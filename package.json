@@ -1,0 +1,30 @@
+{
+  "name": "fillipdesk",
+  "version": "0.1.0",
+  "description": "An all-in-one ai studio for productivity scenarios",
+  "license": "BSD-3-Clause",
+  "author": "uv0xab",
+  "type": "commonjs",
+  "main": "src/main/main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --win",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.2",
+    "electron": "^39.2.6",
+    "electron-builder": "^26.0.12",
+    "electron-reload": "^2.0.0-alpha.1",
+    "eslint": "^9.39.2",
+    "globals": "^16.5.0"
+  },
+  "dependencies": {
+    "highlight.js": "^11.11.1",
+    "marked": "^17.0.1",
+    "marked-highlight": "^2.2.3",
+    "openai": "^6.10.0",
+    "zod": "^4.1.13"
+  }
+}
