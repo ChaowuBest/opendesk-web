@@ -90,3 +90,12 @@ contextBridge.exposeInMainWorld('settingAPI', {
     },
     openDevTools: () => ipcRenderer.invoke('setting:openDevTools'),
 })
+
+contextBridge.exposeInMainWorld('floatWindowAPI', {
+    hideFloatWindow: () => ipcRenderer.invoke('floatWindow:hideFloatWindow'),
+    subscribeIntentsUpdate: (callback) => {
+        ipcRenderer.on('floatWindow:intentsUpdate', (event, ...args) => {
+            callback(...args)
+        })
+    }
+})

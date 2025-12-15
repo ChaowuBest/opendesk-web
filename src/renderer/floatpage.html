@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Flipper Desk | 一站式办公生活空间</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="../renderer/components/intentview.js"></script>
+    <script src="../renderer/components/loading.js"></script>
+</head>
+<body class="bg-transparent overflow-hidden m-0 p-0 font-sans">
+
+    <!-- 主窗口容器 -->
+    <div class="w-screen h-screen bg-white/50 flex items-center justify-center p-2">
+        <intent-list-view id="intent-list-view" class="w-full h-full p-4"/>
+    </div>
+
+    <script>
+    window.addEventListener('keydown', function(event) {
+        if (event.key === 'Escape' || event.key === 'Esc') {
+        window.floatWindowAPI.hideFloatWindow();
+        }
+    });
+    </script>
+</body>
+</html>

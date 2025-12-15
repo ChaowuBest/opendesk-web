@@ -98,7 +98,7 @@ class TaskState {
         你是一个任务管理助手，请根据以下用户消息生成一个任务名称: ${user_message}
         请返回一个简洁明了的任务名称，不要超过10个字符。不要包含任何其他内容。
         `
-        const task_name = await LLM.ask(prompt)
+        const task_name = await LLM.ask(new UserMessage(prompt))
             .catch(err => {
                 console.error(err);
                 return null;

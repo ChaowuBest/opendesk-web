@@ -17,6 +17,7 @@ class Intent {
     }
 }
 
+
 class IntentRegistry {
 
     /** @type {IntentRegistry | null} */
@@ -48,6 +49,14 @@ class IntentRegistry {
     registerIntent(intent) {
         this.intents.push(intent);
     }
+
+    /**
+     * Get all intents
+     * @returns {Intent[]}
+     */
+    getIntents() {
+        return this.intents;
+    }
 }
 
 const globalInstance = IntentRegistry.getInstance();
@@ -60,7 +69,7 @@ globalInstance.registerIntent(new Intent(
     z.object({
         title: z.string().describe("待办事项的标题"),
         description: z.string().describe("待办事项的描述"),
-        due_date: z.date().describe("待办事项的截止日期"),
+        due_date: z.string().describe("待办事项的截止日期, 格式为YYYY-MM-DD"),
         priority: z.enum(['low', 'medium', 'high']).describe("待办事项的优先级"),
     })
 ))
@@ -73,7 +82,7 @@ globalInstance.registerIntent(new Intent(
         amount: z.number().describe("支出的金额"),
         description: z.string().describe("支出的描述"),
         currency: z.enum(['CNY', 'USD', 'EUR']).describe("支出的货币类型，比如人民币、美元、欧元等"),
-        date: z.date().describe("支出的日期"),
+        date: z.string().describe("支出的日期, 格式为YYYY-MM-DD"),
     })
 ))
 

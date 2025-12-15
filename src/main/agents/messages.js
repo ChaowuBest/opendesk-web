@@ -94,23 +94,38 @@ class SystemMessage {
 class UserMessage {
     /**
      *
-     * @param {string} content
+     * @param {string | undefined} content
      */
-    constructor (content) {
+    constructor (content = undefined) {
         this.role = 'user';
-        this.content = [new TextMessagePart(content)];
+        this.content = [];
+        if (typeof content === 'string') {
+            this.content.push(new TextMessagePart(content));
+        }
     }
 
+    /**
+     * Append a text part to the message
+     * @param {string} text
+     * @returns {UserMessage}
+     */
     appendText(text) {
         if (this.content.length > 0 && this.content[this.content.length - 1].type === 'text') {
             this.content[this.content.length - 1].text += text;
         } else {
             this.content.push(new TextMessagePart(text));
         }
+        return this;
     }
 
+    /**
+     * Append an image URL to the message
+     * @param {string} image_url
+     * @returns {UserMessage}
+     */
     appendImageURL(image_url) {
         this.content.push(new ImageMessagePart(image_url));
+        return this;
     }
 
     static assign(user_message_obj) {
@@ -258,6 +273,9 @@ class AssistantResponse {
             // parsing chunk in a stream response
             const chunk = AssistantMessage.parseOpenAIMessage(choice.delta);
             return new AssistantResponse(chunk, choice.finish_reason);
+        } else if (choice.message !== undefined) {
+            const message = AssistantMessage.parseOpenAIMessage(choice.message);
+            return new AssistantResponse(message, choice.finish_reason);
         } else {
             console.info(choice);
             throw new Error('invalid openai response');

@@ -1,7 +1,8 @@
 const { app, BrowserWindow, Tray, globalShortcut, ipcMain } = require('electron')
 const { GlobalState } = require('./states/global')
 const { Setting } = require('./utils/setting')
-const { IntentParser } = require('./services/intent/parser')
+const { openFloatWindow } = require('./windows/floatwindow')
+const process = require('process');
 
 const path = require('path');
 
@@ -102,7 +103,7 @@ const registerSettingAPIHandlers = () => {
 
 const registerHotKeys = () => {
   const ret = globalShortcut.register('Alt+Space', () => {
-    IntentParser.parseScreen();
+    openFloatWindow();
   })
 
   if (!ret) {

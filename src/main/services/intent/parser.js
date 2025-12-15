@@ -3,6 +3,7 @@ const { LLM } = require('../../agents/llm');
 const { UserMessage, ChatContext } = require('../../agents/messages');
 const { Setting } = require('../../utils/setting');
 const { IntentRegistry } = require('./intents');
+const { z } = require('zod');
 const { _ } = require('lodash');
 
 
@@ -17,7 +18,7 @@ const INTENT_PARSING_PROMPT = _.template(`
 <% _.forEach(intents, (intent) => { %>
 - 意图名称: <%= intent.name %>
   * 意图描述: <%= intent.description %>
-  * 意图的输入参数Schema: <%= intent.params %>
+  * 意图的输入参数Schema: <%= JSON.stringify(z.toJSONSchema(intent.params)) %>
 <% }); %>
 
 ## 返回格式
@@ -31,7 +32,45 @@ const INTENT_PARSING_PROMPT = _.template(`
         "confidence": <该意图的置信度，也就是可能性评分，范围从0到1>,
         "params": <意图的参数，需要与该意图的输入参数Schema匹配>
     }}
-`)
+`, { imports: { z } })
+
+class IntentInstance {
+    /**
+     *
+     * @param {string} name
+     * @param {string} reasoning
+     * @param {number} confidence
+     * @param {object} params
+     */
+    constructor(name, reasoning, confidence, params) {
+        /** @type {string} */
+        this.name = name;
+        /** @type {string} */
+        this.reasoning = reasoning;
+        /** @type {number} */
+        this.confidence = confidence;
+        /** @type {object} */
+        this.params = params;
+    }
+
+    /**
+     * Parse an intent instance from an object
+     * @param {object} obj
+     * @returns {IntentInstance}
+     */
+    static parse(obj) {
+        return new IntentInstance(obj.name, obj.reasoning, obj.confidence, obj.params);
+    }
+
+    /**
+     * Parse an array of intent instances
+     * @param {object[]} array
+     * @returns {IntentInstance[]}
+     */
+    static parseArray(array) {
+        return array.map(item => IntentInstance.parse(item));
+    }
+}
 
 class IntentParser {
 
@@ -50,16 +89,33 @@ class IntentParser {
         }
     }
 
-    static async parseScreen() {
+    static getScreenParsingPrompt() {
+        let intents = IntentRegistry.getInstance().getIntents()
+        let prompt = INTENT_PARSING_PROMPT({ intents: intents })
+        // console.info(prompt)
+        return prompt
+    }
+
+    /**
+     * Parse the screen
+     * @param {string | undefined} screenshotURL
+     * @returns {Promise<IntentInstance[]>}
+     */
+    static async parseScreen(screenshotURL = undefined) {
         console.info('start parsing screen')
-        let screenshot = await this.getScreenshotAsURL()
+        if (screenshotURL === undefined) {
+            screenshotURL = await this.getScreenshotAsURL()
+        }
         let model = Setting.getInstance().getDefaultIntentParsingModelInstance();
-        let chat_context = new ChatContext();
-        let user_message = new UserMessage(`The screenshot is of the entire screen. Explain the screen in detail.`)
-        user_message.appendImageURL(screenshot)
-        chat_context.appendMessage(user_message)
-        let resp = await LLM.complete(chat_context, model);
-        console.info(resp);
+        let question = new UserMessage()
+            .appendText(IntentParser.getScreenParsingPrompt())
+            .appendImageURL(screenshotURL);
+
+        let resp = await LLM.askForObject(question, model);
+        let intents = IntentInstance.parseArray(resp);
+        console.info('parsed intents: ', intents);
+
+        return intents;
     }
 }
 
