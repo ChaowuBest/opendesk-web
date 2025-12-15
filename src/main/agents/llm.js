@@ -1,6 +1,6 @@
 const { OpenAI } = require('openai');
 const { ChatContext, AssistantResponse } = require('./messages');
-const { Setting } = require('../utils/setting');
+const { Setting, ModelInstance } = require('../utils/setting');
 
 
 class LLM {
@@ -31,29 +31,52 @@ class LLM {
         return response.choices[0].message.content;
     }
 
-    static async complete(chatContext, modelInstance = undefined) {
-
+    /**
+     * Get the model instance from the model
+     * @param {ModelInstance | string | undefined} model
+     * @returns {ModelInstance}
+     */
+    static _getModelInstance(model) {
+        if (typeof model === 'string') {
+            return Setting.getInstance().getModelInstance(model);
+        } else if (model instanceof ModelInstance) {
+            return model;
+        } else {
+            let model_instance = Setting.getInstance().getDefaultModelInstance();
+            if (model_instance === null) {
+                throw new Error('default model not found');
+            }
+            return model_instance;
+        }
     }
 
     /**
      *
      * @param {ChatContext} chat_context
-     * @param {string | undefined} model_alias
+     * @param {ModelInstance | string | undefined} model
+     * @returns {Promise<AssistantResponse>}
+     */
+    static async complete(chat_context, model = undefined) {
+        var model_instance = this._getModelInstance(model);
+        var client = new OpenAI({
+            apiKey: model_instance.api_key,
+            baseURL: model_instance.base_url
+        });
+        const response = await client.chat.completions.create({
+            model: model_instance.model_name,
+            messages: chat_context.messages.map(message => message.toOpenAIMessage()),
+        })
+        return AssistantResponse.parseOpenAIResponse(response);
+    }
+
+    /**
+     *
+     * @param {ChatContext} chat_context
+     * @param {ModelInstance | string | undefined} model
      * @returns {AsyncIterable<AssistantResponse>}
      */
-    static async* streamComplete(chat_context, model_alias = undefined) {
-        /** @type {ModelInstance | null} */
-        var model_instance = null;
-        if (model_alias === undefined) {
-            model_instance = Setting.getInstance().getDefaultModelInstance();
-        } else {
-            model_instance = Setting.getInstance().getModelInstance(model_alias);
-        }
-
-        if (model_instance === null) {
-            throw new Error(`model ${model_alias} not found`);
-        }
-
+    static async* streamComplete(chat_context, model = undefined) {
+        var model_instance = this._getModelInstance(model);
         var client = new OpenAI({
             apiKey: model_instance.api_key,
             baseURL: model_instance.base_url
@@ -65,15 +88,19 @@ class LLM {
         for (let message of chat_context.messages) {
             messages.push(message.toOpenAIMessage())
         }
+
         const stream = await client.chat.completions.create({
             model: model_instance.model_name,
             messages: messages,
             stream: true
         }).catch(err => {
             console.error(err)
-            // yield AssistantResponse.error(`error: ${err}`)
         })
 
+        if (stream === undefined) {
+            yield AssistantResponse.error('error: completion failed');
+            return;
+        }
         for await (const chunk of stream) {
             yield await AssistantResponse.parseOpenAIResponse(chunk);
         }

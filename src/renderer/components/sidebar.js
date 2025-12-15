@@ -43,6 +43,9 @@ class SideBar extends HTMLElement {
         this.querySelector('#open-setting-editor-btn').addEventListener('click', () => {
             window.globalControlAPI.openSettingEditor();
         })
+        this.querySelector('#open-dev-tools-btn').addEventListener('click', () => {
+            window.settingAPI.openDevTools();
+        })
     }
 
     render() {
@@ -78,6 +81,9 @@ class SideBar extends HTMLElement {
                     </button>
                     <button id="open-setting-editor-btn" class="mx-3 text-gray-500 hover:text-blue-600 text-lg focus:outline-none" title="设置">
                         <i class="fa-solid fa-cog"></i>
+                    </button>
+                    <button id="open-dev-tools-btn" class="mx-3 text-gray-500 hover:text-blue-600 text-lg focus:outline-none" title="开发工具">
+                        <i class="fa-solid fa-terminal"></i>
                     </button>
                 </div>
             </div>

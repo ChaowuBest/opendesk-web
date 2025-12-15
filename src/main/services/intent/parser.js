@@ -1,8 +1,37 @@
 const { desktopCapturer } = require('electron');
 const { LLM } = require('../../agents/llm');
 const { UserMessage, ChatContext } = require('../../agents/messages');
-const fs = require('fs');
+const { Setting } = require('../../utils/setting');
+const { IntentRegistry } = require('./intents');
+const { _ } = require('lodash');
 
+
+const INTENT_PARSING_PROMPT = _.template(`
+你是一个熟悉手机和电脑操作的，善解人意的智能体，总是用中文回答用户的问题。
+
+你需要通过用户给定的设备截图，来猜测用户接下来可能需要你帮忙执行的任务（我们称之为意图）。
+当前所有支持的意图在下面列出：
+
+## 当前系统中已经支持的可以执行的意图
+
+<% _.forEach(intents, (intent) => { %>
+- 意图名称: <%= intent.name %>
+  * 意图描述: <%= intent.description %>
+  * 意图的输入参数Schema: <%= intent.params %>
+<% }); %>
+
+## 返回格式
+
+你的返回格式应该为JSON格式的数组，表示所有可能的意图。这些意图需要按照可能性由大到小排序，
+数组中的每个元素应当符合下面的格式:
+
+    {{
+        "name": <意图的名称>,
+        "reasoning": <简短描述该意图与当前屏幕内容相关的原因，使用自然轻快的语气>,
+        "confidence": <该意图的置信度，也就是可能性评分，范围从0到1>,
+        "params": <意图的参数，需要与该意图的输入参数Schema匹配>
+    }}
+`)
 
 class IntentParser {
 
@@ -24,13 +53,13 @@ class IntentParser {
     static async parseScreen() {
         console.info('start parsing screen')
         let screenshot = await this.getScreenshotAsURL()
+        let model = Setting.getInstance().getDefaultIntentParsingModelInstance();
         let chat_context = new ChatContext();
         let user_message = new UserMessage(`The screenshot is of the entire screen. Explain the screen in detail.`)
         user_message.appendImageURL(screenshot)
         chat_context.appendMessage(user_message)
-        for await (const response of LLM.complete(chat_context)) {
-            console.info(response.content.content[0].text)
-        }
+        let resp = await LLM.complete(chat_context, model);
+        console.info(resp);
     }
 }
 

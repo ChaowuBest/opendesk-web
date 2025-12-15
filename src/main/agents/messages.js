@@ -259,6 +259,7 @@ class AssistantResponse {
             const chunk = AssistantMessage.parseOpenAIMessage(choice.delta);
             return new AssistantResponse(chunk, choice.finish_reason);
         } else {
+            console.info(choice);
             throw new Error('invalid openai response');
         }
     }

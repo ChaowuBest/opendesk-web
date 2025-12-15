@@ -135,7 +135,7 @@ class TaskView extends HTMLElement {
             <div class="flex-1 overflow-y-auto p-4 space-y-4" id="taskview-chat-history"></div>
 
             <!-- 输入区域 -->
-            <div class="p-3">
+            <div class="p-4">
                 <agent-input id="task-${this.task_id}-input" />
             </div>
         </div>

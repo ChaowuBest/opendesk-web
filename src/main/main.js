@@ -5,6 +5,9 @@ const { IntentParser } = require('./services/intent/parser')
 
 const path = require('path');
 
+/** @type {BrowserWindow | null} */
+var globalMainWindow = null;
+
 const createWindow = () => {
   const mainWindow = new BrowserWindow({
     width: 1200,
@@ -19,7 +22,7 @@ const createWindow = () => {
 
   mainWindow.setMenu(null)
   mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'))
-  mainWindow.webContents.openDevTools();
+  globalMainWindow = mainWindow;
 }
 
 const registerTaskManagerAPIHandlers = () => {
@@ -88,6 +91,13 @@ const registerSettingAPIHandlers = () => {
       return { status: 'error', message: error.message };
     }
   })
+  ipcMain.handle('setting:openDevTools', () => {
+    if (globalMainWindow === null) {
+      return { status: 'error', message: 'main window not found' }
+    }
+    globalMainWindow.webContents.openDevTools();
+    return { status: 'ok' };
+  })
 }
 
 const registerHotKeys = () => {
@@ -96,7 +106,7 @@ const registerHotKeys = () => {
   })
 
   if (!ret) {
-    console.log('registration failed')
+    console.log('hotkey register failed, possibly because the hot key is already in use')
   }
 }
 

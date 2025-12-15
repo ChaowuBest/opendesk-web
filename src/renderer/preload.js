@@ -87,5 +87,6 @@ contextBridge.exposeInMainWorld('settingAPI', {
             console.error('saving setting object failed', result.message);
             throw new Error(result.message);
         }
-    }
+    },
+    openDevTools: () => ipcRenderer.invoke('setting:openDevTools'),
 })

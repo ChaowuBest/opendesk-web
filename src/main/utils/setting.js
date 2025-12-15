@@ -103,6 +103,11 @@ class Setting {
         fs.writeFileSync(settingFile, JSON.stringify(this.data, null, 4), { encoding: 'utf8' });
     }
 
+    /**
+     * Get the model instance by the model alias
+     * @param {string} model_alias
+     * @returns {ModelInstance | null}
+     */
     getModelInstance(model_alias) {
         let modelRef = this.data.models.find(model => model.alias === model_alias);
         if (modelRef === undefined) {
@@ -115,8 +120,28 @@ class Setting {
         return new ModelInstance(modelRef.model_name, provider.base_url, provider.api_key);
     }
 
+    /**
+     * Get the default model instance
+     * @returns {ModelInstance}
+     */
     getDefaultModelInstance() {
-        return this.getModelInstance(this.data.default_model);
+        let model = this.getModelInstance(this.data.default_model);
+        if (model === null) {
+            throw new Error(`default model ${this.data.default_model} not found`);
+        }
+        return model;
+    }
+
+    /**
+     * Get the default intent parsing model instance
+     * @returns {ModelInstance}
+     */
+    getDefaultIntentParsingModelInstance() {
+        let model = this.getModelInstance(this.data.default_intent_parsing_model);
+        if (model === null) {
+            throw new Error(`default intent parsing model ${this.data.default_intent_parsing_model} not found`);
+        }
+        return model;
     }
 }
 
@@ -139,4 +164,4 @@ function getTaskDirectory() {
     return taskDirectory;
 }
 
-module.exports = { getAppDirectory, getTaskDirectory, Setting }
+module.exports = { getAppDirectory, getTaskDirectory, Setting, ModelInstance }
