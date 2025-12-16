@@ -31,6 +31,7 @@
   },
   "dependencies": {
     "electron-squirrel-startup": "^1.0.1",
+    "fast-glob": "^3.3.3",
     "highlight.js": "^11.11.1",
     "lodash": "^4.17.21",
     "marked": "^17.0.1",

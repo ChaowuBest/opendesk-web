@@ -16,12 +16,28 @@ const ModelSchema = z.object({
     model_name: z.string().default('google/gemini-2.5-flash')
 })
 
+const FSEntrySchema = z.object({
+    root: z.string().default('C:\\Users'),
+    extnames: z.array(z.string()).default([
+        'doc', 'docx', 'ppt', 'pptx', 'xls', 'xlsx',
+        'jpg', 'jpeg', 'png', 'webp', 'bmp',
+        'c', 'cpp', 'h', 'hpp', 'js'
+    ]),
+    include_patterns: z.array(z.string()).default([]),
+    exclude_patterns: z.array(z.string()).default([
+        "C:\\Windows\\**",
+        "C:\\Temp\\**",
+        "**\\node_modules\\**"
+    ]),
+})
+
 const SettingSchema = z.object({
     default_model: z.string().default(''),
     default_intent_parsing_model: z.string().default(''),
     default_embedding_model: z.string().default(''),
     providers: z.array(ProviderSchema).default([]),
     models: z.array(ModelSchema).default([]),
+    filesystems: z.array(FSEntrySchema).default([]),
 })
 
 class ModelInstance {
@@ -47,6 +63,7 @@ class Setting {
     static instance = null;
 
     constructor() {
+        /** @type {z.core.output<SettingSchema>} */
         this.data = SettingSchema.parse({});
     }
 

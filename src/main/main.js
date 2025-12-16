@@ -2,7 +2,7 @@ const { app, BrowserWindow, Tray, globalShortcut, ipcMain } = require('electron'
 const { GlobalState } = require('./states/global')
 const { Setting } = require('./utils/setting')
 const { openFloatWindow } = require('./windows/floatwindow')
-const process = require('process');
+const { FSScanner } = require('./services/fs/scanner')
 
 const path = require('path');
 
@@ -117,8 +117,10 @@ app.whenReady().then(() => {
   registerTaskManagerAPIHandlers();
   registerSettingAPIHandlers();
   registerHotKeys();
+  FSScanner.startFSService();
 })
 
 app.on('will-quit', () => {
   globalShortcut.unregisterAll()
+  FSScanner.stopFSService();
 })
