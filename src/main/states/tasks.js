@@ -3,6 +3,7 @@ const { LLM } = require('../agents/llm');
 const { getTaskDirectory } = require('../utils/setting');
 const path = require('path');
 const fs = require('fs');
+const { logger } = require('../utils/logger');
 
 
 class TaskUpdateSubscriber {
@@ -83,7 +84,7 @@ class TaskState {
         let assistant_message = new AssistantMessage();
         this.chat_context.appendMessage(user_message);
         this.chat_context.appendMessage(assistant_message);
-        console.info(`messsage submitted to task ${this.task_id}`)
+        logger.info(`messsage submitted to task ${this.task_id}`)
 
         if (this.task_name === null) {
             this.generateTaskName(message).then(() => {
@@ -100,7 +101,7 @@ class TaskState {
         `
         const task_name = await LLM.ask(new UserMessage(prompt))
             .catch(err => {
-                console.error(err);
+                logger.error(err);
                 return null;
             })
         this.task_name = task_name;
@@ -145,7 +146,7 @@ class TaskState {
      */
     addSubscriber(web_contents) {
         let subscriber = new TaskUpdateSubscriber(web_contents);
-        console.info('task update subscriber added for task', this.task_id)
+        logger.info('task update subscriber added for task', this.task_id)
         this.subscribers.push(subscriber);
         return subscriber.subscription_id;
     }
@@ -158,12 +159,12 @@ class TaskState {
     removeSubscriber(subscription_id) {
         let subscriber = this.subscribers.find(s => s.subscription_id === subscription_id);
         if (subscriber === undefined) {
-            console.error('subscriber not found for task', this.task_id)
+            logger.error('subscriber not found for task', this.task_id)
             return false;
         }
 
         this.subscribers = this.subscribers.filter(s => s.subscription_id !== subscription_id);
-        console.info('task update subscriber removed for task', this.task_id)
+        logger.info('task update subscriber removed for task', this.task_id)
         return true;
     }
 }
@@ -231,7 +232,7 @@ class TaskManagerState {
      */
     createTask() {
         const task = new TaskState(this);
-        console.info('task created', task.task_id)
+        logger.info('task created', task.task_id)
         this.tasks.push(task);
         this.publishTaskListUpdate();
         return task;
@@ -267,7 +268,7 @@ class TaskManagerState {
      * @param {Electron.WebContents} webContents
      */
     addSubscriber(webContents) {
-        console.info('task list subscriber added')
+        logger.info('task list subscriber added')
         this.subscribers.push(webContents);
     }
 

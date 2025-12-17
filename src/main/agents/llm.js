@@ -2,6 +2,7 @@ const { OpenAI } = require('openai');
 const { ChatContext, AssistantResponse, UserMessage } = require('./messages');
 const { Setting, ModelInstance } = require('../utils/setting');
 const { z } = require('zod');
+const { logger } = require('../utils/logger');
 
 
 class LLMAskOptions {
@@ -160,7 +161,7 @@ class LLM {
             }
             return LLMValidatorResult.success(obj);
         } catch (error) {
-            console.warn(json_content, error.message);
+            logger.warn(json_content, error.message);
             return LLMValidatorResult.error(`cannot parse the response as json object: ${error.message}`);
         }
     }
@@ -242,7 +243,7 @@ class LLM {
             messages: messages,
             stream: true
         }).catch(err => {
-            console.error(err)
+            logger.error(err)
         })
 
         if (stream === undefined) {

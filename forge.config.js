@@ -13,7 +13,7 @@ module.exports = {
       name: '@electron-forge/maker-squirrel',
       platforms: ['win32'],
       config: {
-        name: "Fillip Desk"
+        name: "FillipDesk"
       },
     },
     {

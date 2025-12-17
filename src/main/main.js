@@ -8,6 +8,11 @@ const { LogStream } = require('./utils/logger')
 
 const path = require('path');
 
+
+if (require('electron-squirrel-startup')) {
+  app.quit();
+}
+
 /** @type {BrowserWindow | null} */
 var globalMainWindow = null;
 
