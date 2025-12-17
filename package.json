@@ -8,11 +8,12 @@
   "main": "src/main/main.js",
   "private": true,
   "scripts": {
-    "start": "chcp 65001 && electron-forge start",
-    "build": "electron-builder --win",
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "run-script-os",
+    "start:win32": "chcp 65001 && electron-forge start",
+    "start:darwin": "electron-forge start",
     "package": "electron-forge package",
-    "make": "electron-forge make"
+    "make": "run-script-os",
+    "make:win32": "electron-forge make --platform=win32 --arch=x64,arm64"
   },
   "devDependencies": {
     "@electron-forge/cli": "^7.10.2",
@@ -27,16 +28,20 @@
     "electron": "^39.2.6",
     "electron-reload": "^2.0.0-alpha.1",
     "eslint": "^9.39.2",
-    "globals": "^16.5.0"
+    "globals": "^16.5.0",
+    "run-script-os": "^1.1.6"
   },
   "dependencies": {
+    "chroma": "^0.0.1",
     "electron-squirrel-startup": "^1.0.1",
     "fast-glob": "^3.3.3",
     "highlight.js": "^11.11.1",
     "lodash": "^4.17.21",
     "marked": "^17.0.1",
     "marked-highlight": "^2.2.3",
+    "nedb": "^1.8.0",
     "openai": "^6.10.0",
+    "winston": "^3.19.0",
     "zod": "^4.1.13"
   }
 }

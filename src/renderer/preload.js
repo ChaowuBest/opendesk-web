@@ -72,6 +72,17 @@ contextBridge.exposeInMainWorld('taskManagerAPI', {
     submitMessage: (taskId, message) => ipcRenderer.invoke('taskManager:submitMessage', taskId, message),
 });
 
+contextBridge.exposeInMainWorld('fsAPI', {
+    searchFilesByKeyword: async (keyword) => {
+        const result = await ipcRenderer.invoke('fs:searchFilesByKeyword', keyword);
+        if (result.status !== 'ok') {
+            console.error('searching files by keyword failed', result.message);
+            throw new Error(result.message);
+        }
+        return result.data;
+    },
+})
+
 contextBridge.exposeInMainWorld('settingAPI', {
     loadSettingObject: async () => {
         const result = await ipcRenderer.invoke('setting:loadSettingObject');
@@ -89,6 +100,19 @@ contextBridge.exposeInMainWorld('settingAPI', {
         }
     },
     openDevTools: () => ipcRenderer.invoke('setting:openDevTools'),
+    getLogContent: async () => {
+        const result = await ipcRenderer.invoke('setting:getLogContent');
+        if (result.status !== 'ok') {
+            console.error('getting log content failed', result.message);
+            throw new Error(result.message);
+        }
+        return result.data;
+    },
+    subscribeLogContentUpdate: (callback) => {
+        ipcRenderer.on('setting:logContentUpdate', (event, ...args) => {
+            callback(...args)
+        })
+    }
 })
 
 contextBridge.exposeInMainWorld('floatWindowAPI', {

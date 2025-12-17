@@ -50,7 +50,7 @@ class TaskView extends HTMLElement {
             <div class="w-8 h-8 bg-green-500 rounded-full flex items-center justify-center flex-shrink-0">
                 <span class="text-white text-xs font-semibold">Me</span>
             </div>
-            <div class="bg-blue-500 text-white rounded-lg p-4 shadow-sm max-w-4xl">
+            <div class="bg-blue-500 text-white rounded-xl p-3 shadow-sm max-w-4xl">
                 ${content}
                 <span class="text-xs text-blue-200 mt-2 block">10:31</span>
             </div>
@@ -73,7 +73,7 @@ class TaskView extends HTMLElement {
             <div class="w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center flex-shrink-0">
                 <span class="text-white text-xs font-semibold">AI</span>
             </div>
-            <div class="bg-white rounded-lg p-4 shadow-sm max-w-4xl">
+            <div class="bg-white rounded-xl p-3 shadow-sm max-w-4xl">
                 <div id='message-${assistant_message.message_id}'>${content}</div>
                 <span class="text-xs text-gray-500 mt-2 block">10:30</span>
             </div>

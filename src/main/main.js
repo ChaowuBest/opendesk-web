@@ -2,7 +2,9 @@ const { app, BrowserWindow, Tray, globalShortcut, ipcMain } = require('electron'
 const { GlobalState } = require('./states/global')
 const { Setting } = require('./utils/setting')
 const { openFloatWindow } = require('./windows/floatwindow')
-const { FSScanner } = require('./services/fs/scanner')
+const { FSService } = require('./services/fs/scanner')
+const { FSStorage } = require('./services/fs/storage')
+const { LogStream } = require('./utils/logger')
 
 const path = require('path');
 
@@ -80,6 +82,12 @@ const registerTaskManagerAPIHandlers = () => {
   });
 }
 
+const registerFSAPIHandlers = () => {
+  ipcMain.handle('fs:searchFilesByKeyword', async (event, keyword) => {
+    return { status: 'ok', data: await FSStorage.getInstance().searchFilesByKeyword(keyword) };
+  })
+}
+
 const registerSettingAPIHandlers = () => {
   ipcMain.handle('setting:loadSettingObject', () => {
     return { status: 'ok', data: Setting.getInstance().getData() };
@@ -98,6 +106,9 @@ const registerSettingAPIHandlers = () => {
     }
     globalMainWindow.webContents.openDevTools();
     return { status: 'ok' };
+  }),
+  ipcMain.handle('setting:getLogContent', () => {
+    return { status: 'ok', data: LogStream.getStream().getContent() };
   })
 }
 
@@ -115,12 +126,14 @@ app.whenReady().then(() => {
   GlobalState.initialize();
   createWindow();
   registerTaskManagerAPIHandlers();
+  registerFSAPIHandlers();
   registerSettingAPIHandlers();
   registerHotKeys();
-  FSScanner.startFSService();
+
+  FSService.startFSService();
 })
 
 app.on('will-quit', () => {
   globalShortcut.unregisterAll()
-  FSScanner.stopFSService();
+  FSService.stopFSService();
 })

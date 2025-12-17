@@ -18,12 +18,11 @@ const ModelSchema = z.object({
 
 const FSEntrySchema = z.object({
     root: z.string().default('C:\\Users'),
-    extnames: z.array(z.string()).default([
-        'doc', 'docx', 'ppt', 'pptx', 'xls', 'xlsx',
-        'jpg', 'jpeg', 'png', 'webp', 'bmp',
-        'c', 'cpp', 'h', 'hpp', 'js'
+    include_patterns: z.array(z.string()).default([
+        "**/*.{txt,md}",
+        "**/*.{pdf,doc,docx,ppt,pptx,xls,xlsx,csv}",
+        "**/*.{json,yaml,yml,xml,html,css,js}",
     ]),
-    include_patterns: z.array(z.string()).default([]),
     exclude_patterns: z.array(z.string()).default([
         "C:\\Windows\\**",
         "C:\\Temp\\**",
@@ -172,6 +171,15 @@ function getAppDirectory() {
     }
 }
 
+function getLogDirectory() {
+    const appDirectory = getAppDirectory();
+    const logDirectory = path.join(appDirectory, 'logs');
+    if (!fs.existsSync(logDirectory)) {
+        fs.mkdirSync(logDirectory, { recursive: true });
+    }
+    return logDirectory;
+}
+
 function getTaskDirectory() {
     const appDirectory = getAppDirectory();
     const taskDirectory = path.join(appDirectory, 'tasks');
@@ -181,4 +189,4 @@ function getTaskDirectory() {
     return taskDirectory;
 }
 
-module.exports = { getAppDirectory, getTaskDirectory, Setting, ModelInstance }
+module.exports = { getAppDirectory, getLogDirectory, getTaskDirectory, Setting, ModelInstance }
