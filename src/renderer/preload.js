@@ -81,6 +81,14 @@ contextBridge.exposeInMainWorld('fsAPI', {
         }
         return result.data;
     },
+    searchFilesByNameSimilarity: async (query) => {
+        const result = await ipcRenderer.invoke('fs:searchFilesByNameSimilarity', query);
+        if (result.status !== 'ok') {
+            console.error('searching files by name similarity failed', result.message);
+            throw new Error(result.message);
+        }
+        return result.data;
+    },
     openFile: async (filePath) => {
         const result = await ipcRenderer.invoke('fs:openFile', filePath);
         if (result.status !== 'ok') {

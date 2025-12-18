@@ -32,7 +32,6 @@
     "run-script-os": "^1.1.6"
   },
   "dependencies": {
-    "chroma": "^0.0.1",
     "electron-squirrel-startup": "^1.0.1",
     "fast-glob": "^3.3.3",
     "highlight.js": "^11.11.1",
@@ -40,7 +39,10 @@
     "marked": "^17.0.1",
     "marked-highlight": "^2.2.3",
     "nedb": "^1.8.0",
+    "nedb-promises": "^6.2.3",
     "openai": "^6.10.0",
+    "p-queue": "^9.0.1",
+    "vectra": "^0.11.1",
     "winston": "^3.19.0",
     "zod": "^4.1.13"
   }

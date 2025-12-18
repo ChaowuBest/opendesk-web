@@ -70,8 +70,13 @@ class LLM {
         logger.info('no_proxy', process.env.NO_PROXY);
     }
 
+    /**
+     * Embed the text
+     * @param {string} text
+     * @returns {Promise<number[]>}
+     */
     static async embed(text) {
-        let modelInstance = Setting.getInstance().getDefaultModelInstance();
+        let modelInstance = Setting.getInstance().getDefaultEmbeddingModelInstance();
         var client = new OpenAI({
             apiKey: modelInstance.api_key,
             baseURL: modelInstance.base_url
@@ -81,6 +86,30 @@ class LLM {
             input: text
         })
         return response.data[0].embedding;
+    }
+
+    /**
+     * Batch embed the texts
+     * @param {string[]} texts
+     * @param {number} batch_size
+     * @returns {Promise<number[][]>}
+     */
+    static async batchEmbed(texts, batch_size = 64) {
+        let model_instance = Setting.getInstance().getDefaultEmbeddingModelInstance();
+        var client = new OpenAI({
+            apiKey: model_instance.api_key,
+            baseURL: model_instance.base_url
+        });
+        let embeddings = [];
+        for (let i = 0; i < texts.length; i += batch_size) {
+            let batch = texts.slice(i, i + batch_size);
+            const response = await client.embeddings.create({
+                model: model_instance.model_name,
+                input: batch
+            })
+            embeddings.push(...response.data.map(data => data.embedding));
+        }
+        return embeddings;
     }
 
     /**

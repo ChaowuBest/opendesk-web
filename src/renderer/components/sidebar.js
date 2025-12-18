@@ -76,22 +76,22 @@ class SideBar extends HTMLElement {
 
             <div class="flex-shrink-0 w-full flex justify-center items-center py-3">
                 <div class="flex justify-center items-center">
-                    <button id="open-home-btn" class="mx-2 text-gray-500 hover:text-blue-600 text-lg focus:outline-none" title="主页">
+                    <button id="open-home-btn" class="mx-3 text-gray-500 hover:text-blue-600 text-lg focus:outline-none" title="主页">
                         <i class="fa-solid fa-house"></i>
                     </button>
-                    <button id="open-memory-btn" class="mx-2 text-gray-500 hover:text-blue-600 text-lg focus:outline-none" title="记忆">
+                    <button id="open-memory-btn" class="mx-3 text-gray-500 hover:text-blue-600 text-lg focus:outline-none" title="记忆">
                         <i class="fa-solid fa-hard-drive"></i>
                     </button>
-                    <button id="open-file-system-btn" class="mx-2 text-gray-500 hover:text-blue-600 text-lg focus:outline-none" title="文件系统">
+                    <button id="open-file-system-btn" class="mx-3 text-gray-500 hover:text-blue-600 text-lg focus:outline-none" title="文件系统">
                         <i class="fa-solid fa-folder-open"></i>
                     </button>
-                    <button id="open-setting-editor-btn" class="mx-2 text-gray-500 hover:text-blue-600 text-lg focus:outline-none" title="设置">
+                    <button id="open-setting-editor-btn" class="mx-3 text-gray-500 hover:text-blue-600 text-lg focus:outline-none" title="设置">
                         <i class="fa-solid fa-cog"></i>
                     </button>
-                    <button id="open-dev-tools-btn" class="mx-2 text-gray-500 hover:text-blue-600 text-lg focus:outline-none" title="开发工具">
+                    <button id="open-dev-tools-btn" class="mx-3 text-gray-500 hover:text-blue-600 text-lg focus:outline-none" title="开发工具">
                         <i class="fa-solid fa-terminal"></i>
                     </button>
-                    <button id="open-log-view-btn" class="mx-2 text-gray-500 hover:text-blue-600 text-lg focus:outline-none" title="日志">
+                    <button id="open-log-view-btn" class="mx-3 text-gray-500 hover:text-blue-600 text-lg focus:outline-none" title="日志">
                         <i class="fa-solid fa-file-lines"></i>
                     </button>
                 </div>

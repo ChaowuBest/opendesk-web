@@ -81,7 +81,7 @@ class FSScanner {
         logger.info(`[depth ${deep}] scanning ${this.root}: ${allFiles.length} files found (${updatedFiles.length} updated), time cost ${totalTime}ms`);
 
         for (const file of updatedFiles.slice(0, 20)) {
-            logger.info(`-> updated file: ${file.path} ${file.stats.ctimeMs} ${file.stats.birthtimeMs} ${file.stats.atimeMs}`);
+            logger.debug(`-> updated file: ${file.path} ${file.stats.ctimeMs} ${file.stats.birthtimeMs} ${file.stats.atimeMs}`);
         }
 
         const fileEntries = updatedFiles.map(file => {
@@ -109,8 +109,8 @@ class FSService {
     /** @type {Map<string, FSScanner>}} */
     static scanners = new Map();
 
-    static startFSService() {
-        const storage = FSStorage.getInstance();
+    static async startFSService() {
+        const storage = await FSStorage.getInstance();
         Setting.getInstance().data.filesystems.forEach(fsEntry => {
             let instance = new FSScanner(fsEntry, storage);
             FSService.scanners.set(fsEntry.root, instance);

@@ -26,17 +26,12 @@ class HomePage extends HTMLElement {
                 this.__search_timeout = null;
             }
             if (event.detail.value.trim() === '') {
-                fileListView.setFiles([]);
+                fileListView.clearSearchResults();
                 return;
             }
             this.__search_timeout = setTimeout(() => {
-                window.fsAPI.searchFilesByKeyword(event.detail.value).then(files => {
-                    fileListView.setFiles(files);
-                }).catch(error => {
-                    console.error('searching files by keyword failed', error);
-                    fileListView.setFiles([]);
-                });
-            }, 500);
+                fileListView.startSearch(event.detail.value);
+            }, 800);
         });
     }
 

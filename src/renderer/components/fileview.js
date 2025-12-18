@@ -12,6 +12,31 @@ class AgentFilesView extends HTMLElement {
         this.render();
     }
 
+    clearSearchResults() {
+        this.files = [];
+        this.current_page = 1;
+        this.render();
+    }
+
+    /**
+     * Start searching files by keyword
+     * @param {string} query
+     */
+    startSearch(query) {
+        // INSERT_YOUR_CODE
+        Promise.all([
+            window.fsAPI.searchFilesByKeyword(query),
+            window.fsAPI.searchFilesByNameSimilarity(query)
+        ]).then(([keywordFiles, similarityFiles]) => {
+            // 合并两个结果，去重（假设 path 唯一）
+            let files = [...keywordFiles, ...similarityFiles];
+            this.setFiles(files);
+        }).catch(error => {
+            console.error('searching files failed', error);
+            this.clearSearchResults();
+        });
+    }
+
     setFiles(files) {
         this.files = files;
         this.current_page = 1;

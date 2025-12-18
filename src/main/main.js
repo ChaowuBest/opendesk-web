@@ -89,7 +89,14 @@ const registerTaskManagerAPIHandlers = () => {
 
 const registerFSAPIHandlers = () => {
   ipcMain.handle('fs:searchFilesByKeyword', async (event, keyword) => {
-    return { status: 'ok', data: await FSStorage.getInstance().searchFilesByKeyword(keyword) };
+    const storage = await FSStorage.getInstance();
+    const result = await storage.searchFilesByKeyword(keyword);
+    return { status: 'ok', data: result };
+  }),
+  ipcMain.handle('fs:searchFilesByNameSimilarity', async (event, query) => {
+    const storage = await FSStorage.getInstance();
+    const result = await storage.searchFilesByNameSimilarity(query);
+    return { status: 'ok', data: result };
   }),
   ipcMain.handle('fs:openFile', async (event, filePath) => {
     shell.openPath(filePath);

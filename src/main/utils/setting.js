@@ -152,6 +152,14 @@ class Setting {
         return model;
     }
 
+    getDefaultEmbeddingModelInstance() {
+        let model = this.getModelInstance(this.data.default_embedding_model);
+        if (model === null) {
+            throw new Error(`default embedding model ${this.data.default_embedding_model} not found`);
+        }
+        return model;
+    }
+
     /**
      * Get the default intent parsing model instance
      * @returns {ModelInstance}
