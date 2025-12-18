@@ -13,7 +13,9 @@ module.exports = {
       name: '@electron-forge/maker-squirrel',
       platforms: ['win32'],
       config: {
-        name: "FillipDesk"
+        name: "FillipDesk",
+        setupExe: 'FillipDesk-${version}-Setup.exe',
+        remoteReleases: ''
       },
     },
     {

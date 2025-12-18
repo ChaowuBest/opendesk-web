@@ -44,6 +44,32 @@ class LLMValidatorResult {
 
 class LLM {
 
+    /**
+     * Ensure the proxy is set for the model instance
+     * @param {ModelInstance} mode_instance
+     * @returns {void}
+     */
+    static __ensureProxy(mode_instance) {
+        if (!mode_instance.no_proxy) {
+            return;
+        }
+
+        // 从mode_instance.base_url中获取域名并放在process.env.no_proxy里面
+        try {
+            const url = new URL(mode_instance.base_url);
+            const domain = url.hostname;
+            if (process.env.NO_PROXY === undefined) {
+                process.env.NO_PROXY = domain;
+            } else if (!process.env.NO_PROXY.includes(domain)) {
+                process.env.NO_PROXY += `,${domain}`;
+            }
+        } catch (e) {
+            logger.warn(`Failed to extract domain from base_url: ${mode_instance.base_url}`, e.message);
+        }
+
+        logger.info('no_proxy', process.env.NO_PROXY);
+    }
+
     static async embed(text) {
         let modelInstance = Setting.getInstance().getDefaultModelInstance();
         var client = new OpenAI({
@@ -96,7 +122,7 @@ class LLM {
         while (final_response === undefined && num_retries < 5) {
             let response = await client.chat.completions.create({
                 model: modelInstance.model_name,
-                messages: messages,
+                messages: messages
             })
 
             if (response.choices.length !== 1) {
@@ -226,6 +252,8 @@ class LLM {
      */
     static async* streamComplete(chat_context, model = undefined) {
         var model_instance = this.__getModelInstance(model);
+        this.__ensureProxy(model_instance);
+
         var client = new OpenAI({
             apiKey: model_instance.api_key,
             baseURL: model_instance.base_url

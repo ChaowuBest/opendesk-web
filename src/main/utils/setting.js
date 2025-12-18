@@ -7,7 +7,8 @@ const fs = require('fs');
 const ProviderSchema = z.object({
     name: z.string().default('openrouter'),
     base_url: z.string().default('https://openrouter.ai/api/v1'),
-    api_key: z.string().default('')
+    api_key: z.string().default(''),
+    no_proxy: z.boolean().default(false)
 })
 
 const ModelSchema = z.object({
@@ -44,14 +45,17 @@ class ModelInstance {
      * @param {string} model_name
      * @param {string} base_url
      * @param {string} api_key
+     * @param {boolean} no_proxy
      */
-    constructor(model_name, base_url, api_key) {
+    constructor(model_name, base_url, api_key, no_proxy) {
         /** @type {string} */
         this.model_name = model_name;
         /** @type {string} */
         this.base_url = base_url;
         /** @type {string} */
         this.api_key = api_key;
+        /** @type {boolean} */
+        this.no_proxy = no_proxy;
     }
 }
 
@@ -133,7 +137,7 @@ class Setting {
         if (provider === undefined) {
             return null;
         }
-        return new ModelInstance(modelRef.model_name, provider.base_url, provider.api_key);
+        return new ModelInstance(modelRef.model_name, provider.base_url, provider.api_key, provider.no_proxy);
     }
 
     /**

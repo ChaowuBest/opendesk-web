@@ -243,7 +243,10 @@ class AssistantMessage {
         if (message.reasoning !== null && message.reasoning !== undefined) {
             console.info('reasoning: ' + message.reasoning);
         }
-        message.content = [new TextMessagePart(openai_message.content)];
+
+        if (openai_message.content !== undefined && openai_message.content !== null) {
+            message.content = [new TextMessagePart(openai_message.content)];
+        }
         return message;
     }
 }
