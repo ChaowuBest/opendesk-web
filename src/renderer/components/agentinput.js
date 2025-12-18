@@ -81,6 +81,15 @@ class AgentInput extends HTMLElement {
                 handleSubmit();
             }
         })
+
+        textarea.addEventListener('input', (e) => {
+            this.dispatchEvent(new CustomEvent('contentChanged', {
+                detail: {
+                    value: e.target.value
+                },
+                bubbles: true
+            }));
+        })
     }
 }
 

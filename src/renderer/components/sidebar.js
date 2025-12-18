@@ -34,6 +34,9 @@ class SideBar extends HTMLElement {
             const taskId = await window.taskManagerAPI.createTask();
             window.globalControlAPI.openTask(taskId);
         })
+        this.querySelector('#open-home-btn').addEventListener('click', () => {
+            window.globalControlAPI.openHomePage();
+        })
         this.querySelector('#open-memory-btn').addEventListener('click', () => {
             // window.globalControlAPI.openMemory();
         })

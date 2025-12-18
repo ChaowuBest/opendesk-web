@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Tray, globalShortcut, ipcMain } = require('electron')
+const { app, BrowserWindow, Tray, globalShortcut, ipcMain, shell } = require('electron')
 const { GlobalState } = require('./states/global')
 const { Setting } = require('./utils/setting')
 const { openFloatWindow } = require('./windows/floatwindow')
@@ -90,6 +90,10 @@ const registerTaskManagerAPIHandlers = () => {
 const registerFSAPIHandlers = () => {
   ipcMain.handle('fs:searchFilesByKeyword', async (event, keyword) => {
     return { status: 'ok', data: await FSStorage.getInstance().searchFilesByKeyword(keyword) };
+  }),
+  ipcMain.handle('fs:openFile', async (event, filePath) => {
+    shell.openPath(filePath);
+    return { status: 'ok' };
   })
 }
 

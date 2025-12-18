@@ -81,6 +81,13 @@ contextBridge.exposeInMainWorld('fsAPI', {
         }
         return result.data;
     },
+    openFile: async (filePath) => {
+        const result = await ipcRenderer.invoke('fs:openFile', filePath);
+        if (result.status !== 'ok') {
+            console.error('opening file failed', result.message);
+            throw new Error(result.message);
+        }
+    }
 })
 
 contextBridge.exposeInMainWorld('settingAPI', {
