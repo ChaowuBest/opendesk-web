@@ -47,9 +47,6 @@ class TaskView extends HTMLElement {
         }
         var html = `
         <div class="flex items-start space-x-3 flex-row-reverse">
-            <div class="w-8 h-8 bg-green-500 rounded-full flex items-center justify-center flex-shrink-0">
-                <span class="text-white text-xs font-semibold">Me</span>
-            </div>
             <div class="bg-blue-500 text-white rounded-xl p-3 shadow-sm max-w-4xl">
                 ${content}
                 <span class="text-xs text-blue-200 mt-2 block">10:31</span>
@@ -70,10 +67,7 @@ class TaskView extends HTMLElement {
         }
         var html = `
         <div class="flex items-start space-x-3">
-            <div class="w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center flex-shrink-0">
-                <span class="text-white text-xs font-semibold">AI</span>
-            </div>
-            <div class="bg-white rounded-xl p-3 shadow-sm max-w-4xl">
+            <div class="p-3">
                 <div id='message-${assistant_message.message_id}'>${content}</div>
                 <span class="text-xs text-gray-500 mt-2 block">10:30</span>
             </div>
@@ -123,7 +117,7 @@ class TaskView extends HTMLElement {
 
     render() {
         this.innerHTML = `
-        <div class="bg-gray-100 h-full flex flex-col">
+        <div class="bg-gray-30 h-full flex flex-col">
             <header class="bg-white border-b border-gray-200 px-4 py-3 flex items-center shadow-sm">
                 <div class="w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center mr-3">
                     <span class="text-white text-sm font-semibold">AI</span>

@@ -14,36 +14,38 @@ class AgentInput extends HTMLElement {
 
     render() {
         this.innerHTML = `
-        <div class="bg-white border border-gray-200 rounded-xl shadow-sm">
-            <!-- 主要输入区域 -->
-            <div class="p-3">
-                <textarea
-                    id="agent-input-textarea"
-                    placeholder="在这里输入消息，按 Ctrl+Enter 发送"
-                    class="w-full h-15 resize-none border-none outline-none placeholder-gray-400 text-gray-700"
-                ></textarea>
-            </div>
-
-            <!-- 工具栏 -->
-            <div class="flex items-center justify-between px-2 py-1 border-t border-gray-100">
-                <!-- 左侧工具按钮 -->
-                <div class="flex items-center space-x-3">
-                    <!-- 附件 -->
-                    <button class="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-50 rounded-md transition-colors">
-                        <i class="fas fa-paperclip text-lg"></i>
-                    </button>
-
-                    <!-- 语音 -->
-                    <button class="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-50 rounded-md transition-colors">
-                        <i class="fas fa-microphone text-lg"></i>
-                    </button>
+        <div class="w-full p-1.5 rounded-[28px] bg-white/40 border border-gray/60 shadow-[0_10px_40px_-15px_rgba(0,0,0,0.08)]">
+            <div class="bg-white rounded-[22px] p-1 shadow-sm border border-gray-100/40">
+                <!-- 主要输入区域 -->
+                <div class="p-3">
+                    <textarea
+                        id="agent-input-textarea"
+                        placeholder="在这里输入消息，按 Ctrl+Enter 发送"
+                        class="w-full h-15 resize-none border-none outline-none placeholder-gray-400 text-gray-700"
+                    ></textarea>
                 </div>
 
-                <!-- 右侧按钮 -->
-                <div class="flex items-center space-x-2">
-                    <!-- 发送按钮 -->
-                    <button id="agent-input-submit-btn" class="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-50 rounded-full transition-colors">
-                        <i class="fas fa-arrow-up text-lg"></i>
+                <!-- 工具栏 -->
+                <div class="flex items-center justify-between px-2 py-1 border-t border-gray-100">
+                    <!-- 左侧工具按钮 -->
+                    <div class="flex items-center space-x-3">
+                        <!-- 附件 -->
+                        <button class="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-50 rounded-md transition-colors">
+                            <i class="fas fa-paperclip text-lg"></i>
+                        </button>
+
+                        <!-- 语音 -->
+                        <button class="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-50 rounded-md transition-colors">
+                            <i class="fas fa-microphone text-lg"></i>
+                        </button>
+                    </div>
+
+                    <!-- 右侧按钮 -->
+                    <div class="flex items-center space-x-2">
+                        <!-- 发送按钮 -->
+                        <button id="agent-input-submit-btn" class="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-50 rounded-full transition-colors">
+                            <i class="fas fa-arrow-up text-lg"></i>
+                    </div>
                 </div>
             </div>
         </div>

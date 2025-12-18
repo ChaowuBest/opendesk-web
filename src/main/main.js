@@ -20,7 +20,7 @@ const createWindow = () => {
   const mainWindow = new BrowserWindow({
     width: 1200,
     height: 700,
-    // frame: false,
+    frame: false,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -118,6 +118,13 @@ const registerSettingAPIHandlers = () => {
   }),
   ipcMain.handle('setting:getLogContent', () => {
     return { status: 'ok', data: LogStream.getStream().getContent() };
+  })
+  ipcMain.handle('setting:closeMainWindow', () => {
+    if (globalMainWindow === null) {
+      return { status: 'error', message: 'main window not found' }
+    }
+    globalMainWindow.close();
+    return { status: 'ok' };
   })
 }
 

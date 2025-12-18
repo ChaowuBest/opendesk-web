@@ -103,7 +103,7 @@ class SideBar extends HTMLElement {
     reloadTaskList() {
         let task_list_container = this.querySelector('#task-list-container');
         task_list_container.innerHTML = '';
-        for (let task of this.taskList) {
+        for (let task of [...this.taskList].reverse()) {
             let task_style = '';
             if (task.task_id === this.currentTaskId) {
                 task_style = 'bg-blue-500 text-white';

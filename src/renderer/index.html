@@ -16,8 +16,19 @@
         <script src="../renderer/components/logview.js"></script>
         <script src="../renderer/components/fileview.js"></script>
         <script src="../renderer/components/homepage.js"></script>
+
+        <link rel="stylesheet" href="../renderer/styles/titlebar.css">
     </head>
     <body>
+        <div class="drag-overlay">
+            <button
+                id="close-drag-overlay-btn" title="关闭"
+                class="absolute top-2 right-4 z-10 py-1 px-2 rounded-full bg-white hover:bg-gray-200 text-gray-500 shadow-sm transition"
+                onclick="window.settingAPI.closeMainWindow()"
+            >
+                <i class="fas fa-times"></i>
+            </button>
+        </div>
         <div class="h-screen flex">
             <!-- 左侧面板 -->
             <div id="leftPanel" class="bg-gray-100 p-4 overflow-auto" style="width: 30%;">

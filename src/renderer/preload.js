@@ -119,7 +119,8 @@ contextBridge.exposeInMainWorld('settingAPI', {
         ipcRenderer.on('setting:logContentUpdate', (event, ...args) => {
             callback(...args)
         })
-    }
+    },
+    closeMainWindow: () => ipcRenderer.invoke('setting:closeMainWindow'),
 })
 
 contextBridge.exposeInMainWorld('floatWindowAPI', {

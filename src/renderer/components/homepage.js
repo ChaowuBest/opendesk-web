@@ -43,7 +43,7 @@ class HomePage extends HTMLElement {
     render() {
         this.innerHTML = `
         <!-- 主内容居中 -->
-        <div class="w-full h-full px-5 flex flex-col items-center justify-center min-h-[80vh]">
+        <div class="w-full h-full px-8 flex flex-col items-center justify-center min-h-[80vh]">
             <!-- 问候语 -->
             <div class="mb-12 text-center">
                 <h1 class="text-3xl font-medium text-gray-800 mb-2">
@@ -54,7 +54,8 @@ class HomePage extends HTMLElement {
             <!-- 输入框区域 -->
             <div class="w-full max-w-4xl mb-8">
                 <agent-input id="agent-input-main"></agent-input>
-                <agent-files-view class="mt-4" id="home-file-list"></agent-files-view>
+                <div class="w-full h-2"></div>
+                <agent-files-view id="home-file-list"></agent-files-view>
             </div>
 
             <!-- 功能按钮区域 -->
