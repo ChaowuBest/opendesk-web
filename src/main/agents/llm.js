@@ -102,6 +102,7 @@ class LLM {
         });
         let embeddings = [];
         for (let i = 0; i < texts.length; i += batch_size) {
+            logger.info(`progress ${i} / ${texts.length}`);
             let batch = texts.slice(i, i + batch_size);
             const response = await client.embeddings.create({
                 model: model_instance.model_name,

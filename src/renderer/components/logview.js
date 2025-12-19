@@ -23,8 +23,9 @@ class LogView extends HTMLElement {
 
     render() {
         this.innerHTML = `
-        <div class="w-full h-full p-2">
-            <pre id="log-content" class="w-full h-full text-xs"></pre>
+        <div class="w-full h-full p-4 bg-blue-950">
+            <pre id="log-content" class="w-full text-xs overflow-y-auto" style="display: block; height: 100%;">
+            </pre>
         </div>
         `
     }

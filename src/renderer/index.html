@@ -4,10 +4,11 @@
         <title>Flipper Desk | 一站式办公生活空间 </title>
         <meta charset="utf-8">
 
-        <script src="https://cdn.tailwindcss.com"></script>
+        <script src="../renderer/styles/tailwind.css"></script>
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
         <!-- highlight.js核心样式 -->
-        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/vs.min.css">
+        <link rel="stylesheet" href="../renderer/styles/highlight-vs.min.css">
+        <link rel="stylesheet" href="../renderer/styles/github-markdown-light.min.css">
 
         <script src="../renderer/components/agentinput.js"></script>
         <script src="../renderer/components/taskview.js"></script>
@@ -23,7 +24,7 @@
         <div class="drag-overlay">
             <button
                 id="close-drag-overlay-btn" title="关闭"
-                class="absolute top-2 right-4 z-10 py-1 px-2 rounded-full bg-white hover:bg-gray-200 text-gray-500 shadow-sm transition"
+                class="absolute top-4 right-4 z-10 w-7 h-7 rounded-full bg-white hover:bg-gray-200 text-gray-500 shadow-sm transition"
                 onclick="window.settingAPI.closeMainWindow()"
             >
                 <i class="fas fa-times"></i>

@@ -33,9 +33,13 @@ class SideBar extends HTMLElement {
         this.querySelector('#create-task-btn').addEventListener('click', async () => {
             const taskId = await window.taskManagerAPI.createTask();
             window.globalControlAPI.openTask(taskId);
+            this.currentTaskId = taskId;
+            this.reloadTaskList();
         })
         this.querySelector('#open-home-btn').addEventListener('click', () => {
+            this.currentTaskId = null;
             window.globalControlAPI.openHomePage();
+            this.reloadTaskList();
         })
         this.querySelector('#open-memory-btn').addEventListener('click', () => {
             // window.globalControlAPI.openMemory();
@@ -57,17 +61,24 @@ class SideBar extends HTMLElement {
     render() {
         this.innerHTML = `
         <div class="h-full flex flex-col">
-            <header class="py-2 flex items-center flex-shrink-0">
-                <h1 class="text-lg font-semibold text-gray-800">Flipper Desk</h1>
+            <header class="py-2 px-1 flex flex-col items-start flex-shrink-0">
+                <h1 class="text-lg font-semibold text-gray-800">Fillip Desk</h1>
+                <p class="text-xs mt-1 text-gray-500">一站式智慧办公空间</p>
             </header>
-
-            <div class="py-2 flex flex-col gap-2 flex-shrink-0">
+            <div class="py-2 flex flex-row gap-2 flex-shrink-0">
+                <button
+                    id="open-home-btn"
+                    class="flex-1 flex items-center justify-center gap-1 px-2 py-2 bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-lg text-gray-700 font-normal text-xs transition-colors duration-200"
+                >
+                    <i class="fa-solid fa-house text-xs"></i>
+                    <span>主页</span>
+                </button>
                 <button
                     id="create-task-btn"
-                    class="w-full flex items-center justify-start gap-2 px-4 py-3 bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-xl text-gray-700 font-medium transition-colors duration-200"
+                    class="flex-1 flex items-center justify-center gap-1 px-2 py-2 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-lg text-blue-700 font-normal text-xs transition-colors duration-200"
                 >
-                    <span class="text-lg">+</span>
-                    <span>新建话题</span>
+                    <i class="fa-solid fa-comments text-xs"></i>
+                    <span>新话题</span>
                 </button>
             </div>
 
@@ -76,9 +87,6 @@ class SideBar extends HTMLElement {
 
             <div class="flex-shrink-0 w-full flex justify-center items-center py-3">
                 <div class="flex justify-center items-center">
-                    <button id="open-home-btn" class="mx-3 text-gray-500 hover:text-blue-600 text-lg focus:outline-none" title="主页">
-                        <i class="fa-solid fa-house"></i>
-                    </button>
                     <button id="open-memory-btn" class="mx-3 text-gray-500 hover:text-blue-600 text-lg focus:outline-none" title="记忆">
                         <i class="fa-solid fa-hard-drive"></i>
                     </button>

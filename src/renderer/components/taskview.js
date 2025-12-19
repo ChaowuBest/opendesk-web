@@ -47,7 +47,7 @@ class TaskView extends HTMLElement {
         }
         var html = `
         <div class="flex items-start space-x-3 flex-row-reverse">
-            <div class="bg-blue-500 text-white rounded-xl p-3 shadow-sm max-w-4xl">
+            <div class="bg-blue-500 text-white rounded-2xl p-3 shadow-sm max-w-4xl markdown-body">
                 ${content}
                 <span class="text-xs text-blue-200 mt-2 block">10:31</span>
             </div>
@@ -67,7 +67,7 @@ class TaskView extends HTMLElement {
         }
         var html = `
         <div class="flex items-start space-x-3">
-            <div class="p-3">
+            <div class="p-3 markdown-body w-full">
                 <div id='message-${assistant_message.message_id}'>${content}</div>
                 <span class="text-xs text-gray-500 mt-2 block">10:30</span>
             </div>

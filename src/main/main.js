@@ -5,8 +5,10 @@ const { openFloatWindow } = require('./windows/floatwindow')
 const { FSService } = require('./services/fs/scanner')
 const { FSStorage } = require('./services/fs/storage')
 const { LogStream } = require('./utils/logger')
+const convert = require('ansi-to-html');
 
 const path = require('path');
+const converter = new convert();
 
 
 if (require('electron-squirrel-startup')) {
@@ -124,7 +126,7 @@ const registerSettingAPIHandlers = () => {
     return { status: 'ok' };
   }),
   ipcMain.handle('setting:getLogContent', () => {
-    return { status: 'ok', data: LogStream.getStream().getContent() };
+    return { status: 'ok', data: converter.toHtml(LogStream.getStream().getContent()) };
   })
   ipcMain.handle('setting:closeMainWindow', () => {
     if (globalMainWindow === null) {

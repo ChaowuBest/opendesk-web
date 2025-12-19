@@ -1,5 +1,6 @@
 const { getAppDirectory } = require('../../utils/setting');
 const path = require('path');
+const fs = require('fs');
 const nedb = require('nedb-promises');
 const { z } = require('zod');
 const { logger } = require('../../utils/logger');
@@ -20,7 +21,6 @@ const FileEntrySchema = z.object({
     type: z.enum(['file', 'directory'])
 })
 
-
 const FileScannerMetadataSchema = z.object({
     root: z.string(),
     last_full_scan_timestamp: z.number(),
@@ -28,8 +28,12 @@ const FileScannerMetadataSchema = z.object({
 
 
 class FSStorage {
+
     /** @type {FSStorage | null} */
     static instance = null;
+
+    /** @type {string} */
+    static vectorCachePath = path.join(getAppDirectory(), 'vec_cache.jsonl');
 
     constructor() {
         /** @type {nedb} */
@@ -37,20 +41,45 @@ class FSStorage {
             filename: path.join(getAppDirectory(), 'fs_storage.db'),
             autoload: true
         });
+
+        /** @type {Map<string, number[]>} */
+        this.vec_cache = new Map();
         this.vecdb = new LocalIndex(path.join(getAppDirectory(), 'vec_storage.db'));
     }
 
     async initialize() {
         await this.db.ensureIndex({ fieldName: 'path', unique: true, sparse: true })
         await this.db.ensureIndex({ fieldName: 'filename', sparse: true })
-        if (!await this.vecdb.isIndexCreated()) {
-            logger.info(`vector index not created, creating new one`);
-            await this.vecdb.createIndex();
+
+        let startTime = Date.now();
+        logger.info(`loading vector cache from vec_cache.jsonl`);
+        // 从 join(getAppDirectory(), 'vec_cache.jsonl') 读取向量缓存，放到 this.vec_cache 里，每行是一条缓存数据
+
+        if (fs.existsSync(FSStorage.vectorCachePath)) {
+            const lines = fs.readFileSync(FSStorage.vectorCachePath, 'utf-8').split('\n');
+            for (const line of lines) {
+                if (!line.trim()) continue;
+                try {
+                    const cacheItem = JSON.parse(line);
+                    // 假定 cacheItem 格式：{ key: string, vec: number[] }
+                    if (cacheItem && cacheItem.key && Array.isArray(cacheItem.vec)) {
+                        this.vec_cache.set(cacheItem.key, cacheItem.vec);
+                    }
+                } catch (e) {
+                    logger.warn(`Error parsing vec_cache.jsonl line: ${e.message}`);
+                }
+            }
         }
-    }
+        logger.info(`loaded ${this.vec_cache.size} vector entries from vec_cache.jsonl: ${Date.now() - startTime}ms`);
 
-    async finalize() {
-
+        startTime = Date.now();
+        await this.vecdb.createIndex({ deleteIfExists: true });
+        await this.vecdb.beginUpdate();
+        for (const [key, vector] of this.vec_cache.entries()) {
+            await this.vecdb.insertItem({ id: key, vector: vector });
+        }
+        await this.vecdb.endUpdate();
+        logger.info(`creating vector index and inserting ${this.vec_cache.size} items to vector database: ${Date.now() - startTime}ms`);
     }
 
     static async getInstance() {
@@ -63,14 +92,7 @@ class FSStorage {
 
     async saveFilenameEmbeddings(filenames) {
         filenames = Array.from(new Set(filenames));
-        let unexist_filenames = [];
-        for (const filename of filenames) {
-            let item = await this.vecdb.getItem(filename);
-            if (!item) {
-                unexist_filenames.push(filename);
-            }
-        }
-
+        let unexist_filenames = filenames.filter(filename => !this.vec_cache.has(filename));
         if (unexist_filenames.length === 0) {
             return;
         }
@@ -80,6 +102,24 @@ class FSStorage {
         let embeddings = await LLM.batchEmbed(unexist_filenames);
         logger.info(`creating embeddings for ${unexist_filenames.length} filenames: ${Date.now() - start_time}ms`);
 
+        if (unexist_filenames.length === 0) {
+            return;
+        }
+
+        // 先存到vec_cache里面，不容易坏掉
+        for (const [index, filename] of unexist_filenames.entries()) {
+            this.vec_cache.set(filename, embeddings[index]);
+        }
+
+        try {
+            const records = unexist_filenames.map((filename, index) => {
+                return JSON.stringify({ key: filename, vec: embeddings[index] });
+            });
+            // 使用同步方式避免并发写入问题
+            fs.appendFileSync(FSStorage.vectorCachePath, records.join('\n') + '\n');
+        } catch (e) {
+            logger.warn(`Error appending to vec_cache.jsonl: ${e.message}`);
+        }
 
         await queue.add(async () => {
             let start_time = Date.now();
@@ -100,8 +140,11 @@ class FSStorage {
      * @param {z.core.output<FileEntrySchema>} files
      */
     async saveFiles(files) {
-        let startTime = Date.now();
+        if (files.length === 0) {
+            return;
+        }
 
+        let startTime = Date.now();
         for (const file of files) {
             await this.db.update(
                 { path: file.path },
