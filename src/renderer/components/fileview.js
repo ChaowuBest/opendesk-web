@@ -50,7 +50,7 @@ class AgentFilesView extends HTMLElement {
 
     renderFileItem(file) {
         return `
-        <div class="px-2 py-1 hover:bg-gray-50 transition grid grid-cols-12 gap-4 items-center">
+        <div class="px-3 py-1 hover:bg-gray-50 transition grid grid-cols-12 gap-4 items-center">
             <div class="btn-open-file col-span-7 flex items-center gap-3 cursor-pointer" data-file_path="${file.path}">
                 <i class="fas fa-file-pdf text-red-500 text-xl"></i>
                 <span class="text-gray-800 font-medium truncate" style="display: inline-block; vertical-align: bottom;" title="${file.filename}">${file.filename}</span>
@@ -84,7 +84,7 @@ class AgentFilesView extends HTMLElement {
         const makeBtn = (i) => {
             let page_class = "px-3 py-1 border border-gray-300 rounded-full hover:bg-gray-50 transition";
             if (i === this.current_page) {
-                page_class = "px-3 py-1 bg-blue-600 text-white rounded-full";
+                page_class = "px-3 py-1 bg-[#C94C40] text-white rounded-full";
             }
             return `<button data-page="${i}" class="btn-page-goto ${page_class}">${i}</button>`;
         };
@@ -156,7 +156,7 @@ class AgentFilesView extends HTMLElement {
         const file_items = current_files.map(file => this.renderFileItem(file)).join('');
         this.innerHTML = `
         <!-- 文件列表 -->
-        <div class="mt-3 w-full bg-white text-sm rounded-xl shadow-sm overflow-hidden">
+        <div class="mt-3 w-full bg-white text-sm rounded-2xl shadow-sm overflow-hidden">
             <!-- 列表头部 -->
             <div class="bg-gray-50 px-3 py-3 border-b border-gray-200 grid grid-cols-12 gap-4 font-medium text-gray-600">
                 <div class="col-span-7">名称</div>

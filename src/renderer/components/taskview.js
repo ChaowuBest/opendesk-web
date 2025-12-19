@@ -47,9 +47,9 @@ class TaskView extends HTMLElement {
         }
         var html = `
         <div class="flex items-start space-x-3 flex-row-reverse">
-            <div class="bg-blue-500 text-white rounded-2xl p-3 shadow-sm max-w-4xl markdown-body">
+            <div class="bg-[#8D6E63] text-white rounded-2xl p-3 shadow-sm max-w-4xl markdown-body">
                 ${content}
-                <span class="text-xs text-blue-200 mt-2 block">10:31</span>
+                <span class="text-xs mt-2 block">10:31</span>
             </div>
         </div>
         `
@@ -67,7 +67,7 @@ class TaskView extends HTMLElement {
         }
         var html = `
         <div class="flex items-start space-x-3">
-            <div class="p-3 markdown-body w-full">
+            <div class="p-3 bg-transparent markdown-body w-full">
                 <div id='message-${assistant_message.message_id}'>${content}</div>
                 <span class="text-xs text-gray-500 mt-2 block">10:30</span>
             </div>
@@ -118,11 +118,8 @@ class TaskView extends HTMLElement {
     render() {
         this.innerHTML = `
         <div class="bg-gray-30 h-full flex flex-col">
-            <header class="bg-white border-b border-gray-200 px-4 py-3 flex items-center shadow-sm">
-                <div class="w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center mr-3">
-                    <span class="text-white text-sm font-semibold">AI</span>
-                </div>
-                <h1 class="text-lg font-semibold text-gray-800">AI Assistant</h1>
+            <header class="w-full px-4 py-3 flex justify-center items-center text-center">
+                <div class="inline-block rounded-full bg-white px-5 py-2 shadow font-semibold text-gray-800 text-sm">智能体对话</div>
             </header>
 
             <!-- 对话历史区域 - 可滚动 -->

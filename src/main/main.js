@@ -2,8 +2,7 @@ const { app, BrowserWindow, Tray, globalShortcut, ipcMain, shell } = require('el
 const { GlobalState } = require('./states/global')
 const { Setting } = require('./utils/setting')
 const { openFloatWindow } = require('./windows/floatwindow')
-const { FSService } = require('./services/fs/scanner')
-const { FSStorage } = require('./services/fs/storage')
+const { FSService } = require('./services/fs/service')
 const { LogStream } = require('./utils/logger')
 const convert = require('ansi-to-html');
 
@@ -18,11 +17,14 @@ if (require('electron-squirrel-startup')) {
 /** @type {BrowserWindow | null} */
 var globalMainWindow = null;
 
+const iconPath = path.join(__dirname, '..', 'assets', 'images', 'icon_round.png');
+
 const createWindow = () => {
   const mainWindow = new BrowserWindow({
     width: 1200,
     height: 700,
     frame: false,
+    icon: iconPath,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -91,14 +93,20 @@ const registerTaskManagerAPIHandlers = () => {
 
 const registerFSAPIHandlers = () => {
   ipcMain.handle('fs:searchFilesByKeyword', async (event, keyword) => {
-    const storage = await FSStorage.getInstance();
-    const result = await storage.searchFilesByKeyword(keyword);
-    return { status: 'ok', data: result };
+    try {
+      const result = await FSService.searchFilesByKeyword(keyword);
+      return { status: 'ok', data: result };
+    } catch (error) {
+      return { status: 'error', message: error.message };
+    }
   }),
   ipcMain.handle('fs:searchFilesByNameSimilarity', async (event, query) => {
-    const storage = await FSStorage.getInstance();
-    const result = await storage.searchFilesByNameSimilarity(query);
-    return { status: 'ok', data: result };
+    try {
+      const result = await FSService.searchFilesByNameSimilarity(query);
+      return { status: 'ok', data: result };
+    } catch (error) {
+      return { status: 'error', message: error.message };
+    }
   }),
   ipcMain.handle('fs:openFile', async (event, filePath) => {
     shell.openPath(filePath);

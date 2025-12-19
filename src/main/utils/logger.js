@@ -1,11 +1,13 @@
-const winston = require('winston');
-const { Setting, getLogDirectory } = require('./setting');
-const path = require('path');
+const { getLogDirectory } = require('./setting');
 const { Writable } = require('stream');
+const { isMainThread, parentPort } = require('worker_threads');
+const path = require('path');
+const winston = require('winston');
 
 
 class LogStream extends Writable {
 
+    /** @type {Writable | null} */
     static globalStream = null;
 
     constructor(filename) {
@@ -30,14 +32,50 @@ class LogStream extends Writable {
     }
 }
 
+// 创建自定义的 winston transport，将日志转发到主线程
+class WorkerLogTransport extends winston.Transport {
+    constructor(options) {
+        super(options);
+    }
+
+    log(info, callback) {
+        setImmediate(() => {
+            this.emit('logged', info);
+        });
+
+        // 格式化消息 - 使用与主线程相同的格式
+        // winston.format.cli() 会在 info 对象上设置 Symbol.for('message')
+        const formattedMessage = info[Symbol.for('message')];
+        const message = formattedMessage || info.message || JSON.stringify(info);
+
+        // 将日志消息发送到主线程
+        parentPort.postMessage({
+            type: 'log',
+            message: message
+        });
+
+        callback();
+    }
+}
+
 /** @type {winston.Logger} */
 const logger = winston.createLogger({
     level: 'info',
-    format: winston.format.cli(),
+    format: winston.format.combine(
+        winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
+        winston.format.errors({ stack: true }),
+        winston.format.colorize(),
+        winston.format.printf(
+            (info) =>
+                `[${info.timestamp} | ${info.level}] ${info.stack || info.message}`
+        )
+    ),
     transports: [
         new winston.transports.File({ filename: path.join(getLogDirectory(), 'app.log') }),
         new winston.transports.Console(),
-        new winston.transports.Stream({ stream: LogStream.getStream() })
+        isMainThread ?
+            new winston.transports.Stream({ stream: LogStream.getStream() }) :
+            new WorkerLogTransport()
     ]
 });
 

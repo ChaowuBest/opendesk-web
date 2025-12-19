@@ -1,3 +1,6 @@
+const { AssistantMessage } = require('./messages');
+
+
 class Agent {
     execute(userMessage, chatCtx) {
 

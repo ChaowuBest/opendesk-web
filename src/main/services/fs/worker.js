@@ -1,13 +1,13 @@
+const { parentPort } = require('worker_threads');
 const fastGlob = require('fast-glob');
-const { z } = require('zod')
+const { z } = require('zod');
 const { FSEntrySchema, Setting } = require('../../utils/setting');
-const { logger } = require('../../utils/logger');
 const { FileEntrySchema, FSStorage } = require('./storage');
+const { logger } = require('../../utils/logger');
 
 
 /**
  * @typedef {z.core.output<FSEntrySchema>} FSEntry
- * @property {FSEntry} entry
  */
 class FSScanner {
     /**
@@ -40,11 +40,10 @@ class FSScanner {
     }
 
     async stop() {
-        clearInterval(this._interval)
+        clearInterval(this._interval);
     }
 
     async scan() {
-
         /** @type {number | undefined} */
         var deep = 4;
         if (this._counter % 32 === 0) {
@@ -105,26 +104,71 @@ class FSScanner {
     }
 }
 
-class FSService {
-    /** @type {Map<string, FSScanner>}} */
-    static scanners = new Map();
+/** @type {Map<string, FSScanner>} */
+const scanners = new Map();
 
-    static async startFSService() {
-        const storage = await FSStorage.getInstance();
-        Setting.getInstance().data.filesystems.forEach(fsEntry => {
-            let instance = new FSScanner(fsEntry, storage);
-            FSService.scanners.set(fsEntry.root, instance);
-            instance.start();
-        })
+/** @type {FSStorage | null} */
+let storage = null;
+
+// 处理来自主线程的消息
+parentPort.on('message', async (message) => {
+    try {
+        const { type, id, payload } = message;
+
+        switch (type) {
+            case 'init': {
+                // 初始化 storage
+                storage = await FSStorage.getInstance();
+                parentPort.postMessage({ type: 'response', id, status: 'ok' });
+                break;
+            }
+
+            case 'startService': {
+                if (!storage) {
+                    storage = await FSStorage.getInstance();
+                }
+                const filesystems = Setting.getInstance().data.filesystems;
+                for (const fsEntry of filesystems) {
+                    let instance = new FSScanner(fsEntry, storage);
+                    scanners.set(fsEntry.root, instance);
+                    instance.start();
+                }
+                parentPort.postMessage({ type: 'response', id, status: 'ok' });
+                break;
+            }
+
+            case 'stopService': {
+                scanners.forEach(instance => {
+                    instance.stop();
+                });
+                scanners.clear();
+                parentPort.postMessage({ type: 'response', id, status: 'ok' });
+                break;
+            }
+
+            case 'searchFilesByKeyword': {
+                if (!storage) {
+                    storage = await FSStorage.getInstance();
+                }
+                const result = await storage.searchFilesByKeyword(payload.keyword);
+                parentPort.postMessage({ type: 'response', id, status: 'ok', data: result });
+                break;
+            }
+
+            case 'searchFilesByNameSimilarity': {
+                if (!storage) {
+                    storage = await FSStorage.getInstance();
+                }
+                const result = await storage.searchFilesByNameSimilarity(payload.query, payload.topK, payload.threshold);
+                parentPort.postMessage({ type: 'response', id, status: 'ok', data: result });
+                break;
+            }
+
+            default:
+                parentPort.postMessage({ type: 'response', id, status: 'error', message: `Unknown message type: ${type}` });
+        }
+    } catch (error) {
+        logger.error(`Worker error: ${error.message}`, error);
+        parentPort.postMessage({ type: 'response', id, status: 'error', message: error.message });
     }
-
-    static stopFSService() {
-        FSService.scanners.forEach(instance => {
-            instance.stop();
-        })
-        FSService.scanners.clear();
-    }
-}
-
-
-module.exports = { FSScanner, FSService };
+});

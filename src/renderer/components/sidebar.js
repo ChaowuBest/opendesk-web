@@ -61,28 +61,38 @@ class SideBar extends HTMLElement {
     render() {
         this.innerHTML = `
         <div class="h-full flex flex-col">
-            <header class="py-2 px-1 flex flex-col items-start flex-shrink-0">
-                <h1 class="text-lg font-semibold text-gray-800">Fillip Desk</h1>
-                <p class="text-xs mt-1 text-gray-500">一站式智慧办公空间</p>
+            <header class="py-2 px-1 flex flex-row items-start flex-shrink-0">
+                <img src="../assets/images/icon_round.png" alt="Fillip Desk Icon" class="w-12 h-12 mr-3"/>
+                <div class="flex flex-col items-start">
+                    <img src="../assets/images/banner.png" alt="Fillip Desk Banner" class="w-32 h-auto"/>
+                    <p class="text-xs mt-1 text-gray-500">一站式智慧办公空间</p>
+                </div>
             </header>
             <div class="py-2 flex flex-row gap-2 flex-shrink-0">
                 <button
                     id="open-home-btn"
-                    class="flex-1 flex items-center justify-center gap-1 px-2 py-2 bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-lg text-gray-700 font-normal text-xs transition-colors duration-200"
+                    class="flex-1 flex items-center justify-center gap-1 px-2 py-3 bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-xl text-gray-700 font-normal text-sm transition-colors duration-200"
                 >
-                    <i class="fa-solid fa-house text-xs"></i>
+                    <i class="fa-solid fa-house"></i>
                     <span>主页</span>
                 </button>
                 <button
-                    id="create-task-btn"
-                    class="flex-1 flex items-center justify-center gap-1 px-2 py-2 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-lg text-blue-700 font-normal text-xs transition-colors duration-200"
+                    id="open-apps-btn"
+                    class="flex-1 flex items-center justify-center gap-1 px-2 py-3 bg-green-50 hover:bg-green-100 border border-green-200 rounded-xl text-green-700 font-normal text-sm transition-colors duration-200"
                 >
-                    <i class="fa-solid fa-comments text-xs"></i>
-                    <span>新话题</span>
+                    <i class="fa-solid fa-th-large"></i>
+                    <span>应用</span>
+                </button>
+                <button
+                    id="create-task-btn"
+                    class="flex-1 flex items-center justify-center gap-1 px-2 py-3 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-xl text-blue-700 font-normal text-sm transition-colors duration-200"
+                >
+                    <i class="fa-solid fa-comments"></i>
+                    <span>新任务</span>
                 </button>
             </div>
 
-            <div id="task-list-container" class="flex-1 overflow-y-auto py-2">
+            <div id="task-list-container" class="flex-1 overflow-y-auto py-2 pr-2">
             </div>
 
             <div class="flex-shrink-0 w-full flex justify-center items-center py-3">
@@ -109,27 +119,38 @@ class SideBar extends HTMLElement {
     }
 
     reloadTaskList() {
+        const standard_class = 'task-item cursor-pointer rounded-2xl pl-5 pr-2 py-2 mb-2 transition-colors duration-200';
         let task_list_container = this.querySelector('#task-list-container');
         task_list_container.innerHTML = '';
         for (let task of [...this.taskList].reverse()) {
             let task_style = '';
             if (task.task_id === this.currentTaskId) {
-                task_style = 'bg-blue-500 text-white';
+                task_style = 'bg-[#C94C40] text-white font-semibold';
             } else {
-                task_style = 'bg-white text-gray-700';
+                task_style = 'bg-white text-gray-700 hover:bg-[#FFF8E7]';
             }
             task_list_container.innerHTML += `
-            <div class="task-item ${task_style} cursor-pointer rounded-xl p-3 mb-2" data-task_id="${task.task_id}">
+            <div class="${task_style} ${standard_class}" data-task_id="${task.task_id}">
                 <div class="flex items-center justify-between">
-                    <p class="text-sm font-semibold">${task.task_name || '未命名任务'}</p>
+                    <p class="text-sm">${task.task_name || '未命名任务'}</p>
                     <button
-                        class="delete-task-btn ml-2 w-7 h-7 flex items-center justify-center rounded-full bg-gray-200 hover:bg-blue-500 transition-colors duration-200"
+                        class="delete-task-btn ml-2 w-5 h-5 flex items-center justify-center rounded-full bg-white hover:bg-[#FFF8E7] transition-colors duration-200"
                         data-task_id="${task.task_id}"
                         title="删除"
                     >
-                        <span class="text-lg font-bold text-gray-600 pointer-events-none group-hover:text-white" style="line-height:1;">×</span>
+                        <span class="text-sm text-gray-600 pointer-events-none hover:text-white transition-colors duration-200" style="line-height:1;">×</span>
                     </button>
                 </div>
+            </div>
+            `
+        }
+
+        // 添加一个 "全部删除" 按钮，样式与单个 task-item 删除按钮一致
+        if (this.taskList.length > 0) {
+            task_list_container.innerHTML +=`
+            <div id="delete-all-tasks-btn" class="${standard_class} bg-white text-sm text-gray-700 hover:bg-[#C94C40] hover:text-white flex items-center justify-center gap-2">
+                <i class="fa-solid fa-trash"></i>
+                <span>全部删除</span>
             </div>
             `
         }
@@ -144,6 +165,17 @@ class SideBar extends HTMLElement {
                 this.reloadTaskList();
             })
         })
+
+        this.querySelector('#delete-all-tasks-btn').addEventListener('click', async (event) => {
+            event.stopPropagation();
+            if (!window.confirm("确定要删除所有任务吗？删除后无法恢复。")) return;
+            for (const task of this.taskList) {
+                await window.taskManagerAPI.removeTask(task.task_id);
+            }
+            this.currentTaskId = null;
+            window.globalControlAPI.openHomePage();
+            this.reloadTaskList();
+        });
 
         task_list_container.querySelectorAll('.delete-task-btn').forEach(btn => {
             btn.addEventListener('click', async (event) => {
