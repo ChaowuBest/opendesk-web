@@ -117,6 +117,7 @@ class TaskState {
             }
 
             var last_part = assistant_message.content[assistant_message.content.length - 1];
+            /* render the last part before sending the update to the subscribers */
             await last_part.render();
             var subscription_feedback = {
                 task_id: this.task_id,

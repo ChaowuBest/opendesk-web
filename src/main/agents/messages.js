@@ -1,5 +1,6 @@
 const { Marked } = require('marked');
 const { markedHighlight } = require('marked-highlight');
+const markedKatex = require('marked-katex-extension');
 const hljs = require('highlight.js');
 
 
@@ -13,6 +14,40 @@ const marked = new Marked(
       }
     })
   );
+
+marked.use(markedKatex({
+    throwOnError: false,
+    displayMode: true,
+    nonStandard: true
+}));
+
+/**
+ * This is NOT an OpenAI message part, but a message part for our own message system.
+ * @class ReasoningMessagePart
+ * @property {'reasoning'} type
+ * @property {string} content
+ */
+class ReasoningMessagePart {
+    /**
+     * Reasoning message part
+     * @param {string} content
+     */
+    constructor (content) {
+        this.type = 'reasoning';
+        this.content = content;
+        /** @type {string | undefined} cached render result of the reasoning */
+        this.rendered = undefined;
+    }
+
+    async render() {
+        this.rendered = this.content;
+    }
+
+    static assign(reasoning_message_part_obj) {
+        Object.setPrototypeOf(reasoning_message_part_obj, ReasoningMessagePart.prototype);
+        return reasoning_message_part_obj;
+    }
+}
 
 /**
  * @class TextMessagePart
@@ -28,7 +63,7 @@ class TextMessagePart {
         this.type = 'text';
         this.text = text;
         /** @type {string | undefined} cached render result of the text */
-        this.text_rendered = undefined;
+        this.rendered = undefined;
     }
 
     toOpenAIMessagePart() {
@@ -41,7 +76,7 @@ class TextMessagePart {
     }
 
     async render() {
-        this.text_rendered = await marked.parse(this.text)
+        this.rendered = await marked.parse(this.text)
     }
 }
 
@@ -58,10 +93,16 @@ class ImageMessagePart {
         this.type = 'image_url';
         /** @type {{ url: string }} */
         this.image_url = { url: image_url };
+        /** @type {string | undefined} cached render result of the image */
+        this.rendered = undefined;
     }
 
     toOpenAIMessagePart() {
         return { type: this.type, image_url: this.image_url };
+    }
+
+    async render() {
+        this.rendered = `<img src="${this.image_url.url}" alt="image" />`;
     }
 
     static assign(image_message_part_obj) {
@@ -160,13 +201,13 @@ class AssistantMessage {
 
     /**
      *
-     * @param {(TextMessagePart)[] | undefined} content
+     * @param {(TextMessagePart | ReasoningMessagePart)[] | undefined} content
      */
     constructor (content) {
         this.role = 'assistant';
         this.message_id = crypto.randomUUID();
 
-        /** @type {(TextMessagePart)[]} */
+        /** @type {(TextMessagePart | ReasoningMessagePart)[]} */
         this.content = content === undefined ? [] : content;
     }
 
@@ -181,6 +222,8 @@ class AssistantMessage {
             for (let part of assistant_message_obj.content) {
                 if (part.type === 'text') {
                     TextMessagePart.assign(part);
+                } else if (part.type === 'reasoning') {
+                    ReasoningMessagePart.assign(part);
                 }
             }
         }
@@ -208,8 +251,20 @@ class AssistantMessage {
     appendPart(part) {
         if (part.type === 'text') {
             this.appendText(part.text);
+        } else if (part.type === 'reasoning') {
+            this.appendReasoningContent(part.content);
         } else {
             throw new Error(`unsupported part type ${part.type}`);
+        }
+    }
+
+    appendReasoningContent(content) {
+        if (this.content.length === 0) {
+            this.content.push(new ReasoningMessagePart(content));
+        } else if (this.content[this.content.length - 1].type === 'reasoning') {
+            this.content[this.content.length - 1].content += content;
+        } else {
+            this.content.push(new ReasoningMessagePart(content));
         }
     }
 
@@ -228,10 +283,13 @@ class AssistantMessage {
     }
 
     toOpenAIMessage() {
-        return {
-            role: this.role,
-            content: this.content.map(part => part.toOpenAIMessagePart())
+        var content = [];
+        for (let part of this.content) {
+            if (part.type !== 'reasoning') {
+                content.push(part.toOpenAIMessagePart());
+            }
         }
+        return { role: this.role, content: content }
     }
 
     /**
@@ -240,12 +298,12 @@ class AssistantMessage {
      */
     static parseOpenAIMessage(openai_message) {
         var message = new AssistantMessage();
-        if (message.reasoning !== null && message.reasoning !== undefined) {
-            console.info('reasoning: ' + message.reasoning);
+        if (openai_message.reasoning_content) {
+            message.content.push(new ReasoningMessagePart(openai_message.reasoning_content));
         }
 
         if (openai_message.content !== undefined && openai_message.content !== null) {
-            message.content = [new TextMessagePart(openai_message.content)];
+            message.content.push(new TextMessagePart(openai_message.content));
         }
         return message;
     }
@@ -272,13 +330,19 @@ class AssistantResponse {
 
     static parseOpenAIResponse(openai_response) {
         const choice = openai_response.choices[0];
+        /** @type {'stop' | 'error' | null} */
+        let finish_reason = choice.finish_reason;
+        if (finish_reason === undefined) {
+            finish_reason = null;
+        }
+
         if (choice.delta !== undefined) {
             // parsing chunk in a stream response
             const chunk = AssistantMessage.parseOpenAIMessage(choice.delta);
-            return new AssistantResponse(chunk, choice.finish_reason);
+            return new AssistantResponse(chunk, finish_reason);
         } else if (choice.message !== undefined) {
             const message = AssistantMessage.parseOpenAIMessage(choice.message);
-            return new AssistantResponse(message, choice.finish_reason);
+            return new AssistantResponse(message, finish_reason);
         } else {
             console.info(choice);
             throw new Error('invalid openai response');

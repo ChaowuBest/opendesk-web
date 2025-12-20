@@ -119,7 +119,7 @@ class SideBar extends HTMLElement {
     }
 
     reloadTaskList() {
-        const standard_class = 'task-item cursor-pointer rounded-2xl pl-5 pr-2 py-2 mb-2 transition-colors duration-200';
+        const standard_class = 'cursor-pointer rounded-2xl pl-5 pr-2 py-2 mb-2 transition-colors duration-200';
         let task_list_container = this.querySelector('#task-list-container');
         task_list_container.innerHTML = '';
         for (let task of [...this.taskList].reverse()) {
@@ -130,7 +130,7 @@ class SideBar extends HTMLElement {
                 task_style = 'bg-white text-gray-700 hover:bg-[#FFF8E7]';
             }
             task_list_container.innerHTML += `
-            <div class="${task_style} ${standard_class}" data-task_id="${task.task_id}">
+            <div class="task-item ${task_style} ${standard_class}" data-task_id="${task.task_id}">
                 <div class="flex items-center justify-between">
                     <p class="text-sm">${task.task_name || '未命名任务'}</p>
                     <button
@@ -166,14 +166,15 @@ class SideBar extends HTMLElement {
             })
         })
 
-        this.querySelector('#delete-all-tasks-btn').addEventListener('click', async (event) => {
+        this.querySelector('#delete-all-tasks-btn')?.addEventListener('click', async (event) => {
             event.stopPropagation();
             if (!window.confirm("确定要删除所有任务吗？删除后无法恢复。")) return;
+            window.globalControlAPI.openHomePage();
+            this.currentTaskId = null;
+            this.reloadTaskList();
             for (const task of this.taskList) {
                 await window.taskManagerAPI.removeTask(task.task_id);
             }
-            this.currentTaskId = null;
-            window.globalControlAPI.openHomePage();
             this.reloadTaskList();
         });
 

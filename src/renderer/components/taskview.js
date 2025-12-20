@@ -39,15 +39,11 @@ class TaskView extends HTMLElement {
     renderUserMessage(user_message) {
         var content = "";
         for (let part of user_message.content) {
-            if (part.type === 'text') {
-                content += part.text_rendered;
-            } else {
-                throw new Error(`unsupported part type ${part.type}`);
-            }
+            content += `<div class="${TaskView.USER_PART_CLASS_MAP[part.type]}">${part.rendered}</div>`;
         }
         var html = `
         <div class="flex items-start space-x-3 flex-row-reverse">
-            <div class="bg-[#8D6E63] text-white rounded-2xl p-3 shadow-sm max-w-4xl markdown-body">
+            <div class="bg-[#8D6E63] text-white rounded-2xl p-3 shadow-sm max-w-4xl">
                 ${content}
                 <span class="text-xs mt-2 block">10:31</span>
             </div>
@@ -56,19 +52,26 @@ class TaskView extends HTMLElement {
         return html
     }
 
+    static USER_PART_CLASS_MAP = {
+        'text': 'bg-transparent text-sm text-white markdown-body'
+    }
+
+    static ASSISTANT_PART_CLASS_MAP = {
+        'text': 'bg-transparent text-sm text-black markdown-body',
+        'reasoning': 'bg-gray-200 rounded-xl text-gray-500 text-xs p-3 mb-3'
+    }
+
     renderAssistantMessage(assistant_message) {
         var content = "";
         for (let part of assistant_message.content) {
-            if (part.type === 'text') {
-                content += part.text_rendered;
-            } else {
-                throw new Error(`unsupported part type ${part.type}`);
-            }
+            content += `<div class="${TaskView.ASSISTANT_PART_CLASS_MAP[part.type]}">${part.rendered}</div>`;
         }
         var html = `
         <div class="flex items-start space-x-3">
-            <div class="p-3 bg-transparent markdown-body w-full">
-                <div id='message-${assistant_message.message_id}'>${content}</div>
+            <div class="p-3 bg-transparent w-full">
+                <div id='message-${assistant_message.message_id}'>
+                    ${content}
+                </div>
                 <span class="text-xs text-gray-500 mt-2 block">10:30</span>
             </div>
         </div>
@@ -104,7 +107,12 @@ class TaskView extends HTMLElement {
         this.setUpEventListeners();
         this.reload().then(async () => {
             this.subscription_id = await window.taskManagerAPI.subscribeTaskUpdate(this.task_id, progress => {
-                this.querySelector(`#message-${progress.message_id}`).innerHTML = progress.last_part.text_rendered;
+                const message_element = this.querySelector(`#message-${progress.message_id}`);
+                if (message_element.children.length <= progress.last_part_index) {
+                    message_element.innerHTML += `<div class='${TaskView.ASSISTANT_PART_CLASS_MAP[progress.last_part.type]}'></div>`
+                }
+                const last_part_element = message_element.children[progress.last_part_index];
+                last_part_element.innerHTML = progress.last_part.rendered;
                 this.scrollToEnd(this.getHistoryContainer())
             })
         })
