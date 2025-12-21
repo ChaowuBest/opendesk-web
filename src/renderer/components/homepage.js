@@ -56,47 +56,38 @@ class HomePage extends HTMLElement {
             <!-- 功能按钮区域 -->
             <div class="w-full max-w-4xl">
                 <div class="flex flex-wrap justify-center gap-3">
+
+                    <!-- 收件箱 -->
+                    <button class="flex items-center space-x-2 px-3 py-2 bg-white rounded-full shadow-sm hover:shadow-md border border-gray-200 transition-all"
+                        onclick="window.globalControlAPI.openApplication('mailbox')">
+                        <i class="fas fa-inbox text-indigo-500 text-sm"></i>
+                        <span class="text-sm text-gray-700">收件箱</span>
+                    </button>
+
                     <!-- 编程 -->
-                    <button class="flex items-center space-x-2 px-3 py-2 bg-white rounded-full shadow-sm hover:shadow-md border border-gray-200 transition-all">
-                        <i class="fas fa-code text-orange-500 text-sm"></i>
-                        <span class="text-sm text-gray-700">编程</span>
+                    <button class="flex items-center space-x-2 px-3 py-2 bg-gray-100 rounded-full shadow-none border border-gray-100 cursor-not-allowed opacity-50" disabled>
+                        <i class="fas fa-code text-orange-300 text-sm"></i>
+                        <span class="text-sm text-gray-400">编程</span>
                     </button>
 
                     <!-- 图像生成 -->
-                    <button class="flex items-center space-x-2 px-3 py-2 bg-white rounded-full shadow-sm hover:shadow-md border border-gray-200 transition-all">
-                        <i class="fas fa-image text-yellow-500 text-sm"></i>
-                        <span class="text-sm text-gray-700">图像生成</span>
+                    <button class="flex items-center space-x-2 px-3 py-2 bg-gray-100 rounded-full shadow-none border border-gray-100 cursor-not-allowed opacity-50" disabled>
+                        <i class="fas fa-image text-yellow-300 text-sm"></i>
+                        <span class="text-sm text-gray-400">图像生成</span>
                     </button>
 
                     <!-- 帮我写作 -->
-                    <button class="flex items-center space-x-2 px-3 py-2 bg-white rounded-full shadow-sm hover:shadow-md border border-gray-200 transition-all">
-                        <i class="fas fa-check text-green-500 text-sm"></i>
-                        <span class="text-sm text-gray-700">帮我写作</span>
-                    </button>
-
-                    <!-- 视频生成 -->
-                    <button class="flex items-center space-x-2 px-3 py-2 bg-white rounded-full shadow-sm hover:shadow-md border border-gray-200 transition-all">
-                        <i class="fas fa-play text-red-500 text-sm"></i>
-                        <span class="text-sm text-gray-700">视频生成</span>
-                    </button>
-
-                    <!-- 翻译 -->
-                    <button class="flex items-center space-x-2 px-3 py-2 bg-white rounded-full shadow-sm hover:shadow-md border border-gray-200 transition-all">
-                        <i class="fas fa-language text-purple-500 text-sm"></i>
-                        <span class="text-sm text-gray-700">翻译</span>
+                    <button class="flex items-center space-x-2 px-3 py-2 bg-gray-100 rounded-full shadow-none border border-gray-100 cursor-not-allowed opacity-50" disabled>
+                        <i class="fas fa-check text-green-300 text-sm"></i>
+                        <span class="text-sm text-gray-400">帮我写作</span>
                     </button>
 
                     <!-- 深入研究 -->
-                    <button class="flex items-center space-x-2 px-3 py-2 bg-white rounded-full shadow-sm hover:shadow-md border border-gray-200 transition-all">
-                        <i class="fas fa-search text-blue-500 text-sm"></i>
-                        <span class="text-sm text-gray-700">深入研究</span>
+                    <button class="flex items-center space-x-2 px-3 py-2 bg-gray-100 rounded-full shadow-none border border-gray-100 cursor-not-allowed opacity-50" disabled>
+                        <i class="fas fa-search text-blue-300 text-sm"></i>
+                        <span class="text-sm text-gray-400">深入研究</span>
                     </button>
 
-                    <!-- 更多 -->
-                    <button class="flex items-center space-x-2 px-3 py-2 bg-white rounded-full shadow-sm hover:shadow-md border border-gray-200 transition-all">
-                        <i class="fas fa-th text-gray-500 text-sm"></i>
-                        <span class="text-sm text-gray-700">更多</span>
-                    </button>
                 </div>
             </div>
         </div>

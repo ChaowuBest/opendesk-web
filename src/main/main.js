@@ -5,6 +5,8 @@ const { openFloatWindow } = require('./windows/floatwindow')
 const { FSService } = require('./services/fs/service')
 const { LogStream } = require('./utils/logger')
 const convert = require('ansi-to-html');
+const { ApplicationRegistry } = require('./applications/base');
+const { SearchApplication } = require('./applications/search/app');
 
 const path = require('path');
 const converter = new convert();
@@ -164,6 +166,7 @@ app.whenReady().then(() => {
   registerHotKeys();
 
   FSService.startFSService();
+  ApplicationRegistry.registerApplication(new SearchApplication());
 })
 
 app.on('will-quit', () => {

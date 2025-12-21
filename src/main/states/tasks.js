@@ -1,9 +1,10 @@
-const { ChatContext, UserMessage, AssistantMessage } = require('../agents/messages');
+const { ChatContext, UserMessage, AssistantMessage, ToolCallMessagePart } = require('../agents/messages');
 const { LLM } = require('../agents/llm');
 const { getTaskDirectory } = require('../utils/setting');
 const path = require('path');
 const fs = require('fs');
 const { logger } = require('../utils/logger');
+const { ApplicationRegistry } = require('../applications/base');
 
 
 class TaskUpdateSubscriber {
@@ -71,7 +72,7 @@ class TaskState {
             task_id: this.task_id,
             task_name: this.task_name,
             task_status: this.task_status,
-            chat_context: this.chat_context,
+            chat_context: this.chat_context.toJSON(),
         }
     }
 
@@ -86,12 +87,16 @@ class TaskState {
         this.chat_context.appendMessage(assistant_message);
         logger.info(`messsage submitted to task ${this.task_id}`)
 
+        this.chat_context.tools = ApplicationRegistry.listAvailableTools();
+        logger.info(`attach ${this.chat_context.tools.length} tools to task ${this.task_id}`);
+
         if (this.task_name === null) {
             this.generateTaskName(message).then(() => {
                 this.task_manager_state.publishTaskListUpdate();
             });
         }
-        this.processCompletion();
+
+        this.processTask();
     }
 
     async generateTaskName(user_message) {
@@ -107,6 +112,27 @@ class TaskState {
         this.task_name = task_name;
     }
 
+    async sendSubscriptionFeedback() {
+        let last_message = this.chat_context.lastMessage();
+        if (last_message.content.length === 0) {
+            return;
+        }
+
+        let last_part = last_message.content[last_message.content.length - 1];
+        /* render the last part before sending the update to the subscribers */
+        await last_part.render();
+        var subscription_feedback = {
+            task_id: this.task_id,
+            message_id: last_message.message_id,
+            last_part_index: last_message.content.length - 1,
+            last_part: last_part
+        };
+
+        for (let subscriber of this.subscribers) {
+            subscriber.send(subscription_feedback)
+        }
+    }
+
     async processCompletion() {
         let assistant_message = this.chat_context.messages[this.chat_context.messages.length - 1];
         for await (const chunk_resp of LLM.streamComplete(this.chat_context)) {
@@ -116,22 +142,70 @@ class TaskState {
                 continue;
             }
 
-            var last_part = assistant_message.content[assistant_message.content.length - 1];
-            /* render the last part before sending the update to the subscribers */
-            await last_part.render();
-            var subscription_feedback = {
-                task_id: this.task_id,
-                message_id: assistant_message.message_id,
-                last_part_index: assistant_message.content.length - 1,
-                last_part: last_part
-            };
-
-            for (let subscriber of this.subscribers) {
-                subscriber.send(subscription_feedback)
-            }
+            await this.sendSubscriptionFeedback();
         }
 
         this.task_manager_state.save();
+    }
+
+    /**
+     * Process the tool calls in the last message
+     * @returns {Promise<boolean>} true if there are tool calls to process, false otherwise
+     */
+    async processToolCalls() {
+        let lastMessage = this.chat_context.lastMessage();
+        if (lastMessage instanceof UserMessage) {
+            return false;
+        }
+
+        let has_pending_tool_call = false;
+        let last_part = lastMessage.content[lastMessage.content.length - 1];
+        if (last_part !== undefined && last_part.type === 'tool_call') {
+            /** @type {ToolCallMessagePart} */
+            for (let tool_call of last_part.toolcalls) {
+                if (tool_call.status !== 'pending') {
+                    continue;
+                }
+
+                has_pending_tool_call = true;
+                let tool = this.chat_context.tools.get(tool_call.tool_name);
+                if (tool === undefined) {
+                    logger.error(`tool ${tool_call.tool_name} not found`);
+                    return false;
+                }
+
+                try {
+                    console.info(tool_call.args_string);
+                    let args = JSON.parse(tool_call.args_string);
+                    tool_call.tool_title = await tool.getTitle(args);
+                    tool_call.status = 'running';
+                    await tool_call.render();
+                    await this.sendSubscriptionFeedback();
+
+                    let result = await tool.execute(args);
+                    tool_call.status = 'success';
+                    tool_call.result = result;
+                } catch (err) {
+                    logger.error(err);
+                    tool_call.status = 'error';
+                    tool_call.result = err.message;
+                }
+
+                await tool_call.render();
+                await this.sendSubscriptionFeedback();
+            }
+        }
+
+        return has_pending_tool_call;
+    }
+
+    async processTask() {
+        while (true) {
+            await this.processCompletion();
+            if (!await this.processToolCalls()) {
+                break;
+            }
+        }
     }
 
     async render() {

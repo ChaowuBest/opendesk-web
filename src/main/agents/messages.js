@@ -2,6 +2,8 @@ const { Marked } = require('marked');
 const { markedHighlight } = require('marked-highlight');
 const markedKatex = require('marked-katex-extension');
 const hljs = require('highlight.js');
+const { logger } = require('../utils/logger');
+const { BaseTool } = require('./tool');
 
 
 const marked = new Marked(
@@ -20,6 +22,8 @@ marked.use(markedKatex({
     displayMode: true,
     nonStandard: true
 }));
+
+const TOOL_CALL_SEPARATOR = `<div class="h-1 w-1 rounded-full bg-slate-300"></div>`;
 
 /**
  * This is NOT an OpenAI message part, but a message part for our own message system.
@@ -46,6 +50,137 @@ class ReasoningMessagePart {
     static assign(reasoning_message_part_obj) {
         Object.setPrototypeOf(reasoning_message_part_obj, ReasoningMessagePart.prototype);
         return reasoning_message_part_obj;
+    }
+}
+
+
+/**
+ * @class ToolCall
+ * @property {number} index
+ * @property {string} id
+ * @property {string} tool_name
+ * @property {string} args_string
+ * @property {'pending' | 'running' | 'success' | 'error'} status
+ */
+class ToolCall {
+    constructor(index, id, tool_name, args_string) {
+        this.index = index;
+        this.id = id;
+        this.tool_name = tool_name;
+        this.tool_title = tool_name;
+        this.args_string = args_string;
+        this.status = 'pending';
+    }
+
+    toOpenAIMessagePart() {
+        return {
+            type: 'tool_call',
+            id: this.id,
+            index: this.index,
+            tool_name: this.tool_name,
+            args_string: this.args_string,
+        };
+    }
+
+    render() {
+        if (this.status === 'running') {
+            return `
+            <!-- 状态：进行中 (呼吸灯效果) -->
+            <div class="flex items-center">
+                <div class="h-2 w-2 rounded-full bg-blue-500 animate-pulse ring-4 ring-blue-100/50"></div>
+                <span class="ml-2 font-semibold text-slate-800">${this.tool_title}</span>
+            </div>
+            `
+        } else if (this.status === 'success') {
+            return `
+            <div class="flex items-center group cursor-help relative">
+                <div class="h-2 w-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.6)]"></div>
+                <span class="ml-2 font-medium text-slate-600">${this.tool_title}</span>
+            </div>
+            `
+        } else if (this.status === 'error') {
+            return `
+            <div class="flex items-center cursor-pointer group relative animate-[shake_0.5s_ease-in-out]">
+                <!-- 错误光晕效果 -->
+                <div class="h-2.5 w-2.5 rounded-full bg-rose-500 shadow-[0_0_10px_rgba(244,63,94,0.6)] flex items-center justify-center">
+                    <!-- 小感叹号图标 -->
+                    <svg class="h-1.5 w-1.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="5">
+                        <path d="M12 8v4m0 4h.01" />
+                    </svg>
+                </div>
+
+                <!-- 错误文字 -->
+                <span class="ml-2 text-[13px] font-semibold text-rose-600">${this.tool_title} Failed</span>
+
+                <!-- 悬浮弹窗 (Error Tooltip) -->
+                <div class="absolute bottom-full mb-3 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-all pointer-events-none">
+                    <div class="bg-white border border-slate-200 shadow-xl rounded-xl p-3 w-48 text-xs text-slate-600">
+                        <p class="font-bold text-slate-800 mb-1">Execution Error</p>
+                        <p class="font-mono text-[10px] leading-relaxed text-rose-500 bg-rose-50 p-1.5 rounded">${this.result}</p>
+                        <!-- 小箭头 -->
+                        <div class="absolute -bottom-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-white border-b border-r border-slate-200 rotate-45"></div>
+                    </div>
+                </div>
+            </div>
+            `;
+        } else {
+            return `
+            <div class="flex items-center opacity-40">
+                <div class="h-2 w-2 rounded-full bg-slate-400"></div>
+                <span class="ml-2 font-medium text-slate-500">${this.tool_title}</span>
+            </div>
+            `;
+        }
+    }
+}
+
+class ToolCallMessagePart {
+    /**
+     * @param {ToolCall[]} toolcalls
+     */
+    constructor(toolcalls) {
+        this.type = 'tool_call';
+        this.toolcalls = toolcalls;
+        this.rendered = undefined;
+    }
+
+    extend(tool_call_message_part) {
+        for (let toolcall of tool_call_message_part.toolcalls) {
+            if (toolcall.id) {
+                this.toolcalls.push(toolcall);
+            } else {
+                let last_toolcall = this.toolcalls[this.toolcalls.length - 1];
+                if (last_toolcall === undefined) {
+                    throw new Error('last toolcall is undefined');
+                }
+                last_toolcall.args_string += toolcall.args_string;
+            }
+        }
+    }
+
+    /**
+     * @returns {object[]}
+     */
+    toOpenAIMessagePart() {
+        return [
+            ...this.toolcalls.map(toolcall => toolcall.toOpenAIMessagePart())
+        ];
+    }
+
+    async render() {
+        const toolcalls = this.toolcalls.map(toolcall => toolcall.render()).join(TOOL_CALL_SEPARATOR);
+        this.rendered = `
+        <div class="flex mt-3 mb-3 text-sm items-center space-x-4 bg-white/80 backdrop-blur-md border border-slate-200 py-2 px-4 rounded-full shadow-sm w-fit">
+            <span class="ml-2 font-semibold text-slate-600">工具调用</span>
+            ${TOOL_CALL_SEPARATOR}
+            ${toolcalls}
+        </div>
+        `;
+    }
+
+    static assign(tool_call_message_part_obj) {
+        Object.setPrototypeOf(tool_call_message_part_obj, ToolCallMessagePart.prototype);
+        return tool_call_message_part_obj;
     }
 }
 
@@ -224,6 +359,8 @@ class AssistantMessage {
                     TextMessagePart.assign(part);
                 } else if (part.type === 'reasoning') {
                     ReasoningMessagePart.assign(part);
+                } else if (part.type === 'tool_call') {
+                    ToolCallMessagePart.assign(part);
                 }
             }
         }
@@ -253,6 +390,8 @@ class AssistantMessage {
             this.appendText(part.text);
         } else if (part.type === 'reasoning') {
             this.appendReasoningContent(part.content);
+        } else if (part.type === 'tool_call') {
+            this.appendToolCallPart(part);
         } else {
             throw new Error(`unsupported part type ${part.type}`);
         }
@@ -282,14 +421,60 @@ class AssistantMessage {
         }
     }
 
+    /**
+     * Append a tool call part to the message
+     * @param {ToolCallMessagePart} part
+     */
+    appendToolCallPart(part) {
+        if (this.content.length === 0) {
+            this.content.push(part);
+        } else if (this.content[this.content.length - 1].type === 'tool_call') {
+            this.content[this.content.length - 1].extend(part);
+        } else {
+            this.content.push(part);
+        }
+    }
+
     toOpenAIMessage() {
         var content = [];
         for (let part of this.content) {
             if (part.type !== 'reasoning') {
-                content.push(part.toOpenAIMessagePart());
+                let openai_part = part.toOpenAIMessagePart();
+                if (Array.isArray(openai_part)) {
+                    content.push(...openai_part);
+                } else {
+                    content.push(openai_part);
+                }
             }
         }
         return { role: this.role, content: content }
+    }
+
+    getOpenAIToolMessages() {
+        var messages = [];
+        var tool_call_parts = this.content.filter(part => part.type === 'tool_call');
+        for (let part of tool_call_parts) {
+            /** @type {ToolCallMessagePart} */
+            let tool_call_part = part;
+            for (let toolcall of tool_call_part.toolcalls) {
+                if (toolcall.status === 'error') {
+                    messages.push({
+                        role: 'tool',
+                        tool_call_id: toolcall.id,
+                        content: `Toolcall failed: ${toolcall.result}`
+                    });
+                } else if (toolcall.status === 'success') {
+                    messages.push({
+                        role: 'tool',
+                        tool_call_id: toolcall.id,
+                        content: toolcall.result
+                    });
+                } else {
+                    throw new Error(`unfinished toolcall status ${toolcall.status}`);
+                }
+            }
+        }
+        return messages;
     }
 
     /**
@@ -301,8 +486,19 @@ class AssistantMessage {
         if (openai_message.reasoning_content) {
             message.content.push(new ReasoningMessagePart(openai_message.reasoning_content));
         }
-
-        if (openai_message.content !== undefined && openai_message.content !== null) {
+        if (openai_message.tool_calls) {
+            var toolcalls = [];
+            for (let tool_call of openai_message.tool_calls) {
+                toolcalls.push(new ToolCall(
+                    tool_call.index,
+                    tool_call.id,
+                    tool_call.function.name,
+                    tool_call.function.arguments
+                ));
+            }
+            message.content.push(new ToolCallMessagePart(toolcalls));
+        }
+        if (openai_message.content) {
             message.content.push(new TextMessagePart(openai_message.content));
         }
         return message;
@@ -330,7 +526,7 @@ class AssistantResponse {
 
     static parseOpenAIResponse(openai_response) {
         const choice = openai_response.choices[0];
-        /** @type {'stop' | 'error' | null} */
+        /** @type {'stop' | 'error' | 'tool_calls' | null} */
         let finish_reason = choice.finish_reason;
         if (finish_reason === undefined) {
             finish_reason = null;
@@ -344,7 +540,7 @@ class AssistantResponse {
             const message = AssistantMessage.parseOpenAIMessage(choice.message);
             return new AssistantResponse(message, finish_reason);
         } else {
-            console.info(choice);
+            logger.error('invalid openai response', choice);
             throw new Error('invalid openai response');
         }
     }
@@ -353,14 +549,25 @@ class AssistantResponse {
 /**
  * @class ChatContext
  * @property {SystemMessage | undefined} system_prompt
+ * @property {(UserMessage | AssistantMessage)[]} messages
+ * @property {BaseTool[]} tools
  */
 class ChatContext {
+
     constructor () {
+        /** @type {SystemMessage | undefined} */
         this.system_prompt = undefined;
-        /**
-         * @type {(UserMessage | AssistantMessage)[]}
-         */
+        /** @type {(UserMessage | AssistantMessage)[]} */
         this.messages = [];
+        /** @type {Map<string, BaseTool>} */
+        this.tools = new Map();
+    }
+
+    toJSON() {
+        return {
+            system_prompt: this.system_prompt,
+            messages: this.messages
+        }
     }
 
     /**
@@ -369,6 +576,10 @@ class ChatContext {
      */
     appendMessage(message) {
         this.messages.push(message);
+    }
+
+    lastMessage() {
+        return this.messages[this.messages.length - 1];
     }
 
     /**
@@ -397,5 +608,6 @@ class ChatContext {
 module.exports = {
     SystemMessage, UserMessage, AssistantMessage,
     AssistantResponse,
-    ChatContext
+    ChatContext,
+    ToolCallMessagePart
 };

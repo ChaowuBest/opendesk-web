@@ -1,5 +1,5 @@
 const { OpenAI } = require('openai');
-const { ChatContext, AssistantResponse, UserMessage } = require('./messages');
+const { ChatContext, AssistantResponse, UserMessage, AssistantMessage } = require('./messages');
 const { Setting, ModelInstance } = require('../utils/setting');
 const { z } = require('zod');
 const { logger } = require('../utils/logger');
@@ -294,14 +294,33 @@ class LLM {
         }
         for (let message of chat_context.messages) {
             messages.push(message.toOpenAIMessage())
+            if (message instanceof AssistantMessage) {
+                messages.push(...message.getOpenAIToolMessages());
+            }
+        }
+
+        let tool_options = {}
+        if (chat_context.tools.size > 0) {
+            tool_options = {
+                tool_choice: 'auto',
+                tools: Array.from(chat_context.tools.entries()).map(([tool_id, tool]) => {
+                    return {
+                        type: 'function',
+                        function: {
+                            name: tool_id,
+                            description: tool.description,
+                            parameters: z.toJSONSchema(tool.params),
+                        },
+                    }
+                }),
+            }
         }
 
         const stream = await client.chat.completions.create({
             model: model_instance.model_name,
             messages: messages,
-            stream: true
-        }).catch(err => {
-            logger.error(err)
+            stream: true,
+            ...tool_options
         })
 
         if (stream === undefined) {

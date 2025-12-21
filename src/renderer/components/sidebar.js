@@ -119,7 +119,7 @@ class SideBar extends HTMLElement {
     }
 
     reloadTaskList() {
-        const standard_class = 'cursor-pointer rounded-2xl pl-5 pr-2 py-2 mb-2 transition-colors duration-200';
+        const standard_class = 'cursor-pointer rounded-lg pl-5 pr-2 py-2 mb-2 transition-colors duration-200';
         let task_list_container = this.querySelector('#task-list-container');
         task_list_container.innerHTML = '';
         for (let task of [...this.taskList].reverse()) {
@@ -127,7 +127,7 @@ class SideBar extends HTMLElement {
             if (task.task_id === this.currentTaskId) {
                 task_style = 'bg-[#C94C40] text-white font-semibold';
             } else {
-                task_style = 'bg-white text-gray-700 hover:bg-[#FFF8E7]';
+                task_style = 'bg-white text-gray-700 hover:shadow-sm hover:border-l-2 hover:border-l-[#C94C40]';
             }
             task_list_container.innerHTML += `
             <div class="task-item ${task_style} ${standard_class}" data-task_id="${task.task_id}">

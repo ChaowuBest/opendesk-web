@@ -32,14 +32,19 @@ const FSEntrySchema = z.object({
     ]),
 })
 
-const SettingSchema = z.object({
-    default_model: z.string().default(''),
-    default_intent_parsing_model: z.string().default(''),
-    default_embedding_model: z.string().default(''),
-    providers: z.array(ProviderSchema).default([]),
-    models: z.array(ModelSchema).default([]),
-    filesystems: z.array(FSEntrySchema).default([]),
-})
+var ApplicationConfigSchema = z.object({});
+
+function getSettingSchema() {
+    return z.object({
+        default_model: z.string().default(''),
+        default_intent_parsing_model: z.string().default(''),
+        default_embedding_model: z.string().default(''),
+        providers: z.array(ProviderSchema).default([]),
+        models: z.array(ModelSchema).default([]),
+        filesystems: z.array(FSEntrySchema).default([]),
+        applications: ApplicationConfigSchema.default({})
+    })
+}
 
 class ModelInstance {
     /**
@@ -68,7 +73,7 @@ class Setting {
 
     constructor() {
         /** @type {z.core.output<SettingSchema>} */
-        this.data = SettingSchema.parse({});
+        this.data = getSettingSchema().parse({});
     }
 
     getData() {
@@ -76,7 +81,7 @@ class Setting {
     }
 
     setData(data) {
-        this.data = SettingSchema.parse(data);
+        this.data = getSettingSchema().parse(data);
         this.save();
     }
 
@@ -95,6 +100,16 @@ class Setting {
     }
 
     /**
+     *
+     * @param {BaseApplication} application
+     */
+    static registerApplicationSettings(application) {
+        ApplicationConfigSchema = ApplicationConfigSchema.extend({
+            [application.bundleName]: application.getConfigSchema().optional()
+        });
+    }
+
+    /**
      * Load the setting from the file system
      * @returns {Setting | null}
      */
@@ -107,7 +122,7 @@ class Setting {
         const settingRawObject = JSON.parse(fs.readFileSync(settingFile, 'utf8'));
         let setting = new Setting();
         try {
-            setting.setData(settingRawObject);
+            setting.data = getSettingSchema().parse(settingRawObject);
             return setting;
         } catch (error) {
             console.error('error loading setting', error);
@@ -119,8 +134,10 @@ class Setting {
      * Save the setting to the file system
      */
     save() {
+        const { logger } = require("./logger");
         const settingDirectory = getAppDirectory();
         const settingFile = path.join(settingDirectory, 'setting.json');
+        logger.info(`saving setting to ${settingFile}`);
         fs.writeFileSync(settingFile, JSON.stringify(this.data, null, 4), { encoding: 'utf8' });
     }
 

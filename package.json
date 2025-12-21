@@ -34,6 +34,7 @@
   "dependencies": {
     "ansi-to-html": "^0.7.2",
     "electron-squirrel-startup": "^1.0.1",
+    "exa-js": "^2.0.12",
     "fast-glob": "^3.3.3",
     "highlight.js": "^11.11.1",
     "katex": "^0.16.27",

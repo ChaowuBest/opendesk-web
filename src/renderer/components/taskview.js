@@ -53,12 +53,13 @@ class TaskView extends HTMLElement {
     }
 
     static USER_PART_CLASS_MAP = {
-        'text': 'bg-transparent text-sm text-white markdown-body'
+        'text': 'bg-transparent text-base text-white markdown-body'
     }
 
     static ASSISTANT_PART_CLASS_MAP = {
-        'text': 'bg-transparent text-sm text-black markdown-body',
-        'reasoning': 'bg-gray-200 rounded-xl text-gray-500 text-xs p-3 mb-3'
+        'text': 'bg-transparent text-base text-black markdown-body',
+        'reasoning': 'bg-gray-200 rounded-xl text-gray-500 text-xs p-3 mb-3',
+        'tool_call': ''
     }
 
     renderAssistantMessage(assistant_message) {
