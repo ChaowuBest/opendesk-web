@@ -132,6 +132,11 @@ class ToolCall {
             `;
         }
     }
+
+    static assign(tool_call_obj) {
+        Object.setPrototypeOf(tool_call_obj, ToolCall.prototype);
+        return tool_call_obj;
+    }
 }
 
 class ToolCallMessagePart {
@@ -180,6 +185,9 @@ class ToolCallMessagePart {
 
     static assign(tool_call_message_part_obj) {
         Object.setPrototypeOf(tool_call_message_part_obj, ToolCallMessagePart.prototype);
+        for (let toolcall of tool_call_message_part_obj.toolcalls) {
+            ToolCall.assign(toolcall)
+        }
         return tool_call_message_part_obj;
     }
 }
