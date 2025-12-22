@@ -58,13 +58,13 @@ class FSService {
 
         // 处理 worker 错误
         this.worker.on('error', (error) => {
-            console.error('Worker error:', error);
+            logger.error('Worker error:', error);
         });
 
         // 处理 worker 退出
         this.worker.on('exit', (code) => {
             if (code !== 0) {
-                console.error(`Worker stopped with exit code ${code}`);
+                logger.error(`Worker stopped with exit code ${code}`);
             }
             this.worker = null;
             // 清理所有待处理的请求
@@ -111,7 +111,7 @@ class FSService {
         try {
             await this.sendMessage('startService', {});
         } catch (error) {
-            console.error('Failed to start FS service:', error);
+            logger.error('Failed to start FS service:', error);
             throw error;
         }
     }
@@ -127,7 +127,7 @@ class FSService {
                 this.worker = null;
             }
         } catch (error) {
-            console.error('Failed to stop FS service:', error);
+            logger.error('Failed to stop FS service:', error);
         }
     }
 

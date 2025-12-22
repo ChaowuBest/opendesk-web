@@ -1,8 +1,7 @@
 const z = require("zod");
-const { app } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const { workerData } = require('worker_threads');
+const { isMainThread, workerData } = require('worker_threads');
 
 
 const ProviderSchema = z.object({
@@ -192,11 +191,12 @@ class Setting {
 }
 
 function getAppDirectory() {
-    if (app === undefined) {
+    if (!isMainThread) {
         // fallback for worker threads or node environments
         return workerData.paths.appDirectory;
     }
 
+    const { app } = require('electron');
     const userDataPath = app.getPath('userData');
     if (fs.existsSync(userDataPath)) {
         return userDataPath;

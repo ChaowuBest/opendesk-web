@@ -1,6 +1,7 @@
 const { FusesPlugin } = require('@electron-forge/plugin-fuses');
 const { FuseV1Options, FuseVersion } = require('@electron/fuses');
 
+
 module.exports = {
   packagerConfig: {
     asar: true,
@@ -14,6 +15,7 @@ module.exports = {
       platforms: ['win32'],
       config: {
         name: "FillipDesk",
+        productName: "Fillip Desk",
         setupExe: 'FillipDesk-${version}-Setup.exe',
         remoteReleases: ''
       },
