@@ -1,4 +1,4 @@
-const { EmailHeader, EmailProfileSchema } = require("../common");
+const { EmailHeader, EmailProfileSchema, EmailContent } = require("../common");
 const { BaseWorker } = require("../../base");
 const { logger } = require('../../../utils/logger');
 const _ = require('lodash');
@@ -9,14 +9,53 @@ const pMap = require('p-map');
 const { simpleParser } = require("mailparser");
 
 
+class POP3EmailClient {
+
+    constructor(usr, pwd, tls, host, port) {
+        this.usr = usr;
+        this.pwd = pwd;
+        this.tls = tls;
+        this.host = host;
+        this.port = port;
+    }
+
+    pop3() {
+        return new Pop3Command({ user: this.usr, password: this.pwd, host: this.host, port: this.port, tls: this.tls });
+    }
+
+    async getEmailContent(uid) {
+        const pop3 = this.pop3();
+        const uidlist = await pop3.UIDL();
+        const uidmapping = new Map(uidlist.map(([index, uid]) => [uid, index]));
+        try {
+            const index = uidmapping.get(uid);
+            if (index === undefined) {
+                logger.error(`email not found: ${uid}`);
+                return null;
+            }
+            const email = await pop3.RETR(index);
+            const parsed = await simpleParser(email);
+            return new EmailContent(parsed.html, parsed.text, parsed.attachments);
+        }
+        catch (error) {
+            logger.error(`error getting email content: ${uid}: ${error}`);
+            return null;
+        } finally {
+            await pop3.QUIT();
+        }
+    }
+}
+
 class MailboxStorage {
 
     constructor(dbPath) {
         /** @type {nedb} */
         this.db = new nedb({ filename: dbPath, autoload: true });
-        this.db.ensureIndex({ fieldName: 'uid', unique: true });
+        this.db.ensureIndex({ fieldName: 'uid', unique: true, sparse: true });
         this.rawdb = new nedb({ filename: dbPath + '.raw', autoload: true });
-        this.rawdb.ensureIndex({ fieldName: 'uid', unique: true });
+        this.rawdb.ensureIndex({ fieldName: 'uid', unique: true, sparse: true });
+        this.contentdb = new nedb({ filename: dbPath + '.content', autoload: true });
+        this.contentdb.ensureIndex({ fieldName: 'uid', unique: true, sparse: true });
     }
 
     async saveRawEmailHeader(uid, header) {
@@ -32,7 +71,27 @@ class MailboxStorage {
         return doc?.header;
     }
 
-    async saveEmailHeaders(...rawHeaders) {
+    async getEmailContent(uid) {
+        const doc = await this.contentdb.findOne({ uid: uid });
+        if (!doc) {
+            return null;
+        }
+        return new EmailContent(doc.htmlContent, doc.textContent);
+    }
+
+    async saveEmailContent(uid, content) {
+        try {
+            await this.contentdb.update(
+                { uid: uid },
+                { $set: { uid: uid, htmlContent: content.htmlContent, textContent: content.textContent } },
+                { upsert: true }
+            )
+        } catch (error) {
+            logger.error(`error saving email content: ${uid}: ${error}`);
+        }
+    }
+
+    async saveRawEmailHeaders(...rawHeaders) {
         const headers = await pMap(
             rawHeaders,
             async ([uid, header]) => {
@@ -52,10 +111,10 @@ class MailboxStorage {
             },
             { concurrency: 16 }
         );
-        await this.saveEmails(...headers.filter(header => header !== null));
+        await this.saveEmailHeaders(...headers.filter(header => header !== null));
     }
 
-    async saveEmails(...emails) {
+    async saveEmailHeaders(...emails) {
         for (const email of emails) {
             try {
                 await this.db.update(
@@ -75,7 +134,7 @@ class MailboxStorage {
         return set;
     }
 
-    async getEmailList() {
+    async getEmailHeaderList() {
         const docs = await this.db.find({});
         return docs.map(doc => new EmailHeader(doc.uid, doc.subject, doc.from, doc.to, doc.date));
     }
@@ -111,13 +170,13 @@ class MailboxWorker extends BaseWorker {
             logger.info(`syncing pop3 email headers ${i} / ${newList.length} emails`);
 
             if (pendingHeaders.length >= 100) {
-                this.storage.saveEmailHeaders(...pendingHeaders);
+                this.storage.saveRawEmailHeaders(...pendingHeaders);
                 pendingHeaders = [];
             }
         }
 
         if (pendingHeaders.length > 0) {
-            this.storage.saveEmailHeaders(...pendingHeaders);
+            this.storage.saveRawEmailHeaders(...pendingHeaders);
         }
 
         await pop3.QUIT();
@@ -145,19 +204,39 @@ class MailboxWorker extends BaseWorker {
         this.sync();
     }
 
-    async getEmailList() {
+    async getEmailHeaderList() {
         let startTime = Date.now();
-        const result = await this.storage.getEmailList();
+        const result = await this.storage.getEmailHeaderList();
         let cost = (Date.now() - startTime) / 1000;
         logger.info(`get email list cost: ${cost.toFixed(2)}s`);
         return result;
     }
 
+    /**
+     * Get the content of an email by its UID.
+     * @param {string} uid 
+     * @returns {EmailContent}
+     */
     async getEmailContent(uid) {
+        logger.info(`getting email content: ${uid}`);
+        const cachedContent = await this.storage.getEmailContent(uid);
+        if (cachedContent) {
+            return cachedContent;
+        }
+
         const config = EmailProfileSchema.parse(this.config);
-        return {
-            subject: 'test',
-            html: 'fuckyou',
+        if (config.inbox?.pop3) {   
+            const pop3 = new POP3EmailClient(
+                config.username, config.password,
+                config.inbox.pop3.tls,
+                config.inbox.pop3.host,
+                config.inbox.pop3.port
+            );
+            const result = await pop3.getEmailContent(uid);
+            await this.storage.saveEmailContent(uid, result);
+            return result;
+        } else {
+            throw new Error('no valid inbox server configured');
         }
     }
 

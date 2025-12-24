@@ -62,12 +62,15 @@ class EmailHeader {
 }
 
 class EmailContent {
-    constructor(htmlContent, textContent, attachments) {
+    constructor(htmlContent, textContent) {
+        this.htmlContent = htmlContent;
+        this.textContent = textContent;
     }
 }
 
 module.exports = {
     EmailHeader,
+    EmailContent,
     EmailProfileSchema,
     InboxServerSchema,
     OutboxServerSchema,

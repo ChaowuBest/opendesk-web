@@ -95,4 +95,91 @@ class AgentInput extends HTMLElement {
     }
 }
 
-customElements.define('agent-input', AgentInput)
+class ApplicationAgentInput extends HTMLElement {
+    constructor() {
+        super();
+    }
+
+    connectedCallback() {
+        this.render();
+    }
+
+    render() {
+        this.innerHTML = `
+        <style>
+        /* Siri 风格的多色液态旋转背景 */
+        @keyframes siri-rotate {
+            0% { transform: rotate(0deg) scale(1); }
+            50% { transform: rotate(180deg) scale(1.2); }
+            100% { transform: rotate(360deg) scale(1); }
+        }
+        .animate-siri {
+            background: conic-gradient(from 0deg, #3b82f6, #8b5cf6, #ec4899, #3b82f6);
+            filter: blur(8px);
+            animation: siri-rotate 4s linear infinite;
+        }
+        /* 贝塞尔曲线让展开更有弹性感 */
+        .transition-liquid {
+            transition: all 0.6s cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+        </style>
+
+        <div class="flex-none p-3 flex justify-center items-center">
+            <!-- 交互容器：group 负责监听悬停 -->
+            <div class="group relative flex items-center justify-center">
+                
+                <!-- 外部动态光晕 (只在圆框状态下明显) -->
+                <div class="absolute inset-0 bg-blue-500/30 blur-2xl rounded-full opacity-0 group-hover:opacity-0 transition-opacity duration-1500"></div>
+
+                <!-- 对话框/圆框主体 -->
+              
+                <!-- 初始：w-14 (圆) -> 悬停：w-[450px] (长条) -->
+                <div class="transition-liquid relative flex items-center bg-white/[0.18] backdrop-blur-2xl border border-white/20 shadow-2xl overflow-hidden
+                            w-14 h-14 group-hover:w-[450px] group-hover:h-14 rounded-full px-2">
+                    
+                    <!-- 内部液态背景 (Siri 核心) -->
+                    <!-- 即使展开了，这个圆形发光体也可以作为图标保留在左侧 -->
+                    <div class="flex-shrink-0 w-10 h-10 relative overflow-hidden rounded-full flex items-center justify-center">
+                        <div class="absolute inset-0 animate-siri opacity-80"></div>
+                    </div>
+
+                    <!-- 展开后的内容：输入框和按钮 -->
+                    <!-- 使用 group-hover 控制透明度和显示 -->
+                    <div class="flex flex-1 items-center opacity-0 group-hover:opacity-100 transition-opacity duration-500 delay-100 pl-3">
+                        <input
+                            id="application-agent-input-textarea"
+                            type="text" 
+                            placeholder="告诉我你想做什么..." 
+                            class="w-full bg-transparent border-none focus:ring-0 text-black placeholder-black/50 text-sm"
+                        />
+                        
+                        <!-- 快捷按钮 -->
+                        <div class="flex items-center gap-2 pr-1">
+                            <button class="w-8 h-8 flex items-center justify-center rounded-full bg-white/10 hover:bg-white/20 text-black/70 transition-colors">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+
+                </div>
+
+            </div>
+        </div>
+        `
+
+        this.querySelector('#application-agent-input-textarea').addEventListener('focus', (e) => {
+            console.info('focus', e.target);
+        });
+
+        this.querySelector('#application-agent-input-textarea').addEventListener('blur', (e) => {
+            console.info('blur', e.target);
+        });
+    }
+
+}
+
+
+customElements.define('agent-input', AgentInput);
+customElements.define('application-agent-input', ApplicationAgentInput);

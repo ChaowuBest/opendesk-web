@@ -12,8 +12,8 @@ class MailboxService extends BaseService {
         return path.join(__dirname, 'worker.js');
     }
 
-    static async getEmailList() {
-        return await this.sendMessage('getEmailList', {});
+    static async getEmailHeaderList() {
+        return await this.sendMessage('getEmailHeaderList', {});
     }
 
     static async getEmailContent(uid) {

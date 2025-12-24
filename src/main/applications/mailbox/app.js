@@ -23,8 +23,8 @@ class MailboxApplication extends BaseApplication {
 
     async handleMessage(message, ...args) {
         switch (message) {
-            case 'getEmailList':
-                return await MailboxService.getEmailList();
+            case 'getEmailHeaderList':
+                return await MailboxService.getEmailHeaderList();
             case 'getEmailContent':
                 return await MailboxService.getEmailContent(args[0]);
             default:

@@ -6,6 +6,7 @@
         <title>Flipper Desk | 一站式办公生活空间</title>
         <script src="../renderer/styles/tailwind.css"></script>
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+        <script src="../renderer/components/agentinput.js"></script>
         <style>
             html, body {
                 height: 100%; /* 关键：让html继承窗口高度 */
@@ -19,6 +20,11 @@
         <div id="application-container" class="w-full h-full">
 
         </div>
+        
+        <div class="fixed bottom-6 left-1/2 -translate-x-1/2 w-full max-w-2xl px-4 z-50">
+            <application-agent-input id="application-agent-input"/>
+        </div>
+        
         <script>
             (async () => {
                 const applicationBundleName = new URLSearchParams(window.location.search).get('applicationBundleName');

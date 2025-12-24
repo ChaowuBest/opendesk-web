@@ -13,7 +13,8 @@
     "start:darwin": "electron-forge start",
     "package": "electron-forge package",
     "make": "run-script-os",
-    "make:win32": "electron-forge make --platform=win32 --arch=x64,arm64"
+    "make:win32": "electron-forge make --platform=win32 --arch=x64,arm64",
+    "make:darwin": "electron-forge make --platform=darwin"
   },
   "devDependencies": {
     "@electron-forge/cli": "^7.10.2",
