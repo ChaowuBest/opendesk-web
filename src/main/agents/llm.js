@@ -282,6 +282,7 @@ class LLM {
      */
     static async* streamComplete(chat_context, model = undefined) {
         var model_instance = this.__getModelInstance(model);
+        var error_message = '';
         this.__ensureProxy(model_instance);
 
         var client = new OpenAI({
@@ -321,10 +322,14 @@ class LLM {
             messages: messages,
             stream: true,
             ...tool_options
-        })
+        }).catch(error => {
+            error_message = `error: completion failed: ${error.message}`;
+            logger.error(error_message);
+            return undefined;
+        });
 
         if (stream === undefined) {
-            yield AssistantResponse.error('error: completion failed');
+            yield AssistantResponse.error(error_message);
             return;
         }
         for await (const chunk of stream) {

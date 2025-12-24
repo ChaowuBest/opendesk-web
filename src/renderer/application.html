@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Flipper Desk | 一站式办公生活空间</title>
+        <script src="../renderer/styles/tailwind.css"></script>
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+        <style>
+            html, body {
+                height: 100%; /* 关键：让html继承窗口高度 */
+                margin: 0;    /* 移除默认外边距，防止出现滚动条 */
+                padding: 0;
+                overflow: hidden; /* 可选：如果你不希望内部出现滚动条 */
+            }
+        </style>
+    </head>
+    <body>
+        <div id="application-container" class="w-full h-full">
+
+        </div>
+        <script>
+            (async () => {
+                const applicationBundleName = new URLSearchParams(window.location.search).get('applicationBundleName');
+                const guiConfig = await window.applicationAPI.getApplicationGUIConfig(applicationBundleName);
+                for (const javascript of guiConfig.javascripts) {
+                    const script = document.createElement('script');
+                    script.src = javascript;
+                    document.body.appendChild(script);
+                }
+                document.querySelector('#application-container').innerHTML = `
+                <${guiConfig.entry} class="w-full h-full"/>
+                `
+            })()
+        </script>
+    </body>
+</html>

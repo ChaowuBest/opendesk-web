@@ -7,6 +7,7 @@ const { LogStream } = require('./utils/logger')
 const convert = require('ansi-to-html');
 const { ApplicationRegistry } = require('./applications/base');
 const { SearchApplication } = require('./applications/search/app');
+const { MailboxApplication } = require('./applications/mailbox/app');
 
 const path = require('path');
 const converter = new convert();
@@ -29,6 +30,7 @@ const createWindow = () => {
     icon: iconPath,
     webPreferences: {
       nodeIntegration: false,
+      nodeIntegrationInSubFrames: true,
       contextIsolation: true,
       preload: path.join(__dirname, '..', 'renderer', 'preload.js')
     }
@@ -145,6 +147,26 @@ const registerSettingAPIHandlers = () => {
     globalMainWindow.close();
     return { status: 'ok' };
   })
+  ipcMain.handle('applicationRegistry:getApplicationGUIConfig', async (event, bundleName) => {
+    const application = ApplicationRegistry.getApplication(bundleName);
+    if (application === undefined) {
+      return { status: 'error', message: `application ${bundleName} not found` }
+    }
+    return { status: 'ok', data: application.getGUIConfig() };
+  })
+  ipcMain.handle('applicationRegistry:sendMessageToApplication', async (event, bundleName, ...args) => {
+    const application = ApplicationRegistry.getApplication(bundleName);
+    if (application === undefined) {
+      return { status: 'error', message: `application ${bundleName} not found` }
+    }
+
+    try {
+      const data = await application.handleMessage(...args);
+      return { status: 'ok', data: data };
+    } catch (error) {
+      return { status: 'error', message: error.message };
+    }
+  })
 }
 
 const registerHotKeys = () => {
@@ -167,6 +189,8 @@ app.whenReady().then(() => {
 
   FSService.startFSService();
   ApplicationRegistry.registerApplication(new SearchApplication());
+  ApplicationRegistry.registerApplication(new MailboxApplication());
+  // globalMainWindow.webContents.openDevTools();
 })
 
 app.on('will-quit', () => {

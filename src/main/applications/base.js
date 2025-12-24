@@ -1,15 +1,188 @@
-const { z } = require("zod");
-const { logger } = require("../utils/logger");
-const { Setting } = require("../utils/setting");
+const { z, object } = require("zod");
+const { Worker, parentPort } = require('worker_threads');
+const { logger, LogStream } = require("../utils/logger");
+const { Setting, getAppDirectory } = require("../utils/setting");
 const { BaseTool } = require("../agents/tool");
+const path = require('path');
+const fs = require('fs');
 
+
+class BaseWorker {
+
+    constructor() {
+        /** @type {object} */
+        this.config = {};
+        /** @type {string} */
+        this.appDataDirectory = getAppDirectory();
+    }
+
+    /**
+     * 初始化 worker
+     */
+    async initialize() {
+        parentPort.on('message', async (message) => {
+            try {
+                const { type, id, payload } = message;
+                if (typeof this[type] === "function") {
+                    let result = await this[type](payload);
+                    parentPort.postMessage({ type: 'response', id: id, status: 'ok', data: result });
+                } else {
+                    throw new Error(`unknown message ${type}, implement this method in the worker class`);
+                }
+            } catch (error) {
+                logger.error(`Worker error: ${error.message}`, error);
+                parentPort.postMessage({ type: 'response', id: message.id, status: 'error', message: error.message });
+            }
+        });
+    }
+
+    async startService() {}
+    async stopService() {}
+
+    async applicationConfigChanged(config) {
+        this.config = config;
+    }
+}
 
 class BaseService {
 
-    static getInstance() {
+    /** @type {Worker | null} */
+    static worker = null;
+
+    /** @type {Map<number, { resolve: Function, reject: Function }>} */
+    static pendingRequests = new Map();
+
+    /** @type {number} */
+    static requestIdCounter = 0;
+
+    /** @type {string} */
+    static applicationDataDirectory = getAppDirectory();
+
+    static getWorkerPath() {
         throw new Error('not implemented');
     }
 
+    static sendApplicationConfig(config) {
+        if (!this.worker) {
+            throw new Error('worker not initialized');
+        }
+        this.worker.postMessage({ type: 'applicationConfigChanged', payload: config });
+    }
+
+    static async initializeWorker() {
+        if (this.worker) {
+            return;
+        }
+
+        this.worker = new Worker(
+            this.getWorkerPath(),
+            {
+                workerData: { paths: { appDirectory: this.applicationDataDirectory } }
+            }
+        );
+
+        let main_log_stream = LogStream.getStream();
+        // 处理 worker 消息
+        this.worker.on('message', (message) => {
+            const { type, id, status, data, message: errorMessage } = message;
+
+            // 处理来自 worker 的日志消息
+            if (type === 'log') {
+                main_log_stream.write(message.message + '\n');
+                return;
+            }
+
+            if (type === 'response' && id !== undefined) {
+                const pending = this.pendingRequests.get(id);
+                if (pending) {
+                    this.pendingRequests.delete(id);
+                    if (status === 'ok') {
+                        pending.resolve(data);
+                    } else {
+                        pending.reject(new Error(errorMessage || 'Unknown error'));
+                    }
+                }
+            }
+        });
+
+        // 处理 worker 错误
+        this.worker.on('error', (error) => {
+            logger.error('Worker error:', error);
+        });
+
+        // 处理 worker 退出
+        this.worker.on('exit', (code) => {
+            if (code !== 0) {
+                logger.error(`Worker stopped with exit code ${code}`);
+            }
+            this.worker = null;
+            // 清理所有待处理的请求
+            this.pendingRequests.forEach(({ reject }) => {
+                reject(new Error('Worker exited'));
+            });
+            this.pendingRequests.clear();
+        });
+    }
+
+    /**
+     * 向 worker 发送消息
+     * @param {string} type
+     * @param {any} payload
+     * @returns {Promise<any>}
+     */
+    static async sendMessage(type, payload) {
+        if (!this.worker) {
+            await this.initializeWorker();
+        }
+
+        const id = ++this.requestIdCounter;
+        return new Promise((resolve, reject) => {
+            this.pendingRequests.set(id, { resolve, reject });
+            this.worker.postMessage({ type, id, payload });
+
+            // 设置超时
+            setTimeout(() => {
+                if (this.pendingRequests.has(id)) {
+                    this.pendingRequests.delete(id);
+                    reject(new Error(`Request timeout: ${type}`));
+                }
+            }, 30000); // 30秒超时
+        });
+    }
+
+    static async startService() {
+        logger.info(`starting service: ${this.name}`);
+        try {
+            await this.sendMessage('startService', {});
+        } catch (error) {
+            logger.error(`failed to start service: ${this.name}: ${error.message}`);
+            throw error;
+        }
+    }
+
+    static async stopService() {
+        logger.info(`stopping service: ${this.name}`);
+        try {
+            if (this.worker) {
+                await this.sendMessage('stopService', {});
+                await this.worker.terminate();
+                this.worker = null;
+            }
+        } catch (error) {
+            logger.error(`failed to stop service: ${this.name}: ${error.message}`);
+        }
+    }
+}
+
+class BaseGUIConfig {
+    /**
+     * @param {string[]} javascripts
+     * @param {string} entry
+     */
+    constructor(javascripts, entry) {
+        this.javascripts = javascripts;
+        this.entry = entry;
+    }
 }
 
 class BaseApplication {
@@ -35,12 +208,16 @@ class BaseApplication {
         return Setting.getInstance().data.applications[this.bundleName];
     }
 
+    async handleMessage(message, ...args) {
+        throw new Error(`unknown message: ${message}`);
+    }
+
     /**
-     * 返回 BaseService 的一个子类。
-     * @returns {typeof BaseService | null}
+     * 返回应用提供的服务
+     * @returns {Array<typeof BaseService>}
      */
-    getService() {
-        throw new Error('not implemented');
+    getServices() {
+        return [];
     }
 
     /**
@@ -48,7 +225,19 @@ class BaseApplication {
      * @returns {BaseTool[]}
      */
     getTools() {
-        throw new Error('not implemented');
+        return [];
+    }
+
+    getGUIConfig() {
+        return undefined;
+    }
+
+    getDataDirectory() {
+        let data_directory = path.join(getAppDirectory(), 'apps', this.bundleName);
+        if (!fs.existsSync(data_directory)) {
+            fs.mkdirSync(data_directory, { recursive: true });
+        }
+        return data_directory;
     }
 }
 
@@ -64,6 +253,15 @@ class ApplicationRegistry {
         logger.info(`registering application ${application.bundleName}`);
         ApplicationRegistry.applications.set(application.bundleName, application);
         Setting.registerApplicationSettings(application);
+        application.getServices()?.forEach(service => {
+            service.applicationDataDirectory = application.getDataDirectory();
+            service.startService();
+            service.sendApplicationConfig(application.getConfig());
+        });
+    }
+
+    static getApplication(bundleName) {
+        return ApplicationRegistry.applications.get(bundleName);
     }
 
     /**
@@ -84,5 +282,7 @@ class ApplicationRegistry {
 module.exports = {
     BaseApplication,
     BaseService,
+    BaseWorker,
+    BaseGUIConfig,
     ApplicationRegistry
 }

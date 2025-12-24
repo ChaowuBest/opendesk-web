@@ -59,7 +59,7 @@ class HomePage extends HTMLElement {
 
                     <!-- 收件箱 -->
                     <button class="flex items-center space-x-2 px-3 py-2 bg-white rounded-full shadow-sm hover:shadow-md border border-gray-200 transition-all"
-                        onclick="window.globalControlAPI.openApplication('mailbox')">
+                        onclick="window.globalControlAPI.openApplication('fillipdesk.mailbox')">
                         <i class="fas fa-inbox text-indigo-500 text-sm"></i>
                         <span class="text-sm text-gray-700">收件箱</span>
                     </button>

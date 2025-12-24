@@ -18,7 +18,7 @@ class ExaSearchTool extends BaseTool {
 
     async execute(args) {
         const exa = new Exa(this.api_key);
-        const results = await exa.search(args.query, { text: true});
+        const results = await exa.search(args.query, { text: true, maxCharacters: 2000 });
         console.info('execute', results)
         return JSON.stringify(results);
     }

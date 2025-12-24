@@ -17,12 +17,19 @@ class SettingEditor extends HTMLElement {
     }
 
     saveSettingData() {
-        const data = JSON.parse(this.querySelector('#json-setting-editor').value);
+        let data = null;
+        try {
+            data = JSON.parse(this.querySelector('#json-setting-editor').value);
+        } catch (error) {
+            this.querySelector('#setting-error-msg').innerHTML = `<span class="text-red-500">${error.message}</span>`;
+            return;
+        }
         window.settingAPI.saveSettingObject(data).then(() => {
             this.querySelector('#setting-error-msg').innerHTML = '';
             this.loadSettingData();
+            this.querySelector('#setting-error-msg').innerHTML = '<span class="text-green-500">保存成功</span>';
         }).catch(error => {
-            this.querySelector('#setting-error-msg').innerHTML = error.message;
+            this.querySelector('#setting-error-msg').innerHTML = `<span class="text-red-500">${error.message}</span>`;
         });
     }
 
@@ -52,7 +59,7 @@ class SettingEditor extends HTMLElement {
                 ></textarea>
             </div>
             <!-- 错误信息 -->
-            <div id="setting-error-msg" class="min-h-[1.5em] text-red-500 text-sm">123</div>
+            <div id="setting-error-msg" class="min-h-[1.5em] text-sm"></div>
         </div>
         `
     }
