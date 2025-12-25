@@ -126,6 +126,14 @@ if (window.self !== window.top) {
     })
 
     contextBridge.exposeInMainWorld('settingAPI', {
+        loadSettingSchema: async () => {
+            const result = await ipcRenderer.invoke('setting:loadSettingSchema');
+            if (result.status !== 'ok') {
+                console.error('loading setting schema failed', result.message);
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
         loadSettingObject: async () => {
             const result = await ipcRenderer.invoke('setting:loadSettingObject');
             if (result.status !== 'ok') {

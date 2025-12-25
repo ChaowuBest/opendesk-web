@@ -1,6 +1,6 @@
 const { app, BrowserWindow, Tray, globalShortcut, ipcMain, shell } = require('electron')
 const { GlobalState } = require('./states/global')
-const { Setting } = require('./utils/setting')
+const { Setting, getSettingSchema } = require('./utils/setting')
 const { openFloatWindow } = require('./windows/floatwindow')
 const { FSService } = require('./services/fs/service')
 const { LogStream } = require('./utils/logger')
@@ -8,7 +8,7 @@ const convert = require('ansi-to-html');
 const { ApplicationRegistry } = require('./applications/base');
 const { SearchApplication } = require('./applications/search/app');
 const { MailboxApplication } = require('./applications/mailbox/app');
-
+const { z } = require('zod');
 const path = require('path');
 const converter = new convert();
 
@@ -119,6 +119,9 @@ const registerFSAPIHandlers = () => {
 }
 
 const registerSettingAPIHandlers = () => {
+  ipcMain.handle('setting:loadSettingSchema', () => {
+    return { status: 'ok', data: z.toJSONSchema(getSettingSchema()) };
+  })
   ipcMain.handle('setting:loadSettingObject', () => {
     return { status: 'ok', data: Setting.getInstance().getData() };
   })

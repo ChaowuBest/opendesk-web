@@ -7,7 +7,7 @@ const { EmailProfileSchema } = require("./common");
 class MailboxApplication extends BaseApplication {
 
     constructor() {
-        super('fillipdesk.mailbox');
+        super('mailbox');
     }
 
     getConfigSchema() {

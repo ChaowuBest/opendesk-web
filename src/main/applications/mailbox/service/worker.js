@@ -183,9 +183,14 @@ class MailboxWorker extends BaseWorker {
     }
 
     async sync() {
+        if (this.config === undefined) {
+            logger.warn('no config, skip mailbox sync');
+            return;
+        }
+
         const config = EmailProfileSchema.parse(this.config);
         if (this.isSyncing) {
-            logger.info('already syncing, skip');
+            logger.info('another syncing process is running, skip');
             return;
         }
 
@@ -200,8 +205,24 @@ class MailboxWorker extends BaseWorker {
         logger.info('mailbox sync completed');
     }
 
+    async trySync() {
+        try {
+            await this.sync();
+        } catch (error) {
+            logger.error(`error syncing mailbox: ${error.message}`);
+        }
+    }
+
     async startService() {
-        this.sync();
+        if (this.config === undefined) {
+            logger.warn('mailbox service not configured, skip sync');
+            return;
+        }
+
+        await this.trySync();
+        setInterval(async () => {
+            await this.trySync();
+        }, 1000 * 60 * 1);
     }
 
     async getEmailHeaderList() {

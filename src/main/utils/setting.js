@@ -2,32 +2,41 @@ const z = require("zod");
 const path = require('path');
 const fs = require('fs');
 const { isMainThread, workerData } = require('worker_threads');
+const { platform } = require("os");
 
 
 const ProviderSchema = z.object({
-    name: z.string().default('openrouter'),
-    base_url: z.string().default('https://openrouter.ai/api/v1'),
-    api_key: z.string().default(''),
-    no_proxy: z.boolean().default(false)
+    name: z.string().default('openrouter').describe('模型提供商名称'),
+    base_url: z.string().default('https://openrouter.ai/api/v1').describe('模型提供商的 API 地址'),
+    api_key: z.string().default('').describe('模型提供商的 API 密钥'),
+    no_proxy: z.boolean().default(false).describe('是否禁用代理')
 })
 
 const ModelSchema = z.object({
-    alias: z.string().default('model_alias'),
-    provider_name: z.string().default('openrouter'),
-    model_name: z.string().default('google/gemini-2.5-flash')
+    alias: z.string().default('model_alias').describe('模型别名(在本地配置中使用的名称)'),
+    provider_name: z.string().default('openrouter').describe('模型提供商'),
+    model_name: z.string().default('google/gemini-2.5-flash').describe('模型名称(在提供商一侧的名称)')
 })
 
 const FSEntrySchema = z.object({
-    root: z.string().default('C:\\Users'),
+    root: z.string().default(process.env.HOME),
     include_patterns: z.array(z.string()).default([
         "**/*.{txt,md}",
         "**/*.{pdf,doc,docx,ppt,pptx,xls,xlsx,csv}",
         "**/*.{json,yaml,yml,xml,html,css,js}",
     ]),
     exclude_patterns: z.array(z.string()).default([
-        "C:\\Windows\\**",
-        "C:\\Temp\\**",
-        "**\\node_modules\\**"
+        "C:/Windows/**",
+        "C:/Temp/**",
+        "**/node_modules/**",
+        "**/.git/**",
+        "**/.DS_Store/**",
+        "**/.idea/**",
+        "**/.vscode/**",
+        "**/.pytest_cache/**",
+        "**/.mypy_cache/**",
+        "**/.hvigor/**",
+        "**/site-packages/**",
     ]),
 })
 
@@ -35,13 +44,17 @@ var ApplicationConfigSchema = z.object({});
 
 function getSettingSchema() {
     return z.object({
-        default_model: z.string().default(''),
-        default_intent_parsing_model: z.string().default(''),
-        default_embedding_model: z.string().default(''),
-        providers: z.array(ProviderSchema).default([]),
-        models: z.array(ModelSchema).default([]),
-        filesystems: z.array(FSEntrySchema).default([]),
-        applications: ApplicationConfigSchema.default({})
+        default_model: z.string()
+            .describe('在对话等场景中使用的默认模型')
+            .default(''),
+        default_intent_parsing_model: z.string().describe('在意图解析中使用的多模态模型').default(''),
+        default_embedding_model: z.string().describe('知识库，检索使用的中使用的向量嵌入模型').default(''),
+        providers: z.array(ProviderSchema).describe('可用AI模型提供商').default([]),
+        models: z.array(ModelSchema)
+            .describe('可用AI模型')
+            .default([]),
+        filesystems: z.array(FSEntrySchema).describe('AI文件系统相关配置').default([]),
+        applications: ApplicationConfigSchema.describe('FillipDesk应用相关配置').default({})
     })
 }
 
@@ -224,4 +237,4 @@ function getTaskDirectory() {
     return taskDirectory;
 }
 
-module.exports = { getAppDirectory, getLogDirectory, getTaskDirectory, Setting, ModelInstance }
+module.exports = { getAppDirectory, getLogDirectory, getTaskDirectory, Setting, ModelInstance, getSettingSchema }

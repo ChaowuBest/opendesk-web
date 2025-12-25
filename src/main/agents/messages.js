@@ -164,6 +164,24 @@ class ToolCallMessagePart {
     }
 
     /**
+     * 用来生成OpenAI工具调用的Assistant消息中的tool_calls
+     * @returns {object[]}
+     */
+    toOpenAIToolCalls() {
+        return this.toolcalls.map(toolcall => {
+            return {
+                id: toolcall.id,
+                type: 'function',
+                function: {
+                    name: toolcall.tool_name,
+                    arguments: toolcall.args_string
+                }
+            }
+        });
+    }
+
+    /**
+     * 用来生成OpenAI工具调用的Response消息
      * @returns {object[]}
      */
     toOpenAIMessagePart() {
@@ -445,17 +463,27 @@ class AssistantMessage {
 
     toOpenAIMessage() {
         var content = [];
+        var toolcalls = [];
         for (let part of this.content) {
-            if (part.type !== 'reasoning') {
-                let openai_part = part.toOpenAIMessagePart();
-                if (Array.isArray(openai_part)) {
-                    content.push(...openai_part);
-                } else {
-                    content.push(openai_part);
-                }
+            switch (part.type) {
+                case 'reasoning':
+                    break;
+                case 'tool_call':
+                    toolcalls.push(...part.toOpenAIToolCalls());
+                    break;
+                case 'text':
+                    let openai_part = part.toOpenAIMessagePart();
+                    if (Array.isArray(openai_part)) {
+                        content.push(...openai_part);
+                    } else {
+                        content.push(openai_part);
+                    }
+                    break;
+                default:
+                    throw new Error(`unsupported part type ${part.type}`);
             }
         }
-        return { role: this.role, content: content }
+        return { role: this.role, content: content, tool_calls: toolcalls }
     }
 
     getOpenAIToolMessages() {
