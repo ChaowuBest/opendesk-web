@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Tray, globalShortcut, ipcMain, shell } = require('electron')
+const { app, BrowserWindow, Tray, globalShortcut, nativeImage, ipcMain, shell, Menu } = require('electron')
 const { GlobalState } = require('./states/global')
 const { Setting, getSettingSchema } = require('./utils/setting')
 const { openFloatWindow } = require('./windows/floatwindow')
@@ -19,6 +19,15 @@ if (require('electron-squirrel-startup')) {
 
 /** @type {BrowserWindow | null} */
 var globalMainWindow = null;
+/** @type {Tray | null} */
+var globalTray = null;
+/** @type {boolean} */
+var isAppQuitting = false;
+
+app.on('before-quit', () => {
+  isAppQuitting = true;
+});
+
 
 const iconPath = path.join(__dirname, '..', 'assets', 'images', 'icon_round.png');
 
@@ -38,6 +47,16 @@ const createWindow = () => {
 
   mainWindow.setMenu(null)
   mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'))
+
+  mainWindow.on('close', (event) => {
+    if (!isAppQuitting) {
+      // 如果不是应用要退出，仅仅是窗口关闭，则拦截并隐藏
+      event.preventDefault();
+      mainWindow.hide();
+    }
+    // 如果 isAppQuitting 为 true，则不执行 preventDefault，窗口正常销毁
+  });
+
   globalMainWindow = mainWindow;
 }
 
@@ -173,13 +192,36 @@ const registerSettingAPIHandlers = () => {
 }
 
 const registerHotKeys = () => {
-  const ret = globalShortcut.register('Alt+Space', () => {
-    openFloatWindow();
-  })
-
-  if (!ret) {
-    console.log('hotkey register failed, possibly because the hot key is already in use')
+  var hotkey = 'Alt+Space';
+  if (process.platform === 'darwin') {
+    hotkey = 'Option+Space';
   }
+  const ret = globalShortcut.register(hotkey, () => {
+    // todo: 意图理解还没成熟，先显示主窗口
+    // openFloatWindow();
+    globalMainWindow.show();
+    globalMainWindow.webContents.send('command:openHomePage')
+  })
+  if (!ret) {
+    console.log(`hotkey ${hotkey} register failed, possibly because the hot key is already in use`)
+  }
+}
+
+const registerTray = () => {
+  var icon = nativeImage.createFromPath(iconPath);
+  icon = icon.resize({ width: 22, height: 22 });
+  const menu = Menu.buildFromTemplate([
+    { label: '打开主窗口', click: () => { globalMainWindow.show(); } },
+    { type: 'separator' },
+    { label: '退出', click: () => { app.quit(); } }
+  ])
+
+  globalTray = new Tray(icon);
+  globalTray.setToolTip('Fillip Desk | 弹指神通');
+  globalTray.setContextMenu(menu);
+  globalTray.on('click', () => {
+    globalMainWindow.show();
+  })
 }
 
 app.whenReady().then(() => {
@@ -189,11 +231,11 @@ app.whenReady().then(() => {
   registerFSAPIHandlers();
   registerSettingAPIHandlers();
   registerHotKeys();
+  registerTray();
 
   FSService.startFSService();
   ApplicationRegistry.registerApplication(new SearchApplication());
   ApplicationRegistry.registerApplication(new MailboxApplication());
-  // globalMainWindow.webContents.openDevTools();
 })
 
 app.on('will-quit', () => {

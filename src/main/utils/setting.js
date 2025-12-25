@@ -18,6 +18,24 @@ const ModelSchema = z.object({
     model_name: z.string().default('google/gemini-2.5-flash').describe('模型名称(在提供商一侧的名称)')
 })
 
+var defaultExcludePatterns = [
+    "C:/Windows/**",
+    "C:/Temp/**",
+    "**/node_modules/**",
+    "**/.git/**",
+    "**/.DS_Store/**",
+    "**/.idea/**",
+    "**/.vscode/**",
+    "**/.pytest_cache/**",
+    "**/.mypy_cache/**",
+    "**/.hvigor/**",
+    "**/site-packages/**",
+]
+
+if (process.platform === 'darwin') {
+    defaultExcludePatterns.push(`${process.env.HOME}/Library/**`);
+}
+
 const FSEntrySchema = z.object({
     root: z.string().default(process.env.HOME),
     include_patterns: z.array(z.string()).default([
@@ -25,19 +43,7 @@ const FSEntrySchema = z.object({
         "**/*.{pdf,doc,docx,ppt,pptx,xls,xlsx,csv}",
         "**/*.{json,yaml,yml,xml,html,css,js}",
     ]),
-    exclude_patterns: z.array(z.string()).default([
-        "C:/Windows/**",
-        "C:/Temp/**",
-        "**/node_modules/**",
-        "**/.git/**",
-        "**/.DS_Store/**",
-        "**/.idea/**",
-        "**/.vscode/**",
-        "**/.pytest_cache/**",
-        "**/.mypy_cache/**",
-        "**/.hvigor/**",
-        "**/site-packages/**",
-    ]),
+    exclude_patterns: z.array(z.string()).default(defaultExcludePatterns),
 })
 
 var ApplicationConfigSchema = z.object({});

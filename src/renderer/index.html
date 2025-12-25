@@ -69,6 +69,16 @@
         }
     }
 
+    const openHomePage = () => {
+        document.querySelector('#rightPanel').innerHTML = `
+        <home-page style="width: 100%; height: 100%;"/>
+        `
+    }
+
+    window.settingAPI.registerCommandCallback('openHomePage', () => {
+        openHomePage();
+    })
+
     window.globalControlAPI = {
         openSettingEditor: () => {
             document.querySelector('#rightPanel').innerHTML = `
@@ -84,9 +94,7 @@
             openTask(taskId)
         },
         openHomePage: () => {
-            document.querySelector('#rightPanel').innerHTML = `
-            <home-page style="width: 100%; height: 100%;"/>
-            `
+            openHomePage();
         },
         openApplication: async (bundleName) => {
             document.querySelector('#rightPanel').innerHTML = `

@@ -1,5 +1,9 @@
 const { FusesPlugin } = require('@electron-forge/plugin-fuses');
 const { FuseV1Options, FuseVersion } = require('@electron/fuses');
+const path = require('path');
+
+var iconPath = '';
+
 
 
 module.exports = {
@@ -7,6 +11,10 @@ module.exports = {
     asar: true,
     platforms: ['win32', 'darwin'],
     arch: ['x64', 'arm64'],
+    icon: path.join(
+      __dirname, 'src', 'assets', 'images',
+      process.platform === 'darwin' ? 'icon_round.icns' : 'icon_round.png'
+    ),
   },
   rebuildConfig: {},
   makers: [
@@ -21,9 +29,12 @@ module.exports = {
       },
     },
     {
-      name: '@electron-forge/maker-zip',
+      name: '@electron-forge/maker-dmg',
       platforms: ['darwin'],
-      config: {},
+      config: {
+        name: "FillipDesk",
+        productName: "Fillip Desk"
+      },
     },
     {
       name: '@electron-forge/maker-deb',

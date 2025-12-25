@@ -155,6 +155,14 @@ class FSStorage {
         let totalTime = Date.now() - startTime;
         logger.info(`saving ${files.length} files to nedb database: ${totalTime}ms`);
 
+        // 这里按照扩展名统计一下不同扩展名的数量，打log出来
+        const extensionCount = {};
+        for (const file of files) {
+            const ext = file.filename.lastIndexOf('.') !== -1 ? file.filename.slice(file.filename.lastIndexOf('.')).toLowerCase() : '';
+            extensionCount[ext] = (extensionCount[ext] || 0) + 1;
+        }
+        logger.info(`Extension Distribution (filenames to embed): ${JSON.stringify(extensionCount)}`);
+
         await this.saveFilenameEmbeddings(files.map(file => file.filename));
     }
 

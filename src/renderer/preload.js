@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, ipcMain } = require('electron');
 
 if (window.self !== window.top) {
     /** @type {string | null} */
@@ -126,6 +126,11 @@ if (window.self !== window.top) {
     })
 
     contextBridge.exposeInMainWorld('settingAPI', {
+        registerCommandCallback: (command, callback) => {
+            ipcRenderer.on(`command:${command}`, (event, ...args) => {
+                callback(...args)
+            })
+        },
         loadSettingSchema: async () => {
             const result = await ipcRenderer.invoke('setting:loadSettingSchema');
             if (result.status !== 'ok') {
