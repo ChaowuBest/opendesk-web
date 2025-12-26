@@ -10,19 +10,23 @@ module.exports = {
     arch: ['x64', 'arm64'],
     icon: path.join(
       __dirname, 'src', 'assets', 'images',
-      process.platform === 'darwin' ? 'icon_round.icns' : 'icon_round.png'
+      process.platform === 'darwin' ? 'icon_round.icns' : 'icon_round.ico'
     ),
   },
   rebuildConfig: {},
   makers: [
     {
-      name: '@electron-forge/maker-squirrel',
+      name: '@electron-forge/maker-wix',
       platforms: ['win32'],
       config: {
         name: "FillipDesk",
-        productName: "Fillip Desk",
         setupExe: 'FillipDesk-${version}-Setup.exe',
-        remoteReleases: ''
+        manufacturer: 'OS Kernel Lab, Huawei.',
+        description: 'An All-in-One AI Office Suite for Productivity Scenarios',
+        shortcutFolderName: 'FillipDesk',
+        language: 1033,
+        upgradeCode: '017f8634-a16c-4194-8c94-d9a3f1319d13',
+        icon: path.join(__dirname, 'src', 'assets', 'images', 'icon_round.ico'),
       },
     },
     {
@@ -58,5 +62,5 @@ module.exports = {
       [FuseV1Options.EnableEmbeddedAsarIntegrityValidation]: true,
       [FuseV1Options.OnlyLoadAppFromAsar]: true,
     }),
-  ],
+  ]
 };
