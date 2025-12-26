@@ -32,12 +32,16 @@ var defaultExcludePatterns = [
     "**/site-packages/**",
 ]
 
+function getHomeDirectory() {
+    return process.env.HOME || process.env.USERPROFILE || "";
+}
+
 if (process.platform === 'darwin') {
-    defaultExcludePatterns.push(`${process.env.HOME}/Library/**`);
+    defaultExcludePatterns.push(`${getHomeDirectory()}/Library/**`);
 }
 
 const FSEntrySchema = z.object({
-    root: z.string().default(process.env.HOME),
+    root: z.string().default(getHomeDirectory()),
     include_patterns: z.array(z.string()).default([
         "**/*.{txt,md}",
         "**/*.{pdf,doc,docx,ppt,pptx,xls,xlsx,csv}",
@@ -118,7 +122,8 @@ class Setting {
     }
 
     /**
-     *
+     * Register the application settings so that they can be managed and
+     * edited from the system setting editor.
      * @param {BaseApplication} application
      */
     static registerApplicationSettings(application) {
@@ -206,6 +211,10 @@ class Setting {
             throw new Error(`default intent parsing model ${this.data.default_intent_parsing_model} not found`);
         }
         return model;
+    }
+
+    static getSettingSchema() {
+        return getSettingSchema();
     }
 }
 

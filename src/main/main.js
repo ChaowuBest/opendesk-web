@@ -1,9 +1,9 @@
 const { app, BrowserWindow, Tray, globalShortcut, nativeImage, ipcMain, shell, Menu } = require('electron')
 const { GlobalState } = require('./states/global')
-const { Setting, getSettingSchema } = require('./utils/setting')
+const { Setting } = require('./utils/setting')
 const { openFloatWindow } = require('./windows/floatwindow')
 const { FSService } = require('./services/fs/service')
-const { LogStream } = require('./utils/logger')
+const { LogStream, logger } = require('./utils/logger')
 const convert = require('ansi-to-html');
 const { ApplicationRegistry } = require('./applications/base');
 const { SearchApplication } = require('./applications/search/app');
@@ -139,7 +139,14 @@ const registerFSAPIHandlers = () => {
 
 const registerSettingAPIHandlers = () => {
   ipcMain.handle('setting:loadSettingSchema', () => {
-    return { status: 'ok', data: z.toJSONSchema(getSettingSchema()) };
+    try {
+      const schema = Setting.getSettingSchema();
+      return { status: 'ok', data: z.toJSONSchema(schema) };
+    } catch (error) {
+      logger.error(`error loading setting schema`, error);
+      logger.error(error.stack)
+      return { status: 'error', message: error.message };
+    }
   })
   ipcMain.handle('setting:loadSettingObject', () => {
     return { status: 'ok', data: Setting.getInstance().getData() };

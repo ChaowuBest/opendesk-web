@@ -159,8 +159,12 @@ parentPort.on('message', async (message) => {
                 if (!storage) {
                     storage = await FSStorage.getInstance();
                 }
-                const result = await storage.searchFilesByNameSimilarity(payload.query, payload.topK, payload.threshold);
-                parentPort.postMessage({ type: 'response', id, status: 'ok', data: result });
+                try {
+                    const result = await storage.searchFilesByNameSimilarity(payload.query, payload.topK, payload.threshold);
+                    parentPort.postMessage({ type: 'response', id, status: 'ok', data: result });
+                } catch (ex) {
+                    parentPort.postMessage({ type: 'response', id, status: 'error', message: ex.message });
+                }
                 break;
             }
 
