@@ -15,10 +15,25 @@ class RecallEntryWidget extends HTMLElement {
 
     connectedCallback() {
         this.render();
-        this.reload();
+        this.reloadPreviewArea();
+        window.applicationAPI.sendMessageToApplication('getWindowList').then(windows => {
+            console.info('windows:', windows);
+        });
     }
 
-    async reload() {
+    async updateWindowSelect() {
+        const windows = await window.applicationAPI.sendMessageToApplication('getWindowList');
+        const windowSelect = this.querySelector('#recall-window-select');
+
+        let options = [`<option value='all' ${this.currentActivity?.selectedWindowId === 'all' ? 'selected' : ''}>全部窗口</option>`];
+        for (const window of windows) {
+            const selected = this.currentActivity?.selectedWindowId === window.windowId.toString() ? 'selected' : '';
+            options.push(`<option value="${window.windowId}" ${selected}>${window.windowId} - ${window.windowTitle}</option>`);
+        }
+        windowSelect.innerHTML = options.join('\n');
+    }
+
+    async reloadPreviewArea() {
         const recallStatus = await this.getRecallStatus();
         this.currentStatus = recallStatus.status;
         this.currentActivity = recallStatus.activity;
@@ -77,7 +92,7 @@ class RecallEntryWidget extends HTMLElement {
                     </div>
                 </div>
                 <!-- 活动信息与控制区（右侧） -->
-                <div class="w-[340px] h-full flex flex-col bg-white/80 rounded-2xl border border-gray-100 shadow p-5 gap-3">
+                <div class="w-[340px] h-full flex flex-col bg-white/80 rounded-2xl border border-gray-100 shadow p-4 gap-3">
                     <div>
                         <div class="text-lg font-bold text-rose-600 break-all">
                             ${recallStatus.activity?.activityName}
@@ -86,7 +101,7 @@ class RecallEntryWidget extends HTMLElement {
                         ${recallStatus.activity?.activityId}
                     </div>
                     </div>
-                    <div class="flex flex-col gap-2 text-sm text-gray-600">
+                    <div class="flex flex-col gap-2 text-xs text-gray-600">
                         <div>
                             <span class="font-medium text-gray-500">开始时间：</span>
                             <span id="recall-recording-start-time">
@@ -98,12 +113,16 @@ class RecallEntryWidget extends HTMLElement {
                             <span id="recall-recording-duration">--:--</span>
                         </div>
                     </div>
-                    <div>
-                        <div class="text-gray-400 italic text-sm">自动记录屏幕活动和截图全过程，便于回顾和检索。</div>
+                    <div class='text-xs'>
+                        <label for="recall-window-select" class="block text-gray-500 font-medium mb-1">选择需要截图的窗口：</label>
+                        <select id="recall-window-select" class="w-full px-3 py-2 rounded-full border border-gray-300 rounded focus:outline-none focus:ring focus:border-blue-300 bg-white">
+                        </select>
+                        <div class="text-gray-400 italic mt-1">你可以选择只对某个窗口进行截图，默认为全部窗口。</div>
                     </div>
                     <button
                         id="stop-recall-capture-btn"
-                        class="mt-4 py-2 w-full rounded-xl bg-gray-700 hover:bg-gray-900 text-white font-medium text-base shadow transition"
+                        class="mt-1 py-2 w-full rounded-xl bg-gray-700 hover:bg-gray-900 text-white font-medium text-base shadow transition mt-auto"
+                        style="margin-top: auto;"
                     >
                         <span class="inline-flex items-center gap-2">
                             <svg class="h-5 w-5 text-white" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2" fill="white" stroke="#ef4444"/></svg>
@@ -119,12 +138,21 @@ class RecallEntryWidget extends HTMLElement {
                 this.querySelector('#stop-recall-capture-btn').onclick = () => {
                     this.stopRecallCapture();
                 }
+                this.querySelector('#recall-window-select').onchange = (event) => {
+                    const selectedWindowId = event.target.value;
+                    this.currentActivity.selectedWindowId = selectedWindowId;
+                    window.applicationAPI.sendMessageToApplication('changeSelectedWindow', selectedWindowId);
+                }
                 // 然后开始实时更新预览
-                this.loadLatestThumbnail();
-                this.updateRecordingDuration();
+                const updatePreview = async () => {
+                    await this.loadLatestThumbnails();
+                    await this.updateRecordingDuration();
+                    await this.updateWindowSelect();
+                }
+
+                updatePreview();
                 this.reloadThumbnailInterval = setInterval(() => {
-                    this.loadLatestThumbnail();
-                    this.updateRecordingDuration();
+                    updatePreview();
                 }, this.reloadThumbnailIntervalMs);
             });
         }
@@ -191,12 +219,13 @@ class RecallEntryWidget extends HTMLElement {
 
     async startRecallCapture(activityName) {
         const recallStatus = await window.applicationAPI.sendMessageToApplication('startRecallCapture', activityName);
-        this.reload();
+        await this.reloadPreviewArea();
+        await this.reloadHistoryActivities();
     }
 
     async stopRecallCapture() {
         const recallStatus = await window.applicationAPI.sendMessageToApplication('stopRecallCapture');
-        this.reload();
+        this.reloadPreviewArea();
     }
 
     async updateRecordingDuration() {
@@ -217,18 +246,29 @@ class RecallEntryWidget extends HTMLElement {
         document.querySelector('#recall-recording-duration').innerHTML = durationString;
     }
 
-    async loadLatestThumbnail() {
+    async loadLatestThumbnails() {
         if (this.currentStatus != 'recording') {
             console.warn('not recording, skipping thumbnail load');
             return;
         }
 
-        const latestThumbnail = await window.applicationAPI.sendMessageToApplication('getLatestThumbnail');
-        document.querySelector('#recall-current-activity-preview').innerHTML = `
-        <div class="flex items-center justify-center h-[56px]">
-            <img src="${latestThumbnail.thumbnails[1]}" alt="latest thumbnail">
-        </div>
-        `;
+        const latestThumbnail = await window.applicationAPI.sendMessageToApplication('getLatestThumbnails');
+        if (latestThumbnail.thumbnails.length === 1) {
+            document.querySelector('#recall-current-activity-preview').innerHTML = `
+            <div class="flex items-center justify-center h-[56px]">
+                <img src="${latestThumbnail.thumbnails[0]}" alt="latest thumbnail">
+            </div>
+            `;
+        } else {
+            // 水平展示多个来源的缩略图
+            document.querySelector('#recall-current-activity-preview').innerHTML = `
+                <div class="flex flex-row gap-2 items-center justify-center">
+                    ${latestThumbnail.thumbnails.map(
+                        (src, idx) => `<img src="${src}" alt="thumbnail ${idx + 1}" class="h-[56px] rounded shadow border" />`
+                    ).join('\n')}
+                </div>
+            `;
+        }
     }
 
     render() {

@@ -1,6 +1,6 @@
 const { BaseWorker } = require("../../base");
 const { logger } = require('../../../utils/logger');
-const { Monitor, Image } = require('node-screenshots');
+const { Monitor, Image, Window } = require('node-screenshots');
 
 const path = require('path');
 const fs = require('fs');
@@ -32,9 +32,11 @@ class RecallActivity {
         this.activityInterval = null;
         /** @type {number} */
         this.activityIntervalMs = 5000;
+        /** @type {string} */
+        this.selectedWindowId = 'all';
 
-        /** @type {Map<number, Buffer>} */
-        this.latestThumbnail = new Map();
+        /** @type {Buffer[]} */
+        this.latestThumbnails = []
     }
 
     toJSON() {
@@ -117,6 +119,14 @@ class RecallWorker extends BaseWorker {
         );
     }
 
+    async changeSelectedWindow(selectedWindowId) {
+        if (!this.currentActivity) {
+            return { success: false, message: 'recall capture is not running' };
+        }
+        this.currentActivity.selectedWindowId = selectedWindowId;
+        return { success: true };
+    }
+
     /**
      * 开始定时截屏
      * @param {string} activityName 活动名称
@@ -167,18 +177,15 @@ class RecallWorker extends BaseWorker {
         return { success: true };
     }
 
-    async getLatestThumbnail() {
+    async getLatestThumbnails() {
         if (!this.currentActivity) {
             return { success: false, message: 'recall capture is not running' };
         }
 
-        // Return stored thumbnails in currentActivity as base64 strings in JSON
-        // currentActivity.latestThumbnail is a Map of monitorId => Buffer
-        const thumbnails = {};
-        for (const [monitorId, buffer] of this.currentActivity.latestThumbnail.entries()) {
-            thumbnails[monitorId] = `data:image/webp;base64,${buffer.toString('base64')}`;
-        }
-        return { success: true, thumbnails };
+        return {
+            success: true,
+            thumbnails: this.currentActivity.latestThumbnails.map(buffer => `data:image/webp;base64,${buffer.toString('base64')}`)
+        };
     }
 
     async requestScreenshot() {
@@ -190,16 +197,28 @@ class RecallWorker extends BaseWorker {
             fs.mkdirSync(saveDir, { recursive: true });
         }
 
-        let monitors = Monitor.all();
+        let sources = [];
+        if (this.currentActivity.selectedWindowId === 'all') {
+            sources = Monitor.all();
+        } else {
+            let window = Window.all().find(window => window.id.toString() === this.currentActivity.selectedWindowId);
+            if (!window) {
+                logger.warn(`window ${this.currentActivity.selectedWindowId} not found, using all monitors instead`);
+                sources = Monitor.all();
+                this.currentActivity.selectedWindowId = 'all';
+            }
+            sources = [window];
+        }
 
-        for (let monitor of monitors) {
+        let latestThumbnails = [];
+        for (let [index, source] of sources.entries()) {
             try {
-                let image = await monitor.captureImage();
+                let image = await source.captureImage();
                 let pngImage = await image.toPng();
 
                 const now = new Date();
 
-                const fileName = `screenshot_${now.getTime()}_${monitor.id}.webp`;
+                const fileName = `screenshot_${now.getTime()}_${index}.webp`;
                 const filePath = path.join(saveDir, fileName);
                 const finalBuffer = await sharp(pngImage)
                     .webp({ quality: 70, method: 6 })
@@ -213,13 +232,15 @@ class RecallWorker extends BaseWorker {
                     .toBuffer();
 
                 fs.writeFileSync(thumbnailPath, thumbnailBuffer);
-                this.currentActivity.latestThumbnail.set(monitor.id, thumbnailBuffer);
+
+                latestThumbnails.push(thumbnailBuffer);
                 logger.info(`recall screenshot saved: ${filePath}`);
             } catch (error) {
-                logger.error(`failed to take screenshot for monitor ${monitor.id}: ${error.message}`);
+                logger.error(`failed to take screenshot for source ${index}: ${error.message}`);
             }
         }
 
+        this.currentActivity.latestThumbnails = latestThumbnails;
         return { success: true };
     }
 

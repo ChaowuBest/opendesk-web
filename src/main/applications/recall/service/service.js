@@ -1,8 +1,7 @@
 const { BaseService } = require("../../base");
 const path = require('path');
-const { desktopCapturer } = require('electron');
+const { Window } = require('node-screenshots')
 const { logger } = require('../../../utils/logger');
-const { getAppDirectory } = require('../../../utils/setting');
 const { shell } = require('electron');
 const fs = require('fs');
 
@@ -26,7 +25,26 @@ class RecallService extends BaseService {
     }
 
     static async stopRecallCapture() {
-        return await this.sendMessage('stopRecallCapture', {});
+        return await this.sendMessage('stopRecallCapture');
+    }
+
+    static async getWindowList() {
+        let windows = Window.all();
+        let result = []
+        for (const window of windows) {
+            if (window.width < 200 || window.height < 200) {
+                continue;
+            }
+            result.push({
+                windowId: window.id,
+                windowTitle: window.title
+            })
+        }
+        return result;
+    }
+
+    static async changeSelectedWindow(selectedWindowId) {
+        return await this.sendMessage('changeSelectedWindow', selectedWindowId);
     }
 
     static async getHistoryActivities(startTimestamp, endTimestamp) {
@@ -50,8 +68,8 @@ class RecallService extends BaseService {
         return { success: true, message: 'history activity opened' };
     }
 
-    static async getLatestThumbnail() {
-        return await this.sendMessage('getLatestThumbnail', {});
+    static async getLatestThumbnails() {
+        return await this.sendMessage('getLatestThumbnails', {});
     }
 
 }

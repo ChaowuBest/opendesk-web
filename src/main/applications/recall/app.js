@@ -39,8 +39,12 @@ class RecallApplication extends BaseApplication {
                 return await RecallService.startRecallCapture(args[0]);
             case 'stopRecallCapture':
                 return await RecallService.stopRecallCapture();
-            case 'getLatestThumbnail':
-                return await RecallService.getLatestThumbnail();
+            case 'getWindowList':
+                return await RecallService.getWindowList();
+            case 'changeSelectedWindow':
+                return await RecallService.changeSelectedWindow(args[0]);
+            case 'getLatestThumbnails':
+                return await RecallService.getLatestThumbnails();
             case 'getHistoryActivities':
                 return await RecallService.getHistoryActivities(args[0], args[1]);
             case 'deleteHistoryActivity':
