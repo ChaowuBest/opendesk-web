@@ -8,6 +8,7 @@ const convert = require('ansi-to-html');
 const { ApplicationRegistry } = require('./applications/base');
 const { SearchApplication } = require('./applications/search/app');
 const { MailboxApplication } = require('./applications/mailbox/app');
+const { RecallApplication } = require('./applications/recall/app');
 const { z } = require('zod');
 const path = require('path');
 const converter = new convert();
@@ -16,6 +17,10 @@ const converter = new convert();
 if (require('electron-squirrel-startup')) {
   app.quit();
 }
+
+const searchApplication = new SearchApplication();
+const mailboxApplication = new MailboxApplication();
+const recallApplication = new RecallApplication();
 
 /** @type {BrowserWindow | null} */
 var globalMainWindow = null;
@@ -219,6 +224,7 @@ const registerTray = () => {
   icon = icon.resize({ width: 22, height: 22 });
   const menu = Menu.buildFromTemplate([
     { label: '打开主窗口', click: () => { globalMainWindow.show(); } },
+    { label: '录制用户活动', click: () => { recallApplication.requestCaptureActivity(); } },
     { type: 'separator' },
     { label: '退出', click: () => { app.quit(); } }
   ])
@@ -241,8 +247,9 @@ app.whenReady().then(() => {
   registerTray();
 
   FSService.startFSService();
-  ApplicationRegistry.registerApplication(new SearchApplication());
-  ApplicationRegistry.registerApplication(new MailboxApplication());
+  ApplicationRegistry.registerApplication(searchApplication);
+  ApplicationRegistry.registerApplication(mailboxApplication);
+  ApplicationRegistry.registerApplication(recallApplication);
 })
 
 app.on('will-quit', () => {

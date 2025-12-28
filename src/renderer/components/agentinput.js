@@ -122,21 +122,30 @@ class ApplicationAgentInput extends HTMLElement {
         .transition-liquid {
             transition: all 0.6s cubic-bezier(0.34, 1.56, 0.64, 1);
         }
+        /* 展开状态样式 */
+        #input-container.expanded,
+        .group:hover #input-container {
+            width: 450px;
+        }
+        #input-content.expanded,
+        .group:hover #input-content {
+            opacity: 1;
+        }
         </style>
 
         <div class="flex-none p-3 flex justify-center items-center">
             <!-- 交互容器：group 负责监听悬停 -->
             <div class="group relative flex items-center justify-center">
-                
+
                 <!-- 外部动态光晕 (只在圆框状态下明显) -->
                 <div class="absolute inset-0 bg-blue-500/30 blur-2xl rounded-full opacity-0 group-hover:opacity-0 transition-opacity duration-1500"></div>
 
                 <!-- 对话框/圆框主体 -->
-              
-                <!-- 初始：w-14 (圆) -> 悬停：w-[450px] (长条) -->
-                <div class="transition-liquid relative flex items-center bg-white/[0.18] backdrop-blur-2xl border border-white/20 shadow-2xl overflow-hidden
-                            w-14 h-14 group-hover:w-[450px] group-hover:h-14 rounded-full px-2">
-                    
+
+                <!-- 初始：w-14 (圆) -> 悬停或焦点：w-[450px] (长条) -->
+                <div id="input-container" class="transition-liquid relative flex items-center bg-white/[0.18] backdrop-blur-2xl border border-white/20 shadow-2xl overflow-hidden
+                            w-14 h-14 rounded-full px-2">
+
                     <!-- 内部液态背景 (Siri 核心) -->
                     <!-- 即使展开了，这个圆形发光体也可以作为图标保留在左侧 -->
                     <div class="flex-shrink-0 w-10 h-10 relative overflow-hidden rounded-full flex items-center justify-center">
@@ -144,15 +153,15 @@ class ApplicationAgentInput extends HTMLElement {
                     </div>
 
                     <!-- 展开后的内容：输入框和按钮 -->
-                    <!-- 使用 group-hover 控制透明度和显示 -->
-                    <div class="flex flex-1 items-center opacity-0 group-hover:opacity-100 transition-opacity duration-500 delay-100 pl-3">
+                    <!-- 使用 expanded 状态和 hover 控制透明度和显示 -->
+                    <div id="input-content" class="flex flex-1 items-center opacity-0 transition-opacity duration-500 delay-100 pl-3">
                         <input
                             id="application-agent-input-textarea"
-                            type="text" 
-                            placeholder="告诉我你想做什么..." 
-                            class="w-full bg-transparent border-none focus:ring-0 text-black placeholder-black/50 text-sm"
+                            type="text"
+                            placeholder="告诉我你想做什么..."
+                            class="w-full bg-transparent border-none p-2 rounded-full focus:ring-0 text-black placeholder-black/50 text-sm"
                         />
-                        
+
                         <!-- 快捷按钮 -->
                         <div class="flex items-center gap-2 pr-1">
                             <button class="w-8 h-8 flex items-center justify-center rounded-full bg-white/10 hover:bg-white/20 text-black/70 transition-colors">
@@ -169,12 +178,50 @@ class ApplicationAgentInput extends HTMLElement {
         </div>
         `
 
-        this.querySelector('#application-agent-input-textarea').addEventListener('focus', (e) => {
-            console.info('focus', e.target);
+        const textarea = this.querySelector('#application-agent-input-textarea');
+        const container = this.querySelector('#input-container');
+        const content = this.querySelector('#input-content');
+        const group = container.closest('.group');
+
+        // 跟踪hover和focus状态
+        let isHovered = false;
+        let isFocused = false;
+
+        // 更新展开状态的函数
+        const updateExpandedState = () => {
+            if (isFocused || isHovered) {
+                container.classList.add('expanded');
+                content.classList.add('expanded');
+            } else {
+                container.classList.remove('expanded');
+                content.classList.remove('expanded');
+            }
+        };
+
+        // 焦点时展开
+        textarea.addEventListener('focus', () => {
+            isFocused = true;
+            updateExpandedState();
         });
 
-        this.querySelector('#application-agent-input-textarea').addEventListener('blur', (e) => {
-            console.info('blur', e.target);
+        // 失去焦点时检查状态
+        textarea.addEventListener('blur', () => {
+            isFocused = false;
+            // 延迟检查，以便能够检测到hover状态
+            setTimeout(() => {
+                updateExpandedState();
+            }, 0);
+        });
+
+        // 处理鼠标进入和离开时的状态
+        group.addEventListener('mouseenter', () => {
+            isHovered = true;
+            updateExpandedState();
+        });
+
+        group.addEventListener('mouseleave', () => {
+            isHovered = false;
+            updateExpandedState();
         });
     }
 

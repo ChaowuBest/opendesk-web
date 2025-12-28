@@ -24,13 +24,13 @@ class BaseWorker {
             try {
                 const { type, id, payload } = message;
                 if (typeof this[type] === "function") {
-                    let result = await this[type](payload);
+                    let result = await this[type](...payload);
                     parentPort.postMessage({ type: 'response', id: id, status: 'ok', data: result });
                 } else {
                     throw new Error(`unknown message ${type}, implement this method in the worker class`);
                 }
             } catch (error) {
-                logger.error(`Worker error: ${error.message}`, error);
+                logger.error(`worker error: ${error.message}: message ${JSON.stringify(message)}`);
                 parentPort.postMessage({ type: 'response', id: message.id, status: 'error', message: error.message });
             }
         });
@@ -59,14 +59,14 @@ class BaseService {
     static applicationDataDirectory = getAppDirectory();
 
     static getWorkerPath() {
-        throw new Error('not implemented');
+        throw new Error('worker path not implemented');
     }
 
     static sendApplicationConfig(config) {
         if (!this.worker) {
             throw new Error('worker not initialized');
         }
-        this.worker.postMessage({ type: 'applicationConfigChanged', payload: config });
+        this.sendMessage('applicationConfigChanged', config);
     }
 
     static async initializeWorker() {
@@ -130,7 +130,7 @@ class BaseService {
      * @param {any} payload
      * @returns {Promise<any>}
      */
-    static async sendMessage(type, payload) {
+    static async sendMessage(type, ...payload) {
         if (!this.worker) {
             await this.initializeWorker();
         }
