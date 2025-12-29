@@ -38,18 +38,29 @@ class TaskView extends HTMLElement {
 
     renderUserMessage(user_message) {
         var content = "";
+        var hasTextPart = false;
         for (let part of user_message.content) {
             content += `<div class="${TaskView.USER_PART_CLASS_MAP[part.type]}">${part.rendered}</div>`;
+            if (part.type === 'text') {
+                hasTextPart = true;
+            }
         }
-        var html = `
-        <div class="flex items-start space-x-3 flex-row-reverse">
-            <div class="bg-[#8D6E63] text-white rounded-2xl p-3 shadow-sm max-w-4xl">
-                ${content}
-                <span class="text-xs mt-2 block">10:31</span>
+        if (hasTextPart) {
+            return `
+            <div class="flex items-start space-x-3 flex-row-reverse">
+                <div class="bg-[#8D6E63] text-white rounded-2xl p-3 shadow-sm max-w-4xl">
+                    ${content}
+                    <span class="text-xs mt-2 block">10:31</span>
+                </div>
             </div>
-        </div>
-        `
-        return html
+            `
+        } else {
+            return `
+            <div class="flex items-start space-x-3 flex-row-reverse">
+                ${content}
+            </div>
+            `
+        }
     }
 
     static USER_PART_CLASS_MAP = {

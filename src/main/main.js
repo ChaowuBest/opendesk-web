@@ -113,9 +113,12 @@ const registerTaskManagerAPIHandlers = () => {
   ipcMain.handle('taskManager:subscribeTaskListUpdate', (event) => {
     return { status: 'ok', data: globalState.taskManagerState.addSubscriber(event.sender) };
   })
-  ipcMain.handle('taskManager:submitMessage', (event, taskId, message) => {
+  ipcMain.handle('taskManager:submitMessage', async (event, taskId, details) => {
     const task = globalState.taskManagerState.getTask(taskId);
-    task.submitUserMessage(message);
+    if (details.attachedFilePaths) {
+      await task.attachFiles(details.attachedFilePaths);
+    }
+    task.submitUserMessage(details.message);
   });
 }
 

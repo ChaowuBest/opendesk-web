@@ -1,10 +1,11 @@
-const { ChatContext, UserMessage, AssistantMessage, ToolCallMessagePart } = require('../agents/messages');
+const { ChatContext, UserMessage, AssistantMessage, ToolCallMessagePart, FileMessagePart } = require('../agents/messages');
 const { LLM } = require('../agents/llm');
 const { getTaskDirectory } = require('../utils/setting');
 const path = require('path');
 const fs = require('fs');
 const { logger } = require('../utils/logger');
 const { ApplicationRegistry } = require('../applications/base');
+const officeParser = require('officeparser');
 
 
 class TaskUpdateSubscriber {
@@ -74,6 +75,18 @@ class TaskState {
             task_status: this.task_status,
             chat_context: this.chat_context.toJSON(),
         }
+    }
+
+    async attachFiles(filePaths) {
+        let user_message = new UserMessage();
+        for (let filePath of filePaths) {
+            let extname = path.extname(filePath);
+            let content = await officeParser.parseOfficeAsync(filePath);
+            logger.info(`attach file ${filePath} to task ${this.task_id} with extension ${extname}`);
+            user_message.content.push(new FileMessagePart(filePath, content));
+        }
+
+        this.chat_context.appendMessage(user_message);
     }
 
     /**

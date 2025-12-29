@@ -4,6 +4,7 @@ const markedKatex = require('marked-katex-extension');
 const hljs = require('highlight.js');
 const { logger } = require('../utils/logger');
 const { BaseTool } = require('./tool');
+const path = require('path');
 
 
 const marked = new Marked(
@@ -210,6 +211,66 @@ class ToolCallMessagePart {
     }
 }
 
+class FileMessagePart {
+    constructor(path, content) {
+        this.type = 'file';
+        this.path = path;
+        this.content = content;
+    }
+
+    toOpenAIMessagePart() {
+        return {
+            type: 'text',
+            text: `用户添加了文件附件: ${this.path}，其内容以文本形式提取如下，供你参考: <content>${this.content}</content>`
+        }
+    }
+
+    async render() {
+        this.rendered = `
+        <div class="flex items-center group cursor-pointer w-fit min-w-[280px] max-w-sm
+            bg-white/70 backdrop-blur-xl
+            rounded-xl px-3.5 py-2.5
+            border border-black/[0.08] shadow-sm
+            hover:shadow-md hover:bg-white/90 hover:-translate-y-0.5
+            transition-all duration-200 ease-out select-none">
+
+            <!-- 文件图标容器 -->
+            <div class="relative w-10 h-10 flex items-center justify-center
+                        bg-white rounded-lg shadow-[0_2px_5px_rgba(0,0,0,0.08)]
+                        mr-3 shrink-0">
+                <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M14 2H6C4.89543 2 4 2.89543 4 4V20C4 21.1046 4.89543 22 6 22H18C19.1046 22 20 21.1046 20 20V8L14 2Z" fill="#E2E2E2"/>
+                <path d="M14 2V8H20L14 2Z" fill="#B0B0B0"/>
+                <rect x="8" y="13" width="8" height="1.5" rx="0.75" fill="white"/>
+                <rect x="8" y="16" width="5" height="1.5" rx="0.75" fill="white"/>
+                </svg>
+            </div>
+
+            <!-- 文件详细信息 -->
+            <div class="flex flex-col min-w-0 flex-1 overflow-hidden">
+                <span class="text-[13px] font-medium text-gray-900 truncate tracking-tight font-sans">
+                ${path.basename(this.path)}
+                </span>
+                <span class="text-[11px] text-gray-500 font-normal leading-tight">
+                    ${path.extname(this.path).toUpperCase().slice(1)} 文档
+                </span>
+            </div>
+
+            <!-- 尾部操作图标 (通常是下拉或下载) -->
+            <div class="ml-2 text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+                <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7" />
+                </svg>
+            </div>
+        </div>
+        `;
+    }
+
+    static assign(file_message_part_obj) {
+        Object.setPrototypeOf(file_message_part_obj, FileMessagePart.prototype);
+        return file_message_part_obj;
+    }
+}
 /**
  * @class TextMessagePart
  * @property {'text'} type
@@ -291,7 +352,7 @@ class SystemMessage {
 
 /**
  * @class UserMessage
- * @property {(TextMessagePart | ImageMessagePart)[]} content
+ * @property {(TextMessagePart | ImageMessagePart | FileMessagePart)[]} content
  */
 class UserMessage {
     /**
@@ -320,6 +381,16 @@ class UserMessage {
         return this;
     }
 
+    appendPart(part) {
+        if (part.type === 'text') {
+            this.appendText(part.text);
+        } else if (part.type === 'file') {
+            this.content.push(part);
+        } else {
+            throw new Error(`unsupported part type ${part.type}`);
+        }
+    }
+
     /**
      * Append an image URL to the message
      * @param {string} image_url
@@ -336,6 +407,8 @@ class UserMessage {
             for (let part of user_message_obj.content) {
                 if (part.type === 'text') {
                     TextMessagePart.assign(part);
+                } else if (part.type === 'file') {
+                    FileMessagePart.assign(part);
                 } else {
                     throw new Error(`unsupported part type ${part.constructor.name}`);
                 }
@@ -645,5 +718,5 @@ module.exports = {
     SystemMessage, UserMessage, AssistantMessage,
     AssistantResponse,
     ChatContext,
-    ToolCallMessagePart
+    ToolCallMessagePart, FileMessagePart
 };

@@ -17,7 +17,7 @@ class HomePage extends HTMLElement {
 
         agentInput.addEventListener('submit', async (event) => {
             const task = await window.taskManagerAPI.createTask();
-            await window.taskManagerAPI.submitMessage(task, event.detail.message);
+            await window.taskManagerAPI.submitMessage(task, event.detail);
             window.globalControlAPI.openTask(task);
         });
         agentInput.addEventListener('contentChanged', (event) => {
@@ -32,6 +32,10 @@ class HomePage extends HTMLElement {
             this.__search_timeout = setTimeout(() => {
                 fileListView.startSearch(event.detail.value);
             }, 800);
+        });
+        fileListView.addEventListener('addFileToSession', (event) => {
+            const file_path = event.detail.file_path;
+            agentInput.attachFilePath(file_path);
         });
     }
 

@@ -1,18 +1,37 @@
 class AgentInput extends HTMLElement {
+
     constructor() {
         super();
+        this.attachedFilePaths = [];
     }
 
     connectedCallback() {
         this.render();
-        this.setUpEventListeners();
     }
 
     disconnectedCallback() {
 
     }
 
+    attachFilePath(filePath) {
+        this.attachedFilePaths.push(filePath);
+        this.render();
+    }
+
     render() {
+        let fileItems = this.attachedFilePaths.map(filePath => {
+            let fileName = filePath.split('/').pop();
+            return `
+            <div class="px-3 py-1 bg-blue-50 text-blue-700 hover:text-gray-600 hover:bg-blue-20 rounded-full border border-blue-100 transition-all shadow-sm text-xs cursor-pointer">
+                <i class="fas fa-paperclip"></i>
+                <span class="max-w-[120px] truncate">${fileName}</span>
+                <button class="hover:text-red-500 leading-none">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            `;
+        }).join('');
+
         this.innerHTML = `
         <div class="w-full p-1.5 rounded-[28px] bg-white/40 border border-gray/60 shadow-[0_10px_40px_-15px_rgba(0,0,0,0.08)]">
             <div class="bg-white rounded-[22px] p-1 shadow-sm border border-gray-100/40">
@@ -30,14 +49,9 @@ class AgentInput extends HTMLElement {
                     <!-- 左侧工具按钮 -->
                     <div class="flex items-center space-x-3">
                         <!-- 附件 -->
-                        <button class="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-50 rounded-md transition-colors">
-                            <i class="fas fa-paperclip text-lg"></i>
-                        </button>
-
-                        <!-- 语音 -->
-                        <button class="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-50 rounded-md transition-colors">
-                            <i class="fas fa-microphone text-lg"></i>
-                        </button>
+                        <div id="agent-input-attached-file-list" class="flex items-center gap-1">
+                            ${fileItems}
+                        </div>
                     </div>
 
                     <!-- 右侧按钮 -->
@@ -50,6 +64,8 @@ class AgentInput extends HTMLElement {
             </div>
         </div>
         `
+
+        this.setUpEventListeners();
     }
 
     setUpEventListeners() {
@@ -65,7 +81,8 @@ class AgentInput extends HTMLElement {
 
             const submitEvent = new CustomEvent('submit', {
                 detail: {
-                    message: message
+                    message: message,
+                    attachedFilePaths: this.attachedFilePaths
                 },
                 bubbles: true
             });

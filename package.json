@@ -51,6 +51,7 @@
     "nedb-promises": "^6.2.3",
     "node-pop3": "^0.11.0",
     "node-screenshots": "^0.2.1",
+    "officeparser": "^5.2.2",
     "openai": "^6.10.0",
     "p-map": "^4.0.0",
     "p-queue": "^9.0.1",
