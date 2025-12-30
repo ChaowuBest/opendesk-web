@@ -12,10 +12,10 @@
     "start:win32": "chcp 65001 && electron-forge start",
     "start:darwin": "electron-forge start",
     "package": "run-script-os",
-    "package:win32": "electron-forge package --platform=win32 --arch=x64,arm64",
+    "package:win32": "electron-forge package --platform=win32",
     "package:darwin": "electron-forge package --platform=darwin",
     "make": "run-script-os",
-    "make:win32": "electron-forge make --skip-package --platform=win32 --arch=x64,arm64",
+    "make:win32": "electron-forge make --skip-package --platform=win32",
     "make:darwin": "electron-forge make --skip-package --platform=darwin"
   },
   "devDependencies": {
