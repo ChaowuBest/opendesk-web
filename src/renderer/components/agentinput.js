@@ -20,6 +20,7 @@ class AgentInput extends HTMLElement {
 
     render() {
         let fileItems = this.attachedFilePaths.map(filePath => {
+            console.info('filePath', filePath);
             let fileName = filePath.split('/').pop();
             return `
             <div class="px-3 py-1 bg-blue-50 text-blue-700 hover:text-gray-600 hover:bg-blue-20 rounded-full border border-blue-100 transition-all shadow-sm text-xs cursor-pointer">
@@ -33,7 +34,7 @@ class AgentInput extends HTMLElement {
         }).join('');
 
         this.innerHTML = `
-        <div class="w-full p-1.5 rounded-[28px] bg-white/40 border border-gray/60 shadow-[0_10px_40px_-15px_rgba(0,0,0,0.08)]">
+        <div id="agent-input-container" class="w-full p-1.5 rounded-[28px] bg-white/40 border border-gray/60 shadow-[0_10px_40px_-15px_rgba(0,0,0,0.08)]">
             <div class="bg-white rounded-[22px] p-1 shadow-sm border border-gray-100/40">
                 <!-- 主要输入区域 -->
                 <div class="p-3">
@@ -69,6 +70,7 @@ class AgentInput extends HTMLElement {
     }
 
     setUpEventListeners() {
+        const container = this.querySelector('#agent-input-container')
         const textarea = this.querySelector('#agent-input-textarea')
         const submitBtn = this.querySelector('#agent-input-submit-btn')
 
@@ -92,6 +94,21 @@ class AgentInput extends HTMLElement {
 
         // 按钮点击事件
         submitBtn.addEventListener('click', handleSubmit)
+
+        container.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+        })
+
+        container.addEventListener('drop', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const files = e.dataTransfer.files;
+            for (const file of files) {
+                console.info('attach dropped file', file, window.fsAPI.getFilePath(file));
+                this.attachFilePath(window.fsAPI.getFilePath(file));
+            }
+        })
 
         // Ctrl+Enter 快捷键
         textarea.addEventListener('keydown', (e) => {

@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer, ipcMain } = require('electron');
+const { contextBridge, ipcRenderer, ipcMain, webUtils } = require('electron');
 
 if (window.self !== window.top) {
     /** @type {string | null} */
@@ -122,6 +122,9 @@ if (window.self !== window.top) {
                 console.error('opening file failed', result.message);
                 throw new Error(result.message);
             }
+        },
+        getFilePath: (file) => {
+            return webUtils.getPathForFile(file);
         }
     })
 
