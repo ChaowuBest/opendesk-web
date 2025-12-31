@@ -157,7 +157,7 @@ class TaskView extends HTMLElement {
         // 为输入框添加事件监听器
         var input_widget = this.querySelector(`#task-${this.task_id}-input`)
         input_widget.addEventListener('submit', async (event) => {
-            await window.taskManagerAPI.submitMessage(this.task_id, event.detail.message)
+            await window.taskManagerAPI.submitMessage(this.task_id, event.detail)
             await this.reload()
         })
     }
