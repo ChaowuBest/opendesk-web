@@ -18,15 +18,19 @@ class AgentInput extends HTMLElement {
         this.render();
     }
 
+    removeFilePath(filePath) {
+        this.attachedFilePaths = this.attachedFilePaths.filter(p => p !== filePath);
+        this.render();
+    }
+
     render() {
         let fileItems = this.attachedFilePaths.map(filePath => {
-            console.info('filePath', filePath);
             let fileName = filePath.split('/').pop();
             return `
             <div class="px-3 py-1 bg-blue-50 text-blue-700 hover:text-gray-600 hover:bg-blue-20 rounded-full border border-blue-100 transition-all shadow-sm text-xs cursor-pointer">
                 <i class="fas fa-paperclip"></i>
                 <span class="max-w-[120px] truncate">${fileName}</span>
-                <button class="hover:text-red-500 leading-none">
+                <button data-file_path="${filePath}" class="agent-input-remove-file-btn hover:text-red-500 leading-none">
                     <i class="fas fa-times"></i>
                 </button>
             </div>
@@ -73,6 +77,7 @@ class AgentInput extends HTMLElement {
         const container = this.querySelector('#agent-input-container')
         const textarea = this.querySelector('#agent-input-textarea')
         const submitBtn = this.querySelector('#agent-input-submit-btn')
+        const removeFileBtns = this.querySelectorAll('.agent-input-remove-file-btn')
 
         // 提交消息的函数
         const handleSubmit = () => {
@@ -92,8 +97,13 @@ class AgentInput extends HTMLElement {
             textarea.value = '';
         }
 
-        // 按钮点击事件
         submitBtn.addEventListener('click', handleSubmit)
+
+        removeFileBtns.forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                this.removeFilePath(btn.dataset.file_path);
+            });
+        });
 
         container.addEventListener('dragover', (e) => {
             e.preventDefault();
@@ -106,6 +116,7 @@ class AgentInput extends HTMLElement {
             const files = e.dataTransfer.files;
             for (const file of files) {
                 console.info('attach dropped file', file, window.fsAPI.getFilePath(file));
+                /* electron前端无法获取文件完整路径，需要通过fsAPI.getFilePath获取 */
                 this.attachFilePath(window.fsAPI.getFilePath(file));
             }
         })

@@ -124,7 +124,13 @@ if (window.self !== window.top) {
             }
         },
         getFilePath: (file) => {
-            return webUtils.getPathForFile(file);
+            // 统一为跨平台路径，始终返回如 c:/xxx 格式
+            let p = webUtils.getPathForFile(file);
+            // 将所有反斜杠替换为正斜杠，以统一为 URI 风格
+            if (typeof p === "string") {
+                p = p.replace(/\\/g, '/');
+            }
+            return p;
         }
     })
 
