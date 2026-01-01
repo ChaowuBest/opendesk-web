@@ -1,3 +1,13 @@
+const supportedFileExtensions = [
+    'pdf',
+    'docx',
+    'doc',
+    'xls',
+    'xlsx',
+    'ppt',
+    'pptx',
+]
+
 class AgentInput extends HTMLElement {
 
     constructor() {
@@ -14,6 +24,11 @@ class AgentInput extends HTMLElement {
     }
 
     attachFilePath(filePath) {
+        const extname = filePath.split('.').pop();
+        if (!supportedFileExtensions.includes(extname)) {
+            window.notificationAPI.sendNotification('error', '文件管理', '不支持的文件类型', `当前还不支持在对话中使用${extname} 文件`);
+            return;
+        }
         this.attachedFilePaths.push(filePath);
         this.render();
     }
@@ -23,19 +38,33 @@ class AgentInput extends HTMLElement {
         this.render();
     }
 
+    clearAttachedFilePaths() {
+        this.attachedFilePaths = [];
+        this.render();
+    }
+
     render() {
         let fileItems = this.attachedFilePaths.map(filePath => {
             let fileName = filePath.split('/').pop();
             return `
-            <div class="px-3 py-1 bg-blue-50 text-blue-700 hover:text-gray-600 hover:bg-blue-20 rounded-full border border-blue-100 transition-all shadow-sm text-xs cursor-pointer">
-                <i class="fas fa-paperclip"></i>
-                <span class="max-w-[120px] truncate">${fileName}</span>
+            <div class="px-3 py-1 bg-blue-50 text-blue-700 hover:text-gray-600 hover:bg-blue-20 rounded-full border border-blue-100 transition-all shadow-sm text-xs cursor-pointer flex items-center">
+                <i class="fas fa-paperclip mr-1"></i>
+                <span class="max-w-[120px] truncate whitespace-nowrap overflow-hidden" style="display:inline-block;">${fileName}</span>
                 <button data-file_path="${filePath}" class="agent-input-remove-file-btn hover:text-red-500 leading-none">
-                    <i class="fas fa-times"></i>
+                    <i class="fas fa-times ml-1"></i>
                 </button>
             </div>
             `;
         }).join('');
+
+        if (this.attachedFilePaths.length === 0) {
+            fileItems = `
+            <div class="flex items-center justify-center text-sm text-gray-400 py-2">
+                <i class="fas fa-file-upload m-2"></i>
+                <span>你可以将文件拖拽到这里~</span>
+            </div>
+            `;
+        }
 
         this.innerHTML = `
         <div id="agent-input-container" class="w-full p-1.5 rounded-[28px] bg-white/40 border border-gray/60 shadow-[0_10px_40px_-15px_rgba(0,0,0,0.08)]">
@@ -50,11 +79,15 @@ class AgentInput extends HTMLElement {
                 </div>
 
                 <!-- 工具栏 -->
-                <div class="flex items-center justify-between px-2 py-1 border-t border-gray-100">
+                <div class="flex items-start justify-between p-2 border-t border-gray-100">
                     <!-- 左侧工具按钮 -->
                     <div class="flex items-center space-x-3">
                         <!-- 附件 -->
-                        <div id="agent-input-attached-file-list" class="flex items-center gap-1">
+                        <div
+                            id="agent-input-attached-file-list"
+                            class="flex flex-wrap items-center gap-1 w-full"
+                            style="row-gap: 0.3rem; overflow-x: auto;"
+                        >
                             ${fileItems}
                         </div>
                     </div>
@@ -62,7 +95,7 @@ class AgentInput extends HTMLElement {
                     <!-- 右侧按钮 -->
                     <div class="flex items-center space-x-2">
                         <!-- 发送按钮 -->
-                        <button id="agent-input-submit-btn" class="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-50 rounded-full transition-colors">
+                        <button id="agent-input-submit-btn" class="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-50 rounded-full transition-colors">
                             <i class="fas fa-arrow-up text-lg"></i>
                     </div>
                 </div>
@@ -94,7 +127,9 @@ class AgentInput extends HTMLElement {
                 bubbles: true
             });
             this.dispatchEvent(submitEvent);
+
             textarea.value = '';
+            this.clearAttachedFilePaths();
         }
 
         submitBtn.addEventListener('click', handleSubmit)

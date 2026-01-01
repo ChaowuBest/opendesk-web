@@ -29,10 +29,9 @@ class SettingEditor extends HTMLElement {
         let data = this.querySelector('#setting-schema-editor').getValue();
         window.settingAPI.saveSettingObject(data).then(async () => {
             await this.loadSettingData();
-            this.querySelector('#setting-error-msg').innerHTML = '';
-            this.querySelector('#setting-error-msg').innerHTML = '<span class="text-green-500">保存成功</span>';
+            window.notificationAPI.sendNotification('info', '设置', '保存成功', '设置已成功保存');
         }).catch(error => {
-            this.querySelector('#setting-error-msg').innerHTML = `<span class="text-red-500">${error.message}</span>`;
+            window.notificationAPI.sendNotification('error', '设置', '保存失败', error.message);
         });
     }
 

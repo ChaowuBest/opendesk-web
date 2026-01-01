@@ -12,6 +12,7 @@ const { RecallApplication } = require('./applications/recall/app');
 const { z } = require('zod');
 const path = require('path');
 const converter = new convert();
+const { NotificationManager } = require('./utils/notificationmgr');
 
 
 if (require('electron-squirrel-startup')) {
@@ -206,6 +207,21 @@ const registerSettingAPIHandlers = () => {
   })
 }
 
+const registerNotificationAPIHandlers = () => {
+  ipcMain.handle('notification:sendNotification', (event, ...args) => {
+    try {
+      NotificationManager.getInstance().sendNotification(...args);
+      return { status: 'ok' };
+    } catch (error) {
+      return { status: 'error', message: error.message };
+    }
+  }),
+  ipcMain.handle('notification:subscribeNotification', (event) => {
+    NotificationManager.getInstance().addSubscriber(event.sender);
+    return { status: 'ok' };
+  })
+}
+
 const registerHotKeys = () => {
   var hotkey = 'Alt+Space';
   if (process.platform === 'darwin') {
@@ -243,9 +259,11 @@ const registerTray = () => {
 app.whenReady().then(() => {
   GlobalState.initialize();
   createWindow();
+
   registerTaskManagerAPIHandlers();
   registerFSAPIHandlers();
   registerSettingAPIHandlers();
+  registerNotificationAPIHandlers();
   registerHotKeys();
   registerTray();
 

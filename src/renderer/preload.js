@@ -1,5 +1,6 @@
 const { contextBridge, ipcRenderer, ipcMain, webUtils } = require('electron');
 
+
 if (window.self !== window.top) {
     /** @type {string | null} */
     var applicationBundleName = null;
@@ -178,6 +179,23 @@ if (window.self !== window.top) {
             })
         },
         closeMainWindow: () => ipcRenderer.invoke('setting:closeMainWindow'),
+    })
+
+    contextBridge.exposeInMainWorld('notificationAPI', {
+        sendNotification: async (...args) => {
+            const result = await ipcRenderer.invoke('notification:sendNotification', ...args);
+            if (result.status !== 'ok') {
+                console.error('sending notification failed', result.message);
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
+        subscribeNotification: async (callback) => {
+            await ipcRenderer.invoke('notification:subscribeNotification');
+            ipcRenderer.on('notification:notificationReceived', (event, ...args) => {
+                callback(...args)
+            })
+        }
     })
 
     contextBridge.exposeInMainWorld('floatWindowAPI', {
