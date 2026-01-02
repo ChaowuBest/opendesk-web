@@ -1,4 +1,4 @@
-const { AssistantMessage } = require('./messages');
+import { AssistantMessage } from './messages.js';
 
 
 class Agent {

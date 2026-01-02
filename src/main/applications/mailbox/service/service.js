@@ -1,6 +1,7 @@
-const { BaseService } = require("../../base");
-const path = require('path');
+import { BaseService } from "../../base.js";
+import path from 'path';
 
+const __dirname = import.meta.dirname;
 
 class MailboxService extends BaseService {
 
@@ -21,4 +22,4 @@ class MailboxService extends BaseService {
     }
 }
 
-module.exports = { MailboxService };
+export { MailboxService };

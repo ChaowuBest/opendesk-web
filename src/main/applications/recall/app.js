@@ -1,8 +1,9 @@
-const { BaseApplication, BaseGUIConfig } = require("../base");
-const { BaseTool } = require("../../agents/tool");
-const { RecallService } = require("./service/service");
-const { z } = require("zod");
-const path = require('path');
+import { BaseApplication, BaseGUIConfig } from "../base.js";
+import { RecallService } from "./service/service.js";
+import { z } from 'zod';
+import path from 'path';
+
+const __dirname = import.meta.dirname;
 
 
 class RecallApplication extends BaseApplication {
@@ -72,4 +73,4 @@ class RecallApplication extends BaseApplication {
     }
 }
 
-module.exports = { RecallApplication }
+export { RecallApplication };

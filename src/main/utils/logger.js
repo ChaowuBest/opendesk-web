@@ -1,8 +1,8 @@
-const { getLogDirectory } = require('./setting');
-const { Writable } = require('stream');
-const { isMainThread, parentPort } = require('worker_threads');
-const path = require('path');
-const winston = require('winston');
+import { getLogDirectory } from './setting.js';
+import { Writable } from 'stream';
+import { isMainThread, parentPort } from 'worker_threads';
+import path from 'path';
+import winston from 'winston';
 
 
 class LogStream extends Writable {
@@ -79,4 +79,4 @@ const logger = winston.createLogger({
     ]
 });
 
-module.exports = { logger, LogStream };
+export { logger, LogStream };

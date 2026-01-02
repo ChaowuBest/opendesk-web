@@ -5,7 +5,7 @@
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Flipper Desk | 一站式办公生活空间</title>
         <script src="../renderer/styles/tailwind.css"></script>
-        <script src="../renderer/scripts/alpinejs.min.js" defer></script>
+        <script src="../assets/scripts/alpinejs.min.js" defer></script>
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
 
         <script src="../renderer/components/agentinput.js"></script>
@@ -61,6 +61,8 @@
 
             async function submitRequest(detail) {
                 const floatingChatPanel = document.querySelector('#floating-ai-chat-panel');
+                const applicationEntryWidget = document.querySelector('#application-entry-widget');
+
                 if (currentTaskId === null) {
                     currentTaskId = await window.taskManagerAPI.createTask();
                     const taskViewContainer = document.querySelector('#floating-ai-task-view-container');
@@ -69,6 +71,9 @@
                     `
                 }
 
+                const toolset = applicationEntryWidget.getToolset().toJSON();
+                console.info(toolset);
+                window.taskManagerAPI.attachToolset(currentTaskId, toolset);
                 window.taskManagerAPI.submitMessage(currentTaskId, detail);
                 document.querySelector(`#task-view-${currentTaskId}`).reload();
                 Alpine.$data(document.body).showFloatingChatPanel = true;
@@ -80,10 +85,11 @@
                 for (const javascript of guiConfig.javascripts) {
                     const script = document.createElement('script');
                     script.src = javascript;
+                    script.type = 'module';
                     document.body.appendChild(script);
                 }
                 document.querySelector('#application-container').innerHTML = `
-                <${guiConfig.entry} class="w-full h-full"/>
+                <${guiConfig.entry} id='application-entry-widget' class="w-full h-full"/>
                 `
                 document.querySelector('#application-agent-input').addEventListener('focus', () => {
                     if (currentTaskId !== null) {

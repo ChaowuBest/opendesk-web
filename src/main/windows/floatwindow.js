@@ -1,6 +1,6 @@
-const { BrowserWindow, ipcMain } = require('electron');
-const path = require('path');
-const { IntentParser } = require('../services/intent/parser');
+import { BrowserWindow, ipcMain } from 'electron';
+import path from 'path';
+import { IntentParser } from '../services/intent/parser.js';
 
 /** @type {BrowserWindow | null} */
 var globalFloatWindow = null;
@@ -57,4 +57,4 @@ const openFloatWindow = async () => {
 
 }
 
-module.exports = { openFloatWindow };
+export { openFloatWindow };

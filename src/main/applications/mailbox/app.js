@@ -1,8 +1,9 @@
-const { BaseApplication, BaseGUIConfig } = require("../base");
-const path = require('path');
-const { MailboxService } = require("./service/service");
-const { EmailProfileSchema } = require("./common");
+import { BaseApplication, BaseGUIConfig } from "../base.js";
+import path from 'path';
+import { MailboxService } from "./service/service.js";
+import { EmailProfileSchema } from "./common.js";
 
+const __dirname = import.meta.dirname;
 
 class MailboxApplication extends BaseApplication {
 
@@ -37,4 +38,4 @@ class MailboxApplication extends BaseApplication {
     }
 }
 
-module.exports = { MailboxApplication }
+export { MailboxApplication };

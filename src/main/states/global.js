@@ -1,4 +1,4 @@
-const { TaskManagerState, TaskState } = require('./tasks');
+import { TaskManagerState, TaskState } from './tasks.js';
 
 
 /**
@@ -45,4 +45,4 @@ class GlobalState {
     }
 }
 
-module.exports = { GlobalState }
+export { GlobalState };

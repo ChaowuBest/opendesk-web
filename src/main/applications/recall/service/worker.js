@@ -1,11 +1,11 @@
-const { BaseWorker } = require("../../base");
-const { logger } = require('../../../utils/logger');
-const { Monitor, Image, Window } = require('node-screenshots');
+import { BaseWorker } from "../../base.js";
+import { logger } from '../../../utils/logger.js';
+import { Monitor, Image, Window } from 'node-screenshots';
 
-const path = require('path');
-const fs = require('fs');
-const sharp = require('sharp');
-const nedb = require('nedb-promises');
+import path from 'path';
+import fs from 'fs';
+import sharp from 'sharp';
+import nedb from 'nedb-promises';
 
 
 class RecallActivity {

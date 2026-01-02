@@ -1,9 +1,9 @@
-const { BaseService } = require("../../base");
-const path = require('path');
-const { Window } = require('node-screenshots')
-const { logger } = require('../../../utils/logger');
-const { shell } = require('electron');
-const fs = require('fs');
+import { BaseService } from "../../base.js";
+import path from 'path';
+import { Window } from 'node-screenshots';
+import { shell } from 'electron';
+
+const __dirname = import.meta.dirname;
 
 
 class RecallService extends BaseService {
@@ -74,4 +74,4 @@ class RecallService extends BaseService {
 
 }
 
-module.exports = { RecallService };
+export { RecallService };

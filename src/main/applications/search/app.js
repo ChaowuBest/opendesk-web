@@ -1,7 +1,7 @@
-const { BaseApplication } = require("../base");
-const { BaseTool } = require("../../agents/tool");
-const { z } = require("zod");
-const { Exa } = require('exa-js');
+import { BaseApplication } from "../base.js";
+import { BaseTool } from "../../agents/tool.js";
+import { z } from 'zod';
+import { Exa } from 'exa-js';
 
 
 class ExaSearchTool extends BaseTool {
@@ -63,4 +63,4 @@ class SearchApplication extends BaseApplication {
     }
 }
 
-module.exports = { SearchApplication }
+export { SearchApplication };

@@ -1,27 +1,25 @@
-const { app, BrowserWindow, Tray, globalShortcut, nativeImage, ipcMain, shell, Menu } = require('electron')
-const { GlobalState } = require('./states/global')
-const { Setting } = require('./utils/setting')
-const { openFloatWindow } = require('./windows/floatwindow')
-const { FSService } = require('./services/fs/service')
-const { LogStream, logger } = require('./utils/logger')
-const convert = require('ansi-to-html');
-const { ApplicationRegistry } = require('./applications/base');
-const { SearchApplication } = require('./applications/search/app');
-const { MailboxApplication } = require('./applications/mailbox/app');
-const { RecallApplication } = require('./applications/recall/app');
-const { z } = require('zod');
-const path = require('path');
-const converter = new convert();
-const { NotificationManager } = require('./utils/notificationmgr');
+import { app, BrowserWindow, Tray, globalShortcut, nativeImage, ipcMain, shell, Menu } from 'electron'
+import { Setting } from './utils/setting.js'
+import { GlobalState } from './states/global.js'
+import { openFloatWindow } from './windows/floatwindow.js'
+import { FSService } from './services/fs/service.js'
+import { ApplicationRegistry } from './applications/base.js';
+import { SearchApplication } from './applications/search/app.js';
+import { MailboxApplication } from './applications/mailbox/app.js';
+import { RecallApplication } from './applications/recall/app.js';
+import { z } from 'zod';
+import Convert from 'ansi-to-html';
+import path from 'path';
+import { NotificationManager } from './utils/notificationmgr.js';
+
+import { LogStream, logger } from './utils/logger.js'
 
 
-if (require('electron-squirrel-startup')) {
-  app.quit();
-}
-
+const __dirname = import.meta.dirname;
 const searchApplication = new SearchApplication();
 const mailboxApplication = new MailboxApplication();
 const recallApplication = new RecallApplication();
+const converter = new Convert();
 
 /** @type {BrowserWindow | null} */
 var globalMainWindow = null;
@@ -33,7 +31,6 @@ var isAppQuitting = false;
 app.on('before-quit', () => {
   isAppQuitting = true;
 });
-
 
 const iconPath = path.join(__dirname, '..', 'assets', 'images', 'icon_round.png');
 
@@ -53,6 +50,7 @@ const createWindow = () => {
 
   mainWindow.setMenu(null)
   mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'))
+  // mainWindow.webContents.openDevTools();
 
   mainWindow.on('close', (event) => {
     if (!isAppQuitting) {
@@ -114,6 +112,15 @@ const registerTaskManagerAPIHandlers = () => {
   })
   ipcMain.handle('taskManager:subscribeTaskListUpdate', (event) => {
     return { status: 'ok', data: globalState.taskManagerState.addSubscriber(event.sender) };
+  })
+  ipcMain.handle('taskManager:attachToolset', (event, taskId, toolset) => {
+    const task = globalState.taskManagerState.getTask(taskId);
+    if (task === undefined) {
+      return { status: 'error', message: `task ${taskId} not found` }
+    }
+
+    task.attachToolset(toolset);
+    return { status: 'ok' };
   })
   ipcMain.handle('taskManager:submitMessage', async (event, taskId, details) => {
     const task = globalState.taskManagerState.getTask(taskId);

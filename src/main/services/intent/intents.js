@@ -1,4 +1,4 @@
-const { z } = require('zod');
+import { z } from 'zod';
 
 
 class Intent {
@@ -86,4 +86,4 @@ globalInstance.registerIntent(new Intent(
     })
 ))
 
-module.exports = { Intent, IntentRegistry };
+export { Intent, IntentRegistry };

@@ -1,10 +1,12 @@
-const { desktopCapturer } = require('electron');
-const { LLM } = require('../../agents/llm');
-const { UserMessage, ChatContext } = require('../../agents/messages');
-const { Setting } = require('../../utils/setting');
-const { IntentRegistry } = require('./intents');
-const { z } = require('zod');
-const { _ } = require('lodash');
+import { desktopCapturer } from 'electron';
+import { LLM } from '../../agents/llm.js';
+import { UserMessage, ChatContext } from '../../agents/messages.js';
+import { Setting } from '../../utils/setting.js';
+import { IntentRegistry } from './intents.js';
+import { z } from 'zod';
+import pkg from 'lodash';
+
+const _ = pkg;
 
 
 const INTENT_PARSING_PROMPT = _.template(`
@@ -119,4 +121,4 @@ class IntentParser {
     }
 }
 
-module.exports = { IntentParser };
+export { IntentParser };

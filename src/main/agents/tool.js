@@ -1,11 +1,8 @@
-const { z } = require('zod');
-
-
 class BaseTool {
     /**
      * @param {string} name 工具的名称
      * @param {string} description 工具的描述
-     * @param {z.ZodSchema} params 工具的参数
+     * @param {import('zod').ZodSchema} params 工具的参数
      */
     constructor(name, description, params) {
         /** @type {string} */
@@ -35,6 +32,4 @@ class BaseTool {
     }
 }
 
-module.exports = {
-    BaseTool
-}
+export { BaseTool };

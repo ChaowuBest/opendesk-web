@@ -1,8 +1,8 @@
-const { OpenAI } = require('openai');
-const { ChatContext, AssistantResponse, UserMessage, AssistantMessage } = require('./messages');
-const { Setting, ModelInstance } = require('../utils/setting');
-const { z } = require('zod');
-const { logger } = require('../utils/logger');
+import { OpenAI } from 'openai';
+import { ChatContext, AssistantResponse, UserMessage, AssistantMessage } from './messages.js';
+import { Setting, ModelInstance } from '../utils/setting.js';
+import { z } from 'zod';
+import { logger } from '../utils/logger.js';
 
 
 class LLMAskOptions {
@@ -301,10 +301,11 @@ class LLM {
         }
 
         let tool_options = {}
-        if (chat_context.tools.size > 0) {
+        let tools = chat_context.getTools();
+        if (tools.size > 0) {
             tool_options = {
                 tool_choice: 'auto',
-                tools: Array.from(chat_context.tools.entries()).map(([tool_id, tool]) => {
+                tools: Array.from(tools.entries()).map(([tool_id, tool]) => {
                     return {
                         type: 'function',
                         function: {
@@ -338,4 +339,4 @@ class LLM {
     }
 }
 
-module.exports = { LLM };
+export { LLM };

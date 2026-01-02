@@ -1,9 +1,19 @@
-const z = require("zod");
-const path = require('path');
-const fs = require('fs');
-const { isMainThread, workerData } = require('worker_threads');
-const { platform } = require("os");
+import z from 'zod';
+import path from 'path';
+import fs from 'fs';
+import { workerData, isMainThread } from 'worker_threads';
+import { createRequire } from 'module';
 
+const require = createRequire(import.meta.url);
+
+let electronApp = null;
+
+try {
+    const electron = require('electron');
+    electronApp = electron.app;
+} catch (error) {
+    console.info('electron is not loaded in the worker thread');
+}
 
 const ProviderSchema = z.object({
     name: z.string().default('openrouter').describe('模型提供商名称'),
@@ -157,10 +167,8 @@ class Setting {
      * Save the setting to the file system
      */
     save() {
-        const { logger } = require("./logger");
         const settingDirectory = getAppDirectory();
         const settingFile = path.join(settingDirectory, 'setting.json');
-        logger.info(`saving setting to ${settingFile}`);
         fs.writeFileSync(settingFile, JSON.stringify(this.data, null, 4), { encoding: 'utf8' });
     }
 
@@ -218,14 +226,16 @@ class Setting {
     }
 }
 
+/**
+ * 获取应用数据目录
+ * @returns {string}
+ */
 function getAppDirectory() {
     if (!isMainThread) {
-        // fallback for worker threads or node environments
         return workerData.paths.appDirectory;
     }
 
-    const { app } = require('electron');
-    const userDataPath = app.getPath('userData');
+    const userDataPath = electronApp.getPath('userData');
     if (fs.existsSync(userDataPath)) {
         return userDataPath;
     } else {
@@ -234,6 +244,10 @@ function getAppDirectory() {
     }
 }
 
+/**
+ * 获取应用日志目录
+ * @returns {string}
+ */
 function getLogDirectory() {
     const appDirectory = getAppDirectory();
     const logDirectory = path.join(appDirectory, 'logs');
@@ -243,6 +257,10 @@ function getLogDirectory() {
     return logDirectory;
 }
 
+/**
+ * 获取应用任务目录
+ * @returns {string}
+ */
 function getTaskDirectory() {
     const appDirectory = getAppDirectory();
     const taskDirectory = path.join(appDirectory, 'tasks');
@@ -252,4 +270,7 @@ function getTaskDirectory() {
     return taskDirectory;
 }
 
-module.exports = { getAppDirectory, getLogDirectory, getTaskDirectory, Setting, ModelInstance, getSettingSchema }
+export {
+    getAppDirectory, getLogDirectory, getTaskDirectory,
+    Setting, ModelInstance, getSettingSchema, FSEntrySchema
+};

@@ -35,6 +35,4 @@ class NotificationManager {
 }
 
 
-module.exports = {
-    NotificationManager
-}
+export { NotificationManager };

@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer, webFrame, ipcMain, webUtils } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 
 function exposeTaskManagerAPI() {
@@ -70,6 +70,7 @@ function exposeTaskManagerAPI() {
                 callback(...args)
             })
         },
+        attachToolset: (taskId, toolset) => ipcRenderer.invoke('taskManager:attachToolset', taskId, toolset),
         submitMessage: (taskId, message) => ipcRenderer.invoke('taskManager:submitMessage', taskId, message),
     });
 }

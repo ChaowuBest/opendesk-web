@@ -1,4 +1,4 @@
-const { z } = require("zod");
+import { z } from 'zod';
 
 
 const InboxServerSchema = z.object({
@@ -68,7 +68,7 @@ class EmailContent {
     }
 }
 
-module.exports = {
+export {
     EmailHeader,
     EmailContent,
     EmailProfileSchema,

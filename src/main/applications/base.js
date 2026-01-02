@@ -1,10 +1,10 @@
-const { z, object } = require("zod");
-const { Worker, parentPort } = require('worker_threads');
-const { logger, LogStream } = require("../utils/logger");
-const { Setting, getAppDirectory } = require("../utils/setting");
-const { BaseTool } = require("../agents/tool");
-const path = require('path');
-const fs = require('fs');
+import { z } from 'zod';
+import { Worker, parentPort } from 'worker_threads';
+import { logger, LogStream } from '../utils/logger.js';
+import { Setting, getAppDirectory } from '../utils/setting.js';
+import { BaseTool } from '../agents/tool.js';
+import path from 'path';
+import fs from 'fs';
 
 
 class BaseWorker {
@@ -232,8 +232,8 @@ class BaseApplication {
         return undefined;
     }
 
-    getDataDirectory() {
-        let data_directory = path.join(getAppDirectory(), 'apps', this.bundleName);
+    async getDataDirectory() {
+        let data_directory = path.join(await getAppDirectory(), 'apps', this.bundleName);
         if (!fs.existsSync(data_directory)) {
             fs.mkdirSync(data_directory, { recursive: true });
         }
@@ -253,8 +253,8 @@ class ApplicationRegistry {
         logger.info(`registering application ${application.bundleName}`);
         ApplicationRegistry.applications.set(application.bundleName, application);
         Setting.registerApplicationSettings(application);
-        application.getServices()?.forEach(service => {
-            service.applicationDataDirectory = application.getDataDirectory();
+        application.getServices()?.forEach(async service => {
+            service.applicationDataDirectory = await application.getDataDirectory();
             service.startService();
             service.sendApplicationConfig(application.getConfig());
         });
@@ -279,10 +279,10 @@ class ApplicationRegistry {
     }
 }
 
-module.exports = {
+export {
     BaseApplication,
     BaseService,
     BaseWorker,
     BaseGUIConfig,
     ApplicationRegistry
-}
+};

@@ -1,9 +1,9 @@
-const { parentPort } = require('worker_threads');
-const fastGlob = require('fast-glob');
-const { z } = require('zod');
-const { FSEntrySchema, Setting } = require('../../utils/setting');
-const { FileEntrySchema, FSStorage } = require('./storage');
-const { logger } = require('../../utils/logger');
+import { parentPort } from 'worker_threads';
+import fastGlob from 'fast-glob';
+import { z } from 'zod';
+import { FSEntrySchema, Setting } from '../../utils/setting.js';
+import { FileEntrySchema, FSStorage } from './storage.js';
+import { logger } from '../../utils/logger.js';
 
 
 /**

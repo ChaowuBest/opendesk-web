@@ -1,11 +1,10 @@
-const { ChatContext, UserMessage, AssistantMessage, ToolCallMessagePart, FileMessagePart } = require('../agents/messages');
-const { LLM } = require('../agents/llm');
-const { getTaskDirectory } = require('../utils/setting');
-const path = require('path');
-const fs = require('fs');
-const { logger } = require('../utils/logger');
-const { ApplicationRegistry } = require('../applications/base');
-const officeParser = require('officeparser');
+import { ChatContext, UserMessage, AssistantMessage, ToolCallMessagePart, FileMessagePart } from '../agents/messages.js';
+import { LLM } from '../agents/llm.js';
+import { getTaskDirectory } from '../utils/setting.js';
+import path from 'path';
+import fs from 'fs';
+import { logger } from '../utils/logger.js';
+import officeParser from 'officeparser';
 
 
 class TaskUpdateSubscriber {
@@ -75,6 +74,11 @@ class TaskState {
             task_status: this.task_status,
             chat_context: this.chat_context.toJSON(),
         }
+    }
+
+    async attachToolset(toolset) {
+        logger.info(`attaching toolset ${toolset.name} to task ${this.task_id}`);
+        this.chat_context.toolsets.set(toolset.name, toolset.tools);
     }
 
     async attachFiles(filePaths) {
@@ -370,4 +374,4 @@ class TaskManagerState {
     }
 }
 
-module.exports = { TaskManagerState, TaskState };
+export { TaskManagerState, TaskState };

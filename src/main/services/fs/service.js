@@ -1,8 +1,10 @@
-const { Worker } = require('worker_threads');
-const { getAppDirectory } = require('../../utils/setting');
-const { logger, LogStream } = require('../../utils/logger');
+import { Worker } from 'worker_threads';
+import { getAppDirectory } from '../../utils/setting.js';
+import { logger, LogStream } from '../../utils/logger.js';
 
-const path = require('path');
+import path from 'path';
+
+const __dirname = import.meta.dirname;
 
 
 class FSService {
@@ -27,7 +29,7 @@ class FSService {
         this.worker = new Worker(workerPath, {
             workerData: {
                 paths: {
-                    appDirectory: getAppDirectory()
+                    appDirectory: await getAppDirectory()
                 }
             }
         });
@@ -152,4 +154,4 @@ class FSService {
     }
 }
 
-module.exports = { FSService };
+export { FSService };

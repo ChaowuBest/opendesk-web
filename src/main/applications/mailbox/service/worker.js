@@ -1,13 +1,15 @@
-const { EmailHeader, EmailProfileSchema, EmailContent } = require("../common");
-const { BaseWorker } = require("../../base");
-const { logger } = require('../../../utils/logger');
-const _ = require('lodash');
-const Pop3Command = require('node-pop3');
-const nedb = require('nedb-promises');
-const path = require('path');
-const pMap = require('p-map');
-const { simpleParser } = require("mailparser");
+import { EmailHeader, EmailProfileSchema, EmailContent } from "../common.js";
+import { BaseWorker } from "../../base.js";
+import { logger } from '../../../utils/logger.js';
+import Pop3Command from 'node-pop3';
+import nedb from 'nedb-promises';
+import path from 'path';
+import pMap from 'p-map';
+import { simpleParser } from "mailparser";
 
+import pkg from 'lodash';
+
+const _ = pkg;
 
 class POP3EmailClient {
 

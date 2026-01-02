@@ -1,15 +1,15 @@
-const { getAppDirectory } = require('../../utils/setting');
-const path = require('path');
-const fs = require('fs');
-const nedb = require('nedb-promises');
-const { z } = require('zod');
-const { logger } = require('../../utils/logger');
-const { LocalIndex } = require('vectra');
-const { LLM } = require('../../agents/llm');
-const PQueue = require('p-queue');
+import { getAppDirectory } from '../../utils/setting.js';
+import path from 'path';
+import fs from 'fs';
+import nedb from 'nedb-promises';
+import { z } from 'zod';
+import { logger } from '../../utils/logger.js';
+import { LocalIndex } from 'vectra';
+import { LLM } from '../../agents/llm.js';
+import PQueue from 'p-queue';
 
 
-const queue = new PQueue.default({ concurrency: 1 });
+const queue = new PQueue({ concurrency: 1 });
 
 const FileEntrySchema = z.object({
     path: z.string(),
@@ -231,4 +231,4 @@ class FSStorage {
 
 }
 
-module.exports = { FileEntrySchema, FileScannerMetadataSchema, FSStorage };
+export { FileEntrySchema, FileScannerMetadataSchema, FSStorage };

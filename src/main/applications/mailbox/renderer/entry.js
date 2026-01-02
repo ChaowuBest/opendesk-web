@@ -1,3 +1,6 @@
+import { Toolset, z } from '../../base_widget.js';
+
+
 class MailBoxEntryWidget extends HTMLElement {
     constructor() {
         super();
@@ -14,6 +17,14 @@ class MailBoxEntryWidget extends HTMLElement {
             }
             this.reloadEmailList();
         })
+    }
+
+    getToolset() {
+        let toolset = new Toolset('mailbox');
+        if (this.selectedEmailUid !== null) {
+            const getSelectedEmailTool = toolset.createTool('getSelectedEmail', '获取当前用户选中正在浏览的邮件信息');
+        }
+        return toolset;
     }
 
     async getEmailHeaderList() {
@@ -165,7 +176,7 @@ class MailBoxEntryWidget extends HTMLElement {
                 <!-- 邮件列表区 -->
                 <div id="email-list" class="flex-1 overflow-y-auto border-t"></div>
 
-                <!-- 底部个人信息与导航 
+                <!-- 底部个人信息与导航
                 <div class="p-4 bg-gray-50 border-t flex items-center justify-between">
                     <div class="flex items-center gap-2">
                         <img class="w-8 h-8 rounded-full border border-gray-200" src="https://ui-avatars.com/api/?name=Alex+Zhang&background=6366f1&color=fff" alt="">

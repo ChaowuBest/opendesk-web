@@ -1,10 +1,10 @@
-const { Marked } = require('marked');
-const { markedHighlight } = require('marked-highlight');
-const markedKatex = require('marked-katex-extension');
-const hljs = require('highlight.js');
-const { logger } = require('../utils/logger');
-const { BaseTool } = require('./tool');
-const path = require('path');
+import { Marked } from 'marked';
+import { markedHighlight } from 'marked-highlight';
+import markedKatex from 'marked-katex-extension';
+import hljs from 'highlight.js';
+import { logger } from '../utils/logger.js';
+import { BaseTool } from './tool.js';
+import path from 'path';
 
 
 const marked = new Marked(
@@ -659,7 +659,7 @@ class AssistantResponse {
  * @class ChatContext
  * @property {SystemMessage | undefined} system_prompt
  * @property {(UserMessage | AssistantMessage)[]} messages
- * @property {BaseTool[]} tools
+ * @property {Map<string, Map<string, BaseTool>>} toolsets
  */
 class ChatContext {
 
@@ -668,8 +668,21 @@ class ChatContext {
         this.system_prompt = undefined;
         /** @type {(UserMessage | AssistantMessage)[]} */
         this.messages = [];
-        /** @type {Map<string, BaseTool>} */
-        this.tools = new Map();
+        /** @type {Map<string, Map<string, BaseTool>>} */
+        this.toolsets = new Map();
+    }
+
+    /**
+     * @returns {Map<string, BaseTool>}
+     */
+    getTools() {
+        let tools = new Map();
+        for (let toolset of this.toolsets.values()) {
+            for (let [name, tool] of toolset.entries()) {
+                tools.set(`${name}-${tool.name}`, tool);
+            }
+        }
+        return tools;
     }
 
     toJSON() {
@@ -714,7 +727,7 @@ class ChatContext {
     }
 }
 
-module.exports = {
+export {
     SystemMessage, UserMessage, AssistantMessage,
     AssistantResponse,
     ChatContext,
