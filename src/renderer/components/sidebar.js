@@ -60,7 +60,7 @@ class SideBar extends HTMLElement {
 
     render() {
         this.innerHTML = `
-        <div class="h-full flex flex-col">
+        <div class="h-full flex flex-col" x-data="{ showApps: false }">
             <header class="py-2 px-1 flex flex-row items-start flex-shrink-0">
                 <img src="../assets/images/icon_round.png" alt="Fillip Desk Icon" class="w-12 h-12 mr-3"/>
                 <div class="flex flex-col items-start">
@@ -71,32 +71,46 @@ class SideBar extends HTMLElement {
             <div class="py-2 flex flex-row gap-2 flex-shrink-0">
                 <button
                     id="open-home-btn"
-                    class="flex-1 flex items-center justify-center gap-1 px-2 py-3 bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-xl text-gray-700 font-normal text-sm transition-colors duration-200"
+                    class="flex-1 flex items-center justify-center gap-1 px-2 py-3 bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-2xl text-gray-700 font-normal text-sm transition-colors duration-200"
                 >
                     <i class="fa-solid fa-house"></i>
                     <span>主页</span>
                 </button>
                 <button
                     id="open-apps-btn"
-                    class="flex-1 flex items-center justify-center gap-1 px-2 py-3 bg-green-50 hover:bg-green-100 border border-green-200 rounded-xl text-green-700 font-normal text-sm transition-colors duration-200"
+                    @click="showApps = !showApps"
+                        :class="showApps ? 'ring-2 ring-orange-400 bg-orange-50' : ''"
+                    class="flex-1 flex items-center justify-center gap-1 px-2 py-3 bg-green-50 hover:bg-green-100 border border-green-200 rounded-2xl text-green-700 font-normal text-sm transition-colors duration-200"
                 >
                     <i class="fa-solid fa-th-large"></i>
                     <span>应用</span>
                 </button>
                 <button
                     id="create-task-btn"
-                    class="flex-1 flex items-center justify-center gap-1 px-2 py-3 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-xl text-blue-700 font-normal text-sm transition-colors duration-200"
+                    class="flex-1 flex items-center justify-center gap-1 px-2 py-3 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-2xl text-blue-700 font-normal text-sm transition-colors duration-200"
                 >
                     <i class="fa-solid fa-comments"></i>
                     <span>新任务</span>
                 </button>
             </div>
 
+            <div
+                x-show="showApps"
+                x-transition:enter="transition ease-out duration-300"
+                x-transition:enter-start="opacity-0 transform translate-y-4"
+                x-transition:enter-end="opacity-100 transform translate-y-0"
+                class="bg-white/90 backdrop-blur-xl rounded-2xl p-6 border border-white/50 shadow-sm my-1"
+            >
+                <div class="grid grid-cols-4 gap-y-8 gap-x-4">
+
+                </div>
+            </div>
+
             <div id="task-list-container" class="flex-1 overflow-y-auto py-2 pr-2">
             </div>
 
             <div class="flex-shrink-0 w-full flex justify-center items-center py-3">
-                <div class="flex justify-center items-center">
+                <div class="flex justify-center items-center bg-white/40 backdrop-blur-2xl rounded-full border border-white/40 shadow-2xl px-4 py-1">
                     <button id="open-memory-btn" class="mx-3 text-gray-500 hover:text-blue-600 text-lg focus:outline-none" title="记忆">
                         <i class="fa-solid fa-hard-drive"></i>
                     </button>
@@ -119,7 +133,7 @@ class SideBar extends HTMLElement {
     }
 
     reloadTaskList() {
-        const standard_class = 'cursor-pointer rounded-lg pl-5 pr-2 py-2 mb-2 transition-colors duration-200';
+        const standard_class = 'cursor-pointer rounded-xl pl-5 pr-2 py-2 mb-2 transition-colors duration-200';
         let task_list_container = this.querySelector('#task-list-container');
         task_list_container.innerHTML = '';
         for (let task of [...this.taskList].reverse()) {

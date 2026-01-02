@@ -48,9 +48,9 @@ class TaskView extends HTMLElement {
         if (hasTextPart) {
             return `
             <div class="flex items-start space-x-3 flex-row-reverse">
-                <div class="bg-[#8D6E63] text-white rounded-2xl p-3 shadow-sm max-w-4xl">
+                <div class="bg-white text-gray-900 rounded-2xl px-4 py-2 shadow-md max-w-3xl border border-gray-200" style="backdrop-filter: blur(8px);">
                     ${content}
-                    <span class="text-xs mt-2 block">10:31</span>
+                    <span class="text-xs text-gray-500 mt-1 block">10:31</span>
                 </div>
             </div>
             `
@@ -64,7 +64,7 @@ class TaskView extends HTMLElement {
     }
 
     static USER_PART_CLASS_MAP = {
-        'text': 'bg-transparent text-base text-white markdown-body'
+        'text': 'bg-transparent text-base text-black markdown-body'
     }
 
     static ASSISTANT_PART_CLASS_MAP = {
@@ -163,4 +163,154 @@ class TaskView extends HTMLElement {
     }
 }
 
+class EmbeddedTaskView extends HTMLElement {
+
+    constructor() {
+        super();
+
+        const task_id = this.getAttribute('task_id')
+        if (task_id === null) {
+            throw new Error('task_id is required');
+        }
+
+        /**
+         * The task id to load in this task view
+         * @type {string}
+         */
+        this.task_id = task_id;
+        /**
+         * The widget id to identify this widget
+         * @type {string}
+         */
+        this.widget_id = crypto.randomUUID();
+        /**
+         * The history container to display the chat history
+         * @type {HTMLDivElement | null}
+         */
+        this.history_container = null;
+        /**
+         * The subscription id for task update
+         * @type {string | null}
+         */
+        this.subscription_id = null;
+    }
+
+    getHistoryContainer() {
+        if (this.history_container === null) {
+            this.history_container = this.querySelector('#taskview-chat-history');
+        }
+        return this.history_container;
+    }
+
+    renderUserMessage(user_message) {
+        if (user_message.content.length === 0) {
+            return '';
+        }
+
+        var content = "";
+        var hasTextPart = false;
+        for (let part of user_message.content) {
+            content += `<div class="${EmbeddedTaskView.USER_PART_CLASS_MAP[part.type]}">${part.rendered}</div>`;
+            if (part.type === 'text') {
+                hasTextPart = true;
+            }
+        }
+        if (hasTextPart) {
+            return `
+            <div class="flex items-start space-x-3 flex-row-reverse">
+                <div class="bg-white text-gray-900 rounded-2xl px-3 py-1 shadow-md max-w-3xl border border-gray-200" style="backdrop-filter: blur(8px);">
+                    ${content}
+                </div>
+            </div>
+            `
+        } else {
+            return `
+            <div class="flex items-start space-x-3 flex-row-reverse">
+                ${content}
+            </div>
+            `
+        }
+    }
+
+    static USER_PART_CLASS_MAP = {
+        'text': 'bg-transparent text-sm text-black markdown-body'
+    }
+
+    static ASSISTANT_PART_CLASS_MAP = {
+        'text': 'bg-transparent text-sm text-black markdown-body',
+        'reasoning': 'bg-gray-200 rounded-xl text-gray-500 text-xs p-3 mb-1',
+        'tool_call': ''
+    }
+
+    renderAssistantMessage(assistant_message) {
+        var content = "";
+        for (let part of assistant_message.content) {
+            content += `<div class="${EmbeddedTaskView.ASSISTANT_PART_CLASS_MAP[part.type]}">${part.rendered}</div>`;
+        }
+        var html = `
+        <div class="flex items-start space-x-3">
+            <div class="p-3 bg-transparent w-full">
+                <div id='message-${assistant_message.message_id}'>
+                    ${content}
+                </div>
+            </div>
+        </div>
+        `
+        return html
+    }
+
+    scrollToEnd(domElement) {
+        setTimeout(() => {
+            domElement.scroll({
+                top: domElement.scrollHeight,
+                behavior: 'smooth'
+            })
+        }, 100)
+    }
+
+    async reload() {
+        var task_state = await window.taskManagerAPI.getFullTask(this.task_id);
+        var history_container = this.getHistoryContainer();
+        history_container.innerHTML = '';
+        for (const message of task_state.chat_context.messages) {
+            if (message.role === 'user') {
+                history_container.innerHTML += this.renderUserMessage(message);
+            } else if (message.role === 'assistant') {
+                history_container.innerHTML += this.renderAssistantMessage(message);
+            }
+            this.scrollToEnd(history_container)
+        }
+    }
+
+    connectedCallback() {
+        this.render();
+        this.reload().then(async () => {
+            this.subscription_id = await window.taskManagerAPI.subscribeTaskUpdate(this.task_id, progress => {
+                const message_element = this.querySelector(`#message-${progress.message_id}`);
+                if (message_element.children.length <= progress.last_part_index) {
+                    message_element.innerHTML += `<div class='${EmbeddedTaskView.ASSISTANT_PART_CLASS_MAP[progress.last_part.type]}'></div>`
+                }
+                const last_part_element = message_element.children[progress.last_part_index];
+                last_part_element.innerHTML = progress.last_part.rendered;
+                this.scrollToEnd(this.getHistoryContainer())
+            })
+        })
+    }
+
+    disconnectedCallback() {
+        window.taskManagerAPI.unsubscribeTaskUpdate(this.task_id, this.subscription_id);
+        this.subscription_id = null;
+    }
+
+    render() {
+        this.innerHTML = `
+        <div class="bg-gray-30 h-full flex flex-col">
+            <div class="flex-1 overflow-y-auto p-4 space-y-1" id="taskview-chat-history"></div>
+        </div>
+        `
+    }
+
+}
+
 customElements.define('task-view', TaskView)
+customElements.define('embedded-task-view', EmbeddedTaskView)

@@ -176,6 +176,11 @@ class AgentInput extends HTMLElement {
 }
 
 class ApplicationAgentInput extends HTMLElement {
+
+    /**
+     * 这个组件用于显示嵌入在应用之中的悬浮AI输入框
+     */
+
     constructor() {
         super();
     }
@@ -281,6 +286,10 @@ class ApplicationAgentInput extends HTMLElement {
         // 焦点时展开
         textarea.addEventListener('focus', () => {
             isFocused = true;
+            const focusEvent = new CustomEvent('focus', {
+                bubbles: true
+            });
+            this.dispatchEvent(focusEvent);
             updateExpandedState();
         });
 
@@ -291,6 +300,21 @@ class ApplicationAgentInput extends HTMLElement {
             setTimeout(() => {
                 updateExpandedState();
             }, 0);
+        });
+
+        textarea.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                const submitEvent = new CustomEvent('submit', {
+                    detail: {
+                        message: textarea.value,
+                        attachedFilePaths: []
+                    },
+                    bubbles: true
+                });
+                this.dispatchEvent(submitEvent);
+                textarea.value = '';
+            }
         });
 
         // 处理鼠标进入和离开时的状态

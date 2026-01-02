@@ -12,11 +12,11 @@ class TaskUpdateSubscriber {
 
     /**
      * A subscriber for task update
-     * @param {Electron.WebContents} web_contents
+     * @param {Electron.SenderFrame} senderFrame
      */
-    constructor (web_contents) {
-        /** @type {Electron.WebContents} */
-        this.web_contents = web_contents;
+    constructor (senderFrame) {
+        /** @type {Electron.SenderFrame} */
+        this.senderFrame = senderFrame;
         /** @type {string} */
         this.subscription_id = crypto.randomUUID();
     }
@@ -26,7 +26,7 @@ class TaskUpdateSubscriber {
      * @param {any} message the message to send
      */
     send(message) {
-        this.web_contents.send(`taskManager:taskUpdate:${this.subscription_id}`, message)
+        this.senderFrame.send(`taskManager:taskUpdate:${this.subscription_id}`, message)
     }
 }
 
@@ -78,6 +78,10 @@ class TaskState {
     }
 
     async attachFiles(filePaths) {
+        if (filePaths.length === 0) {
+            return;
+        }
+
         let user_message = new UserMessage();
         for (let filePath of filePaths) {
             let extname = path.extname(filePath);
@@ -99,9 +103,6 @@ class TaskState {
         this.chat_context.appendMessage(user_message);
         this.chat_context.appendMessage(assistant_message);
         logger.info(`messsage submitted to task ${this.task_id}`)
-
-        this.chat_context.tools = ApplicationRegistry.listAvailableTools();
-        logger.info(`attach ${this.chat_context.tools.length} tools to task ${this.task_id}`);
 
         if (this.task_name === null) {
             this.generateTaskName(message).then(() => {
@@ -229,11 +230,11 @@ class TaskState {
 
     /**
      * Add a subscriber for task update
-     * @param {Electron.WebContents} webContents
+     * @param {Electron.SenderFrame} senderFrame
      * @returns {string} the subscription id
      */
-    addSubscriber(web_contents) {
-        let subscriber = new TaskUpdateSubscriber(web_contents);
+    addSubscriber(senderFrame) {
+        let subscriber = new TaskUpdateSubscriber(senderFrame);
         logger.info('task update subscriber added for task', this.task_id)
         this.subscribers.push(subscriber);
         return subscriber.subscription_id;

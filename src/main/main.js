@@ -97,7 +97,8 @@ const registerTaskManagerAPIHandlers = () => {
       return { status: 'error', message: `task ${taskId} not found` }
     }
 
-    return { status: 'ok', data: task.addSubscriber(event.sender) };
+    console.info(event.senderFrame);
+    return { status: 'ok', data: task.addSubscriber(event.senderFrame) };
   })
   ipcMain.handle('taskManager:unsubscribeTaskUpdate', (event, taskId, subscriptionId) => {
     var task = globalState.taskManagerState.getTask(taskId);

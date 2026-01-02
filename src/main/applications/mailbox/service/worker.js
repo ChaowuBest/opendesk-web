@@ -222,7 +222,7 @@ class MailboxWorker extends BaseWorker {
         await this.trySync();
         setInterval(async () => {
             await this.trySync();
-        }, 1000 * 60 * 1);
+        }, 1000 * 60 * 5);
     }
 
     async getEmailHeaderList() {
@@ -235,7 +235,7 @@ class MailboxWorker extends BaseWorker {
 
     /**
      * Get the content of an email by its UID.
-     * @param {string} uid 
+     * @param {string} uid
      * @returns {EmailContent}
      */
     async getEmailContent(uid) {
@@ -246,7 +246,7 @@ class MailboxWorker extends BaseWorker {
         }
 
         const config = EmailProfileSchema.parse(this.config);
-        if (config.inbox?.pop3) {   
+        if (config.inbox?.pop3) {
             const pop3 = new POP3EmailClient(
                 config.username, config.password,
                 config.inbox.pop3.tls,

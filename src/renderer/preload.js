@@ -1,34 +1,7 @@
-const { contextBridge, ipcRenderer, ipcMain, webUtils } = require('electron');
+const { contextBridge, ipcRenderer, webFrame, ipcMain, webUtils } = require('electron');
 
 
-if (window.self !== window.top) {
-    /** @type {string | null} */
-    var applicationBundleName = null;
-
-    contextBridge.exposeInMainWorld('applicationAPI', {
-        getApplicationGUIConfig: async (bundleName) => {
-            const result = await ipcRenderer.invoke('applicationRegistry:getApplicationGUIConfig', bundleName);
-            if (result.status !== 'ok') {
-                console.error('getting application GUI config failed', result.message);
-                throw new Error(result.message);
-            }
-            applicationBundleName = bundleName;
-            return result.data;
-        },
-        sendMessageToApplication: async (...args) => {
-            if (applicationBundleName === null) {
-                console.error('application bundle name is not set');
-                throw new Error('application bundle name is not set');
-            }
-            const result = await ipcRenderer.invoke('applicationRegistry:sendMessageToApplication', applicationBundleName, ...args);
-            if (result.status !== 'ok') {
-                console.error('sending message to application failed', result.message);
-                throw new Error(result.message);
-            }
-            return result.data;
-        }
-    })
-} else {
+function exposeTaskManagerAPI() {
     contextBridge.exposeInMainWorld('taskManagerAPI', {
         createTask: async () => {
             const result = await ipcRenderer.invoke('taskManager:createTask');
@@ -99,6 +72,39 @@ if (window.self !== window.top) {
         },
         submitMessage: (taskId, message) => ipcRenderer.invoke('taskManager:submitMessage', taskId, message),
     });
+}
+
+
+if (window.self !== window.top) {
+    /** @type {string | null} */
+    var applicationBundleName = null;
+
+    contextBridge.exposeInMainWorld('applicationAPI', {
+        getApplicationGUIConfig: async (bundleName) => {
+            const result = await ipcRenderer.invoke('applicationRegistry:getApplicationGUIConfig', bundleName);
+            if (result.status !== 'ok') {
+                console.error('getting application GUI config failed', result.message);
+                throw new Error(result.message);
+            }
+            applicationBundleName = bundleName;
+            return result.data;
+        },
+        sendMessageToApplication: async (...args) => {
+            if (applicationBundleName === null) {
+                console.error('application bundle name is not set');
+                throw new Error('application bundle name is not set');
+            }
+            const result = await ipcRenderer.invoke('applicationRegistry:sendMessageToApplication', applicationBundleName, ...args);
+            if (result.status !== 'ok') {
+                console.error('sending message to application failed', result.message);
+                throw new Error(result.message);
+            }
+            return result.data;
+        }
+    })
+    exposeTaskManagerAPI();
+} else {
+    exposeTaskManagerAPI();
 
     contextBridge.exposeInMainWorld('fsAPI', {
         searchFilesByKeyword: async (keyword) => {
