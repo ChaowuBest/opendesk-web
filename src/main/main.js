@@ -125,7 +125,6 @@ const registerTaskManagerAPIHandlers = () => {
 
         let result = new Promise((resolve, reject) => {
           ipcMain.once(`taskManager:reportToolCallResult:${toolCallId}`, (event, result) => {
-            console.info('tool call result', result);
             resolve(result);
           });
           event.senderFrame.send(`taskManager:callTool`, taskId, toolCallId, toolset.name, tool.name, args);

@@ -31,6 +31,16 @@ const EmailProfileSchema = z.object({
 });
 
 
+const EmailHeaderQuerySchema = z.object({
+    from: z.string().optional(),
+    to: z.string().optional(),
+    startDate: z.string().describe('开始日期，格式为YYYY-MM-DD').optional(),
+    endDate: z.string().describe('结束日期，格式为YYYY-MM-DD').optional(),
+    limit: z.number().describe('限制返回的邮件数量').optional(),
+    offset: z.number().describe('偏移量').optional(),
+});
+
+
 class EmailAddress {
     constructor(name, address) {
         this.name = name;

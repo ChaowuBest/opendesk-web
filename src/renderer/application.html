@@ -74,10 +74,12 @@
 
                 currentToolset = applicationEntryWidget.getToolset();
                 if (currentToolset) {
+                    console.info('attaching toolset', currentToolset.toJSON());
                     await window.taskManagerAPI.attachToolset(
                         currentTaskId, currentToolset.toJSON(),
                         currentToolset.callTool.bind(currentToolset)
                     );
+                    console.info('attached toolset finished');
                 }
                 window.taskManagerAPI.submitMessage(currentTaskId, request);
                 document.querySelector(`#task-view-${currentTaskId}`).reload();

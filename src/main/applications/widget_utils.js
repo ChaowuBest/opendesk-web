@@ -23,6 +23,11 @@ export class RendererTool extends BaseTool {
         return this;
     }
 
+    setParams(params) {
+        this.params = params.toJSONSchema();
+        return this;
+    }
+
     async execute(args) {
         return this.executor(args);
     }

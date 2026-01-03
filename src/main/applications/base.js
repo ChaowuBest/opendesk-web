@@ -3,6 +3,7 @@ import { Worker, parentPort } from 'worker_threads';
 import { logger, LogStream } from '../utils/logger.js';
 import { Setting, getAppDirectory } from '../utils/setting.js';
 import { BaseTool } from '../agents/tool.js';
+import { NotificationManager } from '../utils/notificationmgr.js';
 import path from 'path';
 import fs from 'fs';
 
@@ -84,11 +85,15 @@ class BaseService {
         let main_log_stream = LogStream.getStream();
         // 处理 worker 消息
         this.worker.on('message', (message) => {
-            const { type, id, status, data, message: errorMessage } = message;
+            const { type, id, status, data, message: errorMessage, payload } = message;
 
             // 处理来自 worker 的日志消息
             if (type === 'log') {
                 main_log_stream.write(message.message + '\n');
+                return;
+            } else if (type === 'notification') {
+                const { type, source, title, message } = payload;
+                NotificationManager.getInstance().sendNotification(type, source, title, message);
                 return;
             }
 

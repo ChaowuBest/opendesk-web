@@ -13,7 +13,7 @@ class MailBoxEntryWidget extends HTMLElement {
     connectedCallback() {
         this.render();
         this.getEmailHeaderList().then((emails) => {
-            console.info(emails);
+            this.emailHeaderList.clear();
             for (const email of emails) {
                 this.emailHeaderList.set(email.uid, email);
             }
@@ -35,6 +35,7 @@ class MailBoxEntryWidget extends HTMLElement {
             });
             toolset.addTool(getSelectedEmailTool);
         }
+
         let getEmailListTool = new RendererTool('getEmailList', '获取邮件列表');
         getEmailListTool.setExecutor(async (args) => {
             let result = '';
@@ -49,14 +50,29 @@ class MailBoxEntryWidget extends HTMLElement {
             console.info(result);
             return result;
         });
-        toolset.addTool(getEmailListTool);
+        let getEmailContentTool = new RendererTool('getEmailContent', '获取邮件内容');
+        getEmailContentTool.setParams(z.object({
+            uid: z.string().describe("邮件的ID")
+        }))
+        getEmailContentTool.setExecutor(async (args) => {
+            let result = '';
+            let content = await this.getEmailContent(args.uid);
+            result += `邮件内容为: <content>${content.textContent || content.htmlContent}</content>\n`;
+            return result;
+        });
+        toolset.addTools(getEmailListTool, getEmailContentTool);
         return toolset;
     }
 
-    async getEmailHeaderList() {
-        const emailHeaderList = await window.applicationAPI.sendMessageToApplication('getEmailHeaderList');
+    /**
+     * Get the list of email headers from the database
+     * @param {import('zod').ZodObject<EmailHeaderQuerySchema> | undefined} query
+     * @returns {Promise<EmailHeader[]>}
+     */
+    async getEmailHeaderList(query) {
+        const emailHeaderList = await window.applicationAPI.sendMessageToApplication('getEmailHeaderList', query);
         emailHeaderList.sort((a, b) => new Date(b.date) - new Date(a.date));
-        return emailHeaderList.slice(0, 200);
+        return emailHeaderList;
     }
 
     renderEmailItem(email) {
@@ -97,12 +113,16 @@ class MailBoxEntryWidget extends HTMLElement {
         });
     }
 
+    async getEmailContent(uid) {
+        return await window.applicationAPI.sendMessageToApplication('getEmailContent', uid);
+    }
+
     async reloadCurrentEmailContent() {
         if (this.selectedEmailUid === null) {
             return;
         }
         this.selectedEmailHeader = this.emailHeaderList.get(this.selectedEmailUid);
-        this.selectedEmailContent = await window.applicationAPI.sendMessageToApplication('getEmailContent', this.selectedEmailUid);
+        this.selectedEmailContent = await this.getEmailContent(this.selectedEmailUid);
 
         if (!this.selectedEmailContent) {
             return;

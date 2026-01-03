@@ -228,7 +228,7 @@ class ApplicationAgentInput extends HTMLElement {
                 <!-- 对话框/圆框主体 -->
 
                 <!-- 初始：w-14 (圆) -> 悬停或焦点：w-[450px] (长条) -->
-                <div id="input-container" class="transition-liquid relative flex items-center bg-white/[0.18] backdrop-blur-2xl border border-white/20 shadow-2xl overflow-hidden
+                <div id="input-container" class="transition-liquid relative flex items-center bg-white/[0.18] backdrop-blur-md border border-white/20 shadow-2xl overflow-hidden
                             w-14 h-14 rounded-full px-2">
 
                     <!-- 内部液态背景 (Siri 核心) -->

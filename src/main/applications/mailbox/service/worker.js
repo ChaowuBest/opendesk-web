@@ -8,6 +8,7 @@ import pMap from 'p-map';
 import { simpleParser } from "mailparser";
 
 import pkg from 'lodash';
+import { NotificationManager } from "../../../utils/notificationmgr.js";
 
 const _ = pkg;
 
@@ -27,9 +28,9 @@ class POP3EmailClient {
 
     async getEmailContent(uid) {
         const pop3 = this.pop3();
-        const uidlist = await pop3.UIDL();
-        const uidmapping = new Map(uidlist.map(([index, uid]) => [uid, index]));
         try {
+            const uidlist = await pop3.UIDL();
+            const uidmapping = new Map(uidlist.map(([index, uid]) => [uid, index]));
             const index = uidmapping.get(uid);
             if (index === undefined) {
                 logger.error(`email not found: ${uid}`);
@@ -136,8 +137,12 @@ class MailboxStorage {
         return set;
     }
 
+    /**
+     * Get the list of email headers from the database
+     * @returns {Promise<EmailHeader[]>}
+     */
     async getEmailHeaderList() {
-        const docs = await this.db.find({});
+        const docs = await this.db.find({}).sort({ date: -1 }).limit(100);
         return docs.map(doc => new EmailHeader(doc.uid, doc.subject, doc.from, doc.to, doc.date));
     }
 }
@@ -158,6 +163,10 @@ class MailboxWorker extends BaseWorker {
         const newList = allList.filter(([_, uid]) => !uidSet.has(uid)).reverse();
 
         var pendingHeaders = [];
+
+        if (newList.length > 0) {
+            NotificationManager.getInstance().info('邮箱', '收取新邮件', `即将从${usr}收取 ${newList.length} 封新邮件`);
+        }
 
         for (const [i, [index, uid]] of newList.entries()) {
             const cachedRawEmail = await this.storage.getRawEmailHeader(uid);
@@ -197,14 +206,20 @@ class MailboxWorker extends BaseWorker {
         }
 
         this.isSyncing = true;
-        if (config.inbox?.pop3) {
-            await this.syncPOP3Inbox(
-                config.username, config.password,
-                config.inbox.pop3.tls, config.inbox.pop3.host, config.inbox.pop3.port
-            );
+        try {
+            if (config.inbox?.pop3) {
+                await this.syncPOP3Inbox(
+                    config.username, config.password,
+                    config.inbox.pop3.tls, config.inbox.pop3.host, config.inbox.pop3.port
+                );
+            }
+            logger.info('mailbox sync completed');
+        } catch (error) {
+            logger.error(`error syncing mailbox: ${error.message}`);
+            NotificationManager.getInstance().error('邮箱', '收取新邮件', `收取新邮件失败: ${error.message}`);
+        } finally {
+            this.isSyncing = false;
         }
-        this.isSyncing = false;
-        logger.info('mailbox sync completed');
     }
 
     async trySync() {
@@ -221,10 +236,12 @@ class MailboxWorker extends BaseWorker {
             return;
         }
 
-        await this.trySync();
-        setInterval(async () => {
+        setTimeout(async () => {
             await this.trySync();
-        }, 1000 * 60 * 5);
+            setInterval(async () => {
+                await this.trySync();
+            }, 1000 * 60 * 5);
+        }, 1000 * 5);
     }
 
     async getEmailHeaderList() {
