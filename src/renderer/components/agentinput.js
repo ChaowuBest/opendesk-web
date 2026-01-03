@@ -302,9 +302,14 @@ class ApplicationAgentInput extends HTMLElement {
             }, 0);
         });
 
-        textarea.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter') {
-                e.preventDefault();
+        textarea.addEventListener('keydown', (event) => {
+            // 如果正在输入法组字过程中，直接返回，不执行提交逻辑
+            if (event.isComposing || event.keyCode === 229) {
+                return;
+            }
+
+            if (event.key === 'Enter') {
+                event.preventDefault();
                 const submitEvent = new CustomEvent('submit', {
                     detail: {
                         message: textarea.value,

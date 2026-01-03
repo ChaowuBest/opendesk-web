@@ -11,13 +11,17 @@ class TaskUpdateSubscriber {
 
     /**
      * A subscriber for task update
-     * @param {Electron.SenderFrame} senderFrame
+     * @param {import('electron').WebFrameMain} senderFrame
      */
     constructor (senderFrame) {
-        /** @type {Electron.SenderFrame} */
+        /** @type {import('electron').WebFrameMain} */
         this.senderFrame = senderFrame;
         /** @type {string} */
         this.subscription_id = crypto.randomUUID();
+    }
+
+    isAvailable() {
+        return !this.senderFrame.isDestroyed();
     }
 
     /**
@@ -25,7 +29,7 @@ class TaskUpdateSubscriber {
      * @param {any} message the message to send
      */
     send(message) {
-        this.senderFrame.send(`taskManager:taskUpdate:${this.subscription_id}`, message)
+        this.senderFrame.send(`taskManager:taskUpdate:${this.subscription_id}`, message);
     }
 }
 
@@ -146,6 +150,7 @@ class TaskState {
             last_part: last_part
         };
 
+        this.subscribers = this.subscribers.filter(subscriber => subscriber.isAvailable());
         for (let subscriber of this.subscribers) {
             subscriber.send(subscription_feedback)
         }
@@ -193,8 +198,10 @@ class TaskState {
                 }
 
                 try {
-                    console.info(tool_call.args_string);
-                    let args = JSON.parse(tool_call.args_string);
+                    let args = {};
+                    if (tool_call.args_string) {
+                        args = JSON.parse(tool_call.args_string);
+                    }
                     tool_call.tool_title = await tool.getTitle(args);
                     tool_call.status = 'running';
                     await tool_call.render();

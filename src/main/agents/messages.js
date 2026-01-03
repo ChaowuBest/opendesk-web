@@ -79,7 +79,7 @@ class ToolCall {
             id: this.id,
             index: this.index,
             tool_name: this.tool_name,
-            args_string: this.args_string,
+            args_string: this.args_string || "",
         };
     }
 
@@ -598,12 +598,13 @@ class AssistantMessage {
         if (openai_message.tool_calls) {
             var toolcalls = [];
             for (let tool_call of openai_message.tool_calls) {
-                toolcalls.push(new ToolCall(
+                let tc = new ToolCall(
                     tool_call.index,
                     tool_call.id,
                     tool_call.function.name,
                     tool_call.function.arguments
-                ));
+                );
+                toolcalls.push(tc);
             }
             message.content.push(new ToolCallMessagePart(toolcalls));
         }
