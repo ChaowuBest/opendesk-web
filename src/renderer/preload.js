@@ -2,6 +2,9 @@ const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 
 function exposeTaskManagerAPI() {
+    /** @type {Map<string, Map<string, (toolName: string, args: any) => Promise<string>>>} */
+    var taskwiseToolsetCallbacks = new Map();
+
     contextBridge.exposeInMainWorld('taskManagerAPI', {
         createTask: async () => {
             const result = await ipcRenderer.invoke('taskManager:createTask');
@@ -70,8 +73,40 @@ function exposeTaskManagerAPI() {
                 callback(...args)
             })
         },
-        attachToolset: (taskId, toolset) => ipcRenderer.invoke('taskManager:attachToolset', taskId, toolset),
+        attachToolset: async (taskId, toolset, toolsetCallback) => {
+            const result = await ipcRenderer.invoke('taskManager:attachToolset', taskId, toolset);
+            if (result.status !== 'ok') {
+                console.error('attaching toolset failed', result.message);
+                throw new Error(result.message);
+            }
+
+            if (!taskwiseToolsetCallbacks.has(taskId)) {
+                taskwiseToolsetCallbacks.set(taskId, new Map());
+            }
+            taskwiseToolsetCallbacks.get(taskId).set(toolset.name, toolsetCallback);
+            return result.data;
+        },
         submitMessage: (taskId, message) => ipcRenderer.invoke('taskManager:submitMessage', taskId, message),
+    });
+
+    ipcRenderer.on('taskManager:callTool', async (event, taskId, toolCallId, toolsetName, toolName, args) => {
+        let result = "";
+        if (!taskwiseToolsetCallbacks.has(taskId)) {
+            result = "错误: 当前任务没有在前端注册";
+        } else {
+            const toolsetCallback = taskwiseToolsetCallbacks.get(taskId).get(toolsetName);
+            if (toolsetCallback === undefined) {
+                result = "错误: 当前工具集没有在前端注册";
+            } else {
+                try {
+                    result = await toolsetCallback(toolName, args);
+                } catch (error) {
+                    result = "错误: 执行工具失败, 错误信息为: " + error.message;
+                    console.error('error executing tool', error);
+                }
+            }
+        }
+        ipcRenderer.send(`taskManager:reportToolCallResult:${toolCallId}`, result);
     });
 }
 

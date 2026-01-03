@@ -3,7 +3,7 @@ import { markedHighlight } from 'marked-highlight';
 import markedKatex from 'marked-katex-extension';
 import hljs from 'highlight.js';
 import { logger } from '../utils/logger.js';
-import { BaseTool } from './tool.js';
+import { BaseTool, BaseToolset } from './tool.js';
 import path from 'path';
 
 
@@ -668,8 +668,13 @@ class ChatContext {
         this.system_prompt = undefined;
         /** @type {(UserMessage | AssistantMessage)[]} */
         this.messages = [];
-        /** @type {Map<string, Map<string, BaseTool>>} */
+        /** @type {Map<string, BaseToolset>} */
         this.toolsets = new Map();
+    }
+
+    getTool(name) {
+        let tools = this.getTools()
+        return tools.get(name);
     }
 
     /**
@@ -678,8 +683,8 @@ class ChatContext {
     getTools() {
         let tools = new Map();
         for (let toolset of this.toolsets.values()) {
-            for (let [name, tool] of toolset.entries()) {
-                tools.set(`${name}-${tool.name}`, tool);
+            for (let tool of toolset.tools.values()) {
+                tools.set(`${toolset.name}-${tool.name}`, tool);
             }
         }
         return tools;

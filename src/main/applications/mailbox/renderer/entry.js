@@ -1,4 +1,4 @@
-import { Toolset, z } from '../../base_widget.js';
+import { RendererToolset, RendererTool, z } from '../../widget_utils.js';
 
 
 class MailBoxEntryWidget extends HTMLElement {
@@ -6,6 +6,8 @@ class MailBoxEntryWidget extends HTMLElement {
         super();
         this.emailHeaderList = new Map();
         this.selectedEmailUid = null;
+        this.selectedEmailHeader = null;
+        this.selectedEmailContent = null;
     }
 
     connectedCallback() {
@@ -20,10 +22,34 @@ class MailBoxEntryWidget extends HTMLElement {
     }
 
     getToolset() {
-        let toolset = new Toolset('mailbox');
+        let toolset = new RendererToolset('mailbox');
         if (this.selectedEmailUid !== null) {
-            const getSelectedEmailTool = toolset.createTool('getSelectedEmail', '获取当前用户选中正在浏览的邮件信息');
+            let getSelectedEmailTool = new RendererTool('getSelectedEmail', '获取当前用户选中正在浏览的邮件信息');
+            getSelectedEmailTool.setExecutor(async (args) => {
+                let result = '当前用户选中正在浏览的邮件信息为: \n';
+                result += `主题: ${this.selectedEmailHeader.subject}\n`;
+                result += `发送至: ${this.selectedEmailHeader.to}\n`;
+                result += `发送时间: ${new Date(this.selectedEmailHeader.date).toLocaleString()}\n`;
+                result += `邮件内容: ${this.selectedEmailContent.textContent || this.selectedEmailContent.htmlContent}\n`;
+                return result;
+            });
+            toolset.addTool(getSelectedEmailTool);
         }
+        let getEmailListTool = new RendererTool('getEmailList', '获取邮件列表');
+        getEmailListTool.setExecutor(async (args) => {
+            let result = '';
+            for (const email of this.emailHeaderList.values()) {
+                result += `- 主题: ${email.subject}\n`;
+                result += `  - 邮件ID: ${email.uid}\n`;
+                result += `  - 发送者: ${email.from}\n`;
+                result += `  - 发送至: ${email.to}\n`;
+                result += `  - 发送时间: ${new Date(email.date).toLocaleString()}\n`;
+                result += `  - 邮件内容: ${email.textContent || email.htmlContent}\n`;
+            }
+            console.info(result);
+            return result;
+        });
+        toolset.addTool(getEmailListTool);
         return toolset;
     }
 
@@ -75,10 +101,10 @@ class MailBoxEntryWidget extends HTMLElement {
         if (this.selectedEmailUid === null) {
             return;
         }
-        const emailHeader = this.emailHeaderList.get(this.selectedEmailUid);
-        const emailContent = await window.applicationAPI.sendMessageToApplication('getEmailContent', this.selectedEmailUid);
-        console.info(emailContent);
-        if (!emailContent) {
+        this.selectedEmailHeader = this.emailHeaderList.get(this.selectedEmailUid);
+        this.selectedEmailContent = await window.applicationAPI.sendMessageToApplication('getEmailContent', this.selectedEmailUid);
+
+        if (!this.selectedEmailContent) {
             return;
         }
 
@@ -114,12 +140,12 @@ class MailBoxEntryWidget extends HTMLElement {
                                 <i class="fab fa-mail text-2xl"></i>
                             </div>
                             <div>
-                                <h4 class="font-bold text-gray-900">${emailHeader.subject}</h4>
-                                <p class="text-xs text-gray-500">发送至: ${emailHeader.to}</p>
+                                <h4 class="font-bold text-gray-900">${this.selectedEmailHeader.subject}</h4>
+                                <p class="text-xs text-gray-500">发送至: ${this.selectedEmailHeader.to}</p>
                             </div>
                         </div>
                         <div class="text-right">
-                            <p class="text-sm font-medium text-gray-900">${new Date(emailHeader.date).toLocaleString()}</p>
+                            <p class="text-sm font-medium text-gray-900">${new Date(this.selectedEmailHeader.date).toLocaleString()}</p>
                             <p class="text-xs text-gray-400">12:30 (10小时前)</p>
                         </div>
                     </div>
@@ -133,7 +159,7 @@ class MailBoxEntryWidget extends HTMLElement {
         `
 
         document.querySelector('#email-body-content').attachShadow({ mode: 'open' });
-        document.querySelector('#email-body-content').shadowRoot.innerHTML = emailContent.htmlContent;
+        document.querySelector('#email-body-content').shadowRoot.innerHTML = this.selectedEmailContent.htmlContent;
     }
 
     openEmail(email) {

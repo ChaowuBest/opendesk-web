@@ -7,6 +7,7 @@ import { ApplicationRegistry } from './applications/base.js';
 import { SearchApplication } from './applications/search/app.js';
 import { MailboxApplication } from './applications/mailbox/app.js';
 import { RecallApplication } from './applications/recall/app.js';
+import { BaseToolset } from './agents/tool.js';
 import { z } from 'zod';
 import Convert from 'ansi-to-html';
 import path from 'path';
@@ -50,7 +51,6 @@ const createWindow = () => {
 
   mainWindow.setMenu(null)
   mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'))
-  // mainWindow.webContents.openDevTools();
 
   mainWindow.on('close', (event) => {
     if (!isAppQuitting) {
@@ -95,7 +95,6 @@ const registerTaskManagerAPIHandlers = () => {
       return { status: 'error', message: `task ${taskId} not found` }
     }
 
-    console.info(event.senderFrame);
     return { status: 'ok', data: task.addSubscriber(event.senderFrame) };
   })
   ipcMain.handle('taskManager:unsubscribeTaskUpdate', (event, taskId, subscriptionId) => {
@@ -113,13 +112,30 @@ const registerTaskManagerAPIHandlers = () => {
   ipcMain.handle('taskManager:subscribeTaskListUpdate', (event) => {
     return { status: 'ok', data: globalState.taskManagerState.addSubscriber(event.sender) };
   })
-  ipcMain.handle('taskManager:attachToolset', (event, taskId, toolset) => {
+  ipcMain.handle('taskManager:attachToolset', async (event, taskId, toolsetObject) => {
     const task = globalState.taskManagerState.getTask(taskId);
     if (task === undefined) {
       return { status: 'error', message: `task ${taskId} not found` }
     }
 
-    task.attachToolset(toolset);
+    const toolset = BaseToolset.fromJSON(toolsetObject);
+    for (let tool of toolset.tools.values()) {
+      tool.setExecutor(async (args) => {
+        let toolCallId = crypto.randomUUID();
+
+        let result = new Promise((resolve, reject) => {
+          ipcMain.once(`taskManager:reportToolCallResult:${toolCallId}`, (event, result) => {
+            console.info('tool call result', result);
+            resolve(result);
+          });
+          event.senderFrame.send(`taskManager:callTool`, taskId, toolCallId, toolset.name, tool.name, args);
+        });
+
+        return await result;
+      });
+    }
+
+    await task.attachToolset(toolset);
     return { status: 'ok' };
   })
   ipcMain.handle('taskManager:submitMessage', async (event, taskId, details) => {
@@ -252,6 +268,7 @@ const registerTray = () => {
   const menu = Menu.buildFromTemplate([
     { label: '打开主窗口', click: () => { globalMainWindow.show(); } },
     { label: '录制用户活动', click: () => { recallApplication.requestCaptureActivity(); } },
+    { label: '打开开发者工具', click: () => { globalMainWindow.webContents.openDevTools(); } },
     { type: 'separator' },
     { label: '退出', click: () => { app.quit(); } }
   ])

@@ -311,7 +311,7 @@ class LLM {
                         function: {
                             name: tool_id,
                             description: tool.description,
-                            parameters: z.toJSONSchema(tool.params),
+                            parameters: tool.params,
                         },
                     }
                 }),

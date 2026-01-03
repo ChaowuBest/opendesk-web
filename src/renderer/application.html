@@ -43,7 +43,7 @@
             x-transition:leave-end="translate-y-full"
         >
             <div id="floating-ai-task-view-container"
-                class="w-full h-full bg-white/60 backdrop-blur-md shadow-xl rounded-3xl border border-gray-200 pb-14 flex flex-col overflow-hidden pointer-events-auto"
+                class="w-full h-full bg-white/60 backdrop-blur-md shadow-xl rounded-3xl border border-gray-200 pb-14 pt-3 flex flex-col overflow-hidden pointer-events-auto"
                 style="max-height: 80vh;"
             >
             </div>
@@ -58,8 +58,9 @@
 
         <script>
             var currentTaskId = null;
+            var currentToolset = null;
 
-            async function submitRequest(detail) {
+            async function submitRequest(request) {
                 const floatingChatPanel = document.querySelector('#floating-ai-chat-panel');
                 const applicationEntryWidget = document.querySelector('#application-entry-widget');
 
@@ -71,10 +72,14 @@
                     `
                 }
 
-                const toolset = applicationEntryWidget.getToolset().toJSON();
-                console.info(toolset);
-                window.taskManagerAPI.attachToolset(currentTaskId, toolset);
-                window.taskManagerAPI.submitMessage(currentTaskId, detail);
+                currentToolset = applicationEntryWidget.getToolset();
+                if (currentToolset) {
+                    await window.taskManagerAPI.attachToolset(
+                        currentTaskId, currentToolset.toJSON(),
+                        currentToolset.callTool.bind(currentToolset)
+                    );
+                }
+                window.taskManagerAPI.submitMessage(currentTaskId, request);
                 document.querySelector(`#task-view-${currentTaskId}`).reload();
                 Alpine.$data(document.body).showFloatingChatPanel = true;
             }
@@ -88,10 +93,9 @@
                     script.type = 'module';
                     document.body.appendChild(script);
                 }
-                document.querySelector('#application-container').innerHTML = `
-                <${guiConfig.entry} id='application-entry-widget' class="w-full h-full"/>
-                `
+                document.querySelector('#application-container').innerHTML = `<${guiConfig.entry} id='application-entry-widget' class="w-full h-full"/>`
                 document.querySelector('#application-agent-input').addEventListener('focus', () => {
+                    // 如果用户激活了聊天输入浮窗，且当前有任务，则显示浮动聊天面板
                     if (currentTaskId !== null) {
                         Alpine.$data(document.body).showFloatingChatPanel = true;
                     }

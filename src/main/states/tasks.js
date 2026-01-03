@@ -78,7 +78,7 @@ class TaskState {
 
     async attachToolset(toolset) {
         logger.info(`attaching toolset ${toolset.name} to task ${this.task_id}`);
-        this.chat_context.toolsets.set(toolset.name, toolset.tools);
+        this.chat_context.toolsets.set(toolset.name, toolset);
     }
 
     async attachFiles(filePaths) {
@@ -186,7 +186,7 @@ class TaskState {
                 }
 
                 has_pending_tool_call = true;
-                let tool = this.chat_context.tools.get(tool_call.tool_name);
+                let tool = this.chat_context.getTool(tool_call.tool_name);
                 if (tool === undefined) {
                     logger.error(`tool ${tool_call.tool_name} not found`);
                     return false;
