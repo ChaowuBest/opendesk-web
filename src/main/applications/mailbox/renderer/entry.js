@@ -24,9 +24,9 @@ class MailBoxEntryWidget extends HTMLElement {
     getToolset() {
         let toolset = new RendererToolset('mailbox');
         if (this.selectedEmailUid !== null) {
-            let getSelectedEmailTool = new RendererTool('getSelectedEmail', '获取当前用户选中正在浏览的邮件信息');
+            let getSelectedEmailTool = new RendererTool('getSelectedEmail', '获取用户当前正在浏览的邮件内容');
             getSelectedEmailTool.setExecutor(async (args) => {
-                let result = '当前用户选中正在浏览的邮件信息为: \n';
+                let result = '当前用户正在浏览的邮件内容为: \n';
                 result += `主题: ${this.selectedEmailHeader.subject}\n`;
                 result += `发送至: ${this.selectedEmailHeader.to}\n`;
                 result += `发送时间: ${new Date(this.selectedEmailHeader.date).toLocaleString()}\n`;
@@ -50,15 +50,21 @@ class MailBoxEntryWidget extends HTMLElement {
             console.info(result);
             return result;
         });
-        let getEmailContentTool = new RendererTool('getEmailContent', '获取邮件内容');
+        let getEmailContentTool = new RendererTool('getEmailContent', '打开指定id的邮件并获取其内容');
         getEmailContentTool.setParams(z.object({
             uid: z.string().describe("邮件的ID")
         }))
         getEmailContentTool.setExecutor(async (args) => {
             let result = '';
-            let content = await this.getEmailContent(args.uid);
-            result += `邮件内容为: <content>${content.textContent || content.htmlContent}</content>\n`;
-            return result;
+            try {
+                await this.openEmailByUid(args.uid);
+                let content = this.selectedEmailContent;
+                result = `邮件内容为: <content>${content.textContent || content.htmlContent}</content>\n`;
+                return result;
+            } catch (error) {
+                result = `获取邮件内容失败: ${error}\n`;
+                return result;
+            }
         });
         toolset.addTools(getEmailListTool, getEmailContentTool);
         return toolset;
@@ -117,16 +123,107 @@ class MailBoxEntryWidget extends HTMLElement {
         return await window.applicationAPI.sendMessageToApplication('getEmailContent', uid);
     }
 
+    async reDownloadEmail(uid) {
+        return await window.applicationAPI.sendMessageToApplication('reDownloadEmail', uid);
+    }
+
+    renderCurrentEmailHeader() {
+        const senders = this.selectedEmailHeader.from.map(sender => {
+            return `
+            <div class="flex items-center bg-gray-200/60 border border-gray-300 rounded px-1.5 py-0.5 text-xs text-gray-700">
+                <span class="font-medium">${sender.name}</span>
+                <span class="ml-1 text-gray-400 italic font-normal">&lt;${sender.address}&gt;</span>
+                <button class="ml-1 text-gray-400 hover:text-gray-600">
+                    <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" /></svg>
+                </button>
+            </div>
+            `
+        }).join('');
+        const tos = this.selectedEmailHeader.to.map(to => {
+            return `
+            <div class="flex items-center bg-blue-100 border border-blue-200 rounded px-1.5 py-0.5 text-xs text-blue-700">
+                <span class="font-medium">${to.name}</span>
+                <span class="ml-1 text-gray-400 italic font-normal">&lt;${to.address}&gt;</span>
+            </div>
+            `
+        }).join('');
+        const ccs = this.selectedEmailHeader.cc?.map(cc => {
+            return `
+            <div class="flex items-center bg-green-100 border border-green-200 rounded px-1.5 py-0.5 text-xs text-green-700">
+                <span class="font-medium">${cc.name}</span>
+                <span class="ml-1 text-gray-400 italic font-normal">&lt;${cc.address}&gt;</span>
+            </div>
+            `
+        }).join('');
+        const bccs = this.selectedEmailHeader.bcc?.map(bcc => {
+            return `
+            <div class="flex items-center bg-purple-100 border border-purple-200 rounded px-1.5 py-0.5 text-xs text-purple-700">
+                <span class="font-medium">${bcc.name}</span>
+                <span class="ml-1 text-gray-400 italic font-normal">&lt;${bcc.address}&gt;</span>
+            </div>
+            `
+        }).join('');
+
+        var addresses = `
+        <!-- 发件人行 -->
+        <div class="group flex items-center px-1 py-1 hover:bg-gray-50 transition-colors">
+            <label class="w-12 text-xs text-gray-400 font-medium">发件人</label>
+            <div class="flex-1 flex items-center gap-2">
+                ${senders}
+            </div>
+        </div>
+
+        <!-- 收件人行 -->
+        <div class="group flex items-center px-1 py-1 hover:bg-gray-50 transition-colors">
+            <label class="w-12 text-xs text-gray-400 font-medium">收件人</label>
+            <div class="flex-1 flex flex-wrap gap-2 items-center">
+                ${tos}
+            </div>
+        </div>
+        `
+
+        if (ccs && ccs.length > 0) {
+            addresses += ` <!-- 抄送行 -->
+            <div class="group flex items-center px-1 py-1 hover:bg-gray-50 transition-colors">
+                <label class="w-12 text-xs text-gray-400 font-medium">抄送</label>
+                <div class="flex-1 flex flex-wrap gap-2 items-center">
+                    ${ccs}
+                </div>
+            </div>
+            `
+        }
+
+        var fullHeader = `
+        <div class="mb-2">
+            <div class="flex flex-col items-center justify-between">
+                <div class="flex flex-col items-left w-full">
+                    <div class="group flex flex-col items-left px-1 py-1 hover:bg-gray-50 transition-colors">
+                        <span class="text-xs text-gray-400 mr-4 mb-1">${new Date(this.selectedEmailHeader.date).toLocaleString()}</span>
+                        <h2 class="text-gray-900 text-lg font-bold leading-tight">${this.selectedEmailHeader.subject}</h2>
+                    </div>
+                    ${addresses}
+                </div>
+            </div>
+        </div>
+        `
+
+        return fullHeader;
+    }
+
     async reloadCurrentEmailContent() {
         if (this.selectedEmailUid === null) {
             return;
         }
+
+        this.querySelector('#email-content').innerHTML = `<content-loading-view data-message="正在加载邮件内容..."></content-loading-view>`;
         this.selectedEmailHeader = this.emailHeaderList.get(this.selectedEmailUid);
         this.selectedEmailContent = await this.getEmailContent(this.selectedEmailUid);
 
         if (!this.selectedEmailContent) {
             return;
         }
+
+        console.info(this.selectedEmailHeader.from);
 
         this.querySelector('#email-content').innerHTML = `
         <!-- 顶部工具栏 -->
@@ -140,7 +237,7 @@ class MailBoxEntryWidget extends HTMLElement {
                 <button class="text-gray-500 hover:text-amber-500"><i class="far fa-star"></i></button>
             </div>
             <div class="flex items-center gap-4">
-                <span class="text-xs text-gray-400">1 / 1,240</span>
+                <!-- <span class="text-xs text-gray-400">1 / 1,240</span> -->
                 <div class="flex border rounded-lg overflow-hidden">
                     <button class="px-3 py-1.5 hover:bg-gray-50 border-r"><i class="fas fa-chevron-left text-xs"></i></button>
                     <button class="px-3 py-1.5 hover:bg-gray-50"><i class="fas fa-chevron-right text-xs"></i></button>
@@ -149,28 +246,10 @@ class MailBoxEntryWidget extends HTMLElement {
         </header>
 
         <!-- 邮件阅读区 -->
-        <div class="flex-1 overflow-y-auto px-6 py-6 bg-white">
+        <div class="flex-1 overflow-y-auto p-4 bg-white">
             <div class="max-w-4xl mx-auto">
                 <!-- 邮件头部 -->
-                <div class="mb-10">
-                    <h2 id="email-header-subject" class="text-2xl font-extrabold text-gray-900 mb-6 leading-tight"></h2>
-                    <div class="flex items-center justify-between">
-                        <div class="flex items-center gap-4">
-                            <div class="w-12 h-12 rounded-full bg-gray-900 flex items-center justify-center text-white">
-                                <i class="fab fa-mail text-2xl"></i>
-                            </div>
-                            <div>
-                                <h4 class="font-bold text-gray-900">${this.selectedEmailHeader.subject}</h4>
-                                <p class="text-xs text-gray-500">发送至: ${this.selectedEmailHeader.to}</p>
-                            </div>
-                        </div>
-                        <div class="text-right">
-                            <p class="text-sm font-medium text-gray-900">${new Date(this.selectedEmailHeader.date).toLocaleString()}</p>
-                            <p class="text-xs text-gray-400">12:30 (10小时前)</p>
-                        </div>
-                    </div>
-                </div>
-
+                ${this.renderCurrentEmailHeader()}
                 <!-- 邮件主体 -->
                 <div id="email-body-content" class="prose prose-indigo max-w-none w-full overflow-x-auto overflow-y-auto">
                 </div>
@@ -182,10 +261,16 @@ class MailBoxEntryWidget extends HTMLElement {
         document.querySelector('#email-body-content').shadowRoot.innerHTML = this.selectedEmailContent.htmlContent;
     }
 
-    openEmail(email) {
+    async openEmail(email) {
         this.selectedEmailUid = email.uid;
         this.reloadEmailList();
-        this.reloadCurrentEmailContent();
+        await this.reloadCurrentEmailContent();
+    }
+
+    async openEmailByUid(uid) {
+        this.selectedEmailUid = uid;
+        this.reloadEmailList();
+        await this.reloadCurrentEmailContent();
     }
 
     render() {
@@ -221,21 +306,9 @@ class MailBoxEntryWidget extends HTMLElement {
 
                 <!-- 邮件列表区 -->
                 <div id="email-list" class="flex-1 overflow-y-auto border-t"></div>
-
-                <!-- 底部个人信息与导航
-                <div class="p-4 bg-gray-50 border-t flex items-center justify-between">
-                    <div class="flex items-center gap-2">
-                        <img class="w-8 h-8 rounded-full border border-gray-200" src="https://ui-avatars.com/api/?name=Alex+Zhang&background=6366f1&color=fff" alt="">
-                        <span class="font-semibold text-xs">Alex Zhang</span>
-                    </div>
-                    <div class="flex gap-3 text-gray-400">
-                        <button class="hover:text-indigo-600 transition-colors"><i class="fas fa-cog"></i></button>
-                        <button class="hover:text-indigo-600 transition-colors"><i class="fas fa-question-circle"></i></button>
-                    </div>
-                </div> -->
             </aside>
 
-            <!-- 右侧栏：邮件内容 (Responsive Flex-1) -->
+            <!-- 右侧栏：邮件内容 -->
             <main id='email-content' class="flex-1 bg-white flex flex-col overflow-auto"></main>
         </div>
         `

@@ -26,7 +26,7 @@ class POP3EmailClient {
         return new Pop3Command({ user: this.usr, password: this.pwd, host: this.host, port: this.port, tls: this.tls });
     }
 
-    async getEmailContent(uid) {
+    async getEmail(uid) {
         const pop3 = this.pop3();
         try {
             const uidlist = await pop3.UIDL();
@@ -38,7 +38,15 @@ class POP3EmailClient {
             }
             const email = await pop3.RETR(index);
             const parsed = await simpleParser(email);
-            return new EmailContent(parsed.html, parsed.text, parsed.attachments);
+            const content = new EmailContent(parsed.html, parsed.text, parsed.attachments);
+            const header = new EmailHeader(
+                uid,
+                parsed.subject,
+                parsed.from?.value, parsed.to?.value,
+                parsed.cc?.value, parsed.bcc?.value,
+                parsed.date?.getTime()
+            );
+            return { header, content };
         }
         catch (error) {
             logger.error(`error getting email content: ${uid}: ${error}`);
@@ -46,6 +54,11 @@ class POP3EmailClient {
         } finally {
             await pop3.QUIT();
         }
+    }
+
+    async getEmailContent(uid) {
+        const { _, content } = await this.getEmail(uid);
+        return content;
     }
 }
 
@@ -104,6 +117,7 @@ class MailboxStorage {
                         uid,
                         parsed.subject,
                         parsed.from?.value, parsed.to?.value,
+                        parsed.cc?.value, parsed.bcc?.value,
                         parsed.date?.getTime()
                     );
                     return header;
@@ -115,6 +129,10 @@ class MailboxStorage {
             { concurrency: 16 }
         );
         await this.saveEmailHeaders(...headers.filter(header => header !== null));
+    }
+
+    async saveEmailHeader(header) {
+        await this.saveEmailHeaders(header);
     }
 
     async saveEmailHeaders(...emails) {
@@ -143,7 +161,7 @@ class MailboxStorage {
      */
     async getEmailHeaderList() {
         const docs = await this.db.find({}).sort({ date: -1 }).limit(100);
-        return docs.map(doc => new EmailHeader(doc.uid, doc.subject, doc.from, doc.to, doc.date));
+        return docs.map(doc => new EmailHeader(doc.uid, doc.subject, doc.from, doc.to, doc.cc, doc.bcc, doc.date));
     }
 }
 
@@ -280,6 +298,22 @@ class MailboxWorker extends BaseWorker {
         }
     }
 
+    async reDownloadEmail(uid) {
+        logger.info(`re-downloading email: ${uid}`);
+        const config = EmailProfileSchema.parse(this.config);
+        if (config.inbox?.pop3) {
+            const pop3 = new POP3EmailClient(
+                config.username, config.password,
+                config.inbox.pop3.tls, config.inbox.pop3.host, config.inbox.pop3.port
+            );
+            const { header, content } = await pop3.getEmail(uid);
+            await this.storage.saveEmailContent(uid, content);
+            await this.storage.saveEmailHeader(header);
+            return content;
+        } else {
+            throw new Error('no valid inbox server configured');
+        }
+    }
 }
 
 (new MailboxWorker()).initialize();

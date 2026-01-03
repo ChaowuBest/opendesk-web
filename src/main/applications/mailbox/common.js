@@ -57,15 +57,15 @@ class EmailHeader {
      * @param {EmailAddress[]} to - The recipient of the email
      * @param {EmailAddress[]} cc - The cc recipient of the email
      * @param {EmailAddress[]} bcc - The bcc recipient of the email
-     * @param {string} messageId - The message id of the email
-     * @param {string[]} relatedMessageIds - The related message ids of the email
      * @param {Date} date - The date of the email
      */
-    constructor(uid, subject, from, to, date) {
+    constructor(uid, subject, from, to, cc, bcc, date) {
         this.uid = uid;
         this.subject = subject;
         this.from = from;
         this.to = to;
+        this.cc = cc;
+        this.bcc = bcc;
         this.date = date;
         this.unread = true;
     }

@@ -47,4 +47,33 @@ class LoadingView extends HTMLElement {
     }
 }
 
+class ContentLoadingView extends HTMLElement {
+    constructor() {
+        super();
+    }
+
+    connectedCallback() {
+        this.render();
+    }
+
+    render() {
+        this.innerHTML = `
+        <div class="w-full h-full">
+            <div class="flex flex-col items-center justify-center w-full h-96 bg-white shadow-inner rounded-2xl">
+            <div class="flex items-end space-x-2 h-12">
+                <!-- 每一根线条都有不同的延迟 -->
+                <div class="w-2 bg-blue-500 rounded-full animate-[bounce_1s_ease-in-out_infinite] h-8"></div>
+                <div class="w-2 bg-indigo-500 rounded-full animate-[bounce_1s_ease-in-out_infinite_0.1s] h-12"></div>
+                <div class="w-2 bg-purple-500 rounded-full animate-[bounce_1s_ease-in-out_infinite_0.2s] h-10"></div>
+                <div class="w-2 bg-pink-500 rounded-full animate-[bounce_1s_ease-in-out_infinite_0.3s] h-6"></div>
+                <div class="w-2 bg-red-500 rounded-full animate-[bounce_1s_ease-in-out_infinite_0.4s] h-9"></div>
+                <div class="w-2 bg-orange-500 rounded-full animate-[bounce_1s_ease-in-out_infinite_0.5s] h-12"></div>
+            </div>
+            <div class="mt-6 text-gray-400 text-sm font-light uppercase tracking-[0.3em]">${this.dataset.message}</div></div>
+        </div>
+        `
+    }
+}
+
 customElements.define('loading-view', LoadingView);
+customElements.define('content-loading-view', ContentLoadingView);

@@ -208,6 +208,7 @@ class TaskState {
                     await this.sendSubscriptionFeedback();
 
                     let result = await tool.execute(args);
+                    // console.info('tool result', result);
                     tool_call.status = 'success';
                     tool_call.result = result;
                 } catch (err) {
