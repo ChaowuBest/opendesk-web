@@ -12,6 +12,9 @@ module.exports = {
       __dirname, 'src', 'assets', 'images',
       process.platform === 'darwin' ? 'icon_round.icns' : 'icon_round.ico'
     ),
+    "asar": {
+      "unpack": "**/node_modules/{sharp,@img}/**/*"
+    }
   },
   rebuildConfig: {},
   makers: [
