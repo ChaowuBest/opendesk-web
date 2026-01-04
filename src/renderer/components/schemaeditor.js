@@ -159,7 +159,19 @@ class SchemaEditor extends HTMLElement {
         // 处理数组项删除
         container.querySelectorAll('[data-array-item-remove]').forEach(btn => {
             btn.addEventListener('click', (e) => {
-                e.target.closest('[data-array-index]').remove();
+                const arrayItem = e.target.closest('[data-array-index]');
+                if (!arrayItem) return;
+
+                // 找到数组容器
+                const arrayContainer = arrayItem.closest('[data-array-field]');
+                if (!arrayContainer) return;
+
+                // 删除数组项
+                arrayItem.remove();
+
+                // 重新索引所有剩余的数组项
+                this.reindexArrayItems(arrayContainer);
+
                 this.dispatchEvent(new CustomEvent('value-change', {
                     detail: { value: this.getValue() }
                 }));
@@ -655,6 +667,60 @@ class SchemaEditor extends HTMLElement {
             "'": '&#039;'
         };
         return String(text).replace(/[&<>"']/g, m => map[m]);
+    }
+
+    /**
+     * 重新索引数组项
+     * 删除数组项后，需要更新所有剩余项的索引和路径
+     */
+    reindexArrayItems(arrayContainer) {
+        const itemsContainer = arrayContainer.querySelector('.space-y-2') || arrayContainer;
+        const arrayItems = Array.from(itemsContainer.querySelectorAll('[data-array-index]'));
+        const fieldPath = arrayContainer.getAttribute('data-field-path');
+
+        // 按当前索引排序，确保顺序正确
+        arrayItems.sort((a, b) => {
+            const indexA = parseInt(a.getAttribute('data-array-index')) || 0;
+            const indexB = parseInt(b.getAttribute('data-array-index')) || 0;
+            return indexA - indexB;
+        });
+
+        // 重新索引所有数组项
+        arrayItems.forEach((item, newIndex) => {
+            // 更新 data-array-index 属性
+            item.setAttribute('data-array-index', newIndex);
+
+            // 更新显示文本
+            const labelSpan = item.querySelector('.text-xs.text-gray-500');
+            if (labelSpan) {
+                labelSpan.textContent = `第 ${newIndex + 1} 项`;
+            }
+
+            // 更新所有子元素的 data-field-path 属性
+            const inputs = item.querySelectorAll('[data-field-path]');
+            inputs.forEach(input => {
+                const oldPath = input.getAttribute('data-field-path');
+                if (!oldPath) return;
+
+                // 使用正则表达式匹配并替换数组索引
+                // 匹配格式：fieldPath[index] 或 fieldPath[index].subfield
+                const pathRegex = /^(.+?)\[\d+\](.*)$/;
+                const match = oldPath.match(pathRegex);
+
+                if (match) {
+                    // 找到数组字段路径和后续路径
+                    const basePath = match[1];
+                    const restPath = match[2];
+                    // 构建新路径
+                    const newPath = `${basePath}[${newIndex}]${restPath}`;
+                    input.setAttribute('data-field-path', newPath);
+                } else if (fieldPath) {
+                    // 如果路径不匹配，但知道数组字段路径，直接构建
+                    const newPath = `${fieldPath}[${newIndex}]`;
+                    input.setAttribute('data-field-path', newPath);
+                }
+            });
+        });
     }
 
     /**

@@ -131,7 +131,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
     }
 
     renderCurrentEmailHeader() {
-        const senders = this.selectedEmailHeader.from.map(sender => {
+        const senders = this.selectedEmailHeader.from?.map(sender => {
             return `
             <div class="flex items-center bg-gray-200/60 border border-gray-300 rounded px-1.5 py-0.5 text-xs text-gray-700">
                 <span class="font-medium">${sender.name}</span>
@@ -142,7 +142,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             </div>
             `
         }).join('');
-        const tos = this.selectedEmailHeader.to.map(to => {
+        const tos = this.selectedEmailHeader.to?.map(to => {
             return `
             <div class="flex items-center bg-blue-100 border border-blue-200 rounded px-1.5 py-0.5 text-xs text-blue-700">
                 <span class="font-medium">${to.name}</span>
@@ -167,23 +167,30 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             `
         }).join('');
 
-        var addresses = `
-        <!-- 发件人行 -->
-        <div class="group flex items-center px-1 py-1 hover:bg-gray-50 transition-colors">
-            <label class="w-12 text-xs text-gray-400 font-medium">发件人</label>
-            <div class="flex-1 flex items-center gap-2">
-                ${senders}
+        var addresses = '';
+        if (senders && senders.length > 0) {
+            addresses += `
+            <!-- 发件人行 -->
+            <div class="group flex items-center px-1 py-1 hover:bg-gray-50 transition-colors">
+                <label class="w-12 text-xs text-gray-400 font-medium">发件人</label>
+                <div class="flex-1 flex items-center gap-2">
+                    ${senders}
+                </div>
             </div>
-        </div>
+            `
+        }
 
-        <!-- 收件人行 -->
-        <div class="group flex items-center px-1 py-1 hover:bg-gray-50 transition-colors">
-            <label class="w-12 text-xs text-gray-400 font-medium">收件人</label>
-            <div class="flex-1 flex flex-wrap gap-2 items-center">
-                ${tos}
+        if (tos && tos.length > 0) {
+            addresses += `
+            <!-- 收件人行 -->
+            <div class="group flex items-center px-1 py-1 hover:bg-gray-50 transition-colors">
+                <label class="w-12 text-xs text-gray-400 font-medium">收件人</label>
+                <div class="flex-1 flex flex-wrap gap-2 items-center">
+                    ${tos}
+                </div>
             </div>
-        </div>
-        `
+            `
+        }
 
         if (ccs && ccs.length > 0) {
             addresses += ` <!-- 抄送行 -->
