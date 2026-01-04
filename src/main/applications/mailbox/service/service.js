@@ -24,6 +24,14 @@ class MailboxService extends BaseService {
     static async reDownloadEmail(uid) {
         return await this.sendMessage('reDownloadEmail', uid);
     }
+
+    /**
+     * 立刻触发一次邮件同步
+     * @returns {Promise<void>}
+     */
+    static async syncEmails() {
+        return await this.sendMessage('syncEmails', {});
+    }
 }
 
 export { MailboxService };

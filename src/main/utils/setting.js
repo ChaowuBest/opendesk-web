@@ -113,8 +113,39 @@ class Setting {
     }
 
     setData(data) {
-        this.data = getSettingSchema().parse(data);
+        const newSettingData = getSettingSchema().parse(data);
+        let settingChangedApplications = [];
+
+        // Print all field names in the ApplicationConfigSchema (must be an object schema)
+        if (ApplicationConfigSchema && ApplicationConfigSchema.shape) {
+            let applicationNames = Object.keys(ApplicationConfigSchema.shape);
+            for (const applicationName of applicationNames) {
+                const newConfig = newSettingData.applications[applicationName];
+                const oldConfig = this.data.applications[applicationName];
+                // 深度比较对象内容
+                const isEqual = JSON.stringify(newConfig) === JSON.stringify(oldConfig);
+                if (!isEqual) {
+                    console.info(`application ${applicationName} config changed`);
+                    settingChangedApplications.push(applicationName);
+                }
+            }
+        }
+
+        // Optionally update and save settings (if that's still desired)
+        this.data = newSettingData;
         this.save();
+
+        console.info(`setting changed applications: ${settingChangedApplications}`);
+        import('../applications/base.js').then(module => {
+            const { ApplicationRegistry } = module;
+            for (const applicationName of settingChangedApplications) {
+                const application = ApplicationRegistry.getApplication(applicationName);
+                if (application === undefined) {
+                    continue;
+                }
+                application.onConfigChanged();
+            }
+        });
     }
 
     /**

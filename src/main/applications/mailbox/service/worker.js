@@ -248,6 +248,14 @@ class MailboxWorker extends BaseWorker {
         }
     }
 
+    async syncEmails() {
+        if (this.config === undefined) {
+            logger.warn('no config, skip mailbox sync');
+            return;
+        }
+        this.sync();
+    }
+
     async startService() {
         if (this.config === undefined) {
             logger.warn('mailbox service not configured, skip sync');

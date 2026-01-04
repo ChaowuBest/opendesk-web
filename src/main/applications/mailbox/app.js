@@ -2,6 +2,7 @@ import { BaseApplication, BaseGUIConfig } from "../base.js";
 import path from 'path';
 import { MailboxService } from "./service/service.js";
 import { EmailProfileSchema } from "./common.js";
+import { logger } from "../../utils/logger.js";
 
 const __dirname = import.meta.dirname;
 
@@ -13,6 +14,13 @@ class MailboxApplication extends BaseApplication {
 
     getConfigSchema() {
         return EmailProfileSchema;
+    }
+
+    onConfigChanged() {
+        logger.info(`mailbox application config changed`);
+        MailboxService.sendApplicationConfig(this.getConfig()).then(() => {
+            MailboxService.syncEmails();
+        })
     }
 
     getGUIConfig() {

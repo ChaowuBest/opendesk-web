@@ -52,9 +52,7 @@ class FSStorage {
         await this.db.ensureIndex({ fieldName: 'filename', sparse: true })
 
         let startTime = Date.now();
-        logger.info(`loading vector cache from vec_cache.jsonl`);
-        // 从 join(getAppDirectory(), 'vec_cache.jsonl') 读取向量缓存，放到 this.vec_cache 里，每行是一条缓存数据
-
+        logger.info(`loading vector cache from ${FSStorage.vectorCachePath}`);
         if (fs.existsSync(FSStorage.vectorCachePath)) {
             const lines = fs.readFileSync(FSStorage.vectorCachePath, 'utf-8').split('\n');
             for (const line of lines) {

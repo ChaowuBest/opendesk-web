@@ -63,11 +63,11 @@ class BaseService {
         throw new Error('worker path not implemented');
     }
 
-    static sendApplicationConfig(config) {
+    static async sendApplicationConfig(config) {
         if (!this.worker) {
             throw new Error('worker not initialized');
         }
-        this.sendMessage('applicationConfigChanged', config);
+        await this.sendMessage('applicationConfigChanged', config);
     }
 
     static async initializeWorker() {
@@ -211,6 +211,13 @@ class BaseApplication {
      */
     getConfig() {
         return Setting.getInstance().data.applications[this.bundleName];
+    }
+
+    /**
+     * 配置发生变化时调用
+     */
+    onConfigChanged() {
+        logger.info(`application ${this.bundleName} config changed`);
     }
 
     async handleMessage(message, ...args) {
