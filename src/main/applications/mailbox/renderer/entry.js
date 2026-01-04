@@ -63,6 +63,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
                 await this.openEmailByUid(args.uid);
                 let content = this.selectedEmailContent;
                 result = `邮件内容为: <content>${content.textContent || content.htmlContent}</content>\n`;
+                await new Promise(resolve => setTimeout(resolve, 1000));
                 return result;
             } catch (error) {
                 result = `获取邮件内容失败: ${error}\n`;

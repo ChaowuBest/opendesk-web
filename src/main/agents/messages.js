@@ -192,14 +192,15 @@ class ToolCallMessagePart {
     }
 
     async render() {
-        const toolcalls = this.toolcalls.map(toolcall => toolcall.render()).join(TOOL_CALL_SEPARATOR);
-        this.rendered = `
-        <div class="flex mt-3 mb-3 text-sm items-center space-x-4 bg-white/80 backdrop-blur-md border border-slate-200 py-2 px-4 rounded-full shadow-sm w-fit">
-            <span class="ml-2 font-semibold text-slate-600">工具调用</span>
-            ${TOOL_CALL_SEPARATOR}
-            ${toolcalls}
-        </div>
-        `;
+        this.rendered = this.toolcalls.map(toolcall => {
+            return `
+            <div class="flex mt-3 mb-3 text-sm items-center space-x-4 bg-white/80 backdrop-blur-md border border-slate-200 py-2 px-4 rounded-full shadow-sm w-fit">
+                <span class="ml-2 font-semibold text-slate-600">工具调用</span>
+                ${TOOL_CALL_SEPARATOR}
+                ${toolcall.render()}
+            </div>
+            `;
+        }).join('');
     }
 
     static assign(tool_call_message_part_obj) {
