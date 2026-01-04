@@ -339,6 +339,11 @@ class ImageMessagePart {
  * @property {string} content
  */
 class SystemMessage {
+
+    /**
+     * System message part
+     * @param {string} content
+     */
     constructor (content) {
         this.role = 'system';
         this.content = content;
@@ -347,6 +352,13 @@ class SystemMessage {
     static assign(system_message_obj) {
         Object.setPrototypeOf(system_message_obj, SystemMessage.prototype);
         return system_message_obj;
+    }
+
+    toOpenAIMessage() {
+        return {
+            role: this.role,
+            content: this.content
+        }
     }
 }
 

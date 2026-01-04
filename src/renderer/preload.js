@@ -86,6 +86,7 @@ function exposeTaskManagerAPI() {
             taskwiseToolsetCallbacks.get(taskId).set(toolset.name, toolsetCallback);
             return result.data;
         },
+        setSystemPrompt: (taskId, prompt) => ipcRenderer.invoke('taskManager:setSystemPrompt', taskId, prompt),
         submitMessage: (taskId, message) => ipcRenderer.invoke('taskManager:submitMessage', taskId, message),
     });
 

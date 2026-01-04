@@ -311,6 +311,7 @@ class MailboxWorker extends BaseWorker {
             await this.storage.saveEmailHeader(header);
             return content;
         } else {
+            logger.error(`no valid inbox server configured: ${this.config}`);
             throw new Error('no valid inbox server configured');
         }
     }

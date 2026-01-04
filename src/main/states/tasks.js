@@ -1,4 +1,4 @@
-import { ChatContext, UserMessage, AssistantMessage, ToolCallMessagePart, FileMessagePart } from '../agents/messages.js';
+import { ChatContext, UserMessage, AssistantMessage, ToolCallMessagePart, FileMessagePart, SystemMessage } from '../agents/messages.js';
 import { LLM } from '../agents/llm.js';
 import { getTaskDirectory } from '../utils/setting.js';
 import path from 'path';
@@ -78,6 +78,11 @@ class TaskState {
             task_status: this.task_status,
             chat_context: this.chat_context.toJSON(),
         }
+    }
+
+    async setSystemPrompt(prompt) {
+        logger.info(`setting system prompt ${prompt} to task ${this.task_id}`);
+        this.chat_context.system_prompt = new SystemMessage(prompt);
     }
 
     async attachToolset(toolset) {

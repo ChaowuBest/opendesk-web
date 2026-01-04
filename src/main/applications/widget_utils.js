@@ -4,6 +4,28 @@ import { BaseTool, BaseToolset } from '../agents/tool.js';
 export { z };
 
 
+export class AgentOperableHTMLElement extends HTMLElement {
+    constructor() {
+        super();
+    }
+
+    /**
+     * 获取工具集
+     * @returns {RendererToolset | null} 工具集
+     */
+    getToolset() {
+        return null;
+    }
+
+    /**
+     * 获取Agent的指示
+     * @returns {string | null} Agent的指示
+     */
+    getAgentInstruct() {
+        return null;
+    }
+}
+
 /**
  * 运行在渲染进程的工具，可以通过后端的Agent调用
  */

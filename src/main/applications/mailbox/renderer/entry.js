@@ -1,7 +1,7 @@
-import { RendererToolset, RendererTool, z } from '../../widget_utils.js';
+import { RendererToolset, RendererTool, z, AgentOperableHTMLElement } from '../../widget_utils.js';
 
 
-class MailBoxEntryWidget extends HTMLElement {
+class MailBoxEntryWidget extends AgentOperableHTMLElement {
     constructor() {
         super();
         this.emailHeaderList = new Map();
@@ -21,6 +21,10 @@ class MailBoxEntryWidget extends HTMLElement {
         })
     }
 
+    getAgentInstruct() {
+        return '你是一个邮件管理助手，你负责管理用户的邮件，并利用提供的邮件及其他工具来完成用户指定的任务。';
+    }
+
     getToolset() {
         let toolset = new RendererToolset('mailbox');
         if (this.selectedEmailUid !== null) {
@@ -36,7 +40,7 @@ class MailBoxEntryWidget extends HTMLElement {
             toolset.addTool(getSelectedEmailTool);
         }
 
-        let getEmailListTool = new RendererTool('getEmailList', '获取邮件列表');
+        let getEmailListTool = new RendererTool('getEmailList', '获取完整的邮件列表');
         getEmailListTool.setExecutor(async (args) => {
             let result = '';
             for (const email of this.emailHeaderList.values()) {
@@ -45,7 +49,6 @@ class MailBoxEntryWidget extends HTMLElement {
                 result += `  - 发送者: ${email.from}\n`;
                 result += `  - 发送至: ${email.to}\n`;
                 result += `  - 发送时间: ${new Date(email.date).toLocaleString()}\n`;
-                result += `  - 邮件内容: ${email.textContent || email.htmlContent}\n`;
             }
             console.info(result);
             return result;
@@ -210,6 +213,14 @@ class MailBoxEntryWidget extends HTMLElement {
         return fullHeader;
     }
 
+    async createNewEmail() {
+        // 这里可以直接 new 一个邮件编辑控件并赋值给 #email-content
+        const emailContent = this.querySelector('#email-content');
+        const mailEditor = new SendEmailWidget();
+        emailContent.innerHTML = '';
+        emailContent.appendChild(mailEditor);
+    }
+
     async reloadCurrentEmailContent() {
         if (this.selectedEmailUid === null) {
             return;
@@ -229,9 +240,9 @@ class MailBoxEntryWidget extends HTMLElement {
         <!-- 顶部工具栏 -->
         <header class="h-16 pl-8 pr-16 border-b flex items-center justify-between">
             <div class="flex items-center gap-6">
-                <button class="text-gray-500 hover:text-indigo-600"><i class="fas fa-reply"></i></button>
-                <button class="text-gray-500 hover:text-indigo-600"><i class="fas fa-reply-all"></i></button>
-                <button class="text-gray-500 hover:text-indigo-600"><i class="fas fa-share text-sm"></i></button>
+                <button id='mailbox-reply-button' class="text-gray-500 hover:text-indigo-600"><i class="fas fa-reply"></i></button>
+                <button id='mailbox-reply-all-button' class="text-gray-500 hover:text-indigo-600"><i class="fas fa-reply-all"></i></button>
+                <button id='mailbox-forward-button' class="text-gray-500 hover:text-indigo-600"><i class="fas fa-share text-sm"></i></button>
                 <span class="h-4 w-px bg-gray-200 mx-2"></span>
                 <button class="text-gray-500 hover:text-red-500"><i class="far fa-trash-alt"></i></button>
                 <button class="text-gray-500 hover:text-amber-500"><i class="far fa-star"></i></button>
@@ -259,6 +270,9 @@ class MailBoxEntryWidget extends HTMLElement {
 
         document.querySelector('#email-body-content').attachShadow({ mode: 'open' });
         document.querySelector('#email-body-content').shadowRoot.innerHTML = this.selectedEmailContent.htmlContent;
+        document.querySelector('#mailbox-reply-button').addEventListener('click', () => {
+            this.createNewEmail();
+        });
     }
 
     async openEmail(email) {
@@ -315,4 +329,87 @@ class MailBoxEntryWidget extends HTMLElement {
     }
 }
 
+class SendEmailWidget extends AgentOperableHTMLElement {
+    constructor() {
+        super();
+    }
+
+    connectedCallback() {
+        this.render();
+    }
+
+    render() {
+        this.innerHTML = `
+        <div class="flex-1 overflow-y-auto bg-white">
+            <!-- 顶部工具栏 -->
+            <header class="h-16 pl-8 pr-16 border-b flex items-center justify-between">
+                <div class="flex items-center gap-6">
+                    <button id='mailbox-reply-button' class="text-gray-500 hover:text-indigo-600"><i class="fas fa-reply"></i></button>
+                    <button id='mailbox-reply-all-button' class="text-gray-500 hover:text-indigo-600"><i class="fas fa-reply-all"></i></button>
+                    <button id='mailbox-forward-button' class="text-gray-500 hover:text-indigo-600"><i class="fas fa-share text-sm"></i></button>
+                    <span class="h-4 w-px bg-gray-200 mx-2"></span>
+                    <button class="text-gray-500 hover:text-red-500"><i class="far fa-trash-alt"></i></button>
+                    <button class="text-gray-500 hover:text-amber-500"><i class="far fa-star"></i></button>
+                </div>
+                <div class="flex items-center gap-4">
+                    <!-- <span class="text-xs text-gray-400">1 / 1,240</span> -->
+                    <div class="flex border rounded-lg overflow-hidden">
+                        <button class="px-3 py-1.5 hover:bg-gray-50 border-r"><i class="fas fa-chevron-left text-xs"></i></button>
+                        <button class="px-3 py-1.5 hover:bg-gray-50"><i class="fas fa-chevron-right text-xs"></i></button>
+                    </div>
+                </div>
+            </header>
+
+            <!-- 邮件头部 -->
+            <!-- 邮件主体 -->
+            <div id="email-body-content" class="prose prose-indigo max-w-none w-full h-full p-2 overflow-x-auto overflow-y-auto">
+                <div id="editor—wrapper">
+                    <div id="toolbar-container"><!-- 工具栏 --></div>
+                    <div id="editor-container"><!-- 编辑器 --></div>
+                </div>
+            </div>
+        </div>
+
+        <style>
+        #editor—wrapper {
+            border: 1px solid #ccc;
+            z-index: 100; /* 按需定义 */
+        }
+        #toolbar-container {
+            border-bottom: 1px solid #ccc;
+        }
+        #editor-container {
+            height: 500px;
+        }
+        </style>
+        `
+
+        const { createEditor, createToolbar } = window.wangEditor
+        const editorConfig = {
+            placeholder: 'Type here...',
+            onChange(editor) {
+              const html = editor.getHtml()
+              console.log('editor content', html)
+              // 也可以同步到 <textarea>
+            },
+        }
+
+        const editor = createEditor({
+            selector: '#editor-container',
+            html: '<p><br></p>',
+            config: editorConfig,
+            mode: 'default', // or 'simple'
+        })
+
+        const toolbarConfig = {}
+        const toolbar = createToolbar({
+            editor,
+            selector: '#toolbar-container',
+            config: toolbarConfig,
+            mode: 'default', // or 'simple'
+        })
+    }
+}
+
 customElements.define('mailbox-entry-widget', MailBoxEntryWidget);
+customElements.define('send-email-widget', SendEmailWidget);

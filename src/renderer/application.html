@@ -12,6 +12,9 @@
         <script src="../renderer/components/taskview.js"></script>
         <script src="../renderer/components/loading.js"></script>
 
+        <script src="https://unpkg.com/@wangeditor/editor@latest/dist/index.js" defer></script>
+        <link href="https://unpkg.com/@wangeditor/editor@latest/dist/css/style.css" rel="stylesheet" defer/>
+
         <style>
             html, body {
                 height: 100%; /* 关键：让html继承窗口高度 */
@@ -81,6 +84,10 @@
                         currentToolset.callTool.bind(currentToolset)
                     );
                     console.info('attached toolset finished');
+                }
+                const agentInstruct = applicationEntryWidget.getAgentInstruct();
+                if (agentInstruct) {
+                    await window.taskManagerAPI.setSystemPrompt(currentTaskId, agentInstruct);
                 }
                 window.taskManagerAPI.submitMessage(currentTaskId, request);
                 document.querySelector(`#task-view-${currentTaskId}`).reload();

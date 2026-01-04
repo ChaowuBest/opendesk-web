@@ -137,6 +137,13 @@ const registerTaskManagerAPIHandlers = () => {
     await task.attachToolset(toolset);
     return { status: 'ok' };
   })
+  ipcMain.handle('taskManager:setSystemPrompt', (event, taskId, prompt) => {
+    const task = globalState.taskManagerState.getTask(taskId);
+    if (task === undefined) {
+      return { status: 'error', message: `task ${taskId} not found` }
+    }
+    task.setSystemPrompt(prompt);
+  })
   ipcMain.handle('taskManager:submitMessage', async (event, taskId, details) => {
     const task = globalState.taskManagerState.getTask(taskId);
     if (details.attachedFilePaths) {
