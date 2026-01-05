@@ -2,6 +2,7 @@ import { EmailHeader, EmailProfileSchema, EmailContent } from "../common.js";
 import { BaseWorker } from "../../base.js";
 import { logger } from '../../../utils/logger.js';
 import Pop3Command from 'node-pop3';
+import fs from 'fs';
 import nedb from 'nedb-promises';
 import path from 'path';
 import pMap from 'p-map';
@@ -66,18 +67,43 @@ class MailboxStorage {
 
     constructor(dbPath) {
         /** @type {nedb} */
-        this.db = new nedb({ filename: dbPath, autoload: true });
-        this.db.ensureIndex({ fieldName: 'uid', unique: true, sparse: true });
-        this.rawdb = new nedb({ filename: dbPath + '.raw', autoload: true });
-        this.rawdb.ensureIndex({ fieldName: 'uid', unique: true, sparse: true });
-        this.contentdb = new nedb({ filename: dbPath + '.content', autoload: true });
-        this.contentdb.ensureIndex({ fieldName: 'uid', unique: true, sparse: true });
+        this.dbPath = dbPath;
+        this.db = new nedb({ filename: dbPath });
+        this.rawdb = new nedb({ filename: dbPath + '.raw' });
+        this.contentdb = new nedb({ filename: dbPath + '.content' });
+    }
+
+    async initialize() {
+        await this.db.load().catch(err => {
+            logger.error(`error loading mailbox_header_storage.db: ${err}`);
+            fs.rmSync(this.dbPath);
+            this.db = new nedb({ filename: this.dbPath, autoload: true });
+            NotificationManager.getInstance().error('邮箱', '收取新邮件', `邮箱数据库(db)损坏，已删除并重新创建`);
+        }).finally(() => {
+            this.db.ensureIndex({ fieldName: 'uid', unique: true, sparse: true });
+        })
+        await this.rawdb.load().catch(err => {
+            logger.error(`error loading mailbox_header_storage.db.raw: ${err}`);
+            fs.rmSync(this.dbPath + '.raw');
+            this.rawdb = new nedb({ filename: this.dbPath + '.raw', autoload: true });
+            NotificationManager.getInstance().error('邮箱', '收取新邮件', `邮箱数据库(rawdb)损坏，已删除并重新创建`);
+        }).finally(() => {
+            this.rawdb.ensureIndex({ fieldName: 'uid', unique: true, sparse: true });
+        })
+        await this.contentdb.load().catch(err => {
+            logger.error(`error loading mailbox_header_storage.db.content: ${err}`);
+            fs.rmSync(this.dbPath + '.content');
+            this.contentdb = new nedb({ filename: this.dbPath + '.content', autoload: true });
+            NotificationManager.getInstance().error('邮箱', '收取新邮件', `邮箱数据库(contentdb)损坏，已删除并重新创建`);
+        }).finally(() => {
+            this.contentdb.ensureIndex({ fieldName: 'uid', unique: true, sparse: true });
+        })
     }
 
     async saveRawEmailHeader(uid, header) {
         await this.rawdb.update(
             { uid: uid },
-            { $set: { uid: uid,header: header } },
+            { $set: { uid: uid, header: header } },
             { upsert: true }
         )
     }
@@ -258,10 +284,11 @@ class MailboxWorker extends BaseWorker {
 
     async startService() {
         if (this.config === undefined) {
-            logger.warn('mailbox service not configured, skip sync');
+            logger.warn('mailbox service not configured, will not start mailbox service');
             return;
         }
 
+        await this.storage.initialize();
         setTimeout(async () => {
             await this.trySync();
             setInterval(async () => {

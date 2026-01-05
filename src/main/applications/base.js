@@ -118,7 +118,7 @@ class BaseService {
         // 处理 worker 退出
         this.worker.on('exit', (code) => {
             if (code !== 0) {
-                logger.error(`Worker stopped with exit code ${code}`);
+                logger.error(`Worker ${this.name} stopped with exit code ${code}`);
             }
             this.worker = null;
             // 清理所有待处理的请求

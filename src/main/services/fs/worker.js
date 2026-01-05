@@ -3,6 +3,7 @@ import fastGlob from 'fast-glob';
 import { z } from 'zod';
 import { FSEntrySchema, Setting } from '../../utils/setting.js';
 import { FileEntrySchema, FSStorage } from './storage.js';
+import { NotificationManager } from '../../utils/notificationmgr.js';
 import { logger } from '../../utils/logger.js';
 
 

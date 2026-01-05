@@ -34,13 +34,11 @@ class FSStorage {
 
     /** @type {string} */
     static vectorCachePath = path.join(getAppDirectory(), 'vec_cache.jsonl');
+    static dbPath = path.join(getAppDirectory(), 'fs_storage.db');
 
     constructor() {
         /** @type {nedb} */
-        this.db = new nedb({
-            filename: path.join(getAppDirectory(), 'fs_storage.db'),
-            autoload: true
-        });
+        this.db = new nedb({ filename: FSStorage.dbPath, autoload: false });
 
         /** @type {Map<string, number[]>} */
         this.vec_cache = new Map();
@@ -48,8 +46,15 @@ class FSStorage {
     }
 
     async initialize() {
-        await this.db.ensureIndex({ fieldName: 'path', unique: true, sparse: true })
-        await this.db.ensureIndex({ fieldName: 'filename', sparse: true })
+        await this.db.load().catch(err => {
+            logger.error(`error loading fs_storage.db: ${err}`);
+            fs.rmSync(FSStorage.dbPath);
+            this.db = new nedb({ filename: FSStorage.dbPath, autoload: true });
+            NotificationManager.getInstance().error('文件系统', '文件系统扫描', `文件系统数据库损坏，已删除并重新创建`);
+        }).finally(() => {
+            this.db.ensureIndex({ fieldName: 'path', unique: true, sparse: true });
+            this.db.ensureIndex({ fieldName: 'filename', sparse: true });
+        })
 
         let startTime = Date.now();
         logger.info(`loading vector cache from ${FSStorage.vectorCachePath}`);
