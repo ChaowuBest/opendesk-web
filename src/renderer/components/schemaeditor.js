@@ -187,7 +187,8 @@ class SchemaEditor extends HTMLElement {
         if (!arrayContainer) return;
 
         const itemsContainer = arrayContainer.querySelector('.space-y-2') || arrayContainer;
-        const currentItems = itemsContainer.querySelectorAll('[data-array-index]');
+        // 只选择直接子元素，避免包含嵌套数组项
+        const currentItems = Array.from(itemsContainer.children).filter(el => el.hasAttribute('data-array-index'));
         const index = currentItems.length;
         const itemPath = fieldPath ? `${fieldPath}[${index}]` : `${fieldId}[${index}]`;
 
@@ -675,7 +676,8 @@ class SchemaEditor extends HTMLElement {
      */
     reindexArrayItems(arrayContainer) {
         const itemsContainer = arrayContainer.querySelector('.space-y-2') || arrayContainer;
-        const arrayItems = Array.from(itemsContainer.querySelectorAll('[data-array-index]'));
+        // 只选择直接子元素，避免包含嵌套数组项
+        const arrayItems = Array.from(itemsContainer.children).filter(el => el.hasAttribute('data-array-index'));
         const fieldPath = arrayContainer.getAttribute('data-field-path');
 
         // 按当前索引排序，确保顺序正确
