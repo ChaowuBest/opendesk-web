@@ -25,6 +25,10 @@ class MailboxService extends BaseService {
         return await this.sendMessage('reDownloadEmailContent', uid);
     }
 
+    static async markEmailAsRead(uid) {
+        return await this.sendMessage('markEmailAsRead', uid);
+    }
+
     /**
      * 立刻触发一次邮件同步
      * @returns {Promise<void>}

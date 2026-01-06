@@ -59,7 +59,7 @@ class EmailHeader {
      * @param {EmailAddress[]} bcc - The bcc recipient of the email
      * @param {Date} date - The date of the email
      */
-    constructor(uid, subject, from, to, cc, bcc, date) {
+    constructor(uid, subject, from, to, cc, bcc, date, unread = true) {
         this.uid = uid;
         this.subject = subject;
         this.from = from;
@@ -67,7 +67,7 @@ class EmailHeader {
         this.cc = cc;
         this.bcc = bcc;
         this.date = date;
-        this.unread = true;
+        this.unread = unread;
     }
 }
 

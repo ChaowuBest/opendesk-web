@@ -4,9 +4,14 @@ import { RendererToolset, RendererTool, z, AgentOperableHTMLElement } from '../.
 class MailBoxEntryWidget extends AgentOperableHTMLElement {
     constructor() {
         super();
+
+        /** @type {Map<string, import('../common.js').EmailHeader>} */
         this.emailHeaderList = new Map();
+        /** @type {string | null} */
         this.selectedEmailUid = null;
+        /** @type {import('../common.js').EmailHeader | null} */
         this.selectedEmailHeader = null;
+        /** @type {import('../common.js').EmailContent | null} */
         this.selectedEmailContent = null;
     }
 
@@ -85,6 +90,11 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         return emailHeaderList;
     }
 
+    /**
+     * 将一封邮件的抬头部分渲染为HTML
+     * @param {import('../common.js').EmailHeader} email
+     * @returns {string}
+     */
     renderEmailItem(email) {
         const isSelected = email.uid === this.selectedEmailUid;
         var classes = "email-item p-3 border-b cursor-pointer border-l-4 ";
@@ -94,11 +104,15 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             classes += "hover:bg-gray-50 transition-colors border-l-transparent";
         }
 
+        var subject_classes = "font-medium text-gray-500";
+        if (email.unread) {
+            subject_classes = "font-bold text-gray-800";
+        }
+
         return `
         <div class="${classes}" data-uid="${email.uid}">
             <div class="flex justify-between items-start mb-1">
-                <span class="font-bold text-gray-800">${email.subject}</span>
-                <!-- <span class="text-xs text-gray-400"></span> -->
+                <span class="${subject_classes}">${email.subject}</span>
             </div>
             <!-- <p class="text-gray-900 font-medium truncate mb-1 text-[13px]">test</p> -->
             <p class="text-gray-500 line-clamp-2 text-xs leading-relaxed">${new Date(email.date).toLocaleString()}</p>
@@ -106,6 +120,9 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         `
     }
 
+    /**
+     * 重新载入邮件列表
+     */
     reloadEmailList() {
         const emailListContainer = this.querySelector('#email-list');
         emailListContainer.innerHTML = '';
@@ -129,6 +146,11 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
 
     async reDownloadEmailContent(uid) {
         return await window.applicationAPI.sendMessageToApplication('reDownloadEmailContent', uid);
+    }
+
+    async markEmailAsRead(uid) {
+        console.info('mark email as read', uid);
+        await window.applicationAPI.sendMessageToApplication('markEmailAsRead', uid);
     }
 
     renderCurrentEmailHeader() {
@@ -345,15 +367,17 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
     }
 
     async openEmail(email, redownload = false) {
-        this.selectedEmailUid = email.uid;
-        this.reloadEmailList();
-        await this.reloadCurrentEmailContent(redownload);
+        await this.openEmailByUid(email.uid, redownload);
     }
 
     async openEmailByUid(uid, redownload = false) {
         this.selectedEmailUid = uid;
-        this.reloadEmailList();
         await this.reloadCurrentEmailContent(redownload);
+        if (this.selectedEmailHeader.unread) {
+            await this.markEmailAsRead(uid);
+            this.selectedEmailHeader.unread = false;
+        }
+        this.reloadEmailList();
     }
 
     render() {

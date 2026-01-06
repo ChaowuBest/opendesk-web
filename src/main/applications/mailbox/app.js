@@ -38,6 +38,8 @@ class MailboxApplication extends BaseApplication {
                 return await MailboxService.getEmailContent(args[0]);
             case 'reDownloadEmailContent':
                 return await MailboxService.reDownloadEmailContent(args[0]);
+            case 'markEmailAsRead':
+                return await MailboxService.markEmailAsRead(args[0]);
             default:
                 throw new Error(`unknown message: ${message}`);
         }

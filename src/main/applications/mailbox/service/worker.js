@@ -134,6 +134,14 @@ class MailboxStorage {
         return doc?.header;
     }
 
+    async markEmailAsRead(uid) {
+        logger.info(`marking email as read: ${uid}`);
+        await this.db.update(
+            { uid: uid },
+            { $set: { unread: false } }
+        )
+    }
+
     async getEmailContent(uid) {
         const doc = await this.contentdb.findOne({ uid: uid });
         if (!doc) {
@@ -208,7 +216,11 @@ class MailboxStorage {
      */
     async getEmailHeaderList() {
         const docs = await this.db.find({}).sort({ date: -1 }).limit(100);
-        return docs.map(doc => new EmailHeader(doc.uid, doc.subject, doc.from, doc.to, doc.cc, doc.bcc, doc.date));
+        return docs.map(doc => new EmailHeader(
+            doc.uid, doc.subject,
+            doc.from, doc.to, doc.cc, doc.bcc,
+            doc.date, doc.unread
+        ));
     }
 }
 
@@ -324,6 +336,10 @@ class MailboxWorker extends BaseWorker {
         let cost = (Date.now() - startTime) / 1000;
         logger.info(`get email list cost: ${cost.toFixed(2)}s`);
         return result;
+    }
+
+    async markEmailAsRead(uid) {
+        await this.storage.markEmailAsRead(uid);
     }
 
     /**
