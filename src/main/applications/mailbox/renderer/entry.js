@@ -286,6 +286,36 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         emailContent.appendChild(mailEditor);
     }
 
+    async createToolbar(buttons) {
+        const topButtonsHTML = buttons.map(button => {
+            return `
+            <button id='${button.id}' class="group flex items-center px-2 py-2 rounded-full
+                        bg-transparent hover:bg-white/60 hover:shadow-md
+                        transition-all duration-500 ease-[cubic-bezier(0.23,1,0.32,1)]
+                        text-gray-700 hover:text-blue-600">
+                <i class="fa-solid ${button.icon}"></i>
+                <span class="max-w-0 overflow-hidden opacity-0
+                            group-hover:max-w-[120px] group-hover:opacity-100
+                            group-hover:ml-2 transition-all duration-500 ease-in-out
+                            whitespace-nowrap font-medium tracking-tight text-sm">
+                    ${button.label}
+                </span>
+            </button>
+            `
+        }).join('');
+
+        let toolbarHTML = `
+        <!-- 顶部工具栏 -->
+        <header class="h-16 pl-3 pr-16 border-b flex items-center justify-between">
+            <div class="flex items-center gap-2 p-1">
+                ${topButtonsHTML}
+            </div>
+        </header>
+        `;
+
+        return toolbarHTML;
+    }
+
     async reloadCurrentEmailContent(redownload = false) {
         if (!this.selectedEmailUid) {
             return;
@@ -304,28 +334,19 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             return;
         }
 
-        console.info(this.selectedEmailHeader.from);
+        const topButtons = [
+            { id: 'mailbox-reply-button', icon: 'fa-reply', label: '回复', action: () => this.createNewEmail() },
+            { id: 'mailbox-reply-all-button', icon: 'fa-reply-all', label: '回复全部', action: () => this.createNewEmail() },
+            { id: 'mailbox-forward-button', icon: 'fa-share', label: '转发', action: () => this.createNewEmail() },
+            { id: 'mailbox-reload-button', icon: 'fa-redo-alt', label: '重新下载', action: () => this.openEmailByUid(this.selectedEmailUid, true) },
+            { id: 'mailbox-trash-button', icon: 'fa-trash-alt', label: '删除', action: () => this.deleteEmail() },
+            { id: 'mailbox-star-button', icon: 'fa-star', label: '收藏', action: () => this.starEmail() },
+        ]
+
+        const toolbarHTML = await this.createToolbar(topButtons);
 
         this.querySelector('#email-content').innerHTML = `
-        <!-- 顶部工具栏 -->
-        <header class="h-16 pl-8 pr-16 border-b flex items-center justify-between">
-            <div class="flex items-center gap-6">
-                <button id='mailbox-reply-button' class="text-gray-500 hover:text-indigo-600"><i class="fas fa-reply"></i></button>
-                <button id='mailbox-reply-all-button' class="text-gray-500 hover:text-indigo-600"><i class="fas fa-reply-all"></i></button>
-                <button id='mailbox-forward-button' class="text-gray-500 hover:text-indigo-600"><i class="fas fa-share text-sm"></i></button>
-                <span class="h-4 w-px bg-gray-200 mx-2"></span>
-                <button class="text-gray-500 hover:text-red-500"><i class="far fa-trash-alt"></i></button>
-                <button class="text-gray-500 hover:text-amber-500"><i class="far fa-star"></i></button>
-                <button id='mailbox-reload-button' class="text-gray-500 hover:text-blue-500"><i class="fas fa-redo-alt"></i></button>
-            </div>
-            <div class="flex items-center gap-4">
-                <!-- <span class="text-xs text-gray-400">1 / 1,240</span> -->
-                <div class="flex border rounded-lg overflow-hidden">
-                    <button class="px-3 py-1.5 hover:bg-gray-50 border-r"><i class="fas fa-chevron-left text-xs"></i></button>
-                    <button class="px-3 py-1.5 hover:bg-gray-50"><i class="fas fa-chevron-right text-xs"></i></button>
-                </div>
-            </div>
-        </header>
+        ${toolbarHTML}
 
         <!-- 邮件阅读区 -->
         <div class="flex-1 overflow-y-auto p-4 bg-white">
@@ -348,12 +369,12 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             document.querySelector('#email-body-content').shadowRoot.innerHTML = textContent;
         }
 
-        document.querySelector('#mailbox-reply-button').addEventListener('click', () => {
-            this.createNewEmail();
-        });
-        document.querySelector('#mailbox-reload-button').addEventListener('click', () => {
-            this.openEmailByUid(this.selectedEmailUid, true);
-        });
+        for (const button of topButtons) {
+            document.querySelector(`#${button.id}`).addEventListener('click', () => {
+                button.action();
+            });
+        }
+
         document.querySelectorAll('.mailbox-open-attachment-item').forEach(item => {
             item.addEventListener('click', (event) => {
                 const filePath = item.dataset.attachment_path;
