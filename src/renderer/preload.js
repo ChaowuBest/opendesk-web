@@ -111,38 +111,7 @@ function exposeTaskManagerAPI() {
     });
 }
 
-
-if (window.self !== window.top) {
-    /** @type {string | null} */
-    var applicationBundleName = null;
-
-    contextBridge.exposeInMainWorld('applicationAPI', {
-        getApplicationGUIConfig: async (bundleName) => {
-            const result = await ipcRenderer.invoke('applicationRegistry:getApplicationGUIConfig', bundleName);
-            if (result.status !== 'ok') {
-                console.error('getting application GUI config failed', result.message);
-                throw new Error(result.message);
-            }
-            applicationBundleName = bundleName;
-            return result.data;
-        },
-        sendMessageToApplication: async (...args) => {
-            if (applicationBundleName === null) {
-                console.error('application bundle name is not set');
-                throw new Error('application bundle name is not set');
-            }
-            const result = await ipcRenderer.invoke('applicationRegistry:sendMessageToApplication', applicationBundleName, ...args);
-            if (result.status !== 'ok') {
-                console.error('sending message to application failed', result.message);
-                throw new Error(result.message);
-            }
-            return result.data;
-        }
-    })
-    exposeTaskManagerAPI();
-} else {
-    exposeTaskManagerAPI();
-
+function exposeFSAPI() {
     contextBridge.exposeInMainWorld('fsAPI', {
         searchFilesByKeyword: async (keyword) => {
             const result = await ipcRenderer.invoke('fs:searchFilesByKeyword', keyword);
@@ -177,6 +146,40 @@ if (window.self !== window.top) {
             return p;
         }
     })
+}
+
+if (window.self !== window.top) {
+    /** @type {string | null} */
+    var applicationBundleName = null;
+
+    contextBridge.exposeInMainWorld('applicationAPI', {
+        getApplicationGUIConfig: async (bundleName) => {
+            const result = await ipcRenderer.invoke('applicationRegistry:getApplicationGUIConfig', bundleName);
+            if (result.status !== 'ok') {
+                console.error('getting application GUI config failed', result.message);
+                throw new Error(result.message);
+            }
+            applicationBundleName = bundleName;
+            return result.data;
+        },
+        sendMessageToApplication: async (...args) => {
+            if (applicationBundleName === null) {
+                console.error('application bundle name is not set');
+                throw new Error('application bundle name is not set');
+            }
+            const result = await ipcRenderer.invoke('applicationRegistry:sendMessageToApplication', applicationBundleName, ...args);
+            if (result.status !== 'ok') {
+                console.error('sending message to application failed', result.message);
+                throw new Error(result.message);
+            }
+            return result.data;
+        }
+    })
+    exposeTaskManagerAPI();
+    exposeFSAPI();
+} else {
+    exposeTaskManagerAPI();
+    exposeFSAPI();
 
     contextBridge.exposeInMainWorld('settingAPI', {
         registerCommandCallback: (command, callback) => {

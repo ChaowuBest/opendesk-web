@@ -21,8 +21,8 @@ class MailboxService extends BaseService {
         return await this.sendMessage('getEmailContent', uid);
     }
 
-    static async reDownloadEmail(uid) {
-        return await this.sendMessage('reDownloadEmail', uid);
+    static async reDownloadEmailContent(uid) {
+        return await this.sendMessage('reDownloadEmailContent', uid);
     }
 
     /**

@@ -127,8 +127,8 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         return await window.applicationAPI.sendMessageToApplication('getEmailContent', uid);
     }
 
-    async reDownloadEmail(uid) {
-        return await window.applicationAPI.sendMessageToApplication('reDownloadEmail', uid);
+    async reDownloadEmailContent(uid) {
+        return await window.applicationAPI.sendMessageToApplication('reDownloadEmailContent', uid);
     }
 
     renderCurrentEmailHeader() {
@@ -204,6 +204,40 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             `
         }
 
+        var attachments = '';
+        for (const attachment of this.selectedEmailContent.attachments) {
+            attachments += `
+            <div class="mailbox-open-attachment-item flex items-center group cursor-pointer w-fit max-w-sm
+                bg-white/70 backdrop-blur-xl
+                rounded-xl px-2.5 py-1
+                border border-black/[0.08] shadow-sm
+                hover:shadow-md hover:bg-white/90 hover:-translate-y-0.5
+                transition-all duration-200 ease-out select-none"
+                data-attachment_path="${attachment.path}"
+            >
+                <!-- 文件图标容器 -->
+                <i class="fa fa-file-alt text-gray-400 text-sm mr-2"></i>
+                <!-- 文件详细信息 -->
+                <div class="flex flex-col min-w-0 flex-1 overflow-hidden">
+                    <span class="text-[13px] font-medium text-gray-900 truncate tracking-tight font-sans">
+                        ${attachment.filename}
+                    </span>
+                </div>
+            </div>
+            `
+        }
+
+        if (attachments) {
+            attachments = `
+            <div class="group flex items-center px-1 py-1 hover:bg-gray-50 transition-colors">
+                <label class="w-12 text-xs text-gray-400 font-medium">附件</label>
+                <div class="flex-1 flex flex-wrap gap-2 items-center">
+                    ${attachments}
+                </div>
+            </div>
+            `
+        }
+
         var fullHeader = `
         <div class="mb-2">
             <div class="flex flex-col items-center justify-between">
@@ -213,6 +247,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
                         <h2 class="text-gray-900 text-lg font-bold leading-tight">${this.selectedEmailHeader.subject}</h2>
                     </div>
                     ${addresses}
+                    ${attachments}
                 </div>
             </div>
         </div>
@@ -229,14 +264,19 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         emailContent.appendChild(mailEditor);
     }
 
-    async reloadCurrentEmailContent() {
-        if (this.selectedEmailUid === null) {
+    async reloadCurrentEmailContent(redownload = false) {
+        if (!this.selectedEmailUid) {
             return;
         }
 
         this.querySelector('#email-content').innerHTML = `<content-loading-view data-message="正在加载邮件内容..."></content-loading-view>`;
         this.selectedEmailHeader = this.emailHeaderList.get(this.selectedEmailUid);
-        this.selectedEmailContent = await this.getEmailContent(this.selectedEmailUid);
+
+        if (redownload) {
+            this.selectedEmailContent = await this.reDownloadEmailContent(this.selectedEmailUid);
+        } else {
+            this.selectedEmailContent = await this.getEmailContent(this.selectedEmailUid);
+        }
 
         if (!this.selectedEmailContent) {
             return;
@@ -254,6 +294,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
                 <span class="h-4 w-px bg-gray-200 mx-2"></span>
                 <button class="text-gray-500 hover:text-red-500"><i class="far fa-trash-alt"></i></button>
                 <button class="text-gray-500 hover:text-amber-500"><i class="far fa-star"></i></button>
+                <button id='mailbox-reload-button' class="text-gray-500 hover:text-blue-500"><i class="fas fa-redo-alt"></i></button>
             </div>
             <div class="flex items-center gap-4">
                 <!-- <span class="text-xs text-gray-400">1 / 1,240</span> -->
@@ -270,29 +311,49 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
                 <!-- 邮件头部 -->
                 ${this.renderCurrentEmailHeader()}
                 <!-- 邮件主体 -->
-                <div id="email-body-content" class="prose prose-indigo max-w-none w-full overflow-x-auto overflow-y-auto">
+                <div id="email-body-content" class="prose prose-indigo max-w-none w-full break-words overflow-x-auto overflow-y-auto">
                 </div>
             </div>
         </div>
         `
 
         document.querySelector('#email-body-content').attachShadow({ mode: 'open' });
-        document.querySelector('#email-body-content').shadowRoot.innerHTML = this.selectedEmailContent.htmlContent;
+        if (this.selectedEmailContent.htmlContent) {
+            document.querySelector('#email-body-content').shadowRoot.innerHTML = this.selectedEmailContent.htmlContent;
+        } else {
+            let textContent = this.selectedEmailContent.textContent;
+            textContent = textContent.replace(/\n/g, '<br>');
+            document.querySelector('#email-body-content').shadowRoot.innerHTML = textContent;
+        }
+
         document.querySelector('#mailbox-reply-button').addEventListener('click', () => {
             this.createNewEmail();
         });
+        document.querySelector('#mailbox-reload-button').addEventListener('click', () => {
+            this.openEmailByUid(this.selectedEmailUid, true);
+        });
+        document.querySelectorAll('.mailbox-open-attachment-item').forEach(item => {
+            item.addEventListener('click', (event) => {
+                const filePath = item.dataset.attachment_path;
+                if (!filePath) {
+                    return;
+                }
+                console.info('open attachment', filePath);
+                window.fsAPI.openFile(filePath);
+            });
+        });
     }
 
-    async openEmail(email) {
+    async openEmail(email, redownload = false) {
         this.selectedEmailUid = email.uid;
         this.reloadEmailList();
-        await this.reloadCurrentEmailContent();
+        await this.reloadCurrentEmailContent(redownload);
     }
 
-    async openEmailByUid(uid) {
+    async openEmailByUid(uid, redownload = false) {
         this.selectedEmailUid = uid;
         this.reloadEmailList();
-        await this.reloadCurrentEmailContent();
+        await this.reloadCurrentEmailContent(redownload);
     }
 
     render() {

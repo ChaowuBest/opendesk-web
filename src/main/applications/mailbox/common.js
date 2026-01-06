@@ -71,16 +71,25 @@ class EmailHeader {
     }
 }
 
+class EmailAttachment {
+    constructor(filename, path) {
+        this.filename = filename;
+        this.path = path;
+    }
+}
+
 class EmailContent {
-    constructor(htmlContent, textContent) {
+    constructor(htmlContent, textContent, attachments) {
         this.htmlContent = htmlContent;
         this.textContent = textContent;
+        this.attachments = attachments;
     }
 }
 
 export {
     EmailHeader,
     EmailContent,
+    EmailAttachment,
     EmailProfileSchema,
     InboxServerSchema,
     OutboxServerSchema,

@@ -171,6 +171,9 @@ const registerFSAPIHandlers = () => {
     }
   }),
   ipcMain.handle('fs:openFile', async (event, filePath) => {
+    if (!filePath) {
+      return { status: 'error', message: `file path is required, ${filePath} given` }
+    }
     shell.openPath(filePath);
     return { status: 'ok' };
   })

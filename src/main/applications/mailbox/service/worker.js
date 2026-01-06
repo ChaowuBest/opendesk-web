@@ -1,4 +1,4 @@
-import { EmailHeader, EmailProfileSchema, EmailContent } from "../common.js";
+import { EmailHeader, EmailProfileSchema, EmailContent, EmailAttachment } from "../common.js";
 import { BaseWorker } from "../../base.js";
 import { logger } from '../../../utils/logger.js';
 import Pop3Command from 'node-pop3';
@@ -12,6 +12,8 @@ import pkg from 'lodash';
 import { NotificationManager } from "../../../utils/notificationmgr.js";
 
 const _ = pkg;
+
+var mailboxDataDirectory = null;
 
 class POP3EmailClient {
 
@@ -27,6 +29,23 @@ class POP3EmailClient {
         return new Pop3Command({ user: this.usr, password: this.pwd, host: this.host, port: this.port, tls: this.tls });
     }
 
+    async prepareAttachments(uid, attachments) {
+        if (!attachments) {
+            return [];
+        }
+
+        const attachmentDirectory = path.join(mailboxDataDirectory, 'attachments', uid);
+        let result = [];
+        fs.mkdirSync(attachmentDirectory, { recursive: true });
+        for (const attachment of attachments) {
+            const attachmentPath = path.join(attachmentDirectory, attachment.filename);
+            logger.info(`saving attachment: ${attachment.filename} to ${attachmentPath}`);
+            fs.writeFileSync(attachmentPath, attachment.content);
+            result.push(new EmailAttachment(attachment.filename, attachmentPath));
+        }
+        return result;
+    }
+
     async getEmail(uid) {
         const pop3 = this.pop3();
         try {
@@ -39,7 +58,9 @@ class POP3EmailClient {
             }
             const email = await pop3.RETR(index);
             const parsed = await simpleParser(email);
-            const content = new EmailContent(parsed.html, parsed.text, parsed.attachments);
+
+            const attachments = await this.prepareAttachments(uid, parsed.attachments);
+            const content = new EmailContent(parsed.html, parsed.text, attachments);
             const header = new EmailHeader(
                 uid,
                 parsed.subject,
@@ -118,14 +139,14 @@ class MailboxStorage {
         if (!doc) {
             return null;
         }
-        return new EmailContent(doc.htmlContent, doc.textContent);
+        return new EmailContent(doc.htmlContent, doc.textContent, doc.attachments || []);
     }
 
     async saveEmailContent(uid, content) {
         try {
             await this.contentdb.update(
                 { uid: uid },
-                { $set: { uid: uid, htmlContent: content.htmlContent, textContent: content.textContent } },
+                { $set: { uid: uid, htmlContent: content.htmlContent, textContent: content.textContent, attachments: content.attachments } },
                 { upsert: true }
             )
         } catch (error) {
@@ -333,7 +354,7 @@ class MailboxWorker extends BaseWorker {
         }
     }
 
-    async reDownloadEmail(uid) {
+    async reDownloadEmailContent(uid) {
         logger.info(`re-downloading email: ${uid}`);
         const config = EmailProfileSchema.parse(this.config);
         if (config.inbox?.pop3) {
@@ -352,4 +373,6 @@ class MailboxWorker extends BaseWorker {
     }
 }
 
-(new MailboxWorker()).initialize();
+let mailboxWorker = new MailboxWorker();
+mailboxDataDirectory = mailboxWorker.appDataDirectory;
+mailboxWorker.initialize();

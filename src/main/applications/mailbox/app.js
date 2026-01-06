@@ -36,8 +36,8 @@ class MailboxApplication extends BaseApplication {
                 return await MailboxService.getEmailHeaderList();
             case 'getEmailContent':
                 return await MailboxService.getEmailContent(args[0]);
-            case 'reDownloadEmail':
-                return await MailboxService.reDownloadEmail(args[0]);
+            case 'reDownloadEmailContent':
+                return await MailboxService.reDownloadEmailContent(args[0]);
             default:
                 throw new Error(`unknown message: ${message}`);
         }
