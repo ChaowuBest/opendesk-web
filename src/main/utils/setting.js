@@ -29,11 +29,8 @@ const ModelSchema = z.object({
 })
 
 var defaultExcludePatterns = [
-    "C:/Windows/**",
-    "C:/Temp/**",
     "**/node_modules/**",
     "**/.git/**",
-    "**/.DS_Store/**",
     "**/.idea/**",
     "**/.vscode/**",
     "**/.pytest_cache/**",
@@ -48,6 +45,15 @@ function getHomeDirectory() {
 
 if (process.platform === 'darwin') {
     defaultExcludePatterns.push(`${getHomeDirectory()}/Library/**`);
+    defaultExcludePatterns.push("**/.DS_Store/**");
+}
+
+if (process.platform === 'win32') {
+    let home = getHomeDirectory();
+    home = home.replace(/\\/g, '/');
+    defaultExcludePatterns.push(`${home}/AppData/**`);
+    defaultExcludePatterns.push("C:/Windows/**");
+    defaultExcludePatterns.push("C:/Temp/**");
 }
 
 const FSEntrySchema = z.object({
@@ -104,7 +110,7 @@ class Setting {
     static instance = null;
 
     constructor() {
-        /** @type {z.core.output<SettingSchema>} */
+        /** @type {z.core.output<getSettingSchema()>} */
         this.data = getSettingSchema().parse({});
     }
 
@@ -132,20 +138,32 @@ class Setting {
         }
 
         // Optionally update and save settings (if that's still desired)
+        let oldSettingData = this.data;
         this.data = newSettingData;
         this.save();
 
-        console.info(`setting changed applications: ${settingChangedApplications}`);
-        import('../applications/base.js').then(module => {
-            const { ApplicationRegistry } = module;
-            for (const applicationName of settingChangedApplications) {
-                const application = ApplicationRegistry.getApplication(applicationName);
-                if (application === undefined) {
-                    continue;
+        // 如果配置发生变化，则通知应用程序
+        if (settingChangedApplications.length > 0) {
+            console.info(`setting changed applications: ${settingChangedApplications}`);
+            import('../applications/base.js').then(module => {
+                const { ApplicationRegistry } = module;
+                for (const applicationName of settingChangedApplications) {
+                    const application = ApplicationRegistry.getApplication(applicationName);
+                    if (application === undefined) {
+                        continue;
+                    }
+                    application.onConfigChanged();
                 }
-                application.onConfigChanged();
-            }
-        });
+            });
+        }
+
+        if (JSON.stringify(oldSettingData.filesystems) !== JSON.stringify(newSettingData.filesystems)) {
+            console.info(`filesystems changed`);
+            import('../services/fs/service.js').then(module => {
+                const { FSService } = module;
+                FSService.restartFSService();
+            });
+        }
     }
 
     /**

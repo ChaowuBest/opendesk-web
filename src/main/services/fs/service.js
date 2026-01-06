@@ -3,6 +3,7 @@ import { getAppDirectory } from '../../utils/setting.js';
 import { logger, LogStream } from '../../utils/logger.js';
 
 import path from 'path';
+import { NotificationManager } from '../../utils/notificationmgr.js';
 
 const __dirname = import.meta.dirname;
 
@@ -88,6 +89,7 @@ class FSService {
      */
     static async sendMessage(type, payload) {
         if (!this.worker) {
+            logger.info('initializing FS worker');
             await this.initializeWorker();
         }
 
@@ -126,10 +128,24 @@ class FSService {
             if (this.worker) {
                 await this.sendMessage('stopService', {});
                 await this.worker.terminate();
+                logger.info('FS worker terminated');
                 this.worker = null;
             }
         } catch (error) {
             logger.error('Failed to stop FS service:', error);
+        }
+    }
+
+    /**
+     * 重启文件系统服务
+     */
+    static async restartFSService() {
+        try {
+            await this.stopFSService();
+            await this.startFSService();
+            NotificationManager.getInstance().info('文件系统', '设置更新', '文件系统服务重启成功');
+        } catch (error) {
+            NotificationManager.getInstance().error('文件系统', '设置更新', '文件系统服务重启失败: ' + error.message);
         }
     }
 

@@ -42,6 +42,7 @@ class FSScanner {
 
     async stop() {
         clearInterval(this._interval);
+        this._interval = null;
     }
 
     async scan() {
@@ -144,6 +145,7 @@ parentPort.on('message', async (message) => {
                 });
                 scanners.clear();
                 parentPort.postMessage({ type: 'response', id, status: 'ok' });
+                parentPort.close();
                 break;
             }
 
