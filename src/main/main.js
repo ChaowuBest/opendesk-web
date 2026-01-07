@@ -29,6 +29,17 @@ var globalTray = null;
 /** @type {boolean} */
 var isAppQuitting = false;
 
+if (app.requestSingleInstanceLock()) {
+  app.on('second-instance', (event, path) => {
+    if (globalMainWindow) {
+      globalMainWindow.show();
+    }
+  })
+} else {
+  app.quit();
+  process.exit(1);
+}
+
 app.on('before-quit', () => {
   isAppQuitting = true;
 });
