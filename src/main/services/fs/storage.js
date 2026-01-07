@@ -186,17 +186,23 @@ class FSStorage {
      */
     async searchFilesByNameSimilarity(query, topK = 20, threshold = 0.5) {
         const startTime = Date.now();
+        logger.info(`[vector] start name similarity search: query="${query}" topK=${topK} threshold=${threshold}`);
+        const embedStart = Date.now();
         const embedding = await LLM.embed(query);
+        const embedTime = Date.now() - embedStart;
+        logger.info(`[vector] embedding ok: ${embedTime}ms`);
+        const queryStart = Date.now();
         const items = await this.vecdb.queryItems(embedding, query, topK);
+        const queryTime = Date.now() - queryStart;
         const totalTime = Date.now() - startTime;
-        logger.info(`searching files by name similarity ${query} in ${totalTime}ms`);
+        logger.info(`[vector] query ok: ${queryTime}ms, total ${totalTime}ms`);
 
         /** @type {FileEntrySchema[]} */
         let result = [];
 
-        logger.info(`found ${items.length} files by name similarity ${query}`);
+        logger.info(`[vector] found ${items.length} candidate items for query="${query}"`);
         for (const item of items) {
-            logger.info(`score: ${item.score} id: ${item.item.id}`);
+            logger.info(`[vector] score: ${item.score} id: ${item.item.id}`);
             if (item.score < threshold) {
                 break;
             }
@@ -204,6 +210,7 @@ class FSStorage {
             let files = await this.db.find({ filename: item.item.id });
             result.push(...files);
         }
+        logger.info(`[vector] returning ${result.length} files after threshold filter`);
         return result;
     }
 

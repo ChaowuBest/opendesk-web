@@ -29,7 +29,15 @@ class AgentFilesView extends HTMLElement {
             window.fsAPI.searchFilesByNameSimilarity(query)
         ]).then(([keywordFiles, similarityFiles]) => {
             // 合并两个结果，去重（假设 path 唯一）
-            let files = [...keywordFiles, ...similarityFiles];
+            const files = [];
+            const seenPaths = new Set();
+            for (const file of [...keywordFiles, ...similarityFiles]) {
+                if (!file?.path || seenPaths.has(file.path)) {
+                    continue;
+                }
+                seenPaths.add(file.path);
+                files.push(file);
+            }
             this.setFiles(files);
         }).catch(error => {
             console.error('searching files failed', error);
