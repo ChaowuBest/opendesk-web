@@ -454,7 +454,7 @@ class MailEditorWidget extends AgentOperableHTMLElement {
 
     render() {
         const buttons = [
-            { id: 'send-email-cancel-button', icon: 'fa-times', label: '取消', action: () => this.cancel() },
+            { id: 'send-email-cancel-button', icon: 'fa-return', label: '取消', action: () => this.cancel() },
             { id: 'send-email-send-button', icon: 'fa-paper-plane', label: '发送', action: () => this.send() },
         ]
         const toolbarHTML = createToolbar(buttons);
