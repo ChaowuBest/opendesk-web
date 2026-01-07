@@ -163,9 +163,12 @@ parentPort.on('message', async (message) => {
                     storage = await FSStorage.getInstance();
                 }
                 try {
+                    logger.info(`[vector] worker request: query="${payload.query}" topK=${payload.topK ?? 'default'} threshold=${payload.threshold ?? 'default'}`);
                     const result = await storage.searchFilesByNameSimilarity(payload.query, payload.topK, payload.threshold);
+                    logger.info(`[vector] worker response: ${result.length} files`);
                     parentPort.postMessage({ type: 'response', id, status: 'ok', data: result });
                 } catch (ex) {
+                    logger.error(`[vector] worker error: ${ex.message}`, ex);
                     parentPort.postMessage({ type: 'response', id, status: 'error', message: ex.message });
                 }
                 break;
