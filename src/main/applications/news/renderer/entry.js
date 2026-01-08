@@ -99,7 +99,7 @@ class NewsEntryWidget extends AgentOperableHTMLElement {
     render() {
         this.innerHTML = `
         <div class="w-full h-full flex flex-col bg-gradient-to-br from-slate-50 via-white to-slate-100">
-            <header class="px-6 py-4 flex items-center justify-between border-b bg-white/80 backdrop-blur">
+            <header class="pl-6 pr-16 py-4 flex items-center justify-between border-b bg-white/80 backdrop-blur">
                 <div>
                     <p class="text-xs uppercase tracking-wide text-gray-400">News now</p>
                     <h1 class="text-2xl font-semibold text-gray-800">即时新闻</h1>
