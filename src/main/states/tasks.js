@@ -139,19 +139,27 @@ class TaskState {
         this.task_name = task_name;
     }
 
-    async sendSubscriptionFeedback() {
+    /**
+     * 向前端的订阅者发布任务状态更新，如果指定了part_index，则只更新该part
+     * 否则更新最后一个part
+     *
+     * @param {number | undefined} part_index the index of the part to update
+     * @returns {Promise<void>}
+     */
+    async sendSubscriptionFeedback(part_index = undefined) {
         let last_message = this.chat_context.lastMessage();
         if (last_message.content.length === 0) {
             return;
         }
 
-        let last_part = last_message.content[last_message.content.length - 1];
+        let updated_part_index = part_index !== undefined ? part_index : last_message.content.length - 1;
+        let last_part = last_message.content[updated_part_index];
         /* render the last part before sending the update to the subscribers */
         await last_part.render();
         var subscription_feedback = {
             task_id: this.task_id,
             message_id: last_message.message_id,
-            last_part_index: last_message.content.length - 1,
+            last_part_index: updated_part_index,
             last_part: last_part
         };
 
@@ -177,6 +185,40 @@ class TaskState {
     }
 
     /**
+     * Process a tool call
+     * @param {ToolCall} tool_call
+     * @returns {Promise<void>}
+     */
+    async processToolCall(tool_call) {
+        let tool = this.chat_context.getTool(tool_call.tool_name);
+        if (tool === undefined) {
+            logger.error(`tool ${tool_call.tool_name} not found`);
+            tool_call.status = 'error';
+            tool_call.result = `tool ${tool_call.tool_name} not found`;
+            return;
+        }
+
+        try {
+            let args = {};
+            if (tool_call.args_string) {
+                args = JSON.parse(tool_call.args_string);
+            }
+            tool_call.tool_title = await tool.getTitle(args);
+            tool_call.status = 'running';
+            await tool_call.render();
+            await this.sendSubscriptionFeedback();
+
+            let result = await tool.execute(args);
+            tool_call.status = 'success';
+            tool_call.result = result;
+        } catch (err) {
+            logger.error(err);
+            tool_call.status = 'error';
+            tool_call.result = err.message;
+        }
+    }
+
+    /**
      * Process the tool calls in the last message
      * @returns {Promise<boolean>} true if there are tool calls to process, false otherwise
      */
@@ -187,43 +229,25 @@ class TaskState {
         }
 
         let has_pending_tool_call = false;
-        let last_part = lastMessage.content[lastMessage.content.length - 1];
-        if (last_part !== undefined && last_part.type === 'tool_call') {
-            /** @type {ToolCallMessagePart} */
-            for (let tool_call of last_part.toolcalls) {
-                if (tool_call.status !== 'pending') {
-                    continue;
-                }
 
-                has_pending_tool_call = true;
-                let tool = this.chat_context.getTool(tool_call.tool_name);
-                if (tool === undefined) {
-                    logger.error(`tool ${tool_call.tool_name} not found`);
-                    return false;
-                }
-
-                try {
-                    let args = {};
-                    if (tool_call.args_string) {
-                        args = JSON.parse(tool_call.args_string);
+        for (let message of this.chat_context.messages) {
+            if (message instanceof AssistantMessage) {
+                for (let index = 0; index < message.content.length; index++) {
+                    let part = message.content[index];
+                    if (part.type !== 'tool_call') {
+                        continue;
                     }
-                    tool_call.tool_title = await tool.getTitle(args);
-                    tool_call.status = 'running';
-                    await tool_call.render();
-                    await this.sendSubscriptionFeedback();
+                    for (let tool_call of part.toolcalls) {
+                        if (tool_call.status !== 'pending') {
+                            continue;
+                        }
+                        has_pending_tool_call = true;
 
-                    let result = await tool.execute(args);
-                    // console.info('tool result', result);
-                    tool_call.status = 'success';
-                    tool_call.result = result;
-                } catch (err) {
-                    logger.error(err);
-                    tool_call.status = 'error';
-                    tool_call.result = err.message;
+                        await this.processToolCall(tool_call);
+                        await tool_call.render();
+                        await this.sendSubscriptionFeedback(index);
+                    }
                 }
-
-                await tool_call.render();
-                await this.sendSubscriptionFeedback();
             }
         }
 
