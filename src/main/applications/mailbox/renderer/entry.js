@@ -59,6 +59,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             console.info(result);
             return result;
         });
+
         let getEmailContentTool = new RendererTool('getEmailContent', '打开指定id的邮件并获取其内容');
         getEmailContentTool.setParams(z.object({
             uid: z.string().describe("邮件的ID")
@@ -76,7 +77,20 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
                 return result;
             }
         });
-        toolset.addTools(getEmailListTool, getEmailContentTool);
+
+        let markEmailAsReadTool = new RendererTool('markEmailAsRead', '标记多个指定id的邮件为已读');
+        markEmailAsReadTool.setParams(z.object({
+            uids: z.array(z.string()).describe("邮件的ID列表")
+        }))
+        markEmailAsReadTool.setExecutor(async (args) => {
+            for (const uid of args.uids) {
+                await this.markEmailAsRead(uid);
+            }
+            this.reloadEmailList();
+            return `已标记邮件为已读: ${args.uids.join(', ')}`;
+        });
+
+        toolset.addTools(getEmailListTool, getEmailContentTool, markEmailAsReadTool);
         return toolset;
     }
 
@@ -152,6 +166,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
     async markEmailAsRead(uid) {
         console.info('mark email as read', uid);
         await window.applicationAPI.sendMessageToApplication('markEmailAsRead', uid);
+        this.emailHeaderList.get(uid).unread = false;
     }
 
     renderCurrentEmailHeader() {
@@ -367,7 +382,6 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         await this.reloadCurrentEmailContent(redownload);
         if (this.selectedEmailHeader.unread) {
             await this.markEmailAsRead(uid);
-            this.selectedEmailHeader.unread = false;
         }
         this.reloadEmailList();
     }
