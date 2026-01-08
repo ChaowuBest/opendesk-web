@@ -68,6 +68,13 @@ class HomePage extends HTMLElement {
                         <span class="text-sm text-gray-700">收件箱</span>
                     </button>
 
+                    <!-- 新闻快讯 -->
+                    <button class="flex items-center space-x-2 px-3 py-2 bg-white rounded-full shadow-sm hover:shadow-md border border-gray-200 transition-all"
+                        onclick="window.globalControlAPI.openApplication('news')">
+                        <i class="fas fa-newspaper text-blue-500 text-sm"></i>
+                        <span class="text-sm text-gray-700">即时新闻</span>
+                    </button>
+
                     <!-- 快速记录 -->
                     <button class="flex items-center space-x-2 px-3 py-2 bg-white rounded-full shadow-sm hover:shadow-md border border-gray-200 transition-all"
                         onclick="window.globalControlAPI.openApplication('recall')">
