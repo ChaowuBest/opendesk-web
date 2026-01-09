@@ -8,6 +8,7 @@ import { SearchApplication } from './applications/search/app.js';
 import { MailboxApplication } from './applications/mailbox/app.js';
 import { RecallApplication } from './applications/recall/app.js';
 import { NewsApplication } from './applications/news/app.js';
+import { A2AApplication } from './applications/a2a/app.js';
 import { BaseToolset } from './agents/tool.js';
 import { z } from 'zod';
 import Convert from 'ansi-to-html';
@@ -22,6 +23,7 @@ const searchApplication = new SearchApplication();
 const mailboxApplication = new MailboxApplication();
 const recallApplication = new RecallApplication();
 const newsApplication = new NewsApplication();
+const a2aApplication = new A2AApplication();
 const converter = new Convert();
 
 /** @type {BrowserWindow | null} */
@@ -353,6 +355,7 @@ app.whenReady().then(() => {
   ApplicationRegistry.registerApplication(mailboxApplication);
   ApplicationRegistry.registerApplication(recallApplication);
   ApplicationRegistry.registerApplication(newsApplication);
+  ApplicationRegistry.registerApplication(a2aApplication);
 })
 
 app.on('will-quit', () => {
