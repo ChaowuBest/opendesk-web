@@ -8,6 +8,7 @@ class NewsEntryWidget extends AgentOperableHTMLElement {
         this.selectedIndex = 0;
         this.loading = false;
         this.errorMessage = null;
+        this.following = false;
     }
 
     connectedCallback() {
@@ -45,6 +46,26 @@ class NewsEntryWidget extends AgentOperableHTMLElement {
 
     setupEvents() {
         this.querySelector('#news-refresh-btn').addEventListener('click', () => this.fetchNews());
+        const starBtn = this.querySelector('#news-star-btn');
+        starBtn.addEventListener('click', () => {
+            this.following = !this.following;
+            this.updateFollowIcon();
+        });
+        this.querySelector('#news-open-btn').addEventListener('click', () => {
+            window.open('https://news.ycombinator.com', '_blank', 'noreferrer');
+        });
+    }
+
+    updateFollowIcon() {
+        const icon = this.querySelector('#news-star-icon');
+        if (!icon) return;
+        if (this.following) {
+            icon.classList.remove('fa-regular');
+            icon.classList.add('fa-solid', 'text-yellow-400');
+        } else {
+            icon.classList.remove('fa-solid', 'text-yellow-400');
+            icon.classList.add('fa-regular');
+        }
     }
 
     async fetchNews() {
@@ -97,6 +118,7 @@ class NewsEntryWidget extends AgentOperableHTMLElement {
     }
 
     render() {
+        const hnIcon = new URL('../../../../assets/images/hacker-news-icon.svg', import.meta.url).href;
         this.innerHTML = `
         <div class="w-full h-full flex flex-col bg-gradient-to-br from-slate-50 via-white to-slate-100">
             <header class="pl-6 pr-16 py-4 flex items-center justify-between border-b bg-white/80 backdrop-blur">
@@ -113,12 +135,25 @@ class NewsEntryWidget extends AgentOperableHTMLElement {
             </header>
 
             <div class="flex-1 grid grid-cols-12 gap-4 p-6 overflow-hidden">
-                <div class="col-span-5 bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden flex flex-col">
-                    <div class="px-4 py-3 border-b flex items-center justify-between">
-                        <span class="text-sm font-semibold text-gray-700">新闻情报官</span>
-                        <span class="text-xs text-gray-400">点击查看详情</span>
+                <div class="col-span-5 self-start bg-white rounded-3xl shadow-sm border-2 border-blue-200 overflow-hidden flex flex-col">
+                    <div class="px-4 py-3 border-b flex items-center justify-between bg-blue-50">
+                        <div class="flex items-center gap-2">
+                            <img src="${hnIcon}" alt="Hacker News icon" class="w-6 h-6 rounded-sm">
+                            <span class="text-lg font-bold text-gray-800">${this.articles[0]?.source || 'Hacker News'}</span>
+                        </div>
+                        <div class="flex items-center gap-2 text-gray-500 ml-auto">
+                            <button id="news-refresh-btn" class="p-1.5 rounded-full hover:bg-white/60 transition text-sm" title="刷新">
+                                <i class="fa-solid fa-rotate"></i>
+                            </button>
+                            <button id="news-star-btn" class="p-1.5 rounded-full hover:bg-white/60 transition text-sm" title="关注">
+                                <i class="fa-regular fa-star" id="news-star-icon"></i>
+                            </button>
+                            <button id="news-open-btn" class="p-1.5 rounded-full hover:bg-white/60 transition text-sm" title="打开 Hacker News">
+                                <i class="fa-solid fa-arrow-up-right-from-square"></i>
+                            </button>
+                        </div>
                     </div>
-                    <div id="news-list" class="flex-1 overflow-y-auto divide-y"></div>
+                    <div id="news-list" class="max-h-96 overflow-y-auto"></div>
                 </div>
                 <div class="col-span-7 bg-white rounded-3xl shadow-sm border border-gray-100 p-6 overflow-y-auto" id="news-detail">
                 </div>
@@ -146,20 +181,41 @@ class NewsEntryWidget extends AgentOperableHTMLElement {
             return;
         }
 
-        list.innerHTML = this.articles.map((article, idx) => {
-            const active = idx === this.selectedIndex;
+        const listArticles = this.articles;
+        if (this.selectedIndex >= listArticles.length) {
+            this.selectedIndex = 0;
+        }
+
+        list.innerHTML = listArticles.map((article, idx) => {
+            const badgeClasses = 'bg-gray-100 text-gray-500';
+            const dividerClass = idx === 0 ? '' : 'border-t border-blue-300';
             return `
-            <div class="px-4 py-3 cursor-pointer transition ${active ? 'bg-blue-50 border-l-4 border-blue-500' : 'hover:bg-gray-50'}" data-index="${idx}">
-                <div class="flex items-start justify-between">
+            <div class="px-2 py-2 cursor-pointer transition group hover:bg-blue-50 border-l-4 border-transparent hover:border-blue-500 w-full ${dividerClass}" data-index="${idx}">
+                <div class="flex items-start gap-2 w-full">
+                    <span class="shrink-0 w-6 h-6 rounded-sm flex items-center justify-center text-[9px] font-bold ${badgeClasses}">${idx + 1}</span>
                     <div class="flex-1">
-                        <p class="text-sm font-semibold text-gray-800 line-clamp-2">${article.title}</p>
-                        <p class="text-xs text-gray-500 mt-1">${article.source} · ${article.author || '未知'} · ${article.points} 分</p>
+                        <a class="inline text-xs font-semibold text-gray-900 group-hover:underline pointer-events-none group-hover:pointer-events-auto" href="${article.url}" target="_blank" rel="noreferrer noopener" data-link>
+                            ${article.title}
+                        </a>
                     </div>
-                    <span class="text-[10px] text-gray-400 ml-2">#${idx + 1}</span>
                 </div>
             </div>
             `;
         }).join('');
+
+        // ensure clicking the link doesn't prevent selection when clicking elsewhere
+        list.querySelectorAll('[data-index]').forEach(item => {
+            item.addEventListener('click', () => {
+                this.selectedIndex = Number(item.dataset.index);
+                this.renderArticleList();
+                this.renderArticleDetail();
+            });
+
+            const link = item.querySelector('[data-link]');
+            link?.addEventListener('click', (e) => {
+                e.stopPropagation();
+            });
+        });
 
         list.querySelectorAll('[data-index]').forEach(item => {
             item.addEventListener('click', () => {
