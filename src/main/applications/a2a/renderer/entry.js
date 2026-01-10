@@ -9,6 +9,8 @@ class A2AEntryWidget extends HTMLElement {
         this.conversationHistory = [];
         /** @type {boolean} */
         this.isSending = false;
+        /** @type {number | null} */
+        this.updateTimer = null;
     }
 
     async connectedCallback() {
@@ -173,36 +175,73 @@ class A2AEntryWidget extends HTMLElement {
             // 更新 AI 响应内容
             const assistantMessage = this.conversationHistory.find(msg => msg.id === assistantMessageId);
             if (assistantMessage) {
-                // 提取文本内容并累加（不是替换）
+                // 提取文本内容
                 const textParts = chunk.content
                     .filter(part => part.type === 'text')
                     .map(part => part.text)
                     .join('');
-                // 累加内容，而不是替换
-                assistantMessage.content = (assistantMessage.content || '') + textParts;
+                
+                const currentContent = assistantMessage.content || '';
+                
+                // 判断是增量块还是完整内容：
+                // 1. 如果新文本包含现有内容，说明是完整内容（LLM 回退情况），应该替换
+                // 2. 如果新文本是现有内容的扩展（现有内容是新文本的前缀），也是完整内容，应该替换
+                // 3. 否则是增量块（A2A agent 情况），应该追加
+                if (textParts.includes(currentContent) || textParts.startsWith(currentContent)) {
+                    // 完整内容，替换
+                    assistantMessage.content = textParts;
+                } else if (currentContent && textParts.length > currentContent.length * 2) {
+                    // 新文本比现有内容长很多，可能是完整内容，替换
+                    assistantMessage.content = textParts;
+                } else {
+                    // 增量块，追加
+                    assistantMessage.content = currentContent + textParts;
+                }
+                
                 assistantMessage.isStreaming = true;
                 this.updateMessages();
             }
         } else if (type === 'stream_complete' && success) {
-            // 流式完成
+            // 流式完成，立即更新
             const assistantMessage = this.conversationHistory.find(msg => msg.id === assistantMessageId);
             if (assistantMessage) {
                 assistantMessage.isStreaming = false;
-                this.updateMessages();
+                this.updateMessages(true); // 立即更新
             }
         } else if (type === 'stream_error') {
-            // 流式错误
+            // 流式错误，立即更新
             const assistantMessage = this.conversationHistory.find(msg => msg.id === assistantMessageId);
             if (assistantMessage) {
                 assistantMessage.content = `错误: ${error || '未知错误'}`;
                 assistantMessage.isStreaming = false;
                 assistantMessage.isError = true;
-                this.updateMessages();
+                this.updateMessages(true); // 立即更新
             }
         }
     }
 
-    updateMessages() {
+    updateMessages(immediate = false) {
+        // 使用节流，减少更新频率
+        if (immediate) {
+            // 立即更新，清除待处理的定时器
+            if (this.updateTimer) {
+                clearTimeout(this.updateTimer);
+                this.updateTimer = null;
+            }
+            this._updateMessagesImmediate();
+        } else {
+            // 节流更新
+            if (this.updateTimer) {
+                clearTimeout(this.updateTimer);
+            }
+            this.updateTimer = setTimeout(() => {
+                this._updateMessagesImmediate();
+                this.updateTimer = null;
+            }, 50); // 每 50ms 最多更新一次
+        }
+    }
+
+    _updateMessagesImmediate() {
         const messagesContainer = this.querySelector('#a2a-messages');
         if (this.conversationHistory.length === 0 && this.agents.length === 0) {
             messagesContainer.innerHTML = `
