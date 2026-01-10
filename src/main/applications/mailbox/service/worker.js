@@ -2,6 +2,7 @@ import { EmailHeader, EmailProfileSchema, EmailContent, EmailAttachment } from "
 import { BaseWorker } from "../../base.js";
 import { logger } from '../../../utils/logger.js';
 import Pop3Command from 'node-pop3';
+import nodemailer from 'nodemailer';
 import fs from 'fs';
 import nedb from 'nedb-promises';
 import path from 'path';
@@ -81,6 +82,48 @@ class POP3EmailClient {
     async getEmailContent(uid) {
         const { _, content } = await this.getEmail(uid);
         return content;
+    }
+}
+
+class SmtpEmailClient {
+    constructor(user, pass, fromName, host, port, secure) {
+        this.user = user;
+        this.pass = pass;
+        this.fromName = fromName;
+        this.host = host;
+        this.port = port;
+        this.secure = secure;
+    }
+
+    async sendMail(to, cc, bcc, subject, text, html, attachments) {
+        const transport = nodemailer.createTransport({
+            host: this.host,
+            port: this.port,
+            secure: this.secure,
+            auth: {
+                user: this.user,
+                pass: this.pass
+            }
+        })
+
+        const mailOptions = {
+            from: `"${this.fromName}" <${this.user}>`,
+            to: Array.isArray(to) ? to.join(', ') : to,
+            cc: Array.isArray(cc) ? cc.join(', ') : cc,
+            bcc: Array.isArray(bcc) ? bcc.join(', ') : bcc,
+            subject: subject,
+            text: text,
+            html: html,
+            attachments: attachments
+        };
+        try {
+            await transport.sendMail(mailOptions);
+            NotificationManager.getInstance().info('邮箱', '发送成功', '邮件发送成功')
+            return true;
+        } catch (error) {
+            NotificationManager.getInstance().error(error, '邮箱', '发送失败', '邮件发送失败')
+            return false;
+        }
     }
 }
 
@@ -574,6 +617,21 @@ class MailboxWorker extends BaseWorker {
 
     async starEmail(starOptions) {
         await this.storage.starEmail(starOptions.uid, starOptions.starred);
+    }
+
+    async sendEmail(sendEmailSchema) {
+        logger.info(`sendEmail to ${sendEmailSchema.to}`)
+        const config = EmailProfileSchema.parse(this.config);
+        if (config.outbox?.smtp) {
+            const smtp = new SmtpEmailClient(config.username, config.password, config.name,
+                config.outbox.smtp.host, config.outbox.smtp.port, config.outbox.smtp.tls
+            );
+            return await smtp.sendMail(sendEmailSchema.to , sendEmailSchema.cc, sendEmailSchema.bcc,
+                sendEmailSchema.subject, sendEmailSchema.text, sendEmailSchema.html, sendEmailSchema.attachments);
+        } else {
+            logger.error(`no valid outbox server configured: ${this.config}`);
+            throw new Error('no valid outbox server configured');
+        }
     }
 }
 

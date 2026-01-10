@@ -42,6 +42,16 @@ const EmailHeaderQuerySchema = z.object({
     offset: z.number().describe('偏移量').optional(),
 });
 
+const sendEmailSchema = z.object({
+    to: z.string().optional(),
+    cc: z.string().default(''),
+    bcc: z.string().default(''),
+    subject: z.string().default(''),
+    text: z.string().default(''),
+    html: z.string().default(''),
+    attachments: z.array(z.string()).default([]),
+});
+
 
 class EmailAddress {
     constructor(name, address) {
@@ -96,4 +106,5 @@ export {
     EmailProfileSchema,
     InboxServerSchema,
     OutboxServerSchema,
+    sendEmailSchema,
 };

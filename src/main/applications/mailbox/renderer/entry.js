@@ -456,6 +456,11 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         }
     }
 
+    async sendEmail(sendEmailSchema) {
+        await window.applicationAPI.sendMessageToApplication('sendEmail', sendEmailSchema);
+        this.reloadCurrentEmailContent();
+    }
+
     renderCurrentEmailHeader() {
         // 渲染单个邮箱地址
         const renderEmailAddress = (address, type) => {
@@ -642,6 +647,10 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         editor.addEventListener('cancel', () => {
             this.reloadCurrentEmailContent();
         });
+        editor.addEventListener('send', async (event) => {
+            const mailSchema = editor.getMailSchema()
+            this.sendEmail(mailSchema);
+        });
     }
 
     handleFilter(filter) {
@@ -670,6 +679,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
 
     async reloadCurrentEmailContent(redownload = false) {
         if (!this.selectedEmailUid) {
+            this.querySelector('#email-content').replaceChildren();
             return;
         }
 
@@ -969,6 +979,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
 class MailEditorWidget extends AgentOperableHTMLElement {
     constructor() {
         super();
+        this.editor = null;
     }
 
     connectedCallback() {
@@ -982,6 +993,14 @@ class MailEditorWidget extends AgentOperableHTMLElement {
 
     send() {
         this.dispatchEvent(new CustomEvent('send', { bubbles: true }));
+    }
+
+    getMailSchema() {
+        const to = document.getElementById('to').value;
+        const subject = document.getElementById('subject').value;
+        const content = this.editor.getHtml();
+        const sendEmailSchema = {to: to, subject: subject, html: content};
+        return sendEmailSchema;
     }
 
     render() {
@@ -1004,7 +1023,7 @@ class MailEditorWidget extends AgentOperableHTMLElement {
                         <div class="flex flex-col items-left w-full">
                             <div class="group flex flex-col items-left px-1 py-1 hover:bg-gray-50 transition-colors">
                                 <span class="text-xs text-gray-400 mr-4 mb-1">${new Date().toLocaleString()}</span>
-                                <input type="text" class="text-gray-900 text-lg font-bold leading-tight" placeholder="邮件主题" value="foo bar">
+                                <input type="text" id="subject" class="text-gray-900 text-lg font-bold leading-tight" placeholder="邮件主题" value="foo bar">
                             </div>
 
                             <!-- 收件人行 -->
@@ -1012,7 +1031,7 @@ class MailEditorWidget extends AgentOperableHTMLElement {
                                 <label class="w-12 text-xs text-gray-400 font-medium">收件人</label>
                                 <div class="flex-1 flex flex-wrap gap-2 items-center">
                                     <div class="flex items-center bg-blue-100 border border-blue-200 rounded px-0.5 py-0.5 text-xs text-blue-700">
-                                        <input type="text" class="text-gray-400 font-normal" placeholder="名字或邮箱地址">
+                                        <input type="email" id="to" class="text-gray-400 font-normal" placeholder="名字或邮箱地址">
                                     </div>
                                 </div>
                             </div>
@@ -1055,6 +1074,7 @@ class MailEditorWidget extends AgentOperableHTMLElement {
             config: editorConfig,
             mode: 'default', // or 'simple'
         })
+        this.editor = editor;
 
         const toolbarConfig = {}
         const toolbar = window.wangEditor.createToolbar({
