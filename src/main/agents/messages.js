@@ -334,6 +334,21 @@ class ImageMessagePart {
     }
 }
 
+
+/**
+ * @class Usage
+ * @property {number} prompt_tokens
+ * @property {number} completion_tokens
+ * @property {number} total_tokens
+ */
+class Usage {
+    constructor(prompt_tokens, completion_tokens, total_tokens) {
+        this.prompt_tokens = prompt_tokens;
+        this.completion_tokens = completion_tokens;
+        this.total_tokens = total_tokens;
+    }
+}
+
 /**
  * @class SystemMessage
  * @property {'system'} role
@@ -456,6 +471,8 @@ class AssistantMessage {
 
         /** @type {(TextMessagePart | ReasoningMessagePart)[]} */
         this.content = content === undefined ? [] : content;
+        /** @type {Usage | undefined} */
+        this.usage = undefined;
     }
 
     /**
@@ -628,7 +645,6 @@ class AssistantMessage {
     }
 }
 
-
 class AssistantResponse {
     /**
      * @param {AssistantMessage} content
@@ -638,6 +654,8 @@ class AssistantResponse {
         this.content = content;
         /** @type {'stop' | 'error' | null} */
         this.finish_reason = null;
+        /** @type {Usage | undefined} */
+        this.usage = undefined;
     }
 
     static error(reason) {
@@ -655,17 +673,31 @@ class AssistantResponse {
             finish_reason = null;
         }
 
+        /** @type {Usage | undefined} */
+        let usage = undefined;
+        if (openai_response.usage) {
+            usage = new Usage(
+                openai_response.usage.prompt_tokens,
+                openai_response.usage.completion_tokens,
+                openai_response.usage.total_tokens
+            );
+        }
+
+        let response;
         if (choice.delta !== undefined) {
             // parsing chunk in a stream response
             const chunk = AssistantMessage.parseOpenAIMessage(choice.delta);
-            return new AssistantResponse(chunk, finish_reason);
+            response = new AssistantResponse(chunk, finish_reason);
         } else if (choice.message !== undefined) {
             const message = AssistantMessage.parseOpenAIMessage(choice.message);
-            return new AssistantResponse(message, finish_reason);
+            response = new AssistantResponse(message, finish_reason);
         } else {
             logger.error('invalid openai response', choice);
             throw new Error('invalid openai response');
         }
+
+        response.usage = usage;
+        return response;
     }
 }
 
@@ -741,8 +773,11 @@ class ChatContext {
                 }
             }
         }
-        Object.setPrototypeOf(chat_context_obj, ChatContext.prototype);
-        return chat_context_obj;
+        let ctx = new ChatContext();
+        ctx.system_prompt = chat_context_obj.system_prompt;
+        ctx.messages = chat_context_obj.messages;
+        // we cannot load any toolset from the saved chat context
+        return ctx;
     }
 }
 

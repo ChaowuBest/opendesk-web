@@ -160,7 +160,8 @@ class TaskState {
             task_id: this.task_id,
             message_id: last_message.message_id,
             last_part_index: updated_part_index,
-            last_part: last_part
+            last_part: last_part,
+            usage: last_message.usage
         };
 
         this.subscribers = this.subscribers.filter(subscriber => subscriber.isAvailable());
@@ -173,6 +174,7 @@ class TaskState {
         let assistant_message = this.chat_context.messages[this.chat_context.messages.length - 1];
         for await (const chunk_resp of LLM.streamComplete(this.chat_context)) {
             assistant_message.mergeChunk(chunk_resp.content);
+            assistant_message.usage = chunk_resp.usage;
             if (this.subscribers.length == 0) {
                 // no subscribers, skip
                 continue;
