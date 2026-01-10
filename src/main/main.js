@@ -9,6 +9,7 @@ import { MailboxApplication } from './applications/mailbox/app.js';
 import { RecallApplication } from './applications/recall/app.js';
 import { NewsApplication } from './applications/news/app.js';
 import { A2AApplication } from './applications/a2a/app.js';
+import { A2AService } from './applications/a2a/service/service.js';
 import { BaseToolset } from './agents/tool.js';
 import { z } from 'zod';
 import Convert from 'ansi-to-html';
@@ -286,6 +287,15 @@ const registerSettingAPIHandlers = () => {
     } catch (error) {
       return { status: 'error', message: error.message };
     }
+  })
+
+  // A2A 应用的流式响应处理
+  ipcMain.handle('a2a:subscribeStream', (event, requestId) => {
+    const unsubscribe = A2AService.subscribeStream(requestId, (data) => {
+      // 发送流式数据到渲染进程
+      event.senderFrame.send('a2a:streamChunk', requestId, data);
+    });
+    return { status: 'ok', data: { requestId } };
   })
 }
 

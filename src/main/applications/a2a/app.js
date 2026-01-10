@@ -25,10 +25,19 @@ class A2AApplication extends BaseApplication {
         switch (message) {
             case 'listAgents':
                 return await A2AService.listAgents(args[0] || {});
+            case 'createConversation':
+                return await A2AService.createConversation();
+            case 'clearConversation':
+                return await A2AService.clearConversation(args[0]);
+            case 'sendChatMessage':
+                return await A2AService.sendChatMessage(args[0], args[1]);
+            case 'getConversationHistory':
+                return await A2AService.getConversationHistory(args[0]);
             default:
                 throw new Error(`unknown message: ${message}`);
         }
     }
+
 
     getServices() {
         return [A2AService];

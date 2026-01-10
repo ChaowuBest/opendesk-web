@@ -1,37 +1,134 @@
 class A2AEntryWidget extends HTMLElement {
     constructor() {
         super();
-        /** @type {string[]} */
-        this.messages = [];
         /** @type {Array} */
         this.agents = [];
+        /** @type {string | null} */
+        this.conversationId = null;
+        /** @type {Array<{role: 'user' | 'assistant', content: string, id: string}>} */
+        this.conversationHistory = [];
+        /** @type {boolean} */
+        this.isSending = false;
     }
 
-    connectedCallback() {
+    async connectedCallback() {
         this.render();
         this.setUpEventListeners();
+        // 创建初始对话
+        await this.createConversation();
+    }
+
+    async createConversation() {
+        try {
+            const result = await window.applicationAPI.sendMessageToApplication('createConversation', {});
+            this.conversationId = result.conversationId;
+            this.conversationHistory = [];
+            this.updateMessages();
+        } catch (error) {
+            console.error('创建对话失败:', error);
+            this.showError(`创建对话失败: ${error.message}`);
+        }
+    }
+
+    async clearConversation() {
+        if (!this.conversationId) {
+            return;
+        }
+        try {
+            await window.applicationAPI.sendMessageToApplication('clearConversation', this.conversationId);
+            this.conversationHistory = [];
+            this.updateMessages();
+        } catch (error) {
+            console.error('清空对话失败:', error);
+            this.showError(`清空对话失败: ${error.message}`);
+        }
     }
 
     setUpEventListeners() {
         const input = this.querySelector('#a2a-input');
         const sendButton = this.querySelector('#a2a-send-btn');
         const loadButton = this.querySelector('#a2a-load-btn');
-        const messagesContainer = this.querySelector('#a2a-messages');
+        const clearButton = this.querySelector('#a2a-clear-btn');
 
-        const sendMessage = () => {
+        const sendMessage = async () => {
             const text = input.value.trim();
-            if (text === '') {
+            if (text === '' || this.isSending) {
                 return;
             }
-            
-            // 添加消息到列表
-            this.messages.push(text);
-            
+
+            if (!this.conversationId) {
+                await this.createConversation();
+            }
+
+            // 添加用户消息到历史
+            const userMessageId = `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+            this.conversationHistory.push({
+                role: 'user',
+                content: text,
+                id: userMessageId
+            });
+
+            // 添加占位的 AI 响应
+            const assistantMessageId = `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+            this.conversationHistory.push({
+                role: 'assistant',
+                content: '',
+                id: assistantMessageId,
+                isStreaming: true
+            });
+
             // 清空输入框
             input.value = '';
-            
+            this.isSending = true;
+            sendButton.disabled = true;
+            sendButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 发送中...';
+
             // 更新显示
             this.updateMessages();
+
+            try {
+                // 发送消息并获取 requestId
+                const result = await window.applicationAPI.sendMessageToApplication('sendChatMessage', this.conversationId, text);
+                const requestId = result.requestId;
+
+                // 订阅流式响应
+                if (window.a2aAPI) {
+                    await window.a2aAPI.subscribeStream(requestId, (data) => {
+                        this.handleStreamChunk(data, assistantMessageId);
+                    });
+                } else {
+                    // 如果没有流式 API，等待一段时间后获取完整响应
+                    setTimeout(async () => {
+                        try {
+                            const history = await window.applicationAPI.sendMessageToApplication('getConversationHistory', this.conversationId);
+                            this.conversationHistory = history.map((msg, idx) => ({
+                                role: msg.role,
+                                content: msg.content,
+                                id: `msg_${idx}_${Date.now()}`
+                            }));
+                            this.updateMessages();
+                        } catch (error) {
+                            console.error('获取对话历史失败:', error);
+                        }
+                    }, 2000);
+                }
+            } catch (error) {
+                console.error('发送消息失败:', error);
+                // 移除占位的 AI 响应
+                this.conversationHistory = this.conversationHistory.filter(msg => msg.id !== assistantMessageId);
+                this.conversationHistory.push({
+                    role: 'assistant',
+                    content: `错误: ${error.message}`,
+                    id: assistantMessageId,
+                    isError: true
+                });
+                this.updateMessages();
+                this.showError(`发送失败: ${error.message}`);
+            } finally {
+                this.isSending = false;
+                sendButton.disabled = false;
+                sendButton.innerHTML = '<i class="fas fa-paper-plane"></i> 发送';
+            }
         };
 
         const loadAgents = async () => {
@@ -42,7 +139,7 @@ class A2AEntryWidget extends HTMLElement {
                 const result = await window.applicationAPI.sendMessageToApplication('listAgents', {});
                 if (result && result.registryEntries) {
                     this.agents = result.registryEntries;
-                    this.updateAgentsDisplay();
+                    this.updateMessages();
                 } else {
                     this.showError('未获取到 agents 数据');
                 }
@@ -57,6 +154,9 @@ class A2AEntryWidget extends HTMLElement {
 
         sendButton.addEventListener('click', sendMessage);
         loadButton.addEventListener('click', loadAgents);
+        if (clearButton) {
+            clearButton.addEventListener('click', () => this.clearConversation());
+        }
         
         input.addEventListener('keypress', (event) => {
             if (event.key === 'Enter' && !event.shiftKey) {
@@ -66,9 +166,44 @@ class A2AEntryWidget extends HTMLElement {
         });
     }
 
+    handleStreamChunk(data, assistantMessageId) {
+        const { type, chunk, error, success } = data;
+
+        if (type === 'stream_chunk' && chunk) {
+            // 更新 AI 响应内容
+            const assistantMessage = this.conversationHistory.find(msg => msg.id === assistantMessageId);
+            if (assistantMessage) {
+                // 提取文本内容
+                const textParts = chunk.content
+                    .filter(part => part.type === 'text')
+                    .map(part => part.text)
+                    .join('');
+                assistantMessage.content = textParts;
+                assistantMessage.isStreaming = true;
+                this.updateMessages();
+            }
+        } else if (type === 'stream_complete' && success) {
+            // 流式完成
+            const assistantMessage = this.conversationHistory.find(msg => msg.id === assistantMessageId);
+            if (assistantMessage) {
+                assistantMessage.isStreaming = false;
+                this.updateMessages();
+            }
+        } else if (type === 'stream_error') {
+            // 流式错误
+            const assistantMessage = this.conversationHistory.find(msg => msg.id === assistantMessageId);
+            if (assistantMessage) {
+                assistantMessage.content = `错误: ${error || '未知错误'}`;
+                assistantMessage.isStreaming = false;
+                assistantMessage.isError = true;
+                this.updateMessages();
+            }
+        }
+    }
+
     updateMessages() {
         const messagesContainer = this.querySelector('#a2a-messages');
-        if (this.messages.length === 0 && this.agents.length === 0) {
+        if (this.conversationHistory.length === 0 && this.agents.length === 0) {
             messagesContainer.innerHTML = `
                 <div class="text-center text-gray-400 mt-8">
                     <i class="fas fa-comments text-4xl mb-2"></i>
@@ -150,20 +285,37 @@ class A2AEntryWidget extends HTMLElement {
             `;
         }
         
-        // 显示消息列表
-        if (this.messages.length > 0) {
+        // 显示对话历史
+        if (this.conversationHistory.length > 0) {
             html += `
                 <div class="mb-6">
                     <h2 class="text-lg font-semibold text-gray-700 mb-3 flex items-center gap-2">
                         <i class="fas fa-comments text-gray-500"></i>
-                        消息 (${this.messages.length})
+                        对话历史
                     </h2>
-                    ${this.messages.map((msg, index) => `
-                        <div class="mb-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
-                            <div class="text-sm text-gray-600 mb-1">消息 ${index + 1}</div>
-                            <div class="text-gray-800">${this.escapeHtml(msg)}</div>
-                        </div>
-                    `).join('')}
+                    <div class="space-y-4">
+                        ${this.conversationHistory.map((msg) => {
+                            if (msg.role === 'user') {
+                                return `
+                                    <div class="flex justify-end">
+                                        <div class="max-w-[80%] p-3 bg-purple-500 text-white rounded-lg shadow-sm">
+                                            <div class="text-sm">${this.escapeHtml(msg.content)}</div>
+                                        </div>
+                                    </div>
+                                `;
+                            } else {
+                                const isStreaming = msg.isStreaming ? '<span class="inline-block w-2 h-2 bg-gray-400 rounded-full animate-pulse ml-1"></span>' : '';
+                                const errorClass = msg.isError ? 'border-red-300 bg-red-50' : 'bg-gray-50';
+                                return `
+                                    <div class="flex justify-start">
+                                        <div class="max-w-[80%] p-3 ${errorClass} rounded-lg border border-gray-200 shadow-sm">
+                                            <div class="text-sm text-gray-800 whitespace-pre-wrap">${this.escapeHtml(msg.content || '')}${isStreaming}</div>
+                                        </div>
+                                    </div>
+                                `;
+                            }
+                        }).join('')}
+                    </div>
                 </div>
             `;
         }
@@ -172,10 +324,6 @@ class A2AEntryWidget extends HTMLElement {
         
         // 滚动到底部
         messagesContainer.scrollTop = messagesContainer.scrollHeight;
-    }
-
-    updateAgentsDisplay() {
-        this.updateMessages();
     }
 
     showError(message) {
@@ -189,6 +337,9 @@ class A2AEntryWidget extends HTMLElement {
     }
 
     escapeHtml(text) {
+        if (text === null || text === undefined) {
+            return '';
+        }
         const div = document.createElement('div');
         div.textContent = text;
         return div.innerHTML;
@@ -199,7 +350,14 @@ class A2AEntryWidget extends HTMLElement {
         <div class="w-full h-full flex flex-col bg-white">
             <!-- 头部 -->
             <header class="h-14 border-b border-gray-200 flex items-center justify-between px-6 bg-white/70 backdrop-blur-xl z-20">
-                <h1 class="font-medium text-md tracking-tight text-center">A2A</h1>
+                <h1 class="font-medium text-md tracking-tight">A2A</h1>
+                <button
+                    id="a2a-clear-btn"
+                    class="px-3 py-1 text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 rounded transition-colors"
+                    title="清空对话"
+                >
+                    <i class="fas fa-trash-alt"></i> 清空
+                </button>
             </header>
 
             <!-- 消息显示区域 -->
@@ -229,7 +387,7 @@ class A2AEntryWidget extends HTMLElement {
                         </button>
                         <button
                             id="a2a-send-btn"
-                            class="px-6 py-2 bg-purple-500 hover:bg-purple-600 text-white rounded-lg font-medium transition-colors flex items-center gap-2"
+                            class="px-6 py-2 bg-purple-500 hover:bg-purple-600 text-white rounded-lg font-medium transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                             <i class="fas fa-paper-plane"></i>
                             <span>发送</span>

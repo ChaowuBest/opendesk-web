@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { Worker, parentPort } from 'worker_threads';
+import { Worker, parentPort, workerData } from 'worker_threads';
 import { logger, LogStream } from '../utils/logger.js';
 import { Setting, getAppDirectory } from '../utils/setting.js';
 import { BaseTool } from '../agents/tool.js';
@@ -21,6 +21,17 @@ class BaseWorker {
      * 初始化 worker
      */
     async initialize() {
+        // 从 workerData 初始化 Setting（如果存在）
+        if (workerData && workerData.settingData) {
+            try {
+                const settingInstance = Setting.getInstance();
+                settingInstance.setData(workerData.settingData);
+                logger.info('Setting data initialized from main thread in worker');
+            } catch (error) {
+                logger.error(`Failed to initialize setting data in worker: ${error.message}`);
+            }
+        }
+
         parentPort.on('message', async (message) => {
             try {
                 const { type, id, payload } = message;
@@ -75,10 +86,16 @@ class BaseService {
             return;
         }
 
+        // 获取主线程的 Setting 数据并传递给 Worker
+        const settingData = Setting.getInstance().getData();
+
         this.worker = new Worker(
             this.getWorkerPath(),
             {
-                workerData: { paths: { appDirectory: this.applicationDataDirectory } }
+                workerData: { 
+                    paths: { appDirectory: this.applicationDataDirectory },
+                    settingData: settingData
+                }
             }
         );
 
