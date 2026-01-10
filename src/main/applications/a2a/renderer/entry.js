@@ -173,12 +173,13 @@ class A2AEntryWidget extends HTMLElement {
             // 更新 AI 响应内容
             const assistantMessage = this.conversationHistory.find(msg => msg.id === assistantMessageId);
             if (assistantMessage) {
-                // 提取文本内容
+                // 提取文本内容并累加（不是替换）
                 const textParts = chunk.content
                     .filter(part => part.type === 'text')
                     .map(part => part.text)
                     .join('');
-                assistantMessage.content = textParts;
+                // 累加内容，而不是替换
+                assistantMessage.content = (assistantMessage.content || '') + textParts;
                 assistantMessage.isStreaming = true;
                 this.updateMessages();
             }
