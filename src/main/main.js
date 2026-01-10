@@ -74,6 +74,42 @@ const createWindow = () => {
     // 如果 isAppQuitting 为 true，则不执行 preventDefault，窗口正常销毁
   });
 
+  /**
+   * Open a link according to the system strategy
+   * @param {string} url
+   * @returns {boolean} true if the link is opened, false otherwise
+   */
+  const openLink = (url) => {
+    if (!url.startsWith('file://')) {
+      shell.openExternal(url);
+      return true;
+    }
+    return false;
+  }
+
+  mainWindow.webContents.on('will-navigate', (event) => {
+    console.log('will-navigate', event);
+    if (openLink(event.url)) {
+      event.preventDefault();
+      return;
+    }
+  });
+
+  mainWindow.webContents.on('will-frame-navigate', (event) => {
+    console.log('will-frame-navigate', event);
+    if (openLink(event.url)) {
+      event.preventDefault();
+      return;
+    }
+  });
+
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (openLink(url)) {
+      return { action: 'deny' };
+    }
+    return { action: 'allow' };
+  });
+
   globalMainWindow = mainWindow;
 }
 
