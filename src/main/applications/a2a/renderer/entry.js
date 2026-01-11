@@ -307,13 +307,46 @@ class A2AEntryWidget extends HTMLElement {
                                     ${skills.length > 0 ? `
                                         <div class="mt-2">
                                             <p class="text-xs font-medium text-gray-500 mb-1">技能 (${skills.length}):</p>
-                                            <div class="flex flex-wrap gap-1">
-                                                ${skills.slice(0, 5).map(skill => `
-                                                    <span class="text-xs px-2 py-1 bg-purple-50 text-purple-700 rounded">
-                                                        ${this.escapeHtml(skill.name || skill.id || 'N/A')}
-                                                    </span>
-                                                `).join('')}
-                                                ${skills.length > 5 ? `<span class="text-xs text-gray-400">+${skills.length - 5} 更多</span>` : ''}
+                                            <div class="space-y-2">
+                                                ${skills.slice(0, 10).map(skill => {
+                                                    const skillName = skill.name || skill.id || 'N/A';
+                                                    const skillDescription = skill.description || '';
+                                                    const skillTags = skill.tags || [];
+                                                    const skillExamples = skill.examples || [];
+                                                    
+                                                    return `
+                                                        <div class="p-2 bg-purple-50 rounded border border-purple-100">
+                                                            <div class="font-semibold text-xs text-purple-700 mb-1">
+                                                                ${this.escapeHtml(skillName)}
+                                                            </div>
+                                                            ${skillDescription ? `
+                                                                <p class="text-xs text-gray-600 mb-1">${this.escapeHtml(skillDescription)}</p>
+                                                            ` : ''}
+                                                            ${skillTags.length > 0 ? `
+                                                                <div class="flex flex-wrap gap-1 mb-1">
+                                                                    ${skillTags.map(tag => `
+                                                                        <span class="text-xs px-1.5 py-0.5 bg-purple-100 text-purple-600 rounded">
+                                                                            ${this.escapeHtml(tag)}
+                                                                        </span>
+                                                                    `).join('')}
+                                                                </div>
+                                                            ` : ''}
+                                                            ${skillExamples.length > 0 ? `
+                                                                <div class="mt-1">
+                                                                    <p class="text-xs font-medium text-gray-500 mb-0.5">示例:</p>
+                                                                    <div class="space-y-0.5">
+                                                                        ${skillExamples.map(example => `
+                                                                            <div class="text-xs text-gray-700 bg-white px-2 py-1 rounded border border-gray-200">
+                                                                                ${this.escapeHtml(example)}
+                                                                            </div>
+                                                                        `).join('')}
+                                                                    </div>
+                                                                </div>
+                                                            ` : ''}
+                                                        </div>
+                                                    `;
+                                                }).join('')}
+                                                ${skills.length > 10 ? `<div class="text-xs text-gray-400 text-center py-1">+${skills.length - 10} 更多技能</div>` : ''}
                                             </div>
                                         </div>
                                     ` : ''}
