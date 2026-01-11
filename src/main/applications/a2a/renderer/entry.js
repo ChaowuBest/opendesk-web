@@ -420,6 +420,11 @@ class A2AEntryWidget extends HTMLElement {
 
     render() {
         this.innerHTML = `
+        <style>
+            #application-agent-input {
+                display: none !important;
+            }
+        </style>
         <div class="w-full h-full flex flex-col bg-white">
             <!-- 头部 -->
             <header class="h-14 border-b border-gray-200 flex items-center justify-between px-6 bg-white/70 backdrop-blur-xl z-20">
