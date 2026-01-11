@@ -88,7 +88,6 @@ const createWindow = () => {
   }
 
   mainWindow.webContents.on('will-navigate', (event) => {
-    console.log('will-navigate', event);
     if (openLink(event.url)) {
       event.preventDefault();
       return;
@@ -96,7 +95,6 @@ const createWindow = () => {
   });
 
   mainWindow.webContents.on('will-frame-navigate', (event) => {
-    console.log('will-frame-navigate', event);
     if (openLink(event.url)) {
       event.preventDefault();
       return;
