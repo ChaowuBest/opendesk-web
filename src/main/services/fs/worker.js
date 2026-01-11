@@ -112,6 +112,27 @@ const scanners = new Map();
 /** @type {FSStorage | null} */
 let storage = null;
 
+async function getStatus() {
+    if (!storage) {
+        return { status: 'idle' };
+    }
+    return {
+        status: 'running',
+        scanners: [
+            ...scanners.values().map(instance => { entry: instance.entry })
+        ],
+        storage: await storage.getStatus(),
+    };
+}
+
+async function resetStorage() {
+    if (!storage) {
+        throw new Error('storage not initialized');
+    }
+    await storage.reset();
+    return { status: 'ok' };
+}
+
 // 处理来自主线程的消息
 parentPort.on('message', async (message) => {
     try {
@@ -146,6 +167,16 @@ parentPort.on('message', async (message) => {
                 scanners.clear();
                 parentPort.postMessage({ type: 'response', id, status: 'ok' });
                 parentPort.close();
+                break;
+            }
+
+            case 'resetStorage': {
+                parentPort.postMessage({ type: 'response', id, status: 'ok', data: await resetStorage() });
+                break;
+            }
+
+            case 'getStatus': {
+                parentPort.postMessage({ type: 'response', id, status: 'ok', data: await getStatus() });
                 break;
             }
 

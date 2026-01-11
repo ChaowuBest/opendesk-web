@@ -136,6 +136,14 @@ class FSService {
         }
     }
 
+    static async getFSStatus() {
+        return await this.sendMessage('getStatus', {});
+    }
+
+    static async resetFSStorage() {
+        return await this.sendMessage('resetStorage', {});
+    }
+
     /**
      * 重启文件系统服务
      */

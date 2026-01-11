@@ -85,6 +85,23 @@ class FSStorage {
         logger.info(`creating vector index and inserting ${this.vec_cache.size} items to vector database: ${Date.now() - startTime}ms`);
     }
 
+    async reset() {
+        await this.db.remove({}, { multi: true });
+        await this.vecdb.clearIndex();
+        this.vec_cache.clear();
+        fs.rmSync(FSStorage.vectorCachePath);
+    }
+
+    async getStatus() {
+        let vecdb_stats = await this.vecdb.getIndexStats();
+        let db_count = await this.db.count();
+        return {
+            veccache_size: this.vec_cache.size,
+            vecdb_size: vecdb_stats.items,
+            db_size: db_count,
+        };
+    }
+
     static async getInstance() {
         if (!this.instance) {
             this.instance = new FSStorage();

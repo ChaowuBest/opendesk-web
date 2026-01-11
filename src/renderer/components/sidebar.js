@@ -111,10 +111,15 @@ class SideBar extends HTMLElement {
 
             <div class="flex-shrink-0 w-full flex justify-center items-center py-3">
                 <div class="flex justify-center items-center bg-white/40 backdrop-blur-2xl rounded-full border border-white/40 shadow-2xl px-4 py-1">
-                    <button id="open-memory-btn" class="mx-3 text-gray-500 hover:text-blue-600 text-lg focus:outline-none" title="记忆">
+                    <button id="open-memory-btn" class="mx-3 text-gray-500 hover:text-blue-600 text-lg focus:outline-none" title="记忆" disabled>
                         <i class="fa-solid fa-hard-drive"></i>
                     </button>
-                    <button id="open-file-system-btn" class="mx-3 text-gray-500 hover:text-blue-600 text-lg focus:outline-none" title="文件系统">
+                    <button
+                        id="open-file-system-btn"
+                        class="mx-3 text-gray-500 hover:text-blue-600 text-lg focus:outline-none"
+                        title="文件系统"
+                        onclick="window.globalControlAPI.openApplication('filemgr')"
+                    >
                         <i class="fa-solid fa-folder-open"></i>
                     </button>
                     <button id="open-setting-editor-btn" class="mx-3 text-gray-500 hover:text-blue-600 text-lg focus:outline-none" title="设置">
