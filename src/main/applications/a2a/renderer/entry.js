@@ -485,10 +485,15 @@ class A2AEntryWidget extends HTMLElement {
                             } else {
                                 const isStreaming = msg.isStreaming ? '<span class="inline-block w-2 h-2 bg-gray-400 rounded-full animate-pulse ml-1"></span>' : '';
                                 const errorClass = msg.isError ? 'border-red-300 bg-red-50' : 'bg-gray-50';
+                                // 渲染 markdown 内容
+                                const renderedContent = msg.isError 
+                                    ? this.escapeHtml(msg.content || '')
+                                    : this.renderMarkdown(msg.content || '');
+                                
                                 return `
                                     <div class="flex justify-start">
                                         <div class="max-w-[80%] p-3 ${errorClass} rounded-lg border border-gray-200 shadow-sm">
-                                            <div class="text-sm text-gray-800 whitespace-pre-wrap">${this.escapeHtml(msg.content || '')}${isStreaming}</div>
+                                            <div class="text-sm text-gray-800 markdown-body" style="line-height: 1.6;">${renderedContent}${isStreaming}</div>
                                         </div>
                                     </div>
                                 `;
@@ -522,6 +527,66 @@ class A2AEntryWidget extends HTMLElement {
         const div = document.createElement('div');
         div.textContent = text;
         return div.innerHTML;
+    }
+
+    /**
+     * 渲染 markdown 内容为 HTML
+     * @param {string} markdown - markdown 文本
+     * @returns {string} 渲染后的 HTML
+     */
+    renderMarkdown(markdown) {
+        if (!markdown || typeof markdown !== 'string') {
+            return '';
+        }
+
+        // 检查 marked 是否可用
+        if (typeof marked === 'undefined') {
+            // 如果 marked 不可用，返回转义的文本（保留换行）
+            return this.escapeHtml(markdown).replace(/\n/g, '<br>');
+        }
+
+        try {
+            // 配置 marked（兼容不同版本）
+            const markedOptions = {
+                breaks: true, // 支持换行
+                gfm: true, // GitHub Flavored Markdown
+            };
+
+            // 如果 highlight.js 可用，添加代码高亮
+            if (typeof hljs !== 'undefined') {
+                markedOptions.highlight = function(code, lang) {
+                    if (lang && hljs.getLanguage(lang)) {
+                        try {
+                            return hljs.highlight(code, { language: lang }).value;
+                        } catch (err) {
+                            console.warn('Highlight error:', err);
+                        }
+                    }
+                    return hljs.highlightAuto(code).value;
+                };
+            }
+
+            // 尝试配置 marked（新版本使用 setOptions，旧版本可能不支持）
+            if (typeof marked.setOptions === 'function') {
+                marked.setOptions(markedOptions);
+            } else if (typeof marked.configure === 'function') {
+                marked.configure(markedOptions);
+            }
+
+            // 尝试解析 markdown（新版本使用 parse，旧版本直接调用）
+            if (typeof marked.parse === 'function') {
+                return marked.parse(markdown);
+            } else if (typeof marked === 'function') {
+                return marked(markdown);
+            } else {
+                // 如果都不支持，返回转义的文本
+                return this.escapeHtml(markdown).replace(/\n/g, '<br>');
+            }
+        } catch (error) {
+            console.error('Markdown rendering error:', error);
+            // 如果渲染失败，返回转义的文本（保留换行）
+            return this.escapeHtml(markdown).replace(/\n/g, '<br>');
+        }
     }
 
     renderAttachments() {
@@ -671,7 +736,7 @@ class A2AEntryWidget extends HTMLElement {
             </main>
 
             <!-- 输入区域 -->
-            <footer class="border-t border-gray-200 p-4 bg-white">
+            <footer class="border-t border-gray-200 p-4 bg-white" id="a2a-footer">
                 <!-- 附件预览区域 -->
                 <div id="a2a-attachments-preview" class="mb-2 flex flex-wrap gap-2 min-h-[60px] p-2 bg-gray-50 rounded-lg border border-gray-200">
                     ${this.renderAttachments()}
