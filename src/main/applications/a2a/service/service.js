@@ -36,6 +36,18 @@ class A2AService extends BaseService {
                         error,
                         success
                     });
+                } else if (type === 'agent_selection') {
+                    // 发射 agent 选择事件
+                    this.streamEmitter.emit(`stream:${requestId}`, {
+                        type: 'agent_selection',
+                        conversationId,
+                        agentName: message.agentName,
+                        agentId: message.agentId,
+                        skillName: message.skillName,
+                        skillId: message.skillId,
+                        reason: message.reason,
+                        message: message.message
+                    });
                 }
             });
         }

@@ -16,11 +16,71 @@ class A2AEntryWidget extends HTMLElement {
     }
 
     async connectedCallback() {
+        // 动态加载 markdown 相关资源
+        await this.loadMarkdownResources();
         this.render();
         this.updateAttachmentsPreview(); // 初始化附件预览区域
         this.setUpEventListeners();
         // 创建初始对话
         await this.createConversation();
+    }
+
+    /**
+     * 动态加载 markdown 渲染所需的 CSS 和 JS 资源
+     */
+    async loadMarkdownResources() {
+        // 检查是否已经加载过
+        if (this.markdownResourcesLoaded) {
+            return;
+        }
+
+        const resources = [
+            // CSS 文件
+            { type: 'css', url: '../renderer/styles/highlight-vs.min.css' },
+            { type: 'css', url: '../renderer/styles/github-markdown-light.min.css' },
+            { type: 'css', url: 'https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css' },
+            // JS 文件
+            { type: 'js', url: 'https://cdn.jsdelivr.net/npm/marked@12.0.0/marked.min.js' },
+            { type: 'js', url: 'https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/lib/highlight.min.js' }
+        ];
+
+        const loadPromises = resources.map(resource => {
+            return new Promise((resolve, reject) => {
+                // 检查是否已经存在
+                const existing = document.querySelector(
+                    resource.type === 'css' 
+                        ? `link[href="${resource.url}"]`
+                        : `script[src="${resource.url}"]`
+                );
+                if (existing) {
+                    resolve();
+                    return;
+                }
+
+                if (resource.type === 'css') {
+                    const link = document.createElement('link');
+                    link.rel = 'stylesheet';
+                    link.href = resource.url;
+                    link.onload = () => resolve();
+                    link.onerror = () => reject(new Error(`Failed to load CSS: ${resource.url}`));
+                    document.head.appendChild(link);
+                } else {
+                    const script = document.createElement('script');
+                    script.src = resource.url;
+                    script.onload = () => resolve();
+                    script.onerror = () => reject(new Error(`Failed to load JS: ${resource.url}`));
+                    document.head.appendChild(script);
+                }
+            });
+        });
+
+        try {
+            await Promise.all(loadPromises);
+            this.markdownResourcesLoaded = true;
+        } catch (error) {
+            console.warn('Failed to load some markdown resources:', error);
+            // 即使部分资源加载失败，也继续执行
+        }
     }
 
     async createConversation() {
@@ -246,9 +306,32 @@ class A2AEntryWidget extends HTMLElement {
     }
 
     handleStreamChunk(data, assistantMessageId) {
-        const { type, chunk, error, success } = data;
+        const { type, chunk, error, success, message, agentName, skillName } = data;
 
-        if (type === 'stream_chunk' && chunk) {
+        if (type === 'agent_selection') {
+            // 处理 Agent 选择提示消息
+            const selectionMessageId = `selection_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+            // 在用户消息和 AI 响应之间插入系统提示消息
+            const userMessageIndex = this.conversationHistory.findIndex(msg => msg.id === assistantMessageId) - 1;
+            if (userMessageIndex >= 0) {
+                // 检查是否已经存在选择提示（避免重复）
+                const existingSelection = this.conversationHistory.find(msg => 
+                    msg.role === 'system' && msg.isAgentSelection && msg.relatedAssistantId === assistantMessageId
+                );
+                if (!existingSelection) {
+                    this.conversationHistory.splice(userMessageIndex + 1, 0, {
+                        role: 'system',
+                        content: message || `已选择 Agent: **${agentName}**${skillName ? `，Skill: **${skillName}**` : ''}`,
+                        id: selectionMessageId,
+                        isAgentSelection: true,
+                        relatedAssistantId: assistantMessageId,
+                        agentName: agentName,
+                        skillName: skillName
+                    });
+                    this.updateMessages(true);
+                }
+            }
+        } else if (type === 'stream_chunk' && chunk) {
             // 更新 AI 响应内容
             const assistantMessage = this.conversationHistory.find(msg => msg.id === assistantMessageId);
             if (assistantMessage) {
@@ -445,7 +528,21 @@ class A2AEntryWidget extends HTMLElement {
                     </h2>
                     <div class="space-y-4">
                         ${this.conversationHistory.map((msg) => {
-                            if (msg.role === 'user') {
+                            if (msg.role === 'system' && msg.isAgentSelection) {
+                                // 系统提示消息：Agent 选择提示
+                                const renderedContent = this.renderMarkdown(msg.content || '');
+                                return `
+                                    <div class="flex justify-center">
+                                        <div class="max-w-[80%] p-3 bg-blue-50 border border-blue-200 rounded-lg shadow-sm">
+                                            <div class="flex items-center gap-2 mb-1">
+                                                <i class="fas fa-robot text-blue-600"></i>
+                                                <span class="text-xs font-semibold text-blue-700">Agent 选择</span>
+                                            </div>
+                                             <div class="text-sm text-blue-800 a2a-markdown-body markdown-body">${renderedContent}</div>
+                                        </div>
+                                    </div>
+                                `;
+                            } else if (msg.role === 'user') {
                                 let attachmentsHtml = '';
                                 if (msg.attachments && msg.attachments.length > 0) {
                                     attachmentsHtml = '<div class="mt-2 flex flex-wrap gap-2">';
@@ -493,7 +590,7 @@ class A2AEntryWidget extends HTMLElement {
                                 return `
                                     <div class="flex justify-start">
                                         <div class="max-w-[80%] p-3 ${errorClass} rounded-lg border border-gray-200 shadow-sm">
-                                            <div class="text-sm text-gray-800 markdown-body" style="line-height: 1.6;">${renderedContent}${isStreaming}</div>
+                                            <div class="text-sm text-gray-800 a2a-markdown-body markdown-body">${renderedContent}${isStreaming}</div>
                                         </div>
                                     </div>
                                 `;

@@ -125,7 +125,7 @@ class A2AWorker extends BaseWorker {
         }).join('\n');
 
         // 构建 prompt
-        const prompt = `你是一个智能 agent 选择助手。根据用户的需求，从提供的 agent 列表中选择最合适的 agent。
+        const prompt = `你是一个智能 agent 选择助手。根据用户的需求，从提供的 agent 列表中选择最合适的 agent 和 skill。
 
 ## 用户需求
 ${userPrompt}
@@ -140,20 +140,24 @@ ${agentsDescription}
 3. 支持的接口（supportedInterfaces）
 4. 与用户需求的匹配度
 
-请选择最匹配用户需求的 agent，并返回以下信息：
+请选择最匹配用户需求的 agent 和该 agent 中最合适的 skill，并返回以下信息：
 - agentId: 选中的 agent ID（从 agent name 中提取，如果包含 "/" 则取最后一部分）
 - agentName: 选中的 agent 完整名称（entry.name）
+- skillId: 选中的 skill ID 或名称（从 agent 的 skills 列表中选择，如果 agent 没有 skills 则返回空字符串）
+- skillName: 选中的 skill 名称（如果 skillId 存在，则返回对应的 skill.name，否则返回空字符串）
 - confidence: 匹配度置信度，范围 0-1 之间的数字
-- reason: 选择该 agent 的原因，用中文简要说明
+- reason: 选择该 agent 和 skill 的原因，用中文简要说明
 
-请确保返回的 agentId 和 agentName 与提供的 agent 列表中的信息完全匹配。`;
+请确保返回的 agentId 和 agentName 与提供的 agent 列表中的信息完全匹配。如果选中的 agent 有 skills，必须选择一个 skill。`;
 
         // 定义返回的 Zod schema
         const selectionSchema = z.object({
             agentId: z.string().describe("选中的 agent ID（从 agent name 中提取）"),
             agentName: z.string().describe("选中的 agent 完整名称（entry.name）"),
+            skillId: z.string().optional().describe("选中的 skill ID 或名称（从 agent 的 skills 列表中选择）"),
+            skillName: z.string().optional().describe("选中的 skill 名称"),
             confidence: z.number().min(0).max(1).describe("匹配度置信度 (0-1)"),
-            reason: z.string().describe("选择该 agent 的原因")
+            reason: z.string().describe("选择该 agent 和 skill 的原因")
         });
 
         try {
@@ -318,6 +322,43 @@ ${agentsDescription}
 
                     if (providerUrl) {
                         logger.info(`Calling agent via A2A: ${selectedAgent.agentName} at ${providerUrl}`);
+                        
+                        // 获取选中的 skill 信息
+                        const skills = card.skills || [];
+                        let selectedSkill = null;
+                        if (selectedAgent.skillId && skills.length > 0) {
+                            selectedSkill = skills.find(skill => 
+                                (skill.id === selectedAgent.skillId) || 
+                                (skill.name === selectedAgent.skillId) ||
+                                (skill.name === selectedAgent.skillName)
+                            );
+                        }
+                        
+                        // 构建提示消息
+                        const agentDisplayName = card.name || selectedAgent.agentId;
+                        let selectionMessage = `已选择 Agent: **${agentDisplayName}**`;
+                        if (selectedSkill) {
+                            const skillDisplayName = selectedSkill.name || selectedAgent.skillName || selectedAgent.skillId;
+                            selectionMessage += `，Skill: **${skillDisplayName}**`;
+                        } else if (selectedAgent.skillName) {
+                            selectionMessage += `，Skill: **${selectedAgent.skillName}**`;
+                        }
+                        if (selectedAgent.reason) {
+                            selectionMessage += `\n\n选择原因: ${selectedAgent.reason}`;
+                        }
+                        
+                        // 发送系统提示消息到前端
+                        parentPort.postMessage({
+                            type: 'agent_selection',
+                            requestId: requestId,
+                            conversationId: conversationId,
+                            agentName: agentDisplayName,
+                            agentId: selectedAgent.agentId,
+                            skillName: selectedSkill ? (selectedSkill.name || selectedAgent.skillName) : (selectedAgent.skillName || ''),
+                            skillId: selectedSkill ? (selectedSkill.id || selectedAgent.skillId) : (selectedAgent.skillId || ''),
+                            reason: selectedAgent.reason || '',
+                            message: selectionMessage
+                        });
                         
                         // 使用 A2A 协议调用 agent（传递完整的消息对象）
                         const messageData = typeof message === 'string' 
