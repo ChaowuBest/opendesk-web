@@ -30,6 +30,7 @@ class A2AApplication extends BaseApplication {
             case 'clearConversation':
                 return await A2AService.clearConversation(args[0]);
             case 'sendChatMessage':
+                // args[0] = conversationId, args[1] = message (string or object)
                 return await A2AService.sendChatMessage(args[0], args[1]);
             case 'getConversationHistory':
                 return await A2AService.getConversationHistory(args[0]);

@@ -173,7 +173,7 @@ ${agentsDescription}
     /**
      * 使用 A2A 协议调用选中的 agent
      * @param {string} agentUrl - Agent 的 provider URL
-     * @param {string} message - 用户消息
+     * @param {string | {text: string, attachments: Array}} message - 用户消息（字符串或消息对象）
      * @returns {Promise<string>} Agent 的响应文本
      */
     async callAgentViaA2A(agentUrl, message) {
@@ -182,11 +182,58 @@ ${agentsDescription}
             // createFromUrl 会自动处理 /.well-known/agent-card.json 路径
             const client = await factory.createFromUrl(agentUrl);
 
+            // 构建 A2A parts
+            const parts = [];
+            
+            // 处理消息：支持字符串（向后兼容）或消息对象
+            let textContent = '';
+            let attachments = [];
+            
+            if (typeof message === 'string') {
+                textContent = message;
+            } else if (message && typeof message === 'object') {
+                textContent = message.text || '';
+                attachments = message.attachments || [];
+            }
+
+            // 添加文本 part
+            if (textContent) {
+                parts.push({ kind: 'text', text: textContent });
+            }
+
+            // 添加附件 parts
+            for (const attachment of attachments) {
+                if (attachment.type === 'image') {
+                    parts.push({
+                        kind: 'image',
+                        image: {
+                            url: attachment.data, // base64 data URL
+                            mimeType: attachment.mimeType
+                        }
+                    });
+                } else if (attachment.type === 'audio') {
+                    parts.push({
+                        kind: 'audio',
+                        audio: {
+                            url: attachment.data, // base64 data URL
+                            mimeType: attachment.mimeType
+                        }
+                    });
+                } else if (attachment.type === 'file') {
+                    // 对于文件，可以发送文件路径或转换为文本描述
+                    // 这里先发送文件路径，如果 agent 需要读取文件内容，可以通过其他方式
+                    parts.push({
+                        kind: 'text',
+                        text: `[文件附件: ${attachment.name}${attachment.filePath ? ` (路径: ${attachment.filePath})` : ''}]`
+                    });
+                }
+            }
+
             const sendParams = {
                 message: {
                     messageId: randomUUID(),
                     role: 'user',
-                    parts: [{ kind: 'text', text: message }],
+                    parts: parts,
                     kind: 'message',
                 },
             };
@@ -212,7 +259,7 @@ ${agentsDescription}
     /**
      * 发送聊天消息并获取 AI 响应（流式）
      * @param {string} conversationId
-     * @param {string} message
+     * @param {string | {text: string, attachments: Array}} message - 用户消息（字符串或消息对象）
      * @param {string} requestId - 用于标识流式响应
      * @returns {Promise<{success: boolean}>}
      */
@@ -223,6 +270,28 @@ ${agentsDescription}
 
         const chatContext = this.conversations.get(conversationId);
         
+        // 处理消息：支持字符串（向后兼容）或消息对象
+        let textContent = '';
+        let attachments = [];
+        
+        if (typeof message === 'string') {
+            textContent = message;
+        } else if (message && typeof message === 'object') {
+            textContent = message.text || '';
+            attachments = message.attachments || [];
+        }
+        
+        // 构建用于 agent 选择的提示文本（包含文本和附件描述）
+        let agentSelectionPrompt = textContent;
+        if (attachments.length > 0) {
+            const attachmentDescriptions = attachments.map(att => {
+                if (att.type === 'image') return '图片';
+                if (att.type === 'audio') return '音频';
+                return '文件';
+            }).join('、');
+            agentSelectionPrompt = `${textContent} [包含${attachments.length}个附件: ${attachmentDescriptions}]`.trim();
+        }
+        
         // 在发送消息前，先选择最合适的 agent
         let selectedAgentEntry = null;
         try {
@@ -231,8 +300,8 @@ ${agentsDescription}
             const agentCards = agentsResult?.registryEntries || [];
 
             if (agentCards.length > 0) {
-                // 选择最合适的 agent
-                const selectedAgent = await this.selectAgent(message, agentCards);
+                // 选择最合适的 agent（使用包含附件信息的提示）
+                const selectedAgent = await this.selectAgent(agentSelectionPrompt, agentCards);
                 
                 // 找到对应的 agent entry
                 selectedAgentEntry = agentCards.find(entry => {
@@ -250,8 +319,11 @@ ${agentsDescription}
                     if (providerUrl) {
                         logger.info(`Calling agent via A2A: ${selectedAgent.agentName} at ${providerUrl}`);
                         
-                        // 使用 A2A 协议调用 agent
-                        const agentResponse = await this.callAgentViaA2A(providerUrl, message);
+                        // 使用 A2A 协议调用 agent（传递完整的消息对象）
+                        const messageData = typeof message === 'string' 
+                            ? { text: message, attachments: [] }
+                            : message;
+                        const agentResponse = await this.callAgentViaA2A(providerUrl, messageData);
                         
                         // 将 agent 响应作为流式数据发送
                         // 模拟流式输出（分块发送）
@@ -284,7 +356,21 @@ ${agentsDescription}
                         });
 
                         // 保存对话历史
-                        const userMessage = new UserMessage(message);
+                        const userMessage = new UserMessage(textContent);
+                        // 如果有附件，添加到消息中
+                        if (attachments.length > 0) {
+                            const { FileMessagePart } = await import('../../../agents/messages.js');
+                            for (const attachment of attachments) {
+                                if (attachment.type === 'image') {
+                                    userMessage.appendImageURL(attachment.data);
+                                } else if (attachment.type === 'file') {
+                                    // FileMessagePart 需要文件路径和内容，这里先只添加路径
+                                    // 如果需要提取内容，可以在这里处理
+                                    userMessage.content.push(new FileMessagePart(attachment.filePath || attachment.name, ''));
+                                }
+                                // audio 类型暂时作为文本描述处理
+                            }
+                        }
                         chatContext.appendMessage(userMessage);
                         const assistantMessage = new AssistantMessage();
                         assistantMessage.content = [{ type: 'text', text: responseText }];
@@ -307,7 +393,18 @@ ${agentsDescription}
         
         // 回退方案：使用 LLM 生成响应
         // 添加用户消息
-        const userMessage = new UserMessage(message);
+        const userMessage = new UserMessage(textContent);
+        // 如果有附件，添加到消息中
+        if (attachments.length > 0) {
+            const { FileMessagePart } = await import('../../../agents/messages.js');
+            for (const attachment of attachments) {
+                if (attachment.type === 'image') {
+                    userMessage.appendImageURL(attachment.data);
+                } else if (attachment.type === 'file') {
+                    userMessage.content.push(new FileMessagePart(attachment.filePath || attachment.name, ''));
+                }
+            }
+        }
         chatContext.appendMessage(userMessage);
 
         // 创建助手消息用于累积响应

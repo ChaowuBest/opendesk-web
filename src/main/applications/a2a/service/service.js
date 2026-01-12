@@ -68,7 +68,7 @@ class A2AService extends BaseService {
     /**
      * 发送聊天消息（流式响应）
      * @param {string} conversationId
-     * @param {string} message
+     * @param {string | {text: string, attachments: Array}} message - 可以是字符串（向后兼容）或消息对象
      * @returns {Promise<{requestId: string, success: boolean}>}
      */
     static async sendChatMessage(conversationId, message) {

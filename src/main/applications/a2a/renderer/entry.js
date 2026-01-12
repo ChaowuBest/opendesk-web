@@ -11,10 +11,13 @@ class A2AEntryWidget extends HTMLElement {
         this.isSending = false;
         /** @type {number | null} */
         this.updateTimer = null;
+        /** @type {Array<{type: 'image' | 'audio' | 'file', data: string, mimeType: string, name: string, filePath?: string}>} */
+        this.attachments = [];
     }
 
     async connectedCallback() {
         this.render();
+        this.updateAttachmentsPreview(); // 初始化附件预览区域
         this.setUpEventListeners();
         // 创建初始对话
         await this.createConversation();
@@ -51,10 +54,69 @@ class A2AEntryWidget extends HTMLElement {
         const sendButton = this.querySelector('#a2a-send-btn');
         const loadButton = this.querySelector('#a2a-load-btn');
         const clearButton = this.querySelector('#a2a-clear-btn');
+        const imageInput = this.querySelector('#a2a-image-input');
+        const audioInput = this.querySelector('#a2a-audio-input');
+        const fileInput = this.querySelector('#a2a-file-input');
+        const imageBtn = this.querySelector('#a2a-image-btn');
+        const audioBtn = this.querySelector('#a2a-audio-btn');
+        const fileBtn = this.querySelector('#a2a-file-btn');
+        const footer = this.querySelector('footer');
+
+        // 文件选择按钮事件
+        imageBtn.addEventListener('click', () => imageInput.click());
+        audioBtn.addEventListener('click', () => audioInput.click());
+        fileBtn.addEventListener('click', () => fileInput.click());
+
+        // 文件选择事件
+        imageInput.addEventListener('change', async (e) => {
+            for (const file of e.target.files) {
+                await this.addAttachment(file);
+            }
+            e.target.value = ''; // 重置input，允许重复选择同一文件
+        });
+
+        audioInput.addEventListener('change', async (e) => {
+            for (const file of e.target.files) {
+                await this.addAttachment(file);
+            }
+            e.target.value = '';
+        });
+
+        fileInput.addEventListener('change', async (e) => {
+            for (const file of e.target.files) {
+                await this.addAttachment(file);
+            }
+            e.target.value = '';
+        });
+
+        // 拖拽支持
+        footer.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            footer.classList.add('bg-gray-50');
+        });
+
+        footer.addEventListener('dragleave', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            footer.classList.remove('bg-gray-50');
+        });
+
+        footer.addEventListener('drop', async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            footer.classList.remove('bg-gray-50');
+            
+            const files = e.dataTransfer.files;
+            for (const file of files) {
+                await this.addAttachment(file);
+            }
+        });
 
         const sendMessage = async () => {
             const text = input.value.trim();
-            if (text === '' || this.isSending) {
+            // 允许只发送附件，不发送文本
+            if ((text === '' && this.attachments.length === 0) || this.isSending) {
                 return;
             }
 
@@ -62,12 +124,26 @@ class A2AEntryWidget extends HTMLElement {
                 await this.createConversation();
             }
 
-            // 添加用户消息到历史
+            // 构建消息对象
+            const messageData = {
+                text: text || '',
+                attachments: this.attachments.map(att => ({
+                    type: att.type,
+                    data: att.data,
+                    mimeType: att.mimeType,
+                    name: att.name,
+                    filePath: att.filePath
+                }))
+            };
+
+            // 添加用户消息到历史（显示文本和附件信息）
             const userMessageId = `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+            const userMessageContent = text || (this.attachments.length > 0 ? `[${this.attachments.length} 个附件]` : '');
             this.conversationHistory.push({
                 role: 'user',
-                content: text,
-                id: userMessageId
+                content: userMessageContent,
+                id: userMessageId,
+                attachments: this.attachments.length > 0 ? [...this.attachments] : undefined
             });
 
             // 添加占位的 AI 响应
@@ -79,8 +155,9 @@ class A2AEntryWidget extends HTMLElement {
                 isStreaming: true
             });
 
-            // 清空输入框
+            // 清空输入框和附件
             input.value = '';
+            this.clearAttachments();
             this.isSending = true;
             sendButton.disabled = true;
             sendButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 发送中...';
@@ -90,7 +167,7 @@ class A2AEntryWidget extends HTMLElement {
 
             try {
                 // 发送消息并获取 requestId
-                const result = await window.applicationAPI.sendMessageToApplication('sendChatMessage', this.conversationId, text);
+                const result = await window.applicationAPI.sendMessageToApplication('sendChatMessage', this.conversationId, messageData);
                 const requestId = result.requestId;
 
                 // 订阅流式响应
@@ -369,10 +446,39 @@ class A2AEntryWidget extends HTMLElement {
                     <div class="space-y-4">
                         ${this.conversationHistory.map((msg) => {
                             if (msg.role === 'user') {
+                                let attachmentsHtml = '';
+                                if (msg.attachments && msg.attachments.length > 0) {
+                                    attachmentsHtml = '<div class="mt-2 flex flex-wrap gap-2">';
+                                    msg.attachments.forEach(att => {
+                                        if (att.type === 'image') {
+                                            attachmentsHtml += `
+                                                <img src="${att.data}" alt="${this.escapeHtml(att.name)}" 
+                                                     class="max-w-[200px] max-h-[200px] object-cover rounded border border-white/30" />
+                                            `;
+                                        } else if (att.type === 'audio') {
+                                            attachmentsHtml += `
+                                                <div class="bg-white/20 rounded p-2 flex items-center gap-2">
+                                                    <i class="fas fa-music"></i>
+                                                    <span class="text-xs">${this.escapeHtml(att.name)}</span>
+                                                </div>
+                                            `;
+                                        } else {
+                                            attachmentsHtml += `
+                                                <div class="bg-white/20 rounded p-2 flex items-center gap-2">
+                                                    <i class="fas fa-file"></i>
+                                                    <span class="text-xs">${this.escapeHtml(att.name)}</span>
+                                                </div>
+                                            `;
+                                        }
+                                    });
+                                    attachmentsHtml += '</div>';
+                                }
+                                
                                 return `
                                     <div class="flex justify-end">
                                         <div class="max-w-[80%] p-3 bg-purple-500 text-white rounded-lg shadow-sm">
-                                            <div class="text-sm">${this.escapeHtml(msg.content)}</div>
+                                            ${msg.content ? `<div class="text-sm">${this.escapeHtml(msg.content)}</div>` : ''}
+                                            ${attachmentsHtml}
                                         </div>
                                     </div>
                                 `;
@@ -418,6 +524,124 @@ class A2AEntryWidget extends HTMLElement {
         return div.innerHTML;
     }
 
+    renderAttachments() {
+        if (this.attachments.length === 0) {
+            return '<div class="text-xs text-gray-400 flex items-center"><i class="fas fa-info-circle mr-1"></i> 可以添加图片、音频或其他文件</div>';
+        }
+        
+        return this.attachments.map((attachment, index) => {
+            let preview = '';
+            if (attachment.type === 'image') {
+                preview = `
+                    <div class="relative group">
+                        <img src="${attachment.data}" alt="${this.escapeHtml(attachment.name)}" 
+                             class="w-16 h-16 object-cover rounded border border-gray-300" />
+                        <button data-attachment-index="${index}" 
+                                class="a2a-remove-attachment absolute -top-2 -right-2 w-5 h-5 bg-red-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-xs">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </div>
+                `;
+            } else if (attachment.type === 'audio') {
+                preview = `
+                    <div class="relative group bg-blue-50 border border-blue-200 rounded p-2 flex items-center gap-2">
+                        <i class="fas fa-music text-blue-600"></i>
+                        <div class="flex-1 min-w-0">
+                            <div class="text-xs font-medium text-gray-700 truncate">${this.escapeHtml(attachment.name)}</div>
+                            <div class="text-xs text-gray-500">音频文件</div>
+                        </div>
+                        <button data-attachment-index="${index}" 
+                                class="a2a-remove-attachment w-5 h-5 bg-red-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-xs">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </div>
+                `;
+            } else {
+                preview = `
+                    <div class="relative group bg-gray-100 border border-gray-300 rounded p-2 flex items-center gap-2">
+                        <i class="fas fa-file text-gray-600"></i>
+                        <div class="flex-1 min-w-0">
+                            <div class="text-xs font-medium text-gray-700 truncate">${this.escapeHtml(attachment.name)}</div>
+                            <div class="text-xs text-gray-500">文件</div>
+                        </div>
+                        <button data-attachment-index="${index}" 
+                                class="a2a-remove-attachment w-5 h-5 bg-red-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-xs">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </div>
+                `;
+            }
+            return preview;
+        }).join('');
+    }
+
+    updateAttachmentsPreview() {
+        const previewContainer = this.querySelector('#a2a-attachments-preview');
+        if (previewContainer) {
+            previewContainer.innerHTML = this.renderAttachments();
+            this.setupAttachmentRemoveButtons();
+        }
+    }
+
+    setupAttachmentRemoveButtons() {
+        const removeButtons = this.querySelectorAll('.a2a-remove-attachment');
+        removeButtons.forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const index = parseInt(btn.dataset.attachmentIndex);
+                this.removeAttachment(index);
+            });
+        });
+    }
+
+    async addAttachment(file) {
+        const filePath = window.fsAPI ? window.fsAPI.getFilePath(file) : null;
+        const fileName = file.name;
+        const fileType = file.type;
+        
+        // 判断文件类型
+        let attachmentType = 'file';
+        if (fileType.startsWith('image/')) {
+            attachmentType = 'image';
+        } else if (fileType.startsWith('audio/')) {
+            attachmentType = 'audio';
+        }
+        
+        // 转换为 base64 data URL
+        try {
+            const dataUrl = await this.fileToDataURL(file);
+            this.attachments.push({
+                type: attachmentType,
+                data: dataUrl,
+                mimeType: fileType,
+                name: fileName,
+                filePath: filePath
+            });
+            this.updateAttachmentsPreview();
+        } catch (error) {
+            console.error('处理文件失败:', error);
+            this.showError(`处理文件失败: ${error.message}`);
+        }
+    }
+
+    fileToDataURL(file) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = (e) => resolve(e.target.result);
+            reader.onerror = (e) => reject(new Error('读取文件失败'));
+            reader.readAsDataURL(file);
+        });
+    }
+
+    removeAttachment(index) {
+        this.attachments.splice(index, 1);
+        this.updateAttachmentsPreview();
+    }
+
+    clearAttachments() {
+        this.attachments = [];
+        this.updateAttachmentsPreview();
+    }
+
     render() {
         this.innerHTML = `
         <style>
@@ -448,13 +672,71 @@ class A2AEntryWidget extends HTMLElement {
 
             <!-- 输入区域 -->
             <footer class="border-t border-gray-200 p-4 bg-white">
+                <!-- 附件预览区域 -->
+                <div id="a2a-attachments-preview" class="mb-2 flex flex-wrap gap-2 min-h-[60px] p-2 bg-gray-50 rounded-lg border border-gray-200">
+                    ${this.renderAttachments()}
+                </div>
+                
                 <div class="flex gap-3 items-end">
-                    <textarea
-                        id="a2a-input"
-                        class="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent resize-none"
-                        rows="3"
-                        placeholder="输入消息..."
-                    ></textarea>
+                    <div class="flex-1 flex flex-col gap-2">
+                        <textarea
+                            id="a2a-input"
+                            class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent resize-none"
+                            rows="3"
+                            placeholder="输入消息..."
+                        ></textarea>
+                        
+                        <!-- 工具栏 -->
+                        <div class="flex items-center gap-2">
+                            <!-- 图片选择 -->
+                            <input
+                                type="file"
+                                id="a2a-image-input"
+                                accept="image/*"
+                                multiple
+                                style="display: none;"
+                            />
+                            <button
+                                id="a2a-image-btn"
+                                class="p-2 text-gray-600 hover:text-purple-600 hover:bg-purple-50 rounded-lg transition-colors"
+                                title="添加图片"
+                            >
+                                <i class="fas fa-image"></i>
+                            </button>
+                            
+                            <!-- 音频选择 -->
+                            <input
+                                type="file"
+                                id="a2a-audio-input"
+                                accept="audio/*"
+                                multiple
+                                style="display: none;"
+                            />
+                            <button
+                                id="a2a-audio-btn"
+                                class="p-2 text-gray-600 hover:text-purple-600 hover:bg-purple-50 rounded-lg transition-colors"
+                                title="添加音频"
+                            >
+                                <i class="fas fa-microphone"></i>
+                            </button>
+                            
+                            <!-- 文件选择 -->
+                            <input
+                                type="file"
+                                id="a2a-file-input"
+                                multiple
+                                style="display: none;"
+                            />
+                            <button
+                                id="a2a-file-btn"
+                                class="p-2 text-gray-600 hover:text-purple-600 hover:bg-purple-50 rounded-lg transition-colors"
+                                title="添加文件"
+                            >
+                                <i class="fas fa-paperclip"></i>
+                            </button>
+                        </div>
+                    </div>
+                    
                     <div class="flex flex-col gap-2">
                         <button
                             id="a2a-load-btn"
