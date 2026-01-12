@@ -839,7 +839,7 @@ class A2AEntryWidget extends HTMLElement {
                     ${this.renderAttachments()}
                 </div>
                 
-                <div class="flex gap-3 items-end">
+                <div class="flex gap-3 items-start">
                     <div class="flex-1 flex flex-col gap-2">
                         <textarea
                             id="a2a-input"
