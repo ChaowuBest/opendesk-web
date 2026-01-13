@@ -86,7 +86,8 @@ class POP3EmailClient {
 }
 
 class SmtpEmailClient {
-    constructor(user, pass, fromName, host, port, secure) {
+    constructor(account, user, pass, fromName, host, port, secure) {
+        this.account = account;
         this.user = user;
         this.pass = pass;
         this.fromName = fromName;
@@ -103,11 +104,14 @@ class SmtpEmailClient {
             auth: {
                 user: this.user,
                 pass: this.pass
+            },
+            tls: {
+                rejectUnauthorized: false
             }
         })
 
         const mailOptions = {
-            from: `"${this.fromName}" <${this.user}>`,
+            from: `"${this.fromName}" <${this.account}>`,
             to: Array.isArray(to) ? to.join(', ') : to,
             cc: Array.isArray(cc) ? cc.join(', ') : cc,
             bcc: Array.isArray(bcc) ? bcc.join(', ') : bcc,
@@ -623,7 +627,8 @@ class MailboxWorker extends BaseWorker {
         logger.info(`sendEmail to ${sendEmailSchema.to}`)
         const config = EmailProfileSchema.parse(this.config);
         if (config.outbox?.smtp) {
-            const smtp = new SmtpEmailClient(config.username, config.password, config.name,
+            const smtp = new SmtpEmailClient(config.outbox.smtp.account? config.outbox.smtp.account : config.username,
+                config.username, config.password, config.name,
                 config.outbox.smtp.host, config.outbox.smtp.port, config.outbox.smtp.tls
             );
             return await smtp.sendMail(sendEmailSchema.to , sendEmailSchema.cc, sendEmailSchema.bcc,

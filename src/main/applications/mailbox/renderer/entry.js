@@ -3,6 +3,13 @@ import { RendererToolset, RendererTool, AgentOperableHTMLElement } from '../../w
 import { ElasticToolbarWidget } from '../../../../renderer/components/toolbar.js';
 
 
+const MailOperations = Object.freeze({
+    SEND: 'send',
+    REPLY: 'reply',
+    REPLYALL: 'replyall',
+    FORWARD: 'forward'
+});
+
 class MailBoxEntryWidget extends AgentOperableHTMLElement {
     constructor() {
         super();
@@ -637,7 +644,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         return fullHeader;
     }
 
-    async createNewEmail() {
+    async createNewEmail(operation, mailHeader, mailContent) {
         // 这里可以直接 new 一个邮件编辑控件并赋值给 #email-content
         const emailContent = this.querySelector('#email-content');
         const editor = new MailEditorWidget();
@@ -647,10 +654,11 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         editor.addEventListener('cancel', () => {
             this.reloadCurrentEmailContent();
         });
-        editor.addEventListener('send', async (event) => {
-            const mailSchema = editor.getMailSchema()
+        editor.addEventListener('send', () => {
+            const mailSchema = editor.getMailContent()
             this.sendEmail(mailSchema);
         });
+        editor.setMailContent(operation, mailHeader, mailContent)
     }
 
     handleFilter(filter) {
@@ -704,9 +712,9 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             : { id: 'mailbox-mark-unread-button', icon: 'fa-envelope', label: '标为未读', action: () => this.markEmailAsUnread(this.selectedEmailUid) };
 
         const topButtons = [
-            { id: 'mailbox-reply-button', icon: 'fa-reply', label: '回复', action: () => this.createNewEmail() },
-            { id: 'mailbox-reply-all-button', icon: 'fa-reply-all', label: '回复全部', action: () => this.createNewEmail() },
-            { id: 'mailbox-forward-button', icon: 'fa-share', label: '转发', action: () => this.createNewEmail() },
+            { id: 'mailbox-reply-button', icon: 'fa-reply', label: '回复', action: () => this.createNewEmail(MailOperations.REPLY, this.selectedEmailHeader, this.selectedEmailContent) },
+            { id: 'mailbox-reply-all-button', icon: 'fa-reply-all', label: '回复全部', action: () => this.createNewEmail(MailOperations.REPLYALL, this.selectedEmailHeader, this.selectedEmailContent) },
+            { id: 'mailbox-forward-button', icon: 'fa-share', label: '转发', action: () => this.createNewEmail(MailOperations.FORWARD, this.selectedEmailHeader, this.selectedEmailContent) },
             { id: 'mailbox-reload-button', icon: 'fa-redo-alt', label: '重新下载', action: () => this.openEmailByUid(this.selectedEmailUid, true) },
             { id: 'mailbox-trash-button', icon: 'fa-trash-alt', label: '删除', action: () => this.deleteEmail() },
             { id: 'mailbox-star-button', icon: 'fa-star', label: '收藏', action: () => this.starEmail(this.selectedEmailUid, !this.selectedEmailHeader.starred) },
@@ -860,7 +868,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         });
 
         document.querySelector('#mailbox-new-email-button').addEventListener('click', () => {
-            this.createNewEmail();
+            this.createNewEmail(MailOperations.SEND);
         });
         document.querySelector('#mailbox-sync-email-button').addEventListener('click', () => {
             this.syncEmails();
@@ -995,12 +1003,42 @@ class MailEditorWidget extends AgentOperableHTMLElement {
         this.dispatchEvent(new CustomEvent('send', { bubbles: true }));
     }
 
-    getMailSchema() {
+    composeOriginContent(selectedEmailHeader, originEmailContent) {
+        let combine = [];
+        combine.push('------ Original Message ------<BR>');
+        combine.push(`<B>发件人</B>: ${selectedEmailHeader.from[0].address}<BR>`);
+        combine.push(`<B>发送时间</B>: ${new Date(selectedEmailHeader.date).toLocaleString()}<BR>`);
+        combine.push(`<B>收件人</B>: ${selectedEmailHeader.to.map(to => to.address).join(',')}<BR>`);
+        if (selectedEmailHeader.cc) {
+            combine.push(`<B>收件人</B>: ${selectedEmailHeader.cc.map(cc => cc.address).join(',')}<BR>`);
+        }
+        combine.push(`<B>主题</B>: ${selectedEmailHeader.subject}<BR>`);
+        combine.push(`${originEmailContent}`);
+        return combine.join('');
+    }
+
+    getMailContent() {
         const to = document.getElementById('to').value;
         const subject = document.getElementById('subject').value;
         const content = this.editor.getHtml();
         const sendEmailSchema = {to: to, subject: subject, html: content};
         return sendEmailSchema;
+    }
+
+    setMailContent(operation, mailHeader, mailContent) {
+        if (!mailHeader || !mailContent) {
+            return;
+        }
+        if (operation == MailOperations.REPLY || operation == MailOperations.REPLYALL) {
+            document.getElementById('to').value = mailHeader.from[0].address;
+            document.getElementById('subject').value = '答复:' + mailHeader.subject;
+        } else if (operation == MailOperations.FORWARD) {
+            document.getElementById('subject').value = '转发:' + mailHeader.subject;
+        }
+
+        let originContent = mailContent.htmlContent ? mailContent.htmlContent : mailContent.textContent.replace(/\n/g, '<br>')
+        let combileContent = this.composeOriginContent(mailHeader, originContent)
+        this.editor.setHtml(combileContent)
     }
 
     render() {
@@ -1056,6 +1094,11 @@ class MailEditorWidget extends AgentOperableHTMLElement {
         }
         #toolbar-container {
             border-bottom: 1px solid #ccc;
+        }
+        #editor-container {
+            font-size: 12px;    /* 默认字号 */
+            line-height: 1;   /* 默认行高 */
+            margin: 10px 0;     /* 段落间距 */
         }
         </style>
         `);

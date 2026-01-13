@@ -16,6 +16,7 @@ const InboxServerSchema = z.object({
 
 const OutboxServerSchema = z.object({
     smtp: z.object({
+        account: z.string().default(''),
         host: z.string().default(''),
         tls: z.boolean().default(true),
         port: z.number().default(587),
