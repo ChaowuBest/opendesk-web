@@ -26,6 +26,8 @@ class NotificationPanel extends HTMLElement {
 
     constructor() {
         super();
+        /** @type {Map<string, NodeJS.Timeout>} */
+        this.closeNotificationTimeouts = new Map();
     }
 
     connectedCallback() {
@@ -50,10 +52,11 @@ class NotificationPanel extends HTMLElement {
                     <h3 class="text-[14px] font-semibold text-gray-900">${title} <span class="text-xs text-gray-500">(@${source})</span></h3>
                     <p class="text-[13px] leading-tight text-gray-600/90">${message}</p>
                 </div>
-                <button class="opacity-0 group-hover:opacity-100 transition-opacity">
-                    <div class="p-1 rounded-full hover:bg-black/5">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-gray-400"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
-                    </div>
+                <button
+                    class="close-notification-btn opacity-0 group-hover:opacity-100 transition-opacity w-8 h-8 flex items-center justify-center rounded-full hover:bg-black/5"
+                    data-notification_id="${notificationId}"
+                >
+                    <i class="fa fa-times text-gray-400"></i>
                 </button>
             </div>
         </div>
@@ -71,24 +74,38 @@ class NotificationPanel extends HTMLElement {
             }
         );
 
-        setTimeout(async () => {
-            const notificationElement = this.querySelector(`#notification-${notificationId}`);
-            await notificationElement.animate([
-                { transform: 'translateX(0)' },
-                { transform: 'translateX(500px)' }
-            ], {
-                duration: 500,
-                fill: 'forwards',
-                easing: 'ease-in-out'
-            }).finished;
-            notificationElement.remove();
-        }, 5000);
+        this.querySelectorAll(`.close-notification-btn`).forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const notificationId = btn.getAttribute('data-notification_id');
+                await this.closeNotification(notificationId);
+            });
+        });
+
+        this.closeNotificationTimeouts.set(notificationId, setTimeout(async () => {
+            await this.closeNotification(notificationId);
+        }, 5000));
+    }
+
+    async closeNotification(notificationId) {
+        const timeout = this.closeNotificationTimeouts.get(notificationId);
+        if (!timeout) { return; }
+        this.closeNotificationTimeouts.delete(notificationId);
+        clearTimeout(timeout);
+
+        const notificationElement = this.querySelector(`#notification-${notificationId}`);
+        await notificationElement.animate([
+            { transform: 'translateX(0)' },
+            { transform: 'translateX(500px)' }
+        ], {
+            duration: 500,
+            fill: 'forwards',
+            easing: 'ease-in-out'
+        }).finished;
+        notificationElement.remove();
     }
 
     render() {
-        this.innerHTML = `
-
-        `;
+        this.innerHTML = ``;
     }
 }
 
