@@ -81,8 +81,8 @@ class A2AWorker extends BaseWorker {
         // 构建 agent cards 的详细描述
         const agentsDescription = agentCards.map((entry, index) => {
             const agentName = entry.name || '';
-            const agentId = agentName.includes('/') 
-                ? agentName.split('/').pop() 
+            const agentId = agentName.includes('/')
+                ? agentName.split('/').pop()
                 : agentName;
             const card = entry.card || {};
             const skills = card.skills || [];
@@ -96,7 +96,7 @@ class A2AWorker extends BaseWorker {
             if (card.description) {
                 description += `- 描述: ${card.description}\n`;
             }
-            
+
             if (skills.length > 0) {
                 description += `- 支持的技能 (${skills.length} 个):\n`;
                 skills.forEach((skill, skillIndex) => {
@@ -140,13 +140,18 @@ ${agentsDescription}
 3. 支持的接口（supportedInterfaces）
 4. 与用户需求的匹配度
 
-请选择最匹配用户需求的 agent 和该 agent 中最合适的 skill，并返回以下信息：
-- agentId: 选中的 agent ID（从 agent name 中提取，如果包含 "/" 则取最后一部分）
-- agentName: 选中的 agent 完整名称（entry.name）
-- skillId: 选中的 skill ID 或名称（从 agent 的 skills 列表中选择，如果 agent 没有 skills 则返回空字符串）
-- skillName: 选中的 skill 名称（如果 skillId 存在，则返回对应的 skill.name，否则返回空字符串）
-- confidence: 匹配度置信度，范围 0-1 之间的数字
-- reason: 选择该 agent 和 skill 的原因，用中文简要说明
+请选择最匹配用户需求的 agent 和该 agent 中最合适的 skill，并用JSON格式返回以下信息：
+
+<example>
+{
+  "agentId": 选中的 agent ID（从 agent name 中提取，如果包含 "/" 则取最后一部分）
+  "agentName": 选中的 agent 完整名称（entry.name）
+  "skillId": 选中的 skill ID 或名称（从 agent 的 skills 列表中选择，如果 agent 没有 skills 则返回空字符串）
+  "skillName": 选中的 skill 名称（如果 skillId 存在，则返回对应的 skill.name，否则返回空字符串）
+  "confidence": 匹配度置信度，范围 0-1 之间的数字
+  "reason": 选择该 agent 和 skill 的原因，用中文简要说明
+}
+</example>
 
 请确保返回的 agentId 和 agentName 与提供的 agent 列表中的信息完全匹配。如果选中的 agent 有 skills，必须选择一个 skill。`;
 
@@ -163,10 +168,10 @@ ${agentsDescription}
         try {
             const question = new UserMessage(prompt);
             const result = await LLM.askForObjectWithSchema(question, selectionSchema);
-            
+
             logger.info(`Selected agent: ${result.agentId} (confidence: ${result.confidence})`);
             logger.info(`Selection reason: ${result.reason}`);
-            
+
             return result;
         } catch (error) {
             logger.error(`Error in selectAgent: ${error.message}`);
@@ -188,11 +193,11 @@ ${agentsDescription}
 
             // 构建 A2A parts
             const parts = [];
-            
+
             // 处理消息：支持字符串（向后兼容）或消息对象
             let textContent = '';
             let attachments = [];
-            
+
             if (typeof message === 'string') {
                 textContent = message;
             } else if (message && typeof message === 'object') {
@@ -243,7 +248,7 @@ ${agentsDescription}
             };
 
             const response = await client.sendMessage(sendParams);
-            
+
             // 提取响应文本
             if (response && response.parts && response.parts.length > 0) {
                 const textParts = response.parts
@@ -252,7 +257,7 @@ ${agentsDescription}
                     .join('');
                 return textParts;
             }
-            
+
             return 'Agent 返回了空响应';
         } catch (error) {
             logger.error(`Error calling agent via A2A: ${error.message}`);
@@ -273,18 +278,18 @@ ${agentsDescription}
         }
 
         const chatContext = this.conversations.get(conversationId);
-        
+
         // 处理消息：支持字符串（向后兼容）或消息对象
         let textContent = '';
         let attachments = [];
-        
+
         if (typeof message === 'string') {
             textContent = message;
         } else if (message && typeof message === 'object') {
             textContent = message.text || '';
             attachments = message.attachments || [];
         }
-        
+
         // 构建用于 agent 选择的提示文本（包含文本和附件描述）
         let agentSelectionPrompt = textContent;
         if (attachments.length > 0) {
@@ -295,7 +300,7 @@ ${agentsDescription}
             }).join('、');
             agentSelectionPrompt = `${textContent} [包含${attachments.length}个附件: ${attachmentDescriptions}]`.trim();
         }
-        
+
         // 在发送消息前，先选择最合适的 agent
         let selectedAgentEntry = null;
         try {
@@ -306,12 +311,12 @@ ${agentsDescription}
             if (agentCards.length > 0) {
                 // 选择最合适的 agent（使用包含附件信息的提示）
                 const selectedAgent = await this.selectAgent(agentSelectionPrompt, agentCards);
-                
+
                 // 找到对应的 agent entry
                 selectedAgentEntry = agentCards.find(entry => {
                     const agentName = entry.name || '';
-                    const agentId = agentName.includes('/') 
-                        ? agentName.split('/').pop() 
+                    const agentId = agentName.includes('/')
+                        ? agentName.split('/').pop()
                         : agentName;
                     return agentId === selectedAgent.agentId || agentName === selectedAgent.agentName;
                 });
@@ -322,18 +327,18 @@ ${agentsDescription}
 
                     if (providerUrl) {
                         logger.info(`Calling agent via A2A: ${selectedAgent.agentName} at ${providerUrl}`);
-                        
+
                         // 获取选中的 skill 信息
                         const skills = card.skills || [];
                         let selectedSkill = null;
                         if (selectedAgent.skillId && skills.length > 0) {
-                            selectedSkill = skills.find(skill => 
-                                (skill.id === selectedAgent.skillId) || 
+                            selectedSkill = skills.find(skill =>
+                                (skill.id === selectedAgent.skillId) ||
                                 (skill.name === selectedAgent.skillId) ||
                                 (skill.name === selectedAgent.skillName)
                             );
                         }
-                        
+
                         // 构建提示消息
                         const agentDisplayName = card.name || selectedAgent.agentId;
                         let selectionMessage = `已选择 Agent: **${agentDisplayName}**`;
@@ -346,7 +351,7 @@ ${agentsDescription}
                         if (selectedAgent.reason) {
                             selectionMessage += `\n\n选择原因: ${selectedAgent.reason}`;
                         }
-                        
+
                         // 发送系统提示消息到前端
                         parentPort.postMessage({
                             type: 'agent_selection',
@@ -359,21 +364,21 @@ ${agentsDescription}
                             reason: selectedAgent.reason || '',
                             message: selectionMessage
                         });
-                        
+
                         // 使用 A2A 协议调用 agent（传递完整的消息对象）
-                        const messageData = typeof message === 'string' 
+                        const messageData = typeof message === 'string'
                             ? { text: message, attachments: [] }
                             : message;
                         const agentResponse = await this.callAgentViaA2A(providerUrl, messageData);
-                        
+
                         // 将 agent 响应作为流式数据发送
                         // 模拟流式输出（分块发送）
                         const responseText = agentResponse;
                         const chunkSize = 30; // 每次发送的字符数（增加以减少刷新频率）
-                        
+
                         for (let i = 0; i < responseText.length; i += chunkSize) {
                             const chunk = responseText.slice(i, i + chunkSize);
-                            
+
                             parentPort.postMessage({
                                 type: 'stream_chunk',
                                 requestId: requestId,
@@ -383,7 +388,7 @@ ${agentsDescription}
                                     finishReason: i + chunkSize >= responseText.length ? 'stop' : null
                                 }
                             });
-                            
+
                             // 添加小延迟以模拟流式效果（稍微增加延迟以减少刷新频率）
                             await new Promise(resolve => setTimeout(resolve, 100));
                         }
@@ -431,7 +436,7 @@ ${agentsDescription}
             logger.error(`Error selecting/calling agent: ${error.message}`);
             // 如果 A2A 调用失败，回退到 LLM
         }
-        
+
         // 回退方案：使用 LLM 生成响应
         // 添加用户消息
         const userMessage = new UserMessage(textContent);
@@ -487,7 +492,7 @@ ${agentsDescription}
             return { success: true };
         } catch (error) {
             logger.error(`Error in sendChatMessage: ${error.message}`);
-            
+
             // 发送错误信号
             parentPort.postMessage({
                 type: 'stream_error',
