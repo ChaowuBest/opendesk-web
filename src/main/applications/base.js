@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { Worker, parentPort } from 'worker_threads';
+import { Worker, parentPort, workerData } from 'worker_threads';
 import { logger, LogStream } from '../utils/logger.js';
 import { Setting, getAppDirectory } from '../utils/setting.js';
 import { BaseTool } from '../agents/tool.js';
@@ -78,7 +78,9 @@ class BaseService {
         this.worker = new Worker(
             this.getWorkerPath(),
             {
-                workerData: { paths: { appDirectory: this.applicationDataDirectory } }
+                workerData: {
+                    paths: { appDirectory: this.applicationDataDirectory }
+                }
             }
         );
 
@@ -151,7 +153,7 @@ class BaseService {
                     this.pendingRequests.delete(id);
                     reject(new Error(`Request timeout: ${type}`));
                 }
-            }, 30000); // 30秒超时
+            }, 60000); // 60秒超时
         });
     }
 

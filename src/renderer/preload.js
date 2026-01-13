@@ -175,6 +175,19 @@ if (window.self !== window.top) {
             return result.data;
         }
     })
+
+    // A2A 应用的流式响应 API
+    contextBridge.exposeInMainWorld('a2aAPI', {
+        subscribeStream: async (requestId, callback) => {
+            await ipcRenderer.invoke('a2a:subscribeStream', requestId);
+            ipcRenderer.on('a2a:streamChunk', (event, receivedRequestId, data) => {
+                if (receivedRequestId === requestId) {
+                    callback(data);
+                }
+            });
+        }
+    })
+
     exposeTaskManagerAPI();
     exposeFSAPI();
 } else {

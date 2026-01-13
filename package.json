@@ -36,6 +36,7 @@
     "run-script-os": "^1.1.6"
   },
   "dependencies": {
+    "@a2a-js/sdk": "^0.3.7",
     "ansi-to-html": "^0.7.2",
     "electron-squirrel-startup": "^1.0.1",
     "exa-js": "^2.0.12",
