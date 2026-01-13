@@ -2,10 +2,16 @@ import { parentPort } from 'worker_threads';
 import fastGlob from 'fast-glob';
 import { z } from 'zod';
 import { FSEntrySchema, Setting } from '../../utils/setting.js';
-import { FileEntrySchema, FSStorage } from './storage.js';
+import { FileEntrySchema, FSStorage, FileScannerMetadataSchema } from './storage.js';
 import { NotificationManager } from '../../utils/notificationmgr.js';
 import { logger } from '../../utils/logger.js';
+import PQueue from 'p-queue';
 
+
+/** @type {PQueue} */
+const task_queue = new PQueue({ concurrency: 1 });
+/** @type {"idle" | "running" | "scanning"} */
+var status = "idle";
 
 /**
  * @typedef {z.core.output<FSEntrySchema>} FSEntry
@@ -21,9 +27,8 @@ class FSScanner {
         this.root = entry.root;
         /** @type {FSStorage} */
         this.storage = storage;
-        /** @type {FileScannerMetadataSchema} */
-        this.metadata = undefined;
-
+        /** @type {z.core.output<FileScannerMetadataSchema>} */
+        this.metadata = FileScannerMetadataSchema.parse({ root: this.root });
         /** @type {NodeJS.Timeout | null} */
         this._interval = null;
         /** @type {number} */
@@ -32,12 +37,22 @@ class FSScanner {
 
     async start() {
         this.metadata = await this.storage.getFileScannerMetadata(this.root);
+        this._counter = 0;
         logger.info(`starting scanner for ${this.root}, using metadata: ${JSON.stringify(this.metadata)}`);
-        await this.scan();
-        this._interval = setInterval(() => {
+
+        const scanTask = async () => {
+            status = "scanning";
+            await this.scan().catch(error => {
+                logger.error(`scan task error: ${error.message}`, error);
+                NotificationManager.getInstance().error('文件系统', '扫描', `扫描失败: ${error.message}`);
+            });
+            status = "running";
             this._counter++;
-            this.scan();
-        }, 10 * 1000);
+            setTimeout(() => {
+                task_queue.add(scanTask);
+            }, 10 * 1000);
+        }
+        task_queue.add(scanTask);
     }
 
     async stop() {
@@ -58,7 +73,7 @@ class FSScanner {
             deep = 6;
         }
 
-        const lastScanningTime = this.metadata.last_full_scan_timestamp;
+        const lastScanningTime = this.metadata.last_full_scan;
 
         /** @type {fastGlob.Options} */
         const options = {
@@ -100,7 +115,8 @@ class FSScanner {
         await this.storage.saveFiles(fileEntries);
         if (deep === undefined) {
             logger.info(`finished full scan for ${this.root}, setting metadata timestamp to ${Date.now()}`);
-            this.metadata.last_full_scan_timestamp = Date.now();
+            this.metadata.last_full_scan = Date.now();
+            this.metadata.total_files = allFiles.length;
             await this.storage.saveFileScannerMetadata(this.metadata);
         }
     }
@@ -112,20 +128,55 @@ const scanners = new Map();
 /** @type {FSStorage | null} */
 let storage = null;
 
-// 处理来自主线程的消息
-parentPort.on('message', async (message) => {
-    try {
-        const { type, id, payload } = message;
+async function getStatus() {
+    if (!storage) {
+        return { status: 'idle' };
+    }
+    return {
+        status: status,
+        scanners: [
+            ...scanners.values().map(instance => {
+                return {
+                    entry: instance.entry,
+                    lastFullScan: instance.metadata.last_full_scan,
+                    totalFiles: instance.metadata.total_files
+                }
+            })
+        ],
+        storage: await storage.getStatus(),
+    };
+}
 
-        switch (type) {
-            case 'init': {
+async function resetStorage() {
+    if (!storage) {
+        throw new Error('storage not initialized');
+    }
+
+    for (const scanner of scanners.values()) {
+        await scanner.stop();
+    }
+    await storage.reset();
+    for (const scanner of scanners.values()) {
+        await scanner.start();
+    }
+}
+
+parentPort.on('message', async (message) => {
+    const { type, id, payload } = message;
+
+    /** @type {Promise<void> | null} */
+    var task = null;
+    switch (type) {
+        case 'init':
+            task =task_queue.add(async () => {
                 // 初始化 storage
                 storage = await FSStorage.getInstance();
+                status = "running";
                 parentPort.postMessage({ type: 'response', id, status: 'ok' });
-                break;
-            }
-
-            case 'startService': {
+            });
+            break;
+        case 'startService':
+            task = task_queue.add(async () => {
                 if (!storage) {
                     storage = await FSStorage.getInstance();
                 }
@@ -136,29 +187,39 @@ parentPort.on('message', async (message) => {
                     instance.start();
                 }
                 parentPort.postMessage({ type: 'response', id, status: 'ok' });
-                break;
-            }
-
-            case 'stopService': {
+            });
+            break;
+        case 'stopService':
+            task = task_queue.add(async () => {
                 scanners.forEach(instance => {
                     instance.stop();
                 });
                 scanners.clear();
                 parentPort.postMessage({ type: 'response', id, status: 'ok' });
                 parentPort.close();
-                break;
-            }
-
-            case 'searchFilesByKeyword': {
+            });
+            break;
+        case 'resetStorage':
+            task = task_queue.add(async () => {
+                await resetStorage();
+                parentPort.postMessage({ type: 'response', id, status: 'ok' });
+            });
+            break;
+        case 'getStatus':
+            /* 状态获取不放在队列里面，因为需要实时获取 */
+            parentPort.postMessage({ type: 'response', id, status: 'ok', data: await getStatus() });
+            break;
+        case 'searchFilesByKeyword':
+            task = task_queue.add(async () => {
                 if (!storage) {
                     storage = await FSStorage.getInstance();
                 }
                 const result = await storage.searchFilesByKeyword(payload.keyword);
                 parentPort.postMessage({ type: 'response', id, status: 'ok', data: result });
-                break;
-            }
-
-            case 'searchFilesByNameSimilarity': {
+            });
+            break;
+        case 'searchFilesByNameSimilarity':
+            task = task_queue.add(async () => {
                 if (!storage) {
                     storage = await FSStorage.getInstance();
                 }
@@ -171,14 +232,17 @@ parentPort.on('message', async (message) => {
                     logger.error(`[vector] worker error: ${ex.message}`, ex);
                     parentPort.postMessage({ type: 'response', id, status: 'error', message: ex.message });
                 }
-                break;
-            }
-
-            default:
-                parentPort.postMessage({ type: 'response', id, status: 'error', message: `Unknown message type: ${type}` });
-        }
-    } catch (error) {
-        logger.error(`Worker error: ${error.message}`, error);
-        parentPort.postMessage({ type: 'response', id, status: 'error', message: error.message });
+            });
+            break;
+        default:
+            parentPort.postMessage({ type: 'response', id, status: 'error', message: `Unknown message type: ${type}` });
     }
+
+    if (task) {
+        task.catch(error => {
+            logger.error(`Worker error: ${error.message}`, error);
+            parentPort.postMessage({ type: 'response', id: message.id, status: 'error', message: error.message });
+        });
+    }
+
 });

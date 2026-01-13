@@ -13,6 +13,11 @@ export class ElasticToolbarWidget extends HTMLElement {
         this.render();
     }
 
+    setButtons(buttons) {
+        this.buttons = buttons;
+        this.render();
+    }
+
     render() {
         const topButtonsHTML = this.buttons.map(button => `
         <button id='${button.id}-${this.uid}' class="group flex items-center px-2 py-2 rounded-full
@@ -31,8 +36,7 @@ export class ElasticToolbarWidget extends HTMLElement {
         ).join('');
 
         let toolbarHTML = `
-        <!-- 顶部工具栏 -->
-        <header class="h-16 pl-3 pr-16 border-b flex items-center justify-between">
+        <header class="h-16 px-0 flex items-center justify-between">
             <div class="flex items-center gap-2 p-1">
                 ${topButtonsHTML}
             </div>

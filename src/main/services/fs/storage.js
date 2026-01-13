@@ -22,8 +22,10 @@ const FileEntrySchema = z.object({
 })
 
 const FileScannerMetadataSchema = z.object({
+    type: z.literal('metadata').default('metadata'),
     root: z.string(),
-    last_full_scan_timestamp: z.number(),
+    last_full_scan: z.number().default(0),
+    total_files: z.number().default(0),
 })
 
 
@@ -83,6 +85,24 @@ class FSStorage {
         }
         await this.vecdb.endUpdate();
         logger.info(`creating vector index and inserting ${this.vec_cache.size} items to vector database: ${Date.now() - startTime}ms`);
+    }
+
+    async reset() {
+        await this.db.remove({}, { multi: true });
+        await this.vecdb.createIndex({ deleteIfExists: true });
+        this.vec_cache.clear();
+        fs.rmSync(FSStorage.vectorCachePath, { force: true });
+        logger.info('storage reset finished')
+    }
+
+    async getStatus() {
+        let vecdb_stats = await this.vecdb.getIndexStats();
+        let db_count = await this.db.count({ type: { $ne: 'metadata' } });
+        return {
+            veccache_size: this.vec_cache.size,
+            vecdb_size: vecdb_stats.items,
+            db_size: db_count,
+        };
     }
 
     static async getInstance() {

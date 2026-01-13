@@ -311,7 +311,9 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             return;
         }
 
-        this.querySelector('#email-content').innerHTML = `<content-loading-view data-message="正在加载邮件内容..."></content-loading-view>`;
+        this.querySelector('#email-content').innerHTML = `
+        <content-loading-view class="w-full h-full" data-message="正在加载邮件内容..."></content-loading-view>
+        `;
         this.selectedEmailHeader = this.emailHeaderList.get(this.selectedEmailUid);
 
         if (redownload) {
@@ -334,6 +336,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         ]
 
         const toolbar = new ElasticToolbarWidget(topButtons);
+        toolbar.classList.add('pl-3', 'pr-16')
 
         this.querySelector('#email-content').innerHTML = '';
         this.querySelector('#email-content').appendChild(toolbar);

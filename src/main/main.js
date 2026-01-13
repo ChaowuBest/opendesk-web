@@ -15,6 +15,7 @@ import { z } from 'zod';
 import Convert from 'ansi-to-html';
 import path from 'path';
 import { NotificationManager } from './utils/notificationmgr.js';
+import { FileMgrApplication } from './applications/filemgr/app.js';
 
 import { LogStream, logger } from './utils/logger.js'
 
@@ -25,6 +26,7 @@ const mailboxApplication = new MailboxApplication();
 const recallApplication = new RecallApplication();
 const newsApplication = new NewsApplication();
 const a2aApplication = new A2AApplication();
+const fileMgrApplication = new FileMgrApplication();
 const converter = new Convert();
 
 /** @type {BrowserWindow | null} */
@@ -366,9 +368,10 @@ app.whenReady().then(() => {
   ApplicationRegistry.registerApplication(recallApplication);
   ApplicationRegistry.registerApplication(newsApplication);
   ApplicationRegistry.registerApplication(a2aApplication);
+  ApplicationRegistry.registerApplication(fileMgrApplication);
 })
 
-app.on('will-quit', () => {
+app.on('will-quit', async () => {
   globalShortcut.unregisterAll()
-  FSService.stopFSService();
+  await FSService.stopFSService();
 })
