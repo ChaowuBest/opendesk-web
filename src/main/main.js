@@ -371,7 +371,7 @@ app.whenReady().then(() => {
   ApplicationRegistry.registerApplication(fileMgrApplication);
 })
 
-app.on('will-quit', () => {
+app.on('will-quit', async () => {
   globalShortcut.unregisterAll()
-  FSService.stopFSService();
+  await FSService.stopFSService();
 })

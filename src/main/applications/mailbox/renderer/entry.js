@@ -336,6 +336,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         ]
 
         const toolbar = new ElasticToolbarWidget(topButtons);
+        toolbar.classList.add('pl-3', 'pr-16')
 
         this.querySelector('#email-content').innerHTML = '';
         this.querySelector('#email-content').appendChild(toolbar);
