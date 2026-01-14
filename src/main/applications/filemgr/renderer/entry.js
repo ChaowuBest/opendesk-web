@@ -119,6 +119,12 @@ class FileMgrEntryWidget extends AgentOperableHTMLElement {
                 <span class="text-sm font-medium">未启动</span>
                 `;
                 break;
+            case 'error':
+                fileSystemStatusHTML = `
+                <div class="w-2.5 h-2.5 bg-red-500 rounded-full mr-2"></div>
+                <span class="text-sm font-medium">错误</span>
+                `;
+                break;
             default:
                 fileSystemStatusHTML = `
                 <div class="w-2.5 h-2.5 bg-gray-500 rounded-full mr-2"></div>
@@ -131,20 +137,20 @@ class FileMgrEntryWidget extends AgentOperableHTMLElement {
         <div class="bg-white py-6 px-4 rounded-2xl shadow-sm border border-[#F0F0F2]">
             <p class="text-xs font-semibold text-[#86868B] uppercase tracking-wider">文件总数</p>
             <div class="mt-2 flex items-baseline">
-                <span class="text-3xl font-bold">${fileSystemStatus.storage.db_size || '--'}</span>
+                <span class="text-3xl font-bold">${fileSystemStatus?.storage?.db_size || '--'}</span>
             </div>
         </div>
         <div class="bg-white py-6 px-4 rounded-2xl shadow-sm border border-[#F0F0F2]">
             <p class="text-xs font-semibold text-[#86868B] uppercase tracking-wider">向量索引</p>
             <div class="mt-2 flex items-baseline">
-                <span class="text-3xl font-bold">${fileSystemStatus.storage.vecdb_size || '--'}</span>
+                <span class="text-3xl font-bold">${fileSystemStatus?.storage?.vecdb_size || '--'}</span>
                 <span class="ml-2 text-xs text-[#86868B]">条</span>
             </div>
         </div>
         <div class="bg-white py-6 px-4 rounded-2xl shadow-sm border border-[#F0F0F2]">
             <p class="text-xs font-semibold text-[#86868B] uppercase tracking-wider">向量缓存</p>
             <div class="mt-2 flex items-baseline">
-                <span class="text-3xl font-bold">${fileSystemStatus.storage.veccache_size || '--'}</span>
+                <span class="text-3xl font-bold">${fileSystemStatus?.storage?.veccache_size || '--'}</span>
                 <span class="ml-2 text-xs text-[#86868B]">条</span>
             </div>
         </div>

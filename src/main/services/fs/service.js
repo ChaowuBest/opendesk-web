@@ -137,6 +137,9 @@ class FSService {
     }
 
     static async getFSStatus() {
+        if (!this.worker) {
+            return { status: 'error', message: 'FS service not running' };
+        }
         return await this.sendMessage('getStatus', {});
     }
 
