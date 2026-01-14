@@ -431,82 +431,41 @@ class A2AEntryWidget extends HTMLElement {
                                 : agentName;
                             const card = entry.card || {};
                             const skills = card.skills || [];
-                            const supportedInterfaces = card.supportedInterfaces || [];
                             
                             return `
                                 <div class="p-4 bg-white rounded-lg border border-gray-200 shadow-sm hover:shadow-md transition-shadow">
                                     <div class="flex items-start justify-between mb-2">
                                         <div class="flex-1">
                                             <h3 class="font-semibold text-gray-800">${this.escapeHtml(card.name || agentId)}</h3>
-                                            <p class="text-xs text-gray-500 mt-1">ID: ${this.escapeHtml(agentId)}</p>
-                                            ${card.version ? `<p class="text-xs text-gray-500">版本: ${this.escapeHtml(card.version)}</p>` : ''}
                                         </div>
                                     </div>
                                     ${card.description ? `
                                         <p class="text-sm text-gray-600 mt-2 mb-3">${this.escapeHtml(card.description)}</p>
                                     ` : ''}
-                                    ${supportedInterfaces.length > 0 ? `
-                                        <div class="mt-2 mb-2">
-                                            <p class="text-xs font-medium text-gray-500 mb-1">支持的接口:</p>
-                                            <div class="space-y-2">
-                                                ${supportedInterfaces.map(iface => `
-                                                    <div class="p-2 bg-blue-50 rounded border border-blue-100">
-                                                        <div class="flex items-center gap-2 mb-1">
-                                                            <span class="text-xs font-semibold text-blue-700">
-                                                                ${this.escapeHtml(iface.protocolBinding || 'N/A')}
-                                                            </span>
-                                                        </div>
-                                                        <div class="text-xs text-blue-600 break-all">
-                                                            ${this.escapeHtml(iface.url || 'N/A')}
-                                                        </div>
-                                                    </div>
-                                                `).join('')}
-                                            </div>
-                                        </div>
-                                    ` : ''}
                                     ${skills.length > 0 ? `
                                         <div class="mt-2">
                                             <p class="text-xs font-medium text-gray-500 mb-1">技能 (${skills.length}):</p>
                                             <div class="space-y-2">
-                                                ${skills.slice(0, 10).map(skill => {
+                                                ${skills.map(skill => {
                                                     const skillName = skill.name || skill.id || 'N/A';
-                                                    const skillDescription = skill.description || '';
-                                                    const skillTags = skill.tags || [];
                                                     const skillExamples = skill.examples || [];
+                                                    const firstExample = skillExamples.length > 0 ? skillExamples[0] : null;
                                                     
                                                     return `
                                                         <div class="p-2 bg-purple-50 rounded border border-purple-100">
                                                             <div class="font-semibold text-xs text-purple-700 mb-1">
                                                                 ${this.escapeHtml(skillName)}
                                                             </div>
-                                                            ${skillDescription ? `
-                                                                <p class="text-xs text-gray-600 mb-1">${this.escapeHtml(skillDescription)}</p>
-                                                            ` : ''}
-                                                            ${skillTags.length > 0 ? `
-                                                                <div class="flex flex-wrap gap-1 mb-1">
-                                                                    ${skillTags.map(tag => `
-                                                                        <span class="text-xs px-1.5 py-0.5 bg-purple-100 text-purple-600 rounded">
-                                                                            ${this.escapeHtml(tag)}
-                                                                        </span>
-                                                                    `).join('')}
-                                                                </div>
-                                                            ` : ''}
-                                                            ${skillExamples.length > 0 ? `
+                                                            ${firstExample ? `
                                                                 <div class="mt-1">
-                                                                    <p class="text-xs font-medium text-gray-500 mb-0.5">示例:</p>
-                                                                    <div class="space-y-0.5">
-                                                                        ${skillExamples.map(example => `
-                                                                            <div class="text-xs text-gray-700 bg-white px-2 py-1 rounded border border-gray-200">
-                                                                                ${this.escapeHtml(example)}
-                                                                            </div>
-                                                                        `).join('')}
+                                                                    <div class="text-xs text-gray-700 bg-white px-2 py-1 rounded border border-gray-200">
+                                                                        ${this.escapeHtml(firstExample)}
                                                                     </div>
                                                                 </div>
                                                             ` : ''}
                                                         </div>
                                                     `;
                                                 }).join('')}
-                                                ${skills.length > 10 ? `<div class="text-xs text-gray-400 text-center py-1">+${skills.length - 10} 更多技能</div>` : ''}
                                             </div>
                                         </div>
                                     ` : ''}
