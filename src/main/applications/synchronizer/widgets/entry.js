@@ -32,7 +32,7 @@ class SynchronizerEntryWidget extends HTMLElement {
             btn.disabled = true;
             btn.classList.add('opacity-60');
             statusDiv.textContent = '正在同步...';
-            window.applicationAPI.sendMessageToApplication('synchronize');
+            console.info(await window.applicationAPI.sendMessageToApplication('synchronize', -3, 2));
         });
     }
 }

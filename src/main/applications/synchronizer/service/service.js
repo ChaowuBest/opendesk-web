@@ -14,8 +14,8 @@ class SynchronizationService extends BaseService {
         return path.join(__dirname, 'worker.js');
     }
 
-    static async getOutlookCalendarItems() {
-        return await this.sendMessage('getOutlookCalendarItems', {});
+    static async getOutlookCalendarItems(daysBefore, daysAfter) {
+        return await this.sendMessage('getOutlookCalendarItems', daysBefore, daysAfter);
     }
 
 }

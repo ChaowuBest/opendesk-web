@@ -1,3 +1,10 @@
+const SYSTEM_PROMPT = () => `
+你是一个有用的助手，请根据用户的问题给出回答。
+
+## 可供参考的补充信息
+- 当前日期和时间：${new Date().toLocaleString()}
+`;
+
 class HomePage extends HTMLElement {
     constructor() {
         super();
@@ -17,6 +24,7 @@ class HomePage extends HTMLElement {
 
         agentInput.addEventListener('submit', async (event) => {
             const task = await window.taskManagerAPI.createTask();
+            await window.taskManagerAPI.setSystemPrompt(task, SYSTEM_PROMPT());
             await window.taskManagerAPI.submitMessage(task, event.detail);
             window.globalControlAPI.openTask(task);
         });

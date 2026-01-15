@@ -2,7 +2,7 @@ import { BaseWorker } from "../../base.js";
 import { spawnSync } from 'child_process';
 
 
-const POWERSHELL_CMD_GET_OUTLOOK_CALENDAR_ITEMS = `
+const POWERSHELL_CMD_GET_OUTLOOK_CALENDAR_ITEMS = (daysBefore, daysAfter) => `
 $outlook = New-Object -ComObject Outlook.Application;
 $ns = $outlook.GetNamespace("MAPI");
 $calendar = $ns.GetDefaultFolder(9);
@@ -10,8 +10,8 @@ $items = $calendar.Items
 $items.Sort("[Start]")
 $items.IncludeRecurrences = $true
 
-$startRange = (Get-Date).AddDays(-90).ToString("yyyy-MM-dd HH:mm")
-$endRange = (Get-Date).AddDays(30).ToString("yyyy-MM-dd HH:mm")
+$startRange = (Get-Date).AddDays(${daysBefore}).ToString("yyyy-MM-dd HH:mm")
+$endRange = (Get-Date).AddDays(${daysAfter}).ToString("yyyy-MM-dd HH:mm")
 $filter = "[Start] >= '$startRange' AND [End] <= '$endRange'"
 $items = $items.Restrict($filter)
 
@@ -21,12 +21,18 @@ $objects = $items | ForEach-Object {
         $attendees += $recipient.Name
     }
     [PSCustomObject]@{
+        EntryID   = $_.EntryID
         Subject   = $_.Subject
         StartTime = $_.Start.ToString("yyyy-MM-dd HH:mm:ss")
-        EndTime   = $_.End.ToString("yyyy-MM-dd HH:mm:ss")
-        Location  = if ($_.Location) { $_.Location } else { "" }
-        Attendees = $attendees
-        Organizer = if ($_.Organizer) { $_.Organizer.Name } else { "" }
+        EndTime     = $_.End.ToString("yyyy-MM-dd HH:mm:ss")
+        Location    = if ($_.Location) { $_.Location } else { "" }
+        Attendees   = $attendees
+        Organizer   = if ($_.Organizer) { $_.Organizer.Name } else { "" }
+        IsAllDay    = $_.IsAllDay
+        IsPrivate   = $_.IsPrivate
+        IsMeeting   = $_.IsMeeting
+        IsCancelled = $_.IsCancelled
+        IsRecurring = $_.IsRecurring
     }
 }
 
@@ -40,12 +46,19 @@ class SynchronizationWorker extends BaseWorker {
         super();
     }
 
-    async getOutlookCalendarItems() {
-        console.info('synchronizing outlook');
-        const cmd = POWERSHELL_CMD_GET_OUTLOOK_CALENDAR_ITEMS;
+    async getOutlookCalendarItems(daysBefore, daysAfter) {
+        const cmd = POWERSHELL_CMD_GET_OUTLOOK_CALENDAR_ITEMS(daysBefore, daysAfter);
         const result = spawnSync('powershell.exe', ['-ExecutionPolicy', 'Bypass', '-Command', cmd]);
-        console.info(result.stdout.toString());
-        return result;
+        if (result.status !== 0) {
+            throw new Error(`failed to synchronize outlook: ${result.stderr.toString()}`);
+        }
+        const output = result.stdout.toString().trim();
+        if (!output) {
+            return [];
+        } else {
+            const jsonOutput = JSON.parse();
+            return jsonOutput;
+        }
     }
 
     async startService() {
