@@ -185,10 +185,12 @@ class BaseGUIConfig {
     /**
      * @param {string[]} javascripts
      * @param {string} entry
+     * @param {string | undefined} icon
      */
-    constructor(javascripts, entry) {
+    constructor(javascripts, entry, icon = undefined) {
         this.javascripts = javascripts;
         this.entry = entry;
+        this.icon = icon;
     }
 }
 
@@ -281,12 +283,19 @@ class ApplicationRegistry {
     }
 
     static getApplicationList() {
+        const __dirname = import.meta.dirname;
+        const defaultAppIcon = path.join(__dirname, '..', '..', 'assets', 'images', 'default-app-icon.png');
         return Array.from(this.applications.values()).map(application => {
+            let guiConfig = application.getGUIConfig();
+            if (guiConfig === undefined) {
+                return undefined;
+            }
             return {
                 bundleName: application.bundleName,
                 name: application.name,
+                icon: guiConfig.icon || defaultAppIcon,
             }
-        });
+        }).filter(application => application !== undefined);
     }
 
     /**

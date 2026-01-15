@@ -7,13 +7,14 @@ const __dirname = import.meta.dirname;
 
 class NewsApplication extends BaseApplication {
     constructor() {
-        super("news");
+        super("news", "新闻聚合");
     }
 
     getGUIConfig() {
         return new BaseGUIConfig(
             [path.join(__dirname, "renderer", "entry.js")],
-            "news-entry-widget"
+            "news-entry-widget",
+            path.join(import.meta.dirname, "icon.png")
         );
     }
 

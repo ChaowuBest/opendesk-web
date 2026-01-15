@@ -7,13 +7,14 @@ import path from 'path';
 
 class FileMgrApplication extends BaseApplication {
     constructor() {
-        super('filemgr');
+        super('filemgr', '文件');
     }
 
     getGUIConfig() {
         return new BaseGUIConfig(
             [path.join(import.meta.dirname, 'renderer', 'entry.js')],
-            'filemgr-entry-widget'
+            'filemgr-entry-widget',
+            path.join(import.meta.dirname, 'icon.png')
         );
     }
 

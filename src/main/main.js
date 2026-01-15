@@ -14,6 +14,7 @@ import { NewsApplication } from './applications/news/app.js';
 import { A2AApplication } from './applications/a2a/app.js';
 import { A2AService } from './applications/a2a/service/service.js';
 import { SynchronizerApplication } from './applications/synchronizer/app.js';
+import { CalendarApplication } from './applications/calendar/app.js';
 
 
 import { z } from 'zod';
@@ -32,6 +33,7 @@ const newsApplication = new NewsApplication();
 const a2aApplication = new A2AApplication();
 const fileMgrApplication = new FileMgrApplication();
 const synchronizerApplication = new SynchronizerApplication();
+const calendarApplication = new CalendarApplication();
 const converter = new Convert();
 
 /** @type {BrowserWindow | null} */
@@ -378,6 +380,7 @@ app.whenReady().then(() => {
   ApplicationRegistry.registerApplication(a2aApplication);
   ApplicationRegistry.registerApplication(fileMgrApplication);
   ApplicationRegistry.registerApplication(synchronizerApplication);
+  ApplicationRegistry.registerApplication(calendarApplication);
 })
 
 app.on('will-quit', async () => {

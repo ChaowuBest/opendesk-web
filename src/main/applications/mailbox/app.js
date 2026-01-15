@@ -26,7 +26,8 @@ class MailboxApplication extends BaseApplication {
     getGUIConfig() {
         return new BaseGUIConfig(
             [path.join(__dirname, 'renderer', 'entry.js')],
-            'mailbox-entry-widget'
+            'mailbox-entry-widget',
+            path.join(import.meta.dirname, 'icon.png')
         );
     }
 

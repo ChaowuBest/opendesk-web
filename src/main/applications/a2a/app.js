@@ -7,7 +7,7 @@ const __dirname = import.meta.dirname;
 
 class A2AApplication extends BaseApplication {
     constructor() {
-        super('a2a');
+        super('a2a', '智能体中心');
     }
 
     getConfigSchema() {
@@ -17,7 +17,8 @@ class A2AApplication extends BaseApplication {
     getGUIConfig() {
         return new BaseGUIConfig(
             [path.join(__dirname, 'renderer', 'entry.js')],
-            'a2a-entry-widget'
+            'a2a-entry-widget',
+            path.join(import.meta.dirname, 'icon.png')
         );
     }
 

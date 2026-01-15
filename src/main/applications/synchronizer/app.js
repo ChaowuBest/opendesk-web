@@ -23,7 +23,8 @@ class SynchronizerApplication extends BaseApplication {
     getGUIConfig() {
         return new BaseGUIConfig(
             [path.join(__dirname, 'widgets', 'entry.js')],
-            'synchronizer-entry-widget'
+            'synchronizer-entry-widget',
+            path.join(import.meta.dirname, 'icon.png')
         );
     }
 

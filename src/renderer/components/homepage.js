@@ -97,13 +97,6 @@ class HomePage extends HTMLElement {
                         <span class="text-sm text-gray-700">A2A</span>
                     </button>
 
-                    <!-- 同步 -->
-                    <button class="flex items-center space-x-2 px-3 py-2 bg-white rounded-full shadow-sm hover:shadow-md border border-gray-200 transition-all"
-                        onclick="window.globalControlAPI.openApplication('synchronizer')">
-                        <i class="fas fa-sync text-green-500 text-sm"></i>
-                        <span class="text-sm text-gray-700">同步</span>
-                    </button>
-
                     <!-- 编程 -->
                     <button class="flex items-center space-x-2 px-3 py-2 bg-gray-100 rounded-full shadow-none border border-gray-100 cursor-not-allowed opacity-50" disabled>
                         <i class="fas fa-code text-orange-300 text-sm"></i>

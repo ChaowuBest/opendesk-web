@@ -24,7 +24,8 @@ class RecallApplication extends BaseApplication {
     getGUIConfig() {
         return new BaseGUIConfig(
             [path.join(__dirname, 'widgets', 'entry.js')],
-            'recall-entry-widget'
+            'recall-entry-widget',
+            path.join(import.meta.dirname, 'icon.png')
         );
     }
 
