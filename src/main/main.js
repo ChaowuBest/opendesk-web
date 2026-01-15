@@ -13,7 +13,6 @@ import { RecallApplication } from './applications/recall/app.js';
 import { NewsApplication } from './applications/news/app.js';
 import { A2AApplication } from './applications/a2a/app.js';
 import { A2AService } from './applications/a2a/service/service.js';
-import { SynchronizerApplication } from './applications/synchronizer/app.js';
 import { CalendarApplication } from './applications/calendar/app.js';
 
 
@@ -32,7 +31,6 @@ const recallApplication = new RecallApplication();
 const newsApplication = new NewsApplication();
 const a2aApplication = new A2AApplication();
 const fileMgrApplication = new FileMgrApplication();
-const synchronizerApplication = new SynchronizerApplication();
 const calendarApplication = new CalendarApplication();
 const converter = new Convert();
 
@@ -379,7 +377,6 @@ app.whenReady().then(() => {
   ApplicationRegistry.registerApplication(newsApplication);
   ApplicationRegistry.registerApplication(a2aApplication);
   ApplicationRegistry.registerApplication(fileMgrApplication);
-  ApplicationRegistry.registerApplication(synchronizerApplication);
   ApplicationRegistry.registerApplication(calendarApplication);
 })
 

@@ -1,5 +1,5 @@
-import { BaseWorker } from "../../base.js";
 import { spawnSync } from 'child_process';
+import { z } from 'zod';
 
 
 const POWERSHELL_CMD_GET_OUTLOOK_CALENDAR_ITEMS = (daysBefore, daysAfter) => `
@@ -23,18 +23,18 @@ $objects = $items | ForEach-Object {
         $attendees += $recipient.Name
     }
     [PSCustomObject]@{
-        EntryID   = $_.EntryID
-        Subject   = $_.Subject
-        StartTime = $_.Start.ToString("yyyy-MM-dd HH:mm:ss")
-        EndTime     = $_.End.ToString("yyyy-MM-dd HH:mm:ss")
-        Location    = if ($_.Location) { $_.Location } else { "" }
-        Attendees   = $attendees
-        Organizer   = if ($_.Organizer) { $_.Organizer.Name } else { "" }
-        IsAllDay    = $_.IsAllDay
-        IsPrivate   = $_.IsPrivate
-        IsMeeting   = $_.IsMeeting
-        IsCancelled = $_.IsCancelled
-        IsRecurring = $_.IsRecurring
+        entryID   = $_.EntryID
+        subject   = $_.Subject
+        startTime = $_.Start.ToString("yyyy-MM-dd HH:mm:ss")
+        endTime   = $_.End.ToString("yyyy-MM-dd HH:mm:ss")
+        location  = if ($_.Location) { $_.Location } else { "" }
+        attendees = $attendees
+        organizer = if ($_.Organizer) { $_.Organizer.Name } else { "" }
+        isAllDay  = $_.IsAllDay
+        isPrivate = $_.IsPrivate
+        isMeeting = $_.IsMeeting
+        isCancelled = $_.IsCancelled
+        isRecurring = $_.IsRecurring
     }
 }
 
@@ -42,13 +42,24 @@ $jsonOutput = $objects | ConvertTo-Json -Depth 2
 Write-Output $jsonOutput
 `
 
-class SynchronizationWorker extends BaseWorker {
+const OutlookCalendarItemSchema = z.object({
+    entryID: z.string(),
+    subject: z.string(),
+    startTime: z.string(),
+    endTime: z.string(),
+    location: z.string(),
+    attendees: z.array(z.string()),
+    organizer: z.string(),
+});
 
-    constructor() {
-        super();
-    }
+export class OutlookUtils {
 
-    async getOutlookCalendarItems(daysBefore, daysAfter) {
+    /**
+     * @param {number} daysBefore
+     * @param {number} daysAfter
+     * @returns {Promise<z.output<OutlookCalendarItemSchema>[]>}
+     */
+    static async getOutlookCalendarItems(daysBefore, daysAfter) {
         const cmd = POWERSHELL_CMD_GET_OUTLOOK_CALENDAR_ITEMS(daysBefore, daysAfter);
         const result = spawnSync('powershell.exe', ['-ExecutionPolicy', 'Bypass', '-Command', cmd]);
         if (result.status !== 0) {
@@ -62,14 +73,4 @@ class SynchronizationWorker extends BaseWorker {
             return jsonOutput;
         }
     }
-
-    async startService() {
-
-    }
-
-    async stopService() {
-
-    }
 }
-
-(new SynchronizationWorker()).initialize();

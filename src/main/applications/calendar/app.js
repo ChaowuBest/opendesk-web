@@ -1,6 +1,6 @@
 import { BaseApplication } from "../base.js";
 import { BaseGUIConfig } from "../base.js";
-import { FSService } from "../../services/fs/service.js";
+import { CalendarService } from "./service/service.js";
 import { z } from 'zod';
 import path from 'path';
 
@@ -13,7 +13,7 @@ class CalendarApplication extends BaseApplication {
     getGUIConfig() {
         return new BaseGUIConfig(
             [path.join(import.meta.dirname, 'renderer', 'entry.js')],
-            'filemgr-entry-widget',
+            'calendar-entry-widget',
             path.join(import.meta.dirname, 'icon.png')
         );
     }
@@ -34,8 +34,14 @@ class CalendarApplication extends BaseApplication {
         return tools;
     }
 
+    getServices() {
+        return [CalendarService];
+    }
+
     async handleMessage(message, ...args) {
         switch (message) {
+            case 'getCalendarItems':
+                return await CalendarService.getCalendarItems(args[0]);
             default:
                 throw new Error(`unknown message: ${message}`);
         }
