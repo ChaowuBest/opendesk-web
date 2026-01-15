@@ -282,6 +282,9 @@ const registerSettingAPIHandlers = () => {
     }
     return { status: 'ok', data: application.getGUIConfig() };
   })
+  ipcMain.handle('applicationRegistry:getApplicationList', async (event) => {
+    return { status: 'ok', data: ApplicationRegistry.getApplicationList() };
+  })
   ipcMain.handle('applicationRegistry:sendMessageToApplication', async (event, bundleName, ...args) => {
     const application = ApplicationRegistry.getApplication(bundleName);
     if (application === undefined) {

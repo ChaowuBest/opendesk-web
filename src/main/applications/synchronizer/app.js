@@ -13,7 +13,7 @@ const SynchronizationConfigSchema = z.object({
 
 class SynchronizerApplication extends BaseApplication {
     constructor() {
-        super('synchronizer');
+        super('synchronizer', '同步');
     }
 
     getConfigSchema() {
@@ -33,6 +33,7 @@ class SynchronizerApplication extends BaseApplication {
         }));
         tool.setExecutor(async (args) => {
             const result = await SynchronizationService.getOutlookCalendarItems(-1, args.days);
+            console.info(result);
             return JSON.stringify(result);
         });
         return [tool];

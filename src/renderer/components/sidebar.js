@@ -60,6 +60,13 @@ class SideBar extends HTMLElement {
 
     render() {
         this.innerHTML = `
+        <style>
+            .app-icon { border-radius: 15px; }
+            [x-cloak] {
+                display: none !important;
+            }
+        </style>
+
         <div class="h-full flex flex-col" x-data="{ showApps: false }">
             <header class="py-2 px-1 flex flex-row items-start flex-shrink-0">
                 <img src="../assets/images/icon_round.png" alt="Fillip Desk Icon" class="w-12 h-12 mr-3"/>
@@ -95,13 +102,14 @@ class SideBar extends HTMLElement {
             </div>
 
             <div
+                x-cloak
                 x-show="showApps"
                 x-transition:enter="transition ease-out duration-300"
                 x-transition:enter-start="opacity-0 transform translate-y-4"
                 x-transition:enter-end="opacity-100 transform translate-y-0"
-                class="bg-white/90 backdrop-blur-xl rounded-2xl p-6 border border-white/50 shadow-sm my-1"
+                class="bg-white/90 backdrop-blur-xl rounded-2xl p-4 border border-white/50 shadow-sm my-1"
             >
-                <div class="grid grid-cols-4 gap-y-8 gap-x-4">
+                <div id="app-container" class="flex flex-wrap gap-y-5 gap-x-3 items-center justify-center">
 
                 </div>
             </div>
@@ -135,6 +143,24 @@ class SideBar extends HTMLElement {
             </div>
         </div>
         `
+        this.reloadApplicationList();
+    }
+
+    async reloadApplicationList() {
+        const app_container = this.querySelector('#app-container');
+        app_container.innerHTML = '';
+        for (let app of await window.applicationRegistryAPI.getApplicationList()) {
+            app_container.innerHTML += `
+            <div class="flex flex-col items-center group cursor-pointer" onclick="window.globalControlAPI.openApplication('${app.bundleName}')">
+                <div class="app-icon w-12 h-12 shadow-lg transform transition duration-200 group-hover:brightness-90 group-active:scale-95 bg-gradient-to-b from-blue-400 to-blue-600 flex items-center justify-center">
+                    <svg class="w-10 h-10 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <path d="M3 7V17C3 18.1046 3.89543 19 5 19H19C20.1046 19 21 18.1046 21 17V9C21 7.89543 20.1046 7 19 7H13L11 5H5C3.89543 5 3 5.89543 3 7Z" fill="white" fill-opacity="0.2"/>
+                    </svg>
+                </div>
+                <span class="mt-2 text-xs font-medium text-gray-800 drop-shadow-sm">${app.name}</span>
+            </div>
+            `
+        }
     }
 
     reloadTaskList() {

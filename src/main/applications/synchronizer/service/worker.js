@@ -3,6 +3,8 @@ import { spawnSync } from 'child_process';
 
 
 const POWERSHELL_CMD_GET_OUTLOOK_CALENDAR_ITEMS = (daysBefore, daysAfter) => `
+$OutputEncoding = [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+
 $outlook = New-Object -ComObject Outlook.Application;
 $ns = $outlook.GetNamespace("MAPI");
 $calendar = $ns.GetDefaultFolder(9);
@@ -56,7 +58,7 @@ class SynchronizationWorker extends BaseWorker {
         if (!output) {
             return [];
         } else {
-            const jsonOutput = JSON.parse();
+            const jsonOutput = JSON.parse(output);
             return jsonOutput;
         }
     }

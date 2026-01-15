@@ -9,7 +9,7 @@ const __dirname = import.meta.dirname;
 class MailboxApplication extends BaseApplication {
 
     constructor() {
-        super('mailbox');
+        super('mailbox', '邮箱');
     }
 
     getConfigSchema() {

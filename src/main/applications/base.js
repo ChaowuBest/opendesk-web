@@ -194,9 +194,11 @@ class BaseGUIConfig {
 
 class BaseApplication {
 
-    constructor(bundleName) {
+    constructor(bundleName, name = "未命名应用") {
         /** @type {string} */
         this.bundleName = bundleName;
+        /** @type {string} */
+        this.name = name;
     }
 
     /**
@@ -276,6 +278,15 @@ class ApplicationRegistry {
 
     static getApplication(bundleName) {
         return ApplicationRegistry.applications.get(bundleName);
+    }
+
+    static getApplicationList() {
+        return Array.from(this.applications.values()).map(application => {
+            return {
+                bundleName: application.bundleName,
+                name: application.name,
+            }
+        });
     }
 
     /**

@@ -8,7 +8,7 @@ const __dirname = import.meta.dirname;
 
 class RecallApplication extends BaseApplication {
     constructor() {
-        super('recall');
+        super('recall', '快速记录');
     }
 
     getServices() {
