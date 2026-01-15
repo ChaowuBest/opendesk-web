@@ -31,11 +31,10 @@ class CalendarEntryWidget extends HTMLElement {
         </div>
         `;
 
-        const calendarItems = await window.applicationAPI.sendMessageToApplication('getCalendarItems', date.toISOString().split('T')[0]);
-        const startTime = new Date(calendarItems[0].startTime).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+        const calendarItems = await window.applicationAPI.sendMessageToApplication('getCalendarItems', date.toLocaleDateString());
 
         for (const item of calendarItems) {
-            console.info('item:', item);
+            const startTime = new Date(item.startTime).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
             scheduleHTML += `
             <div class="flex gap-4">
                 <div class="flex flex-col items-center">
