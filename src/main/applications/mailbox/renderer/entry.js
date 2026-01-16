@@ -7,7 +7,8 @@ const MailOperations = Object.freeze({
     SEND: 'send',
     REPLY: 'reply',
     REPLYALL: 'replyall',
-    FORWARD: 'forward'
+    FORWARD: 'forward',
+    POLISH: 'polish'
 });
 
 class MailBoxEntryWidget extends AgentOperableHTMLElement {
@@ -209,7 +210,57 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             return `已标记邮件为已读: ${args.uids.join(', ')}`;
         });
 
-        toolset.addTools(getEmailListTool, getEmailContentTool, markEmailAsReadTool);
+        let writeEmailTool = new RendererTool('writeEmail', '撰写邮件,邮件正文内容由你自动生成');
+        writeEmailTool.setParams(z.object({
+            to: z.array(z.string()).describe("收件人列表"),
+            cc: z.array(z.string()).describe("抄送人列表,如果为提供则为空"),
+            subject: z.string().describe("主题"),
+            content: z.string().describe("邮件正文内容,html格式,符合wangeditor的html规范")
+        }))
+        writeEmailTool.setExecutor(async (args) => {
+            let to = [];
+            let cc = [];
+            for (const item of args.to) {
+                to.push({user: '', address: item});
+            }
+            for (const item of args.cc) {
+                cc.push({user: '', address: item});
+            }
+            let mailHeader = {subject: args.subject, to: to, cc: cc};
+            let mailContent = {htmlContent: args.content, textContent: args.content};
+            this.createNewEmail(MailOperations.SEND, mailHeader, mailContent);
+            return "邮件已撰写完成";
+        })
+
+        let replyEmailTool = new RendererTool('replyEmail', '回复邮件,回复内容由你根据指定邮件内容自动生成');
+        replyEmailTool.setParams(z.object({
+            replyContent: z.string().describe("回复内容,html格式,符合wangeditor的html规范")
+        }))
+        replyEmailTool.setExecutor(async (args) => {
+            if (!this.selectedEmailUid) {
+                return "请选择一封具体的邮件让我回复";
+            }
+            this.createNewEmail(MailOperations.REPLY, this.selectedEmailHeader, this.selectedEmailContent, args.replyContent);
+            return "邮件回复完成";
+        })
+
+        let getEditEmailTool = new RendererTool('getEditEmail', '获取当前正在编辑的邮件内容');
+        getEditEmailTool.setExecutor(async (args) => {
+            const emailContent = this.querySelector('#email-content');
+            return emailContent.innerHTML;
+        });
+
+        let PolishEmailTool = new RendererTool('polishEmail', '邮件校对和润色');
+        PolishEmailTool.setParams(z.object({
+            content: z.string().describe("校对润色后的邮件正文内容,html格式,符合wangeditor的html规范")
+        }))
+        PolishEmailTool.setExecutor(async (args) => {
+            const editor = document.querySelector('#editor');
+            editor.setMailContent(MailOperations.POLISH, {}, args.content)
+            return `已完成邮件润色`;
+        });
+
+        toolset.addTools(getEmailListTool, getEmailContentTool, markEmailAsReadTool, writeEmailTool, replyEmailTool, getEditEmailTool, PolishEmailTool);
         return toolset;
     }
 
@@ -644,11 +695,12 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         return fullHeader;
     }
 
-    async createNewEmail(operation, mailHeader, mailContent) {
+    async createNewEmail(operation, mailHeader, mailContent, replyContent) {
         // 这里可以直接 new 一个邮件编辑控件并赋值给 #email-content
         const emailContent = this.querySelector('#email-content');
         const editor = new MailEditorWidget();
         editor.classList.add('flex-1', 'overflow-y-auto', 'bg-white');
+        editor.id = 'editor';
         emailContent.innerHTML = '';
         emailContent.appendChild(editor);
         editor.addEventListener('cancel', () => {
@@ -658,7 +710,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             const mailSchema = editor.getMailContent()
             this.sendEmail(mailSchema);
         });
-        editor.setMailContent(operation, mailHeader, mailContent)
+        editor.setMailContent(operation, mailHeader, mailContent, replyContent)
     }
 
     handleFilter(filter) {
@@ -1003,16 +1055,19 @@ class MailEditorWidget extends AgentOperableHTMLElement {
         this.dispatchEvent(new CustomEvent('send', { bubbles: true }));
     }
 
-    composeOriginContent(selectedEmailHeader, originEmailContent) {
+    composeContent(selectedEmailHeader, originEmailContent, replyContent) {
         let combine = [];
-        combine.push('------ Original Message ------<BR>');
-        combine.push(`<B>发件人</B>: ${selectedEmailHeader.from[0].address}<BR>`);
-        combine.push(`<B>发送时间</B>: ${new Date(selectedEmailHeader.date).toLocaleString()}<BR>`);
-        combine.push(`<B>收件人</B>: ${selectedEmailHeader.to.map(to => to.address).join(',')}<BR>`);
-        if (selectedEmailHeader.cc) {
-            combine.push(`<B>收件人</B>: ${selectedEmailHeader.cc.map(cc => cc.address).join(',')}<BR>`);
+        if (replyContent) {
+            combine.push(`${replyContent}`)
         }
-        combine.push(`<B>主题</B>: ${selectedEmailHeader.subject}<BR>`);
+        combine.push('<p>------ Original Message ------</p>');
+        combine.push(`<p><B>发件人</B>: ${selectedEmailHeader.from[0].address}</p>`);
+        combine.push(`<p><B>发送时间</B>: ${new Date(selectedEmailHeader.date).toLocaleString()}</p>`);
+        combine.push(`<p><B>收件人</B>: ${selectedEmailHeader.to.map(to => to.address).join(',')}</p>`);
+        if (selectedEmailHeader.cc) {
+            combine.push(`<p><B>收件人</B>: ${selectedEmailHeader.cc.map(cc => cc.address).join(',')}</p>`);
+        }
+        combine.push(`<p><B>主题</B>: ${selectedEmailHeader.subject}</p><BR>`);
         combine.push(`${originEmailContent}`);
         return combine.join('');
     }
@@ -1025,8 +1080,12 @@ class MailEditorWidget extends AgentOperableHTMLElement {
         return sendEmailSchema;
     }
 
-    setMailContent(operation, mailHeader, mailContent) {
-        if (!mailHeader || !mailContent) {
+    setMailContent(operation, mailHeader, mailContent, replyContent) {
+        if (!mailHeader && !mailContent) {
+            return;
+        }
+        if (operation == MailOperations.POLISH) {
+            this.editor.setHtml(mailContent)
             return;
         }
         if (operation == MailOperations.REPLY || operation == MailOperations.REPLYALL) {
@@ -1034,11 +1093,18 @@ class MailEditorWidget extends AgentOperableHTMLElement {
             document.getElementById('subject').value = '答复:' + mailHeader.subject;
         } else if (operation == MailOperations.FORWARD) {
             document.getElementById('subject').value = '转发:' + mailHeader.subject;
+        } else if (operation == MailOperations.SEND) {
+            document.getElementById('subject').value = mailHeader.subject;
+            document.getElementById('to').value = mailHeader.to.map(to => to.address).join(',')
         }
 
         let originContent = mailContent.htmlContent ? mailContent.htmlContent : mailContent.textContent.replace(/\n/g, '<br>')
-        let combileContent = this.composeOriginContent(mailHeader, originContent)
-        this.editor.setHtml(combileContent)
+        if (operation == MailOperations.SEND) {
+            this.editor.setHtml(originContent)
+        } else {
+            let combileContent = this.composeContent(mailHeader, originContent, replyContent)
+            this.editor.setHtml(combileContent)
+        }
     }
 
     render() {
