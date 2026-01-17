@@ -1,6 +1,7 @@
 import { getAppDirectory } from '../../utils/setting.js';
 import path from 'path';
 import fs from 'fs';
+import readline from 'readline';
 import nedb from 'nedb-promises';
 import { z } from 'zod';
 import { logger } from '../../utils/logger.js';
@@ -61,8 +62,12 @@ class FSStorage {
         let startTime = Date.now();
         logger.info(`loading vector cache from ${FSStorage.vectorCachePath}`);
         if (fs.existsSync(FSStorage.vectorCachePath)) {
-            const lines = fs.readFileSync(FSStorage.vectorCachePath, 'utf-8').split('\n');
-            for (const line of lines) {
+            const fileStream = fs.createReadStream(FSStorage.vectorCachePath, { encoding: 'utf-8' });
+            const rl = readline.createInterface({
+                input: fileStream,
+                crlfDelay: Infinity
+              });
+              for await (const line of rl) {
                 if (!line.trim()) continue;
                 try {
                     const cacheItem = JSON.parse(line);
@@ -79,12 +84,17 @@ class FSStorage {
 
         startTime = Date.now();
         await this.vecdb.createIndex({ deleteIfExists: true });
-        await this.vecdb.beginUpdate();
-        for (const [key, vector] of this.vec_cache.entries()) {
-            await this.vecdb.insertItem({ id: key, vector: vector });
+        try {
+            await this.vecdb.beginUpdate();
+            for (const [key, vector] of this.vec_cache.entries()) {
+                await this.vecdb.insertItem({ id: key, vector: vector });
+            }
+            await this.vecdb.endUpdate();
+            logger.info(`creating vector index and inserting ${this.vec_cache.size} items to vector database: ${Date.now() - startTime}ms`);
+        } catch (e) {
+            await this.vecdb.createIndex({ deleteIfExists: true });
+            logger.error(`error creating vector index, using empty index instead`);
         }
-        await this.vecdb.endUpdate();
-        logger.info(`creating vector index and inserting ${this.vec_cache.size} items to vector database: ${Date.now() - startTime}ms`);
     }
 
     async reset() {

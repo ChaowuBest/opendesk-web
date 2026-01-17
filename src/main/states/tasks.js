@@ -1,10 +1,12 @@
 import { ChatContext, UserMessage, AssistantMessage, ToolCallMessagePart, FileMessagePart, SystemMessage } from '../agents/messages.js';
 import { LLM } from '../agents/llm.js';
+import { BaseToolset } from '../agents/tool.js';
 import { getTaskDirectory } from '../utils/setting.js';
 import path from 'path';
 import fs from 'fs';
 import { logger } from '../utils/logger.js';
 import officeParser from 'officeparser';
+import { ApplicationRegistry } from '../applications/base.js';
 
 
 class TaskUpdateSubscriber {
@@ -115,6 +117,8 @@ class TaskState {
         let assistant_message = new AssistantMessage();
         this.chat_context.appendMessage(user_message);
         this.chat_context.appendMessage(assistant_message);
+        this.chat_context.attachToolsets(...ApplicationRegistry.listAvailableToolsets().values());
+
         logger.info(`messsage submitted to task ${this.task_id}`)
 
         if (this.task_name === null) {

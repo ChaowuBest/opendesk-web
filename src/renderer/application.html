@@ -97,7 +97,7 @@
                     `;
                 }
 
-                currentToolset = applicationEntryWidget.getToolset();
+                const currentToolset = applicationEntryWidget.getToolset?.();
                 if (currentToolset) {
                     console.info('attaching toolset', currentToolset.toJSON());
                     await window.taskManagerAPI.attachToolset(
@@ -106,7 +106,7 @@
                     );
                     console.info('attached toolset finished');
                 }
-                const agentInstruct = applicationEntryWidget.getAgentInstruct();
+                const agentInstruct = applicationEntryWidget.getAgentInstruct?.();
                 if (agentInstruct) {
                     await window.taskManagerAPI.setSystemPrompt(currentTaskId, agentInstruct);
                 }

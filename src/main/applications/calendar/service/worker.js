@@ -1,0 +1,80 @@
+import { BaseWorker } from "../../base.js";
+import { logger } from "../../../utils/logger.js";
+import { OutlookUtils } from "../../../utils/outlook.js";
+import { CalendarItemSchema } from "../common.js";
+import nedb from 'nedb-promises';
+import path from 'path';
+import fs from 'fs';
+import PQueue from 'p-queue';
+
+
+/** @type {PQueue} */
+const task_queue = new PQueue({ concurrency: 1 });
+
+class CalendarWorker extends BaseWorker {
+
+    constructor() {
+        super();
+        this.db = new nedb({ filename: path.join(this.appDataDirectory, 'calendar.db') });
+    }
+
+    async loadDatabase() {
+        await this.db.load().catch(err => {
+            logger.error(`error loading calendar.db: ${err}`);
+            fs.rmSync(path.join(this.appDataDirectory, 'calendar.db'));
+            this.db = new nedb({ filename: path.join(this.appDataDirectory, 'calendar.db') });
+        }).finally(() => {
+            this.db.ensureIndex({ fieldName: 'uid', unique: true });
+        });
+    }
+
+    async loadOutlookCalendarItems() {
+        const items = await OutlookUtils.getOutlookCalendarItems(-7, 7);
+        const validatedItems = items.map(item => CalendarItemSchema.parse({
+            uid: item.entryID,
+            subject: item.subject,
+            startTime: Date.parse(item.startTime.replace(' ', 'T')),
+            endTime: Date.parse(item.endTime.replace(' ', 'T')),
+            location: item.location
+        }));
+
+        for (const item of validatedItems) {
+            await this.db.update(
+                { uid: item.uid },
+                { $set: item },
+                { upsert: true }
+            ).catch(err => {
+                logger.error(`error saving outlook calendar item: ${item.uid}: ${err}`);
+            });
+        }
+        logger.info(`loaded ${validatedItems.length} outlook calendar items to database`);
+    }
+
+    /**
+     *
+     * @param {string} dateString YYYY-MM-DD
+     * @returns {Promise<z.output<CalendarItemSchema>[]>}
+     */
+    async getCalendarItems(dateString) {
+        const dayTimestamp = Date.parse(dateString);
+        const items = await this.db.find({
+            startTime: { $gte: dayTimestamp, $lte: dayTimestamp + 86400000 },
+        }).sort({ startTime: 1 });
+        return items.map(item => CalendarItemSchema.parse(item));
+    }
+
+    async startService() {
+        await this.loadDatabase();
+        task_queue.add(async () => {
+            await this.loadOutlookCalendarItems().catch(err => {
+                logger.error(`error loading outlook calendar items: ${err}`);
+            });
+        });
+    }
+
+    async stopService() {
+
+    }
+}
+
+(new CalendarWorker()).initialize();

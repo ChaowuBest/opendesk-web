@@ -60,6 +60,12 @@ class SideBar extends HTMLElement {
 
     render() {
         this.innerHTML = `
+        <style>
+            [x-cloak] {
+                display: none !important;
+            }
+        </style>
+
         <div class="h-full flex flex-col" x-data="{ showApps: false }">
             <header class="py-2 px-1 flex flex-row items-start flex-shrink-0">
                 <img src="../assets/images/icon_round.png" alt="Fillip Desk Icon" class="w-12 h-12 mr-3"/>
@@ -95,13 +101,14 @@ class SideBar extends HTMLElement {
             </div>
 
             <div
+                x-cloak
                 x-show="showApps"
                 x-transition:enter="transition ease-out duration-300"
                 x-transition:enter-start="opacity-0 transform translate-y-4"
                 x-transition:enter-end="opacity-100 transform translate-y-0"
-                class="bg-white/90 backdrop-blur-xl rounded-2xl p-6 border border-white/50 shadow-sm my-1"
+                class="bg-white/90 backdrop-blur-xl rounded-2xl p-4 border border-white/50 shadow-sm my-1"
             >
-                <div class="grid grid-cols-4 gap-y-8 gap-x-4">
+                <div id="app-container" class="flex flex-wrap gap-y-5 gap-x-2 items-center justify-left">
 
                 </div>
             </div>
@@ -135,6 +142,22 @@ class SideBar extends HTMLElement {
             </div>
         </div>
         `
+        this.reloadApplicationList();
+    }
+
+    async reloadApplicationList() {
+        const app_container = this.querySelector('#app-container');
+        app_container.innerHTML = '';
+        for (let app of await window.applicationRegistryAPI.getApplicationList()) {
+            app_container.innerHTML += `
+            <div class="flex flex-col items-center group cursor-pointer" onclick="window.globalControlAPI.openApplication('${app.bundleName}')">
+                <div class="rounded-full w-12 h-12 shadow-lg transform transition duration-200 group-hover:brightness-90 group-active:scale-95 flex items-center justify-center">
+                    <img src="${app.icon}" alt="${app.name}" class="w-full h-full object-cover">
+                </div>
+                <span class="mt-2 text-xs font-medium text-gray-800 drop-shadow-sm w-16 text-center truncate">${app.name}</span>
+            </div>
+            `
+        }
     }
 
     reloadTaskList() {

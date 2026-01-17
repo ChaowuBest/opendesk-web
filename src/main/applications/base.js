@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { Worker, parentPort, workerData } from 'worker_threads';
 import { logger, LogStream } from '../utils/logger.js';
 import { Setting, getAppDirectory } from '../utils/setting.js';
-import { BaseTool } from '../agents/tool.js';
+import { BaseToolset } from '../agents/tool.js';
 import { NotificationManager } from '../utils/notificationmgr.js';
 import path from 'path';
 import fs from 'fs';
@@ -185,18 +185,22 @@ class BaseGUIConfig {
     /**
      * @param {string[]} javascripts
      * @param {string} entry
+     * @param {string | undefined} icon
      */
-    constructor(javascripts, entry) {
+    constructor(javascripts, entry, icon = undefined) {
         this.javascripts = javascripts;
         this.entry = entry;
+        this.icon = icon;
     }
 }
 
 class BaseApplication {
 
-    constructor(bundleName) {
+    constructor(bundleName, name = "未命名应用") {
         /** @type {string} */
         this.bundleName = bundleName;
+        /** @type {string} */
+        this.name = name;
     }
 
     /**
@@ -236,9 +240,9 @@ class BaseApplication {
 
     /**
      * 获取应用提供的工具
-     * @returns {BaseTool[]}
+     * @returns {BaseToolset[]}
      */
-    getTools() {
+    getToolsets() {
         return [];
     }
 
@@ -278,15 +282,31 @@ class ApplicationRegistry {
         return ApplicationRegistry.applications.get(bundleName);
     }
 
+    static getApplicationList() {
+        const __dirname = import.meta.dirname;
+        const defaultAppIcon = path.join(__dirname, '..', '..', 'assets', 'images', 'default-app-icon.png');
+        return Array.from(this.applications.values()).map(application => {
+            let guiConfig = application.getGUIConfig();
+            if (guiConfig === undefined) {
+                return undefined;
+            }
+            return {
+                bundleName: application.bundleName,
+                name: application.name,
+                icon: guiConfig.icon || defaultAppIcon,
+            }
+        }).filter(application => application !== undefined);
+    }
+
     /**
-     * @returns {Map<string, BaseTool>}
+     * @returns {Map<string, BaseToolset>}
      */
-    static listAvailableTools() {
+    static listAvailableToolsets() {
         let result = new Map();
         for (let application of ApplicationRegistry.applications.values()) {
-            for (let tool of application.getTools()) {
-                let tool_id = `${application.bundleName}-${tool.name}`;
-                result.set(tool_id, tool);
+            for (let toolset of application.getToolsets()) {
+                let toolsetName = `${application.bundleName}-${toolset.name}`;
+                result.set(toolsetName, toolset);
             }
         }
         return result;

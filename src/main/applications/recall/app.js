@@ -8,7 +8,7 @@ const __dirname = import.meta.dirname;
 
 class RecallApplication extends BaseApplication {
     constructor() {
-        super('recall');
+        super('recall', '快速记录');
     }
 
     getServices() {
@@ -24,7 +24,8 @@ class RecallApplication extends BaseApplication {
     getGUIConfig() {
         return new BaseGUIConfig(
             [path.join(__dirname, 'widgets', 'entry.js')],
-            'recall-entry-widget'
+            'recall-entry-widget',
+            path.join(import.meta.dirname, 'icon.png')
         );
     }
 

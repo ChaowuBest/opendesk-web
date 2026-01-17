@@ -3,6 +3,9 @@ import { Setting } from './utils/setting.js'
 import { GlobalState } from './states/global.js'
 import { openFloatWindow } from './windows/floatwindow.js'
 import { FSService } from './services/fs/service.js'
+import { BaseToolset } from './agents/tool.js';
+
+/* applications */
 import { ApplicationRegistry } from './applications/base.js';
 import { SearchApplication } from './applications/search/app.js';
 import { MailboxApplication } from './applications/mailbox/app.js';
@@ -10,13 +13,14 @@ import { RecallApplication } from './applications/recall/app.js';
 import { NewsApplication } from './applications/news/app.js';
 import { A2AApplication } from './applications/a2a/app.js';
 import { A2AService } from './applications/a2a/service/service.js';
-import { BaseToolset } from './agents/tool.js';
+import { CalendarApplication } from './applications/calendar/app.js';
+
+
 import { z } from 'zod';
 import Convert from 'ansi-to-html';
 import path from 'path';
 import { NotificationManager } from './utils/notificationmgr.js';
 import { FileMgrApplication } from './applications/filemgr/app.js';
-
 import { LogStream, logger } from './utils/logger.js'
 
 
@@ -27,6 +31,7 @@ const recallApplication = new RecallApplication();
 const newsApplication = new NewsApplication();
 const a2aApplication = new A2AApplication();
 const fileMgrApplication = new FileMgrApplication();
+const calendarApplication = new CalendarApplication();
 const converter = new Convert();
 
 /** @type {BrowserWindow | null} */
@@ -277,6 +282,9 @@ const registerSettingAPIHandlers = () => {
     }
     return { status: 'ok', data: application.getGUIConfig() };
   })
+  ipcMain.handle('applicationRegistry:getApplicationList', async (event) => {
+    return { status: 'ok', data: ApplicationRegistry.getApplicationList() };
+  })
   ipcMain.handle('applicationRegistry:sendMessageToApplication', async (event, bundleName, ...args) => {
     const application = ApplicationRegistry.getApplication(bundleName);
     if (application === undefined) {
@@ -369,6 +377,7 @@ app.whenReady().then(() => {
   ApplicationRegistry.registerApplication(newsApplication);
   ApplicationRegistry.registerApplication(a2aApplication);
   ApplicationRegistry.registerApplication(fileMgrApplication);
+  ApplicationRegistry.registerApplication(calendarApplication);
 })
 
 app.on('will-quit', async () => {

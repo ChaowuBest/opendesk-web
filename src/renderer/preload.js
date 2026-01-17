@@ -274,6 +274,14 @@ if (window.self !== window.top) {
                 throw new Error(result.message);
             }
             return result.data;
+        },
+        getApplicationList: async () => {
+            const result = await ipcRenderer.invoke('applicationRegistry:getApplicationList');
+            if (result.status !== 'ok') {
+                console.error('getting application list failed', result.message);
+                throw new Error(result.message);
+            }
+            return result.data;
         }
     })
 }
