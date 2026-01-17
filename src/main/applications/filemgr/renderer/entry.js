@@ -97,7 +97,6 @@ class FileMgrEntryWidget extends AgentOperableHTMLElement {
     async reloadFileSystemStatus() {
         const fileSystemStatusCards = this.querySelector('#file-system-status-cards');
         const fileSystemStatus = await window.applicationAPI.sendMessageToApplication('getFileSystemStatus');
-        console.info('file system status:', fileSystemStatus);
 
         var fileSystemStatusHTML = '';
         switch (fileSystemStatus.status) {

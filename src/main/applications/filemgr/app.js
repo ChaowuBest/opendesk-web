@@ -1,5 +1,5 @@
-import { BaseApplication } from "../base.js";
-import { BaseGUIConfig } from "../base.js";
+import { BaseApplication, BaseGUIConfig } from "../base.js";
+import { BaseTool, BaseToolset } from "../../agents/tool.js";
 import { FSService } from "../../services/fs/service.js";
 import { z } from 'zod';
 import path from 'path';
@@ -24,14 +24,25 @@ class FileMgrApplication extends BaseApplication {
         });
     }
 
-    getTools() {
-        const config = this.getConfig();
-        if (config === undefined) {
-            return [];
-        }
-
-        let tools = [];
-        return tools;
+    getToolsets() {
+        const toolset = new BaseToolset('filemgr');
+        const searchFileTool = new BaseTool(
+            'searchFile',
+            '根据给定的检索字符串搜索相关文件，搜索结果会同时包含关键字匹配以及语义模糊搜索的内容',
+            z.object({
+                query: z.string().describe('检索字符串'),
+            })
+        );
+        searchFileTool.setExecutor(async (args) => {
+            const result = await Promise.all([
+                FSService.searchFilesByKeyword(args.query),
+                FSService.searchFilesByNameSimilarity(args.query)
+            ]);
+            console.info(result);
+            return JSON.stringify(result);
+        });
+        toolset.addTool(searchFileTool);
+        return [toolset];
     }
 
     async handleMessage(message, ...args) {

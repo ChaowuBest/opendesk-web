@@ -117,11 +117,7 @@ class TaskState {
         let assistant_message = new AssistantMessage();
         this.chat_context.appendMessage(user_message);
         this.chat_context.appendMessage(assistant_message);
-        let toolset = new BaseToolset('available_tools');
-        ApplicationRegistry.listAvailableTools().forEach(tool => {
-            toolset.addTool(tool);
-        });
-        this.chat_context.toolsets.set('available_tools', toolset);
+        this.chat_context.attachToolsets(...ApplicationRegistry.listAvailableToolsets().values());
 
         logger.info(`messsage submitted to task ${this.task_id}`)
 

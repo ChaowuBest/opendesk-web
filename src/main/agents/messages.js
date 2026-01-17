@@ -718,6 +718,16 @@ class ChatContext {
         this.toolsets = new Map();
     }
 
+    /**
+     * Attach multiple toolsets to the chat context
+     * @param {BaseToolset[]} toolsets
+     */
+    attachToolsets(...toolsets) {
+        for (let toolset of toolsets) {
+            this.toolsets.set(toolset.name, toolset);
+        }
+    }
+
     getTool(name) {
         let tools = this.getTools()
         return tools.get(name);

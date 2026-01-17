@@ -63,7 +63,7 @@ class CalendarEntryWidget extends HTMLElement {
 
     render() {
         this.innerHTML = `
-        <div class="w-full h-full bg-[#F4F4F7] to-pink-200">
+        <div class="flex flex-col w-full h-full bg-[#F4F4F7] to-pink-200">
             <div class="p-5 pt-7">
                 <!-- 头部控制 -->
                 <div class="flex items-center justify-between mb-4 px-1">
@@ -134,7 +134,7 @@ class CalendarEntryWidget extends HTMLElement {
             </div>
 
             <!-- 下部分：日程表 (占据大部) -->
-            <div id="calendar-current-day-schedule" class="flex-1 overflow-y-auto no-scrollbar bg-white/10 rounded-t-[32px] p-6 space-y-5">
+            <div id="calendar-current-day-schedule" class="flex-1 overflow-y-auto bg-white/10 rounded-t-[32px] p-6 space-y-5">
 
             </div>
 

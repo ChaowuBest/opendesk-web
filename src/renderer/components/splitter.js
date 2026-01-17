@@ -24,7 +24,9 @@ class SplitterWidget extends HTMLElement {
         </div>
 
         <!-- 槽位 2：右侧内容 -->
-        <slot id="rightPanel" name="right" style="display: block; flex: 1; height: 100%;"></slot>
+        <div id="rightPanelWrapper" style="display: flex; flex: 1 1 0; min-width: 0; height: 100%;">
+            <slot id="rightPanel" name="right" style="display: block; width: 100%; height: 100%; min-width: 0;"></slot>
+        </div>
         `;
 
         const resizer = this.shadowRoot.getElementById('resizer');

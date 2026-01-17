@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { Worker, parentPort, workerData } from 'worker_threads';
 import { logger, LogStream } from '../utils/logger.js';
 import { Setting, getAppDirectory } from '../utils/setting.js';
-import { BaseTool } from '../agents/tool.js';
+import { BaseToolset } from '../agents/tool.js';
 import { NotificationManager } from '../utils/notificationmgr.js';
 import path from 'path';
 import fs from 'fs';
@@ -240,9 +240,9 @@ class BaseApplication {
 
     /**
      * 获取应用提供的工具
-     * @returns {BaseTool[]}
+     * @returns {BaseToolset[]}
      */
-    getTools() {
+    getToolsets() {
         return [];
     }
 
@@ -299,14 +299,14 @@ class ApplicationRegistry {
     }
 
     /**
-     * @returns {Map<string, BaseTool>}
+     * @returns {Map<string, BaseToolset>}
      */
-    static listAvailableTools() {
+    static listAvailableToolsets() {
         let result = new Map();
         for (let application of ApplicationRegistry.applications.values()) {
-            for (let tool of application.getTools()) {
-                let tool_id = `${application.bundleName}-${tool.name}`;
-                result.set(tool_id, tool);
+            for (let toolset of application.getToolsets()) {
+                let toolsetName = `${application.bundleName}-${toolset.name}`;
+                result.set(toolsetName, toolset);
             }
         }
         return result;

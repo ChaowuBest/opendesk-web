@@ -1,7 +1,8 @@
 import { BaseApplication } from "../base.js";
-import { BaseTool } from "../../agents/tool.js";
+import { BaseTool, BaseToolset } from "../../agents/tool.js";
 import { z } from 'zod';
 import { Exa } from 'exa-js';
+import { logger } from "../../utils/logger.js";
 
 
 class ExaSearchTool extends BaseTool {
@@ -18,7 +19,7 @@ class ExaSearchTool extends BaseTool {
 
     async execute(args) {
         const exa = new Exa(this.api_key);
-        const results = await exa.search(args.query, {
+        const searchResults = await exa.search(args.query, {
             numResults: 15,
             type: 'auto',
             contents: {
@@ -26,12 +27,13 @@ class ExaSearchTool extends BaseTool {
             }
         });
 
-        let result = "总计找到 ${results.results.length} 条结果：\n\n";
-        for (let result of results.results) {
-            result += `- 搜索结果： ${result.title}\n`;
-            result += `  - url: ${result.url}\n`;
-            result += `  - 摘要: <summary>${result.summary}</summary>\n`;
+        let result = `总计找到 ${searchResults.results.length} 条结果：\n\n`;
+        for (let item of searchResults.results) {
+            result += `- 搜索结果： ${item.title}\n`;
+            result += `  - url: ${item.url}\n`;
+            result += `  - 摘要: <summary>${item.summary}</summary>\n`;
         }
+
         return result;
     }
 }
@@ -44,22 +46,20 @@ class SearchApplication extends BaseApplication {
 
     getConfigSchema() {
         return z.object({
-            exa_search_api_key: z.string().default(''),
+            exa_search: z.object({
+                api_key: z.string().default('').describe('ExaSearch的API密钥'),
+                enabled: z.boolean().default(false).describe('是否启用ExaSearch'),
+            }).optional()
         });
     }
 
-    getTools() {
-        const config = this.getConfig();
-        if (config === undefined) {
-            return [];
+    getToolsets() {
+        const exa_search = this.getConfig()?.exa_search;
+        const toolset = new BaseToolset('search');
+        if (exa_search?.enabled && exa_search?.api_key !== '') {
+            toolset.addTool(new ExaSearchTool(exa_search?.api_key));
         }
-
-        let tools = [];
-        const exa_key = config.exa_search_api_key.trim();
-        if (exa_key !== '') {
-            tools.push(new ExaSearchTool(exa_key));
-        }
-        return tools;
+        return [toolset];
     }
 }
 
