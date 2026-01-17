@@ -27,6 +27,21 @@ class TaskView extends HTMLElement {
          * @type {string | null}
          */
         this.subscription_id = null;
+        /**
+         * Whether to auto scroll to bottom when new messages are added
+         * @type {boolean}
+         */
+        this.auto_scrolling_to_bottom = true;
+    }
+
+    setAutoScrollingToBottom(auto_scrolling_to_bottom) {
+        this.auto_scrolling_to_bottom = auto_scrolling_to_bottom;
+        const scrollButton = this.querySelector('#taskview-scroll-to-bottom-button');
+        if (auto_scrolling_to_bottom) {
+            scrollButton.classList.add('hidden');
+        } else {
+            scrollButton.classList.remove('hidden');
+        }
     }
 
     getHistoryContainer() {
@@ -97,8 +112,11 @@ class TaskView extends HTMLElement {
         return html
     }
 
-    scrollToEnd(domElement) {
+    tryScrollToEnd() {
+        if (!this.auto_scrolling_to_bottom) { return; }
+        const domElement = this.getHistoryContainer();
         setTimeout(() => {
+            if (!this.auto_scrolling_to_bottom) { return; }
             domElement.scroll({
                 top: domElement.scrollHeight,
                 behavior: 'smooth'
@@ -116,7 +134,7 @@ class TaskView extends HTMLElement {
             } else if (message.role === 'assistant') {
                 history_container.innerHTML += this.renderAssistantMessage(message);
             }
-            this.scrollToEnd(history_container)
+            this.tryScrollToEnd()
         }
     }
 
@@ -139,7 +157,7 @@ class TaskView extends HTMLElement {
                     总计 ${progress.usage.total_tokens} 词
                     `;
                 }
-                this.scrollToEnd(this.getHistoryContainer())
+                this.tryScrollToEnd()
             })
         })
     }
@@ -156,8 +174,21 @@ class TaskView extends HTMLElement {
                 <div class="inline-block rounded-full bg-white px-5 py-2 shadow font-semibold text-gray-800 text-sm">智能体对话</div>
             </header>
 
-            <!-- 对话历史区域 - 可滚动 -->
-            <div class="flex-1 overflow-y-auto p-4 space-y-4" id="taskview-chat-history"></div>
+            <div class="relative flex-1 overflow-y-auto">
+                <!-- 对话历史区域 - 可滚动 -->
+                <div id="taskview-chat-history" class="w-full h-full space-y-4 overflow-y-auto px-4">
+                </div>
+                <!-- 滚动到底部按钮, 按需显示 -->
+                <button
+                    id="taskview-scroll-to-bottom-button"
+                    class="absolute bottom-3 right-8 flex items-center justify-center px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-full shadow transition-all focus:outline-none active:scale-95 text-xs hidden"
+                    style="min-width: unset; height: 2rem;"
+                    title="滚动到底部"
+                >
+                    <i class="fas fa-arrow-down text-sm"></i>
+                    <span class="ml-1">滚动到底部</span>
+                </button>
+            </div>
 
             <!-- 输入区域 -->
             <div class="p-4">
@@ -169,10 +200,21 @@ class TaskView extends HTMLElement {
 
     setUpEventListeners() {
         // 为输入框添加事件监听器
-        var input_widget = this.querySelector(`#task-${this.task_id}-input`)
+        const input_widget = this.querySelector(`#task-${this.task_id}-input`)
         input_widget.addEventListener('submit', async (event) => {
             await window.taskManagerAPI.submitMessage(this.task_id, event.detail)
             await this.reload()
+        })
+        const chatHistory = this.querySelector('#taskview-chat-history');
+        chatHistory.addEventListener('scroll', (event) => {
+            const scrollBottom = chatHistory.scrollTop + chatHistory.clientHeight;
+            const distanceToBottom = Math.abs(chatHistory.scrollHeight - scrollBottom);
+            this.setAutoScrollingToBottom(distanceToBottom < 50);
+        })
+        const scrollButton = this.querySelector('#taskview-scroll-to-bottom-button');
+        scrollButton.addEventListener('click', () => {
+            this.setAutoScrollingToBottom(true);
+            this.tryScrollToEnd();
         })
     }
 }
@@ -207,6 +249,11 @@ class EmbeddedTaskView extends HTMLElement {
          * @type {string | null}
          */
         this.subscription_id = null;
+        /**
+         * Whether to auto scroll to bottom when new messages are added
+         * @type {boolean}
+         */
+        this.auto_scrolling_to_bottom = true;
     }
 
     getHistoryContainer() {
@@ -273,8 +320,10 @@ class EmbeddedTaskView extends HTMLElement {
         return html
     }
 
-    scrollToEnd(domElement) {
+    tryScrollToEnd() {
+        const domElement = this.getHistoryContainer();
         setTimeout(() => {
+            if (!this.auto_scrolling_to_bottom) { return; }
             domElement.scroll({
                 top: domElement.scrollHeight,
                 behavior: 'smooth'
@@ -292,7 +341,7 @@ class EmbeddedTaskView extends HTMLElement {
             } else if (message.role === 'assistant') {
                 history_container.innerHTML += this.renderAssistantMessage(message);
             }
-            this.scrollToEnd(history_container)
+            this.tryScrollToEnd()
         }
     }
 
@@ -306,7 +355,7 @@ class EmbeddedTaskView extends HTMLElement {
                 }
                 const last_part_element = message_element.children[progress.last_part_index];
                 last_part_element.innerHTML = progress.last_part.rendered;
-                this.scrollToEnd(this.getHistoryContainer())
+                this.tryScrollToEnd()
             })
         })
     }
@@ -316,12 +365,43 @@ class EmbeddedTaskView extends HTMLElement {
         this.subscription_id = null;
     }
 
+    setAutoScrollingToBottom(auto_scrolling_to_bottom) {
+        this.auto_scrolling_to_bottom = auto_scrolling_to_bottom;
+        const scrollButton = this.querySelector('#taskview-scroll-to-bottom-button');
+        if (auto_scrolling_to_bottom) {
+            scrollButton.classList.add('hidden');
+        } else {
+            scrollButton.classList.remove('hidden');
+        }
+    }
+
     render() {
         this.innerHTML = `
         <div class="bg-gray-30 h-full flex flex-col">
             <div class="flex-1 overflow-y-auto p-4 space-y-1" id="taskview-chat-history"></div>
+
+            <!-- 滚动到底部按钮, 按需显示 -->
+            <button
+                id="taskview-scroll-to-bottom-button"
+                class="absolute bottom-20 left-1/2 -translate-x-1/2 flex items-center justify-center px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-full shadow transition-all focus:outline-none active:scale-95 text-xs hidden"
+                style="min-width: unset; height: 2rem;"
+                title="滚动到底部"
+            >
+                <i class="fas fa-arrow-down text-sm"></i>
+                <span class="ml-1">滚动到底部</span>
+            </button>
         </div>
         `
+
+        this.querySelector('#taskview-scroll-to-bottom-button').addEventListener('click', () => {
+            this.setAutoScrollingToBottom(true);
+            this.tryScrollToEnd();
+        })
+        this.querySelector('#taskview-chat-history').addEventListener('scroll', (event) => {
+            const scrollBottom = event.target.scrollTop + event.target.clientHeight;
+            const distanceToBottom = Math.abs(event.target.scrollHeight - scrollBottom);
+            this.setAutoScrollingToBottom(distanceToBottom < 50);
+        })
     }
 
 }
