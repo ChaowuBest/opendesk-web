@@ -63,7 +63,7 @@ class CalendarEntryWidget extends HTMLElement {
 
     render() {
         this.innerHTML = `
-        <div class="flex flex-col w-full h-full bg-[#F4F4F7] to-pink-200">
+        <div class="flex flex-col w-full h-full bg-white to-pink-200">
             <div class="p-5 pt-7">
                 <!-- 头部控制 -->
                 <div class="flex items-center justify-between mb-4 px-1">
@@ -81,7 +81,7 @@ class CalendarEntryWidget extends HTMLElement {
                 </div>
 
                 <!-- 完整月历网格 -->
-                <div class="grid grid-cols-7 text-center">
+                <div class="grid grid-cols-7 gap-x-4 gap-y-1 text-center">
                     <!-- 星期标题 -->
                     <div class="h-6 flex items-center justify-center text-[10px] font-bold text-slate-400 uppercase tracking-widest">S</div>
                     <div class="h-6 flex items-center justify-center text-[10px] font-bold text-slate-400 uppercase tracking-widest">M</div>
