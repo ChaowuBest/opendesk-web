@@ -76,6 +76,7 @@ function getSettingSchema() {
             .default(''),
         default_intent_parsing_model: z.string().describe('在意图解析中使用的多模态模型').default(''),
         default_embedding_model: z.string().describe('知识库，检索使用的中使用的向量嵌入模型').default(''),
+        default_reranker_model: z.string().describe('在检索结果重排序中使用的模型').default(''),
         providers: z.array(ProviderSchema).describe('可用AI模型提供商').default([]),
         models: z.array(ModelSchema)
             .describe('可用AI模型')
@@ -255,6 +256,14 @@ class Setting {
         let model = this.getModelInstance(this.data.default_embedding_model);
         if (model === null) {
             throw new Error(`default embedding model ${this.data.default_embedding_model} not found`);
+        }
+        return model;
+    }
+
+    getDefaultRerankerModelInstance() {
+        let model = this.getModelInstance(this.data.default_reranker_model);
+        if (model === null) {
+            throw new Error(`default reranker model ${this.data.default_reranker_model} not found`);
         }
         return model;
     }

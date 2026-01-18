@@ -114,6 +114,43 @@ class LLM {
     }
 
     /**
+    /**
+     * Rerank the items using the reranker model
+     *
+     * @template T
+     * @param {string} query
+     * @param {T[]} items
+     * @param {(item: T) => string} stringifier
+     * @param {ModelInstance | string | undefined} model
+     * @returns {Promise<T[]>}
+     */
+    static async rerank(query, items, stringifier, model = undefined) {
+        if (model === undefined) {
+            model = Setting.getInstance().getDefaultRerankerModelInstance();
+        }
+        let modelInstance = LLM.__getModelInstance(model);
+        const response = await fetch(modelInstance.base_url + '/rerank', {
+            method: 'POST',
+            headers: {Authorization: `Bearer ${modelInstance.api_key}`, 'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                model: modelInstance.model_name,
+                query: query,
+                documents: items.map(item => stringifier(item))
+            }),
+        });
+
+        const rerankResult = await response.json();
+        const rerankedItems = [];
+        for (const { index, relevance_score } of rerankResult.results) {
+            console.info(`reranked item ${stringifier(items[index])} with relevance score ${relevance_score}`);
+            if (relevance_score >= 0.01) {
+                rerankedItems.push(items[index]);
+            }
+        }
+        return rerankedItems;
+    }
+
+    /**
      * Get the model instance from the model
      * @param {ModelInstance | string | undefined} model
      * @returns {ModelInstance}
