@@ -16,6 +16,8 @@ class CalendarWorker extends BaseWorker {
     constructor() {
         super();
         this.db = new nedb({ filename: path.join(this.appDataDirectory, 'calendar.db') });
+        /** @type {NodeJS.Timeout | null} */
+        this._interval = null;
     }
 
     async loadDatabase() {
@@ -35,7 +37,9 @@ class CalendarWorker extends BaseWorker {
             subject: item.subject,
             startTime: Date.parse(item.startTime.replace(' ', 'T')),
             endTime: Date.parse(item.endTime.replace(' ', 'T')),
-            location: item.location
+            location: item.location,
+            isAllDay: item.isAllDay ?? false,
+            isCancelled: item.isCancelled ?? false
         }));
 
         for (const item of validatedItems) {
@@ -56,7 +60,8 @@ class CalendarWorker extends BaseWorker {
      * @returns {Promise<z.output<CalendarItemSchema>[]>}
      */
     async getCalendarItems(dateString) {
-        const dayTimestamp = Date.parse(dateString);
+        /* dateString是本地时间，如果用-作为连字符，会被当做UTC时间处理，所以需要替换为/ */
+        const dayTimestamp = new Date(dateString.replace(/-/g, '/')).getTime();
         const items = await this.db.find({
             startTime: { $gte: dayTimestamp, $lte: dayTimestamp + 86400000 },
         }).sort({ startTime: 1 });
@@ -65,11 +70,16 @@ class CalendarWorker extends BaseWorker {
 
     async startService() {
         await this.loadDatabase();
-        task_queue.add(async () => {
-            await this.loadOutlookCalendarItems().catch(err => {
-                logger.error(`error loading outlook calendar items: ${err}`);
+        const syncImmediately = async () => {
+            task_queue.add(async () => {
+                await this.loadOutlookCalendarItems().catch(err => {
+                    logger.error(`error loading outlook calendar items: ${err}`);
+                });
             });
-        });
+        };
+
+        await syncImmediately();
+        this._interval = setInterval(syncImmediately, 1000 * 60 * 2);
     }
 
     async stopService() {

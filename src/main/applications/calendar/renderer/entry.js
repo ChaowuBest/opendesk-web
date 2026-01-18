@@ -1,6 +1,7 @@
 class CalendarEntryWidget extends HTMLElement {
     constructor() {
         super();
+        this.currentDate = new Date();
     }
 
     connectedCallback() {
@@ -63,86 +64,96 @@ class CalendarEntryWidget extends HTMLElement {
 
     render() {
         this.innerHTML = `
-        <div class="flex flex-col w-full h-full bg-white to-pink-200">
-            <div class="p-5 pt-7">
-                <!-- 头部控制 -->
-                <div class="flex items-center justify-between mb-4 px-1">
-                    <div class="flex flex-col">
-                        <h2 class="text-lg font-bold text-gray-800 tracking-tight">2026年 1月</h2>
+        <splitter-widget class="w-full h-full bg-white to-pink-200">
+            <!-- 左侧面板 -->
+            <div id="leftPanel" slot="left" class="p-2 overflow-auto w-full h-full">
+                <div class="flex flex-col w-full h-full bg-white to-pink-200">
+                    <div class="p-5 pt-7">
+                        <!-- 头部控制 -->
+                        <div class="flex items-center justify-between mb-4 px-1">
+                            <div class="flex flex-col">
+                                <h2 class="text-lg font-bold text-gray-800 tracking-tight">2026年 1月</h2>
+                            </div>
+                            <div class="flex gap-1">
+                                <button class="p-1.5 hover:bg-white/40 rounded-full transition-all active:scale-90">
+                                    <svg class="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M15 19l-7-7 7-7" /></svg>
+                                </button>
+                                <button class="p-1.5 hover:bg-white/40 rounded-full transition-all active:scale-90">
+                                    <svg class="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 5l7 7-7 7" /></svg>
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- 完整月历网格 -->
+                        <div class="grid grid-cols-7 gap-x-4 gap-y-1 text-center">
+                            <!-- 星期标题 -->
+                            <div class="h-6 flex items-center justify-center text-[10px] font-bold text-slate-400 uppercase tracking-widest">S</div>
+                            <div class="h-6 flex items-center justify-center text-[10px] font-bold text-slate-400 uppercase tracking-widest">M</div>
+                            <div class="h-6 flex items-center justify-center text-[10px] font-bold text-slate-400 uppercase tracking-widest">T</div>
+                            <div class="h-6 flex items-center justify-center text-[10px] font-bold text-slate-400 uppercase tracking-widest">W</div>
+                            <div class="h-6 flex items-center justify-center text-[10px] font-bold text-slate-400 uppercase tracking-widest">T</div>
+                            <div class="h-6 flex items-center justify-center text-[10px] font-bold text-slate-400 uppercase tracking-widest">F</div>
+                            <div class="h-6 flex items-center justify-center text-[10px] font-bold text-slate-400 uppercase tracking-widest">S</div>
+
+                            <!-- 第一行 -->
+                            <div class="h-9 flex items-center justify-center text-sm text-slate-300">24</div>
+                            <div class="h-9 flex items-center justify-center text-sm text-slate-300">25</div>
+                            <div class="h-9 flex items-center justify-center text-sm text-slate-300">26</div>
+                            <div class="h-9 flex items-center justify-center text-sm text-slate-300">27</div>
+                            <div class="h-9 flex items-center justify-center text-sm text-slate-300">28</div>
+                            <div class="h-9 flex items-center justify-center text-sm text-slate-300">29</div>
+                            <div class="h-9 flex items-center justify-center text-sm text-slate-300">30</div>
+
+                            <!-- 10月数据 -->
+                            <div class="h-9 flex items-center justify-center text-sm font-medium text-slate-700 hover:bg-white/60 rounded-xl cursor-pointer">1</div>
+                            <div class="h-9 flex items-center justify-center text-sm font-medium text-slate-700 hover:bg-white/60 rounded-xl cursor-pointer relative">
+                                2 <span class="absolute bottom-1 w-1 h-1 bg-rose-400 rounded-full"></span>
+                            </div>
+                            <!-- 选中状态：液态深色 -->
+                            <div class="h-9 flex items-center justify-center text-sm font-bold text-white bg-slate-800 rounded-xl shadow-lg shadow-black/20 ring-1 ring-black/10">3</div>
+                            <div class="h-9 flex items-center justify-center text-sm font-medium text-slate-700 hover:bg-white/60 rounded-xl cursor-pointer">4</div>
+                            <div class="h-9 flex items-center justify-center text-sm font-medium text-slate-700 hover:bg-white/60 rounded-xl cursor-pointer">5</div>
+                            <div class="h-9 flex items-center justify-center text-sm font-medium text-slate-700 hover:bg-white/60 rounded-xl cursor-pointer relative">
+                                6 <span class="absolute bottom-1 w-1 h-1 bg-sky-400 rounded-full"></span>
+                            </div>
+                            <div class="h-9 flex items-center justify-center text-sm font-medium text-slate-700 hover:bg-white/60 rounded-xl cursor-pointer">7</div>
+
+                            <!-- 循环行示例 -->
+                            <div class="h-9 flex items-center justify-center text-sm font-medium text-slate-700 hover:bg-white/60 rounded-xl cursor-pointer">8</div>
+                            <div class="h-9 flex items-center justify-center text-sm font-medium text-slate-700 hover:bg-white/60 rounded-xl cursor-pointer">9</div>
+                            <div class="h-9 flex items-center justify-center text-sm font-medium text-slate-700 hover:bg-white/60 rounded-xl cursor-pointer">10</div>
+                            <div class="h-9 flex items-center justify-center text-sm font-medium text-slate-700 hover:bg-white/60 rounded-xl cursor-pointer">11</div>
+                            <div class="h-9 flex items-center justify-center text-sm font-medium text-slate-700 hover:bg-white/60 rounded-xl cursor-pointer">12</div>
+                            <div class="h-9 flex items-center justify-center text-sm font-medium text-slate-700 hover:bg-white/60 rounded-xl cursor-pointer relative">
+                                13 <span class="absolute bottom-1 w-1 h-1 bg-amber-400 rounded-full"></span>
+                            </div>
+                            <div class="h-9 flex items-center justify-center text-sm font-medium text-slate-700 hover:bg-white/60 rounded-xl cursor-pointer">14</div>
+
+                            <!-- ... 更多行省略，保持视觉比例正确 -->
+                            <div class="h-9 flex items-center justify-center text-sm font-medium text-slate-700 hover:bg-white/60 rounded-xl cursor-pointer">...</div>
+                            <div class="h-9 flex items-center justify-center text-sm font-medium text-slate-700 hover:bg-white/60 rounded-xl cursor-pointer">29</div>
+                            <div class="h-9 flex items-center justify-center text-sm font-medium text-slate-700 hover:bg-white/60 rounded-xl cursor-pointer">30</div>
+                            <div class="h-9 flex items-center justify-center text-sm font-medium text-slate-700 hover:bg-white/60 rounded-xl cursor-pointer">31</div>
+                        </div>
                     </div>
-                    <div class="flex gap-1">
-                        <button class="p-1.5 hover:bg-white/40 rounded-full transition-all active:scale-90">
-                            <svg class="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M15 19l-7-7 7-7" /></svg>
-                        </button>
-                        <button class="p-1.5 hover:bg-white/40 rounded-full transition-all active:scale-90">
-                            <svg class="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 5l7 7-7 7" /></svg>
-                        </button>
+
+                    <!-- 下部分：日程表 (占据大部) -->
+                    <div id="calendar-current-day-schedule" class="flex-1 overflow-y-auto bg-white/10 rounded-t-[32px] p-6 space-y-5">
+
+                    </div>
+
+                    <!-- 底部 Home Indicator (iOS/macOS 全屏常用) -->
+                    <div class="h-8 flex justify-center items-center">
+                        <div class="w-16 h-1 w-24 bg-black/10 rounded-full"></div>
                     </div>
                 </div>
-
-                <!-- 完整月历网格 -->
-                <div class="grid grid-cols-7 gap-x-4 gap-y-1 text-center">
-                    <!-- 星期标题 -->
-                    <div class="h-6 flex items-center justify-center text-[10px] font-bold text-slate-400 uppercase tracking-widest">S</div>
-                    <div class="h-6 flex items-center justify-center text-[10px] font-bold text-slate-400 uppercase tracking-widest">M</div>
-                    <div class="h-6 flex items-center justify-center text-[10px] font-bold text-slate-400 uppercase tracking-widest">T</div>
-                    <div class="h-6 flex items-center justify-center text-[10px] font-bold text-slate-400 uppercase tracking-widest">W</div>
-                    <div class="h-6 flex items-center justify-center text-[10px] font-bold text-slate-400 uppercase tracking-widest">T</div>
-                    <div class="h-6 flex items-center justify-center text-[10px] font-bold text-slate-400 uppercase tracking-widest">F</div>
-                    <div class="h-6 flex items-center justify-center text-[10px] font-bold text-slate-400 uppercase tracking-widest">S</div>
-
-                    <!-- 第一行 -->
-                    <div class="h-9 flex items-center justify-center text-sm text-slate-300">24</div>
-                    <div class="h-9 flex items-center justify-center text-sm text-slate-300">25</div>
-                    <div class="h-9 flex items-center justify-center text-sm text-slate-300">26</div>
-                    <div class="h-9 flex items-center justify-center text-sm text-slate-300">27</div>
-                    <div class="h-9 flex items-center justify-center text-sm text-slate-300">28</div>
-                    <div class="h-9 flex items-center justify-center text-sm text-slate-300">29</div>
-                    <div class="h-9 flex items-center justify-center text-sm text-slate-300">30</div>
-
-                    <!-- 10月数据 -->
-                    <div class="h-9 flex items-center justify-center text-sm font-medium text-slate-700 hover:bg-white/60 rounded-xl cursor-pointer">1</div>
-                    <div class="h-9 flex items-center justify-center text-sm font-medium text-slate-700 hover:bg-white/60 rounded-xl cursor-pointer relative">
-                        2 <span class="absolute bottom-1 w-1 h-1 bg-rose-400 rounded-full"></span>
-                    </div>
-                    <!-- 选中状态：液态深色 -->
-                    <div class="h-9 flex items-center justify-center text-sm font-bold text-white bg-slate-800 rounded-xl shadow-lg shadow-black/20 ring-1 ring-black/10">3</div>
-                    <div class="h-9 flex items-center justify-center text-sm font-medium text-slate-700 hover:bg-white/60 rounded-xl cursor-pointer">4</div>
-                    <div class="h-9 flex items-center justify-center text-sm font-medium text-slate-700 hover:bg-white/60 rounded-xl cursor-pointer">5</div>
-                    <div class="h-9 flex items-center justify-center text-sm font-medium text-slate-700 hover:bg-white/60 rounded-xl cursor-pointer relative">
-                        6 <span class="absolute bottom-1 w-1 h-1 bg-sky-400 rounded-full"></span>
-                    </div>
-                    <div class="h-9 flex items-center justify-center text-sm font-medium text-slate-700 hover:bg-white/60 rounded-xl cursor-pointer">7</div>
-
-                    <!-- 循环行示例 -->
-                    <div class="h-9 flex items-center justify-center text-sm font-medium text-slate-700 hover:bg-white/60 rounded-xl cursor-pointer">8</div>
-                    <div class="h-9 flex items-center justify-center text-sm font-medium text-slate-700 hover:bg-white/60 rounded-xl cursor-pointer">9</div>
-                    <div class="h-9 flex items-center justify-center text-sm font-medium text-slate-700 hover:bg-white/60 rounded-xl cursor-pointer">10</div>
-                    <div class="h-9 flex items-center justify-center text-sm font-medium text-slate-700 hover:bg-white/60 rounded-xl cursor-pointer">11</div>
-                    <div class="h-9 flex items-center justify-center text-sm font-medium text-slate-700 hover:bg-white/60 rounded-xl cursor-pointer">12</div>
-                    <div class="h-9 flex items-center justify-center text-sm font-medium text-slate-700 hover:bg-white/60 rounded-xl cursor-pointer relative">
-                        13 <span class="absolute bottom-1 w-1 h-1 bg-amber-400 rounded-full"></span>
-                    </div>
-                    <div class="h-9 flex items-center justify-center text-sm font-medium text-slate-700 hover:bg-white/60 rounded-xl cursor-pointer">14</div>
-
-                    <!-- ... 更多行省略，保持视觉比例正确 -->
-                    <div class="h-9 flex items-center justify-center text-sm font-medium text-slate-700 hover:bg-white/60 rounded-xl cursor-pointer">...</div>
-                    <div class="h-9 flex items-center justify-center text-sm font-medium text-slate-700 hover:bg-white/60 rounded-xl cursor-pointer">29</div>
-                    <div class="h-9 flex items-center justify-center text-sm font-medium text-slate-700 hover:bg-white/60 rounded-xl cursor-pointer">30</div>
-                    <div class="h-9 flex items-center justify-center text-sm font-medium text-slate-700 hover:bg-white/60 rounded-xl cursor-pointer">31</div>
-                </div>
             </div>
 
-            <!-- 下部分：日程表 (占据大部) -->
-            <div id="calendar-current-day-schedule" class="flex-1 overflow-y-auto bg-white/10 rounded-t-[32px] p-6 space-y-5">
-
+            <!-- 右侧面板 -->
+            <div id="rightPanel" slot="right" class="bg-white p-0 overflow-auto w-full h-full">
+                abc
             </div>
-
-            <!-- 底部 Home Indicator (iOS/macOS 全屏常用) -->
-            <div class="h-8 flex justify-center items-center">
-                <div class="w-16 h-1 w-24 bg-black/10 rounded-full"></div>
-            </div>
-        </div>
+        </splitter-widget>
         `;
     }
 }

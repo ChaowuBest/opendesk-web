@@ -50,6 +50,11 @@ const OutlookCalendarItemSchema = z.object({
     location: z.string(),
     attendees: z.array(z.string()),
     organizer: z.string(),
+    isAllDay: z.boolean(),
+    isPrivate: z.boolean(),
+    isMeeting: z.boolean(),
+    isCancelled: z.boolean(),
+    isRecurring: z.boolean(),
 });
 
 export class OutlookUtils {

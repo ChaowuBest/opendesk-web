@@ -240,6 +240,12 @@ class FSStorage {
             let files = await this.db.find({ filename: item.item.id });
             result.push(...files);
         }
+
+        try {
+            result = await LLM.rerank(query, result, (item) => item.filename);
+        } catch (error) {
+            logger.error(`[vector] failed to rerank the results: ${error}`);
+        }
         logger.info(`[vector] returning ${result.length} files after threshold filter`);
         return result;
     }
