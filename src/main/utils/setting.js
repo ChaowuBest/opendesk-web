@@ -199,7 +199,12 @@ class Setting {
      */
     static load() {
         const settingDirectory = getAppDirectory();
-        const settingFile = path.join(settingDirectory, 'setting.json');
+        let settingFile = path.join(settingDirectory, 'setting.json');
+        if (!fs.existsSync(settingFile)) {
+            // If the application's setting.json path does not exist, switch to the default main setting.json
+            const parentDir = path.dirname(path.dirname(settingDirectory));
+            settingFile = path.join(parentDir, 'setting.json');
+        }
         if (!fs.existsSync(settingFile)) {
             return null;
         }
