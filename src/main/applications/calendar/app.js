@@ -4,6 +4,7 @@ import { CalendarService } from "./service/service.js";
 import { BaseToolset, BaseTool } from "../../agents/tool.js";
 import { z } from 'zod';
 import path from 'path';
+import { logger } from "../../utils/logger.js";
 
 
 class CalendarApplication extends BaseApplication {
@@ -49,6 +50,7 @@ class CalendarApplication extends BaseApplication {
                     result += `  - 地点: ${item.location}\n`;
                 }
             }
+            logger.info(`getCalendarItemsTool: ${result}`);
             return result;
         });
         calendarToolset.addTool(getCalendarItemsTool);

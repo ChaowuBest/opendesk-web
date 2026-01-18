@@ -4,6 +4,8 @@ const SYSTEM_PROMPT = () => `
 
 ## 补充信息
 - 现在的日期和时间：${new Date().toLocaleString()}
+- 当用户提到“文件”的时候，这通常是指本地AI文件系统中的文件，而不是互联网上的文件
+- 不要过度使用搜索类工具
 `;
 
 class HomePage extends HTMLElement {
