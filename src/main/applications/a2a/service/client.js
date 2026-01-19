@@ -442,11 +442,20 @@ export class A2ARegistryClient {
       const entries = result.registryEntries || [];
       const nextPageToken = result.nextPageToken || null;
 
+      // 客户端过滤entry状态，只保留VERIFICATION_STATE_VERIFIED和VERIFICATION_STATE_OFFICIAL
+      let filteredAgents = entries.filter((entry) => {
+        const verificationState = entry.verificationState;
+
+        return (
+          verificationState === "VERIFICATION_STATE_VERIFIED" ||
+          verificationState === "VERIFICATION_STATE_OFFICIAL"
+        );
+      });
+
       // 客户端过滤（向后兼容，如果提供了 filterKeyword）
-      let filteredAgents = entries;
       if (filterKeyword) {
         const keyword = filterKeyword.toLowerCase();
-        filteredAgents = entries.filter((entry) => {
+        filteredAgents = filteredAgents.filter((entry) => {
           const card = entry.card || {};
           const name = (card.name || '').toLowerCase();
           const description = (card.description || '').toLowerCase();
