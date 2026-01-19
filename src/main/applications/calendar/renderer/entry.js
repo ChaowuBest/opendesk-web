@@ -32,7 +32,7 @@ class CalendarEntryWidget extends HTMLElement {
         </div>
         `;
 
-        const calendarItems = await window.applicationAPI.sendMessageToApplication('getCalendarItems', date.toLocaleDateString());
+        const calendarItems = await window.applicationAPI.call('getCalendarItems', date.toLocaleDateString());
 
         for (const item of calendarItems) {
             const startTime = new Date(item.startTime).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });

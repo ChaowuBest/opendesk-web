@@ -1,5 +1,4 @@
-const { contextBridge, ipcRenderer, webUtils } = require('electron');
-
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
 
 function exposeTaskManagerAPI() {
     /** @type {Map<string, Map<string, (toolName: string, args: any) => Promise<string>>>} */
@@ -114,23 +113,24 @@ function exposeTaskManagerAPI() {
 function exposeFSAPI() {
     contextBridge.exposeInMainWorld('fsAPI', {
         searchFilesByKeyword: async (keyword) => {
-            const result = await ipcRenderer.invoke('fs:searchFilesByKeyword', keyword);
+            const result = await ipcRenderer.invoke('applicationRegistry:call', 'filemgr', 'searchFilesByKeyword', keyword);
             if (result.status !== 'ok') {
                 console.error('searching files by keyword failed', result.message);
                 throw new Error(result.message);
             }
+            console.info(result);
             return result.data;
         },
         searchFilesByNameSimilarity: async (query) => {
-            const result = await ipcRenderer.invoke('fs:searchFilesByNameSimilarity', query);
+            const result = await ipcRenderer.invoke('applicationRegistry:call', 'filemgr', 'searchFilesByNameSimilarity', query);
             if (result.status !== 'ok') {
                 console.error('searching files by name similarity failed', result.message);
                 throw new Error(result.message);
             }
             return result.data;
         },
-        openFile: async (filePath) => {
-            const result = await ipcRenderer.invoke('fs:openFile', filePath);
+        openPath: async (filePath) => {
+            const result = await ipcRenderer.invoke('applicationRegistry:callMainWorld', 'filemgr', 'openPath', filePath);
             if (result.status !== 'ok') {
                 console.error('opening file failed', result.message);
                 throw new Error(result.message);
@@ -162,29 +162,52 @@ if (window.self !== window.top) {
             applicationBundleName = bundleName;
             return result.data;
         },
-        sendMessageToApplication: async (...args) => {
+        call: async (methodName, ...args) => {
             if (applicationBundleName === null) {
                 console.error('application bundle name is not set');
                 throw new Error('application bundle name is not set');
             }
-            const result = await ipcRenderer.invoke('applicationRegistry:sendMessageToApplication', applicationBundleName, ...args);
+            const result = await ipcRenderer.invoke('applicationRegistry:call', applicationBundleName, methodName, ...args);
             if (result.status !== 'ok') {
-                console.error('sending message to application failed', result.message);
+                console.error('calling application failed', methodName, result.message);
                 throw new Error(result.message);
             }
             return result.data;
-        }
-    })
+        },
+        callMainWorld: async (methodName, ...args) => {
+            if (applicationBundleName === null) {
+                console.error('application bundle name is not set');
+                throw new Error('application bundle name is not set');
+            }
+            const result = await ipcRenderer.invoke('applicationRegistry:callMainWorld', applicationBundleName, methodName, ...args);
+            if (result.status !== 'ok') {
+                console.error('calling application failed', methodName, result.message);
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
+        streamCall: async (methodName, callback, ...args) => {
+            if (applicationBundleName === null) {
+                console.error('application bundle name is not set');
+                throw new Error('application bundle name is not set');
+            }
+            const result = await ipcRenderer.invoke('applicationRegistry:streamCall', applicationBundleName, methodName, ...args);
+            if (result.status !== 'ok') {
+                console.error('calling application failed', methodName, result.message);
+                throw new Error(result.message);
+            }
 
-    // A2A 应用的流式响应 API
-    contextBridge.exposeInMainWorld('a2aAPI', {
-        subscribeStream: async (requestId, callback) => {
-            await ipcRenderer.invoke('a2a:subscribeStream', requestId);
-            ipcRenderer.on('a2a:streamChunk', (event, receivedRequestId, data) => {
-                if (receivedRequestId === requestId) {
-                    callback(data);
+            const listener = (event, chunk) => {
+                if (chunk === undefined) {
+                    console.info('stream complete', result.requestId);
+                    ipcRenderer.off(`applicationRegistry:streamChunk:${result.requestId}`);
+                } else {
+                    callback(chunk);
                 }
-            });
+            };
+
+            console.info('listener registered', result.requestId);
+            ipcRenderer.on(`applicationRegistry:streamChunk:${result.requestId}`, listener);
         }
     })
 

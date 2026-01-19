@@ -1,4 +1,5 @@
-import { RendererToolset, RendererTool, z, AgentOperableHTMLElement } from '../../widget_utils.js';
+import { z } from 'zod';
+import { RendererToolset, RendererTool, AgentOperableHTMLElement } from '../../widget_utils.js';
 import { ElasticToolbarWidget } from '../../../../renderer/components/toolbar.js';
 
 
@@ -100,7 +101,8 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
      * @returns {Promise<EmailHeader[]>}
      */
     async getEmailHeaderList(query) {
-        const emailHeaderList = await window.applicationAPI.sendMessageToApplication('getEmailHeaderList', query);
+        console.info('getting email header list', query);
+        const emailHeaderList = await window.applicationAPI.call('getEmailHeaderList', query);
         emailHeaderList.sort((a, b) => new Date(b.date) - new Date(a.date));
         return emailHeaderList;
     }
@@ -112,7 +114,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
      */
     renderEmailItem(email) {
         const isSelected = email.uid === this.selectedEmailUid;
-        var classes = "email-item p-3 border-b cursor-pointer border-l-4 ";
+        var classes = "email-item p-3 border-b cursor-pointer border-gray-200 border-l-4 ";
         if (isSelected) {
             classes += "bg-indigo-50/50 relative border-l-indigo-600";
         } else {
@@ -161,16 +163,16 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
     }
 
     async getEmailContent(uid) {
-        return await window.applicationAPI.sendMessageToApplication('getEmailContent', uid);
+        return await window.applicationAPI.call('getEmailContent', uid);
     }
 
     async reDownloadEmailContent(uid) {
-        return await window.applicationAPI.sendMessageToApplication('reDownloadEmailContent', uid);
+        return await window.applicationAPI.call('reDownloadEmailContent', uid);
     }
 
     async markEmailAsRead(uid) {
         console.info('mark email as read', uid);
-        await window.applicationAPI.sendMessageToApplication('markEmailAsRead', uid);
+        await window.applicationAPI.call('markEmailAsRead', uid);
         this.emailHeaderList.get(uid).unread = false;
     }
 
@@ -410,7 +412,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
                     return;
                 }
                 console.info('open attachment', filePath);
-                window.fsAPI.openFile(filePath);
+                window.fsAPI.openPath(filePath);
             });
         });
     }
@@ -432,7 +434,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         this.innerHTML = `
         <div class="flex h-full">
             <!-- 左侧栏：融合了导航和列表 (Width: 400px) -->
-            <aside class="w-[350px] bg-white border-r flex flex-col flex-shrink-0">
+            <aside class="w-[350px] bg-white border-r border-gray-200 flex flex-col flex-shrink-0">
 
                 <!-- 顶部操作区 -->
                 <div class="p-3 space-y-3">
@@ -469,7 +471,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
                 </div>
 
                 <!-- 邮件列表区 -->
-                <div id="email-list" class="flex-1 overflow-y-auto border-t"></div>
+                <div id="email-list" class="flex-1 overflow-y-auto border-t border-gray-200"></div>
             </aside>
 
             <!-- 右侧栏：邮件内容 -->
@@ -613,3 +615,5 @@ class MailEditorWidget extends AgentOperableHTMLElement {
 
 customElements.define('mailbox-entry-widget', MailBoxEntryWidget);
 customElements.define('mail-editor-widget', MailEditorWidget);
+
+console.info('mailbox/renderer/entry.js loaded');

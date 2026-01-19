@@ -2,7 +2,6 @@ import { BaseApplication } from "../base.js";
 import { BaseTool, BaseToolset } from "../../agents/tool.js";
 import { z } from 'zod';
 import { Exa } from 'exa-js';
-import { logger } from "../../utils/logger.js";
 
 
 class ExaSearchTool extends BaseTool {
@@ -41,7 +40,7 @@ class ExaSearchTool extends BaseTool {
 
 class SearchApplication extends BaseApplication {
     constructor() {
-        super('search');
+        super('search', '融合搜索');
     }
 
     getConfigSchema() {

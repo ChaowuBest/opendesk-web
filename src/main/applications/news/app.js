@@ -14,17 +14,8 @@ class NewsApplication extends BaseApplication {
         return new BaseGUIConfig(
             [path.join(__dirname, "renderer", "entry.js")],
             "news-entry-widget",
-            path.join(import.meta.dirname, "icon.png")
+            `/applications/news/icon.png`
         );
-    }
-
-    async handleMessage(message, ..._args) {
-        switch (message) {
-            case 'fetchTopNews':
-                return await this.fetchTopNews();
-            default:
-                throw new Error(`unknown message: ${message}`);
-        }
     }
 
     /**

@@ -29,44 +29,6 @@ const ModelSchema = z.object({
     context_size: z.number().default(32768).describe('模型上下文大小(单位: 词)')
 })
 
-var defaultExcludePatterns = [
-    "**/node_modules/**",
-    "**/.git/**",
-    "**/.idea/**",
-    "**/.vscode/**",
-    "**/.pytest_cache/**",
-    "**/.mypy_cache/**",
-    "**/.hvigor/**",
-    "**/site-packages/**",
-]
-
-function getHomeDirectory() {
-    return process.env.HOME || process.env.USERPROFILE || "";
-}
-
-if (process.platform === 'darwin') {
-    defaultExcludePatterns.push(`${getHomeDirectory()}/Library/**`);
-    defaultExcludePatterns.push("**/.DS_Store/**");
-}
-
-if (process.platform === 'win32') {
-    let home = getHomeDirectory();
-    home = home.replace(/\\/g, '/');
-    defaultExcludePatterns.push(`${home}/AppData/**`);
-    defaultExcludePatterns.push("C:/Windows/**");
-    defaultExcludePatterns.push("C:/Temp/**");
-}
-
-const FSEntrySchema = z.object({
-    root: z.string().default(getHomeDirectory()),
-    include_patterns: z.array(z.string()).default([
-        "**/*.{txt,md}",
-        "**/*.{pdf,doc,docx,ppt,pptx,xls,xlsx,csv}",
-        "**/*.{json,yaml,yml,xml,html,css,js}",
-    ]),
-    exclude_patterns: z.array(z.string()).default(defaultExcludePatterns),
-})
-
 var ApplicationConfigSchema = z.object({});
 
 function getSettingSchema() {
@@ -81,7 +43,6 @@ function getSettingSchema() {
         models: z.array(ModelSchema)
             .describe('可用AI模型')
             .default([]),
-        filesystems: z.array(FSEntrySchema).describe('AI文件系统相关配置').default([]),
         applications: ApplicationConfigSchema.describe('FillipDesk应用相关配置').default({})
     })
 }
@@ -106,10 +67,11 @@ class ModelInstance {
 }
 
 class Setting {
-    /**
-     * @type {Setting | null}
-     */
+
+    /** @type {Setting | null} */
     static instance = null;
+    /** @type {Map<string, function>} */
+    static applicationConfigChangedCallbacks = new Map();
 
     constructor() {
         /** @type {z.core.output<getSettingSchema()>} */
@@ -118,6 +80,10 @@ class Setting {
 
     getData() {
         return this.data;
+    }
+
+    getApplicationConfig(applicationName) {
+        return this.data.applications[applicationName];
     }
 
     setData(data) {
@@ -147,24 +113,12 @@ class Setting {
         // 如果配置发生变化，则通知应用程序
         if (settingChangedApplications.length > 0) {
             console.info(`setting changed applications: ${settingChangedApplications}`);
-            import('../applications/base.js').then(module => {
-                const { ApplicationRegistry } = module;
-                for (const applicationName of settingChangedApplications) {
-                    const application = ApplicationRegistry.getApplication(applicationName);
-                    if (application === undefined) {
-                        continue;
-                    }
-                    application.onConfigChanged();
+            for (const applicationName of settingChangedApplications) {
+                const callback = Setting.applicationConfigChangedCallbacks.get(applicationName);
+                if (callback !== undefined) {
+                    callback();
                 }
-            });
-        }
-
-        if (JSON.stringify(oldSettingData.filesystems) !== JSON.stringify(newSettingData.filesystems)) {
-            console.info(`filesystems changed`);
-            import('../services/fs/service.js').then(module => {
-                const { FSService } = module;
-                FSService.restartFSService();
-            });
+            }
         }
     }
 
@@ -186,11 +140,13 @@ class Setting {
      * Register the application settings so that they can be managed and
      * edited from the system setting editor.
      * @param {BaseApplication} application
+     * @param {() => void} configChangedCallback
      */
-    static registerApplicationSettings(application) {
+    static registerApplicationSettings(application, configChangedCallback) {
         ApplicationConfigSchema = ApplicationConfigSchema.extend({
             [application.bundleName]: application.getConfigSchema().optional()
         });
+        Setting.applicationConfigChangedCallbacks.set(application.bundleName, configChangedCallback);
     }
 
     /**

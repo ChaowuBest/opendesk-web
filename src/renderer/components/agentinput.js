@@ -67,7 +67,7 @@ class AgentInput extends HTMLElement {
         }
 
         this.innerHTML = `
-        <div id="agent-input-container" class="w-full p-1.5 rounded-[28px] bg-white/40 border border-gray/60 shadow-[0_10px_40px_-15px_rgba(0,0,0,0.08)]">
+        <div id="agent-input-container" class="w-full p-1.5 rounded-[28px] bg-white/40 border border-gray-300/60 shadow-[0_10px_40px_-15px_rgba(0,0,0,0.08)]">
             <div class="bg-white rounded-[22px] p-1 shadow-sm border border-gray-100/40">
                 <!-- 主要输入区域 -->
                 <div class="p-3">
