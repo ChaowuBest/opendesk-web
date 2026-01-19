@@ -128,6 +128,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         <div class="${classes}" data-uid="${email.uid}">
             <div class="flex justify-between items-start mb-1">
                 <span class="${subject_classes}">${email.subject}</span>
+                ${email.starred ? '<i class="fa fa-star text-yellow-500"></i>' : ''}
             </div>
             <!-- <p class="text-gray-900 font-medium truncate mb-1 text-[13px]">test</p> -->
             <p class="text-gray-500 line-clamp-2 text-xs leading-relaxed">${new Date(email.date).toLocaleString()}</p>
@@ -138,10 +139,14 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
     /**
      * 重新载入邮件列表
      */
-    reloadEmailList() {
+    reloadEmailList(emailList = this.emailHeaderList) {
         const emailListContainer = this.querySelector('#email-list');
         emailListContainer.innerHTML = '';
-        for (const email of this.emailHeaderList.values()) {
+        if (emailList.size === 0) {
+            emailListContainer.innerHTML = '<div class="text-gray-500 text-center py-4">暂无相关类型邮件</div>';
+            return;
+        }
+        for (const email of emailList.values()) {
             emailListContainer.innerHTML += this.renderEmailItem(email);
         }
 
@@ -149,7 +154,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             item.addEventListener('click', (event) => {
                 const uid = item.dataset.uid;
                 console.info(uid);
-                const email = this.emailHeaderList.get(uid);
+                const email = emailList.get(uid);
                 this.openEmail(email);
             });
         });
@@ -167,6 +172,17 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         console.info('mark email as read', uid);
         await window.applicationAPI.sendMessageToApplication('markEmailAsRead', uid);
         this.emailHeaderList.get(uid).unread = false;
+    }
+
+    async starEmail(uid, starred = true) {
+        console.info('star email', uid, starred);
+        let starOptions = {
+            uid: uid,
+            starred: starred
+        }
+        await window.applicationAPI.sendMessageToApplication('starEmail', starOptions);
+        this.emailHeaderList.get(uid).starred = starred;
+        this.reloadEmailList();
     }
 
     renderCurrentEmailHeader() {
@@ -306,6 +322,29 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         });
     }
 
+    handleFilter(filter) {
+        console.info('handle filter', filter);
+        switch (filter) {
+            case 'all':
+                this.reloadEmailList();
+                break;
+            case 'unread':
+                const unreadEmailList = new Map([...this.emailHeaderList].filter(([_, email]) => email.unread));
+                this.reloadEmailList(unreadEmailList);
+                break;
+            case 'starred':
+                const starredEmailList = new Map([...this.emailHeaderList].filter(([_, email]) => email.starred));
+                this.reloadEmailList(starredEmailList);
+                break;
+            case 'draft':
+                this.reloadEmailList(new Map());
+                break;
+            case 'sent':
+                this.reloadEmailList(new Map());
+                break;
+        }
+    }
+
     async reloadCurrentEmailContent(redownload = false) {
         if (!this.selectedEmailUid) {
             return;
@@ -332,7 +371,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             { id: 'mailbox-forward-button', icon: 'fa-share', label: '转发', action: () => this.createNewEmail() },
             { id: 'mailbox-reload-button', icon: 'fa-redo-alt', label: '重新下载', action: () => this.openEmailByUid(this.selectedEmailUid, true) },
             { id: 'mailbox-trash-button', icon: 'fa-trash-alt', label: '删除', action: () => this.deleteEmail() },
-            { id: 'mailbox-star-button', icon: 'fa-star', label: '收藏', action: () => this.starEmail() },
+            { id: 'mailbox-star-button', icon: 'fa-star', label: '收藏', action: () => this.starEmail(this.selectedEmailUid, !this.selectedEmailHeader.starred) },
         ]
 
         const toolbar = new ElasticToolbarWidget(topButtons);
@@ -420,12 +459,12 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
                     </div>
 
                     <!-- 导航标签 (水平排列) -->
-                    <div class="flex gap-2 overflow-x-auto pb-1 text-xs no-scrollbar">
-                        <button class="whitespace-nowrap px-3 py-1.5 bg-gray-900 text-white rounded-lg">全部</button>
-                        <button class="whitespace-nowrap px-3 py-1.5 bg-gray-100 text-gray-600 hover:bg-gray-200 rounded-lg font-medium">未读</button>
-                        <button class="whitespace-nowrap px-3 py-1.5 bg-gray-100 text-gray-600 hover:bg-gray-200 rounded-lg font-medium">收藏</button>
-                        <button class="whitespace-nowrap px-3 py-1.5 bg-gray-100 text-gray-600 hover:bg-gray-200 rounded-lg font-medium">草稿</button>
-                        <button class="whitespace-nowrap px-3 py-1.5 bg-gray-100 text-gray-600 hover:bg-gray-200 rounded-lg font-medium">已发送</button>
+                    <div class="flex gap-2 overflow-x-auto pb-1 text-xs no-scrollbar" id="mailbox-tabs">
+                        <button class="whitespace-nowrap px-3 py-1.5 bg-gray-900 text-white rounded-lg active" id="mailbox-all-email-button">全部</button>
+                        <button class="whitespace-nowrap px-3 py-1.5 bg-gray-100 text-gray-600 hover:bg-gray-200 rounded-lg font-medium" id="mailbox-unread-email-button">未读</button>
+                        <button class="whitespace-nowrap px-3 py-1.5 bg-gray-100 text-gray-600 hover:bg-gray-200 rounded-lg font-medium" id="mailbox-star-email-button">收藏</button>
+                        <button class="whitespace-nowrap px-3 py-1.5 bg-gray-100 text-gray-600 hover:bg-gray-200 rounded-lg font-medium" id="mailbox-draft-email-button">草稿</button>
+                        <button class="whitespace-nowrap px-3 py-1.5 bg-gray-100 text-gray-600 hover:bg-gray-200 rounded-lg font-medium" id="mailbox-sent-email-button">已发送</button>
                     </div>
                 </div>
 
@@ -438,8 +477,36 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         </div>
         `
 
+        const tabsContainer = document.getElementById('mailbox-tabs');
+        const tabButtons = tabsContainer.querySelectorAll('button');
+        tabsContainer.addEventListener('click', function(e) {
+            if (e.target.tagName === 'BUTTON') {
+                // 重置所有按钮样式
+                tabButtons.forEach(btn => {
+                    btn.className = 'whitespace-nowrap px-3 py-1.5 bg-gray-100 text-gray-600 hover:bg-gray-200 rounded-lg font-medium';
+                });
+                // 设置当前按钮为激活状态
+                e.target.className = 'whitespace-nowrap px-3 py-1.5 bg-gray-900 text-white rounded-lg active';
+            }
+        });
+
         document.querySelector('#mailbox-new-email-button').addEventListener('click', () => {
             this.createNewEmail();
+        });
+        document.getElementById('mailbox-all-email-button').addEventListener('click', () => {
+            this.handleFilter('all');
+        });
+        document.getElementById('mailbox-unread-email-button').addEventListener('click', () => {
+            this.handleFilter('unread');
+        });
+        document.getElementById('mailbox-star-email-button').addEventListener('click', () => {
+            this.handleFilter('starred');
+        });
+        document.getElementById('mailbox-draft-email-button').addEventListener('click', () => {
+            this.handleFilter('draft');
+        });
+        document.getElementById('mailbox-sent-email-button').addEventListener('click', () => {
+            this.handleFilter('sent');
         });
     }
 }

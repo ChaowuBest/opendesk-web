@@ -150,6 +150,14 @@ class MailboxStorage {
         return new EmailContent(doc.htmlContent, doc.textContent, doc.attachments || []);
     }
 
+    async starEmail(uid, starred) {
+        logger.info(`starring email: ${uid}: ${starred}`);
+        await this.db.update(
+            { uid: uid },
+            { $set: { starred: starred } }
+        )
+    }
+
     async saveEmailContent(uid, content) {
         try {
             await this.contentdb.update(
@@ -219,7 +227,7 @@ class MailboxStorage {
         return docs.map(doc => new EmailHeader(
             doc.uid, doc.subject,
             doc.from, doc.to, doc.cc, doc.bcc,
-            doc.date, doc.unread
+            doc.date, doc.unread, doc.starred
         ));
     }
 }
@@ -386,6 +394,10 @@ class MailboxWorker extends BaseWorker {
             logger.error(`no valid inbox server configured: ${this.config}`);
             throw new Error('no valid inbox server configured');
         }
+    }
+
+    async starEmail(starOptions) {
+        await this.storage.starEmail(starOptions.uid, starOptions.starred);
     }
 }
 

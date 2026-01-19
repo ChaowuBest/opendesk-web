@@ -29,6 +29,10 @@ class MailboxService extends BaseService {
         return await this.sendMessage('markEmailAsRead', uid);
     }
 
+    static async starEmail(starOptions) {
+        return await this.sendMessage('starEmail', starOptions);
+    }
+
     /**
      * 立刻触发一次邮件同步
      * @returns {Promise<void>}
