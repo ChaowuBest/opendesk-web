@@ -530,10 +530,17 @@ class A2AEntryWidget extends HTMLElement {
                                     ? this.escapeHtml(msg.content || '')
                                     : this.renderMarkdown(msg.content || '');
 
+                                // 检测是否是 HTML 内容（a2ui）
+                                const isHTMLContent = this.isHTML(msg.content || '');
+                                // 对于 HTML 内容，不使用 markdown-body 类，避免样式覆盖
+                                const contentClass = isHTMLContent 
+                                    ? 'a2a-html-content' 
+                                    : 'text-sm text-gray-800 a2a-markdown-body markdown-body';
+
                                 return `
                                     <div class="flex justify-start">
                                         <div class="max-w-[80%] p-3 ${errorClass} rounded-lg border border-gray-200 shadow-sm">
-                                            <div class="text-sm text-gray-800 a2a-markdown-body markdown-body">${renderedContent}${isStreaming}</div>
+                                            <div class="${contentClass}">${renderedContent}${isStreaming}</div>
                                         </div>
                                     </div>
                                 `;
@@ -570,6 +577,29 @@ class A2AEntryWidget extends HTMLElement {
     }
 
     /**
+     * 检测内容是否是 HTML
+     * @param {string} content - 内容文本
+     * @returns {boolean} 是否是 HTML
+     */
+    isHTML(content) {
+        if (!content || typeof content !== 'string') {
+            return false;
+        }
+        // 检查是否包含 HTML 标签（特别是 a2ui-root 类）
+        const trimmed = content.trim();
+        return trimmed.startsWith('<') && (
+            trimmed.includes('<div') ||
+            trimmed.includes('<span') ||
+            trimmed.includes('<h1') ||
+            trimmed.includes('<h2') ||
+            trimmed.includes('<h3') ||
+            trimmed.includes('<p') ||
+            trimmed.includes('class="a2ui-root"') ||
+            trimmed.includes("class='a2ui-root'")
+        );
+    }
+
+    /**
      * 渲染 markdown 内容为 HTML
      * @param {string} markdown - markdown 文本
      * @returns {string} 渲染后的 HTML
@@ -577,6 +607,11 @@ class A2AEntryWidget extends HTMLElement {
     renderMarkdown(markdown) {
         if (!markdown || typeof markdown !== 'string') {
             return '';
+        }
+
+        // 如果是 HTML 内容，直接返回（不进行 markdown 渲染）
+        if (this.isHTML(markdown)) {
+            return markdown;
         }
 
         // 检查 marked 是否可用
@@ -752,6 +787,15 @@ class A2AEntryWidget extends HTMLElement {
         <style>
             #application-agent-input {
                 display: none !important;
+            }
+            /* 确保 a2ui HTML 内容的样式不被覆盖 */
+            /* 移除可能覆盖内联样式的默认样式 */
+            .a2a-html-content {
+                /* 不设置 font-size，让内联样式生效 */
+            }
+            /* 确保内联样式优先级最高，不被 markdown-body 等类覆盖 */
+            .a2a-html-content * {
+                /* 内联样式会自动覆盖，这里不需要额外设置 */
             }
         </style>
         <div class="w-full h-full flex flex-col bg-white">
