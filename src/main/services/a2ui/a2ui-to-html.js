@@ -490,6 +490,63 @@ class A2UIToHTMLConverter {
     const messages = Array.isArray(json) ? json : [json];
     return this.processMessages(messages);
   }
+
+  extractA2UIData(parts) {
+    try {
+      // Extract surfaceUpdate
+      const surfaceUpdatePart = parts.find(part =>
+        part.kind === 'data' &&
+        part.data?.surfaceUpdate
+      );
+
+      // Extract dataModelUpdate
+      const dataModelUpdatePart = parts.find(part =>
+        part.kind === 'data' &&
+        part.data?.dataModelUpdate
+      );
+
+      // Extract beginRendering
+      const beginRenderingPart = parts.find(part =>
+        part.kind === 'data' &&
+        part.data?.beginRendering
+      );
+
+      // Construct the result object
+      const result = [];
+
+      if (surfaceUpdatePart) {
+        result.push({
+          surfaceUpdate: surfaceUpdatePart.data.surfaceUpdate
+        });
+      }
+
+      if (dataModelUpdatePart) {
+        const contents = dataModelUpdatePart.data.dataModelUpdate.contents;
+        const transformedContents = contents.map(item => ({
+          key: item.key,
+          valueString: item.valueString
+        }));
+
+        result.push({
+          dataModelUpdate: {
+            surfaceId: dataModelUpdatePart.data.dataModelUpdate.surfaceId,
+            contents: transformedContents
+          }
+        });
+      }
+
+      if (beginRenderingPart) {
+        result.push({
+          beginRendering: beginRenderingPart.data.beginRendering
+        });
+      }
+
+      return result;
+    } catch (error) {
+      logger.error(`Error extracting A2A a2ui data information: ${error.message}`);
+      return null;
+    }
+  }
 }
 
 // 导出函数（支持 CommonJS 和 ES6 模块）
