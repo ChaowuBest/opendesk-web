@@ -1,37 +1,21 @@
 import { app, BrowserWindow, Tray, globalShortcut, nativeImage, ipcMain, shell, Menu } from 'electron'
-import { Setting } from './utils/setting.js'
+import { Setting, getAppDirectory } from './utils/setting.js'
 import { GlobalState } from './states/global.js'
 import { openFloatWindow } from './windows/floatwindow.js'
-import { FSService } from './services/fs/service.js'
 import { BaseToolset } from './agents/tool.js';
-
-/* applications */
-import { ApplicationRegistry } from './applications/base.js';
-import { SearchApplication } from './applications/search/app.js';
-import { MailboxApplication } from './applications/mailbox/app.js';
-import { RecallApplication } from './applications/recall/app.js';
-import { NewsApplication } from './applications/news/app.js';
-import { A2AApplication } from './applications/a2a/app.js';
-import { A2AService } from './applications/a2a/service/service.js';
-import { CalendarApplication } from './applications/calendar/app.js';
-
-
+import { is } from '@electron-toolkit/utils';
 import { z } from 'zod';
+import { NotificationManager } from './utils/notificationmgr.js';
+import { LogStream, logger } from './utils/logger.js'
+import { registerApplicationRegistryHandlers, initializeRegistry } from './applications/registry.js';
+
 import Convert from 'ansi-to-html';
 import path from 'path';
-import { NotificationManager } from './utils/notificationmgr.js';
-import { FileMgrApplication } from './applications/filemgr/app.js';
-import { LogStream, logger } from './utils/logger.js'
+
+import appIcon from '../../resources/main/images/icon_round.png?asset'
 
 
 const __dirname = import.meta.dirname;
-const searchApplication = new SearchApplication();
-const mailboxApplication = new MailboxApplication();
-const recallApplication = new RecallApplication();
-const newsApplication = new NewsApplication();
-const a2aApplication = new A2AApplication();
-const fileMgrApplication = new FileMgrApplication();
-const calendarApplication = new CalendarApplication();
 const converter = new Convert();
 
 /** @type {BrowserWindow | null} */
@@ -56,24 +40,26 @@ app.on('before-quit', () => {
   isAppQuitting = true;
 });
 
-const iconPath = path.join(__dirname, '..', 'assets', 'images', 'icon_round.png');
-
 const createWindow = () => {
   const mainWindow = new BrowserWindow({
     width: 1200,
     height: 700,
     frame: false,
-    icon: iconPath,
+    icon: appIcon,
     webPreferences: {
       nodeIntegration: false,
       nodeIntegrationInSubFrames: true,
       contextIsolation: true,
-      preload: path.join(__dirname, '..', 'renderer', 'preload.js')
+      preload: path.join(__dirname, '..', 'preload', 'index.js')
     }
   })
 
   mainWindow.setMenu(null)
-  mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'))
+  if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
+    mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
+  } else {
+    mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'))
+  }
 
   mainWindow.on('close', (event) => {
     if (!isAppQuitting) {
@@ -90,7 +76,8 @@ const createWindow = () => {
    * @returns {boolean} true if the link is opened, false otherwise
    */
   const openLink = (url) => {
-    if (!url.startsWith('file://')) {
+    console.log(`openLink: ${url}`);
+    if (!url.startsWith('file://') && !url.startsWith('http://localhost')) {
       shell.openExternal(url);
       return true;
     }
@@ -210,32 +197,6 @@ const registerTaskManagerAPIHandlers = () => {
   });
 }
 
-const registerFSAPIHandlers = () => {
-  ipcMain.handle('fs:searchFilesByKeyword', async (event, keyword) => {
-    try {
-      const result = await FSService.searchFilesByKeyword(keyword);
-      return { status: 'ok', data: result };
-    } catch (error) {
-      return { status: 'error', message: error.message };
-    }
-  }),
-  ipcMain.handle('fs:searchFilesByNameSimilarity', async (event, query) => {
-    try {
-      const result = await FSService.searchFilesByNameSimilarity(query);
-      return { status: 'ok', data: result };
-    } catch (error) {
-      return { status: 'error', message: error.message };
-    }
-  }),
-  ipcMain.handle('fs:openFile', async (event, filePath) => {
-    if (!filePath) {
-      return { status: 'error', message: `file path is required, ${filePath} given` }
-    }
-    shell.openPath(filePath);
-    return { status: 'ok' };
-  })
-}
-
 const registerSettingAPIHandlers = () => {
   ipcMain.handle('setting:loadSettingSchema', () => {
     try {
@@ -275,38 +236,7 @@ const registerSettingAPIHandlers = () => {
     globalMainWindow.close();
     return { status: 'ok' };
   })
-  ipcMain.handle('applicationRegistry:getApplicationGUIConfig', async (event, bundleName) => {
-    const application = ApplicationRegistry.getApplication(bundleName);
-    if (application === undefined) {
-      return { status: 'error', message: `application ${bundleName} not found` }
-    }
-    return { status: 'ok', data: application.getGUIConfig() };
-  })
-  ipcMain.handle('applicationRegistry:getApplicationList', async (event) => {
-    return { status: 'ok', data: ApplicationRegistry.getApplicationList() };
-  })
-  ipcMain.handle('applicationRegistry:sendMessageToApplication', async (event, bundleName, ...args) => {
-    const application = ApplicationRegistry.getApplication(bundleName);
-    if (application === undefined) {
-      return { status: 'error', message: `application ${bundleName} not found` }
-    }
 
-    try {
-      const data = await application.handleMessage(...args);
-      return { status: 'ok', data: data };
-    } catch (error) {
-      return { status: 'error', message: error.message };
-    }
-  })
-
-  // A2A 应用的流式响应处理
-  ipcMain.handle('a2a:subscribeStream', (event, requestId) => {
-    const unsubscribe = A2AService.subscribeStream(requestId, (data) => {
-      // 发送流式数据到渲染进程
-      event.senderFrame.send('a2a:streamChunk', requestId, data);
-    });
-    return { status: 'ok', data: { requestId } };
-  })
 }
 
 const registerNotificationAPIHandlers = () => {
@@ -341,7 +271,7 @@ const registerHotKeys = () => {
 }
 
 const registerTray = () => {
-  var icon = nativeImage.createFromPath(iconPath);
+  var icon = nativeImage.createFromPath(appIcon);
   icon = icon.resize({ width: 22, height: 22 });
   const menu = Menu.buildFromTemplate([
     { label: '打开主窗口', click: () => { globalMainWindow.show(); } },
@@ -364,23 +294,14 @@ app.whenReady().then(() => {
   createWindow();
 
   registerTaskManagerAPIHandlers();
-  registerFSAPIHandlers();
   registerSettingAPIHandlers();
+  registerApplicationRegistryHandlers(ipcMain);
   registerNotificationAPIHandlers();
   registerHotKeys();
   registerTray();
-
-  FSService.startFSService();
-  ApplicationRegistry.registerApplication(searchApplication);
-  ApplicationRegistry.registerApplication(mailboxApplication);
-  ApplicationRegistry.registerApplication(recallApplication);
-  ApplicationRegistry.registerApplication(newsApplication);
-  ApplicationRegistry.registerApplication(a2aApplication);
-  ApplicationRegistry.registerApplication(fileMgrApplication);
-  ApplicationRegistry.registerApplication(calendarApplication);
+  initializeRegistry();
 })
 
 app.on('will-quit', async () => {
   globalShortcut.unregisterAll()
-  await FSService.stopFSService();
 })

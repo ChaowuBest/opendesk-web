@@ -9,7 +9,7 @@ module.exports = {
     platforms: ['win32', 'darwin'],
     arch: ['x64', 'arm64'],
     icon: path.join(
-      __dirname, 'src', 'assets', 'images',
+      __dirname, 'resources', 'package', 'icons',
       process.platform === 'darwin' ? 'icon_round.icns' : 'icon_round.ico'
     ),
     "asar": {

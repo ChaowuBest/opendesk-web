@@ -1,4 +1,5 @@
-import { AgentOperableHTMLElement, RendererTool, RendererToolset, z } from '../../widget_utils.js';
+import { AgentOperableHTMLElement, RendererTool, RendererToolset } from '../../widget_utils.js';
+
 
 class NewsEntryWidget extends AgentOperableHTMLElement {
     constructor() {
@@ -75,7 +76,7 @@ class NewsEntryWidget extends AgentOperableHTMLElement {
         let errorFlag = false;
         try {
             console.info('[news-ui] fetchNews start');
-            const hits = await window.applicationAPI.sendMessageToApplication('fetchTopNews');
+            const hits = await window.applicationAPI.callMainWorld('fetchTopNews');
             console.info('[news-ui] fetchNews hits received', hits?.length);
             this.articles = hits.map(hit => ({
                 title: hit.title || hit.story_title || 'Untitled',

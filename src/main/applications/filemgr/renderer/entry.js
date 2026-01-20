@@ -22,7 +22,7 @@ class FileMgrEntryWidget extends AgentOperableHTMLElement {
     render() {
         this.innerHTML = `
         <div class="w-full h-full flex flex-col bg-gradient-to-br from-slate-50 via-white to-slate-100">
-            <header class="pl-6 pr-16 py-4 flex items-center justify-between border-b bg-white/80 backdrop-blur">
+            <header class="pl-6 pr-16 py-4 flex items-center justify-between border-b border-gray-200 bg-white/80 backdrop-blur">
                 <div>
                     <p class="text-xs uppercase tracking-wide text-gray-400">轻松寻找，管理和组织你的文件</p>
                     <h1 class="text-xl font-semibold text-gray-800">智能文件系统</h1>
@@ -79,7 +79,7 @@ class FileMgrEntryWidget extends AgentOperableHTMLElement {
                 id: 'filemgr-reset-btn', icon: 'fa-redo-alt', label: '重置文件系统',
                 action: async () => {
                     if (confirm("请确认是否要重置存储系统？这将清空现有的索引")) {
-                        await window.applicationAPI.sendMessageToApplication("resetFileSystemStorage")
+                        await window.applicationAPI.call("resetFileSystemStorage")
                         await this.reloadFileSystemStatus();
                     }
                 }
@@ -96,7 +96,7 @@ class FileMgrEntryWidget extends AgentOperableHTMLElement {
 
     async reloadFileSystemStatus() {
         const fileSystemStatusCards = this.querySelector('#file-system-status-cards');
-        const fileSystemStatus = await window.applicationAPI.sendMessageToApplication('getFileSystemStatus');
+        const fileSystemStatus = await window.applicationAPI.call('getFileSystemStatus');
 
         var fileSystemStatusHTML = '';
         switch (fileSystemStatus.status) {

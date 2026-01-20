@@ -6,6 +6,7 @@ class AgentFilesView extends HTMLElement {
         this.current_page = 1;
         this.page_size = 5;
         this.file_list_id = crypto.randomUUID();
+        this.search_time = 0;
     }
 
     connectedCallback() {
@@ -23,7 +24,7 @@ class AgentFilesView extends HTMLElement {
      * @param {string} query
      */
     startSearch(query) {
-        // INSERT_YOUR_CODE
+        const startTime = Date.now();
         Promise.all([
             window.fsAPI.searchFilesByKeyword(query),
             window.fsAPI.searchFilesByNameSimilarity(query)
@@ -38,6 +39,7 @@ class AgentFilesView extends HTMLElement {
                 seenPaths.add(file.path);
                 files.push(file);
             }
+            this.search_time = (Date.now() - startTime) / 1000;
             this.setFiles(files);
         }).catch(error => {
             console.error('searching files failed', error);
@@ -163,29 +165,34 @@ class AgentFilesView extends HTMLElement {
     render() {
         const current_files = this.files.slice((this.current_page - 1) * this.page_size, this.current_page * this.page_size);
         const file_items = current_files.map(file => this.renderFileItem(file)).join('');
-        this.innerHTML = `
-        <!-- 文件列表 -->
-        <div class="mt-3 w-full bg-white text-sm rounded-2xl shadow-sm overflow-hidden">
-            <!-- 列表头部 -->
-            <div class="bg-gray-50 px-3 py-3 border-b border-gray-200 grid grid-cols-12 gap-4 font-medium text-gray-600">
-                <div class="col-span-7">名称</div>
-                <div class="col-span-2 hidden md:block">修改时间</div>
-                <div class="col-span-2 hidden md:block">大小</div>
-                <div class="col-span-1 text-left">操作</div>
-            </div>
-            <!-- 文件项 -->
-            <div id='${this.file_list_id}' class="divide-y divide-gray-200">
-                ${file_items}
-            </div>
-            <!-- 分页 -->
-            <div class="mt-4 px-3 pb-3 flex justify-between items-center">
-                <p class="text-gray-600">共 ${this.files.length} 个文件</p>
-                <div class="flex gap-2">
-                    ${this.renderPagination()}
+
+        if (this.files.length > 0) {
+            this.innerHTML = `
+            <!-- 文件列表 -->
+            <div class="mt-3 w-full bg-white text-sm rounded-2xl shadow-sm overflow-hidden">
+                <!-- 列表头部 -->
+                <div class="bg-gray-50 px-3 py-3 border-b border-gray-200 grid grid-cols-12 gap-4 font-medium text-gray-600">
+                    <div class="col-span-7">名称</div>
+                    <div class="col-span-2 hidden md:block">修改时间</div>
+                    <div class="col-span-2 hidden md:block">大小</div>
+                    <div class="col-span-1 text-left">操作</div>
+                </div>
+                <!-- 文件项 -->
+                <div id='${this.file_list_id}' class="divide-y divide-gray-200">
+                    ${file_items}
+                </div>
+                <!-- 分页 -->
+                <div class="mt-4 px-3 pb-3 flex justify-between items-center">
+                    <p class="text-gray-600">共 ${this.files.length} 个文件，耗时 ${this.search_time} 秒</p>
+                    <div class="flex gap-2">
+                        ${this.renderPagination()}
+                    </div>
                 </div>
             </div>
-        </div>
-        `;
+            `;
+        } else {
+            this.innerHTML = ``;
+        }
 
         this.querySelectorAll('.btn-page-goto').forEach(btn => {
             btn.addEventListener('click', (event) => {
@@ -197,7 +204,7 @@ class AgentFilesView extends HTMLElement {
             btn.addEventListener('click', (event) => {
                 const file_path = event.currentTarget.dataset.file_path;
                 console.info('open file', file_path);
-                window.fsAPI.openFile(file_path);
+                window.fsAPI.openPath(file_path);
             });
         });
         this.querySelectorAll('.btn-add-file-to-session').forEach(btn => {

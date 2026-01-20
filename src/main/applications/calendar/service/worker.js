@@ -13,8 +13,8 @@ const task_queue = new PQueue({ concurrency: 1 });
 
 class CalendarWorker extends BaseWorker {
 
-    constructor() {
-        super();
+    constructor(appDataDirectory) {
+        super(appDataDirectory);
         this.db = new nedb({ filename: path.join(this.appDataDirectory, 'calendar.db') });
         /** @type {NodeJS.Timeout | null} */
         this._interval = null;
@@ -68,7 +68,7 @@ class CalendarWorker extends BaseWorker {
         return items.map(item => CalendarItemSchema.parse(item));
     }
 
-    async startService() {
+    async initialize() {
         await this.loadDatabase();
         const syncImmediately = async () => {
             task_queue.add(async () => {
@@ -82,9 +82,6 @@ class CalendarWorker extends BaseWorker {
         this._interval = setInterval(syncImmediately, 1000 * 60 * 2);
     }
 
-    async stopService() {
-
-    }
 }
 
-(new CalendarWorker()).initialize();
+export default CalendarWorker;

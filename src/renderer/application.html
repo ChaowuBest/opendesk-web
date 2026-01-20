@@ -4,17 +4,11 @@
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Flipper Desk | 一站式办公生活空间</title>
-        <script src="../renderer/styles/tailwind.css"></script>
-        <script src="../assets/scripts/alpinejs.min.js" defer></script>
+
+        <link rel="stylesheet" href="./styles/common.css">
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
 
-        <script src="../renderer/components/agentinput.js"></script>
-        <script src="../renderer/components/taskview.js"></script>
-        <script src="../renderer/components/loading.js"></script>
-        <script src="../renderer/components/splitter.js"></script>
-
-        <script src="../assets/scripts/wangEditor.min.js" defer></script>
-        <link rel="stylesheet" href="../assets/styles/wangEditor.css" defer />
+        <script type="module" src="./scripts/application.js"></script>
 
         <style>
             html, body {
@@ -117,14 +111,11 @@
             }
 
             (async () => {
+                const apps = import.meta.glob('../main/applications/**/renderer/entry.js');
+                console.info('apps:', apps);
                 const applicationBundleName = new URLSearchParams(window.location.search).get('applicationBundleName');
                 const guiConfig = await window.applicationAPI.getApplicationGUIConfig(applicationBundleName);
-                for (const javascript of guiConfig.javascripts) {
-                    const script = document.createElement('script');
-                    script.src = javascript;
-                    script.type = 'module';
-                    document.body.appendChild(script);
-                }
+                await apps[`../main/applications/${applicationBundleName}/renderer/entry.js`]();
                 document.querySelector('#application-container').innerHTML = `<${guiConfig.entry} id='application-entry-widget' class="w-full h-full"/>`
                 document.querySelector('#application-agent-input').addEventListener('focus', () => {
                     // 如果用户激活了聊天输入浮窗，且当前有任务，则显示浮动聊天面板

@@ -1,6 +1,7 @@
 import { BaseApplication, BaseGUIConfig } from "../base.js";
 import { BaseTool, BaseToolset } from "../../agents/tool.js";
-import { FSService } from "../../services/fs/service.js";
+import { FSEntrySchema } from './setting.js';
+import { shell } from 'electron';
 import { z } from 'zod';
 import path from 'path';
 
@@ -14,13 +15,14 @@ class FileMgrApplication extends BaseApplication {
         return new BaseGUIConfig(
             [path.join(import.meta.dirname, 'renderer', 'entry.js')],
             'filemgr-entry-widget',
-            path.join(import.meta.dirname, 'icon.png')
+            `/applications/filemgr/icon.png`
         );
     }
 
     getConfigSchema() {
         return z.object({
-
+            enabled: z.boolean().describe('启用AI文件系统').default(false),
+            entries: z.array(FSEntrySchema).describe('文件系统入口').default([]),
         });
     }
 
@@ -35,8 +37,8 @@ class FileMgrApplication extends BaseApplication {
         );
         searchFileTool.setExecutor(async (args) => {
             const result = await Promise.all([
-                FSService.searchFilesByKeyword(args.query),
-                FSService.searchFilesByNameSimilarity(args.query)
+                // FSService.searchFilesByKeyword(args.query),
+                // FSService.searchFilesByNameSimilarity(args.query)
             ]);
             console.info(result);
             return JSON.stringify(result);
@@ -45,15 +47,8 @@ class FileMgrApplication extends BaseApplication {
         return [toolset];
     }
 
-    async handleMessage(message, ...args) {
-        switch (message) {
-            case 'getFileSystemStatus':
-                return await FSService.getFSStatus();
-            case 'resetFileSystemStorage':
-                return await FSService.resetFSStorage();
-            default:
-                throw new Error(`unknown message: ${message}`);
-        }
+    openPath(filePath) {
+        shell.openPath(filePath);
     }
 }
 

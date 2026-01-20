@@ -1,7 +1,5 @@
-import { z } from '../../assets/scripts/zod.min.js';
+import { z } from 'zod';
 import { BaseTool, BaseToolset } from '../agents/tool.js';
-
-export { z };
 
 
 export class AgentOperableHTMLElement extends HTMLElement {

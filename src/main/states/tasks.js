@@ -6,7 +6,7 @@ import path from 'path';
 import fs from 'fs';
 import { logger } from '../utils/logger.js';
 import officeParser from 'officeparser';
-import { ApplicationRegistry } from '../applications/base.js';
+import { ApplicationRegistry } from '../applications/registry.js';
 
 
 class TaskUpdateSubscriber {

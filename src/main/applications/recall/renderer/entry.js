@@ -16,13 +16,13 @@ class RecallEntryWidget extends HTMLElement {
     connectedCallback() {
         this.render();
         this.reloadPreviewArea();
-        window.applicationAPI.sendMessageToApplication('getWindowList').then(windows => {
+        window.applicationAPI.call('getWindowList').then(windows => {
             console.info('windows:', windows);
         });
     }
 
     async updateWindowSelect() {
-        const windows = await window.applicationAPI.sendMessageToApplication('getWindowList');
+        const windows = await window.applicationAPI.call('getWindowList');
         const windowSelect = this.querySelector('#recall-window-select');
 
         let options = [`<option value='all' ${this.currentActivity?.selectedWindowId === 'all' ? 'selected' : ''}>全部窗口</option>`];
@@ -141,7 +141,7 @@ class RecallEntryWidget extends HTMLElement {
                 this.querySelector('#recall-window-select').onchange = (event) => {
                     const selectedWindowId = event.target.value;
                     this.currentActivity.selectedWindowId = selectedWindowId;
-                    window.applicationAPI.sendMessageToApplication('changeSelectedWindow', selectedWindowId);
+                    window.applicationAPI.call('changeSelectedWindow', selectedWindowId);
                 }
                 // 然后开始实时更新预览
                 const updatePreview = async () => {
@@ -159,7 +159,7 @@ class RecallEntryWidget extends HTMLElement {
     }
 
     async reloadHistoryActivities() {
-        const historyActivities = await window.applicationAPI.sendMessageToApplication('getHistoryActivities', 0, Date.now());
+        const historyActivities = await window.applicationAPI.call('getHistoryActivities', 0, Date.now());
         const historyActivitiesHtml = historyActivities.map(activity => `
         <div class="history-activity-item flex-none w-56 group cursor-pointer" data-activity_id="${activity.activityId}">
             <div class="relative aspect-video rounded-lg overflow-hidden border border-zinc-200 group-hover:border-blue-400 transition-colors shadow-sm bg-white">
@@ -199,32 +199,37 @@ class RecallEntryWidget extends HTMLElement {
                 if (!confirmDelete) {
                     return;
                 }
-                await window.applicationAPI.sendMessageToApplication('deleteHistoryActivity', activityId);
+                await window.applicationAPI.call('deleteHistoryActivity', activityId);
                 this.reloadHistoryActivities();
             }
         });
         document.querySelectorAll('.history-activity-item').forEach(item => {
-            item.onclick = () => {
+            item.onclick = async () => {
                 const activityId = item.dataset.activity_id;
-                window.applicationAPI.sendMessageToApplication('openHistoryActivity', activityId);
+                const result = await window.applicationAPI.call('getHistoryActivityById', activityId);
+                if (!result.success) {
+                    return;
+                }
+
+                window.fsAPI.openPath(result.activity.activityPath);
             }
         });
     }
 
     async getRecallStatus() {
-        const recallStatus = await window.applicationAPI.sendMessageToApplication('getRecallStatus');
+        const recallStatus = await window.applicationAPI.call('getRecallStatus');
         console.info('current recall status:', recallStatus);
         return recallStatus;
     }
 
     async startRecallCapture(activityName) {
-        const recallStatus = await window.applicationAPI.sendMessageToApplication('startRecallCapture', activityName);
+        const recallStatus = await window.applicationAPI.call('startRecallCapture', activityName);
         await this.reloadPreviewArea();
         await this.reloadHistoryActivities();
     }
 
     async stopRecallCapture() {
-        const recallStatus = await window.applicationAPI.sendMessageToApplication('stopRecallCapture');
+        const recallStatus = await window.applicationAPI.call('stopRecallCapture');
         this.reloadPreviewArea();
     }
 
@@ -252,7 +257,7 @@ class RecallEntryWidget extends HTMLElement {
             return;
         }
 
-        const latestThumbnail = await window.applicationAPI.sendMessageToApplication('getLatestThumbnails');
+        const latestThumbnail = await window.applicationAPI.call('getLatestThumbnails');
         if (latestThumbnail.thumbnails.length === 1) {
             document.querySelector('#recall-current-activity-preview').innerHTML = `
             <div class="flex items-center justify-center h-[56px]">
@@ -313,64 +318,6 @@ class RecallEntryWidget extends HTMLElement {
 
                 <!-- 水平时间轴项 -->
                 <div id='recall-history-activity-list' class="flex gap-5 overflow-x-auto pb-6 no-scrollbar h-full items-start">
-
-                    <!-- 过去活动 1 -->
-                    <div class="flex-none w-48 group">
-                        <div class="relative aspect-video rounded-xl border-2 border-transparent transition-all group-hover:shadow-lg group-hover:scale-[1.02] cursor-pointer bg-white mb-2 overflow-hidden ring-1 ring-gray-200">
-                        <img src="https://images.unsplash.com/photo-1542831371-29b0f74f9713?auto=format&fit=crop&q=40&w=300" class="w-full h-full object-cover grayscale-[0.3] group-hover:grayscale-0">
-                        <div class="absolute inset-0 bg-gradient-to-t from-black/20 to-transparent"></div>
-                        <span class="absolute bottom-1.5 left-2 text-[9px] font-bold text-white uppercase opacity-0 group-hover:opacity-100 transition-opacity">14:20 PM</span>
-                        </div>
-                        <div class="flex items-center gap-2 px-1">
-                        <div class="w-5 h-5 rounded shadow-sm flex items-center justify-center bg-white border border-gray-100">
-                            <i class="fa-brands fa-chrome text-blue-500 text-[10px]"></i>
-                        </div>
-                        <span class="text-xs font-semibold text-gray-600 truncate">GitHub PR Review</span>
-                        </div>
-                    </div>
-
-                    <!-- 过去活动 2 (当前选中点) -->
-                    <div class="flex-none w-48 group">
-                        <div class="relative aspect-video rounded-xl border-2 border-blue-500 shadow-xl shadow-blue-100 cursor-pointer bg-white mb-2 overflow-hidden transform scale-105 z-10">
-                        <img src="https://images.unsplash.com/photo-1587620962725-abab7fe55159?auto=format&fit=crop&q=40&w=300" class="w-full h-full object-cover">
-                        <div class="absolute top-1 right-1 bg-blue-500 text-white text-[8px] px-1.5 py-0.5 rounded-full font-bold">CURRENT</div>
-                        </div>
-                        <div class="flex items-center gap-2 px-1">
-                        <div class="w-5 h-5 rounded shadow-sm flex items-center justify-center bg-white border border-gray-100">
-                            <i class="fa-solid fa-code text-gray-700 text-[10px]"></i>
-                        </div>
-                        <span class="text-xs font-bold text-blue-600 truncate">VS Code Editor</span>
-                        </div>
-                    </div>
-
-                    <!-- 过去活动 3 -->
-                    <div class="flex-none w-48 group opacity-70 hover:opacity-100">
-                        <div class="relative aspect-video rounded-xl border-2 border-transparent hover:ring-1 ring-gray-300 transition-all cursor-pointer bg-white mb-2 overflow-hidden ring-1 ring-gray-200">
-                        <img src="https://images.unsplash.com/photo-1611162616305-c69b3fa7fbe0?auto=format&fit=crop&q=40&w=300" class="w-full h-full object-cover grayscale">
-                        </div>
-                        <div class="flex items-center gap-2 px-1">
-                        <div class="w-5 h-5 rounded shadow-sm flex items-center justify-center bg-white border border-gray-100">
-                            <i class="fa-brands fa-slack text-purple-500 text-[10px]"></i>
-                        </div>
-                        <span class="text-xs font-semibold text-gray-600 truncate">Messaging (Internal)</span>
-                        </div>
-                    </div>
-
-                    <!-- 更多重复占位... -->
-                    <div class="flex-none w-48 group opacity-50">
-                        <div class="relative aspect-video rounded-xl border border-dashed border-gray-300 bg-gray-100/50 mb-2 flex items-center justify-center">
-                            <i class="fa-solid fa-image text-gray-300"></i>
-                        </div>
-                        <div class="h-3 w-2/3 bg-gray-200 rounded mx-1"></div>
-                    </div>
-
-                    <div class="flex-none w-48 group opacity-50">
-                        <div class="relative aspect-video rounded-xl border border-dashed border-gray-300 bg-gray-100/50 mb-2 flex items-center justify-center">
-                            <i class="fa-solid fa-image text-gray-300"></i>
-                        </div>
-                        <div class="h-3 w-2/3 bg-gray-200 rounded mx-1"></div>
-                    </div>
-
                 </div>
             </footer>
         </div>

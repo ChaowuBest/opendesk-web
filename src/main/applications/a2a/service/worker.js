@@ -12,8 +12,8 @@ import { randomUUID } from "crypto";
 const GATEWAY_URL = "http://1.92.70.52:8080";
 
 class A2AWorker extends BaseWorker {
-    constructor() {
-        super();
+    constructor(appDataDirectory) {
+        super(appDataDirectory);
         this.client = new A2ARegistryClient(GATEWAY_URL);
         /** @type {Map<string, ChatContext>} */
         this.conversations = new Map();
@@ -21,14 +21,6 @@ class A2AWorker extends BaseWorker {
 
     async initialize() {
         await super.initialize();
-    }
-
-    async startService() {
-        // 服务启动逻辑（如果需要）
-    }
-
-    async stopService() {
-        // 服务停止逻辑（如果需要）
     }
 
     async listAgents(options = {}) {
@@ -269,10 +261,9 @@ ${agentsDescription}
      * 发送聊天消息并获取 AI 响应（流式）
      * @param {string} conversationId
      * @param {string | {text: string, attachments: Array}} message - 用户消息（字符串或消息对象）
-     * @param {string} requestId - 用于标识流式响应
-     * @returns {Promise<{success: boolean}>}
+     * @returns {AsyncGenerator<object>}
      */
-    async sendChatMessage(conversationId, message, requestId) {
+    async* sendChatMessage(conversationId, message) {
         if (!this.conversations.has(conversationId)) {
             throw new Error(`Conversation ${conversationId} not found`);
         }
@@ -353,9 +344,8 @@ ${agentsDescription}
                         }
 
                         // 发送系统提示消息到前端
-                        parentPort.postMessage({
+                        yield {
                             type: 'agent_selection',
-                            requestId: requestId,
                             conversationId: conversationId,
                             agentName: agentDisplayName,
                             agentId: selectedAgent.agentId,
@@ -363,7 +353,7 @@ ${agentsDescription}
                             skillId: selectedSkill ? (selectedSkill.id || selectedAgent.skillId) : (selectedAgent.skillId || ''),
                             reason: selectedAgent.reason || '',
                             message: selectionMessage
-                        });
+                        };
 
                         // 使用 A2A 协议调用 agent（传递完整的消息对象）
                         const messageData = typeof message === 'string'
@@ -379,27 +369,25 @@ ${agentsDescription}
                         for (let i = 0; i < responseText.length; i += chunkSize) {
                             const chunk = responseText.slice(i, i + chunkSize);
 
-                            parentPort.postMessage({
+                            yield {
                                 type: 'stream_chunk',
-                                requestId: requestId,
                                 conversationId: conversationId,
                                 chunk: {
                                     content: [{ type: 'text', text: chunk }],
                                     finishReason: i + chunkSize >= responseText.length ? 'stop' : null
                                 }
-                            });
+                            };
 
                             // 添加小延迟以模拟流式效果（稍微增加延迟以减少刷新频率）
                             await new Promise(resolve => setTimeout(resolve, 100));
                         }
 
                         // 发送完成信号
-                        parentPort.postMessage({
+                        yield {
                             type: 'stream_complete',
-                            requestId: requestId,
                             conversationId: conversationId,
                             success: true
-                        });
+                        };
 
                         // 保存对话历史
                         const userMessage = new UserMessage(textContent);
@@ -465,9 +453,8 @@ ${agentsDescription}
 
                 // 发送流式数据块到前端
                 // 使用特殊的消息类型来发送流式数据
-                parentPort.postMessage({
+                yield {
                     type: 'stream_chunk',
-                    requestId: requestId,
                     conversationId: conversationId,
                     chunk: {
                         content: assistantMessage.content.map(part => {
@@ -478,28 +465,26 @@ ${agentsDescription}
                         }).filter(p => p !== null),
                         finishReason: chunkResponse.finish_reason
                     }
-                });
+                };
             }
 
             // 发送完成信号
-            parentPort.postMessage({
+            yield {
                 type: 'stream_complete',
-                requestId: requestId,
                 conversationId: conversationId,
                 success: true
-            });
+            };
 
             return { success: true };
         } catch (error) {
             logger.error(`Error in sendChatMessage: ${error.message}`);
 
             // 发送错误信号
-            parentPort.postMessage({
+            yield {
                 type: 'stream_error',
-                requestId: requestId,
                 conversationId: conversationId,
                 error: error.message
-            });
+            };
 
             throw error;
         }
@@ -540,5 +525,4 @@ ${agentsDescription}
     }
 }
 
-const worker = new A2AWorker();
-worker.initialize();
+export default A2AWorker;

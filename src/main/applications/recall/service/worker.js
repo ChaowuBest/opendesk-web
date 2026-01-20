@@ -1,6 +1,6 @@
 import { BaseWorker } from "../../base.js";
 import { logger } from '../../../utils/logger.js';
-import { Monitor, Image, Window } from 'node-screenshots';
+import { Monitor, Window } from 'node-screenshots';
 
 import path from 'path';
 import fs from 'fs';
@@ -54,8 +54,8 @@ class RecallActivity {
 
 class RecallWorker extends BaseWorker {
 
-    constructor() {
-        super();
+    constructor(appDataDirectory) {
+        super(appDataDirectory);
 
         /** @type {RecallActivity | null} */
         this.currentActivity = null;
@@ -118,6 +118,22 @@ class RecallWorker extends BaseWorker {
             { upsert: true }
         );
     }
+
+    async getWindowList() {
+        let windows = Window.all();
+        let result = []
+        for (const window of windows) {
+            if (window.width < 200 || window.height < 200) {
+                continue;
+            }
+            result.push({
+                windowId: window.id,
+                windowTitle: window.title
+            })
+        }
+        return result;
+    }
+
 
     async changeSelectedWindow(selectedWindowId) {
         if (!this.currentActivity) {
@@ -233,7 +249,7 @@ class RecallWorker extends BaseWorker {
 
                 fs.writeFileSync(thumbnailPath, thumbnailBuffer);
 
-                latestThumbnails.push(thumbnailBuffer);
+                latestThumbnails.push(finalBuffer);
                 logger.info(`recall screenshot saved: ${filePath}`);
             } catch (error) {
                 logger.error(`failed to take screenshot for source ${index}: ${error.message}`);
@@ -244,13 +260,6 @@ class RecallWorker extends BaseWorker {
         return { success: true };
     }
 
-    async startService() {
-
-    }
-
-    async stopService() {
-
-    }
 }
 
-(new RecallWorker()).initialize();
+export default RecallWorker;

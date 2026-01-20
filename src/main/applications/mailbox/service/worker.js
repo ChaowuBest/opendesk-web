@@ -30,7 +30,7 @@ class POP3EmailClient {
     }
 
     async prepareAttachments(uid, attachments) {
-        if (!attachments) {
+        if (!attachments || attachments.length === 0) {
             return [];
         }
 
@@ -234,9 +234,10 @@ class MailboxStorage {
 
 class MailboxWorker extends BaseWorker {
 
-    constructor() {
-        super();
-        this.storage = new MailboxStorage(path.join(this.appDataDirectory, 'mailbox_header_storage.db'));
+    constructor(appDataDirectory) {
+        super(appDataDirectory);
+        mailboxDataDirectory = appDataDirectory;
+        this.storage = new MailboxStorage(path.join(appDataDirectory, 'mailbox_header_storage.db'));
         this.isSyncing = false;
     }
 
@@ -323,7 +324,7 @@ class MailboxWorker extends BaseWorker {
         this.sync();
     }
 
-    async startService() {
+    async initialize() {
         if (this.config === undefined) {
             logger.warn('mailbox service not configured, will not start mailbox service');
             return;
@@ -336,6 +337,11 @@ class MailboxWorker extends BaseWorker {
                 await this.trySync();
             }, 1000 * 60 * 5);
         }, 1000 * 5);
+    }
+
+    async applicationConfigChanged(config) {
+        super.applicationConfigChanged(config);
+        await this.sync();
     }
 
     async getEmailHeaderList() {
@@ -401,6 +407,4 @@ class MailboxWorker extends BaseWorker {
     }
 }
 
-let mailboxWorker = new MailboxWorker();
-mailboxDataDirectory = mailboxWorker.appDataDirectory;
-mailboxWorker.initialize();
+export default MailboxWorker;

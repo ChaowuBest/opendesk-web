@@ -48,7 +48,7 @@ class A2AEntryWidget extends HTMLElement {
             return new Promise((resolve, reject) => {
                 // 检查是否已经存在
                 const existing = document.querySelector(
-                    resource.type === 'css' 
+                    resource.type === 'css'
                         ? `link[href="${resource.url}"]`
                         : `script[src="${resource.url}"]`
                 );
@@ -85,7 +85,7 @@ class A2AEntryWidget extends HTMLElement {
 
     async createConversation() {
         try {
-            const result = await window.applicationAPI.sendMessageToApplication('createConversation', {});
+            const result = await window.applicationAPI.call('createConversation', {});
             this.conversationId = result.conversationId;
             this.conversationHistory = [];
             this.updateMessages();
@@ -100,7 +100,7 @@ class A2AEntryWidget extends HTMLElement {
             return;
         }
         try {
-            await window.applicationAPI.sendMessageToApplication('clearConversation', this.conversationId);
+            await window.applicationAPI.call('clearConversation', this.conversationId);
             this.conversationHistory = [];
             this.updateMessages();
         } catch (error) {
@@ -166,7 +166,7 @@ class A2AEntryWidget extends HTMLElement {
             e.preventDefault();
             e.stopPropagation();
             footer.classList.remove('bg-gray-50');
-            
+
             const files = e.dataTransfer.files;
             for (const file of files) {
                 await this.addAttachment(file);
@@ -227,30 +227,14 @@ class A2AEntryWidget extends HTMLElement {
 
             try {
                 // 发送消息并获取 requestId
-                const result = await window.applicationAPI.sendMessageToApplication('sendChatMessage', this.conversationId, messageData);
-                const requestId = result.requestId;
-
-                // 订阅流式响应
-                if (window.a2aAPI) {
-                    await window.a2aAPI.subscribeStream(requestId, (data) => {
-                        this.handleStreamChunk(data, assistantMessageId);
-                    });
-                } else {
-                    // 如果没有流式 API，等待一段时间后获取完整响应
-                    setTimeout(async () => {
-                        try {
-                            const history = await window.applicationAPI.sendMessageToApplication('getConversationHistory', this.conversationId);
-                            this.conversationHistory = history.map((msg, idx) => ({
-                                role: msg.role,
-                                content: msg.content,
-                                id: `msg_${idx}_${Date.now()}`
-                            }));
-                            this.updateMessages();
-                        } catch (error) {
-                            console.error('获取对话历史失败:', error);
-                        }
-                    }, 2000);
-                }
+                window.applicationAPI.streamCall(
+                    'sendChatMessage',
+                    (chunk) => {
+                        // console.info('received', chunk);
+                        this.handleStreamChunk(chunk, assistantMessageId);
+                    },
+                    this.conversationId, messageData
+                );
             } catch (error) {
                 console.error('发送消息失败:', error);
                 // 移除占位的 AI 响应
@@ -273,9 +257,9 @@ class A2AEntryWidget extends HTMLElement {
         const loadAgents = async () => {
             loadButton.disabled = true;
             loadButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 加载中...';
-            
+
             try {
-                const result = await window.applicationAPI.sendMessageToApplication('listAgents', {});
+                const result = await window.applicationAPI.call('listAgents', {});
                 if (result && result.registryEntries) {
                     this.agents = result.registryEntries;
                     this.updateMessages();
@@ -296,7 +280,7 @@ class A2AEntryWidget extends HTMLElement {
         if (clearButton) {
             clearButton.addEventListener('click', () => this.clearConversation());
         }
-        
+
         input.addEventListener('keypress', (event) => {
             if (event.key === 'Enter' && !event.shiftKey) {
                 event.preventDefault();
@@ -315,7 +299,7 @@ class A2AEntryWidget extends HTMLElement {
             const userMessageIndex = this.conversationHistory.findIndex(msg => msg.id === assistantMessageId) - 1;
             if (userMessageIndex >= 0) {
                 // 检查是否已经存在选择提示（避免重复）
-                const existingSelection = this.conversationHistory.find(msg => 
+                const existingSelection = this.conversationHistory.find(msg =>
                     msg.role === 'system' && msg.isAgentSelection && msg.relatedAssistantId === assistantMessageId
                 );
                 if (!existingSelection) {
@@ -340,9 +324,9 @@ class A2AEntryWidget extends HTMLElement {
                     .filter(part => part.type === 'text')
                     .map(part => part.text)
                     .join('');
-                
+
                 const currentContent = assistantMessage.content || '';
-                
+
                 // 判断是增量块还是完整内容：
                 // 1. 如果新文本包含现有内容，说明是完整内容（LLM 回退情况），应该替换
                 // 2. 如果新文本是现有内容的扩展（现有内容是新文本的前缀），也是完整内容，应该替换
@@ -357,7 +341,7 @@ class A2AEntryWidget extends HTMLElement {
                     // 增量块，追加
                     assistantMessage.content = currentContent + textParts;
                 }
-                
+
                 assistantMessage.isStreaming = true;
                 this.updateMessages();
             }
@@ -414,7 +398,7 @@ class A2AEntryWidget extends HTMLElement {
         }
 
         let html = '';
-        
+
         // 显示 agents 列表
         if (this.agents.length > 0) {
             html += `
@@ -426,12 +410,12 @@ class A2AEntryWidget extends HTMLElement {
                     <div class="space-y-3">
                         ${this.agents.map((entry, index) => {
                             const agentName = entry.name || '';
-                            const agentId = agentName.includes('/') 
-                                ? agentName.split('/').pop() 
+                            const agentId = agentName.includes('/')
+                                ? agentName.split('/').pop()
                                 : agentName;
                             const card = entry.card || {};
                             const skills = card.skills || [];
-                            
+
                             return `
                                 <div class="p-4 bg-white rounded-lg border border-gray-200 shadow-sm hover:shadow-md transition-shadow">
                                     <div class="flex items-start justify-between mb-2">
@@ -450,7 +434,7 @@ class A2AEntryWidget extends HTMLElement {
                                                     const skillName = skill.name || skill.id || 'N/A';
                                                     const skillExamples = skill.examples || [];
                                                     const firstExample = skillExamples.length > 0 ? skillExamples[0] : null;
-                                                    
+
                                                     return `
                                                         <div class="p-2 bg-purple-50 rounded border border-purple-100">
                                                             <div class="font-semibold text-xs text-purple-700 mb-1">
@@ -476,7 +460,7 @@ class A2AEntryWidget extends HTMLElement {
                 </div>
             `;
         }
-        
+
         // 显示对话历史
         if (this.conversationHistory.length > 0) {
             html += `
@@ -508,7 +492,7 @@ class A2AEntryWidget extends HTMLElement {
                                     msg.attachments.forEach(att => {
                                         if (att.type === 'image') {
                                             attachmentsHtml += `
-                                                <img src="${att.data}" alt="${this.escapeHtml(att.name)}" 
+                                                <img src="${att.data}" alt="${this.escapeHtml(att.name)}"
                                                      class="max-w-[200px] max-h-[200px] object-cover rounded border border-white/30" />
                                             `;
                                         } else if (att.type === 'audio') {
@@ -529,7 +513,7 @@ class A2AEntryWidget extends HTMLElement {
                                     });
                                     attachmentsHtml += '</div>';
                                 }
-                                
+
                                 return `
                                     <div class="flex justify-end">
                                         <div class="max-w-[80%] p-3 bg-purple-500 text-white rounded-lg shadow-sm">
@@ -542,10 +526,10 @@ class A2AEntryWidget extends HTMLElement {
                                 const isStreaming = msg.isStreaming ? '<span class="inline-block w-2 h-2 bg-gray-400 rounded-full animate-pulse ml-1"></span>' : '';
                                 const errorClass = msg.isError ? 'border-red-300 bg-red-50' : 'bg-gray-50';
                                 // 渲染 markdown 内容
-                                const renderedContent = msg.isError 
+                                const renderedContent = msg.isError
                                     ? this.escapeHtml(msg.content || '')
                                     : this.renderMarkdown(msg.content || '');
-                                
+
                                 return `
                                     <div class="flex justify-start">
                                         <div class="max-w-[80%] p-3 ${errorClass} rounded-lg border border-gray-200 shadow-sm">
@@ -559,9 +543,9 @@ class A2AEntryWidget extends HTMLElement {
                 </div>
             `;
         }
-        
+
         messagesContainer.innerHTML = html;
-        
+
         // 滚动到底部
         messagesContainer.scrollTop = messagesContainer.scrollHeight;
     }
@@ -649,15 +633,15 @@ class A2AEntryWidget extends HTMLElement {
         if (this.attachments.length === 0) {
             return '<div class="text-xs text-gray-400 flex items-center"><i class="fas fa-info-circle mr-1"></i> 可以添加图片、音频或其他文件</div>';
         }
-        
+
         return this.attachments.map((attachment, index) => {
             let preview = '';
             if (attachment.type === 'image') {
                 preview = `
                     <div class="relative group">
-                        <img src="${attachment.data}" alt="${this.escapeHtml(attachment.name)}" 
+                        <img src="${attachment.data}" alt="${this.escapeHtml(attachment.name)}"
                              class="w-16 h-16 object-cover rounded border border-gray-300" />
-                        <button data-attachment-index="${index}" 
+                        <button data-attachment-index="${index}"
                                 class="a2a-remove-attachment absolute -top-2 -right-2 w-5 h-5 bg-red-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-xs">
                             <i class="fas fa-times"></i>
                         </button>
@@ -671,7 +655,7 @@ class A2AEntryWidget extends HTMLElement {
                             <div class="text-xs font-medium text-gray-700 truncate">${this.escapeHtml(attachment.name)}</div>
                             <div class="text-xs text-gray-500">音频文件</div>
                         </div>
-                        <button data-attachment-index="${index}" 
+                        <button data-attachment-index="${index}"
                                 class="a2a-remove-attachment w-5 h-5 bg-red-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-xs">
                             <i class="fas fa-times"></i>
                         </button>
@@ -685,7 +669,7 @@ class A2AEntryWidget extends HTMLElement {
                             <div class="text-xs font-medium text-gray-700 truncate">${this.escapeHtml(attachment.name)}</div>
                             <div class="text-xs text-gray-500">文件</div>
                         </div>
-                        <button data-attachment-index="${index}" 
+                        <button data-attachment-index="${index}"
                                 class="a2a-remove-attachment w-5 h-5 bg-red-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-xs">
                             <i class="fas fa-times"></i>
                         </button>
@@ -718,7 +702,7 @@ class A2AEntryWidget extends HTMLElement {
         const filePath = window.fsAPI ? window.fsAPI.getFilePath(file) : null;
         const fileName = file.name;
         const fileType = file.type;
-        
+
         // 判断文件类型
         let attachmentType = 'file';
         if (fileType.startsWith('image/')) {
@@ -726,7 +710,7 @@ class A2AEntryWidget extends HTMLElement {
         } else if (fileType.startsWith('audio/')) {
             attachmentType = 'audio';
         }
-        
+
         // 转换为 base64 data URL
         try {
             const dataUrl = await this.fileToDataURL(file);
@@ -797,7 +781,7 @@ class A2AEntryWidget extends HTMLElement {
                 <div id="a2a-attachments-preview" class="mb-2 flex flex-wrap gap-2 min-h-[60px] p-2 bg-gray-50 rounded-lg border border-gray-200">
                     ${this.renderAttachments()}
                 </div>
-                
+
                 <div class="flex gap-3 items-start">
                     <div class="flex-1 flex flex-col gap-2">
                         <textarea
@@ -806,7 +790,7 @@ class A2AEntryWidget extends HTMLElement {
                             rows="3"
                             placeholder="输入消息..."
                         ></textarea>
-                        
+
                         <!-- 工具栏 -->
                         <div class="flex items-center gap-2">
                             <!-- 图片选择 -->
@@ -824,7 +808,7 @@ class A2AEntryWidget extends HTMLElement {
                             >
                                 <i class="fas fa-image"></i>
                             </button>
-                            
+
                             <!-- 音频选择 -->
                             <input
                                 type="file"
@@ -840,7 +824,7 @@ class A2AEntryWidget extends HTMLElement {
                             >
                                 <i class="fas fa-microphone"></i>
                             </button>
-                            
+
                             <!-- 文件选择 -->
                             <input
                                 type="file"
@@ -857,7 +841,7 @@ class A2AEntryWidget extends HTMLElement {
                             </button>
                         </div>
                     </div>
-                    
+
                     <div class="flex flex-col gap-2">
                         <button
                             id="a2a-load-btn"

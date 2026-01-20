@@ -216,3 +216,10 @@ src/renderer/
   - [ ] AI 备忘录
   - [ ] AI 日历管理
   - [ ] AI PPT生成
+
+## 5. 开发必读资料
+
+### Electron前端开发相关
+
+- Electron-Vite相关
+  * [Vite资源处理](https://cn.electron-vite.org/guide/assets) 这部分详细讲述了如何在Electron Vite的打包框架之下应该如何引入静态资源
