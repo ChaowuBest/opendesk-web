@@ -145,7 +145,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         const emailListContainer = this.querySelector('#email-list');
         emailListContainer.innerHTML = '';
         if (emailList.size === 0) {
-            emailListContainer.innerHTML = '<div class="text-gray-500 text-center py-4">暂无相关类型邮件</div>';
+            emailListContainer.innerHTML = '<div class="text-gray-500 text-center py-4">暂无符合条件的邮件</div>';
             return;
         }
         for (const email of emailList.values()) {
@@ -182,8 +182,17 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             uid: uid,
             starred: starred
         }
-        await window.applicationAPI.sendMessageToApplication('starEmail', starOptions);
+        await window.applicationAPI.call('starEmail', starOptions);
         this.emailHeaderList.get(uid).starred = starred;
+        this.reloadEmailList();
+    }
+
+    async searchEmails(query) {
+        const emailList = await window.applicationAPI.call('searchEmails', query);
+        this.emailHeaderList.clear();
+        for (const email of emailList) {
+            this.emailHeaderList.set(email.uid, email);
+        }
         this.reloadEmailList();
     }
 
@@ -457,7 +466,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
                     <!-- 搜索框 -->
                     <div class="relative rounded-2xl">
                         <i class="fas fa-search absolute left-3 top-3 text-gray-400"></i>
-                        <input type="text" placeholder="搜索邮件..." class="w-full bg-gray-100 border-none rounded-xl pl-10 pr-4 py-2.5 focus:ring-2 focus:ring-indigo-500 outline-none">
+                        <input type="text" id="mailbox-search-input" placeholder="搜索邮件..." class="w-full bg-gray-100 border-none rounded-xl pl-10 pr-4 py-2.5 focus:ring-2 focus:ring-indigo-500 outline-none">
                     </div>
 
                     <!-- 导航标签 (水平排列) -->
@@ -510,6 +519,105 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         document.getElementById('mailbox-sent-email-button').addEventListener('click', () => {
             this.handleFilter('sent');
         });
+
+        // 搜索功能
+        const searchInput = document.getElementById('mailbox-search-input');
+        let searchTimeout = null;
+        searchInput.addEventListener('input', (e) => {
+            clearTimeout(searchTimeout);
+            const query = e.target.value.trim();
+            if (query === '') {
+                // 如果搜索框为空，恢复显示所有邮件
+                this.getEmailHeaderList().then((emails) => {
+                    this.emailHeaderList.clear();
+                    for (const email of emails) {
+                        this.emailHeaderList.set(email.uid, email);
+                    }
+                    this.reloadEmailList();
+                });
+                return;
+            }
+            // 防抖：延迟500ms执行搜索
+            searchTimeout = setTimeout(() => {
+                this.performSearch(query);
+            }, 500);
+        });
+
+        // 支持回车键立即搜索
+        searchInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                clearTimeout(searchTimeout);
+                const query = e.target.value.trim();
+                if (query !== '') {
+                    this.performSearch(query);
+                }
+            }
+        });
+    }
+
+    /**
+     * 解析搜索查询字符串，支持多种搜索格式
+     * @param {string} queryString
+     * @returns {Object}
+     */
+    parseSearchQuery(queryString) {
+        const query = {};
+        
+        // 解析特殊格式的搜索
+        // from:xxx, to:xxx, subject:xxx, body:xxx, date:YYYY-MM-DD
+        const patterns = [
+            { key: 'from', regex: /from:([^\s]+)/i },
+            { key: 'to', regex: /to:([^\s]+)/i },
+            { key: 'subject', regex: /subject:([^\s]+)/i },
+            { key: 'body', regex: /body:([^\s]+)/i },
+            { key: 'date', regex: /date:([^\s]+)/i },
+        ];
+
+        let remainingQuery = queryString;
+        
+        for (const pattern of patterns) {
+            const match = queryString.match(pattern.regex);
+            if (match) {
+                query[pattern.key] = match[1];
+                remainingQuery = remainingQuery.replace(pattern.regex, '').trim();
+            }
+        }
+
+        // 如果没有指定特定字段，默认搜索主题、正文或发件人
+        if (remainingQuery && !query.subject && !query.body && !query.from && !query.to) {
+            query.general = remainingQuery; // 使用 general 字段表示通用搜索（主题、正文或发件人）
+        } else if (remainingQuery) {
+            // 如果还有其他文本，也添加到主题搜索中
+            if (!query.subject) {
+                query.subject = remainingQuery;
+            }
+        }
+
+        return query;
+    }
+
+    /**
+     * 执行搜索
+     * @param {string} queryString
+     */
+    async performSearch(queryString) {
+        const query = this.parseSearchQuery(queryString);
+        
+        // 处理日期范围
+        if (query.date) {
+            // 支持单个日期或日期范围
+            if (query.date.includes('~')) {
+                const [startDate, endDate] = query.date.split('~').map(d => d.trim());
+                query.startDate = startDate;
+                query.endDate = endDate || startDate;
+            } else {
+                query.startDate = query.date;
+                query.endDate = query.date;
+            }
+            delete query.date;
+        }
+
+        this.searchEmails(query);
     }
 }
 

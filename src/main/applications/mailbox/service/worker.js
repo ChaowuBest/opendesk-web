@@ -230,6 +230,145 @@ class MailboxStorage {
             doc.date, doc.unread, doc.starred
         ));
     }
+
+    /**
+     * Search emails by various criteria
+     * @param {import('../common.js').EmailHeaderQuerySchema & {general?: string}} query
+     * @returns {Promise<EmailHeader[]>}
+     */
+    async searchEmails(query) {
+        // Build the query object for NeDB
+        const dbQuery = {};
+        const orConditions = [];
+
+        // General search (search in subject, body, or from)
+        if (query.general) {
+            const generalRegex = new RegExp(query.general, 'i');
+            const matchingUids = new Set();
+            
+            // 1. Find emails matching subject
+            const subjectDocs = await this.db.find({
+                subject: { $regex: generalRegex }
+            });
+            for (const doc of subjectDocs) {
+                matchingUids.add(doc.uid);
+            }
+            
+            // 2. Find emails matching from (sender)
+            const fromDocs = await this.db.find({
+                $or: [
+                    { 'from.address': { $regex: generalRegex } },
+                    { 'from.name': { $regex: generalRegex } }
+                ]
+            });
+            for (const doc of fromDocs) {
+                matchingUids.add(doc.uid);
+            }
+            
+            // 3. Find emails matching body content
+            const bodyRegex = new RegExp(query.general, 'i');
+            const contentDocs = await this.contentdb.find({
+                $or: [
+                    { htmlContent: { $regex: bodyRegex } },
+                    { textContent: { $regex: bodyRegex } }
+                ]
+            });
+            for (const contentDoc of contentDocs) {
+                matchingUids.add(contentDoc.uid);
+            }
+            
+            // Query headers for matching UIDs (OR relationship: subject OR from OR body)
+            if (matchingUids.size > 0) {
+                dbQuery.uid = { $in: Array.from(matchingUids) };
+            } else {
+                // No matches, return empty result
+                return [];
+            }
+        } else {
+            // Subject search (case-insensitive regex)
+            if (query.subject) {
+                dbQuery.subject = { $regex: new RegExp(query.subject, 'i') };
+            }
+
+            // From search (search in from array)
+            if (query.from) {
+                orConditions.push({
+                    'from.address': { $regex: new RegExp(query.from, 'i') }
+                });
+                orConditions.push({
+                    'from.name': { $regex: new RegExp(query.from, 'i') }
+                });
+            }
+
+            // To search (search in to array)
+            if (query.to) {
+                orConditions.push({
+                    'to.address': { $regex: new RegExp(query.to, 'i') }
+                });
+                orConditions.push({
+                    'to.name': { $regex: new RegExp(query.to, 'i') }
+                });
+            }
+
+            // If we have or conditions, add them to the query
+            if (orConditions.length > 0) {
+                dbQuery.$or = orConditions;
+            }
+        }
+
+        // Date range search
+        if (query.startDate || query.endDate) {
+            dbQuery.date = dbQuery.date || {};
+            if (query.startDate) {
+                const startDate = new Date(query.startDate);
+                startDate.setHours(0, 0, 0, 0);
+                dbQuery.date.$gte = startDate.getTime();
+            }
+            if (query.endDate) {
+                const endDate = new Date(query.endDate);
+                endDate.setHours(23, 59, 59, 999);
+                dbQuery.date.$lte = endDate.getTime();
+            }
+        }
+
+        // Execute the query
+        let docs = await this.db.find(dbQuery).sort({ date: -1 });
+        
+        // If body search is requested (and not general search), filter by content
+        if (query.body && !query.general) {
+            const bodyRegex = new RegExp(query.body, 'i');
+            const matchingUids = new Set();
+            
+            // Search in content database
+            const contentDocs = await this.contentdb.find({
+                $or: [
+                    { htmlContent: { $regex: bodyRegex } },
+                    { textContent: { $regex: bodyRegex } }
+                ]
+            });
+            
+            for (const contentDoc of contentDocs) {
+                matchingUids.add(contentDoc.uid);
+            }
+            
+            // Filter headers by matching UIDs
+            docs = docs.filter(doc => matchingUids.has(doc.uid));
+        }
+
+        // Apply limit and offset
+        if (query.offset) {
+            docs = docs.slice(query.offset);
+        }
+        if (query.limit) {
+            docs = docs.slice(0, query.limit);
+        }
+
+        return docs.map(doc => new EmailHeader(
+            doc.uid, doc.subject,
+            doc.from, doc.to, doc.cc, doc.bcc,
+            doc.date, doc.unread, doc.starred
+        ));
+    }
 }
 
 class MailboxWorker extends BaseWorker {
@@ -349,6 +488,14 @@ class MailboxWorker extends BaseWorker {
         const result = await this.storage.getEmailHeaderList();
         let cost = (Date.now() - startTime) / 1000;
         logger.info(`get email list cost: ${cost.toFixed(2)}s`);
+        return result;
+    }
+
+    async searchEmails(query) {
+        let startTime = Date.now();
+        const result = await this.storage.searchEmails(query);
+        let cost = (Date.now() - startTime) / 1000;
+        logger.info(`search emails cost: ${cost.toFixed(2)}s, found ${result.length} results`);
         return result;
     }
 
