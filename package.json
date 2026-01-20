@@ -30,6 +30,7 @@
     "@electron-forge/plugin-fuses": "^7.10.2",
     "@electron/fuses": "^1.8.0",
     "@eslint/js": "^9.39.2",
+    "@types/alpinejs": "^3.13.11",
     "electron": "^39.2.6",
     "electron-reload": "^2.0.0-alpha.1",
     "electron-vite": "^5.0.0",
