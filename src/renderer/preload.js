@@ -208,6 +208,23 @@ if (window.self !== window.top) {
 
             console.info('listener registered', result.requestId);
             ipcRenderer.on(`applicationRegistry:streamChunk:${result.requestId}`, listener);
+        },
+        subscribeEmailListUpdate: async (bundleName, callback) => {
+            const result = await ipcRenderer.invoke('mailbox:subscribeEmailListUpdate', bundleName);
+            if (result.status !== 'ok') {
+                console.error('subscribing email list update failed', result.message);
+                throw new Error(result.message);
+            }
+            ipcRenderer.on('mailbox:emailListUpdated', callback);
+            return result.data;
+        },
+        unsubscribeEmailListUpdate: async (bundleName) => {
+            const result = await ipcRenderer.invoke('mailbox:unsubscribeEmailListUpdate', bundleName);
+            if (result.status !== 'ok') {
+                console.error('unsubscribing email list update failed', result.message);
+                throw new Error(result.message);
+            }
+            ipcRenderer.removeAllListeners('mailbox:emailListUpdated');
         }
     })
 

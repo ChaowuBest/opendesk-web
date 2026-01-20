@@ -7,6 +7,7 @@ import nedb from 'nedb-promises';
 import path from 'path';
 import pMap from 'p-map';
 import { simpleParser } from "mailparser";
+import { parentPort } from 'worker_threads';
 
 import pkg from 'lodash';
 import { NotificationManager } from "../../../utils/notificationmgr.js";
@@ -416,6 +417,18 @@ class MailboxWorker extends BaseWorker {
         }
 
         await pop3.QUIT();
+        
+        // 如果有新邮件，在所有邮件保存完成后发送更新通知
+        if (newList.length > 0) {
+            if (typeof parentPort !== 'undefined' && parentPort) {
+                parentPort.postMessage({ 
+                    type: 'emailListUpdated',
+                    bundleName: 'mailbox'
+                });
+            } else {
+                logger.warn('parentPort 未定义，无法发送邮件列表更新消息');
+            }
+        }
     }
 
     async sync() {

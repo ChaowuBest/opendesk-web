@@ -19,13 +19,25 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
 
     connectedCallback() {
         this.render();
-        this.getEmailHeaderList().then((emails) => {
-            this.emailHeaderList.clear();
-            for (const email of emails) {
-                this.emailHeaderList.set(email.uid, email);
-            }
-            this.reloadEmailList();
-        })
+        this.loadEmailList();
+        
+        // 订阅邮件列表更新事件
+        if (window.applicationAPI && window.applicationAPI.subscribeEmailListUpdate) {
+            window.applicationAPI.subscribeEmailListUpdate('mailbox', () => {
+                this.loadEmailList();
+            }).catch(error => {
+                console.error('订阅邮件列表更新失败:', error);
+            });
+        }
+    }
+
+    async loadEmailList() {
+        const emails = await this.getEmailHeaderList();
+        this.emailHeaderList.clear();
+        for (const email of emails) {
+            this.emailHeaderList.set(email.uid, email);
+        }
+        this.reloadEmailList();
     }
 
     getAgentInstruct() {
@@ -528,13 +540,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             const query = e.target.value.trim();
             if (query === '') {
                 // 如果搜索框为空，恢复显示所有邮件
-                this.getEmailHeaderList().then((emails) => {
-                    this.emailHeaderList.clear();
-                    for (const email of emails) {
-                        this.emailHeaderList.set(email.uid, email);
-                    }
-                    this.reloadEmailList();
-                });
+                this.loadEmailList();
                 return;
             }
             // 防抖：延迟500ms执行搜索

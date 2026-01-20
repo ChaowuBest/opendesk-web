@@ -134,6 +134,32 @@ export function registerApplicationRegistryHandlers(ipcMain: Electron.IpcMain) {
           return { status: 'error', message: error.message };
         }
       })
+
+      // 邮箱应用的邮件列表更新订阅
+      ipcMain.handle('mailbox:subscribeEmailListUpdate', (event, bundleName) => {
+        const application = ApplicationRegistry.getApplication(bundleName);
+        if (application === undefined) {
+          return { status: 'error', message: `application ${bundleName} not found` };
+        }
+        if ('addSubscriber' in application && typeof (application as any).addSubscriber === 'function') {
+          // 使用 senderFrame 因为应用在 iframe 中运行
+          const subscriptionId = (application as any).addSubscriber(event.senderFrame);
+          return { status: 'ok', data: subscriptionId };
+        }
+        return { status: 'error', message: 'application does not support email list updates' };
+      })
+
+      ipcMain.handle('mailbox:unsubscribeEmailListUpdate', (event, bundleName) => {
+        const application = ApplicationRegistry.getApplication(bundleName);
+        if (application === undefined) {
+          return { status: 'error', message: `application ${bundleName} not found` };
+        }
+        if ('removeSubscriber' in application && typeof (application as any).removeSubscriber === 'function') {
+          (application as any).removeSubscriber(event.senderFrame);
+          return { status: 'ok' };
+        }
+        return { status: 'error', message: 'application does not support email list updates' };
+      })
 }
 
 export function initializeRegistry() {
@@ -194,6 +220,13 @@ export function initializeRegistry() {
           }
           case 'log': {
             LogStream.getStream().write(event.message + '\n');
+            break;
+          }
+          case 'emailListUpdated': {
+            const application = ApplicationRegistry.getApplication(event.bundleName);
+            if (application && 'onEmailListUpdated' in application && typeof (application as any).onEmailListUpdated === 'function') {
+              (application as any).onEmailListUpdated();
+            }
             break;
           }
           default: {
