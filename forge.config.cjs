@@ -12,8 +12,8 @@ module.exports = {
       __dirname, 'resources', 'package', 'icons',
       process.platform === 'darwin' ? 'icon_round.icns' : 'icon_round.ico'
     ),
-    "asar": {
-      "unpack": "**/node_modules/{sharp,@img}/**/*"
+    asar: {
+      unpack: "**/node_modules/{sharp,@img}/**/*"
     }
   },
   rebuildConfig: {},
@@ -29,7 +29,7 @@ module.exports = {
         shortcutFolderName: 'FillipDesk',
         language: 1033,
         upgradeCode: '017f8634-a16c-4194-8c94-d9a3f1319d13',
-        icon: path.join(__dirname, 'src', 'assets', 'images', 'icon_round.ico'),
+        icon: path.join(__dirname, 'resources', 'package', 'icons', 'icon_round.ico'),
       },
     },
     {

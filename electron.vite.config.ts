@@ -8,6 +8,7 @@ export default defineConfig({
     publicDir: path.join(__dirname, 'resources', 'main'),
     plugins: [tailwindcss()],
     build: {
+      outDir: 'dist/main',
       rollupOptions: {
         input: {
           main: path.join(__dirname, 'src', 'main', 'main.js'),
@@ -20,6 +21,7 @@ export default defineConfig({
   preload: {
     plugins: [tailwindcss()],
     build: {
+        outDir: 'dist/preload',
         rollupOptions: {
             input: {
                 index: path.join(__dirname, 'src', 'renderer', 'preload.js')
@@ -33,6 +35,7 @@ export default defineConfig({
     }
   },
   renderer: {
+    base: './',
     publicDir: path.join(__dirname, 'resources', 'renderer'),
     plugins: [tailwindcss()],
     resolve: {
@@ -41,7 +44,15 @@ export default defineConfig({
       }
     },
     build: {
-      sourcemap: true
+      outDir: 'dist/renderer',
+      sourcemap: true,
+      rollupOptions: {
+        input: {
+          index: path.join(__dirname, 'src', 'renderer', 'index.html'),
+          application: path.join(__dirname, 'src', 'renderer', 'application.html'),
+          floatpage: path.join(__dirname, 'src', 'renderer', 'floatpage.html')
+        }
+      }
     }
   }
 })
