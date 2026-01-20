@@ -30,7 +30,7 @@ class POP3EmailClient {
     }
 
     async prepareAttachments(uid, attachments) {
-        if (!attachments) {
+        if (!attachments || attachments.length === 0) {
             return [];
         }
 
@@ -236,6 +236,7 @@ class MailboxWorker extends BaseWorker {
 
     constructor(appDataDirectory) {
         super(appDataDirectory);
+        mailboxDataDirectory = appDataDirectory;
         this.storage = new MailboxStorage(path.join(appDataDirectory, 'mailbox_header_storage.db'));
         this.isSyncing = false;
     }
