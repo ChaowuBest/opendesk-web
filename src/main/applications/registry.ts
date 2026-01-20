@@ -11,6 +11,8 @@ import { Worker } from "worker_threads";
 import { Setting, getAppDirectory } from "../utils/setting.js";
 import { LogStream } from "../utils/logger.js";
 import { NotificationManager } from "../utils/notificationmgr.js";
+import { app } from 'electron';
+import path from 'path';
 
 
 var pendingRequests: Map<string, {
@@ -147,7 +149,7 @@ export function initializeRegistry() {
     ApplicationRegistry.registerApplication(new NewsApplication());
 
     globalWorker = new Worker(
-        './out/main/worker.js',
+        path.join(app.getAppPath(), 'dist', 'main', 'worker.js'),
         {
           workerData: {
             paths: { appDirectory: getAppDirectory() },

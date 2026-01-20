@@ -68,9 +68,9 @@ class SideBar extends HTMLElement {
 
         <div class="h-full flex flex-col" x-data="{ showApps: false }">
             <header class="py-2 px-1 flex flex-row items-start flex-shrink-0">
-                <img src="/images/icon_round.png" alt="Fillip Desk Icon" class="w-12 h-12 mr-3"/>
+                <img src="./images/icon_round.png" alt="Fillip Desk Icon" class="w-12 h-12 mr-3"/>
                 <div class="flex flex-col items-start">
-                    <img src="/images/banner.png" alt="Fillip Desk Banner" class="w-32 h-auto"/>
+                    <img src="./images/banner.png" alt="Fillip Desk Banner" class="w-32 h-auto"/>
                     <p class="text-xs mt-1 text-gray-500">一站式智慧办公空间</p>
                 </div>
             </header>
@@ -152,7 +152,7 @@ class SideBar extends HTMLElement {
             app_container.innerHTML += `
             <div class="flex flex-col items-center group cursor-pointer" onclick="window.globalControlAPI.openApplication('${app.bundleName}')">
                 <div class="rounded-full w-12 h-12 shadow-lg transform transition duration-200 group-hover:brightness-90 group-active:scale-95 flex items-center justify-center">
-                    <img src="/applications/${app.bundleName}/icon.png" alt="${app.name}" class="w-full h-full object-cover">
+                    <img src="./applications/${app.bundleName}/icon.png" alt="${app.name}" class="w-full h-full object-cover">
                 </div>
                 <span class="mt-2 text-xs font-medium text-gray-800 drop-shadow-sm w-16 text-center truncate">${app.name}</span>
             </div>
