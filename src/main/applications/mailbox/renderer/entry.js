@@ -15,6 +15,8 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         this.selectedEmailHeader = null;
         /** @type {import('../common.js').EmailContent | null} */
         this.selectedEmailContent = null;
+        /** @type {string} */
+        this.currentFilter = 'all'; // 当前选中的过滤器
     }
 
     connectedCallback() {
@@ -99,7 +101,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             for (const uid of args.uids) {
                 await this.markEmailAsRead(uid);
             }
-            this.reloadEmailList();
+            this.applyCurrentFilter();
             return `已标记邮件为已读: ${args.uids.join(', ')}`;
         });
 
@@ -196,7 +198,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         }
         await window.applicationAPI.call('starEmail', starOptions);
         this.emailHeaderList.get(uid).starred = starred;
-        this.reloadEmailList();
+        this.applyCurrentFilter();
     }
 
     async searchEmails(query) {
@@ -347,6 +349,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
 
     handleFilter(filter) {
         console.info('handle filter', filter);
+        this.currentFilter = filter; // 保存当前过滤器状态
         switch (filter) {
             case 'all':
                 this.reloadEmailList();
@@ -448,7 +451,14 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         if (this.selectedEmailHeader.unread) {
             await this.markEmailAsRead(uid);
         }
-        this.reloadEmailList();
+        this.applyCurrentFilter();
+    }
+
+    /**
+     * 应用当前选中的过滤器
+     */
+    applyCurrentFilter() {
+        this.handleFilter(this.currentFilter);
     }
 
     render() {
