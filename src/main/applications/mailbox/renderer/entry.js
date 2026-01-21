@@ -35,7 +35,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         for (const email of emails) {
             this.emailHeaderList.set(email.uid, email);
         }
-        this.reloadEmailList();
+        this.applyCurrentFilter();
     }
 
     getAgentInstruct() {
@@ -184,6 +184,63 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         console.info('mark email as read', uid);
         await window.applicationAPI.call('markEmailAsRead', uid);
         this.emailHeaderList.get(uid).unread = false;
+        if (this.selectedEmailUid === uid) {
+            this.selectedEmailHeader.unread = false;
+            this.updateReadUnreadButton();
+        }
+        this.applyCurrentFilter();
+    }
+
+    async markEmailAsUnread(uid) {
+        console.info('mark email as unread', uid);
+        await window.applicationAPI.call('markEmailAsUnread', uid);
+        this.emailHeaderList.get(uid).unread = true;
+        if (this.selectedEmailUid === uid) {
+            this.selectedEmailHeader.unread = true;
+            this.updateReadUnreadButton();
+        }
+        this.applyCurrentFilter();
+    }
+
+    updateReadUnreadButton() {
+        // 查找工具栏中的已读/未读按钮（通过 ID 前缀匹配，因为 ElasticToolbarWidget 会给 ID 添加 uid 后缀）
+        const toolbar = this.querySelector('elastic-toolbar-widget');
+        if (!toolbar) {
+            return;
+        }
+        const allButtons = toolbar.querySelectorAll('button');
+        let readUnreadButton = null;
+        for (const button of allButtons) {
+            if (button.id.includes('mailbox-mark-read-button') || button.id.includes('mailbox-mark-unread-button')) {
+                readUnreadButton = button;
+                break;
+            }
+        }
+
+        if (!readUnreadButton) {
+            return;
+        }
+        const icon = readUnreadButton.querySelector('i');
+        const label = readUnreadButton.querySelector('span');
+        const newIdPrefix = this.selectedEmailHeader.unread ? 'mailbox-mark-read-button' : 'mailbox-mark-unread-button';
+        const newId = `${newIdPrefix}-${toolbar.uid}`;
+        if (this.selectedEmailHeader.unread) {
+            readUnreadButton.id = newId;
+            if (icon) icon.className = 'fa-solid fa-envelope-open';
+            if (label) label.textContent = '标为已读';
+        } else {
+            readUnreadButton.id = newId;
+            if (icon) icon.className = 'fa-solid fa-envelope';
+            if (label) label.textContent = '标为未读';
+        }
+
+        const newButton = readUnreadButton.cloneNode(true);
+        readUnreadButton.parentNode.replaceChild(newButton, readUnreadButton);
+        if (this.selectedEmailHeader.unread) {
+            newButton.addEventListener('click', () => this.markEmailAsRead(this.selectedEmailUid));
+        } else {
+            newButton.addEventListener('click', () => this.markEmailAsUnread(this.selectedEmailUid));
+        }
     }
 
     async starEmail(uid, starred = true) {
@@ -204,6 +261,29 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             this.emailHeaderList.set(email.uid, email);
         }
         this.reloadEmailList();
+    }
+
+    /**
+     * 立即同步邮件
+     */
+    async syncEmails() {
+        const syncButton = document.querySelector('#mailbox-sync-email-button');
+        const icon = syncButton.querySelector('i');
+
+        // 添加旋转动画
+        icon.classList.add('fa-spin');
+        syncButton.disabled = true;
+
+        try {
+            await window.applicationAPI.call('syncEmails');
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            await this.loadEmailList();
+        } catch (error) {
+            console.error('同步邮件失败:', error);
+        } finally {
+            icon.classList.remove('fa-spin');
+            syncButton.disabled = false;
+        }
     }
 
     renderCurrentEmailHeader() {
@@ -387,6 +467,11 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             return;
         }
 
+        // 根据邮件状态动态设置已读/未读按钮
+        const readUnreadButton = this.selectedEmailHeader.unread
+            ? { id: 'mailbox-mark-read-button', icon: 'fa-envelope-open', label: '标为已读', action: () => this.markEmailAsRead(this.selectedEmailUid) }
+            : { id: 'mailbox-mark-unread-button', icon: 'fa-envelope', label: '标为未读', action: () => this.markEmailAsUnread(this.selectedEmailUid) };
+
         const topButtons = [
             { id: 'mailbox-reply-button', icon: 'fa-reply', label: '回复', action: () => this.createNewEmail() },
             { id: 'mailbox-reply-all-button', icon: 'fa-reply-all', label: '回复全部', action: () => this.createNewEmail() },
@@ -394,6 +479,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             { id: 'mailbox-reload-button', icon: 'fa-redo-alt', label: '重新下载', action: () => this.openEmailByUid(this.selectedEmailUid, true) },
             { id: 'mailbox-trash-button', icon: 'fa-trash-alt', label: '删除', action: () => this.deleteEmail() },
             { id: 'mailbox-star-button', icon: 'fa-star', label: '收藏', action: () => this.starEmail(this.selectedEmailUid, !this.selectedEmailHeader.starred) },
+            readUnreadButton,
         ]
 
         const toolbar = new ElasticToolbarWidget(topButtons);
@@ -467,18 +553,32 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
                 <div class="p-3 space-y-3">
                     <div class="flex items-center justify-between">
                         <h1 class="text-xl font-bold tracking-tight px-1">收件箱</h1>
-                        <button id='mailbox-new-email-button' class="group flex items-center px-2 py-2 rounded-full
-                                    bg-transparent hover:bg-white/60 hover:shadow-md
-                                    transition-all duration-500 ease-[cubic-bezier(0.23,1,0.32,1)]
-                                    text-gray-700 hover:text-blue-600">
-                            <i class="fa-solid fa-plus"></i>
-                            <span class="max-w-0 overflow-hidden opacity-0
-                                        group-hover:max-w-[120px] group-hover:opacity-100
-                                        group-hover:ml-2 transition-all duration-500 ease-in-out
-                                        whitespace-nowrap font-medium tracking-tight text-sm">
-                                写邮件
-                            </span>
-                        </button>
+                        <div class="flex items-center gap-2">
+                            <button id='mailbox-sync-email-button' class="group flex items-center px-2 py-2 rounded-full
+                                        bg-transparent hover:bg-white/60 hover:shadow-md
+                                        transition-all duration-500 ease-[cubic-bezier(0.23,1,0.32,1)]
+                                        text-gray-700 hover:text-blue-600" title="同步邮件">
+                                <i class="fa-solid fa-sync-alt"></i>
+                                <span class="max-w-0 overflow-hidden opacity-0
+                                            group-hover:max-w-[120px] group-hover:opacity-100
+                                            group-hover:ml-2 transition-all duration-500 ease-in-out
+                                            whitespace-nowrap font-medium tracking-tight text-sm">
+                                    同步
+                                </span>
+                            </button>
+                            <button id='mailbox-new-email-button' class="group flex items-center px-2 py-2 rounded-full
+                                        bg-transparent hover:bg-white/60 hover:shadow-md
+                                        transition-all duration-500 ease-[cubic-bezier(0.23,1,0.32,1)]
+                                        text-gray-700 hover:text-blue-600">
+                                <i class="fa-solid fa-plus"></i>
+                                <span class="max-w-0 overflow-hidden opacity-0
+                                            group-hover:max-w-[120px] group-hover:opacity-100
+                                            group-hover:ml-2 transition-all duration-500 ease-in-out
+                                            whitespace-nowrap font-medium tracking-tight text-sm">
+                                    写邮件
+                                </span>
+                            </button>
+                        </div>
                     </div>
 
                     <!-- 搜索框 -->
@@ -521,6 +621,9 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
 
         document.querySelector('#mailbox-new-email-button').addEventListener('click', () => {
             this.createNewEmail();
+        });
+        document.querySelector('#mailbox-sync-email-button').addEventListener('click', () => {
+            this.syncEmails();
         });
         document.getElementById('mailbox-all-email-button').addEventListener('click', () => {
             this.handleFilter('all');
