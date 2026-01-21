@@ -184,6 +184,63 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         console.info('mark email as read', uid);
         await window.applicationAPI.call('markEmailAsRead', uid);
         this.emailHeaderList.get(uid).unread = false;
+        if (this.selectedEmailUid === uid) {
+            this.selectedEmailHeader.unread = false;
+            this.updateReadUnreadButton();
+        }
+        this.applyCurrentFilter();
+    }
+
+    async markEmailAsUnread(uid) {
+        console.info('mark email as unread', uid);
+        await window.applicationAPI.call('markEmailAsUnread', uid);
+        this.emailHeaderList.get(uid).unread = true;
+        if (this.selectedEmailUid === uid) {
+            this.selectedEmailHeader.unread = true;
+            this.updateReadUnreadButton();
+        }
+        this.applyCurrentFilter();
+    }
+
+    updateReadUnreadButton() {
+        // 查找工具栏中的已读/未读按钮（通过 ID 前缀匹配，因为 ElasticToolbarWidget 会给 ID 添加 uid 后缀）
+        const toolbar = this.querySelector('elastic-toolbar-widget');
+        if (!toolbar) {
+            return;
+        }
+        const allButtons = toolbar.querySelectorAll('button');
+        let readUnreadButton = null;
+        for (const button of allButtons) {
+            if (button.id.includes('mailbox-mark-read-button') || button.id.includes('mailbox-mark-unread-button')) {
+                readUnreadButton = button;
+                break;
+            }
+        }
+
+        if (!readUnreadButton) {
+            return;
+        }
+        const icon = readUnreadButton.querySelector('i');
+        const label = readUnreadButton.querySelector('span');
+        const newIdPrefix = this.selectedEmailHeader.unread ? 'mailbox-mark-read-button' : 'mailbox-mark-unread-button';
+        const newId = `${newIdPrefix}-${toolbar.uid}`;
+        if (this.selectedEmailHeader.unread) {
+            readUnreadButton.id = newId;
+            if (icon) icon.className = 'fa-solid fa-envelope-open';
+            if (label) label.textContent = '标为已读';
+        } else {
+            readUnreadButton.id = newId;
+            if (icon) icon.className = 'fa-solid fa-envelope';
+            if (label) label.textContent = '标为未读';
+        }
+
+        const newButton = readUnreadButton.cloneNode(true);
+        readUnreadButton.parentNode.replaceChild(newButton, readUnreadButton);
+        if (this.selectedEmailHeader.unread) {
+            newButton.addEventListener('click', () => this.markEmailAsRead(this.selectedEmailUid));
+        } else {
+            newButton.addEventListener('click', () => this.markEmailAsUnread(this.selectedEmailUid));
+        }
     }
 
     async starEmail(uid, starred = true) {
@@ -212,11 +269,11 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
     async syncEmails() {
         const syncButton = document.querySelector('#mailbox-sync-email-button');
         const icon = syncButton.querySelector('i');
-        
+
         // 添加旋转动画
         icon.classList.add('fa-spin');
         syncButton.disabled = true;
-        
+
         try {
             await window.applicationAPI.call('syncEmails');
             await new Promise(resolve => setTimeout(resolve, 1000));
@@ -410,6 +467,11 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             return;
         }
 
+        // 根据邮件状态动态设置已读/未读按钮
+        const readUnreadButton = this.selectedEmailHeader.unread
+            ? { id: 'mailbox-mark-read-button', icon: 'fa-envelope-open', label: '标为已读', action: () => this.markEmailAsRead(this.selectedEmailUid) }
+            : { id: 'mailbox-mark-unread-button', icon: 'fa-envelope', label: '标为未读', action: () => this.markEmailAsUnread(this.selectedEmailUid) };
+
         const topButtons = [
             { id: 'mailbox-reply-button', icon: 'fa-reply', label: '回复', action: () => this.createNewEmail() },
             { id: 'mailbox-reply-all-button', icon: 'fa-reply-all', label: '回复全部', action: () => this.createNewEmail() },
@@ -417,6 +479,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             { id: 'mailbox-reload-button', icon: 'fa-redo-alt', label: '重新下载', action: () => this.openEmailByUid(this.selectedEmailUid, true) },
             { id: 'mailbox-trash-button', icon: 'fa-trash-alt', label: '删除', action: () => this.deleteEmail() },
             { id: 'mailbox-star-button', icon: 'fa-star', label: '收藏', action: () => this.starEmail(this.selectedEmailUid, !this.selectedEmailHeader.starred) },
+            readUnreadButton,
         ]
 
         const toolbar = new ElasticToolbarWidget(topButtons);

@@ -142,6 +142,14 @@ class MailboxStorage {
         )
     }
 
+    async markEmailAsUnread(uid) {
+        logger.info(`marking email as unread: ${uid}`);
+        await this.db.update(
+            { uid: uid },
+            { $set: { unread: true } }
+        )
+    }
+
     async getEmailContent(uid) {
         const doc = await this.contentdb.findOne({ uid: uid });
         if (!doc) {
@@ -510,6 +518,10 @@ class MailboxWorker extends BaseWorker {
 
     async markEmailAsRead(uid) {
         await this.storage.markEmailAsRead(uid);
+    }
+
+    async markEmailAsUnread(uid) {
+        await this.storage.markEmailAsUnread(uid);
     }
 
     /**
