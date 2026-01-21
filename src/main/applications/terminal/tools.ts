@@ -1,0 +1,98 @@
+import { exec } from "child_process";
+import { BaseTool } from "../../agents/tool.js";
+import { ToolCall } from "../../agents/messages.js";
+import { z } from 'zod';
+import { promisify } from 'util';
+import fs from 'fs';
+import iconv from 'iconv-lite';
+
+
+const ExecuteCmdArgsSchema = z.object({
+    command: z.string().describe('要执行的CMD命令'),
+    workingDirectory: z.string().optional().describe('执行命令的工作目录，如果不指定则使用系统默认目录')
+});
+
+export class ExecuteCmdTool extends BaseTool {
+    constructor() {
+        super(
+            'executeCmd',
+            '在 Windows 下执行 cmd 命令。可以执行任何有效的 Windows CMD 命令，如 dir、cd、type、echo 等',
+            ExecuteCmdArgsSchema
+        );
+
+        this.executor = this.executeCommand;
+    }
+
+    renderToolCall(toolcall: ToolCall): string | undefined {
+        return `
+        <!-- 终端主容器 -->
+        <div class="terminal-window w-full max-w-4xl rounded-xl overflow-hidden border border-gray-300 flex flex-col my-2 font-mono">
+            <!-- macOS 顶部标题栏 (浅色渐变) -->
+            <div class="flex items-center justify-between px-4 py-3 bg-gradient-to-b from-gray-100 to-gray-200 border-b border-gray-300">
+                <div class="text-[12px] font-medium text-gray-600 flex items-center gap-2">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
+                    FillipDesk Agent -- CMD Terminal
+                </div>
+                <div class="w-12"></div>
+            </div>
+
+            <!-- 终端内容区域 -->
+            <div class="p-3 text-xs xs:text-base leading-relaxed overflow-y-none custom-scrollbar text-gray-800">
+
+                <!-- 执行脚本 -->
+                <div class="mb-2 flex items-start">
+                    <span class="text-blue-500 font-bold mr-2">❯</span>
+                    <div>
+                        <span class="text-blue-600">/home</span>
+                        <span class="text-gray-800 ml-1">${toolcall.args_object?.command}</span>
+                    </div>
+                </div>
+
+                <!-- 过程记录 -->
+                <div class="space-y-1 mb-4 border-l-2 border-gray-200 pl-4 ml-1">
+                    ${toolcall.result === undefined
+                        ? `<div class="flex items-center gap-2 text-gray-400 animate-pulse h-7">
+                               <svg class="w-5 h-5 animate-spin text-blue-400" viewBox="0 0 24 24" fill="none"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/></svg>
+                               <span>命令执行中，请稍候…</span>
+                           </div>`
+                        : `<pre>${toolcall.result}</pre>`}
+                </div>
+            </div>
+        </div>
+        `
+    }
+
+    /**
+     * Execute a command in cmd
+     */
+    async executeCommand(args: z.output<typeof ExecuteCmdArgsSchema>): Promise<string> {
+        let command: string = args.command;
+        let workingDirectory: string | undefined = args.workingDirectory;
+
+        const execAsync = promisify(exec);
+        try {
+            const options: any = {
+                encoding: 'buffer',
+                maxBuffer: 10 * 1024 * 1024, // 10MB
+            };
+
+            if (workingDirectory && fs.existsSync(workingDirectory)) {
+                options.cwd = workingDirectory;
+            }
+
+            const { stdout, stderr } = await execAsync(`cmd /c ${command}`, options);
+            const out = iconv.decode(stdout, 'cp936');
+            const err = iconv.decode(stderr, 'cp936');
+
+            let result = '';
+            if (out) { result += `标准输出流：\n${out}\n`; }
+            if (err) { result += `标准错误流：\n${err}\n`; }
+            if (!out && !err) { result = '命令执行成功'; }
+
+            const output = result.trim() || '命令执行完成。';
+            return output;
+        } catch (error: any) {
+            return `执行命令时出错: ${error.message}\n${error.stdout || ''}\n${error.stderr || ''}`;
+        }
+    }
+}

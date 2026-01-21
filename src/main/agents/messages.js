@@ -24,8 +24,6 @@ marked.use(markedKatex({
     nonStandard: true
 }));
 
-const TOOL_CALL_SEPARATOR = `<div class="h-1 w-1 rounded-full bg-slate-300"></div>`;
-
 /**
  * This is NOT an OpenAI message part, but a message part for our own message system.
  * @class ReasoningMessagePart
@@ -62,6 +60,7 @@ class ReasoningMessagePart {
  * @property {string} tool_name
  * @property {string} args_string
  * @property {'pending' | 'running' | 'success' | 'error'} status
+ * @property {BaseTool | undefined} tool
  */
 class ToolCall {
     constructor(index, id, tool_name, args_string) {
@@ -70,7 +69,11 @@ class ToolCall {
         this.tool_name = tool_name;
         this.tool_title = tool_name;
         this.args_string = args_string;
+        this.args_object = {};
         this.status = 'pending';
+        this.result = undefined;
+
+        Object.defineProperty(this, 'tool', { value: undefined, writable: true, enumerable: false });
     }
 
     toOpenAIMessagePart() {
@@ -83,52 +86,83 @@ class ToolCall {
         };
     }
 
+    setTool(tool) {
+        this.tool = tool;
+    }
+
+    /**
+     * Render the tool call
+     * @returns {string} 工具调用的渲染结果
+     */
     render() {
+        /* 如果工具自定义了渲染函数，则使用工具的渲染函数 */
+        if (this.tool !== undefined) {
+            let rendered = this.tool.renderToolCall(this);
+            if (rendered !== undefined) {
+                return rendered;
+            }
+        }
+
         if (this.status === 'running') {
             return `
-            <!-- 状态：进行中 (呼吸灯效果) -->
-            <div class="flex items-center">
-                <div class="h-2 w-2 rounded-full bg-blue-500 animate-pulse ring-4 ring-blue-100/50"></div>
-                <span class="ml-2 font-semibold text-slate-800">${this.tool_title}</span>
+            <div class="flex mt-3 mb-3 text-sm items-center space-x-4 bg-white/80 backdrop-blur-md border border-slate-200 py-2 px-4 rounded-full shadow-sm w-fit">
+                <span class="ml-2 font-semibold text-slate-600">工具调用</span>
+                <div class="h-1 w-1 rounded-full bg-slate-300"></div>
+                <!-- 状态：进行中 (呼吸灯效果) -->
+                <div class="flex items-center">
+                    <div class="h-2 w-2 rounded-full bg-blue-500 animate-pulse ring-4 ring-blue-100/50"></div>
+                    <span class="ml-2 font-semibold text-slate-800">${this.tool_title}</span>
+                </div>
             </div>
             `
         } else if (this.status === 'success') {
             return `
-            <div class="flex items-center group cursor-help relative">
-                <div class="h-2 w-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.6)]"></div>
-                <span class="ml-2 font-medium text-slate-600">${this.tool_title}</span>
+            <div class="flex mt-3 mb-3 text-sm items-center space-x-4 bg-white/80 backdrop-blur-md border border-slate-200 py-2 px-4 rounded-full shadow-sm w-fit">
+                <span class="ml-2 font-semibold text-slate-600">工具调用</span>
+                <div class="h-1 w-1 rounded-full bg-slate-300"></div>
+                <div class="flex items-center group cursor-help relative">
+                    <div class="h-2 w-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.6)]"></div>
+                    <span class="ml-2 font-medium text-slate-600">${this.tool_title}</span>
+                </div>
             </div>
             `
         } else if (this.status === 'error') {
             return `
-            <div class="flex items-center cursor-pointer group relative animate-[shake_0.5s_ease-in-out]">
-                <!-- 错误光晕效果 -->
-                <div class="h-2.5 w-2.5 rounded-full bg-rose-500 shadow-[0_0_10px_rgba(244,63,94,0.6)] flex items-center justify-center">
-                    <!-- 小感叹号图标 -->
-                    <svg class="h-1.5 w-1.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="5">
-                        <path d="M12 8v4m0 4h.01" />
-                    </svg>
-                </div>
+            <div class="flex mt-3 mb-3 text-sm items-center space-x-4 bg-white/80 backdrop-blur-md border border-slate-200 py-2 px-4 rounded-full shadow-sm w-fit">
+                <span class="ml-2 font-semibold text-slate-600">工具调用</span>
+                <div class="h-1 w-1 rounded-full bg-slate-300"></div>
+                <div class="flex items-center cursor-pointer group relative animate-[shake_0.5s_ease-in-out]">
+                    <!-- 错误光晕效果 -->
+                    <div class="h-2.5 w-2.5 rounded-full bg-rose-500 shadow-[0_0_10px_rgba(244,63,94,0.6)] flex items-center justify-center">
+                        <!-- 小感叹号图标 -->
+                        <svg class="h-1.5 w-1.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="5">
+                            <path d="M12 8v4m0 4h.01" />
+                        </svg>
+                    </div>
 
-                <!-- 错误文字 -->
-                <span class="ml-2 text-[13px] font-semibold text-rose-600">${this.tool_title} Failed</span>
+                    <!-- 错误文字 -->
+                    <span class="ml-2 text-[13px] font-semibold text-rose-600">${this.tool_title} Failed</span>
 
-                <!-- 悬浮弹窗 (Error Tooltip) -->
-                <div class="absolute bottom-full mb-3 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-all pointer-events-none">
-                    <div class="bg-white border border-slate-200 shadow-xl rounded-xl p-3 w-48 text-xs text-slate-600">
-                        <p class="font-bold text-slate-800 mb-1">Execution Error</p>
-                        <p class="font-mono text-[10px] leading-relaxed text-rose-500 bg-rose-50 p-1.5 rounded">${this.result}</p>
-                        <!-- 小箭头 -->
-                        <div class="absolute -bottom-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-white border-b border-r border-slate-200 rotate-45"></div>
+                    <!-- 悬浮弹窗 (Error Tooltip) -->
+                    <div class="absolute bottom-full mb-3 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-all pointer-events-none">
+                        <div class="bg-white border border-slate-200 shadow-xl rounded-xl p-3 w-48 text-xs text-slate-600">
+                            <p class="font-bold text-slate-800 mb-1">Execution Error</p>
+                            <p class="font-mono text-[10px] leading-relaxed text-rose-500 bg-rose-50 p-1.5 rounded">${this.result}</p>
+                            <!-- 小箭头 -->
+                            <div class="absolute -bottom-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-white border-b border-r border-slate-200 rotate-45"></div>
+                        </div>
                     </div>
                 </div>
             </div>
             `;
         } else {
             return `
-            <div class="flex items-center opacity-40">
-                <div class="h-2 w-2 rounded-full bg-slate-400"></div>
-                <span class="ml-2 font-medium text-slate-500">${this.tool_title}</span>
+            <div class="flex mt-3 mb-3 text-sm items-center space-x-4 bg-white/80 backdrop-blur-md border border-slate-200 py-2 px-4 rounded-full shadow-sm w-fit">
+                <span class="ml-2 font-semibold text-slate-600">工具调用</span>
+                <div class="flex items-center opacity-40">
+                    <div class="h-2 w-2 rounded-full bg-slate-400"></div>
+                    <span class="ml-2 font-medium text-slate-500">${this.tool_title}</span>
+                </div>
             </div>
             `;
         }
@@ -192,15 +226,7 @@ class ToolCallMessagePart {
     }
 
     async render() {
-        this.rendered = this.toolcalls.map(toolcall => {
-            return `
-            <div class="flex mt-3 mb-3 text-sm items-center space-x-4 bg-white/80 backdrop-blur-md border border-slate-200 py-2 px-4 rounded-full shadow-sm w-fit">
-                <span class="ml-2 font-semibold text-slate-600">工具调用</span>
-                ${TOOL_CALL_SEPARATOR}
-                ${toolcall.render()}
-            </div>
-            `;
-        }).join('');
+        this.rendered = this.toolcalls.map(toolcall => toolcall.render()).join('');
     }
 
     static assign(tool_call_message_part_obj) {
@@ -795,5 +821,5 @@ export {
     SystemMessage, UserMessage, AssistantMessage,
     AssistantResponse,
     ChatContext,
-    ToolCallMessagePart, FileMessagePart
+    ToolCallMessagePart, FileMessagePart, ToolCall
 };

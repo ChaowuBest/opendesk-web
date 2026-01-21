@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="./src/assets/images/banner.png" alt="Fillip Desk" style="max-width: 100%; height: 70px; object-fit: cover;" />
+  <img src="./resources/renderer/images/banner.png" alt="Fillip Desk" style="max-width: 100%; height: 70px; object-fit: cover;" />
 </p>
 
 <p align="center">
