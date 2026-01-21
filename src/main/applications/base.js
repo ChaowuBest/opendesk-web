@@ -11,7 +11,8 @@ import PQueue from 'p-queue';
 
 class BaseWorker {
 
-    constructor(appDataDirectory) {
+    constructor(bundleName, appDataDirectory) {
+        this.bundleName = bundleName;
         /** @type {object} */
         this.config = {};
         /** @type {string} */
@@ -55,6 +56,15 @@ class BaseWorker {
         this.config = config;
     }
 
+    async emitEvent(eventName, ...args) {
+        parentPort?.postMessage({
+            type: 'subscribeEvent',
+            bundleName: this.bundleName,
+            eventName: eventName,
+            args: args,
+        });
+    }
+
     /**
      * 顺序执行任务
      * @param {() => Promise<void>} task
@@ -87,6 +97,8 @@ class BaseApplication {
         this.name = name;
         /** @type {BaseWorker | undefined} */
         this.globalWorker = undefined;
+        /** @type {Map<string, Set<Electron.SenderFrame>>} */
+        this.eventSubscribers = new Map();
     }
 
     toJSON() {
@@ -94,6 +106,50 @@ class BaseApplication {
             bundleName: this.bundleName,
             name: this.name,
         };
+    }
+
+    /**
+     * 添加事件订阅者
+     * @param {string} eventName
+     * @param {Electron.SenderFrame} senderFrame
+     */
+    addSubscriber(eventName, senderFrame) {
+        if (!this.eventSubscribers.has(eventName)) {
+            this.eventSubscribers.set(eventName, new Set());
+        }
+        this.eventSubscribers.get(eventName).add(senderFrame);
+    }
+
+    /**
+     * 移除事件订阅者
+     * @param {string} eventName
+     * @param {Electron.SenderFrame} senderFrame
+     */
+    removeSubscriber(eventName, senderFrame) {
+        if (this.eventSubscribers.has(eventName)) {
+            this.eventSubscribers.get(eventName).delete(senderFrame);
+        }
+    }
+
+    /**
+     * 发送事件到所有订阅者
+     * @param {string} eventName
+     * @param {any[]} args
+     */
+    sendEventToSubscribers(eventName, ...args) {
+        const subscribers = this.eventSubscribers.get(eventName);
+        if (!subscribers) return;
+
+        // 使用 [...subscribers] 避免迭代时删除出错
+        for (const subscriber of [...subscribers]) {
+            // Electron BrowserWindow/WebContents 都有 isDestroyed 方法
+            // 如果对象已经失效，则删除
+            if (typeof subscriber.isDestroyed === 'function' && subscriber.isDestroyed()) {
+                subscribers.delete(subscriber);
+                continue;
+            }
+            subscriber.send(`applicationRegistry:event:${eventName}`, ...args);
+        }
     }
 
     /**

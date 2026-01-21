@@ -246,7 +246,7 @@ class MailboxStorage {
         if (query.general) {
             const generalRegex = new RegExp(query.general, 'i');
             const matchingUids = new Set();
-            
+
             // 1. Find emails matching subject
             const subjectDocs = await this.db.find({
                 subject: { $regex: generalRegex }
@@ -254,7 +254,7 @@ class MailboxStorage {
             for (const doc of subjectDocs) {
                 matchingUids.add(doc.uid);
             }
-            
+
             // 2. Find emails matching from (sender)
             const fromDocs = await this.db.find({
                 $or: [
@@ -265,7 +265,7 @@ class MailboxStorage {
             for (const doc of fromDocs) {
                 matchingUids.add(doc.uid);
             }
-            
+
             // 3. Find emails matching body content
             const bodyRegex = new RegExp(query.general, 'i');
             const contentDocs = await this.contentdb.find({
@@ -277,7 +277,7 @@ class MailboxStorage {
             for (const contentDoc of contentDocs) {
                 matchingUids.add(contentDoc.uid);
             }
-            
+
             // Query headers for matching UIDs (OR relationship: subject OR from OR body)
             if (matchingUids.size > 0) {
                 dbQuery.uid = { $in: Array.from(matchingUids) };
@@ -334,12 +334,12 @@ class MailboxStorage {
 
         // Execute the query
         let docs = await this.db.find(dbQuery).sort({ date: -1 });
-        
+
         // If body search is requested (and not general search), filter by content
         if (query.body && !query.general) {
             const bodyRegex = new RegExp(query.body, 'i');
             const matchingUids = new Set();
-            
+
             // Search in content database
             const contentDocs = await this.contentdb.find({
                 $or: [
@@ -347,11 +347,11 @@ class MailboxStorage {
                     { textContent: { $regex: bodyRegex } }
                 ]
             });
-            
+
             for (const contentDoc of contentDocs) {
                 matchingUids.add(contentDoc.uid);
             }
-            
+
             // Filter headers by matching UIDs
             docs = docs.filter(doc => matchingUids.has(doc.uid));
         }
@@ -375,7 +375,7 @@ class MailboxStorage {
 class MailboxWorker extends BaseWorker {
 
     constructor(appDataDirectory) {
-        super(appDataDirectory);
+        super('mailbox', appDataDirectory);
         mailboxDataDirectory = appDataDirectory;
         this.storage = new MailboxStorage(path.join(appDataDirectory, 'mailbox_header_storage.db'));
         this.isSyncing = false;
@@ -417,11 +417,11 @@ class MailboxWorker extends BaseWorker {
         }
 
         await pop3.QUIT();
-        
+
         // 如果有新邮件，在所有邮件保存完成后发送更新通知
         if (newList.length > 0) {
             if (typeof parentPort !== 'undefined' && parentPort) {
-                parentPort.postMessage({ 
+                parentPort.postMessage({
                     type: 'emailListUpdated',
                     bundleName: 'mailbox'
                 });
@@ -429,6 +429,10 @@ class MailboxWorker extends BaseWorker {
                 logger.warn('parentPort 未定义，无法发送邮件列表更新消息');
             }
         }
+    }
+
+    notifyEmailListUpdated() {
+        this.emitEvent('emailListUpdated');
     }
 
     async sync() {
@@ -452,6 +456,7 @@ class MailboxWorker extends BaseWorker {
                 );
             }
             logger.info('mailbox sync completed');
+            this.notifyEmailListUpdated();
         } catch (error) {
             logger.error(`error syncing mailbox: ${error.message}`);
             NotificationManager.getInstance().error('邮箱', '收取新邮件', `收取新邮件失败: ${error.message}`);

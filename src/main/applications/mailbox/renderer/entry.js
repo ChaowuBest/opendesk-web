@@ -22,15 +22,11 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
     connectedCallback() {
         this.render();
         this.loadEmailList();
-        
+
         // 订阅邮件列表更新事件
-        if (window.applicationAPI && window.applicationAPI.subscribeEmailListUpdate) {
-            window.applicationAPI.subscribeEmailListUpdate('mailbox', () => {
-                this.loadEmailList();
-            }).catch(error => {
-                console.error('订阅邮件列表更新失败:', error);
-            });
-        }
+        window.applicationAPI.subscribe('emailListUpdated', () => {
+            this.loadEmailList();
+        });
     }
 
     async loadEmailList() {
@@ -578,7 +574,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
      */
     parseSearchQuery(queryString) {
         const query = {};
-        
+
         // 解析特殊格式的搜索
         // from:xxx, to:xxx, subject:xxx, body:xxx, date:YYYY-MM-DD
         const patterns = [
@@ -590,7 +586,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         ];
 
         let remainingQuery = queryString;
-        
+
         for (const pattern of patterns) {
             const match = queryString.match(pattern.regex);
             if (match) {
@@ -618,7 +614,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
      */
     async performSearch(queryString) {
         const query = this.parseSearchQuery(queryString);
-        
+
         // 处理日期范围
         if (query.date) {
             // 支持单个日期或日期范围

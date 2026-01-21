@@ -55,7 +55,7 @@ class RecallActivity {
 class RecallWorker extends BaseWorker {
 
     constructor(appDataDirectory) {
-        super(appDataDirectory);
+        super('recall', appDataDirectory);
 
         /** @type {RecallActivity | null} */
         this.currentActivity = null;

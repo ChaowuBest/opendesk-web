@@ -209,22 +209,25 @@ if (window.self !== window.top) {
             console.info('listener registered', result.requestId);
             ipcRenderer.on(`applicationRegistry:streamChunk:${result.requestId}`, listener);
         },
-        subscribeEmailListUpdate: async (bundleName, callback) => {
-            const result = await ipcRenderer.invoke('mailbox:subscribeEmailListUpdate', bundleName);
+        subscribe: async (eventName, callback) => {
+            const result = await ipcRenderer.invoke('applicationRegistry:subscribe', applicationBundleName, eventName);
             if (result.status !== 'ok') {
-                console.error('subscribing email list update failed', result.message);
+                console.error('subscribing event failed', eventName, result.message);
                 throw new Error(result.message);
             }
-            ipcRenderer.on('mailbox:emailListUpdated', callback);
+            ipcRenderer.on(`applicationRegistry:event:${eventName}`, (event, ...args) => {
+                callback(...args)
+            })
             return result.data;
         },
-        unsubscribeEmailListUpdate: async (bundleName) => {
-            const result = await ipcRenderer.invoke('mailbox:unsubscribeEmailListUpdate', bundleName);
+        unsubscribe: async (eventName) => {
+            const result = await ipcRenderer.invoke('applicationRegistry:unsubscribe', applicationBundleName, eventName);
             if (result.status !== 'ok') {
-                console.error('unsubscribing email list update failed', result.message);
+                console.error('unsubscribing event failed', eventName, result.message);
                 throw new Error(result.message);
             }
-            ipcRenderer.removeAllListeners('mailbox:emailListUpdated');
+            ipcRenderer.removeAllListeners(`applicationRegistry:event:${eventName}`);
+            return result.data;
         }
     })
 
