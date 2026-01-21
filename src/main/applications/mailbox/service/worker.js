@@ -389,12 +389,6 @@ class MailboxWorker extends BaseWorker {
         const allList = await pop3.UIDL();
         const uidSet = await this.storage.getUIDSet();
         const newList = allList.filter(([_, uid]) => !uidSet.has(uid)).reverse();
-        
-        // 打印同步信息
-        logger.info(`Sync info: server emails=${allList.length}, local emails=${uidSet.size}, new emails=${newList.length}`);
-        logger.info(`Server email UIDs: ${allList.map(([_, uid]) => uid).join(', ')}`);
-        logger.info(`Local email UIDs: ${Array.from(uidSet).join(', ')}`);
-        logger.info(`New email UIDs: ${newList.map(([_, uid]) => uid).join(', ')}`);
 
         var pendingHeaders = [];
 
