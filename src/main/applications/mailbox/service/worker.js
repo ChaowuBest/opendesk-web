@@ -222,11 +222,11 @@ class MailboxStorage {
     /**
      * Get the list of email headers from the database
      * @param {number} offset - The offset to start from
-     * @param {number} limit - The maximum number of emails to return
+     * @param {number} pageSize - The page size of emails to return
      * @returns {Promise<EmailHeader[]>}
      */
-    async getEmailHeaderList(offset = 0, limit = 10) {
-        const docs = await this.db.find({}).sort({ date: -1 }).skip(offset).limit(limit);
+    async getEmailHeaderList(offset = 0, pageSize = 20) {
+        const docs = await this.db.find({}).sort({ date: -1 }).skip(offset).limit(pageSize);
         return docs.map(doc => new EmailHeader(
             doc.uid, doc.subject,
             doc.from, doc.to, doc.cc, doc.bcc,
@@ -503,9 +503,9 @@ class MailboxWorker extends BaseWorker {
         await this.sync();
     }
 
-    async getEmailHeaderList(offset = 0, limit = 10) {
+    async getEmailHeaderList(offset = 0, pageSize = 20) {
         let startTime = Date.now();
-        const result = await this.storage.getEmailHeaderList(offset, limit);
+        const result = await this.storage.getEmailHeaderList(offset, pageSize);
         let cost = (Date.now() - startTime) / 1000;
         logger.info(`get email list cost: ${cost.toFixed(2)}s`);
         return result;

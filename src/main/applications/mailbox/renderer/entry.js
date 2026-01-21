@@ -19,6 +19,8 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         this.currentFilter = 'all'; // 当前选中的过滤器
         /** @type {number} */
         this.currentOffset = 0; // 当前加载的邮件偏移量
+        /** @type {number} */
+        this.emailPerPage = 20; // 每页加载的邮件数量 
         /** @type {boolean} */
         this.isLoading = false; // 是否正在加载邮件
         /** @type {boolean} */
@@ -81,7 +83,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         this.hasMoreEmails = true;
         this.loadingError = null;
         
-        const emails = await this.getEmailHeaderList(this.currentOffset, 10);
+        const emails = await this.getEmailHeaderList(this.currentOffset, this.emailPerPage);
         this.emailHeaderList.clear();
         for (const email of emails) {
             this.emailHeaderList.set(email.uid, email);
@@ -89,7 +91,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         this.currentOffset += emails.length;
         
         // 检查是否还有更多邮件
-        if (emails.length < 10) {
+        if (emails.length < this.emailPerPage) {
             this.hasMoreEmails = false;
         }
         
