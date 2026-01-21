@@ -2,7 +2,6 @@ import { app, dialog, shell } from 'electron';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
-import https from 'https';
 import http from 'http';
 import { spawn } from 'child_process';
 
@@ -78,11 +77,11 @@ export class UpdateClient {
   }
 
   /**
-   * 发送 HTTP/HTTPS 请求
+   * 发送 HTTP 请求
    */
   private async httpRequest(url: string): Promise<string> {
     return new Promise((resolve, reject) => {
-      const client = url.startsWith('https') ? https : http;
+      const client = http;
       client
         .get(url, (res) => {
           if (res.statusCode !== 200) {
@@ -165,7 +164,7 @@ export class UpdateClient {
    */
   private async downloadFile(url: string, destPath: string, onProgress?: (progress: number) => void): Promise<void> {
     return new Promise((resolve, reject) => {
-      const client = url.startsWith('https') ? https : http;
+      const client = http;
       const file = fs.createWriteStream(destPath);
 
       client

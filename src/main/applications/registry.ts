@@ -9,7 +9,7 @@ import { SearchApplication } from "./search/app.js";
 import { NewsApplication } from "./news/app.js";
 import { Worker } from "worker_threads";
 import { Setting, getAppDirectory } from "../utils/setting.js";
-import { LogStream } from "../utils/logger.js";
+import { logger, LogStream } from "../utils/logger.js";
 import { NotificationManager } from "../utils/notificationmgr.js";
 import { app } from 'electron';
 import path from 'path';
@@ -55,113 +55,101 @@ export class ApplicationRegistry {
  * 注册应用注册器IPC处理程序
  */
 export function registerApplicationRegistryHandlers(ipcMain: Electron.IpcMain) {
-    ipcMain.handle('applicationRegistry:getApplicationGUIConfig', async (event, bundleName) => {
-        const application = ApplicationRegistry.getApplication(bundleName);
-        if (application === undefined) {
-          return { status: 'error', message: `application ${bundleName} not found` }
-        }
-        return { status: 'ok', data: application.getGUIConfig() };
-      })
-      ipcMain.handle('applicationRegistry:getApplicationList', async (event) => {
-        return { status: 'ok', data: ApplicationRegistry.getApplicationList() };
-      })
-      ipcMain.handle('applicationRegistry:call', async (event, bundleName, methodName, ...args) => {
-        const application = ApplicationRegistry.getApplication(bundleName);
-        const requestId = crypto.randomUUID();
+  ipcMain.handle('applicationRegistry:getApplicationGUIConfig', async (event, bundleName) => {
+    const application = ApplicationRegistry.getApplication(bundleName);
+    if (application === undefined) {
+      return { status: 'error', message: `application ${bundleName} not found` }
+    }
+    return { status: 'ok', data: application.getGUIConfig() };
+  })
+  ipcMain.handle('applicationRegistry:getApplicationList', async (event) => {
+    return { status: 'ok', data: ApplicationRegistry.getApplicationList() };
+  })
+  ipcMain.handle('applicationRegistry:call', async (event, bundleName, methodName, ...args) => {
+    const application = ApplicationRegistry.getApplication(bundleName);
+    const requestId = crypto.randomUUID();
 
-        if (application === undefined) {
-          return { status: 'error', message: `application ${bundleName} not found` }
-        } else if (globalWorker === null) {
-          return { status: 'error', message: 'global worker not initialized yet' }
-        }
+    if (application === undefined) {
+      return { status: 'error', message: `application ${bundleName} not found` }
+    } else if (globalWorker === null) {
+      return { status: 'error', message: 'global worker not initialized yet' }
+    }
 
-        try {
-          let promise = new Promise((resolve, reject) => {
-            pendingRequests.set(requestId, { resolve, reject });
-          });
+    try {
+      let promise = new Promise((resolve, reject) => {
+        pendingRequests.set(requestId, { resolve, reject });
+      });
 
-          globalWorker.postMessage({
-            bundleName: bundleName,
-            requestId: requestId,
-            methodName: methodName,
-            args: args,
-          })
-
-          const data = await promise;
-          pendingRequests.delete(requestId);
-          return { status: 'ok', data: data };
-        } catch (error) {
-          return { status: 'error', message: error.message };
-        }
+      globalWorker.postMessage({
+        bundleName: bundleName,
+        requestId: requestId,
+        methodName: methodName,
+        args: args,
       })
 
-      ipcMain.handle('applicationRegistry:callMainWorld', async (event, bundleName, methodName, ...args) => {
-        const application = ApplicationRegistry.getApplication(bundleName);
-        if (application === undefined) {
-          return { status: 'error', message: `application ${bundleName} not found` }
-        }
-        const method = application[methodName];
-        if (method === undefined) {
-          return { status: 'error', message: `method ${methodName} not found in application ${bundleName}` }
-        }
-        return { status: 'ok', data: await method(...args) };
+      const data = await promise;
+      pendingRequests.delete(requestId);
+      return { status: 'ok', data: data };
+    } catch (error) {
+      return { status: 'error', message: error.message };
+    }
+  })
+  ipcMain.handle('applicationRegistry:callMainWorld', async (event, bundleName, methodName, ...args) => {
+    const application = ApplicationRegistry.getApplication(bundleName);
+    if (application === undefined) {
+      return { status: 'error', message: `application ${bundleName} not found` }
+    }
+    const method = application[methodName];
+    if (method === undefined) {
+      return { status: 'error', message: `method ${methodName} not found in application ${bundleName}` }
+    }
+    return { status: 'ok', data: await method(...args) };
+  })
+  ipcMain.handle('applicationRegistry:streamCall', async (event, bundleName, methodName, ...args) => {
+    const application = ApplicationRegistry.getApplication(bundleName);
+    const requestId = crypto.randomUUID();
+
+    if (application === undefined) {
+      return { status: 'error', message: `application ${bundleName} not found` }
+    } else if (globalWorker === null) {
+      return { status: 'error', message: 'global worker not initialized yet' }
+    }
+
+    try {
+      const callback = (chunk) => {
+        event.senderFrame?.send?.(`applicationRegistry:streamChunk:${requestId}`, chunk);
+      }
+      pendingStreamRequests.set(requestId, callback);
+
+      globalWorker.postMessage({
+        bundleName: bundleName,
+        requestId: requestId,
+        methodName: methodName,
+        args: args,
+        stream: true,
       })
 
-      ipcMain.handle('applicationRegistry:streamCall', async (event, bundleName, methodName, ...args) => {
-        const application = ApplicationRegistry.getApplication(bundleName);
-        const requestId = crypto.randomUUID();
-
-        if (application === undefined) {
-          return { status: 'error', message: `application ${bundleName} not found` }
-        } else if (globalWorker === null) {
-          return { status: 'error', message: 'global worker not initialized yet' }
-        }
-
-        try {
-          const callback = (chunk) => {
-            event.senderFrame?.send?.(`applicationRegistry:streamChunk:${requestId}`, chunk);
-          }
-          pendingStreamRequests.set(requestId, callback);
-
-          globalWorker.postMessage({
-            bundleName: bundleName,
-            requestId: requestId,
-            methodName: methodName,
-            args: args,
-            stream: true,
-          })
-
-          return { status: 'ok', requestId: requestId };
-        } catch (error) {
-          return { status: 'error', message: error.message };
-        }
-      })
-
-      // 邮箱应用的邮件列表更新订阅
-      ipcMain.handle('mailbox:subscribeEmailListUpdate', (event, bundleName) => {
-        const application = ApplicationRegistry.getApplication(bundleName);
-        if (application === undefined) {
-          return { status: 'error', message: `application ${bundleName} not found` };
-        }
-        if ('addSubscriber' in application && typeof (application as any).addSubscriber === 'function') {
-          // 使用 senderFrame 因为应用在 iframe 中运行
-          const subscriptionId = (application as any).addSubscriber(event.senderFrame);
-          return { status: 'ok', data: subscriptionId };
-        }
-        return { status: 'error', message: 'application does not support email list updates' };
-      })
-
-      ipcMain.handle('mailbox:unsubscribeEmailListUpdate', (event, bundleName) => {
-        const application = ApplicationRegistry.getApplication(bundleName);
-        if (application === undefined) {
-          return { status: 'error', message: `application ${bundleName} not found` };
-        }
-        if ('removeSubscriber' in application && typeof (application as any).removeSubscriber === 'function') {
-          (application as any).removeSubscriber(event.senderFrame);
-          return { status: 'ok' };
-        }
-        return { status: 'error', message: 'application does not support email list updates' };
-      })
+      return { status: 'ok', requestId: requestId };
+    } catch (error) {
+      return { status: 'error', message: error.message };
+    }
+  })
+  ipcMain.handle('applicationRegistry:subscribe', async (event, bundleName, eventName) => {
+    const application = ApplicationRegistry.getApplication(bundleName);
+    if (application === undefined) {
+      return { status: 'error', message: `application ${bundleName} not found` };
+    }
+    application.addSubscriber(eventName, event.senderFrame);
+    return { status: 'ok' };
+  })
+  ipcMain.handle('applicationRegistry:unsubscribe', async (event, bundleName, eventName) => {
+    const application = ApplicationRegistry.getApplication(bundleName);
+    if (application === undefined) {
+      return { status: 'error', message: `application ${bundleName} not found` };
+    }
+    application.removeSubscriber(eventName, event.senderFrame);
+    return { status: 'ok' };
+  })
 }
 
 export function initializeRegistry() {
@@ -222,6 +210,16 @@ export function initializeRegistry() {
           }
           case 'log': {
             LogStream.getStream().write(event.message + '\n');
+            break;
+          }
+          case 'subscribeEvent': {
+            const { bundleName, eventName, args } = event;
+            const application = ApplicationRegistry.getApplication(bundleName);
+            if (!application) {
+              logger.warn(`application ${bundleName} not found`);
+              return;
+            }
+            application.sendEventToSubscribers(eventName, args);
             break;
           }
           case 'emailListUpdated': {

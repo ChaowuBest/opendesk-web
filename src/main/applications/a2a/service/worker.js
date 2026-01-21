@@ -13,7 +13,7 @@ const GATEWAY_URL = "http://1.92.70.52:8080";
 
 class A2AWorker extends BaseWorker {
     constructor(appDataDirectory) {
-        super(appDataDirectory);
+        super('a2a', appDataDirectory);
         this.client = new A2ARegistryClient(GATEWAY_URL);
         /** @type {Map<string, ChatContext>} */
         this.conversations = new Map();
