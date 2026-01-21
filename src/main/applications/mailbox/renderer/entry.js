@@ -17,6 +17,14 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         this.selectedEmailContent = null;
         /** @type {string} */
         this.currentFilter = 'all'; // 当前选中的过滤器
+        /** @type {number} */
+        this.currentOffset = 0; // 当前加载的邮件偏移量
+        /** @type {boolean} */
+        this.isLoading = false; // 是否正在加载邮件
+        /** @type {boolean} */
+        this.hasMoreEmails = true; // 是否还有更多邮件可加载
+        /** @type {string | null} */
+        this.loadingError = null; // 加载错误信息
     }
 
     connectedCallback() {
@@ -27,15 +35,103 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         window.applicationAPI.subscribe('emailListUpdated', () => {
             this.loadEmailList();
         });
+
+        // 添加滚动事件监听
+        this.setupScrollListener();
+    }
+
+    /**
+     * 设置滚动事件监听
+     */
+    setupScrollListener() {
+        const emailListContainer = this.querySelector('#email-list');
+        if (!emailListContainer) return;
+
+        // 节流函数，优化滚动事件处理
+        const throttle = (func, delay) => {
+            let inThrottle;
+            return function() {
+                const args = arguments;
+                const context = this;
+                if (!inThrottle) {
+                    func.apply(context, args);
+                    inThrottle = true;
+                    setTimeout(() => inThrottle = false, delay);
+                }
+            }
+        };
+
+        // 滚动事件处理函数
+        const handleScroll = throttle(() => {
+            if (this.isLoading || !this.hasMoreEmails) return;
+
+            const { scrollTop, scrollHeight, clientHeight } = emailListContainer;
+            // 当滚动到距离底部 50px 时触发加载
+            if (scrollHeight - scrollTop - clientHeight < 50) {
+                this.loadMoreEmails();
+            }
+        }, 100);
+
+        emailListContainer.addEventListener('scroll', handleScroll);
     }
 
     async loadEmailList() {
-        const emails = await this.getEmailHeaderList();
+        // 重置状态变量
+        this.currentOffset = 0;
+        this.hasMoreEmails = true;
+        this.loadingError = null;
+        
+        const emails = await this.getEmailHeaderList(this.currentOffset, 10);
         this.emailHeaderList.clear();
         for (const email of emails) {
             this.emailHeaderList.set(email.uid, email);
         }
+        this.currentOffset += emails.length;
+        
+        // 检查是否还有更多邮件
+        if (emails.length < 10) {
+            this.hasMoreEmails = false;
+        }
+        
         this.reloadEmailList();
+    }
+
+    /**
+     * Load more emails incrementally
+     */
+    async loadMoreEmails() {
+        if (this.isLoading || !this.hasMoreEmails) return;
+        
+        this.isLoading = true;
+        this.loadingError = null;
+        
+        // 更新加载状态 UI
+        this.updateLoadingStatusUI();
+        
+        try {
+            const emails = await this.getEmailHeaderList(this.currentOffset, 10);
+            
+            // 检查是否还有更多邮件
+            if (emails.length < 10) {
+                this.hasMoreEmails = false;
+            }
+            
+            // 添加新邮件到现有列表
+            for (const email of emails) {
+                this.emailHeaderList.set(email.uid, email);
+            }
+            this.currentOffset += emails.length;
+            
+            // 重新渲染邮件列表
+            this.reloadEmailList();
+        } catch (error) {
+            console.error('Error loading more emails:', error);
+            this.loadingError = '加载邮件失败，请重试';
+        } finally {
+            this.isLoading = false;
+            // 更新加载状态 UI
+            this.updateLoadingStatusUI();
+        }
     }
 
     getAgentInstruct() {
@@ -107,12 +203,13 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
 
     /**
      * Get the list of email headers from the database
-     * @param {import('zod').ZodObject<EmailHeaderQuerySchema> | undefined} query
+     * @param {number} offset - The offset to start from
+     * @param {number} limit - The maximum number of emails to return
      * @returns {Promise<EmailHeader[]>}
      */
-    async getEmailHeaderList(query) {
-        console.info('getting email header list', query);
-        const emailHeaderList = await window.applicationAPI.call('getEmailHeaderList', query);
+    async getEmailHeaderList(offset = 0, limit = 10) {
+        console.info('getting email header list', { offset, limit });
+        const emailHeaderList = await window.applicationAPI.call('getEmailHeaderList', offset, limit);
         emailHeaderList.sort((a, b) => new Date(b.date) - new Date(a.date));
         return emailHeaderList;
     }
@@ -154,14 +251,19 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
     reloadEmailList(emailList = this.emailHeaderList) {
         const emailListContainer = this.querySelector('#email-list');
         emailListContainer.innerHTML = '';
+        
         if (emailList.size === 0) {
             emailListContainer.innerHTML = '<div class="text-gray-500 text-center py-4">暂无符合条件的邮件</div>';
             return;
         }
+        
         for (const email of emailList.values()) {
             emailListContainer.innerHTML += this.renderEmailItem(email);
         }
-
+        
+        // 添加加载状态 UI
+        this.updateLoadingStatusUI();
+        
         this.querySelectorAll('.email-item').forEach(item => {
             item.addEventListener('click', (event) => {
                 const uid = item.dataset.uid;
@@ -170,6 +272,50 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
                 this.openEmail(email);
             });
         });
+    }
+
+    /**
+     * 更新加载状态 UI
+     */
+    updateLoadingStatusUI() {
+        const emailListContainer = this.querySelector('#email-list');
+        if (!emailListContainer) return;
+        
+        // 移除现有的加载状态元素
+        const existingLoadingElement = emailListContainer.querySelector('.loading-status');
+        if (existingLoadingElement) {
+            existingLoadingElement.remove();
+        }
+        
+        // 添加新的加载状态元素
+        let loadingStatusHTML = '';
+        
+        if (this.isLoading) {
+            loadingStatusHTML = `
+                <div class="loading-status text-gray-500 text-center py-4">
+                    加载中...
+                </div>
+            `;
+        } else if (!this.hasMoreEmails && this.emailHeaderList.size > 0) {
+            loadingStatusHTML = `
+                <div class="loading-status text-gray-500 text-center py-4">
+                    已加载全部邮件
+                </div>
+            `;
+        } else if (this.loadingError) {
+            loadingStatusHTML = `
+                <div class="loading-status text-red-500 text-center py-4">
+                    ${this.loadingError}
+                    <button class="ml-2 text-blue-500 hover:underline" onclick="this.closest('mailbox-entry-widget').loadMoreEmails()">
+                        重试
+                    </button>
+                </div>
+            `;
+        }
+        
+        if (loadingStatusHTML) {
+            emailListContainer.insertAdjacentHTML('beforeend', loadingStatusHTML);
+        }
     }
 
     async getEmailContent(uid) {

@@ -221,10 +221,12 @@ class MailboxStorage {
 
     /**
      * Get the list of email headers from the database
+     * @param {number} offset - The offset to start from
+     * @param {number} limit - The maximum number of emails to return
      * @returns {Promise<EmailHeader[]>}
      */
-    async getEmailHeaderList() {
-        const docs = await this.db.find({}).sort({ date: -1 }).limit(100);
+    async getEmailHeaderList(offset = 0, limit = 10) {
+        const docs = await this.db.find({}).sort({ date: -1 }).skip(offset).limit(limit);
         return docs.map(doc => new EmailHeader(
             doc.uid, doc.subject,
             doc.from, doc.to, doc.cc, doc.bcc,
@@ -387,6 +389,12 @@ class MailboxWorker extends BaseWorker {
         const allList = await pop3.UIDL();
         const uidSet = await this.storage.getUIDSet();
         const newList = allList.filter(([_, uid]) => !uidSet.has(uid)).reverse();
+        
+        // 打印同步信息
+        logger.info(`Sync info: server emails=${allList.length}, local emails=${uidSet.size}, new emails=${newList.length}`);
+        logger.info(`Server email UIDs: ${allList.map(([_, uid]) => uid).join(', ')}`);
+        logger.info(`Local email UIDs: ${Array.from(uidSet).join(', ')}`);
+        logger.info(`New email UIDs: ${newList.map(([_, uid]) => uid).join(', ')}`);
 
         var pendingHeaders = [];
 
@@ -501,9 +509,9 @@ class MailboxWorker extends BaseWorker {
         await this.sync();
     }
 
-    async getEmailHeaderList() {
+    async getEmailHeaderList(offset = 0, limit = 10) {
         let startTime = Date.now();
-        const result = await this.storage.getEmailHeaderList();
+        const result = await this.storage.getEmailHeaderList(offset, limit);
         let cost = (Date.now() - startTime) / 1000;
         logger.info(`get email list cost: ${cost.toFixed(2)}s`);
         return result;
