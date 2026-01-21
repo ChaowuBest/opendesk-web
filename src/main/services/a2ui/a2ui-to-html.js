@@ -727,8 +727,23 @@ class A2UIToHTMLConverter {
     // 过滤掉会破坏紧凑布局的样式属性
     if (filterTypography) {
       const blockedProps = [
-        'font-size', 'line-height', 'font-weight', 
-        'min-height', 'min-width', 'padding', 'margin'
+        // 字体相关
+        'font-size', 'font-weight', 'font-family', 'font-style',
+        'line-height', 'letter-spacing', 'word-spacing', 'text-indent',
+        // 尺寸相关
+        'width', 'height',
+        'min-width', 'min-height', 'max-width', 'max-height',
+        // 间距相关
+        'padding', 'margin',
+        'gap', 'row-gap', 'column-gap',
+        // 定位相关（可能影响布局）
+        'top', 'right', 'bottom', 'left',
+        'inset',
+        // flex/grid 子项尺寸
+        'flex-basis', 'flex-grow', 'flex-shrink',
+        // 其他可能影响布局的属性
+        'transform', 'scale', 'zoom',
+        'position', // 防止 absolute/fixed 定位破坏流式布局
       ];
       const filteredStyles = styleStr
         .split(';')
