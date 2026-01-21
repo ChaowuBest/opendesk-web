@@ -7,7 +7,7 @@ import { is } from '@electron-toolkit/utils';
 import { z } from 'zod';
 import { NotificationManager } from './utils/notificationmgr.js';
 import { LogStream, logger } from './utils/logger.js'
-import { registerApplicationRegistryHandlers, initializeRegistry } from './applications/registry.js';
+import { registerApplicationRegistryHandlers, initializeRegistry, notifyWorkerSettingUpdate } from './applications/registry.js';
 import { UpdateClient } from '../updater/client.js';
 
 import Convert from 'ansi-to-html';
@@ -215,6 +215,8 @@ const registerSettingAPIHandlers = () => {
   ipcMain.handle('setting:saveSettingObject', (event, settingObject) => {
     try {
       Setting.getInstance().setData(settingObject);
+      // 通知 Worker 线程更新设置，使新的模型配置立即生效
+      notifyWorkerSettingUpdate(Setting.getInstance().getData());
       return { status: 'ok' };
     } catch (error) {
       return { status: 'error', message: error.message };

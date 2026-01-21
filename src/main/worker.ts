@@ -1,7 +1,7 @@
 import { logger } from "./utils/logger.js";
 import { parentPort, workerData } from 'worker_threads';
 import { BaseWorker } from "./applications/base.js";
-import { getAppDirectory } from "./utils/setting.js";
+import { getAppDirectory, Setting } from "./utils/setting.js";
 import path from 'path';
 
 import MailboxWorker from './applications/mailbox/service/worker.js'
@@ -32,6 +32,16 @@ for (const [name, appWorker] of appWorkers.entries()) {
 
 parentPort?.on('message', async (message) => {
     const { bundleName, requestId, methodName, args, stream } = message;
+
+    // 处理全局设置更新消息
+    if (methodName === '__updateGlobalSetting') {
+        const newSettingData = args[0];
+        logger.info('received global setting update');
+        Setting.updateInstanceData(newSettingData);
+        parentPort?.postMessage({ type: 'response', id: requestId, status: 'ok', data: null });
+        return;
+    }
+
     logger.info(`received message from ${bundleName}`);
     const appWorker = appWorkers.get(bundleName);
 

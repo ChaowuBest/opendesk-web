@@ -137,6 +137,17 @@ class Setting {
     }
 
     /**
+     * Update the setting data directly (used by worker thread to sync settings from main thread)
+     * @param {object} data - The new setting data
+     */
+    static updateInstanceData(data) {
+        if (Setting.instance === null) {
+            Setting.instance = new Setting();
+        }
+        Setting.instance.data = getSettingSchema().parse(data);
+    }
+
+    /**
      * Register the application settings so that they can be managed and
      * edited from the system setting editor.
      * @param {BaseApplication} application
