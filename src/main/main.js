@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Tray, globalShortcut, nativeImage, ipcMain, shell, Menu } from 'electron'
+import { app, BrowserWindow, Tray, globalShortcut, nativeImage, ipcMain, shell, Menu, dialog } from 'electron'
 import { Setting, getAppDirectory } from './utils/setting.js'
 import { GlobalState } from './states/global.js'
 import { openFloatWindow } from './windows/floatwindow.js'
@@ -198,6 +198,45 @@ const registerTaskManagerAPIHandlers = () => {
   });
 }
 
+const registerFSAPIHandlers = () => {
+  ipcMain.handle('fs:searchFilesByKeyword', async (event, keyword) => {
+    try {
+      const result = await FSService.searchFilesByKeyword(keyword);
+      return { status: 'ok', data: result };
+    } catch (error) {
+      return { status: 'error', message: error.message };
+    }
+  }),
+  ipcMain.handle('fs:searchFilesByNameSimilarity', async (event, query) => {
+    try {
+      const result = await FSService.searchFilesByNameSimilarity(query);
+      return { status: 'ok', data: result };
+    } catch (error) {
+      return { status: 'error', message: error.message };
+    }
+  }),
+  ipcMain.handle('fs:openFile', async (event, filePath) => {
+    if (!filePath) {
+      return { status: 'error', message: `file path is required, ${filePath} given` }
+    }
+    shell.openPath(filePath);
+    return { status: 'ok' };
+  })
+  ipcMain.handle('fs:dialog-open', async () => {
+    const { canceled, filePaths } = await dialog.showOpenDialog({
+        title: '选择附件',
+        properties: ['openFile', 'multiSelections'] // 允许选文件、允许多选
+    });
+
+    if (canceled) {
+        return []; // 用户取消，返回空数组
+    } else {
+        // 将 Windows 路径的反斜杠统一替换为正斜杠，保持前后端一致
+        return filePaths.map(p => p.replace(/\\/g, '/'));
+    }
+  })
+}
+
 const registerSettingAPIHandlers = () => {
   ipcMain.handle('setting:loadSettingSchema', () => {
     try {
@@ -324,6 +363,7 @@ app.whenReady().then(() => {
   createWindow();
 
   registerTaskManagerAPIHandlers();
+  registerFSAPIHandlers();
   registerSettingAPIHandlers();
   registerApplicationRegistryHandlers(ipcMain);
   registerNotificationAPIHandlers();

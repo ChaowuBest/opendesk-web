@@ -40,7 +40,8 @@ export default defineConfig({
     plugins: [tailwindcss()],
     resolve: {
       alias: {
-        '@': path.resolve(__dirname, 'src')
+        '@': path.resolve(__dirname, 'src'),
+        '@assets': path.resolve(__dirname, 'src/assets')
       }
     },
     build: {
@@ -52,6 +53,12 @@ export default defineConfig({
           application: path.join(__dirname, 'src', 'renderer', 'application.html'),
           floatpage: path.join(__dirname, 'src', 'renderer', 'floatpage.html')
         }
+      }
+    },
+    server: {
+      fs: {
+        // 允许访问 src/assets 目录
+        allow: [path.join(__dirname, 'src')]
       }
     }
   }

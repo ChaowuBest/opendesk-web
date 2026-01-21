@@ -47,6 +47,7 @@
     "@electron-toolkit/utils": "^4.0.0",
     "@tailwindcss/postcss": "^4.1.18",
     "@tailwindcss/vite": "^4.1.18",
+    "@yaireo/tagify": "^4.31.3",
     "alpinejs": "^3.15.4",
     "ansi-to-html": "^0.7.2",
     "autoprefixer": "^10.4.23",
@@ -71,7 +72,9 @@
     "p-queue": "^9.0.1",
     "postcss": "^8.5.6",
     "sharp": "^0.34.5",
+    "sweetalert2": "^11.15.10",
     "tailwindcss": "^4.1.18",
+    "tinymce": "^7.0.0",
     "vectra": "^0.11.1",
     "winston": "^3.19.0",
     "zod": "^4.2.1"

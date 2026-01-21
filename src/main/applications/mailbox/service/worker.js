@@ -197,6 +197,14 @@ class MailboxStorage {
         )
     }
 
+    async deleteEmail(uid) {
+        logger.info(`deleting email: ${uid}`);
+        await this.db.update(
+            { uid: uid },
+            { $set: { deleted: true } }
+        )
+    }
+
     async getEmailContent(uid) {
         const doc = await this.contentdb.findOne({ uid: uid });
         if (!doc) {
@@ -279,8 +287,9 @@ class MailboxStorage {
      * @param {number} pageSize - The page size of emails to return
      * @returns {Promise<EmailHeader[]>}
      */
+
     async getEmailHeaderList(offset = 0, pageSize = 20) {
-        const docs = await this.db.find({}).sort({ date: -1 }).skip(offset).limit(pageSize);
+        const docs = await this.db.find({deleted: { $ne: true }}).sort({ date: -1 }).skip(offset).limit(pageSize);
         return docs.map(doc => new EmailHeader(
             doc.uid, doc.subject,
             doc.from, doc.to, doc.cc, doc.bcc,
@@ -569,8 +578,13 @@ class MailboxWorker extends BaseWorker {
         await this.storage.markEmailAsRead(uid);
     }
 
+
     async markEmailAsUnread(uid) {
         await this.storage.markEmailAsUnread(uid);
+    }
+
+    async deleteEmail(uid) {
+        await this.storage.deleteEmail(uid);
     }
 
     /**
