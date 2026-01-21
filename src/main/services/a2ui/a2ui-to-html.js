@@ -1,20 +1,667 @@
 /**
  * A2UI 到 HTML 转换器
  * 将 Google A2UI 标准格式的文本/JSON 转换为 HTML
+ * 使用 @a2ui/lit 官方库进行主题和样式处理
  */
+
+import { v0_8 } from '@a2ui/lit';
+
+// ============================================================================
+// 紧凑主题配置 - 针对桌面端对话框优化
+// 格式遵循 @a2ui/lit v0_8.Types.Theme 规范
+// ============================================================================
+
+/** 基础元素样式 */
+const a = {
+  'typography-f-sf': true,
+  'typography-fs-n': true,
+  'typography-w-500': true,
+  'layout-as-n': true,
+  'layout-dis-iflx': true,
+  'layout-al-c': true,
+  'typography-td-none': true,
+  'color-c-p40': true,
+};
+
+const body = {
+  'typography-f-s': true,
+  'typography-fs-n': true,
+  'typography-w-400': true,
+  'layout-mt-0': true,
+  'layout-mb-2': true,
+  'typography-sz-bm': true,
+  'color-c-n10': true,
+};
+
+const button = {
+  'typography-f-sf': true,
+  'typography-fs-n': true,
+  'typography-w-500': true,
+  'layout-pt-2': true,
+  'layout-pb-2': true,
+  'layout-pl-3': true,
+  'layout-pr-3': true,
+  'layout-mb-1': true,
+  'border-br-12': true,
+  'border-bw-0': true,
+  'border-c-n70': true,
+  'border-bs-s': true,
+  'color-bgc-s30': true,
+  'behavior-ho-80': true,
+};
+
+const heading = {
+  'typography-f-sf': true,
+  'typography-fs-n': true,
+  'typography-w-500': true,
+  'layout-mt-0': true,
+  'layout-mb-2': true,
+};
+
+const input = {
+  'typography-f-sf': true,
+  'typography-fs-n': true,
+  'typography-w-400': true,
+  'layout-pl-3': true,
+  'layout-pr-3': true,
+  'layout-pt-2': true,
+  'layout-pb-2': true,
+  'border-br-4': true,
+  'border-bw-1': true,
+  'color-bc-s70': true,
+  'border-bs-s': true,
+  'layout-as-n': true,
+  'color-c-n10': true,
+};
+
+const p = {
+  'typography-f-s': true,
+  'typography-fs-n': true,
+  'typography-w-400': true,
+  'layout-m-0': true,
+  'typography-sz-bm': true,
+  'layout-as-n': true,
+  'color-c-n10': true,
+};
+
+const orderedList = {
+  'typography-f-s': true,
+  'typography-fs-n': true,
+  'typography-w-400': true,
+  'layout-m-0': true,
+  'typography-sz-bm': true,
+  'layout-as-n': true,
+  'color-c-n10': true,
+};
+
+const unorderedList = { ...orderedList };
+const listItem = { ...orderedList };
+
+const pre = {
+  'typography-f-c': true,
+  'typography-fs-n': true,
+  'typography-w-400': true,
+  'typography-sz-bm': true,
+  'typography-ws-p': true,
+  'layout-as-n': true,
+};
+
+const textarea = {
+  ...input,
+  'layout-r-none': true,
+  'layout-fs-c': true,
+};
+
+// 使用 @a2ui/lit 合并样式
+const aLight = v0_8.Styles.merge(a, {});
+const inputLight = v0_8.Styles.merge(input, {});
+const textareaLight = v0_8.Styles.merge(textarea, {});
+const buttonLight = v0_8.Styles.merge(button, {});
+const bodyLight = v0_8.Styles.merge(body, {});
+const pLight = v0_8.Styles.merge(p, {});
+const preLight = v0_8.Styles.merge(pre, {});
+const orderedListLight = v0_8.Styles.merge(orderedList, {});
+const unorderedListLight = v0_8.Styles.merge(unorderedList, {});
+const listItemLight = v0_8.Styles.merge(listItem, {});
+
+/**
+ * 紧凑主题配置
+ * @type {v0_8.Types.Theme}
+ */
+const theme = {
+  additionalStyles: {
+    // 根容器 - 超紧凑布局 + 统一背景
+    Root: {
+      'font-family': '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+      'font-size': '11px',
+      'line-height': '1.35',
+      'color': '#1e293b',
+      '-webkit-font-smoothing': 'antialiased',
+      'word-wrap': 'break-word',
+      'overflow-wrap': 'break-word',
+      'word-break': 'break-word',
+      'background': 'linear-gradient(135deg, #f8fafc 0%, #f1f5f9 50%, #e2e8f0 100%)',
+      'border-radius': '8px',
+      'padding': '10px 12px',
+    },
+    Button: {
+      '--n-35': 'var(--n-100)',
+      '--n-10': 'var(--n-0)',
+      'background': 'linear-gradient(135deg, #818cf8 0%, #a78bfa 100%)',
+      'box-shadow': '0 1px 3px rgba(102, 126, 234, 0.2)',
+      'padding': '3px 10px',
+      'border-radius': '5px',
+      'font-size': '10px',
+      'font-weight': '500',
+      'cursor': 'pointer',
+      'transition': 'all 0.1s ease',
+      'color': '#ffffff',
+      'border': 'none',
+      'white-space': 'nowrap',
+    },
+    Text: {
+      h1: {
+        'color': 'transparent',
+        'background': 'linear-gradient(135deg, #818cf8 0%, #a78bfa 100%)',
+        '-webkit-background-clip': 'text',
+        'background-clip': 'text',
+        '-webkit-text-fill-color': 'transparent',
+        'font-size': '13px',
+        'font-weight': '600',
+        'margin-bottom': '2px',
+        'line-height': '1.25',
+      },
+      h2: {
+        'color': 'transparent',
+        'background': 'linear-gradient(135deg, #818cf8 0%, #a78bfa 100%)',
+        '-webkit-background-clip': 'text',
+        'background-clip': 'text',
+        '-webkit-text-fill-color': 'transparent',
+        'font-size': '12px',
+        'font-weight': '600',
+        'margin-bottom': '2px',
+        'line-height': '1.25',
+      },
+      h3: {
+        'color': 'transparent',
+        'background': 'linear-gradient(135deg, #818cf8 0%, #a78bfa 100%)',
+        '-webkit-background-clip': 'text',
+        'background-clip': 'text',
+        '-webkit-text-fill-color': 'transparent',
+        'font-size': '11px',
+        'font-weight': '500',
+        'margin-bottom': '1px',
+        'line-height': '1.25',
+      },
+      h4: {
+        'color': '#1e293b',
+        'font-size': '11px',
+        'font-weight': '500',
+        'margin-bottom': '1px',
+        'line-height': '1.25',
+      },
+      h5: {
+        'color': '#1e293b',
+        'font-size': '10px',
+        'font-weight': '500',
+        'margin-bottom': '1px',
+        'line-height': '1.25',
+      },
+      body: {
+        'color': '#475569',
+        'font-size': '11px',
+        'line-height': '1.4',
+        'word-wrap': 'break-word',
+        'word-break': 'break-word',
+      },
+      caption: {
+        'color': '#64748b',
+        'font-size': '10px',
+        'line-height': '1.3',
+      },
+    },
+    Card: {
+      'background': 'linear-gradient(135deg, rgba(255,255,255,0.95) 0%, rgba(248,250,252,0.9) 100%)',
+      'border': '1px solid rgba(0,0,0,0.05)',
+      'border-radius': '8px',
+      'padding': '8px 10px',
+      'box-shadow': '0 1px 4px rgba(0,0,0,0.03)',
+    },
+    // 分隔符样式 - 紧凑间距
+    Divider: {
+      horizontal: {
+        'height': '1px',
+        'width': '100%',
+        'background': 'linear-gradient(90deg, transparent 0%, rgba(148,163,184,0.25) 15%, rgba(148,163,184,0.25) 85%, transparent 100%)',
+        'border': 'none',
+        'margin': '6px 0',
+      },
+      vertical: {
+        'width': '1px',
+        'align-self': 'stretch',
+        'background': 'linear-gradient(180deg, transparent 0%, rgba(148,163,184,0.25) 15%, rgba(148,163,184,0.25) 85%, transparent 100%)',
+        'border': 'none',
+        'margin': '0 6px',
+        'flex-shrink': '0',
+      },
+    },
+    TextField: {
+      '--p-0': 'var(--n-0)',
+      'background': '#ffffff',
+      'border': '1px solid rgba(0,0,0,0.08)',
+      'border-radius': '4px',
+      'padding': '4px 8px',
+      'font-size': '11px',
+      'transition': 'border-color 0.12s ease, box-shadow 0.12s ease',
+    },
+    // 列表 - 紧凑间距
+    List: {
+      'background': 'transparent',
+    },
+    // 模态框 - 适应紧凑布局
+    Modal: {
+      backdrop: {
+        'background': 'rgba(15, 23, 42, 0.35)',
+        'backdrop-filter': 'blur(3px)',
+      },
+      element: {
+        'background': '#ffffff',
+        'border-radius': '10px',
+        'box-shadow': '0 12px 28px rgba(0,0,0,0.12), 0 4px 10px rgba(0,0,0,0.08)',
+        'padding': '12px',
+      },
+    },
+    // 图片样式 - 紧凑尺寸
+    Image: {
+      'border-radius': '4px',
+      'object-fit': 'cover',
+      'max-width': '100%',
+      'max-height': '120px',
+    },
+    // 行布局 - 横向扩展，紧凑间距
+    Row: {
+      'display': 'flex',
+      'flex-direction': 'row',
+      'gap': '6px',
+      'align-items': 'center',
+      'flex-wrap': 'wrap',
+      'width': '100%',
+    },
+    // 列布局 - 紧凑纵向间距
+    Column: {
+      'display': 'flex',
+      'flex-direction': 'column',
+      'gap': '4px',
+      'width': '100%',
+    },
+    // 复选框
+    CheckBox: {
+      'cursor': 'pointer',
+      'font-size': '11px',
+    },
+    // 图标 - 小尺寸
+    Icon: {
+      'color': '#64748b',
+      'display': 'inline-flex',
+      'align-items': 'center',
+      'justify-content': 'center',
+      'font-size': '12px',
+    },
+  },
+  components: {
+    AudioPlayer: {},
+    // 按钮 - 紧凑内边距
+    Button: {
+      'layout-pt-1': true,
+      'layout-pb-1': true,
+      'layout-pl-2': true,
+      'layout-pr-2': true,
+      'border-br-6': true,
+      'border-bw-0': true,
+      'border-bs-s': true,
+      'color-bgc-p30': true,
+      'behavior-ho-70': true,
+      'typography-w-500': true,
+      'typography-f-sf': true,
+      'typography-sz-sm': true,
+      'layout-dsp-iflex': true,
+      'layout-al-c': true,
+    },
+    // 卡片 - 紧凑内边距
+    Card: {
+      'border-br-6': true,
+      'layout-p-2': true,
+      'color-bgc-n100': true,
+      'border-bw-1': true,
+      'border-bs-s': true,
+    },
+    // 复选框 - 紧凑间距
+    CheckBox: {
+      element: {
+        'layout-m-0': true,
+        'layout-mr-1': true,
+        'border-br-2': true,
+        'border-bw-1': true,
+        'border-bs-s': true,
+        'color-bgc-n100': true,
+        'color-bc-n70': true,
+      },
+      label: {
+        'color-c-n30': true,
+        'typography-f-sf': true,
+        'typography-w-400': true,
+        'layout-flx-1': true,
+        'typography-sz-sm': true,
+      },
+      container: {
+        'layout-dsp-iflex': true,
+        'layout-al-c': true,
+        'layout-g-1': true,
+      },
+    },
+    // 列布局 - 紧凑纵向间距
+    Column: {
+      'layout-g-1': true,
+      'layout-dsp-flexver': true,
+      'layout-w-100': true,
+    },
+    // 日期时间输入 - 紧凑尺寸
+    DateTimeInput: {
+      container: {
+        'typography-sz-sm': true,
+        'layout-w-100': true,
+        'layout-g-1': true,
+        'layout-dsp-flexhor': true,
+        'layout-al-c': true,
+        'typography-ws-nw': true,
+      },
+      label: {
+        'color-c-n50': true,
+        'typography-sz-xs': true,
+        'typography-w-500': true,
+      },
+      element: {
+        'layout-pt-1': true,
+        'layout-pb-1': true,
+        'layout-pl-2': true,
+        'layout-pr-2': true,
+        'border-br-3': true,
+        'border-bw-1': true,
+        'border-bs-s': true,
+        'color-bgc-n100': true,
+        'color-bc-n70': true,
+        'color-c-n10': true,
+        'typography-sz-sm': true,
+      },
+    },
+    // 分隔符 - 紧凑间距
+    Divider: {
+      horizontal: {
+        'layout-w-100': true,
+        'layout-mt-1': true,
+        'layout-mb-1': true,
+      },
+      vertical: {
+        'layout-as-st': true,
+        'layout-ml-1': true,
+        'layout-mr-1': true,
+      },
+    },
+    // 图片 - 紧凑尺寸
+    Image: {
+      all: {
+        'border-br-3': true,
+        'layout-el-cv': true,
+      },
+      avatar: {
+        'is-avatar': true,
+        'border-br-full': true,
+      },
+      header: {
+        'layout-w-100': true,
+        'border-br-4': true,
+      },
+      icon: {
+        'border-br-0': true,
+      },
+      largeFeature: {
+        'layout-w-100': true,
+      },
+      mediumFeature: {},
+      smallFeature: {},
+    },
+    // 图标 - 紧凑尺寸
+    Icon: {
+      'layout-dsp-iflex': true,
+      'layout-al-c': true,
+      'layout-jc-c': true,
+      'color-c-n50': true,
+      'typography-sz-sm': true,
+    },
+    // 列表 - 紧凑间距
+    List: {
+      'layout-g-1': true,
+      'layout-dsp-flexver': true,
+    },
+    // 模态框 - 紧凑内边距
+    Modal: {
+      backdrop: {
+        'color-bbgc-n10_35': true,
+      },
+      element: {
+        'border-br-8': true,
+        'color-bgc-n100': true,
+        'layout-p-3': true,
+      },
+    },
+    // 多选 - 紧凑间距
+    MultipleChoice: {
+      container: {
+        'layout-g-1': true,
+      },
+      label: {
+        'typography-sz-xs': true,
+        'color-c-n50': true,
+      },
+      element: {},
+    },
+    // 行布局 - 紧凑间距，横向扩展
+    Row: {
+      'layout-g-1': true,
+      'layout-dsp-flexhor': true,
+      'layout-al-c': true,
+      'layout-w-100': true,
+      'layout-fw-w': true,
+    },
+    // 滑块 - 紧凑间距
+    Slider: {
+      container: {
+        'layout-g-1': true,
+      },
+      label: {
+        'typography-sz-xs': true,
+        'color-c-n50': true,
+      },
+      element: {},
+    },
+    // 标签页 - 紧凑内边距
+    Tabs: {
+      container: {
+        'layout-g-1': true,
+      },
+      controls: {
+        all: {
+          'layout-pt-1': true,
+          'layout-pb-1': true,
+          'layout-pl-2': true,
+          'layout-pr-2': true,
+          'color-c-n50': true,
+          'typography-w-500': true,
+          'typography-sz-sm': true,
+        },
+        selected: {
+          'color-c-p40': true,
+          'border-bb-2': true,
+          'color-bc-p40': true,
+        },
+      },
+      element: {},
+    },
+    // 文本 - 紧凑字号和间距
+    Text: {
+      all: {
+        'layout-w-100': true,
+        'typography-f-sf': true,
+      },
+      h1: {
+        'typography-f-sf': true,
+        'typography-v-r': true,
+        'typography-w-600': true,
+        'layout-m-0': true,
+        'layout-p-0': true,
+        'typography-sz-tl': true,
+        'layout-mb-1': true,
+      },
+      h2: {
+        'typography-f-sf': true,
+        'typography-v-r': true,
+        'typography-w-600': true,
+        'layout-m-0': true,
+        'layout-p-0': true,
+        'typography-sz-ll': true,
+        'layout-mb-1': true,
+      },
+      h3: {
+        'typography-f-sf': true,
+        'typography-v-r': true,
+        'typography-w-500': true,
+        'layout-m-0': true,
+        'layout-p-0': true,
+        'typography-sz-bm': true,
+        'layout-mb-1': true,
+      },
+      h4: {
+        'typography-f-sf': true,
+        'typography-v-r': true,
+        'typography-w-500': true,
+        'layout-m-0': true,
+        'layout-p-0': true,
+        'typography-sz-sm': true,
+        'color-c-n10': true,
+      },
+      h5: {
+        'typography-f-sf': true,
+        'typography-v-r': true,
+        'typography-w-500': true,
+        'layout-m-0': true,
+        'layout-p-0': true,
+        'typography-sz-sm': true,
+        'color-c-n10': true,
+      },
+      body: {
+        'color-c-n30': true,
+        'typography-sz-sm': true,
+        'typography-lh-normal': true,
+      },
+      caption: {
+        'color-c-n50': true,
+        'typography-sz-xs': true,
+      },
+    },
+    // 输入框 - 紧凑尺寸
+    TextField: {
+      container: {
+        'typography-sz-sm': true,
+        'layout-w-100': true,
+        'layout-g-0': true,
+        'layout-dsp-flexver': true,
+      },
+      label: {
+        'layout-flx-0': true,
+        'color-c-n50': true,
+        'typography-sz-xs': true,
+        'typography-w-500': true,
+        'layout-mb-0': true,
+      },
+      element: {
+        'typography-sz-sm': true,
+        'layout-pt-1': true,
+        'layout-pb-1': true,
+        'layout-pl-2': true,
+        'layout-pr-2': true,
+        'border-br-3': true,
+        'border-bw-1': true,
+        'border-bs-s': true,
+        'color-bgc-n100': true,
+        'color-bc-n70': true,
+        'color-c-n10': true,
+      },
+    },
+    // 视频 - 紧凑尺寸
+    Video: {
+      'border-br-4': true,
+      'layout-el-cv': true,
+      'layout-w-100': true,
+    },
+  },
+  elements: {
+    a: aLight,
+    body: bodyLight,
+    button: buttonLight,
+    h1: heading,
+    h2: heading,
+    h3: heading,
+    h4: heading,
+    h5: heading,
+    input: inputLight,
+    p: pLight,
+    pre: preLight,
+    textarea: textareaLight,
+  },
+  markdown: {
+    p: [...Object.keys(pLight)],
+    h1: [...Object.keys(heading)],
+    h2: [...Object.keys(heading)],
+    h3: [...Object.keys(heading)],
+    h4: [...Object.keys(heading)],
+    h5: [...Object.keys(heading)],
+    ul: [...Object.keys(unorderedListLight)],
+    ol: [...Object.keys(orderedListLight)],
+    li: [...Object.keys(listItemLight)],
+    a: [...Object.keys(aLight)],
+    strong: [],
+    em: [],
+  },
+};
+
+// ============================================================================
+// A2UI 转换器类
+// ============================================================================
 
 class A2UIToHTMLConverter {
   constructor() {
-    this.componentBuffers = {};  // surfaceId -> { id -> componentDef }
-    this.dataModels = {};        // surfaceId -> data model object
-    this.renderStyles = {};      // surfaceId -> beginRendering.styles
+    this.componentBuffers = {};
+    this.dataModels = {};
+    this.renderStyles = {};
     this.renderRootId = null;
     this.renderSurfaceId = null;
+    this.theme = theme;
   }
 
   /**
-   * 处理 surfaceUpdate 消息
+   * 获取 @a2ui/lit 主题配置
    */
+  getTheme() {
+    return this.theme;
+  }
+
+  /**
+   * 使用 @a2ui/lit Styles.merge 合并样式
+   */
+  mergeStyles(...styles) {
+    return v0_8.Styles.merge(...styles);
+  }
+
   handleSurfaceUpdate(msg) {
     const { surfaceId, components } = msg.surfaceUpdate;
     if (!this.componentBuffers[surfaceId]) {
@@ -25,9 +672,6 @@ class A2UIToHTMLConverter {
     });
   }
 
-  /**
-   * 处理 dataModelUpdate 消息
-   */
   handleDataModelUpdate(msg) {
     const { surfaceId, contents } = msg.dataModelUpdate;
     if (!this.dataModels[surfaceId]) {
@@ -35,24 +679,15 @@ class A2UIToHTMLConverter {
     }
     contents.forEach(item => {
       let value = null;
-      if (item.valueString !== undefined) {
-        value = item.valueString;
-      } else if (item.valueInt !== undefined) {
-        value = item.valueInt;
-      } else if (item.valueDouble !== undefined) {
-        value = item.valueDouble;
-      } else if (item.valueBool !== undefined) {
-        value = item.valueBool;
-      } else if (item.valueObject !== undefined) {
-        value = item.valueObject;
-      }
+      if (item.valueString !== undefined) value = item.valueString;
+      else if (item.valueInt !== undefined) value = item.valueInt;
+      else if (item.valueDouble !== undefined) value = item.valueDouble;
+      else if (item.valueBool !== undefined) value = item.valueBool;
+      else if (item.valueObject !== undefined) value = item.valueObject;
       this.dataModels[surfaceId][item.key] = value;
     });
   }
 
-  /**
-   * 处理 beginRendering 消息
-   */
   handleBeginRendering(msg) {
     this.renderSurfaceId = msg.beginRendering.surfaceId;
     this.renderRootId = msg.beginRendering.root;
@@ -61,9 +696,6 @@ class A2UIToHTMLConverter {
     }
   }
 
-  /**
-   * 处理 deleteSurface 消息
-   */
   handleDeleteSurface(msg) {
     const { surfaceId } = msg.deleteSurface;
     delete this.componentBuffers[surfaceId];
@@ -71,9 +703,6 @@ class A2UIToHTMLConverter {
     delete this.renderStyles[surfaceId];
   }
 
-  /**
-   * 拼接 style 字符串（去掉多余分号，避免出现 ";;"）
-   */
   mergeStyleStrings(...styleParts) {
     const parts = styleParts
       .filter(Boolean)
@@ -84,51 +713,57 @@ class A2UIToHTMLConverter {
   }
 
   /**
-   * 从 props 里取 a2ui 常见的内联样式字段（你示例使用 style: "..."）
+   * 从 props 中获取内联样式，过滤掉会破坏紧凑布局的属性
    */
-  getInlineStyleFromProps(props) {
+  getInlineStyleFromProps(props, filterTypography = true) {
     if (!props) return null;
-    if (typeof props.style === 'string') return props.style;
-    if (typeof props.styles === 'string') return props.styles;
-    if (typeof props.css === 'string') return props.css;
-    return null;
+    let styleStr = null;
+    if (typeof props.style === 'string') styleStr = props.style;
+    else if (typeof props.styles === 'string') styleStr = props.styles;
+    else if (typeof props.css === 'string') styleStr = props.css;
+    
+    if (!styleStr) return null;
+    
+    // 过滤掉会破坏紧凑布局的样式属性
+    if (filterTypography) {
+      const blockedProps = [
+        'font-size', 'line-height', 'font-weight', 
+        'min-height', 'min-width', 'padding', 'margin'
+      ];
+      const filteredStyles = styleStr
+        .split(';')
+        .map(s => s.trim())
+        .filter(s => {
+          if (!s) return false;
+          const propName = s.split(':')[0]?.trim().toLowerCase();
+          return !blockedProps.some(blocked => propName === blocked || propName.startsWith(blocked + '-'));
+        })
+        .join('; ');
+      return filteredStyles || null;
+    }
+    
+    return styleStr;
   }
 
-  /**
-   * usageHint/variant 到 HTML tag 的简易映射（让你的示例更接近“标题/正文”）
-   */
   pickTextTag(props) {
     const hint = props?.usageHint || props?.variant;
     if (!hint) return 'span';
     const h = String(hint).toLowerCase();
-    if (h.startsWith('h')) return h.replace('.', ''); // "h." / "h1" 等
+    if (h.startsWith('h1') || h === 'headline' || h === 'title') return 'h1';
+    if (h.startsWith('h2') || h === 'subtitle') return 'h2';
+    if (h.startsWith('h3')) return 'h3';
+    if (h.startsWith('h4')) return 'h4';
+    if (h.startsWith('h5')) return 'h5';
     if (h === 'body' || h === 'paragraph') return 'p';
     return 'span';
   }
 
-  /**
-   * 解析绑定值（支持 literal 和 path 绑定）
-   */
   resolveBoundValue(boundVal, dataModel) {
-    if (!boundVal || typeof boundVal !== 'object') {
-      return boundVal;
-    }
-
-    // 处理 literal 值
-    if (boundVal.literalString !== undefined) {
-      return String(boundVal.literalString);
-    }
-    if (boundVal.literalInt !== undefined) {
-      return boundVal.literalInt;
-    }
-    if (boundVal.literalDouble !== undefined) {
-      return boundVal.literalDouble;
-    }
-    if (boundVal.literalBool !== undefined) {
-      return boundVal.literalBool;
-    }
-
-    // 处理 path 绑定
+    if (!boundVal || typeof boundVal !== 'object') return boundVal;
+    if (boundVal.literalString !== undefined) return String(boundVal.literalString);
+    if (boundVal.literalInt !== undefined) return boundVal.literalInt;
+    if (boundVal.literalDouble !== undefined) return boundVal.literalDouble;
+    if (boundVal.literalBool !== undefined) return boundVal.literalBool;
     if (boundVal.path !== undefined) {
       const path = boundVal.path.replace(/^\//, '').split('/');
       let value = dataModel;
@@ -141,41 +776,55 @@ class A2UIToHTMLConverter {
       }
       return value !== undefined ? value : '';
     }
-
     return '';
   }
 
-  /**
-   * 转义 HTML 特殊字符
-   */
   escapeHtml(text) {
-    if (text === null || text === undefined) {
-      return '';
-    }
-    const map = {
-      '&': '&amp;',
-      '<': '&lt;',
-      '>': '&gt;',
-      '"': '&quot;',
-      "'": '&#039;'
-    };
+    if (text === null || text === undefined) return '';
+    const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' };
     return String(text).replace(/[&<>"']/g, m => map[m]);
   }
 
   /**
-   * 渲染单个组件
+   * 获取组件的样式类名列表
    */
+  getComponentStyleClasses(componentType, variant = null) {
+    const compConfig = this.theme.components?.[componentType];
+    if (!compConfig) return [];
+    
+    if (variant && compConfig[variant]) {
+      return Object.keys(compConfig[variant]).filter(k => compConfig[variant][k]);
+    }
+    return Object.keys(compConfig).filter(k => compConfig[k] === true);
+  }
+
+  /**
+   * 获取额外的组件内联样式
+   */
+  getAdditionalStyles(componentType, variant = null) {
+    const addStyles = this.theme.additionalStyles?.[componentType];
+    if (!addStyles) return '';
+    
+    if (variant && addStyles[variant]) {
+      return Object.entries(addStyles[variant])
+        .map(([prop, val]) => `${prop}: ${val}`)
+        .join('; ');
+    }
+    
+    // 过滤掉嵌套对象（如 h1, h2 等）
+    const directStyles = Object.entries(addStyles)
+      .filter(([, val]) => typeof val !== 'object')
+      .map(([prop, val]) => `${prop}: ${val}`)
+      .join('; ');
+    
+    return directStyles;
+  }
+
   renderComponentById(id, compBuf, dataModel) {
     const compObj = compBuf[id];
-    if (!compObj) {
-      return '';
-    }
-
+    if (!compObj) return '';
     const keys = Object.keys(compObj);
-    if (keys.length !== 1) {
-      return '';
-    }
-
+    if (keys.length !== 1) return '';
     const type = keys[0];
     const props = compObj[type];
 
@@ -184,175 +833,210 @@ class A2UIToHTMLConverter {
         const textVal = this.resolveBoundValue(props.text, dataModel);
         const escapedText = this.escapeHtml(textVal);
         const tag = this.pickTextTag(props);
-        const style = this.buildTextStyle(props);
-        return `<${tag}${style ? ` style="${style}"` : ''}>${escapedText}</${tag}>`;
+        const variant = this.getTextVariant(props);
+        const styleClasses = this.getComponentStyleClasses('Text', variant);
+        const additionalStyle = this.getAdditionalStyles('Text', variant);
+        const inlineStyle = this.mergeStyleStrings(additionalStyle, this.getInlineStyleFromProps(props));
+        return `<${tag} class="${styleClasses.join(' ')}"${inlineStyle ? ` style="${inlineStyle}"` : ''}>${escapedText}</${tag}>`;
       }
-
       case 'Image': {
         const url = this.resolveBoundValue(props.url || props.src, dataModel);
         const alt = this.resolveBoundValue(props.alt, dataModel) || '';
-        const style = this.buildImageStyle(props);
-        return `<img src="${this.escapeHtml(url)}" alt="${this.escapeHtml(alt)}"${style ? ` style="${style}"` : ''} />`;
+        const usageHint = props.usageHint || 'all';
+        const styleClasses = this.getComponentStyleClasses('Image', usageHint);
+        const additionalStyle = this.getAdditionalStyles('Image');
+        const buildStyle = this.buildImageStyle(props);
+        const style = this.mergeStyleStrings(additionalStyle, buildStyle, this.getInlineStyleFromProps(props));
+        return `<img class="a2ui-image a2ui-image--${usageHint} ${styleClasses.join(' ')}" src="${this.escapeHtml(url)}" alt="${this.escapeHtml(alt)}"${style ? ` style="${style}"` : ''} />`;
       }
-
       case 'Button': {
         const childId = props.child;
         const childHtml = childId ? this.renderComponentById(childId, compBuf, dataModel) : '';
-        const style = this.buildButtonStyle(props);
+        const styleClasses = this.getComponentStyleClasses('Button');
+        const additionalStyle = this.getAdditionalStyles('Button');
+        const style = this.mergeStyleStrings(additionalStyle, this.getInlineStyleFromProps(props));
         const disabled = props.disabled ? ' disabled' : '';
-        return `<button${style ? ` style="${style}"` : ''}${disabled}>${childHtml}</button>`;
+        return `<button class="${styleClasses.join(' ')}"${style ? ` style="${style}"` : ''}${disabled}>${childHtml}</button>`;
       }
-
       case 'Column': {
         const children = this.getChildren(props, compBuf, dataModel);
-        const style = this.buildLayoutStyle(props, 'column');
-        return `<div style="${style}">${children}</div>`;
+        const styleClasses = this.getComponentStyleClasses('Column');
+        const additionalStyle = this.getAdditionalStyles('Column');
+        const layoutStyle = this.buildLayoutStyle(props, 'column');
+        const style = this.mergeStyleStrings(additionalStyle, layoutStyle, this.getInlineStyleFromProps(props));
+        return `<div class="a2ui-column ${styleClasses.join(' ')}"${style ? ` style="${style}"` : ''}>${children}</div>`;
       }
-
       case 'Row': {
         const children = this.getChildren(props, compBuf, dataModel);
-        const style = this.buildLayoutStyle(props, 'row');
-        return `<div style="${style}">${children}</div>`;
+        const styleClasses = this.getComponentStyleClasses('Row');
+        const additionalStyle = this.getAdditionalStyles('Row');
+        const layoutStyle = this.buildLayoutStyle(props, 'row');
+        const style = this.mergeStyleStrings(additionalStyle, layoutStyle, this.getInlineStyleFromProps(props));
+        return `<div class="a2ui-row ${styleClasses.join(' ')}"${style ? ` style="${style}"` : ''}>${children}</div>`;
       }
-
       case 'Divider': {
         const axis = (props.axis || 'horizontal').toLowerCase();
-        const base = axis === 'vertical'
-          ? 'width: 1px; align-self: stretch; background: rgba(0,0,0,0.12); margin: 0 8px;'
-          : 'height: 1px; width: 100%; background: rgba(0,0,0,0.12); margin: 12px 0;';
-        const style = this.mergeStyleStrings(base, this.getInlineStyleFromProps(props));
-        return `<div role="separator" aria-orientation="${axis === 'vertical' ? 'vertical' : 'horizontal'}"${style ? ` style="${style}"` : ''}></div>`;
+        const styleClasses = this.getComponentStyleClasses('Divider', axis);
+        const additionalStyle = this.getAdditionalStyles('Divider', axis);
+        const inlineStyle = this.mergeStyleStrings(additionalStyle, this.getInlineStyleFromProps(props));
+        return `<hr class="a2ui-divider a2ui-divider--${axis} ${styleClasses.join(' ')}" role="separator" aria-orientation="${axis}"${inlineStyle ? ` style="${inlineStyle}"` : ''} />`;
       }
-
       case 'TextField': {
         const placeholder = this.resolveBoundValue(props.placeholder, dataModel) || '';
         const value = this.resolveBoundValue(props.value, dataModel) || '';
-        const style = this.buildInputStyle(props);
-        return `<input type="text" placeholder="${this.escapeHtml(placeholder)}" value="${this.escapeHtml(value)}"${style ? ` style="${style}"` : ''} />`;
+        const label = this.resolveBoundValue(props.label, dataModel) || '';
+        const containerClasses = this.getComponentStyleClasses('TextField', 'container');
+        const labelClasses = this.getComponentStyleClasses('TextField', 'label');
+        const elementClasses = this.getComponentStyleClasses('TextField', 'element');
+        const additionalStyle = this.getAdditionalStyles('TextField');
+        const inputHtml = `<input class="a2ui-textfield__input ${elementClasses.join(' ')}" type="text" placeholder="${this.escapeHtml(placeholder)}" value="${this.escapeHtml(value)}"${additionalStyle ? ` style="${additionalStyle}"` : ''} />`;
+        if (label) {
+          return `<div class="a2ui-textfield ${containerClasses.join(' ')}"><label class="a2ui-textfield__label ${labelClasses.join(' ')}">${this.escapeHtml(label)}</label>${inputHtml}</div>`;
+        }
+        return `<div class="a2ui-textfield ${containerClasses.join(' ')}">${inputHtml}</div>`;
       }
-
       case 'CheckBox': {
         const label = this.resolveBoundValue(props.label, dataModel) || '';
         const checked = props.checked ? ' checked' : '';
-        return `<label><input type="checkbox"${checked} /> ${this.escapeHtml(label)}</label>`;
+        const containerClasses = this.getComponentStyleClasses('CheckBox', 'container');
+        const elementClasses = this.getComponentStyleClasses('CheckBox', 'element');
+        const labelClasses = this.getComponentStyleClasses('CheckBox', 'label');
+        const additionalStyle = this.getAdditionalStyles('CheckBox');
+        return `<label class="a2ui-checkbox ${containerClasses.join(' ')}"${additionalStyle ? ` style="${additionalStyle}"` : ''}><input class="a2ui-checkbox__input ${elementClasses.join(' ')}" type="checkbox"${checked} /><span class="a2ui-checkbox__label ${labelClasses.join(' ')}">${this.escapeHtml(label)}</span></label>`;
       }
-
+      case 'Card': {
+        const children = this.getChildren(props, compBuf, dataModel);
+        const styleClasses = this.getComponentStyleClasses('Card');
+        const additionalStyle = this.getAdditionalStyles('Card');
+        const style = this.mergeStyleStrings(additionalStyle, this.getInlineStyleFromProps(props));
+        return `<div class="${styleClasses.join(' ')}"${style ? ` style="${style}"` : ''}>${children}</div>`;
+      }
       case 'Container':
       case 'Box': {
         const children = this.getChildren(props, compBuf, dataModel);
         const style = this.buildContainerStyle(props);
         return `<div${style ? ` style="${style}"` : ''}>${children}</div>`;
       }
-
-      default:
-        // 未知组件类型，尝试渲染为通用 div
+      case 'List': {
+        const children = this.getChildren(props, compBuf, dataModel);
+        const styleClasses = this.getComponentStyleClasses('List');
+        const additionalStyle = this.getAdditionalStyles('List');
+        return `<div class="a2ui-list ${styleClasses.join(' ')}"${additionalStyle ? ` style="${additionalStyle}"` : ''}>${children}</div>`;
+      }
+      case 'Modal': {
+        const children = this.getChildren(props, compBuf, dataModel);
+        const backdropClasses = this.getComponentStyleClasses('Modal', 'backdrop');
+        const elementClasses = this.getComponentStyleClasses('Modal', 'element');
+        const backdropStyle = this.getAdditionalStyles('Modal', 'backdrop');
+        const elementStyle = this.getAdditionalStyles('Modal', 'element');
+        return `<div class="a2ui-modal"><div class="a2ui-modal__backdrop ${backdropClasses.join(' ')}"${backdropStyle ? ` style="${backdropStyle}"` : ''}></div><div class="a2ui-modal__content ${elementClasses.join(' ')}"${elementStyle ? ` style="${elementStyle}"` : ''}>${children}</div></div>`;
+      }
+      case 'Tabs': {
+        const children = this.getChildren(props, compBuf, dataModel);
+        const styleClasses = this.getComponentStyleClasses('Tabs', 'container');
+        return `<div class="${styleClasses.join(' ')}">${children}</div>`;
+      }
+      case 'Icon': {
+        const iconName = this.resolveBoundValue(props.icon || props.name, dataModel) || '';
+        const styleClasses = this.getComponentStyleClasses('Icon');
+        const additionalStyle = this.getAdditionalStyles('Icon');
+        return `<span class="a2ui-icon ${styleClasses.join(' ')}"${additionalStyle ? ` style="${additionalStyle}"` : ''}>${this.escapeHtml(iconName)}</span>`;
+      }
+      case 'Video': {
+        const url = this.resolveBoundValue(props.url || props.src, dataModel);
+        const styleClasses = this.getComponentStyleClasses('Video');
+        return `<video class="${styleClasses.join(' ')}" src="${this.escapeHtml(url)}" controls></video>`;
+      }
+      default: {
         const defaultChildren = this.getChildren(props, compBuf, dataModel);
         return `<div class="a2ui-${type.toLowerCase()}">${defaultChildren}</div>`;
+      }
     }
   }
 
-  /**
-   * 获取子组件 HTML
-   */
+  getTextVariant(props) {
+    const hint = props?.usageHint || props?.variant || 'body';
+    const h = String(hint).toLowerCase();
+    if (h.startsWith('h1') || h === 'headline' || h === 'title') return 'h1';
+    if (h.startsWith('h2') || h === 'subtitle') return 'h2';
+    if (h.startsWith('h3')) return 'h3';
+    if (h.startsWith('h4')) return 'h4';
+    if (h.startsWith('h5')) return 'h5';
+    if (h === 'caption' || h === 'small') return 'caption';
+    return 'body';
+  }
+
   getChildren(props, compBuf, dataModel) {
     if (props.children) {
       if (props.children.explicitList) {
-        // 静态子组件列表
-        return props.children.explicitList
-          .map(childId => this.renderComponentById(childId, compBuf, dataModel))
-          .join('');
+        return props.children.explicitList.map(childId => this.renderComponentById(childId, compBuf, dataModel)).join('');
       } else if (props.children.template) {
-        // 动态模板（简化处理）
         const template = props.children.template;
         const listPath = template.listPath;
         if (listPath && dataModel) {
           const list = this.resolveBoundValue({ path: listPath }, dataModel);
           if (Array.isArray(list)) {
-            return list
-              .map((item, index) => {
-                const childId = template.child;
-                // 这里可以创建临时组件实例，简化处理
-                return this.renderComponentById(childId, compBuf, dataModel);
-              })
-              .join('');
+            return list.map(() => this.renderComponentById(template.child, compBuf, dataModel)).join('');
           }
         }
       }
     }
-    if (props.child) {
-      // 单个子组件
-      return this.renderComponentById(props.child, compBuf, dataModel);
-    }
+    if (props.child) return this.renderComponentById(props.child, compBuf, dataModel);
     return '';
   }
 
-  /**
-   * 构建文本样式
-   */
-  buildTextStyle(props) {
-    const styles = [];
-    if (props.fontSize) {
-      styles.push(`font-size: ${props.fontSize}px`);
-    }
-    if (props.fontWeight) {
-      styles.push(`font-weight: ${props.fontWeight}`);
-    }
-    if (props.color) {
-      styles.push(`color: ${props.color}`);
-    }
-    if (props.alignment) {
-      styles.push(`text-align: ${props.alignment}`);
-    }
-    return this.mergeStyleStrings(styles.join('; '), this.getInlineStyleFromProps(props));
-  }
-
-  /**
-   * 构建图片样式
-   */
   buildImageStyle(props) {
     const styles = [];
+    // 限制图片最大尺寸以保持紧凑布局
     if (props.width) {
-      styles.push(`width: ${props.width}px`);
+      const w = typeof props.width === 'number' ? props.width : parseInt(props.width) || 100;
+      styles.push(`width: ${Math.min(w, 200)}px`);
     }
     if (props.height) {
-      styles.push(`height: ${props.height}px`);
+      const h = typeof props.height === 'number' ? props.height : parseInt(props.height) || 100;
+      styles.push(`height: ${Math.min(h, 100)}px`);
     }
-    return this.mergeStyleStrings(styles.join('; '), this.getInlineStyleFromProps(props));
+    if (props.borderRadius) {
+      const br = Math.min(parseInt(props.borderRadius) || 4, 12);
+      styles.push(`border-radius: ${br}px`);
+    }
+    // 强制限制最大高度
+    styles.push(`max-height: 100px`);
+    return this.mergeStyleStrings(styles.join('; '), this.getInlineStyleFromProps(props, true));
   }
 
-  /**
-   * 构建按钮样式
-   */
-  buildButtonStyle(props) {
-    const styles = [];
-    // primary button + theme 兜底（你的示例是 primary: true，并在 beginRendering.styles 里给 primaryColor）
-    const theme = this.renderStyles?.[this.renderSurfaceId] || {};
-    const primaryColor = theme.primaryColor || '#2563eb';
-    if (props.primary) {
-      styles.push(`background-color: ${primaryColor}`);
-      styles.push(`color: #fff`);
-      styles.push(`border: 1px solid ${primaryColor}`);
+  buildLayoutStyle(props, direction) {
+    const styles = [`display: flex`, `flex-direction: ${direction}`, `width: 100%`];
+    // 限制 gap 最大值以保持紧凑
+    if (props.gap) {
+      const gapVal = Math.min(parseInt(props.gap) || 4, 8);
+      styles.push(`gap: ${gapVal}px`);
     }
-    if (props.backgroundColor) {
-      styles.push(`background-color: ${props.backgroundColor}`);
-    }
-    if (props.textColor) {
-      styles.push(`color: ${props.textColor}`);
-    }
+    // 限制 padding 最大值
     if (props.padding) {
-      styles.push(`padding: ${props.padding}px`);
+      const padVal = Math.min(parseInt(props.padding) || 0, 12);
+      styles.push(`padding: ${padVal}px`);
     }
-    // 给一个更“组件化”的基础观感
-    styles.push('border-radius: 10px');
-    styles.push('padding: 10px 14px');
-    styles.push('cursor: pointer');
-    styles.push('font-size: 14px');
-    styles.push('line-height: 1.2');
-    styles.push('display: inline-flex');
-    styles.push('align-items: center');
-    styles.push('justify-content: center');
+    if (props.alignment) styles.push(`align-items: ${this.mapFlexAlign(props.alignment)}`);
+    if (props.justification) styles.push(`justify-content: ${this.mapFlexAlign(props.justification)}`);
+    // 过滤掉原始样式中会破坏布局的属性
+    return this.mergeStyleStrings(styles.join('; '), this.getInlineStyleFromProps(props, true)) || '';
+  }
 
-    return this.mergeStyleStrings(styles.join('; '), this.getInlineStyleFromProps(props));
+  buildContainerStyle(props) {
+    const styles = [];
+    if (props.backgroundColor) styles.push(`background-color: ${props.backgroundColor}`);
+    // 限制 padding/margin 最大值
+    if (props.padding) {
+      const padVal = Math.min(parseInt(props.padding) || 0, 12);
+      styles.push(`padding: ${padVal}px`);
+    }
+    if (props.margin) {
+      const marginVal = Math.min(parseInt(props.margin) || 0, 8);
+      styles.push(`margin: ${marginVal}px`);
+    }
+    // 不使用原始的 width/height，让布局自适应
+    return this.mergeStyleStrings(styles.join('; '), this.getInlineStyleFromProps(props, true));
   }
 
   mapFlexAlign(value) {
@@ -369,194 +1053,338 @@ class A2UIToHTMLConverter {
   }
 
   /**
-   * 构建布局样式
+   * 生成基础 CSS 样式 - 超紧凑布局
    */
-  buildLayoutStyle(props, direction) {
-    const styles = [`display: flex`, `flex-direction: ${direction}`];
-    if (props.gap) {
-      styles.push(`gap: ${props.gap}px`);
-    }
-    if (props.padding) {
-      styles.push(`padding: ${props.padding}px`);
-    }
-    if (props.alignment) {
-      styles.push(`align-items: ${this.mapFlexAlign(props.alignment)}`);
-    }
-    if (props.justification) {
-      styles.push(`justify-content: ${this.mapFlexAlign(props.justification)}`);
-    }
-    return this.mergeStyleStrings(styles.join('; '), this.getInlineStyleFromProps(props)) || '';
+  generateBaseStyles() {
+    const rootStyles = this.getAdditionalStyles('Root');
+    return `
+/* A2UI 超紧凑布局基础样式 */
+.a2ui-root {
+  ${rootStyles || 'font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; font-size: 11px; line-height: 1.35; color: #1e293b;'}
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  word-break: break-word;
+  max-width: 100%;
+  background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 50%, #e2e8f0 100%);
+  border-radius: 8px;
+  padding: 10px 12px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05), 0 1px 2px rgba(0, 0, 0, 0.03);
+}
+
+/* 通用样式 */
+.a2ui-root * {
+  box-sizing: border-box;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+/* 加粗文本 - 与正文大小一致 */
+.a2ui-root strong, .a2ui-root b {
+  font-weight: 600;
+  font-size: inherit;
+  color: #334155;
+}
+
+/* 分隔符样式 - 超紧凑间距 */
+.a2ui-divider {
+  border: none;
+  margin: 0;
+  flex-shrink: 0;
+}
+.a2ui-divider--horizontal {
+  height: 1px;
+  width: 100%;
+  background: linear-gradient(90deg, transparent 0%, rgba(148,163,184,0.2) 10%, rgba(148,163,184,0.2) 90%, transparent 100%);
+  margin: 4px 0;
+}
+.a2ui-divider--vertical {
+  width: 1px;
+  align-self: stretch;
+  min-height: 10px;
+  background: linear-gradient(180deg, transparent 0%, rgba(148,163,184,0.2) 10%, rgba(148,163,184,0.2) 90%, transparent 100%);
+  margin: 0 4px;
+  flex-shrink: 0;
+}
+
+/* 布局组件 - 超紧凑间距，横向扩展优先 */
+.a2ui-row {
+  display: flex;
+  flex-direction: row;
+  gap: 4px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  width: 100%;
+}
+.a2ui-column {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+}
+.a2ui-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* 模态框 - 紧凑尺寸 */
+.a2ui-modal {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+.a2ui-modal__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.3);
+  backdrop-filter: blur(2px);
+}
+.a2ui-modal__content {
+  position: relative;
+  background: #ffffff;
+  border-radius: 8px;
+  box-shadow: 0 8px 20px rgba(0,0,0,0.1), 0 3px 8px rgba(0,0,0,0.06);
+  padding: 10px;
+  max-width: 95vw;
+  max-height: 65vh;
+  overflow: auto;
+}
+
+/* 按钮 - 超紧凑尺寸 */
+.a2ui-root button {
+  font-size: 10px;
+  padding: 3px 10px;
+  border-radius: 5px;
+  white-space: nowrap;
+  line-height: 1.3;
+}
+.a2ui-root button:hover {
+  opacity: 0.9;
+}
+.a2ui-root button:active {
+  opacity: 0.8;
+}
+
+/* 图片 - 限制高度 */
+.a2ui-image {
+  max-width: 100%;
+  max-height: 100px;
+  height: auto;
+  border-radius: 3px;
+  object-fit: cover;
+}
+.a2ui-image--avatar {
+  border-radius: 50%;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+}
+.a2ui-image--icon {
+  border-radius: 0;
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+}
+.a2ui-image--header {
+  max-height: 60px;
+  width: 100%;
+  object-fit: cover;
+}
+
+/* 输入框 - 超紧凑尺寸 */
+.a2ui-textfield {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  width: 100%;
+}
+.a2ui-textfield__label {
+  font-size: 9px;
+  font-weight: 500;
+  color: #64748b;
+}
+.a2ui-textfield__input {
+  padding: 3px 6px;
+  border: 1px solid rgba(0,0,0,0.08);
+  border-radius: 3px;
+  font-size: 10px;
+  background: #ffffff;
+  transition: border-color 0.1s ease;
+  width: 100%;
+  line-height: 1.3;
+}
+.a2ui-textfield__input:focus {
+  outline: none;
+  border-color: #818cf8;
+  box-shadow: 0 0 0 1px rgba(129, 140, 248, 0.1);
+}
+
+/* 复选框 - 超紧凑尺寸 */
+.a2ui-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  cursor: pointer;
+}
+.a2ui-checkbox__input {
+  margin: 0;
+  cursor: pointer;
+  width: 11px;
+  height: 11px;
+}
+.a2ui-checkbox__label {
+  font-size: 10px;
+  color: #475569;
+}
+
+/* 图标 - 小尺寸 */
+.a2ui-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #64748b;
+  font-size: 11px;
+}
+
+/* 卡片 - 紧凑内边距 */
+.a2ui-card {
+  padding: 6px 8px;
+  border-radius: 6px;
+}
+
+/* 标题 - 超紧凑行高和间距 */
+.a2ui-root h1, .a2ui-root h2, .a2ui-root h3, .a2ui-root h4, .a2ui-root h5 {
+  margin: 0;
+  line-height: 1.25;
+  word-wrap: break-word;
+}
+.a2ui-root h1 { font-size: 13px; margin-bottom: 2px; font-weight: 600; }
+.a2ui-root h2 { font-size: 12px; margin-bottom: 2px; font-weight: 600; }
+.a2ui-root h3 { font-size: 11px; margin-bottom: 1px; font-weight: 500; }
+.a2ui-root h4 { font-size: 11px; margin-bottom: 1px; font-weight: 500; }
+.a2ui-root h5 { font-size: 10px; margin-bottom: 1px; font-weight: 500; }
+
+/* 段落和正文 - 超紧凑间距 */
+.a2ui-root p {
+  margin: 0 0 2px 0;
+  font-size: 11px;
+  line-height: 1.4;
+  word-wrap: break-word;
+  word-break: break-word;
+}
+.a2ui-root span {
+  font-size: 11px;
+  line-height: 1.4;
+  word-wrap: break-word;
+}
+
+/* 链接 */
+.a2ui-root a {
+  color: #6366f1;
+  text-decoration: none;
+  font-size: inherit;
+}
+.a2ui-root a:hover {
+  text-decoration: underline;
+}
+`;
   }
 
-  /**
-   * 构建容器样式
-   */
-  buildContainerStyle(props) {
-    const styles = [];
-    if (props.backgroundColor) {
-      styles.push(`background-color: ${props.backgroundColor}`);
-    }
-    if (props.padding) {
-      styles.push(`padding: ${props.padding}px`);
-    }
-    if (props.margin) {
-      styles.push(`margin: ${props.margin}px`);
-    }
-    if (props.width) {
-      styles.push(`width: ${props.width}px`);
-    }
-    if (props.height) {
-      styles.push(`height: ${props.height}px`);
-    }
-    return this.mergeStyleStrings(styles.join('; '), this.getInlineStyleFromProps(props));
-  }
-
-  /**
-   * 构建输入框样式
-   */
-  buildInputStyle(props) {
-    const styles = [];
-    if (props.width) {
-      styles.push(`width: ${props.width}px`);
-    }
-    if (props.padding) {
-      styles.push(`padding: ${props.padding}px`);
-    }
-    styles.push('border: 1px solid rgba(0,0,0,0.18)');
-    styles.push('border-radius: 10px');
-    styles.push('outline: none');
-    styles.push('min-height: 36px');
-    return this.mergeStyleStrings(styles.join('; '), this.getInlineStyleFromProps(props));
-  }
-
-  /**
-   * 处理消息数组
-   */
-  processMessages(messages) {
-    // 重置状态
+  processMessages(messages, options = {}) {
+    const { fullDocument = false, includeStyles = true } = options;
     this.componentBuffers = {};
     this.dataModels = {};
     this.renderRootId = null;
     this.renderSurfaceId = null;
 
-    // 处理每条消息
     messages.forEach(msg => {
-      if (msg.surfaceUpdate) {
-        this.handleSurfaceUpdate(msg);
-      } else if (msg.dataModelUpdate) {
-        this.handleDataModelUpdate(msg);
-      } else if (msg.beginRendering) {
-        this.handleBeginRendering(msg);
-      } else if (msg.deleteSurface) {
-        this.handleDeleteSurface(msg);
-      }
+      if (msg.surfaceUpdate) this.handleSurfaceUpdate(msg);
+      else if (msg.dataModelUpdate) this.handleDataModelUpdate(msg);
+      else if (msg.beginRendering) this.handleBeginRendering(msg);
+      else if (msg.deleteSurface) this.handleDeleteSurface(msg);
     });
 
-    // 如果没有收到 beginRendering，返回空字符串
-    if (!this.renderRootId || !this.renderSurfaceId) {
-      return '';
-    }
-
+    if (!this.renderRootId || !this.renderSurfaceId) return '';
     const compBuf = this.componentBuffers[this.renderSurfaceId];
     const dataModel = this.dataModels[this.renderSurfaceId] || {};
-    const theme = this.renderStyles?.[this.renderSurfaceId] || {};
-
-    if (!compBuf) {
-      return '';
-    }
+    if (!compBuf) return '';
 
     const rootHtml = this.renderComponentById(this.renderRootId, compBuf, dataModel);
-    const rootStyle = this.mergeStyleStrings(
-      theme.font ? `font-family: ${theme.font}, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif` : null,
-      theme.primaryColor ? `--a2ui-primary-color: ${theme.primaryColor}` : null,
-      'color: rgba(0,0,0,0.88)'
-    );
-    return `<div class="a2ui-root"${rootStyle ? ` style="${rootStyle}"` : ''}>${rootHtml}</div>`;
+    const rootAdditionalStyle = this.getAdditionalStyles('Root');
+    const contentHtml = `<div class="a2ui-root"${rootAdditionalStyle ? ` style="${rootAdditionalStyle}"` : ''}>${rootHtml}</div>`;
+    
+    const styleBlock = includeStyles ? `<style>${this.generateBaseStyles()}</style>` : '';
+
+    if (fullDocument) {
+      return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>A2UI</title>
+  ${styleBlock}
+</head>
+<body style="margin: 0; padding: 0;">
+  ${contentHtml}
+</body>
+</html>`;
+    }
+    return styleBlock + contentHtml;
   }
 
-  /**
-   * 从 JSONL 文本（每行一个 JSON）解析并转换
-   */
-  convertFromJSONL(jsonlText) {
+  convertFromJSONL(jsonlText, options = {}) {
     const lines = jsonlText.trim().split('\n').filter(line => line.trim());
     const messages = lines.map(line => JSON.parse(line));
-    return this.processMessages(messages);
+    return this.processMessages(messages, options);
   }
 
-  /**
-   * 从 JSON 数组转换
-   */
-  convertFromJSON(json) {
+  convertFromJSON(json, options = {}) {
     const messages = Array.isArray(json) ? json : [json];
-    return this.processMessages(messages);
+    return this.processMessages(messages, options);
   }
 
   extractA2UIData(parts) {
     try {
-      // Extract surfaceUpdate
-      const surfaceUpdatePart = parts.find(part =>
-        part.kind === 'data' &&
-        part.data?.surfaceUpdate
-      );
-
-      // Extract dataModelUpdate
-      const dataModelUpdatePart = parts.find(part =>
-        part.kind === 'data' &&
-        part.data?.dataModelUpdate
-      );
-
-      // Extract beginRendering
-      const beginRenderingPart = parts.find(part =>
-        part.kind === 'data' &&
-        part.data?.beginRendering
-      );
-
-      // Construct the result object
       const result = [];
+      const surfaceUpdatePart = parts.find(part => part.kind === 'data' && part.data?.surfaceUpdate);
+      if (surfaceUpdatePart) result.push({ surfaceUpdate: surfaceUpdatePart.data.surfaceUpdate });
 
-      if (surfaceUpdatePart) {
-        result.push({
-          surfaceUpdate: surfaceUpdatePart.data.surfaceUpdate
-        });
-      }
-
+      const dataModelUpdatePart = parts.find(part => part.kind === 'data' && part.data?.dataModelUpdate);
       if (dataModelUpdatePart) {
         const contents = dataModelUpdatePart.data.dataModelUpdate.contents;
-        const transformedContents = contents.map(item => ({
-          key: item.key,
-          valueString: item.valueString
-        }));
-
-        result.push({
-          dataModelUpdate: {
-            surfaceId: dataModelUpdatePart.data.dataModelUpdate.surfaceId,
-            contents: transformedContents
-          }
-        });
+        const transformedContents = contents.map(item => ({ key: item.key, valueString: item.valueString }));
+        result.push({ dataModelUpdate: { surfaceId: dataModelUpdatePart.data.dataModelUpdate.surfaceId, contents: transformedContents } });
       }
 
-      if (beginRenderingPart) {
-        result.push({
-          beginRendering: beginRenderingPart.data.beginRendering
-        });
-      }
+      const beginRenderingPart = parts.find(part => part.kind === 'data' && part.data?.beginRendering);
+      if (beginRenderingPart) result.push({ beginRendering: beginRenderingPart.data.beginRendering });
 
       return result;
     } catch (error) {
-      logger.error(`Error extracting A2A a2ui data information: ${error.message}`);
+      console.error(`Error extracting A2UI data: ${error.message}`);
       return null;
     }
   }
 }
 
-// 导出函数（支持 CommonJS 和 ES6 模块）
+// ============================================================================
+// 导出
+// ============================================================================
+
+// CommonJS 导出
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = A2UIToHTMLConverter;
+  module.exports = { A2UIToHTMLConverter, theme, v0_8 };
 }
 
-// 全局函数（浏览器环境）
+// 浏览器全局
 if (typeof window !== 'undefined') {
   window.A2UIToHTMLConverter = A2UIToHTMLConverter;
+  window.a2uiTheme = theme;
 }
 
-export { A2UIToHTMLConverter };
+export { A2UIToHTMLConverter, theme, v0_8 };
