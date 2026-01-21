@@ -8,6 +8,7 @@ import { z } from 'zod';
 import { NotificationManager } from './utils/notificationmgr.js';
 import { LogStream, logger } from './utils/logger.js'
 import { registerApplicationRegistryHandlers, initializeRegistry } from './applications/registry.js';
+import { UpdateClient } from '../updater/client.js';
 
 import Convert from 'ansi-to-html';
 import path from 'path';
@@ -289,6 +290,33 @@ const registerTray = () => {
   })
 }
 
+// 初始化自动更新客户端
+let updateClient = null;
+const initializeUpdater = () => {
+  // 配置多个备选更新服务器地址，按顺序尝试
+  // 如果第一个服务器不可用，会自动尝试下一个
+  const updateServerUrls = [
+    'http://localhost:3000', // 本地测试服务器
+  ];
+
+  // 只在生产环境启用自动更新，或者设置了 DEBUG_UPDATER 环境变量
+  if (!is.dev || process.env.DEBUG_UPDATER) {
+    logger.info(`启用自动更新, 当前版本: ${app.getVersion()}`);
+    updateClient = new UpdateClient({
+      serverUrls: updateServerUrls,
+      currentVersion: app.getVersion(),
+      checkInterval: 3600000, // 每小时检查一次
+    });
+
+    // 延迟检查更新，避免影响应用启动速度
+    setTimeout(() => {
+      updateClient.checkAndPromptUpdate().catch((error) => {
+        logger.error('检查更新失败', error);
+      });
+    }, 3000); // 3秒后检查
+  }
+}
+
 app.whenReady().then(() => {
   GlobalState.initialize();
   createWindow();
@@ -300,8 +328,13 @@ app.whenReady().then(() => {
   registerHotKeys();
   registerTray();
   initializeRegistry();
+  initializeUpdater();
 })
 
 app.on('will-quit', async () => {
   globalShortcut.unregisterAll()
+  // 停止自动更新检查
+  if (updateClient) {
+    updateClient.stopAutoCheck();
+  }
 })
