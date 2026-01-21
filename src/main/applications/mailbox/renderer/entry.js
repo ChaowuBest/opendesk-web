@@ -35,7 +35,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         for (const email of emails) {
             this.emailHeaderList.set(email.uid, email);
         }
-        this.reloadEmailList();
+        this.applyCurrentFilter();
     }
 
     getAgentInstruct() {
@@ -204,6 +204,29 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             this.emailHeaderList.set(email.uid, email);
         }
         this.reloadEmailList();
+    }
+
+    /**
+     * 立即同步邮件
+     */
+    async syncEmails() {
+        const syncButton = document.querySelector('#mailbox-sync-email-button');
+        const icon = syncButton.querySelector('i');
+        
+        // 添加旋转动画
+        icon.classList.add('fa-spin');
+        syncButton.disabled = true;
+        
+        try {
+            await window.applicationAPI.call('syncEmails');
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            await this.loadEmailList();
+        } catch (error) {
+            console.error('同步邮件失败:', error);
+        } finally {
+            icon.classList.remove('fa-spin');
+            syncButton.disabled = false;
+        }
     }
 
     renderCurrentEmailHeader() {
@@ -467,18 +490,32 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
                 <div class="p-3 space-y-3">
                     <div class="flex items-center justify-between">
                         <h1 class="text-xl font-bold tracking-tight px-1">收件箱</h1>
-                        <button id='mailbox-new-email-button' class="group flex items-center px-2 py-2 rounded-full
-                                    bg-transparent hover:bg-white/60 hover:shadow-md
-                                    transition-all duration-500 ease-[cubic-bezier(0.23,1,0.32,1)]
-                                    text-gray-700 hover:text-blue-600">
-                            <i class="fa-solid fa-plus"></i>
-                            <span class="max-w-0 overflow-hidden opacity-0
-                                        group-hover:max-w-[120px] group-hover:opacity-100
-                                        group-hover:ml-2 transition-all duration-500 ease-in-out
-                                        whitespace-nowrap font-medium tracking-tight text-sm">
-                                写邮件
-                            </span>
-                        </button>
+                        <div class="flex items-center gap-2">
+                            <button id='mailbox-sync-email-button' class="group flex items-center px-2 py-2 rounded-full
+                                        bg-transparent hover:bg-white/60 hover:shadow-md
+                                        transition-all duration-500 ease-[cubic-bezier(0.23,1,0.32,1)]
+                                        text-gray-700 hover:text-blue-600" title="同步邮件">
+                                <i class="fa-solid fa-sync-alt"></i>
+                                <span class="max-w-0 overflow-hidden opacity-0
+                                            group-hover:max-w-[120px] group-hover:opacity-100
+                                            group-hover:ml-2 transition-all duration-500 ease-in-out
+                                            whitespace-nowrap font-medium tracking-tight text-sm">
+                                    同步
+                                </span>
+                            </button>
+                            <button id='mailbox-new-email-button' class="group flex items-center px-2 py-2 rounded-full
+                                        bg-transparent hover:bg-white/60 hover:shadow-md
+                                        transition-all duration-500 ease-[cubic-bezier(0.23,1,0.32,1)]
+                                        text-gray-700 hover:text-blue-600">
+                                <i class="fa-solid fa-plus"></i>
+                                <span class="max-w-0 overflow-hidden opacity-0
+                                            group-hover:max-w-[120px] group-hover:opacity-100
+                                            group-hover:ml-2 transition-all duration-500 ease-in-out
+                                            whitespace-nowrap font-medium tracking-tight text-sm">
+                                    写邮件
+                                </span>
+                            </button>
+                        </div>
                     </div>
 
                     <!-- 搜索框 -->
@@ -521,6 +558,9 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
 
         document.querySelector('#mailbox-new-email-button').addEventListener('click', () => {
             this.createNewEmail();
+        });
+        document.querySelector('#mailbox-sync-email-button').addEventListener('click', () => {
+            this.syncEmails();
         });
         document.getElementById('mailbox-all-email-button').addEventListener('click', () => {
             this.handleFilter('all');
