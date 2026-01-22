@@ -1,3 +1,5 @@
+import { A2UIToHTMLConverter } from '../../../services/a2ui/a2ui-to-html.js';
+
 class A2AEntryWidget extends HTMLElement {
     constructor() {
         super();
@@ -13,6 +15,8 @@ class A2AEntryWidget extends HTMLElement {
         this.updateTimer = null;
         /** @type {Array<{type: 'image' | 'audio' | 'file', data: string, mimeType: string, name: string, filePath?: string}>} */
         this.attachments = [];
+        /** @type {A2UIToHTMLConverter} */
+        this.a2uiConverter = new A2UIToHTMLConverter();
     }
 
     async connectedCallback() {
@@ -401,64 +405,7 @@ class A2AEntryWidget extends HTMLElement {
 
         // 显示 agents 列表
         if (this.agents.length > 0) {
-            html += `
-                <div class="mb-6">
-                    <h2 class="text-lg font-semibold text-gray-700 mb-3 flex items-center gap-2">
-                        <i class="fas fa-robot text-purple-500"></i>
-                        Agents 列表 (${this.agents.length})
-                    </h2>
-                    <div class="space-y-3">
-                        ${this.agents.map((entry, index) => {
-                            const agentName = entry.name || '';
-                            const agentId = agentName.includes('/')
-                                ? agentName.split('/').pop()
-                                : agentName;
-                            const card = entry.card || {};
-                            const skills = card.skills || [];
-
-                            return `
-                                <div class="p-4 bg-white rounded-lg border border-gray-200 shadow-sm hover:shadow-md transition-shadow">
-                                    <div class="flex items-start justify-between mb-2">
-                                        <div class="flex-1">
-                                            <h3 class="font-semibold text-gray-800">${this.escapeHtml(card.name || agentId)}</h3>
-                                        </div>
-                                    </div>
-                                    ${card.description ? `
-                                        <p class="text-sm text-gray-600 mt-2 mb-3">${this.escapeHtml(card.description)}</p>
-                                    ` : ''}
-                                    ${skills.length > 0 ? `
-                                        <div class="mt-2">
-                                            <p class="text-xs font-medium text-gray-500 mb-1">技能 (${skills.length}):</p>
-                                            <div class="space-y-2">
-                                                ${skills.map(skill => {
-                                                    const skillName = skill.name || skill.id || 'N/A';
-                                                    const skillExamples = skill.examples || [];
-                                                    const firstExample = skillExamples.length > 0 ? skillExamples[0] : null;
-
-                                                    return `
-                                                        <div class="p-2 bg-purple-50 rounded border border-purple-100">
-                                                            <div class="font-semibold text-xs text-purple-700 mb-1">
-                                                                ${this.escapeHtml(skillName)}
-                                                            </div>
-                                                            ${firstExample ? `
-                                                                <div class="mt-1">
-                                                                    <div class="text-xs text-gray-700 bg-white px-2 py-1 rounded border border-gray-200">
-                                                                        ${this.escapeHtml(firstExample)}
-                                                                    </div>
-                                                                </div>
-                                                            ` : ''}
-                                                        </div>
-                                                    `;
-                                                }).join('')}
-                                            </div>
-                                        </div>
-                                    ` : ''}
-                                </div>
-                            `;
-                        }).join('')}
-                    </div>
-                </div>
-            `;
+            html += this.renderAgentsList();
         }
 
         // 显示对话历史
@@ -780,6 +727,208 @@ class A2AEntryWidget extends HTMLElement {
     clearAttachments() {
         this.attachments = [];
         this.updateAttachmentsPreview();
+    }
+
+    /**
+     * 使用 a2ui 模块渲染 Agents 列表
+     * @returns {string} 渲染后的 HTML
+     */
+    renderAgentsList() {
+        try {
+            const converter = this.a2uiConverter;
+            
+            // 获取主题样式类
+            const cardClasses = converter.getComponentStyleClasses('Card').join(' ');
+            const cardStyles = converter.getAdditionalStyles('Card');
+            const columnClasses = converter.getComponentStyleClasses('Column').join(' ');
+            const columnStyles = converter.getAdditionalStyles('Column');
+            const rowClasses = converter.getComponentStyleClasses('Row').join(' ');
+            const rowStyles = converter.getAdditionalStyles('Row');
+            const listClasses = converter.getComponentStyleClasses('List').join(' ');
+            const listStyles = converter.getAdditionalStyles('List');
+            
+            // 获取文本样式
+            const h2Styles = converter.getAdditionalStyles('Text', 'h2');
+            const h3Styles = converter.getAdditionalStyles('Text', 'h3');
+            const h4Styles = converter.getAdditionalStyles('Text', 'h4');
+            const bodyStyles = converter.getAdditionalStyles('Text', 'body');
+            const captionStyles = converter.getAdditionalStyles('Text', 'caption');
+            
+            // 获取图标样式
+            const iconClasses = converter.getComponentStyleClasses('Icon').join(' ');
+            const iconStyles = converter.getAdditionalStyles('Icon');
+            
+            // 获取 Root 背景样式（用于整个列表容器）
+            const rootStyles = converter.getAdditionalStyles('Root');
+
+            // 构建 Agents 卡片 HTML
+            const agentsHtml = this.agents.map((entry) => {
+                const agentName = entry.name || '';
+                const agentId = agentName.includes('/')
+                    ? agentName.split('/').pop()
+                    : agentName;
+                const card = entry.card || {};
+                const skills = card.skills || [];
+
+                // 构建技能列表 HTML
+                let skillsHtml = '';
+                if (skills.length > 0) {
+                    const skillsList = skills.map(skill => {
+                        const skillName = skill.name || skill.id || 'N/A';
+                        const skillExamples = skill.examples || [];
+                        const firstExample = skillExamples.length > 0 ? skillExamples[0] : null;
+
+                        // 使用主题样式构建技能卡片
+                        return `
+                            <div class="a2ui-card ${cardClasses}" style="${cardStyles}; background: linear-gradient(135deg, rgba(139, 92, 246, 0.1) 0%, rgba(167, 139, 250, 0.05) 100%); border: 1px solid rgba(139, 92, 246, 0.2); margin-bottom: 4px;">
+                                <div class="a2ui-column ${columnClasses}" style="${columnStyles}">
+                                    <h4 style="${h4Styles}; margin: 0 0 4px 0; color: #7c3aed;">
+                                        ${this.escapeHtml(skillName)}
+                                    </h4>
+                                    ${firstExample ? `
+                                        <p style="${captionStyles}; margin: 0; background: rgba(255, 255, 255, 0.8); padding: 4px 6px; border-radius: 4px; border: 1px solid rgba(0, 0, 0, 0.05);">
+                                            ${this.escapeHtml(firstExample)}
+                                        </p>
+                                    ` : ''}
+                                </div>
+                            </div>
+                        `;
+                    }).join('');
+
+                    skillsHtml = `
+                        <div class="a2ui-column ${columnClasses}" style="${columnStyles}; margin-top: 8px;">
+                            <p style="${captionStyles}; margin: 0 0 4px 0; font-weight: 500;">
+                                技能 (${skills.length}):
+                            </p>
+                            <div class="a2ui-list ${listClasses}" style="${listStyles}">
+                                ${skillsList}
+                            </div>
+                        </div>
+                    `;
+                }
+
+                // 使用主题样式构建 Agent 卡片
+                return `
+                    <div class="a2ui-card ${cardClasses} agents-card-item" style="${cardStyles}; margin-bottom: 8px; transition: all 0.2s ease; cursor: default;">
+                        <div class="a2ui-column ${columnClasses}" style="${columnStyles}">
+                            <h3 style="${h3Styles}; margin: 0;">
+                                ${this.escapeHtml(card.name || agentId)}
+                            </h3>
+                            ${card.description ? `
+                                <p style="${bodyStyles}; margin: 4px 0 0 0;">
+                                    ${this.escapeHtml(card.description)}
+                                </p>
+                            ` : ''}
+                            ${skillsHtml}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            // 使用主题样式构建完整的列表
+            const additionalStyles = `
+                <style>
+                    ${converter.generateBaseStyles()}
+                    /* Agents 列表特定样式 */
+                    .agents-list-container {
+                        ${rootStyles}
+                    }
+                    .agents-card-item:hover {
+                        box-shadow: 0 2px 8px rgba(0,0,0,0.08), 0 1px 3px rgba(0,0,0,0.05) !important;
+                        transform: translateY(-1px);
+                        border-color: rgba(139, 92, 246, 0.2) !important;
+                    }
+                </style>
+            `;
+            
+            return `
+                <div class="mb-6">
+                    ${additionalStyles}
+                    <div class="a2ui-root agents-list-container" style="${rootStyles}">
+                        <div class="a2ui-column ${columnClasses}" style="${columnStyles}">
+                            <div class="a2ui-row ${rowClasses}" style="${rowStyles}; align-items: center; margin-bottom: 8px;">
+                                <span class="a2ui-icon ${iconClasses}" style="${iconStyles}; font-size: 16px;">🤖</span>
+                                <h2 style="${h2Styles}; margin: 0;">
+                                    Agents 列表 (${this.agents.length})
+                                </h2>
+                            </div>
+                            <div class="a2ui-list ${listClasses}" style="${listStyles}">
+                                ${agentsHtml}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        } catch (error) {
+            console.error('Error rendering agents list with a2ui:', error);
+            // 如果出错，回退到传统渲染方式
+            return this.renderAgentsListTraditional();
+        }
+    }
+
+    /**
+     * 传统方式渲染 Agents 列表（作为回退方案）
+     * @returns {string} 渲染后的 HTML
+     */
+    renderAgentsListTraditional() {
+        return `
+            <div class="mb-6">
+                <h2 class="text-lg font-semibold text-gray-700 mb-3 flex items-center gap-2">
+                    <i class="fas fa-robot text-purple-500"></i>
+                    Agents 列表 (${this.agents.length})
+                </h2>
+                <div class="space-y-3">
+                    ${this.agents.map((entry, index) => {
+                        const agentName = entry.name || '';
+                        const agentId = agentName.includes('/')
+                            ? agentName.split('/').pop()
+                            : agentName;
+                        const card = entry.card || {};
+                        const skills = card.skills || [];
+
+                        return `
+                            <div class="p-4 bg-white rounded-lg border border-gray-200 shadow-sm hover:shadow-md transition-shadow">
+                                <div class="flex items-start justify-between mb-2">
+                                    <div class="flex-1">
+                                        <h3 class="font-semibold text-gray-800">${this.escapeHtml(card.name || agentId)}</h3>
+                                    </div>
+                                </div>
+                                ${card.description ? `
+                                    <p class="text-sm text-gray-600 mt-2 mb-3">${this.escapeHtml(card.description)}</p>
+                                ` : ''}
+                                ${skills.length > 0 ? `
+                                    <div class="mt-2">
+                                        <p class="text-xs font-medium text-gray-500 mb-1">技能 (${skills.length}):</p>
+                                        <div class="space-y-2">
+                                            ${skills.map(skill => {
+                                                const skillName = skill.name || skill.id || 'N/A';
+                                                const skillExamples = skill.examples || [];
+                                                const firstExample = skillExamples.length > 0 ? skillExamples[0] : null;
+
+                                                return `
+                                                    <div class="p-2 bg-purple-50 rounded border border-purple-100">
+                                                        <div class="font-semibold text-xs text-purple-700 mb-1">
+                                                            ${this.escapeHtml(skillName)}
+                                                        </div>
+                                                        ${firstExample ? `
+                                                            <div class="mt-1">
+                                                                <div class="text-xs text-gray-700 bg-white px-2 py-1 rounded border border-gray-200">
+                                                                    ${this.escapeHtml(firstExample)}
+                                                                </div>
+                                                            </div>
+                                                        ` : ''}
+                                                    </div>
+                                                `;
+                                            }).join('')}
+                                        </div>
+                                    </div>
+                                ` : ''}
+                            </div>
+                        `;
+                    }).join('')}
+                </div>
+            </div>
+        `;
     }
 
     render() {
