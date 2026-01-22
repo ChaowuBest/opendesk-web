@@ -68,8 +68,8 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             if (this.isLoading || !this.hasMoreEmails) return;
 
             const { scrollTop, scrollHeight, clientHeight } = emailListContainer;
-            // 当滚动到距离底部 50px 时触发加载
-            if (scrollHeight - scrollTop - clientHeight < 50) {
+            // 当滚动到距离底部 100px 时触发加载
+            if (scrollHeight - scrollTop - clientHeight < 100) {
                 this.loadMoreEmails();
             }
         }, 100);
@@ -212,6 +212,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
      */
     async getEmailHeaderList(offset = this.currentOffset, pageSize = this.emailPerPage) {
         console.info('getting email header list', { offset, pageSize });
+        
         const emailHeaderList = await window.applicationAPI.call('getEmailHeaderList', offset, pageSize);
         emailHeaderList.sort((a, b) => new Date(b.date) - new Date(a.date));
         return emailHeaderList;
@@ -281,43 +282,61 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
      * 更新加载状态 UI
      */
     updateLoadingStatusUI() {
-        const emailListContainer = this.querySelector('#email-list');
-        if (!emailListContainer) return;
-        
-        // 移除现有的加载状态元素
-        const existingLoadingElement = emailListContainer.querySelector('.loading-status');
-        if (existingLoadingElement) {
-            existingLoadingElement.remove();
+        const emailListContainer = this.querySelector('#email-list') || this.querySelector('.email-list-container');
+        if (!emailListContainer) {
+            console.warn('Email list container not found');
+            return;
         }
         
-        // 添加新的加载状态元素
-        let loadingStatusHTML = '';
+        // 复用或创建加载状态元素
+        let loadingElement = emailListContainer.querySelector('.loading-status');
+        if (!loadingElement) {
+            loadingElement = document.createElement('div');
+            loadingElement.className = 'loading-status';
+            emailListContainer.appendChild(loadingElement);
+        }
         
+        // 根据状态更新内容
+        let content = '';
         if (this.isLoading) {
-            loadingStatusHTML = `
-                <div class="loading-status text-gray-500 text-center py-4">
+            content = `
+                <div class="text-gray-500 text-center py-4 animate-pulse">
                     加载中...
                 </div>
             `;
         } else if (!this.hasMoreEmails && this.emailHeaderList.size > 0) {
-            loadingStatusHTML = `
-                <div class="loading-status text-gray-500 text-center py-4">
+            content = `
+                <div class="text-gray-500 text-center py-4">
                     已加载全部邮件
                 </div>
             `;
         } else if (this.loadingError) {
-            loadingStatusHTML = `
-                <div class="loading-status text-red-500 text-center py-4">
-                    ${this.loadingError}
-                    <button class="ml-2 text-blue-500 hover:underline" onclick="this.closest('mailbox-entry-widget').loadMoreEmails()">
+            // HTML 转义错误信息
+            const escapedError = this.loadingError.replace(/[&<>"']/g, (char) => {
+                const entities = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+                return entities[char];
+            });
+            content = `
+                <div class="text-red-500 text-center py-4">
+                    ${escapedError}
+                    <button class="ml-2 text-blue-500 hover:underline retry-button">
                         重试
                     </button>
                 </div>
             `;
         }
         
-        if (loadingStatusHTML) {
-            emailListContainer.insertAdjacentHTML('beforeend', loadingStatusHTML);
+        // 只在内容变化时更新
+        if (loadingElement.innerHTML !== content) {
+            loadingElement.innerHTML = content;
+            
+            // 绑定重试按钮事件
+            const retryButton = loadingElement.querySelector('.retry-button');
+            if (retryButton) {
+                retryButton.onclick = () => {
+                    this.loadMoreEmails();
+                };
+            }
         }
     }
 
