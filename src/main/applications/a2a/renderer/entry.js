@@ -1133,17 +1133,19 @@ class A2AEntryWidget extends HTMLElement {
                     ${this.renderAttachments()}
                 </div>
 
-                <div class="flex gap-3 items-start">
-                    <div class="flex-1 flex flex-col gap-2">
+                <div class="flex gap-3 items-center">
+                    <div class="flex-1">
                         <textarea
                             id="a2a-input"
                             class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent resize-none"
-                            rows="3"
+                            rows="1"
                             placeholder="输入消息..."
+                            style="height: 40px; min-height: 40px; max-height: 40px; line-height: 1.5; overflow-y: hidden;"
                         ></textarea>
+                    </div>
 
-                        <!-- 工具栏 -->
-                        <div class="flex items-center gap-2">
+                    <!-- 工具栏 -->
+                    <div class="flex items-center gap-2">
                             <!-- 图片选择 -->
                             <input
                                 type="file"
@@ -1190,10 +1192,9 @@ class A2AEntryWidget extends HTMLElement {
                             >
                                 <i class="fas fa-paperclip"></i>
                             </button>
-                        </div>
                     </div>
 
-                    <div class="flex flex-col gap-2">
+                    <div>
                         <button
                             id="a2a-send-btn"
                             class="px-6 py-2 bg-purple-500 hover:bg-purple-600 text-white rounded-lg font-medium transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
