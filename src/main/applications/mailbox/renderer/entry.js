@@ -27,6 +27,8 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         this.hasMoreEmails = true; // 是否还有更多邮件可加载
         /** @type {string | null} */
         this.loadingError = null; // 加载错误信息
+        /** @type {boolean} */
+        this.isHeadersExpanded = false; // 邮件头是否展开
     }
 
     connectedCallback() {
@@ -455,76 +457,127 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
     }
 
     renderCurrentEmailHeader() {
-        const senders = this.selectedEmailHeader.from?.map(sender => {
+        // 渲染单个邮箱地址
+        const renderEmailAddress = (address, type) => {
+            let bgColor, borderColor, textColor;
+            switch (type) {
+                case 'from':
+                    bgColor = 'bg-gray-200/60';
+                    borderColor = 'border-gray-300';
+                    textColor = 'text-gray-700';
+                    break;
+                case 'to':
+                    bgColor = 'bg-blue-100';
+                    borderColor = 'border-blue-200';
+                    textColor = 'text-blue-700';
+                    break;
+                case 'cc':
+                    bgColor = 'bg-green-100';
+                    borderColor = 'border-green-200';
+                    textColor = 'text-green-700';
+                    break;
+                case 'bcc':
+                    bgColor = 'bg-purple-100';
+                    borderColor = 'border-purple-200';
+                    textColor = 'text-purple-700';
+                    break;
+                default:
+                    bgColor = 'bg-gray-200/60';
+                    borderColor = 'border-gray-300';
+                    textColor = 'text-gray-700';
+            }
+            
             return `
-            <div class="flex items-center bg-gray-200/60 border border-gray-300 rounded px-1.5 py-0.5 text-xs text-gray-700">
-                <span class="font-medium">${sender.name}</span>
-                <span class="ml-1 text-gray-400 italic font-normal">&lt;${sender.address}&gt;</span>
+            <div class="flex items-center ${bgColor} border ${borderColor} rounded px-1.5 py-0.5 text-xs ${textColor}">
+                <span class="font-medium">${address.name}</span>
+                <span class="ml-1 text-gray-400 italic font-normal">&lt;${address.address}&gt;</span>
+                ${type === 'from' ? `
                 <button class="ml-1 text-gray-400 hover:text-gray-600">
                     <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" /></svg>
                 </button>
+                ` : ''}
             </div>
-            `
-        }).join('');
-        const tos = this.selectedEmailHeader.to?.map(to => {
-            return `
-            <div class="flex items-center bg-blue-100 border border-blue-200 rounded px-1.5 py-0.5 text-xs text-blue-700">
-                <span class="font-medium">${to.name}</span>
-                <span class="ml-1 text-gray-400 italic font-normal">&lt;${to.address}&gt;</span>
-            </div>
-            `
-        }).join('');
-        const ccs = this.selectedEmailHeader.cc?.map(cc => {
-            return `
-            <div class="flex items-center bg-green-100 border border-green-200 rounded px-1.5 py-0.5 text-xs text-green-700">
-                <span class="font-medium">${cc.name}</span>
-                <span class="ml-1 text-gray-400 italic font-normal">&lt;${cc.address}&gt;</span>
-            </div>
-            `
-        }).join('');
-        const bccs = this.selectedEmailHeader.bcc?.map(bcc => {
-            return `
-            <div class="flex items-center bg-purple-100 border border-purple-200 rounded px-1.5 py-0.5 text-xs text-purple-700">
-                <span class="font-medium">${bcc.name}</span>
-                <span class="ml-1 text-gray-400 italic font-normal">&lt;${bcc.address}&gt;</span>
-            </div>
-            `
-        }).join('');
-
+            `;
+        };
+        
+        // 检查是否需要显示展开/收起按钮
+        const needsExpandButton = () => {
+            const totalAddresses = 
+                (this.selectedEmailHeader.to?.length || 0) +
+                (this.selectedEmailHeader.cc?.length || 0) +
+                (this.selectedEmailHeader.bcc?.length || 0);
+            return totalAddresses > 3;
+        };
+        
         var addresses = '';
-        if (senders && senders.length > 0) {
+        
+        // 渲染发件人，右侧添加展开/收起按钮
+        if (this.selectedEmailHeader.from && this.selectedEmailHeader.from.length > 0) {
+            const senderHtml = this.selectedEmailHeader.from.map(addr => renderEmailAddress(addr, 'from')).join('');
+            
+            let expandButton = '';
+            if (needsExpandButton()) {
+                expandButton = `
+                <button class="email-expand-toggle bg-white border border-gray-300 rounded px-1.5 py-0.5 text-xs text-gray-600 hover:bg-gray-50 focus:outline-none focus:ring-1 focus:ring-gray-300 ml-2" 
+                        data-expanded="${this.isHeadersExpanded}">
+                    ${this.isHeadersExpanded ? '收起' : '展开'}
+                </button>
+                `;
+            }
+            
             addresses += `
             <!-- 发件人行 -->
-            <div class="group flex items-center px-1 py-1 hover:bg-gray-50 transition-colors">
-                <label class="w-12 text-xs text-gray-400 font-medium">发件人</label>
-                <div class="flex-1 flex items-center gap-2">
-                    ${senders}
+            <div class="group flex items-start px-1 py-1 hover:bg-gray-50 transition-colors">
+                <label class="w-12 text-xs text-gray-400 font-medium pt-0.5">发件人</label>
+                <div class="flex-1 flex flex-wrap gap-2 items-center">
+                    ${senderHtml}
+                    ${expandButton}
                 </div>
             </div>
-            `
+            `;
         }
-
-        if (tos && tos.length > 0) {
+        
+        // 渲染收件人，默认显示前3个
+        if (this.selectedEmailHeader.to && this.selectedEmailHeader.to.length > 0) {
+            const maxVisible = this.isHeadersExpanded ? this.selectedEmailHeader.to.length : 3;
+            const displayTos = this.selectedEmailHeader.to.slice(0, maxVisible);
+            const toHtml = displayTos.map(addr => renderEmailAddress(addr, 'to')).join('');
+            
             addresses += `
             <!-- 收件人行 -->
-            <div class="group flex items-center px-1 py-1 hover:bg-gray-50 transition-colors">
-                <label class="w-12 text-xs text-gray-400 font-medium">收件人</label>
-                <div class="flex-1 flex flex-wrap gap-2 items-center">
-                    ${tos}
+            <div class="group flex items-start px-1 py-1 hover:bg-gray-50 transition-colors">
+                <label class="w-12 text-xs text-gray-400 font-medium pt-0.5">收件人</label>
+                <div class="flex-1 flex flex-wrap gap-2">
+                    ${toHtml}
                 </div>
             </div>
-            `
+            `;
         }
-
-        if (ccs && ccs.length > 0) {
+        
+        // 渲染抄送，展开时显示
+        if (this.selectedEmailHeader.cc && this.selectedEmailHeader.cc.length > 0 && this.isHeadersExpanded) {
+            const ccHtml = this.selectedEmailHeader.cc.map(addr => renderEmailAddress(addr, 'cc')).join('');
             addresses += ` <!-- 抄送行 -->
-            <div class="group flex items-center px-1 py-1 hover:bg-gray-50 transition-colors">
-                <label class="w-12 text-xs text-gray-400 font-medium">抄送</label>
-                <div class="flex-1 flex flex-wrap gap-2 items-center">
-                    ${ccs}
+            <div class="group flex items-start px-1 py-1 hover:bg-gray-50 transition-colors">
+                <label class="w-12 text-xs text-gray-400 font-medium pt-0.5">抄送</label>
+                <div class="flex-1 flex flex-wrap gap-2">
+                    ${ccHtml}
                 </div>
             </div>
-            `
+            `;
+        }
+        
+        // 渲染密送，展开时显示
+        if (this.selectedEmailHeader.bcc && this.selectedEmailHeader.bcc.length > 0 && this.isHeadersExpanded) {
+            const bccHtml = this.selectedEmailHeader.bcc.map(addr => renderEmailAddress(addr, 'bcc')).join('');
+            addresses += ` <!-- 密送行 -->
+            <div class="group flex items-start px-1 py-1 hover:bg-gray-50 transition-colors">
+                <label class="w-12 text-xs text-gray-400 font-medium pt-0.5">密送</label>
+                <div class="flex-1 flex flex-wrap gap-2">
+                    ${bccHtml}
+                </div>
+            </div>
+            `;
         }
 
         var attachments = '';
@@ -689,6 +742,15 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
                 window.fsAPI.openPath(filePath);
             });
         });
+
+        // 添加展开/收起按钮事件监听器
+        const expandButton = document.querySelector('.email-expand-toggle');
+        if (expandButton) {
+            expandButton.addEventListener('click', () => {
+                this.isHeadersExpanded = !this.isHeadersExpanded;
+                this.reloadCurrentEmailContent();
+            });
+        }
     }
 
     async openEmail(email, redownload = false) {
