@@ -205,20 +205,23 @@ ${agentsDescription}
 
             // 添加附件 parts
             for (const attachment of attachments) {
-                if (attachment.type === 'image') {
-                    parts.push({
-                        kind: 'image',
-                        image: {
-                            url: attachment.data, // base64 data URL
-                            mimeType: attachment.mimeType
+                if (attachment.type === 'image' || attachment.type === 'audio') {
+                    // 从 data URL 中提取 base64 数据
+                    let base64Data = attachment.data;
+                    if (base64Data.startsWith('data:')) {
+                        // 提取 base64 部分（去掉 data:mime/type;base64, 前缀）
+                        const base64Match = base64Data.match(/^data:[^;]+;base64,(.+)$/);
+                        if (base64Match) {
+                            base64Data = base64Match[1];
                         }
-                    });
-                } else if (attachment.type === 'audio') {
+                    }
+
+                    // 转换FilePart格式：{kind: "file", file: {bytes, mimeType}}
                     parts.push({
-                        kind: 'audio',
-                        audio: {
-                            url: attachment.data, // base64 data URL
-                            mimeType: attachment.mimeType
+                        kind: 'file',
+                        file: {
+                            bytes: base64Data,
+                            mimeType: attachment.mimeType || (attachment.type === 'image' ? 'image/png' : 'audio/mpeg')
                         }
                     });
                 } else if (attachment.type === 'file') {
