@@ -17,6 +17,8 @@ class A2AEntryWidget extends HTMLElement {
         this.attachments = [];
         /** @type {A2UIToHTMLConverter} */
         this.a2uiConverter = new A2UIToHTMLConverter();
+        /** @type {boolean} */
+        this.agentsListExpanded = false; // Agents 列表是否展开
     }
 
     async connectedCallback() {
@@ -500,8 +502,29 @@ class A2AEntryWidget extends HTMLElement {
 
         messagesContainer.innerHTML = html;
 
+        // 设置 Agents 列表展开/收起事件监听器
+        this.setupAgentsListToggle();
+
         // 滚动到底部
         messagesContainer.scrollTop = messagesContainer.scrollHeight;
+    }
+
+    /**
+     * 设置 Agents 列表展开/收起功能
+     */
+    setupAgentsListToggle() {
+        const toggleButtons = this.querySelectorAll('[data-action="toggle-agents-list"]');
+        toggleButtons.forEach(button => {
+            // 移除可能存在的旧事件监听器
+            const newButton = button.cloneNode(true);
+            button.parentNode.replaceChild(newButton, button);
+
+            // 添加新的事件监听器
+            newButton.addEventListener('click', () => {
+                this.agentsListExpanded = !this.agentsListExpanded;
+                this.updateMessages(true); // 立即更新
+            });
+        });
     }
 
     showError(message) {
@@ -761,6 +784,10 @@ class A2AEntryWidget extends HTMLElement {
             // 获取 Root 背景样式（用于整个列表容器）
             const rootStyles = converter.getAdditionalStyles('Root');
 
+            // 获取按钮样式
+            const buttonClasses = converter.getComponentStyleClasses('Button').join(' ');
+            const buttonStyles = converter.getAdditionalStyles('Button');
+
             // 构建 Agents 卡片 HTML
             const agentsHtml = this.agents.map((entry) => {
                 const agentName = entry.name || '';
@@ -826,6 +853,9 @@ class A2AEntryWidget extends HTMLElement {
             }).join('');
 
             // 使用主题样式构建完整的列表
+            const isExpanded = this.agentsListExpanded;
+            const expandIcon = isExpanded ? '▼' : '▶';
+
             const additionalStyles = `
                 <style>
                     ${converter.generateBaseStyles()}
@@ -838,6 +868,48 @@ class A2AEntryWidget extends HTMLElement {
                         transform: translateY(-1px);
                         border-color: rgba(139, 92, 246, 0.2) !important;
                     }
+                    .agents-list-header {
+                        cursor: pointer;
+                        user-select: none;
+                        transition: opacity 0.2s ease, background-color 0.2s ease;
+                        padding: 4px 8px;
+                        margin: -4px -8px;
+                        border-radius: 4px;
+                    }
+                    .agents-list-header:hover {
+                        opacity: 0.8;
+                        background-color: rgba(0, 0, 0, 0.02);
+                    }
+                    .agents-list-content {
+                        overflow: hidden;
+                        transition: max-height 0.4s cubic-bezier(0.4, 0, 0.2, 1), 
+                                    opacity 0.3s ease,
+                                    margin-top 0.3s ease;
+                        max-height: ${isExpanded ? '5000px' : '0'};
+                        opacity: ${isExpanded ? '1' : '0'};
+                        margin-top: ${isExpanded ? '8px' : '0'};
+                    }
+                    .agents-expand-icon {
+                        display: inline-flex;
+                        align-items: center;
+                        justify-content: center;
+                        width: 16px;
+                        height: 16px;
+                        transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+                        transform: rotate(${isExpanded ? '90deg' : '0deg'});
+                        margin-right: 6px;
+                        font-size: 10px;
+                        color: #64748b;
+                        flex-shrink: 0;
+                    }
+                    .agents-collapse-button {
+                        margin-top: 8px;
+                        opacity: ${isExpanded ? '1' : '0'};
+                        pointer-events: ${isExpanded ? 'auto' : 'none'};
+                        transition: opacity 0.3s ease;
+                        display: flex;
+                        justify-content: center;
+                    }
                 </style>
             `;
             
@@ -846,14 +918,23 @@ class A2AEntryWidget extends HTMLElement {
                     ${additionalStyles}
                     <div class="a2ui-root agents-list-container" style="${rootStyles}">
                         <div class="a2ui-column ${columnClasses}" style="${columnStyles}">
-                            <div class="a2ui-row ${rowClasses}" style="${rowStyles}; align-items: center; margin-bottom: 8px;">
+                            <div class="a2ui-row ${rowClasses} agents-list-header" style="${rowStyles}; align-items: center;" data-action="toggle-agents-list">
+                                <span class="agents-expand-icon">${expandIcon}</span>
                                 <span class="a2ui-icon ${iconClasses}" style="${iconStyles}; font-size: 16px;">🤖</span>
-                                <h2 style="${h2Styles}; margin: 0;">
+                                <h2 style="${h2Styles}; margin: 0; flex: 1;">
                                     Agents 列表 (${this.agents.length})
                                 </h2>
                             </div>
-                            <div class="a2ui-list ${listClasses}" style="${listStyles}">
-                                ${agentsHtml}
+                            <div class="agents-list-content">
+                                <div class="a2ui-list ${listClasses}" style="${listStyles}">
+                                    ${agentsHtml}
+                                </div>
+                                <div class="agents-collapse-button">
+                                    <button class="${buttonClasses}" style="${buttonStyles}" data-action="toggle-agents-list">
+                                        <span style="margin-right: 4px;">▲</span>
+                                        收起列表
+                                    </button>
+                                </div>
                             </div>
                         </div>
                     </div>
