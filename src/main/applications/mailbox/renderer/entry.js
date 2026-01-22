@@ -43,6 +43,9 @@ import 'tinymce/skins/ui/oxide/skin.css';
 // 引入内容区域的排版样式
 import contentCss from 'tinymce/skins/content/default/content.css?inline';
 import contentUiCss from 'tinymce/skins/ui/oxide/content.css?inline';
+
+// 5. 引入中文语言包
+import 'tinymce-i18n/langs7/zh_CN.js';
 // ========== TinyMCE 7.x 导入结束 ==========
 
 const MailOperations = Object.freeze({
@@ -1543,6 +1546,7 @@ class MailEditorWidget extends AgentOperableHTMLElement {
             branding: false,
             statusbar: false,
             resize: true,
+            language: 'zh_CN',  // 设置中文语言
             
             // 【关键配置】TinyMCE 7.x 需要的配置
             skin: false,  // 不动态加载皮肤（已在顶部 import）
