@@ -2,6 +2,7 @@ import { EmailHeader, EmailProfileSchema, EmailContent, EmailAttachment } from "
 import { BaseWorker } from "../../base.js";
 import { logger } from '../../../utils/logger.js';
 import Pop3Command from 'node-pop3';
+import nodemailer from 'nodemailer';
 import fs from 'fs';
 import nedb from 'nedb-promises';
 import path from 'path';
@@ -84,6 +85,52 @@ class POP3EmailClient {
     }
 }
 
+class SmtpEmailClient {
+    constructor(account, user, pass, fromName, host, port, secure) {
+        this.account = account;
+        this.user = user;
+        this.pass = pass;
+        this.fromName = fromName;
+        this.host = host;
+        this.port = port;
+        this.secure = secure;
+    }
+
+    async sendMail(to, cc, bcc, subject, text, html, attachments) {
+        const transport = nodemailer.createTransport({
+            host: this.host,
+            port: this.port,
+            secure: this.secure,
+            auth: {
+                user: this.user,
+                pass: this.pass
+            },
+            tls: {
+                rejectUnauthorized: false
+            }
+        })
+
+        const mailOptions = {
+            from: `"${this.fromName}" <${this.account}>`,
+            to: Array.isArray(to) ? to.join(', ') : to,
+            cc: Array.isArray(cc) ? cc.join(', ') : cc,
+            bcc: Array.isArray(bcc) ? bcc.join(', ') : bcc,
+            subject: subject,
+            text: text,
+            html: html,
+            attachments: attachments
+        };
+        try {
+            await transport.sendMail(mailOptions);
+            NotificationManager.getInstance().info('邮箱', '发送成功', '邮件发送成功')
+            return true;
+        } catch (error) {
+            NotificationManager.getInstance().error(error, '邮箱', '发送失败', '邮件发送失败')
+            return false;
+        }
+    }
+}
+
 class MailboxStorage {
 
     constructor(dbPath) {
@@ -147,6 +194,14 @@ class MailboxStorage {
         await this.db.update(
             { uid: uid },
             { $set: { unread: true } }
+        )
+    }
+
+    async deleteEmail(uid) {
+        logger.info(`deleting email: ${uid}`);
+        await this.db.update(
+            { uid: uid },
+            { $set: { deleted: true } }
         )
     }
 
@@ -232,8 +287,9 @@ class MailboxStorage {
      * @param {number} pageSize - The page size of emails to return
      * @returns {Promise<EmailHeader[]>}
      */
+
     async getEmailHeaderList(offset = 0, pageSize = 20) {
-        const docs = await this.db.find({}).sort({ date: -1 }).skip(offset).limit(pageSize);
+        const docs = await this.db.find({deleted: { $ne: true }}).sort({ date: -1 }).skip(offset).limit(pageSize);
         return docs.map(doc => new EmailHeader(
             doc.uid, doc.subject,
             doc.from, doc.to, doc.cc, doc.bcc,
@@ -522,8 +578,13 @@ class MailboxWorker extends BaseWorker {
         await this.storage.markEmailAsRead(uid);
     }
 
+
     async markEmailAsUnread(uid) {
         await this.storage.markEmailAsUnread(uid);
+    }
+
+    async deleteEmail(uid) {
+        await this.storage.deleteEmail(uid);
     }
 
     /**
@@ -574,6 +635,22 @@ class MailboxWorker extends BaseWorker {
 
     async starEmail(starOptions) {
         await this.storage.starEmail(starOptions.uid, starOptions.starred);
+    }
+
+    async sendEmail(sendEmailSchema) {
+        logger.info(`sendEmail to ${sendEmailSchema.to}`)
+        const config = EmailProfileSchema.parse(this.config);
+        if (config.outbox?.smtp) {
+            const smtp = new SmtpEmailClient(config.outbox.smtp.account? config.outbox.smtp.account : config.username,
+                config.username, config.password, config.name,
+                config.outbox.smtp.host, config.outbox.smtp.port, config.outbox.smtp.tls
+            );
+            return await smtp.sendMail(sendEmailSchema.to , sendEmailSchema.cc, sendEmailSchema.bcc,
+                sendEmailSchema.subject, sendEmailSchema.text, sendEmailSchema.html, sendEmailSchema.attachments);
+        } else {
+            logger.error(`no valid outbox server configured: ${this.config}`);
+            throw new Error('no valid outbox server configured');
+        }
     }
 }
 

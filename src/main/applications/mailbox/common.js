@@ -16,6 +16,7 @@ const InboxServerSchema = z.object({
 
 const OutboxServerSchema = z.object({
     smtp: z.object({
+        account: z.string().default(''),
         host: z.string().default(''),
         tls: z.boolean().default(true),
         port: z.number().default(587),
@@ -42,6 +43,16 @@ const EmailHeaderQuerySchema = z.object({
     offset: z.number().describe('偏移量').optional(),
 });
 
+const sendEmailSchema = z.object({
+    to: z.string().optional(),
+    cc: z.string().default(''),
+    bcc: z.string().default(''),
+    subject: z.string().default(''),
+    text: z.string().default(''),
+    html: z.string().default(''),
+    attachments: z.array(z.string()).default([]),
+});
+
 
 class EmailAddress {
     constructor(name, address) {
@@ -61,7 +72,7 @@ class EmailHeader {
      * @param {EmailAddress[]} bcc - The bcc recipient of the email
      * @param {Date} date - The date of the email
      */
-    constructor(uid, subject, from, to, cc, bcc, date, unread = true, starred = false) {
+    constructor(uid, subject, from, to, cc, bcc, date, unread = true, starred = false, deleted = false) {
         this.uid = uid;
         this.subject = subject;
         this.from = from;
@@ -71,6 +82,7 @@ class EmailHeader {
         this.date = date;
         this.unread = unread;
         this.starred = starred;
+        this.deleted = deleted
     }
 }
 
@@ -96,4 +108,5 @@ export {
     EmailProfileSchema,
     InboxServerSchema,
     OutboxServerSchema,
+    sendEmailSchema,
 };

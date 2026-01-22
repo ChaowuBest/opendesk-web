@@ -136,6 +136,12 @@ function exposeFSAPI() {
                 throw new Error(result.message);
             }
         },
+        selectFile: async () => {
+            // 调用主进程的 dialog
+            const filePaths = await ipcRenderer.invoke('fs:dialog-open');
+            // 这里的返回值直接就是路径数组 ['C:/Users/.../a.pdf']，或者空数组(用户取消)
+            return filePaths; 
+        },
         getFilePath: (file) => {
             // 统一为跨平台路径，始终返回如 c:/xxx 格式
             let p = webUtils.getPathForFile(file);
