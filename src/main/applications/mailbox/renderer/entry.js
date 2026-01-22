@@ -20,7 +20,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         /** @type {number} */
         this.currentOffset = 0; // 当前加载的邮件偏移量
         /** @type {number} */
-        this.emailPerPage = 8; // 每页加载的邮件数量 
+        this.emailPerPage = 20; // 每页加载的邮件数量 
         /** @type {boolean} */
         this.isLoading = false; // 是否正在加载邮件
         /** @type {boolean} */
@@ -212,12 +212,6 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
      */
     async getEmailHeaderList(offset = this.currentOffset, pageSize = this.emailPerPage) {
         console.info('getting email header list', { offset, pageSize });
-
-        // // 模拟加载失败，用于测试错误处理
-        // // 随机触发错误，概率为50%
-        // if (Math.random() < 0.5) {
-        //     throw new Error('网络错误：无法连接到邮件服务器');
-        // }
         
         const emailHeaderList = await window.applicationAPI.call('getEmailHeaderList', offset, pageSize);
         emailHeaderList.sort((a, b) => new Date(b.date) - new Date(a.date));
