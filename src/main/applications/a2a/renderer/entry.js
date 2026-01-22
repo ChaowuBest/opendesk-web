@@ -119,7 +119,6 @@ class A2AEntryWidget extends HTMLElement {
         const input = this.querySelector('#a2a-input');
         const sendButton = this.querySelector('#a2a-send-btn');
         const loadButton = this.querySelector('#a2a-load-btn');
-        const clearButton = this.querySelector('#a2a-clear-btn');
         const imageInput = this.querySelector('#a2a-image-input');
         const audioInput = this.querySelector('#a2a-audio-input');
         const fileInput = this.querySelector('#a2a-file-input');
@@ -283,9 +282,6 @@ class A2AEntryWidget extends HTMLElement {
 
         sendButton.addEventListener('click', sendMessage);
         loadButton.addEventListener('click', loadAgents);
-        if (clearButton) {
-            clearButton.addEventListener('click', () => this.clearConversation());
-        }
 
         input.addEventListener('keypress', (event) => {
             if (event.key === 'Enter' && !event.shiftKey) {
@@ -414,10 +410,20 @@ class A2AEntryWidget extends HTMLElement {
         if (this.conversationHistory.length > 0) {
             html += `
                 <div class="mb-6">
-                    <h2 class="text-lg font-semibold text-gray-700 mb-3 flex items-center gap-2">
-                        <i class="fas fa-comments text-gray-500"></i>
-                        对话历史
-                    </h2>
+                    <div class="flex items-center gap-3 mb-3">
+                        <h2 class="text-lg font-semibold text-gray-700 flex items-center gap-2">
+                            <i class="fas fa-comments text-gray-500"></i>
+                            对话历史
+                        </h2>
+                        <!-- 清空对话按钮（仅在对话历史存在时显示） -->
+                        <button
+                            id="a2a-clear-btn"
+                            class="px-3 py-1.5 text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg transition-all shadow-sm hover:shadow-md"
+                            title="清空对话"
+                        >
+                            <i class="fas fa-trash-alt"></i> 清空
+                        </button>
+                    </div>
                     <div class="space-y-4">
                         ${this.conversationHistory.map((msg) => {
                             if (msg.role === 'system' && msg.isAgentSelection) {
@@ -505,8 +511,28 @@ class A2AEntryWidget extends HTMLElement {
         // 设置 Agents 列表展开/收起事件监听器
         this.setupAgentsListToggle();
 
+        // 设置清空按钮事件监听器（如果存在）
+        this.setupClearButton();
+
         // 滚动到底部
         messagesContainer.scrollTop = messagesContainer.scrollHeight;
+    }
+
+    /**
+     * 设置清空按钮事件监听器
+     */
+    setupClearButton() {
+        const clearButton = this.querySelector('#a2a-clear-btn');
+        if (clearButton) {
+            // 移除可能存在的旧事件监听器
+            const newButton = clearButton.cloneNode(true);
+            clearButton.parentNode.replaceChild(newButton, clearButton);
+
+            // 添加新的事件监听器
+            newButton.addEventListener('click', () => {
+                this.clearConversation();
+            });
+        }
     }
 
     /**
@@ -1032,17 +1058,10 @@ class A2AEntryWidget extends HTMLElement {
             <!-- 头部 -->
             <header class="h-14 border-b border-gray-200 flex items-center justify-between px-6 bg-white/70 backdrop-blur-xl z-20">
                 <h1 class="font-medium text-md tracking-tight">A2A</h1>
-                <button
-                    id="a2a-clear-btn"
-                    class="px-3 py-1 text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 rounded transition-colors"
-                    title="清空对话"
-                >
-                    <i class="fas fa-trash-alt"></i> 清空
-                </button>
             </header>
 
             <!-- 消息显示区域 -->
-            <main id="a2a-messages" class="flex-1 overflow-y-auto p-6">
+            <main id="a2a-messages" class="flex-1 overflow-y-auto p-6 relative">
                 <div class="text-center text-gray-400 mt-8">
                     <i class="fas fa-comments text-4xl mb-2"></i>
                     <p>还没有消息，开始输入吧！</p>
