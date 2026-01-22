@@ -112,10 +112,10 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         this.updateLoadingStatusUI();
         
         try {
-            const emails = await this.getEmailHeaderList(this.currentOffset, 10);
+            const emails = await this.getEmailHeaderList(this.currentOffset, this.emailPerPage);
             
             // 检查是否还有更多邮件
-            if (emails.length < 10) {
+            if (emails.length < this.emailPerPage) {    
                 this.hasMoreEmails = false;
             }
             
@@ -207,12 +207,12 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
     /**
      * Get the list of email headers from the database
      * @param {number} offset - The offset to start from
-     * @param {number} limit - The maximum number of emails to return
+     * @param {number} pageSize - The page size of emails to return
      * @returns {Promise<EmailHeader[]>}
      */
-    async getEmailHeaderList(offset = 0, limit = 10) {
-        console.info('getting email header list', { offset, limit });
-        const emailHeaderList = await window.applicationAPI.call('getEmailHeaderList', offset, limit);
+    async getEmailHeaderList(offset = this.currentOffset, pageSize = this.emailPerPage) {
+        console.info('getting email header list', { offset, pageSize });
+        const emailHeaderList = await window.applicationAPI.call('getEmailHeaderList', offset, pageSize);
         emailHeaderList.sort((a, b) => new Date(b.date) - new Date(a.date));
         return emailHeaderList;
     }
