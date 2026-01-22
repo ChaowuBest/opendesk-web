@@ -1,6 +1,6 @@
 import { BaseToolset } from "../../agents/tool.js";
 import { BaseApplication } from "../base.js";
-import { ExecuteCmdTool } from "./tools.js";
+import { ExecuteCmdTool, ExecuteBashTool } from "./tools.js";
 
 
 export class TerminalApplication extends BaseApplication {
@@ -10,7 +10,11 @@ export class TerminalApplication extends BaseApplication {
 
     getToolsets(): BaseToolset[] {
         const toolset = new BaseToolset('terminal');
-        toolset.addTool(new ExecuteCmdTool());
+        if (process.platform === 'win32') {
+            toolset.addTool(new ExecuteCmdTool());
+        } else {
+            toolset.addTool(new ExecuteBashTool());
+        }
         return [toolset];
     }
 }

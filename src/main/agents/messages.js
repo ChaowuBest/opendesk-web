@@ -175,26 +175,35 @@ class ToolCall {
 }
 
 class ToolCallMessagePart {
+
     /**
-     * @param {ToolCall[]} toolcalls
+     * 初始化一个ToolCallMessagePart
+     * 需要注意，我们特意设计成不允许在构造函数中传递toolcalls，这是因为如果模型直接输出
+     * 了多个ToolCall（但实际上是同一个TC的多个流式组件的话，直接初始化会造成它们无法自动合并
      */
-    constructor(toolcalls) {
+    constructor() {
         this.type = 'tool_call';
-        this.toolcalls = toolcalls;
+        this.toolcalls = [];
         this.rendered = undefined;
+    }
+
+    push(toolcall) {
+        if (typeof toolcall.id === 'string') {
+            this.toolcalls.push(toolcall);
+        } else {
+            let last_toolcall = this.toolcalls[this.toolcalls.length - 1];
+            if (last_toolcall === undefined) {
+                // 有的消息片段中是没有第一个初始id的，因为带id的片段在上一条消息中
+                this.toolcalls.push(toolcall);
+            } else {
+                last_toolcall.args_string += toolcall.args_string;
+            }
+        }
     }
 
     extend(tool_call_message_part) {
         for (let toolcall of tool_call_message_part.toolcalls) {
-            if (toolcall.id) {
-                this.toolcalls.push(toolcall);
-            } else {
-                let last_toolcall = this.toolcalls[this.toolcalls.length - 1];
-                if (last_toolcall === undefined) {
-                    throw new Error('last toolcall is undefined');
-                }
-                last_toolcall.args_string += toolcall.args_string;
-            }
+            this.push(toolcall)
         }
     }
 
@@ -652,7 +661,7 @@ class AssistantMessage {
             message.content.push(new ReasoningMessagePart(openai_message.reasoning_content));
         }
         if (openai_message.tool_calls) {
-            var toolcalls = [];
+            let part = new ToolCallMessagePart()
             for (let tool_call of openai_message.tool_calls) {
                 let tc = new ToolCall(
                     tool_call.index,
@@ -660,9 +669,9 @@ class AssistantMessage {
                     tool_call.function.name,
                     tool_call.function.arguments
                 );
-                toolcalls.push(tc);
+                part.push(tc);
             }
-            message.content.push(new ToolCallMessagePart(toolcalls));
+            message.content.push(part);
         }
         if (openai_message.content) {
             message.content.push(new TextMessagePart(openai_message.content));
