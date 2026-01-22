@@ -29,6 +29,8 @@ class A2AEntryWidget extends HTMLElement {
         this.setUpEventListeners();
         // 创建初始对话
         await this.createConversation();
+        // 自动加载 Agents 列表
+        await this.loadAgents();
     }
 
     /**
@@ -118,7 +120,6 @@ class A2AEntryWidget extends HTMLElement {
     setUpEventListeners() {
         const input = this.querySelector('#a2a-input');
         const sendButton = this.querySelector('#a2a-send-btn');
-        const loadButton = this.querySelector('#a2a-load-btn');
         const imageInput = this.querySelector('#a2a-image-input');
         const audioInput = this.querySelector('#a2a-audio-input');
         const fileInput = this.querySelector('#a2a-file-input');
@@ -259,29 +260,28 @@ class A2AEntryWidget extends HTMLElement {
             }
         };
 
-        const loadAgents = async () => {
-            loadButton.disabled = true;
-            loadButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 加载中...';
+        const updateAgents = async () => {
+            const updateButton = this.querySelector('#a2a-update-btn');
+            if (updateButton) {
+                updateButton.disabled = true;
+                updateButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 更新中...';
+            }
 
             try {
-                const result = await window.applicationAPI.call('listAgents', {});
-                if (result && result.registryEntries) {
-                    this.agents = result.registryEntries;
-                    this.updateMessages();
-                } else {
-                    this.showError('未获取到 agents 数据');
-                }
-            } catch (error) {
-                console.error('加载 agents 失败:', error);
-                this.showError(`加载失败: ${error.message}`);
+                await this.loadAgents();
             } finally {
-                loadButton.disabled = false;
-                loadButton.innerHTML = '<i class="fas fa-download"></i> 加载';
+                if (updateButton) {
+                    updateButton.disabled = false;
+                    updateButton.innerHTML = '<i class="fas fa-sync-alt"></i> 更新';
+                }
             }
         };
 
         sendButton.addEventListener('click', sendMessage);
-        loadButton.addEventListener('click', loadAgents);
+        const updateButton = this.querySelector('#a2a-update-btn');
+        if (updateButton) {
+            updateButton.addEventListener('click', updateAgents);
+        }
 
         input.addEventListener('keypress', (event) => {
             if (event.key === 'Enter' && !event.shiftKey) {
@@ -511,6 +511,9 @@ class A2AEntryWidget extends HTMLElement {
         // 设置 Agents 列表展开/收起事件监听器
         this.setupAgentsListToggle();
 
+        // 设置更新按钮事件监听器
+        this.setupUpdateButton();
+
         // 设置清空按钮事件监听器（如果存在）
         this.setupClearButton();
 
@@ -531,6 +534,49 @@ class A2AEntryWidget extends HTMLElement {
             // 添加新的事件监听器
             newButton.addEventListener('click', () => {
                 this.clearConversation();
+            });
+        }
+    }
+
+    /**
+     * 加载 Agents 列表
+     */
+    async loadAgents() {
+        try {
+            const result = await window.applicationAPI.call('listAgents', {});
+            if (result && result.registryEntries) {
+                this.agents = result.registryEntries;
+                this.updateMessages();
+            } else {
+                console.warn('未获取到 agents 数据');
+            }
+        } catch (error) {
+            console.error('加载 agents 失败:', error);
+            // 不显示错误提示，避免干扰用户体验
+        }
+    }
+
+    /**
+     * 设置更新按钮事件监听器
+     */
+    setupUpdateButton() {
+        const updateButton = this.querySelector('#a2a-update-btn');
+        if (updateButton) {
+            // 移除可能存在的旧事件监听器
+            const newButton = updateButton.cloneNode(true);
+            updateButton.parentNode.replaceChild(newButton, updateButton);
+
+            // 添加新的事件监听器
+            newButton.addEventListener('click', async () => {
+                newButton.disabled = true;
+                newButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 更新中...';
+
+                try {
+                    await this.loadAgents();
+                } finally {
+                    newButton.disabled = false;
+                    newButton.innerHTML = '<i class="fas fa-sync-alt"></i> 更新';
+                }
             });
         }
     }
@@ -944,12 +990,24 @@ class A2AEntryWidget extends HTMLElement {
                     ${additionalStyles}
                     <div class="a2ui-root agents-list-container" style="${rootStyles}">
                         <div class="a2ui-column ${columnClasses}" style="${columnStyles}">
-                            <div class="a2ui-row ${rowClasses} agents-list-header" style="${rowStyles}; align-items: center;" data-action="toggle-agents-list">
-                                <span class="agents-expand-icon">${expandIcon}</span>
-                                <span class="a2ui-icon ${iconClasses}" style="${iconStyles}; font-size: 16px;">🤖</span>
-                                <h2 style="${h2Styles}; margin: 0; flex: 1;">
-                                    Agents 列表 (${this.agents.length})
-                                </h2>
+                            <div class="a2ui-row ${rowClasses} agents-list-header" style="${rowStyles}; align-items: center; justify-content: space-between;" data-action="toggle-agents-list">
+                                <div class="a2ui-row ${rowClasses}" style="${rowStyles}; align-items: center; flex: 1;">
+                                    <span class="agents-expand-icon">${expandIcon}</span>
+                                    <span class="a2ui-icon ${iconClasses}" style="${iconStyles}; font-size: 16px;">🤖</span>
+                                    <h2 style="${h2Styles}; margin: 0;">
+                                        Agents 列表 (${this.agents.length})
+                                    </h2>
+                                </div>
+                                <!-- 更新按钮 -->
+                                <button
+                                    id="a2a-update-btn"
+                                    class="${buttonClasses}"
+                                    style="${buttonStyles}; margin-left: 8px; flex-shrink: 0;"
+                                    title="更新 Agents 列表"
+                                    onclick="event.stopPropagation();"
+                                >
+                                    <i class="fas fa-sync-alt"></i> 更新
+                                </button>
                             </div>
                             <div class="agents-list-content">
                                 <div class="a2ui-list ${listClasses}" style="${listStyles}">
@@ -1136,13 +1194,6 @@ class A2AEntryWidget extends HTMLElement {
                     </div>
 
                     <div class="flex flex-col gap-2">
-                        <button
-                            id="a2a-load-btn"
-                            class="px-6 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg font-medium transition-colors flex items-center gap-2"
-                        >
-                            <i class="fas fa-download"></i>
-                            <span>加载</span>
-                        </button>
                         <button
                             id="a2a-send-btn"
                             class="px-6 py-2 bg-purple-500 hover:bg-purple-600 text-white rounded-lg font-medium transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
