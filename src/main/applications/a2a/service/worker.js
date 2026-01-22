@@ -7,6 +7,7 @@ import { parentPort } from "worker_threads";
 import { z } from "zod";
 import { ClientFactory } from "@a2a-js/sdk/client";
 import { randomUUID } from "crypto";
+import {A2UIToHTMLConverter} from '../../../services/a2ui/a2ui-to-html.js'
 
 // 硬编码的服务器地址
 const GATEWAY_URL = "http://1.92.70.52:8080";
@@ -248,6 +249,19 @@ ${agentsDescription}
                     .map(part => part.text)
                     .join('');
                 return textParts;
+            }
+
+            // 提取a2ui data转换为html
+            if (response.status.message.parts) {
+                const converter = new A2UIToHTMLConverter();
+                const messages = converter.extractA2UIData(response.status.message.parts);
+
+                if (messages !== 'undefined') {
+                    const html = converter.convertFromJSON(messages);
+                    return html;
+                } else {
+                    return 'Agent 获取Data响应失败';
+                }
             }
 
             return 'Agent 返回了空响应';

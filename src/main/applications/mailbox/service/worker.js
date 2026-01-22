@@ -7,7 +7,6 @@ import nedb from 'nedb-promises';
 import path from 'path';
 import pMap from 'p-map';
 import { simpleParser } from "mailparser";
-import { parentPort } from 'worker_threads';
 
 import pkg from 'lodash';
 import { NotificationManager } from "../../../utils/notificationmgr.js";
@@ -140,6 +139,14 @@ class MailboxStorage {
         await this.db.update(
             { uid: uid },
             { $set: { unread: false } }
+        )
+    }
+
+    async markEmailAsUnread(uid) {
+        logger.info(`marking email as unread: ${uid}`);
+        await this.db.update(
+            { uid: uid },
+            { $set: { unread: true } }
         )
     }
 
@@ -419,18 +426,7 @@ class MailboxWorker extends BaseWorker {
         }
 
         await pop3.QUIT();
-
-        // 如果有新邮件，在所有邮件保存完成后发送更新通知
-        if (newList.length > 0) {
-            if (typeof parentPort !== 'undefined' && parentPort) {
-                parentPort.postMessage({
-                    type: 'emailListUpdated',
-                    bundleName: 'mailbox'
-                });
-            } else {
-                logger.warn('parentPort 未定义，无法发送邮件列表更新消息');
-            }
-        }
+        return newList.length;
     }
 
     notifyEmailListUpdated() {
@@ -438,6 +434,7 @@ class MailboxWorker extends BaseWorker {
     }
 
     async sync() {
+        let newEmailCount = 0;
         if (this.config === undefined) {
             logger.warn('no config, skip mailbox sync');
             return;
@@ -452,13 +449,15 @@ class MailboxWorker extends BaseWorker {
         this.isSyncing = true;
         try {
             if (config.inbox?.pop3) {
-                await this.syncPOP3Inbox(
+                newEmailCount = await this.syncPOP3Inbox(
                     config.username, config.password,
                     config.inbox.pop3.tls, config.inbox.pop3.host, config.inbox.pop3.port
                 );
             }
             logger.info('mailbox sync completed');
-            this.notifyEmailListUpdated();
+            if (newEmailCount > 0) {
+                this.notifyEmailListUpdated(newEmailCount);
+            }
         } catch (error) {
             logger.error(`error syncing mailbox: ${error.message}`);
             NotificationManager.getInstance().error('邮箱', '收取新邮件', `收取新邮件失败: ${error.message}`);
@@ -521,6 +520,10 @@ class MailboxWorker extends BaseWorker {
 
     async markEmailAsRead(uid) {
         await this.storage.markEmailAsRead(uid);
+    }
+
+    async markEmailAsUnread(uid) {
+        await this.storage.markEmailAsUnread(uid);
     }
 
     /**

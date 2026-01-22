@@ -152,6 +152,23 @@ export function registerApplicationRegistryHandlers(ipcMain: Electron.IpcMain) {
   })
 }
 
+/**
+ * 通知 Worker 线程更新全局设置
+ * @param settingData - 新的设置数据
+ */
+export function notifyWorkerSettingUpdate(settingData: object) {
+    if (globalWorker === null) {
+        logger.warn('global worker not initialized, cannot notify setting update');
+        return;
+    }
+    globalWorker.postMessage({
+        bundleName: '__system',
+        requestId: crypto.randomUUID(),
+        methodName: '__updateGlobalSetting',
+        args: [settingData],
+    });
+}
+
 export function initializeRegistry() {
 
     ApplicationRegistry.registerApplication(new MailboxApplication());
