@@ -900,7 +900,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             text: "此操作无法撤销",
             icon: 'warning',
             showCancelButton: true,
-            confirmButtonColor: '#d33', 
+            confirmButtonColor: '#d33',
             cancelButtonColor: '#3085d6',
             confirmButtonText: '确定',
             cancelButtonText: '取消',
@@ -925,7 +925,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
                     icon: 'error'
                 });
             }
-        }   
+        }
     }
 
     async deleteEmail(uid, redownload = false) {
@@ -1177,12 +1177,12 @@ class MailEditorWidget extends AgentOperableHTMLElement {
         }
 
         container.classList.remove('hidden');
-        
+
         const attachmentsHTML = this.attachments.map((attachment, index) => {
             const ext = attachment.filename.split('.').pop().toLowerCase();
             let iconClass = 'fa-file';
             let iconColor = 'text-gray-500';
-            
+
             if (['jpg', 'jpeg', 'png', 'gif', 'bmp', 'svg', 'webp'].includes(ext)) {
                 iconClass = 'fa-file-image';
                 iconColor = 'text-blue-500';
@@ -1213,19 +1213,19 @@ class MailEditorWidget extends AgentOperableHTMLElement {
             }
 
             return `
-                <div class="attachment-item group flex items-center gap-3 px-3 py-2.5 
+                <div class="attachment-item group flex items-center gap-3 px-3 py-2.5
                             bg-gradient-to-r from-gray-50 to-white
                             border border-gray-200 rounded-lg
                             hover:shadow-md hover:border-blue-300 hover:from-blue-50 hover:to-white
-                            transition-all duration-200" 
+                            transition-all duration-200"
                      data-index="${index}">
                     <!-- 文件图标 -->
-                    <div class="flex-shrink-0 w-10 h-10 flex items-center justify-center 
-                                bg-white rounded-lg border border-gray-200 
+                    <div class="flex-shrink-0 w-10 h-10 flex items-center justify-center
+                                bg-white rounded-lg border border-gray-200
                                 group-hover:border-blue-300 transition-colors">
                         <i class="fas ${iconClass} ${iconColor} text-lg"></i>
                     </div>
-                    
+
                     <!-- 文件信息 -->
                     <div class="flex-1 min-w-0">
                         <div class="text-sm font-medium text-gray-900 truncate">
@@ -1235,9 +1235,9 @@ class MailEditorWidget extends AgentOperableHTMLElement {
                             ${attachment.path}
                         </div>
                     </div>
-                    
+
                     <!-- 删除按钮 -->
-                    <button class="remove-attachment flex-shrink-0 w-7 h-7 
+                    <button class="remove-attachment flex-shrink-0 w-7 h-7
                                    flex items-center justify-center
                                    rounded-full bg-white border border-gray-200
                                    hover:bg-red-50 hover:border-red-300
@@ -1299,18 +1299,18 @@ class MailEditorWidget extends AgentOperableHTMLElement {
         const sender = selectedEmailHeader.from && selectedEmailHeader.from[0] ? selectedEmailHeader.from[0].address : '未知发件人';
         const sendTime = new Date(selectedEmailHeader.date).toLocaleString();
         const receivers = selectedEmailHeader.to ? selectedEmailHeader.to.map(t => t.address).join(', ') : '';
-        const ccReceivers = selectedEmailHeader.cc && selectedEmailHeader.cc.length > 0 
-            ? selectedEmailHeader.cc.map(c => c.address).join(', ') 
+        const ccReceivers = selectedEmailHeader.cc && selectedEmailHeader.cc.length > 0
+            ? selectedEmailHeader.cc.map(c => c.address).join(', ')
             : null;
         const htmlTemplate = `
             ${replyContent ? `<div>${replyContent}</div>` : ''}
-            
+
             <br><br>
-            
+
             <hr style="border: 0; border-top: 1px solid #e5e7eb; margin: 20px 0;">
 
             <div style="background-color: #f3f4f6; padding: 16px; border-radius: 8px; font-size: 13px; font-family: 'Segoe UI', Arial, sans-serif; color: #374151; margin-bottom: 20px;">
-                
+
                 <div style="font-weight: bold; font-size: 14px; margin-bottom: 12px; color: #111827; border-bottom: 1px solid #e5e7eb; padding-bottom: 8px;">
                     ----- 原始邮件 -----
                 </div>
@@ -1319,24 +1319,24 @@ class MailEditorWidget extends AgentOperableHTMLElement {
                     <span style="color: #6b7280; font-weight: bold; display: inline-block; width: 70px;">发件人:</span>
                     <span style="color: #1f2937; font-weight: 500;">${sender}</span>
                 </div>
-                
+
                 <div style="margin-bottom: 6px;">
                     <span style="color: #6b7280; font-weight: bold; display: inline-block; width: 70px;">发送时间:</span>
                     <span style="color: #374151;">${sendTime}</span>
                 </div>
-                
+
                 <div style="margin-bottom: 6px;">
                     <span style="color: #6b7280; font-weight: bold; display: inline-block; width: 70px;">收件人:</span>
                     <span style="color: #374151;">${receivers}</span>
                 </div>
-                
+
                 ${ccReceivers ? `
                 <div style="margin-bottom: 6px;">
                     <span style="color: #6b7280; font-weight: bold; display: inline-block; width: 70px;">抄送:</span>
                     <span style="color: #374151;">${ccReceivers}</span>
                 </div>
                 ` : ''}
-                
+
                 <div>
                     <span style="color: #6b7280; font-weight: bold; display: inline-block; width: 70px;">主题:</span>
                     <span style="color: #374151;">${selectedEmailHeader.subject}</span>
@@ -1373,9 +1373,18 @@ class MailEditorWidget extends AgentOperableHTMLElement {
             editor.setContent(mailContent)
             return;
         }
-        if (operation == MailOperations.REPLY || operation == MailOperations.REPLYALL) {
+        if (operation == MailOperations.REPLY) {
             document.getElementById('to').value = mailHeader.from[0].address;
             document.getElementById('subject').value = '答复:' + mailHeader.subject;
+        } else if (operation == MailOperations.REPLYALL) {
+            document.getElementById('to').value = mailHeader.from[0].address;
+            document.getElementById('subject').value = '答复全部:' + mailHeader.subject;
+            if (mailHeader.cc && mailHeader.cc.length > 0) {
+                document.getElementById('cc').value = mailHeader.cc.map(cc => cc.address).join(',');
+            }
+            if (mailHeader.bcc && mailHeader.bcc.length > 0) {
+                document.getElementById('bcc').value = mailHeader.bcc.map(bcc => bcc.address).join(',');
+            }
         } else if (operation == MailOperations.FORWARD) {
             document.getElementById('subject').value = '转发:' + mailHeader.subject;
         } else if (operation == MailOperations.SEND) {
@@ -1410,7 +1419,7 @@ class MailEditorWidget extends AgentOperableHTMLElement {
 
                     <div class="flex items-center px-4 border-b border-gray-100 min-h-[46px]">
                         <span class="text-sm text-gray-600 font-medium w-14 flex-shrink-0 cursor-default">收件人</span>
-                        
+
                         <div class="flex-1 ml-2 mr-4">
                             <input id="to" value="" class="w-full" placeholder="">
                         </div>
@@ -1426,8 +1435,8 @@ class MailEditorWidget extends AgentOperableHTMLElement {
                         <div class="flex-1 ml-2 mr-4">
                             <input id="cc" value="" class="w-full" placeholder="">
                         </div>
-                        <button id="close-cc" onclick="closeRow('cc')" 
-                                class="w-5 h-5 flex items-center justify-center rounded-full 
+                        <button id="close-cc" onclick="closeRow('cc')"
+                                class="w-5 h-5 flex items-center justify-center rounded-full
                                        hover:bg-gray-200 transition-colors mr-2 flex-shrink-0"
                                 title="关闭抄送">
                             <i class="fas fa-times text-gray-400 hover:text-gray-600 text-xs"></i>
@@ -1439,8 +1448,8 @@ class MailEditorWidget extends AgentOperableHTMLElement {
                         <div class="flex-1 ml-2 mr-4">
                             <input id="bcc" value="" class="w-full" placeholder="">
                         </div>
-                        <button id="close-bcc" onclick="closeRow('bcc')" 
-                                class="w-5 h-5 flex items-center justify-center rounded-full 
+                        <button id="close-bcc" onclick="closeRow('bcc')"
+                                class="w-5 h-5 flex items-center justify-center rounded-full
                                        hover:bg-gray-200 transition-colors mr-2 flex-shrink-0"
                                 title="关闭密送">
                             <i class="fas fa-times text-gray-400 hover:text-gray-600 text-xs"></i>
@@ -1451,8 +1460,8 @@ class MailEditorWidget extends AgentOperableHTMLElement {
                         <div class="text-sm text-gray-600 font-medium w-14 flex justify-between cursor-default mr-2">
                             <span>主&nbsp题</span>
                         </div>
-                        <input type="text" id="subject" 
-                            class="flex-1 bg-transparent outline-none text-sm font-medium text-gray-900 h-9 placeholder-gray-400" 
+                        <input type="text" id="subject"
+                            class="flex-1 bg-transparent outline-none text-sm font-medium text-gray-900 h-9 placeholder-gray-400"
                             placeholder="" value="">
                         <span class="text-xs text-gray-300 font-light ml-2 whitespace-nowrap">
                             ${new Date().toLocaleString()}
@@ -1467,7 +1476,7 @@ class MailEditorWidget extends AgentOperableHTMLElement {
                         <textarea id="email-editor"></textarea>
                     </div>
                 </div>
-                
+
                 <!-- 附件列表容器 -->
                 <div id="attachment-list-container" class="hidden"></div>
             </div>
@@ -1478,7 +1487,7 @@ class MailEditorWidget extends AgentOperableHTMLElement {
             border: none;
             z-index: 100;
         }
-        
+
         #toolbar-container {
             border-bottom: 1px solid #ccc;
         }
@@ -1502,12 +1511,12 @@ class MailEditorWidget extends AgentOperableHTMLElement {
             color: #111827 !important;
         }
         .tagify__input {
-            min-width: 50px !important; 
+            min-width: 50px !important;
             margin: 0 !important;
             font-size: 14px !important;
             font-weight: 500 !important;
         }
-        
+
         .tagify__input::before {
             font-size: 14px !important;
             font-weight: 400 !important;
@@ -1529,7 +1538,7 @@ class MailEditorWidget extends AgentOperableHTMLElement {
         if (inputTo) {
             this.tagifyInstances.to = new Tagify(inputTo, commonConfig);
         }
-        
+
         ['cc', 'bcc'].forEach(type => {
             const inputEl = document.getElementById(type);
             if (inputEl) {
@@ -1538,7 +1547,7 @@ class MailEditorWidget extends AgentOperableHTMLElement {
         });
 
         if (window.tinymce) {
-            tinymce.remove('#email-editor'); 
+            tinymce.remove('#email-editor');
         }
 
         tinymce.init({
@@ -1549,13 +1558,13 @@ class MailEditorWidget extends AgentOperableHTMLElement {
             statusbar: false,
             resize: true,
             language: 'zh_CN',  // 设置中文语言
-            
+
             // 【关键配置】TinyMCE 7.x 需要的配置
             skin: false,  // 不动态加载皮肤（已在顶部 import）
             content_css: false,  // 不动态加载内容样式（已在顶部 import）
             license_key: 'gpl',  // 声明为 GPL 开源使用（避免弹窗）
             highlight_on_focus: false,
-            
+
             plugins: [
                 'advlist', 'autolink', 'lists', 'link', 'image', 'charmap', 'preview',
                 'anchor', 'searchreplace', 'visualblocks', 'code', 'fullscreen',
