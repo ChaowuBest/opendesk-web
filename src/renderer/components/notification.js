@@ -61,11 +61,12 @@ class NotificationPanel extends HTMLElement {
             </div>
         </div>
         `
-        this.innerHTML += notificationHtml;
-        this.querySelector(`#notification-${notificationId}`).animate(
+        this.insertAdjacentHTML('beforeend', notificationHtml);
+        const notificationElement = this.querySelector(`#notification-${notificationId}`);
+        notificationElement.animate(
             [
-                { transform: 'translateX(500px)' },       // 起始点
-                { transform: 'translateX(0)' }  // 终点
+                { transform: 'translateX(500px)' },
+                { transform: 'translateX(0)' }
             ],
             {
                 duration: 500,
@@ -74,12 +75,12 @@ class NotificationPanel extends HTMLElement {
             }
         );
 
-        this.querySelectorAll(`.close-notification-btn`).forEach(btn => {
-            btn.addEventListener('click', async () => {
-                const notificationId = btn.getAttribute('data-notification_id');
-                console.info('close notification btn clicked', notificationId);
-                await this.closeNotification(notificationId);
-            });
+        // 只为新添加的按钮添加事件监听器，避免重复添加
+        const closeBtn = notificationElement.querySelector(`.close-notification-btn`);
+        closeBtn.addEventListener('click', async () => {
+            const notificationId = closeBtn.getAttribute('data-notification_id');
+            console.info('close notification btn clicked', notificationId);
+            await this.closeNotification(notificationId);
         });
 
         this.closeNotificationTimeouts.set(notificationId, setTimeout(async () => {
@@ -88,21 +89,36 @@ class NotificationPanel extends HTMLElement {
     }
 
     async closeNotification(notificationId) {
+        // 清除自动关闭的timeout（如果存在）
         const timeout = this.closeNotificationTimeouts.get(notificationId);
-        if (!timeout) { return; }
-        this.closeNotificationTimeouts.delete(notificationId);
-        clearTimeout(timeout);
+        if (timeout) {
+            this.closeNotificationTimeouts.delete(notificationId);
+            clearTimeout(timeout);
+        }
 
+        // 查找通知元素
         const notificationElement = this.querySelector(`#notification-${notificationId}`);
-        await notificationElement.animate([
-            { transform: 'translateX(0)' },
-            { transform: 'translateX(500px)' }
-        ], {
-            duration: 500,
-            fill: 'forwards',
-            easing: 'ease-in-out'
-        }).finished;
-        notificationElement.remove();
+        if (!notificationElement) {
+            // 如果元素已经不存在，直接返回
+            return;
+        }
+
+        // 执行关闭动画并移除元素
+        try {
+            await notificationElement.animate([
+                { transform: 'translateX(0)' },
+                { transform: 'translateX(500px)' }
+            ], {
+                duration: 500,
+                fill: 'forwards',
+                easing: 'ease-in-out'
+            }).finished;
+            notificationElement.remove();
+        } catch (error) {
+            // 如果动画失败，直接移除元素
+            console.warn('Failed to animate notification close:', error);
+            notificationElement.remove();
+        }
     }
 
     render() {
