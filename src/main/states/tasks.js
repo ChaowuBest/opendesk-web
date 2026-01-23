@@ -1,12 +1,12 @@
 import { ChatContext, UserMessage, AssistantMessage, ToolCallMessagePart, FileMessagePart, SystemMessage } from '../agents/messages.js';
 import { LLM } from '../agents/llm.js';
-import { BaseToolset } from '../agents/tool.js';
 import { getTaskDirectory } from '../utils/setting.js';
 import path from 'path';
 import fs from 'fs';
 import { logger } from '../utils/logger.js';
 import officeParser from 'officeparser';
 import { ApplicationRegistry } from '../applications/registry.js';
+import { jsonrepair } from 'jsonrepair';
 
 
 class TaskUpdateSubscriber {
@@ -204,14 +204,27 @@ class TaskState {
             return;
         }
 
+        tool_call.setTool(tool);
+
         try {
-            let args = {};
+            let args = undefined;
             if (tool_call.args_string) {
-                args = JSON.parse(tool_call.args_string);
+                try {
+                    args = JSON.parse(tool_call.args_string);
+                } catch (err) {
+                    logger.warn(`failed to parse args string ${tool_call.args_string} for tool ${tool_call.tool_name}: ${err.message}`);
+                }
+
+                try {
+                    args = JSON.parse(jsonrepair(tool_call.args_string));
+                } catch (err) {
+                    logger.error(`failed to repair args string ${tool_call.args_string} for tool ${tool_call.tool_name}: ${err.message}`);
+                    throw err;
+                }
             }
-            tool_call.tool_title = await tool.getTitle(args);
+            tool_call.tool_title = tool.getTitle(args);
+            tool_call.args_object = args;
             tool_call.status = 'running';
-            await tool_call.render();
             await this.sendSubscriptionFeedback();
 
             let result = await tool.execute(args);
@@ -327,10 +340,15 @@ class TaskManagerState {
         }
         const taskList = JSON.parse(fs.readFileSync(taskListFile, 'utf8'));
         let taskManagerState = new TaskManagerState();
-        taskManagerState.tasks = taskList.map(
-            task => TaskState.load(path.join(taskDirectory, `${task.task_id}.json`), taskManagerState)
-        );
-        return taskManagerState;
+        for (let task of taskList) {
+            try {
+                taskManagerState.tasks.push(TaskState.load(path.join(taskDirectory, `${task.task_id}.json`), taskManagerState));
+            } catch (err) {
+                logger.warn(`error loading task ${task.task_id}: ${err.message}`);
+                continue;
+            }
+        }
+        return taskManagerState.tasks.length > 0 ? taskManagerState : null;
     }
 
     save() {

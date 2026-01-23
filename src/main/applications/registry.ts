@@ -7,6 +7,7 @@ import { A2AApplication } from "./a2a/app.js";
 import { RecallApplication } from "./recall/app.js";
 import { SearchApplication } from "./search/app.js";
 import { NewsApplication } from "./news/app.js";
+import { TerminalApplication } from "./terminal/app.js";
 import { Worker } from "worker_threads";
 import { Setting, getAppDirectory } from "../utils/setting.js";
 import { logger, LogStream } from "../utils/logger.js";
@@ -174,6 +175,7 @@ export function initializeRegistry() {
     ApplicationRegistry.registerApplication(new MailboxApplication());
     ApplicationRegistry.registerApplication(new FileMgrApplication());
     ApplicationRegistry.registerApplication(new CalendarApplication());
+    ApplicationRegistry.registerApplication(new TerminalApplication());
     ApplicationRegistry.registerApplication(new A2AApplication());
     ApplicationRegistry.registerApplication(new RecallApplication());
     ApplicationRegistry.registerApplication(new SearchApplication());
@@ -236,7 +238,7 @@ export function initializeRegistry() {
               logger.warn(`application ${bundleName} not found`);
               return;
             }
-            application.sendEventToSubscribers(eventName, args);
+            application.sendEventToSubscribers(eventName, ...args);
             break;
           }
           case 'emailListUpdated': {

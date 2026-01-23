@@ -34,12 +34,21 @@ export class BaseTool {
     }
 
     /**
-     *
+     * 获取工具的标题
      * @param {z.output<this.params>} args 工具的参数
      * @returns {string} 工具的标题
      */
     getTitle(args) {
         return this.name;
+    }
+
+    /**
+     * 自定义的工具调用结果渲染函数，如果返回 undefined，则不渲染工具调用
+     * @param {ToolCall} toolcall 工具调用
+     * @returns {string | undefined} 工具调用的渲染结果(如有)
+     */
+    renderToolCall(toolcall) {
+        return undefined;
     }
 
     /**
