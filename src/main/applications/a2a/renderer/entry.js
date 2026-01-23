@@ -49,7 +49,8 @@ class A2AEntryWidget extends HTMLElement {
             { type: 'css', url: 'https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css' },
             // JS 文件
             { type: 'js', url: 'https://cdn.jsdelivr.net/npm/marked@12.0.0/marked.min.js' },
-            { type: 'js', url: 'https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/lib/highlight.min.js' }
+            { type: 'js', url: 'https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/lib/highlight.min.js' },
+            { type: 'js', url: 'https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js' }
         ];
 
         const loadPromises = resources.map(resource => {
@@ -642,6 +643,113 @@ class A2AEntryWidget extends HTMLElement {
     }
 
     /**
+     * 渲染 LaTeX 数学公式
+     * @param {string} text - 包含 LaTeX 公式的文本
+     * @returns {string} 渲染后的 HTML
+     */
+    renderLatex(text) {
+        if (!text || typeof text !== 'string') {
+            return text;
+        }
+
+        // 先过滤掉文本中的 <br> 标签（作为纯文本出现的）
+        // 这些标签应该被移除，因为它们会干扰渲染
+        text = text.replace(/&lt;br&gt;|&lt;br\s*\/&gt;|<br>|<br\s*\/>/gi, '');
+
+        // 检查 katex 是否可用
+        if (typeof katex === 'undefined') {
+            return text;
+        }
+
+        try {
+            // 先处理块级公式 $$...$$（避免与内联公式冲突）
+            // 支持跨行公式
+            const blockFormulaRegex = /\$\$([\s\S]*?)\$\$/g;
+            const blockPlaceholders = [];
+            let blockIndex = 0;
+
+            text = text.replace(blockFormulaRegex, (match, formula) => {
+                try {
+                    // 清理公式中的换行和多余空格，但保留必要的空格
+                    const cleanedFormula = formula.trim().replace(/\s+/g, ' ');
+                    const placeholder = `__BLOCK_LATEX_${blockIndex}__`;
+                    // 使用 displayMode: false 使其左对齐，或者使用 displayMode: true 但添加左对齐样式
+                    const katexHtml = katex.renderToString(cleanedFormula, {
+                        displayMode: false, // 改为 false 使其左对齐而不是居中
+                        throwOnError: false
+                    });
+                    blockPlaceholders.push({
+                        placeholder: placeholder,
+                        html: katexHtml
+                    });
+                    blockIndex++;
+                    return placeholder;
+                } catch (error) {
+                    console.warn('KaTeX block formula error:', error, formula);
+                    return match; // 如果渲染失败，返回原始内容
+                }
+            });
+
+            // 处理内联公式 $...$
+            // 先找到所有可能的 $...$ 模式，然后过滤掉块级公式
+            const inlinePlaceholders = [];
+            let inlineIndex = 0;
+
+            // 使用更简单的方法：查找所有 $...$ 模式，但排除 $$...$$
+            // 通过检查前后字符来确保是内联公式
+            text = text.replace(/\$([^$\n]+?)\$/g, (match, formula, offset, fullText) => {
+                // 检查前后字符，确保不是块级公式的一部分
+                const beforeChar = offset > 0 ? fullText[offset - 1] : '';
+                const afterChar = offset + match.length < fullText.length ? fullText[offset + match.length] : '';
+
+                // 如果前后都是 $，说明是块级公式，跳过（应该已经被处理了）
+                if (beforeChar === '$' || afterChar === '$') {
+                    return match;
+                }
+
+                // 检查是否是占位符
+                if (match.includes('__BLOCK_LATEX_') || match.includes('__INLINE_LATEX_')) {
+                    return match;
+                }
+
+                try {
+                    const cleanedFormula = formula.trim();
+                    // 跳过空公式
+                    if (!cleanedFormula) {
+                        return match;
+                    }
+                    const placeholder = `__INLINE_LATEX_${inlineIndex}__`;
+                    inlinePlaceholders.push({
+                        placeholder: placeholder,
+                        html: katex.renderToString(cleanedFormula, {
+                            displayMode: false,
+                            throwOnError: false
+                        })
+                    });
+                    inlineIndex++;
+                    return placeholder;
+                } catch (error) {
+                    console.warn('KaTeX inline formula error:', error, formula);
+                    return match; // 如果渲染失败，返回原始内容
+                }
+            });
+
+            // 替换所有占位符
+            blockPlaceholders.forEach(item => {
+                text = text.replace(item.placeholder, item.html);
+            });
+            inlinePlaceholders.forEach(item => {
+                text = text.replace(item.placeholder, item.html);
+            });
+
+            return text;
+        } catch (error) {
+            console.error('LaTeX rendering error:', error);
+            return text;
+        }
+    }
+
+    /**
      * 渲染 markdown 内容为 HTML
      * @param {string} markdown - markdown 文本
      * @returns {string} 渲染后的 HTML
@@ -656,10 +764,15 @@ class A2AEntryWidget extends HTMLElement {
             return markdown;
         }
 
+        // 在 markdown 渲染之前，先过滤掉文本中的 <br> 标签（作为纯文本出现的）
+        // 这些标签应该被移除，因为它们会干扰渲染
+        markdown = markdown.replace(/&lt;br&gt;|&lt;br\s*\/&gt;|<br>|<br\s*\/>/gi, '');
+
         // 检查 marked 是否可用
         if (typeof marked === 'undefined') {
-            // 如果 marked 不可用，返回转义的文本（保留换行）
-            return this.escapeHtml(markdown).replace(/\n/g, '<br>');
+            // 如果 marked 不可用，返回转义的文本（保留换行），并尝试渲染 LaTeX
+            const escaped = this.escapeHtml(markdown).replace(/\n/g, '<br>');
+            return this.renderLatex(escaped);
         }
 
         try {
@@ -691,18 +804,23 @@ class A2AEntryWidget extends HTMLElement {
             }
 
             // 尝试解析 markdown（新版本使用 parse，旧版本直接调用）
+            let html;
             if (typeof marked.parse === 'function') {
-                return marked.parse(markdown);
+                html = marked.parse(markdown);
             } else if (typeof marked === 'function') {
-                return marked(markdown);
+                html = marked(markdown);
             } else {
                 // 如果都不支持，返回转义的文本
-                return this.escapeHtml(markdown).replace(/\n/g, '<br>');
+                html = this.escapeHtml(markdown).replace(/\n/g, '<br>');
             }
+
+            // 在 markdown 渲染后，渲染 LaTeX 公式
+            return this.renderLatex(html);
         } catch (error) {
             console.error('Markdown rendering error:', error);
-            // 如果渲染失败，返回转义的文本（保留换行）
-            return this.escapeHtml(markdown).replace(/\n/g, '<br>');
+            // 如果渲染失败，返回转义的文本（保留换行），并尝试渲染 LaTeX
+            const escaped = this.escapeHtml(markdown).replace(/\n/g, '<br>');
+            return this.renderLatex(escaped);
         }
     }
 
