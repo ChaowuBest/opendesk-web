@@ -1,3 +1,13 @@
+/**
+ * 工作线程入口文件
+ * 当前设计上整个FillipDesk只保留一个工作线程。这主要是考虑到：
+ * 1️⃣ 工作线程过多导致内存开销变大
+ * 2️⃣ 原始设计中，由各个应用自行动态导入的工作线程会导致Electron Vite打包识别困难
+ *
+ * 因此现在每个应用如果需要在工作线程中执行任务，那么必须自己提供worker.ts/js文件，
+ * 并在本文件中import这些Worker类，并注册到appWorkers中统一进行初始化和任务分发操作。
+ */
+
 import { logger } from "./utils/logger.js";
 import { parentPort, workerData } from 'worker_threads';
 import { BaseWorker } from "./applications/base.js";
@@ -9,6 +19,7 @@ import CalendarWorker from './applications/calendar/service/worker.js'
 import A2AWorker from './applications/a2a/service/worker.js'
 import RecallWorker from './applications/recall/service/worker.js'
 import FileManagerWorker from './applications/filemgr/worker.js'
+import TerminalWorker from './applications/terminal/worker.js'
 
 const appWorkers: Map<string, BaseWorker> = new Map();
 
@@ -21,6 +32,7 @@ appWorkers.set('calendar', new CalendarWorker(path.join(getAppDirectory(), 'apps
 appWorkers.set('a2a', new A2AWorker(path.join(getAppDirectory(), 'apps', 'a2a')));
 appWorkers.set('recall', new RecallWorker(path.join(getAppDirectory(), 'apps', 'recall')));
 appWorkers.set('filemgr', new FileManagerWorker(path.join(getAppDirectory(), 'apps', 'filemgr')));
+appWorkers.set('terminal', new TerminalWorker(path.join(getAppDirectory(), 'apps', 'terminal')));
 
 for (const [name, appWorker] of appWorkers.entries()) {
     logger.info(`initializing worker ${name}`);

@@ -23,7 +23,7 @@
         </style>
     </head>
     <body x-data="{ showFloatingChatPanel: false, isMaximized: false }">
-        <div id="application-container" class="w-full h-full">
+        <div id="application-container" class="flex w-full h-full">
 
         </div>
 
@@ -116,7 +116,9 @@
                 const applicationBundleName = new URLSearchParams(window.location.search).get('applicationBundleName');
                 const guiConfig = await window.applicationAPI.getApplicationGUIConfig(applicationBundleName);
                 await apps[`../main/applications/${applicationBundleName}/renderer/entry.js`]();
-                document.querySelector('#application-container').innerHTML = `<${guiConfig.entry} id='application-entry-widget' class="w-full h-full"/>`
+
+                const entryName = guiConfig?.entry || `${applicationBundleName}-entry-widget`;
+                document.querySelector('#application-container').innerHTML = `<${entryName} id='application-entry-widget' class="w-full h-full"/>`
                 document.querySelector('#application-agent-input').addEventListener('focus', () => {
                     // 如果用户激活了聊天输入浮窗，且当前有任务，则显示浮动聊天面板
                     if (currentTaskId !== null) {

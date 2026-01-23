@@ -238,7 +238,7 @@ export function initializeRegistry() {
               logger.warn(`application ${bundleName} not found`);
               return;
             }
-            application.sendEventToSubscribers(eventName, args);
+            application.sendEventToSubscribers(eventName, ...args);
             break;
           }
           case 'emailListUpdated': {

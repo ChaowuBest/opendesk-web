@@ -77,6 +77,7 @@ class NotificationPanel extends HTMLElement {
         this.querySelectorAll(`.close-notification-btn`).forEach(btn => {
             btn.addEventListener('click', async () => {
                 const notificationId = btn.getAttribute('data-notification_id');
+                console.info('close notification btn clicked', notificationId);
                 await this.closeNotification(notificationId);
             });
         });

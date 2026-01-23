@@ -1,5 +1,5 @@
 import { BaseToolset } from "../../agents/tool.js";
-import { BaseApplication } from "../base.js";
+import { BaseApplication, BaseGUIConfig } from "../base.js";
 import { ExecuteCmdTool, ExecuteBashTool } from "./tools.js";
 
 
