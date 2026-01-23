@@ -60,7 +60,8 @@ class TaskState {
         const task = new TaskState(task_manager_state);
         task.task_id = task_json.task_id;
         task.task_name = task_json.task_name;
-        task.task_status = task_json.task_status;
+        // 从硬盘加载的任务不能是running状态（应用重启后任务已停止）
+        task.task_status = task_json.task_status === 'running' ? 'waiting' : task_json.task_status;
         task.chat_context = ChatContext.assign(task_json.chat_context);
         return task;
     }
@@ -113,6 +114,8 @@ class TaskState {
      * @param {string} message
      */
      submitUserMessage(message) {
+        this.task_status = 'running';
+
         let user_message = new UserMessage(message);
         let assistant_message = new AssistantMessage();
         this.chat_context.appendMessage(user_message);
@@ -128,6 +131,18 @@ class TaskState {
         }
 
         this.processTask();
+    }
+
+    /**
+     * Stop the task execution
+     */
+    stop() {
+        if (this.task_status === 'stopped') {
+            return;
+        }
+        this.task_status = 'stopped';
+        logger.info(`task ${this.task_id} stopped by user`);
+        this.task_manager_state.publishTaskListUpdate();
     }
 
     async generateTaskName(user_message) {
@@ -162,6 +177,7 @@ class TaskState {
         await last_part.render();
         var subscription_feedback = {
             task_id: this.task_id,
+            task_status: this.task_status,
             message_id: last_message.message_id,
             last_part_index: updated_part_index,
             last_part: last_part,
@@ -177,6 +193,12 @@ class TaskState {
     async processCompletion() {
         let assistant_message = this.chat_context.messages[this.chat_context.messages.length - 1];
         for await (const chunk_resp of LLM.streamComplete(this.chat_context)) {
+            // 检查是否已停止
+            if (this.task_status === 'stopped') {
+                logger.info(`task ${this.task_id} completion interrupted by stop request`);
+                break;
+            }
+
             assistant_message.mergeChunk(chunk_resp.content);
             assistant_message.usage = chunk_resp.usage;
             if (this.subscribers.length == 0) {
@@ -227,6 +249,13 @@ class TaskState {
             tool_call.status = 'running';
             await this.sendSubscriptionFeedback();
 
+            /* 在执行工具前检查是否任务已经被中止 */
+            if (this.task_status === 'stopped') {
+                tool_call.status = 'error';
+                tool_call.result = '任务已停止';
+                return;
+            }
+
             let result = await tool.execute(args);
             tool_call.status = 'success';
             tool_call.result = result;
@@ -274,12 +303,21 @@ class TaskState {
     }
 
     async processTask() {
-        while (true) {
+        while (this.task_status !== 'stopped') {
             await this.processCompletion();
+            if (this.task_status === 'stopped') {
+                break;  /* task is stopped, break */
+            }
+
             if (!await this.processToolCalls()) {
-                break;
+                break;  /* no more tool calls to process, break */
             }
         }
+
+        if (this.task_status !== 'stopped') {
+            this.task_status = 'stopped';
+        }
+        this.sendSubscriptionFeedback();
     }
 
     async render() {

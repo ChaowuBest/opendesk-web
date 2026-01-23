@@ -32,6 +32,11 @@ class TaskView extends HTMLElement {
          * @type {boolean}
          */
         this.auto_scrolling_to_bottom = true;
+        /**
+         * Current task status
+         * @type {string}
+         */
+        this.task_status = 'waiting';
     }
 
     setAutoScrollingToBottom(auto_scrolling_to_bottom) {
@@ -126,6 +131,9 @@ class TaskView extends HTMLElement {
 
     async reload() {
         var task_state = await window.taskManagerAPI.getFullTask(this.task_id);
+        this.task_status = task_state.task_status || 'waiting';
+        this.updateStopButtonVisibility();
+
         var history_container = this.getHistoryContainer();
         history_container.innerHTML = '';
         for (const message of task_state.chat_context.messages) {
@@ -135,6 +143,27 @@ class TaskView extends HTMLElement {
                 history_container.innerHTML += this.renderAssistantMessage(message);
             }
             this.tryScrollToEnd()
+        }
+    }
+
+    updateStopButtonVisibility() {
+        const inputWidget = this.querySelector(`#task-${this.task_id}-input`);
+        if (inputWidget) {
+            if (this.task_status === 'running') {
+                inputWidget.setDisabled(true);
+                inputWidget.setStopMode(true, async () => {
+                    try {
+                        await window.taskManagerAPI.stopTask(this.task_id);
+                        this.task_status = 'stopped';
+                        this.updateStopButtonVisibility();
+                    } catch (error) {
+                        console.error('Failed to stop task:', error);
+                    }
+                });
+            } else {
+                inputWidget.setDisabled(false);
+                inputWidget.setStopMode(false);
+            }
         }
     }
 
@@ -157,7 +186,12 @@ class TaskView extends HTMLElement {
                     总计 ${progress.usage.total_tokens} 词
                     `;
                 }
-                this.tryScrollToEnd()
+
+                if (progress.task_status !== this.task_status) {
+                    this.task_status = progress.task_status;
+                    this.updateStopButtonVisibility();
+                }
+                this.tryScrollToEnd();
             })
         })
     }
@@ -202,8 +236,10 @@ class TaskView extends HTMLElement {
         // 为输入框添加事件监听器
         const input_widget = this.querySelector(`#task-${this.task_id}-input`)
         input_widget.addEventListener('submit', async (event) => {
+            this.task_status = 'running';
+            this.updateStopButtonVisibility();
             await window.taskManagerAPI.submitMessage(this.task_id, event.detail)
-            await this.reload()
+            await this.reload();
         })
         const chatHistory = this.querySelector('#taskview-chat-history');
         chatHistory.addEventListener('scroll', (event) => {
@@ -254,6 +290,11 @@ class EmbeddedTaskView extends HTMLElement {
          * @type {boolean}
          */
         this.auto_scrolling_to_bottom = true;
+        /**
+         * Current task status
+         * @type {string}
+         */
+        this.task_status = 'waiting';
     }
 
     getHistoryContainer() {
@@ -333,6 +374,9 @@ class EmbeddedTaskView extends HTMLElement {
 
     async reload() {
         var task_state = await window.taskManagerAPI.getFullTask(this.task_id);
+        this.task_status = task_state.task_status || 'waiting';
+        this.updateStopButtonVisibility();
+
         var history_container = this.getHistoryContainer();
         history_container.innerHTML = '';
         for (const message of task_state.chat_context.messages) {
@@ -343,6 +387,11 @@ class EmbeddedTaskView extends HTMLElement {
             }
             this.tryScrollToEnd()
         }
+    }
+
+    updateStopButtonVisibility() {
+        // EmbeddedTaskView 没有输入框，不需要停止按钮
+        // 停止功能由应用层面的输入框控制
     }
 
     connectedCallback() {
@@ -378,7 +427,7 @@ class EmbeddedTaskView extends HTMLElement {
     render() {
         this.innerHTML = `
         <div class="bg-gray-30 h-full flex flex-col">
-            <div class="flex-1 overflow-y-auto p-4 space-y-1" id="taskview-chat-history"></div>
+            <div class="relative flex-1 overflow-y-auto p-4 space-y-1" id="taskview-chat-history"></div>
 
             <!-- 滚动到底部按钮, 按需显示 -->
             <button

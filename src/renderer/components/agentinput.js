@@ -13,6 +13,9 @@ class AgentInput extends HTMLElement {
     constructor() {
         super();
         this.attachedFilePaths = [];
+        this.isDisabled = false;
+        this.showStopButton = false;
+        this.onStopCallback = null;
     }
 
     connectedCallback() {
@@ -41,6 +44,51 @@ class AgentInput extends HTMLElement {
     clearAttachedFilePaths() {
         this.attachedFilePaths = [];
         this.render();
+    }
+
+    setDisabled(disabled) {
+        this.isDisabled = disabled;
+        this.updateInputState();
+    }
+
+    setStopMode(showStop, onStopCallback = null) {
+        this.showStopButton = showStop;
+        this.onStopCallback = onStopCallback;
+        this.updateInputState();
+    }
+
+    updateInputState() {
+        const textarea = this.querySelector('#agent-input-textarea');
+        const submitBtn = this.querySelector('#agent-input-submit-btn');
+        const stopBtn = this.querySelector('#agent-input-stop-btn');
+
+        if (textarea) {
+            if (this.isDisabled) {
+                textarea.disabled = true;
+                textarea.classList.add('opacity-50', 'cursor-not-allowed');
+                textarea.placeholder = '正在生成回复，请稍候...';
+            } else {
+                textarea.disabled = false;
+                textarea.classList.remove('opacity-50', 'cursor-not-allowed');
+                textarea.placeholder = '在这里输入消息，按 Ctrl+Enter 发送';
+            }
+        }
+
+        if (submitBtn) {
+            if (this.showStopButton) {
+                submitBtn.classList.add('hidden');
+            } else {
+                submitBtn.classList.remove('hidden');
+            }
+        }
+
+        if (stopBtn) {
+            if (this.showStopButton) {
+                stopBtn.classList.remove('hidden');
+            } else {
+                stopBtn.classList.add('hidden');
+            }
+        }
     }
 
     render() {
@@ -93,10 +141,16 @@ class AgentInput extends HTMLElement {
                     </div>
 
                     <!-- 右侧按钮 -->
-                    <div class="flex items-center space-x-2">
+                    <div class="flex items-center space-x-2 mt-1">
                         <!-- 发送按钮 -->
                         <button id="agent-input-submit-btn" class="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-50 rounded-full transition-colors">
                             <i class="fas fa-arrow-up text-lg"></i>
+                        </button>
+                        <!-- 停止按钮 -->
+                        <button id="agent-input-stop-btn" class="p-1.5 bg-red-500 hover:bg-red-600 text-white rounded-full px-4 transition-colors text-sm hidden">
+                            <i class="fas fa-stop"></i>
+                            <span class="ml-1">停止任务</span>
+                        </button>
                     </div>
                 </div>
             </div>
@@ -104,16 +158,23 @@ class AgentInput extends HTMLElement {
         `
 
         this.setUpEventListeners();
+        this.updateInputState();
     }
 
     setUpEventListeners() {
         const container = this.querySelector('#agent-input-container')
         const textarea = this.querySelector('#agent-input-textarea')
         const submitBtn = this.querySelector('#agent-input-submit-btn')
+        const stopBtn = this.querySelector('#agent-input-stop-btn')
         const removeFileBtns = this.querySelectorAll('.agent-input-remove-file-btn')
 
         // 提交消息的函数
         const handleSubmit = () => {
+            // 如果输入框被禁用，不允许提交
+            if (this.isDisabled) {
+                return;
+            }
+
             const message = textarea.value.trim()
             if (message === '') {
                 return;
@@ -133,6 +194,15 @@ class AgentInput extends HTMLElement {
         }
 
         submitBtn.addEventListener('click', handleSubmit)
+
+        // 停止按钮事件
+        if (stopBtn) {
+            stopBtn.addEventListener('click', () => {
+                if (this.onStopCallback) {
+                    this.onStopCallback();
+                }
+            });
+        }
 
         removeFileBtns.forEach(btn => {
             btn.addEventListener('click', (e) => {
@@ -158,6 +228,12 @@ class AgentInput extends HTMLElement {
 
         // Ctrl+Enter 快捷键
         textarea.addEventListener('keydown', (e) => {
+            // 如果输入框被禁用，阻止所有输入
+            if (this.isDisabled) {
+                e.preventDefault();
+                return;
+            }
+
             if (e.ctrlKey && e.key === 'Enter') {
                 e.preventDefault();
                 handleSubmit();
