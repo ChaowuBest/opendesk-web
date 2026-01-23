@@ -73,7 +73,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         /** @type {number} */
         this.currentOffset = 0; // 当前加载的邮件偏移量
         /** @type {number} */
-        this.emailPerPage = 20; // 每页加载的邮件数量 
+        this.emailPerPage = 20; // 每页加载的邮件数量
         /** @type {boolean} */
         this.isLoading = false; // 是否正在加载邮件
         /** @type {boolean} */
@@ -137,19 +137,19 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         this.currentOffset = 0;
         this.hasMoreEmails = true;
         this.loadingError = null;
-        
+
         const emails = await this.getEmailHeaderList(this.currentOffset, this.emailPerPage);
         this.emailHeaderList.clear();
         for (const email of emails) {
             this.emailHeaderList.set(email.uid, email);
         }
         this.currentOffset += emails.length;
-        
+
         // 检查是否还有更多邮件
         if (emails.length < this.emailPerPage) {
             this.hasMoreEmails = false;
         }
-        
+
         this.reloadEmailList();
         this.applyCurrentFilter();
     }
@@ -159,27 +159,27 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
      */
     async loadMoreEmails() {
         if (this.isLoading || !this.hasMoreEmails) return;
-        
+
         this.isLoading = true;
         this.loadingError = null;
-        
+
         // 更新加载状态 UI
         this.updateLoadingStatusUI();
-        
+
         try {
             const emails = await this.getEmailHeaderList(this.currentOffset, this.emailPerPage);
-            
+
             // 检查是否还有更多邮件
-            if (emails.length < this.emailPerPage) {    
+            if (emails.length < this.emailPerPage) {
                 this.hasMoreEmails = false;
             }
-            
+
             // 添加新邮件到现有列表
             for (const email of emails) {
                 this.emailHeaderList.set(email.uid, email);
             }
             this.currentOffset += emails.length;
-            
+
             // 重新渲染邮件列表
             this.reloadEmailList();
         } catch (error) {
@@ -319,7 +319,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
      */
     async getEmailHeaderList(offset = this.currentOffset, pageSize = this.emailPerPage) {
         console.info('getting email header list', { offset, pageSize });
-        
+
         const emailHeaderList = await window.applicationAPI.call('getEmailHeaderList', offset, pageSize);
         emailHeaderList.sort((a, b) => new Date(b.date) - new Date(a.date));
         return emailHeaderList;
@@ -362,19 +362,19 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
     reloadEmailList(emailList = this.emailHeaderList) {
         const emailListContainer = this.querySelector('#email-list');
         emailListContainer.innerHTML = '';
-        
+
         if (emailList.size === 0) {
             emailListContainer.innerHTML = '<div class="text-gray-500 text-center py-4">暂无符合条件的邮件</div>';
             return;
         }
-        
+
         for (const email of emailList.values()) {
             emailListContainer.innerHTML += this.renderEmailItem(email);
         }
-        
+
         // 添加加载状态 UI
         this.updateLoadingStatusUI();
-        
+
         this.querySelectorAll('.email-item').forEach(item => {
             item.addEventListener('click', (event) => {
                 const uid = item.dataset.uid;
@@ -394,7 +394,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             console.warn('Email list container not found');
             return;
         }
-        
+
         // 复用或创建加载状态元素
         let loadingElement = emailListContainer.querySelector('.loading-status');
         if (!loadingElement) {
@@ -402,7 +402,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             loadingElement.className = 'loading-status';
             emailListContainer.appendChild(loadingElement);
         }
-        
+
         // 根据状态更新内容
         let content = '';
         if (this.isLoading) {
@@ -432,11 +432,11 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
                 </div>
             `;
         }
-        
+
         // 只在内容变化时更新
         if (loadingElement.innerHTML !== content) {
             loadingElement.innerHTML = content;
-            
+
             // 绑定重试按钮事件
             const retryButton = loadingElement.querySelector('.retry-button');
             if (retryButton) {
@@ -596,7 +596,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
                     borderColor = 'border-gray-300';
                     textColor = 'text-gray-700';
             }
-            
+
             return `
             <div class="flex items-center ${bgColor} border ${borderColor} rounded px-1.5 py-0.5 text-xs ${textColor}">
                 <span class="font-medium">${address.name}</span>
@@ -609,32 +609,32 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             </div>
             `;
         };
-        
+
         // 检查是否需要显示展开/收起按钮
         const needsExpandButton = () => {
-            const totalAddresses = 
+            const totalAddresses =
                 (this.selectedEmailHeader.to?.length || 0) +
                 (this.selectedEmailHeader.cc?.length || 0) +
                 (this.selectedEmailHeader.bcc?.length || 0);
             return totalAddresses > 3;
         };
-        
+
         var addresses = '';
-        
+
         // 渲染发件人，右侧添加展开/收起按钮
         if (this.selectedEmailHeader.from && this.selectedEmailHeader.from.length > 0) {
             const senderHtml = this.selectedEmailHeader.from.map(addr => renderEmailAddress(addr, 'from')).join('');
-            
+
             let expandButton = '';
             if (needsExpandButton()) {
                 expandButton = `
-                <button class="email-expand-toggle bg-white border border-gray-300 rounded px-1.5 py-0.5 text-xs text-gray-600 hover:bg-gray-50 focus:outline-none focus:ring-1 focus:ring-gray-300 ml-2" 
+                <button class="email-expand-toggle bg-white border border-gray-300 rounded px-1.5 py-0.5 text-xs text-gray-600 hover:bg-gray-50 focus:outline-none focus:ring-1 focus:ring-gray-300 ml-2"
                         data-expanded="${this.isHeadersExpanded}">
                     ${this.isHeadersExpanded ? '收起' : '展开'}
                 </button>
                 `;
             }
-            
+
             addresses += `
             <!-- 发件人行 -->
             <div class="group flex items-start px-1 py-1 hover:bg-gray-50 transition-colors">
@@ -646,13 +646,13 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             </div>
             `;
         }
-        
+
         // 渲染收件人，默认显示前3个
         if (this.selectedEmailHeader.to && this.selectedEmailHeader.to.length > 0) {
             const maxVisible = this.isHeadersExpanded ? this.selectedEmailHeader.to.length : 3;
             const displayTos = this.selectedEmailHeader.to.slice(0, maxVisible);
             const toHtml = displayTos.map(addr => renderEmailAddress(addr, 'to')).join('');
-            
+
             addresses += `
             <!-- 收件人行 -->
             <div class="group flex items-start px-1 py-1 hover:bg-gray-50 transition-colors">
@@ -663,7 +663,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             </div>
             `;
         }
-        
+
         // 渲染抄送，展开时显示
         if (this.selectedEmailHeader.cc && this.selectedEmailHeader.cc.length > 0 && this.isHeadersExpanded) {
             const ccHtml = this.selectedEmailHeader.cc.map(addr => renderEmailAddress(addr, 'cc')).join('');
@@ -676,7 +676,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             </div>
             `;
         }
-        
+
         // 渲染密送，展开时显示
         if (this.selectedEmailHeader.bcc && this.selectedEmailHeader.bcc.length > 0 && this.isHeadersExpanded) {
             const bccHtml = this.selectedEmailHeader.bcc.map(addr => renderEmailAddress(addr, 'bcc')).join('');
@@ -844,10 +844,12 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         document.querySelector('#email-body-content').attachShadow({ mode: 'open' });
         if (this.selectedEmailContent.htmlContent) {
             document.querySelector('#email-body-content').shadowRoot.innerHTML = this.selectedEmailContent.htmlContent;
-        } else {
+        } else if (this.selectedEmailContent.textContent) {
             let textContent = this.selectedEmailContent.textContent;
             textContent = textContent.replace(/\n/g, '<br>');
             document.querySelector('#email-body-content').shadowRoot.innerHTML = textContent;
+        } else {
+            document.querySelector('#email-body-content').shadowRoot.innerHTML = '';
         }
 
         document.querySelectorAll('.mailbox-open-attachment-item').forEach(item => {
