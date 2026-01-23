@@ -1,5 +1,5 @@
 import { BaseApplication, BaseGUIConfig } from "../base.js";
-import { EmailProfileSchema } from "./common.js";
+import { MailboxConfigSchema } from "./common.js"; // 引入新的 Schema
 import { logger } from "../../utils/logger.js";
 import path from 'path';
 
@@ -12,8 +12,9 @@ class MailboxApplication extends BaseApplication {
         super('mailbox', '邮箱');
     }
 
+    // 【重要】这里必须返回包含 profiles 数组的 Schema
     getConfigSchema() {
-        return EmailProfileSchema;
+        return MailboxConfigSchema;
     }
 
     onConfigChanged() {

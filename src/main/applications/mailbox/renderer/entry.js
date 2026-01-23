@@ -84,19 +84,136 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         this.isHeadersExpanded = false; // 邮件头是否展开
         /** @type {object | null} */
         this.currentSearchQuery = null; // 当前搜索/筛选查询条件
+
+        // 多账号支持
+        this.accounts = [];
+        this.currentAccount = null;
     }
 
-    connectedCallback() {
+    async connectedCallback() {
         this.render();
-        this.loadEmailList();
+        this.setupAccountSelectorListeners();
+        this.setupScrollListener();
 
-        // 订阅邮件列表更新事件
+        // 初始化加载
+        try {
+            await this.loadAccounts();
+            this.updateAccountSelectorUI();
+
+            if (this.currentAccount) {
+                await this.loadEmailList();
+            } else {
+                const list = this.querySelector('#email-list');
+                if (list) {
+                    list.innerHTML = '<div class="text-gray-500 text-center py-4">请先在配置文件中配置邮箱账号</div>';
+                }
+            }
+        } catch (error) {
+            console.error('Initialization error:', error);
+        }
+
+        // 订阅邮件列表更新事件 (保持不变)
         window.applicationAPI.subscribe('emailListUpdated', () => {
             this.loadEmailList();
         });
 
-        // 添加滚动事件监听
-        this.setupScrollListener();
+        // 【核心修改】订阅账号列表更新事件
+        window.applicationAPI.subscribe('accountsUpdated', async () => {
+             console.log("配置更新检测到，正在强制重载...");
+
+             // 1. 重新获取最新的账号列表
+             await this.loadAccounts();
+             this.updateAccountSelectorUI();
+
+             // 2. 无论之前是否有数据，配置变了必须强制刷新
+             if (this.currentAccount) {
+                 // 清空本地缓存的数据
+                 this.emailHeaderList.clear();
+                 this.currentOffset = 0;
+                 this.hasMoreEmails = true;
+
+                 // 清空视图
+                 this.reloadEmailList();
+
+                 // 重新从后端拉取数据
+                 await this.loadEmailList();
+             } else {
+                 // 如果配置全删了，没账号了，清空列表显示提示
+                 const list = this.querySelector('#email-list');
+                 if (list) list.innerHTML = '<div class="text-gray-500 text-center py-4">暂无可用账号</div>';
+                 this.emailHeaderList.clear();
+             }
+        });
+    }
+
+    /**
+     * 加载账号列表
+     */
+    async loadAccounts() {
+        try {
+            this.accounts = await window.applicationAPI.call('getAccountList');
+            if (this.accounts && this.accounts.length > 0) {
+                // 找到当前活跃的账号，如果没有则默认第一个
+                this.currentAccount = this.accounts.find(a => a.active) || this.accounts[0];
+                // 如果后端没有标记任何 active，则主动切换到第一个
+                if (!this.accounts.find(a => a.active)) {
+                    await this.switchAccount(this.currentAccount.email);
+                }
+            } else {
+                this.accounts = [];
+                this.currentAccount = null;
+            }
+        } catch (error) {
+            console.error('Error loading accounts:', error);
+            this.accounts = [];
+        }
+    }
+
+    /**
+     * 切换账号
+     * @param {string} email
+     */
+    async switchAccount(email) {
+        if (this.currentAccount && this.currentAccount.email === email && this.accounts.length > 1) return;
+
+        try {
+            await window.applicationAPI.call('switchAccount', email);
+
+            // 更新本地状态
+            this.currentAccount = this.accounts.find(a => a.email === email);
+            this.accounts.forEach(a => a.active = (a.email === email));
+
+            // 重置所有列表状态
+            this.currentOffset = 0;
+            this.hasMoreEmails = true;
+            this.isLoading = false;
+            this.loadingError = null;
+            this.emailHeaderList.clear();
+
+            // 重置选中状态
+            this.selectedEmailUid = null;
+            this.selectedEmailHeader = null;
+            this.selectedEmailContent = null;
+
+            // 清空右侧内容区
+            const contentArea = this.querySelector('#email-content');
+            if (contentArea) contentArea.innerHTML = '';
+
+            // 刷新UI中的账号显示
+            this.updateAccountSelectorUI();
+
+            // 重新加载邮件
+            this.reloadEmailList(); // 先清空视图
+            await this.loadEmailList(); // 再请求数据
+
+        } catch (error) {
+            console.error('Switch account failed:', error);
+            Swal.fire({
+                title: '切换账号失败',
+                text: error.message,
+                icon: 'error'
+            });
+        }
     }
 
     /**
@@ -815,8 +932,10 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         const icon = syncButton.querySelector('i');
 
         // 添加旋转动画
-        icon.classList.add('fa-spin');
-        syncButton.disabled = true;
+        if (syncButton && icon) {
+             icon.classList.add('fa-spin');
+             syncButton.disabled = true;
+        }
 
         try {
             await window.applicationAPI.call('syncEmails');
@@ -825,8 +944,10 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         } catch (error) {
             console.error('同步邮件失败:', error);
         } finally {
-            icon.classList.remove('fa-spin');
-            syncButton.disabled = false;
+            if (syncButton && icon) {
+                icon.classList.remove('fa-spin');
+                syncButton.disabled = false;
+            }
         }
     }
 
@@ -836,6 +957,8 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
     }
 
     renderCurrentEmailHeader() {
+        if (!this.selectedEmailHeader) return '';
+
         // 渲染单个邮箱地址
         const renderEmailAddress = (address, type) => {
             let bgColor, borderColor, textColor;
@@ -984,7 +1107,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         if (this.selectedEmailHeader.bcc && this.selectedEmailHeader.bcc.length > 0 && shouldShowAll) {
             const bccHtml = this.selectedEmailHeader.bcc.map(addr => renderEmailAddress(addr, 'bcc')).join('');
             addresses += ` <!-- 密送行 -->
-            <div class="group flex items-start px-1 py-1 hover:bg-gray-50 transition-colors">
+                <div class="group flex items-start px-1 py-1 hover:bg-gray-50 transition-colors">
                 <label class="w-12 text-xs text-gray-400 font-medium pt-0.5">密送</label>
                 <div class="flex-1 flex flex-wrap gap-2">
                     ${bccHtml}
@@ -994,26 +1117,26 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         }
 
         var attachments = '';
-        for (const attachment of this.selectedEmailContent.attachments) {
-            attachments += `
-            <div class="mailbox-open-attachment-item flex items-center group cursor-pointer w-fit max-w-sm
-                bg-white/70 backdrop-blur-xl
-                rounded-xl px-2.5 py-1
-                border border-black/[0.08] shadow-sm
-                hover:shadow-md hover:bg-white/90 hover:-translate-y-0.5
-                transition-all duration-200 ease-out select-none"
-                data-attachment_path="${attachment.path}"
-            >
-                <!-- 文件图标容器 -->
-                <i class="fa fa-file-alt text-gray-400 text-sm mr-2"></i>
-                <!-- 文件详细信息 -->
-                <div class="flex flex-col min-w-0 flex-1 overflow-hidden">
-                    <span class="text-[13px] font-medium text-gray-900 truncate tracking-tight font-sans">
-                        ${attachment.filename}
-                    </span>
+        if (this.selectedEmailContent && this.selectedEmailContent.attachments) {
+            for (const attachment of this.selectedEmailContent.attachments) {
+                attachments += `
+                <div class="mailbox-open-attachment-item flex items-center group cursor-pointer w-fit max-w-sm
+                    bg-white/70 backdrop-blur-xl
+                    rounded-xl px-2.5 py-1
+                    border border-black/[0.08] shadow-sm
+                    hover:shadow-md hover:bg-white/90 hover:-translate-y-0.5
+                    transition-all duration-200 ease-out select-none"
+                    data-attachment_path="${attachment.path}"
+                >
+                    <i class="fa fa-file-alt text-gray-400 text-sm mr-2"></i>
+                    <div class="flex flex-col min-w-0 flex-1 overflow-hidden">
+                        <span class="text-[13px] font-medium text-gray-900 truncate tracking-tight font-sans">
+                            ${attachment.filename}
+                        </span>
+                    </div>
                 </div>
-            </div>
-            `
+                `
+            }
         }
 
         if (attachments) {
@@ -1256,15 +1379,41 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
     }
 
     render() {
+        const accountName = this.currentAccount ? (this.currentAccount.name || this.currentAccount.email) : '未配置账号';
+
+        // 生成账号列表项 HTML，包含空值保护
+        const accountListHtml = (this.accounts || []).map(acc => `
+            <div class="account-selector-item px-3 py-2 hover:bg-gray-100 cursor-pointer text-sm flex items-center gap-2 ${acc.email === (this.currentAccount?.email) ? 'bg-indigo-50 text-indigo-600' : 'text-gray-700'}"
+                 data-email="${acc.email}">
+                 <div class="w-2 h-2 rounded-full ${acc.email === (this.currentAccount?.email) ? 'bg-indigo-600' : 'bg-transparent'}"></div>
+                 <div class="flex flex-col overflow-hidden">
+                    <span class="font-medium truncate">${acc.name || acc.email}</span>
+                    <span class="text-xs text-gray-400 truncate">${acc.email}</span>
+                 </div>
+            </div>
+        `).join('');
+
         this.innerHTML = `
         <div class="flex h-full">
             <!-- 左侧栏：融合了导航和列表 (Width: 400px) -->
             <aside class="w-[350px] bg-white border-r border-gray-200 flex flex-col flex-shrink-0">
 
-                <!-- 顶部操作区 -->
                 <div class="p-3 space-y-3">
                     <div class="flex items-center justify-between">
-                        <h1 class="text-xl font-bold tracking-tight px-1">收件箱</h1>
+                        <div class="relative z-20">
+                            <button id="account-selector-btn" class="flex items-center gap-2 px-2 py-1 -ml-2 rounded-lg hover:bg-gray-100 transition-colors group">
+                                <h1 class="text-xl font-bold tracking-tight text-gray-900 group-hover:text-indigo-600 transition-colors truncate max-w-[180px]">
+                                    ${accountName}
+                                </h1>
+                                <i class="fa-solid fa-chevron-down text-gray-400 text-xs group-hover:text-indigo-500 transition-colors"></i>
+                            </button>
+
+                            <div id="account-selector-menu" class="hidden absolute left-0 top-full mt-1 w-64 bg-white rounded-xl shadow-lg border border-gray-100 py-1 overflow-hidden origin-top-left transition-all duration-200">
+                                <div class="px-3 py-2 text-xs font-medium text-gray-400 border-b border-gray-50">切换账号</div>
+                                ${accountListHtml || '<div class="p-3 text-xs text-gray-400">暂无可用账号</div>'}
+                            </div>
+                        </div>
+
                         <div class="flex items-center gap-2">
                             <button id='mailbox-sync-email-button' class="group flex items-center px-2 py-2 rounded-full
                                         bg-transparent hover:bg-white/60 hover:shadow-md
@@ -1292,13 +1441,11 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
                             </button>
                         </div>
                     </div>
-
                     <!-- 搜索框 -->
                     <div class="relative rounded-2xl">
                         <i class="fas fa-search absolute left-3 top-3 text-gray-400"></i>
                         <input type="text" id="mailbox-search-input" placeholder="搜索邮件..." class="w-full bg-gray-100 border-none rounded-xl pl-10 pr-4 py-2.5 focus:ring-2 focus:ring-indigo-500 outline-none">
                     </div>
-
                     <!-- 导航标签 (水平排列) -->
                     <div class="flex gap-2 overflow-x-auto pb-1 text-xs no-scrollbar" id="mailbox-tabs">
                         <button class="whitespace-nowrap px-3 py-1.5 bg-gray-900 text-white rounded-lg active" id="mailbox-all-email-button">全部</button>
@@ -1308,17 +1455,100 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
                         <button class="whitespace-nowrap px-3 py-1.5 bg-gray-100 text-gray-600 hover:bg-gray-200 rounded-lg font-medium" id="mailbox-sent-email-button">已发送</button>
                     </div>
                 </div>
-
                 <!-- 邮件列表区 -->
                 <div id="email-list" class="flex-1 overflow-y-auto border-t border-gray-200"></div>
             </aside>
-
             <!-- 右侧栏：邮件内容 -->
             <main id='email-content' class="flex-1 bg-white flex flex-col overflow-auto"></main>
         </div>
         `
 
+        this.setupTabListeners();
+        this.setupActionListeners();
+        this.setupSearchListeners();
+    }
+
+    // 辅助方法：设置账号切换器的事件监听
+    setupAccountSelectorListeners() {
+        const btn = this.querySelector('#account-selector-btn');
+        const menu = this.querySelector('#account-selector-menu');
+        if (!btn || !menu) return;
+
+        // 切换菜单显示
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            menu.classList.toggle('hidden');
+        });
+
+        // 点击外部关闭菜单
+        document.addEventListener('click', (e) => {
+            if (!menu.classList.contains('hidden') && !btn.contains(e.target) && !menu.contains(e.target)) {
+                menu.classList.add('hidden');
+            }
+        });
+
+        // 账号点击事件
+        const items = menu.querySelectorAll('.account-selector-item');
+        items.forEach(item => {
+            item.addEventListener('click', (e) => {
+                const email = item.dataset.email;
+                if (email) {
+                    this.switchAccount(email);
+                    menu.classList.add('hidden');
+                }
+            });
+        });
+    }
+
+    // 辅助方法：更新账号切换器 UI（选中状态和标题）
+    // 辅助方法：更新账号切换器 UI（重新渲染列表并绑定事件）
+    updateAccountSelectorUI() {
+        // 1. 更新顶部按钮的标题
+        const titleEl = this.querySelector('#account-selector-btn h1');
+        if (titleEl) {
+            titleEl.textContent = this.currentAccount ? (this.currentAccount.name || this.currentAccount.email) : '未配置账号';
+        }
+
+        // 2. 重新生成账号列表的 HTML
+        const menu = this.querySelector('#account-selector-menu');
+        if (!menu) return;
+
+        const accountListHtml = (this.accounts || []).map(acc => `
+            <div class="account-selector-item px-3 py-2 hover:bg-gray-100 cursor-pointer text-sm flex items-center gap-2 ${acc.email === (this.currentAccount?.email) ? 'bg-indigo-50 text-indigo-600' : 'text-gray-700'}"
+                 data-email="${acc.email}">
+                 <div class="w-2 h-2 rounded-full ${acc.email === (this.currentAccount?.email) ? 'bg-indigo-600' : 'bg-transparent'}"></div>
+                 <div class="flex flex-col overflow-hidden">
+                    <span class="font-medium truncate">${acc.name || acc.email}</span>
+                    <span class="text-xs text-gray-400 truncate">${acc.email}</span>
+                 </div>
+            </div>
+        `).join('');
+
+        // 3. 将新生成的 HTML 注入到菜单中
+        // 保留顶部的 "切换账号" 标题栏，只替换列表部分
+        menu.innerHTML = `
+            <div class="px-3 py-2 text-xs font-medium text-gray-400 border-b border-gray-50">切换账号</div>
+            ${accountListHtml || '<div class="p-3 text-xs text-gray-400">暂无可用账号</div>'}
+        `;
+
+        // 4. 【关键】因为 DOM 被重写了，必须重新绑定点击事件
+        const items = menu.querySelectorAll('.account-selector-item');
+        items.forEach(item => {
+            item.addEventListener('click', (e) => {
+                const email = item.dataset.email;
+                if (email) {
+                    this.switchAccount(email);
+                    menu.classList.add('hidden'); // 选择后关闭菜单
+                }
+            });
+        });
+    }
+
+    // 辅助方法：设置标签页事件
+    setupTabListeners() {
         const tabsContainer = document.getElementById('mailbox-tabs');
+        if (!tabsContainer) return;
+
         const tabButtons = tabsContainer.querySelectorAll('button');
         tabsContainer.addEventListener('click', function(e) {
             if (e.target.tagName === 'BUTTON') {
@@ -1331,30 +1561,29 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             }
         });
 
-        document.querySelector('#mailbox-new-email-button').addEventListener('click', () => {
+        // 绑定具体功能
+        document.getElementById('mailbox-all-email-button')?.addEventListener('click', () => this.handleFilter('all'));
+        document.getElementById('mailbox-unread-email-button')?.addEventListener('click', () => this.handleFilter('unread'));
+        document.getElementById('mailbox-star-email-button')?.addEventListener('click', () => this.handleFilter('starred'));
+        document.getElementById('mailbox-draft-email-button')?.addEventListener('click', () => this.handleFilter('draft'));
+        document.getElementById('mailbox-sent-email-button')?.addEventListener('click', () => this.handleFilter('sent'));
+    }
+
+    // 辅助方法：设置动作按钮事件
+    setupActionListeners() {
+        document.querySelector('#mailbox-new-email-button')?.addEventListener('click', () => {
             this.createNewEmail(MailOperations.SEND);
         });
-        document.querySelector('#mailbox-sync-email-button').addEventListener('click', () => {
+        document.querySelector('#mailbox-sync-email-button')?.addEventListener('click', () => {
             this.syncEmails();
         });
-        document.getElementById('mailbox-all-email-button').addEventListener('click', () => {
-            this.handleFilter('all');
-        });
-        document.getElementById('mailbox-unread-email-button').addEventListener('click', () => {
-            this.handleFilter('unread');
-        });
-        document.getElementById('mailbox-star-email-button').addEventListener('click', () => {
-            this.handleFilter('starred');
-        });
-        document.getElementById('mailbox-draft-email-button').addEventListener('click', () => {
-            this.handleFilter('draft');
-        });
-        document.getElementById('mailbox-sent-email-button').addEventListener('click', () => {
-            this.handleFilter('sent');
-        });
+    }
 
-        // 搜索功能
+    // 辅助方法：设置搜索事件
+    setupSearchListeners() {
         const searchInput = document.getElementById('mailbox-search-input');
+        if (!searchInput) return;
+
         let searchTimeout = null;
         searchInput.addEventListener('input', (e) => {
             clearTimeout(searchTimeout);
@@ -1788,7 +2017,6 @@ class MailEditorWidget extends AgentOperableHTMLElement {
                     </div>
 
                 </div>
-
                 <!-- 邮件主体 -->
                 <div id="email-body-content" class="prose prose-indigo max-w-none w-full flex-1 overflow-x-auto overflow-y-auto">
                     <div id="editor—wrapper">
