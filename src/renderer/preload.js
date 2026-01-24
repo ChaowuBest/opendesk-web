@@ -158,6 +158,14 @@ function exposeFSAPI() {
                 p = p.replace(/\\/g, '/');
             }
             return p;
+        },
+        getPathType: async (filePath) => {
+            const result = await ipcRenderer.invoke('fs:getPathType', filePath);
+            if (result.status !== 'ok') {
+                console.error('getting path type failed', result.message);
+                throw new Error(result.message);
+            }
+            return result.data;
         }
     })
 }

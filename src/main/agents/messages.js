@@ -67,12 +67,11 @@ class ToolCall {
         this.index = index;
         this.id = id;
         this.tool_name = tool_name;
-        this.tool_title = tool_name;
         this.args_string = args_string;
-        this.args_object = {};
         this.status = 'pending';
         this.result = undefined;
 
+        Object.defineProperty(this, 'args_object', { value: {}, writable: true, enumerable: false });
         Object.defineProperty(this, 'tool', { value: undefined, writable: true, enumerable: false });
     }
 
@@ -111,7 +110,7 @@ class ToolCall {
                 <!-- 状态：进行中 (呼吸灯效果) -->
                 <div class="flex items-center">
                     <div class="h-2 w-2 rounded-full bg-blue-500 animate-pulse ring-4 ring-blue-100/50"></div>
-                    <span class="ml-2 font-semibold text-slate-800">${this.tool_title}</span>
+                    <span class="ml-2 font-semibold text-slate-800">${this.tool_name}</span>
                 </div>
             </div>
             `
@@ -122,7 +121,7 @@ class ToolCall {
                 <div class="h-1 w-1 rounded-full bg-slate-300"></div>
                 <div class="flex items-center group cursor-help relative">
                     <div class="h-2 w-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.6)]"></div>
-                    <span class="ml-2 font-medium text-slate-600">${this.tool_title}</span>
+                    <span class="ml-2 font-medium text-slate-600">${this.tool_name}</span>
                 </div>
             </div>
             `
@@ -141,7 +140,7 @@ class ToolCall {
                     </div>
 
                     <!-- 错误文字 -->
-                    <span class="ml-2 text-[13px] font-semibold text-rose-600">${this.tool_title} Failed</span>
+                    <span class="ml-2 text-[13px] font-semibold text-rose-600">${this.tool_name} Failed</span>
 
                     <!-- 悬浮弹窗 (Error Tooltip) -->
                     <div class="absolute bottom-full mb-3 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-all pointer-events-none">
@@ -161,7 +160,7 @@ class ToolCall {
                 <span class="ml-2 font-semibold text-slate-600">工具调用</span>
                 <div class="flex items-center opacity-40">
                     <div class="h-2 w-2 rounded-full bg-slate-400"></div>
-                    <span class="ml-2 font-medium text-slate-500">${this.tool_title}</span>
+                    <span class="ml-2 font-medium text-slate-500">${this.tool_name}</span>
                 </div>
             </div>
             `;

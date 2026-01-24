@@ -12,6 +12,7 @@ import { UpdateClient } from '../updater/client.js';
 
 import Convert from 'ansi-to-html';
 import path from 'path';
+import fs from 'fs';
 
 import appIcon from '../../resources/main/images/icon_round.png?asset'
 
@@ -245,6 +246,26 @@ const registerFSAPIHandlers = () => {
     } else {
         // 将 Windows 路径的反斜杠统一替换为正斜杠，保持前后端一致
         return filePaths.map(p => p.replace(/\\/g, '/'));
+    }
+  })
+  ipcMain.handle('fs:getPathType', async (event, filePath) => {
+    try {
+      // 将正斜杠路径转换回系统路径格式（Windows需要反斜杠）
+      const systemPath = filePath.replace(/\//g, path.sep);
+      const stats = await fs.promises.stat(systemPath);
+      if (stats.isFile()) {
+        return { status: 'ok', data: 'file' };
+      } else if (stats.isDirectory()) {
+        return { status: 'ok', data: 'directory' };
+      } else {
+        return { status: 'ok', data: null };
+      }
+    } catch (error) {
+      // 如果路径不存在或无法访问，返回null
+      if (error.code === 'ENOENT') {
+        return { status: 'ok', data: null };
+      }
+      return { status: 'error', message: error.message };
     }
   })
 }

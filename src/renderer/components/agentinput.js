@@ -215,14 +215,33 @@ class AgentInput extends HTMLElement {
             e.stopPropagation();
         })
 
-        container.addEventListener('drop', (e) => {
+        container.addEventListener('drop', async (e) => {
             e.preventDefault();
             e.stopPropagation();
             const files = e.dataTransfer.files;
             for (const file of files) {
-                console.info('attach dropped file', file, window.fsAPI.getFilePath(file));
+                const filePath = window.fsAPI.getFilePath(file);
                 /* electron前端无法获取文件完整路径，需要通过fsAPI.getFilePath获取 */
-                this.attachFilePath(window.fsAPI.getFilePath(file));
+
+                // 检查路径类型
+                const pathType = await window.fsAPI.getPathType(filePath);
+
+                if (pathType === 'directory') {
+                    // 如果是目录，直接插入到textarea当前光标位置
+                    const cursorPos = textarea.selectionStart;
+                    const textBefore = textarea.value.substring(0, cursorPos);
+                    const textAfter = textarea.value.substring(cursorPos);
+                    textarea.value = textBefore + filePath + textAfter;
+                    // 设置光标位置到插入文本的末尾
+                    const newCursorPos = cursorPos + filePath.length;
+                    textarea.setSelectionRange(newCursorPos, newCursorPos);
+                    // 触发input事件以通知内容变化
+                    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+                } else if (pathType === 'file') {
+                    // 如果是文件，按原有逻辑attachFilepath
+                    this.attachFilePath(filePath);
+                }
+                // 如果pathType为null（路径不存在），则不执行任何操作
             }
         })
 
