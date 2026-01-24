@@ -30,6 +30,282 @@ class POP3EmailClient {
         return new Pop3Command({ user: this.usr, password: this.pwd, host: this.host, port: this.port, tls: this.tls });
     }
 
+    extractFilenameFromContentDisposition(contentDisposition) {
+        if (!contentDisposition) return null;
+
+        let filenameMatch = contentDisposition.match(/filename\*=([^;]+)/i);
+        if (filenameMatch) {
+            // RFC 5987 格式: filename*=charset'lang'encoded-value
+            const encodedValue = filenameMatch[1];
+            const match = encodedValue.match(/^([^']+)'[^']*'(.+)$/);
+            if (match) {
+                const [, charset, encoded] = match;
+                try {
+                    const decoded = decodeURIComponent(encoded);
+                    const buffer = Buffer.from(decoded, 'latin1');
+                    const charsetMap = {
+                        'gb2312': 'gbk',
+                        'gb_2312': 'gbk',
+                        'x-gbk': 'gbk',
+                    };
+                    const normalizedCharset = charsetMap[charset?.toLowerCase()] || charset?.toLowerCase() || 'utf-8';
+                    try {
+                        return buffer.toString(normalizedCharset);
+                    } catch (e) {
+                        return buffer.toString('utf-8', 'replace');
+                    }
+                } catch (error) {
+                    logger.warn(`Failed to decode RFC 5987 filename: ${error.message}`);
+                }
+            }
+        }
+
+        filenameMatch = contentDisposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/i);
+        if (filenameMatch && filenameMatch[1]) {
+            let filename = filenameMatch[1].trim();
+            filename = filename.replace(/^["']|["']$/g, '');
+            filename = this.decodeRfc2047(filename);
+            return filename || null;
+        }
+        return null;
+    }
+
+    getExtensionFromContentType(contentType) {
+        if (!contentType) return '';
+
+        const mimeToExt = {
+            'text/plain': '.txt',
+            'text/html': '.html',
+            'text/css': '.css',
+            'text/calendar': '.ics',
+            'text/javascript': '.js',
+            'application/json': '.json',
+            'application/pdf': '.pdf',
+            'application/zip': '.zip',
+            'application/x-zip-compressed': '.zip',
+            'image/jpeg': '.jpg',
+            'image/png': '.png',
+            'image/gif': '.gif',
+            'image/webp': '.webp',
+            'image/svg+xml': '.svg',
+            'application/msword': '.doc',
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '.docx',
+            'application/vnd.ms-excel': '.xls',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': '.xlsx',
+            'application/vnd.ms-powerpoint': '.ppt',
+            'application/vnd.openxmlformats-officedocument.presentationml.presentation': '.pptx',
+            'message/rfc822': '.eml',
+            'message/rfc822-headers': '.eml',
+        };
+
+        const mainType = contentType.split(';')[0].trim().toLowerCase();
+        return mimeToExt[mainType] || '';
+    }
+
+    sanitizeFilename(filename) {
+        if (!filename) return 'attachment';
+
+        let sanitized = filename.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_');
+        sanitized = sanitized.replace(/^[.\s]+/, '');
+        sanitized = sanitized.replace(/[.\s]+$/, '');
+
+        if (!sanitized || sanitized.trim() === '') {
+            return 'attachment';
+        }
+
+        const maxLength = 255;
+        if (sanitized.length > maxLength) {
+            const ext = path.extname(sanitized);
+            const nameWithoutExt = path.basename(sanitized, ext);
+            const truncatedName = nameWithoutExt.substring(0, maxLength - ext.length - 10) + '...';
+            sanitized = truncatedName + ext;
+        }
+
+        return sanitized;
+    }
+
+    decodeRfc2047(encodedStr) {
+        if (!encodedStr) return '';
+
+        // 匹配所有 RFC 2047 编码段 =?charset?encoding?encoded-text?=
+        // 支持多个编码段（主题可能被分成多段）
+        const rfc2047Pattern = /=\?([^?]+)\?([BQbq])\?([^?]+)\?=/g;
+
+        return encodedStr.replace(rfc2047Pattern, (match, charset, encoding, encoded) => {
+            try {
+                let decoded;
+                const encodingUpper = encoding.toUpperCase();
+                const charsetLower = charset.toLowerCase();
+
+                if (encodingUpper === 'B') {
+                    const buffer = Buffer.from(encoded, 'base64');
+                    const charsetMap = {
+                        'gb2312': 'utf-8',  // Node.js 不支持 GBK，先尝试 utf-8
+                        'gb_2312': 'utf-8',
+                        'x-gbk': 'utf-8',
+                        'gbk': 'utf-8',
+                        'gb18030': 'utf-8',
+                        'windows-1252': 'latin1',
+                        'iso-8859-1': 'latin1',
+                        'cp936': 'utf-8',
+                    };
+                    const normalizedCharset = charsetMap[charsetLower] || charsetLower;
+
+                    try {
+                        if (['utf8', 'utf-8', 'utf16le', 'latin1', 'ascii'].includes(normalizedCharset)) {
+                            decoded = buffer.toString(normalizedCharset);
+                        } else if (charsetLower.includes('gb') || charsetLower.includes('gbk') || charsetLower.includes('gb2312')) {
+                            decoded = buffer.toString('utf-8', 'replace');
+                            if (decoded.includes('')) {
+                                try {
+                                    const utf8Str = buffer.toString('utf-8');
+                                    if (!utf8Str.includes('')) {
+                                        decoded = utf8Str;
+                                    } else {
+                                        decoded = buffer.toString('latin1');
+                                    }
+                                } catch (e) {
+                                    decoded = buffer.toString('latin1');
+                                }
+                            }
+                        } else {
+                            try {
+                                decoded = buffer.toString('utf-8');
+                            } catch (e) {
+                                decoded = buffer.toString('latin1');
+                            }
+                        }
+                    } catch (e) {
+                        decoded = buffer.toString('latin1');
+                    }
+                } else if (encodingUpper === 'Q') {
+                    const bytes = [];
+                    for (let i = 0; i < encoded.length; i++) {
+                        if (encoded[i] === '=' && i + 2 < encoded.length) {
+                            const hex = encoded.substring(i + 1, i + 3);
+                            if (/^[0-9A-Fa-f]{2}$/.test(hex)) {
+                                bytes.push(parseInt(hex, 16));
+                                i += 2;
+                                continue;
+                            }
+                        }
+                        if (encoded[i] === '_') {
+                            bytes.push(0x20);
+                        } else {
+                            bytes.push(encoded.charCodeAt(i));
+                        }
+                    }
+
+                    const buffer = Buffer.from(bytes);
+                    const charsetMap = {
+                        'gb2312': 'utf-8',
+                        'gb_2312': 'utf-8',
+                        'x-gbk': 'utf-8',
+                        'gbk': 'utf-8',
+                        'gb18030': 'utf-8',
+                        'windows-1252': 'latin1',
+                        'iso-8859-1': 'latin1',
+                        'cp936': 'utf-8',
+                    };
+                    const normalizedCharset = charsetMap[charsetLower] || charsetLower;
+                    try {
+                        if (['utf8', 'utf-8', 'utf16le', 'latin1', 'ascii'].includes(normalizedCharset)) {
+                            decoded = buffer.toString(normalizedCharset);
+                        } else if (charsetLower.includes('gb') || charsetLower.includes('gbk')) {
+                            decoded = buffer.toString('utf-8', 'replace');
+                        } else {
+                            decoded = buffer.toString('utf-8', 'replace');
+                        }
+                    } catch (e) {
+                        decoded = buffer.toString('latin1');
+                    }
+                } else {
+                    return match;
+                }
+
+                return decoded;
+            } catch (error) {
+                logger.warn(`Failed to decode RFC 2047: charset=${charset}, encoding=${encoding}, error=${error.message}`);
+                return match;
+            }
+        });
+    }
+
+    async extractSubjectFromRfc822(content) {
+        try {
+            let contentBuffer;
+            if (Buffer.isBuffer(content)) {
+                contentBuffer = content;
+            } else if (typeof content === 'string') {
+                contentBuffer = Buffer.from(content, 'utf-8');
+            } else {
+                return null;
+            }
+
+            const parsed = await simpleParser(contentBuffer);
+            if (parsed.subject) {
+                return parsed.subject;
+            }
+
+            const contentStr = contentBuffer.toString('utf-8', 'replace');
+            const subjectMatch = contentStr.match(/^Subject:\s*((?:.|\r?\n(?:\s|\t).*)*)/im);
+            if (subjectMatch && subjectMatch[1]) {
+                let subject = subjectMatch[1]
+                    .replace(/\r?\n[\s\t]+/g, ' ')
+                    .trim();
+                subject = this.decodeRfc2047(subject);
+                return subject || null;
+            }
+        } catch (error) {
+            logger.warn(`Failed to extract subject from RFC822 attachment: ${error.message}`);
+            // 如果解析失败，尝试简单的字符串提取作为备用
+            try {
+                const contentStr = Buffer.isBuffer(content)
+                    ? content.toString('utf-8', 'replace')
+                    : String(content);
+                const subjectMatch = contentStr.match(/^Subject:\s*((?:.|\r?\n(?:\s|\t).*)*)/im);
+                if (subjectMatch && subjectMatch[1]) {
+                    let subject = subjectMatch[1]
+                        .replace(/\r?\n[\s\t]+/g, ' ')
+                        .trim();
+                    subject = this.decodeRfc2047(subject);
+                    return subject || null;
+                }
+            } catch (fallbackError) {
+                logger.warn(`Fallback extraction also failed: ${fallbackError.message}`);
+            }
+        }
+        return null;
+    }
+
+    async generateDefaultFilename(attachment, index) {
+        const timestamp = Date.now();
+        const contentType = attachment.contentType || '';
+        const mainType = contentType.split(';')[0].trim().toLowerCase();
+        const ext = this.getExtensionFromContentType(contentType);
+
+        if (mainType === 'message/rfc822' && attachment.content) {
+            const subject = await this.extractSubjectFromRfc822(attachment.content);
+            if (subject) {
+                const subjectFilename = this.sanitizeFilename(subject);
+                if (subjectFilename && subjectFilename !== 'attachment') {
+                    const finalExt = ext || '.eml';
+                    const nameWithoutExt = path.basename(subjectFilename, path.extname(subjectFilename));
+                    return `${nameWithoutExt}${finalExt}`;
+                }
+            }
+        }
+
+        if (attachment.contentId) {
+            const contentIdName = this.sanitizeFilename(attachment.contentId.replace(/[<>]/g, ''));
+            if (contentIdName && contentIdName !== 'attachment') {
+                return contentIdName + ext;
+            }
+        }
+
+        return `attachment_${index}_${timestamp}${ext}`;
+    }
+
     async prepareAttachments(uid, attachments) {
         if (!attachments || attachments.length === 0) {
             return [];
@@ -38,12 +314,56 @@ class POP3EmailClient {
         const attachmentDirectory = path.join(mailboxDataDirectory, 'attachments', uid);
         let result = [];
         fs.mkdirSync(attachmentDirectory, { recursive: true });
-        for (const attachment of attachments) {
-            const attachmentPath = path.join(attachmentDirectory, attachment.filename);
-            logger.info(`saving attachment: ${attachment.filename} to ${attachmentPath}`);
-            fs.writeFileSync(attachmentPath, attachment.content);
-            result.push(new EmailAttachment(attachment.filename, attachmentPath));
+
+        for (let i = 0; i < attachments.length; i++) {
+            const attachment = attachments[i];
+            let filename = attachment.filename;
+
+            // 如果 filename 为 undefined 或空，尝试从其他地方获取
+            if (!filename) {
+                if (attachment.contentDisposition) {
+                    filename = this.extractFilenameFromContentDisposition(attachment.contentDisposition);
+                }
+
+                if (!filename && attachment.contentId) {
+                    filename = attachment.contentId.replace(/[<>]/g, '');
+                }
+
+                if (!filename) {
+                    filename = await this.generateDefaultFilename(attachment, i);
+                    logger.warn(`附件 ${i} 没有文件名，使用默认名称: ${filename}`);
+                }
+            }
+
+            const contentType = attachment.contentType || '';
+            const mainType = contentType.split(';')[0].trim().toLowerCase();
+            if (mainType === 'message/rfc822' || mainType === 'message/rfc822-headers') {
+                const currentExt = path.extname(filename).toLowerCase();
+                if (currentExt !== '.eml') {
+                    const nameWithoutExt = path.basename(filename, currentExt);
+                    filename = `${nameWithoutExt}.eml`;
+                }
+            }
+
+            filename = this.sanitizeFilename(filename);
+            let finalFilename = filename;
+            let counter = 1;
+            const baseName = path.basename(filename, path.extname(filename));
+            const ext = path.extname(filename);
+            while (fs.existsSync(path.join(attachmentDirectory, finalFilename))) {
+                finalFilename = `${baseName}_${counter}${ext}`;
+                counter++;
+            }
+
+            try {
+                const attachmentPath = path.join(attachmentDirectory, finalFilename);
+                fs.writeFileSync(attachmentPath, attachment.content);
+                result.push(new EmailAttachment(finalFilename, attachmentPath));
+            } catch (error) {
+                logger.error(`保存附件失败: ${finalFilename}: ${error.message}`);
+            }
         }
+
         return result;
     }
 
@@ -397,6 +717,19 @@ class MailboxStorage {
             }
         }
 
+        // Unread filter
+        if (query.unread !== undefined) {
+            dbQuery.unread = query.unread;
+        }
+
+        // Starred filter
+        if (query.starred !== undefined) {
+            dbQuery.starred = query.starred;
+        }
+
+        // Always exclude deleted emails
+        dbQuery.deleted = { $ne: true };
+
         // Execute the query
         let docs = await this.db.find(dbQuery).sort({ date: -1 });
 
@@ -421,11 +754,11 @@ class MailboxStorage {
             docs = docs.filter(doc => matchingUids.has(doc.uid));
         }
 
-        // Apply limit and offset
-        if (query.offset) {
+        // Apply limit and offset for pagination (after all filtering)
+        if (query.offset !== undefined) {
             docs = docs.slice(query.offset);
         }
-        if (query.limit) {
+        if (query.limit !== undefined) {
             docs = docs.slice(0, query.limit);
         }
 

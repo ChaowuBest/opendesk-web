@@ -82,6 +82,8 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         this.loadingError = null; // 加载错误信息
         /** @type {boolean} */
         this.isHeadersExpanded = false; // 邮件头是否展开
+        /** @type {object | null} */
+        this.currentSearchQuery = null; // 当前搜索/筛选查询条件
     }
 
     connectedCallback() {
@@ -137,26 +139,84 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         this.currentOffset = 0;
         this.hasMoreEmails = true;
         this.loadingError = null;
+        this.currentSearchQuery = null;
 
-        const emails = await this.getEmailHeaderList(this.currentOffset, this.emailPerPage);
-        this.emailHeaderList.clear();
-        for (const email of emails) {
-            this.emailHeaderList.set(email.uid, email);
+        const query = this.buildFilterQuery();
+        if (query) {
+            await this.loadFilteredEmails(query, true);
+        } else {
+            const emails = await this.getEmailHeaderList(this.currentOffset, this.emailPerPage);
+            this.emailHeaderList.clear();
+            for (const email of emails) {
+                this.emailHeaderList.set(email.uid, email);
+            }
+            this.currentOffset += emails.length;
+
+            // 检查是否还有更多邮件
+            if (emails.length < this.emailPerPage) {
+                this.hasMoreEmails = false;
+            }
+
+            // 初始加载时，完全重新加载列表
+            this.reloadEmailList(this.emailHeaderList, true);
         }
-        this.currentOffset += emails.length;
-
-        // 检查是否还有更多邮件
-        if (emails.length < this.emailPerPage) {
-            this.hasMoreEmails = false;
-        }
-
-        this.reloadEmailList();
-        this.applyCurrentFilter();
     }
 
-    /**
-     * Load more emails incrementally
-     */
+    buildFilterQuery() {
+        switch (this.currentFilter) {
+            case 'all':
+                return null; // 返回 null 表示加载所有邮件
+            case 'unread':
+                return { unread: true, limit: this.emailPerPage, offset: 0 };
+            case 'starred':
+                return { starred: true, limit: this.emailPerPage, offset: 0 };
+            case 'draft':
+                return { limit: 0 };
+            case 'sent':
+                return { limit: 0 };
+            default:
+                return null;
+        }
+    }
+
+    async loadFilteredEmails(query, reset = false) {
+        if (reset) {
+            this.currentOffset = 0;
+            this.hasMoreEmails = true;
+            this.currentSearchQuery = query;
+        }
+
+        const searchQuery = { ...query, offset: this.currentOffset, limit: this.emailPerPage };
+
+        try {
+            const emails = await window.applicationAPI.call('searchEmails', searchQuery);
+
+            if (reset) {
+                this.emailHeaderList.clear();
+            }
+
+            for (const email of emails) {
+                this.emailHeaderList.set(email.uid, email);
+            }
+            this.currentOffset += emails.length;
+            if (emails.length < this.emailPerPage) {
+                this.hasMoreEmails = false;
+            }
+
+            if (reset) {
+                this.reloadEmailList(this.emailHeaderList, true);
+            } else {
+                this.appendEmailItems(emails);
+            }
+        } catch (error) {
+            console.error('Error loading filtered emails:', error);
+            this.loadingError = '加载邮件失败，请重试';
+            if (reset) {
+                this.reloadEmailList(new Map(), true);
+            }
+        }
+    }
+
     async loadMoreEmails() {
         if (this.isLoading || !this.hasMoreEmails) return;
 
@@ -167,21 +227,25 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         this.updateLoadingStatusUI();
 
         try {
-            const emails = await this.getEmailHeaderList(this.currentOffset, this.emailPerPage);
+            if (this.currentSearchQuery) {
+                await this.loadFilteredEmails(this.currentSearchQuery, false);
+            } else {
+                const emails = await this.getEmailHeaderList(this.currentOffset, this.emailPerPage);
 
-            // 检查是否还有更多邮件
-            if (emails.length < this.emailPerPage) {
-                this.hasMoreEmails = false;
+                // 检查是否还有更多邮件
+                if (emails.length < this.emailPerPage) {
+                    this.hasMoreEmails = false;
+                }
+
+                // 添加新邮件到现有列表
+                for (const email of emails) {
+                    this.emailHeaderList.set(email.uid, email);
+                }
+                this.currentOffset += emails.length;
+
+                // 只追加新邮件，不重新渲染整个列表
+                this.appendEmailItems(emails);
             }
-
-            // 添加新邮件到现有列表
-            for (const email of emails) {
-                this.emailHeaderList.set(email.uid, email);
-            }
-            this.currentOffset += emails.length;
-
-            // 重新渲染邮件列表
-            this.reloadEmailList();
         } catch (error) {
             console.error('Error loading more emails:', error);
             this.loadingError = '加载邮件失败，请重试';
@@ -251,7 +315,6 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             for (const uid of args.uids) {
                 await this.markEmailAsRead(uid);
             }
-            this.applyCurrentFilter();
             return `已标记邮件为已读: ${args.uids.join(', ')}`;
         });
 
@@ -356,33 +419,214 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         `
     }
 
-    /**
-     * 重新载入邮件列表
-     */
-    reloadEmailList(emailList = this.emailHeaderList) {
-        const emailListContainer = this.querySelector('#email-list');
-        emailListContainer.innerHTML = '';
+    createEmailItemElement(email) {
+        const div = document.createElement('div');
+        div.innerHTML = this.renderEmailItem(email);
+        const element = div.firstElementChild;
 
-        if (emailList.size === 0) {
-            emailListContainer.innerHTML = '<div class="text-gray-500 text-center py-4">暂无符合条件的邮件</div>';
+        // 添加点击事件
+        element.addEventListener('click', () => {
+            const email = this.emailHeaderList.get(element.dataset.uid);
+            if (email) {
+                this.openEmail(email);
+            }
+        });
+
+        return element;
+    }
+
+    updateEmailItem(uid) {
+        const email = this.emailHeaderList.get(uid);
+        if (!email) return;
+
+        const emailListContainer = this.querySelector('#email-list');
+        if (!emailListContainer) return;
+
+        const existingItem = emailListContainer.querySelector(`[data-uid="${uid}"]`);
+        if (!existingItem) {
+            if (this.shouldShowEmail(email)) {
+                this.insertEmailItemInOrder(emailListContainer, email);
+            }
             return;
         }
 
-        for (const email of emailList.values()) {
-            emailListContainer.innerHTML += this.renderEmailItem(email);
+        const shouldShow = this.shouldShowEmail(email);
+        const isVisible = existingItem.parentElement === emailListContainer;
+
+        if (!shouldShow && isVisible) {
+            existingItem.remove();
+            return;
+        }
+
+        if (shouldShow && !isVisible) {
+            this.insertEmailItemInOrder(emailListContainer, email);
+            existingItem.remove();
+            return;
+        }
+
+        if (!shouldShow) {
+            return;
+        }
+
+        const isSelected = email.uid === this.selectedEmailUid;
+        var classes = "email-item p-3 border-b cursor-pointer border-gray-200 border-l-4 ";
+        if (isSelected) {
+            classes += "bg-indigo-50/50 relative border-l-indigo-600";
+        } else {
+            classes += "hover:bg-gray-50 transition-colors border-l-transparent";
+        }
+
+        var subject_classes = "font-medium text-gray-500";
+        if (email.unread) {
+            subject_classes = "font-bold text-gray-800";
+        }
+
+        existingItem.className = classes;
+        existingItem.dataset.uid = email.uid;
+
+        // 更新内容
+        const subjectSpan = existingItem.querySelector('span');
+        const starIcon = existingItem.querySelector('.fa-star');
+        const dateP = existingItem.querySelector('p');
+
+        if (subjectSpan) {
+            subjectSpan.className = subject_classes;
+            subjectSpan.textContent = email.subject;
+        }
+
+        // 更新收藏图标
+        const iconContainer = existingItem.querySelector('.flex.justify-between');
+        if (iconContainer) {
+            if (email.starred) {
+                if (!starIcon) {
+                    const star = document.createElement('i');
+                    star.className = 'fa fa-star text-yellow-500';
+                    iconContainer.appendChild(star);
+                }
+            } else {
+                if (starIcon) {
+                    starIcon.remove();
+                }
+            }
+        }
+
+        if (dateP) {
+            dateP.textContent = new Date(email.date).toLocaleString();
+        }
+    }
+
+    shouldShowEmail(email) {
+        if (email.deleted) {
+            return false;
+        }
+        return true;
+    }
+
+    insertEmailItemInOrder(container, email) {
+        const newElement = this.createEmailItemElement(email);
+        const items = Array.from(container.querySelectorAll('.email-item'));
+
+        // 找到插入位置（按日期降序）
+        let insertIndex = -1;
+        for (let i = 0; i < items.length; i++) {
+            const itemUid = items[i].dataset.uid;
+            const itemEmail = this.emailHeaderList.get(itemUid);
+            if (itemEmail && itemEmail.date < email.date) {
+                insertIndex = i;
+                break;
+            }
+        }
+
+        if (insertIndex === -1) {
+            const loadingStatus = container.querySelector('.loading-status');
+            if (loadingStatus) {
+                container.insertBefore(newElement, loadingStatus);
+            } else {
+                container.appendChild(newElement);
+            }
+        } else {
+            container.insertBefore(newElement, items[insertIndex]);
+        }
+    }
+
+    appendEmailItems(emails) {
+        const emailListContainer = this.querySelector('#email-list');
+        if (!emailListContainer) return;
+
+        const loadingStatus = emailListContainer.querySelector('.loading-status');
+        if (loadingStatus) {
+            loadingStatus.remove();
+        }
+
+        const fragment = document.createDocumentFragment();
+        for (const email of emails) {
+            if (this.shouldShowEmail(email)) {
+                const element = this.createEmailItemElement(email);
+                fragment.appendChild(element);
+            }
+        }
+
+        emailListContainer.appendChild(fragment);
+        this.updateLoadingStatusUI();
+    }
+
+    reloadEmailList(emailList = this.emailHeaderList, forceFullReload = false) {
+        const emailListContainer = this.querySelector('#email-list');
+        if (!emailListContainer) return;
+
+        if (forceFullReload) {
+            emailListContainer.innerHTML = '';
+        }
+
+        // 过滤出应该显示的邮件
+        const emailsToShow = Array.from(emailList.values()).filter(email => this.shouldShowEmail(email));
+
+        if (emailsToShow.length === 0) {
+            if (forceFullReload || emailListContainer.children.length === 0) {
+                emailListContainer.innerHTML = '<div class="text-gray-500 text-center py-4">暂无符合条件的邮件</div>';
+            }
+            return;
+        }
+
+        // 如果强制完全重新加载，使用 DocumentFragment 批量添加
+        if (forceFullReload) {
+            const fragment = document.createDocumentFragment();
+            for (const email of emailsToShow) {
+                const element = this.createEmailItemElement(email);
+                fragment.appendChild(element);
+            }
+            emailListContainer.appendChild(fragment);
+        } else {
+            // 增量更新：只更新变化的邮件项
+            const existingUids = new Set(
+                Array.from(emailListContainer.querySelectorAll('.email-item'))
+                    .map(item => item.dataset.uid)
+            );
+
+            // 更新已存在的邮件项
+            for (const email of emailsToShow) {
+                if (existingUids.has(email.uid)) {
+                    this.updateEmailItem(email.uid);
+                } else {
+                    // 新邮件，按顺序插入
+                    this.insertEmailItemInOrder(emailListContainer, email);
+                }
+            }
+
+            // 移除不再应该显示的邮件项
+            for (const uid of existingUids) {
+                const email = emailList.get(uid);
+                if (!email || !this.shouldShowEmail(email)) {
+                    const item = emailListContainer.querySelector(`[data-uid="${uid}"]`);
+                    if (item) {
+                        item.remove();
+                    }
+                }
+            }
         }
 
         // 添加加载状态 UI
         this.updateLoadingStatusUI();
-
-        this.querySelectorAll('.email-item').forEach(item => {
-            item.addEventListener('click', (event) => {
-                const uid = item.dataset.uid;
-                console.info(uid);
-                const email = emailList.get(uid);
-                this.openEmail(email);
-            });
-        });
     }
 
     /**
@@ -458,23 +702,31 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
     async markEmailAsRead(uid) {
         console.info('mark email as read', uid);
         await window.applicationAPI.call('markEmailAsRead', uid);
-        this.emailHeaderList.get(uid).unread = false;
+        const email = this.emailHeaderList.get(uid);
+        if (email) {
+            email.unread = false;
+            // 只更新单个邮件项，不重新加载整个列表
+            this.updateEmailItem(uid);
+        }
         if (this.selectedEmailUid === uid) {
             this.selectedEmailHeader.unread = false;
             this.updateReadUnreadButton();
         }
-        this.applyCurrentFilter();
     }
 
     async markEmailAsUnread(uid) {
         console.info('mark email as unread', uid);
         await window.applicationAPI.call('markEmailAsUnread', uid);
-        this.emailHeaderList.get(uid).unread = true;
+        const email = this.emailHeaderList.get(uid);
+        if (email) {
+            email.unread = true;
+            // 只更新单个邮件项，不重新加载整个列表
+            this.updateEmailItem(uid);
+        }
         if (this.selectedEmailUid === uid) {
             this.selectedEmailHeader.unread = true;
             this.updateReadUnreadButton();
         }
-        this.applyCurrentFilter();
     }
 
     updateReadUnreadButton() {
@@ -525,17 +777,26 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             starred: starred
         }
         await window.applicationAPI.call('starEmail', starOptions);
-        this.emailHeaderList.get(uid).starred = starred;
-        this.applyCurrentFilter();
+        const email = this.emailHeaderList.get(uid);
+        if (email) {
+            email.starred = starred;
+            // 只更新单个邮件项，不重新加载整个列表
+            this.updateEmailItem(uid);
+        }
+        if (this.selectedEmailUid === uid) {
+            this.selectedEmailHeader.starred = starred;
+        }
     }
 
     async searchEmails(query) {
-        const emailList = await window.applicationAPI.call('searchEmails', query);
-        this.emailHeaderList.clear();
-        for (const email of emailList) {
-            this.emailHeaderList.set(email.uid, email);
-        }
-        this.reloadEmailList();
+        // 重置搜索状态
+        this.currentOffset = 0;
+        this.hasMoreEmails = true;
+        this.loadingError = null;
+
+        const searchQuery = { ...query, limit: this.emailPerPage, offset: 0 };
+        this.currentSearchQuery = searchQuery;
+        await this.loadFilteredEmails(searchQuery, true);
     }
 
     /**
@@ -760,27 +1021,37 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         editor.setMailContent(operation, mailHeader, mailContent, replyContent)
     }
 
-    handleFilter(filter) {
+    async handleFilter(filter) {
         console.info('handle filter', filter);
         this.currentFilter = filter; // 保存当前过滤器状态
-        switch (filter) {
-            case 'all':
-                this.reloadEmailList();
-                break;
-            case 'unread':
-                const unreadEmailList = new Map([...this.emailHeaderList].filter(([_, email]) => email.unread));
-                this.reloadEmailList(unreadEmailList);
-                break;
-            case 'starred':
-                const starredEmailList = new Map([...this.emailHeaderList].filter(([_, email]) => email.starred));
-                this.reloadEmailList(starredEmailList);
-                break;
-            case 'draft':
-                this.reloadEmailList(new Map());
-                break;
-            case 'sent':
-                this.reloadEmailList(new Map());
-                break;
+
+        // 根据筛选器从数据库加载邮件
+        const query = this.buildFilterQuery();
+        if (query === null) {
+            // 如果是"全部"，重新加载所有邮件
+            this.currentSearchQuery = null;
+            this.currentOffset = 0;
+            this.hasMoreEmails = true;
+            const emails = await this.getEmailHeaderList(this.currentOffset, this.emailPerPage);
+            this.emailHeaderList.clear();
+            for (const email of emails) {
+                this.emailHeaderList.set(email.uid, email);
+            }
+            this.currentOffset += emails.length;
+            if (emails.length < this.emailPerPage) {
+                this.hasMoreEmails = false;
+            }
+            this.reloadEmailList(this.emailHeaderList, true);
+        } else if (query.limit === 0) {
+            // 如果 limit 为 0，表示应该显示空列表（草稿/已发送）
+            this.currentSearchQuery = null;
+            this.currentOffset = 0;
+            this.hasMoreEmails = false;
+            this.emailHeaderList.clear();
+            this.reloadEmailList(new Map(), true);
+        } else {
+            // 其他筛选条件，从数据库搜索
+            await this.loadFilteredEmails(query, true);
         }
     }
 
@@ -883,15 +1154,9 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         if (this.selectedEmailHeader.unread) {
             await this.markEmailAsRead(uid);
         }
-        this.applyCurrentFilter();
+        this.reloadEmailList(this.emailHeaderList, false);
     }
 
-    /**
-     * 应用当前选中的过滤器
-     */
-    applyCurrentFilter() {
-        this.handleFilter(this.currentFilter);
-    }
 
     async handleDelete(uid, redownload = false) {
     // 1. 弹出询问框（UI 逻辑）
@@ -900,7 +1165,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             text: "此操作无法撤销",
             icon: 'warning',
             showCancelButton: true,
-            confirmButtonColor: '#d33', 
+            confirmButtonColor: '#d33',
             cancelButtonColor: '#3085d6',
             confirmButtonText: '确定',
             cancelButtonText: '取消',
@@ -925,7 +1190,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
                     icon: 'error'
                 });
             }
-        }   
+        }
     }
 
     async deleteEmail(uid, redownload = false) {
@@ -934,8 +1199,17 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         const nextuid = keys[index + 1];
         await window.applicationAPI.call('deleteEmail', uid);
         this.emailHeaderList.delete(uid);
+
+        // 移除邮件项的 DOM，不重新渲染整个列表
+        const emailListContainer = this.querySelector('#email-list');
+        if (emailListContainer) {
+            const item = emailListContainer.querySelector(`[data-uid="${uid}"]`);
+            if (item) {
+                item.remove();
+            }
+        }
+
         this.selectedEmailUid = nextuid;
-        this.reloadEmailList();
         await this.reloadCurrentEmailContent(redownload);
     }
 
@@ -1177,12 +1451,12 @@ class MailEditorWidget extends AgentOperableHTMLElement {
         }
 
         container.classList.remove('hidden');
-        
+
         const attachmentsHTML = this.attachments.map((attachment, index) => {
             const ext = attachment.filename.split('.').pop().toLowerCase();
             let iconClass = 'fa-file';
             let iconColor = 'text-gray-500';
-            
+
             if (['jpg', 'jpeg', 'png', 'gif', 'bmp', 'svg', 'webp'].includes(ext)) {
                 iconClass = 'fa-file-image';
                 iconColor = 'text-blue-500';
@@ -1213,19 +1487,19 @@ class MailEditorWidget extends AgentOperableHTMLElement {
             }
 
             return `
-                <div class="attachment-item group flex items-center gap-3 px-3 py-2.5 
+                <div class="attachment-item group flex items-center gap-3 px-3 py-2.5
                             bg-gradient-to-r from-gray-50 to-white
                             border border-gray-200 rounded-lg
                             hover:shadow-md hover:border-blue-300 hover:from-blue-50 hover:to-white
-                            transition-all duration-200" 
+                            transition-all duration-200"
                      data-index="${index}">
                     <!-- 文件图标 -->
-                    <div class="flex-shrink-0 w-10 h-10 flex items-center justify-center 
-                                bg-white rounded-lg border border-gray-200 
+                    <div class="flex-shrink-0 w-10 h-10 flex items-center justify-center
+                                bg-white rounded-lg border border-gray-200
                                 group-hover:border-blue-300 transition-colors">
                         <i class="fas ${iconClass} ${iconColor} text-lg"></i>
                     </div>
-                    
+
                     <!-- 文件信息 -->
                     <div class="flex-1 min-w-0">
                         <div class="text-sm font-medium text-gray-900 truncate">
@@ -1235,9 +1509,9 @@ class MailEditorWidget extends AgentOperableHTMLElement {
                             ${attachment.path}
                         </div>
                     </div>
-                    
+
                     <!-- 删除按钮 -->
-                    <button class="remove-attachment flex-shrink-0 w-7 h-7 
+                    <button class="remove-attachment flex-shrink-0 w-7 h-7
                                    flex items-center justify-center
                                    rounded-full bg-white border border-gray-200
                                    hover:bg-red-50 hover:border-red-300
@@ -1299,18 +1573,18 @@ class MailEditorWidget extends AgentOperableHTMLElement {
         const sender = selectedEmailHeader.from && selectedEmailHeader.from[0] ? selectedEmailHeader.from[0].address : '未知发件人';
         const sendTime = new Date(selectedEmailHeader.date).toLocaleString();
         const receivers = selectedEmailHeader.to ? selectedEmailHeader.to.map(t => t.address).join(', ') : '';
-        const ccReceivers = selectedEmailHeader.cc && selectedEmailHeader.cc.length > 0 
-            ? selectedEmailHeader.cc.map(c => c.address).join(', ') 
+        const ccReceivers = selectedEmailHeader.cc && selectedEmailHeader.cc.length > 0
+            ? selectedEmailHeader.cc.map(c => c.address).join(', ')
             : null;
         const htmlTemplate = `
             ${replyContent ? `<div>${replyContent}</div>` : ''}
-            
+
             <br><br>
-            
+
             <hr style="border: 0; border-top: 1px solid #e5e7eb; margin: 20px 0;">
 
             <div style="background-color: #f3f4f6; padding: 16px; border-radius: 8px; font-size: 13px; font-family: 'Segoe UI', Arial, sans-serif; color: #374151; margin-bottom: 20px;">
-                
+
                 <div style="font-weight: bold; font-size: 14px; margin-bottom: 12px; color: #111827; border-bottom: 1px solid #e5e7eb; padding-bottom: 8px;">
                     ----- 原始邮件 -----
                 </div>
@@ -1319,24 +1593,24 @@ class MailEditorWidget extends AgentOperableHTMLElement {
                     <span style="color: #6b7280; font-weight: bold; display: inline-block; width: 70px;">发件人:</span>
                     <span style="color: #1f2937; font-weight: 500;">${sender}</span>
                 </div>
-                
+
                 <div style="margin-bottom: 6px;">
                     <span style="color: #6b7280; font-weight: bold; display: inline-block; width: 70px;">发送时间:</span>
                     <span style="color: #374151;">${sendTime}</span>
                 </div>
-                
+
                 <div style="margin-bottom: 6px;">
                     <span style="color: #6b7280; font-weight: bold; display: inline-block; width: 70px;">收件人:</span>
                     <span style="color: #374151;">${receivers}</span>
                 </div>
-                
+
                 ${ccReceivers ? `
                 <div style="margin-bottom: 6px;">
                     <span style="color: #6b7280; font-weight: bold; display: inline-block; width: 70px;">抄送:</span>
                     <span style="color: #374151;">${ccReceivers}</span>
                 </div>
                 ` : ''}
-                
+
                 <div>
                     <span style="color: #6b7280; font-weight: bold; display: inline-block; width: 70px;">主题:</span>
                     <span style="color: #374151;">${selectedEmailHeader.subject}</span>
@@ -1373,9 +1647,18 @@ class MailEditorWidget extends AgentOperableHTMLElement {
             editor.setContent(mailContent)
             return;
         }
-        if (operation == MailOperations.REPLY || operation == MailOperations.REPLYALL) {
+        if (operation == MailOperations.REPLY) {
             document.getElementById('to').value = mailHeader.from[0].address;
             document.getElementById('subject').value = '答复:' + mailHeader.subject;
+        } else if (operation == MailOperations.REPLYALL) {
+            document.getElementById('to').value = mailHeader.from[0].address;
+            document.getElementById('subject').value = '答复全部:' + mailHeader.subject;
+            if (mailHeader.cc && mailHeader.cc.length > 0) {
+                document.getElementById('cc').value = mailHeader.cc.map(cc => cc.address).join(',');
+            }
+            if (mailHeader.bcc && mailHeader.bcc.length > 0) {
+                document.getElementById('bcc').value = mailHeader.bcc.map(bcc => bcc.address).join(',');
+            }
         } else if (operation == MailOperations.FORWARD) {
             document.getElementById('subject').value = '转发:' + mailHeader.subject;
         } else if (operation == MailOperations.SEND) {
@@ -1410,7 +1693,7 @@ class MailEditorWidget extends AgentOperableHTMLElement {
 
                     <div class="flex items-center px-4 border-b border-gray-100 min-h-[46px]">
                         <span class="text-sm text-gray-600 font-medium w-14 flex-shrink-0 cursor-default">收件人</span>
-                        
+
                         <div class="flex-1 ml-2 mr-4">
                             <input id="to" value="" class="w-full" placeholder="">
                         </div>
@@ -1426,8 +1709,8 @@ class MailEditorWidget extends AgentOperableHTMLElement {
                         <div class="flex-1 ml-2 mr-4">
                             <input id="cc" value="" class="w-full" placeholder="">
                         </div>
-                        <button id="close-cc" onclick="closeRow('cc')" 
-                                class="w-5 h-5 flex items-center justify-center rounded-full 
+                        <button id="close-cc" onclick="closeRow('cc')"
+                                class="w-5 h-5 flex items-center justify-center rounded-full
                                        hover:bg-gray-200 transition-colors mr-2 flex-shrink-0"
                                 title="关闭抄送">
                             <i class="fas fa-times text-gray-400 hover:text-gray-600 text-xs"></i>
@@ -1439,8 +1722,8 @@ class MailEditorWidget extends AgentOperableHTMLElement {
                         <div class="flex-1 ml-2 mr-4">
                             <input id="bcc" value="" class="w-full" placeholder="">
                         </div>
-                        <button id="close-bcc" onclick="closeRow('bcc')" 
-                                class="w-5 h-5 flex items-center justify-center rounded-full 
+                        <button id="close-bcc" onclick="closeRow('bcc')"
+                                class="w-5 h-5 flex items-center justify-center rounded-full
                                        hover:bg-gray-200 transition-colors mr-2 flex-shrink-0"
                                 title="关闭密送">
                             <i class="fas fa-times text-gray-400 hover:text-gray-600 text-xs"></i>
@@ -1451,8 +1734,8 @@ class MailEditorWidget extends AgentOperableHTMLElement {
                         <div class="text-sm text-gray-600 font-medium w-14 flex justify-between cursor-default mr-2">
                             <span>主&nbsp题</span>
                         </div>
-                        <input type="text" id="subject" 
-                            class="flex-1 bg-transparent outline-none text-sm font-medium text-gray-900 h-9 placeholder-gray-400" 
+                        <input type="text" id="subject"
+                            class="flex-1 bg-transparent outline-none text-sm font-medium text-gray-900 h-9 placeholder-gray-400"
                             placeholder="" value="">
                         <span class="text-xs text-gray-300 font-light ml-2 whitespace-nowrap">
                             ${new Date().toLocaleString()}
@@ -1467,7 +1750,7 @@ class MailEditorWidget extends AgentOperableHTMLElement {
                         <textarea id="email-editor"></textarea>
                     </div>
                 </div>
-                
+
                 <!-- 附件列表容器 -->
                 <div id="attachment-list-container" class="hidden"></div>
             </div>
@@ -1478,7 +1761,7 @@ class MailEditorWidget extends AgentOperableHTMLElement {
             border: none;
             z-index: 100;
         }
-        
+
         #toolbar-container {
             border-bottom: 1px solid #ccc;
         }
@@ -1502,12 +1785,12 @@ class MailEditorWidget extends AgentOperableHTMLElement {
             color: #111827 !important;
         }
         .tagify__input {
-            min-width: 50px !important; 
+            min-width: 50px !important;
             margin: 0 !important;
             font-size: 14px !important;
             font-weight: 500 !important;
         }
-        
+
         .tagify__input::before {
             font-size: 14px !important;
             font-weight: 400 !important;
@@ -1529,7 +1812,7 @@ class MailEditorWidget extends AgentOperableHTMLElement {
         if (inputTo) {
             this.tagifyInstances.to = new Tagify(inputTo, commonConfig);
         }
-        
+
         ['cc', 'bcc'].forEach(type => {
             const inputEl = document.getElementById(type);
             if (inputEl) {
@@ -1538,7 +1821,7 @@ class MailEditorWidget extends AgentOperableHTMLElement {
         });
 
         if (window.tinymce) {
-            tinymce.remove('#email-editor'); 
+            tinymce.remove('#email-editor');
         }
 
         tinymce.init({
@@ -1549,13 +1832,13 @@ class MailEditorWidget extends AgentOperableHTMLElement {
             statusbar: false,
             resize: true,
             language: 'zh_CN',  // 设置中文语言
-            
+
             // 【关键配置】TinyMCE 7.x 需要的配置
             skin: false,  // 不动态加载皮肤（已在顶部 import）
             content_css: false,  // 不动态加载内容样式（已在顶部 import）
             license_key: 'gpl',  // 声明为 GPL 开源使用（避免弹窗）
             highlight_on_focus: false,
-            
+
             plugins: [
                 'advlist', 'autolink', 'lists', 'link', 'image', 'charmap', 'preview',
                 'anchor', 'searchreplace', 'visualblocks', 'code', 'fullscreen',
