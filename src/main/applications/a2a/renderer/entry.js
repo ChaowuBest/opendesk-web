@@ -1,4 +1,5 @@
 import { A2UIToHTMLConverter } from '../../../services/a2ui/a2ui-to-html.js';
+import { isJSON, jsonToHTML } from '../../../services/a2ui/json-to-html.js';
 
 class A2AEntryWidget extends HTMLElement {
     constructor() {
@@ -764,6 +765,11 @@ class A2AEntryWidget extends HTMLElement {
             return markdown;
         }
 
+        // 检测是否是 JSON 格式，如果是则渲染为 HTML
+        if (isJSON(markdown)) {
+            return jsonToHTML(markdown);
+        }
+
         // 在 markdown 渲染之前，先过滤掉文本中的 <br> 标签（作为纯文本出现的）
         // 这些标签应该被移除，因为它们会干扰渲染
         markdown = markdown.replace(/&lt;br&gt;|&lt;br\s*\/&gt;|<br>|<br\s*\/>/gi, '');
@@ -1228,6 +1234,133 @@ class A2AEntryWidget extends HTMLElement {
             /* 确保内联样式优先级最高，不被 markdown-body 等类覆盖 */
             .a2a-html-content * {
                 /* 内联样式会自动覆盖，这里不需要额外设置 */
+            }
+            /* JSON 渲染样式 */
+            .json-article-list {
+                display: flex;
+                flex-direction: column;
+                gap: 1.5rem;
+                margin: 1rem 0;
+            }
+            .json-article-item {
+                border: 1px solid #e0e0e0;
+                border-radius: 8px;
+                padding: 1rem;
+                background: #fff;
+                box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+                transition: box-shadow 0.2s;
+            }
+            .json-article-item:hover {
+                box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+            }
+            .json-article-content {
+                flex: 1;
+            }
+            .json-article-title {
+                margin: 0 0 0.5rem 0;
+                font-size: 1.1rem;
+                font-weight: 600;
+                color: #1a1a1a;
+            }
+            .json-article-title a {
+                color: #2563eb;
+                text-decoration: none;
+            }
+            .json-article-title a:hover {
+                text-decoration: underline;
+            }
+            .json-article-date {
+                font-size: 0.85rem;
+                color: #666;
+                margin-bottom: 0.5rem;
+            }
+            .json-article-summary {
+                color: #555;
+                line-height: 1.6;
+                margin-bottom: 0.5rem;
+            }
+            .json-article-meta {
+                margin-top: 0.5rem;
+                padding-top: 0.5rem;
+                border-top: 1px solid #e0e0e0;
+                font-size: 0.9rem;
+            }
+            .json-article-meta-item {
+                margin: 0.25rem 0;
+            }
+            .json-article-image {
+                margin-bottom: 0.75rem;
+            }
+            .json-article-image img {
+                max-width: 100%;
+                height: auto;
+                border-radius: 4px;
+            }
+            .json-table {
+                width: 100%;
+                border-collapse: collapse;
+                margin: 1rem 0;
+            }
+            .json-table th,
+            .json-table td {
+                border: 1px solid #e0e0e0;
+                padding: 0.75rem;
+                text-align: left;
+            }
+            .json-table th {
+                background-color: #f5f5f5;
+                font-weight: 600;
+            }
+            .json-table tr:nth-child(even) {
+                background-color: #fafafa;
+            }
+            .json-card-list {
+                display: grid;
+                grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+                gap: 1rem;
+                margin: 1rem 0;
+            }
+            .json-card {
+                border: 1px solid #e0e0e0;
+                border-radius: 8px;
+                padding: 1rem;
+                background: #fff;
+                box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            }
+            .json-card-field {
+                margin-bottom: 0.75rem;
+            }
+            .json-card-field:last-child {
+                margin-bottom: 0;
+            }
+            .json-card-key {
+                font-weight: 600;
+                color: #555;
+                margin-bottom: 0.25rem;
+                font-size: 0.9rem;
+            }
+            .json-card-value {
+                color: #333;
+            }
+            .json-display {
+                background: #f5f5f5;
+                border: 1px solid #e0e0e0;
+                border-radius: 4px;
+                padding: 1rem;
+                overflow-x: auto;
+                margin: 1rem 0;
+            }
+            .json-display code {
+                font-family: 'Courier New', monospace;
+                font-size: 0.9rem;
+                color: #333;
+            }
+            .json-error {
+                color: #dc2626;
+                padding: 0.5rem;
+                background: #fee2e2;
+                border-radius: 4px;
+                margin: 1rem 0;
             }
         </style>
         <div class="w-full h-full flex flex-col bg-white">
