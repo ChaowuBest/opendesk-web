@@ -394,9 +394,50 @@ class EmbeddedTaskView extends HTMLElement {
         // 停止功能由应用层面的输入框控制
     }
 
+    /**
+     * 发送任务状态变化事件
+     * @param {string} status 任务状态
+     */
+    emitTaskStatusChanged(status) {
+        const event = new CustomEvent('task-status-changed', {
+            detail: {
+                taskId: this.task_id,
+                status: status
+            },
+            bubbles: true
+        });
+        this.dispatchEvent(event);
+    }
+
+    async reload() {
+        var task_state = await window.taskManagerAPI.getFullTask(this.task_id);
+        const previous_status = this.task_status;
+        this.task_status = task_state.task_status || 'waiting';
+        this.updateStopButtonVisibility();
+
+        // 如果状态发生变化，发送事件
+        if (previous_status !== this.task_status) {
+            this.emitTaskStatusChanged(this.task_status);
+        }
+
+        var history_container = this.getHistoryContainer();
+        history_container.innerHTML = '';
+        for (const message of task_state.chat_context.messages) {
+            if (message.role === 'user') {
+                history_container.innerHTML += this.renderUserMessage(message);
+            } else if (message.role === 'assistant') {
+                history_container.innerHTML += this.renderAssistantMessage(message);
+            }
+            this.tryScrollToEnd()
+        }
+    }
+
     connectedCallback() {
         this.render();
         this.reload().then(async () => {
+            // 在首次加载完成后，发送一次初始状态事件
+            this.emitTaskStatusChanged(this.task_status);
+
             this.subscription_id = await window.taskManagerAPI.subscribeTaskUpdate(this.task_id, progress => {
                 const message_element = this.querySelector(`#message-${progress.message_id}`);
                 if (message_element.children.length <= progress.last_part_index) {
@@ -404,7 +445,13 @@ class EmbeddedTaskView extends HTMLElement {
                 }
                 const last_part_element = message_element.children[progress.last_part_index];
                 last_part_element.innerHTML = progress.last_part.rendered;
-                this.tryScrollToEnd()
+                this.tryScrollToEnd();
+
+                // 检测任务状态变化并发送事件
+                if (progress.task_status && progress.task_status !== this.task_status) {
+                    this.task_status = progress.task_status;
+                    this.emitTaskStatusChanged(this.task_status);
+                }
             })
         })
     }

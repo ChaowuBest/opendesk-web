@@ -259,6 +259,60 @@ class ApplicationAgentInput extends HTMLElement {
 
     constructor() {
         super();
+        /**
+         * 当前任务状态
+         * @type {string}
+         */
+        this.taskStatus = 'waiting';
+        /**
+         * 停止任务的回调函数
+         * @type {function | null}
+         */
+        this.onStopCallback = null;
+    }
+
+    /**
+     * 设置任务状态
+     * @param {string} status 任务状态 ('running', 'waiting', 'stopped' 等)
+     * @param {function | null} onStopCallback 停止任务的回调函数
+     */
+    setTaskStatus(status, onStopCallback = null) {
+        this.taskStatus = status;
+        this.onStopCallback = onStopCallback;
+        this.updateDisplay();
+    }
+
+    /**
+     * 更新显示状态（停止图标或渐变背景）
+     */
+    updateDisplay() {
+        const gradientContainer = this.querySelector('#gradient-container');
+        const stopButton = this.querySelector('#stop-task-button');
+        const textarea = this.querySelector('#application-agent-input-textarea');
+
+        if (!gradientContainer || !stopButton) {
+            return;
+        }
+
+        if (this.taskStatus === 'running') {
+            // 显示停止图标，隐藏渐变背景
+            gradientContainer.classList.add('hidden');
+            stopButton.classList.remove('hidden');
+            // 禁用输入框
+            if (textarea) {
+                textarea.disabled = true;
+                textarea.classList.add('opacity-50', 'cursor-not-allowed');
+            }
+        } else {
+            // 显示渐变背景，隐藏停止图标
+            gradientContainer.classList.remove('hidden');
+            stopButton.classList.add('hidden');
+            // 启用输入框
+            if (textarea) {
+                textarea.disabled = false;
+                textarea.classList.remove('opacity-50', 'cursor-not-allowed');
+            }
+        }
     }
 
     connectedCallback() {
@@ -307,11 +361,16 @@ class ApplicationAgentInput extends HTMLElement {
                 <div id="input-container" class="transition-liquid relative flex items-center bg-white/[0.18] backdrop-blur-md border border-white/20 shadow-2xl overflow-hidden
                             w-14 h-14 rounded-full px-2">
 
-                    <!-- 内部液态背景 (Siri 核心) -->
+                    <!-- 内部液态背景 (Siri 核心) - 任务非运行状态时显示 -->
                     <!-- 即使展开了，这个圆形发光体也可以作为图标保留在左侧 -->
-                    <div class="flex-shrink-0 w-10 h-10 relative overflow-hidden rounded-full flex items-center justify-center">
+                    <div id="gradient-container" class="flex-shrink-0 w-10 h-10 relative overflow-hidden rounded-full flex items-center justify-center">
                         <div class="absolute inset-0 animate-siri opacity-80"></div>
                     </div>
+
+                    <!-- 停止按钮 - 任务运行状态时显示 -->
+                    <button id="stop-task-button" class="flex-shrink-0 w-10 h-10 rounded-full bg-red-500 hover:bg-red-600 text-white flex items-center justify-center transition-colors shadow-lg hidden">
+                        <i class="fas fa-stop text-sm"></i>
+                    </button>
 
                     <!-- 展开后的内容：输入框和按钮 -->
                     <!-- 使用 expanded 状态和 hover 控制透明度和显示 -->
@@ -343,6 +402,17 @@ class ApplicationAgentInput extends HTMLElement {
         const container = this.querySelector('#input-container');
         const content = this.querySelector('#input-content');
         const group = container.closest('.group');
+        const stopButton = this.querySelector('#stop-task-button');
+
+        // 停止按钮点击事件
+        if (stopButton) {
+            stopButton.addEventListener('click', (e) => {
+                e.stopPropagation();
+                if (this.onStopCallback) {
+                    this.onStopCallback();
+                }
+            });
+        }
 
         // 跟踪hover和focus状态
         let isHovered = false;
@@ -408,6 +478,9 @@ class ApplicationAgentInput extends HTMLElement {
             isHovered = false;
             updateExpandedState();
         });
+
+        // 初始化显示状态
+        this.updateDisplay();
     }
 
 }

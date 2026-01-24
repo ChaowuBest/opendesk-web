@@ -90,6 +90,30 @@
                     </header>
                     <embedded-task-view id='task-view-${currentTaskId}' task_id="${currentTaskId}" class="flex-1 overflow-y-auto" />
                     `;
+
+                    // 监听任务状态变化事件
+                    const taskView = document.querySelector(`#task-view-${currentTaskId}`);
+                    const agentInput = document.querySelector('#application-agent-input');
+
+                    taskView.addEventListener('task-status-changed', (e) => {
+                        const { taskId, status } = e.detail;
+                        if (taskId === currentTaskId) {
+                            // 更新悬浮球状态
+                            if (status === 'running') {
+                                // 显示停止图标，传入停止回调
+                                agentInput.setTaskStatus('running', async () => {
+                                    try {
+                                        await window.taskManagerAPI.stopTask(currentTaskId);
+                                    } catch (error) {
+                                        console.error('Failed to stop task:', error);
+                                    }
+                                });
+                            } else {
+                                // 恢复渐变效果
+                                agentInput.setTaskStatus(status);
+                            }
+                        }
+                    });
                 }
 
                 const currentToolset = applicationEntryWidget.getToolset?.();
