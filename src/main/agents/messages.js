@@ -59,8 +59,11 @@ class ReasoningMessagePart {
  * @property {string} id
  * @property {string} tool_name
  * @property {string} args_string
+ * @property {object} args_object
  * @property {'pending' | 'running' | 'success' | 'error'} status
  * @property {BaseTool | undefined} tool
+ * @property {string | undefined} result
+ * @property {string | undefined} rendered
  */
 class ToolCall {
     constructor(index, id, tool_name, args_string) {
@@ -68,10 +71,11 @@ class ToolCall {
         this.id = id;
         this.tool_name = tool_name;
         this.args_string = args_string;
+        this.args_object = {};
         this.status = 'pending';
         this.result = undefined;
+        this.rendered = undefined;
 
-        Object.defineProperty(this, 'args_object', { value: {}, writable: true, enumerable: false });
         Object.defineProperty(this, 'tool', { value: undefined, writable: true, enumerable: false });
     }
 
@@ -89,11 +93,20 @@ class ToolCall {
         this.tool = tool;
     }
 
+    freezeRenderResult() {
+        this.rendered = this.render();
+    }
+
     /**
      * Render the tool call
      * @returns {string} 工具调用的渲染结果
      */
     render() {
+        if (this.rendered !== undefined) {
+            /* 如果已经确认冻结了渲染结果，则直接返回 */
+            return this.rendered;
+        }
+
         /* 如果工具自定义了渲染函数，则使用工具的渲染函数 */
         if (this.tool !== undefined) {
             let rendered = this.tool.renderToolCall(this);

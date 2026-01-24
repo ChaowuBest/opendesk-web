@@ -262,6 +262,8 @@ class TaskState {
             logger.error(err);
             tool_call.status = 'error';
             tool_call.result = err.message;
+        } finally {
+            tool_call.freezeRenderResult();
         }
     }
 
