@@ -12,10 +12,6 @@ class ExaSearchTool extends BaseTool {
         this.api_key = api_key;
     }
 
-    async getTitle(args) {
-        return `搜索 ${args.query}`
-    }
-
     async execute(args) {
         const exa = new Exa(this.api_key);
         const searchResults = await exa.search(args.query, {

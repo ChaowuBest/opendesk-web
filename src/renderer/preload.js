@@ -23,6 +23,14 @@ function exposeTaskManagerAPI() {
                 throw new Error(result.message);
             }
         },
+        stopTask: async (taskId) => {
+            const result = await ipcRenderer.invoke('taskManager:stopTask', taskId);
+            if (result.status !== 'ok') {
+                console.error('stopping task failed', result.message);
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
         getFullTask: async (taskId) => {
             const result = await ipcRenderer.invoke('taskManager:getFullTask', taskId);
             if (result.status === 'ok') {
@@ -86,15 +94,7 @@ function exposeTaskManagerAPI() {
             return result.data;
         },
         setSystemPrompt: (taskId, prompt) => ipcRenderer.invoke('taskManager:setSystemPrompt', taskId, prompt),
-        submitMessage: (taskId, message) => ipcRenderer.invoke('taskManager:submitMessage', taskId, message),
-        stopTask: async (taskId) => {
-            const result = await ipcRenderer.invoke('taskManager:stopTask', taskId);
-            if (result.status !== 'ok') {
-                console.error('stopping task failed', result.message);
-                throw new Error(result.message);
-            }
-            return result.data;
-        },
+        submitMessage: (taskId, message) => ipcRenderer.invoke('taskManager:submitMessage', taskId, message)
     });
 
     ipcRenderer.on('taskManager:callTool', async (event, taskId, toolCallId, toolsetName, toolName, args) => {
@@ -158,6 +158,14 @@ function exposeFSAPI() {
                 p = p.replace(/\\/g, '/');
             }
             return p;
+        },
+        getPathType: async (filePath) => {
+            const result = await ipcRenderer.invoke('fs:getPathType', filePath);
+            if (result.status !== 'ok') {
+                console.error('getting path type failed', result.message);
+                throw new Error(result.message);
+            }
+            return result.data;
         }
     })
 }

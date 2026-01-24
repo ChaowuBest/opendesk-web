@@ -59,19 +59,22 @@ class ReasoningMessagePart {
  * @property {string} id
  * @property {string} tool_name
  * @property {string} args_string
+ * @property {object} args_object
  * @property {'pending' | 'running' | 'success' | 'error'} status
  * @property {BaseTool | undefined} tool
+ * @property {string | undefined} result
+ * @property {string | undefined} rendered
  */
 class ToolCall {
     constructor(index, id, tool_name, args_string) {
         this.index = index;
         this.id = id;
         this.tool_name = tool_name;
-        this.tool_title = tool_name;
         this.args_string = args_string;
         this.args_object = {};
         this.status = 'pending';
         this.result = undefined;
+        this.rendered = undefined;
 
         Object.defineProperty(this, 'tool', { value: undefined, writable: true, enumerable: false });
     }
@@ -90,11 +93,20 @@ class ToolCall {
         this.tool = tool;
     }
 
+    freezeRenderResult() {
+        this.rendered = this.render();
+    }
+
     /**
      * Render the tool call
      * @returns {string} 工具调用的渲染结果
      */
     render() {
+        if (this.rendered !== undefined) {
+            /* 如果已经确认冻结了渲染结果，则直接返回 */
+            return this.rendered;
+        }
+
         /* 如果工具自定义了渲染函数，则使用工具的渲染函数 */
         if (this.tool !== undefined) {
             let rendered = this.tool.renderToolCall(this);
@@ -111,7 +123,7 @@ class ToolCall {
                 <!-- 状态：进行中 (呼吸灯效果) -->
                 <div class="flex items-center">
                     <div class="h-2 w-2 rounded-full bg-blue-500 animate-pulse ring-4 ring-blue-100/50"></div>
-                    <span class="ml-2 font-semibold text-slate-800">${this.tool_title}</span>
+                    <span class="ml-2 font-semibold text-slate-800">${this.tool_name}</span>
                 </div>
             </div>
             `
@@ -122,7 +134,7 @@ class ToolCall {
                 <div class="h-1 w-1 rounded-full bg-slate-300"></div>
                 <div class="flex items-center group cursor-help relative">
                     <div class="h-2 w-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.6)]"></div>
-                    <span class="ml-2 font-medium text-slate-600">${this.tool_title}</span>
+                    <span class="ml-2 font-medium text-slate-600">${this.tool_name}</span>
                 </div>
             </div>
             `
@@ -141,7 +153,7 @@ class ToolCall {
                     </div>
 
                     <!-- 错误文字 -->
-                    <span class="ml-2 text-[13px] font-semibold text-rose-600">${this.tool_title} Failed</span>
+                    <span class="ml-2 text-[13px] font-semibold text-rose-600">${this.tool_name} Failed</span>
 
                     <!-- 悬浮弹窗 (Error Tooltip) -->
                     <div class="absolute bottom-full mb-3 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-all pointer-events-none">
@@ -161,7 +173,7 @@ class ToolCall {
                 <span class="ml-2 font-semibold text-slate-600">工具调用</span>
                 <div class="flex items-center opacity-40">
                     <div class="h-2 w-2 rounded-full bg-slate-400"></div>
-                    <span class="ml-2 font-medium text-slate-500">${this.tool_title}</span>
+                    <span class="ml-2 font-medium text-slate-500">${this.tool_name}</span>
                 </div>
             </div>
             `;

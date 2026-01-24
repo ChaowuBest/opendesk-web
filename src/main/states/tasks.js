@@ -186,7 +186,7 @@ class TaskState {
 
         this.subscribers = this.subscribers.filter(subscriber => subscriber.isAvailable());
         for (let subscriber of this.subscribers) {
-            subscriber.send(subscription_feedback)
+            subscriber.send(subscription_feedback);
         }
     }
 
@@ -244,7 +244,6 @@ class TaskState {
                     throw err;
                 }
             }
-            tool_call.tool_title = tool.getTitle(args);
             tool_call.args_object = args;
             tool_call.status = 'running';
             await this.sendSubscriptionFeedback();
@@ -263,6 +262,8 @@ class TaskState {
             logger.error(err);
             tool_call.status = 'error';
             tool_call.result = err.message;
+        } finally {
+            tool_call.freezeRenderResult();
         }
     }
 
