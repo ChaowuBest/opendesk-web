@@ -172,3 +172,58 @@ export class ExecuteBashTool extends BaseTool {
         return renderTerminalToolCall('BASH', toolcall);
     }
 }
+
+const readFileSchema = z.object({
+    path: z.string().describe('要读取的文件路径')
+});
+
+export class ReadFileTool extends BaseTool {
+    constructor() {
+        super(
+            'readFile',
+            '读取文件内容',
+            readFileSchema
+        );
+
+        this.executor = this.executeCommand;
+    }
+
+    executeCommand(args: z.output<typeof readFileSchema>): Promise<string> {
+        return new Promise((resolve, reject) => {
+            fs.readFile(args.path, 'utf8', (err, data) => {
+                if (err) {
+                    reject(err);
+                }
+                resolve(data);
+            });
+        });
+    }
+}
+
+const writeFileSchema = z.object({
+    path: z.string().describe('要写入的文件路径'),
+    content: z.string().describe('要写入的文件内容')
+});
+
+export class WriteFileTool extends BaseTool {
+    constructor() {
+        super(
+            'writeFile',
+            '将文件内容写入执行的路径',
+            writeFileSchema
+        );
+
+        this.executor = this.executeCommand;
+    }
+
+    executeCommand(args: z.output<typeof writeFileSchema>): Promise<string> {
+        return new Promise((resolve, reject) => {
+            fs.writeFile(args.path, args.content, 'utf8', (err) => {
+                if (err) {
+                    reject(err);
+                }
+                resolve('文件写入成功');
+            });
+        });
+    }
+}

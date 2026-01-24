@@ -1,6 +1,6 @@
 import { BaseToolset } from "../../agents/tool.js";
 import { BaseApplication, BaseGUIConfig } from "../base.js";
-import { ExecuteCmdTool, ExecuteBashTool } from "./tools.js";
+import { ExecuteCmdTool, ExecuteBashTool, WriteFileTool, ReadFileTool } from "./tools.js";
 
 
 export class TerminalApplication extends BaseApplication {
@@ -15,6 +15,9 @@ export class TerminalApplication extends BaseApplication {
         } else {
             toolset.addTool(new ExecuteBashTool());
         }
+
+        toolset.addTool(new ReadFileTool());
+        toolset.addTool(new WriteFileTool());
         return [toolset];
     }
 }
