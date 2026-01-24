@@ -191,10 +191,22 @@ const registerTaskManagerAPIHandlers = () => {
   })
   ipcMain.handle('taskManager:submitMessage', async (event, taskId, details) => {
     const task = globalState.taskManagerState.getTask(taskId);
+    if (task === undefined) {
+      return { status: 'error', message: `task ${taskId} not found` }
+    }
     if (details.attachedFilePaths) {
       await task.attachFiles(details.attachedFilePaths);
     }
     task.submitUserMessage(details.message);
+    return { status: 'ok' };
+  });
+  ipcMain.handle('taskManager:stopTask', (event, taskId) => {
+    const task = globalState.taskManagerState.getTask(taskId);
+    if (task === undefined) {
+      return { status: 'error', message: `task ${taskId} not found` }
+    }
+    task.stop();
+    return { status: 'ok' };
   });
 }
 

@@ -87,6 +87,14 @@ function exposeTaskManagerAPI() {
         },
         setSystemPrompt: (taskId, prompt) => ipcRenderer.invoke('taskManager:setSystemPrompt', taskId, prompt),
         submitMessage: (taskId, message) => ipcRenderer.invoke('taskManager:submitMessage', taskId, message),
+        stopTask: async (taskId) => {
+            const result = await ipcRenderer.invoke('taskManager:stopTask', taskId);
+            if (result.status !== 'ok') {
+                console.error('stopping task failed', result.message);
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
     });
 
     ipcRenderer.on('taskManager:callTool', async (event, taskId, toolCallId, toolsetName, toolName, args) => {
