@@ -1,4 +1,5 @@
 import { A2UIToHTMLConverter } from '../../../services/a2ui/a2ui-to-html.js';
+import { isJSON, jsonToHTML } from '../../../services/a2ui/json-to-html.js';
 
 class A2AEntryWidget extends HTMLElement {
     constructor() {
@@ -764,6 +765,11 @@ class A2AEntryWidget extends HTMLElement {
             return markdown;
         }
 
+        // 检测是否是 JSON 格式，如果是则渲染为 HTML
+        if (isJSON(markdown)) {
+            return jsonToHTML(markdown);
+        }
+
         // 在 markdown 渲染之前，先过滤掉文本中的 <br> 标签（作为纯文本出现的）
         // 这些标签应该被移除，因为它们会干扰渲染
         markdown = markdown.replace(/&lt;br&gt;|&lt;br\s*\/&gt;|<br>|<br\s*\/>/gi, '');
@@ -1228,6 +1234,214 @@ class A2AEntryWidget extends HTMLElement {
             /* 确保内联样式优先级最高，不被 markdown-body 等类覆盖 */
             .a2a-html-content * {
                 /* 内联样式会自动覆盖，这里不需要额外设置 */
+            }
+            /* JSON 渲染样式 - 与 a2ui 主题统一 */
+            .json-container {
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+                font-size: 11px;
+                line-height: 1.35;
+                color: #1e293b;
+                -webkit-font-smoothing: antialiased;
+                word-wrap: break-word;
+                overflow-wrap: break-word;
+                word-break: break-word;
+                background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 50%, #e2e8f0 100%);
+                border-radius: 8px;
+                padding: 10px 12px;
+                box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05), 0 1px 2px rgba(0, 0, 0, 0.03);
+            }
+            .json-container * {
+                box-sizing: border-box;
+            }
+            .json-article-list {
+                display: flex;
+                flex-direction: column;
+                gap: 8px;
+            }
+            .json-article-item {
+                background: rgba(255, 255, 255, 0.7);
+                border: 1px solid rgba(226, 232, 240, 0.8);
+                border-radius: 6px;
+                padding: 8px 10px;
+                box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+                transition: all 0.15s ease;
+            }
+            .json-article-item:hover {
+                box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+                border-color: rgba(139, 92, 246, 0.2);
+                transform: translateY(-1px);
+            }
+            .json-article-content {
+                flex: 1;
+            }
+            .json-article-title {
+                margin: 0 0 4px 0;
+                font-size: 12px;
+                font-weight: 600;
+                line-height: 1.25;
+                color: transparent;
+                background: linear-gradient(135deg, #818cf8 0%, #a78bfa 100%);
+                -webkit-background-clip: text;
+                background-clip: text;
+                -webkit-text-fill-color: transparent;
+            }
+            .json-article-title a {
+                color: transparent;
+                background: linear-gradient(135deg, #818cf8 0%, #a78bfa 100%);
+                -webkit-background-clip: text;
+                background-clip: text;
+                -webkit-text-fill-color: transparent;
+                text-decoration: none;
+                font-weight: 600;
+            }
+            .json-article-title a:hover {
+                text-decoration: underline;
+                opacity: 0.9;
+            }
+            .json-article-date {
+                font-size: 10px;
+                color: #64748b;
+                margin-bottom: 4px;
+            }
+            .json-article-summary {
+                color: #475569;
+                font-size: 11px;
+                line-height: 1.45;
+                margin-bottom: 4px;
+            }
+            .json-article-meta {
+                margin-top: 6px;
+                padding-top: 6px;
+                border-top: 1px solid rgba(226, 232, 240, 0.6);
+                font-size: 10px;
+            }
+            .json-article-meta-item {
+                margin: 2px 0;
+                color: #64748b;
+            }
+            .json-article-meta-item strong {
+                color: #475569;
+                font-weight: 500;
+            }
+            .json-article-image {
+                margin-bottom: 6px;
+            }
+            .json-article-image img {
+                max-width: 100%;
+                height: auto;
+                border-radius: 4px;
+                box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+            }
+            .json-table {
+                width: 100%;
+                border-collapse: collapse;
+                margin: 6px 0;
+                font-size: 10px;
+                background: rgba(255, 255, 255, 0.7);
+                border-radius: 6px;
+                overflow: hidden;
+                box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+            }
+            .json-table th,
+            .json-table td {
+                border: 1px solid rgba(226, 232, 240, 0.8);
+                padding: 6px 8px;
+                text-align: left;
+            }
+            .json-table th {
+                background: linear-gradient(135deg, rgba(129, 140, 248, 0.1) 0%, rgba(167, 139, 250, 0.1) 100%);
+                font-weight: 500;
+                color: #475569;
+                font-size: 10px;
+            }
+            .json-table tr:nth-child(even) {
+                background-color: rgba(248, 250, 252, 0.5);
+            }
+            .json-table tr:hover {
+                background-color: rgba(129, 140, 248, 0.05);
+            }
+            .json-card-list {
+                display: grid;
+                grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+                gap: 8px;
+            }
+            .json-card {
+                background: rgba(255, 255, 255, 0.7);
+                border: 1px solid rgba(226, 232, 240, 0.8);
+                border-radius: 6px;
+                padding: 8px 10px;
+                box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+                transition: all 0.15s ease;
+            }
+            .json-card:hover {
+                box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+                border-color: rgba(139, 92, 246, 0.2);
+                transform: translateY(-1px);
+            }
+            .json-card-field {
+                margin-bottom: 4px;
+            }
+            .json-card-field:last-child {
+                margin-bottom: 0;
+            }
+            .json-card-key {
+                font-weight: 500;
+                color: #64748b;
+                margin-bottom: 1px;
+                font-size: 10px;
+            }
+            .json-card-value {
+                color: #334155;
+                font-size: 11px;
+            }
+            .json-string {
+                color: #059669;
+            }
+            .json-number {
+                color: #2563eb;
+            }
+            .json-boolean {
+                color: #7c3aed;
+            }
+            .json-null {
+                color: #94a3b8;
+                font-style: italic;
+            }
+            .json-key {
+                color: #64748b;
+                font-weight: 500;
+            }
+            .json-object,
+            .json-array {
+                font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+                font-size: 10px;
+            }
+            .json-property,
+            .json-item {
+                padding-left: 12px;
+                border-left: 1px solid rgba(226, 232, 240, 0.6);
+                margin: 2px 0;
+            }
+            .json-display {
+                background: rgba(248, 250, 252, 0.8);
+                border: 1px solid rgba(226, 232, 240, 0.8);
+                border-radius: 6px;
+                padding: 8px 10px;
+                overflow-x: auto;
+                margin: 6px 0;
+            }
+            .json-display code {
+                font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+                font-size: 10px;
+                color: #334155;
+            }
+            .json-error {
+                color: #dc2626;
+                padding: 6px 8px;
+                background: rgba(254, 226, 226, 0.5);
+                border: 1px solid rgba(248, 113, 113, 0.3);
+                border-radius: 4px;
+                font-size: 10px;
             }
         </style>
         <div class="w-full h-full flex flex-col bg-white">

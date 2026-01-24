@@ -8,6 +8,7 @@ import { z } from "zod";
 import { ClientFactory } from "@a2a-js/sdk/client";
 import { randomUUID } from "crypto";
 import {A2UIToHTMLConverter} from '../../../services/a2ui/a2ui-to-html.js'
+import { isJSON, jsonToHTML } from '../../../services/a2ui/json-to-html.js'
 
 // 硬编码的服务器地址
 const GATEWAY_URL = "http://1.92.70.52:8080";
@@ -251,6 +252,19 @@ ${agentsDescription}
                     .filter(part => part.kind === 'text')
                     .map(part => part.text)
                     .join('');
+
+                // 检测是否是 JSON 格式，如果是则转换为 HTML
+                if (isJSON(textParts)) {
+                    try {
+                        const html = jsonToHTML(textParts);
+                        return html;
+                    } catch (error) {
+                        logger.warn(`Failed to convert JSON to HTML: ${error.message}`);
+                        // 如果转换失败，返回原始文本
+                        return textParts;
+                    }
+                }
+
                 return textParts;
             }
 
