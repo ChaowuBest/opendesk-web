@@ -717,6 +717,19 @@ class MailboxStorage {
             }
         }
 
+        // Unread filter
+        if (query.unread !== undefined) {
+            dbQuery.unread = query.unread;
+        }
+
+        // Starred filter
+        if (query.starred !== undefined) {
+            dbQuery.starred = query.starred;
+        }
+
+        // Always exclude deleted emails
+        dbQuery.deleted = { $ne: true };
+
         // Execute the query
         let docs = await this.db.find(dbQuery).sort({ date: -1 });
 
@@ -741,11 +754,11 @@ class MailboxStorage {
             docs = docs.filter(doc => matchingUids.has(doc.uid));
         }
 
-        // Apply limit and offset
-        if (query.offset) {
+        // Apply limit and offset for pagination (after all filtering)
+        if (query.offset !== undefined) {
             docs = docs.slice(query.offset);
         }
-        if (query.limit) {
+        if (query.limit !== undefined) {
             docs = docs.slice(0, query.limit);
         }
 

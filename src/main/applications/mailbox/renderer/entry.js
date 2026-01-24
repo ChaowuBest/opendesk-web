@@ -82,6 +82,8 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         this.loadingError = null; // 加载错误信息
         /** @type {boolean} */
         this.isHeadersExpanded = false; // 邮件头是否展开
+        /** @type {object | null} */
+        this.currentSearchQuery = null; // 当前搜索/筛选查询条件
     }
 
     connectedCallback() {
@@ -137,26 +139,84 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         this.currentOffset = 0;
         this.hasMoreEmails = true;
         this.loadingError = null;
+        this.currentSearchQuery = null;
 
-        const emails = await this.getEmailHeaderList(this.currentOffset, this.emailPerPage);
-        this.emailHeaderList.clear();
-        for (const email of emails) {
-            this.emailHeaderList.set(email.uid, email);
+        const query = this.buildFilterQuery();
+        if (query) {
+            await this.loadFilteredEmails(query, true);
+        } else {
+            const emails = await this.getEmailHeaderList(this.currentOffset, this.emailPerPage);
+            this.emailHeaderList.clear();
+            for (const email of emails) {
+                this.emailHeaderList.set(email.uid, email);
+            }
+            this.currentOffset += emails.length;
+
+            // 检查是否还有更多邮件
+            if (emails.length < this.emailPerPage) {
+                this.hasMoreEmails = false;
+            }
+
+            // 初始加载时，完全重新加载列表
+            this.reloadEmailList(this.emailHeaderList, true);
         }
-        this.currentOffset += emails.length;
-
-        // 检查是否还有更多邮件
-        if (emails.length < this.emailPerPage) {
-            this.hasMoreEmails = false;
-        }
-
-        this.reloadEmailList();
-        this.applyCurrentFilter();
     }
 
-    /**
-     * Load more emails incrementally
-     */
+    buildFilterQuery() {
+        switch (this.currentFilter) {
+            case 'all':
+                return null; // 返回 null 表示加载所有邮件
+            case 'unread':
+                return { unread: true, limit: this.emailPerPage, offset: 0 };
+            case 'starred':
+                return { starred: true, limit: this.emailPerPage, offset: 0 };
+            case 'draft':
+                return { limit: 0 };
+            case 'sent':
+                return { limit: 0 };
+            default:
+                return null;
+        }
+    }
+
+    async loadFilteredEmails(query, reset = false) {
+        if (reset) {
+            this.currentOffset = 0;
+            this.hasMoreEmails = true;
+            this.currentSearchQuery = query;
+        }
+
+        const searchQuery = { ...query, offset: this.currentOffset, limit: this.emailPerPage };
+
+        try {
+            const emails = await window.applicationAPI.call('searchEmails', searchQuery);
+
+            if (reset) {
+                this.emailHeaderList.clear();
+            }
+
+            for (const email of emails) {
+                this.emailHeaderList.set(email.uid, email);
+            }
+            this.currentOffset += emails.length;
+            if (emails.length < this.emailPerPage) {
+                this.hasMoreEmails = false;
+            }
+
+            if (reset) {
+                this.reloadEmailList(this.emailHeaderList, true);
+            } else {
+                this.appendEmailItems(emails);
+            }
+        } catch (error) {
+            console.error('Error loading filtered emails:', error);
+            this.loadingError = '加载邮件失败，请重试';
+            if (reset) {
+                this.reloadEmailList(new Map(), true);
+            }
+        }
+    }
+
     async loadMoreEmails() {
         if (this.isLoading || !this.hasMoreEmails) return;
 
@@ -167,21 +227,25 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         this.updateLoadingStatusUI();
 
         try {
-            const emails = await this.getEmailHeaderList(this.currentOffset, this.emailPerPage);
+            if (this.currentSearchQuery) {
+                await this.loadFilteredEmails(this.currentSearchQuery, false);
+            } else {
+                const emails = await this.getEmailHeaderList(this.currentOffset, this.emailPerPage);
 
-            // 检查是否还有更多邮件
-            if (emails.length < this.emailPerPage) {
-                this.hasMoreEmails = false;
+                // 检查是否还有更多邮件
+                if (emails.length < this.emailPerPage) {
+                    this.hasMoreEmails = false;
+                }
+
+                // 添加新邮件到现有列表
+                for (const email of emails) {
+                    this.emailHeaderList.set(email.uid, email);
+                }
+                this.currentOffset += emails.length;
+
+                // 只追加新邮件，不重新渲染整个列表
+                this.appendEmailItems(emails);
             }
-
-            // 添加新邮件到现有列表
-            for (const email of emails) {
-                this.emailHeaderList.set(email.uid, email);
-            }
-            this.currentOffset += emails.length;
-
-            // 重新渲染邮件列表
-            this.reloadEmailList();
         } catch (error) {
             console.error('Error loading more emails:', error);
             this.loadingError = '加载邮件失败，请重试';
@@ -251,7 +315,6 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             for (const uid of args.uids) {
                 await this.markEmailAsRead(uid);
             }
-            this.applyCurrentFilter();
             return `已标记邮件为已读: ${args.uids.join(', ')}`;
         });
 
@@ -356,33 +419,214 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         `
     }
 
-    /**
-     * 重新载入邮件列表
-     */
-    reloadEmailList(emailList = this.emailHeaderList) {
-        const emailListContainer = this.querySelector('#email-list');
-        emailListContainer.innerHTML = '';
+    createEmailItemElement(email) {
+        const div = document.createElement('div');
+        div.innerHTML = this.renderEmailItem(email);
+        const element = div.firstElementChild;
 
-        if (emailList.size === 0) {
-            emailListContainer.innerHTML = '<div class="text-gray-500 text-center py-4">暂无符合条件的邮件</div>';
+        // 添加点击事件
+        element.addEventListener('click', () => {
+            const email = this.emailHeaderList.get(element.dataset.uid);
+            if (email) {
+                this.openEmail(email);
+            }
+        });
+
+        return element;
+    }
+
+    updateEmailItem(uid) {
+        const email = this.emailHeaderList.get(uid);
+        if (!email) return;
+
+        const emailListContainer = this.querySelector('#email-list');
+        if (!emailListContainer) return;
+
+        const existingItem = emailListContainer.querySelector(`[data-uid="${uid}"]`);
+        if (!existingItem) {
+            if (this.shouldShowEmail(email)) {
+                this.insertEmailItemInOrder(emailListContainer, email);
+            }
             return;
         }
 
-        for (const email of emailList.values()) {
-            emailListContainer.innerHTML += this.renderEmailItem(email);
+        const shouldShow = this.shouldShowEmail(email);
+        const isVisible = existingItem.parentElement === emailListContainer;
+
+        if (!shouldShow && isVisible) {
+            existingItem.remove();
+            return;
+        }
+
+        if (shouldShow && !isVisible) {
+            this.insertEmailItemInOrder(emailListContainer, email);
+            existingItem.remove();
+            return;
+        }
+
+        if (!shouldShow) {
+            return;
+        }
+
+        const isSelected = email.uid === this.selectedEmailUid;
+        var classes = "email-item p-3 border-b cursor-pointer border-gray-200 border-l-4 ";
+        if (isSelected) {
+            classes += "bg-indigo-50/50 relative border-l-indigo-600";
+        } else {
+            classes += "hover:bg-gray-50 transition-colors border-l-transparent";
+        }
+
+        var subject_classes = "font-medium text-gray-500";
+        if (email.unread) {
+            subject_classes = "font-bold text-gray-800";
+        }
+
+        existingItem.className = classes;
+        existingItem.dataset.uid = email.uid;
+
+        // 更新内容
+        const subjectSpan = existingItem.querySelector('span');
+        const starIcon = existingItem.querySelector('.fa-star');
+        const dateP = existingItem.querySelector('p');
+
+        if (subjectSpan) {
+            subjectSpan.className = subject_classes;
+            subjectSpan.textContent = email.subject;
+        }
+
+        // 更新收藏图标
+        const iconContainer = existingItem.querySelector('.flex.justify-between');
+        if (iconContainer) {
+            if (email.starred) {
+                if (!starIcon) {
+                    const star = document.createElement('i');
+                    star.className = 'fa fa-star text-yellow-500';
+                    iconContainer.appendChild(star);
+                }
+            } else {
+                if (starIcon) {
+                    starIcon.remove();
+                }
+            }
+        }
+
+        if (dateP) {
+            dateP.textContent = new Date(email.date).toLocaleString();
+        }
+    }
+
+    shouldShowEmail(email) {
+        if (email.deleted) {
+            return false;
+        }
+        return true;
+    }
+
+    insertEmailItemInOrder(container, email) {
+        const newElement = this.createEmailItemElement(email);
+        const items = Array.from(container.querySelectorAll('.email-item'));
+
+        // 找到插入位置（按日期降序）
+        let insertIndex = -1;
+        for (let i = 0; i < items.length; i++) {
+            const itemUid = items[i].dataset.uid;
+            const itemEmail = this.emailHeaderList.get(itemUid);
+            if (itemEmail && itemEmail.date < email.date) {
+                insertIndex = i;
+                break;
+            }
+        }
+
+        if (insertIndex === -1) {
+            const loadingStatus = container.querySelector('.loading-status');
+            if (loadingStatus) {
+                container.insertBefore(newElement, loadingStatus);
+            } else {
+                container.appendChild(newElement);
+            }
+        } else {
+            container.insertBefore(newElement, items[insertIndex]);
+        }
+    }
+
+    appendEmailItems(emails) {
+        const emailListContainer = this.querySelector('#email-list');
+        if (!emailListContainer) return;
+
+        const loadingStatus = emailListContainer.querySelector('.loading-status');
+        if (loadingStatus) {
+            loadingStatus.remove();
+        }
+
+        const fragment = document.createDocumentFragment();
+        for (const email of emails) {
+            if (this.shouldShowEmail(email)) {
+                const element = this.createEmailItemElement(email);
+                fragment.appendChild(element);
+            }
+        }
+
+        emailListContainer.appendChild(fragment);
+        this.updateLoadingStatusUI();
+    }
+
+    reloadEmailList(emailList = this.emailHeaderList, forceFullReload = false) {
+        const emailListContainer = this.querySelector('#email-list');
+        if (!emailListContainer) return;
+
+        if (forceFullReload) {
+            emailListContainer.innerHTML = '';
+        }
+
+        // 过滤出应该显示的邮件
+        const emailsToShow = Array.from(emailList.values()).filter(email => this.shouldShowEmail(email));
+
+        if (emailsToShow.length === 0) {
+            if (forceFullReload || emailListContainer.children.length === 0) {
+                emailListContainer.innerHTML = '<div class="text-gray-500 text-center py-4">暂无符合条件的邮件</div>';
+            }
+            return;
+        }
+
+        // 如果强制完全重新加载，使用 DocumentFragment 批量添加
+        if (forceFullReload) {
+            const fragment = document.createDocumentFragment();
+            for (const email of emailsToShow) {
+                const element = this.createEmailItemElement(email);
+                fragment.appendChild(element);
+            }
+            emailListContainer.appendChild(fragment);
+        } else {
+            // 增量更新：只更新变化的邮件项
+            const existingUids = new Set(
+                Array.from(emailListContainer.querySelectorAll('.email-item'))
+                    .map(item => item.dataset.uid)
+            );
+
+            // 更新已存在的邮件项
+            for (const email of emailsToShow) {
+                if (existingUids.has(email.uid)) {
+                    this.updateEmailItem(email.uid);
+                } else {
+                    // 新邮件，按顺序插入
+                    this.insertEmailItemInOrder(emailListContainer, email);
+                }
+            }
+
+            // 移除不再应该显示的邮件项
+            for (const uid of existingUids) {
+                const email = emailList.get(uid);
+                if (!email || !this.shouldShowEmail(email)) {
+                    const item = emailListContainer.querySelector(`[data-uid="${uid}"]`);
+                    if (item) {
+                        item.remove();
+                    }
+                }
+            }
         }
 
         // 添加加载状态 UI
         this.updateLoadingStatusUI();
-
-        this.querySelectorAll('.email-item').forEach(item => {
-            item.addEventListener('click', (event) => {
-                const uid = item.dataset.uid;
-                console.info(uid);
-                const email = emailList.get(uid);
-                this.openEmail(email);
-            });
-        });
     }
 
     /**
@@ -458,23 +702,31 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
     async markEmailAsRead(uid) {
         console.info('mark email as read', uid);
         await window.applicationAPI.call('markEmailAsRead', uid);
-        this.emailHeaderList.get(uid).unread = false;
+        const email = this.emailHeaderList.get(uid);
+        if (email) {
+            email.unread = false;
+            // 只更新单个邮件项，不重新加载整个列表
+            this.updateEmailItem(uid);
+        }
         if (this.selectedEmailUid === uid) {
             this.selectedEmailHeader.unread = false;
             this.updateReadUnreadButton();
         }
-        this.applyCurrentFilter();
     }
 
     async markEmailAsUnread(uid) {
         console.info('mark email as unread', uid);
         await window.applicationAPI.call('markEmailAsUnread', uid);
-        this.emailHeaderList.get(uid).unread = true;
+        const email = this.emailHeaderList.get(uid);
+        if (email) {
+            email.unread = true;
+            // 只更新单个邮件项，不重新加载整个列表
+            this.updateEmailItem(uid);
+        }
         if (this.selectedEmailUid === uid) {
             this.selectedEmailHeader.unread = true;
             this.updateReadUnreadButton();
         }
-        this.applyCurrentFilter();
     }
 
     updateReadUnreadButton() {
@@ -525,17 +777,26 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             starred: starred
         }
         await window.applicationAPI.call('starEmail', starOptions);
-        this.emailHeaderList.get(uid).starred = starred;
-        this.applyCurrentFilter();
+        const email = this.emailHeaderList.get(uid);
+        if (email) {
+            email.starred = starred;
+            // 只更新单个邮件项，不重新加载整个列表
+            this.updateEmailItem(uid);
+        }
+        if (this.selectedEmailUid === uid) {
+            this.selectedEmailHeader.starred = starred;
+        }
     }
 
     async searchEmails(query) {
-        const emailList = await window.applicationAPI.call('searchEmails', query);
-        this.emailHeaderList.clear();
-        for (const email of emailList) {
-            this.emailHeaderList.set(email.uid, email);
-        }
-        this.reloadEmailList();
+        // 重置搜索状态
+        this.currentOffset = 0;
+        this.hasMoreEmails = true;
+        this.loadingError = null;
+
+        const searchQuery = { ...query, limit: this.emailPerPage, offset: 0 };
+        this.currentSearchQuery = searchQuery;
+        await this.loadFilteredEmails(searchQuery, true);
     }
 
     /**
@@ -760,27 +1021,37 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         editor.setMailContent(operation, mailHeader, mailContent, replyContent)
     }
 
-    handleFilter(filter) {
+    async handleFilter(filter) {
         console.info('handle filter', filter);
         this.currentFilter = filter; // 保存当前过滤器状态
-        switch (filter) {
-            case 'all':
-                this.reloadEmailList();
-                break;
-            case 'unread':
-                const unreadEmailList = new Map([...this.emailHeaderList].filter(([_, email]) => email.unread));
-                this.reloadEmailList(unreadEmailList);
-                break;
-            case 'starred':
-                const starredEmailList = new Map([...this.emailHeaderList].filter(([_, email]) => email.starred));
-                this.reloadEmailList(starredEmailList);
-                break;
-            case 'draft':
-                this.reloadEmailList(new Map());
-                break;
-            case 'sent':
-                this.reloadEmailList(new Map());
-                break;
+
+        // 根据筛选器从数据库加载邮件
+        const query = this.buildFilterQuery();
+        if (query === null) {
+            // 如果是"全部"，重新加载所有邮件
+            this.currentSearchQuery = null;
+            this.currentOffset = 0;
+            this.hasMoreEmails = true;
+            const emails = await this.getEmailHeaderList(this.currentOffset, this.emailPerPage);
+            this.emailHeaderList.clear();
+            for (const email of emails) {
+                this.emailHeaderList.set(email.uid, email);
+            }
+            this.currentOffset += emails.length;
+            if (emails.length < this.emailPerPage) {
+                this.hasMoreEmails = false;
+            }
+            this.reloadEmailList(this.emailHeaderList, true);
+        } else if (query.limit === 0) {
+            // 如果 limit 为 0，表示应该显示空列表（草稿/已发送）
+            this.currentSearchQuery = null;
+            this.currentOffset = 0;
+            this.hasMoreEmails = false;
+            this.emailHeaderList.clear();
+            this.reloadEmailList(new Map(), true);
+        } else {
+            // 其他筛选条件，从数据库搜索
+            await this.loadFilteredEmails(query, true);
         }
     }
 
@@ -883,15 +1154,9 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         if (this.selectedEmailHeader.unread) {
             await this.markEmailAsRead(uid);
         }
-        this.applyCurrentFilter();
+        this.reloadEmailList(this.emailHeaderList, false);
     }
 
-    /**
-     * 应用当前选中的过滤器
-     */
-    applyCurrentFilter() {
-        this.handleFilter(this.currentFilter);
-    }
 
     async handleDelete(uid, redownload = false) {
     // 1. 弹出询问框（UI 逻辑）
@@ -934,8 +1199,17 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         const nextuid = keys[index + 1];
         await window.applicationAPI.call('deleteEmail', uid);
         this.emailHeaderList.delete(uid);
+
+        // 移除邮件项的 DOM，不重新渲染整个列表
+        const emailListContainer = this.querySelector('#email-list');
+        if (emailListContainer) {
+            const item = emailListContainer.querySelector(`[data-uid="${uid}"]`);
+            if (item) {
+                item.remove();
+            }
+        }
+
         this.selectedEmailUid = nextuid;
-        this.reloadEmailList();
         await this.reloadCurrentEmailContent(redownload);
     }
 
