@@ -16,6 +16,22 @@ const _ = pkg;
 
 var mailboxDataDirectory = null;
 
+/**
+ * 为Promise添加超时机制
+ * @param {Promise} promise 
+ * @param {number} timeoutMs 超时时间（毫秒）
+ * @param {string} operation 操作名称（用于错误信息）
+ * @returns {Promise}
+ */
+async function withTimeout(promise, timeoutMs, operation = 'operation') {
+    const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => {
+            reject(new Error(`${operation} 超时 (${timeoutMs}ms)`));
+        }, timeoutMs);
+    });
+    return Promise.race([promise, timeoutPromise]);
+}
+
 class POP3EmailClient {
 
     constructor(usr, pwd, tls, host, port) {
@@ -49,15 +65,26 @@ class POP3EmailClient {
 
     async getEmail(uid) {
         const pop3 = this.pop3();
+        const operationTimeout = 60000; // 单个操作超时60秒（获取完整邮件可能需要更长时间）
         try {
-            const uidlist = await pop3.UIDL();
+            // 为UIDL操作添加超时
+            const uidlist = await withTimeout(
+                pop3.UIDL(),
+                operationTimeout,
+                `UIDL(${uid})`
+            );
             const uidmapping = new Map(uidlist.map(([index, uid]) => [uid, index]));
             const index = uidmapping.get(uid);
             if (index === undefined) {
                 logger.error(`email not found: ${uid}`);
                 return null;
             }
-            const email = await pop3.RETR(index);
+            // 为RETR操作添加超时
+            const email = await withTimeout(
+                pop3.RETR(index),
+                operationTimeout,
+                `RETR(${index}, ${uid})`
+            );
             const parsed = await simpleParser(email);
 
             const attachments = await this.prepareAttachments(uid, parsed.attachments);
@@ -72,15 +99,44 @@ class POP3EmailClient {
             return { header, content };
         }
         catch (error) {
-            logger.error(`error getting email content: ${uid}: ${error}`);
+            // 处理 AggregateError，记录所有错误信息
+            if (error instanceof AggregateError) {
+                const errorMessages = error.errors?.map(err => err.message || String(err)).join('; ') || error.message;
+                logger.error(`error getting email content: ${uid}: AggregateError - ${errorMessages}`);
+                if (error.errors && error.errors.length > 0) {
+                    error.errors.forEach((err, idx) => {
+                        logger.error(`  error ${idx + 1}: ${err.message || String(err)}`);
+                    });
+                }
+            } else {
+                logger.error(`error getting email content: ${uid}: ${error.message || String(error)}`);
+                if (error.stack) {
+                    logger.error(`  stack: ${error.stack}`);
+                }
+            }
             return null;
         } finally {
-            await pop3.QUIT();
+            try {
+                // 为QUIT操作添加较短的超时
+                await withTimeout(
+                    pop3.QUIT(),
+                    5000,
+                    `QUIT(${uid})`
+                );
+            } catch (quitError) {
+                // 忽略 QUIT 操作的错误，避免掩盖原始错误
+                logger.warn(`error during POP3 QUIT for ${uid}: ${quitError.message || String(quitError)}`);
+            }
         }
     }
 
     async getEmailContent(uid) {
-        const { _, content } = await this.getEmail(uid);
+        const emailResult = await this.getEmail(uid);
+        if (!emailResult) {
+            logger.error(`failed to get email content: ${uid}, getEmail returned null`);
+            return null;
+        }
+        const { _, content } = emailResult;
         return content;
     }
 }
@@ -447,42 +503,161 @@ class MailboxWorker extends BaseWorker {
     }
 
     async syncPOP3Inbox(usr, pwd, tls, host, port) {
-        const pop3 = new Pop3Command({ user: usr, password: pwd, host: host, port: port, tls: tls });
+        const maxRetries = 3;
+        const operationTimeout = 30000; // 单个操作超时30秒
+        const overallTimeout = 300000; // 整体超时5分钟
+        let lastError = null;
+        
+        // 为整个同步过程添加超时
+        const syncPromise = (async () => {
+            // 重试机制：对于网络错误、超时等概率性问题进行重试
+            for (let attempt = 0; attempt < maxRetries; attempt++) {
+                let pop3 = null;
+                try {
+                    pop3 = new Pop3Command({ user: usr, password: pwd, host: host, port: port, tls: tls });
 
-        const allList = await pop3.UIDL();
-        const uidSet = await this.storage.getUIDSet();
-        const newList = allList.filter(([_, uid]) => !uidSet.has(uid)).reverse();
+                    // 为UIDL操作添加超时
+                    const allList = await withTimeout(
+                        pop3.UIDL(),
+                        operationTimeout,
+                        'UIDL'
+                    );
+                    const uidSet = await this.storage.getUIDSet();
+                    const newList = allList.filter(([_, uid]) => !uidSet.has(uid)).reverse();
 
-        var pendingHeaders = [];
+                    var pendingHeaders = [];
 
-        if (newList.length > 0) {
-            NotificationManager.getInstance().info('邮箱', '收取新邮件', `即将从${usr}收取 ${newList.length} 封新邮件`);
-        }
+                    if (newList.length > 0) {
+                        NotificationManager.getInstance().info('邮箱', '收取新邮件', `即将从${usr}收取 ${newList.length} 封新邮件`);
+                    }
 
-        for (const [i, [index, uid]] of newList.entries()) {
-            const cachedRawEmail = await this.storage.getRawEmailHeader(uid);
-            if (cachedRawEmail) {
-                pendingHeaders.push([uid, cachedRawEmail]);
-            } else {
-                const rawEmailHeader = await pop3.TOP(index, 1)
-                pendingHeaders.push([uid, rawEmailHeader]);
-                await this.storage.saveRawEmailHeader(uid, rawEmailHeader);
+                    for (const [i, [index, uid]] of newList.entries()) {
+                        const cachedRawEmail = await this.storage.getRawEmailHeader(uid);
+                        if (cachedRawEmail) {
+                            pendingHeaders.push([uid, cachedRawEmail]);
+                        } else {
+                            try {
+                                // 为TOP操作添加超时
+                                const rawEmailHeader = await withTimeout(
+                                    pop3.TOP(index, 1),
+                                    operationTimeout,
+                                    `TOP(${index})`
+                                );
+                                pendingHeaders.push([uid, rawEmailHeader]);
+                                await this.storage.saveRawEmailHeader(uid, rawEmailHeader);
+                            } catch (topError) {
+                                // 单个邮件头获取失败，记录错误但继续处理其他邮件
+                                logger.warn(`failed to get email header for ${uid}, index ${index}: ${topError.message}`);
+                                // 如果是超时或网络错误，且重试次数未用完，则重新抛出以触发外层重试
+                                if (attempt < maxRetries - 1 && this.isRetryableError(topError)) {
+                                    throw topError;
+                                }
+                                // 否则跳过这封邮件，继续处理下一封
+                                continue;
+                            }
+                        }
+
+                        // 每处理10封邮件记录一次进度
+                        if ((i + 1) % 10 === 0 || i + 1 === newList.length) {
+                            logger.info(`syncing pop3 email headers ${i + 1} / ${newList.length} emails`);
+                        }
+
+                        if (pendingHeaders.length >= 100) {
+                            this.storage.saveRawEmailHeaders(...pendingHeaders);
+                            pendingHeaders = [];
+                        }
+                    }
+
+                    if (pendingHeaders.length > 0) {
+                        this.storage.saveRawEmailHeaders(...pendingHeaders);
+                    }
+
+                    // 尝试关闭连接，但不让QUIT的错误影响整体结果
+                    try {
+                        await withTimeout(
+                            pop3.QUIT(),
+                            operationTimeout,
+                            'QUIT'
+                        );
+                    } catch (quitError) {
+                        logger.warn(`error during POP3 QUIT: ${quitError.message}`);
+                        // QUIT失败不影响同步结果，忽略错误
+                    }
+                    
+                    return newList.length;
+                } catch (error) {
+                    lastError = error;
+                    // 判断是否应该重试
+                    const shouldRetry = attempt < maxRetries - 1 && this.isRetryableError(error);
+                    
+                    if (shouldRetry) {
+                        const delay = (attempt + 1) * 1000; // 递增延迟：1s, 2s
+                        logger.warn(`retrying syncPOP3Inbox, attempt ${attempt + 1}/${maxRetries}, delay ${delay}ms, error: ${error.message}`);
+                        await new Promise(resolve => setTimeout(resolve, delay));
+                    } else {
+                        // 不应该重试或已达到最大重试次数
+                        break;
+                    }
+                } finally {
+                    // 确保在出错时也尝试关闭连接
+                    if (pop3) {
+                        try {
+                            await withTimeout(
+                                pop3.QUIT(),
+                                5000, // QUIT操作使用较短的超时
+                                'QUIT(cleanup)'
+                            );
+                        } catch (quitError) {
+                            // 忽略QUIT错误
+                        }
+                    }
+                }
             }
+            
+            // 所有重试都失败了
+            logger.error(`failed to sync POP3 inbox after ${maxRetries} attempts: ${lastError?.message || 'unknown error'}`);
+            throw lastError || new Error('同步邮件失败');
+        })();
 
-            logger.info(`syncing pop3 email headers ${i} / ${newList.length} emails`);
-
-            if (pendingHeaders.length >= 100) {
-                this.storage.saveRawEmailHeaders(...pendingHeaders);
-                pendingHeaders = [];
+        // 为整个同步过程添加超时
+        try {
+            return await withTimeout(
+                syncPromise,
+                overallTimeout,
+                'syncPOP3Inbox'
+            );
+        } catch (error) {
+            if (error.message?.includes('超时')) {
+                logger.error(`syncPOP3Inbox overall timeout after ${overallTimeout}ms`);
+                throw new Error(`同步邮件超时，请检查网络连接或稍后重试`);
             }
+            throw error;
         }
+    }
 
-        if (pendingHeaders.length > 0) {
-            this.storage.saveRawEmailHeaders(...pendingHeaders);
-        }
-
-        await pop3.QUIT();
-        return newList.length;
+    /**
+     * 判断错误是否应该重试
+     * @param {Error} error 
+     * @returns {boolean}
+     */
+    isRetryableError(error) {
+        if (!error) return false;
+        
+        const errorMessage = error.message?.toLowerCase() || String(error).toLowerCase();
+        const retryablePatterns = [
+            'timeout',
+            'econnreset',
+            'etimedout',
+            'enotfound',
+            'econnrefused',
+            'network',
+            '连接',
+            '网络',
+            '超时',
+            'aggregateerror'
+        ];
+        
+        return retryablePatterns.some(pattern => errorMessage.includes(pattern));
     }
 
     notifyEmailListUpdated() {
@@ -601,15 +776,60 @@ class MailboxWorker extends BaseWorker {
 
         const config = EmailProfileSchema.parse(this.config);
         if (config.inbox?.pop3) {
-            const pop3 = new POP3EmailClient(
-                config.username, config.password,
-                config.inbox.pop3.tls,
-                config.inbox.pop3.host,
-                config.inbox.pop3.port
-            );
-            const result = await pop3.getEmailContent(uid);
-            await this.storage.saveEmailContent(uid, result);
-            return result;
+            // 重试机制：对于概率性错误（如网络问题、超时等）进行重试
+            const maxRetries = 2;
+            let lastError = null;
+            
+            for (let attempt = 0; attempt <= maxRetries; attempt++) {
+                try {
+                    const pop3 = new POP3EmailClient(
+                        config.username, config.password,
+                        config.inbox.pop3.tls,
+                        config.inbox.pop3.host,
+                        config.inbox.pop3.port
+                    );
+                    // 为获取邮件内容添加整体超时（2分钟）
+                    const result = await withTimeout(
+                        pop3.getEmailContent(uid),
+                        120000,
+                        `getEmailContent(${uid})`
+                    );
+                    if (!result) {
+                        // 如果返回 null，可能是邮件不存在，不重试
+                        if (attempt === 0) {
+                            logger.error(`failed to get email content from POP3 server: ${uid}`);
+                        }
+                        throw new Error(`无法获取邮件内容: ${uid}`);
+                    }
+                    await this.storage.saveEmailContent(uid, result);
+                    return result;
+                } catch (error) {
+                    lastError = error;
+                    // 判断是否应该重试：网络错误、超时错误、AggregateError 等
+                    const shouldRetry = attempt < maxRetries && (
+                        error instanceof AggregateError ||
+                        error.message?.includes('timeout') ||
+                        error.message?.includes('ECONNRESET') ||
+                        error.message?.includes('ETIMEDOUT') ||
+                        error.message?.includes('ENOTFOUND') ||
+                        error.message?.includes('网络') ||
+                        error.message?.includes('连接')
+                    );
+                    
+                    if (shouldRetry) {
+                        const delay = (attempt + 1) * 1000; // 递增延迟：1s, 2s
+                        logger.warn(`retrying getEmailContent for ${uid}, attempt ${attempt + 1}/${maxRetries + 1}, delay ${delay}ms`);
+                        await new Promise(resolve => setTimeout(resolve, delay));
+                    } else {
+                        // 不应该重试或已达到最大重试次数
+                        break;
+                    }
+                }
+            }
+            
+            // 所有重试都失败了
+            logger.error(`failed to get email content from POP3 server after ${maxRetries + 1} attempts: ${uid}`);
+            throw lastError || new Error(`无法获取邮件内容: ${uid}`);
         } else {
             throw new Error('no valid inbox server configured');
         }
