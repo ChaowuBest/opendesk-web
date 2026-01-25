@@ -1,8 +1,10 @@
-import { app, dialog, shell } from 'electron';
+import { app, dialog, shell, session } from 'electron';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import http from 'http';
+import https from 'https';
+import { Transform } from 'stream';
 import { spawn } from 'child_process';
 
 export interface Package {
@@ -57,6 +59,66 @@ export class UpdateClient {
   }
 
   /**
+   * 解析系统代理设置
+   * 返回代理配置对象，如果没有代理则返回 null
+   */
+  private async resolveSystemProxy(url: string): Promise<{ host: string; port: number; protocol: 'http' | 'https' | 'socks5' } | null> {
+    try {
+      // 使用 Electron 的 session.resolveProxy 获取系统代理
+      const proxyString = await session.defaultSession.resolveProxy(url);
+
+      if (!proxyString || proxyString === 'DIRECT') {
+        return null;
+      }
+
+      // 解析代理字符串，格式可能是：
+      // "PROXY host:port"
+      // "HTTPS host:port"
+      // "SOCKS5 host:port"
+      // "PROXY host:port; HTTPS host:port" (多个代理，用分号分隔)
+      const parts = proxyString.split(';');
+      for (const part of parts) {
+        const trimmed = part.trim();
+        if (trimmed.startsWith('PROXY ')) {
+          const proxyUrl = trimmed.substring(6).trim();
+          const [host, port] = proxyUrl.split(':');
+          if (host && port) {
+            return {
+              host: host.trim(),
+              port: parseInt(port.trim(), 10),
+              protocol: 'http',
+            };
+          }
+        } else if (trimmed.startsWith('HTTPS ')) {
+          const proxyUrl = trimmed.substring(6).trim();
+          const [host, port] = proxyUrl.split(':');
+          if (host && port) {
+            return {
+              host: host.trim(),
+              port: parseInt(port.trim(), 10),
+              protocol: 'https',
+            };
+          }
+        } else if (trimmed.startsWith('SOCKS5 ')) {
+          const proxyUrl = trimmed.substring(7).trim();
+          const [host, port] = proxyUrl.split(':');
+          if (host && port) {
+            return {
+              host: host.trim(),
+              port: parseInt(port.trim(), 10),
+              protocol: 'socks5',
+            };
+          }
+        }
+      }
+    } catch (error) {
+      console.warn('解析系统代理失败:', error);
+    }
+
+    return null;
+  }
+
+  /**
    * 比较版本号
    * 返回: 1 表示 version1 > version2, -1 表示 version1 < version2, 0 表示相等
    */
@@ -77,27 +139,146 @@ export class UpdateClient {
   }
 
   /**
-   * 发送 HTTP 请求
+   * 发送 HTTP/HTTPS 请求（支持代理）
    */
   private async httpRequest(url: string): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const client = http;
-      client
-        .get(url, (res) => {
-          if (res.statusCode !== 200) {
-            reject(new Error(`HTTP ${res.statusCode}: ${res.statusMessage}`));
-            return;
-          }
+    return new Promise(async (resolve, reject) => {
+      try {
+        const urlObj = new URL(url);
+        const proxy = await this.resolveSystemProxy(url);
 
-          let data = '';
-          res.on('data', (chunk) => {
-            data += chunk;
-          });
-          res.on('end', () => {
-            resolve(data);
-          });
-        })
-        .on('error', reject);
+        // 如果没有代理，直接连接
+        if (!proxy) {
+          const client = urlObj.protocol === 'https:' ? https : http;
+          client
+            .get(url, (res) => {
+              if (res.statusCode !== 200) {
+                reject(new Error(`HTTP ${res.statusCode}: ${res.statusMessage}`));
+                return;
+              }
+
+              let data = '';
+              res.on('data', (chunk) => {
+                data += chunk;
+              });
+              res.on('end', () => {
+                resolve(data);
+              });
+            })
+            .on('error', reject);
+          return;
+        }
+
+        // 使用代理连接
+        if (proxy.protocol === 'http' || proxy.protocol === 'https') {
+          // HTTP/HTTPS 代理
+          const proxyClient = proxy.protocol === 'https' ? https : http;
+
+          // 对于 HTTP 请求，通过代理发送完整 URL
+          // 对于 HTTPS 请求，使用 CONNECT 方法建立隧道
+          if (urlObj.protocol === 'https:') {
+            // HTTPS 通过 HTTP 代理：使用 CONNECT 方法
+            const options = {
+              hostname: proxy.host,
+              port: proxy.port,
+              method: 'CONNECT',
+              path: `${urlObj.hostname}:${urlObj.port || 443}`,
+              headers: {
+                'Host': `${urlObj.hostname}:${urlObj.port || 443}`,
+                'Proxy-Connection': 'keep-alive',
+              },
+            };
+
+            const req = proxyClient.request(options);
+            req.on('connect', (res, socket, head) => {
+              if (res.statusCode !== 200) {
+                reject(new Error(`代理连接失败: ${res.statusCode}`));
+                return;
+              }
+
+              // 通过隧道发送 HTTPS 请求
+              const client = https.request({
+                ...({ socket: socket } as any),
+                method: 'GET',
+                path: urlObj.pathname + urlObj.search,
+                headers: {
+                  'Host': urlObj.host,
+                },
+              }, (res) => {
+                if (res.statusCode !== 200) {
+                  reject(new Error(`HTTP ${res.statusCode}: ${res.statusMessage}`));
+                  return;
+                }
+
+                let data = '';
+                res.on('data', (chunk) => {
+                  data += chunk;
+                });
+                res.on('end', () => {
+                  resolve(data);
+                });
+              });
+
+              client.on('error', reject);
+              client.end();
+            });
+
+            req.on('error', reject);
+            req.end();
+          } else {
+            // HTTP 通过 HTTP 代理：直接转发请求
+            const options = {
+              hostname: proxy.host,
+              port: proxy.port,
+              method: 'GET',
+              path: url,
+              headers: {
+                'Host': urlObj.host,
+              },
+            };
+
+            proxyClient
+              .request(options, (res) => {
+                if (res.statusCode !== 200) {
+                  reject(new Error(`HTTP ${res.statusCode}: ${res.statusMessage}`));
+                  return;
+                }
+
+                let data = '';
+                res.on('data', (chunk) => {
+                  data += chunk;
+                });
+                res.on('end', () => {
+                  resolve(data);
+                });
+              })
+              .on('error', reject)
+              .end();
+          }
+        } else {
+          // SOCKS5 代理暂不支持，回退到直连
+          console.warn(`不支持的代理类型: ${proxy.protocol}，使用直连`);
+          const client = urlObj.protocol === 'https:' ? https : http;
+          client
+            .get(url, (res) => {
+              if (res.statusCode !== 200) {
+                reject(new Error(`HTTP ${res.statusCode}: ${res.statusMessage}`));
+                return;
+              }
+
+              let data = '';
+              res.on('data', (chunk) => {
+                data += chunk;
+              });
+              res.on('end', () => {
+                resolve(data);
+              });
+            })
+            .on('error', reject);
+        }
+      } catch (error) {
+        reject(error);
+      }
     });
   }
 
@@ -160,45 +341,251 @@ export class UpdateClient {
   }
 
   /**
-   * 下载文件
+   * 下载文件（支持代理）
    */
   private async downloadFile(url: string, destPath: string, onProgress?: (progress: number) => void): Promise<void> {
-    return new Promise((resolve, reject) => {
-      const client = http;
-      const file = fs.createWriteStream(destPath);
+    return new Promise(async (resolve, reject) => {
+      try {
+        const urlObj = new URL(url);
+        const proxy = await this.resolveSystemProxy(url);
 
-      client
-        .get(url, (res) => {
-          if (res.statusCode !== 200) {
+        // 设置更大的缓冲区以提高下载速度
+        const file = fs.createWriteStream(destPath, { highWaterMark: 1024 * 1024 }); // 1MB 缓冲区
+        const hasError = { value: false };
+
+        // 如果没有代理，使用原来的逻辑
+        if (!proxy || proxy.protocol === 'socks5') {
+          if (proxy && proxy.protocol === 'socks5') {
+            console.warn('SOCKS5 代理暂不支持，使用直连');
+          }
+
+          const client = urlObj.protocol === 'https:' ? https : http;
+
+          // 设置 HTTP 请求选项，包括请求头和 keep-alive
+          const options = {
+            hostname: urlObj.hostname,
+            port: urlObj.port || (urlObj.protocol === 'https:' ? 443 : 80),
+            path: urlObj.pathname + urlObj.search,
+            method: 'GET',
+            headers: {
+              'User-Agent': 'FillipDesk-Updater/1.0',
+              'Accept': '*/*',
+              'Connection': 'keep-alive',
+            },
+          };
+
+          const req = client.request(options, (res) => {
+            this.handleDownloadResponse(res, file, destPath, onProgress, resolve, reject, hasError);
+          });
+
+          req.on('error', (error) => {
+            hasError.value = true;
             file.close();
-            fs.unlinkSync(destPath);
-            reject(new Error(`下载失败: HTTP ${res.statusCode}`));
-            return;
-          }
-
-          const totalSize = parseInt(res.headers['content-length'] || '0', 10);
-          let downloadedSize = 0;
-
-          res.on('data', (chunk) => {
-            downloadedSize += chunk.length;
-            file.write(chunk);
-            if (onProgress && totalSize > 0) {
-              onProgress((downloadedSize / totalSize) * 100);
+            if (fs.existsSync(destPath)) {
+              fs.unlinkSync(destPath);
             }
+            reject(error);
           });
 
-          res.on('end', () => {
-            file.end();
-            resolve();
+          req.end();
+          return;
+        }
+
+        // 使用 HTTP/HTTPS 代理
+        const proxyClient = proxy.protocol === 'https' ? https : http;
+
+        if (urlObj.protocol === 'https:') {
+          // HTTPS 通过 HTTP 代理：使用 CONNECT 方法建立隧道
+          const connectOptions = {
+            hostname: proxy.host,
+            port: proxy.port,
+            method: 'CONNECT',
+            path: `${urlObj.hostname}:${urlObj.port || 443}`,
+            headers: {
+              'Host': `${urlObj.hostname}:${urlObj.port || 443}`,
+              'Proxy-Connection': 'keep-alive',
+            },
+          };
+
+          const connectReq = proxyClient.request(connectOptions);
+          connectReq.on('connect', (res, socket, head) => {
+            if (res.statusCode !== 200) {
+              hasError.value = true;
+              file.close();
+              if (fs.existsSync(destPath)) {
+                fs.unlinkSync(destPath);
+              }
+              reject(new Error(`代理连接失败: ${res.statusCode}`));
+              return;
+            }
+
+            // 通过隧道发送 HTTPS 请求
+            const options = {
+              ...({ socket: socket } as any),
+              method: 'GET',
+              path: urlObj.pathname + urlObj.search,
+              headers: {
+                'Host': urlObj.host,
+                'User-Agent': 'FillipDesk-Updater/1.0',
+                'Accept': '*/*',
+                'Connection': 'keep-alive',
+              },
+            };
+
+            const req = https.request(options, (res) => {
+              this.handleDownloadResponse(res, file, destPath, onProgress, resolve, reject, hasError);
+            });
+
+            req.on('error', (error) => {
+              hasError.value = true;
+              file.close();
+              if (fs.existsSync(destPath)) {
+                fs.unlinkSync(destPath);
+              }
+              reject(error);
+            });
+
+            req.end();
           });
-        })
-        .on('error', (error) => {
-          file.close();
-          if (fs.existsSync(destPath)) {
-            fs.unlinkSync(destPath);
+
+          connectReq.on('error', (error) => {
+            hasError.value = true;
+            file.close();
+            if (fs.existsSync(destPath)) {
+              fs.unlinkSync(destPath);
+            }
+            reject(error);
+          });
+
+          connectReq.end();
+        } else {
+          // HTTP 通过 HTTP 代理：直接转发请求
+          const options = {
+            hostname: proxy.host,
+            port: proxy.port,
+            method: 'GET',
+            path: url,
+            headers: {
+              'Host': urlObj.host,
+              'User-Agent': 'FillipDesk-Updater/1.0',
+              'Accept': '*/*',
+              'Connection': 'keep-alive',
+            },
+          };
+
+          const req = proxyClient.request(options, (res) => {
+            this.handleDownloadResponse(res, file, destPath, onProgress, resolve, reject, hasError);
+          });
+
+          req.on('error', (error) => {
+            hasError.value = true;
+            file.close();
+            if (fs.existsSync(destPath)) {
+              fs.unlinkSync(destPath);
+            }
+            reject(error);
+          });
+
+          req.end();
+        }
+      } catch (error) {
+        reject(error);
+      }
+    });
+  }
+
+  /**
+   * 处理下载响应（处理进度跟踪和文件写入）
+   */
+  private handleDownloadResponse(
+    res: http.IncomingMessage,
+    file: fs.WriteStream,
+    destPath: string,
+    onProgress: ((progress: number) => void) | undefined,
+    resolve: () => void,
+    reject: (error: Error) => void,
+    hasError: { value: boolean }
+  ): void {
+    if (res.statusCode !== 200) {
+      file.close();
+      fs.unlinkSync(destPath);
+      reject(new Error(`下载失败: HTTP ${res.statusCode}`));
+      return;
+    }
+
+    const totalSize = parseInt(res.headers['content-length'] || '0', 10);
+    let downloadedSize = 0;
+    let lastProgressPercent = -1;
+
+    // 如果知道文件大小，在开始时打印
+    if (totalSize > 0 && onProgress) {
+      onProgress(0); // 触发 0% 进度
+    }
+
+    // 创建一个 Transform 流来跟踪进度，使用更大的缓冲区
+    const progressStream = new Transform({
+      highWaterMark: 1024 * 1024, // 1MB 缓冲区
+      transform(chunk: Buffer, encoding, callback) {
+        if (hasError.value) {
+          callback();
+          return;
+        }
+
+        downloadedSize += chunk.length;
+
+        // 只在进度变化时调用回调，减少开销
+        if (onProgress && totalSize > 0) {
+          const progress = (downloadedSize / totalSize) * 100;
+          const progressPercent = Math.floor(progress);
+
+          // 只在百分比变化时调用，避免频繁调用
+          if (progressPercent !== lastProgressPercent) {
+            lastProgressPercent = progressPercent;
+            onProgress(progress);
           }
-          reject(error);
-        });
+        }
+
+        // 将数据传递给下一个流
+        callback(null, chunk);
+      },
+    });
+
+    // 使用 pipe 链：res -> progressStream -> file
+    res.pipe(progressStream).pipe(file);
+
+    file.on('finish', () => {
+      file.close();
+      if (onProgress && totalSize > 0) {
+        onProgress(100); // 确保 100% 被打印
+      }
+      resolve();
+    });
+
+    file.on('error', (error) => {
+      hasError.value = true;
+      file.close();
+      if (fs.existsSync(destPath)) {
+        fs.unlinkSync(destPath);
+      }
+      reject(error);
+    });
+
+    progressStream.on('error', (error) => {
+      hasError.value = true;
+      file.close();
+      if (fs.existsSync(destPath)) {
+        fs.unlinkSync(destPath);
+      }
+      reject(error);
+    });
+
+    res.on('error', (error) => {
+      hasError.value = true;
+      file.close();
+      if (fs.existsSync(destPath)) {
+        fs.unlinkSync(destPath);
+      }
+      reject(error);
     });
   }
 
@@ -236,12 +623,30 @@ export class UpdateClient {
       }
     }
 
+    // 创建进度回调，同时打印日志和调用用户提供的回调
+    let lastProgressPercent = -1;
+    const progressCallback = (progress: number) => {
+      const percent = Math.round(progress);
+      // 只在百分比变化时打印，避免日志过多（每 5% 打印一次，或者达到 100% 时打印）
+      if (percent !== lastProgressPercent && (percent % 5 === 0 || percent === 100)) {
+        console.log(`下载进度: ${percent}%`);
+        lastProgressPercent = percent;
+      }
+      // 调用用户提供的回调（如果存在）
+      if (onProgress) {
+        onProgress(progress);
+      }
+    };
+
     // 按顺序尝试下载
     let lastError: Error | null = null;
     for (const downloadUrl of downloadUrls) {
       try {
-        await this.downloadFile(downloadUrl, destPath, onProgress);
+        console.log(`开始下载: ${fileName} (${(pkg.size / 1024 / 1024).toFixed(2)} MB)`);
+        console.log(`下载地址: ${downloadUrl}`);
+        await this.downloadFile(downloadUrl, destPath, progressCallback);
 
+        console.log('下载完成，正在验证文件...');
         // 验证下载的文件
         const downloadedHash = await this.calculateHash(destPath);
         if (downloadedHash !== pkg.hash) {
@@ -249,6 +654,7 @@ export class UpdateClient {
           throw new Error('下载的文件哈希值不匹配');
         }
 
+        console.log('文件验证成功');
         return destPath;
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));

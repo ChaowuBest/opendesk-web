@@ -23,6 +23,7 @@ export interface UpdateServerConfig {
   host: string;
   packagesDir: string;
   baseUrl?: string;
+  basePath?: string; // API 的基础路径，例如 '/update'
 }
 
 export class UpdateServer {
@@ -33,11 +34,19 @@ export class UpdateServer {
   private loadedJsonFiles: Map<string, number> = new Map(); // 文件路径 -> 最后修改时间戳
 
   constructor(config: UpdateServerConfig) {
+    // 规范化 basePath：确保以 / 开头，不以 / 结尾（除非是根路径）
+    const basePath = config.basePath
+      ? config.basePath.startsWith('/')
+        ? (config.basePath === '/' ? '' : config.basePath.replace(/\/$/, ''))
+        : '/' + config.basePath.replace(/\/$/, '')
+      : '';
+
     this.config = {
       port: config.port,
       host: config.host,
       packagesDir: config.packagesDir,
-      baseUrl: config.baseUrl || `http://${config.host}:${config.port}`,
+      baseUrl: config.baseUrl || `http://${config.host}:${config.port}${basePath}`,
+      basePath: basePath,
     };
 
     // 确保包目录存在
@@ -99,7 +108,14 @@ export class UpdateServer {
                   }
                 }
                 if (packageFile) {
-                  pkg.url = `${this.config.baseUrl}/packages/${packageFile}`;
+                  // 生成包的下载 URL
+                  // 如果 baseUrl 已经以 basePath 结尾，直接使用；否则组合两者
+                  let baseUrl = this.config.baseUrl;
+                  if (this.config.basePath && !baseUrl.endsWith(this.config.basePath)) {
+                    // 确保 baseUrl 不以 / 结尾，basePath 以 / 开头
+                    baseUrl = baseUrl.replace(/\/$/, '') + this.config.basePath;
+                  }
+                  pkg.url = `${baseUrl}/packages/${packageFile}`;
                 }
               }
 
@@ -111,7 +127,7 @@ export class UpdateServer {
 
               this.packages.set(key, pkg);
               this.loadedJsonFiles.set(jsonPath, fileModifiedTime);
-              
+
               if (existingPkg) {
                 console.log(`已更新包信息: ${jsonFile}`);
               } else {
@@ -230,8 +246,14 @@ export class UpdateServer {
       return;
     }
 
+    // 去掉 basePath 前缀来匹配路由
+    let pathname = url.pathname;
+    if (this.config.basePath && pathname.startsWith(this.config.basePath)) {
+      pathname = pathname.substring(this.config.basePath.length) || '/';
+    }
+
     // API 路由
-    if (url.pathname === '/api/latest' && req.method === 'GET') {
+    if (pathname === '/api/latest' && req.method === 'GET') {
       const platform = url.searchParams.get('platform') || '';
       const arch = url.searchParams.get('arch') || '';
       const latest = this.getLatestVersion(platform, arch);
@@ -241,10 +263,10 @@ export class UpdateServer {
       return;
     }
 
-    if (url.pathname === '/api/packages' && req.method === 'GET') {
+    if (pathname === '/api/packages' && req.method === 'GET') {
       const packages = this.getAllPackages();
       const latestUpdatedAt = this.getLatestUpdatedAt();
-      
+
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(
         JSON.stringify({
@@ -257,8 +279,8 @@ export class UpdateServer {
     }
 
     // 下载包文件
-    if (url.pathname.startsWith('/packages/') && req.method === 'GET') {
-      const fileName = path.basename(url.pathname);
+    if (pathname.startsWith('/packages/') && req.method === 'GET') {
+      const fileName = path.basename(pathname);
       const filePath = path.join(this.config.packagesDir, fileName);
 
       if (!fs.existsSync(filePath)) {
@@ -307,7 +329,7 @@ export class UpdateServer {
   stop(): Promise<void> {
     // 停止定时扫描
     this.stopScanning();
-    
+
     return new Promise((resolve) => {
       this.server.close(() => {
         console.log('更新服务器已停止');
@@ -332,6 +354,7 @@ function printHelp(): void {
   console.log('可选参数:');
   console.log('  --host <host>        服务器监听的主机地址 (默认: 0.0.0.0)');
   console.log('  --port <port>        服务器监听的端口号 (默认: 3000)');
+  console.log('  --base-path <path>   API 的基础路径，例如 /update (默认: 空，即根路径)');
   console.log('  -h, --help           显示此帮助信息');
   console.log('');
   console.log('示例:');
@@ -348,11 +371,12 @@ function printHelp(): void {
 /**
  * 解析命令行参数
  */
-function parseCommandLineArgs(): { host: string; port: number; directory: string } | null {
+function parseCommandLineArgs(): { host: string; port: number; directory: string; basePath?: string } | null {
   const args = process.argv.slice(2);
   let host: string | null = null;
   let port: number | null = null;
   let directory: string | null = null;
+  let basePath: string | null = null;
 
   // 检查帮助参数
   for (const arg of args) {
@@ -371,6 +395,9 @@ function parseCommandLineArgs(): { host: string; port: number; directory: string
       i++;
     } else if (args[i] === '--directory' && i + 1 < args.length) {
       directory = args[i + 1];
+      i++;
+    } else if (args[i] === '--base-path' && i + 1 < args.length) {
+      basePath = args[i + 1];
       i++;
     }
   }
@@ -393,7 +420,12 @@ function parseCommandLineArgs(): { host: string; port: number; directory: string
     return null;
   }
 
-  return { host: finalHost, port: finalPort, directory };
+  return {
+    host: finalHost,
+    port: finalPort,
+    directory,
+    ...(basePath !== null && { basePath })
+  };
 }
 
 // 如果直接运行此文件，启动服务器
@@ -421,6 +453,7 @@ if (isMainModule) {
     host: config.host,
     port: config.port,
     packagesDir: config.directory,
+    ...(config.basePath && { basePath: config.basePath }),
   });
 
   server.start().catch(console.error);

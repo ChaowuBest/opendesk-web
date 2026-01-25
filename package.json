@@ -16,8 +16,8 @@
     "package:win32": "npm run build && electron-forge package --platform=win32",
     "package:darwin": "npm run build && electron-forge package --platform=darwin",
     "make": "run-script-os",
-    "make:win32": "electron-forge make --skip-package --platform=win32",
-    "make:darwin": "electron-forge make --skip-package --platform=darwin",
+    "make:win32": "electron-forge make --platform=win32",
+    "make:darwin": "electron-forge make --platform=darwin",
     "updater:server": "tsx src/updater/server.ts",
     "updater:publish": "tsx src/updater/publish-update.ts"
   },
