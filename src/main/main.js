@@ -370,7 +370,9 @@ const initializeUpdater = () => {
   // 配置多个备选更新服务器地址，按顺序尝试
   // 如果第一个服务器不可用，会自动尝试下一个
   const updateServerUrls = [
-    'http://localhost:3000', // 本地测试服务器
+    // 如果要进行更新测试，可以把下边这一行注释打开
+    // 'http://localhost:3000',
+    'https://fillipdesk.uv0xab.com/update'
   ];
 
   // 只在生产环境启用自动更新，或者设置了 DEBUG_UPDATER 环境变量
