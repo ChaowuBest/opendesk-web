@@ -181,7 +181,7 @@ export class ReadFileTool extends BaseTool {
     constructor() {
         super(
             'readFile',
-            '读取文件内容',
+            '读取文件原始文本内容, 可用来读取文本、代码、配置文件等文本格式数据',
             readFileSchema
         );
 

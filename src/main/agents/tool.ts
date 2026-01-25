@@ -1,0 +1,124 @@
+import { z } from 'zod';
+import { ToolCall } from './messages.js';
+
+
+export class BaseTool<T extends z.ZodType> {
+    name: string;
+    description: string;
+    params: T;
+    executor?: ((args: z.output<T>) => Promise<string>);
+
+    constructor(name: string, description: string, params: T) {
+        this.name = name;
+        this.description = description;
+        this.params = params;
+        this.executor = undefined;
+    }
+
+    toJSON() {
+        return {
+            name: this.name,
+            description: this.description,
+            params: this.params.toJSONSchema(),
+        };
+    }
+
+    static fromJSON(jsonObject: object) {
+        let tool = new BaseTool(
+            jsonObject['name'],
+            jsonObject['description'],
+            z.fromJSONSchema(jsonObject['params'])
+        );
+        return tool;
+    }
+
+    /**
+     * 自定义的工具调用结果渲染函数，如果返回 undefined，则不渲染工具调用
+     */
+    renderToolCall(toolcall: ToolCall) {
+        return undefined;
+    }
+
+    /**
+     * 设置工具的执行函数
+     */
+    setExecutor(executor: (args: z.output<T>) => Promise<string>): ThisType<T> {
+        this.executor = executor;
+        return this;
+    }
+
+    /**
+     * 执行工具
+     */
+    async execute(args: z.output<T>): Promise<string> {
+        if (!this.executor) {
+            throw new Error(`executor of tool ${this.name} hasn't been set yet`);
+        }
+        return this.executor(args);
+    }
+}
+
+export class BaseToolset {
+    name: string;
+    tools: Map<string, BaseTool<z.ZodType>> = new Map();
+
+    constructor(name: string) {
+        this.name = name;
+    }
+
+    /**
+     * Add multiple tools to the toolset
+     */
+    addTools(...tools: BaseTool<z.ZodType>[]) {
+        for (const tool of tools) {
+            this.addTool(tool);
+        }
+    }
+
+    /**
+     * Add a tool to the toolset
+     */
+    addTool(tool: BaseTool<z.ZodType>) {
+        this.tools.set(tool.name, tool);
+    }
+
+    getTools(): Map<string, BaseTool<z.ZodType>> {
+        return this.tools;
+    }
+
+    hasTool(name: string): boolean {
+        return this.tools.has(name);
+    }
+
+    /**
+     * Get a tool by name
+     */
+    getTool(name: string): BaseTool<z.ZodType> | undefined {
+        return this.tools.get(name);
+    }
+
+    async callTool(toolName: string, args: object): Promise<string> {
+        let tool = this.getTool(toolName);
+        if (tool === undefined) {
+            throw new Error(`tool ${toolName} not found`);
+        }
+        return await tool.execute(args);
+    }
+
+    toJSON() {
+        return {
+            name: this.name,
+            tools: Array.from(this.tools.values()).map((tool) => {
+                return tool.toJSON();
+            }),
+        };
+    }
+
+    static fromJSON(jsonObject: object) {
+        let toolset = new BaseToolset(jsonObject['name']);
+        for (let tool of jsonObject['tools']) {
+            toolset.addTool(BaseTool.fromJSON(tool));
+        }
+        return toolset;
+    }
+}

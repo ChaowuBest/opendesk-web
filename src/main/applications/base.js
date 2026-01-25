@@ -95,10 +95,10 @@ class BaseApplication {
         this.bundleName = bundleName;
         /** @type {string} */
         this.name = name;
-        /** @type {BaseWorker | undefined} */
-        this.globalWorker = undefined;
         /** @type {Map<string, Set<Electron.SenderFrame>>} */
         this.eventSubscribers = new Map();
+        /** @type {ApplicationRegistry | undefined} */
+        this.registry = undefined;
     }
 
     toJSON() {
@@ -153,11 +153,11 @@ class BaseApplication {
     }
 
     /**
-     * 设置全局 worker
-     * @param {Worker} worker
+     * 设置应用注册器
+     * @param {ApplicationRegistry} registry
      */
-    setGlobalWorker(worker) {
-        this.globalWorker = worker;
+    setRegistry(registry) {
+        this.registry = registry;
     }
 
     /**
@@ -208,10 +208,10 @@ class BaseApplication {
     }
 
     async callWorker(methodName, ...args) {
-        if (this.globalWorker === undefined) {
+        if (this.registry === undefined) {
             throw new Error(`global worker not initialized`);
         }
-        return await this.globalWorker.handleMessage(methodName, ...args);
+        return await this.registry.callWorker(this.bundleName, methodName, ...args);
     }
 }
 

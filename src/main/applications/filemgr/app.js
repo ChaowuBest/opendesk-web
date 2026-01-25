@@ -30,16 +30,13 @@ class FileMgrApplication extends BaseApplication {
         const toolset = new BaseToolset('filemgr');
         const searchFileTool = new BaseTool(
             'searchFile',
-            '根据给定的检索字符串搜索相关文件，搜索结果会同时包含关键字匹配以及语义模糊搜索的内容',
+            '根据给定的查询内容对文件进行模糊搜索',
             z.object({
-                query: z.string().describe('检索字符串'),
+                query: z.string().describe('查询内容'),
             })
         );
         searchFileTool.setExecutor(async (args) => {
-            const result = await Promise.all([
-                // FSService.searchFilesByKeyword(args.query),
-                // FSService.searchFilesByNameSimilarity(args.query)
-            ]);
+            const result = await this.callWorker('searchFilesByNameSimilarity', args.query);
             console.info(result);
             return JSON.stringify(result);
         });
