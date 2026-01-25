@@ -10,12 +10,19 @@ class SplitterWidget extends HTMLElement {
 
     render() {
         this.shadowRoot.innerHTML = `
+        <style>
+            :host {
+                display: flex;
+                width: 100%;
+                height: 100%;
+            }
+        </style>
         <!-- TODO: 需要提供一个可配置的宽度属性 -->
-        <slot id="leftPanel" name="left" style="display: block; width: 350px; height: 100%;"></slot>
+        <slot id="leftPanel" name="left" style="display: block; width: 350px; height: 100%; flex-shrink: 0;"></slot>
 
         <div id="resizer"
             class="w-[4px] relative group transition-all duration-150"
-            style="background: linear-gradient(to right, transparent 40%, #e0e0e0 50%, transparent 60%); min-width: 4px; cursor: col-resize;"
+            style="background: linear-gradient(to right, transparent 40%, #e0e0e0 50%, transparent 60%); min-width: 4px; cursor: col-resize; flex-shrink: 0;"
         >
             <div class="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 pointer-events-none">
                 <!-- macOS 风格：轻微内凹或者几乎看不见，只是微微一条淡色线 -->

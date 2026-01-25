@@ -263,7 +263,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
     getToolset() {
         let toolset = new RendererToolset('mailbox');
         if (this.selectedEmailUid !== null) {
-            let getSelectedEmailTool = new RendererTool('getSelectedEmail', '获取用户当前正在浏览的邮件内容');
+            let getSelectedEmailTool = new RendererTool('getSelectedEmail', '获取用户当前正在浏览的邮件内容', z.object({}));
             getSelectedEmailTool.setExecutor(async (args) => {
                 let result = '当前用户正在浏览的邮件内容为: \n';
                 result += `主题: ${this.selectedEmailHeader.subject}\n`;
@@ -275,7 +275,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             toolset.addTool(getSelectedEmailTool);
         }
 
-        let getEmailListTool = new RendererTool('getEmailList', '获取完整的邮件列表');
+        let getEmailListTool = new RendererTool('getEmailList', '获取完整的邮件列表', z.object({}));
         getEmailListTool.setExecutor(async (args) => {
             let result = '';
             for (const email of this.emailHeaderList.values()) {
@@ -289,10 +289,9 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             return result;
         });
 
-        let getEmailContentTool = new RendererTool('getEmailContent', '打开指定id的邮件并获取其内容');
-        getEmailContentTool.setParams(z.object({
+        let getEmailContentTool = new RendererTool('getEmailContent', '打开指定id的邮件并获取其内容', z.object({
             uid: z.string().describe("邮件的ID")
-        }))
+        }));
         getEmailContentTool.setExecutor(async (args) => {
             let result = '';
             try {
@@ -307,10 +306,9 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             }
         });
 
-        let markEmailAsReadTool = new RendererTool('markEmailAsRead', '标记多个指定id的邮件为已读');
-        markEmailAsReadTool.setParams(z.object({
+        let markEmailAsReadTool = new RendererTool('markEmailAsRead', '标记多个指定id的邮件为已读', z.object({
             uids: z.array(z.string()).describe("邮件的ID列表")
-        }))
+        }));
         markEmailAsReadTool.setExecutor(async (args) => {
             for (const uid of args.uids) {
                 await this.markEmailAsRead(uid);
@@ -320,13 +318,12 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
 
 
         toolset.addTools(getEmailListTool, getEmailContentTool, markEmailAsReadTool);
-        let writeEmailTool = new RendererTool('writeEmail', '撰写邮件,邮件正文内容由你自动生成');
-        writeEmailTool.setParams(z.object({
+        let writeEmailTool = new RendererTool('writeEmail', '撰写邮件,邮件正文内容由你自动生成', z.object({
             to: z.array(z.string()).describe("收件人列表"),
             cc: z.array(z.string()).describe("抄送人列表,如果为提供则为空"),
             subject: z.string().describe("主题"),
             content: z.string().describe("邮件正文内容,html格式")
-        }))
+        }));
         writeEmailTool.setExecutor(async (args) => {
             let to = [];
             let cc = [];
@@ -342,10 +339,9 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             return "邮件已撰写完成";
         })
 
-        let replyEmailTool = new RendererTool('replyEmail', '回复邮件,回复内容由你根据指定邮件内容自动生成');
-        replyEmailTool.setParams(z.object({
+        let replyEmailTool = new RendererTool('replyEmail', '回复邮件,回复内容由你根据指定邮件内容自动生成', z.object({
             replyContent: z.string().describe("回复内容,html格式")
-        }))
+        }));
         replyEmailTool.setExecutor(async (args) => {
             if (!this.selectedEmailUid) {
                 return "请选择一封具体的邮件让我回复";
@@ -354,13 +350,15 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             return "邮件回复完成";
         })
 
-        let getEditEmailTool = new RendererTool('getEditEmail', '获取当前正在编辑的邮件内容');
+        let getEditEmailTool = new RendererTool('getEditEmail', '获取当前正在编辑的邮件内容', z.object({}));
         getEditEmailTool.setExecutor(async (args) => {
             const emailContent = this.querySelector('#email-content');
             return emailContent.innerHTML;
         });
 
-        let PolishEmailTool = new RendererTool('polishEmail', '邮件校对和润色');
+        let PolishEmailTool = new RendererTool('polishEmail', '邮件校对和润色', z.object({
+            content: z.string().describe("校对润色后的邮件正文内容,html格式")
+        }));
         PolishEmailTool.setParams(z.object({
             content: z.string().describe("校对润色后的邮件正文内容,html格式")
         }))

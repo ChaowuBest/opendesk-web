@@ -25,7 +25,7 @@ class NewsEntryWidget extends AgentOperableHTMLElement {
     getToolset() {
         const toolset = new RendererToolset('news');
         if (this.articles.length > 0) {
-            const headlineTool = new RendererTool('getTopHeadlines', '获取当前新闻列表（前10条）');
+            const headlineTool = new RendererTool('getTopHeadlines', '获取当前新闻列表（前10条）', z.object({}));
             headlineTool.setExecutor(async () => {
                 return this.articles.slice(0, 10).map((item, idx) => {
                     return `${idx + 1}. ${item.title}\n   链接: ${item.url}\n   来源: ${item.source}，作者: ${item.author || '未知'}，热度: ${item.points}`;
@@ -34,7 +34,7 @@ class NewsEntryWidget extends AgentOperableHTMLElement {
             toolset.addTool(headlineTool);
 
             if (this.selectedIndex !== null && this.articles[this.selectedIndex]) {
-                const detailTool = new RendererTool('getSelectedArticle', '获取用户正在查看的新闻详情');
+                const detailTool = new RendererTool('getSelectedArticle', '获取用户正在查看的新闻详情', z.object({}));
                 detailTool.setExecutor(async () => {
                     const current = this.articles[this.selectedIndex];
                     return `标题: ${current.title}\n来源: ${current.source}\n作者: ${current.author || '未知'}\n热度: ${current.points}\n链接: ${current.url}`;

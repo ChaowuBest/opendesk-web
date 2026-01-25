@@ -29,6 +29,7 @@ export class ApplicationRegistry {
 
     static registerApplication(application: BaseApplication) {
         this.applications.set(application.bundleName, application);
+        application.setRegistry(this);
         Setting.registerApplicationSettings(application, () => {
             application.onConfigChanged();
             globalWorker?.postMessage({
@@ -50,6 +51,36 @@ export class ApplicationRegistry {
     static listAvailableToolsets(): BaseToolset[] {
         return Array.from(this.applications.values()).flatMap(application => application.getToolsets());
     }
+
+    static async callWorker(bundleName: string, methodName: string, ...args: any[]): Promise<any> {
+      const application = ApplicationRegistry.getApplication(bundleName);
+      const requestId = crypto.randomUUID();
+
+      if (application === undefined) {
+        return { status: 'error', message: `application ${bundleName} not found` }
+      } else if (globalWorker === null) {
+        return { status: 'error', message: 'global worker not initialized yet' }
+      }
+
+      try {
+        let promise = new Promise((resolve, reject) => {
+          pendingRequests.set(requestId, { resolve, reject });
+        });
+
+        globalWorker.postMessage({
+          bundleName: bundleName,
+          requestId: requestId,
+          methodName: methodName,
+          args: args,
+        })
+
+        const data = await promise;
+        pendingRequests.delete(requestId);
+        return { status: 'ok', data: data };
+      } catch (error) {
+        return { status: 'error', message: error.message };
+      }
+    }
 };
 
 /**
@@ -67,33 +98,7 @@ export function registerApplicationRegistryHandlers(ipcMain: Electron.IpcMain) {
     return { status: 'ok', data: ApplicationRegistry.getApplicationList() };
   })
   ipcMain.handle('applicationRegistry:call', async (event, bundleName, methodName, ...args) => {
-    const application = ApplicationRegistry.getApplication(bundleName);
-    const requestId = crypto.randomUUID();
-
-    if (application === undefined) {
-      return { status: 'error', message: `application ${bundleName} not found` }
-    } else if (globalWorker === null) {
-      return { status: 'error', message: 'global worker not initialized yet' }
-    }
-
-    try {
-      let promise = new Promise((resolve, reject) => {
-        pendingRequests.set(requestId, { resolve, reject });
-      });
-
-      globalWorker.postMessage({
-        bundleName: bundleName,
-        requestId: requestId,
-        methodName: methodName,
-        args: args,
-      })
-
-      const data = await promise;
-      pendingRequests.delete(requestId);
-      return { status: 'ok', data: data };
-    } catch (error) {
-      return { status: 'error', message: error.message };
-    }
+    return ApplicationRegistry.callWorker(bundleName, methodName, ...args);
   })
   ipcMain.handle('applicationRegistry:callMainWorld', async (event, bundleName, methodName, ...args) => {
     const application = ApplicationRegistry.getApplication(bundleName);

@@ -1,3 +1,6 @@
+import { ElasticToolbarWidget } from '../../../../renderer/components/toolbar.js';
+
+
 class CalendarEntryWidget extends HTMLElement {
     constructor() {
         super();
@@ -6,11 +9,126 @@ class CalendarEntryWidget extends HTMLElement {
 
     connectedCallback() {
         this.render();
+
+        // 添加月份切换按钮事件
+        const prevMonthBtn = this.querySelector('#prev-month-btn');
+        const nextMonthBtn = this.querySelector('#next-month-btn');
+
+        if (prevMonthBtn) {
+            prevMonthBtn.addEventListener('click', () => {
+                const newDate = new Date(this.currentDate.getFullYear(), this.currentDate.getMonth() - 1, 1);
+                const daysInNewMonth = new Date(newDate.getFullYear(), newDate.getMonth() + 1, 0).getDate();
+                const day = Math.min(this.currentDate.getDate(), daysInNewMonth);
+                this.currentDate = new Date(newDate.getFullYear(), newDate.getMonth(), day);
+                this.renderCalendarGrid();
+                this.updateMonthHeader();
+                this.setCurrentDate();
+            });
+        }
+
+        if (nextMonthBtn) {
+            nextMonthBtn.addEventListener('click', () => {
+                const newDate = new Date(this.currentDate.getFullYear(), this.currentDate.getMonth() + 1, 1);
+                const daysInNewMonth = new Date(newDate.getFullYear(), newDate.getMonth() + 1, 0).getDate();
+                const day = Math.min(this.currentDate.getDate(), daysInNewMonth);
+                this.currentDate = new Date(newDate.getFullYear(), newDate.getMonth(), day);
+                this.renderCalendarGrid();
+                this.updateMonthHeader();
+                this.setCurrentDate();
+            });
+        }
+
+        // 初始化月历和日期
+        this.updateMonthHeader();
+        this.renderCalendarGrid();
         this.setCurrentDate();
     }
 
+    renderCalendarGrid() {
+        const calendarGrid = this.querySelector('#calendar-grid');
+        if (!calendarGrid) return;
+
+        const year = this.currentDate.getFullYear();
+        const month = this.currentDate.getMonth();
+
+        // 获取当月第一天和最后一天
+        const firstDay = new Date(year, month, 1);
+        const lastDay = new Date(year, month + 1, 0);
+        const firstDayOfWeek = firstDay.getDay(); // 0 = 星期日
+        const daysInMonth = lastDay.getDate();
+
+        // 获取上个月的最后几天
+        const prevMonthLastDay = new Date(year, month, 0).getDate();
+
+        let gridHTML = '';
+
+        // 星期标题
+        const weekDays = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+        weekDays.forEach(day => {
+            gridHTML += `<div class="h-6 flex items-center justify-center text-[10px] font-bold text-slate-400 uppercase tracking-widest">${day}</div>`;
+        });
+
+        // 上个月的日期（灰色显示）
+        for (let i = firstDayOfWeek - 1; i >= 0; i--) {
+            const day = prevMonthLastDay - i;
+            gridHTML += `<div class="h-9 flex items-center justify-center text-sm text-slate-300">${day}</div>`;
+        }
+
+        // 当月的日期
+        const today = new Date();
+        const isCurrentMonth = today.getFullYear() === year && today.getMonth() === month;
+        const selectedDate = this.currentDate.getDate();
+
+        for (let day = 1; day <= daysInMonth; day++) {
+            const isToday = isCurrentMonth && day === today.getDate();
+            const isSelected = day === selectedDate;
+
+            let classes = 'h-9 flex items-center justify-center text-sm font-medium text-slate-700 hover:bg-white/60 rounded-xl cursor-pointer';
+
+            if (isSelected) {
+                classes = 'h-9 flex items-center justify-center text-sm font-bold text-white bg-slate-800 rounded-xl shadow-lg shadow-black/20 ring-1 ring-black/10';
+            } else if (isToday) {
+                classes += ' ring-2 ring-blue-400';
+            }
+
+            gridHTML += `<div class="${classes}" data-day="${day}">${day}</div>`;
+        }
+
+        // 下个月的日期（填充剩余格子，灰色显示）
+        const totalCells = firstDayOfWeek + daysInMonth;
+        const remainingCells = 42 - totalCells; // 6行 x 7列 = 42
+        for (let day = 1; day <= remainingCells && day <= 14; day++) {
+            gridHTML += `<div class="h-9 flex items-center justify-center text-sm text-slate-300">${day}</div>`;
+        }
+
+        calendarGrid.innerHTML = gridHTML;
+
+        // 为日期添加点击事件
+        calendarGrid.querySelectorAll('[data-day]').forEach(cell => {
+            cell.addEventListener('click', () => {
+                const day = parseInt(cell.getAttribute('data-day'));
+                this.currentDate = new Date(year, month, day);
+                this.setCurrentDate();
+                this.renderCalendarGrid();
+            });
+        });
+    }
+
+    updateMonthHeader() {
+        const monthHeader = this.querySelector('#month-header');
+        if (!monthHeader) return;
+
+        const year = this.currentDate.getFullYear();
+        const month = this.currentDate.getMonth() + 1;
+        monthHeader.textContent = `${year}年 ${month}月`;
+    }
+
     async setCurrentDate(dateString = undefined) {
-        var date = dateString ? new Date(dateString) : new Date();
+        if (dateString) {
+            this.currentDate = new Date(dateString);
+        }
+
+        var date = this.currentDate;
         const weekdayNames = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六'];
         const dayOfWeek = weekdayNames[date.getDay()];
         const currentDateString = date.toLocaleDateString('zh-CN', {
@@ -20,10 +138,6 @@ class CalendarEntryWidget extends HTMLElement {
         }) + ' ' + dayOfWeek;
 
         const scheduleElement = this.querySelector('#calendar-current-day-schedule');
-        scheduleElement.innerHTML = `
-        <content-loading-view class="col-span-full rounded-2xl" data-type="lr" data-message="刷新日程状态..."></content-loading-view>
-        `;
-
         var scheduleHTML = '';
         scheduleHTML += `
         <div class="flex items-center justify-between mb-2">
@@ -34,10 +148,11 @@ class CalendarEntryWidget extends HTMLElement {
 
         const calendarItems = await window.applicationAPI.call('getCalendarItems', date.toLocaleDateString());
 
-        for (const item of calendarItems) {
+        for (let i = 0; i < calendarItems.length; i++) {
+            const item = calendarItems[i];
             const startTime = new Date(item.startTime).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
             scheduleHTML += `
-            <div class="flex gap-4">
+            <div class="calendar-item flex gap-4 cursor-pointer" data-item-index="${i}">
                 <div class="flex flex-col items-center">
                     <span class="text-[11px] font-bold text-slate-500">${startTime}</span>
                     <div class="w-px h-full bg-slate-300 mt-2"></div>
@@ -60,6 +175,174 @@ class CalendarEntryWidget extends HTMLElement {
         }
 
         scheduleElement.innerHTML = scheduleHTML;
+
+        // 为每个日历条目添加点击事件
+        scheduleElement.querySelectorAll('.calendar-item').forEach((element, index) => {
+            element.addEventListener('click', () => {
+                this.showCalendarItem(calendarItems[index]);
+            });
+        });
+
+        // 更新月历网格和头部
+        this.renderCalendarGrid();
+        this.updateMonthHeader();
+        this.clearCalendarItem();
+    }
+
+    async clearCalendarItem() {
+        const rightPanel = this.querySelector('#rightPanel');
+        rightPanel.innerHTML = `
+        <div class="w-full flex flex-col items-center justify-center text-center p-12 overflow-hidden relative">
+            <!-- 装饰性背景光晕 -->
+            <div class="absolute inset-0 overflow-hidden pointer-events-none">
+                <div class="absolute -top-24 -left-24 w-64 h-64 bg-blue-100/30 rounded-full blur-3xl text-blue-100"></div>
+                <div class="absolute -bottom-24 -right-24 w-64 h-64 bg-purple-100/30 rounded-full blur-3xl"></div>
+            </div>
+
+            <!-- 核心占位图形 -->
+            <div class="relative mb-8">
+                <!-- 底层阴影环 -->
+                <div class="absolute inset-0 bg-gray-200/50 rounded-full blur-xl animate-pulse-soft"></div>
+
+                <!-- 大图标 -->
+                <div class="relative w-24 h-24 bg-white/60 rounded-3xl shadow-inner flex items-center justify-center border border-white/80">
+                    <i class="fa-solid fa-calendar-day text-5xl icon-gradient"></i>
+                </div>
+
+                <!-- 浮动装饰小图标 -->
+                <div class="absolute -right-2 -top-2 w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center text-white text-xs shadow-lg shadow-blue-200 border-2 border-white animate-bounce-slow">
+                    <i class="fa-solid fa-plus"></i>
+                </div>
+            </div>
+
+            <!-- 文字说明 -->
+            <div class="relative z-10">
+                <h3 class="text-xl font-semibold text-gray-800 mb-2">未选择日程</h3>
+                <p class="text-sm text-gray-500 max-w-[260px] leading-relaxed mx-auto">
+                    从左侧列表中选择一个项目以查看其详细内容，或者点击下方按钮创建新安排。
+                </p>
+            </div>
+
+            <!-- 快速操作按钮 -->
+            <div class="mt-10 flex gap-4">
+                <button class="px-6 py-2 bg-white/80 hover:bg-white text-gray-700 text-sm font-medium rounded-lg border border-gray-200 shadow-sm transition-all active:scale-95">
+                    浏览日历
+                </button>
+                <button class="px-6 py-2 bg-blue-500 hover:bg-blue-600 text-white text-sm font-medium rounded-lg shadow-md shadow-blue-100 transition-all active:scale-95">
+                    立即添加
+                </button>
+            </div>
+        </div>
+        `;
+    }
+
+    async showCalendarItem(item) {
+        const rightPanel = this.querySelector('#rightPanel');
+
+        // 格式化日期和时间
+        const startDate = new Date(item.startTime);
+        const endDate = item.endTime ? new Date(item.endTime) : null;
+        const startTimeStr = startDate.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+        const endTimeStr = endDate ? endDate.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : '';
+        const timeRange = endTimeStr ? `${startTimeStr} — ${endTimeStr}` : startTimeStr;
+
+        const dateStr = startDate.toLocaleDateString('zh-CN', {
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric'
+        });
+        const weekdayNames = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六'];
+        const dayOfWeek = weekdayNames[startDate.getDay()];
+        const fullDateStr = `${dateStr} ${dayOfWeek}`;
+
+        const monthName = startDate.toLocaleDateString('zh-CN', { month: 'long' });
+        const dayNum = startDate.getDate();
+
+        rightPanel.innerHTML = `
+        <div class="glass-panel w-full overflow-hidden animate-in fade-in zoom-in duration-300">
+
+            <!-- 顶部工具栏 -->
+            <div id='calendar-item-toolbar' class="pl-3 pr-16 flex justify-between items-center section-divider">
+
+            </div>
+
+            <!-- 内容主体 -->
+            <div class="p-8">
+                <!-- 标题与状态 -->
+                <div class="mb-8">
+                    <div class="flex items-center gap-3 mb-2">
+                        <span class="w-3 h-3 rounded-full bg-blue-500"></span>
+                        <span class="text-xs font-bold text-blue-600 uppercase tracking-widest">日程</span>
+                    </div>
+                    <h1 class="text-3xl font-bold text-gray-900 tracking-tight">${item.subject || '无标题'}</h1>
+                </div>
+
+                <!-- 时间信息卡片 -->
+                <div class="flex items-start gap-6 mb-8 p-4 bg-white/30 rounded-xl border border-white/40">
+                    <div class="flex flex-col items-center justify-center bg-white rounded-lg shadow-sm w-16 h-16 border border-gray-100">
+                        <span class="text-[10px] font-bold text-red-500 uppercase">${monthName}</span>
+                        <span class="text-2xl font-bold text-gray-800 leading-none">${dayNum}</span>
+                    </div>
+                    <div class="space-y-1">
+                        <div class="flex items-center text-gray-800 font-medium">
+                            <i class="fa-regular fa-clock w-6 text-gray-400"></i>
+                            ${timeRange}
+                        </div>
+                        <div class="flex items-center text-gray-500 text-sm">
+                            <i class="fa-regular fa-calendar-check w-6 text-gray-400"></i>
+                            ${fullDateStr}
+                        </div>
+                        ${item.location ? `
+                        <div class="flex items-center text-gray-500 text-sm">
+                            <i class="fa-solid fa-location-dot w-6 text-gray-400"></i>
+                            ${item.location}
+                        </div>
+                        ` : ''}
+                    </div>
+                </div>
+
+                <!-- 详细内容描述 -->
+                <div class="space-y-6">
+                    ${item.description ? `
+                    <section>
+                        <h4 class="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3">日程描述</h4>
+                        <div class="text-gray-700 leading-relaxed bg-white/20 p-4 rounded-xl border border-black/5">
+                            ${item.description}
+                        </div>
+                    </section>
+                    ` : ''}
+
+                    ${item.attendees && item.attendees.length > 0 ? `
+                    <section>
+                        <h4 class="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3">参与人员 (${item.attendees.length})</h4>
+                        <div class="flex flex-wrap gap-2">
+                            ${item.attendees.map((attendee, idx) => `
+                            <div class="flex items-center bg-white/50 border border-gray-200 py-1 px-3 rounded-full shadow-sm">
+                                <img src="https://i.pravatar.cc/100?u=${idx}" class="w-5 h-5 rounded-full mr-2">
+                                <span class="text-xs font-medium text-gray-700">${attendee}</span>
+                            </div>
+                            `).join('')}
+                        </div>
+                    </section>
+                    ` : ''}
+                </div>
+            </div>
+        </div>
+        `;
+
+        const buttons = [
+            { id: 'calendar-item-back-button', icon: 'fa-circle-arrow-left', label: '返回', action: () => {
+                this.clearCalendarItem();
+            }},
+            { id: 'calendar-item-edit-button', icon: 'fa-edit', label: '编辑', action: () => {
+                console.log('编辑日程', item);
+            }},
+            { id: 'calendar-item-delete-button', icon: 'fa-trash-alt', label: '删除', action: () => {
+                console.log('删除日程', item);
+            }},
+        ];
+        const headerToolbar = new ElasticToolbarWidget(buttons);
+        this.querySelector('#calendar-item-toolbar').appendChild(headerToolbar);
     }
 
     render() {
@@ -72,68 +355,20 @@ class CalendarEntryWidget extends HTMLElement {
                         <!-- 头部控制 -->
                         <div class="flex items-center justify-between mb-4 px-1">
                             <div class="flex flex-col">
-                                <h2 class="text-lg font-bold text-gray-800 tracking-tight">2026年 1月</h2>
+                                <h2 id="month-header" class="text-lg font-bold text-gray-800 tracking-tight">2026年 1月</h2>
                             </div>
                             <div class="flex gap-1">
-                                <button class="p-1.5 hover:bg-white/40 rounded-full transition-all active:scale-90">
+                                <button id="prev-month-btn" class="p-1.5 hover:bg-white/40 rounded-full transition-all active:scale-90">
                                     <svg class="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M15 19l-7-7 7-7" /></svg>
                                 </button>
-                                <button class="p-1.5 hover:bg-white/40 rounded-full transition-all active:scale-90">
+                                <button id="next-month-btn" class="p-1.5 hover:bg-white/40 rounded-full transition-all active:scale-90">
                                     <svg class="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 5l7 7-7 7" /></svg>
                                 </button>
                             </div>
                         </div>
 
                         <!-- 完整月历网格 -->
-                        <div class="grid grid-cols-7 gap-x-4 gap-y-1 text-center">
-                            <!-- 星期标题 -->
-                            <div class="h-6 flex items-center justify-center text-[10px] font-bold text-slate-400 uppercase tracking-widest">S</div>
-                            <div class="h-6 flex items-center justify-center text-[10px] font-bold text-slate-400 uppercase tracking-widest">M</div>
-                            <div class="h-6 flex items-center justify-center text-[10px] font-bold text-slate-400 uppercase tracking-widest">T</div>
-                            <div class="h-6 flex items-center justify-center text-[10px] font-bold text-slate-400 uppercase tracking-widest">W</div>
-                            <div class="h-6 flex items-center justify-center text-[10px] font-bold text-slate-400 uppercase tracking-widest">T</div>
-                            <div class="h-6 flex items-center justify-center text-[10px] font-bold text-slate-400 uppercase tracking-widest">F</div>
-                            <div class="h-6 flex items-center justify-center text-[10px] font-bold text-slate-400 uppercase tracking-widest">S</div>
-
-                            <!-- 第一行 -->
-                            <div class="h-9 flex items-center justify-center text-sm text-slate-300">24</div>
-                            <div class="h-9 flex items-center justify-center text-sm text-slate-300">25</div>
-                            <div class="h-9 flex items-center justify-center text-sm text-slate-300">26</div>
-                            <div class="h-9 flex items-center justify-center text-sm text-slate-300">27</div>
-                            <div class="h-9 flex items-center justify-center text-sm text-slate-300">28</div>
-                            <div class="h-9 flex items-center justify-center text-sm text-slate-300">29</div>
-                            <div class="h-9 flex items-center justify-center text-sm text-slate-300">30</div>
-
-                            <!-- 10月数据 -->
-                            <div class="h-9 flex items-center justify-center text-sm font-medium text-slate-700 hover:bg-white/60 rounded-xl cursor-pointer">1</div>
-                            <div class="h-9 flex items-center justify-center text-sm font-medium text-slate-700 hover:bg-white/60 rounded-xl cursor-pointer relative">
-                                2 <span class="absolute bottom-1 w-1 h-1 bg-rose-400 rounded-full"></span>
-                            </div>
-                            <!-- 选中状态：液态深色 -->
-                            <div class="h-9 flex items-center justify-center text-sm font-bold text-white bg-slate-800 rounded-xl shadow-lg shadow-black/20 ring-1 ring-black/10">3</div>
-                            <div class="h-9 flex items-center justify-center text-sm font-medium text-slate-700 hover:bg-white/60 rounded-xl cursor-pointer">4</div>
-                            <div class="h-9 flex items-center justify-center text-sm font-medium text-slate-700 hover:bg-white/60 rounded-xl cursor-pointer">5</div>
-                            <div class="h-9 flex items-center justify-center text-sm font-medium text-slate-700 hover:bg-white/60 rounded-xl cursor-pointer relative">
-                                6 <span class="absolute bottom-1 w-1 h-1 bg-sky-400 rounded-full"></span>
-                            </div>
-                            <div class="h-9 flex items-center justify-center text-sm font-medium text-slate-700 hover:bg-white/60 rounded-xl cursor-pointer">7</div>
-
-                            <!-- 循环行示例 -->
-                            <div class="h-9 flex items-center justify-center text-sm font-medium text-slate-700 hover:bg-white/60 rounded-xl cursor-pointer">8</div>
-                            <div class="h-9 flex items-center justify-center text-sm font-medium text-slate-700 hover:bg-white/60 rounded-xl cursor-pointer">9</div>
-                            <div class="h-9 flex items-center justify-center text-sm font-medium text-slate-700 hover:bg-white/60 rounded-xl cursor-pointer">10</div>
-                            <div class="h-9 flex items-center justify-center text-sm font-medium text-slate-700 hover:bg-white/60 rounded-xl cursor-pointer">11</div>
-                            <div class="h-9 flex items-center justify-center text-sm font-medium text-slate-700 hover:bg-white/60 rounded-xl cursor-pointer">12</div>
-                            <div class="h-9 flex items-center justify-center text-sm font-medium text-slate-700 hover:bg-white/60 rounded-xl cursor-pointer relative">
-                                13 <span class="absolute bottom-1 w-1 h-1 bg-amber-400 rounded-full"></span>
-                            </div>
-                            <div class="h-9 flex items-center justify-center text-sm font-medium text-slate-700 hover:bg-white/60 rounded-xl cursor-pointer">14</div>
-
-                            <!-- ... 更多行省略，保持视觉比例正确 -->
-                            <div class="h-9 flex items-center justify-center text-sm font-medium text-slate-700 hover:bg-white/60 rounded-xl cursor-pointer">...</div>
-                            <div class="h-9 flex items-center justify-center text-sm font-medium text-slate-700 hover:bg-white/60 rounded-xl cursor-pointer">29</div>
-                            <div class="h-9 flex items-center justify-center text-sm font-medium text-slate-700 hover:bg-white/60 rounded-xl cursor-pointer">30</div>
-                            <div class="h-9 flex items-center justify-center text-sm font-medium text-slate-700 hover:bg-white/60 rounded-xl cursor-pointer">31</div>
+                        <div id="calendar-grid" class="grid grid-cols-7 gap-x-4 gap-y-1 text-center">
                         </div>
                     </div>
 
@@ -151,7 +386,6 @@ class CalendarEntryWidget extends HTMLElement {
 
             <!-- 右侧面板 -->
             <div id="rightPanel" slot="right" class="bg-white p-0 overflow-auto w-full h-full">
-                abc
             </div>
         </splitter-widget>
         `;
