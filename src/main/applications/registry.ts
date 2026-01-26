@@ -9,6 +9,7 @@ import { SearchApplication } from "./search/app.js";
 import { NewsApplication } from "./news/app.js";
 import { TerminalApplication } from "./terminal/app.js";
 import { PPTCreatorApplication } from "./ppt/app.js";
+import { DesignerApplication } from "./designer/app.js";
 import { Worker } from "worker_threads";
 import { Setting, getAppDirectory } from "../utils/setting.js";
 import { logger, LogStream } from "../utils/logger.js";
@@ -187,6 +188,7 @@ export function initializeRegistry() {
     ApplicationRegistry.registerApplication(new SearchApplication());
     ApplicationRegistry.registerApplication(new NewsApplication());
     ApplicationRegistry.registerApplication(new PPTCreatorApplication());
+    ApplicationRegistry.registerApplication(new DesignerApplication());
 
     globalWorker = new Worker(
         path.join(app.getAppPath(), 'dist', 'main', 'worker.js'),

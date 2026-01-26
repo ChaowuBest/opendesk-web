@@ -5,7 +5,7 @@ import { CreatePPTTool } from "./tools";
 
 export class PPTCreatorApplication extends BaseApplication {
     constructor() {
-        super('pptcreator', 'PPT制作');
+        super('ppt', 'PPT制作');
     }
 
     getToolsets(): BaseToolset[] {
