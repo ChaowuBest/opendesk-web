@@ -31,7 +31,10 @@ class CalendarWorker extends BaseWorker {
     }
 
     async loadOutlookCalendarItems() {
-        const items = await OutlookUtils.getOutlookCalendarItems(-7, 7);
+        var items = await OutlookUtils.getOutlookCalendarItems(-7, 7);
+        if (!Array.isArray(items)) {
+            items = [items];
+        }
         const validatedItems = items.map(item => CalendarItemSchema.parse({
             uid: item.entryID,
             subject: item.subject,
@@ -65,7 +68,9 @@ class CalendarWorker extends BaseWorker {
         const items = await this.db.find({
             startTime: { $gte: dayTimestamp, $lte: dayTimestamp + 86400000 },
         }).sort({ startTime: 1 });
-        return items.map(item => CalendarItemSchema.parse(item));
+
+        const result = items.map(item => CalendarItemSchema.parse(item));
+        return result;
     }
 
     async initialize() {

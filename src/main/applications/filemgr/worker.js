@@ -151,7 +151,11 @@ class FileManagerWorker extends BaseWorker {
     async initialize() {
         this.runSequentially(async () => {
             this.storage = await FSStorage.getInstance();
-            const filesystems = this.config.entries;
+            const filesystems = this.config?.entries;
+            if (!filesystems) {
+                logger.warn(`no filesystems configured, skipping initialization`);
+                return;
+            }
             for (const fsEntry of filesystems) {
                 let instance = new FSScanner(fsEntry, this.storage, this.taskQueue);
                 this.scanners.set(fsEntry.root, instance);

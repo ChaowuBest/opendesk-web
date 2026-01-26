@@ -40,8 +40,12 @@ class CalendarApplication extends BaseApplication {
         );
         getCalendarItemsTool.setExecutor(async (args) => {
             let items = await this.callWorker('getCalendarItems', args.dateString);
+            if (items.status !== 'ok') {
+                return `错误: 无法获取日程信息: ${items.message}`;
+            }
+
             let result = `在${args.dateString}的日程安排列表为: \n`;
-            for (let item of items) {
+            for (let item of items.data) {
                 result += `- ${item.subject}\n`;
                 result += `  - 开始时间: ${new Date(item.startTime).toLocaleString()}\n`;
                 result += `  - 结束时间: ${new Date(item.endTime).toLocaleString()}\n`;

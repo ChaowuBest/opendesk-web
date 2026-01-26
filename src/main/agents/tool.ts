@@ -35,7 +35,7 @@ export class BaseTool<T extends z.ZodType> {
     /**
      * 自定义的工具调用结果渲染函数，如果返回 undefined，则不渲染工具调用
      */
-    renderToolCall(toolcall: ToolCall) {
+    renderToolCall(toolcall: ToolCall): string | undefined {
         return undefined;
     }
 
@@ -60,7 +60,7 @@ export class BaseTool<T extends z.ZodType> {
 
 export class BaseToolset {
     name: string;
-    tools: Map<string, BaseTool<z.ZodType>> = new Map();
+    tools: Map<string, BaseTool<any>> = new Map();
 
     constructor(name: string) {
         this.name = name;
@@ -69,7 +69,7 @@ export class BaseToolset {
     /**
      * Add multiple tools to the toolset
      */
-    addTools(...tools: BaseTool<z.ZodType>[]) {
+    addTools(...tools: BaseTool<any>[]) {
         for (const tool of tools) {
             this.addTool(tool);
         }
@@ -78,7 +78,7 @@ export class BaseToolset {
     /**
      * Add a tool to the toolset
      */
-    addTool(tool: BaseTool<z.ZodType>) {
+    addTool(tool: BaseTool<any>) {
         this.tools.set(tool.name, tool);
     }
 
@@ -93,7 +93,7 @@ export class BaseToolset {
     /**
      * Get a tool by name
      */
-    getTool(name: string): BaseTool<z.ZodType> | undefined {
+    getTool(name: string): BaseTool<any> | undefined {
         return this.tools.get(name);
     }
 
