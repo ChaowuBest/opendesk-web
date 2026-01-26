@@ -869,12 +869,11 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             `;
         };
 
-        // 检查是否需要显示展开/收起按钮
+        // 检查是否需要显示展开/收起按钮，计算收件人和抄送人的数量
         const needsExpandButton = () => {
-            const totalAddresses =
+            const totalAddresses = 
                 (this.selectedEmailHeader.to?.length || 0) +
-                (this.selectedEmailHeader.cc?.length || 0) +
-                (this.selectedEmailHeader.bcc?.length || 0);
+                (this.selectedEmailHeader.cc?.length || 0);
             return totalAddresses > 3;
         };
 
@@ -906,11 +905,28 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             `;
         }
 
-        // 渲染收件人，默认显示前3个
-        if (this.selectedEmailHeader.to && this.selectedEmailHeader.to.length > 0) {
-            const maxVisible = this.isHeadersExpanded ? this.selectedEmailHeader.to.length : 3;
-            const displayTos = this.selectedEmailHeader.to.slice(0, maxVisible);
-            const toHtml = displayTos.map(addr => renderEmailAddress(addr, 'to')).join('');
+        // 检查总地址数（收件人+抄送）
+        const toCount = this.selectedEmailHeader.to?.length || 0;
+        const ccCount = this.selectedEmailHeader.cc?.length || 0;
+        const totalAddresses = toCount + ccCount;
+        
+        // 当总地址数 <= 3 时，显示所有收件人、抄送，无需展开
+        const shouldShowAll = totalAddresses <= 3 || this.isHeadersExpanded;
+        
+        // 渲染收件人
+        if (toCount > 0) {
+            let toHtml = '';
+            
+            if (shouldShowAll) {
+                // 展开状态，显示所有收件人
+                toHtml = this.selectedEmailHeader.to.map(addr => renderEmailAddress(addr, 'to')).join('');
+            } else {
+                // 未展开状态，计算显示的收件人数
+                const maxTotalVisible = 3;
+                const toVisibleCount = Math.min(toCount, maxTotalVisible);
+                const displayTos = this.selectedEmailHeader.to.slice(0, toVisibleCount);
+                toHtml = displayTos.map(addr => renderEmailAddress(addr, 'to')).join('');
+            }
 
             addresses += `
             <!-- 收件人行 -->
@@ -923,21 +939,39 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             `;
         }
 
-        // 渲染抄送，展开时显示
-        if (this.selectedEmailHeader.cc && this.selectedEmailHeader.cc.length > 0 && this.isHeadersExpanded) {
-            const ccHtml = this.selectedEmailHeader.cc.map(addr => renderEmailAddress(addr, 'cc')).join('');
-            addresses += ` <!-- 抄送行 -->
-            <div class="group flex items-start px-1 py-1 hover:bg-gray-50 transition-colors">
-                <label class="w-12 text-xs text-gray-400 font-medium pt-0.5">抄送</label>
-                <div class="flex-1 flex flex-wrap gap-2">
-                    ${ccHtml}
+        // 渲染抄送
+        if (ccCount > 0) {
+            let ccHtml = '';
+            
+            if (shouldShowAll) {
+                // 展开状态，显示所有抄送人
+                ccHtml = this.selectedEmailHeader.cc.map(addr => renderEmailAddress(addr, 'cc')).join('');
+            } else {
+                // 未展开状态，显示部分抄送人
+                const maxTotalVisible = 3;
+                const toVisibleCount = Math.min(toCount, maxTotalVisible);
+                const ccVisibleCount = Math.max(0, maxTotalVisible - toVisibleCount);
+                
+                if (ccVisibleCount > 0) {
+                    const displayCcs = this.selectedEmailHeader.cc.slice(0, ccVisibleCount);
+                    ccHtml = displayCcs.map(addr => renderEmailAddress(addr, 'cc')).join('');
+                }
+            }
+            
+            if (ccHtml) {
+                addresses += ` <!-- 抄送行 -->
+                <div class="group flex items-start px-1 py-1 hover:bg-gray-50 transition-colors">
+                    <label class="w-12 text-xs text-gray-400 font-medium pt-0.5">抄送</label>
+                    <div class="flex-1 flex flex-wrap gap-2">
+                        ${ccHtml}
+                    </div>
                 </div>
-            </div>
-            `;
+                `;
+            }
         }
 
-        // 渲染密送，展开时显示
-        if (this.selectedEmailHeader.bcc && this.selectedEmailHeader.bcc.length > 0 && this.isHeadersExpanded) {
+        // 渲染密送，总地址数 <= 3 或展开时显示
+        if (this.selectedEmailHeader.bcc && this.selectedEmailHeader.bcc.length > 0 && shouldShowAll) {
             const bccHtml = this.selectedEmailHeader.bcc.map(addr => renderEmailAddress(addr, 'bcc')).join('');
             addresses += ` <!-- 密送行 -->
             <div class="group flex items-start px-1 py-1 hover:bg-gray-50 transition-colors">
