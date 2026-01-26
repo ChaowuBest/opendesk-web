@@ -65,7 +65,9 @@ class CalendarWorker extends BaseWorker {
         const items = await this.db.find({
             startTime: { $gte: dayTimestamp, $lte: dayTimestamp + 86400000 },
         }).sort({ startTime: 1 });
-        return items.map(item => CalendarItemSchema.parse(item));
+
+        const result = items.map(item => CalendarItemSchema.parse(item));
+        return result;
     }
 
     async initialize() {
