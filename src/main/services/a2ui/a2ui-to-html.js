@@ -672,6 +672,70 @@ class A2UIToHTMLConverter {
     });
   }
 
+  /**
+   * 递归处理 valueMap，将其转换为普通对象或数组
+   */
+  processValueMap(valueMap) {
+    if (!valueMap || !Array.isArray(valueMap)) {
+      return valueMap;
+    }
+
+    // 检查是否是数组格式的 map（每个元素有 key 和 value）
+    const isMapFormat = valueMap.every(item => item && typeof item === 'object' && 'key' in item);
+
+    if (isMapFormat) {
+      // 转换为对象
+      const result = {};
+      for (const item of valueMap) {
+        let value = null;
+        if (item.valueString !== undefined) value = item.valueString;
+        else if (item.valueInt !== undefined) value = item.valueInt;
+        else if (item.valueDouble !== undefined) value = item.valueDouble;
+        else if (item.valueBool !== undefined) value = item.valueBool;
+        else if (item.valueObject !== undefined) value = item.valueObject;
+        else if (item.valueMap !== undefined) value = this.processValueMap(item.valueMap);
+        else if (item.valueList !== undefined) value = this.processValueList(item.valueList);
+
+        if (value !== null) {
+          result[item.key] = value;
+        }
+      }
+      return result;
+    }
+
+    return valueMap;
+  }
+
+  /**
+   * 递归处理 valueList，将其转换为数组
+   */
+  processValueList(valueList) {
+    if (!valueList || !Array.isArray(valueList)) {
+      return valueList;
+    }
+
+    return valueList.map(item => {
+      if (item && typeof item === 'object') {
+        if (item.valueMap !== undefined) {
+          return this.processValueMap(item.valueMap);
+        } else if (item.valueList !== undefined) {
+          return this.processValueList(item.valueList);
+        } else if (item.valueString !== undefined) {
+          return item.valueString;
+        } else if (item.valueInt !== undefined) {
+          return item.valueInt;
+        } else if (item.valueDouble !== undefined) {
+          return item.valueDouble;
+        } else if (item.valueBool !== undefined) {
+          return item.valueBool;
+        } else if (item.valueObject !== undefined) {
+          return item.valueObject;
+        }
+      }
+      return item;
+    });
+  }
+
   handleDataModelUpdate(msg) {
     const { surfaceId, contents } = msg.dataModelUpdate;
     if (!this.dataModels[surfaceId]) {
@@ -684,7 +748,12 @@ class A2UIToHTMLConverter {
       else if (item.valueDouble !== undefined) value = item.valueDouble;
       else if (item.valueBool !== undefined) value = item.valueBool;
       else if (item.valueObject !== undefined) value = item.valueObject;
-      this.dataModels[surfaceId][item.key] = value;
+      else if (item.valueMap !== undefined) value = this.processValueMap(item.valueMap);
+      else if (item.valueList !== undefined) value = this.processValueList(item.valueList);
+
+      if (value !== null) {
+        this.dataModels[surfaceId][item.key] = value;
+      }
     });
   }
 
@@ -962,6 +1031,43 @@ class A2UIToHTMLConverter {
         const styleClasses = this.getComponentStyleClasses('Video');
         return `<video class="${styleClasses.join(' ')}" src="${this.escapeHtml(url)}" controls></video>`;
       }
+      case 'MultipleChoice': {
+        const options = props.options || [];
+        const maxAllowedSelections = props.maxAllowedSelections || 1;
+        const selections = this.resolveBoundValue(props.selections, dataModel) || [];
+        const selectedValues = Array.isArray(selections) ? selections : (selections ? [selections] : []);
+
+        const containerClasses = this.getComponentStyleClasses('MultipleChoice', 'container');
+        const labelClasses = this.getComponentStyleClasses('MultipleChoice', 'label');
+        const elementClasses = this.getComponentStyleClasses('MultipleChoice', 'element');
+        const additionalStyle = this.getAdditionalStyles('MultipleChoice');
+
+        const inputType = maxAllowedSelections === 1 ? 'radio' : 'checkbox';
+        const nameAttr = maxAllowedSelections === 1 ? ` name="mc_${Date.now()}_${Math.random().toString(36).substr(2, 9)}"` : '';
+
+        const optionsHtml = options.map((option, index) => {
+          const label = this.resolveBoundValue(option.label, dataModel) || '';
+          const value = option.value || String(index);
+          const isChecked = selectedValues.includes(value) || selectedValues.includes(String(value));
+          const checkedAttr = isChecked ? ' checked' : '';
+          const optionId = `mc_${Date.now()}_${index}_${Math.random().toString(36).substr(2, 9)}`;
+
+          return `
+            <label class="a2ui-multiplechoice__option ${containerClasses.join(' ')}"${additionalStyle ? ` style="${additionalStyle}"` : ''}>
+              <input 
+                type="${inputType}" 
+                class="a2ui-multiplechoice__input ${elementClasses.join(' ')}" 
+                value="${this.escapeHtml(value)}" 
+                id="${optionId}"
+               ${nameAttr}${checkedAttr} 
+              />
+              <span class="a2ui-multiplechoice__label ${labelClasses.join(' ')}">${this.escapeHtml(label)}</span>
+            </label>
+          `;
+        }).join('');
+
+        return `<div class="a2ui-multiplechoice">${optionsHtml}</div>`;
+      }
       default: {
         const defaultChildren = this.getChildren(props, compBuf, dataModel);
         return `<div class="a2ui-${type.toLowerCase()}">${defaultChildren}</div>`;
@@ -987,11 +1093,38 @@ class A2UIToHTMLConverter {
         return props.children.explicitList.map(childId => this.renderComponentById(childId, compBuf, dataModel)).join('');
       } else if (props.children.template) {
         const template = props.children.template;
-        const listPath = template.listPath;
-        if (listPath && dataModel) {
-          const list = this.resolveBoundValue({ path: listPath }, dataModel);
+        // 支持 dataBinding 和 listPath 两种格式
+        const bindingPath = template.dataBinding || template.listPath;
+        const componentId = template.componentId || template.child;
+
+        if (bindingPath && componentId && dataModel) {
+          const list = this.resolveBoundValue({ path: bindingPath }, dataModel);
+
+          // 处理数组
           if (Array.isArray(list)) {
-            return list.map(() => this.renderComponentById(template.child, compBuf, dataModel)).join('');
+            return list.map((item, index) => {
+              // 为每个 item 创建新的 dataModel 上下文
+              // 将 item 的数据合并到 dataModel 中，使路径绑定能够访问当前 item 的属性
+              const itemDataModel = { ...dataModel, ...item };
+              // 如果 item 是对象，将其属性直接添加到 dataModel 中
+              if (item && typeof item === 'object') {
+                Object.assign(itemDataModel, item);
+              }
+              return this.renderComponentById(componentId, compBuf, itemDataModel);
+            }).join('');
+          }
+
+          // 处理对象（valueMap 转换后的对象）
+          if (list && typeof list === 'object' && !Array.isArray(list)) {
+            // 将对象转换为数组（按 key 排序以保持一致性）
+            const items = Object.keys(list).map(key => ({ key, ...list[key] }));
+            return items.map((item, index) => {
+              const itemDataModel = { ...dataModel, ...item };
+              if (item && typeof item === 'object') {
+                Object.assign(itemDataModel, item);
+              }
+              return this.renderComponentById(componentId, compBuf, itemDataModel);
+            }).join('');
           }
         }
       }
@@ -1372,7 +1505,18 @@ class A2UIToHTMLConverter {
       const dataModelUpdatePart = parts.find(part => part.kind === 'data' && part.data?.dataModelUpdate);
       if (dataModelUpdatePart) {
         const contents = dataModelUpdatePart.data.dataModelUpdate.contents;
-        const transformedContents = contents.map(item => ({ key: item.key, valueString: item.valueString }));
+        // 保留所有类型的值，不仅仅是 valueString
+        const transformedContents = contents.map(item => {
+          const result = { key: item.key };
+          if (item.valueString !== undefined) result.valueString = item.valueString;
+          if (item.valueInt !== undefined) result.valueInt = item.valueInt;
+          if (item.valueDouble !== undefined) result.valueDouble = item.valueDouble;
+          if (item.valueBool !== undefined) result.valueBool = item.valueBool;
+          if (item.valueObject !== undefined) result.valueObject = item.valueObject;
+          if (item.valueMap !== undefined) result.valueMap = item.valueMap;
+          if (item.valueList !== undefined) result.valueList = item.valueList;
+          return result;
+        });
         result.push({ dataModelUpdate: { surfaceId: dataModelUpdatePart.data.dataModelUpdate.surfaceId, contents: transformedContents } });
       }
 
