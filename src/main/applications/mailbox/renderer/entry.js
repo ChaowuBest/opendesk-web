@@ -316,24 +316,33 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             return `已标记邮件为已读: ${args.uids.join(', ')}`;
         });
 
-
-        toolset.addTools(getEmailListTool, getEmailContentTool, markEmailAsReadTool);
         let writeEmailTool = new RendererTool('writeEmail', '撰写邮件,邮件正文内容由你自动生成', z.object({
             to: z.array(z.string()).describe("收件人列表"),
-            cc: z.array(z.string()).describe("抄送人列表,如果为提供则为空"),
+            cc: z.array(z.string()).describe("抄送人列表"),
+            bcc: z.array(z.string()).describe("密送人列表"),
             subject: z.string().describe("主题"),
             content: z.string().describe("邮件正文内容,html格式")
         }));
         writeEmailTool.setExecutor(async (args) => {
             let to = [];
             let cc = [];
-            for (const item of args.to) {
-                to.push({user: '', address: item});
+            let bcc = [];
+            if (args.to) {
+                args.to.map(item => {
+                    to.push({name: '', address: item});
+                })
             }
-            for (const item of args.cc) {
-                cc.push({user: '', address: item});
+            if (args.cc) {
+                args.cc.map(item => {
+                    cc.push({name: '', address: item});
+                })
             }
-            let mailHeader = {subject: args.subject, to: to, cc: cc};
+            if (args.bcc) {
+                args.bcc.map(item => {
+                    bcc.push({name: '', address: item});
+                })
+            }
+            let mailHeader = {subject: args.subject, to: to, cc: cc, bcc: bcc};
             let mailContent = {htmlContent: args.content, textContent: args.content};
             this.createNewEmail(MailOperations.SEND, mailHeader, mailContent);
             return "邮件已撰写完成";
@@ -352,8 +361,9 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
 
         let getEditEmailTool = new RendererTool('getEditEmail', '获取当前正在编辑的邮件内容', z.object({}));
         getEditEmailTool.setExecutor(async (args) => {
-            const emailContent = this.querySelector('#email-content');
-            return emailContent.innerHTML;
+            const editor = document.querySelector('#editor');
+            const mailElement = await editor.getMailContent();
+            return mailElement.html;
         });
 
         let PolishEmailTool = new RendererTool('polishEmail', '邮件校对和润色', z.object({
@@ -871,7 +881,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
 
         // 检查是否需要显示展开/收起按钮，计算收件人和抄送人的数量
         const needsExpandButton = () => {
-            const totalAddresses = 
+            const totalAddresses =
                 (this.selectedEmailHeader.to?.length || 0) +
                 (this.selectedEmailHeader.cc?.length || 0);
             return totalAddresses > 3;
@@ -909,14 +919,14 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         const toCount = this.selectedEmailHeader.to?.length || 0;
         const ccCount = this.selectedEmailHeader.cc?.length || 0;
         const totalAddresses = toCount + ccCount;
-        
+
         // 当总地址数 <= 3 时，显示所有收件人、抄送，无需展开
         const shouldShowAll = totalAddresses <= 3 || this.isHeadersExpanded;
-        
+
         // 渲染收件人
         if (toCount > 0) {
             let toHtml = '';
-            
+
             if (shouldShowAll) {
                 // 展开状态，显示所有收件人
                 toHtml = this.selectedEmailHeader.to.map(addr => renderEmailAddress(addr, 'to')).join('');
@@ -942,7 +952,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         // 渲染抄送
         if (ccCount > 0) {
             let ccHtml = '';
-            
+
             if (shouldShowAll) {
                 // 展开状态，显示所有抄送人
                 ccHtml = this.selectedEmailHeader.cc.map(addr => renderEmailAddress(addr, 'cc')).join('');
@@ -951,13 +961,13 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
                 const maxTotalVisible = 3;
                 const toVisibleCount = Math.min(toCount, maxTotalVisible);
                 const ccVisibleCount = Math.max(0, maxTotalVisible - toVisibleCount);
-                
+
                 if (ccVisibleCount > 0) {
                     const displayCcs = this.selectedEmailHeader.cc.slice(0, ccVisibleCount);
                     ccHtml = displayCcs.map(addr => renderEmailAddress(addr, 'cc')).join('');
                 }
             }
-            
+
             if (ccHtml) {
                 addresses += ` <!-- 抄送行 -->
                 <div class="group flex items-start px-1 py-1 hover:bg-gray-50 transition-colors">
@@ -1684,6 +1694,7 @@ class MailEditorWidget extends AgentOperableHTMLElement {
             document.getElementById('subject').value = '答复:' + mailHeader.subject;
         } else if (operation == MailOperations.REPLYALL) {
             document.getElementById('to').value = mailHeader.from[0].address;
+            document.getElementById('to').value += ',' + mailHeader.to.map(to => to.address).join(',');
             document.getElementById('subject').value = '答复全部:' + mailHeader.subject;
             if (mailHeader.cc && mailHeader.cc.length > 0) {
                 document.getElementById('cc').value = mailHeader.cc.map(cc => cc.address).join(',');
@@ -1696,6 +1707,8 @@ class MailEditorWidget extends AgentOperableHTMLElement {
         } else if (operation == MailOperations.SEND) {
             document.getElementById('subject').value = mailHeader.subject;
             document.getElementById('to').value = mailHeader.to.map(to => to.address).join(',')
+            document.getElementById('cc').value = mailHeader.cc.map(cc => cc.address).join(',')
+            document.getElementById('bcc').value = mailHeader.bcc.map(bcc => bcc.address).join(',')
         }
 
         let originContent = mailContent.htmlContent ? mailContent.htmlContent : mailContent.textContent.replace(/\n/g, '<br>')
