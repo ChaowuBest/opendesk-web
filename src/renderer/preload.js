@@ -315,6 +315,8 @@ if (window.self !== window.top) {
             return result.data;
         },
         subscribeNotification: async (callback) => {
+            // 先移除旧的监听器，避免重复订阅
+            ipcRenderer.removeAllListeners('notification:notificationReceived');
             await ipcRenderer.invoke('notification:subscribeNotification');
             ipcRenderer.on('notification:notificationReceived', (event, ...args) => {
                 callback(...args)
