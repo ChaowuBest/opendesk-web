@@ -32,9 +32,7 @@ class NotificationPanel extends HTMLElement {
 
     connectedCallback() {
         this.render();
-        window.notificationAPI.subscribeNotification(this.onNotificationReceived.bind(this)).then(subscriptionId => {
-            console.info(`notification subscribed`, subscriptionId);
-        });
+        window.notificationAPI.subscribeNotification(this.onNotificationReceived.bind(this));
     }
 
     onNotificationReceived(type, source, title, message) {

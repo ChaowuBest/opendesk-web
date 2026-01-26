@@ -28,6 +28,11 @@ class NotificationManager {
     }
 
     addSubscriber(subscriber) {
+        // 检查订阅者是否已存在，避免重复添加
+        if (this.subscribers.includes(subscriber)) {
+            logger.info(`notification subscriber ${subscriber.id} already exists, skipping`);
+            return;
+        }
         logger.info(`adding notification subscriber: ${subscriber.id}`);
         this.subscribers.push(subscriber);
     }
