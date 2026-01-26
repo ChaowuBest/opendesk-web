@@ -31,7 +31,10 @@ class CalendarWorker extends BaseWorker {
     }
 
     async loadOutlookCalendarItems() {
-        const items = await OutlookUtils.getOutlookCalendarItems(-7, 7);
+        var items = await OutlookUtils.getOutlookCalendarItems(-7, 7);
+        if (!Array.isArray(items)) {
+            items = [items];
+        }
         const validatedItems = items.map(item => CalendarItemSchema.parse({
             uid: item.entryID,
             subject: item.subject,
