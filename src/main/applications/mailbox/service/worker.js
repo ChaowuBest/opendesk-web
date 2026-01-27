@@ -18,7 +18,7 @@ var mailboxDataDirectory = null;
 
 /**
  * 为Promise添加超时机制
- * @param {Promise} promise 
+ * @param {Promise} promise
  * @param {number} timeoutMs 超时时间（毫秒）
  * @param {string} operation 操作名称（用于错误信息）
  * @returns {Promise}
@@ -840,7 +840,7 @@ class MailboxWorker extends BaseWorker {
         const operationTimeout = 30000; // 单个操作超时30秒
         const overallTimeout = 300000; // 整体超时5分钟
         let lastError = null;
-        
+
         // 为整个同步过程添加超时
         const syncPromise = (async () => {
             // 重试机制：对于网络错误、超时等概率性问题进行重试
@@ -916,13 +916,13 @@ class MailboxWorker extends BaseWorker {
                         logger.warn(`error during POP3 QUIT: ${quitError.message}`);
                         // QUIT失败不影响同步结果，忽略错误
                     }
-                    
+
                     return newList.length;
                 } catch (error) {
                     lastError = error;
                     // 判断是否应该重试
                     const shouldRetry = attempt < maxRetries - 1 && this.isRetryableError(error);
-                    
+
                     if (shouldRetry) {
                         const delay = (attempt + 1) * 1000; // 递增延迟：1s, 2s
                         logger.warn(`retrying syncPOP3Inbox, attempt ${attempt + 1}/${maxRetries}, delay ${delay}ms, error: ${error.message}`);
@@ -946,7 +946,7 @@ class MailboxWorker extends BaseWorker {
                     }
                 }
             }
-            
+
             // 所有重试都失败了
             logger.error(`failed to sync POP3 inbox after ${maxRetries} attempts: ${lastError?.message || 'unknown error'}`);
             throw lastError || new Error('同步邮件失败');
@@ -970,12 +970,12 @@ class MailboxWorker extends BaseWorker {
 
     /**
      * 判断错误是否应该重试
-     * @param {Error} error 
+     * @param {Error} error
      * @returns {boolean}
      */
     isRetryableError(error) {
         if (!error) return false;
-        
+
         const errorMessage = error.message?.toLowerCase() || String(error).toLowerCase();
         const retryablePatterns = [
             'timeout',
@@ -989,7 +989,7 @@ class MailboxWorker extends BaseWorker {
             '超时',
             'aggregateerror'
         ];
-        
+
         return retryablePatterns.some(pattern => errorMessage.includes(pattern));
     }
 
@@ -1112,7 +1112,7 @@ class MailboxWorker extends BaseWorker {
             // 重试机制：对于概率性错误（如网络问题、超时等）进行重试
             const maxRetries = 2;
             let lastError = null;
-            
+
             for (let attempt = 0; attempt <= maxRetries; attempt++) {
                 try {
                     const pop3 = new POP3EmailClient(
@@ -1148,7 +1148,7 @@ class MailboxWorker extends BaseWorker {
                         error.message?.includes('网络') ||
                         error.message?.includes('连接')
                     );
-                    
+
                     if (shouldRetry) {
                         const delay = (attempt + 1) * 1000; // 递增延迟：1s, 2s
                         logger.warn(`retrying getEmailContent for ${uid}, attempt ${attempt + 1}/${maxRetries + 1}, delay ${delay}ms`);
@@ -1159,7 +1159,7 @@ class MailboxWorker extends BaseWorker {
                     }
                 }
             }
-            
+
             // 所有重试都失败了
             logger.error(`failed to get email content from POP3 server after ${maxRetries + 1} attempts: ${uid}`);
             throw lastError || new Error(`无法获取邮件内容: ${uid}`);

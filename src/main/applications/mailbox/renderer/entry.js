@@ -257,7 +257,13 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
     }
 
     getAgentInstruct() {
-        return '你是一个邮件管理助手，你负责管理用户的邮件，并利用提供的邮件及其他工具来完成用户指定的任务。';
+        return `你是一个邮件管理助手，你负责管理用户的邮件，并利用提供的邮件及其他工具来完成用户指定的任务。
+
+                重要规则：
+                    1. 不要假设你已经知道邮件内容，每次必须通过工具获取。
+                    2. 当用户请求总结邮件内容、分析邮件、提取邮件信息或任何需要了解邮件内容的操作时，你必须首先调用 getSelectedEmailTool 工具来获取当前选中的邮件内容。
+                    3. 如果用户说"总结这封邮件"、"这封邮件说了什么"、"分析这封邮件"等类似请求，立即调用 getSelectedEmailTool。
+                `;
     }
 
     getToolset() {
