@@ -1,6 +1,5 @@
 import { z } from 'zod';
 
-
 const InboxServerSchema = z.object({
     pop3: z.object({
         host: z.string().default(''),
@@ -23,14 +22,20 @@ const OutboxServerSchema = z.object({
     }).optional(),
 });
 
+// 单个账号的配置
 const EmailProfileSchema = z.object({
     name: z.string().default(''),
-    inbox: InboxServerSchema.optional(),
-    outbox: OutboxServerSchema.optional(),
     username: z.string().default(''),
     password: z.string().default(''),
+    inbox: InboxServerSchema.optional(),
+    outbox: OutboxServerSchema.optional(),
 });
 
+// 【核心修改】应用层级配置，包含 profiles 数组
+const MailboxConfigSchema = z.object({
+    currentProfileId: z.string().optional(),
+    profiles: z.array(EmailProfileSchema).default([]),
+});
 
 const EmailHeaderQuerySchema = z.object({
     from: z.string().optional(),
@@ -52,7 +57,6 @@ const sendEmailSchema = z.object({
     html: z.string().default(''),
     attachments: z.array(z.string()).default([]),
 });
-
 
 class EmailAddress {
     constructor(name, address) {
@@ -106,6 +110,7 @@ export {
     EmailContent,
     EmailAttachment,
     EmailProfileSchema,
+    MailboxConfigSchema, // 导出这个新的 Schema
     InboxServerSchema,
     OutboxServerSchema,
     sendEmailSchema,

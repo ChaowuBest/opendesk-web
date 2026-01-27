@@ -1,4 +1,4 @@
-import { EmailHeader, EmailProfileSchema, EmailContent, EmailAttachment } from "../common.js";
+import { EmailHeader, EmailProfileSchema, MailboxConfigSchema, EmailContent, EmailAttachment } from "../common.js";
 import { BaseWorker } from "../../base.js";
 import { logger } from '../../../utils/logger.js';
 import Pop3Command from 'node-pop3';
@@ -18,7 +18,7 @@ var mailboxDataDirectory = null;
 
 /**
  * 为Promise添加超时机制
- * @param {Promise} promise 
+ * @param {Promise} promise
  * @param {number} timeoutMs 超时时间（毫秒）
  * @param {string} operation 操作名称（用于错误信息）
  * @returns {Promise}
@@ -322,14 +322,16 @@ class POP3EmailClient {
         return `attachment_${index}_${timestamp}${ext}`;
     }
 
-    async prepareAttachments(uid, attachments) {
+    async prepareAttachments(uid, attachments, attachmentDirectory) {
         if (!attachments || attachments.length === 0) {
             return [];
         }
 
-        const attachmentDirectory = path.join(mailboxDataDirectory, 'attachments', uid);
+        const emailAttachmentDir = path.join(attachmentDirectory, uid);
         let result = [];
-        fs.mkdirSync(attachmentDirectory, { recursive: true });
+        if (!fs.existsSync(emailAttachmentDir)) {
+            fs.mkdirSync(emailAttachmentDir, { recursive: true });
+       }
 
         for (let i = 0; i < attachments.length; i++) {
             const attachment = attachments[i];
@@ -366,13 +368,13 @@ class POP3EmailClient {
             let counter = 1;
             const baseName = path.basename(filename, path.extname(filename));
             const ext = path.extname(filename);
-            while (fs.existsSync(path.join(attachmentDirectory, finalFilename))) {
+            while (fs.existsSync(path.join(emailAttachmentDir, finalFilename))) {
                 finalFilename = `${baseName}_${counter}${ext}`;
                 counter++;
             }
 
             try {
-                const attachmentPath = path.join(attachmentDirectory, finalFilename);
+                const attachmentPath = path.join(emailAttachmentDir, finalFilename);
                 fs.writeFileSync(attachmentPath, attachment.content);
                 result.push(new EmailAttachment(finalFilename, attachmentPath));
             } catch (error) {
@@ -383,7 +385,7 @@ class POP3EmailClient {
         return result;
     }
 
-    async getEmail(uid) {
+    async getEmail(uid, attachmentDirectory) {
         const pop3 = this.pop3();
         const operationTimeout = 60000; // 单个操作超时60秒（获取完整邮件可能需要更长时间）
         try {
@@ -407,7 +409,7 @@ class POP3EmailClient {
             );
             const parsed = await simpleParser(email);
 
-            const attachments = await this.prepareAttachments(uid, parsed.attachments);
+            const attachments = await this.prepareAttachments(uid, parsed.attachments, attachmentDirectory);
             const content = new EmailContent(parsed.html, parsed.text, attachments);
             const header = new EmailHeader(
                 uid,
@@ -450,8 +452,8 @@ class POP3EmailClient {
         }
     }
 
-    async getEmailContent(uid) {
-        const emailResult = await this.getEmail(uid);
+    async getEmailContent(uid, attachmentDirectory) {
+        const emailResult = await this.getEmail(uid, attachmentDirectory);
         if (!emailResult) {
             logger.error(`failed to get email content: ${uid}, getEmail returned null`);
             return null;
@@ -512,9 +514,9 @@ class MailboxStorage {
     constructor(dbPath) {
         /** @type {nedb} */
         this.dbPath = dbPath;
-        this.db = new nedb({ filename: dbPath });
-        this.rawdb = new nedb({ filename: dbPath + '.raw' });
-        this.contentdb = new nedb({ filename: dbPath + '.content' });
+        this.db = new nedb({ filename: dbPath + '.db' });
+        this.rawdb = new nedb({ filename: dbPath + '_raw.db' });
+        this.contentdb = new nedb({ filename: dbPath + '_content.db' });
     }
 
     async initialize() {
@@ -657,13 +659,6 @@ class MailboxStorage {
         return set;
     }
 
-    /**
-     * Get the list of email headers from the database
-     * @param {number} offset - The offset to start from
-     * @param {number} pageSize - The page size of emails to return
-     * @returns {Promise<EmailHeader[]>}
-     */
-
     async getEmailHeaderList(offset = 0, pageSize = 20) {
         const docs = await this.db.find({deleted: { $ne: true }}).sort({ date: -1 }).skip(offset).limit(pageSize);
         return docs.map(doc => new EmailHeader(
@@ -673,92 +668,42 @@ class MailboxStorage {
         ));
     }
 
-    /**
-     * Search emails by various criteria
-     * @param {import('../common.js').EmailHeaderQuerySchema & {general?: string}} query
-     * @returns {Promise<EmailHeader[]>}
-     */
     async searchEmails(query) {
-        // Build the query object for NeDB
         const dbQuery = {};
         const orConditions = [];
 
-        // General search (search in subject, body, or from)
         if (query.general) {
             const generalRegex = new RegExp(query.general, 'i');
             const matchingUids = new Set();
+            const subjectDocs = await this.db.find({ subject: { $regex: generalRegex } });
+            for (const doc of subjectDocs) matchingUids.add(doc.uid);
 
-            // 1. Find emails matching subject
-            const subjectDocs = await this.db.find({
-                subject: { $regex: generalRegex }
-            });
-            for (const doc of subjectDocs) {
-                matchingUids.add(doc.uid);
-            }
-
-            // 2. Find emails matching from (sender)
             const fromDocs = await this.db.find({
-                $or: [
-                    { 'from.address': { $regex: generalRegex } },
-                    { 'from.name': { $regex: generalRegex } }
-                ]
+                $or: [ { 'from.address': { $regex: generalRegex } }, { 'from.name': { $regex: generalRegex } } ]
             });
-            for (const doc of fromDocs) {
-                matchingUids.add(doc.uid);
-            }
+            for (const doc of fromDocs) matchingUids.add(doc.uid);
 
-            // 3. Find emails matching body content
             const bodyRegex = new RegExp(query.general, 'i');
             const contentDocs = await this.contentdb.find({
-                $or: [
-                    { htmlContent: { $regex: bodyRegex } },
-                    { textContent: { $regex: bodyRegex } }
-                ]
+                $or: [ { htmlContent: { $regex: bodyRegex } }, { textContent: { $regex: bodyRegex } } ]
             });
-            for (const contentDoc of contentDocs) {
-                matchingUids.add(contentDoc.uid);
-            }
+            for (const contentDoc of contentDocs) matchingUids.add(contentDoc.uid);
 
-            // Query headers for matching UIDs (OR relationship: subject OR from OR body)
-            if (matchingUids.size > 0) {
-                dbQuery.uid = { $in: Array.from(matchingUids) };
-            } else {
-                // No matches, return empty result
-                return [];
-            }
+            if (matchingUids.size > 0) dbQuery.uid = { $in: Array.from(matchingUids) };
+            else return [];
         } else {
-            // Subject search (case-insensitive regex)
-            if (query.subject) {
-                dbQuery.subject = { $regex: new RegExp(query.subject, 'i') };
-            }
-
-            // From search (search in from array)
+            if (query.subject) dbQuery.subject = { $regex: new RegExp(query.subject, 'i') };
             if (query.from) {
-                orConditions.push({
-                    'from.address': { $regex: new RegExp(query.from, 'i') }
-                });
-                orConditions.push({
-                    'from.name': { $regex: new RegExp(query.from, 'i') }
-                });
+                orConditions.push({ 'from.address': { $regex: new RegExp(query.from, 'i') } });
+                orConditions.push({ 'from.name': { $regex: new RegExp(query.from, 'i') } });
             }
-
-            // To search (search in to array)
             if (query.to) {
-                orConditions.push({
-                    'to.address': { $regex: new RegExp(query.to, 'i') }
-                });
-                orConditions.push({
-                    'to.name': { $regex: new RegExp(query.to, 'i') }
-                });
+                orConditions.push({ 'to.address': { $regex: new RegExp(query.to, 'i') } });
+                orConditions.push({ 'to.name': { $regex: new RegExp(query.to, 'i') } });
             }
-
-            // If we have or conditions, add them to the query
-            if (orConditions.length > 0) {
-                dbQuery.$or = orConditions;
-            }
+            if (orConditions.length > 0) dbQuery.$or = orConditions;
         }
 
-        // Date range search
         if (query.startDate || query.endDate) {
             dbQuery.date = dbQuery.date || {};
             if (query.startDate) {
@@ -789,24 +734,13 @@ class MailboxStorage {
         // Execute the query
         let docs = await this.db.find(dbQuery).sort({ date: -1 });
 
-        // If body search is requested (and not general search), filter by content
         if (query.body && !query.general) {
             const bodyRegex = new RegExp(query.body, 'i');
             const matchingUids = new Set();
-
-            // Search in content database
             const contentDocs = await this.contentdb.find({
-                $or: [
-                    { htmlContent: { $regex: bodyRegex } },
-                    { textContent: { $regex: bodyRegex } }
-                ]
+                $or: [ { htmlContent: { $regex: bodyRegex } }, { textContent: { $regex: bodyRegex } } ]
             });
-
-            for (const contentDoc of contentDocs) {
-                matchingUids.add(contentDoc.uid);
-            }
-
-            // Filter headers by matching UIDs
+            for (const contentDoc of contentDocs) matchingUids.add(contentDoc.uid);
             docs = docs.filter(doc => matchingUids.has(doc.uid));
         }
 
@@ -830,42 +764,51 @@ class MailboxWorker extends BaseWorker {
 
     constructor(appDataDirectory) {
         super('mailbox', appDataDirectory);
-        mailboxDataDirectory = appDataDirectory;
-        this.storage = new MailboxStorage(path.join(appDataDirectory, 'mailbox_header_storage.db'));
+        this.appDataDirectory = appDataDirectory;
+        // 使用 Map 管理多个 storage 和 profile
+        this.storageMap = new Map(); // username -> MailboxStorage
+        this.profileMap = new Map(); // username -> EmailProfileSchema
+        this.currentProfileId = null; // 当前选中的 profile username
         this.isSyncing = false;
     }
 
-    async syncPOP3Inbox(usr, pwd, tls, host, port) {
+    async syncPOP3Inbox(profile, storage) {
+        const { username, password, inbox } = profile;
+        if (!inbox?.pop3) return 0;
+
+        const pop3 = new Pop3Command({
+            user: username,
+            password: password,
+            host: inbox.pop3.host,
+            port: inbox.pop3.port,
+            tls: inbox.pop3.tls
+        });
         const maxRetries = 3;
         const operationTimeout = 30000; // 单个操作超时30秒
         const overallTimeout = 300000; // 整体超时5分钟
         let lastError = null;
-        
+
         // 为整个同步过程添加超时
         const syncPromise = (async () => {
             // 重试机制：对于网络错误、超时等概率性问题进行重试
             for (let attempt = 0; attempt < maxRetries; attempt++) {
-                let pop3 = null;
                 try {
-                    pop3 = new Pop3Command({ user: usr, password: pwd, host: host, port: port, tls: tls });
-
                     // 为UIDL操作添加超时
                     const allList = await withTimeout(
                         pop3.UIDL(),
                         operationTimeout,
                         'UIDL'
                     );
-                    const uidSet = await this.storage.getUIDSet();
+                    const uidSet = await storage.getUIDSet();
                     const newList = allList.filter(([_, uid]) => !uidSet.has(uid)).reverse();
 
                     var pendingHeaders = [];
-
                     if (newList.length > 0) {
-                        NotificationManager.getInstance().info('邮箱', '收取新邮件', `即将从${usr}收取 ${newList.length} 封新邮件`);
+                        NotificationManager.getInstance().info('邮箱', '收取新邮件', `即将从${username}收取 ${newList.length} 封新邮件`);
                     }
 
                     for (const [i, [index, uid]] of newList.entries()) {
-                        const cachedRawEmail = await this.storage.getRawEmailHeader(uid);
+                        const cachedRawEmail = await storage.getRawEmailHeader(uid);
                         if (cachedRawEmail) {
                             pendingHeaders.push([uid, cachedRawEmail]);
                         } else {
@@ -877,7 +820,7 @@ class MailboxWorker extends BaseWorker {
                                     `TOP(${index})`
                                 );
                                 pendingHeaders.push([uid, rawEmailHeader]);
-                                await this.storage.saveRawEmailHeader(uid, rawEmailHeader);
+                                await storage.saveRawEmailHeader(uid, rawEmailHeader);
                             } catch (topError) {
                                 // 单个邮件头获取失败，记录错误但继续处理其他邮件
                                 logger.warn(`failed to get email header for ${uid}, index ${index}: ${topError.message}`);
@@ -896,13 +839,13 @@ class MailboxWorker extends BaseWorker {
                         }
 
                         if (pendingHeaders.length >= 100) {
-                            this.storage.saveRawEmailHeaders(...pendingHeaders);
+                            storage.saveRawEmailHeaders(...pendingHeaders);
                             pendingHeaders = [];
                         }
                     }
 
                     if (pendingHeaders.length > 0) {
-                        this.storage.saveRawEmailHeaders(...pendingHeaders);
+                        storage.saveRawEmailHeaders(...pendingHeaders);
                     }
 
                     // 尝试关闭连接，但不让QUIT的错误影响整体结果
@@ -916,13 +859,13 @@ class MailboxWorker extends BaseWorker {
                         logger.warn(`error during POP3 QUIT: ${quitError.message}`);
                         // QUIT失败不影响同步结果，忽略错误
                     }
-                    
+
                     return newList.length;
                 } catch (error) {
                     lastError = error;
                     // 判断是否应该重试
                     const shouldRetry = attempt < maxRetries - 1 && this.isRetryableError(error);
-                    
+
                     if (shouldRetry) {
                         const delay = (attempt + 1) * 1000; // 递增延迟：1s, 2s
                         logger.warn(`retrying syncPOP3Inbox, attempt ${attempt + 1}/${maxRetries}, delay ${delay}ms, error: ${error.message}`);
@@ -946,7 +889,7 @@ class MailboxWorker extends BaseWorker {
                     }
                 }
             }
-            
+
             // 所有重试都失败了
             logger.error(`failed to sync POP3 inbox after ${maxRetries} attempts: ${lastError?.message || 'unknown error'}`);
             throw lastError || new Error('同步邮件失败');
@@ -968,14 +911,47 @@ class MailboxWorker extends BaseWorker {
         }
     }
 
+    getCurrentStorage() {
+        if (!this.currentProfileId) return null;
+        return this.storageMap.get(this.currentProfileId);
+    }
+
+    getCurrentProfile() {
+        if (!this.currentProfileId) return null;
+        return this.profileMap.get(this.currentProfileId);
+    }
+
+    getCurrentAttachmentDir() {
+        if (!this.currentProfileId) return null;
+        const safeEmail = this.currentProfileId.replace(/[^a-zA-Z0-9@.-]/g, '_');
+        return path.join(this.appDataDirectory, 'attachments', safeEmail);
+    }
+
+    async initializeAccount(profile) {
+        const email = profile.username;
+        // 使用安全的邮件地址作为文件名的一部分，避免特殊字符问题
+        const safeEmail = email.replace(/[^a-zA-Z0-9@.-]/g, '_');
+
+        // 每个账号独立数据库
+        const dbName = `mailbox_data_${safeEmail}`;
+        const dbPath = path.join(this.appDataDirectory, 'db', safeEmail, dbName);
+
+        const storage = new MailboxStorage(dbPath);
+        await storage.initialize();
+
+        this.storageMap.set(email, storage);
+        this.profileMap.set(email, profile);
+        logger.info(`initialized storage for profile: ${email}`);
+    }
+
     /**
      * 判断错误是否应该重试
-     * @param {Error} error 
+     * @param {Error} error
      * @returns {boolean}
      */
     isRetryableError(error) {
         if (!error) return false;
-        
+
         const errorMessage = error.message?.toLowerCase() || String(error).toLowerCase();
         const retryablePatterns = [
             'timeout',
@@ -989,22 +965,21 @@ class MailboxWorker extends BaseWorker {
             '超时',
             'aggregateerror'
         ];
-        
+
         return retryablePatterns.some(pattern => errorMessage.includes(pattern));
     }
 
-    notifyEmailListUpdated() {
-        this.emitEvent('emailListUpdated');
+    notifyEmailListUpdated(profileId) {
+        if (this.currentProfileId === profileId) {
+            this.emitEvent('emailListUpdated');
+        }
     }
 
     async sync() {
-        let newEmailCount = 0;
-        if (this.config === undefined) {
-            logger.warn('no config, skip mailbox sync');
+        if (this.profileMap.size === 0) {
             return;
         }
 
-        const config = EmailProfileSchema.parse(this.config);
         if (this.isSyncing) {
             logger.info('another syncing process is running, skip');
             return;
@@ -1012,19 +987,27 @@ class MailboxWorker extends BaseWorker {
 
         this.isSyncing = true;
         try {
-            if (config.inbox?.pop3) {
-                newEmailCount = await this.syncPOP3Inbox(
-                    config.username, config.password,
-                    config.inbox.pop3.tls, config.inbox.pop3.host, config.inbox.pop3.port
-                );
+            for (const [id, profile] of this.profileMap) {
+                const storage = this.storageMap.get(id);
+                if (!storage) continue;
+
+                try {
+                    logger.info(`starting sync for profile: ${id}`);
+                    let newEmailCount = 0;
+                    if (profile.inbox?.pop3) {
+                        newEmailCount = await this.syncPOP3Inbox(profile, storage);
+                    }
+                    if (newEmailCount > 0) {
+                        this.notifyEmailListUpdated(id);
+                    }
+                } catch (accError) {
+                    logger.error(`error syncing profile ${id}: ${accError.message}`);
+                    NotificationManager.getInstance().error('邮箱', '收取新邮件', `账号 ${id} 同步失败: ${accError.message}`);
+                }
             }
-            logger.info('mailbox sync completed');
-            if (newEmailCount > 0) {
-                this.notifyEmailListUpdated(newEmailCount);
-            }
+            logger.info('all mailboxes sync completed');
         } catch (error) {
             logger.error(`error syncing mailbox: ${error.message}`);
-            NotificationManager.getInstance().error('邮箱', '收取新邮件', `收取新邮件失败: ${error.message}`);
         } finally {
             this.isSyncing = false;
         }
@@ -1039,20 +1022,100 @@ class MailboxWorker extends BaseWorker {
     }
 
     async syncEmails() {
-        if (this.config === undefined) {
-            logger.warn('no config, skip mailbox sync');
-            return;
-        }
         this.sync();
     }
 
-    async initialize() {
-        if (this.config === undefined) {
-            logger.warn('mailbox service not configured, will not start mailbox service');
+    // ====== 给前端调用：获取账号列表 ======
+    async getAccountList() {
+        const accounts = [];
+        for (const [id, profile] of this.profileMap) {
+            accounts.push({
+                email: id, // 这里对应前端的 email 字段
+                name: profile.name || id,
+                active: id === this.currentProfileId
+            });
+        }
+        return accounts;
+    }
+
+    async switchAccount(email) {
+        if (!this.storageMap.has(email)) {
+            await this.reloadProfilesFromConfig();
+            if (!this.storageMap.has(email)) {
+                throw new Error(`Profile ${email} not found`);
+            }
+        }
+        this.currentProfileId = email;
+        logger.info(`switched to profile: ${email}`);
+        return true;
+    }
+
+    async reloadProfilesFromConfig() {
+        if (!this.config) {
+            logger.warn('mailbox service not configured');
+            this.profileMap.clear();
+            this.storageMap.clear();
+            this.currentProfileId = null;
+            this.emitEvent('accountsUpdated', []);
             return;
         }
 
-        await this.storage.initialize();
+        logger.info(`Reloading mailbox profiles...`);
+
+        let profiles = [];
+        let configCurrentProfileId = null;
+
+        if (this.config.profiles && Array.isArray(this.config.profiles)) {
+            profiles = this.config.profiles;
+            configCurrentProfileId = this.config.currentProfileId;
+        } else if (this.config.username) {
+            logger.info('detect legacy single-account config, adapting...');
+            profiles = [this.config];
+        }
+
+        const validUsernamesInConfig = new Set();
+        for (const p of profiles) {
+            try {
+                const parsedProfile = EmailProfileSchema.parse(p);
+                validUsernamesInConfig.add(parsedProfile.username);
+
+                if (!this.storageMap.has(parsedProfile.username)) {
+                    await this.initializeAccount(parsedProfile);
+                } else {
+                    this.profileMap.set(parsedProfile.username, parsedProfile);
+                }
+            } catch (e) {
+                logger.error(`failed to initialize profile: ${e}`);
+            }
+        }
+
+        for (const existingUsername of this.profileMap.keys()) {
+            if (!validUsernamesInConfig.has(existingUsername)) {
+                logger.info(`Profile removed from config, cleaning up: ${existingUsername}`);
+                this.profileMap.delete(existingUsername);
+                this.storageMap.delete(existingUsername);
+            }
+        }
+
+        if (this.currentProfileId && !this.profileMap.has(this.currentProfileId)) {
+            logger.warn(`Current profile ${this.currentProfileId} was removed, switching context...`);
+            this.currentProfileId = null;
+        }
+
+        if (!this.currentProfileId) {
+            if (configCurrentProfileId && this.storageMap.has(configCurrentProfileId)) {
+                this.currentProfileId = configCurrentProfileId;
+            } else if (this.profileMap.size > 0) {
+                this.currentProfileId = this.profileMap.keys().next().value;
+            }
+        }
+
+        this.emitEvent('accountsUpdated', await this.getAccountList());
+        logger.info(`mailbox initialized/reloaded with ${this.profileMap.size} profiles. Current: ${this.currentProfileId}`);
+    }
+
+    async initialize() {
+        await this.reloadProfilesFromConfig();
         setTimeout(async () => {
             await this.trySync();
             setInterval(async () => {
@@ -1063,67 +1126,75 @@ class MailboxWorker extends BaseWorker {
 
     async applicationConfigChanged(config) {
         super.applicationConfigChanged(config);
-        await this.sync();
+        await this.reloadProfilesFromConfig();
+        await this.trySync();
     }
 
     async getEmailHeaderList(offset = 0, pageSize = 20) {
+        const storage = this.getCurrentStorage();
+        if (!storage) return [];
+
         let startTime = Date.now();
-        const result = await this.storage.getEmailHeaderList(offset, pageSize);
+        const result = await storage.getEmailHeaderList(offset, pageSize);
         let cost = (Date.now() - startTime) / 1000;
         logger.info(`get email list cost: ${cost.toFixed(2)}s`);
         return result;
     }
 
     async searchEmails(query) {
+        const storage = this.getCurrentStorage();
+        if (!storage) return [];
+
         let startTime = Date.now();
-        const result = await this.storage.searchEmails(query);
+        const result = await storage.searchEmails(query);
         let cost = (Date.now() - startTime) / 1000;
         logger.info(`search emails cost: ${cost.toFixed(2)}s, found ${result.length} results`);
         return result;
     }
 
     async markEmailAsRead(uid) {
-        await this.storage.markEmailAsRead(uid);
+        const storage = this.getCurrentStorage();
+        if (storage) await storage.markEmailAsRead(uid);
     }
 
-
     async markEmailAsUnread(uid) {
-        await this.storage.markEmailAsUnread(uid);
+        const storage = this.getCurrentStorage();
+        if (storage) await storage.markEmailAsUnread(uid);
     }
 
     async deleteEmail(uid) {
-        await this.storage.deleteEmail(uid);
+        const storage = this.getCurrentStorage();
+        if (storage) await storage.deleteEmail(uid);
     }
 
-    /**
-     * Get the content of an email by its UID.
-     * @param {string} uid
-     * @returns {EmailContent}
-     */
     async getEmailContent(uid) {
         logger.info(`getting email content: ${uid}`);
-        const cachedContent = await this.storage.getEmailContent(uid);
+        const storage = this.getCurrentStorage();
+        const profile = this.getCurrentProfile();
+        if (!storage || !profile) return null;
+
+        const cachedContent = await storage.getEmailContent(uid);
         if (cachedContent) {
             return cachedContent;
         }
 
-        const config = EmailProfileSchema.parse(this.config);
-        if (config.inbox?.pop3) {
+        if (profile.inbox?.pop3) {
             // 重试机制：对于概率性错误（如网络问题、超时等）进行重试
             const maxRetries = 2;
             let lastError = null;
-            
+
             for (let attempt = 0; attempt <= maxRetries; attempt++) {
                 try {
                     const pop3 = new POP3EmailClient(
-                        config.username, config.password,
-                        config.inbox.pop3.tls,
-                        config.inbox.pop3.host,
-                        config.inbox.pop3.port
+                        profile.username, profile.password,
+                        profile.inbox.pop3.tls,
+                        profile.inbox.pop3.host,
+                        profile.inbox.pop3.port
                     );
+                    const attachmentDir = this.getCurrentAttachmentDir();
                     // 为获取邮件内容添加整体超时（2分钟）
                     const result = await withTimeout(
-                        pop3.getEmailContent(uid),
+                        pop3.getEmailContent(uid, attachmentDir),
                         120000,
                         `getEmailContent(${uid})`
                     );
@@ -1134,7 +1205,7 @@ class MailboxWorker extends BaseWorker {
                         }
                         throw new Error(`无法获取邮件内容: ${uid}`);
                     }
-                    await this.storage.saveEmailContent(uid, result);
+                    await storage.saveEmailContent(uid, result);
                     return result;
                 } catch (error) {
                     lastError = error;
@@ -1148,7 +1219,7 @@ class MailboxWorker extends BaseWorker {
                         error.message?.includes('网络') ||
                         error.message?.includes('连接')
                     );
-                    
+
                     if (shouldRetry) {
                         const delay = (attempt + 1) * 1000; // 递增延迟：1s, 2s
                         logger.warn(`retrying getEmailContent for ${uid}, attempt ${attempt + 1}/${maxRetries + 1}, delay ${delay}ms`);
@@ -1159,7 +1230,7 @@ class MailboxWorker extends BaseWorker {
                     }
                 }
             }
-            
+
             // 所有重试都失败了
             logger.error(`failed to get email content from POP3 server after ${maxRetries + 1} attempts: ${uid}`);
             throw lastError || new Error(`无法获取邮件内容: ${uid}`);
@@ -1170,38 +1241,46 @@ class MailboxWorker extends BaseWorker {
 
     async reDownloadEmailContent(uid) {
         logger.info(`re-downloading email: ${uid}`);
-        const config = EmailProfileSchema.parse(this.config);
-        if (config.inbox?.pop3) {
+        const storage = this.getCurrentStorage();
+        const profile = this.getCurrentProfile();
+
+        if (!storage || !profile) throw new Error('No active profile');
+
+        if (profile.inbox?.pop3) {
             const pop3 = new POP3EmailClient(
-                config.username, config.password,
-                config.inbox.pop3.tls, config.inbox.pop3.host, config.inbox.pop3.port
+                profile.username, profile.password,
+                profile.inbox.pop3.tls, profile.inbox.pop3.host, profile.inbox.pop3.port
             );
-            const { header, content } = await pop3.getEmail(uid);
-            await this.storage.saveEmailContent(uid, content);
-            await this.storage.saveEmailHeader(header);
+            const attachmentDir = this.getCurrentAttachmentDir();
+            const { header, content } = await pop3.getEmail(uid, attachmentDir);
+            await storage.saveEmailContent(uid, content);
+            await storage.saveEmailHeader(header);
             return content;
         } else {
-            logger.error(`no valid inbox server configured: ${this.config}`);
             throw new Error('no valid inbox server configured');
         }
     }
 
     async starEmail(starOptions) {
-        await this.storage.starEmail(starOptions.uid, starOptions.starred);
+        const storage = this.getCurrentStorage();
+        if (storage) await storage.starEmail(starOptions.uid, starOptions.starred);
     }
 
     async sendEmail(sendEmailSchema) {
         logger.info(`sendEmail to ${sendEmailSchema.to}`)
-        const config = EmailProfileSchema.parse(this.config);
-        if (config.outbox?.smtp) {
-            const smtp = new SmtpEmailClient(config.outbox.smtp.account? config.outbox.smtp.account : config.username,
-                config.username, config.password, config.name,
-                config.outbox.smtp.host, config.outbox.smtp.port, config.outbox.smtp.tls
+        const profile = this.getCurrentProfile();
+        if (!profile) throw new Error('No active profile');
+
+        if (profile.outbox?.smtp) {
+            const smtp = new SmtpEmailClient(
+                profile.outbox.smtp.account ? profile.outbox.smtp.account : profile.username,
+                profile.username, profile.password, profile.name,
+                profile.outbox.smtp.host, profile.outbox.smtp.port, profile.outbox.smtp.tls
             );
             return await smtp.sendMail(sendEmailSchema.to , sendEmailSchema.cc, sendEmailSchema.bcc,
                 sendEmailSchema.subject, sendEmailSchema.text, sendEmailSchema.html, sendEmailSchema.attachments);
         } else {
-            logger.error(`no valid outbox server configured: ${this.config}`);
+            logger.error(`no valid outbox server configured`);
             throw new Error('no valid outbox server configured');
         }
     }
