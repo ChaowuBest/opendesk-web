@@ -124,28 +124,44 @@ class FSStorage {
     }
 
     async saveFilenameEmbeddings(filenames) {
-        filenames = Array.from(new Set(filenames));
-        let unexist_filenames = filenames.filter(filename => !this.vec_cache.has(filename));
-        if (unexist_filenames.length === 0) {
+        if (!filenames || filenames.length === 0) {
             return;
         }
 
-        let start_time = Date.now();
-        logger.info(`${unexist_filenames.length} filenames not found in vector database`);
-        let embeddings = await LLM.batchEmbed(unexist_filenames);
-        logger.info(`creating embeddings for ${unexist_filenames.length} filenames: ${Date.now() - start_time}ms`);
+        // 去重并过滤已存在的文件名
+        const uniqueFilenames = Array.from(new Set(filenames));
+        const unexistFilenames = uniqueFilenames.filter(filename => !this.vec_cache.has(filename));
 
-        if (unexist_filenames.length === 0) {
+        if (unexistFilenames.length === 0) {
             return;
+        }
+
+        const embedStartTime = Date.now();
+        logger.info(`${unexistFilenames.length} filenames not found in vector database, creating embeddings...`);
+
+        let embeddings;
+        try {
+            embeddings = await LLM.batchEmbed(unexistFilenames);
+            const embedTime = Date.now() - embedStartTime;
+            logger.info(`created embeddings for ${unexistFilenames.length} filenames: ${embedTime}ms`);
+        } catch (error) {
+            logger.error(`failed to create embeddings: ${error.message}`, error);
+            throw error;
         }
 
         // 先存到vec_cache里面，不容易坏掉
-        for (const [index, filename] of unexist_filenames.entries()) {
-            this.vec_cache.set(filename, embeddings[index]);
+        const cacheStartTime = Date.now();
+        for (let i = 0; i < unexistFilenames.length; i++) {
+            this.vec_cache.set(unexistFilenames[i], embeddings[i]);
+        }
+        const cacheTime = Date.now() - cacheStartTime;
+        if (cacheTime > 10) {
+            logger.debug(`updated vec_cache for ${unexistFilenames.length} filenames: ${cacheTime}ms`);
         }
 
+        // 写入缓存文件
         try {
-            const records = unexist_filenames.map((filename, index) => {
+            const records = unexistFilenames.map((filename, index) => {
                 return JSON.stringify({ key: filename, vec: embeddings[index] });
             });
             // 使用同步方式避免并发写入问题
@@ -154,22 +170,39 @@ class FSStorage {
             logger.warn(`Error appending to vec_cache.jsonl: ${e.message}`);
         }
 
+        // 保存到向量数据库（使用队列确保顺序）
         await queue.add(async () => {
-            let start_time = Date.now();
-            await this.vecdb.beginUpdate()
-            for (const [index, filename] of unexist_filenames.entries()) {
-                await this.vecdb.insertItem({
-                    id: filename,
-                    vector: embeddings[index]
-                })
+            const vecdbStartTime = Date.now();
+            try {
+                await this.vecdb.beginUpdate();
+                for (let i = 0; i < unexistFilenames.length; i++) {
+                    await this.vecdb.insertItem({
+                        id: unexistFilenames[i],
+                        vector: embeddings[i]
+                    });
+                }
+                await this.vecdb.endUpdate();
+                const vecdbTime = Date.now() - vecdbStartTime;
+                logger.info(`saved ${unexistFilenames.length} filenames to vector database: ${vecdbTime}ms`);
+            } catch (error) {
+                logger.error(`failed to save to vector database: ${error.message}`, error);
+                throw error;
             }
-            await this.vecdb.endUpdate();
-            logger.info(`saving ${unexist_filenames.length} filenames to vector database: ${Date.now() - start_time}ms`);
         });
     }
 
     /**
-     *
+     * 提取文件扩展名（优化版本）
+     * @param {string} filename
+     * @returns {string}
+     */
+    _getFileExtension(filename) {
+        const lastDot = filename.lastIndexOf('.');
+        return lastDot !== -1 ? filename.slice(lastDot).toLowerCase() : '';
+    }
+
+    /**
+     * 批量保存文件到数据库
      * @param {z.core.output<FileEntrySchema>} files
      */
     async saveFiles(files) {
@@ -177,26 +210,60 @@ class FSStorage {
             return;
         }
 
-        let startTime = Date.now();
-        for (const file of files) {
-            await this.db.update(
+        const startTime = Date.now();
+        const extensionCount = {};
+        const filenames = [];
+
+        // 并行处理数据库更新（控制并发数避免过载）
+        const CONCURRENT_UPDATES = 10; // 同时进行的数据库更新数量
+        const updatePromises = [];
+
+        for (let i = 0; i < files.length; i++) {
+            const file = files[i];
+
+            // 在遍历时同时统计扩展名和收集文件名，避免重复遍历
+            const ext = this._getFileExtension(file.filename);
+            extensionCount[ext] = (extensionCount[ext] || 0) + 1;
+            filenames.push(file.filename);
+
+            // 创建更新任务
+            const updatePromise = this.db.update(
                 { path: file.path },
                 { $set: file },
                 { upsert: true }
-            )
-        }
-        let totalTime = Date.now() - startTime;
-        logger.info(`saving ${files.length} files to nedb database: ${totalTime}ms`);
+            );
 
-        // 这里按照扩展名统计一下不同扩展名的数量，打log出来
-        const extensionCount = {};
-        for (const file of files) {
-            const ext = file.filename.lastIndexOf('.') !== -1 ? file.filename.slice(file.filename.lastIndexOf('.')).toLowerCase() : '';
-            extensionCount[ext] = (extensionCount[ext] || 0) + 1;
-        }
-        logger.info(`Extension Distribution (filenames to embed): ${JSON.stringify(extensionCount)}`);
+            updatePromises.push(updatePromise);
 
-        await this.saveFilenameEmbeddings(files.map(file => file.filename));
+            // 当达到并发数或处理完所有文件时，等待当前批次完成
+            if (updatePromises.length >= CONCURRENT_UPDATES || i === files.length - 1) {
+                await Promise.all(updatePromises);
+                updatePromises.length = 0; // 清空数组
+            }
+        }
+
+        const dbTime = Date.now() - startTime;
+        const avgTime = (dbTime / files.length).toFixed(2);
+        logger.info(`saved ${files.length} files to nedb database: ${dbTime}ms (avg: ${avgTime}ms/file)`);
+
+        // 只在有多个扩展名类型时记录详细统计
+        const extTypes = Object.keys(extensionCount).length;
+        if (extTypes > 1) {
+            logger.debug(`Extension Distribution: ${JSON.stringify(extensionCount)}`);
+        }
+
+        // 处理文件名嵌入（保持 await 以确保数据一致性）
+        const embedStartTime = Date.now();
+        try {
+            await this.saveFilenameEmbeddings(filenames);
+            const embedTime = Date.now() - embedStartTime;
+            if (embedTime > 100) { // 只在耗时较长时记录
+                logger.debug(`filename embeddings processed in ${embedTime}ms`);
+            }
+        } catch (error) {
+            logger.error(`failed to save filename embeddings: ${error.message}`, error);
+            // 不抛出错误，避免影响文件保存的主流程
+        }
     }
 
     async searchFilesByKeyword(keyword) {
@@ -254,9 +321,9 @@ class FSStorage {
         let metadata = await this.db.findOne({ root: root });
         if (!metadata) {
             logger.info(`no file scanner metadata found for ${root}, creating new one`);
+            // 使用Schema的默认值，last_full_scan默认为0
             return FileScannerMetadataSchema.parse({
                 root: root,
-                last_full_scan_timestamp: 0,
             });
         }
         try {
@@ -264,9 +331,9 @@ class FSStorage {
             return result;
         } catch (error) {
             logger.warn(`error parsing existing file scanner metadata: ${error}`);
+            // 解析失败时，创建新的metadata，使用Schema的默认值
             return FileScannerMetadataSchema.parse({
                 root: root,
-                last_full_scan_timestamp: 0,
             });
         }
     }
