@@ -948,7 +948,99 @@ class A2UIToHTMLConverter {
         const additionalStyle = this.getAdditionalStyles('Column');
         const layoutStyle = this.buildLayoutStyle(props, 'column');
         const style = this.mergeStyleStrings(additionalStyle, layoutStyle, this.getInlineStyleFromProps(props));
-        return `<div class="a2ui-column ${styleClasses.join(' ')}"${style ? ` style="${style}"` : ''}>${children}</div>`;
+
+        // 检查是否有 correctAnswer，如果有则添加可展开的答案显示
+        let answerSection = '';
+        const correctAnswer = dataModel?.correctAnswer;
+        if (correctAnswer !== undefined && correctAnswer !== null && correctAnswer !== '') {
+          const answerId = `answer_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+          const toggleId = `toggle_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+          const answerText = String(correctAnswer);
+          const optionLabels = {
+            'A': dataModel?.optionA || 'A',
+            'B': dataModel?.optionB || 'B',
+            'C': dataModel?.optionC || 'C',
+            'D': dataModel?.optionD || 'D'
+          };
+
+          // 获取正确答案的完整文本
+          const fullAnswerText = optionLabels[answerText] || answerText;
+
+          answerSection = `
+            <div class="a2ui-answer-section" style="margin-top: 10px; padding-top: 8px; border-top: 1px solid #e5e7eb;">
+              <button 
+                type="button" 
+                id="${toggleId}"
+                class="a2ui-answer-toggle" 
+                onclick="
+                  const answerDiv = document.getElementById('${answerId}');
+                  const toggleBtn = document.getElementById('${toggleId}');
+                  if (answerDiv.style.display === 'none' || !answerDiv.style.display) {
+                    answerDiv.style.display = 'block';
+                    toggleBtn.textContent = '隐藏答案';
+                    toggleBtn.style.backgroundColor = '#6366f1';
+                    toggleBtn.style.color = '#ffffff';
+                  } else {
+                    answerDiv.style.display = 'none';
+                    toggleBtn.textContent = '显示答案';
+                    toggleBtn.style.backgroundColor = 'transparent';
+                    toggleBtn.style.color = '#6366f1';
+                  }
+                "
+                style="
+                  padding: 6px 12px;
+                  font-size: 11px;
+                  color: #6366f1;
+                  background: transparent;
+                  border: 1px solid #6366f1;
+                  border-radius: 6px;
+                  cursor: pointer;
+                  font-weight: 500;
+                  transition: all 0.2s ease;
+                  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                "
+                onmouseover="this.style.backgroundColor='#f3f4f6'"
+                onmouseout="if(this.textContent === '显示答案') this.style.backgroundColor='transparent'"
+              >显示答案</button>
+              <div 
+                id="${answerId}" 
+                class="a2ui-answer-content" 
+                style="
+                  display: none;
+                  margin-top: 8px;
+                  padding: 10px 12px;
+                  background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
+                  border-left: 3px solid #3b82f6;
+                  border-radius: 6px;
+                  font-size: 11px;
+                  line-height: 1.5;
+                  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+                "
+              >
+                <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 4px;">
+                  <span style="
+                    display: inline-flex;
+                    align-items: center;
+                    justify-content: center;
+                    width: 20px;
+                    height: 20px;
+                    background-color: #3b82f6;
+                    color: #ffffff;
+                    border-radius: 50%;
+                    font-weight: 600;
+                    font-size: 10px;
+                  ">✓</span>
+                  <strong style="color: #1e40af; font-size: 11px;">正确答案：</strong>
+                </div>
+                <div style="color: #1e40af; font-weight: 500; margin-left: 26px; padding-left: 8px; border-left: 2px solid #93c5fd;">
+                  ${this.escapeHtml(fullAnswerText)}
+                </div>
+              </div>
+            </div>
+          `;
+        }
+
+        return `<div class="a2ui-column ${styleClasses.join(' ')}"${style ? ` style="${style}"` : ''}>${children}${answerSection}</div>`;
       }
       case 'Row': {
         const children = this.getChildren(props, compBuf, dataModel);
