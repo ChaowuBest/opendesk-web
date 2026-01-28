@@ -1190,7 +1190,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             const mailSchema = await editor.getMailContent()
             this.sendEmail(mailSchema);
         });
-        editor.setMailContent(operation, mailHeader, mailContent, replyContent)
+        editor.setMailContent(operation, mailHeader, mailContent, replyContent, this.currentAccount)
     }
 
     async handleFilter(filter) {
@@ -1916,7 +1916,7 @@ class MailEditorWidget extends AgentOperableHTMLElement {
         return sendEmailSchema;
     }
 
-    async setMailContent(operation, mailHeader, mailContent, replyContent) {
+    async setMailContent(operation, mailHeader, mailContent, replyContent, currentAccount) {
         if (!mailHeader && !mailContent) {
             return;
         }
@@ -1929,8 +1929,9 @@ class MailEditorWidget extends AgentOperableHTMLElement {
             document.getElementById('to').value = mailHeader.from[0].address;
             document.getElementById('subject').value = '答复:' + mailHeader.subject;
         } else if (operation == MailOperations.REPLYALL) {
+            const filteredTo = mailHeader.to.filter(to => to.address != currentAccount?.email);
             document.getElementById('to').value = mailHeader.from[0].address;
-            document.getElementById('to').value += ',' + mailHeader.to.map(to => to.address).join(',');
+            document.getElementById('to').value += ',' + filteredTo.map(to => to.address).join(',');
             document.getElementById('subject').value = '答复全部:' + mailHeader.subject;
             if (mailHeader.cc && mailHeader.cc.length > 0) {
                 document.getElementById('cc').value = mailHeader.cc.map(cc => cc.address).join(',');
