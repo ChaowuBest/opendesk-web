@@ -77,9 +77,11 @@ class CalendarWorker extends BaseWorker {
         await this.loadDatabase();
         const syncImmediately = async () => {
             task_queue.add(async () => {
-                await this.loadOutlookCalendarItems().catch(err => {
-                    logger.error(`error loading outlook calendar items: ${err}`);
-                });
+                if (this.config.dataSources.outlook.enabled) {
+                    await this.loadOutlookCalendarItems().catch(err => {
+                        logger.error(`error loading outlook calendar items: ${err}`);
+                    });
+                }
             });
         };
 

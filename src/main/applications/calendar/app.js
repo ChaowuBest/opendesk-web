@@ -22,7 +22,11 @@ class CalendarApplication extends BaseApplication {
 
     getConfigSchema() {
         return z.object({
-
+            dataSources: z.object({
+                outlook: z.object({
+                    enabled: z.boolean().default(false).describe('是否同步Outlook日历数据'),
+                }).optional()
+            }).default({})
         });
     }
 
