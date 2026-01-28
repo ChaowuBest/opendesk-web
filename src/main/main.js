@@ -28,6 +28,45 @@ var globalTray = null;
 /** @type {boolean} */
 var isAppQuitting = false;
 
+/**
+ * 将应用内置的 skills 目录（resources/skills）自动拷贝到用户的 skills 目录
+ * - 支持 npm 调试（dev）和打包运行
+ * - 总是覆盖同名内置技能到最新版本（与 resources/skills 保持一致）
+ */
+async function installBundledSkillsIfNeeded() {
+  try {
+    const appPath = app.getAppPath();
+    const bundledSkillsDir = path.join(appPath, 'resources', 'skills');
+    if (!fs.existsSync(bundledSkillsDir)) {
+      return;
+    }
+
+    const userSkillsDir = SkillRegistry.getSkillsDirectory();
+
+    const copyRecursive = (src, dest) => {
+      const stat = fs.statSync(src);
+      if (stat.isDirectory()) {
+        fs.mkdirSync(dest, { recursive: true });
+        for (const child of fs.readdirSync(src)) {
+          copyRecursive(path.join(src, child), path.join(dest, child));
+        }
+      } else {
+        fs.copyFileSync(src, dest);
+      }
+    };
+
+    const entries = fs.readdirSync(bundledSkillsDir, { withFileTypes: true });
+    for (const ent of entries) {
+      if (!ent.isDirectory()) continue;
+      const srcDir = path.join(bundledSkillsDir, ent.name);
+      const destDir = path.join(userSkillsDir, ent.name);
+      copyRecursive(srcDir, destDir);
+    }
+  } catch (error) {
+    console.error('installBundledSkillsIfNeeded failed', error);
+  }
+}
+
 if (app.requestSingleInstanceLock()) {
     app.on('second-instance', (event, path) => {
         if (globalMainWindow) {
@@ -452,6 +491,11 @@ const initializeProtocolHandlers = () => {
 app.whenReady().then(() => {
     GlobalState.initialize();
     createWindow();
+
+    // 将打包内置/源码中的 resources/skills 自动同步到用户 skills 目录
+    installBundledSkillsIfNeeded().catch((err) => {
+      console.error('installBundledSkillsIfNeeded error', err);
+    });
 
     registerTaskManagerAPIHandlers();
     registerFSAPIHandlers();
