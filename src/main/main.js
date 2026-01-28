@@ -8,6 +8,7 @@ import { z } from 'zod';
 import { NotificationManager } from './utils/notificationmgr.js';
 import { LogStream, logger } from './utils/logger.js'
 import { registerApplicationRegistryHandlers, initializeRegistry, notifyWorkerSettingUpdate, ApplicationRegistry } from './applications/registry';
+import { SkillRegistry } from './services/skills/SkillRegistry.js';
 import { UpdateClient } from '../updater/client.js';
 
 import Convert from 'ansi-to-html';
@@ -336,6 +337,31 @@ const registerSettingAPIHandlers = () => {
 
 }
 
+const registerSkillRegistryHandlers = () => {
+  ipcMain.handle('skillRegistry:list', () => {
+    try {
+      return { status: 'ok', data: SkillRegistry.listSkills() };
+    } catch (error) {
+      return { status: 'error', message: error.message };
+    }
+  });
+  ipcMain.handle('skillRegistry:refresh', () => {
+    try {
+      const { toolsets, errors } = SkillRegistry.refresh();
+      return { status: 'ok', data: { count: toolsets.length, errors } };
+    } catch (error) {
+      return { status: 'error', message: error.message };
+    }
+  });
+  ipcMain.handle('skillRegistry:getSkillsDirectory', () => {
+    try {
+      return { status: 'ok', data: SkillRegistry.getSkillsDirectory() };
+    } catch (error) {
+      return { status: 'error', message: error.message };
+    }
+  });
+};
+
 const registerNotificationAPIHandlers = () => {
     ipcMain.handle('notification:sendNotification', (event, ...args) => {
         try {
@@ -431,6 +457,7 @@ app.whenReady().then(() => {
     registerFSAPIHandlers();
     registerSettingAPIHandlers();
     registerApplicationRegistryHandlers(ipcMain);
+    registerSkillRegistryHandlers();
     registerNotificationAPIHandlers();
     registerHotKeys();
     registerTray();

@@ -152,6 +152,17 @@ src/renderer/
 
 ### 3.3. 后端逻辑
 
+### 3.4. 本地 Agent Skills（Anthropic 行业标准）
+
+主进程对话会自动发现并挂载**本地端侧归档的 Agent Skills**，与内建应用工具集一起参与工具调用。格式对齐 **Anthropic 发布的 Agent Skills 行业标准**（[agentskills.io](https://agentskills.io/specification)）。
+
+- **技能目录**：应用数据目录下的 `skills/`（如 Windows `%APPDATA%/fillipdesk/skills/`）。
+- **单技能结构**：每个技能一个子目录，**目录名必须与 SKILL.md 中的 name 一致**；目录内必含 **SKILL.md**（YAML frontmatter + Markdown 正文），可选子目录 `scripts/`、`references/`、`assets/`。
+- **SKILL.md 格式**：YAML 必填字段 `name`（1–64 字符，小写字母/数字/连字符，不可首尾或连续连字符）、`description`（1–1024 字符）；可选 `license`、`compatibility`（≤500 字符）、`metadata`、`allowed-tools`（实验性）。正文为 Markdown，供模型按需加载。
+- **调用方式**：每个技能在主进程中暴露为一个 tool（name = 技能 name，description = 技能 description）。默认执行时返回 SKILL.md 正文；若在 frontmatter 中配置 FillipDesk 扩展 `fillipdesk.handler`（script/module/url），则执行对应脚本/模块并返回结果。
+- **示例**：见 `resources/skills/example/`（含 SKILL.md 与可选 handler.js），复制到 `skills/` 后即可被主进程检测并调用。
+- **前端 API**：`window.skillRegistryAPI.list()`、`skillRegistryAPI.refresh()`、`skillRegistryAPI.getSkillsDirectory()`。
+
 ## 4. 后续开发规划
 
 #### 版本节奏

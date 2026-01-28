@@ -1,5 +1,6 @@
 import { BaseToolset } from "../agents/tool";
 import { BaseApplication } from "./base.js";
+import { SkillRegistry } from "../services/skills/SkillRegistry.js";
 import { MailboxApplication } from "./mailbox/app.js";
 import { FileMgrApplication } from "./filemgr/app.js";
 import { CalendarApplication } from "./calendar/app.js";
