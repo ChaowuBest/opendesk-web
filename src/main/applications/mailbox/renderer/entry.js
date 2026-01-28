@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { RendererToolset, RendererTool, AgentOperableHTMLElement } from '../../widget_utils.js';
 import { ElasticToolbarWidget } from '../../../../renderer/components/toolbar.ts';
+import { EmailHeader, EmailContent } from '../common.js';
 
 // ========== Tagify 导入 ==========
 import Tagify from '@yaireo/tagify';
@@ -1174,10 +1175,19 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         return fullHeader;
     }
 
+    /**
+     *
+     * @param {MailOperations} operation
+     * @param {EmailHeader | undefined} mailHeader
+     * @param {EmailContent | undefined} mailContent
+     * @param {string | undefined} replyContent
+     */
     async createNewEmail(operation, mailHeader, mailContent, replyContent) {
         // 这里可以直接 new 一个邮件编辑控件并赋值给 #email-content
         const emailContent = this.querySelector('#email-content');
-        const editor = new MailEditorWidget();
+        const editor = new MailEditorWidget(
+
+        );
         // 与阅读界面一致：flex flex-col 让工具栏固定顶部、内容区单独滚动；min-h-0 使内部 overflow 生效；不加 overflow-y-auto 避免整块（含工具栏）一起滚动
         editor.classList.add('flex-1', 'flex', 'flex-col', 'min-h-0', 'bg-white', 'w-full');
         editor.id = 'editor';
@@ -1698,6 +1708,10 @@ class MailEditorWidget extends AgentOperableHTMLElement {
         };
     }
 
+    async getEditor() {
+        return await this.editorReady;
+    }
+
     /**
      * 从 Tagify 输入框中获取邮箱地址数组
      * @param {string} inputId - input 元素的 id ('to', 'cc', 'bcc')
@@ -1956,11 +1970,15 @@ class MailEditorWidget extends AgentOperableHTMLElement {
         }
     }
 
+    async magicWrite() {
+        window.aiBarAPI.submitRequestInNewTask("帮我写一下当前打开的这封邮件");
+    }
+
     render() {
         const buttons = [
             { id: 'send-email-cancel-button', icon: 'fa-circle-arrow-left', label: '取消', action: () => this.cancel() },
             { id: 'send-email-send-button', icon: 'fa-paper-plane', label: '发送', action: () => this.send() },
-            { id: 'send-email-polish-button', icon: 'fa-wand-sparkles', label: '帮我写', labelStayVisible: true, action: () => this.polish() },
+            { id: 'send-email-magic-write-button', icon: 'fa-wand-sparkles', label: '帮我写', labelStayVisible: true, action: () => this.magicWrite() },
         ]
         const headerToolbar = new ElasticToolbarWidget(buttons);
         headerToolbar.classList.add('pl-3', 'pr-16');

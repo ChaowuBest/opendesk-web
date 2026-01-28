@@ -198,6 +198,7 @@ const registerTaskManagerAPIHandlers = () => {
     if (details.attachedFilePaths) {
       await task.attachFiles(details.attachedFilePaths);
     }
+
     task.submitUserMessage(details.message);
     return { status: 'ok' };
   });

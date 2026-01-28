@@ -63,6 +63,10 @@
             var currentTaskId = null;
             var currentToolset = null;
 
+            async function clearTask() {
+                currentTaskId = null;
+            }
+
             async function submitRequest(request) {
                 const floatingChatPanel = document.querySelector('#floating-ai-chat-panel');
                 const applicationEntryWidget = document.querySelector('#application-entry-widget');
@@ -129,19 +133,29 @@
                 if (agentInstruct) {
                     await window.taskManagerAPI.setSystemPrompt(currentTaskId, agentInstruct);
                 }
-                window.taskManagerAPI.submitMessage(currentTaskId, request);
+
+                await window.taskManagerAPI.submitMessage(currentTaskId, request);
                 document.querySelector(`#task-view-${currentTaskId}`).reload();
                 Alpine.$data(document.body).showFloatingChatPanel = true;
             }
 
             (async () => {
                 const apps = import.meta.glob('../main/applications/**/renderer/entry.js');
-                console.info('apps:', apps);
+
                 const applicationBundleName = new URLSearchParams(window.location.search).get('applicationBundleName');
                 const guiConfig = await window.applicationAPI.getApplicationGUIConfig(applicationBundleName);
                 await apps[`../main/applications/${applicationBundleName}/renderer/entry.js`]();
 
                 const entryName = guiConfig?.entry || `${applicationBundleName}-entry-widget`;
+
+                window.aiBarAPI = {
+                    submitRequest: (request) => submitRequest({message: request}),
+                    submitRequestInNewTask: async (request) => {
+                        await clearTask();
+                        await submitRequest({message: request});
+                    }
+                }
+
                 document.querySelector('#application-container').innerHTML = `<${entryName} id='application-entry-widget' class="w-full h-full"/>`
                 document.querySelector('#application-agent-input').addEventListener('focus', () => {
                     // 如果用户激活了聊天输入浮窗，且当前有任务，则显示浮动聊天面板
