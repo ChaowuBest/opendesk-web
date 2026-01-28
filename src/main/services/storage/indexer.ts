@@ -12,7 +12,7 @@
  * 4. 索引器将自动可用于搜索操作
  */
 
-import { Item, FilterCondition, QueryOperator } from './object.js';
+import { Item, FilterCondition, QueryOperator } from './abstrac-storage.js';
 
 /**
  * 索引器搜索选项

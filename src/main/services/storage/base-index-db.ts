@@ -8,7 +8,7 @@
 import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
-import { ColumnSchema, ALLOWED_COLUMNS, validateColumnSchema, ScalarOperator } from './object.js';
+import { ColumnSchema, validateColumnSchema, ScalarOperator } from './abstrac-storage.js';
 
 // BaseIndexDB 支持的操作符（从 object.ts 导入，保持类型别名以兼容）
 export type BaseQueryOperator = ScalarOperator;
@@ -87,7 +87,7 @@ export class BaseIndexDB {
         const columnDefs: string[] = [];
 
         for (const columnName of Object.keys(this.schema.columns)) {
-            const allowedDef = ALLOWED_COLUMNS[columnName];
+            const allowedDef = this.schema.columns[columnName];
             if (!allowedDef) continue;
 
             let colDef = `${columnName} ${allowedDef.type}`;
@@ -116,6 +116,7 @@ export class BaseIndexDB {
             )
         `;
 
+        console.info(`[base-index-db] create table SQL:\n${createTableSQL}`);
         this.db.exec(createTableSQL);
 
         // 为常用查询字段创建索引

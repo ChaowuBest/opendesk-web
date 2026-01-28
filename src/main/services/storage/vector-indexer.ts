@@ -6,7 +6,7 @@
  */
 
 import { Indexer, IndexerSearchOptions, IndexerSearchResult } from './indexer.js';
-import { Item, FilterCondition, VectorOperator, QueryOperator, VectorQuery } from './object.js';
+import { Item, FilterCondition, VectorOperator, QueryOperator, VectorQuery, ItemType } from './abstrac-storage.js';
 import { VectorIndexDB, VectorIndexRecord, VectorSearchOptions } from './vector-index-db.js';
 
 /**
@@ -92,7 +92,7 @@ export class VectorIndexer extends Indexer {
     ): Item {
         const item: Item = {
             item_id: result.item_id,
-            item_type: result.item_type,
+            item_type: result.item_type as ItemType,
         };
         // 从 metadata 复制所有额外字段
         if (metadata) {
@@ -109,14 +109,11 @@ export class VectorIndexer extends Indexer {
      * Item → VectorIndexRecord 转换
      * 注意：需要 Item 附带 repr 属性
      */
-    private itemToRecord(item: Item & { repr?: Float32Array | number[] }): VectorIndexRecord | null {
-        if (!item.repr) {
-            return null;
-        }
+    private itemToRecord(item: Item, repr: Float32Array | number[]): VectorIndexRecord | null {
         return {
             item_id: item.item_id,
             item_type: item.item_type,
-            repr: item.repr,
+            repr: repr,
         };
     }
 
@@ -229,12 +226,21 @@ export class VectorIndexer extends Indexer {
 
     /**
      * 向索引中插入 Item
-     * 注意：Item 需要附带 repr 属性
+     * 注意：Item 需要附带 repr 属性 
+     * TODO
      */
     async insert(items: Item[]): Promise<void> {
         const records: VectorIndexRecord[] = [];
+        // 定义一个长度为的1024的repr
         for (const item of items) {
-            const record = this.itemToRecord(item as Item & { repr?: Float32Array | number[] });
+            // TODO fix 0
+            const repr = item.indexer_columns?.[this.name]?.[0]?.content;
+            let validRepr = Array.isArray(repr) && repr.length === 1024 && repr.every(v => typeof v === 'number');
+            if (!validRepr) {
+                console.error(`[VectorIndexer] Item ${item.item_id} does not contain the required repr for indexer ${this.name}`);
+                continue;
+            }
+            const record = this.itemToRecord(item, repr as number[]);
             if (record) {
                 records.push(record);
             }
@@ -271,7 +277,13 @@ export class VectorIndexer extends Indexer {
      */
     async update(items: Item[]): Promise<void> {
         for (const item of items) {
-            const record = this.itemToRecord(item as Item & { repr?: Float32Array | number[] });
+            const repr = item.indexer_columns?.[this.name]?.[0]?.content;
+            let validRepr = Array.isArray(repr) && repr.length === 1024 && repr.every(v => typeof v === 'number');
+            if (!validRepr) {
+                console.error(`[VectorIndexer] Item ${item.item_id} does not contain the required repr for indexer ${this.name}`);
+                continue;
+            }
+            const record = this.itemToRecord(item, repr as number[]);
             if (record) {
                 this.db.upsert(record);
             }

@@ -8,7 +8,7 @@
 import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
-import { ScalarOperator } from './object.js';
+import { ScalarOperator } from './abstrac-storage.js';
 
 // TagIndexDB 支持的操作符（从 object.ts 导入，保持类型别名以兼容）
 export type TagQueryOperator = ScalarOperator;
@@ -18,7 +18,6 @@ export interface TagIndexRecord {
     item_id: string;
     item_type: string;
     tag: string;
-    text: string;
 }
 
 // 查询条件接口
@@ -43,7 +42,6 @@ export interface QueryOptions {
 export interface UpdateData {
     item_type?: string;
     tag?: string;
-    text?: string;
 }
 
 // 支持的操作符列表
@@ -90,8 +88,7 @@ export class TagIndexDB {
             CREATE TABLE IF NOT EXISTS ${this.tableName} (
                 item_id TEXT PRIMARY KEY,
                 item_type TEXT,
-                tag TEXT,
-                text TEXT
+                tag TEXT
             )
         `;
 
@@ -125,8 +122,8 @@ export class TagIndexDB {
      */
     insert(record: TagIndexRecord): boolean {
         const stmt = this.db.prepare(`
-            INSERT INTO ${this.tableName} (item_id, item_type, tag, text)
-            VALUES (@item_id, @item_type, @tag, @text)
+            INSERT INTO ${this.tableName} (item_id, item_type, tag)
+            VALUES (@item_id, @item_type, @tag)
         `);
 
         try {
@@ -147,8 +144,8 @@ export class TagIndexDB {
      */
     insertMany(records: TagIndexRecord[]): number {
         const stmt = this.db.prepare(`
-            INSERT INTO ${this.tableName} (item_id, item_type, tag, text)
-            VALUES (@item_id, @item_type, @tag, @text)
+            INSERT INTO ${this.tableName} (item_id, item_type, tag)
+            VALUES (@item_id, @item_type, @tag)
         `);
 
         const insertAll = this.db.transaction((records: TagIndexRecord[]) => {
@@ -177,12 +174,11 @@ export class TagIndexDB {
      */
     upsert(record: TagIndexRecord): boolean {
         const stmt = this.db.prepare(`
-            INSERT INTO ${this.tableName} (item_id, item_type, tag, text)
-            VALUES (@item_id, @item_type, @tag, @text)
+            INSERT INTO ${this.tableName} (item_id, item_type, tag)
+            VALUES (@item_id, @item_type, @tag)
             ON CONFLICT(item_id) DO UPDATE SET
                 item_type = excluded.item_type,
-                tag = excluded.tag,
-                text = excluded.text
+                tag = excluded.tag
         `);
 
         const result = stmt.run(record);
@@ -397,7 +393,7 @@ export class TagIndexDB {
             const { field, operator, value } = condition;
 
             // 验证字段名，防止 SQL 注入
-            if (!['item_id', 'item_type', 'tag', 'text'].includes(field)) {
+            if (!['item_id', 'item_type', 'tag'].includes(field)) {
                 throw new Error(`Invalid field name: ${field}`);
             }
 

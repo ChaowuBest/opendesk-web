@@ -6,7 +6,7 @@
  */
 
 import { Indexer, IndexerSearchOptions, IndexerSearchResult } from './indexer.js';
-import { Item, FilterCondition, ScalarOperator, QueryOperator } from './object.js';
+import { Item, FilterCondition, ScalarOperator, QueryOperator, ItemType } from './abstrac-storage.js';
 import { TagIndexDB, TagIndexRecord, QueryCondition } from './tag-index-db.js';
 
 /**
@@ -17,7 +17,7 @@ import { TagIndexDB, TagIndexRecord, QueryCondition } from './tag-index-db.js';
  */
 export class TagIndexer extends Indexer {
     readonly name = 'TagIndexer';
-    readonly supportedFields = ['item_id', 'item_type', 'tag', 'text'];
+    readonly supportedFields = ['item_id', 'item_type', 'tag'];
     readonly supportedOperators: QueryOperator[] = [
         '=', '!=', '>', '<', '>=', '<=', 'like', 'in'
     ];
@@ -86,9 +86,8 @@ export class TagIndexer extends Indexer {
     private recordToItem(record: TagIndexRecord, metadata?: Partial<Item>): Item {
         const item: Item = {
             item_id: record.item_id,
-            item_type: record.item_type,
+            item_type: record.item_type as ItemType,
             tag: record.tag,
-            text: record.text,
         };
         // 从 metadata 复制额外字段
         if (metadata) {
@@ -104,12 +103,11 @@ export class TagIndexer extends Indexer {
     /**
      * Item → TagIndexRecord 转换
      */
-    private itemToRecord(item: Item): TagIndexRecord {
+    private itemToRecord(item: Item, tag: string): TagIndexRecord {
         return {
             item_id: item.item_id,
             item_type: item.item_type,
-            tag: item.tag ?? '',
-            text: item.text ?? '',
+            tag: tag,
         };
     }
 
@@ -160,7 +158,17 @@ export class TagIndexer extends Indexer {
      * 向索引中插入 Item
      */
     async insert(items: Item[]): Promise<void> {
-        const records = items.map(item => this.itemToRecord(item));
+        const records: TagIndexRecord[] = [];
+
+        for (const item of items) {
+            // TODO fix 0
+            const tag = item.indexer_columns?.[this.name]?.[0]?.content;
+            const record = this.itemToRecord(item, tag as string);
+            if (record) {
+                records.push(record);
+            }
+        }
+
         this.db.insertMany(records);
     }
 
@@ -176,7 +184,10 @@ export class TagIndexer extends Indexer {
      */
     async update(items: Item[]): Promise<void> {
         for (const item of items) {
-            this.db.upsert(this.itemToRecord(item));
+            // TODO fix 0
+            const tag = item.indexer_columns?.[this.name]?.[0]?.content;
+            const record = this.itemToRecord(item, tag as string);
+            this.db.upsert(record);
         }
     }
 

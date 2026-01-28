@@ -18,7 +18,6 @@ import {
     SearchItem,
     validateColumnSchema,
     SchemaValidationError,
-    ALLOWED_COLUMNS,
     REQUIRED_COLUMNS,
     BM25Query,
 } from '../object.js';

@@ -16,7 +16,7 @@
  */
 
 import { Indexer, IndexerSearchOptions, IndexerSearchResult } from './indexer.js';
-import { Item, FilterCondition, QueryOperator } from './object.js';
+import { Item, FilterCondition, QueryOperator } from './abstrac-storage.js';
 import { BM25IndexDB, BM25IndexRecord } from './bm25-index-db.js';
 import { BM25Retriever } from '@langchain/community/retrievers/bm25';
 import { Document } from '@langchain/core/documents';
@@ -142,7 +142,6 @@ export class BM25Indexer extends Indexer {
                 metadata: {
                     item_id: record.item_id,
                     item_type: record.item_type,
-                    tag: record.tag,
                     created_at: record.created_at,
                     updated_at: record.updated_at,
                 }
@@ -205,7 +204,6 @@ export class BM25Indexer extends Indexer {
         return {
             item_id: item.item_id,
             item_type: item.item_type,
-            tag: item.tag ?? '',
             text: item.text ?? '',
             created_at: item.created_at ?? 0,
             updated_at: item.updated_at ?? 0,
@@ -230,6 +228,12 @@ export class BM25Indexer extends Indexer {
             const condition = conditions[0];
             this.validateField(condition.field);
             this.validateOperator(condition.operator);
+
+            /* 当前看BM25的开发有几个问题 
+            1  BM25Query结构体没有实现
+            2 invoke 查询调的是retriever，但是insert插入的是db，那能查到东西吗
+            */
+            
 
             // 提取 BM25 查询参数
             const bm25Query = condition.value as BM25Query;

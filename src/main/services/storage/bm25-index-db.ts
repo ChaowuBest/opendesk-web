@@ -24,7 +24,6 @@ import fs from 'fs';
 export interface BM25IndexRecord {
     item_id: string;
     item_type: string;
-    tag: string;
     text: string;
     created_at?: number;
     updated_at?: number;
@@ -79,7 +78,6 @@ export class BM25IndexDB {
             CREATE TABLE IF NOT EXISTS ${this.tableName} (
                 item_id TEXT PRIMARY KEY,
                 item_type TEXT NOT NULL,
-                tag TEXT,
                 text TEXT NOT NULL,
                 created_at INTEGER,
                 updated_at INTEGER
@@ -89,7 +87,6 @@ export class BM25IndexDB {
 
         // 创建索引以加速查询
         this.db.exec(`CREATE INDEX IF NOT EXISTS idx_bm25_item_type ON ${this.tableName}(item_type)`);
-        this.db.exec(`CREATE INDEX IF NOT EXISTS idx_bm25_tag ON ${this.tableName}(tag)`);
         this.db.exec(`CREATE INDEX IF NOT EXISTS idx_bm25_updated_at ON ${this.tableName}(updated_at)`);
 
         this.isInitialized = true;
@@ -102,8 +99,8 @@ export class BM25IndexDB {
      */
     insert(record: BM25IndexRecord): boolean {
         const stmt = this.db.prepare(`
-            INSERT INTO ${this.tableName} (item_id, item_type, tag, text, created_at, updated_at)
-            VALUES (@item_id, @item_type, @tag, @text, @created_at, @updated_at)
+            INSERT INTO ${this.tableName} (item_id, item_type, text, created_at, updated_at)
+            VALUES (@item_id, @item_type, @text, @created_at, @updated_at)
         `);
 
         try {
@@ -124,8 +121,8 @@ export class BM25IndexDB {
         if (records.length === 0) return 0;
 
         const stmt = this.db.prepare(`
-            INSERT INTO ${this.tableName} (item_id, item_type, tag, text, created_at, updated_at)
-            VALUES (@item_id, @item_type, @tag, @text, @created_at, @updated_at)
+            INSERT INTO ${this.tableName} (item_id, item_type, text, created_at, updated_at)
+            VALUES (@item_id, @item_type, @text, @created_at, @updated_at)
         `);
 
         const insertAll = this.db.transaction((records: BM25IndexRecord[]) => {
@@ -152,11 +149,10 @@ export class BM25IndexDB {
      */
     upsert(record: BM25IndexRecord): boolean {
         const stmt = this.db.prepare(`
-            INSERT INTO ${this.tableName} (item_id, item_type, tag, text, created_at, updated_at)
-            VALUES (@item_id, @item_type, @tag, @text, @created_at, @updated_at)
+            INSERT INTO ${this.tableName} (item_id, item_type, text, created_at, updated_at)
+            VALUES (@item_id, @item_type, @text, @created_at, @updated_at)
             ON CONFLICT(item_id) DO UPDATE SET
                 item_type = excluded.item_type,
-                tag = excluded.tag,
                 text = excluded.text,
                 updated_at = excluded.updated_at
         `);

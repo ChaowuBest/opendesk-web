@@ -9,7 +9,7 @@ import Database from 'better-sqlite3';
 import * as sqliteVec from 'sqlite-vec';
 import path from 'path';
 import fs from 'fs';
-import { SimilarityMetric } from './object.js';
+import { SimilarityMetric } from './abstrac-storage.js';
 
 // 向量索引记录接口 - 保持语义最小化
 export interface VectorIndexRecord {

@@ -34,14 +34,18 @@ import { Indexer, IndexerSearchOptions as BaseIndexerSearchOptions, IndexerSearc
 import { BM25Indexer } from './bm25-indexer.js';
 import { VectorIndexer } from './vector-indexer.js';
 import { TagIndexer } from './tag-indexer.js';
-import { BaseIndexDB, BaseQueryCondition, BaseQueryOperator } from './base-index-db.js';
+import {BaseIndexer} from './base-index.ts';
 
 export type ItemType = 'file' | 'mail' | 'memory';
 
 export interface Item {
     item_id: string;
     item_type: ItemType;
-    [key: string]: any;  // 支持动态字段
+    [key: string]: any;  // 支持动态字段，用于传递列名
+    // key代表indexer，array的string代表列名，
+    indexer_columns?: {
+        [indexer: string]: Array<{ column: string; content: string | number[] }>;
+    };
 }
 
 export interface SearchItem {
@@ -70,55 +74,55 @@ export interface ColumnConstraint {
  * 允许的列定义白名单
  * 用户只能从这个列表中选择列名
  */
-export const ALLOWED_COLUMNS: Record<string, ColumnConstraint> = {
-    // === 核心字段（必需） ===
-    'item_id': { type: 'TEXT', nullable: false },
-    'item_type': { type: 'TEXT', nullable: false },
+// export const ALLOWED_COLUMNS: Record<string, ColumnConstraint> = {
+//     // === 核心字段（必需） ===
+//     'item_id': { type: 'TEXT', nullable: false },
+//     'item_type': { type: 'TEXT', nullable: false },
 
-    // === 文件场景 ===
-    'filename': { type: 'TEXT', nullable: true },
-    'file_path': { type: 'TEXT', nullable: true },
-    'file_ext': { type: 'TEXT', nullable: true },
-    'size': { type: 'INTEGER', nullable: true, defaultValue: 0 },
-    'owner': { type: 'TEXT', nullable: true },
-    'creator': { type: 'TEXT', nullable: true },
-    'modifier': { type: 'TEXT', nullable: true },
+//     // === 文件场景 ===
+//     'filename': { type: 'TEXT', nullable: true },
+//     'file_path': { type: 'TEXT', nullable: true },
+//     'file_ext': { type: 'TEXT', nullable: true },
+//     'size': { type: 'INTEGER', nullable: true, defaultValue: 0 },
+//     'owner': { type: 'TEXT', nullable: true },
+//     'creator': { type: 'TEXT', nullable: true },
+//     'modifier': { type: 'TEXT', nullable: true },
 
-    // === 邮件场景 ===
-    'mail_title': { type: 'TEXT', nullable: true },
-    'mail_ctx': { type: 'TEXT', nullable: true },
-    'mail_from': { type: 'TEXT', nullable: true },
-    'mail_to': { type: 'TEXT', nullable: true },
-    'mail_cc': { type: 'TEXT', nullable: true },
-    'mail_date': { type: 'INTEGER', nullable: true },
-    'attachment_title': { type: 'TEXT', nullable: true },
-    'attachment_ctx': { type: 'TEXT', nullable: true },
-    'sender': { type: 'TEXT', nullable: true },
+//     // === 邮件场景 ===
+//     'mail_title': { type: 'TEXT', nullable: true },
+//     'mail_ctx': { type: 'TEXT', nullable: true },
+//     'mail_from': { type: 'TEXT', nullable: true },
+//     'mail_to': { type: 'TEXT', nullable: true },
+//     'mail_cc': { type: 'TEXT', nullable: true },
+//     'mail_date': { type: 'INTEGER', nullable: true },
+//     'attachment_title': { type: 'TEXT', nullable: true },
+//     'attachment_ctx': { type: 'TEXT', nullable: true },
+//     'sender': { type: 'TEXT', nullable: true },
 
-    // === 文档场景 ===
-    'doc_title': { type: 'TEXT', nullable: true },
-    'doc_ctx': { type: 'TEXT', nullable: true },
-    'doc_author': { type: 'TEXT', nullable: true },
-    'doc_version': { type: 'TEXT', nullable: true },
+//     // === 文档场景 ===
+//     'doc_title': { type: 'TEXT', nullable: true },
+//     'doc_ctx': { type: 'TEXT', nullable: true },
+//     'doc_author': { type: 'TEXT', nullable: true },
+//     'doc_version': { type: 'TEXT', nullable: true },
 
-    // === 通用元数据 ===
-    'created_at': { type: 'INTEGER', nullable: true },
-    'updated_at': { type: 'INTEGER', nullable: true },
-    'tag': { type: 'TEXT', nullable: true },
-    'tags': { type: 'TEXT', nullable: true },
-    'text': { type: 'TEXT', nullable: true },
-    'category': { type: 'TEXT', nullable: true },
-    'priority': { type: 'INTEGER', nullable: true },
-    'status': { type: 'TEXT', nullable: true },
-    'description': { type: 'TEXT', nullable: true },
-    'source': { type: 'TEXT', nullable: true },
-    'url': { type: 'TEXT', nullable: true },
+//     // === 通用元数据 ===
+//     'created_at': { type: 'INTEGER', nullable: true },
+//     'updated_at': { type: 'INTEGER', nullable: true },
+//     'tag': { type: 'TEXT', nullable: true },
+//     'tags': { type: 'TEXT', nullable: true },
+//     'text': { type: 'TEXT', nullable: true },
+//     'category': { type: 'TEXT', nullable: true },
+//     'priority': { type: 'INTEGER', nullable: true },
+//     'status': { type: 'TEXT', nullable: true },
+//     'description': { type: 'TEXT', nullable: true },
+//     'source': { type: 'TEXT', nullable: true },
+//     'url': { type: 'TEXT', nullable: true },
 
-    // === 数值字段 ===
-    'score': { type: 'REAL', nullable: true },
-    'count': { type: 'INTEGER', nullable: true },
-    'weight': { type: 'REAL', nullable: true },
-};
+//     // === 数值字段 ===
+//     'score': { type: 'REAL', nullable: true },
+//     'count': { type: 'INTEGER', nullable: true },
+//     'weight': { type: 'REAL', nullable: true },
+// };
 
 /**
  * 必需的列（每个 schema 都必须包含）
@@ -131,7 +135,7 @@ export const REQUIRED_COLUMNS = ['item_id', 'item_type'];
 export interface ColumnSchema {
     // 代表该Item的所有列名字，key是列名，value是约束/类型描述
     columns: {
-        [column: string]: string;
+        [column: string]: ColumnConstraint;
     };
     // 代表哪些列需要被怎样的indexer索引
     needIndexers: {
@@ -160,14 +164,6 @@ export function validateColumnSchema(schema: ColumnSchema): void {
     for (const required of REQUIRED_COLUMNS) {
         if (!(required in schema.columns)) {
             errors.push(`Missing required column: ${required}`);
-        }
-    }
-
-    // 2. 检查所有列是否在白名单中
-    for (const columnName of Object.keys(schema.columns)) {
-        if (!(columnName in ALLOWED_COLUMNS)) {
-            invalidColumns.push(columnName);
-            errors.push(`Column "${columnName}" is not in the allowed list`);
         }
     }
 
@@ -247,225 +243,6 @@ export interface FilterCondition {
     vectorQuery?: VectorQuery;
 }
 
-// ============================================================================
-// BaseIndexer - 动态 Schema 的 SQLite 索引器
-// ============================================================================
-
-/**
- * BaseIndexer - 支持动态 Schema 的 SQLite 索引器
- *
- * 特性：
- * - 根据 ColumnSchema 动态创建表结构
- * - 支持所有标量操作符
- * - 使用 WAL 模式确保并发安全（SQLite 层面处理）
- * - 自动创建索引提高查询性能
- */
-export class BaseIndexer extends Indexer {
-    readonly name = 'BaseIndexer';
-    readonly supportedOperators: QueryOperator[] = [
-        '=', '!=', '>', '<', '>=', '<=',
-        'like', 'notlike', 'in', 'notin',
-        'between', 'notbetween'
-    ];
-
-    private _supportedFields: string[] = [];
-    private db: BaseIndexDB;
-    private schema: ColumnSchema;
-    private isInitialized = false;
-
-    constructor(schema: ColumnSchema, dbPath: string) {
-        super();
-        validateColumnSchema(schema);
-        this.schema = schema;
-        this._supportedFields = Object.keys(schema.columns);
-        this.db = new BaseIndexDB(dbPath, schema);
-    }
-
-    get supportedFields(): string[] {
-        return this._supportedFields;
-    }
-
-    /**
-     * 初始化索引器
-     */
-    async initialize(): Promise<void> {
-        this.isInitialized = true;
-    }
-
-    /**
-     * 验证字段是否支持
-     */
-    private validateField(field: string): void {
-        if (!this._supportedFields.includes(field)) {
-            throw new Error(
-                `BaseIndexer does not support field: ${field}. ` +
-                `Supported fields: ${this._supportedFields.join(', ')}`
-            );
-        }
-    }
-
-    /**
-     * 验证操作符是否支持
-     */
-    private validateOperator(operator: QueryOperator): void {
-        if (!this.supportsOperator(operator)) {
-            throw new Error(
-                `BaseIndexer does not support operator: ${operator}. ` +
-                `Supported operators: ${this.supportedOperators.join(', ')}`
-            );
-        }
-    }
-
-    /**
-     * 转换 FilterCondition 为 BaseQueryCondition
-     */
-    private toQueryCondition(cond: FilterCondition): BaseQueryCondition {
-        this.validateField(cond.field);
-        this.validateOperator(cond.operator);
-
-        return {
-            field: cond.field,
-            operator: cond.operator as BaseQueryOperator,
-            value: cond.value,
-        };
-    }
-
-    /**
-     * 搜索匹配条件的 Item
-     */
-    async search(
-        conditions: FilterCondition[],
-        options?: BaseIndexerSearchOptions
-    ): Promise<IndexerSearchResult> {
-        // 转换条件
-        const queryConditions = conditions
-            .filter(c => c.indexer === 'BaseIndexer')
-            .map(c => this.toQueryCondition(c));
-
-        // Join 过滤：限制在已有结果集的 item_id 范围内
-        if (options?.existingResults && options.existingResults.length > 0) {
-            queryConditions.push({
-                field: 'item_id',
-                operator: 'in',
-                value: options.existingResults.map(r => r.item_id),
-            });
-        }
-
-        // 执行查询
-        const records = this.db.query(queryConditions, {
-            limit: options?.limit,
-            offset: options?.offset,
-            orderBy: options?.orderBy ? {
-                field: options.orderBy.field,
-                direction: options.orderBy.direction,
-            } : undefined,
-        });
-
-        // 如果有 existingResults，从中获取完整的元数据
-        const existingMap = new Map(
-            options?.existingResults?.map(r => [r.item_id, r])
-        );
-
-        // 转换记录为 Item
-        const items: Item[] = records.map(record => {
-            const existing = existingMap.get(record.item_id);
-            const item: Item = {
-                item_id: record.item_id,
-                item_type: record.item_type as ItemType,
-            };
-
-            // 动态复制 schema 中定义的字段
-            for (const field of this._supportedFields) {
-                if (field === 'item_id' || field === 'item_type') continue;
-                if (record[field] !== undefined) {
-                    item[field] = record[field];
-                } else if (existing?.[field] !== undefined) {
-                    item[field] = existing[field];
-                }
-            }
-
-            return item;
-        });
-
-        // 获取总数
-        const totalCount = this.db.count(queryConditions);
-
-        return { items, totalCount };
-    }
-
-    /**
-     * 插入 Item
-     */
-    async insert(items: Item[]): Promise<void> {
-        if (items.length === 0) return;
-
-        const records = items.map(item => {
-            const record: Record<string, any> = {};
-            for (const field of this._supportedFields) {
-                if (item[field] !== undefined) {
-                    record[field] = item[field];
-                }
-            }
-            return record;
-        });
-
-        this.db.insertMany(records);
-    }
-
-    /**
-     * 删除 Item
-     */
-    async delete(itemIds: string[]): Promise<void> {
-        if (itemIds.length === 0) return;
-
-        this.db.deleteMany(itemIds);
-    }
-
-    /**
-     * 更新 Item
-     */
-    async update(items: Item[]): Promise<void> {
-        if (items.length === 0) return;
-
-        for (const item of items) {
-            const record: Record<string, any> = {};
-            for (const field of this._supportedFields) {
-                if (item[field] !== undefined) {
-                    record[field] = item[field];
-                }
-            }
-            this.db.upsert(record);
-        }
-    }
-
-    /**
-     * 关闭索引器
-     */
-    close(): void {
-        this.db.close();
-    }
-
-    /**
-     * 获取记录数
-     */
-    getCount(): number {
-        return this.db.count();
-    }
-
-    /**
-     * 获取 schema
-     */
-    getSchema(): ColumnSchema {
-        return this.schema;
-    }
-
-    /**
-     * 获取底层数据库实例
-     */
-    getDB(): BaseIndexDB {
-        return this.db;
-    }
-}
 
 // ============================================================================
 // BaseStorage - 多索引器协调存储
@@ -565,6 +342,22 @@ export class BaseStorage {
      */
     async insert(items: Item[]): Promise<void> {
         if (items.length === 0) return;
+
+
+        // 检查 items 内的每个 item，其 key 是否对应 schema 中的定义，不对应时直接 return
+        for (const item of items) {
+            for (const [col, indexers] of Object.entries(this.schema.needIndexers)) {
+            // 检查当前 item 的 indexer_columns 是否包含对应的 indexer 和 column
+                for (const ind of indexers) {
+                    if (!item.indexer_columns ||
+                        !item.indexer_columns[ind] ||
+                        !item.indexer_columns[ind].some(colObj => colObj.column === col)) {
+                            console.error(`[BaseStorage] Item ${item.item_id} does not contain the required column ${col} for indexer ${ind}`);
+                            return;
+                        }
+                }
+            }
+        }
 
         // 根据 schema.needIndexers 确定每个字段需要哪些 indexer
         const indexersToUse = new Set<string>();
