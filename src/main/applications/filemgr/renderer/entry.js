@@ -1,5 +1,5 @@
 import { AgentOperableHTMLElement } from '../../widget_utils.js';
-import { ElasticToolbarWidget } from '../../../../renderer/components/toolbar.js';
+import { ElasticToolbarWidget } from '../../../../renderer/components/toolbar.ts';
 
 
 class FileMgrEntryWidget extends AgentOperableHTMLElement {

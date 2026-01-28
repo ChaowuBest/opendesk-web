@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { RendererToolset, RendererTool, AgentOperableHTMLElement } from '../../widget_utils.js';
-import { ElasticToolbarWidget } from '../../../../renderer/components/toolbar.js';
+import { ElasticToolbarWidget } from '../../../../renderer/components/toolbar.ts';
 
 // ========== Tagify 导入 ==========
 import Tagify from '@yaireo/tagify';
@@ -1960,6 +1960,7 @@ class MailEditorWidget extends AgentOperableHTMLElement {
         const buttons = [
             { id: 'send-email-cancel-button', icon: 'fa-circle-arrow-left', label: '取消', action: () => this.cancel() },
             { id: 'send-email-send-button', icon: 'fa-paper-plane', label: '发送', action: () => this.send() },
+            { id: 'send-email-polish-button', icon: 'fa-wand-sparkles', label: '帮我写', labelStayVisible: true, action: () => this.polish() },
         ]
         const headerToolbar = new ElasticToolbarWidget(buttons);
         headerToolbar.classList.add('pl-3', 'pr-16');
