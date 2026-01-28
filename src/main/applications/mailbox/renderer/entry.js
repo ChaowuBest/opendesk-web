@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { RendererToolset, RendererTool, AgentOperableHTMLElement } from '../../widget_utils.js';
-import { ElasticToolbarWidget } from '../../../../renderer/components/toolbar.js';
+import { ElasticToolbarWidget } from '../../../../renderer/components/toolbar.ts';
 
 // ========== Tagify 导入 ==========
 import Tagify from '@yaireo/tagify';
@@ -1178,7 +1178,8 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         // 这里可以直接 new 一个邮件编辑控件并赋值给 #email-content
         const emailContent = this.querySelector('#email-content');
         const editor = new MailEditorWidget();
-        editor.classList.add('flex-1', 'overflow-y-auto', 'bg-white');
+        // 与阅读界面一致：flex flex-col 让工具栏固定顶部、内容区单独滚动；min-h-0 使内部 overflow 生效；不加 overflow-y-auto 避免整块（含工具栏）一起滚动
+        editor.classList.add('flex-1', 'flex', 'flex-col', 'min-h-0', 'bg-white', 'w-full');
         editor.id = 'editor';
         emailContent.innerHTML = '';
         emailContent.appendChild(editor);
@@ -1959,15 +1960,17 @@ class MailEditorWidget extends AgentOperableHTMLElement {
         const buttons = [
             { id: 'send-email-cancel-button', icon: 'fa-circle-arrow-left', label: '取消', action: () => this.cancel() },
             { id: 'send-email-send-button', icon: 'fa-paper-plane', label: '发送', action: () => this.send() },
+            { id: 'send-email-polish-button', icon: 'fa-wand-sparkles', label: '帮我写', labelStayVisible: true, action: () => this.polish() },
         ]
         const headerToolbar = new ElasticToolbarWidget(buttons);
+        headerToolbar.classList.add('pl-3', 'pr-16');
 
         this.innerHTML = '';
         this.appendChild(headerToolbar);
 
         this.insertAdjacentHTML('beforeend', `
-        <!-- 邮件阅读区 -->
-        <div class="flex-1 overflow-y-auto p-4 bg-white flex flex-col">
+        <!-- 邮件编辑区（布局与阅读界面一致：工具栏固定顶部，此处 flex-1 min-h-0 使内容区单独滚动） -->
+        <div class="flex-1 min-h-0 overflow-y-auto p-4 bg-white flex flex-col">
             <div class="w-full max-w-5xl mx-auto flex-1 flex flex-col">
                 <div class="w-full bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden font-sans mb-3">
 
