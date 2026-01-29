@@ -21,6 +21,7 @@ export class TagIndexer extends Indexer {
     readonly supportedOperators: QueryOperator[] = [
         '=', '!=', '>', '<', '>=', '<=', 'like', 'in'
     ];
+    private readonly columnName = 'tag';
 
     private db: TagIndexDB;
     private isInitialized = false;
@@ -161,9 +162,8 @@ export class TagIndexer extends Indexer {
         const records: TagIndexRecord[] = [];
 
         for (const item of items) {
-            // TODO fix 0
-            const tag = item.indexer_columns?.[this.name]?.[0]?.content;
-            const record = this.itemToRecord(item, tag as string);
+            const col = item.indexer_columns?.[this.name]?.find(c => c.column === this.columnName);
+            const record = this.itemToRecord(item, col?.content as string);
             if (record) {
                 records.push(record);
             }
@@ -184,9 +184,8 @@ export class TagIndexer extends Indexer {
      */
     async update(items: Item[]): Promise<void> {
         for (const item of items) {
-            // TODO fix 0
-            const tag = item.indexer_columns?.[this.name]?.[0]?.content;
-            const record = this.itemToRecord(item, tag as string);
+            const col = item.indexer_columns?.[this.name]?.find(c => c.column === this.columnName);
+            const record = this.itemToRecord(item, col?.content as string);
             this.db.upsert(record);
         }
     }

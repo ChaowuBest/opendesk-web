@@ -24,10 +24,10 @@ export class VectorIndexer extends Indexer {
         'vector_not_similar',
         'vector_range'
     ];
+    private readonly columnName = 'repr';
 
     private db: VectorIndexDB;
     private readonly dimension: number;
-    private isInitialized = false;
 
     constructor(dbPath: string, dimension: number = 1024) {
         super();
@@ -40,7 +40,6 @@ export class VectorIndexer extends Indexer {
      */
     async initialize(): Promise<void> {
         // VectorIndexDB 在构造函数中已初始化
-        this.isInitialized = true;
     }
 
     /**
@@ -226,16 +225,13 @@ export class VectorIndexer extends Indexer {
 
     /**
      * 向索引中插入 Item
-     * 注意：Item 需要附带 repr 属性 
-     * TODO
      */
     async insert(items: Item[]): Promise<void> {
         const records: VectorIndexRecord[] = [];
-        // 定义一个长度为的1024的repr
         for (const item of items) {
-            // TODO fix 0
-            const repr = item.indexer_columns?.[this.name]?.[0]?.content;
-            let validRepr = Array.isArray(repr) && repr.length === 1024 && repr.every(v => typeof v === 'number');
+            const col = item.indexer_columns?.[this.name]?.find(c => c.column === this.columnName);
+            const repr = col?.content;
+            const validRepr = Array.isArray(repr) && repr.length === this.dimension && repr.every(v => typeof v === 'number');
             if (!validRepr) {
                 console.error(`[VectorIndexer] Item ${item.item_id} does not contain the required repr for indexer ${this.name}`);
                 continue;
@@ -273,12 +269,12 @@ export class VectorIndexer extends Indexer {
 
     /**
      * 更新索引中的 Item
-     * 注意：Item 需要附带 repr 属性
      */
     async update(items: Item[]): Promise<void> {
         for (const item of items) {
-            const repr = item.indexer_columns?.[this.name]?.[0]?.content;
-            let validRepr = Array.isArray(repr) && repr.length === 1024 && repr.every(v => typeof v === 'number');
+            const col = item.indexer_columns?.[this.name]?.find(c => c.column === this.columnName);
+            const repr = col?.content;
+            const validRepr = Array.isArray(repr) && repr.length === this.dimension && repr.every(v => typeof v === 'number');
             if (!validRepr) {
                 console.error(`[VectorIndexer] Item ${item.item_id} does not contain the required repr for indexer ${this.name}`);
                 continue;
