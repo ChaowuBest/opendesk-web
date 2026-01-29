@@ -17,8 +17,10 @@ const REFERENCES_DIR = 'references';
 const SCRIPTS_DIR = 'scripts';
 const ASSETS_DIR = 'assets';
 
-/** @type {Map<string, { frontmatter: object, body: string, toolset: BaseToolset, skillDir: string }>} */
+/** @type {Map<string, { frontmatter: object, body: string, skillDir: string }>} */
 const skillsCache = new Map();
+/** 所有本地技能共用一个 toolset，工具 ID 为 skill-<name>，避免 skill-pdf-pdf 重复 */
+let singleSkillToolset = null;
 
 /** 内置 skills 根目录（main 进程设置），用于渐进式加载时回退读取 resources/skills */
 let bundledSkillsRoot = '';
@@ -202,10 +204,8 @@ function loadSkillFromDir(skillDir, dirName) {
   }
 
   const { name, description, body, frontmatter } = parsed;
-  const toolsetName = `skill-${name}`;
-  const toolset = new BaseToolset(toolsetName);
 
-  // 单技能单 tool：与 Anthropic 规范一致，一个 skill 对应一个可调用的能力
+  // 单技能单 tool，tool 的 name 为技能名；统一放入 toolset "skill"，工具 ID 为 skill-<name>
   const paramsSchema = { type: 'object', properties: {}, required: [] };
   const handler = frontmatter.fillipdesk?.handler ?? frontmatter.handler;
   if (handler && (frontmatter.fillipdesk?.input_schema || frontmatter.input_schema)) {
@@ -227,11 +227,10 @@ function loadSkillFromDir(skillDir, dirName) {
     params: paramsSchema
   });
   tool.setExecutor(createExecutor(name, skillDir, body, frontmatter, handler));
-  toolset.addTool(tool);
 
   return {
     success: true,
-    toolset,
+    tool,
     name,
     body,
     frontmatter,
@@ -366,13 +365,14 @@ function runScript(scriptPath, skillDir, input) {
 
 /**
  * 扫描 skills 目录下所有子目录，加载 SKILL.md 并缓存
+ * 所有技能共用一个 toolset "skill"，工具 ID 为 skill-<name>（如 skill-pdf、skill-example）
  * @returns {{ toolsets: BaseToolset[], errors: Array<{ id: string, error: string }> }}
  */
 function loadAll() {
   const skillsDir = getSkillsDirectory();
   skillsCache.clear();
+  singleSkillToolset = new BaseToolset('skill');
 
-  const toolsets = [];
   const errors = [];
 
   let entries = [];
@@ -380,7 +380,7 @@ function loadAll() {
     entries = fs.readdirSync(skillsDir, { withFileTypes: true });
   } catch (e) {
     logger.error(`SkillRegistry: 无法读取目录 ${skillsDir}: ${e.message}`);
-    return { toolsets, errors: [{ id: '', error: e.message }] };
+    return { toolsets: [], errors: [{ id: '', error: e.message }] };
   }
 
   for (const ent of entries) {
@@ -391,10 +391,9 @@ function loadAll() {
       skillsCache.set(result.name, {
         frontmatter: result.frontmatter,
         body: result.body,
-        toolset: result.toolset,
         skillDir: result.skillDir
       });
-      toolsets.push(result.toolset);
+      singleSkillToolset.addTool(result.tool);
       logger.info(`SkillRegistry: 已加载技能 ${result.name} (Anthropic Agent Skills)`);
     } else {
       errors.push({ id: ent.name, error: result.error });
@@ -402,7 +401,7 @@ function loadAll() {
     }
   }
 
-  return { toolsets, errors };
+  return { toolsets: [singleSkillToolset], errors };
 }
 
 /**
@@ -410,11 +409,11 @@ function loadAll() {
  * @returns {BaseToolset[]}
  */
 function getToolsets() {
-  if (skillsCache.size === 0) {
+  if (singleSkillToolset === null || skillsCache.size === 0) {
     const { toolsets } = loadAll();
     return toolsets;
   }
-  return Array.from(skillsCache.values()).map((s) => s.toolset);
+  return [singleSkillToolset];
 }
 
 /**
