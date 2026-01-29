@@ -37,7 +37,8 @@ class CalendarApplication extends BaseApplication {
     getToolsets() {
         let calendarToolset = new BaseToolset('calendar');
         let getCalendarItemsTool = new BaseTool(
-            'getCalendarItems', '获取指定日期的日程和会议列表',
+            'getCalendarItems',
+            '获取指定日期的日程安排和会议列表（注：交流，研讨，培训等各种广义的日程安排也包含在内）',
             z.object({
                 dateString: z.string().describe('日期字符串，格式为YYYY-MM-DD')
             })
