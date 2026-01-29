@@ -1401,9 +1401,8 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         `).join('');
 
         this.innerHTML = `
-        <div class="flex h-full">
-            <!-- 左侧栏：融合了导航和列表 (Width: 400px) -->
-            <aside class="w-[350px] bg-white border-r border-gray-200 flex flex-col flex-shrink-0">
+        <splitter-widget class="w-full h-full flex">
+            <aside slot="left" class="w-full bg-white flex flex-col flex-shrink-0">
 
                 <div class="p-3 space-y-3">
                     <div class="flex items-center justify-between">
@@ -1466,8 +1465,8 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
                 <div id="email-list" class="flex-1 overflow-y-auto border-t border-gray-200"></div>
             </aside>
             <!-- 右侧栏：邮件内容 -->
-            <main id='email-content' class="flex-1 bg-white flex flex-col overflow-auto"></main>
-        </div>
+            <main id='email-content' slot="right" class="flex-1 bg-white flex flex-col overflow-auto"></main>
+        </splitter-widget>
         `
 
         this.setupTabListeners();
