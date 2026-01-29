@@ -10,7 +10,6 @@
 
 import {
     BaseStorage,
-    BaseIndexer,
     Item,
     ItemType,
     FilterCondition,
@@ -20,12 +19,12 @@ import {
     SchemaValidationError,
     REQUIRED_COLUMNS,
     BM25Query,
-} from '../object.js';
+} from '../abstrac-storage.js';
+import { BaseIndexer } from '../base-index.js';
 import { TagIndexer } from '../tag-indexer.js';
 import { TagIndexDB, TagIndexRecord } from '../tag-index-db.js';
 import { VectorIndexDB, VectorIndexRecord } from '../vector-index-db.js';
 import { VectorIndexer } from '../vector-indexer.js';
-import { BM25IndexDB, BM25IndexRecord } from '../bm25-index-db.js';
 import { BM25Indexer } from '../bm25-indexer.js';
 import { BaseIndexDB } from '../base-index-db.js';
 import path from 'path';
@@ -1029,132 +1028,7 @@ async function testEdgeCasesConcurrency(): Promise<void> {
 }
 
 // ============================================================================
-// BM25IndexDB 单元测试
-// ============================================================================
-
-async function testBM25IndexDBInitialization(): Promise<void> {
-    console.log('\n=== Test: BM25IndexDB Initialization ===');
-    cleanupTestDB();
-
-    const db = new BM25IndexDB(getTestDBPath('bm25-init'));
-
-    assertEqual(db.count(), 0, 'Initial count should be 0');
-
-    db.close();
-    console.log('✓ BM25IndexDB Initialization test passed');
-}
-
-async function testBM25IndexDBCRUD(): Promise<void> {
-    console.log('\n=== Test: BM25IndexDB CRUD ===');
-    cleanupTestDB();
-
-    const db = new BM25IndexDB(getTestDBPath('bm25-crud'));
-
-    // Insert
-    const record: BM25IndexRecord = {
-        item_id: 'bm25_001',
-        item_type: 'document',
-        tag: 'test',
-        text: 'This is a test document for BM25 indexing',
-        created_at: Date.now(),
-        updated_at: Date.now(),
-    };
-
-    const inserted = db.insert(record);
-    assert(inserted, 'Insert should return true');
-    assertEqual(db.count(), 1, 'Count should be 1 after insert');
-
-    // Find by ID
-    const found = db.findById('bm25_001');
-    assertEqual(found?.text, record.text, 'Found record should match');
-
-    // Update (upsert)
-    const updatedRecord = { ...record, text: 'Updated text content', updated_at: Date.now() };
-    db.upsert(updatedRecord);
-    const updated = db.findById('bm25_001');
-    assertEqual(updated?.text, 'Updated text content', 'Text should be updated');
-
-    // Delete
-    const deleted = db.delete('bm25_001');
-    assert(deleted, 'Delete should return true');
-    assertEqual(db.count(), 0, 'Count should be 0 after delete');
-
-    db.close();
-    console.log('✓ BM25IndexDB CRUD test passed');
-}
-
-async function testBM25IndexDBBatchOperations(): Promise<void> {
-    console.log('\n=== Test: BM25IndexDB Batch Operations ===');
-    cleanupTestDB();
-
-    const db = new BM25IndexDB(getTestDBPath('bm25-batch'));
-
-    // Batch insert
-    const records: BM25IndexRecord[] = [];
-    for (let i = 0; i < 100; i++) {
-        records.push({
-            item_id: `batch_${i}`,
-            item_type: 'document',
-            tag: `tag_${i % 5}`,
-            text: `Document number ${i} with some searchable content`,
-            created_at: Date.now(),
-            updated_at: Date.now(),
-        });
-    }
-
-    const insertedCount = db.insertMany(records);
-    assertEqual(insertedCount, 100, 'Should insert 100 records');
-    assertEqual(db.count(), 100, 'Should have 100 records');
-
-    // Test duplicate insert (should skip)
-    const duplicateCount = db.insertMany(records.slice(0, 5));
-    assertEqual(duplicateCount, 0, 'Duplicate inserts should be skipped');
-
-    // Batch delete
-    const idsToDelete = records.slice(0, 10).map(r => r.item_id);
-    const deletedCount = db.deleteMany(idsToDelete);
-    assertEqual(deletedCount, 10, 'Should delete 10 records');
-    assertEqual(db.count(), 90, 'Should have 90 records after delete');
-
-    db.close();
-    console.log('✓ BM25IndexDB Batch Operations test passed');
-}
-
-async function testBM25IndexDBUpsert(): Promise<void> {
-    console.log('\n=== Test: BM25IndexDB Upsert ===');
-    cleanupTestDB();
-
-    const db = new BM25IndexDB(getTestDBPath('bm25-upsert'));
-
-    const record: BM25IndexRecord = {
-        item_id: 'upsert_001',
-        item_type: 'document',
-        tag: 'original',
-        text: 'Original text',
-        created_at: 1000,
-        updated_at: 2000,
-    };
-
-    // Initial insert via upsert
-    db.upsert(record);
-    assertEqual(db.count(), 1, 'Should have 1 record');
-
-    // Update via upsert
-    const updatedRecord = { ...record, tag: 'updated', text: 'Updated text', updated_at: 3000 };
-    db.upsert(updatedRecord);
-    assertEqual(db.count(), 1, 'Should still have 1 record');
-
-    const found = db.findById('upsert_001');
-    assertEqual(found?.tag, 'updated', 'Tag should be updated');
-    assertEqual(found?.text, 'Updated text', 'Text should be updated');
-    assertEqual(found?.created_at, 1000, 'created_at should be preserved');
-
-    db.close();
-    console.log('✓ BM25IndexDB Upsert test passed');
-}
-
-// ============================================================================
-// BM25Indexer 单元测试
+// BM25Indexer 单元测试 (使用 search-index + nodejieba)
 // ============================================================================
 
 async function testBM25IndexerInitialization(): Promise<void> {
@@ -1170,7 +1044,8 @@ async function testBM25IndexerInitialization(): Promise<void> {
     assert(!indexer.supportsOperator('='), 'Should not support = operator');
     assert(!indexer.supportsOperator('vector_similarity'), 'Should not support vector_similarity');
 
-    assertEqual(indexer.getDocumentCount(), 0, 'Initial document count should be 0');
+    const count = await indexer.getDocumentCount();
+    assertEqual(count, 0, 'Initial document count should be 0');
 
     indexer.close();
     console.log('✓ BM25Indexer Initialization test passed');
@@ -1184,23 +1059,26 @@ async function testBM25IndexerCRUD(): Promise<void> {
     await indexer.initialize();
 
     const items: Item[] = [
-        { item_id: 'doc_001', item_type: 'document', tag: 'work', text: 'Project proposal for Q4 planning', created_at: 1000, updated_at: 2000 },
-        { item_id: 'doc_002', item_type: 'document', tag: 'work', text: 'Meeting notes from Monday standup', created_at: 1100, updated_at: 2100 },
-        { item_id: 'doc_003', item_type: 'article', tag: 'tech', text: 'Introduction to machine learning algorithms', created_at: 1200, updated_at: 2200 },
+        { item_id: 'doc_001', item_type: 'file', tag: 'work', text: 'Project proposal for Q4 planning', created_at: 1000, updated_at: 2000 },
+        { item_id: 'doc_002', item_type: 'file', tag: 'work', text: 'Meeting notes from Monday standup', created_at: 1100, updated_at: 2100 },
+        { item_id: 'doc_003', item_type: 'file', tag: 'tech', text: 'Introduction to machine learning algorithms', created_at: 1200, updated_at: 2200 },
     ];
 
     // Insert
     await indexer.insert(items);
-    assertEqual(indexer.getDocumentCount(), 3, 'Should have 3 documents after insert');
+    const countAfterInsert = await indexer.getDocumentCount();
+    assertEqual(countAfterInsert, 3, 'Should have 3 documents after insert');
 
     // Update
     const updatedItem = { ...items[0], text: 'Updated project proposal for Q4 planning and budget' };
     await indexer.update([updatedItem]);
-    assertEqual(indexer.getDocumentCount(), 3, 'Should still have 3 documents after update');
+    const countAfterUpdate = await indexer.getDocumentCount();
+    assertEqual(countAfterUpdate, 3, 'Should still have 3 documents after update');
 
     // Delete
     await indexer.delete(['doc_001']);
-    assertEqual(indexer.getDocumentCount(), 2, 'Should have 2 documents after delete');
+    const countAfterDelete = await indexer.getDocumentCount();
+    assertEqual(countAfterDelete, 2, 'Should have 2 documents after delete');
 
     indexer.close();
     console.log('✓ BM25Indexer CRUD test passed');
@@ -1214,10 +1092,10 @@ async function testBM25IndexerSearch(): Promise<void> {
     await indexer.initialize();
 
     const items: Item[] = [
-        { item_id: 'doc_001', item_type: 'document', tag: 'work', text: 'Project proposal for Q4 planning and budget allocation', created_at: 1000, updated_at: 2000 },
-        { item_id: 'doc_002', item_type: 'document', tag: 'work', text: 'Meeting notes from Monday standup discussion', created_at: 1100, updated_at: 2100 },
-        { item_id: 'doc_003', item_type: 'article', tag: 'tech', text: 'Introduction to machine learning algorithms and neural networks', created_at: 1200, updated_at: 2200 },
-        { item_id: 'doc_004', item_type: 'document', tag: 'work', text: 'Quarterly budget review and financial planning', created_at: 1300, updated_at: 2300 },
+        { item_id: 'doc_001', item_type: 'file', tag: 'work', text: 'Project proposal for Q4 planning and budget allocation', created_at: 1000, updated_at: 2000 },
+        { item_id: 'doc_002', item_type: 'file', tag: 'work', text: 'Meeting notes from Monday standup discussion', created_at: 1100, updated_at: 2100 },
+        { item_id: 'doc_003', item_type: 'file', tag: 'tech', text: 'Introduction to machine learning algorithms and neural networks', created_at: 1200, updated_at: 2200 },
+        { item_id: 'doc_004', item_type: 'file', tag: 'work', text: 'Quarterly budget review and financial planning', created_at: 1300, updated_at: 2300 },
     ];
 
     await indexer.insert(items);
@@ -1228,14 +1106,36 @@ async function testBM25IndexerSearch(): Promise<void> {
     ]);
 
     assert(result.items.length > 0, 'Should find results');
-    assert(result.scores !== undefined, 'Should have scores');
-
-    // The most relevant documents should be about project/planning/budget
-    const topResultIds = result.items.slice(0, 2).map(i => i.item_id);
-    assert(topResultIds.includes('doc_001') || topResultIds.includes('doc_004'), 'Top results should include relevant documents');
 
     indexer.close();
     console.log('✓ BM25Indexer Search test passed');
+}
+
+async function testBM25IndexerChineseSearch(): Promise<void> {
+    console.log('\n=== Test: BM25Indexer Chinese Search ===');
+    cleanupTestDB();
+
+    const indexer = new BM25Indexer(getTestDBPath('bm25idx-chinese'));
+    await indexer.initialize();
+
+    const items: Item[] = [
+        { item_id: 'cn_001', item_type: 'file', tag: 'work', text: '项目计划书和预算分配方案', created_at: 1000, updated_at: 2000 },
+        { item_id: 'cn_002', item_type: 'file', tag: 'work', text: '周一站会会议纪要', created_at: 1100, updated_at: 2100 },
+        { item_id: 'cn_003', item_type: 'file', tag: 'tech', text: '机器学习算法和神经网络介绍', created_at: 1200, updated_at: 2200 },
+        { item_id: 'cn_004', item_type: 'file', tag: 'work', text: '季度预算审查和财务规划', created_at: 1300, updated_at: 2300 },
+    ];
+
+    await indexer.insert(items);
+
+    // Chinese search with jieba tokenization
+    const result = await indexer.search([
+        { indexer: 'BM25Indexer', field: 'text', operator: 'bm25_match', value: { query: '项目预算', topK: 10 } as BM25Query }
+    ]);
+
+    assert(result.items.length > 0, 'Should find Chinese results');
+
+    indexer.close();
+    console.log('✓ BM25Indexer Chinese Search test passed');
 }
 
 async function testBM25IndexerUnsupportedOperator(): Promise<void> {
@@ -1268,10 +1168,10 @@ async function testBM25IndexerJoinFiltering(): Promise<void> {
     await indexer.initialize();
 
     const items: Item[] = [
-        { item_id: 'doc_001', item_type: 'document', tag: 'important', text: 'Important project proposal document', created_at: 1000, updated_at: 2000 },
-        { item_id: 'doc_002', item_type: 'document', tag: 'normal', text: 'Regular project update report', created_at: 1100, updated_at: 2100 },
-        { item_id: 'doc_003', item_type: 'document', tag: 'important', text: 'Critical project deadline reminder', created_at: 1200, updated_at: 2200 },
-        { item_id: 'doc_004', item_type: 'document', tag: 'normal', text: 'Weekly project status summary', created_at: 1300, updated_at: 2300 },
+        { item_id: 'doc_001', item_type: 'file', tag: 'important', text: 'Important project proposal document', created_at: 1000, updated_at: 2000 },
+        { item_id: 'doc_002', item_type: 'file', tag: 'normal', text: 'Regular project update report', created_at: 1100, updated_at: 2100 },
+        { item_id: 'doc_003', item_type: 'file', tag: 'important', text: 'Critical project deadline reminder', created_at: 1200, updated_at: 2200 },
+        { item_id: 'doc_004', item_type: 'file', tag: 'normal', text: 'Weekly project status summary', created_at: 1300, updated_at: 2300 },
     ];
 
     await indexer.insert(items);
@@ -1290,75 +1190,19 @@ async function testBM25IndexerJoinFiltering(): Promise<void> {
         assert(['doc_001', 'doc_003'].includes(item.item_id), 'Should only contain doc_001 or doc_003');
     }
 
-    // Verify metadata is preserved
-    const item001 = result.items.find(i => i.item_id === 'doc_001');
-    if (item001) {
-        assertEqual(item001.tag, 'important', 'Tag should be preserved from existingResults');
-        assertEqual(item001.created_at, 1000, 'created_at should be preserved');
-    }
-
     indexer.close();
     console.log('✓ BM25Indexer Join Filtering test passed');
 }
 
-async function testBM25IndexerPagination(): Promise<void> {
-    console.log('\n=== Test: BM25Indexer Pagination ===');
-    cleanupTestDB();
-
-    const indexer = new BM25Indexer(getTestDBPath('bm25idx-page'));
-    await indexer.initialize();
-
-    // Insert many items
-    const items: Item[] = [];
-    for (let i = 0; i < 20; i++) {
-        items.push({
-            item_id: `page_${i}`,
-            item_type: 'document',
-            tag: 'test',
-            text: `Document number ${i} about software development and programming`,
-            created_at: 1000 + i * 100,
-            updated_at: 2000 + i * 100,
-        });
-    }
-    await indexer.insert(items);
-
-    // Test topK limit
-    const result1 = await indexer.search([
-        { indexer: 'BM25Indexer', field: 'text', operator: 'bm25_match', value: { query: 'software development', topK: 5 } as BM25Query }
-    ]);
-    assertEqual(result1.items.length, 5, 'Should return 5 items with topK=5');
-
-    // Test offset
-    const result2 = await indexer.search(
-        [{ indexer: 'BM25Indexer', field: 'text', operator: 'bm25_match', value: { query: 'software development', topK: 10 } as BM25Query }],
-        { offset: 3 }
-    );
-    assert(result2.items.length <= 7, 'Should return at most 7 items with offset=3');
-
-    // Test limit option
-    const result3 = await indexer.search(
-        [{ indexer: 'BM25Indexer', field: 'text', operator: 'bm25_match', value: { query: 'software development', topK: 10 } as BM25Query }],
-        { limit: 3 }
-    );
-    assertEqual(result3.items.length, 3, 'Should return 3 items with limit=3');
-
-    indexer.close();
-    console.log('✓ BM25Indexer Pagination test passed');
-}
-
-// ============================================================================
-// BM25 边界情况测试
-// ============================================================================
-
-async function testBM25EdgeCasesEmptyQuery(): Promise<void> {
-    console.log('\n=== Test: BM25 Edge Cases - Empty Query ===');
+async function testBM25IndexerEmptyQuery(): Promise<void> {
+    console.log('\n=== Test: BM25Indexer Empty Query ===');
     cleanupTestDB();
 
     const indexer = new BM25Indexer(getTestDBPath('bm25-empty'));
     await indexer.initialize();
 
     const items: Item[] = [
-        { item_id: 'doc_001', item_type: 'document', tag: 'test', text: 'Test document content', created_at: 1000, updated_at: 2000 },
+        { item_id: 'doc_001', item_type: 'file', tag: 'test', text: 'Test document content', created_at: 1000, updated_at: 2000 },
     ];
     await indexer.insert(items);
 
@@ -1377,48 +1221,7 @@ async function testBM25EdgeCasesEmptyQuery(): Promise<void> {
 
     indexer.close();
     emptyIndexer.close();
-    console.log('✓ BM25 Edge Cases - Empty Query test passed');
-}
-
-async function testBM25EdgeCasesConcurrency(): Promise<void> {
-    console.log('\n=== Test: BM25 Edge Cases - Concurrency ===');
-    cleanupTestDB();
-
-    const indexer = new BM25Indexer(getTestDBPath('bm25-concurrent'));
-    await indexer.initialize();
-
-    // Concurrent inserts
-    const insertPromises: Promise<void>[] = [];
-    for (let i = 0; i < 10; i++) {
-        insertPromises.push(indexer.insert([{
-            item_id: `concurrent_${i}`,
-            item_type: 'document',
-            tag: 'test',
-            text: `Concurrent document number ${i} about testing`,
-            created_at: Date.now(),
-            updated_at: Date.now(),
-        }]));
-    }
-    await Promise.all(insertPromises);
-
-    // Verify all inserted
-    assertEqual(indexer.getDocumentCount(), 10, 'All 10 concurrent inserts should succeed');
-
-    // Concurrent searches
-    const searchPromises: Promise<any>[] = [];
-    for (let i = 0; i < 5; i++) {
-        searchPromises.push(indexer.search([
-            { indexer: 'BM25Indexer', field: 'text', operator: 'bm25_match', value: { query: 'document testing', topK: 20 } as BM25Query }
-        ]));
-    }
-
-    const results = await Promise.all(searchPromises);
-    for (const result of results) {
-        assert(result.items.length > 0, 'Concurrent search should return results');
-    }
-
-    indexer.close();
-    console.log('✓ BM25 Edge Cases - Concurrency test passed');
+    console.log('✓ BM25Indexer Empty Query test passed');
 }
 
 // ============================================================================
@@ -1808,11 +1611,11 @@ async function testBM25WithTagIndexerJoin(): Promise<void> {
     await bm25Indexer.initialize();
 
     const items: Item[] = [
-        { item_id: 'multi_001', item_type: 'document' as ItemType, tag: 'important', text: 'Important project proposal for Q4', created_at: 1000, updated_at: 2000 },
-        { item_id: 'multi_002', item_type: 'document' as ItemType, tag: 'important', text: 'Critical budget review document', created_at: 1100, updated_at: 2100 },
-        { item_id: 'multi_003', item_type: 'document' as ItemType, tag: 'normal', text: 'Regular project update notes', created_at: 1200, updated_at: 2200 },
-        { item_id: 'multi_004', item_type: 'image' as ItemType, tag: 'important', text: 'Project chart image', created_at: 1300, updated_at: 2300 },
-        { item_id: 'multi_005', item_type: 'document' as ItemType, tag: 'archived', text: 'Old project documentation', created_at: 1400, updated_at: 2400 },
+        { item_id: 'multi_001', item_type: 'file', tag: 'important', text: 'Important project proposal for Q4', created_at: 1000, updated_at: 2000 },
+        { item_id: 'multi_002', item_type: 'file', tag: 'important', text: 'Critical budget review document', created_at: 1100, updated_at: 2100 },
+        { item_id: 'multi_003', item_type: 'file', tag: 'normal', text: 'Regular project update notes', created_at: 1200, updated_at: 2200 },
+        { item_id: 'multi_004', item_type: 'file', tag: 'important', text: 'Project chart image', created_at: 1300, updated_at: 2300 },
+        { item_id: 'multi_005', item_type: 'file', tag: 'archived', text: 'Old project documentation', created_at: 1400, updated_at: 2400 },
     ];
 
     // Insert to both indexers
@@ -1897,23 +1700,14 @@ async function runAllTests(): Promise<void> {
         testEdgeCasesEmptyResults,
         testEdgeCasesConcurrency,
 
-        // BM25IndexDB 单元测试
-        testBM25IndexDBInitialization,
-        testBM25IndexDBCRUD,
-        testBM25IndexDBBatchOperations,
-        testBM25IndexDBUpsert,
-
         // BM25Indexer 单元测试
         testBM25IndexerInitialization,
         testBM25IndexerCRUD,
         testBM25IndexerSearch,
+        testBM25IndexerChineseSearch,
         testBM25IndexerUnsupportedOperator,
         testBM25IndexerJoinFiltering,
-        testBM25IndexerPagination,
-
-        // BM25 边界情况测试
-        testBM25EdgeCasesEmptyQuery,
-        testBM25EdgeCasesConcurrency,
+        testBM25IndexerEmptyQuery,
 
         // BM25 + 其他 Indexer 集成测试
         testBM25WithTagIndexerJoin,

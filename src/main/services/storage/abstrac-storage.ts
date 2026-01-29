@@ -232,6 +232,12 @@ export type VectorOperator = 'vector_similarity' | 'vector_near' | 'vector_not_s
 // BM25 操作符
 export type BM25Operator = 'bm25_match';
 
+// BM25 查询参数
+export interface BM25Query {
+    query: string;
+    topK?: number;
+}
+
 // 所有操作符
 export type QueryOperator = ScalarOperator | VectorOperator | BM25Operator;
 
