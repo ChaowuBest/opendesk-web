@@ -310,6 +310,30 @@ const registerSettingAPIHandlers = () => {
     }
     globalMainWindow.close();
     return { status: 'ok' };
+  }),
+  ipcMain.handle('setting:minimizeMainWindow', () => {
+    if (globalMainWindow === null) {
+      return { status: 'error', message: 'main window not found' }
+    }
+    globalMainWindow.minimize();
+    return { status: 'ok' };
+  }),
+  ipcMain.handle('setting:maximizeMainWindow', () => {
+    if (globalMainWindow === null) {
+      return { status: 'error', message: 'main window not found' }
+    }
+    if (globalMainWindow.isMaximized()) {
+      globalMainWindow.unmaximize();
+    } else {
+      globalMainWindow.maximize();
+    }
+    return { status: 'ok' };
+  }),
+  ipcMain.handle('setting:isMaximized', () => {
+    if (globalMainWindow === null) {
+      return { status: 'error', message: 'main window not found' }
+    }
+    return { status: 'ok', data: globalMainWindow.isMaximized() };
   })
 
 }
