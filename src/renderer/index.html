@@ -19,13 +19,29 @@
     </head>
     <body>
         <div class="drag-overlay">
-            <button
-                id="close-drag-overlay-btn" title="关闭"
-                class="absolute top-4 right-4 z-10 w-7 h-7 rounded-full bg-white hover:bg-gray-200 text-gray-500 shadow-sm transition"
-                onclick="window.settingAPI.closeMainWindow()"
-            >
-                <i class="fas fa-times"></i>
-            </button>
+            <div class="absolute top-4 right-4 z-10 flex gap-2">
+                <button
+                    id="minimize-btn" title="最小化"
+                    class="window-control-btn w-7 h-7 rounded-full text-xs bg-white hover:bg-gray-200 text-gray-500 shadow-sm transition"
+                    onclick="window.settingAPI.minimizeMainWindow()"
+                >
+                    <i class="fas fa-minus"></i>
+                </button>
+                <button
+                    id="maximize-btn" title="最大化"
+                    class="window-control-btn w-7 h-7 rounded-full text-xs bg-white hover:bg-gray-200 text-gray-500 shadow-sm transition"
+                    onclick="window.settingAPI.maximizeMainWindow().then(() => updateMaximizeIcon())"
+                >
+                    <i class="far fa-square" id="maximize-icon"></i>
+                </button>
+                <button
+                    id="close-drag-overlay-btn" title="关闭"
+                    class="window-control-btn w-7 h-7 rounded-full text-xs bg-white hover:bg-red-500 hover:text-white text-gray-500 shadow-sm transition"
+                    onclick="window.settingAPI.closeMainWindow()"
+                >
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
         </div>
         <div class="w-full h-screen">
             <splitter-widget class="w-full h-full flex">
@@ -70,6 +86,23 @@
     window.settingAPI.registerCommandCallback('openHomePage', () => {
         openHomePage();
     })
+
+    async function updateMaximizeIcon() {
+        const isMaximized = await window.settingAPI.isMaximized();
+        const maximizeIcon = document.getElementById('maximize-icon');
+        if (maximizeIcon) {
+            if (isMaximized) {
+                maximizeIcon.className = 'fas fa-window-restore';
+            } else {
+                maximizeIcon.className = 'far fa-square';
+            }
+        }
+    }
+
+    window.addEventListener('resize', updateMaximizeIcon);
+
+    // 初始化图标
+    updateMaximizeIcon();
 
     window.globalControlAPI = {
         openSettingEditor: () => {

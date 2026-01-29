@@ -1190,7 +1190,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             const mailSchema = await editor.getMailContent()
             this.sendEmail(mailSchema);
         });
-        editor.setMailContent(operation, mailHeader, mailContent, replyContent)
+        editor.setMailContent(operation, mailHeader, mailContent, replyContent, this.currentAccount)
     }
 
     async handleFilter(filter) {
@@ -1401,9 +1401,8 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         `).join('');
 
         this.innerHTML = `
-        <div class="flex h-full">
-            <!-- 左侧栏：融合了导航和列表 (Width: 400px) -->
-            <aside class="w-[350px] bg-white border-r border-gray-200 flex flex-col flex-shrink-0">
+        <splitter-widget class="w-full h-full flex">
+            <aside slot="left" class="w-full bg-white flex flex-col flex-shrink-0">
 
                 <div class="p-3 space-y-3">
                     <div class="flex items-center justify-between">
@@ -1466,8 +1465,8 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
                 <div id="email-list" class="flex-1 overflow-y-auto border-t border-gray-200"></div>
             </aside>
             <!-- 右侧栏：邮件内容 -->
-            <main id='email-content' class="flex-1 bg-white flex flex-col overflow-auto"></main>
-        </div>
+            <main id='email-content' slot="right" class="flex-1 bg-white flex flex-col overflow-auto"></main>
+        </splitter-widget>
         `
 
         this.setupTabListeners();
@@ -1916,7 +1915,7 @@ class MailEditorWidget extends AgentOperableHTMLElement {
         return sendEmailSchema;
     }
 
-    async setMailContent(operation, mailHeader, mailContent, replyContent) {
+    async setMailContent(operation, mailHeader, mailContent, replyContent, currentAccount) {
         if (!mailHeader && !mailContent) {
             return;
         }
@@ -1929,8 +1928,9 @@ class MailEditorWidget extends AgentOperableHTMLElement {
             document.getElementById('to').value = mailHeader.from[0].address;
             document.getElementById('subject').value = '答复:' + mailHeader.subject;
         } else if (operation == MailOperations.REPLYALL) {
+            const filteredTo = mailHeader.to.filter(to => to.address != currentAccount?.email);
             document.getElementById('to').value = mailHeader.from[0].address;
-            document.getElementById('to').value += ',' + mailHeader.to.map(to => to.address).join(',');
+            document.getElementById('to').value += ',' + filteredTo.map(to => to.address).join(',');
             document.getElementById('subject').value = '答复全部:' + mailHeader.subject;
             if (mailHeader.cc && mailHeader.cc.length > 0) {
                 document.getElementById('cc').value = mailHeader.cc.map(cc => cc.address).join(',');

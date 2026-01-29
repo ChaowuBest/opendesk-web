@@ -303,6 +303,15 @@ if (window.self !== window.top) {
             })
         },
         closeMainWindow: () => ipcRenderer.invoke('setting:closeMainWindow'),
+        minimizeMainWindow: () => ipcRenderer.invoke('setting:minimizeMainWindow'),
+        maximizeMainWindow: () => ipcRenderer.invoke('setting:maximizeMainWindow'),
+        isMaximized: async () => {
+            const result = await ipcRenderer.invoke('setting:isMaximized');
+            if (result.status !== 'ok') {
+                return false;
+            }
+            return result.data;
+        },
     })
 
     contextBridge.exposeInMainWorld('notificationAPI', {
