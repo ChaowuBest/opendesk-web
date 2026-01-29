@@ -13,9 +13,156 @@ import { parseAndValidateSkillMd, SKILL_MD_FILENAME } from './skill-schema.js';
 import { logger } from '../../utils/logger.js';
 
 const SKILLS_DIR_NAME = 'skills';
+const REFERENCES_DIR = 'references';
+const SCRIPTS_DIR = 'scripts';
+const ASSETS_DIR = 'assets';
 
 /** @type {Map<string, { frontmatter: object, body: string, toolset: BaseToolset, skillDir: string }>} */
 const skillsCache = new Map();
+
+/** 内置 skills 根目录（main 进程设置），用于渐进式加载时回退读取 resources/skills */
+let bundledSkillsRoot = '';
+
+/**
+ * 设置内置 skills 根目录（app.getAppPath()），用于在 userData 目录无参考文档/脚本时回退加载
+ * @param {string} appPath
+ */
+function setBundledSkillsRoot(appPath) {
+  if (typeof appPath === 'string' && appPath) bundledSkillsRoot = path.resolve(appPath);
+}
+
+/**
+ * 从指定目录读取参考文档与脚本列表（不修改传入的 arrays，返回合并结果）
+ */
+function readResourcesFromDir(resolvedDir, intoRefs, intoScripts, intoAssets) {
+  const safeReadFile = (filePath) => {
+    try {
+      return fs.readFileSync(filePath, 'utf8');
+    } catch {
+      return '';
+    }
+  };
+
+  // 技能根目录下除 SKILL.md 外的 .md 文件（如 reference.md, forms.md）
+  try {
+    const entries = fs.readdirSync(resolvedDir, { withFileTypes: true });
+    for (const e of entries) {
+      if (!e.isFile() || path.extname(e.name).toLowerCase() !== '.md') continue;
+      if (e.name === SKILL_MD_FILENAME) continue;
+      const content = safeReadFile(path.join(resolvedDir, e.name));
+      if (content) intoRefs.push({ name: e.name, content });
+    }
+  } catch (_) {}
+
+  const refDir = path.join(resolvedDir, REFERENCES_DIR);
+  if (fs.existsSync(refDir) && fs.statSync(refDir).isDirectory()) {
+    try {
+      const refEntries = fs.readdirSync(refDir, { withFileTypes: true });
+      for (const e of refEntries) {
+        const full = path.join(refDir, e.name);
+        if (e.isFile()) {
+          const content = safeReadFile(full);
+          if (content) intoRefs.push({ name: `${REFERENCES_DIR}/${e.name}`, content });
+        }
+      }
+    } catch (_) {}
+  }
+
+  const scriptsDir = path.join(resolvedDir, SCRIPTS_DIR);
+  if (fs.existsSync(scriptsDir) && fs.statSync(scriptsDir).isDirectory()) {
+    try {
+      const list = fs.readdirSync(scriptsDir);
+      intoScripts.push(...list.map((name) => `${SCRIPTS_DIR}/${name}`));
+    } catch (_) {}
+  }
+
+  const assetsDirPath = path.join(resolvedDir, ASSETS_DIR);
+  if (fs.existsSync(assetsDirPath) && fs.statSync(assetsDirPath).isDirectory()) {
+    try {
+      const list = fs.readdirSync(assetsDirPath);
+      intoAssets.push(...list.map((name) => `${ASSETS_DIR}/${name}`));
+    } catch (_) {}
+  }
+}
+
+/**
+ * 渐进式加载技能资源：在技能被调用时读取 references、scripts、assets 等（Anthropic 规范子目录）
+ * 先读 userData/skills/<name>，若参考文档与脚本均为空则回退读 bundled resources/skills/<name>（调试/未拷贝完整时）
+ * @param {string} skillDir - 技能目录绝对路径（通常为 userData/skills/<name>）
+ * @param {string} skillName - 技能 name（用于回退路径 basename）
+ * @returns {{ referencesSections: Array<{ name: string, content: string }>, scriptsList: string[], assetsList: string[] }}
+ */
+function loadSkillResources(skillDir, skillName) {
+  const referencesSections = [];
+  const scriptsList = [];
+  const assetsList = [];
+
+  const resolvedDir = path.resolve(skillDir);
+  readResourcesFromDir(resolvedDir, referencesSections, scriptsList, assetsList);
+
+  const hadAny = referencesSections.length > 0 || scriptsList.length > 0 || assetsList.length > 0;
+  if (!hadAny && bundledSkillsRoot && skillName) {
+    const fallbackDir = path.join(bundledSkillsRoot, 'resources', SKILLS_DIR_NAME, skillName);
+    if (fs.existsSync(fallbackDir) && fs.statSync(fallbackDir).isDirectory()) {
+      logger.info(`SkillRegistry: 渐进式加载回退到内置目录 ${fallbackDir}`);
+      readResourcesFromDir(path.resolve(fallbackDir), referencesSections, scriptsList, assetsList);
+    }
+  }
+
+  logger.info(`SkillRegistry: 渐进式加载 [${skillName}] 参考文档=${referencesSections.length} 脚本=${scriptsList.length} 资源=${assetsList.length}`);
+  return { referencesSections, scriptsList, assetsList };
+}
+
+/**
+ * 将 SKILL.md body 与渐进式加载的资源格式化为返回给模型的完整技能内容
+ * 先输出资源摘要与“如何实际使用”的说明，再输出技能说明与参考文档全文
+ * @param {string} body - SKILL.md 正文
+ * @param {object} resources - { referencesSections, scriptsList, assetsList }
+ * @param {{ skillName: string, skillDir: string }} [usageContext] - 用于生成“如何实际使用”说明
+ */
+function formatProgressiveSkillContent(body, resources, usageContext) {
+  const parts = [];
+
+  const refNames = resources.referencesSections.map((r) => r.name);
+  const hasRefs = refNames.length > 0;
+  const hasScripts = resources.scriptsList.length > 0;
+  const hasAssets = resources.assetsList.length > 0;
+  if (hasRefs || hasScripts || hasAssets) {
+    parts.push('## 本技能已加载的资源与能力\n');
+    if (hasRefs) parts.push('- **参考文档**: ' + refNames.join(', '));
+    if (hasScripts) parts.push('- **可用脚本**: ' + resources.scriptsList.map((s) => `\`${s}\``).join(', '));
+    if (hasAssets) parts.push('- **资源文件**: ' + resources.assetsList.map((s) => `\`${s}\``).join(', '));
+    parts.push('');
+  }
+
+  if (usageContext && (hasScripts || hasRefs)) {
+    parts.push(
+      '## 如何实际使用本技能\n\n' +
+      '上述参考文档与脚本为**可执行能力**，请根据本技能的说明与参考文档，在用户提出相关需求时：\n' +
+      '1. **执行脚本**：以本技能目录为工作目录（cwd）运行 `scripts/` 中对应脚本，按脚本约定传入参数或 stdin。\n' +
+      '2. **或按说明执行代码/命令**：根据技能说明与参考文档，在终端中编写并执行相应代码或命令，完成用户任务并返回结果。\n' +
+      (usageContext.skillDir ? `\n**技能目录（执行脚本或命令时请设为此 cwd）**: \`${usageContext.skillDir}\`\n` : '')
+    );
+    parts.push('');
+  }
+
+  if (body && body.trim()) {
+    parts.push('## 技能说明 (SKILL.md)\n\n' + body.trim());
+  }
+  if (resources.referencesSections.length > 0) {
+    parts.push('## 参考文档全文\n');
+    for (const { name, content } of resources.referencesSections) {
+      parts.push(`### ${name}\n\n${content.trim()}\n`);
+    }
+  }
+  if (resources.scriptsList.length > 0) {
+    parts.push('## 可用脚本\n\n' + resources.scriptsList.map((s) => `- \`${s}\``).join('\n'));
+  }
+  if (resources.assetsList.length > 0) {
+    parts.push('## 资源文件\n\n' + resources.assetsList.map((s) => `- \`${s}\``).join('\n'));
+  }
+  return parts.length ? parts.join('\n\n') : '[无额外资源]';
+}
 
 /**
  * 获取本地 skills 根目录（userData/skills）
@@ -104,14 +251,32 @@ function loadSkillFromDir(skillDir, dirName) {
 function createExecutor(skillName, skillDir, body, frontmatter, handler) {
   return async (args) => {
     const input = args?.input ?? '';
+    const resources = loadSkillResources(skillDir, skillName);
+    const progressiveContent = formatProgressiveSkillContent(body, resources, {
+      skillName,
+      skillDir
+    });
+    const skillContext = {
+      skillDir,
+      body,
+      frontmatter,
+      resources: {
+        referencesSections: resources.referencesSections,
+        scriptsList: resources.scriptsList,
+        assetsList: resources.assetsList
+      }
+    };
+
     if (!handler) {
-      return body || `[技能 ${skillName}] 无正文说明。`;
+      return progressiveContent || `[技能 ${skillName}] 无正文说明。`;
     }
 
     const h = typeof handler === 'string' ? { type: 'script', path: handler } : handler;
     if (!h || !h.type) {
-      return body || `[技能 ${skillName}] 无正文说明。`;
+      return progressiveContent || `[技能 ${skillName}] 无正文说明。`;
     }
+
+    let handlerResult = '';
 
     if (h.type === 'script' && h.path) {
       const scriptPath = path.resolve(skillDir, h.path);
@@ -121,10 +286,8 @@ function createExecutor(skillName, skillDir, body, frontmatter, handler) {
       if (!fs.existsSync(scriptPath)) {
         return `[技能 ${skillName}] 脚本不存在: ${h.path}`;
       }
-      return runScript(scriptPath, skillDir, input);
-    }
-
-    if (h.type === 'module' && h.path) {
+      handlerResult = await runScript(scriptPath, skillDir, input);
+    } else if (h.type === 'module' && h.path) {
       const modulePath = path.resolve(skillDir, h.path);
       if (!modulePath.startsWith(path.resolve(skillDir))) {
         return `[技能 ${skillName}] handler 路径不允许超出技能目录`;
@@ -134,33 +297,33 @@ function createExecutor(skillName, skillDir, body, frontmatter, handler) {
         const mod = await import(moduleUrl);
         const execute = mod.execute ?? mod.default?.execute ?? mod.default;
         if (typeof execute !== 'function') {
-          return `[技能 ${skillName}] handler 模块需导出 execute(input, args) => Promise<string>`;
+          return `[技能 ${skillName}] handler 模块需导出 execute(input, args, skillContext?) => Promise<string>`;
         }
-        const result = await execute(input, args);
-        return typeof result === 'string' ? result : JSON.stringify(result);
+        handlerResult = await execute(input, args, skillContext);
+        handlerResult = typeof handlerResult === 'string' ? handlerResult : JSON.stringify(handlerResult);
       } catch (err) {
         logger.error(`Skill ${skillName} module error: ${err.message}`);
         return `执行失败: ${err.message}`;
       }
-    }
-
-    if (h.type === 'url' && h.url) {
+    } else if (h.type === 'url' && h.url) {
       try {
         const res = await fetch(h.url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ skill: skillName, input, arguments: args })
+          body: JSON.stringify({ skill: skillName, input, arguments: args, skillContext })
         });
         const text = await res.text();
         if (!res.ok) return `远程调用失败 (${res.status}): ${text}`;
-        return text;
+        handlerResult = text;
       } catch (err) {
         logger.error(`Skill ${skillName} url error: ${err.message}`);
         return `请求失败: ${err.message}`;
       }
+    } else {
+      return progressiveContent || `[技能 ${skillName}] 未配置可执行 handler。`;
     }
 
-    return body || `[技能 ${skillName}] 未配置可执行 handler。`;
+    return progressiveContent + '\n\n---\n\n## 执行结果\n\n' + handlerResult;
   };
 }
 
@@ -281,6 +444,7 @@ function listSkills() {
 
 export const SkillRegistry = {
   getSkillsDirectory,
+  setBundledSkillsRoot,
   loadAll,
   getToolsets,
   refresh,

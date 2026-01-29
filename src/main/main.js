@@ -488,14 +488,19 @@ const initializeProtocolHandlers = () => {
     }
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
     GlobalState.initialize();
     createWindow();
 
-    // 将打包内置/源码中的 resources/skills 自动同步到用户 skills 目录
-    installBundledSkillsIfNeeded().catch((err) => {
+    // 内置 skills 根目录，供 SkillRegistry 渐进式加载时回退读取
+    SkillRegistry.setBundledSkillsRoot(app.getAppPath());
+
+    // 将打包内置/源码中的 resources/skills 自动同步到用户 skills 目录（先完成再注册，确保首次对话能发现技能）
+    try {
+      await installBundledSkillsIfNeeded();
+    } catch (err) {
       console.error('installBundledSkillsIfNeeded error', err);
-    });
+    }
 
     registerTaskManagerAPIHandlers();
     registerFSAPIHandlers();
