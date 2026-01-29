@@ -672,88 +672,31 @@ class A2UIToHTMLConverter {
     });
   }
 
-  /**
-   * 递归处理 valueMap，将其转换为普通对象或数组
-   */
-  processValueMap(valueMap) {
-    if (!valueMap || !Array.isArray(valueMap)) {
-      return valueMap;
-    }
+  // 辅助函数：递归解析 A2UI 值类型
+  _parseA2UIValue(item) {
+      if (!item) return null;
+      if (item.valueString !== undefined) return item.valueString;
+      if (item.valueNumber !== undefined) return item.valueNumber;
+      if (item.valueBoolean !== undefined) return item.valueBoolean;
+      
+      // 处理 valueMap (用于 List 渲染)
+      if (item.valueMap !== undefined && Array.isArray(item.valueMap)) {
+          const resultObj = {};
+          item.valueMap.forEach(subItem => {
+              resultObj[subItem.key] = this._parseA2UIValue(subItem);
+          });
 
-    // 检查是否是数组格式的 map（每个元素有 key 和 value）
-    const isMapFormat = valueMap.every(item => item && typeof item === 'object' && 'key' in item);
-
-    if (isMapFormat) {
-      // 转换为对象
-      const result = {};
-      for (const item of valueMap) {
-        let value = null;
-        if (item.valueString !== undefined) value = item.valueString;
-        else if (item.valueInt !== undefined) value = item.valueInt;
-        else if (item.valueDouble !== undefined) value = item.valueDouble;
-        else if (item.valueBool !== undefined) value = item.valueBool;
-        else if (item.valueObject !== undefined) value = item.valueObject;
-        else if (item.valueMap !== undefined) value = this.processValueMap(item.valueMap);
-        else if (item.valueList !== undefined) value = this.processValueList(item.valueList);
-
-        if (value !== null) {
-          result[item.key] = value;
-        }
+          return resultObj;
       }
-      return result;
-    }
-
-    return valueMap;
+      return null;
   }
-
-  /**
-   * 递归处理 valueList，将其转换为数组
-   */
-  processValueList(valueList) {
-    if (!valueList || !Array.isArray(valueList)) {
-      return valueList;
-    }
-
-    return valueList.map(item => {
-      if (item && typeof item === 'object') {
-        if (item.valueMap !== undefined) {
-          return this.processValueMap(item.valueMap);
-        } else if (item.valueList !== undefined) {
-          return this.processValueList(item.valueList);
-        } else if (item.valueString !== undefined) {
-          return item.valueString;
-        } else if (item.valueInt !== undefined) {
-          return item.valueInt;
-        } else if (item.valueDouble !== undefined) {
-          return item.valueDouble;
-        } else if (item.valueBool !== undefined) {
-          return item.valueBool;
-        } else if (item.valueObject !== undefined) {
-          return item.valueObject;
-        }
-      }
-      return item;
-    });
-  }
-
   handleDataModelUpdate(msg) {
     const { surfaceId, contents } = msg.dataModelUpdate;
     if (!this.dataModels[surfaceId]) {
       this.dataModels[surfaceId] = {};
     }
     contents.forEach(item => {
-      let value = null;
-      if (item.valueString !== undefined) value = item.valueString;
-      else if (item.valueInt !== undefined) value = item.valueInt;
-      else if (item.valueDouble !== undefined) value = item.valueDouble;
-      else if (item.valueBool !== undefined) value = item.valueBool;
-      else if (item.valueObject !== undefined) value = item.valueObject;
-      else if (item.valueMap !== undefined) value = this.processValueMap(item.valueMap);
-      else if (item.valueList !== undefined) value = this.processValueList(item.valueList);
-
-      if (value !== null) {
-        this.dataModels[surfaceId][item.key] = value;
-      }
+      this.dataModels[surfaceId][item.key] = this._parseA2UIValue(item);
     });
   }
 
@@ -940,7 +883,47 @@ class A2UIToHTMLConverter {
         const additionalStyle = this.getAdditionalStyles('Button');
         const style = this.mergeStyleStrings(additionalStyle, this.getInlineStyleFromProps(props));
         const disabled = props.disabled ? ' disabled' : '';
-        return `<button class="${styleClasses.join(' ')}"${style ? ` style="${style}"` : ''}${disabled}>${childHtml}</button>`;
+        
+        // 将 action 数据序列化到 data-action 属性中
+        let actionAttr = '';
+        if (props.action) {
+            // 安全地序列化 JSON，防止引号冲突
+            const actionJson = JSON.stringify(props.action).replace(/"/g, '&quot;');
+            actionAttr = ` data-a2ui-action="${actionJson}"`;
+        }
+        
+        // 添加 class "a2ui-interactive-btn" 以便 entry.js 监听
+        return `<button class="a2ui-interactive-btn ${styleClasses.join(' ')}"${style ? ` style="${style}"` : ''}${disabled}${actionAttr}>${childHtml}</button>`;
+      }
+
+      case 'MultipleChoice': {
+        // MultipleChoice 渲染逻辑，确保 input 有正确的 name 和 value
+        const containerClasses = this.getComponentStyleClasses('MultipleChoice', 'container');
+        const labelClasses = this.getComponentStyleClasses('MultipleChoice', 'label');
+        const additionalStyle = this.getAdditionalStyles('MultipleChoice');
+        
+        const options = props.options || [];
+        const groupName = `group_${id}_${Math.random().toString(36).substr(2, 5)}`;
+        
+        const optionsHtml = options.map((opt, index) => {
+            const label = this.resolveBoundValue(opt.label, dataModel) || '';
+            const val = opt.value || '';
+            return `
+                <label class="a2ui-radio-option" style="display:flex; align-items:center; margin-bottom:4px; cursor:pointer;">
+                    <input type="radio" 
+                           name="${groupName}" 
+                           value="${val}" 
+                           data-component-id="${id}"
+                           class="a2ui-radio-input" 
+                           style="margin-right:6px;">
+                    <span class="${labelClasses.join(' ')}">${this.escapeHtml(label)}</span>
+                </label>
+            `;
+        }).join('');
+
+        return `<div class="a2ui-multiplechoice ${containerClasses.join(' ')}"${additionalStyle ? ` style="${additionalStyle}"` : ''} id="${id}">
+            ${optionsHtml}
+        </div>`;
       }
       case 'Column': {
         const children = this.getChildren(props, compBuf, dataModel);
@@ -948,99 +931,7 @@ class A2UIToHTMLConverter {
         const additionalStyle = this.getAdditionalStyles('Column');
         const layoutStyle = this.buildLayoutStyle(props, 'column');
         const style = this.mergeStyleStrings(additionalStyle, layoutStyle, this.getInlineStyleFromProps(props));
-
-        // 检查是否有 correctAnswer，如果有则添加可展开的答案显示
-        let answerSection = '';
-        const correctAnswer = dataModel?.correctAnswer;
-        if (correctAnswer !== undefined && correctAnswer !== null && correctAnswer !== '') {
-          const answerId = `answer_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-          const toggleId = `toggle_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-          const answerText = String(correctAnswer);
-          const optionLabels = {
-            'A': dataModel?.optionA || 'A',
-            'B': dataModel?.optionB || 'B',
-            'C': dataModel?.optionC || 'C',
-            'D': dataModel?.optionD || 'D'
-          };
-
-          // 获取正确答案的完整文本
-          const fullAnswerText = optionLabels[answerText] || answerText;
-
-          answerSection = `
-            <div class="a2ui-answer-section" style="margin-top: 10px; padding-top: 8px; border-top: 1px solid #e5e7eb;">
-              <button 
-                type="button" 
-                id="${toggleId}"
-                class="a2ui-answer-toggle" 
-                onclick="
-                  const answerDiv = document.getElementById('${answerId}');
-                  const toggleBtn = document.getElementById('${toggleId}');
-                  if (answerDiv.style.display === 'none' || !answerDiv.style.display) {
-                    answerDiv.style.display = 'block';
-                    toggleBtn.textContent = '隐藏答案';
-                    toggleBtn.style.backgroundColor = '#6366f1';
-                    toggleBtn.style.color = '#ffffff';
-                  } else {
-                    answerDiv.style.display = 'none';
-                    toggleBtn.textContent = '显示答案';
-                    toggleBtn.style.backgroundColor = 'transparent';
-                    toggleBtn.style.color = '#6366f1';
-                  }
-                "
-                style="
-                  padding: 6px 12px;
-                  font-size: 11px;
-                  color: #6366f1;
-                  background: transparent;
-                  border: 1px solid #6366f1;
-                  border-radius: 6px;
-                  cursor: pointer;
-                  font-weight: 500;
-                  transition: all 0.2s ease;
-                  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-                "
-                onmouseover="this.style.backgroundColor='#f3f4f6'"
-                onmouseout="if(this.textContent === '显示答案') this.style.backgroundColor='transparent'"
-              >显示答案</button>
-              <div 
-                id="${answerId}" 
-                class="a2ui-answer-content" 
-                style="
-                  display: none;
-                  margin-top: 8px;
-                  padding: 10px 12px;
-                  background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
-                  border-left: 3px solid #3b82f6;
-                  border-radius: 6px;
-                  font-size: 11px;
-                  line-height: 1.5;
-                  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-                "
-              >
-                <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 4px;">
-                  <span style="
-                    display: inline-flex;
-                    align-items: center;
-                    justify-content: center;
-                    width: 20px;
-                    height: 20px;
-                    background-color: #3b82f6;
-                    color: #ffffff;
-                    border-radius: 50%;
-                    font-weight: 600;
-                    font-size: 10px;
-                  ">✓</span>
-                  <strong style="color: #1e40af; font-size: 11px;">正确答案：</strong>
-                </div>
-                <div style="color: #1e40af; font-weight: 500; margin-left: 26px; padding-left: 8px; border-left: 2px solid #93c5fd;">
-                  ${this.escapeHtml(fullAnswerText)}
-                </div>
-              </div>
-            </div>
-          `;
-        }
-
-        return `<div class="a2ui-column ${styleClasses.join(' ')}"${style ? ` style="${style}"` : ''}>${children}${answerSection}</div>`;
+        return `<div class="a2ui-column ${styleClasses.join(' ')}"${style ? ` style="${style}"` : ''}>${children}</div>`;
       }
       case 'Row': {
         const children = this.getChildren(props, compBuf, dataModel);
@@ -1123,43 +1014,6 @@ class A2UIToHTMLConverter {
         const styleClasses = this.getComponentStyleClasses('Video');
         return `<video class="${styleClasses.join(' ')}" src="${this.escapeHtml(url)}" controls></video>`;
       }
-      case 'MultipleChoice': {
-        const options = props.options || [];
-        const maxAllowedSelections = props.maxAllowedSelections || 1;
-        const selections = this.resolveBoundValue(props.selections, dataModel) || [];
-        const selectedValues = Array.isArray(selections) ? selections : (selections ? [selections] : []);
-
-        const containerClasses = this.getComponentStyleClasses('MultipleChoice', 'container');
-        const labelClasses = this.getComponentStyleClasses('MultipleChoice', 'label');
-        const elementClasses = this.getComponentStyleClasses('MultipleChoice', 'element');
-        const additionalStyle = this.getAdditionalStyles('MultipleChoice');
-
-        const inputType = maxAllowedSelections === 1 ? 'radio' : 'checkbox';
-        const nameAttr = maxAllowedSelections === 1 ? ` name="mc_${Date.now()}_${Math.random().toString(36).substr(2, 9)}"` : '';
-
-        const optionsHtml = options.map((option, index) => {
-          const label = this.resolveBoundValue(option.label, dataModel) || '';
-          const value = option.value || String(index);
-          const isChecked = selectedValues.includes(value) || selectedValues.includes(String(value));
-          const checkedAttr = isChecked ? ' checked' : '';
-          const optionId = `mc_${Date.now()}_${index}_${Math.random().toString(36).substr(2, 9)}`;
-
-          return `
-            <label class="a2ui-multiplechoice__option ${containerClasses.join(' ')}"${additionalStyle ? ` style="${additionalStyle}"` : ''}>
-              <input 
-                type="${inputType}" 
-                class="a2ui-multiplechoice__input ${elementClasses.join(' ')}" 
-                value="${this.escapeHtml(value)}" 
-                id="${optionId}"
-               ${nameAttr}${checkedAttr} 
-              />
-              <span class="a2ui-multiplechoice__label ${labelClasses.join(' ')}">${this.escapeHtml(label)}</span>
-            </label>
-          `;
-        }).join('');
-
-        return `<div class="a2ui-multiplechoice">${optionsHtml}</div>`;
-      }
       default: {
         const defaultChildren = this.getChildren(props, compBuf, dataModel);
         return `<div class="a2ui-${type.toLowerCase()}">${defaultChildren}</div>`;
@@ -1179,43 +1033,32 @@ class A2UIToHTMLConverter {
     return 'body';
   }
 
+  // 
   getChildren(props, compBuf, dataModel) {
     if (props.children) {
       if (props.children.explicitList) {
         return props.children.explicitList.map(childId => this.renderComponentById(childId, compBuf, dataModel)).join('');
       } else if (props.children.template) {
         const template = props.children.template;
-        // 支持 dataBinding 和 listPath 两种格式
-        const bindingPath = template.dataBinding || template.listPath;
-        const componentId = template.componentId || template.child;
+        // 优先使用 dataBinding (标准属性)，兼容 listPath
+        const listPath = template.dataBinding || template.listPath;
+        
+        if (listPath && dataModel) {
+          const rawData = this.resolveBoundValue({ path: listPath }, dataModel);
+          let list = [];
 
-        if (bindingPath && componentId && dataModel) {
-          const list = this.resolveBoundValue({ path: bindingPath }, dataModel);
-
-          // 处理数组
-          if (Array.isArray(list)) {
-            return list.map((item, index) => {
-              // 为每个 item 创建新的 dataModel 上下文
-              // 将 item 的数据合并到 dataModel 中，使路径绑定能够访问当前 item 的属性
-              const itemDataModel = { ...dataModel, ...item };
-              // 如果 item 是对象，将其属性直接添加到 dataModel 中
-              if (item && typeof item === 'object') {
-                Object.assign(itemDataModel, item);
-              }
-              return this.renderComponentById(componentId, compBuf, itemDataModel);
-            }).join('');
+          // 处理数据源：如果是数组直接用，如果是对象(Map)则取其 values
+          if (Array.isArray(rawData)) {
+              list = rawData;
+          } else if (rawData && typeof rawData === 'object') {
+              list = Object.values(rawData);
           }
 
-          // 处理对象（valueMap 转换后的对象）
-          if (list && typeof list === 'object' && !Array.isArray(list)) {
-            // 将对象转换为数组（按 key 排序以保持一致性）
-            const items = Object.keys(list).map(key => ({ key, ...list[key] }));
-            return items.map((item, index) => {
-              const itemDataModel = { ...dataModel, ...item };
-              if (item && typeof item === 'object') {
-                Object.assign(itemDataModel, item);
-              }
-              return this.renderComponentById(componentId, compBuf, itemDataModel);
+          if (list.length > 0) {
+            return list.map((item) => {
+                // 创建一个合并了当前 item 数据的临时 Model
+                const itemDataModel = { ...dataModel, ...item };
+                return this.renderComponentById(template.componentId, compBuf, itemDataModel);
             }).join('');
           }
         }
@@ -1587,7 +1430,7 @@ class A2UIToHTMLConverter {
     const messages = Array.isArray(json) ? json : [json];
     return this.processMessages(messages, options);
   }
-
+  //修复题目找不到
   extractA2UIData(parts) {
     try {
       const result = [];
@@ -1596,20 +1439,10 @@ class A2UIToHTMLConverter {
 
       const dataModelUpdatePart = parts.find(part => part.kind === 'data' && part.data?.dataModelUpdate);
       if (dataModelUpdatePart) {
-        const contents = dataModelUpdatePart.data.dataModelUpdate.contents;
-        // 保留所有类型的值，不仅仅是 valueString
-        const transformedContents = contents.map(item => {
-          const result = { key: item.key };
-          if (item.valueString !== undefined) result.valueString = item.valueString;
-          if (item.valueInt !== undefined) result.valueInt = item.valueInt;
-          if (item.valueDouble !== undefined) result.valueDouble = item.valueDouble;
-          if (item.valueBool !== undefined) result.valueBool = item.valueBool;
-          if (item.valueObject !== undefined) result.valueObject = item.valueObject;
-          if (item.valueMap !== undefined) result.valueMap = item.valueMap;
-          if (item.valueList !== undefined) result.valueList = item.valueList;
-          return result;
+        // 直接透传 contents，不要使用 map 过滤，否则 valueMap (题目列表) 会丢失！
+        result.push({ 
+            dataModelUpdate: dataModelUpdatePart.data.dataModelUpdate 
         });
-        result.push({ dataModelUpdate: { surfaceId: dataModelUpdatePart.data.dataModelUpdate.surfaceId, contents: transformedContents } });
       }
 
       const beginRenderingPart = parts.find(part => part.kind === 'data' && part.data?.beginRendering);
@@ -1621,6 +1454,7 @@ class A2UIToHTMLConverter {
       return null;
     }
   }
+
 }
 
 // ============================================================================

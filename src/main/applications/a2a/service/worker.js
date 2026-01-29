@@ -304,12 +304,14 @@ ${agentsDescription}
         // 处理消息：支持字符串（向后兼容）或消息对象
         let textContent = '';
         let attachments = [];
+        let targetAgentId = null;
 
         if (typeof message === 'string') {
             textContent = message;
         } else if (message && typeof message === 'object') {
             textContent = message.text || '';
             attachments = message.attachments || [];
+            targetAgentId = message.targetAgentId;
         }
 
         // 构建用于 agent 选择的提示文本（包含文本和附件描述）
@@ -331,8 +333,34 @@ ${agentsDescription}
             const agentCards = agentsResult?.registryEntries || [];
 
             if (agentCards.length > 0) {
+                let selectedAgent = null;
+                if (targetAgentId) {
+                    logger.info(`[Sticky Routing] 前端指定了 Agent: ${targetAgentId}`);
+                    // 在现有列表中查找该 Agent
+                    const foundEntry = agentCards.find(entry => {
+                         const name = entry.name || '';
+                         const id = name.includes('/') ? name.split('/').pop() : name;
+                         return id === targetAgentId;
+                    });
+                    
+                    if (foundEntry) {
+                        // 伪造一个 selectedAgent 对象，假装是 LLM 选出来的
+                        const card = foundEntry.card || {};
+                        selectedAgent = {
+                            agentId: targetAgentId,
+                            agentName: card.name,
+                            skillId: '', // 保持默认，或者你可以从 message 中透传 skillId
+                            skillName: '',
+                            reason: '用户连续操作，自动保持会话 (Sticky Session)'
+                        };
+                    }
+                }
+
+                if (!selectedAgent) {
+                    selectedAgent = await this.selectAgent(agentSelectionPrompt, agentCards);
+                }
                 // 选择最合适的 agent（使用包含附件信息的提示）
-                const selectedAgent = await this.selectAgent(agentSelectionPrompt, agentCards);
+                //const selectedAgent = await this.selectAgent(agentSelectionPrompt, agentCards);
 
                 // 找到对应的 agent entry
                 selectedAgentEntry = agentCards.find(entry => {
