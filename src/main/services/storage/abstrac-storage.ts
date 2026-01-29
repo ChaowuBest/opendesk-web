@@ -34,7 +34,7 @@ import { Indexer, IndexerSearchOptions as BaseIndexerSearchOptions, IndexerSearc
 import { BM25Indexer } from './bm25-indexer.js';
 import { VectorIndexer } from './vector-indexer.js';
 import { TagIndexer } from './tag-indexer.js';
-import {BaseIndexer} from './base-index.ts';
+import {BaseIndexer} from './base-indexer.js';
 
 export type ItemType = 'file' | 'mail' | 'memory';
 
