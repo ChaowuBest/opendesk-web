@@ -758,6 +758,37 @@ class MailboxStorage {
             doc.date, doc.unread, doc.starred
         ));
     }
+
+    /**
+     * 彻底删除那些服务器上已不存在，且本地没有正文内容的"僵尸"邮件
+     * 同时从 header db 和 raw db 中物理删除
+     * @param {Set<string>} serverUidSet 服务器端当前的UID集合
+     */
+    async pruneExpiredEmails(serverUidSet) {
+        // 1. 找出所有本地显示为"未删除"的邮件 (只查 uid 字段)
+        const localActiveDocs = await this.db.find({ deleted: { $ne: true } }, { uid: 1 });
+
+        let cleanedCount = 0;
+        for (const doc of localActiveDocs) {
+            // 2. 如果本地 UID 不在服务器列表中
+            if (!serverUidSet.has(doc.uid)) {
+
+                // 3. 再次确认本地没有正文内容 (防止误删已归档邮件)
+                const contentCount = await this.contentdb.count({ uid: doc.uid });
+
+                if (contentCount === 0) {
+                    // 4. 执行物理删除 (Hard Delete)
+                    // 删除 header 数据库记录
+                    await this.db.remove({ uid: doc.uid }, { multi: false });
+                    // 删除 raw header 数据库记录
+                    await this.rawdb.remove({ uid: doc.uid }, { multi: false });
+
+                    cleanedCount++;
+                }
+            }
+        }
+        return cleanedCount;
+    }
 }
 
 class MailboxWorker extends BaseWorker {
@@ -799,6 +830,20 @@ class MailboxWorker extends BaseWorker {
                         operationTimeout,
                         'UIDL'
                     );
+                    // 1. 构建服务器 UID 集合
+                    const serverUidSet = new Set(allList.map(([_, uid]) => uid));
+
+                    // 2. 执行物理清理
+                    try {
+
+                        const cleanedCount = await storage.pruneExpiredEmails(serverUidSet);
+
+                        if (cleanedCount > 0) {
+                            logger.info(`[Sync] Physically removed ${cleanedCount} expired emails (header & raw) without content.`);
+                        }
+                    } catch (e) {
+                        logger.warn(`[Sync] Failed to prune expired emails: ${e.message}`);
+                    }
                     const uidSet = await storage.getUIDSet();
                     const newList = allList.filter(([_, uid]) => !uidSet.has(uid)).reverse();
 
