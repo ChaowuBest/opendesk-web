@@ -45,7 +45,6 @@ function readResourcesFromDir(resolvedDir, intoRefs, intoScripts, intoAssets) {
     }
   };
 
-  // 技能根目录下除 SKILL.md 外的 .md 文件（如 reference.md, forms.md）
   try {
     const entries = fs.readdirSync(resolvedDir, { withFileTypes: true });
     for (const e of entries) {
@@ -88,11 +87,7 @@ function readResourcesFromDir(resolvedDir, intoRefs, intoScripts, intoAssets) {
 }
 
 /**
- * 渐进式加载技能资源：在技能被调用时读取 references、scripts、assets 等（Anthropic 规范子目录）
- * 先读 userData/skills/<name>，若参考文档与脚本均为空则回退读 bundled resources/skills/<name>（调试/未拷贝完整时）
- * @param {string} skillDir - 技能目录绝对路径（通常为 userData/skills/<name>）
- * @param {string} skillName - 技能 name（用于回退路径 basename）
- * @returns {{ referencesSections: Array<{ name: string, content: string }>, scriptsList: string[], assetsList: string[] }}
+ * 渐进式加载技能资源：在技能被调用时读取 references、scripts、assets 等
  */
 function loadSkillResources(skillDir, skillName) {
   const referencesSections = [];
@@ -117,10 +112,6 @@ function loadSkillResources(skillDir, skillName) {
 
 /**
  * 将 SKILL.md body 与渐进式加载的资源格式化为返回给模型的完整技能内容
- * 先输出资源摘要与“如何实际使用”的说明，再输出技能说明与参考文档全文
- * @param {string} body - SKILL.md 正文
- * @param {object} resources - { referencesSections, scriptsList, assetsList }
- * @param {{ skillName: string, skillDir: string }} [usageContext] - 用于生成“如何实际使用”说明
  */
 function formatProgressiveSkillContent(body, resources, usageContext) {
   const parts = [];
@@ -166,10 +157,6 @@ function formatProgressiveSkillContent(body, resources, usageContext) {
   return parts.length ? parts.join('\n\n') : '[无额外资源]';
 }
 
-/**
- * 获取本地 skills 根目录（userData/skills）
- * @returns {string}
- */
 function getSkillsDirectory() {
   const appDir = getAppDirectory();
   const skillsDir = path.join(appDir, SKILLS_DIR_NAME);
@@ -179,12 +166,6 @@ function getSkillsDirectory() {
   return skillsDir;
 }
 
-/**
- * 加载单个技能目录：读取 SKILL.md，解析并校验，创建单技能单 tool
- * @param {string} skillDir - 技能目录绝对路径
- * @param {string} dirName - 目录名（须与 SKILL.md 的 name 一致）
- * @returns {{ success: boolean, toolset?: BaseToolset, error?: string, name?: string, body?: string, frontmatter?: object }}
- */
 function loadSkillFromDir(skillDir, dirName) {
   const skillMdPath = path.join(skillDir, SKILL_MD_FILENAME);
   if (!fs.existsSync(skillMdPath)) {
@@ -205,7 +186,6 @@ function loadSkillFromDir(skillDir, dirName) {
 
   const { name, description, body, frontmatter } = parsed;
 
-  // 单技能单 tool，tool 的 name 为技能名；统一放入 toolset "skill"，工具 ID 为 skill-<name>
   const paramsSchema = { type: 'object', properties: {}, required: [] };
   const handler = frontmatter.fillipdesk?.handler ?? frontmatter.handler;
   if (handler && (frontmatter.fillipdesk?.input_schema || frontmatter.input_schema)) {
@@ -238,15 +218,6 @@ function loadSkillFromDir(skillDir, dirName) {
   };
 }
 
-/**
- * 创建技能执行器：默认返回 SKILL.md body（指令正文）；若配置 handler 则执行脚本/模块并返回结果
- * @param {string} skillName
- * @param {string} skillDir
- * @param {string} body - SKILL.md 正文
- * @param {object} frontmatter
- * @param {string | object} handler - fillipdesk 扩展：脚本路径或 { type, path } / { type, url }
- * @returns {(args: object) => Promise<string>}
- */
 function createExecutor(skillName, skillDir, body, frontmatter, handler) {
   return async (args) => {
     const input = args?.input ?? '';
@@ -326,13 +297,6 @@ function createExecutor(skillName, skillDir, body, frontmatter, handler) {
   };
 }
 
-/**
- * 在 skillDir 下执行脚本，传入 input 为 stdin，返回 stdout
- * @param {string} scriptPath - 脚本绝对路径
- * @param {string} skillDir - 技能目录（cwd）
- * @param {string} input
- * @returns {Promise<string>}
- */
 function runScript(scriptPath, skillDir, input) {
   return new Promise((resolve, reject) => {
     const ext = path.extname(scriptPath).toLowerCase();
@@ -363,11 +327,6 @@ function runScript(scriptPath, skillDir, input) {
   });
 }
 
-/**
- * 扫描 skills 目录下所有子目录，加载 SKILL.md 并缓存
- * 所有技能共用一个 toolset "skill"，工具 ID 为 skill-<name>（如 skill-pdf、skill-example）
- * @returns {{ toolsets: BaseToolset[], errors: Array<{ id: string, error: string }> }}
- */
 function loadAll() {
   const skillsDir = getSkillsDirectory();
   skillsCache.clear();
@@ -404,10 +363,6 @@ function loadAll() {
   return { toolsets: [singleSkillToolset], errors };
 }
 
-/**
- * 获取当前已加载的所有技能对应的 BaseToolset 列表，供主进程对话挂载
- * @returns {BaseToolset[]}
- */
 function getToolsets() {
   if (singleSkillToolset === null || skillsCache.size === 0) {
     const { toolsets } = loadAll();
@@ -416,18 +371,10 @@ function getToolsets() {
   return [singleSkillToolset];
 }
 
-/**
- * 刷新技能列表（重新扫描磁盘），返回新 toolsets
- * @returns {{ toolsets: BaseToolset[], errors: Array<{ id: string, error: string }> }}
- */
 function refresh() {
   return loadAll();
 }
 
-/**
- * 列出已加载技能的元信息（供 UI / IPC），对齐 Anthropic 规范字段
- * @returns {Array<{ id: string, name: string, description: string, license?: string, compatibility?: string, metadata?: object }>}
- */
 function listSkills() {
   if (skillsCache.size === 0) loadAll();
   return Array.from(skillsCache.entries()).map(([id, s]) => ({

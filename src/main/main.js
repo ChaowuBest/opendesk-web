@@ -8,7 +8,7 @@ import { z } from 'zod';
 import { NotificationManager } from './utils/notificationmgr.js';
 import { LogStream, logger } from './utils/logger.js'
 import { registerApplicationRegistryHandlers, initializeRegistry, notifyWorkerSettingUpdate, ApplicationRegistry } from './applications/registry';
-import { SkillRegistry } from './services/skills/SkillRegistry.js';
+import { SkillRegistry } from './applications/skills/skillregistry.js';
 import { UpdateClient } from '../updater/client.js';
 
 import Convert from 'ansi-to-html';

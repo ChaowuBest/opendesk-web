@@ -1,6 +1,5 @@
 import { BaseToolset } from "../agents/tool";
 import { BaseApplication } from "./base.js";
-import { SkillRegistry } from "../services/skills/SkillRegistry.js";
 import { MailboxApplication } from "./mailbox/app.js";
 import { FileMgrApplication } from "./filemgr/app.js";
 import { CalendarApplication } from "./calendar/app.js";
@@ -11,6 +10,7 @@ import { NewsApplication } from "./news/app.js";
 import { TerminalApplication } from "./terminal/app.js";
 import { PPTCreatorApplication } from "./ppt/app.js";
 import { DesignerApplication } from "./designer/app.js";
+import { SkillsApplication } from "./skills/app.js";
 import { Setting, getAppDirectory } from "../utils/setting.js";
 import { logger, LogStream } from "../utils/logger.js";
 import { NotificationManager } from "../utils/notificationmgr.js";
@@ -78,6 +78,7 @@ export class ApplicationRegistry {
         return this.applications.get(bundleName);
     }
 
+    /** 应用内建 toolsets（含 skills 子应用的本地技能） */
     static async listAvailableToolsets(): Promise<BaseToolset[]> {
         let result: BaseToolset[] = [];
         for (const application of this.applications.values()) {
