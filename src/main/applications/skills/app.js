@@ -33,8 +33,8 @@ class SkillsApplication extends BaseApplication {
     return SkillRegistry.getSkillsDirectory();
   }
 
-  setBundledSkillsRoot(appPath) {
-    return SkillRegistry.setBundledSkillsRoot(appPath);
+  getBundledSkillsDirectory() {
+    return SkillRegistry.getBundledSkillsDirectory();
   }
 
   listSkills() {

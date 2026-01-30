@@ -29,15 +29,33 @@ var globalTray = null;
 var isAppQuitting = false;
 
 /**
- * 将应用内置的 skills 目录（resources/skills）自动拷贝到用户的 skills 目录
- * - 支持 npm 调试（dev）和打包运行
- * - 总是覆盖同名内置技能到最新版本（与 resources/skills 保持一致）
+ * 解析内置 skills 目录：优先用 SkillRegistry，再尝试 main 进程侧路径（开发/打包均可用）
+ */
+function resolveBundledSkillsDir() {
+  const fromRegistry = SkillRegistry.getBundledSkillsDirectory();
+  if (fs.existsSync(fromRegistry)) return fromRegistry;
+  const appPath = app.getAppPath();
+  const candidates = [
+    path.join(__dirname, 'applications', 'skills', 'resources'),
+    path.join(appPath, 'applications', 'skills', 'resources'),
+    path.join(appPath, 'src', 'main', 'applications', 'skills', 'resources')
+  ];
+  for (const dir of candidates) {
+    if (fs.existsSync(dir)) return dir;
+  }
+  return null;
+}
+
+/**
+ * 将应用内置的 skills 目录自动拷贝到用户的 apps/skills/resources
+ * - 支持 npm 调试（dev）和打包运行，多路径回退定位内置目录
+ * - 总是覆盖同名内置技能到最新版本
  */
 async function installBundledSkillsIfNeeded() {
   try {
-    const appPath = app.getAppPath();
-    const bundledSkillsDir = path.join(appPath, 'resources', 'skills');
-    if (!fs.existsSync(bundledSkillsDir)) {
+    const bundledSkillsDir = resolveBundledSkillsDir();
+    if (!bundledSkillsDir) {
+      logger.warn('installBundledSkillsIfNeeded: 未找到内置 skills 目录，跳过拷贝');
       return;
     }
 
@@ -57,10 +75,9 @@ async function installBundledSkillsIfNeeded() {
 
     const entries = fs.readdirSync(bundledSkillsDir, { withFileTypes: true });
     for (const ent of entries) {
-      if (!ent.isDirectory()) continue;
-      const srcDir = path.join(bundledSkillsDir, ent.name);
-      const destDir = path.join(userSkillsDir, ent.name);
-      copyRecursive(srcDir, destDir);
+      const srcPath = path.join(bundledSkillsDir, ent.name);
+      const destPath = path.join(userSkillsDir, ent.name);
+      copyRecursive(srcPath, destPath);
     }
   } catch (error) {
     console.error('installBundledSkillsIfNeeded failed', error);
@@ -492,10 +509,7 @@ app.whenReady().then(async () => {
     GlobalState.initialize();
     createWindow();
 
-    // 内置 skills 根目录，供 SkillRegistry 渐进式加载时回退读取
-    SkillRegistry.setBundledSkillsRoot(app.getAppPath());
-
-    // 将打包内置/源码中的 resources/skills 自动同步到用户 skills 目录（先完成再注册，确保首次对话能发现技能）
+    // 将内置 skills（applications/skills/resources）自动同步到用户 skills 目录（先完成再注册，确保首次对话能发现技能）
     try {
       await installBundledSkillsIfNeeded();
     } catch (err) {

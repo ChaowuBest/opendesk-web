@@ -22,15 +22,17 @@ const skillsCache = new Map();
 /** 所有本地技能共用一个 toolset，工具 ID 为 skill-<name>，避免 skill-pdf-pdf 重复 */
 let singleSkillToolset = null;
 
-/** 内置 skills 根目录（main 进程设置），用于渐进式加载时回退读取 resources/skills */
-let bundledSkillsRoot = '';
+const __skillsDir = import.meta.dirname;
 
 /**
- * 设置内置 skills 根目录（app.getAppPath()），用于在 userData 目录无参考文档/脚本时回退加载
- * @param {string} appPath
+ * 返回内置技能根目录（用于安装到用户目录及渐进式加载回退）
+ * 开发时：与 skillregistry 同级的 resources；打包后：main 输出目录下的 applications/skills/resources
+ * @returns {string}
  */
-function setBundledSkillsRoot(appPath) {
-  if (typeof appPath === 'string' && appPath) bundledSkillsRoot = path.resolve(appPath);
+function getBundledSkillsDirectory() {
+  const nextToModule = path.join(__skillsDir, 'resources');
+  if (fs.existsSync(nextToModule)) return nextToModule;
+  return path.join(__skillsDir, 'applications', 'skills', 'resources');
 }
 
 /**
@@ -98,8 +100,8 @@ function loadSkillResources(skillDir, skillName) {
   readResourcesFromDir(resolvedDir, referencesSections, scriptsList, assetsList);
 
   const hadAny = referencesSections.length > 0 || scriptsList.length > 0 || assetsList.length > 0;
-  if (!hadAny && bundledSkillsRoot && skillName) {
-    const fallbackDir = path.join(bundledSkillsRoot, 'resources', SKILLS_DIR_NAME, skillName);
+  if (!hadAny && skillName) {
+    const fallbackDir = path.join(getBundledSkillsDirectory(), skillName);
     if (fs.existsSync(fallbackDir) && fs.statSync(fallbackDir).isDirectory()) {
       logger.info(`SkillRegistry: 渐进式加载回退到内置目录 ${fallbackDir}`);
       readResourcesFromDir(path.resolve(fallbackDir), referencesSections, scriptsList, assetsList);
@@ -157,9 +159,10 @@ function formatProgressiveSkillContent(body, resources, usageContext) {
   return parts.length ? parts.join('\n\n') : '[无额外资源]';
 }
 
+/** 用户技能目录：与其它应用一致，放在 apps/skills/resources 下 */
 function getSkillsDirectory() {
   const appDir = getAppDirectory();
-  const skillsDir = path.join(appDir, SKILLS_DIR_NAME);
+  const skillsDir = path.join(appDir, 'apps', SKILLS_DIR_NAME, 'resources');
   if (!fs.existsSync(skillsDir)) {
     fs.mkdirSync(skillsDir, { recursive: true });
   }
@@ -390,7 +393,7 @@ function listSkills() {
 
 export const SkillRegistry = {
   getSkillsDirectory,
-  setBundledSkillsRoot,
+  getBundledSkillsDirectory,
   loadAll,
   getToolsets,
   refresh,
