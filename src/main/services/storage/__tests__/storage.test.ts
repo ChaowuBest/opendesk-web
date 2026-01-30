@@ -279,12 +279,12 @@ async function main(): Promise<void> {
     const storage = new BaseStorage('storage-test2', schema, TEST_DB_DIR);
     await storage.initialize();
 
-    // await seedItems(storage);
+    await seedItems(storage);
     // await testBaseSearch(storage);
     // await testVectorSearch(storage);
     // await testTagSearch(storage);
-    // await testBM25Search(storage);
-    await testVectorBaseOnly();
+    await testBM25Search(storage);
+    // await testVectorBaseOnly();
 }
 
 main().catch((error) => {

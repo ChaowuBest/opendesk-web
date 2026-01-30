@@ -6,7 +6,7 @@
  */
 
 import { Indexer, IndexerSearchOptions, IndexerSearchResult } from './indexer.js';
-import { Item, FilterCondition, QueryOperator, BM25Query, ItemType } from './abstrac-storage.js';
+import { Item, FilterCondition, QueryOperator, BM25Query, ItemType, ColumnSchema } from './abstrac-storage.js';
 import { BM25IndexDB, BM25Record, BM25SearchResult } from './bm25-index-db.js';
 
 /**
@@ -23,11 +23,13 @@ export class BM25Indexer extends Indexer {
 
     private db: BM25IndexDB;
     private defaultTopK: number;
+    private schema: ColumnSchema;
 
-    constructor(dbPath: string, defaultTopK = 10) {
+    constructor(schema: ColumnSchema, dbPath: string, defaultTopK = 10) {
         super();
         this.db = new BM25IndexDB(dbPath);
         this.defaultTopK = defaultTopK;
+        this.schema = schema;
     }
 
     /**
@@ -69,9 +71,6 @@ export class BM25Indexer extends Indexer {
             item_id: result.item_id,
             item_type: result.item_type as ItemType,
             text: result.text,
-            tag: metadata?.tag ?? result.tag,
-            created_at: metadata?.created_at ?? result.created_at,
-            updated_at: metadata?.updated_at ?? result.updated_at,
         };
 
         // 从 metadata 复制额外字段
@@ -89,17 +88,15 @@ export class BM25Indexer extends Indexer {
     /**
      * Item → BM25Record 转换
      */
-    private itemToRecord(item: Item): BM25Record {
-        const col = item.indexer_columns?.[this.name]?.find(c => c.column === this.columnName);
+    private itemToRecord(item: Item, colName: string, new_id: string): BM25Record {
+        const col = item.indexer_columns?.[this.name]?.find(c => c.column === colName);
         const text = (col?.content as string) ?? item.text ?? '';
 
         return {
+            bm25_id: new_id,
             item_id: item.item_id,
-            item_type: item.item_type,
+            item_type: colName,
             text: text,
-            tag: item.tag ?? '',
-            created_at: item.created_at ?? Date.now(),
-            updated_at: item.updated_at ?? Date.now(),
         };
     }
 

@@ -278,7 +278,7 @@ export class BaseStorage {
         this.baseIndexer = new BaseIndexer(schema, path.join(this.dbBasePath, 'base-index.db'));
 
         // 初始化其他 indexer
-        this.bm25Indexer = new BM25Indexer(path.join(this.dbBasePath, 'bm25-index.db'));
+        this.bm25Indexer = new BM25Indexer(schema, path.join(this.dbBasePath, 'bm25-index.db'));
         this.vectorIndexer = new VectorIndexer(schema, path.join(this.dbBasePath, 'vector-index.db'));
         this.tagIndexer = new TagIndexer(schema, path.join(this.dbBasePath, 'tag-index.db'));
     }
@@ -321,7 +321,7 @@ export class BaseStorage {
             if (typeof conditions === 'undefined') {
                 conditions = [];
             }
-            
+
             const indexer = this.getIndexerByName(indexerName);
 
             if (!hasInitialData) {

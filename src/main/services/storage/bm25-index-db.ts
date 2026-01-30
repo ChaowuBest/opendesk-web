@@ -16,12 +16,10 @@ import fs from 'fs';
  * 存储记录
  */
 export interface BM25Record {
+    bm25_id: string;
     item_id: string;
     item_type: string;
     text: string;
-    tag?: string;
-    created_at?: number;
-    updated_at?: number;
 }
 
 /**
@@ -31,9 +29,6 @@ export interface BM25SearchResult {
     item_id: string;
     item_type: string;
     text: string;
-    tag: string;
-    created_at: number;
-    updated_at: number;
     score: number;
 }
 
@@ -41,6 +36,7 @@ export interface BM25SearchResult {
  * 搜索选项
  */
 export interface BM25SearchOptions {
+    columnName: string;
     topK?: number;
 }
 
@@ -124,9 +120,6 @@ export class BM25IndexDB {
                         item_id: result._id,
                         item_type: doc.item_type ?? 'file',
                         text: Array.isArray(doc.text) ? doc.text.join(' ') : doc.text,
-                        tag: doc.tag ?? '',
-                        created_at: doc.created_at ?? 0,
-                        updated_at: doc.updated_at ?? 0,
                         score: result._score ?? 0,
                     });
                 }
@@ -150,9 +143,6 @@ export class BM25IndexDB {
                 _id: record.item_id,
                 item_type: record.item_type,
                 text: this.tokenize(record.text),
-                tag: record.tag ?? '',
-                created_at: record.created_at ?? Date.now(),
-                updated_at: record.updated_at ?? Date.now(),
             }));
 
             await this.si!.PUT(docs);
@@ -181,9 +171,6 @@ export class BM25IndexDB {
                 _id: record.item_id,
                 item_type: record.item_type,
                 text: this.tokenize(record.text),
-                tag: record.tag ?? '',
-                created_at: record.created_at ?? Date.now(),
-                updated_at: record.updated_at ?? Date.now(),
             }));
 
             await this.si!.PUT(docs);
