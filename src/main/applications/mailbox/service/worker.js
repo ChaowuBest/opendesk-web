@@ -758,7 +758,6 @@ class MailboxStorage {
             doc.date, doc.unread, doc.starred
         ));
     }
-    // ... 请将此方法添加到 MailboxStorage 类的末尾 ...
 
     /**
      * 彻底删除那些服务器上已不存在，且本地没有正文内容的"僵尸"邮件
@@ -778,7 +777,7 @@ class MailboxStorage {
                 const contentCount = await this.contentdb.count({ uid: doc.uid });
 
                 if (contentCount === 0) {
-                    // 4. [关键修改] 执行物理删除 (Hard Delete)
+                    // 4. 执行物理删除 (Hard Delete)
                     // 删除 header 数据库记录
                     await this.db.remove({ uid: doc.uid }, { multi: false });
                     // 删除 raw header 数据库记录
