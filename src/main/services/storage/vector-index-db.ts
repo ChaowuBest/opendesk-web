@@ -13,6 +13,7 @@ import { SimilarityMetric } from './abstrac-storage.js';
 
 // 向量索引记录接口 - 保持语义最小化
 export interface VectorIndexRecord {
+    vector_id: string;
     item_id: string;
     item_type: string;
     repr: Float32Array | number[];
@@ -28,6 +29,7 @@ export interface VectorSearchResult {
 
 // 向量搜索选项
 export interface VectorSearchOptions {
+    columnName: string;
     /** 相似度计算方法，默认为 cosine */
     metric?: SimilarityMetric;
     /** 相似度阈值（0-1之间，值越大要求越相似） */
@@ -83,7 +85,8 @@ export class VectorIndexDB {
         // 创建元数据表
         const createMetaTableSQL = `
             CREATE TABLE IF NOT EXISTS ${this.metaTableName} (
-                item_id TEXT PRIMARY KEY,
+                vector_id TEXT PRIMARY KEY,
+                item_id TEXT,
                 item_type TEXT NOT NULL
             )
         `;
@@ -92,7 +95,7 @@ export class VectorIndexDB {
         // 创建向量虚拟表
         const createVecTableSQL = `
             CREATE VIRTUAL TABLE IF NOT EXISTS ${this.vecTableName} USING vec0(
-                item_id TEXT PRIMARY KEY,
+                vector_id TEXT PRIMARY KEY,
                 repr float[${this.dimension}]
             )
         `;
@@ -173,19 +176,19 @@ export class VectorIndexDB {
         const vecData = this.toFloat32Array(record.repr);
 
         const insertMeta = this.db.prepare(`
-            INSERT INTO ${this.metaTableName} (item_id, item_type)
+            INSERT INTO ${this.metaTableName} (vector_id, item_id, item_type)
             VALUES (?, ?)
         `);
 
         const insertVec = this.db.prepare(`
-            INSERT INTO ${this.vecTableName} (item_id, repr)
+            INSERT INTO ${this.vecTableName} (vector_id, repr)
             VALUES (?, ?)
         `);
 
         const transaction = this.db.transaction(() => {
             try {
-                insertMeta.run(record.item_id, record.item_type);
-                insertVec.run(record.item_id, vecData);
+                insertMeta.run(record.vector_id, record.item_id, record.item_type);
+                insertVec.run(record.vector_id, vecData);
                 return true;
             } catch (error: any) {
                 if (error.code === 'SQLITE_CONSTRAINT_PRIMARYKEY' ||
@@ -208,12 +211,12 @@ export class VectorIndexDB {
         if (records.length === 0) return 0;
 
         const insertMeta = this.db.prepare(`
-            INSERT INTO ${this.metaTableName} (item_id, item_type)
-            VALUES (?, ?)
+            INSERT INTO ${this.metaTableName} (vector_id, item_id, item_type)
+            VALUES (?, ?, ?)
         `);
 
         const insertVec = this.db.prepare(`
-            INSERT INTO ${this.vecTableName} (item_id, repr)
+            INSERT INTO ${this.vecTableName} (vector_id, repr)
             VALUES (?, ?)
         `);
 
@@ -223,8 +226,8 @@ export class VectorIndexDB {
                 try {
                     this.validateDimension(record.repr);
                     const vecData = this.toFloat32Array(record.repr);
-                    insertMeta.run(record.item_id, record.item_type);
-                    insertVec.run(record.item_id, vecData);
+                    insertMeta.run(record.vector_id, record.item_id, record.item_type);
+                    insertVec.run(record.vector_id, vecData);
                     count++;
                 } catch (error: any) {
                     // 跳过重复记录，继续插入其他记录
@@ -251,30 +254,51 @@ export class VectorIndexDB {
         const vecData = this.toFloat32Array(record.repr);
 
         const upsertMeta = this.db.prepare(`
-            INSERT INTO ${this.metaTableName} (item_id, item_type)
-            VALUES (?, ?)
-            ON CONFLICT(item_id) DO UPDATE SET
+            INSERT INTO ${this.metaTableName} (vector_id, item_id, item_type)
+            VALUES (?, ?, ?)
+            ON CONFLICT(vector_id) DO UPDATE SET
                 item_type = excluded.item_type
         `);
 
-        // vec0 虚拟表需要先删除再插入
-        const deleteVec = this.db.prepare(`
-            DELETE FROM ${this.vecTableName} WHERE item_id = ?
+        const selectVectorIds = this.db.prepare(`
+            SELECT vector_id FROM ${this.metaTableName} WHERE item_id = ?
         `);
 
         const insertVec = this.db.prepare(`
-            INSERT INTO ${this.vecTableName} (item_id, repr)
+            INSERT INTO ${this.vecTableName} (vector_id, repr)
             VALUES (?, ?)
         `);
 
+        let tempTableName = `temp_vector_ids_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+
         const transaction = this.db.transaction(() => {
-            upsertMeta.run(record.item_id, record.item_type);
-            deleteVec.run(record.item_id);
-            insertVec.run(record.item_id, vecData);
+            // 1. 插入/更新 meta 表
+            upsertMeta.run(record.vector_id, record.item_id, record.item_type);
+
+            // 2. 查询 item_id 对应的所有 vector_id
+            const vectorRows = selectVectorIds.all(record.item_id) as Array<{ vector_id: string }>;
+
+            // 3. 构建临时表并删除所有旧 vector_id
+            this.db.exec(`CREATE TEMP TABLE ${tempTableName} (vector_id TEXT PRIMARY KEY)`);
+            const insertTemp = this.db.prepare(`INSERT INTO ${tempTableName} (vector_id) VALUES (?)`);
+            for (const row of vectorRows) {
+                insertTemp.run(row.vector_id);
+            }
+            this.db.prepare(`
+                DELETE FROM ${this.vecTableName}
+                WHERE vector_id IN (SELECT vector_id FROM ${tempTableName})
+            `).run();
+
+            // 4. 插入对应 vector_id 的向量
+            insertVec.run(record.vector_id, vecData);
             return true;
         });
 
-        return transaction();
+        try {
+            return transaction();
+        } finally {
+            this.db.exec(`DROP TABLE IF EXISTS ${tempTableName}`);
+        }
     }
 
     /**
@@ -335,82 +359,80 @@ export class VectorIndexDB {
         const vecData = this.toFloat32Array(queryVector);
         const metric = options?.metric || 'cosine';
         const distanceFunc = this.getDistanceFunction(metric);
+        const columnName = options?.columnName || '';
         const topK = options?.topK || 100;
         const threshold = options?.threshold;
 
         let sql: string;
-        const params: any[] = [vecData, topK];
+        const params: any[] = [vecData, columnName, topK];
+        let tempTableName: string | undefined;
 
-        if (filterItemIds && filterItemIds.length > 0) {
-            // 带过滤的搜索
-            const placeholders = filterItemIds.map(() => '?').join(', ');
-            sql = `
-                SELECT
-                    v.item_id,
-                    m.item_type,
-                    ${distanceFunc}(v.repr, ?) as distance
-                FROM ${this.vecTableName} v
-                JOIN ${this.metaTableName} m ON v.item_id = m.item_id
-                WHERE v.item_id IN (${placeholders})
-                ORDER BY distance ASC
-                LIMIT ?
-            `;
-            params.splice(1, 0, ...filterItemIds);
-        } else {
-            // 全量搜索
-            sql = `
-                SELECT
-                    v.item_id,
-                    m.item_type,
-                    ${distanceFunc}(v.repr, ?) as distance
-                FROM ${this.vecTableName} v
-                JOIN ${this.metaTableName} m ON v.item_id = m.item_id
-                ORDER BY distance ASC
-                LIMIT ?
-            `;
+        try {
+            if (filterItemIds && filterItemIds.length > 0) {
+                // 带过滤的搜索：使用临时表避免拼接 IN 列表
+                tempTableName = `temp_filter_ids_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+                this.db.exec(`CREATE TEMP TABLE ${tempTableName} (item_id TEXT PRIMARY KEY)`);
+
+                const insertTemp = this.db.prepare(`INSERT INTO ${tempTableName} (item_id) VALUES (?)`);
+                const insertAll = this.db.transaction((ids: string[]) => {
+                    for (const id of ids) {
+                        insertTemp.run(id);
+                    }
+                });
+                insertAll(filterItemIds);
+
+                sql = `
+                    SELECT
+                        v.vector_id,
+                        m.item_type,
+                        ${distanceFunc}(v.repr, ?) as distance
+                    FROM ${tempTableName} t
+                    JOIN ${this.metaTableName} m ON t.item_id = m.item_id
+                    JOIN ${this.vecTableName} v ON v.vector_id = m.vector_id
+                    WHERE m.item_type = ?
+                    ORDER BY distance ASC
+                    LIMIT ?
+                `;
+            } else {
+                // 全量搜索
+                sql = `
+                    SELECT
+                        v.vector_id,
+                        m.item_id,
+                        m.item_type,
+                        ${distanceFunc}(v.repr, ?) as distance
+                    FROM ${this.metaTableName} m
+                    JOIN ${this.vecTableName} v ON v.vector_id = m.vector_id
+                    WHERE m.item_type = ?
+                    ORDER BY distance ASC
+                    LIMIT ?
+                `;
+            }
+
+            const stmt = this.db.prepare(sql);
+            const rows = stmt.all(...params) as Array<{ item_id: string; item_type: string; distance: number }>;
+
+            // 转换为搜索结果
+            const results: VectorSearchResult[] = rows.map(row => ({
+                item_id: row.item_id,
+                item_type: row.item_type,
+                distance: row.distance,
+                similarity: this.distanceToSimilarity(row.distance, metric),
+            }));
+
+            // 应用相似度阈值过滤
+            if (threshold !== undefined) {
+                return results.filter(r => r.similarity >= threshold);
+            }
+
+            return results;
+        } finally {
+            if (tempTableName) {
+                this.db.exec(`DROP TABLE IF EXISTS ${tempTableName}`);
+            }
         }
-
-        const stmt = this.db.prepare(sql);
-        const rows = stmt.all(...params) as Array<{ item_id: string; item_type: string; distance: number }>;
-
-        // 转换为搜索结果
-        const results: VectorSearchResult[] = rows.map(row => ({
-            item_id: row.item_id,
-            item_type: row.item_type,
-            distance: row.distance,
-            similarity: this.distanceToSimilarity(row.distance, metric),
-        }));
-
-        // 应用相似度阈值过滤
-        if (threshold !== undefined) {
-            return results.filter(r => r.similarity >= threshold);
-        }
-
-        return results;
     }
 
-    /**
-     * 根据 item_id 查询单条记录
-     * @param itemId 记录 ID
-     * @returns 查询到的记录或 undefined
-     */
-    findById(itemId: string): VectorIndexRecord | undefined {
-        const metaStmt = this.db.prepare(`SELECT * FROM ${this.metaTableName} WHERE item_id = ?`);
-        const meta = metaStmt.get(itemId) as { item_id: string; item_type: string } | undefined;
-
-        if (!meta) return undefined;
-
-        const vecStmt = this.db.prepare(`SELECT repr FROM ${this.vecTableName} WHERE item_id = ?`);
-        const vec = vecStmt.get(itemId) as { repr: Buffer } | undefined;
-
-        if (!vec) return undefined;
-
-        return {
-            item_id: meta.item_id,
-            item_type: meta.item_type,
-            repr: new Float32Array(vec.repr.buffer, vec.repr.byteOffset, vec.repr.byteLength / 4),
-        };
-    }
 
     /**
      * 统计记录数

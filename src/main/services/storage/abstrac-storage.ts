@@ -137,7 +137,7 @@ export interface ColumnSchema {
     columns: {
         [column: string]: ColumnConstraint;
     };
-    // 代表哪些列需要被怎样的indexer索引
+    // column 代表列名，value代表索引
     needIndexers: {
         [column: string]: string[];
     };
@@ -279,8 +279,8 @@ export class BaseStorage {
 
         // 初始化其他 indexer
         this.bm25Indexer = new BM25Indexer(path.join(this.dbBasePath, 'bm25-index.db'));
-        this.vectorIndexer = new VectorIndexer(path.join(this.dbBasePath, 'vector-index.db'));
-        this.tagIndexer = new TagIndexer(path.join(this.dbBasePath, 'tag-index.db'));
+        this.vectorIndexer = new VectorIndexer(schema, path.join(this.dbBasePath, 'vector-index.db'));
+        this.tagIndexer = new TagIndexer(schema, path.join(this.dbBasePath, 'tag-index.db'));
     }
 
     /**
@@ -315,9 +315,13 @@ export class BaseStorage {
         const indexerOrder = ['TagIndexer', 'BM25Indexer', 'VectorIndexer', 'BaseIndexer'];
 
         for (const indexerName of indexerOrder) {
-            const conditions = conditionsByIndexer[indexerName];
-            if (!conditions || conditions.length === 0) continue;
-
+            let conditions = conditionsByIndexer[indexerName];
+            if ( ( !conditions || conditions.length === 0 ) 
+                && (indexerName != 'BaseIndexer') ) continue;
+            if (typeof conditions === 'undefined') {
+                conditions = [];
+            }
+            
             const indexer = this.getIndexerByName(indexerName);
 
             if (!hasInitialData) {

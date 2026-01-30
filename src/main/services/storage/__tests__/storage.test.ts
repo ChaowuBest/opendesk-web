@@ -2,7 +2,7 @@
  * Minimal BaseStorage test scaffold
  *
  * 运行方式：
- * npx tsx src/main/services/storage/__tests__/storage_test2.ts
+ * npx tsx src/main/services/storage/__tests__/storage.test.ts
  */
 
 import path from 'path';
@@ -11,10 +11,14 @@ import fs from 'fs';
 import { BaseStorage, ColumnSchema, Item, BM25Query } from '../abstrac-storage.js';
 
 const TEST_DB_DIR = path.join(os.tmpdir(), 'storage-test2');
+const TEST_DB_DIR_VB = path.join(os.tmpdir(), 'storage-test2-vector-base');
 
 function cleanupTestDb(): void {
     if (fs.existsSync(TEST_DB_DIR)) {
         fs.rmSync(TEST_DB_DIR, { recursive: true, force: true });
+    }
+    if (fs.existsSync(TEST_DB_DIR_VB)) {
+        fs.rmSync(TEST_DB_DIR_VB, { recursive: true, force: true });
     }
 }
 
@@ -127,6 +131,131 @@ async function testBM25Search(storage: BaseStorage): Promise<void> {
     console.log('[BM25Indexer] results:', results);
 }
 
+async function testVectorBaseOnly(): Promise<void> {
+    const schema: ColumnSchema = {
+        columns: {
+            item_id: { type: 'TEXT', nullable: false },
+            item_type: { type: 'TEXT', nullable: false },
+            filename: { type: 'TEXT', nullable: true },
+            text: { type: 'TEXT', nullable: true },
+            semi_text: { type: 'TEXT', nullable: true },
+            created_at: { type: 'INTEGER', nullable: true },
+            updated_at: { type: 'INTEGER', nullable: true },
+        },
+        needIndexers: {
+            text: ['VectorIndexer'],
+            semi_text: ['VectorIndexer'],
+        },
+    };
+
+    const storage = new BaseStorage('storage-test2-vector-base', schema, TEST_DB_DIR_VB);
+    await storage.initialize();
+
+    const now = Date.now();
+    const items: Item[] = [
+        {
+            item_id: 'vb-1',
+            item_type: 'file',
+            filename: 'vector-base-1.txt',
+            text: 'text-vector-1',
+            semi_text: 'semitext-vector-1',
+            created_at: now,
+            updated_at: now,
+            indexer_columns: {
+                VectorIndexer: [
+                    { column: 'text', content: makeOneHotVector(2) },
+                    { column: 'semi_text', content: makeOneHotVector(3) },
+                ],
+            },
+        },
+        {
+            item_id: 'vb-2',
+            item_type: 'file',
+            filename: 'vector-base-2.txt',
+            text: 'text-vector-2',
+            semi_text: 'semitext-vector-2',
+            created_at: now,
+            updated_at: now,
+            indexer_columns: {
+                VectorIndexer: [
+                    { column: 'text', content: makeOneHotVector(4) },
+                    { column: 'semi_text', content: makeOneHotVector(5) },
+                ],
+            },
+        },
+        {
+            item_id: 'vb-3',
+            item_type: 'file',
+            filename: 'vector-base-3.txt',
+            text: 'text-vector-3',
+            semi_text: 'semitext-vector-3',
+            created_at: now,
+            updated_at: now,
+            indexer_columns: {
+                VectorIndexer: [
+                    { column: 'text', content: makeOneHotVector(6) },
+                    { column: 'semi_text', content: makeOneHotVector(7) },
+                ],
+            },
+        },
+        {
+            item_id: 'vb-4',
+            item_type: 'file',
+            filename: 'vector-base-4.txt',
+            text: 'text-vector-4',
+            semi_text: 'semitext-vector-4',
+            created_at: now,
+            updated_at: now,
+            indexer_columns: {
+                VectorIndexer: [
+                    { column: 'text', content: makeOneHotVector(8) },
+                    { column: 'semi_text', content: makeOneHotVector(9) },
+                ],
+            },
+        },
+    ];
+
+    await storage.insert(items);
+
+    // const baseResults = await storage.search([], [
+    //     {
+    //         indexer: 'BaseIndexer',
+    //         field: 'text',
+    //         operator: 'like',
+    //         value: 'text-%',
+    //     },
+    // ]);
+    // console.log('[Vector+Base] BaseIndexer results:', baseResults);
+
+    const vecResultsText = await storage.search([], [
+        {
+            indexer: 'VectorIndexer',
+            field: 'text',
+            operator: 'vector_near',
+            value: items[0].indexer_columns?.VectorIndexer?.[0].content as number[],
+            vectorQuery: { topK: 1, metric: 'cosine', threshold: 0.0 },
+        },
+        {
+            indexer: 'BaseIndexer',
+            field: 'text',
+            operator: 'like',
+            value: 'text-%',
+        }
+    ]);
+    console.log('[Vector+Base] VectorIndexer(text) results:', vecResultsText);
+
+    const vecResultsSemi = await storage.search([], [
+        {
+            indexer: 'VectorIndexer',
+            field: 'semi_text',
+            operator: 'vector_near',
+            value: items[1].indexer_columns?.VectorIndexer?.[1].content as number[],
+            vectorQuery: { topK: 1, metric: 'cosine', threshold: 0.0 },
+        },
+    ]);
+    console.log('[Vector+Base] VectorIndexer(semi_text) results:', vecResultsSemi);
+}
+
 async function main(): Promise<void> {
     cleanupTestDb();
     // TODO: 在这里补充/调整 schema 字段
@@ -150,11 +279,12 @@ async function main(): Promise<void> {
     const storage = new BaseStorage('storage-test2', schema, TEST_DB_DIR);
     await storage.initialize();
 
-    await seedItems(storage);
-    await testBaseSearch(storage);
-    await testVectorSearch(storage);
-    await testTagSearch(storage);
-    await testBM25Search(storage);
+    // await seedItems(storage);
+    // await testBaseSearch(storage);
+    // await testVectorSearch(storage);
+    // await testTagSearch(storage);
+    // await testBM25Search(storage);
+    await testVectorBaseOnly();
 }
 
 main().catch((error) => {

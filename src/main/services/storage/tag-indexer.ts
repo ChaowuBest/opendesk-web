@@ -6,7 +6,7 @@
  */
 
 import { Indexer, IndexerSearchOptions, IndexerSearchResult } from './indexer.js';
-import { Item, FilterCondition, ScalarOperator, QueryOperator, ItemType } from './abstrac-storage.js';
+import { Item, FilterCondition, ScalarOperator, QueryOperator, ItemType, ColumnSchema } from './abstrac-storage.js';
 import { TagIndexDB, TagIndexRecord, QueryCondition } from './tag-index-db.js';
 
 /**
@@ -21,13 +21,16 @@ export class TagIndexer extends Indexer {
     readonly supportedOperators: QueryOperator[] = [
         '=', '!=', '>', '<', '>=', '<=', 'like', 'in'
     ];
-    private readonly columnName = 'tag';
+    private columnName;
 
     private db: TagIndexDB;
     private isInitialized = false;
 
-    constructor(dbPath: string) {
+    constructor(schema: ColumnSchema, dbPath: string) {
         super();
+        this.columnName = Object.keys(schema.needIndexers).find(
+            key => schema.needIndexers[key].includes(this.name)
+        );
         this.db = new TagIndexDB(dbPath);
     }
 

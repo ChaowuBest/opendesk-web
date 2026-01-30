@@ -6,8 +6,9 @@
  */
 
 import { Indexer, IndexerSearchOptions, IndexerSearchResult } from './indexer.js';
-import { Item, FilterCondition, VectorOperator, QueryOperator, VectorQuery, ItemType } from './abstrac-storage.js';
+import { Item, FilterCondition, VectorOperator, QueryOperator, VectorQuery, ItemType, ColumnSchema } from './abstrac-storage.js';
 import { VectorIndexDB, VectorIndexRecord, VectorSearchOptions } from './vector-index-db.js';
+import { randomUUID } from 'crypto';
 
 /**
  * 向量索引器
@@ -15,6 +16,9 @@ import { VectorIndexDB, VectorIndexRecord, VectorSearchOptions } from './vector-
  * 使用 SQLite + sqlite-vec 存储向量索引，支持向量相似度查询。
  * 不支持标量操作符。
  */
+
+// VectorIndexer 层负责分别插入多个向量
+
 export class VectorIndexer extends Indexer {
     readonly name = 'VectorIndexer';
     readonly supportedFields = ['repr'];
@@ -28,10 +32,12 @@ export class VectorIndexer extends Indexer {
 
     private db: VectorIndexDB;
     private readonly dimension: number;
-
-    constructor(dbPath: string, dimension: number = 1024) {
+    private schema: ColumnSchema;
+    
+    constructor(schema: ColumnSchema, dbPath: string, dimension: number = 1024) {
         super();
         this.dimension = dimension;
+        this.schema = schema;
         this.db = new VectorIndexDB(dbPath, dimension);
     }
 
@@ -58,10 +64,11 @@ export class VectorIndexer extends Indexer {
      * 验证字段是否支持
      */
     private validateField(field: string): void {
-        if (!this.supportsField(field)) {
+        const indexers = this.schema.needIndexers?.[field];
+        if (!indexers || !indexers.includes(this.name)) {
             throw new Error(
                 `VectorIndexer does not support field: ${field}. ` +
-                `Supported fields: ${this.supportedFields.join(', ')}`
+                `Field must be listed in schema.needIndexers with VectorIndexer`
             );
         }
     }
@@ -108,10 +115,11 @@ export class VectorIndexer extends Indexer {
      * Item → VectorIndexRecord 转换
      * 注意：需要 Item 附带 repr 属性
      */
-    private itemToRecord(item: Item, repr: Float32Array | number[]): VectorIndexRecord | null {
+    private itemToRecord(item: Item, colName: string, repr: Float32Array | number[], new_id: string): VectorIndexRecord | null {
         return {
+            vector_id: new_id,
             item_id: item.item_id,
-            item_type: item.item_type,
+            item_type: colName,
             repr: repr,
         };
     }
@@ -142,6 +150,7 @@ export class VectorIndexer extends Indexer {
 
         // 构建搜索选项
         const searchOptions: VectorSearchOptions = {
+            columnName: condition.field,
             metric: vectorQuery.metric || 'cosine',
         };
 
@@ -229,35 +238,30 @@ export class VectorIndexer extends Indexer {
     async insert(items: Item[]): Promise<void> {
         const records: VectorIndexRecord[] = [];
         for (const item of items) {
-            const col = item.indexer_columns?.[this.name]?.find(c => c.column === this.columnName);
-            const repr = col?.content;
-            const validRepr = Array.isArray(repr) && repr.length === this.dimension && repr.every(v => typeof v === 'number');
-            if (!validRepr) {
-                console.error(`[VectorIndexer] Item ${item.item_id} does not contain the required repr for indexer ${this.name}`);
+            const columns = item.indexer_columns?.[this.name] as Array<{ column: string; content: string | number[] }> | undefined;
+            if (!columns || columns.length === 0) {
+                console.error(`[VectorIndexer] Item ${item.item_id} does not contain indexer_columns for ${this.name}`);
                 continue;
             }
-            const record = this.itemToRecord(item, repr as number[]);
-            if (record) {
-                records.push(record);
+
+            for (const col of columns) {
+                const columnName = col.column;
+                const repr = col.content;
+                const validRepr = Array.isArray(repr) && repr.length === this.dimension && repr.every(v => typeof v === 'number');
+                if (!validRepr) {
+                    console.error(`[VectorIndexer] Item ${item.item_id} does not contain a valid repr for indexer ${this.name} (${columnName})`);
+                    continue;
+                }
+
+                const record = this.itemToRecord(item, columnName, repr as number[], randomUUID());
+                if (record) {
+                    records.push(record);
+                }
             }
         }
         if (records.length > 0) {
             this.db.insertMany(records);
         }
-    }
-
-    /**
-     * 带向量的插入（类型安全）
-     */
-    async insertWithVectors(
-        items: Array<Item & { repr: Float32Array | number[] }>
-    ): Promise<void> {
-        const records = items.map(item => ({
-            item_id: item.item_id,
-            item_type: item.item_type,
-            repr: item.repr,
-        }));
-        this.db.insertMany(records);
     }
 
     /**
@@ -272,32 +276,26 @@ export class VectorIndexer extends Indexer {
      */
     async update(items: Item[]): Promise<void> {
         for (const item of items) {
-            const col = item.indexer_columns?.[this.name]?.find(c => c.column === this.columnName);
-            const repr = col?.content;
-            const validRepr = Array.isArray(repr) && repr.length === this.dimension && repr.every(v => typeof v === 'number');
-            if (!validRepr) {
-                console.error(`[VectorIndexer] Item ${item.item_id} does not contain the required repr for indexer ${this.name}`);
+            const columns = item.indexer_columns?.[this.name] as Array<{ column: string; content: string | number[] }> | undefined;
+            if (!columns || columns.length === 0) {
+                console.error(`[VectorIndexer] Item ${item.item_id} does not contain indexer_columns for ${this.name}`);
                 continue;
             }
-            const record = this.itemToRecord(item, repr as number[]);
-            if (record) {
-                this.db.upsert(record);
-            }
-        }
-    }
 
-    /**
-     * 带向量的更新（类型安全）
-     */
-    async updateWithVectors(
-        items: Array<Item & { repr: Float32Array | number[] }>
-    ): Promise<void> {
-        for (const item of items) {
-            this.db.upsert({
-                item_id: item.item_id,
-                item_type: item.item_type,
-                repr: item.repr,
-            });
+            for (const col of columns) {
+                const columnName = col.column;
+                const repr = col.content;
+                const validRepr = Array.isArray(repr) && repr.length === this.dimension && repr.every(v => typeof v === 'number');
+                if (!validRepr) {
+                    console.error(`[VectorIndexer] Item ${item.item_id} does not contain a valid repr for indexer ${this.name} (${columnName})`);
+                    continue;
+                }
+
+                const record = this.itemToRecord(item, columnName, repr as number[], randomUUID());
+                if (record) {
+                    this.db.upsert(record);
+                }
+            }
         }
     }
 
