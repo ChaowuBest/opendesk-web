@@ -26,7 +26,7 @@ class FileMgrApplication extends BaseApplication {
         });
     }
 
-    getToolsets() {
+    async getToolsets() {
         const toolset = new BaseToolset('filemgr');
         const searchFileTool = new BaseTool(
             'searchFile',

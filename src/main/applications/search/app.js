@@ -48,7 +48,7 @@ class SearchApplication extends BaseApplication {
         });
     }
 
-    getToolsets() {
+    async getToolsets() {
         const exa_search = this.getConfig()?.exa_search;
         const toolset = new BaseToolset('search');
         if (exa_search?.enabled && exa_search?.api_key !== '') {

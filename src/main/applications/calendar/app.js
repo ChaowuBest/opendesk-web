@@ -32,9 +32,9 @@ class CalendarApplication extends BaseApplication {
 
     /**
      * Get the toolsets for the calendar application
-     * @returns {BaseToolset[]}
+     * @returns {Promise<BaseToolset[]>}
      */
-    getToolsets() {
+    async getToolsets() {
         let calendarToolset = new BaseToolset('calendar');
         let getCalendarItemsTool = new BaseTool(
             'getCalendarItems',

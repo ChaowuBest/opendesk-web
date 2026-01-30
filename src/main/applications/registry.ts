@@ -11,6 +11,36 @@ import { TerminalApplication } from "./terminal/app.js";
 import { PPTCreatorApplication } from "./ppt/app.js";
 import { DesignerApplication } from "./designer/app.js";
 import { Worker } from "worker_threads";
+/** 所有会在注册表中注册的应用类，用于协议配置收集等 */
+const APP_CLASSES = [
+  MailboxApplication,
+  FileMgrApplication,
+  CalendarApplication,
+  TerminalApplication,
+  A2AApplication,
+  RecallApplication,
+  SearchApplication,
+  NewsApplication,
+  PPTCreatorApplication,
+  DesignerApplication,
+];
+
+export type ProtocolHandlerEntry = {
+  scheme: string;
+  privileges?: Electron.Privileges;
+  handler: (request: Electron.ProtocolRequest) => Response | Promise<Response>;
+};
+
+/**
+ * 从所有应用收集协议配置（scheme + privileges + handler），用于主进程在启动时注册自定义协议。
+ * 在 app 未 ready 前可调用以得到 schemes 列表用于 registerSchemesAsPrivileged。
+ */
+export function getProtocolConfigsFromAllApps(): ProtocolHandlerEntry[] {
+  return APP_CLASSES.flatMap((Cls) => {
+    const app = new Cls();
+    return app.getProtocolHandlers();
+  });
+}
 import { Setting, getAppDirectory } from "../utils/setting.js";
 import { logger, LogStream } from "../utils/logger.js";
 import { NotificationManager } from "../utils/notificationmgr.js";
@@ -50,8 +80,12 @@ export class ApplicationRegistry {
         return this.applications.get(bundleName);
     }
 
-    static listAvailableToolsets(): BaseToolset[] {
-        return Array.from(this.applications.values()).flatMap(application => application.getToolsets());
+    static async listAvailableToolsets(): Promise<BaseToolset[]> {
+      let result: BaseToolset[] = [];
+      for (const application of this.applications.values()) {
+        result.push(...(await application.getToolsets()));
+      }
+      return result;
     }
 
     static async callWorker(bundleName: string, methodName: string, ...args: any[]): Promise<any> {
@@ -208,17 +242,9 @@ export function notifyWorkerSettingUpdate(settingData: object) {
 }
 
 export function initializeRegistry() {
-
-    ApplicationRegistry.registerApplication(new MailboxApplication());
-    ApplicationRegistry.registerApplication(new FileMgrApplication());
-    ApplicationRegistry.registerApplication(new CalendarApplication());
-    ApplicationRegistry.registerApplication(new TerminalApplication());
-    ApplicationRegistry.registerApplication(new A2AApplication());
-    ApplicationRegistry.registerApplication(new RecallApplication());
-    ApplicationRegistry.registerApplication(new SearchApplication());
-    ApplicationRegistry.registerApplication(new NewsApplication());
-    ApplicationRegistry.registerApplication(new PPTCreatorApplication());
-    ApplicationRegistry.registerApplication(new DesignerApplication());
+    for (const Cls of APP_CLASSES) {
+        ApplicationRegistry.registerApplication(new Cls());
+    }
 
     globalWorker = new Worker(
         path.join(app.getAppPath(), 'dist', 'main', 'worker.js'),

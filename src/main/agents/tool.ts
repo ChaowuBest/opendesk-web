@@ -2,11 +2,37 @@ import { z } from 'zod';
 import { ToolCall } from './messages.js';
 
 
+export class ToolResult {
+    status: 'running' | 'success' | 'error' = 'running';
+    result: string = '';
+    result_object?: object;
+
+    static fromStringResponse(response: string): ToolResult {
+        let result = new ToolResult();
+        result.status = 'success';
+        result.result = response;
+        return result;
+    }
+
+    attachResult(chunk: string) {
+        this.result += chunk;
+    }
+
+    updateResult(result: string) {
+        this.result = result;
+    }
+
+    updateResultObject(result_object: object) {
+        this.result_object = result_object;
+    }
+}
+
 export class BaseTool<T extends z.ZodType> {
     name: string;
     description: string;
     params: T;
     executor?: ((args: z.output<T>) => Promise<string>);
+    universalExecutor?: ((args: z.output<T>, result: ToolResult) => Promise<void>);
 
     constructor(name: string, description: string, params: T) {
         this.name = name;
@@ -48,13 +74,41 @@ export class BaseTool<T extends z.ZodType> {
     }
 
     /**
+     * 设置工具的通用执行函数，如果设置，则优先使用通用执行函数，否则使用普通执行函数
+     */
+    setUniversalExecutor(universalExecutor: (args: z.output<T>, result: ToolResult) => Promise<void>): ThisType<T> {
+        this.universalExecutor = universalExecutor;
+        return this;
+    }
+
+    /**
      * 执行工具
      */
-    async execute(args: z.output<T>): Promise<string> {
-        if (!this.executor) {
+    async execute(args: z.output<T>): Promise<ToolResult> {
+        if (this.universalExecutor) {
+            let result = new ToolResult();
+            return await this.universalExecutor(args, result).then(() => {
+                result.status = 'success';
+                return result;
+            }).catch((err) => {
+                result.status = 'error';
+                result.result = err.message;
+                return result;
+            });
+        } else if (this.executor) {
+            let result = new ToolResult();
+            return await this.executor(args).then((stringResult) => {
+                result.status = 'success';
+                result.result = stringResult;
+                return result;
+            }).catch((err) => {
+                result.status = 'error';
+                result.result = err.message;
+                return result;
+            });
+        } else {
             throw new Error(`executor of tool ${this.name} hasn't been set yet`);
         }
-        return this.executor(args);
     }
 }
 
@@ -97,7 +151,7 @@ export class BaseToolset {
         return this.tools.get(name);
     }
 
-    async callTool(toolName: string, args: object): Promise<string> {
+    async callTool(toolName: string, args: object): Promise<ToolResult> {
         let tool = this.getTool(toolName);
         if (tool === undefined) {
             throw new Error(`tool ${toolName} not found`);

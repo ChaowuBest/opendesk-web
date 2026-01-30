@@ -132,6 +132,15 @@ class BaseApplication {
     }
 
     /**
+     * 获取应用的自定义协议配置，用于在应用内安全加载资源（如 ppt://）。
+     * 每个应用可返回多组配置；主进程会在启动时据此注册 scheme 与 handler。
+     * @returns {Array<{ scheme: string, privileges?: import('electron').ProtocolHandlerPrivileges, handler: (request: import('electron').ProtocolRequest) => Promise<Response> | Response }>}
+     */
+    getProtocolHandlers() {
+        return [];
+    }
+
+    /**
      * 发送事件到所有订阅者
      * @param {string} eventName
      * @param {any[]} args
@@ -185,9 +194,9 @@ class BaseApplication {
 
     /**
      * 获取应用提供的工具
-     * @returns {BaseToolset[]}
+     * @returns {Promise<BaseToolset[]>}
      */
-    getToolsets() {
+    async getToolsets() {
         return [];
     }
 

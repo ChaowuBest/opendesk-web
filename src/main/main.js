@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Tray, globalShortcut, nativeImage, ipcMain, shell, Menu, dialog } from 'electron'
+import { app, BrowserWindow, Tray, globalShortcut, nativeImage, ipcMain, shell, Menu, dialog, protocol } from 'electron'
 import { Setting, getAppDirectory } from './utils/setting.js'
 import { GlobalState } from './states/global.js'
 import { openFloatWindow } from './windows/floatwindow.js'
@@ -7,12 +7,13 @@ import { is } from '@electron-toolkit/utils';
 import { z } from 'zod';
 import { NotificationManager } from './utils/notificationmgr.js';
 import { LogStream, logger } from './utils/logger.js'
-import { registerApplicationRegistryHandlers, initializeRegistry, notifyWorkerSettingUpdate } from './applications/registry.js';
+import { registerApplicationRegistryHandlers, initializeRegistry, notifyWorkerSettingUpdate, getProtocolConfigsFromAllApps } from './applications/registry.js';
 import { UpdateClient } from '../updater/client.js';
 
 import Convert from 'ansi-to-html';
 import path from 'path';
 import fs from 'fs';
+import { pathToFileURL } from 'node:url';
 
 import appIcon from '../../resources/main/images/icon_round.png?asset'
 
@@ -26,6 +27,16 @@ var globalMainWindow = null;
 var globalTray = null;
 /** @type {boolean} */
 var isAppQuitting = false;
+
+// 由各应用通过 base.getProtocolHandlers 注册自定义协议；主进程在此统一声明 scheme 权限
+const protocolConfigs = getProtocolConfigsFromAllApps();
+const schemePrivileges = protocolConfigs.map((c) => ({
+  scheme: c.scheme,
+  privileges: c.privileges ?? { standard: true, secure: true, supportFetchAPI: true }
+}));
+if (schemePrivileges.length) {
+  protocol.registerSchemesAsPrivileged(schemePrivileges);
+}
 
 if (app.requestSingleInstanceLock()) {
   app.on('second-instance', (event, path) => {
@@ -73,17 +84,19 @@ const createWindow = () => {
   });
 
   /**
-   * Open a link according to the system strategy
+   * Open a link according to the system strategy.
+   * Third-party HTTP/HTTPS open in system browser; in-app schemes (file, localhost, 及各应用注册的 scheme) 留在应用内打开。
    * @param {string} url
-   * @returns {boolean} true if the link is opened, false otherwise
+   * @returns {boolean} true if the link was opened externally (caller should preventDefault)
    */
+  const inAppSchemePrefixes = protocolConfigs.map((c) => c.scheme + '://');
   const openLink = (url) => {
     console.log(`openLink: ${url}`);
-    if (!url.startsWith('file://') && !url.startsWith('http://localhost')) {
-      shell.openExternal(url);
-      return true;
+    if (url.startsWith('file://') || url.startsWith('http://localhost') || inAppSchemePrefixes.some((p) => url.startsWith(p))) {
+      return false;
     }
-    return false;
+    shell.openExternal(url);
+    return true;
   }
 
   mainWindow.webContents.on('will-navigate', (event) => {
@@ -199,7 +212,7 @@ const registerTaskManagerAPIHandlers = () => {
       await task.attachFiles(details.attachedFilePaths);
     }
 
-    task.submitUserMessage(details.message);
+    await task.submitUserMessage(details.message);
     return { status: 'ok' };
   });
   ipcMain.handle('taskManager:stopTask', (event, taskId) => {
@@ -421,6 +434,10 @@ const initializeUpdater = () => {
 app.whenReady().then(() => {
   GlobalState.initialize();
   createWindow();
+
+  for (const { scheme, handler } of protocolConfigs) {
+    protocol.handle(scheme, handler);
+  }
 
   registerTaskManagerAPIHandlers();
   registerFSAPIHandlers();

@@ -74,6 +74,7 @@ class ToolCall {
         this.args_object = {};
         this.status = 'pending';
         this.result = undefined;
+        this.result_object = undefined;
         this.rendered = undefined;
 
         Object.defineProperty(this, 'tool', { value: undefined, writable: true, enumerable: false });

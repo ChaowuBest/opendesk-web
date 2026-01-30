@@ -113,14 +113,16 @@ class TaskState {
      * Submit a message to the task
      * @param {string} message
      */
-     submitUserMessage(message) {
+     async submitUserMessage(message) {
         this.task_status = 'running';
 
         let user_message = new UserMessage(message);
         let assistant_message = new AssistantMessage();
         this.chat_context.appendMessage(user_message);
         this.chat_context.appendMessage(assistant_message);
-        this.chat_context.attachToolsets(...ApplicationRegistry.listAvailableToolsets().values());
+
+        let toolsets = await ApplicationRegistry.listAvailableToolsets();
+        this.chat_context.attachToolsets(...toolsets);
 
         logger.info(`messsage submitted to task ${this.task_id}`)
 
@@ -256,8 +258,9 @@ class TaskState {
             }
 
             let result = await tool.execute(args);
-            tool_call.status = 'success';
-            tool_call.result = result;
+            tool_call.status = result.status;
+            tool_call.result = result.result;
+            tool_call.result_object = result.result_object;
         } catch (err) {
             logger.error(err);
             tool_call.status = 'error';
