@@ -1,0 +1,53 @@
+/**
+ * 文件系统服务
+ * 负责处理文件和文件夹的系统级操作
+ */
+
+import { shell } from 'electron';
+import fs from 'fs';
+
+class FileSystemService {
+    /**
+     * 打开活动文件夹
+     * @param {string} dirPath 活动文件夹路径
+     */
+    async openActivityFolder(dirPath) {
+        await shell.openPath(dirPath);
+        return { success: true, message: 'activity folder opened' };
+    }
+
+    /**
+     * 预览活动PDF
+     * @param {string} activityId 活动ID
+     */
+    async previewActivityPDF(pdfPath) {
+        try {
+            // 在主进程中使用shell打开PDF
+            await shell.openPath(pdfPath);
+            return { success: true, message: 'PDF opened for preview' };
+        } catch (error) {
+            return { success: false, message: error.message };
+        }
+    }
+
+    /**
+     * 在文件管理器中显示文件
+     * @param {string} filePath 文件路径
+     */
+    async showFileInFolder(filePath) {
+        try {
+            if (!fs.existsSync(filePath)) {
+                return { success: false, message: 'File does not exist' };
+            }
+
+            // 在主进程中使用shell显示文件
+            shell.showItemInFolder(filePath);
+            return { success: true, message: 'File shown in folder' };
+        } catch (error) {
+            return { success: false, message: error.message };
+        }
+    }
+}
+
+// 导出单例
+export const fileSystemService = new FileSystemService();

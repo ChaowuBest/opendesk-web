@@ -1,13 +1,14 @@
 import { BaseApplication, BaseGUIConfig } from "../base.js";
 import { z } from 'zod';
 import path from 'path';
+import { fileSystemService } from './service/fileSystemService.js';
 
 const __dirname = import.meta.dirname;
 
 
 class RecallApplication extends BaseApplication {
     constructor() {
-        super('recall', '快速记录');
+        super('recall', 'Recall');
     }
 
     getConfigSchema() {
@@ -18,7 +19,14 @@ class RecallApplication extends BaseApplication {
 
     getGUIConfig() {
         return new BaseGUIConfig(
-            [path.join(__dirname, 'widgets', 'entry.js')],
+            [
+                path.join(__dirname, 'widgets', 'entry.js'),
+                // 录制页面
+                path.join(__dirname, 'widgets', 'recording', 'recordingPage.js'),
+                // 浏览页面及子组件
+                path.join(__dirname, 'widgets', 'browser', 'browserPage.js'),
+                path.join(__dirname, 'widgets', 'browser', 'components', 'activityList.js'),
+            ],
             'recall-entry-widget',
             `/applications/recall/icon.png`
         );
@@ -37,6 +45,31 @@ class RecallApplication extends BaseApplication {
         if (!activityName) {
             return;
         }
+    }
+
+    // ==================== 文件系统操作（委托给 service 层）====================
+    /**
+     * 打开活动文件夹
+     * @param {string} dirPath 活动文件夹路径
+     */
+    async openActivityFolder(dirPath) {
+        return await fileSystemService.openActivityFolder(dirPath);
+    }
+
+    /**
+     * 预览活动PDF
+     * @param {string} pdfPath PDF文件路径
+     */
+    async previewActivityPDF(pdfPath) {
+        return await fileSystemService.previewActivityPDF(pdfPath);
+    }
+
+    /**
+     * 在文件管理器中显示文件
+     * @param {string} filePath 文件路径
+     */
+    async showFileInFolder(filePath) {
+        return await fileSystemService.showFileInFolder(filePath);
     }
 
 }
