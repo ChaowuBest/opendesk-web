@@ -61,7 +61,6 @@ parentPort?.on('message', async (message) => {
         return;
     }
 
-    logger.info(`received message from ${bundleName}`);
     const appWorker = appWorkers.get(bundleName);
 
     if (appWorker) {

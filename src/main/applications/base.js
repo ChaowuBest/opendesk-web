@@ -217,7 +217,6 @@ class BaseApplication {
 
 export {
     BaseApplication,
-    BaseService,
     BaseWorker,
     BaseGUIConfig
 };
