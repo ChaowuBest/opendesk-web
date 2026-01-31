@@ -10,7 +10,7 @@ const __dirname = import.meta.dirname;
  */
 class SkillsApplication extends BaseApplication {
   constructor() {
-    super('skills', '本地技能');
+    super('skills', 'Skills');
   }
 
   getConfigSchema() {
@@ -21,7 +21,7 @@ class SkillsApplication extends BaseApplication {
     return new BaseGUIConfig(
       [path.join(__dirname, 'renderer', 'entry.js')],
       'skills-entry-widget',
-      '/applications/a2a/icon.png'
+      '/applications/skills/icon.png'
     );
   }
 
