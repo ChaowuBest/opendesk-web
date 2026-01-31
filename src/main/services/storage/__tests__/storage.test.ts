@@ -396,7 +396,7 @@ async function testBM25Only(): Promise<void> {
 
 async function main(): Promise<void> {
     cleanupTestDb();
-    // TODO: 在这里补充/调整 schema 字段
+
     const schema: ColumnSchema = {
         columns: {
             item_id: { type: 'TEXT', nullable: false },
