@@ -186,7 +186,7 @@ export class BM25IndexDB {
                     _id: record.bm25_id,
                     item_id: record.item_id,
                     item_type: record.item_type,
-                    text: this.tokenize(record.text),
+                    text: this.tokenize(record.text).join(' '),
                 }));
                 await index.PUT(docs);
                 // console.log(`[BM25IndexDB] Inserted ${docs.length} docs into index: ${itemType}`);
@@ -230,7 +230,7 @@ export class BM25IndexDB {
                     _id: record.bm25_id,
                     item_id: record.item_id,
                     item_type: record.item_type,
-                    text: this.tokenize(record.text),
+                    text: this.tokenize(record.text).join(' '),
                 }));
                 await index.PUT(docs);
             }

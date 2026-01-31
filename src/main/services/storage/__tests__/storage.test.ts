@@ -372,6 +372,17 @@ async function testBM25Only(): Promise<void> {
     ]);
     console.log('[BM25Only] text results:', resultsText);
 
+    // 校验词频：'project plan project' 包含 2 个 project，应该排在 'project beta notes' 前面
+    if (resultsText.length >= 2) {
+        const scores = resultsText.map(r => r.BM25Score ?? 0);
+        if (scores[0] <= scores[1]) {
+            console.error('[BM25Only] FAIL: 词频高的文档应该有更高的 BM25Score');
+            console.error(`  bm-1 (2个project) score: ${scores[0]}, bm-2 (1个project) score: ${scores[1]}`);
+        } else {
+            console.log('[BM25Only] PASS: 词频校验通过');
+        }
+    }
+
     const resultsSemi = await storage.search([], [
         {
             indexer: 'BM25Indexer',
