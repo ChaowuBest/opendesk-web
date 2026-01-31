@@ -196,13 +196,26 @@ export class BM25IndexDB {
 
     /**
      * 删除记录
-     * 删除这里有问题，TODO需要改，之后需要再构建一个表
+     * 遍历所有索引，按 item_id 查找并删除对应文档
      */
     async delete(itemIds: string[]): Promise<void> {
         if (itemIds.length === 0 || !this.si) return;
 
         await this.mutex.runExclusive(async () => {
-            await this.si!.DELETE(...itemIds);
+            for (const index of Object.values(this.si as Record<string, any>)) {
+                for (const itemId of itemIds) {
+                    try {
+                        // 查找 item_id 对应的文档
+                        const results = await index.SEARCH([`item_id:${itemId}`], { PAGE: { SIZE: 100 } });
+                        if (results.RESULT && results.RESULT.length > 0) {
+                            const docIds = results.RESULT.map((r: any) => r._id);
+                            await index.DELETE(...docIds);
+                        }
+                    } catch {
+                        // 忽略删除错误
+                    }
+                }
+            }
         });
     }
 

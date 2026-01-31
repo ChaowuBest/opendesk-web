@@ -327,14 +327,21 @@ export class VectorIndexDB {
     deleteMany(itemIds: string[]): number {
         if (itemIds.length === 0) return 0;
 
+        const selectVectorIds = this.db.prepare(`SELECT vector_id FROM ${this.metaTableName} WHERE item_id = ?`);
         const deleteMeta = this.db.prepare(`DELETE FROM ${this.metaTableName} WHERE item_id = ?`);
-        const deleteVec = this.db.prepare(`DELETE FROM ${this.vecTableName} WHERE item_id = ?`);
+        const deleteVec = this.db.prepare(`DELETE FROM ${this.vecTableName} WHERE vector_id = ?`);
 
         const deleteAll = this.db.transaction((ids: string[]) => {
             let count = 0;
             for (const id of ids) {
+                // 先查找对应的 vector_id
+                const rows = selectVectorIds.all(id) as { vector_id: string }[];
+                // 删除 vec 表中的记录
+                for (const row of rows) {
+                    deleteVec.run(row.vector_id);
+                }
+                // 删除 meta 表中的记录
                 const result = deleteMeta.run(id);
-                deleteVec.run(id);
                 if (result.changes > 0) count++;
             }
             return count;
