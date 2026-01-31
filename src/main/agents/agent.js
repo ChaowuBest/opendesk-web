@@ -1,4 +1,4 @@
-import { AssistantMessage } from './messages.js';
+import { AssistantMessage } from './messages';
 
 
 class Agent {

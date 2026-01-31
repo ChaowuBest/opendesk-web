@@ -2,7 +2,7 @@ import { net } from 'electron';
 import { BaseTool } from '../../agents/tool.js';
 import { z } from 'zod';
 import { logger } from '../../utils/logger.js';
-import { ToolCall } from '../../agents/messages.js';
+import { ToolCall } from '../../agents/messages';
 import AdmZip from 'adm-zip';
 import path from 'path';
 import fs from 'fs';

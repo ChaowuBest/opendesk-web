@@ -1,6 +1,6 @@
 import { exec } from "child_process";
 import { BaseTool } from "../../agents/tool.js";
-import { ToolCall } from "../../agents/messages.js";
+import { ToolCall } from "../../agents/messages";
 import { z } from 'zod';
 import { promisify } from 'util';
 import fs from 'fs';

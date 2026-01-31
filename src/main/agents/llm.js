@@ -1,5 +1,5 @@
 import { OpenAI } from 'openai';
-import { ChatContext, AssistantResponse, UserMessage, AssistantMessage } from './messages.js';
+import { ChatContext, AssistantResponse, UserMessage, AssistantMessage } from './messages';
 import { Setting, ModelInstance } from '../utils/setting.js';
 import { z } from 'zod';
 import { logger } from '../utils/logger.js';

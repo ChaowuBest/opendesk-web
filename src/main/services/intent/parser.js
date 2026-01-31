@@ -1,6 +1,6 @@
 import { desktopCapturer } from 'electron';
 import { LLM } from '../../agents/llm.js';
-import { UserMessage, ChatContext } from '../../agents/messages.js';
+import { UserMessage, ChatContext } from '../../agents/messages';
 import { Setting } from '../../utils/setting.js';
 import { IntentRegistry } from './intents.js';
 import { z } from 'zod';

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { ToolCall } from './messages.js';
+import { ToolCall } from './messages';
 
 
 export class ToolResult {
@@ -61,7 +61,7 @@ export class BaseTool<T extends z.ZodType> {
     /**
      * 自定义的工具调用结果渲染函数，如果返回 undefined，则不渲染工具调用
      */
-    renderToolCall(toolcall: ToolCall): string | undefined {
+    async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
         return undefined;
     }
 

@@ -1,4 +1,4 @@
-import { ChatContext, UserMessage, AssistantMessage, ToolCallMessagePart, FileMessagePart, SystemMessage } from '../agents/messages.js';
+import { ChatContext, UserMessage, AssistantMessage, ToolCallMessagePart, FileMessagePart, SystemMessage } from '../agents/messages';
 import { LLM } from '../agents/llm.js';
 import { getTaskDirectory } from '../utils/setting.js';
 import path from 'path';
