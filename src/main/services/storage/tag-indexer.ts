@@ -211,8 +211,8 @@ export class TagIndexer extends Indexer {
 /**
  * 创建 TagIndexer 实例的工厂函数
  */
-export function createTagIndexer(dbPath: string): TagIndexer {
-    return new TagIndexer(dbPath);
+export function createTagIndexer(schema: ColumnSchema, dbPath: string): TagIndexer {
+    return new TagIndexer(schema, dbPath);
 }
 
 export default TagIndexer;

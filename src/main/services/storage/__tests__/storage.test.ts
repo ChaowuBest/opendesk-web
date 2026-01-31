@@ -99,7 +99,7 @@ async function testVectorSearch(storage: BaseStorage): Promise<void> {
     const results = await storage.search([], [
         {
             indexer: 'VectorIndexer',
-            field: 'repr',
+            field: 'text',
             operator: 'vector_near',
             value: queryVector,
             vectorQuery: { topK: 1, metric: 'cosine', threshold: 0.0 },
@@ -418,11 +418,11 @@ async function main(): Promise<void> {
     await storage.initialize();
 
     await seedItems(storage);
-    // await testBaseSearch(storage);
-    // await testVectorSearch(storage);
-    // await testTagSearch(storage);
-    // await testBM25Search(storage);
-    // await testVectorBaseOnly();
+    await testBaseSearch(storage);
+    await testVectorSearch(storage);
+    await testTagSearch(storage);
+    await testBM25Search(storage);
+    await testVectorBaseOnly();
     await testBM25Only();
 }
 

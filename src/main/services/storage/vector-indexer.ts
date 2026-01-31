@@ -324,8 +324,8 @@ export class VectorIndexer extends Indexer {
 /**
  * 创建 VectorIndexer 实例的工厂函数
  */
-export function createVectorIndexer(dbPath: string, dimension: number = 1024): VectorIndexer {
-    return new VectorIndexer(dbPath, dimension);
+export function createVectorIndexer(schema: ColumnSchema, dbPath: string, dimension: number = 1024): VectorIndexer {
+    return new VectorIndexer(schema, dbPath, dimension);
 }
 
 export default VectorIndexer;
