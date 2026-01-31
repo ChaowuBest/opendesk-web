@@ -135,7 +135,15 @@ async function demoTagIndexer(): Promise<void> {
     log('Part 1: TagIndexer - 标签索引');
     console.log('用途：基于标签的快速过滤，适合分类查询');
 
-    const indexer = new TagIndexer(path.join(TEST_DIR, 'tag.db'));
+    const schema: ColumnSchema = {
+        columns: {
+            item_id: { type: 'TEXT', nullable: false },
+            item_type: { type: 'TEXT', nullable: false },
+            tag: { type: 'TEXT', nullable: true },
+        },
+        needIndexers: { tag: ['TagIndexer'] }
+    };
+    const indexer = new TagIndexer(schema, path.join(TEST_DIR, 'tag.db'));
     await indexer.initialize();
 
     // 插入数据
@@ -235,7 +243,15 @@ async function demoVectorIndexer(): Promise<void> {
     log('Part 3: VectorIndexer - 向量相似度搜索');
     console.log('用途：语义相似度搜索，适合 RAG 场景的文档检索');
 
-    const indexer = new VectorIndexer(path.join(TEST_DIR, 'vector.db'), VECTOR_DIM);
+    const schema: ColumnSchema = {
+        columns: {
+            item_id: { type: 'TEXT', nullable: false },
+            item_type: { type: 'TEXT', nullable: false },
+            repr: { type: 'BLOB', nullable: true },
+        },
+        needIndexers: { repr: ['VectorIndexer'] }
+    };
+    const indexer = new VectorIndexer(schema, path.join(TEST_DIR, 'vector.db'), VECTOR_DIM);
     await indexer.initialize();
 
     // 插入数据
@@ -276,7 +292,15 @@ async function demoBM25Indexer(): Promise<void> {
     log('Part 4: BM25Indexer - 全文搜索 (BM25 + jieba分词)');
     console.log('用途：关键词全文搜索，支持中英文混合');
 
-    const indexer = new BM25Indexer(path.join(TEST_DIR, 'bm25'), 10);
+    const schema: ColumnSchema = {
+        columns: {
+            item_id: { type: 'TEXT', nullable: false },
+            item_type: { type: 'TEXT', nullable: false },
+            text: { type: 'TEXT', nullable: true },
+        },
+        needIndexers: { text: ['BM25Indexer'] }
+    };
+    const indexer = new BM25Indexer(schema, path.join(TEST_DIR, 'bm25'), 10);
     await indexer.initialize();
 
     // 插入数据
