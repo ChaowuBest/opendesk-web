@@ -1,8 +1,8 @@
 import { BaseApplication, BaseGUIConfig } from "../base.js";
 import { MailboxConfigSchema } from "./common.js"; // 引入新的 Schema
 import { logger } from "../../utils/logger.js";
-import path from 'path';
 
+import path from 'path';
 
 const __dirname = import.meta.dirname;
 
@@ -28,6 +28,7 @@ class MailboxApplication extends BaseApplication {
 
         );
     }
+
 }
 
 export { MailboxApplication };

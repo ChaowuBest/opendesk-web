@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { RendererToolset, RendererTool, AgentOperableHTMLElement } from '../../widget_utils.js';
 import { ElasticToolbarWidget } from '../../../../renderer/components/toolbar.ts';
+import { EmailHeader, EmailContent } from '../common.js';
 
 // ========== Tagify 导入 ==========
 import Tagify from '@yaireo/tagify';
@@ -374,13 +375,16 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
     }
 
     getAgentInstruct() {
-        return `你是一个邮件管理助手，你负责管理用户的邮件，并利用提供的邮件及其他工具来完成用户指定的任务。
+        return `
+        你是一个邮件管理助手，你负责管理用户的邮件，并利用提供的邮件及其他工具来完成用户指定的任务。
 
-                重要规则：
-                    1. 不要假设你已经知道邮件内容，每次必须通过工具获取。
-                    2. 当用户请求总结邮件内容、分析邮件、提取邮件信息或任何需要了解邮件内容的操作时，你必须首先调用 getSelectedEmailTool 工具来获取当前选中的邮件内容。
-                    3. 如果用户说"总结这封邮件"、"这封邮件说了什么"、"分析这封邮件"等类似请求，立即调用 getSelectedEmailTool。
-                `;
+        **重要规则**
+        1. 不要假设你已经知道邮件内容，每次必须通过工具获取;
+        2. 当用户请求总结邮件内容、分析邮件、提取邮件信息或任何需要了解邮件内容的操作时，你必须首先调用 getSelectedEmailTool 工具来获取当前选中的邮件内容;
+        3. 如果用户说"总结这封邮件"、"这封邮件说了什么"、"分析这封邮件"等类似请求，立即调用 getSelectedEmailTool;
+        4. 在邮件回复或编写邮件时，如果涉及到日程，文件等事实性信息，必须通过工具查询相关内容，如果无法获取到信息时需要向用户询问。
+            不能编造数据，必须真实可靠;
+        `;
     }
 
     getToolset() {
@@ -1174,10 +1178,19 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         return fullHeader;
     }
 
+    /**
+     *
+     * @param {MailOperations} operation
+     * @param {EmailHeader | undefined} mailHeader
+     * @param {EmailContent | undefined} mailContent
+     * @param {string | undefined} replyContent
+     */
     async createNewEmail(operation, mailHeader, mailContent, replyContent) {
         // 这里可以直接 new 一个邮件编辑控件并赋值给 #email-content
         const emailContent = this.querySelector('#email-content');
-        const editor = new MailEditorWidget();
+        const editor = new MailEditorWidget(
+
+        );
         // 与阅读界面一致：flex flex-col 让工具栏固定顶部、内容区单独滚动；min-h-0 使内部 overflow 生效；不加 overflow-y-auto 避免整块（含工具栏）一起滚动
         editor.classList.add('flex-1', 'flex', 'flex-col', 'min-h-0', 'bg-white', 'w-full');
         editor.id = 'editor';
@@ -1698,6 +1711,10 @@ class MailEditorWidget extends AgentOperableHTMLElement {
         };
     }
 
+    async getEditor() {
+        return await this.editorReady;
+    }
+
     /**
      * 从 Tagify 输入框中获取邮箱地址数组
      * @param {string} inputId - input 元素的 id ('to', 'cc', 'bcc')
@@ -1956,11 +1973,15 @@ class MailEditorWidget extends AgentOperableHTMLElement {
         }
     }
 
+    async magicWrite() {
+        window.aiBarAPI.submitRequestInNewTask("帮我回复一下当前打开的这封邮件");
+    }
+
     render() {
         const buttons = [
             { id: 'send-email-cancel-button', icon: 'fa-circle-arrow-left', label: '取消', action: () => this.cancel() },
             { id: 'send-email-send-button', icon: 'fa-paper-plane', label: '发送', action: () => this.send() },
-            { id: 'send-email-polish-button', icon: 'fa-wand-sparkles', label: '帮我写', labelStayVisible: true, action: () => this.polish() },
+            { id: 'send-email-magic-write-button', icon: 'fa-wand-sparkles', label: '帮我写', labelStayVisible: true, action: () => this.magicWrite() },
         ]
         const headerToolbar = new ElasticToolbarWidget(buttons);
         headerToolbar.classList.add('pl-3', 'pr-16');

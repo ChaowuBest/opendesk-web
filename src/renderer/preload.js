@@ -231,6 +231,29 @@ if (window.self !== window.top) {
             console.info('listener registered', result.requestId);
             ipcRenderer.on(`applicationRegistry:streamChunk:${result.requestId}`, listener);
         },
+        streamCallMainWorld: async (methodName, callback, ...args) => {
+            if (applicationBundleName === null) {
+                console.error('application bundle name is not set');
+                throw new Error('application bundle name is not set');
+            }
+            const result = await ipcRenderer.invoke('applicationRegistry:streamCallMainWorld', applicationBundleName, methodName, ...args);
+            if (result.status !== 'ok') {
+                console.error('calling application failed', methodName, result.message);
+                throw new Error(result.message);
+            }
+
+            const listener = (event, chunk) => {
+                if (chunk === undefined) {
+                    console.info('stream complete', result.requestId);
+                    ipcRenderer.off(`applicationRegistry:streamChunk:${result.requestId}`);
+                } else {
+                    callback(chunk);
+                }
+            };
+
+            console.info('listener registered', result.requestId);
+            ipcRenderer.on(`applicationRegistry:streamChunk:${result.requestId}`, listener);
+        },
         subscribe: async (eventName, callback) => {
             const result = await ipcRenderer.invoke('applicationRegistry:subscribe', applicationBundleName, eventName);
             if (result.status !== 'ok') {

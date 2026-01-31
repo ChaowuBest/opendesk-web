@@ -1,6 +1,8 @@
 import { EmailHeader, EmailProfileSchema, MailboxConfigSchema, EmailContent, EmailAttachment } from "../common.js";
 import { BaseWorker } from "../../base.js";
 import { logger } from '../../../utils/logger.js';
+import { NotificationManager } from "../../../utils/notificationmgr.js";
+
 import Pop3Command from 'node-pop3';
 import nodemailer from 'nodemailer';
 import fs from 'fs';
@@ -8,9 +10,7 @@ import nedb from 'nedb-promises';
 import path from 'path';
 import pMap from 'p-map';
 import { simpleParser } from "mailparser";
-
 import pkg from 'lodash';
-import { NotificationManager } from "../../../utils/notificationmgr.js";
 
 const _ = pkg;
 

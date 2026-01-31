@@ -142,6 +142,36 @@ export function registerApplicationRegistryHandlers(ipcMain: Electron.IpcMain) {
       return { status: 'error', message: error.message };
     }
   })
+  ipcMain.handle('applicationRegistry:streamCallMainWorld', async (event, bundleName, methodName, ...args) => {
+    const application = ApplicationRegistry.getApplication(bundleName);
+    const requestId = crypto.randomUUID();
+
+    if (application === undefined) {
+      return { status: 'error', message: `application ${bundleName} not found` }
+    }
+    const method = application[methodName];
+    if (method === undefined) {
+      return { status: 'error', message: `method ${methodName} not found in application ${bundleName}` }
+    }
+
+    const send = (chunk: any) => {
+      event.senderFrame?.send?.(`applicationRegistry:streamChunk:${requestId}`, chunk);
+    };
+
+    (async () => {
+      try {
+        for await (const chunk of method.apply(application, args)) {
+          send(chunk);
+        }
+        send(undefined);
+      } catch (error) {
+        logger.error(`streamCallMainWorld ${bundleName}.${methodName} error: ${error}`);
+        send(undefined);
+      }
+    })();
+
+    return { status: 'ok', requestId };
+  })
   ipcMain.handle('applicationRegistry:subscribe', async (event, bundleName, eventName) => {
     const application = ApplicationRegistry.getApplication(bundleName);
     if (application === undefined) {
