@@ -1,7 +1,7 @@
 import { Marked } from 'marked';
 import { markedHighlight } from 'marked-highlight';
 import { logger } from '../utils/logger.js';
-import { BaseTool, BaseToolset } from './tool.js';
+import { BaseTool, BaseToolset } from './tool';
 
 import markedKatex from 'marked-katex-extension';
 import hljs from 'highlight.js';

@@ -1,5 +1,5 @@
 import { exec } from "child_process";
-import { BaseTool } from "../../agents/tool.js";
+import { BaseTool } from "../../agents/tool";
 import { ToolCall } from "../../agents/messages";
 import { z } from 'zod';
 import { promisify } from 'util';
@@ -62,9 +62,8 @@ export class ExecuteCmdTool extends BaseTool<typeof ExecuteCmdArgsSchema> {
         this.executor = this.executeCommand;
     }
 
-    renderToolCall(toolcall: ToolCall): string | undefined {
+    async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
         return renderTerminalToolCall('CMD', toolcall);
-
     }
 
     /**
@@ -168,7 +167,7 @@ export class ExecuteBashTool extends BaseTool<typeof ExecuteBashArgsSchema> {
         });
     }
 
-    renderToolCall(toolcall: ToolCall): string | undefined {
+    async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
         return renderTerminalToolCall('BASH', toolcall);
     }
 }

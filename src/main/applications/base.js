@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { Worker, parentPort, workerData } from 'worker_threads';
 import { logger, LogStream } from '../utils/logger.js';
 import { Setting, getAppDirectory } from '../utils/setting.js';
-import { BaseToolset } from '../agents/tool.js';
+import { BaseToolset } from '../agents/tool';
 import { NotificationManager } from '../utils/notificationmgr.js';
 import path from 'path';
 import fs from 'fs';

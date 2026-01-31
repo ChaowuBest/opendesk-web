@@ -1,8 +1,9 @@
 import { net } from 'electron';
-import { BaseTool } from '../../agents/tool.js';
+import { BaseTool, ToolResult } from '../../agents/tool';
 import { z } from 'zod';
 import { logger } from '../../utils/logger.js';
 import { ToolCall } from '../../agents/messages';
+import { marked } from '../../agents/messages';
 import AdmZip from 'adm-zip';
 import path from 'path';
 import fs from 'fs';
@@ -84,7 +85,6 @@ class PPTAgent {
 
             const textChunk = decoder.decode(value, { stream: true });
             for (const line of textChunk.split('\n').filter(line => line.trim() !== '')) {
-                console.info(line);
                 try {
                     const chunk = JSON.parse(line);
                     if (chunk.text) {
@@ -116,26 +116,33 @@ export class CreatePPTTool extends BaseTool<typeof CreatePPTSchema> {
 
     constructor(appDataDirectory: string) {
         super('CreatePPT', '根据指定的需求创建PPT', CreatePPTSchema);
-        this.executor = this.createPPT;
         this.appDataDirectory = appDataDirectory;
+        this.setUniversalExecutor(this.createPPT);
     }
 
-    renderToolCall(toolcall: ToolCall): string | undefined {
-        return `
-        <div class="max-w-2xl h-full overflow-auto p-2 flex items-start justify-center">
-            <ppt-container class="block w-full max-w-2xl" data-id="e498bdd9496546c6aff652996d0412dd"></ppt-container>
-        </div>
-        `
+    async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
+        if (toolcall.status === 'success') {
+            return `
+            <div class="max-w-2xl h-full overflow-auto p-2 flex items-start justify-center">
+                <ppt-container class="block w-full max-w-2xl" data-id="e498bdd9496546c6aff652996d0412dd"></ppt-container>
+            </div>
+            `
+        } else {
+            const md = toolcall.result !== undefined ? (await marked.parse(toolcall.result)) : 'PPT制作中...';
+            return `
+            <div class="max-w-2xl h-full overflow-auto p-2 flex items-start justify-center">
+                ${md}
+            </div>
+            `
+        }
     }
 
-    async createPPT(args: z.output<typeof CreatePPTSchema>): Promise<string> {
+    async createPPT(args: z.output<typeof CreatePPTSchema>, result: ToolResult): Promise<void> {
         const pptAgent = new PPTAgent();
-        // await pptAgent.initializeFromRequest(args.request);
-        await pptAgent.initializeFromExisting('e498bdd9496546c6aff652996d0412dd');
+        await pptAgent.initializeFromRequest(args.request);
 
-        var result = '<b>PPTAgent</b><br/>';
         for await (const chunk of pptAgent.fetchPPTTask()) {
-            result += chunk;
+            result.attachResult(chunk);
         }
 
         const instanceId = pptAgent.instanceId;
@@ -148,6 +155,8 @@ export class CreatePPTTool extends BaseTool<typeof CreatePPTSchema> {
             if (!response.ok) {
                 throw new Error(`下载PPT压缩包失败: ${response.statusText}`);
             }
+
+            fs.mkdirSync(targetDir, { recursive: true });
             const buffer = await response.arrayBuffer();
             // 保存到临时路径
             const tmpZipPath = path.join(this.appDataDirectory, 'data', `${instanceId}.zip`);
@@ -167,9 +176,6 @@ export class CreatePPTTool extends BaseTool<typeof CreatePPTSchema> {
             }));
         }
 
-        result += `<br/>`;
-        result += `下载PPT：<a href="${pptAgent.result?.ppt_url}" target="_blank">${pptAgent.result?.name}</a>`;
-        result += `PPT摘要：${pptAgent.result?.abstract}`;
-        return result;
+        result.updateResultObject({ instanceId: instanceId });
     }
 }

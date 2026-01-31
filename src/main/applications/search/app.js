@@ -1,5 +1,5 @@
 import { BaseApplication } from "../base.js";
-import { BaseTool, BaseToolset } from "../../agents/tool.js";
+import { BaseTool, BaseToolset } from "../../agents/tool";
 import { z } from 'zod';
 import { Exa } from 'exa-js';
 

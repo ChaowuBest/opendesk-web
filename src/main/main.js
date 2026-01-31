@@ -2,7 +2,7 @@ import { app, BrowserWindow, Tray, globalShortcut, nativeImage, ipcMain, shell, 
 import { Setting, getAppDirectory } from './utils/setting.js'
 import { GlobalState } from './states/global.js'
 import { openFloatWindow } from './windows/floatwindow.js'
-import { BaseToolset } from './agents/tool.js';
+import { BaseToolset } from './agents/tool';
 import { is } from '@electron-toolkit/utils';
 import { z } from 'zod';
 import { NotificationManager } from './utils/notificationmgr.js';

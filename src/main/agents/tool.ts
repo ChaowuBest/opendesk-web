@@ -7,6 +7,8 @@ export class ToolResult {
     result: string = '';
     result_object?: object;
 
+    updatedCallback?: (result: ToolResult) => void;
+
     static fromStringResponse(response: string): ToolResult {
         let result = new ToolResult();
         result.status = 'success';
@@ -16,14 +18,23 @@ export class ToolResult {
 
     attachResult(chunk: string) {
         this.result += chunk;
+        if (this.updatedCallback) {
+            this.updatedCallback(this);
+        }
     }
 
     updateResult(result: string) {
         this.result = result;
+        if (this.updatedCallback) {
+            this.updatedCallback(this);
+        }
     }
 
     updateResultObject(result_object: object) {
         this.result_object = result_object;
+        if (this.updatedCallback) {
+            this.updatedCallback(this);
+        }
     }
 }
 
@@ -84,9 +95,10 @@ export class BaseTool<T extends z.ZodType> {
     /**
      * 执行工具
      */
-    async execute(args: z.output<T>): Promise<ToolResult> {
+    async execute(args: z.output<T>, updatedCallback?: (result: ToolResult) => void): Promise<ToolResult> {
         if (this.universalExecutor) {
             let result = new ToolResult();
+            result.updatedCallback = updatedCallback;
             return await this.universalExecutor(args, result).then(() => {
                 result.status = 'success';
                 return result;

@@ -1,4 +1,4 @@
-import { BaseToolset } from "../agents/tool.js";
+import { BaseToolset } from "../agents/tool";
 import { BaseApplication } from "./base.js";
 import { MailboxApplication } from "./mailbox/app.js";
 import { FileMgrApplication } from "./filemgr/app.js";

@@ -1,4 +1,4 @@
-import { BaseToolset } from "../../agents/tool.js";
+import { BaseToolset } from "../../agents/tool";
 import { BaseApplication, BaseGUIConfig } from "../base.js";
 import { ExecuteCmdTool, ExecuteBashTool, WriteFileTool, ReadFileTool } from "./tools.js";
 

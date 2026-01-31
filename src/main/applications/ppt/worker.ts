@@ -20,40 +20,36 @@ export default class PPTWorker extends BaseWorker {
     async getSlides(uid: string): Promise<Slides | null> {
         const dataDir = path.join(this.appDataDirectory, 'data', uid);
         const manifestPath = path.join(dataDir, 'manifest.json');
-        try {
-            const data = await fs.promises.readFile(manifestPath, 'utf-8');
-            const manifest = JSON.parse(data);
-            const slides: Slides = {
-                uid: uid,
-                name: manifest.name,
-                abstract: manifest.abstract,
-                pages: [],
-                images: {},
-            };
 
-            for (var i = 0;; i ++) {
-                const pagePath = path.join(dataDir, `${i}.html`);
-                if (fs.existsSync(pagePath)) {
-                    const pageContent = fs.readFileSync(pagePath, 'utf-8');
-                    slides.pages.push(pageContent);
-                } else {
-                    break;
-                }
+        const data = await fs.promises.readFile(manifestPath, 'utf-8');
+        const manifest = JSON.parse(data);
+        const slides: Slides = {
+            uid: uid,
+            name: manifest.name,
+            abstract: manifest.abstract,
+            pages: [],
+            images: {},
+        };
+
+        for (var i = 0;; i ++) {
+            const pagePath = path.join(dataDir, `${i}.html`);
+            if (fs.existsSync(pagePath)) {
+                const pageContent = fs.readFileSync(pagePath, 'utf-8');
+                slides.pages.push(pageContent);
+            } else {
+                break;
             }
-
-            const imagesDir = path.join(dataDir, 'images');
-            if (fs.existsSync(imagesDir)) {
-                const images = await fs.promises.readdir(imagesDir);
-                for (const image of images) {
-                    slides.images[image] = path.join(dataDir, 'images', image);
-                }
-            }
-
-            logger.info(`slides for ${uid} loaded with ${slides.pages.length} pages and ${Object.keys(slides.images).length} images`);
-            return slides;
-        } catch (error) {
-            logger.error(`Failed to get slides for ${uid}: ${error}`);
-            return null;
         }
+
+        const imagesDir = path.join(dataDir, 'images');
+        if (fs.existsSync(imagesDir)) {
+            const images = await fs.promises.readdir(imagesDir);
+            for (const image of images) {
+                slides.images[image] = path.join(dataDir, 'images', image);
+            }
+        }
+
+        logger.info(`slides for ${uid} loaded with ${slides.pages.length} pages and ${Object.keys(slides.images).length} images`);
+        return slides;
     }
 }
