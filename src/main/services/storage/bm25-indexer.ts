@@ -8,6 +8,7 @@
 import { Indexer, IndexerSearchOptions, IndexerSearchResult } from './indexer.js';
 import { Item, FilterCondition, QueryOperator, BM25Query, ItemType, ColumnSchema } from './abstrac-storage.js';
 import { BM25IndexDB, BM25Record, BM25SearchResult } from './bm25-index-db.js';
+import { randomUUID } from 'crypto';
 
 /**
  * BM25 全文搜索索引器
@@ -27,7 +28,7 @@ export class BM25Indexer extends Indexer {
 
     constructor(schema: ColumnSchema, dbPath: string, defaultTopK = 10) {
         super();
-        this.db = new BM25IndexDB(dbPath);
+        this.db = new BM25IndexDB(schema, dbPath);
         this.defaultTopK = defaultTopK;
         this.schema = schema;
     }
@@ -43,10 +44,11 @@ export class BM25Indexer extends Indexer {
      * 验证字段是否支持
      */
     private validateField(field: string): void {
-        if (!this.supportsField(field)) {
+        const indexers = this.schema.needIndexers?.[field];
+        if (!indexers || !indexers.includes(this.name)) {
             throw new Error(
                 `BM25Indexer does not support field: ${field}. ` +
-                `Supported fields: ${this.supportedFields.join(', ')}`
+                `Field must be listed in schema.needIndexers with BM25Indexer`
             );
         }
     }
@@ -90,7 +92,7 @@ export class BM25Indexer extends Indexer {
      */
     private itemToRecord(item: Item, colName: string, new_id: string): BM25Record {
         const col = item.indexer_columns?.[this.name]?.find(c => c.column === colName);
-        const text = (col?.content as string) ?? item.text ?? '';
+        const text = (col?.content as string) ?? '';
 
         return {
             bm25_id: new_id,
@@ -123,7 +125,7 @@ export class BM25Indexer extends Indexer {
         const topK = bm25Query.topK ?? options?.limit ?? this.defaultTopK;
 
         // 调用 DB 层搜索
-        const results = await this.db.search(bm25Query.query, { topK: topK * 2 });
+        const results = await this.db.search(bm25Query.query, { columnName: condition.field, topK: topK * 2 });
 
         if (results.length === 0) {
             return { items: [], totalCount: 0 };
@@ -177,8 +179,31 @@ export class BM25Indexer extends Indexer {
      * 向索引中插入 Item
      */
     async insert(items: Item[]): Promise<void> {
-        const records = items.map(item => this.itemToRecord(item));
-        await this.db.insert(records);
+        const records: BM25Record[] = [];
+        for (const item of items) {
+            const columns = item.indexer_columns?.[this.name] as Array<{ column: string; content: string }> | undefined;
+            if (!columns || columns.length === 0) {
+                console.error(`[BM25Indexer] Item ${item.item_id} does not contain indexer_columns for ${this.name}`);
+                continue;
+            }
+
+            for (const col of columns) {
+                const columnName = col.column;
+                const text = col.content;
+                if (typeof text !== 'string') {
+                    console.error(`[BM25Indexer] Item ${item.item_id} does not contain a valid text for indexer ${this.name} (${columnName})`);
+                    continue;
+                }
+
+                const record = this.itemToRecord(item, columnName, randomUUID());
+                if (record) {
+                    records.push(record);
+                }
+            }
+        }
+        if (records.length > 0) {
+            await this.db.insert(records);
+        }
     }
 
     /**
@@ -192,8 +217,31 @@ export class BM25Indexer extends Indexer {
      * 更新索引中的 Item
      */
     async update(items: Item[]): Promise<void> {
-        const records = items.map(item => this.itemToRecord(item));
-        await this.db.update(records);
+        const records: BM25Record[] = [];
+        for (const item of items) {
+            const columns = item.indexer_columns?.[this.name] as Array<{ column: string; content: string }> | undefined;
+            if (!columns || columns.length === 0) {
+                console.error(`[BM25Indexer] Item ${item.item_id} does not contain indexer_columns for ${this.name}`);
+                continue;
+            }
+
+            for (const col of columns) {
+                const columnName = col.column;
+                const text = col.content;
+                if (typeof text !== 'string') {
+                    console.error(`[BM25Indexer] Item ${item.item_id} does not contain a valid text for indexer ${this.name} (${columnName})`);
+                    continue;
+                }
+
+                const record = this.itemToRecord(item, columnName, randomUUID());
+                if (record) {
+                    records.push(record);
+                }
+            }
+        }
+        if (records.length > 0) {
+            await this.db.update(records);
+        }
     }
 
     /**
@@ -213,9 +261,9 @@ export class BM25Indexer extends Indexer {
     /**
      * 获取文档数量
      */
-    async getDocumentCount(): Promise<number> {
-        return await this.db.getDocumentCount();
-    }
+    // async getDocumentCount(): Promise<number> {
+    //     return await this.db.getDocumentCount();
+    // }
 
     /**
      * 获取底层 BM25IndexDB 实例（用于高级操作）
@@ -223,13 +271,24 @@ export class BM25Indexer extends Indexer {
     getDB(): BM25IndexDB {
         return this.db;
     }
+
+    /**
+     * 删除所有数据库内容
+     */
+    async deleteAll(): Promise<void> {
+        if (this.db) {
+            await this.db.deleteAll();
+        } else {
+            throw new Error('[BM25Indexer] BM25IndexDB deleteAll fails');
+        }
+    }
 }
 
 /**
  * 创建 BM25Indexer 实例的工厂函数
  */
-export function createBM25Indexer(dbPath: string, defaultTopK = 10): BM25Indexer {
-    return new BM25Indexer(dbPath, defaultTopK);
+export function createBM25Indexer(schema: ColumnSchema, dbPath: string, defaultTopK = 10): BM25Indexer {
+    return new BM25Indexer(schema, dbPath, defaultTopK);
 }
 
 export default BM25Indexer;

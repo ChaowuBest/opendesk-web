@@ -12,6 +12,7 @@ import { BaseStorage, ColumnSchema, Item, BM25Query } from '../abstrac-storage.j
 
 const TEST_DB_DIR = path.join(os.tmpdir(), 'storage-test2');
 const TEST_DB_DIR_VB = path.join(os.tmpdir(), 'storage-test2-vector-base');
+const TEST_DB_DIR_BM = path.join(os.tmpdir(), 'storage-test2-bm25-only');
 
 function cleanupTestDb(): void {
     if (fs.existsSync(TEST_DB_DIR)) {
@@ -19,6 +20,9 @@ function cleanupTestDb(): void {
     }
     if (fs.existsSync(TEST_DB_DIR_VB)) {
         fs.rmSync(TEST_DB_DIR_VB, { recursive: true, force: true });
+    }
+    if (fs.existsSync(TEST_DB_DIR_BM)) {
+        fs.rmSync(TEST_DB_DIR_BM, { recursive: true, force: true });
     }
 }
 
@@ -256,6 +260,129 @@ async function testVectorBaseOnly(): Promise<void> {
     console.log('[Vector+Base] VectorIndexer(semi_text) results:', vecResultsSemi);
 }
 
+async function testBM25Only(): Promise<void> {
+    const schema: ColumnSchema = {
+        columns: {
+            item_id: { type: 'TEXT', nullable: false },
+            item_type: { type: 'TEXT', nullable: false },
+            filename: { type: 'TEXT', nullable: true },
+            text: { type: 'TEXT', nullable: true },
+            semi_text: { type: 'TEXT', nullable: true },
+            created_at: { type: 'INTEGER', nullable: true },
+            updated_at: { type: 'INTEGER', nullable: true },
+        },
+        needIndexers: {
+            text: ['BM25Indexer'],
+            semi_text: ['BM25Indexer'],
+        },
+    };
+
+    const storage = new BaseStorage('storage-test2-bm25-only', schema, path.join(os.tmpdir(), 'storage-test2-bm25-only'));
+    await storage.initialize();
+
+    const now = Date.now();
+    const items: Item[] = [
+        (() => {
+            const text = 'project plan project';
+            const semiText = 'alpha milestones';
+            return {
+                item_id: 'bm-1',
+                item_type: 'file',
+                filename: 'bm25-1.txt',
+                text: text,
+                semi_text: semiText,
+                created_at: now,
+                updated_at: now,
+                indexer_columns: {
+                    BM25Indexer: [
+                        { column: 'text', content: text },
+                        { column: 'semi_text', content: semiText },
+                    ],
+                },
+            };
+        })(),
+        (() => {
+            const text = 'project beta notes';
+            const semiText = 'beta schedule';
+            return {
+                item_id: 'bm-2',
+                item_type: 'file',
+                filename: 'bm25-2.txt',
+                text: text,
+                semi_text: semiText,
+                created_at: now,
+                updated_at: now,
+                indexer_columns: {
+                    BM25Indexer: [
+                        { column: 'text', content: text },
+                        { column: 'semi_text', content: semiText },
+                    ],
+                },
+            };
+        })(),
+        (() => {
+            const text = 'release checklist';
+            const semiText = 'release preparation';
+            return {
+                item_id: 'bm-3',
+                item_type: 'file',
+                filename: 'bm25-3.txt',
+                text: text,
+                semi_text: semiText,
+                created_at: now,
+                updated_at: now,
+                indexer_columns: {
+                    BM25Indexer: [
+                        { column: 'text', content: text },
+                        { column: 'semi_text', content: semiText },
+                    ],
+                },
+            };
+        })(),
+        (() => {
+            const text = 'design review notes';
+            const semiText = 'design feedback';
+            return {
+                item_id: 'bm-4',
+                item_type: 'file',
+                filename: 'bm25-4.txt',
+                text: text,
+                semi_text: semiText,
+                created_at: now,
+                updated_at: now,
+                indexer_columns: {
+                    BM25Indexer: [
+                        { column: 'text', content: text },
+                        { column: 'semi_text', content: semiText },
+                    ],
+                },
+            };
+        })(),
+    ];
+
+    await storage.insert(items);
+
+    const resultsText = await storage.search([], [
+        {
+            indexer: 'BM25Indexer',
+            field: 'text',
+            operator: 'bm25_match',
+            value: { query: 'project', topK: 10 } as BM25Query,
+        },
+    ]);
+    console.log('[BM25Only] text results:', resultsText);
+
+    const resultsSemi = await storage.search([], [
+        {
+            indexer: 'BM25Indexer',
+            field: 'semi_text',
+            operator: 'bm25_match',
+            value: { query: 'design', topK: 10 } as BM25Query,
+        },
+    ]);
+    console.log('[BM25Only] semi_text results:', resultsSemi);
+}
+
 async function main(): Promise<void> {
     cleanupTestDb();
     // TODO: 在这里补充/调整 schema 字段
@@ -283,8 +410,9 @@ async function main(): Promise<void> {
     // await testBaseSearch(storage);
     // await testVectorSearch(storage);
     // await testTagSearch(storage);
-    await testBM25Search(storage);
+    // await testBM25Search(storage);
     // await testVectorBaseOnly();
+    await testBM25Only();
 }
 
 main().catch((error) => {
