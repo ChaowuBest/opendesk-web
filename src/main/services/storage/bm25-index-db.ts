@@ -251,29 +251,6 @@ export class BM25IndexDB {
     }
 
     /**
-     * 获取所有文档
-     */
-    // async getAllDocuments(): Promise<Map<string, any>> {
-    //     if (!this.si) return new Map();
-
-    //     const allDocs = await this.si.ALL_DOCUMENTS();
-    //     return new Map<string, any>(allDocs.map((d: any) => [d._id, d._doc]));
-    // }
-
-    // /**
-    //  * 获取文档数量
-    //  */
-    // async getDocumentCount(): Promise<number> {
-    //     if (!this.si) return 0;
-    //     try {
-    //         const allDocs = await this.si.ALL_DOCUMENTS();
-    //         return allDocs.length;
-    //     } catch {
-    //         return 0;
-    //     }
-    // }
-
-    /**
      * 刷新索引到磁盘
      */
     async flush(): Promise<void> {

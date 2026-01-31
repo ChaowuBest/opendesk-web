@@ -259,13 +259,6 @@ export class BM25Indexer extends Indexer {
     }
 
     /**
-     * 获取文档数量
-     */
-    // async getDocumentCount(): Promise<number> {
-    //     return await this.db.getDocumentCount();
-    // }
-
-    /**
      * 获取底层 BM25IndexDB 实例（用于高级操作）
      */
     getDB(): BM25IndexDB {

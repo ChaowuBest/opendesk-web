@@ -71,60 +71,6 @@ export interface ColumnConstraint {
 }
 
 /**
- * 允许的列定义白名单
- * 用户只能从这个列表中选择列名
- */
-// export const ALLOWED_COLUMNS: Record<string, ColumnConstraint> = {
-//     // === 核心字段（必需） ===
-//     'item_id': { type: 'TEXT', nullable: false },
-//     'item_type': { type: 'TEXT', nullable: false },
-
-//     // === 文件场景 ===
-//     'filename': { type: 'TEXT', nullable: true },
-//     'file_path': { type: 'TEXT', nullable: true },
-//     'file_ext': { type: 'TEXT', nullable: true },
-//     'size': { type: 'INTEGER', nullable: true, defaultValue: 0 },
-//     'owner': { type: 'TEXT', nullable: true },
-//     'creator': { type: 'TEXT', nullable: true },
-//     'modifier': { type: 'TEXT', nullable: true },
-
-//     // === 邮件场景 ===
-//     'mail_title': { type: 'TEXT', nullable: true },
-//     'mail_ctx': { type: 'TEXT', nullable: true },
-//     'mail_from': { type: 'TEXT', nullable: true },
-//     'mail_to': { type: 'TEXT', nullable: true },
-//     'mail_cc': { type: 'TEXT', nullable: true },
-//     'mail_date': { type: 'INTEGER', nullable: true },
-//     'attachment_title': { type: 'TEXT', nullable: true },
-//     'attachment_ctx': { type: 'TEXT', nullable: true },
-//     'sender': { type: 'TEXT', nullable: true },
-
-//     // === 文档场景 ===
-//     'doc_title': { type: 'TEXT', nullable: true },
-//     'doc_ctx': { type: 'TEXT', nullable: true },
-//     'doc_author': { type: 'TEXT', nullable: true },
-//     'doc_version': { type: 'TEXT', nullable: true },
-
-//     // === 通用元数据 ===
-//     'created_at': { type: 'INTEGER', nullable: true },
-//     'updated_at': { type: 'INTEGER', nullable: true },
-//     'tag': { type: 'TEXT', nullable: true },
-//     'tags': { type: 'TEXT', nullable: true },
-//     'text': { type: 'TEXT', nullable: true },
-//     'category': { type: 'TEXT', nullable: true },
-//     'priority': { type: 'INTEGER', nullable: true },
-//     'status': { type: 'TEXT', nullable: true },
-//     'description': { type: 'TEXT', nullable: true },
-//     'source': { type: 'TEXT', nullable: true },
-//     'url': { type: 'TEXT', nullable: true },
-
-//     // === 数值字段 ===
-//     'score': { type: 'REAL', nullable: true },
-//     'count': { type: 'INTEGER', nullable: true },
-//     'weight': { type: 'REAL', nullable: true },
-// };
-
-/**
  * 必需的列（每个 schema 都必须包含）
  */
 export const REQUIRED_COLUMNS = ['item_id', 'item_type'];
