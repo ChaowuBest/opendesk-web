@@ -1402,7 +1402,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
 
         this.innerHTML = `
         <splitter-widget class="w-full h-full flex">
-            <aside slot="left" class="w-full bg-white flex flex-col flex-shrink-0">
+            <aside slot="left" class="w-full bg-white flex flex-col flex-shrink-0" style="height: 100%; min-height: 0; overflow: hidden;">
 
                 <div class="p-3 space-y-3">
                     <div class="flex items-center justify-between">

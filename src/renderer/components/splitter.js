@@ -15,10 +15,11 @@ class SplitterWidget extends HTMLElement {
                 display: flex;
                 width: 100%;
                 height: 100%;
+                min-height: 0;
             }
         </style>
         <!-- TODO: 需要提供一个可配置的宽度属性 -->
-        <slot id="leftPanel" name="left" style="display: block; width: 350px; height: 100%; flex-shrink: 0;"></slot>
+        <slot id="leftPanel" name="left" style="display: flex; flex-direction: column; width: 350px; height: 100%; flex-shrink: 0; min-height: 0; overflow: visible;"></slot>
 
         <div id="resizer"
             class="w-[4px] relative group transition-all duration-150"
@@ -31,8 +32,8 @@ class SplitterWidget extends HTMLElement {
         </div>
 
         <!-- 槽位 2：右侧内容 -->
-        <div id="rightPanelWrapper" style="display: flex; flex: 1 1 0; min-width: 0; height: 100%;">
-            <slot id="rightPanel" name="right" style="display: block; width: 100%; height: 100%; min-width: 0;"></slot>
+        <div id="rightPanelWrapper" style="display: flex; flex-direction: column; flex: 1 1 0; min-width: 0; min-height: 0; height: 100%; overflow: hidden;">
+            <slot id="rightPanel" name="right" style="display: flex; flex-direction: column; width: 100%; height: 100%; min-width: 0; min-height: 0;"></slot>
         </div>
         `;
 
