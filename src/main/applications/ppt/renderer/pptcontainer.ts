@@ -3,7 +3,6 @@ import type { Slides } from '../common';
 
 export class PPTContainer extends HTMLElement {
     private pptId?: string;
-    private baseFileUrl: string = '';
     private slides: Slides | null = null;
     private totalPages: number = 0;
     private currentPage: number = 0;
@@ -160,18 +159,16 @@ export class PPTContainer extends HTMLElement {
         if (!this.slides?.pages?.length || index < 0 || index >= this.slides.pages.length) {
             doc.open();
             doc.write(`
-        <!DOCTYPE html><html><head><meta charset="utf-8"></head>
-        <body style="margin:0;display:flex;align-items:center;justify-content:center;height:100vh;color:#9ca3af;font-size:14px;font-family:system-ui,sans-serif;">
-          暂无幻灯片内容，请点击下方页码切换
-        </body></html>`);
+            <!DOCTYPE html><html><head><meta charset="utf-8"></head>
+            <body style="margin:0;display:flex;align-items:center;justify-content:center;height:100vh;color:#9ca3af;font-size:14px;font-family:system-ui,sans-serif;">
+            暂无幻灯片内容，请点击下方页码切换
+            </body></html>`);
             doc.close();
             return;
         }
 
         const pageHtml = this.slides.pages[index];
-        const baseTag = this.baseFileUrl
-            ? `<base href="${this.baseFileUrl}" target="_blank">`
-            : '';
+        const baseTag = `<base href="ppt://data/${this.pptId}/" target="_blank">`;
         doc.open();
         doc.write(baseTag + pageHtml);
         doc.close();
