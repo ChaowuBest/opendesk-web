@@ -218,7 +218,7 @@ class BaseApplication {
 
     async callWorker(methodName, ...args) {
         if (this.registry === undefined) {
-            throw new Error(`global worker not initialized`);
+            throw new Error(`application's registry is not configured`);
         }
         return await this.registry.callWorker(this.bundleName, methodName, ...args);
     }

@@ -33,7 +33,6 @@ export class PPTContainer extends HTMLElement {
         this.render();
         this.bindElements();
         this.attachEventListeners();
-        this.showPage(0);
         this.loadPPT();
     }
 
@@ -43,9 +42,8 @@ export class PPTContainer extends HTMLElement {
         if (this.pptId) {
             try {
                 const res = await fetch(`ppt://metadata/${this.pptId}`);
-                if (res.ok) {
-                    slides = await res.json() as Slides;
-                }
+                const respObject = await res.json();
+                slides = (respObject.data) as Slides;
             } catch (e) {
                 console.error('Failed to fetch slides metadata:', e);
             }

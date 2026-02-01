@@ -121,20 +121,17 @@ export class CreatePPTTool extends BaseTool<typeof CreatePPTSchema> {
     }
 
     async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
+        const md = toolcall.result !== undefined ? (await marked.parse(toolcall.result)) : 'PPT制作中...';
+        var result = `<div class="max-w-2xl h-full overflow-auto p-2 flex flex-col space-y-2 items-start justify-center">${md}</div>`
         if (toolcall.status === 'success') {
-            return `
+            const instanceId = toolcall.result_object?.['instanceId'];
+            result += `
             <div class="max-w-2xl h-full overflow-auto p-2 flex items-start justify-center">
-                <ppt-container class="block w-full max-w-2xl" data-id="e498bdd9496546c6aff652996d0412dd"></ppt-container>
-            </div>
-            `
-        } else {
-            const md = toolcall.result !== undefined ? (await marked.parse(toolcall.result)) : 'PPT制作中...';
-            return `
-            <div class="max-w-2xl h-full overflow-auto p-2 flex items-start justify-center">
-                ${md}
+                <ppt-container class="block w-full max-w-2xl" data-id="${instanceId}"></ppt-container>
             </div>
             `
         }
+        return result;
     }
 
     async createPPT(args: z.output<typeof CreatePPTSchema>, result: ToolResult): Promise<void> {

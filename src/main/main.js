@@ -13,7 +13,6 @@ import { UpdateClient } from '../updater/client.js';
 import Convert from 'ansi-to-html';
 import path from 'path';
 import fs from 'fs';
-import { pathToFileURL } from 'node:url';
 
 import appIcon from '../../resources/main/images/icon_round.png?asset'
 
