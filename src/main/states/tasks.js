@@ -115,6 +115,7 @@ class TaskState {
      */
      async submitUserMessage(message) {
         this.task_status = 'running';
+        this.task_manager_state.publishTaskListUpdate();
 
         let user_message = new UserMessage(message);
         let assistant_message = new AssistantMessage();
@@ -331,6 +332,7 @@ class TaskState {
             this.task_status = 'stopped';
         }
         this.sendSubscriptionFeedback();
+        this.task_manager_state.publishTaskListUpdate();
     }
 
     async render() {
