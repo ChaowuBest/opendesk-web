@@ -10,7 +10,7 @@ class A2AApplication extends BaseApplication {
         super('a2a', '智能体中心');
     }
 
-    getConfigSchema() {
+    static getConfigSchema() {
         return z.object({});
     }
 

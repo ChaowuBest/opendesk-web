@@ -11,7 +11,7 @@ class RecallApplication extends BaseApplication {
         super('recall', 'Recall');
     }
 
-    getConfigSchema() {
+    static getConfigSchema() {
         return z.object({
 
         });

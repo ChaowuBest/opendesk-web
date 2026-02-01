@@ -39,7 +39,7 @@ class SearchApplication extends BaseApplication {
         super('search', '融合搜索');
     }
 
-    getConfigSchema() {
+    static getConfigSchema() {
         return z.object({
             exa_search: z.object({
                 api_key: z.string().default('').describe('ExaSearch的API密钥'),

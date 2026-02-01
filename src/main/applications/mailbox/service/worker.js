@@ -881,6 +881,8 @@ class MailboxWorker extends BaseWorker {
                         // 每处理10封邮件记录一次进度
                         if ((i + 1) % 10 === 0 || i + 1 === newList.length) {
                             logger.info(`syncing pop3 email headers ${i + 1} / ${newList.length} emails`);
+                            // 在收取的过程中也及时通知前端刷新邮件列表，避免前端卡住太久
+                            this.notifyEmailListUpdated(this.currentProfileId);
                         }
 
                         if (pendingHeaders.length >= 100) {
