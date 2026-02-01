@@ -155,8 +155,12 @@ class Setting {
      * @param {() => void} configChangedCallback
      */
     static registerApplicationSettings(application, configChangedCallback) {
+        /**
+         * 这里有一点绕，需要从一个application中获取其静态原型，然后再调用静态方法查找其Schema
+         */
+        const applicationConfigSchema = Object.getPrototypeOf(application).constructor.getConfigSchema();
         ApplicationConfigSchema = ApplicationConfigSchema.extend({
-            [application.bundleName]: application.getConfigSchema().optional()
+            [application.bundleName]: applicationConfigSchema.optional()
         });
         Setting.applicationConfigChangedCallbacks.set(application.bundleName, configChangedCallback);
     }

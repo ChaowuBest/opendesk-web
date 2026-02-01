@@ -19,7 +19,7 @@ class FileMgrApplication extends BaseApplication {
         );
     }
 
-    getConfigSchema() {
+    static getConfigSchema() {
         return z.object({
             enabled: z.boolean().describe('启用AI文件系统').default(false),
             entries: z.array(FSEntrySchema).describe('文件系统入口').default([]),

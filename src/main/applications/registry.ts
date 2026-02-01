@@ -18,17 +18,17 @@ import { Worker } from "worker_threads";
 import path from 'path';
 
 
-const applications = [
-    new MailboxApplication(),
-    new FileMgrApplication(),
-    new CalendarApplication(),
-    new TerminalApplication(),
-    new A2AApplication(),
-    new RecallApplication(),
-    new SearchApplication(),
-    new NewsApplication(),
-    new PPTCreatorApplication(),
-    new DesignerApplication(),
+const APPLICATION_CLASSES: (typeof BaseApplication)[] = [
+    MailboxApplication,
+    FileMgrApplication,
+    CalendarApplication,
+    TerminalApplication,
+    A2AApplication,
+    RecallApplication,
+    SearchApplication,
+    NewsApplication,
+    PPTCreatorApplication,
+    DesignerApplication,
 ];
 
 export type ProtocolHandlerEntry = {
@@ -36,14 +36,6 @@ export type ProtocolHandlerEntry = {
     privileges?: Electron.Privileges;
     handler: (request: Electron.ProtocolRequest) => Response | Promise<Response>;
 };
-
-/**
- * 从所有应用收集协议配置（scheme + privileges + handler），用于主进程在启动时注册自定义协议。
- * 在 app 未 ready 前可调用以得到 schemes 列表用于 registerSchemesAsPrivileged。
- */
-export function getProtocolConfigsFromAllApps(): ProtocolHandlerEntry[] {
-    return applications.flatMap(application => application.getProtocolHandlers());
-}
 
 var pendingRequests: Map<string, {
     resolve: (value: any) => void,
@@ -67,6 +59,14 @@ export class ApplicationRegistry {
                 args: [application.getConfig()],
             })
         });
+    }
+
+    static collectProtocolHandlerEntries(): ProtocolHandlerEntry[] {
+        let entries: ProtocolHandlerEntry[] = [];
+        for (const application of this.applications.values()) {
+            entries.push(...application.getProtocolHandlers());
+        }
+        return entries;
     }
 
     static getApplicationList(): object[] {
@@ -239,8 +239,8 @@ export function notifyWorkerSettingUpdate(settingData: object) {
 }
 
 export function initializeRegistry() {
-    for (const application of applications) {
-        ApplicationRegistry.registerApplication(application);
+    for (const APPLICATION_CLASS of APPLICATION_CLASSES) {
+        ApplicationRegistry.registerApplication(new APPLICATION_CLASS());
     }
 
     globalWorker = new Worker(

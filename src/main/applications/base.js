@@ -173,7 +173,7 @@ class BaseApplication {
      * 返回应用的配置 schema，用于在设置界面中显示和编辑配置。如果不需要配置，则返回空对象。
      * @returns {z.ZodObject<any>}
      */
-    getConfigSchema() {
+    static getConfigSchema() {
         return z.object({});
     }
 

@@ -18,7 +18,7 @@ export class PPTCreatorApplication extends BaseApplication {
         this.reloadServiceUrl();
     }
 
-    getConfigSchema(): z.ZodObject<any> {
+    static getConfigSchema(): z.ZodObject<any> {
         return PPTCreatorConfigSchema;
     }
 

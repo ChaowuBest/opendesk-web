@@ -20,7 +20,7 @@ class CalendarApplication extends BaseApplication {
         );
     }
 
-    getConfigSchema() {
+    static getConfigSchema() {
         return z.object({
             dataSources: z.object({
                 outlook: z.object({

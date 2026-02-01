@@ -13,7 +13,7 @@ class MailboxApplication extends BaseApplication {
     }
 
     // 【重要】这里必须返回包含 profiles 数组的 Schema
-    getConfigSchema() {
+    static getConfigSchema() {
         return MailboxConfigSchema;
     }
 
