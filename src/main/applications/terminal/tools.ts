@@ -1,6 +1,6 @@
 import { exec } from "child_process";
-import { BaseTool } from "../../agents/tool.js";
-import { ToolCall } from "../../agents/messages.js";
+import { BaseTool } from "../../agents/tool";
+import { ToolCall } from "../../agents/messages";
 import { z } from 'zod';
 import { promisify } from 'util';
 import fs from 'fs';
@@ -51,7 +51,7 @@ const ExecuteCmdArgsSchema = z.object({
     workingDirectory: z.string().optional().describe('执行命令的工作目录，如果不指定则使用系统默认目录')
 });
 
-export class ExecuteCmdTool extends BaseTool {
+export class ExecuteCmdTool extends BaseTool<typeof ExecuteCmdArgsSchema> {
     constructor() {
         super(
             'executeCmd',
@@ -62,9 +62,8 @@ export class ExecuteCmdTool extends BaseTool {
         this.executor = this.executeCommand;
     }
 
-    renderToolCall(toolcall: ToolCall): string | undefined {
+    async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
         return renderTerminalToolCall('CMD', toolcall);
-
     }
 
     /**
@@ -107,7 +106,7 @@ const ExecuteBashArgsSchema = z.object({
     workingDirectory: z.string().optional().describe('执行命令的工作目录，如果不指定则使用系统默认目录')
 });
 
-export class ExecuteBashTool extends BaseTool {
+export class ExecuteBashTool extends BaseTool<typeof ExecuteBashArgsSchema> {
     constructor() {
         super(
             'executeBash',
@@ -168,7 +167,7 @@ export class ExecuteBashTool extends BaseTool {
         });
     }
 
-    renderToolCall(toolcall: ToolCall): string | undefined {
+    async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
         return renderTerminalToolCall('BASH', toolcall);
     }
 }
@@ -177,7 +176,7 @@ const readFileSchema = z.object({
     path: z.string().describe('要读取的文件路径')
 });
 
-export class ReadFileTool extends BaseTool {
+export class ReadFileTool extends BaseTool<typeof readFileSchema> {
     constructor() {
         super(
             'readFile',
@@ -205,7 +204,7 @@ const writeFileSchema = z.object({
     content: z.string().describe('要写入的文件内容')
 });
 
-export class WriteFileTool extends BaseTool {
+export class WriteFileTool extends BaseTool<typeof writeFileSchema> {
     constructor() {
         super(
             'writeFile',

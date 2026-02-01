@@ -20,6 +20,7 @@ import A2AWorker from './applications/a2a/service/worker.js'
 import RecallWorker from './applications/recall/service/worker.js'
 import FileManagerWorker from './applications/filemgr/worker.js'
 import TerminalWorker from './applications/terminal/worker.js'
+import PPTWorker from './applications/ppt/worker.js'
 
 const appWorkers: Map<string, BaseWorker> = new Map();
 // 记录各个worker的初始化状态
@@ -35,6 +36,7 @@ appWorkers.set('a2a', new A2AWorker(path.join(getAppDirectory(), 'apps', 'a2a'))
 appWorkers.set('recall', new RecallWorker(path.join(getAppDirectory(), 'apps', 'recall')));
 appWorkers.set('filemgr', new FileManagerWorker(path.join(getAppDirectory(), 'apps', 'filemgr')));
 appWorkers.set('terminal', new TerminalWorker(path.join(getAppDirectory(), 'apps', 'terminal')));
+appWorkers.set('ppt', new PPTWorker(path.join(getAppDirectory(), 'apps', 'ppt')));
 
 for (const [name, appWorker] of appWorkers.entries()) {
     logger.info(`initializing worker ${name}`);

@@ -10,6 +10,7 @@ import '../components/logview.js';
 import '../components/fileview.js';
 import '../components/homepage.js';
 import '../components/schemaeditor.js';
+import '../../main/applications/ppt/renderer/pptcontainer.js';
 
 window.Alpine = Alpine;
 Alpine.start();

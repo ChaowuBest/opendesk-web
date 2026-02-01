@@ -1,5 +1,5 @@
 import { BaseApplication } from "../base.js";
-import { BaseTool, BaseToolset } from "../../agents/tool.js";
+import { BaseTool, BaseToolset } from "../../agents/tool";
 import { z } from 'zod';
 import { Exa } from 'exa-js';
 
@@ -48,7 +48,7 @@ class SearchApplication extends BaseApplication {
         });
     }
 
-    getToolsets() {
+    async getToolsets() {
         const exa_search = this.getConfig()?.exa_search;
         const toolset = new BaseToolset('search');
         if (exa_search?.enabled && exa_search?.api_key !== '') {

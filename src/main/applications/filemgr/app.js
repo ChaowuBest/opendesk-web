@@ -1,5 +1,5 @@
 import { BaseApplication, BaseGUIConfig } from "../base.js";
-import { BaseTool, BaseToolset } from "../../agents/tool.js";
+import { BaseTool, BaseToolset } from "../../agents/tool";
 import { FSEntrySchema } from './setting.js';
 import { shell } from 'electron';
 import { z } from 'zod';
@@ -26,7 +26,7 @@ class FileMgrApplication extends BaseApplication {
         });
     }
 
-    getToolsets() {
+    async getToolsets() {
         const toolset = new BaseToolset('filemgr');
         const searchFileTool = new BaseTool(
             'searchFile',

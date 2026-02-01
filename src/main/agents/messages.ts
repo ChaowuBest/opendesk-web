@@ -1,22 +1,23 @@
 import { Marked } from 'marked';
 import { markedHighlight } from 'marked-highlight';
+import { logger } from '../utils/logger.js';
+import { BaseTool, BaseToolset } from './tool';
+
 import markedKatex from 'marked-katex-extension';
 import hljs from 'highlight.js';
-import { logger } from '../utils/logger.js';
-import { BaseTool, BaseToolset } from './tool.js';
 import path from 'path';
 
 
-const marked = new Marked(
+export const marked = new Marked(
     markedHighlight({
-      emptyLangClass: 'hljs',
-      langPrefix: 'hljs language-',
-      highlight(code, lang, info) {
+        emptyLangClass: 'hljs',
+        langPrefix: 'hljs language-',
+        highlight(code, lang, info) {
         const language = hljs.getLanguage(lang) ? lang : 'plaintext';
         return hljs.highlight(code, { language }).value;
-      }
+        }
     })
-  );
+);
 
 marked.use(markedKatex({
     throwOnError: false,
@@ -26,60 +27,57 @@ marked.use(markedKatex({
 
 /**
  * This is NOT an OpenAI message part, but a message part for our own message system.
- * @class ReasoningMessagePart
- * @property {'reasoning'} type
- * @property {string} content
  */
 class ReasoningMessagePart {
-    /**
-     * Reasoning message part
-     * @param {string} content
-     */
-    constructor (content) {
-        this.type = 'reasoning';
+    type: 'reasoning' = 'reasoning';
+    content: string;
+    /** cached render result of the reasoning */
+    rendered?: string;
+
+    constructor (content: string) {
         this.content = content;
-        /** @type {string | undefined} cached render result of the reasoning */
-        this.rendered = undefined;
     }
 
     async render() {
         this.rendered = this.content;
     }
 
-    static assign(reasoning_message_part_obj) {
+    /**
+     * Assign the prototype of the given object to the ReasoningMessagePart prototype,
+     * mainly used for deserialization.
+     *
+     * @param reasoning_message_part_obj - The object to assign the prototype to
+     * @returns The assigned reasoning message part
+     */
+    static assign(reasoning_message_part_obj: object): ReasoningMessagePart {
         Object.setPrototypeOf(reasoning_message_part_obj, ReasoningMessagePart.prototype);
-        return reasoning_message_part_obj;
+        return reasoning_message_part_obj as ReasoningMessagePart;
     }
 }
 
-
-/**
- * @class ToolCall
- * @property {number} index
- * @property {string} id
- * @property {string} tool_name
- * @property {string} args_string
- * @property {object} args_object
- * @property {'pending' | 'running' | 'success' | 'error'} status
- * @property {BaseTool | undefined} tool
- * @property {string | undefined} result
- * @property {string | undefined} rendered
- */
 class ToolCall {
-    constructor(index, id, tool_name, args_string) {
+
+    index: number;
+    id: string
+    tool_name: string;
+    args_string: string;
+    args_object: object = {};
+    status: 'pending' | 'running' | 'success' | 'error' = 'pending';
+    result?: string;
+    result_object?: object;
+    rendered?: string;
+    tool?: BaseTool<any>;
+
+    constructor(index: number, id: string, tool_name: string, args_string: string) {
         this.index = index;
         this.id = id;
         this.tool_name = tool_name;
         this.args_string = args_string;
-        this.args_object = {};
-        this.status = 'pending';
-        this.result = undefined;
-        this.rendered = undefined;
 
         Object.defineProperty(this, 'tool', { value: undefined, writable: true, enumerable: false });
     }
 
-    toOpenAIMessagePart() {
+    toOpenAIMessagePart(): object {
         return {
             type: 'tool_call',
             id: this.id,
@@ -89,19 +87,18 @@ class ToolCall {
         };
     }
 
-    setTool(tool) {
+    setTool(tool: BaseTool<any>) {
         this.tool = tool;
     }
 
-    freezeRenderResult() {
-        this.rendered = this.render();
+    async freezeRenderResult() {
+        this.rendered = await this.render();
     }
 
     /**
-     * Render the tool call
-     * @returns {string} 工具调用的渲染结果
+     * 渲染工具调用
      */
-    render() {
+    async render(): Promise<string> {
         if (this.rendered !== undefined) {
             /* 如果已经确认冻结了渲染结果，则直接返回 */
             return this.rendered;
@@ -109,7 +106,7 @@ class ToolCall {
 
         /* 如果工具自定义了渲染函数，则使用工具的渲染函数 */
         if (this.tool !== undefined) {
-            let rendered = this.tool.renderToolCall(this);
+            let rendered = await this.tool.renderToolCall(this);
             if (rendered !== undefined) {
                 return rendered;
             }
@@ -180,26 +177,25 @@ class ToolCall {
         }
     }
 
-    static assign(tool_call_obj) {
+    static assign(tool_call_obj: object): ToolCall {
         Object.setPrototypeOf(tool_call_obj, ToolCall.prototype);
-        return tool_call_obj;
+        return tool_call_obj as ToolCall;
     }
 }
 
 class ToolCallMessagePart {
+    type: 'tool_call' = 'tool_call';
+    toolcalls: ToolCall[] = [];
+    rendered?: string;
 
     /**
      * 初始化一个ToolCallMessagePart
      * 需要注意，我们特意设计成不允许在构造函数中传递toolcalls，这是因为如果模型直接输出
      * 了多个ToolCall（但实际上是同一个TC的多个流式组件的话，直接初始化会造成它们无法自动合并
      */
-    constructor() {
-        this.type = 'tool_call';
-        this.toolcalls = [];
-        this.rendered = undefined;
-    }
+    constructor() { }
 
-    push(toolcall) {
+    push(toolcall: ToolCall) {
         if (typeof toolcall.id === 'string') {
             this.toolcalls.push(toolcall);
         } else {
@@ -213,7 +209,7 @@ class ToolCallMessagePart {
         }
     }
 
-    extend(tool_call_message_part) {
+    extend(tool_call_message_part: ToolCallMessagePart) {
         for (let toolcall of tool_call_message_part.toolcalls) {
             this.push(toolcall)
         }
@@ -221,9 +217,8 @@ class ToolCallMessagePart {
 
     /**
      * 用来生成OpenAI工具调用的Assistant消息中的tool_calls
-     * @returns {object[]}
      */
-    toOpenAIToolCalls() {
+    toOpenAIToolCalls(): object[] {
         return this.toolcalls.map(toolcall => {
             return {
                 id: toolcall.id,
@@ -238,16 +233,19 @@ class ToolCallMessagePart {
 
     /**
      * 用来生成OpenAI工具调用的Response消息
-     * @returns {object[]}
      */
-    toOpenAIMessagePart() {
+    toOpenAIMessagePart(): object[] {
         return [
             ...this.toolcalls.map(toolcall => toolcall.toOpenAIMessagePart())
         ];
     }
 
-    async render() {
-        this.rendered = this.toolcalls.map(toolcall => toolcall.render()).join('');
+    async render(): Promise<string> {
+        this.rendered = '';
+        for (const toolcall of this.toolcalls) {
+            this.rendered += await toolcall.render();
+        }
+        return this.rendered;
     }
 
     static assign(tool_call_message_part_obj) {
@@ -260,20 +258,24 @@ class ToolCallMessagePart {
 }
 
 class FileMessagePart {
-    constructor(path, content) {
-        this.type = 'file';
+    type: 'file' = 'file';
+    path: string;
+    content: string;
+    rendered?: string;
+
+    constructor(path: string, content: string) {
         this.path = path;
         this.content = content;
     }
 
-    toOpenAIMessagePart() {
+    toOpenAIMessagePart(): object {
         return {
             type: 'text',
             text: `用户添加了文件附件: ${this.path}，其内容以文本形式提取如下，供你参考: <content>${this.content}</content>`
         }
     }
 
-    async render() {
+    async render(): Promise<string> {
         this.rendered = `
         <div class="flex items-center group cursor-pointer w-fit min-w-[280px] max-w-sm
             bg-white/70 backdrop-blur-xl
@@ -312,84 +314,73 @@ class FileMessagePart {
             </div>
         </div>
         `;
+        return this.rendered;
     }
 
-    static assign(file_message_part_obj) {
+    static assign(file_message_part_obj: object): FileMessagePart {
         Object.setPrototypeOf(file_message_part_obj, FileMessagePart.prototype);
-        return file_message_part_obj;
+        return file_message_part_obj as FileMessagePart;
     }
 }
-/**
- * @class TextMessagePart
- * @property {'text'} type
- * @property {string} text
- */
+
 class TextMessagePart {
-    /**
-     * Plain text message part
-     * @param {string} text
-     */
-    constructor (text) {
-        this.type = 'text';
+    type: 'text' = 'text';
+    text: string;
+    rendered?: string;
+
+    constructor (text: string) {
         this.text = text;
-        /** @type {string | undefined} cached render result of the text */
-        this.rendered = undefined;
     }
 
-    toOpenAIMessagePart() {
+    toOpenAIMessagePart(): object {
         return { type: 'text', text: this.text }
     }
 
-    static assign(text_message_part_obj) {
+    static assign(text_message_part_obj: object): TextMessagePart {
         Object.setPrototypeOf(text_message_part_obj, TextMessagePart.prototype);
-        return text_message_part_obj;
+        return text_message_part_obj as TextMessagePart;
     }
 
-    async render() {
+    async render(): Promise<string> {
         this.rendered = await marked.parse(this.text)
+        return this.rendered;
     }
 }
 
-/**
- * @class ImageMessagePart
- */
 class ImageMessagePart {
-    /**
-     * Image message part
-     * @param {string} image_url
-     */
-    constructor (image_url) {
-        /** @type {'image_url'} */
-        this.type = 'image_url';
-        /** @type {{ url: string }} */
+    type: 'image_url' = 'image_url';
+    image_url: { url: string };
+    rendered?: string;
+
+    constructor (image_url: string) {
         this.image_url = { url: image_url };
-        /** @type {string | undefined} cached render result of the image */
-        this.rendered = undefined;
     }
 
-    toOpenAIMessagePart() {
+    toOpenAIMessagePart(): object {
         return { type: this.type, image_url: this.image_url };
     }
 
-    async render() {
+    async render(): Promise<string> {
         this.rendered = `<img src="${this.image_url.url}" alt="image" />`;
+        return this.rendered;
     }
 
-    static assign(image_message_part_obj) {
+    static assign(image_message_part_obj: object): ImageMessagePart {
         Object.setPrototypeOf(image_message_part_obj, ImageMessagePart.prototype);
-        return image_message_part_obj;
+        return image_message_part_obj as ImageMessagePart;
     }
 }
 
 
 /**
  * @class Usage
- * @property {number} prompt_tokens
- * @property {number} completion_tokens
- * @property {number} total_tokens
  */
 class Usage {
-    constructor(prompt_tokens, completion_tokens, total_tokens) {
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+
+    constructor(prompt_tokens: number, completion_tokens: number, total_tokens: number) {
         this.prompt_tokens = prompt_tokens;
         this.completion_tokens = completion_tokens;
         this.total_tokens = total_tokens;
@@ -398,26 +389,21 @@ class Usage {
 
 /**
  * @class SystemMessage
- * @property {'system'} role
- * @property {string} content
  */
 class SystemMessage {
+    role: 'system' = 'system';
+    content: string;
 
-    /**
-     * System message part
-     * @param {string} content
-     */
-    constructor (content) {
-        this.role = 'system';
+    constructor(content: string) {
         this.content = content;
     }
 
-    static assign(system_message_obj) {
+    static assign(system_message_obj: object): SystemMessage {
         Object.setPrototypeOf(system_message_obj, SystemMessage.prototype);
-        return system_message_obj;
+        return system_message_obj as SystemMessage;
     }
 
-    toOpenAIMessage() {
+    toOpenAIMessage(): object {
         return {
             role: this.role,
             content: this.content
@@ -425,19 +411,12 @@ class SystemMessage {
     }
 }
 
-/**
- * @class UserMessage
- * @property {(TextMessagePart | ImageMessagePart | FileMessagePart)[]} content
- */
 class UserMessage {
-    /**
-     *
-     * @param {string | undefined} content
-     */
-    constructor (content = undefined) {
-        this.role = 'user';
-        this.content = [];
-        if (typeof content === 'string') {
+    role: 'user' = 'user';
+    content: Array<TextMessagePart | ImageMessagePart | FileMessagePart> = [];
+
+    constructor (content?: string) {
+        if (content) {
             this.content.push(new TextMessagePart(content));
         }
     }
@@ -447,16 +426,17 @@ class UserMessage {
      * @param {string} text
      * @returns {UserMessage}
      */
-    appendText(text) {
-        if (this.content.length > 0 && this.content[this.content.length - 1].type === 'text') {
-            this.content[this.content.length - 1].text += text;
+    appendText(text: string): UserMessage {
+        const last_part = this.content[this.content.length - 1];
+        if (last_part && last_part.type === 'text') {
+            last_part.text += text;
         } else {
             this.content.push(new TextMessagePart(text));
         }
         return this;
     }
 
-    appendPart(part) {
+    appendPart(part: TextMessagePart | ImageMessagePart | FileMessagePart): UserMessage {
         if (part.type === 'text') {
             this.appendText(part.text);
         } else if (part.type === 'file') {
@@ -464,6 +444,7 @@ class UserMessage {
         } else {
             throw new Error(`unsupported part type ${part.type}`);
         }
+        return this;
     }
 
     /**
@@ -471,15 +452,16 @@ class UserMessage {
      * @param {string} image_url
      * @returns {UserMessage}
      */
-    appendImageURL(image_url) {
+    appendImageURL(image_url: string): UserMessage {
         this.content.push(new ImageMessagePart(image_url));
         return this;
     }
 
-    static assign(user_message_obj) {
-        Object.setPrototypeOf(user_message_obj, UserMessage.prototype);
-        if (user_message_obj.content !== undefined) {
-            for (let part of user_message_obj.content) {
+    static assign(raw_obj: object): UserMessage {
+        Object.setPrototypeOf(raw_obj, UserMessage.prototype);
+        let user_message = raw_obj as UserMessage;
+        if (user_message.content !== undefined) {
+            for (let part of user_message.content) {
                 if (part.type === 'text') {
                     TextMessagePart.assign(part);
                 } else if (part.type === 'file') {
@@ -489,16 +471,16 @@ class UserMessage {
                 }
             }
         }
-        return user_message_obj;
+        return user_message;
     }
 
-    async render() {
+    async render(): Promise<void> {
         for (let part of this.content) {
             await part.render();
         }
     }
 
-    toOpenAIMessage() {
+    toOpenAIMessage(): object {
         return {
             role: this.role,
             content: this.content.map(part => part.toOpenAIMessagePart())
@@ -507,30 +489,23 @@ class UserMessage {
 }
 
 class AssistantMessage {
+    role: 'assistant' = 'assistant';
+    message_id: string = crypto.randomUUID();
+    content: Array<TextMessagePart | ReasoningMessagePart | ToolCallMessagePart> = [];
+    usage?: Usage;
 
-    /**
-     *
-     * @param {(TextMessagePart | ReasoningMessagePart)[] | undefined} content
-     */
-    constructor (content) {
-        this.role = 'assistant';
-        this.message_id = crypto.randomUUID();
-
-        /** @type {(TextMessagePart | ReasoningMessagePart)[]} */
-        this.content = content === undefined ? [] : content;
-        /** @type {Usage | undefined} */
-        this.usage = undefined;
+    constructor (content: Array<TextMessagePart | ReasoningMessagePart> = []) {
+        this.content = content;
     }
 
     /**
      * Assign the prototype of the given object to the AssistantMessage prototype
-     * @param {object} assistant_message_obj
-     * @returns {AssistantMessage}
      */
-    static assign(assistant_message_obj) {
-        Object.setPrototypeOf(assistant_message_obj, AssistantMessage.prototype);
-        if (assistant_message_obj.content !== undefined) {
-            for (let part of assistant_message_obj.content) {
+    static assign(raw_obj: object): AssistantMessage {
+        Object.setPrototypeOf(raw_obj, AssistantMessage.prototype);
+        let assistant_message = raw_obj as AssistantMessage;
+        if (assistant_message.content !== undefined) {
+            for (let part of assistant_message.content) {
                 if (part.type === 'text') {
                     TextMessagePart.assign(part);
                 } else if (part.type === 'reasoning') {
@@ -540,10 +515,10 @@ class AssistantMessage {
                 }
             }
         }
-        return assistant_message_obj;
+        return assistant_message;
     }
 
-    async render() {
+    async render(): Promise<void> {
         for (let part of this.content) {
             await part.render();
         }
@@ -551,69 +526,65 @@ class AssistantMessage {
 
     /**
      * Merges the give message to this message and returns itself
-     * @param {AssistantMessage} chunk
-     * @returns {AssistantMessage}
      */
-    mergeChunk(chunk) {
+    mergeChunk(chunk: AssistantMessage): AssistantMessage {
         for (var part of chunk.content) {
             this.appendPart(part);
         }
         return this;
     }
 
-    appendPart(part) {
+    appendPart(part: TextMessagePart | ReasoningMessagePart | ToolCallMessagePart): AssistantMessage {
         if (part.type === 'text') {
             this.appendText(part.text);
         } else if (part.type === 'reasoning') {
             this.appendReasoningContent(part.content);
         } else if (part.type === 'tool_call') {
             this.appendToolCallPart(part);
-        } else {
-            throw new Error(`unsupported part type ${part.type}`);
         }
+        return this;
     }
 
-    appendReasoningContent(content) {
-        if (this.content.length === 0) {
-            this.content.push(new ReasoningMessagePart(content));
-        } else if (this.content[this.content.length - 1].type === 'reasoning') {
-            this.content[this.content.length - 1].content += content;
+    appendReasoningContent(content: string): AssistantMessage {
+        const last_part = this.content[this.content.length - 1];
+        if (last_part && last_part.type === 'reasoning') {
+            last_part.content += content;
         } else {
             this.content.push(new ReasoningMessagePart(content));
         }
+        return this;
     }
 
     /**
      * Append a text part to the message
      * @param {string} text
      */
-    appendText(text) {
-        if (this.content.length === 0) {
-            this.content.push(new TextMessagePart(text));
-        } else if (this.content[this.content.length - 1].type === 'text') {
-            this.content[this.content.length - 1].text += text;
+    appendText(text: string): AssistantMessage {
+        const last_part = this.content[this.content.length - 1];
+        if (last_part && last_part.type === 'text') {
+            last_part.text += text;
         } else {
             this.content.push(new TextMessagePart(text));
         }
+        return this;
     }
 
     /**
      * Append a tool call part to the message
-     * @param {ToolCallMessagePart} part
      */
-    appendToolCallPart(part) {
-        if (this.content.length === 0) {
-            this.content.push(part);
-        } else if (this.content[this.content.length - 1].type === 'tool_call') {
-            this.content[this.content.length - 1].extend(part);
+    appendToolCallPart(part: ToolCallMessagePart): AssistantMessage {
+        const last_part = this.content[this.content.length - 1];
+        if (last_part && last_part.type === 'tool_call') {
+            last_part.extend(part);
         } else {
             this.content.push(part);
         }
+        return this;
     }
 
-    toOpenAIMessage() {
-        var content = [];
-        var toolcalls = [];
+    toOpenAIMessage(): object {
+        var content: object[] = [];
+        var toolcalls: object[] = [];
         for (let part of this.content) {
             switch (part.type) {
                 case 'reasoning':
@@ -629,20 +600,16 @@ class AssistantMessage {
                         content.push(openai_part);
                     }
                     break;
-                default:
-                    throw new Error(`unsupported part type ${part.type}`);
             }
         }
         return { role: this.role, content: content, tool_calls: toolcalls }
     }
 
-    getOpenAIToolMessages() {
-        var messages = [];
+    getOpenAIToolMessages(): object[] {
+        var messages: object[] = [];
         var tool_call_parts = this.content.filter(part => part.type === 'tool_call');
         for (let part of tool_call_parts) {
-            /** @type {ToolCallMessagePart} */
-            let tool_call_part = part;
-            for (let toolcall of tool_call_part.toolcalls) {
+            for (let toolcall of part.toolcalls) {
                 if (toolcall.status === 'error') {
                     messages.push({
                         role: 'tool',
@@ -663,128 +630,105 @@ class AssistantMessage {
         return messages;
     }
 
-    /**
-     * Parse an assistant message chunk from a standard OpenAI message
-     * @returns {AssistantMessage}
-     */
-    static parseOpenAIMessage(openai_message) {
+    static parseOpenAIMessage(openai_message: object): AssistantMessage {
         var message = new AssistantMessage();
-        if (openai_message.reasoning_content) {
-            message.content.push(new ReasoningMessagePart(openai_message.reasoning_content));
+
+        const reasoning_content = openai_message['reasoning_content'];
+        if (reasoning_content) {
+            message.content.push(new ReasoningMessagePart(reasoning_content));
         }
-        if (openai_message.tool_calls) {
+
+        const tool_calls = openai_message['tool_calls'];
+        if (tool_calls) {
             let part = new ToolCallMessagePart()
-            for (let tool_call of openai_message.tool_calls) {
+            for (let tool_call of tool_calls) {
                 let tc = new ToolCall(
-                    tool_call.index,
-                    tool_call.id,
-                    tool_call.function.name,
-                    tool_call.function.arguments
+                    tool_call['index'],
+                    tool_call['id'],
+                    tool_call['function']['name'],
+                    tool_call['function']['arguments']
                 );
                 part.push(tc);
             }
             message.content.push(part);
         }
-        if (openai_message.content) {
-            message.content.push(new TextMessagePart(openai_message.content));
+        const content = openai_message['content'];
+        if (content) {
+            message.content.push(new TextMessagePart(content));
         }
         return message;
     }
 }
 
 class AssistantResponse {
-    /**
-     * @param {AssistantMessage} content
-     */
-    constructor (content) {
-        /** @type {AssistantMessage} */
+    content: AssistantMessage;
+    finish_reason: 'stop' | 'error' | 'tool_calls' | null;
+    usage?: Usage;
+
+    constructor (content: AssistantMessage, finish_reason: 'stop' | 'error' | 'tool_calls' | null = null) {
         this.content = content;
-        /** @type {'stop' | 'error' | null} */
-        this.finish_reason = null;
-        /** @type {Usage | undefined} */
-        this.usage = undefined;
+        this.finish_reason = finish_reason;
     }
 
-    static error(reason) {
-        var response = new AssistantResponse(new AssistantMessage());
-        response.finish_reason = 'error';
+    static error(reason: string): AssistantResponse {
+        var response = new AssistantResponse(new AssistantMessage(), 'error');
         response.content.appendText(reason);
-        return response
+        return response;
     }
 
-    static parseOpenAIResponse(openai_response) {
-        const choice = openai_response.choices[0];
-        /** @type {'stop' | 'error' | 'tool_calls' | null} */
+    static parseOpenAIResponse(openai_response: object): AssistantResponse {
+        const choice = openai_response['choices'][0];
         let finish_reason = choice.finish_reason;
-        if (finish_reason === undefined) {
-            finish_reason = null;
-        }
+        let response: AssistantResponse;
 
-        /** @type {Usage | undefined} */
-        let usage = undefined;
-        if (openai_response.usage) {
-            usage = new Usage(
-                openai_response.usage.prompt_tokens,
-                openai_response.usage.completion_tokens,
-                openai_response.usage.total_tokens
-            );
-        }
-
-        let response;
         if (choice.delta !== undefined) {
             // parsing chunk in a stream response
             const chunk = AssistantMessage.parseOpenAIMessage(choice.delta);
-            response = new AssistantResponse(chunk, finish_reason);
+            response = new AssistantResponse(chunk, finish_reason ?? null);
         } else if (choice.message !== undefined) {
             const message = AssistantMessage.parseOpenAIMessage(choice.message);
-            response = new AssistantResponse(message, finish_reason);
+            response = new AssistantResponse(message, finish_reason ?? null);
         } else {
             logger.error('invalid openai response', choice);
             throw new Error('invalid openai response');
         }
 
-        response.usage = usage;
+        const usage = openai_response['usage'];
+        if (usage) {
+            response.usage = new Usage(
+                usage['prompt_tokens'],
+                usage['completion_tokens'],
+                usage['total_tokens']
+            );
+        }
         return response;
     }
 }
 
 /**
- * @class ChatContext
- * @property {SystemMessage | undefined} system_prompt
- * @property {(UserMessage | AssistantMessage)[]} messages
- * @property {Map<string, Map<string, BaseTool>>} toolsets
+ * Chat context for a chat session
  */
 class ChatContext {
-
-    constructor () {
-        /** @type {SystemMessage | undefined} */
-        this.system_prompt = undefined;
-        /** @type {(UserMessage | AssistantMessage)[]} */
-        this.messages = [];
-        /** @type {Map<string, BaseToolset>} */
-        this.toolsets = new Map();
-    }
+    system_prompt?: SystemMessage;
+    messages: (UserMessage | AssistantMessage)[] = [];
+    toolsets: Map<string, BaseToolset> = new Map();
 
     /**
      * Attach multiple toolsets to the chat context
-     * @param {BaseToolset[]} toolsets
      */
-    attachToolsets(...toolsets) {
+    attachToolsets(...toolsets: BaseToolset[]) {
         for (let toolset of toolsets) {
             this.toolsets.set(toolset.name, toolset);
         }
     }
 
-    getTool(name) {
+    getTool(name: string): BaseTool<any> | undefined {
         let tools = this.getTools()
         return tools.get(name);
     }
 
-    /**
-     * @returns {Map<string, BaseTool>}
-     */
-    getTools() {
-        let tools = new Map();
+    getTools(): Map<string, BaseTool<any>> {
+        let tools: Map<string, BaseTool<any>> = new Map();
         for (let toolset of this.toolsets.values()) {
             for (let tool of toolset.tools.values()) {
                 tools.set(`${toolset.name}-${tool.name}`, tool);
@@ -793,46 +737,41 @@ class ChatContext {
         return tools;
     }
 
-    toJSON() {
+    toJSON(): object {
         return {
             system_prompt: this.system_prompt,
             messages: this.messages
         }
     }
 
-    /**
-     *
-     * @param {UserMessage | AssistantMessage} message
-     */
-    appendMessage(message) {
+    appendMessage(message: UserMessage | AssistantMessage): void {
         this.messages.push(message);
     }
 
-    lastMessage() {
+    lastMessage(): UserMessage | AssistantMessage | undefined {
         return this.messages[this.messages.length - 1];
     }
 
     /**
      * Assign the prototype of the given object to the ChatContext prototype
-     * @param {object} chat_context_obj
-     * @returns {ChatContext}
      */
-    static assign(chat_context_obj) {
-        if (chat_context_obj.system_prompt !== undefined) {
-            SystemMessage.assign(chat_context_obj.system_prompt);
+    static assign(chat_context_obj: object): ChatContext {
+        let ctx = new ChatContext();
+        const system_prompt = chat_context_obj['system_prompt'];
+        if (system_prompt !== undefined) {
+            ctx.system_prompt = SystemMessage.assign(system_prompt);
         }
-        if (chat_context_obj.messages !== undefined) {
-            for (let message of chat_context_obj.messages) {
+
+        const messages = chat_context_obj['messages'];
+        if (messages !== undefined) {
+            for (let message of messages) {
                 if (message.role === 'user') {
-                    UserMessage.assign(message);
+                    ctx.messages.push(UserMessage.assign(message));
                 } else if (message.role === 'assistant') {
-                    AssistantMessage.assign(message);
+                    ctx.messages.push(AssistantMessage.assign(message));
                 }
             }
         }
-        let ctx = new ChatContext();
-        ctx.system_prompt = chat_context_obj.system_prompt;
-        ctx.messages = chat_context_obj.messages;
         // we cannot load any toolset from the saved chat context
         return ctx;
     }

@@ -1,9 +1,8 @@
 import { BaseWorker } from "../../base.js";
 import { A2ARegistryClient } from "./client.js";
 import { LLM } from "../../../agents/llm.js";
-import { ChatContext, UserMessage, AssistantMessage, SystemMessage } from "../../../agents/messages.js";
+import { ChatContext, UserMessage, AssistantMessage, FileMessagePart } from "../../../agents/messages";
 import { logger } from "../../../utils/logger.js";
-import { parentPort } from "worker_threads";
 import { z } from "zod";
 import { ClientFactory } from "@a2a-js/sdk/client";
 import { randomUUID } from "crypto";
@@ -424,7 +423,6 @@ ${agentsDescription}
                         const userMessage = new UserMessage(textContent);
                         // 如果有附件，添加到消息中
                         if (attachments.length > 0) {
-                            const { FileMessagePart } = await import('../../../agents/messages.js');
                             for (const attachment of attachments) {
                                 if (attachment.type === 'image') {
                                     userMessage.appendImageURL(attachment.data);
@@ -461,7 +459,6 @@ ${agentsDescription}
         const userMessage = new UserMessage(textContent);
         // 如果有附件，添加到消息中
         if (attachments.length > 0) {
-            const { FileMessagePart } = await import('../../../agents/messages.js');
             for (const attachment of attachments) {
                 if (attachment.type === 'image') {
                     userMessage.appendImageURL(attachment.data);

@@ -381,6 +381,22 @@ if (window.self !== window.top) {
                 throw new Error(result.message);
             }
             return result.data;
+        },
+        call: async (bundleName, methodName, ...args) => {
+            const result = await ipcRenderer.invoke('applicationRegistry:call', bundleName, methodName, ...args);
+            if (result.status !== 'ok') {
+                console.error('calling application failed', bundleName, methodName, result.message);
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
+        callMainWorld: async (bundleName, methodName, ...args) => {
+            const result = await ipcRenderer.invoke('applicationRegistry:callMainWorld', bundleName, methodName, ...args);
+            if (result.status !== 'ok') {
+                console.error('calling application failed', bundleName, methodName, result.message);
+                throw new Error(result.message);
+            }
+            return result.data;
         }
     })
 }

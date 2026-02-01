@@ -1,30 +1,50 @@
 import { net } from 'electron';
-import { BaseTool } from '../../agents/tool.js';
+import { BaseTool, ToolResult } from '../../agents/tool';
 import { z } from 'zod';
 import { logger } from '../../utils/logger.js';
-import { ToolCall } from '../../agents/messages.js';
-import { text } from 'stream/consumers';
+import { ToolCall } from '../../agents/messages';
+import { marked } from '../../agents/messages';
+import AdmZip from 'adm-zip';
+import path from 'path';
+import fs from 'fs';
 
-
-const SERVICE_URL = 'http://119.8.241.85:59801';
 
 interface PPTResult {
     name: string
-    url: string
+    ppt_url: string
+    zip_url: string
     abstract: string
 }
 
-class PPTAgent {
+export class PPTAgent {
     instanceId: string
     result?: PPTResult
+
+    static serviceUrl?: string
 
     constructor() {
         this.instanceId = '';
         this.result = undefined;
     }
 
-    async initialize() {
-        const response = await net.fetch(SERVICE_URL + "/create_pptagent", { method: 'POST' })
+    static setServiceUrl(serviceUrl: string) {
+        this.serviceUrl = serviceUrl;
+    }
+
+    getServiceUrl(): string {
+        if (!PPTAgent.serviceUrl) {
+            throw new Error('错误：PPT制作服务地址未设置')
+        }
+        return PPTAgent.serviceUrl;
+    }
+
+    async initializeFromExisting(instanceId: string) {
+        this.instanceId = instanceId;
+        return;
+    }
+
+    async initializeFromRequest(request: string) {
+        var response = await net.fetch(this.getServiceUrl() + "/create_pptagent", { method: 'POST' })
         if (!response.ok) {
             throw new Error('错误：无法创建PPT智能体')
         }
@@ -32,11 +52,9 @@ class PPTAgent {
         this.instanceId = await response.text();
         // 去掉第一位和最后一位
         this.instanceId = this.instanceId.slice(1, -1);
-        logger.info(`PPT智能体创建成功，实例ID: ${this.instanceId}`);
-    }
+        logger.info(`PPT智能体分配成功，实例ID: ${this.instanceId}`);
 
-    async* createPPT(request: string): AsyncIterable<string> {
-        const response = await net.fetch(SERVICE_URL + "/ainvoke", {
+        response = await net.fetch(this.getServiceUrl() + "/ainvoke", {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -47,6 +65,24 @@ class PPTAgent {
 
         if (!response.ok || !response.body) {
             throw new Error('错误：无法创建PPT')
+        }
+    }
+
+    async* fetchPPTTask(): AsyncIterable<string> {
+        if (!this.instanceId) {
+            throw new Error('错误：PPT智能体未初始化')
+        }
+
+        const response = await net.fetch(this.getServiceUrl() + "/aresume", {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                instance_id: this.instanceId,
+            })
+        })
+
+        if (!response.ok || !response.body) {
+            throw new Error('错误：无法获取PPT任务状态')
         }
 
         const reader = response.body.getReader();
@@ -62,12 +98,18 @@ class PPTAgent {
             for (const line of textChunk.split('\n').filter(line => line.trim() !== '')) {
                 try {
                     const chunk = JSON.parse(line);
-                    if (chunk.role === 'assistant') {
+                    if (chunk.text) {
                         yield chunk.text;
-                    } else if (chunk.role === 'thinkflow' && chunk.sources) {
-                        this.result = chunk.sources;
                     }
-                    console.info(chunk);
+                    if (chunk.status === 'completed' && chunk.sources?.name !== undefined) {
+                        console.info('result received');
+                        this.result = {
+                            name: chunk.sources.name,
+                            ppt_url: chunk.sources.url,
+                            zip_url: chunk.sources.zip_url,
+                            abstract: chunk.sources.abstract,
+                        }
+                    }
                 } catch (error) {
                     logger.error(`Error parsing JSON chunk: ${line}, error: ${error}`);
                 }
@@ -81,62 +123,79 @@ const CreatePPTSchema = z.object({
 })
 
 export class CreatePPTTool extends BaseTool<typeof CreatePPTSchema> {
-    constructor() {
+    appDataDirectory: string
+
+    constructor(appDataDirectory: string) {
         super('CreatePPT', '根据指定的需求创建PPT', CreatePPTSchema);
-        this.executor = this.createPPT;
+        this.appDataDirectory = appDataDirectory;
+        this.setUniversalExecutor(this.createPPT);
     }
 
-    renderToolCall(toolcall: ToolCall): string | undefined {
-        return `
-        <!-- 终端主容器 -->
-        <div class="terminal-window w-full max-w-4xl rounded-xl overflow-hidden border border-gray-300 flex flex-col my-2 font-mono">
-            <!-- macOS 顶部标题栏 (浅色渐变) -->
-            <div class="flex items-center justify-between px-4 py-3 bg-gradient-to-b from-gray-100 to-gray-200 border-b border-gray-300">
-                <div class="text-[12px] font-medium text-gray-600 flex items-center gap-2">
-                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
-                    FillipDesk Agent -- PPT生成
-                </div>
-                <div class="w-12"></div>
+    async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
+        const md = toolcall.result !== undefined ? (await marked.parse(toolcall.result)) : 'PPT制作中...';
+        var result = `<div class="max-w-2xl h-full overflow-auto p-2 flex flex-col space-y-2 items-start justify-center">${md}</div>`
+        if (toolcall.status === 'success') {
+            const instanceId = toolcall.result_object?.['instanceId'];
+            result += `
+            <div class="max-w-3xl h-full overflow-auto p-2 flex items-start justify-center">
+                <ppt-container class="block w-full" data-id="${instanceId}"></ppt-container>
             </div>
-
-            <!-- 终端内容区域 -->
-            <div class="p-3 text-xs xs:text-base leading-relaxed overflow-y-none custom-scrollbar text-gray-800">
-
-                <!-- 执行脚本 -->
-                <div class="mb-2 flex items-start">
-                    <span class="text-blue-500 font-bold mr-2">❯</span>
-                    <div>
-                        <span class="text-blue-600">Create PPT</span>
-                        <span class="text-gray-800 ml-1">${toolcall.args_object?.request}</span>
-                    </div>
+            `
+        } else {
+            result += `
+            <div class="max-w-md flex gap-4 items-center p-3 bg-slate-50 rounded-xl border border-slate-100 transform transition-all hover:scale-[1.01] hover:bg-white hover:shadow-sm">
+                <div class="w-10 h-10 rounded-lg bg-blue-100 flex items-center justify-center text-blue-600 animate-pulse">
+                    <i class="fa-solid fa-brain text-lg"></i>
                 </div>
-
-                <!-- 过程记录 -->
-                <div class="space-y-1 mb-4 border-l-2 border-gray-200 pl-4 ml-1">
-                    ${toolcall.result === undefined
-                        ? `<div class="flex items-center gap-2 text-gray-400 animate-pulse h-7">
-                            <svg class="w-5 h-5 animate-spin text-blue-400" viewBox="0 0 24 24" fill="none"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/></svg>
-                            <span>PPT生成中，请稍候…</span>
-                        </div>`
-                        : `<pre>${toolcall.result}</pre>`}
+                <div class="flex-1 space-y-2">
+                    <div class="h-2.5 bg-slate-200 rounded w-1/3 skeleton-shimmer rounded-full"></div>
+                    <div class="h-2 bg-slate-100 rounded w-3/4 skeleton-shimmer rounded-full"></div>
                 </div>
             </div>
-        </div>
-        `
+`
+        }
+        return result;
     }
 
-    async createPPT(args: z.output<typeof CreatePPTSchema>): Promise<string> {
+    async createPPT(args: z.output<typeof CreatePPTSchema>, result: ToolResult): Promise<void> {
         const pptAgent = new PPTAgent();
-        await pptAgent.initialize();
+        await pptAgent.initializeFromRequest(args.request);
 
-        var result = '<b>PPTAgent</b><br/>';
-        for await (const chunk of pptAgent.createPPT(args.request)) {
-            result += chunk;
+        for await (const chunk of pptAgent.fetchPPTTask()) {
+            result.attachResult(chunk);
         }
 
-        result += `<br/>`;
-        result += `下载PPT：<a href="${pptAgent.result?.url}" target="_blank">${pptAgent.result?.name}</a>`;
-        result += `PPT摘要：${pptAgent.result?.abstract}`;
-        return result;
+        const instanceId = pptAgent.instanceId;
+        const zipUrl = pptAgent.result?.zip_url;
+        const targetDir = path.join(this.appDataDirectory, 'data', instanceId);
+
+        if (zipUrl && !fs.existsSync(targetDir)) {
+            // 下载zip文件
+            const response = await net.fetch(zipUrl);
+            if (!response.ok) {
+                throw new Error(`下载PPT压缩包失败: ${response.statusText}`);
+            }
+
+            fs.mkdirSync(targetDir, { recursive: true });
+            const buffer = await response.arrayBuffer();
+            // 保存到临时路径
+            const tmpZipPath = path.join(this.appDataDirectory, 'data', `${instanceId}.zip`);
+            fs.writeFileSync(tmpZipPath, Buffer.from(buffer));
+
+            const zip = new AdmZip(tmpZipPath);
+            zip.extractAllTo(targetDir, true);
+
+            // 删除临时zip
+            fs.unlinkSync(tmpZipPath);
+            console.info(`PPT压缩包下载成功，解压到: ${targetDir}`);
+
+            const manifestPath = path.join(targetDir, 'manifest.json');
+            fs.writeFileSync(manifestPath, JSON.stringify({
+                name: pptAgent.result?.name || '未命名PPT',
+                abstract: pptAgent.result?.abstract || '系统未生成摘要',
+            }));
+        }
+
+        result.updateResultObject({ instanceId: instanceId });
     }
 }

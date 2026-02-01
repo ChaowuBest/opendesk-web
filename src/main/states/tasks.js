@@ -1,4 +1,4 @@
-import { ChatContext, UserMessage, AssistantMessage, ToolCallMessagePart, FileMessagePart, SystemMessage } from '../agents/messages.js';
+import { ChatContext, UserMessage, AssistantMessage, ToolCallMessagePart, FileMessagePart, SystemMessage } from '../agents/messages';
 import { LLM } from '../agents/llm.js';
 import { getTaskDirectory } from '../utils/setting.js';
 import path from 'path';
@@ -113,14 +113,16 @@ class TaskState {
      * Submit a message to the task
      * @param {string} message
      */
-     submitUserMessage(message) {
+     async submitUserMessage(message) {
         this.task_status = 'running';
 
         let user_message = new UserMessage(message);
         let assistant_message = new AssistantMessage();
         this.chat_context.appendMessage(user_message);
         this.chat_context.appendMessage(assistant_message);
-        this.chat_context.attachToolsets(...ApplicationRegistry.listAvailableToolsets().values());
+
+        let toolsets = await ApplicationRegistry.listAvailableToolsets();
+        this.chat_context.attachToolsets(...toolsets);
 
         logger.info(`messsage submitted to task ${this.task_id}`)
 
@@ -174,19 +176,24 @@ class TaskState {
         let updated_part_index = part_index !== undefined ? part_index : last_message.content.length - 1;
         let last_part = last_message.content[updated_part_index];
         /* render the last part before sending the update to the subscribers */
-        await last_part.render();
-        var subscription_feedback = {
-            task_id: this.task_id,
-            task_status: this.task_status,
-            message_id: last_message.message_id,
-            last_part_index: updated_part_index,
-            last_part: last_part,
-            usage: last_message.usage
-        };
 
-        this.subscribers = this.subscribers.filter(subscriber => subscriber.isAvailable());
-        for (let subscriber of this.subscribers) {
-            subscriber.send(subscription_feedback);
+        try {
+            await last_part.render();
+            var subscription_feedback = {
+                task_id: this.task_id,
+                task_status: this.task_status,
+                message_id: last_message.message_id,
+                last_part_index: updated_part_index,
+                last_part: last_part,
+                usage: last_message.usage
+            };
+
+            this.subscribers = this.subscribers.filter(subscriber => subscriber.isAvailable());
+            for (let subscriber of this.subscribers) {
+                subscriber.send(subscription_feedback);
+            }
+        } catch (err) {
+            logger.error(`error sending subscription feedback for task ${this.task_id}: ${err.message}`);
         }
     }
 
@@ -214,7 +221,7 @@ class TaskState {
 
     /**
      * Process a tool call
-     * @param {ToolCall} tool_call
+     * @param {import('../agents/messages').ToolCall} tool_call
      * @returns {Promise<void>}
      */
     async processToolCall(tool_call) {
@@ -255,15 +262,20 @@ class TaskState {
                 return;
             }
 
-            let result = await tool.execute(args);
-            tool_call.status = 'success';
-            tool_call.result = result;
+            let result = await tool.execute(args, async (result) => {
+                tool_call.result = result.result;
+                tool_call.result_object = result.result_object;
+                await this.sendSubscriptionFeedback();
+            });
+            tool_call.status = result.status;
+            tool_call.result = result.result;
+            tool_call.result_object = result.result_object;
         } catch (err) {
             logger.error(err);
             tool_call.status = 'error';
             tool_call.result = err.message;
         } finally {
-            tool_call.freezeRenderResult();
+            await tool_call.freezeRenderResult();
         }
     }
 

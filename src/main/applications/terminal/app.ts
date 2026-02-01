@@ -1,4 +1,4 @@
-import { BaseToolset } from "../../agents/tool.js";
+import { BaseToolset } from "../../agents/tool";
 import { BaseApplication, BaseGUIConfig } from "../base.js";
 import { ExecuteCmdTool, ExecuteBashTool, WriteFileTool, ReadFileTool } from "./tools.js";
 
@@ -8,7 +8,7 @@ export class TerminalApplication extends BaseApplication {
         super('terminal', '终端');
     }
 
-    getToolsets(): BaseToolset[] {
+    async getToolsets(): Promise<BaseToolset[]> {
         const toolset = new BaseToolset('terminal');
         if (process.platform === 'win32') {
             toolset.addTool(new ExecuteCmdTool());

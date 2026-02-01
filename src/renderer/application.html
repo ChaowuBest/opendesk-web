@@ -140,11 +140,19 @@
             }
 
             (async () => {
-                const apps = import.meta.glob('../main/applications/**/renderer/entry.js');
-
+                const apps = import.meta.glob('../main/applications/**/renderer/entry.{js,ts}');
                 const applicationBundleName = new URLSearchParams(window.location.search).get('applicationBundleName');
                 const guiConfig = await window.applicationAPI.getApplicationGUIConfig(applicationBundleName);
-                await apps[`../main/applications/${applicationBundleName}/renderer/entry.js`]();
+
+                const entryJSPath = `../main/applications/${applicationBundleName}/renderer/entry.js`;
+                const entryTSPath = `../main/applications/${applicationBundleName}/renderer/entry.ts`;
+                if (apps[entryJSPath]) {
+                    await apps[entryJSPath]();
+                } else if (apps[entryTSPath]) {
+                    await apps[entryTSPath]();
+                } else {
+                    throw new Error(`Entry file not found for application ${applicationBundleName}`);
+                }
 
                 const entryName = guiConfig?.entry || `${applicationBundleName}-entry-widget`;
 

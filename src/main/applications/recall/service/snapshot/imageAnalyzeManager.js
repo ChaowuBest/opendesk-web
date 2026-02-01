@@ -7,7 +7,7 @@ import sharp from 'sharp';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { Setting } from '../../../../utils/setting.js';
-import { UserMessage } from '../../../../agents/messages.js';
+import { UserMessage } from '../../../../agents/messages';
 import { LLM } from '../../../../agents/llm.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -27,7 +27,7 @@ function calculateHammingDistance(hash1, hash2) {
     if (!hash1 || !hash2 || hash1.length !== hash2.length) {
         return Infinity;
     }
-    
+
     let distance = 0;
     for (let i = 0; i < hash1.length; i++) {
         if (hash1[i] !== hash2[i]) {
@@ -48,21 +48,21 @@ async function calculateDHash(imageBuffer) {
             .grayscale()
             .raw()
             .toBuffer();
-        
+
         // 计算dHash：比较每行相邻像素的亮度差异
         let hash = '';
         for (let y = 0; y < 8; y++) {
             for (let x = 0; x < 8; x++) {
                 const currentIndex = y * 9 + x;
                 const nextIndex = y * 9 + x + 1;
-                
+
                 const currentPixel = grayBuffer[currentIndex];
                 const nextPixel = grayBuffer[nextIndex];
-                
+
                 hash += currentPixel < nextPixel ? '1' : '0';
             }
         }
-        
+
         return hash;
     } catch (error) {
         logger.error(`Failed to calculate dHash: ${error.message}`);
@@ -151,7 +151,7 @@ class ImageAnalyzeManager {
     /**
      * 比较两个图像是否相似（纯判定函数）
      * 使用分层策略：先dHash快速过滤，再SSIM精确比较
-     * 
+     *
      * @param {string} hash1 - 第一个图像的dHash
      * @param {string} path1 - 第一个图像的路径
      * @param {string} hash2 - 第二个图像的dHash
