@@ -141,6 +141,18 @@ export class CreatePPTTool extends BaseTool<typeof CreatePPTSchema> {
                 <ppt-container class="block w-full" data-id="${instanceId}"></ppt-container>
             </div>
             `
+        } else {
+            result += `
+            <div class="max-w-md flex gap-4 items-center p-3 bg-slate-50 rounded-xl border border-slate-100 transform transition-all hover:scale-[1.01] hover:bg-white hover:shadow-sm">
+                <div class="w-10 h-10 rounded-lg bg-blue-100 flex items-center justify-center text-blue-600 animate-pulse">
+                    <i class="fa-solid fa-brain text-lg"></i>
+                </div>
+                <div class="flex-1 space-y-2">
+                    <div class="h-2.5 bg-slate-200 rounded w-1/3 skeleton-shimmer rounded-full"></div>
+                    <div class="h-2 bg-slate-100 rounded w-3/4 skeleton-shimmer rounded-full"></div>
+                </div>
+            </div>
+`
         }
         return result;
     }
