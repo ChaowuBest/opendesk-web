@@ -1,13 +1,35 @@
 import { BaseToolset } from "../../agents/tool";
 import { BaseApplication } from "../base";
-import { CreatePPTTool } from "./tools";
+import { CreatePPTTool, PPTAgent } from "./tools";
 import path from "path";
 import fs from "fs";
+import { z } from "zod";
 
+
+const DEFAULT_SERVICE_URL = 'http://119.8.241.85:59801';
+
+const PPTCreatorConfigSchema = z.object({
+    service_url: z.string().default(DEFAULT_SERVICE_URL).describe('PPT制作服务地址'),
+});
 
 export class PPTCreatorApplication extends BaseApplication {
     constructor() {
         super('ppt', 'PPT制作');
+        this.reloadServiceUrl();
+    }
+
+    getConfigSchema(): z.ZodObject<any> {
+        return PPTCreatorConfigSchema;
+    }
+
+    async onConfigChanged(): Promise<void> {
+        this.reloadServiceUrl();
+    }
+
+    async reloadServiceUrl(): Promise<void> {
+        const config = this.getConfig() as z.output<typeof PPTCreatorConfigSchema>;
+        const serviceUrl = config?.service_url || DEFAULT_SERVICE_URL;
+        PPTAgent.setServiceUrl(serviceUrl);
     }
 
     async getToolsets(): Promise<BaseToolset[]> {

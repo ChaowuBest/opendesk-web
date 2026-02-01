@@ -9,8 +9,6 @@ import path from 'path';
 import fs from 'fs';
 
 
-const SERVICE_URL = 'http://119.8.241.85:59801';
-
 interface PPTResult {
     name: string
     ppt_url: string
@@ -18,13 +16,26 @@ interface PPTResult {
     abstract: string
 }
 
-class PPTAgent {
+export class PPTAgent {
     instanceId: string
     result?: PPTResult
+
+    static serviceUrl?: string
 
     constructor() {
         this.instanceId = '';
         this.result = undefined;
+    }
+
+    static setServiceUrl(serviceUrl: string) {
+        this.serviceUrl = serviceUrl;
+    }
+
+    getServiceUrl(): string {
+        if (!PPTAgent.serviceUrl) {
+            throw new Error('错误：PPT制作服务地址未设置')
+        }
+        return PPTAgent.serviceUrl;
     }
 
     async initializeFromExisting(instanceId: string) {
@@ -33,7 +44,7 @@ class PPTAgent {
     }
 
     async initializeFromRequest(request: string) {
-        var response = await net.fetch(SERVICE_URL + "/create_pptagent", { method: 'POST' })
+        var response = await net.fetch(this.getServiceUrl() + "/create_pptagent", { method: 'POST' })
         if (!response.ok) {
             throw new Error('错误：无法创建PPT智能体')
         }
@@ -43,7 +54,7 @@ class PPTAgent {
         this.instanceId = this.instanceId.slice(1, -1);
         logger.info(`PPT智能体分配成功，实例ID: ${this.instanceId}`);
 
-        response = await net.fetch(SERVICE_URL + "/ainvoke", {
+        response = await net.fetch(this.getServiceUrl() + "/ainvoke", {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -62,7 +73,7 @@ class PPTAgent {
             throw new Error('错误：PPT智能体未初始化')
         }
 
-        const response = await net.fetch(SERVICE_URL + "/aresume", {
+        const response = await net.fetch(this.getServiceUrl() + "/aresume", {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -126,8 +137,8 @@ export class CreatePPTTool extends BaseTool<typeof CreatePPTSchema> {
         if (toolcall.status === 'success') {
             const instanceId = toolcall.result_object?.['instanceId'];
             result += `
-            <div class="max-w-2xl h-full overflow-auto p-2 flex items-start justify-center">
-                <ppt-container class="block w-full max-w-2xl" data-id="${instanceId}"></ppt-container>
+            <div class="max-w-3xl h-full overflow-auto p-2 flex items-start justify-center">
+                <ppt-container class="block w-full" data-id="${instanceId}"></ppt-container>
             </div>
             `
         }
