@@ -1,3 +1,6 @@
+import './statustags';
+
+
 class SideBar extends HTMLElement {
 
     constructor() {
@@ -171,12 +174,14 @@ class SideBar extends HTMLElement {
             } else {
                 task_style = 'bg-white text-gray-700 hover:shadow-sm hover:border-l-2 hover:border-l-[#C94C40]';
             }
+            console.info('task', task);
             task_list_container.innerHTML += `
             <div class="task-item ${task_style} ${standard_class}" data-task_id="${task.task_id}">
                 <div class="flex items-center justify-between">
                     <p class="text-sm">${task.task_name || '未命名任务'}</p>
+                    ${task.task_status === 'running' ? '<task-status-tag class="ml-2"></task-status-tag>' : ''}
                     <button
-                        class="delete-task-btn ml-2 w-5 h-5 flex items-center justify-center rounded-full bg-white hover:bg-[#FFF8E7] transition-colors duration-200"
+                        class="delete-task-btn ml-auto w-5 h-5 flex items-center justify-center rounded-full bg-white hover:bg-[#FFF8E7] transition-colors duration-200"
                         data-task_id="${task.task_id}"
                         title="删除"
                     >
