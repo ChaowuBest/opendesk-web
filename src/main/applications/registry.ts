@@ -30,6 +30,7 @@ const APPLICATION_CLASSES: (typeof BaseApplication)[] = [
     NewsApplication,
     PPTCreatorApplication,
     DesignerApplication,
+    SkillsApplication,
 ];
 
 export type ProtocolHandlerEntry = {

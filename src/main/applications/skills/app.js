@@ -13,7 +13,7 @@ class SkillsApplication extends BaseApplication {
     super('skills', 'Skills');
   }
 
-  getConfigSchema() {
+  static getConfigSchema() {
     return z.object({});
   }
 
@@ -25,7 +25,7 @@ class SkillsApplication extends BaseApplication {
     );
   }
 
-  getToolsets() {
+  async getToolsets() {
     return SkillRegistry.getToolsets();
   }
 
