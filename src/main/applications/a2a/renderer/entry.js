@@ -20,6 +20,7 @@ class A2AEntryWidget extends HTMLElement {
         this.a2uiConverter = new A2UIToHTMLConverter();
         /** @type {boolean} */
         this.agentsListExpanded = false; // Agents 列表是否展开
+        this.lastAgentId = null; // [新增] 记录最后一次服务的 Agent ID
     }
 
     async connectedCallback() {
@@ -118,6 +119,178 @@ class A2AEntryWidget extends HTMLElement {
             this.showError(`清空对话失败: ${error.message}`);
         }
     }
+    
+    /**
+     * 处理 A2UI 按钮点击
+     * @param {HTMLElement} btn 
+     */
+    async handleA2UIAction(btn) {
+        try {
+            const actionDef = JSON.parse(btn.dataset.a2uiAction);
+            const actionName = actionDef.name;
+            const contextDefs = actionDef.context || []; 
+            console.log(`[A2UI] 触发动作: ${actionName}`, contextDefs);
+
+            let messageToSend = '';
+
+            // 生成题目 (start_quiz) ---
+            if (actionName === 'start_quiz') {
+                
+                let articleId = null;
+                messageToSend = "The user clicked 'Generate Quiz'."; 
+                for (const ctx of contextDefs) {
+                     if (ctx.key === 'articleId' && ctx.value && ctx.value.literalString) {
+                         articleId = ctx.value.literalString;
+                     }
+                }
+                if (articleId) {
+                    messageToSend = `The user clicked 'Generate Quiz' for article with ID: ${articleId}.`;
+                }
+            }
+
+            // 提交答案 (submit_quiz) ---
+            else if (actionName === 'submit_quiz') {
+                const messageBubble = btn.closest('.a2ui-root') || document;                
+                const answers = [];
+                const allRadios = messageBubble.querySelectorAll('input[type="radio"]');
+                const seenGroups = new Set();
+
+                allRadios.forEach(radio => {
+                    radio.disabled = true; 
+                    radio.setAttribute('disabled', 'disabled'); // 显式写入 HTML 属性
+                    if (radio.checked) {
+                        radio.setAttribute('checked', 'checked');
+                    }
+                    if (seenGroups.has(radio.name)) return;
+                    seenGroups.add(radio.name);
+
+                    const checked = messageBubble.querySelector(`input[name="${radio.name}"]:checked`);
+                    const qIndex = answers.length + 1;
+                    const qId = `question${qIndex}`;
+                    
+                    const userSelection = checked ? checked.value : "OptionA"; 
+                    
+                    answers.push({
+                        questionId: qId,
+                        userSelection: `Option${userSelection}`
+                    });
+                });
+                btn.disabled = true;
+                btn.textContent = '已提交'; // 更改按钮文字提供反馈
+                btn.classList.add('a2ui-btn-disabled');
+                const updatedHtml = messageBubble.outerHTML;
+                for (let i = this.conversationHistory.length - 1; i >= 0; i--) {
+                    const msg = this.conversationHistory[i];
+                    if (msg.role === 'assistant') {
+                        msg.content = updatedHtml;
+                        break; 
+                    }
+                }
+                const payload = {
+                    results: {
+                        questions: answers
+                    }
+                };
+                // 触发 agent_executor.py:129
+                messageToSend = `ACTION: submit_quiz with data: ${JSON.stringify(payload)}`;
+            } 
+            // 处理打开链接 (open_url) ---
+            else if (actionName === 'open_url') {
+                let url = actionDef.context ? actionDef.context.url : null;
+                if (!url && Array.isArray(contextDefs)) {
+                    for (const ctx of contextDefs) {
+                        if (ctx.key === 'url') {
+                            url = (ctx.value && ctx.value.literalString) ? ctx.value.literalString : ctx.value;
+                            break;
+                        }
+                    }
+                }
+                if (url) {
+                    console.log(`[A2UI] 打开链接: ${url}`);
+                    window.open(url, '_blank'); // 在新标签页打开
+                } else {
+                    console.warn('[A2UI] open_url 动作未找到有效的 url 参数');
+                }
+                
+                return; 
+            }
+            //  点击 Done (完成) ---
+            else if (['done', 'finish', 'close', 'complete', 'close_result'].includes(actionName.toLowerCase())) {
+                btn.style.display = 'none';
+                btn.insertAdjacentHTML('afterend', `
+                    <div style="
+                        text-align: center;
+                        color: #8b5cf6; 
+                        font-weight: 600;
+                        padding: 12px 0;
+                        font-size: 14px;
+                        animation: fadeIn 0.5s;
+                    ">
+                        Thank you for your use and support
+                    </div>
+                    <style>@keyframes fadeIn { from { opacity:0; } to { opacity:1; } }</style>
+                `);
+                const root = btn.closest('.a2ui-root');
+                if (root) {
+                    const newHtml = root.outerHTML;
+                    for (let i = this.conversationHistory.length - 1; i >= 0; i--) {
+                        if (this.conversationHistory[i].role === 'assistant') {
+                            this.conversationHistory[i].content = newHtml;
+                            break;
+                        }
+                    }
+                }
+                return; 
+            }
+            if (messageToSend) {
+                this.sendMessage(messageToSend, true, this.lastAgentId); 
+            }
+
+        } catch (error) {
+            console.error('处理 A2UI 动作失败:', error);
+            this.showError('无法执行操作: ' + error.message);
+        }
+    }
+    async sendMessage(text, isSystemAction = false, targetAgentId = null) {
+        if (!this.conversationId) await this.createConversation();
+
+        const messageData = { text: text, attachments: [], targetAgentId: targetAgentId };
+        window.applicationAPI.streamCall(
+            'sendChatMessage',
+            (chunk) => {
+                const assistantMessageId = `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+            },
+            this.conversationId, messageData
+        );
+        this.isSending = true;
+        if (!isSystemAction) {
+        } else {
+             this.conversationHistory.push({
+                role: 'user',
+                content: `[系统指令] ${text.startsWith('ACTION') ? '提交答案...' : '生成题目...'}`,
+                id: `sys_${Date.now()}`,
+                isSystem: true // 可以在 render 里处理这个样式让它变灰
+            });
+        }
+        
+        const assistantMessageId = `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        this.conversationHistory.push({
+            role: 'assistant',
+            content: '',
+            id: assistantMessageId,
+            isStreaming: true
+        });
+        this.updateMessages();
+
+        try {
+            window.applicationAPI.streamCall(
+                'sendChatMessage',
+                (chunk) => this.handleStreamChunk(chunk, assistantMessageId),
+                this.conversationId, messageData
+            );
+        } catch(e) { /*...*/ }
+        finally { this.isSending = false; }
+    }
 
     setUpEventListeners() {
         const input = this.querySelector('#a2a-input');
@@ -134,6 +307,16 @@ class A2AEntryWidget extends HTMLElement {
         imageBtn.addEventListener('click', () => imageInput.click());
         audioBtn.addEventListener('click', () => audioInput.click());
         fileBtn.addEventListener('click', () => fileInput.click());
+        const messagesContainer = this.querySelector('#a2a-messages');
+        messagesContainer.addEventListener('click', (e) => {
+            // 查找最近的带有 data-a2ui-action 的按钮
+            const btn = e.target.closest('.a2ui-interactive-btn');
+            if (btn && btn.dataset.a2uiAction) {
+                e.preventDefault();
+                e.stopPropagation();
+                this.handleA2UIAction(btn);
+            }
+        });
 
         // 文件选择事件
         imageInput.addEventListener('change', async (e) => {
@@ -294,9 +477,13 @@ class A2AEntryWidget extends HTMLElement {
     }
 
     handleStreamChunk(data, assistantMessageId) {
-        const { type, chunk, error, success, message, agentName, skillName } = data;
+        const { type, agentId, chunk, error, success, message, agentName, skillName } = data;
 
         if (type === 'agent_selection') {
+            if (agentId) {
+                this.lastAgentId = agentId; // [新增] 记住这个 Agent
+                console.log('Current active agent:', this.lastAgentId);
+            }
             // 处理 Agent 选择提示消息
             const selectionMessageId = `selection_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
             // 在用户消息和 AI 响应之间插入系统提示消息

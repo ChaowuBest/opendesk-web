@@ -672,19 +672,31 @@ class A2UIToHTMLConverter {
     });
   }
 
+  // 辅助函数：递归解析 A2UI 值类型
+  _parseA2UIValue(item) {
+      if (!item) return null;
+      if (item.valueString !== undefined) return item.valueString;
+      if (item.valueNumber !== undefined) return item.valueNumber;
+      if (item.valueBoolean !== undefined) return item.valueBoolean;
+      
+      // 处理 valueMap (用于 List 渲染)
+      if (item.valueMap !== undefined && Array.isArray(item.valueMap)) {
+          const resultObj = {};
+          item.valueMap.forEach(subItem => {
+              resultObj[subItem.key] = this._parseA2UIValue(subItem);
+          });
+
+          return resultObj;
+      }
+      return null;
+  }
   handleDataModelUpdate(msg) {
     const { surfaceId, contents } = msg.dataModelUpdate;
     if (!this.dataModels[surfaceId]) {
       this.dataModels[surfaceId] = {};
     }
     contents.forEach(item => {
-      let value = null;
-      if (item.valueString !== undefined) value = item.valueString;
-      else if (item.valueInt !== undefined) value = item.valueInt;
-      else if (item.valueDouble !== undefined) value = item.valueDouble;
-      else if (item.valueBool !== undefined) value = item.valueBool;
-      else if (item.valueObject !== undefined) value = item.valueObject;
-      this.dataModels[surfaceId][item.key] = value;
+      this.dataModels[surfaceId][item.key] = this._parseA2UIValue(item);
     });
   }
 
@@ -866,12 +878,56 @@ class A2UIToHTMLConverter {
       }
       case 'Button': {
         const childId = props.child;
-        const childHtml = childId ? this.renderComponentById(childId, compBuf, dataModel) : '';
+        let childHtml = childId ? this.renderComponentById(childId, compBuf, dataModel) : '';
         const styleClasses = this.getComponentStyleClasses('Button');
         const additionalStyle = this.getAdditionalStyles('Button');
         const style = this.mergeStyleStrings(additionalStyle, this.getInlineStyleFromProps(props));
         const disabled = props.disabled ? ' disabled' : '';
-        return `<button class="${styleClasses.join(' ')}"${style ? ` style="${style}"` : ''}${disabled}>${childHtml}</button>`;
+        
+        // 将 action 数据序列化到 data-action 属性中
+        let actionAttr = '';
+        if (props.action) {
+            // 安全地序列化 JSON，防止引号冲突
+            const actionJson = JSON.stringify(props.action).replace(/"/g, '&quot;');
+            actionAttr = ` data-a2ui-action="${actionJson}"`;
+            if (props.action.name === 'close_result') {
+                childHtml = 'Done';
+            }
+        }
+        
+        
+        // 添加 class "a2ui-interactive-btn" 以便 entry.js 监听
+        return `<button class="a2ui-interactive-btn ${styleClasses.join(' ')}"${style ? ` style="${style}"` : ''}${disabled}${actionAttr}>${childHtml}</button>`;
+      }
+
+      case 'MultipleChoice': {
+        // MultipleChoice 渲染逻辑，确保 input 有正确的 name 和 value
+        const containerClasses = this.getComponentStyleClasses('MultipleChoice', 'container');
+        const labelClasses = this.getComponentStyleClasses('MultipleChoice', 'label');
+        const additionalStyle = this.getAdditionalStyles('MultipleChoice');
+        
+        const options = props.options || [];
+        const groupName = `group_${id}_${Math.random().toString(36).substr(2, 5)}`;
+        
+        const optionsHtml = options.map((opt, index) => {
+            const label = this.resolveBoundValue(opt.label, dataModel) || '';
+            const val = opt.value || '';
+            return `
+                <label class="a2ui-radio-option" style="display:flex; align-items:center; margin-bottom:4px; cursor:pointer;">
+                    <input type="radio" 
+                           name="${groupName}" 
+                           value="${val}" 
+                           data-component-id="${id}"
+                           class="a2ui-radio-input" 
+                           style="margin-right:6px;">
+                    <span class="${labelClasses.join(' ')}">${this.escapeHtml(label)}</span>
+                </label>
+            `;
+        }).join('');
+
+        return `<div class="a2ui-multiplechoice ${containerClasses.join(' ')}"${additionalStyle ? ` style="${additionalStyle}"` : ''} id="${id}">
+            ${optionsHtml}
+        </div>`;
       }
       case 'Column': {
         const children = this.getChildren(props, compBuf, dataModel);
@@ -981,17 +1037,33 @@ class A2UIToHTMLConverter {
     return 'body';
   }
 
+  // 
   getChildren(props, compBuf, dataModel) {
     if (props.children) {
       if (props.children.explicitList) {
         return props.children.explicitList.map(childId => this.renderComponentById(childId, compBuf, dataModel)).join('');
       } else if (props.children.template) {
         const template = props.children.template;
-        const listPath = template.listPath;
+        // 优先使用 dataBinding (标准属性)，兼容 listPath
+        const listPath = template.dataBinding || template.listPath;
+        
         if (listPath && dataModel) {
-          const list = this.resolveBoundValue({ path: listPath }, dataModel);
-          if (Array.isArray(list)) {
-            return list.map(() => this.renderComponentById(template.child, compBuf, dataModel)).join('');
+          const rawData = this.resolveBoundValue({ path: listPath }, dataModel);
+          let list = [];
+
+          // 处理数据源：如果是数组直接用，如果是对象(Map)则取其 values
+          if (Array.isArray(rawData)) {
+              list = rawData;
+          } else if (rawData && typeof rawData === 'object') {
+              list = Object.values(rawData);
+          }
+
+          if (list.length > 0) {
+            return list.map((item) => {
+                // 创建一个合并了当前 item 数据的临时 Model
+                const itemDataModel = { ...dataModel, ...item };
+                return this.renderComponentById(template.componentId, compBuf, itemDataModel);
+            }).join('');
           }
         }
       }
@@ -1362,7 +1434,7 @@ class A2UIToHTMLConverter {
     const messages = Array.isArray(json) ? json : [json];
     return this.processMessages(messages, options);
   }
-
+  //修复题目找不到
   extractA2UIData(parts) {
     try {
       const result = [];
@@ -1371,9 +1443,10 @@ class A2UIToHTMLConverter {
 
       const dataModelUpdatePart = parts.find(part => part.kind === 'data' && part.data?.dataModelUpdate);
       if (dataModelUpdatePart) {
-        const contents = dataModelUpdatePart.data.dataModelUpdate.contents;
-        const transformedContents = contents.map(item => ({ key: item.key, valueString: item.valueString }));
-        result.push({ dataModelUpdate: { surfaceId: dataModelUpdatePart.data.dataModelUpdate.surfaceId, contents: transformedContents } });
+        // 直接透传 contents，不要使用 map 过滤，否则 valueMap (题目列表) 会丢失！
+        result.push({ 
+            dataModelUpdate: dataModelUpdatePart.data.dataModelUpdate 
+        });
       }
 
       const beginRenderingPart = parts.find(part => part.kind === 'data' && part.data?.beginRendering);
@@ -1385,6 +1458,7 @@ class A2UIToHTMLConverter {
       return null;
     }
   }
+
 }
 
 // ============================================================================
