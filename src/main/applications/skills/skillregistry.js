@@ -382,15 +382,29 @@ function refresh() {
 
 function listSkills() {
   if (skillsCache.size === 0) loadAll();
-  return Array.from(skillsCache.entries()).map(([id, s]) => ({
-    id,
-    name: s.frontmatter.name,
-    description: s.frontmatter.description ?? '',
-    license: s.frontmatter.license,
-    compatibility: s.frontmatter.compatibility,
-    metadata: s.frontmatter.metadata,
-    allowedTools: s.frontmatter['allowed-tools']
-  }));
+  const skillsDir = getSkillsDirectory();
+  const list = Array.from(skillsCache.entries()).map(([id, s]) => {
+    let addedAt = 0;
+    try {
+      const dirPath = path.join(skillsDir, id);
+      if (fs.existsSync(dirPath)) {
+        const stat = fs.statSync(dirPath);
+        addedAt = (stat.birthtimeMs != null ? stat.birthtimeMs : stat.mtimeMs) || 0;
+      }
+    } catch (_) {}
+    return {
+      id,
+      name: s.frontmatter.name,
+      description: s.frontmatter.description ?? '',
+      license: s.frontmatter.license,
+      compatibility: s.frontmatter.compatibility,
+      metadata: s.frontmatter.metadata,
+      allowedTools: s.frontmatter['allowed-tools'],
+      addedAt
+    };
+  });
+  list.sort((a, b) => (b.addedAt - a.addedAt));
+  return list.map(({ addedAt, ...rest }) => rest);
 }
 
 /** 递归复制目录 */
