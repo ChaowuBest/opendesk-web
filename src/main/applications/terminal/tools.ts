@@ -1,6 +1,7 @@
 import { exec } from "child_process";
 import { BaseTool } from "../../agents/tool";
 import { ToolCall } from "../../agents/messages";
+import { escapeHtml } from "../../utils/escape";
 import { z } from 'zod';
 import { promisify } from 'util';
 import fs from 'fs';
@@ -28,7 +29,7 @@ function renderTerminalToolCall(cmdName: string, toolcall: ToolCall): string | u
                 <span class="text-blue-500 font-bold mr-2">❯</span>
                 <div>
                     <span class="text-blue-600">/home</span>
-                    <span class="text-gray-800 ml-1">${toolcall.args_object?.command}</span>
+                    <span class="text-gray-800 ml-1">${toolcall.args_object?.['command']}</span>
                 </div>
             </div>
 
@@ -39,7 +40,7 @@ function renderTerminalToolCall(cmdName: string, toolcall: ToolCall): string | u
                             <svg class="w-5 h-5 animate-spin text-blue-400" viewBox="0 0 24 24" fill="none"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/></svg>
                             <span>命令执行中，请稍候…</span>
                         </div>`
-                    : `<pre>${toolcall.result}</pre>`}
+                    : `<pre>${escapeHtml(toolcall.result)}</pre>`}
             </div>
         </div>
     </div>

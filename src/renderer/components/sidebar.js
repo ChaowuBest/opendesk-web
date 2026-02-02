@@ -174,7 +174,7 @@ class SideBar extends HTMLElement {
             } else {
                 task_style = 'bg-white text-gray-700 hover:shadow-sm hover:border-l-2 hover:border-l-[#C94C40]';
             }
-            console.info('task', task);
+
             task_list_container.innerHTML += `
             <div class="task-item ${task_style} ${standard_class}" data-task_id="${task.task_id}">
                 <div class="flex items-center justify-between">

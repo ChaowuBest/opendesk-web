@@ -14,12 +14,12 @@ import { SkillsApplication } from "./skills/app.js";
 import { Setting, getAppDirectory } from "../utils/setting.js";
 import { logger, LogStream } from "../utils/logger.js";
 import { NotificationManager } from "../utils/notificationmgr.js";
-import { app } from 'electron';
+import { app, protocol } from 'electron';
 import { Worker } from "worker_threads";
 import path from 'path';
 
 
-const APPLICATION_CLASSES: (typeof BaseApplication)[] = [
+export const APPLICATION_CLASSES: (typeof BaseApplication)[] = [
     MailboxApplication,
     FileMgrApplication,
     CalendarApplication,
@@ -241,11 +241,37 @@ export function notifyWorkerSettingUpdate(settingData: object) {
     });
 }
 
+/**
+ * 初始化应用注册表和协议处理
+ * 在 app.whenReady() 之前调用，用于注册应用实例和协议 schemes
+ */
 export function initializeRegistry() {
+    // 注册所有应用实例
     for (const APPLICATION_CLASS of APPLICATION_CLASSES) {
-        ApplicationRegistry.registerApplication(new APPLICATION_CLASS());
+        const appInstance = new APPLICATION_CLASS();
+        if (!ApplicationRegistry.applications.has(appInstance.bundleName)) {
+            ApplicationRegistry.registerApplication(appInstance);
+        }
     }
 
+    // 收集协议配置并注册 schemes（必须在 app.whenReady() 之前）
+    const protocolConfigs = ApplicationRegistry.collectProtocolHandlerEntries();
+    const schemes = protocolConfigs.map(config => ({
+        scheme: config.scheme,
+        privileges: config.privileges || { standard: true, secure: true, supportFetchAPI: true }
+    }));
+
+    if (schemes.length > 0) {
+        protocol.registerSchemesAsPrivileged(schemes);
+    }
+}
+
+/**
+ * 初始化 Worker 和协议 handlers
+ * 在 app.whenReady() 之后调用
+ */
+export function initializeRegistryWorker() {
+    // 创建 Worker（需要在 app.whenReady() 之后，因为需要 app.getAppPath()）
     globalWorker = new Worker(
         path.join(app.getAppPath(), 'dist', 'main', 'worker.js'),
         {
@@ -319,4 +345,17 @@ export function initializeRegistry() {
             }
         }
     });
+}
+
+/**
+ * 注册协议 handlers
+ * 在 app.whenReady() 之后调用
+ */
+export function initializeProtocolHandlers() {
+    // 由各应用通过 base.getProtocolHandlers 注册自定义协议；主进程在此统一注册 handler
+    const protocolConfigs = ApplicationRegistry.collectProtocolHandlerEntries();
+    for (const { scheme, handler } of protocolConfigs) {
+        // protocol.handle 期望的 handler 类型与我们的类型定义兼容，使用类型断言
+        protocol.handle(scheme, handler as any);
+    }
 }
