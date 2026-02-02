@@ -122,7 +122,7 @@ class SettingEditor extends HTMLElement {
         this.innerHTML = `
         <div class="flex flex-col h-full w-full p-5 bg-white">
             <!-- 标题 -->
-            <div class="mb-4 pr-[50px] flex items-center justify-between">
+            <div class="mb-4 pr-[120px] flex items-center justify-between">
                 <h2 class="text-2xl font-bold text-gray-800">设置</h2>
                 <!-- 按钮区域在右侧，按钮为浅色背景，hover 时优雅特效 -->
                 <div class="space-x-2 flex text-xs">
