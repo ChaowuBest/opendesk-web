@@ -228,14 +228,20 @@ class SkillsEntryWidget extends HTMLElement {
     this.shadowRoot.innerHTML = `
       <style>
         :host {
-          display: block; height: 100%; overflow: auto; font-size: 14px; box-sizing: border-box;
-          padding: 24px 28px 32px 28px;
+          display: flex; flex-direction: column; height: 100%; font-size: 14px; box-sizing: border-box;
+          overflow: hidden;
         }
-        .wrap { max-width: 720px; margin: 0 auto; }
-        .header {
+        .head {
+          flex-shrink: 0; padding: 24px 28px 20px 28px; border-bottom: 1px solid #e2e8f0; background: #fff;
+        }
+        .head .header {
           display: flex; align-items: center; justify-content: flex-start;
-          margin-top: 16px; margin-bottom: 20px; flex-wrap: wrap; gap: 12px;
+          flex-wrap: wrap; gap: 12px;
         }
+        .scroll-area {
+          flex: 1; min-height: 0; overflow: auto; padding: 20px 28px 32px 28px;
+        }
+        .scroll-wrap { max-width: 720px; margin: 0 auto; }
         h2 { margin: 0; font-size: 18px; font-weight: 600; color: #1f2937; }
         .btn {
           padding: 8px 14px; border-radius: 8px; border: 1px solid #e5e7eb;
@@ -293,16 +299,20 @@ class SkillsEntryWidget extends HTMLElement {
         .add-url-input { flex: 1; padding: 8px 12px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 13px; }
         .add-url-input:focus { outline: none; border-color: #6366f1; }
       </style>
-      <div class="wrap">
+      <div class="head">
         <div class="header">
           <h2>本地技能</h2>
           <button type="button" class="btn" id="refresh-btn" ${this.loading ? 'disabled' : ''}>${this.loading ? '刷新中…' : '刷新'}</button>
           <button type="button" class="btn" id="add-btn" ${this.loading ? 'disabled' : ''}>添加</button>
         </div>
-        ${msgHtml}
-        ${addPanelHtml}
-        <div class="skill-list">
-          ${listHtml}
+      </div>
+      <div class="scroll-area">
+        <div class="scroll-wrap">
+          ${msgHtml}
+          ${addPanelHtml}
+          <div class="skill-list">
+            ${listHtml}
+          </div>
         </div>
       </div>
     `;
