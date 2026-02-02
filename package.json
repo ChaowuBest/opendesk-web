@@ -79,7 +79,7 @@
     "nedb-promises": "^6.2.3",
     "node-pop3": "^0.11.0",
     "node-screenshots": "^0.2.1",
-    "nodejieba": "^3.5.2",
+    "nodejieba": "^3.4.4",
     "nodemailer": "^7.0.12",
     "officeparser": "^5.2.2",
     "openai": "^6.10.0",
