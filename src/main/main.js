@@ -416,6 +416,43 @@ const registerSkillRegistryHandlers = () => {
       return { status: 'error', message: error.message };
     }
   });
+  ipcMain.handle('skillRegistry:pickDirectory', async () => {
+    try {
+      const win = BrowserWindow.getFocusedWindow();
+      const { canceled, filePaths } = await dialog.showOpenDialog(win || null, {
+        properties: ['openDirectory'],
+        title: '选择技能目录（须含 SKILL.md）'
+      });
+      if (canceled || !filePaths?.length) return { status: 'ok', data: null };
+      return { status: 'ok', data: filePaths[0] };
+    } catch (error) {
+      return { status: 'error', message: error.message };
+    }
+  });
+  ipcMain.handle('skillRegistry:addFromPath', (event, sourcePath) => {
+    try {
+      const result = SkillRegistry.addSkillFromPath(sourcePath);
+      return result.success ? { status: 'ok', data: { name: result.name } } : { status: 'error', message: result.error };
+    } catch (error) {
+      return { status: 'error', message: error.message };
+    }
+  });
+  ipcMain.handle('skillRegistry:addFromUrl', async (event, url) => {
+    try {
+      const result = await SkillRegistry.addSkillFromUrl(url);
+      return result.success ? { status: 'ok', data: { name: result.name } } : { status: 'error', message: result.error };
+    } catch (error) {
+      return { status: 'error', message: error.message };
+    }
+  });
+  ipcMain.handle('skillRegistry:delete', (event, skillId) => {
+    try {
+      const result = SkillRegistry.deleteSkill(skillId);
+      return result.success ? { status: 'ok' } : { status: 'error', message: result.error };
+    } catch (error) {
+      return { status: 'error', message: error.message };
+    }
+  });
 };
 
 const registerNotificationAPIHandlers = () => {

@@ -7,6 +7,8 @@ import path from 'path';
 import fs from 'fs';
 import { pathToFileURL } from 'url';
 import { spawn } from 'child_process';
+import os from 'os';
+import AdmZip from 'adm-zip';
 import { getAppDirectory } from '../../utils/setting.js';
 import { BaseTool, BaseToolset } from '../../agents/tool.js';
 import { parseAndValidateSkillMd, SKILL_MD_FILENAME } from './skill-schema.js';
@@ -391,11 +393,130 @@ function listSkills() {
   }));
 }
 
+/** 递归复制目录 */
+function copyDirRecursive(src, dest) {
+  fs.mkdirSync(dest, { recursive: true });
+  for (const ent of fs.readdirSync(src, { withFileTypes: true })) {
+    const s = path.join(src, ent.name);
+    const d = path.join(dest, ent.name);
+    if (ent.isDirectory()) copyDirRecursive(s, d);
+    else fs.copyFileSync(s, d);
+  }
+}
+
+/** 递归删除目录或文件 */
+function rmRecursive(p) {
+  if (!fs.existsSync(p)) return;
+  if (fs.statSync(p).isDirectory()) {
+    for (const name of fs.readdirSync(p)) rmRecursive(path.join(p, name));
+    fs.rmdirSync(p);
+  } else fs.unlinkSync(p);
+}
+
+/**
+ * 从本地目录添加技能：校验 SKILL.md 后复制到用户技能目录
+ * @param {string} sourceDir - 源目录（须含 SKILL.md，目录名可与 name 不一致，以 frontmatter name 为准）
+ * @returns {{ success: boolean, name?: string, error?: string }}
+ */
+function addSkillFromPath(sourceDir) {
+  const resolved = path.resolve(sourceDir);
+  if (!fs.existsSync(resolved) || !fs.statSync(resolved).isDirectory()) {
+    return { success: false, error: '源路径不存在或不是目录' };
+  }
+  const result = loadSkillFromDir(resolved, path.basename(resolved));
+  if (!result.success) return { success: false, error: result.error };
+  const skillsDir = getSkillsDirectory();
+  const destDir = path.join(skillsDir, result.name);
+  if (fs.existsSync(destDir)) {
+    return { success: false, error: `技能 "${result.name}" 已存在，请先删除或改用其它名称` };
+  }
+  try {
+    copyDirRecursive(resolved, destDir);
+    loadAll();
+    return { success: true, name: result.name };
+  } catch (e) {
+    rmRecursive(destDir);
+    return { success: false, error: `复制失败: ${e.message}` };
+  }
+}
+
+/**
+ * 从 URL 添加技能：下载 zip 并解压，查找含 SKILL.md 的根后复制到用户技能目录
+ * @param {string} url - 技能包 zip 的 URL（如 GitHub archive）
+ * @returns {Promise<{ success: boolean, name?: string, error?: string }>}
+ */
+async function addSkillFromUrl(url) {
+  if (!url || typeof url !== 'string') {
+    return { success: false, error: '请提供有效的 URL' };
+  }
+  const trimmed = url.trim();
+  if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) {
+    return { success: false, error: 'URL 须以 http:// 或 https:// 开头' };
+  }
+  const tmpDir = path.join(os.tmpdir(), `skill-download-${Date.now()}`);
+  try {
+    fs.mkdirSync(tmpDir, { recursive: true });
+    const res = await fetch(trimmed, { redirect: 'follow' });
+    if (!res.ok) {
+      return { success: false, error: `下载失败: ${res.status} ${res.statusText}` };
+    }
+    const buf = Buffer.from(await res.arrayBuffer());
+    const zip = new AdmZip(buf);
+    zip.extractAllTo(tmpDir, true);
+    const entries = fs.readdirSync(tmpDir, { withFileTypes: true });
+    let skillRoot = null;
+    if (entries.length === 1 && entries[0].isDirectory()) {
+      const sub = path.join(tmpDir, entries[0].name);
+      if (fs.existsSync(path.join(sub, SKILL_MD_FILENAME))) skillRoot = sub;
+    }
+    if (!skillRoot && fs.existsSync(path.join(tmpDir, SKILL_MD_FILENAME))) {
+      skillRoot = tmpDir;
+    }
+    if (!skillRoot) {
+      return { success: false, error: '压缩包内未找到含 SKILL.md 的技能目录' };
+    }
+    const addResult = addSkillFromPath(skillRoot);
+    return addResult;
+  } catch (e) {
+    return { success: false, error: e.message || '下载或解压失败' };
+  } finally {
+    if (fs.existsSync(tmpDir)) rmRecursive(tmpDir);
+  }
+}
+
+/**
+ * 删除指定技能（按 id，即目录名）
+ * @param {string} skillId - 技能 id（目录名）
+ * @returns {{ success: boolean, error?: string }}
+ */
+function deleteSkill(skillId) {
+  if (!skillId || typeof skillId !== 'string') {
+    return { success: false, error: '请指定要删除的技能' };
+  }
+  const safeName = path.basename(skillId).replace(/[/\\]/g, '');
+  if (!safeName) return { success: false, error: '无效的技能 id' };
+  const skillsDir = getSkillsDirectory();
+  const targetDir = path.join(skillsDir, safeName);
+  if (!fs.existsSync(targetDir)) {
+    return { success: false, error: `技能 "${safeName}" 不存在` };
+  }
+  try {
+    rmRecursive(targetDir);
+    loadAll();
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: `删除失败: ${e.message}` };
+  }
+}
+
 export const SkillRegistry = {
   getSkillsDirectory,
   getBundledSkillsDirectory,
   loadAll,
   getToolsets,
   refresh,
-  listSkills
+  listSkills,
+  addSkillFromPath,
+  addSkillFromUrl,
+  deleteSkill
 };
