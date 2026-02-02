@@ -7,8 +7,8 @@ import { is } from '@electron-toolkit/utils';
 import { z } from 'zod';
 import { NotificationManager } from './utils/notificationmgr.js';
 import { LogStream, logger } from './utils/logger.js'
-import { registerApplicationRegistryHandlers, initializeRegistry, notifyWorkerSettingUpdate, ApplicationRegistry } from './applications/registry';
 import { SkillRegistry } from './applications/skills/skillregistry.js';
+import { registerApplicationRegistryHandlers, initializeRegistry, initializeRegistryWorker, initializeProtocolHandlers, notifyWorkerSettingUpdate, ApplicationRegistry } from './applications/registry';
 import { UpdateClient } from '../updater/client.js';
 
 import Convert from 'ansi-to-html';
@@ -497,13 +497,8 @@ const initializeUpdater = () => {
     }
 }
 
-const initializeProtocolHandlers = () => {
-    // 由各应用通过 base.getProtocolHandlers 注册自定义协议；主进程在此统一声明 scheme 权限
-    const protocolConfigs = ApplicationRegistry.collectProtocolHandlerEntries();
-    for (const { scheme, handler } of protocolConfigs) {
-        protocol.handle(scheme, handler);
-    }
-}
+// 在 app.whenReady() 之前初始化 Registry 和协议 schemes
+initializeRegistry();
 
 app.whenReady().then(async () => {
     GlobalState.initialize();
@@ -524,7 +519,7 @@ app.whenReady().then(async () => {
     registerNotificationAPIHandlers();
     registerHotKeys();
     registerTray();
-    initializeRegistry();
+    initializeRegistryWorker();
     initializeProtocolHandlers();
     initializeUpdater();
 })
