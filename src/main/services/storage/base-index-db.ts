@@ -8,7 +8,7 @@
 import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
-import { ColumnSchema, validateColumnSchema, ScalarOperator } from './abstrac-storage.js';
+import { ColumnSchema, validateColumnSchema, ScalarOperator } from './abstract-storage.js';
 
 // BaseIndexDB 支持的操作符（从 object.ts 导入，保持类型别名以兼容）
 export type BaseQueryOperator = ScalarOperator;

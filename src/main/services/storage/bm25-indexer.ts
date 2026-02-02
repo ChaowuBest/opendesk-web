@@ -6,7 +6,7 @@
  */
 
 import { Indexer, IndexerSearchOptions, IndexerSearchResult } from './indexer.js';
-import { Item, FilterCondition, QueryOperator, BM25Query, ItemType, ColumnSchema } from './abstrac-storage.js';
+import { Item, FilterCondition, QueryOperator, BM25Query, ItemType, ColumnSchema } from './abstract-storage.js';
 import { BM25IndexDB, BM25Record, BM25SearchResult } from './bm25-index-db.js';
 import { randomUUID } from 'crypto';
 

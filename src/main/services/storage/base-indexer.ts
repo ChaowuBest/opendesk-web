@@ -1,7 +1,7 @@
 import path from 'path';
 import { Indexer, IndexerSearchOptions as BaseIndexerSearchOptions, IndexerSearchResult } from './indexer.js';
 import { BaseIndexDB, BaseQueryCondition, BaseQueryOperator } from './base-index-db.js';
-import { ColumnSchema, validateColumnSchema, QueryOperator, FilterCondition, Item, ItemType } from './abstrac-storage.js';
+import { ColumnSchema, validateColumnSchema, QueryOperator, FilterCondition, Item, ItemType } from './abstract-storage.js';
 // ============================================================================
 // BaseIndexer - 动态 Schema 的 SQLite 索引器
 // ============================================================================

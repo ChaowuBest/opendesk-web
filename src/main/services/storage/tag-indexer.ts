@@ -6,7 +6,7 @@
  */
 
 import { Indexer, IndexerSearchOptions, IndexerSearchResult } from './indexer.js';
-import { Item, FilterCondition, ScalarOperator, QueryOperator, ItemType, ColumnSchema } from './abstrac-storage.js';
+import { Item, FilterCondition, ScalarOperator, QueryOperator, ItemType, ColumnSchema } from './abstract-storage.js';
 import { TagIndexDB, TagIndexRecord, QueryCondition } from './tag-index-db.js';
 
 /**

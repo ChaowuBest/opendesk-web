@@ -6,7 +6,7 @@
  */
 
 import { Indexer, IndexerSearchOptions, IndexerSearchResult } from './indexer.js';
-import { Item, FilterCondition, VectorOperator, QueryOperator, VectorQuery, ItemType, ColumnSchema } from './abstrac-storage.js';
+import { Item, FilterCondition, VectorOperator, QueryOperator, VectorQuery, ItemType, ColumnSchema } from './abstract-storage.js';
 import { VectorIndexDB, VectorIndexRecord, VectorSearchOptions } from './vector-index-db.js';
 import { randomUUID } from 'crypto';
 

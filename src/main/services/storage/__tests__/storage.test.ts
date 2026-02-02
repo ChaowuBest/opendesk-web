@@ -8,7 +8,7 @@
 import path from 'path';
 import os from 'os';
 import fs from 'fs';
-import { BaseStorage, ColumnSchema, Item, BM25Query } from '../abstrac-storage.js';
+import { BaseStorage, ColumnSchema, Item, BM25Query } from '../abstract-storage.js';
 
 const TEST_DB_DIR = path.join(os.tmpdir(), 'storage-test2');
 const TEST_DB_DIR_VB = path.join(os.tmpdir(), 'storage-test2-vector-base');

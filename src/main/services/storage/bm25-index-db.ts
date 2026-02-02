@@ -9,7 +9,7 @@
 import { SearchIndex } from 'search-index';
 import nodejieba from 'nodejieba';
 import { Mutex } from 'async-mutex';
-import { ColumnSchema } from './abstrac-storage';
+import { ColumnSchema } from './abstract-storage';
 import path from 'path';
 import fs from 'fs';
 

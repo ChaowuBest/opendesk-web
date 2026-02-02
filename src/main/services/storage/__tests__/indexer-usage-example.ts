@@ -11,7 +11,7 @@
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
-import { BaseStorage, Item, ColumnSchema, BM25Query } from '../abstrac-storage.js';
+import { BaseStorage, Item, ColumnSchema, BM25Query } from '../abstract-storage.js';
 import { TagIndexer } from '../tag-indexer.js';
 import { BaseIndexer } from '../base-indexer.js';
 import { VectorIndexer } from '../vector-indexer.js';
