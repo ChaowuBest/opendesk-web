@@ -47,9 +47,14 @@
                     <main-sidebar id="main-sidebar" class="w-full h-full"/>
                 </div>
 
-                <!-- 右侧面板 -->
+                <!-- 右侧面板：双槽常驻，切换只显隐不销毁，保证应用对话保活 -->
                 <div id="rightPanel" slot="right" class="bg-white p-0 overflow-auto w-full h-full">
-                    <home-page id="home-page" class="h-full w-full" />
+                    <div id="rightPanelInner" style="position:relative;width:100%;height:100%;">
+                        <div id="nonAppSlot" class="w-full h-full">
+                            <home-page id="home-page" class="h-full w-full" />
+                        </div>
+                        <div id="app-frames-container" style="display:none;position:absolute;top:0;left:0;width:100%;height:100%;"></div>
+                    </div>
                 </div>
             </splitter-widget>
 
@@ -59,73 +64,89 @@
     </body>
 
     <script>
-    /**
-     * Open a task by its id
-     * @param {string | null} taskId
-     */
-    function openTask(taskId) {
-        if (taskId === null) {
-            document.querySelector('#rightPanel').innerHTML = "";
-            return;
-        } else {
-            document.querySelector('#rightPanel').innerHTML = `
-            <task-view task_id="${taskId}" style="width: 100%; height: 100%;"/>
-            `
+    (function () {
+        var nonAppSlot = null;
+        var appFramesContainer = null;
+        var appFrameCache = {};
+
+        function ensureSlots() {
+            if (nonAppSlot && appFramesContainer) return;
+            nonAppSlot = document.getElementById('nonAppSlot');
+            appFramesContainer = document.getElementById('app-frames-container');
+            if (!nonAppSlot || !appFramesContainer) return;
+            if (!window.__appFrameCache) window.__appFrameCache = {};
+            appFrameCache = window.__appFrameCache;
         }
-    }
 
-    const openHomePage = () => {
-        document.querySelector('#rightPanel').innerHTML = `
-        <home-page style="width: 100%; height: 100%;"/>
-        `
-    }
+        function showNonApp() {
+            ensureSlots();
+            if (nonAppSlot) nonAppSlot.style.display = '';
+            if (appFramesContainer) appFramesContainer.style.display = 'none';
+        }
 
-    window.settingAPI.registerCommandCallback('openHomePage', () => {
-        openHomePage();
-    })
+        function showAppFrames() {
+            ensureSlots();
+            if (nonAppSlot) nonAppSlot.style.display = 'none';
+            if (appFramesContainer) appFramesContainer.style.display = 'block';
+        }
 
-    async function updateMaximizeIcon() {
-        const isMaximized = await window.settingAPI.isMaximized();
-        const maximizeIcon = document.getElementById('maximize-icon');
-        if (maximizeIcon) {
-            if (isMaximized) {
-                maximizeIcon.className = 'fas fa-window-restore';
+        function openTask(taskId) {
+            ensureSlots();
+            if (taskId === null) {
+                nonAppSlot.innerHTML = '<home-page id="home-page" class="h-full w-full" style="width:100%;height:100%;"/>';
             } else {
-                maximizeIcon.className = 'far fa-square';
+                nonAppSlot.innerHTML = '<task-view task_id="' + taskId + '" style="width:100%;height:100%;"/>';
+            }
+            showNonApp();
+        }
+
+        function openHomePage() {
+            ensureSlots();
+            nonAppSlot.innerHTML = '<home-page id="home-page" class="h-full w-full" style="width:100%;height:100%;"/>';
+            showNonApp();
+        }
+
+        window.settingAPI.registerCommandCallback('openHomePage', openHomePage);
+
+        async function updateMaximizeIcon() {
+            const isMaximized = await window.settingAPI.isMaximized();
+            const maximizeIcon = document.getElementById('maximize-icon');
+            if (maximizeIcon) {
+                maximizeIcon.className = isMaximized ? 'fas fa-window-restore' : 'far fa-square';
             }
         }
-    }
+        window.addEventListener('resize', updateMaximizeIcon);
+        updateMaximizeIcon();
 
-    window.addEventListener('resize', updateMaximizeIcon);
-
-    // 初始化图标
-    updateMaximizeIcon();
-
-    window.globalControlAPI = {
-        openSettingEditor: () => {
-            document.querySelector('#rightPanel').innerHTML = `
-            <setting-editor style="width: 100%; height: 100%;"/>
-            `
-        },
-        openLogView: () => {
-            document.querySelector('#rightPanel').innerHTML = `
-            <log-view style="width: 100%; height: 100%;"/>
-            `
-        },
-        openTask: (taskId) => {
-            openTask(taskId)
-        },
-        openHomePage: () => {
-            openHomePage();
-        },
-        openApplication: async (bundleName) => {
-            document.querySelector('#rightPanel').innerHTML = `
-            <iframe
-                class="w-full h-full"
-                src="./application.html?applicationBundleName=${bundleName}"
-            />
-            `
-        }
-    }
+        window.globalControlAPI = {
+            openSettingEditor: function () {
+                ensureSlots();
+                nonAppSlot.innerHTML = '<setting-editor style="width:100%;height:100%;"/>';
+                showNonApp();
+            },
+            openLogView: function () {
+                ensureSlots();
+                nonAppSlot.innerHTML = '<log-view style="width:100%;height:100%;"/>';
+                showNonApp();
+            },
+            openTask: openTask,
+            openHomePage: openHomePage,
+            openApplication: function (bundleName) {
+                ensureSlots();
+                if (!appFrameCache[bundleName]) {
+                    var iframe = document.createElement('iframe');
+                    iframe.className = 'w-full h-full';
+                    iframe.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;border:0;';
+                    iframe.src = './application.html?applicationBundleName=' + encodeURIComponent(bundleName);
+                    appFramesContainer.appendChild(iframe);
+                    appFrameCache[bundleName] = iframe;
+                }
+                Object.keys(appFrameCache).forEach(function (name) {
+                    appFrameCache[name].style.display = name === bundleName ? 'block' : 'none';
+                });
+                showAppFrames();
+            }
+        };
+    })();
     </script>
 </html>
