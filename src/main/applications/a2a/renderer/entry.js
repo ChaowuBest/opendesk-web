@@ -194,6 +194,26 @@ class A2AEntryWidget extends HTMLElement {
                 // 触发 agent_executor.py:129
                 messageToSend = `ACTION: submit_quiz with data: ${JSON.stringify(payload)}`;
             } 
+            // 处理打开链接 (open_url) ---
+            else if (actionName === 'open_url') {
+                let url = actionDef.context ? actionDef.context.url : null;
+                if (!url && Array.isArray(contextDefs)) {
+                    for (const ctx of contextDefs) {
+                        if (ctx.key === 'url') {
+                            url = (ctx.value && ctx.value.literalString) ? ctx.value.literalString : ctx.value;
+                            break;
+                        }
+                    }
+                }
+                if (url) {
+                    console.log(`[A2UI] 打开链接: ${url}`);
+                    window.open(url, '_blank'); // 在新标签页打开
+                } else {
+                    console.warn('[A2UI] open_url 动作未找到有效的 url 参数');
+                }
+                
+                return; 
+            }
             //  点击 Done (完成) ---
             else if (['done', 'finish', 'close', 'complete', 'close_result'].includes(actionName.toLowerCase())) {
                 btn.style.display = 'none';
