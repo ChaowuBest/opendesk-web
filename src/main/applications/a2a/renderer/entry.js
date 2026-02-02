@@ -148,42 +148,82 @@ class A2AEntryWidget extends HTMLElement {
                 }
             }
 
-            // --- 提交答案 (submit_quiz) ---
+            // 提交答案 (submit_quiz) ---
             else if (actionName === 'submit_quiz') {
-                const messageBubble = btn.closest('.a2ui-root') || document;
+                const messageBubble = btn.closest('.a2ui-root') || document;                
                 const answers = [];
                 const allRadios = messageBubble.querySelectorAll('input[type="radio"]');
                 const seenGroups = new Set();
 
                 allRadios.forEach(radio => {
+                    radio.disabled = true; 
+                    radio.setAttribute('disabled', 'disabled'); // 显式写入 HTML 属性
+                    if (radio.checked) {
+                        radio.setAttribute('checked', 'checked');
+                    }
                     if (seenGroups.has(radio.name)) return;
                     seenGroups.add(radio.name);
+
                     const checked = messageBubble.querySelector(`input[name="${radio.name}"]:checked`);
-                    const container = radio.closest('.a2ui-multiplechoice');
-                    const userSelection = checked ? checked.value : "OptionA"; // 默认A
                     const qIndex = answers.length + 1;
                     const qId = `question${qIndex}`;
+                    
+                    const userSelection = checked ? checked.value : "OptionA"; 
+                    
                     answers.push({
                         questionId: qId,
-                        userSelection: `Option${userSelection}` // 转换为 OptionA 格式
+                        userSelection: `Option${userSelection}`
                     });
                 });
-                // 构造专门给后端 executor 解析的 JSON 结构
+                btn.disabled = true;
+                btn.textContent = '已提交'; // 更改按钮文字提供反馈
+                btn.classList.add('a2ui-btn-disabled');
+                const updatedHtml = messageBubble.outerHTML;
+                for (let i = this.conversationHistory.length - 1; i >= 0; i--) {
+                    const msg = this.conversationHistory[i];
+                    if (msg.role === 'assistant') {
+                        msg.content = updatedHtml;
+                        break; 
+                    }
+                }
                 const payload = {
                     results: {
                         questions: answers
                     }
                 };
-                // 构造特殊指令，触发 agent_executor.py:129
+                // 触发 agent_executor.py:129
                 messageToSend = `ACTION: submit_quiz with data: ${JSON.stringify(payload)}`;
             } 
-            // 默认处理 ---
-            else {
-                messageToSend = `User interaction: ${actionName}`;
+            //  点击 Done (完成) ---
+            else if (['done', 'finish', 'close', 'complete', 'close_result'].includes(actionName.toLowerCase())) {
+                btn.style.display = 'none';
+                btn.insertAdjacentHTML('afterend', `
+                    <div style="
+                        text-align: center;
+                        color: #8b5cf6; 
+                        font-weight: 600;
+                        padding: 12px 0;
+                        font-size: 14px;
+                        animation: fadeIn 0.5s;
+                    ">
+                        Thank you for your use and support
+                    </div>
+                    <style>@keyframes fadeIn { from { opacity:0; } to { opacity:1; } }</style>
+                `);
+                const root = btn.closest('.a2ui-root');
+                if (root) {
+                    const newHtml = root.outerHTML;
+                    for (let i = this.conversationHistory.length - 1; i >= 0; i--) {
+                        if (this.conversationHistory[i].role === 'assistant') {
+                            this.conversationHistory[i].content = newHtml;
+                            break;
+                        }
+                    }
+                }
+                return; 
             }
-            // 3. 发送消息
             if (messageToSend) {
-                this.sendMessage(messageToSend, true, this.lastAgentId); // true 表示这是一个隐藏的系统指令或自动指令
+                this.sendMessage(messageToSend, true, this.lastAgentId); 
             }
 
         } catch (error) {

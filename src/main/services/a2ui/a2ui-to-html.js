@@ -878,7 +878,7 @@ class A2UIToHTMLConverter {
       }
       case 'Button': {
         const childId = props.child;
-        const childHtml = childId ? this.renderComponentById(childId, compBuf, dataModel) : '';
+        let childHtml = childId ? this.renderComponentById(childId, compBuf, dataModel) : '';
         const styleClasses = this.getComponentStyleClasses('Button');
         const additionalStyle = this.getAdditionalStyles('Button');
         const style = this.mergeStyleStrings(additionalStyle, this.getInlineStyleFromProps(props));
@@ -890,7 +890,11 @@ class A2UIToHTMLConverter {
             // 安全地序列化 JSON，防止引号冲突
             const actionJson = JSON.stringify(props.action).replace(/"/g, '&quot;');
             actionAttr = ` data-a2ui-action="${actionJson}"`;
+            if (props.action.name === 'close_result') {
+                childHtml = 'Done';
+            }
         }
+        
         
         // 添加 class "a2ui-interactive-btn" 以便 entry.js 监听
         return `<button class="a2ui-interactive-btn ${styleClasses.join(' ')}"${style ? ` style="${style}"` : ''}${disabled}${actionAttr}>${childHtml}</button>`;
