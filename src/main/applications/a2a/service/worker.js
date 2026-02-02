@@ -419,28 +419,18 @@ ${agentsDescription}
                             : message;
                         const agentResponse = await this.callAgentViaA2A(providerUrl, messageData);
 
-                        // 将 agent 响应作为流式数据发送
-                        // 模拟流式输出（分块发送）
+                        // A2A 已返回完整响应，直接整段发送，无需模拟流式（避免人为延迟）
                         const responseText = agentResponse;
-                        const chunkSize = 30; // 每次发送的字符数（增加以减少刷新频率）
 
-                        for (let i = 0; i < responseText.length; i += chunkSize) {
-                            const chunk = responseText.slice(i, i + chunkSize);
+                        yield {
+                            type: 'stream_chunk',
+                            conversationId: conversationId,
+                            chunk: {
+                                content: [{ type: 'text', text: responseText }],
+                                finishReason: 'stop'
+                            }
+                        };
 
-                            yield {
-                                type: 'stream_chunk',
-                                conversationId: conversationId,
-                                chunk: {
-                                    content: [{ type: 'text', text: chunk }],
-                                    finishReason: i + chunkSize >= responseText.length ? 'stop' : null
-                                }
-                            };
-
-                            // 添加小延迟以模拟流式效果（稍微增加延迟以减少刷新频率）
-                            await new Promise(resolve => setTimeout(resolve, 100));
-                        }
-
-                        // 发送完成信号
                         yield {
                             type: 'stream_complete',
                             conversationId: conversationId,
