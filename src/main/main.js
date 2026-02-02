@@ -8,6 +8,7 @@ import { z } from 'zod';
 import { NotificationManager } from './utils/notificationmgr.js';
 import { LogStream, logger } from './utils/logger.js'
 import { registerApplicationRegistryHandlers, initializeRegistry, notifyWorkerSettingUpdate, ApplicationRegistry } from './applications/registry';
+import { SkillRegistry } from './applications/skills/skillregistry.js';
 import { UpdateClient } from '../updater/client.js';
 
 import Convert from 'ansi-to-html';
@@ -26,6 +27,62 @@ var globalMainWindow = null;
 var globalTray = null;
 /** @type {boolean} */
 var isAppQuitting = false;
+
+/**
+ * 解析内置 skills 目录：优先用 SkillRegistry，再尝试 main 进程侧路径（开发/打包均可用）
+ */
+function resolveBundledSkillsDir() {
+  const fromRegistry = SkillRegistry.getBundledSkillsDirectory();
+  if (fs.existsSync(fromRegistry)) return fromRegistry;
+  const appPath = app.getAppPath();
+  const candidates = [
+    path.join(__dirname, 'applications', 'skills', 'resources'),
+    path.join(appPath, 'applications', 'skills', 'resources'),
+    path.join(appPath, 'src', 'main', 'applications', 'skills', 'resources')
+  ];
+  for (const dir of candidates) {
+    if (fs.existsSync(dir)) return dir;
+  }
+  return null;
+}
+
+/**
+ * 将应用内置的 skills 目录自动拷贝到用户的 apps/skills/resources
+ * - 支持 npm 调试（dev）和打包运行，多路径回退定位内置目录
+ * - 总是覆盖同名内置技能到最新版本
+ */
+async function installBundledSkillsIfNeeded() {
+  try {
+    const bundledSkillsDir = resolveBundledSkillsDir();
+    if (!bundledSkillsDir) {
+      logger.warn('installBundledSkillsIfNeeded: 未找到内置 skills 目录，跳过拷贝');
+      return;
+    }
+
+    const userSkillsDir = SkillRegistry.getSkillsDirectory();
+
+    const copyRecursive = (src, dest) => {
+      const stat = fs.statSync(src);
+      if (stat.isDirectory()) {
+        fs.mkdirSync(dest, { recursive: true });
+        for (const child of fs.readdirSync(src)) {
+          copyRecursive(path.join(src, child), path.join(dest, child));
+        }
+      } else {
+        fs.copyFileSync(src, dest);
+      }
+    };
+
+    const entries = fs.readdirSync(bundledSkillsDir, { withFileTypes: true });
+    for (const ent of entries) {
+      const srcPath = path.join(bundledSkillsDir, ent.name);
+      const destPath = path.join(userSkillsDir, ent.name);
+      copyRecursive(srcPath, destPath);
+    }
+  } catch (error) {
+    console.error('installBundledSkillsIfNeeded failed', error);
+  }
+}
 
 if (app.requestSingleInstanceLock()) {
     app.on('second-instance', (event, path) => {
@@ -336,6 +393,31 @@ const registerSettingAPIHandlers = () => {
 
 }
 
+const registerSkillRegistryHandlers = () => {
+  ipcMain.handle('skillRegistry:list', () => {
+    try {
+      return { status: 'ok', data: SkillRegistry.listSkills() };
+    } catch (error) {
+      return { status: 'error', message: error.message };
+    }
+  });
+  ipcMain.handle('skillRegistry:refresh', () => {
+    try {
+      const { toolsets, errors } = SkillRegistry.refresh();
+      return { status: 'ok', data: { count: toolsets.length, errors } };
+    } catch (error) {
+      return { status: 'error', message: error.message };
+    }
+  });
+  ipcMain.handle('skillRegistry:getSkillsDirectory', () => {
+    try {
+      return { status: 'ok', data: SkillRegistry.getSkillsDirectory() };
+    } catch (error) {
+      return { status: 'error', message: error.message };
+    }
+  });
+};
+
 const registerNotificationAPIHandlers = () => {
     ipcMain.handle('notification:sendNotification', (event, ...args) => {
         try {
@@ -423,14 +505,22 @@ const initializeProtocolHandlers = () => {
     }
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
     GlobalState.initialize();
     createWindow();
+
+    // 将内置 skills（applications/skills/resources）自动同步到用户 skills 目录（先完成再注册，确保首次对话能发现技能）
+    try {
+      await installBundledSkillsIfNeeded();
+    } catch (err) {
+      console.error('installBundledSkillsIfNeeded error', err);
+    }
 
     registerTaskManagerAPIHandlers();
     registerFSAPIHandlers();
     registerSettingAPIHandlers();
     registerApplicationRegistryHandlers(ipcMain);
+    registerSkillRegistryHandlers();
     registerNotificationAPIHandlers();
     registerHotKeys();
     registerTray();

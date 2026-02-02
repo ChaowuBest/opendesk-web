@@ -51,11 +51,27 @@ const ExecuteCmdArgsSchema = z.object({
     workingDirectory: z.string().optional().describe('执行命令的工作目录，如果不指定则使用系统默认目录')
 });
 
+/**
+ * 解析命令中的 "cd /d path & rest" 或 "cd path && rest"，提取工作目录与剩余命令，避免 & 被父进程拆开导致后续命令在错误目录执行
+ */
+function parseCdAndCommand(command: string): { cwd?: string; command: string } {
+    const t = command.trim();
+    const cdMatch = t.match(/^cd\s+(?:\/d\s+)?([^\s&]+)\s*(?:&&?|&)\s*(.+)$/s);
+    if (cdMatch) {
+        const pathPart = cdMatch[1].trim();
+        const rest = cdMatch[2].trim();
+        if (rest && fs.existsSync(pathPart)) {
+            return { cwd: pathPart, command: rest };
+        }
+    }
+    return { command: t };
+}
+
 export class ExecuteCmdTool extends BaseTool<typeof ExecuteCmdArgsSchema> {
     constructor() {
         super(
             'executeCmd',
-            '在 Windows 下执行 cmd 命令。可以执行任何有效的 Windows CMD 命令，如 dir、cd、type、echo 等',
+            '在 Windows 下执行 cmd 命令。可以执行任何有效的 Windows CMD 命令，如 dir、cd、type、echo 等。若命令含 "cd /d 路径 & 后续命令"，将自动在指定目录下执行后续命令',
             ExecuteCmdArgsSchema
         );
 
@@ -67,11 +83,18 @@ export class ExecuteCmdTool extends BaseTool<typeof ExecuteCmdArgsSchema> {
     }
 
     /**
-     * Execute a command in cmd
+     * Execute a command in cmd.
+     * 整条命令用双引号包裹传给 cmd /c，避免 & 被父进程拆成多条；若含 "cd /d path & rest" 则解析并设置 cwd。
      */
     async executeCommand(args: z.output<typeof ExecuteCmdArgsSchema>): Promise<string> {
         let command: string = args.command;
         let workingDirectory: string | undefined = args.workingDirectory;
+
+        const parsed = parseCdAndCommand(command);
+        if (parsed.cwd) {
+            workingDirectory = parsed.cwd;
+            command = parsed.command;
+        }
 
         const execAsync = promisify(exec);
         try {
@@ -84,7 +107,8 @@ export class ExecuteCmdTool extends BaseTool<typeof ExecuteCmdArgsSchema> {
                 options.cwd = workingDirectory;
             }
 
-            const { stdout, stderr } = await execAsync(`cmd /c ${command}`, options);
+            const quoted = `"${command.replace(/"/g, '""')}"`;
+            const { stdout, stderr } = await execAsync(`cmd /c ${quoted}`, options);
             const out = iconv.decode(stdout, 'cp936');
             const err = iconv.decode(stderr, 'cp936');
 
