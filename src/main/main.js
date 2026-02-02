@@ -47,12 +47,18 @@ function resolveBundledSkillsDir() {
 }
 
 /**
- * 将应用内置的 skills 目录自动拷贝到用户的 apps/skills/resources
+ * 仅在首次运行时将内置 skills 拷贝到用户的 apps/skills/resources
+ * - 若用户技能目录已存在（含用户删除后的空目录），则不再覆盖，以保留用户删除/修改
  * - 支持 npm 调试（dev）和打包运行，多路径回退定位内置目录
- * - 总是覆盖同名内置技能到最新版本
  */
 async function installBundledSkillsIfNeeded() {
   try {
+    const appDir = getAppDirectory();
+    const userSkillsDirPath = path.join(appDir, 'apps', 'skills', 'resources');
+    if (fs.existsSync(userSkillsDirPath)) {
+      return;
+    }
+
     const bundledSkillsDir = resolveBundledSkillsDir();
     if (!bundledSkillsDir) {
       logger.warn('installBundledSkillsIfNeeded: 未找到内置 skills 目录，跳过拷贝');
