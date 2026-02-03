@@ -33,3 +33,9 @@ NodeJS提供了node-gyp来构建这些包，但是在Arm64下，你需要手动�
    然后安装即可。
 
 安装后重启你的IDE，之后由于安装包构建报错的软件包(如better-sqlite3等)应当都可以通过node-gyp正常安装。
+
+## 设置默认编码为UTF8
+
+参考[这篇帖子](https://zhuanlan.zhihu.com/p/153219931)的教程，在控制面板中将Windows的全局编码设定为UTF-8（否则默认情况下，中文的编码为GBK）.
+
+如果不这么设置的话，部分需要node-gyp来本地构建的包会由于编码问题而无法编译(e.g. nodejieba)。在x86架构的Windows下，由于有预编译包的存在才不容易出现这个问题。
