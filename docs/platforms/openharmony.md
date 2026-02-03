@@ -47,7 +47,7 @@ hap路径参考`ohos_hap/electron/build/default/outputs/default/electron-default
 - demo hap包下载[electron-default-signed.hap](http://113.44.212.85:5005/downloads/electron-default-signed.hap)
 
 - 鸿蒙系统FillipDesk应用
-  ![alt text](FillipDesk-oh.jpg)
+  ![alt text](../images/oh-homepage.jpg)
 
 ## 6. 后续规划
 

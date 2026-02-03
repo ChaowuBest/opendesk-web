@@ -1,5 +1,12 @@
 # FillipDesk 开发说明
 
+本文档介绍了如何快速上手开发FillipDesk。
+
+大多数情况下，着手开发FillipDesk是一个易于上手并且能够快速看到成果的工作 ;) 然而，对于面向鸿蒙设备的，以及在Windows Arm环境下的开发者，你需要额外阅读下面的教程：
+
+- [鸿蒙化适配说明](./platforms/openharmony.md)
+- [Windows Arm上开发所需要的额外配置](./platforms/win32-arm64.md)
+
 ## 1. 配置开发环境
 
 ### 1.1 安装NVM, NodeJS和Electron
@@ -35,6 +42,8 @@ nvm use latest
 node -v
 # v22.15.1
 ```
+
+> 注: 如果使用的是arm64的windows，如鸿蒙PC的虚拟机或者Microsoft Copilot+PC，那么需要`nvm use latest arm64`
 
 接下来只要进入FillipDesk的代码仓库，执行`npm install`命令就可以自动安装所有依赖(也包括Electron)。
 
