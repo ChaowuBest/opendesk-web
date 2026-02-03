@@ -254,6 +254,8 @@ export function initializeRegistry() {
         }
     }
 
+    // 应用注册的时候会改变设置的Schema，所以这里需要清空一下重新载入
+    Setting.clearCache();
     // 收集协议配置并注册 schemes（必须在 app.whenReady() 之前）
     const protocolConfigs = ApplicationRegistry.collectProtocolHandlerEntries();
     const schemes = protocolConfigs.map(config => ({
