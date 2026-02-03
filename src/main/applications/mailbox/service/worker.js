@@ -660,12 +660,85 @@ class MailboxStorage {
     }
 
     async getEmailHeaderList(offset = 0, pageSize = 20) {
-        const docs = await this.db.find({deleted: { $ne: true }}).sort({ date: -1 }).skip(offset).limit(pageSize);
+        const docs = await this.db.find({
+            deleted: { $ne: true }, 
+            $and: [
+                { type: { $ne: 'draft' } },
+                { type: { $ne: 'sent' } }
+            ]
+        }).sort({ date: -1 }).skip(offset).limit(pageSize);
         return docs.map(doc => new EmailHeader(
             doc.uid, doc.subject,
             doc.from, doc.to, doc.cc, doc.bcc,
-            doc.date, doc.unread, doc.starred
+            doc.date, doc.unread, doc.starred, doc.deleted, doc.type || 'inbox'
         ));
+    }
+
+    async getDraftList(offset = 0, pageSize = 20) {
+        const docs = await this.db.find({deleted: { $ne: true }, type: 'draft'}).sort({ date: -1 }).skip(offset).limit(pageSize);
+        return docs.map(doc => new EmailHeader(
+            doc.uid, doc.subject,
+            doc.from, doc.to, doc.cc, doc.bcc,
+            doc.date, doc.unread, doc.starred, doc.deleted, doc.type
+        ));
+    }
+
+    async getSentList(offset = 0, pageSize = 20) {
+        const docs = await this.db.find({deleted: { $ne: true }, type: 'sent'}).sort({ date: -1 }).skip(offset).limit(pageSize);
+        return docs.map(doc => new EmailHeader(
+            doc.uid, doc.subject,
+            doc.from, doc.to, doc.cc, doc.bcc,
+            doc.date, doc.unread, doc.starred, doc.deleted, doc.type
+        ));
+    }
+
+    async saveDraft(uid, emailHeader, emailContent) {
+        const draftData = {
+            uid: uid,
+            subject: emailHeader.subject,
+            from: emailHeader.from,
+            to: emailHeader.to,
+            cc: emailHeader.cc,
+            bcc: emailHeader.bcc,
+            date: Date.now(),
+            unread: false,
+            starred: false,
+            deleted: false,
+            type: 'draft'
+        };
+        await this.db.update({ uid: uid }, { $set: draftData }, { upsert: true });
+        await this.contentdb.update(
+            { uid: uid },
+            { $set: { uid: uid, htmlContent: emailContent.htmlContent, textContent: emailContent.textContent, attachments: emailContent.attachments || [] } },
+            { upsert: true }
+        );
+    }
+
+    async deleteDraft(uid) {
+        await this.db.remove({ uid: uid, type: 'draft' });
+        await this.contentdb.remove({ uid: uid });
+    }
+
+    async saveSentEmail(uid, emailHeader, emailContent) {
+        const sentData = {
+            uid: uid,
+            subject: emailHeader.subject,
+            from: emailHeader.from,
+            to: emailHeader.to,
+            cc: emailHeader.cc,
+            bcc: emailHeader.bcc,
+            date: Date.now(),
+            unread: false,
+            starred: false,
+            deleted: false,
+            type: 'sent'
+        };
+        await this.db.update({ uid: uid }, { $set: sentData }, { upsert: true });
+        await this.contentdb.update(
+            { uid: uid },
+            { $set: { uid: uid, htmlContent: emailContent.htmlContent, textContent: emailContent.textContent, attachments: emailContent.attachments || [] } },
+            { upsert: true }
+        );
     }
 
     async searchEmails(query) {
@@ -728,6 +801,11 @@ class MailboxStorage {
             dbQuery.starred = query.starred;
         }
 
+        // Type filter (draft, sent, inbox)
+        if (query.type !== undefined) {
+            dbQuery.type = query.type;
+        }
+
         // Always exclude deleted emails
         dbQuery.deleted = { $ne: true };
 
@@ -755,7 +833,7 @@ class MailboxStorage {
         return docs.map(doc => new EmailHeader(
             doc.uid, doc.subject,
             doc.from, doc.to, doc.cc, doc.bcc,
-            doc.date, doc.unread, doc.starred
+            doc.date, doc.unread, doc.starred, doc.deleted, doc.type || 'inbox'
         ));
     }
 
@@ -1316,6 +1394,7 @@ class MailboxWorker extends BaseWorker {
     async sendEmail(sendEmailSchema) {
         logger.info(`sendEmail to ${sendEmailSchema.to}`)
         const profile = this.getCurrentProfile();
+        const storage = this.getCurrentStorage();
         if (!profile) throw new Error('No active profile');
 
         if (profile.outbox?.smtp) {
@@ -1324,12 +1403,91 @@ class MailboxWorker extends BaseWorker {
                 profile.username, profile.password, profile.name,
                 profile.outbox.smtp.host, profile.outbox.smtp.port, profile.outbox.smtp.tls
             );
-            return await smtp.sendMail(sendEmailSchema.to , sendEmailSchema.cc, sendEmailSchema.bcc,
+            const result = await smtp.sendMail(sendEmailSchema.to , sendEmailSchema.cc, sendEmailSchema.bcc,
                 sendEmailSchema.subject, sendEmailSchema.text, sendEmailSchema.html, sendEmailSchema.attachments);
+            
+            if (result && storage) {
+                // 发送成功后保存到已发送
+                const uid = `sent_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+                const emailHeader = {
+                    subject: sendEmailSchema.subject,
+                    from: [{ name: profile.name, address: profile.username }],
+                    to: Array.isArray(sendEmailSchema.to) ? sendEmailSchema.to.map(addr => ({ name: '', address: addr })) : [{ name: '', address: sendEmailSchema.to }],
+                    cc: Array.isArray(sendEmailSchema.cc) ? sendEmailSchema.cc.map(addr => ({ name: '', address: addr })) : (sendEmailSchema.cc ? [{ name: '', address: sendEmailSchema.cc }] : []),
+                    bcc: Array.isArray(sendEmailSchema.bcc) ? sendEmailSchema.bcc.map(addr => ({ name: '', address: addr })) : (sendEmailSchema.bcc ? [{ name: '', address: sendEmailSchema.bcc }] : [])
+                };
+                const emailContent = {
+                    htmlContent: sendEmailSchema.html,
+                    textContent: sendEmailSchema.text,
+                    attachments: sendEmailSchema.attachments || []
+                };
+                await storage.saveSentEmail(uid, emailHeader, emailContent);
+            
+            } else if (!result && storage) {
+                // 发送失败，保存到草稿箱
+                const draftUid = sendEmailSchema.draftUid || `draft_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+                const emailHeader = {
+                    subject: sendEmailSchema.subject,
+                    from: [{ name: profile.name, address: profile.username }],
+                    to: Array.isArray(sendEmailSchema.to) ? sendEmailSchema.to.map(addr => ({ name: '', address: addr })) : (sendEmailSchema.to ? [{ name: '', address: sendEmailSchema.to }] : []),
+                    cc: Array.isArray(sendEmailSchema.cc) ? sendEmailSchema.cc.map(addr => ({ name: '', address: addr })) : (sendEmailSchema.cc ? [{ name: '', address: sendEmailSchema.cc }] : []),
+                    bcc: Array.isArray(sendEmailSchema.bcc) ? sendEmailSchema.bcc.map(addr => ({ name: '', address: addr })) : (sendEmailSchema.bcc ? [{ name: '', address: sendEmailSchema.bcc }] : [])
+                };
+                const emailContent = {
+                    htmlContent: sendEmailSchema.html,
+                    textContent: sendEmailSchema.text,
+                    attachments: sendEmailSchema.attachments || []
+                };
+                await storage.saveDraft(draftUid, emailHeader, emailContent);
+                logger.info(`email send failed, saved to drafts: ${draftUid}`);
+            }
+            
+            return result;
         } else {
             logger.error(`no valid outbox server configured`);
             throw new Error('no valid outbox server configured');
         }
+    }
+
+    async saveDraft(draftSchema) {
+        logger.info(`saveDraft: ${draftSchema.subject}`);
+        const profile = this.getCurrentProfile();
+        const storage = this.getCurrentStorage();
+        if (!profile || !storage) throw new Error('No active profile');
+
+        const uid = draftSchema.uid || `draft_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        const emailHeader = {
+            subject: draftSchema.subject,
+            from: [{ name: profile.name, address: profile.username }],
+            to: Array.isArray(draftSchema.to) ? draftSchema.to.map(addr => ({ name: '', address: addr })) : (draftSchema.to ? [{ name: '', address: draftSchema.to }] : []),
+            cc: Array.isArray(draftSchema.cc) ? draftSchema.cc.map(addr => ({ name: '', address: addr })) : (draftSchema.cc ? [{ name: '', address: draftSchema.cc }] : []),
+            bcc: Array.isArray(draftSchema.bcc) ? draftSchema.bcc.map(addr => ({ name: '', address: addr })) : (draftSchema.bcc ? [{ name: '', address: draftSchema.bcc }] : [])
+        };
+        const emailContent = {
+            htmlContent: draftSchema.html,
+            textContent: draftSchema.text,
+            attachments: draftSchema.attachments || []
+        };
+        await storage.saveDraft(uid, emailHeader, emailContent);
+        return uid;
+    }
+
+    async getDraftList(offset = 0, pageSize = 20) {
+        const storage = this.getCurrentStorage();
+        if (!storage) return [];
+        return await storage.getDraftList(offset, pageSize);
+    }
+
+    async getSentList(offset = 0, pageSize = 20) {
+        const storage = this.getCurrentStorage();
+        if (!storage) return [];
+        return await storage.getSentList(offset, pageSize);
+    }
+
+    async deleteDraft(uid) {
+        const storage = this.getCurrentStorage();
+        if (!storage) throw new Error('No active profile');
+        await storage.deleteDraft(uid);
     }
 }
 

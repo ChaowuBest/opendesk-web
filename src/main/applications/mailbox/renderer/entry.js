@@ -289,9 +289,9 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             case 'starred':
                 return { starred: true, limit: this.emailPerPage, offset: 0 };
             case 'draft':
-                return { limit: 0 };
+                return { type: 'draft', limit: this.emailPerPage, offset: 0 };
             case 'sent':
-                return { limit: 0 };
+                return { type: 'sent', limit: this.emailPerPage, offset: 0 };
             default:
                 return null;
         }
@@ -524,7 +524,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
     }
 
     /**
-     * 将一封邮件的抬头部分渲染为HTML
+     * 渲染单个邮件项，根据邮件类型显示不同的标识
      * @param {import('../common.js').EmailHeader} email
      * @returns {string}
      */
@@ -542,14 +542,38 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             subject_classes = "font-bold text-gray-800";
         }
 
+        // 根据邮件类型显示不同的图标
+        let typeIcon = '';
+        if (email.type === 'draft') {
+            typeIcon = '<i class="fa fa-file-alt text-gray-400 mr-1" title="草稿"></i>';
+        } else if (email.type === 'sent') {
+            typeIcon = '<i class="fa fa-paper-plane text-blue-400 mr-1" title="已发送"></i>';
+        }
+
+        // 显示收件人或发件人和日期
+        let infoLine = '';
+        if (email.type === 'sent' || email.type === 'draft') {
+            // 已发送和草稿显示收件人
+            const toAddresses = email.to && email.to.length > 0 
+                ? email.to.map(t => t.name || t.address).join(', ') 
+                : '无收件人';
+            infoLine = `<p class="text-gray-500 text-xs truncate mb-1">收件人: ${toAddresses}</p>`;
+        } else {
+            // 收件箱显示发件人
+            const fromAddress = email.from && email.from.length > 0 
+                ? (email.from[0].name || email.from[0].address) 
+                : '未知发件人';
+            infoLine = `<p class="text-gray-500 text-xs truncate mb-1">发件人: ${fromAddress}</p>`;
+        }
+
         return `
         <div class="${classes}" data-uid="${email.uid}">
             <div class="flex justify-between items-start mb-1">
-                <span class="${subject_classes}">${email.subject}</span>
+                <span class="${subject_classes}">${typeIcon}${email.subject || '(无主题)'}</span>
                 ${email.starred ? '<i class="fa fa-star text-yellow-500"></i>' : ''}
             </div>
-            <!-- <p class="text-gray-900 font-medium truncate mb-1 text-[13px]">test</p> -->
-            <p class="text-gray-500 line-clamp-2 text-xs leading-relaxed">${new Date(email.date).toLocaleString()}</p>
+            ${infoLine}
+            <p class="text-gray-400 text-xs">${new Date(email.date).toLocaleString()}</p>
         </div>
         `
     }
@@ -603,51 +627,9 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             return;
         }
 
-        const isSelected = email.uid === this.selectedEmailUid;
-        var classes = "email-item p-3 border-b cursor-pointer border-gray-200 border-l-4 ";
-        if (isSelected) {
-            classes += "bg-indigo-50/50 relative border-l-indigo-600";
-        } else {
-            classes += "hover:bg-gray-50 transition-colors border-l-transparent";
-        }
-
-        var subject_classes = "font-medium text-gray-500";
-        if (email.unread) {
-            subject_classes = "font-bold text-gray-800";
-        }
-
-        existingItem.className = classes;
-        existingItem.dataset.uid = email.uid;
-
-        // 更新内容
-        const subjectSpan = existingItem.querySelector('span');
-        const starIcon = existingItem.querySelector('.fa-star');
-        const dateP = existingItem.querySelector('p');
-
-        if (subjectSpan) {
-            subjectSpan.className = subject_classes;
-            subjectSpan.textContent = email.subject;
-        }
-
-        // 更新收藏图标
-        const iconContainer = existingItem.querySelector('.flex.justify-between');
-        if (iconContainer) {
-            if (email.starred) {
-                if (!starIcon) {
-                    const star = document.createElement('i');
-                    star.className = 'fa fa-star text-yellow-500';
-                    iconContainer.appendChild(star);
-                }
-            } else {
-                if (starIcon) {
-                    starIcon.remove();
-                }
-            }
-        }
-
-        if (dateP) {
-            dateP.textContent = new Date(email.date).toLocaleString();
-        }
+        // 完全重新渲染该邮件项，避免部分更新导致的布局问题
+        const newElement = this.createEmailItemElement(email);
+        existingItem.replaceWith(newElement);
     }
 
     shouldShowEmail(email) {
@@ -962,8 +944,28 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
     }
 
     async sendEmail(sendEmailSchema) {
-        await window.applicationAPI.call('sendEmail', sendEmailSchema);
-        this.reloadCurrentEmailContent();
+        // 显示小提示（右上角下方，不阻塞操作）
+        const toast = document.createElement('div');
+        toast.id = 'email-sending-toast';
+        toast.innerHTML = `
+            <div style="position: fixed; top: 80px; right: 20px; z-index: 9999; 
+                        background: white; padding: 12px 20px; border-radius: 8px; 
+                        box-shadow: 0 4px 12px rgba(0,0,0,0.15); 
+                        display: flex; align-items: center; gap: 10px;
+                        border-left: 4px solid #3b82f6;">
+                <i class="fas fa-spinner fa-spin" style="color: #3b82f6;"></i>
+                <span style="color: #374151; font-size: 14px;">正在发送邮件...</span>
+            </div>
+        `;
+        document.body.appendChild(toast);
+
+        try {
+            await window.applicationAPI.call('sendEmail', sendEmailSchema);
+        } finally {
+            // 移除提示
+            const toastEl = document.getElementById('email-sending-toast');
+            if (toastEl) toastEl.remove();
+        }
     }
 
     renderCurrentEmailHeader() {
@@ -1200,10 +1202,43 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             this.reloadCurrentEmailContent();
         });
         editor.addEventListener('send', async() => {
-            const mailSchema = await editor.getMailContent()
-            this.sendEmail(mailSchema);
+            const mailSchema = await editor.getMailContent();
+            // 先关闭编辑器
+            this.reloadCurrentEmailContent();
+            // 再发送邮件（带加载提示）
+            await this.sendEmail(mailSchema);
+        });
+
+        editor.addEventListener('saveDraft', async() => {
+            const mailSchema = await editor.getMailContent();
+            await this.saveDraft(mailSchema);
         });
         editor.setMailContent(operation, mailHeader, mailContent, replyContent, this.currentAccount)
+    }
+
+    async saveDraft(draftSchema) {
+        try {
+            const uid = await window.applicationAPI.call('saveDraft', draftSchema);
+            Swal.fire({
+                title: '保存成功',
+                text: '草稿已保存',
+                icon: 'success',
+                timer: 1500,
+                showConfirmButton: false
+            });
+            // 如果当前在草稿箱，刷新列表
+            if (this.currentFilter === 'draft') {
+                await this.handleFilter('draft');
+            }
+            return uid;
+        } catch (error) {
+            console.error('保存草稿失败:', error);
+            Swal.fire({
+                title: '保存失败',
+                text: error.message || '保存草稿时发生错误',
+                icon: 'error'
+            });
+        }
     }
 
     async handleFilter(filter) {
@@ -1227,13 +1262,6 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
                 this.hasMoreEmails = false;
             }
             this.reloadEmailList(this.emailHeaderList, true);
-        } else if (query.limit === 0) {
-            // 如果 limit 为 0，表示应该显示空列表（草稿/已发送）
-            this.currentSearchQuery = null;
-            this.currentOffset = 0;
-            this.hasMoreEmails = false;
-            this.emailHeaderList.clear();
-            this.reloadEmailList(new Map(), true);
         } else {
             // 其他筛选条件，从数据库搜索
             await this.loadFilteredEmails(query, true);
@@ -1251,31 +1279,54 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         `;
         this.selectedEmailHeader = this.emailHeaderList.get(this.selectedEmailUid);
 
-        if (redownload) {
-            this.selectedEmailContent = await this.reDownloadEmailContent(this.selectedEmailUid);
-        } else {
+        // 如果是草稿或已发送，从本地数据库加载
+        if (this.selectedEmailHeader.type === 'draft' || this.selectedEmailHeader.type === 'sent') {
             this.selectedEmailContent = await this.getEmailContent(this.selectedEmailUid);
+        } else {
+            // 收件箱邮件，可能需要从服务器下载
+            if (redownload) {
+                this.selectedEmailContent = await this.reDownloadEmailContent(this.selectedEmailUid);
+            } else {
+                this.selectedEmailContent = await this.getEmailContent(this.selectedEmailUid);
+            }
         }
 
         if (!this.selectedEmailContent) {
             return;
         }
 
-        // 根据邮件状态动态设置已读/未读按钮
-        const readUnreadButton = this.selectedEmailHeader.unread
-            ? { id: 'mailbox-mark-read-button', icon: 'fa-envelope-open', label: '标为已读', action: () => this.markEmailAsRead(this.selectedEmailUid) }
-            : { id: 'mailbox-mark-unread-button', icon: 'fa-envelope', label: '标为未读', action: () => this.markEmailAsUnread(this.selectedEmailUid) };
+        // 根据邮件类型显示不同的操作按钮
+        let topButtons = [];
+        
+        if (this.selectedEmailHeader.type === 'draft') {
+            // 草稿：编辑、删除
+            topButtons = [
+                { id: 'mailbox-edit-draft-button', icon: 'fa-edit', label: '编辑', action: () => this.editDraft(this.selectedEmailUid) },
+                { id: 'mailbox-delete-draft-button', icon: 'fa-trash-alt', label: '删除', action: () => this.handleDeleteDraft(this.selectedEmailUid) },
+            ];
+        } else if (this.selectedEmailHeader.type === 'sent') {
+            // 已发送：转发、删除
+            topButtons = [
+                { id: 'mailbox-forward-button', icon: 'fa-share', label: '转发', action: () => this.createNewEmail(MailOperations.FORWARD, this.selectedEmailHeader, this.selectedEmailContent) },
+                { id: 'mailbox-trash-button', icon: 'fa-trash-alt', label: '删除', action: () => this.handleDelete(this.selectedEmailUid) },
+                { id: 'mailbox-star-button', icon: 'fa-star', label: '收藏', action: () => this.starEmail(this.selectedEmailUid, !this.selectedEmailHeader.starred) },
+            ];
+        } else {
+            // 收件箱：回复、转发、删除等
+            const readUnreadButton = this.selectedEmailHeader.unread
+                ? { id: 'mailbox-mark-read-button', icon: 'fa-envelope-open', label: '标为已读', action: () => this.markEmailAsRead(this.selectedEmailUid) }
+                : { id: 'mailbox-mark-unread-button', icon: 'fa-envelope', label: '标为未读', action: () => this.markEmailAsUnread(this.selectedEmailUid) };
 
-        const topButtons = [
-            { id: 'mailbox-reply-button', icon: 'fa-reply', label: '回复', action: () => this.createNewEmail(MailOperations.REPLY, this.selectedEmailHeader, this.selectedEmailContent) },
-            { id: 'mailbox-reply-all-button', icon: 'fa-reply-all', label: '回复全部', action: () => this.createNewEmail(MailOperations.REPLYALL, this.selectedEmailHeader, this.selectedEmailContent) },
-            { id: 'mailbox-forward-button', icon: 'fa-share', label: '转发', action: () => this.createNewEmail(MailOperations.FORWARD, this.selectedEmailHeader, this.selectedEmailContent) },
-            { id: 'mailbox-reload-button', icon: 'fa-redo-alt', label: '重新下载', action: () => this.openEmailByUid(this.selectedEmailUid, true) },
-            { id: 'mailbox-trash-button', icon: 'fa-trash-alt', label: '删除', action: () => this.handleDelete(this.selectedEmailUid) },
-            { id: 'mailbox-star-button', icon: 'fa-star', label: '收藏', action: () => this.starEmail(this.selectedEmailUid, !this.selectedEmailHeader.starred) },
-            readUnreadButton,
-
-        ]
+            topButtons = [
+                { id: 'mailbox-reply-button', icon: 'fa-reply', label: '回复', action: () => this.createNewEmail(MailOperations.REPLY, this.selectedEmailHeader, this.selectedEmailContent) },
+                { id: 'mailbox-reply-all-button', icon: 'fa-reply-all', label: '回复全部', action: () => this.createNewEmail(MailOperations.REPLYALL, this.selectedEmailHeader, this.selectedEmailContent) },
+                { id: 'mailbox-forward-button', icon: 'fa-share', label: '转发', action: () => this.createNewEmail(MailOperations.FORWARD, this.selectedEmailHeader, this.selectedEmailContent) },
+                { id: 'mailbox-reload-button', icon: 'fa-redo-alt', label: '重新下载', action: () => this.openEmailByUid(this.selectedEmailUid, true) },
+                { id: 'mailbox-trash-button', icon: 'fa-trash-alt', label: '删除', action: () => this.handleDelete(this.selectedEmailUid) },
+                { id: 'mailbox-star-button', icon: 'fa-star', label: '收藏', action: () => this.starEmail(this.selectedEmailUid, !this.selectedEmailHeader.starred) },
+                readUnreadButton,
+            ];
+        }
 
         const toolbar = new ElasticToolbarWidget(topButtons);
         toolbar.classList.add('pl-3', 'pr-16')
@@ -1326,6 +1377,104 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
                 this.isHeadersExpanded = !this.isHeadersExpanded;
                 this.reloadCurrentEmailContent();
             });
+        }
+    }
+
+    async editDraft(uid) {
+        const email = this.emailHeaderList.get(uid);
+        const content = await this.getEmailContent(uid);
+        if (!email || !content) {
+            Swal.fire({
+                title: '错误',
+                text: '无法加载草稿内容',
+                icon: 'error'
+            });
+            return;
+        }
+
+        // 打开编辑器，传入草稿的 uid
+        const emailContent = this.querySelector('#email-content');
+        const editor = new MailEditorWidget();
+        editor.classList.add('flex-1', 'overflow-y-auto', 'bg-white');
+        editor.id = 'editor';
+        editor.draftUid = uid; // 保存草稿 uid
+        emailContent.innerHTML = '';
+        emailContent.appendChild(editor);
+        
+        editor.addEventListener('cancel', () => {
+            this.reloadCurrentEmailContent();
+        });
+        
+        editor.addEventListener('send', async() => {
+            const mailSchema = await editor.getMailContent();
+            mailSchema.draftUid = uid; 
+            // 先关闭编辑器
+            this.reloadCurrentEmailContent();
+            // 再发送邮件（带加载提示）
+            await this.sendEmail(mailSchema);
+            this.deleteEmail(uid);
+        });
+        
+        editor.addEventListener('saveDraft', async() => {
+            const mailSchema = await editor.getMailContent();
+            mailSchema.uid = uid; // 更新现有草稿
+            await this.saveDraft(mailSchema);
+        });
+
+        // 设置编辑器内容
+        await editor.setMailContent(MailOperations.SEND, email, content);
+    }
+
+    async handleDeleteDraft(uid) {
+        const result = await Swal.fire({
+            title: '确定要删除这个草稿吗？',
+            text: "此操作无法撤销",
+            icon: 'warning',
+            showCancelButton: true,
+            confirmButtonColor: '#d33',
+            cancelButtonColor: '#3085d6',
+            confirmButtonText: '确定',
+            cancelButtonText: '取消',
+            didOpen: (popup) => {
+                popup.style.fontSize = '0.8rem';
+            },
+        });
+
+        if (result.isConfirmed) {
+            try {
+                await window.applicationAPI.call('deleteDraft', uid);
+                this.emailHeaderList.delete(uid);
+                
+                // 移除邮件项的 DOM
+                const emailListContainer = this.querySelector('#email-list');
+                if (emailListContainer) {
+                    const item = emailListContainer.querySelector(`[data-uid="${uid}"]`);
+                    if (item) {
+                        item.remove();
+                    }
+                }
+
+                // 清空右侧内容区
+                this.selectedEmailUid = null;
+                this.selectedEmailHeader = null;
+                this.selectedEmailContent = null;
+                this.querySelector('#email-content').innerHTML = '';
+
+                Swal.fire({
+                    title: '删除成功',
+                    text: '草稿已删除',
+                    icon: 'success',
+                    timer: 1500,
+                    showConfirmButton: false
+                });
+            } catch (error) {
+                console.error('删除草稿失败:', error);
+                Swal.fire({
+                    title: '删除失败',
+                    text: error.message,
+                    icon: 'error'
+                });
+            }
         }
     }
 
@@ -1854,9 +2003,36 @@ class MailEditorWidget extends AgentOperableHTMLElement {
         this.render();
     }
 
-    cancel() {
+    async cancel() {
         console.info('cancel');
-        this.dispatchEvent(new CustomEvent('cancel'), { bubbles: true });
+        
+        // 弹出确认对话框，询问是否保存草稿
+        const result = await Swal.fire({
+            title: '是否保存草稿？',
+            text: '您可以选择保存草稿或直接退出',
+            icon: 'question',
+            showCancelButton: true,
+            showDenyButton: true,
+            confirmButtonColor: '#3085d6',
+            denyButtonColor: '#6c757d',
+            cancelButtonColor: '#d33',
+            confirmButtonText: '保存草稿',
+            denyButtonText: '不保存',
+            cancelButtonText: '继续编辑',
+            didOpen: (popup) => {
+                popup.style.fontSize = '0.9rem';
+            },
+        });
+
+        if (result.isConfirmed) {
+            // 用户选择保存草稿
+            await this.saveDraft();
+            this.dispatchEvent(new CustomEvent('cancel'), { bubbles: true });
+        } else if (result.isDenied) {
+            // 用户选择不保存，直接退出
+            this.dispatchEvent(new CustomEvent('cancel'), { bubbles: true });
+        }
+        // 如果用户点击"继续编辑"或关闭对话框，则什么都不做
     }
 
     send() {
@@ -1980,6 +2156,7 @@ class MailEditorWidget extends AgentOperableHTMLElement {
     render() {
         const buttons = [
             { id: 'send-email-cancel-button', icon: 'fa-circle-arrow-left', label: '取消', action: () => this.cancel() },
+            { id: 'send-email-save-draft-button', icon: 'fa-save', label: '保存草稿', action: () => this.saveDraft() },
             { id: 'send-email-send-button', icon: 'fa-paper-plane', label: '发送', action: () => this.send() },
             { id: 'send-email-magic-write-button', icon: 'fa-wand-sparkles', label: '帮我写', labelStayVisible: true, action: () => this.magicWrite() },
         ]
@@ -2207,6 +2384,10 @@ class MailEditorWidget extends AgentOperableHTMLElement {
         window.tagifyInstances = this.tagifyInstances;
 
         console.log("Tagify (To, Cc, Bcc) 初始化完成！");
+    }
+
+    saveDraft() {
+        this.dispatchEvent(new CustomEvent('saveDraft', { bubbles: true }));
     }
 }
 
