@@ -14,7 +14,9 @@ class SkillsApplication extends BaseApplication {
   }
 
   static getConfigSchema() {
-    return z.object({});
+    return z.object({
+        enabled: z.boolean().describe('是否启用技能').default(false)
+    });
   }
 
   getGUIConfig() {
@@ -26,7 +28,11 @@ class SkillsApplication extends BaseApplication {
   }
 
   async getToolsets() {
-    return SkillRegistry.getToolsets();
+    if (this.getConfig()?.enabled === true) {
+        return SkillRegistry.getToolsets();
+    } else {
+        return [];
+    }
   }
 
   getSkillsDirectory() {

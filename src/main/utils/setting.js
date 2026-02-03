@@ -137,6 +137,10 @@ class Setting {
         return Setting.instance;
     }
 
+    static clearCache() {
+        Setting.instance = null;
+    }
+
     /**
      * Update the setting data directly (used by worker thread to sync settings from main thread)
      * @param {object} data - The new setting data
@@ -172,11 +176,7 @@ class Setting {
     static load() {
         const settingDirectory = getAppDirectory();
         let settingFile = path.join(settingDirectory, 'setting.json');
-        if (!fs.existsSync(settingFile)) {
-            // If the application's setting.json path does not exist, switch to the default main setting.json
-            const parentDir = path.dirname(path.dirname(settingDirectory));
-            settingFile = path.join(parentDir, 'setting.json');
-        }
+        console.info(`loading setting from ${settingFile}`);
         if (!fs.existsSync(settingFile)) {
             return null;
         }
