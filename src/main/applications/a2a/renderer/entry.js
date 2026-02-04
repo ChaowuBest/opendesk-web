@@ -148,41 +148,86 @@ class A2AEntryWidget extends HTMLElement {
                 }
             }
 
-            // 提交答案 (submit_quiz) ---
             else if (actionName === 'submit_quiz') {
-                const messageBubble = btn.closest('.a2ui-root') || document;                
+                if (btn.disabled || btn.classList.contains('a2ui-btn-disabled')) {
+                    return;
+                }
+
+                const messageBubble = btn.closest('.a2ui-root') || document;
                 const answers = [];
                 const allRadios = messageBubble.querySelectorAll('input[type="radio"]');
                 const seenGroups = new Set();
+                let originalQuestionsMap = [];
+                try {
+                    const rawModelStr = messageBubble.getAttribute('data-a2ui-model');
+                    if (rawModelStr) {
+                        const decodedStr = decodeURIComponent(rawModelStr);
+                        const parsedMessages = JSON.parse(decodedStr);
+                        
+                        const updates = Array.isArray(parsedMessages) ? parsedMessages : [parsedMessages];
+                        for (const update of updates) {
+                            if (update.dataModelUpdate && update.dataModelUpdate.contents) {
+                                const qData = update.dataModelUpdate.contents.find(c => c.key === 'questions');
+                                if (qData && qData.valueMap) {
+                                    originalQuestionsMap = qData.valueMap;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                } catch (e) {
+                    console.error("[Debug] 读取原始数据失败:", e);
+                }
 
+                let groupIndex = 0; 
                 allRadios.forEach(radio => {
-                    radio.disabled = true; 
-                    radio.setAttribute('disabled', 'disabled'); // 显式写入 HTML 属性
+                    radio.disabled = true;
+                    radio.setAttribute('disabled', 'disabled');
                     if (radio.checked) {
                         radio.setAttribute('checked', 'checked');
+                    } else {
+                        radio.removeAttribute('checked');
                     }
                     if (seenGroups.has(radio.name)) return;
                     seenGroups.add(radio.name);
-
                     const checked = messageBubble.querySelector(`input[name="${radio.name}"]:checked`);
                     const qIndex = answers.length + 1;
                     const qId = `question${qIndex}`;
-                    
                     const userSelection = checked ? checked.value : "OptionA"; 
-                    
-                    answers.push({
+
+                    const answerObj = {
                         questionId: qId,
                         userSelection: `Option${userSelection}`
-                    });
+                    };
+                    if (originalQuestionsMap.length > groupIndex) {
+                        const originalQ = originalQuestionsMap[groupIndex];
+                        if (originalQ && originalQ.valueMap) {
+                            const getValue = (key) => {
+                                const item = originalQ.valueMap.find(v => v.key === key);
+                                return item ? (item.valueString || '') : '';
+                            };
+                            
+                            answerObj.question = getValue('question');
+                            answerObj.correctAnswer = getValue('correctAnswer');
+                            answerObj.optionA = getValue('optionA');
+                            answerObj.optionB = getValue('optionB');
+                            answerObj.optionC = getValue('optionC');
+                            answerObj.optionD = getValue('optionD');
+                        }
+                    }
+                    
+                    answers.push(answerObj);
+                    groupIndex++;
                 });
                 btn.disabled = true;
-                btn.textContent = '已提交'; // 更改按钮文字提供反馈
+                btn.setAttribute('disabled', 'disabled'); 
+                btn.textContent = '已提交'; 
                 btn.classList.add('a2ui-btn-disabled');
                 const updatedHtml = messageBubble.outerHTML;
                 for (let i = this.conversationHistory.length - 1; i >= 0; i--) {
                     const msg = this.conversationHistory[i];
                     if (msg.role === 'assistant') {
-                        msg.content = updatedHtml;
+                        msg.content = updatedHtml; 
                         break; 
                     }
                 }
@@ -191,9 +236,8 @@ class A2AEntryWidget extends HTMLElement {
                         questions: answers
                     }
                 };
-                // 触发 agent_executor.py:129
                 messageToSend = `ACTION: submit_quiz with data: ${JSON.stringify(payload)}`;
-            } 
+            }
             // 处理打开链接 (open_url) ---
             else if (actionName === 'open_url') {
                 let url = actionDef.context ? actionDef.context.url : null;
