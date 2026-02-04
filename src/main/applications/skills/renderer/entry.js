@@ -339,7 +339,7 @@ class SkillsEntryWidget extends HTMLElement {
       </style>
       <div class="head">
         <div class="header">
-          <h2>本地技能</h2>
+          <h2>Skills</h2>
           <button type="button" class="btn" id="refresh-btn" ${this.loading ? 'disabled' : ''}>${this.loading ? '刷新中…' : '刷新'}</button>
           <button type="button" class="btn" id="add-btn" ${this.loading ? 'disabled' : ''}>添加</button>
         </div>
