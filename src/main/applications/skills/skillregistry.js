@@ -498,7 +498,7 @@ function addSkillFromZipPath(zipPath) {
 
 /**
  * 从 URL 添加技能：下载 zip 并解压，查找含 SKILL.md 的根后复制到用户技能目录
- * @param {string} url - 技能包 zip 的 URL（如 GitHub archive）
+ * @param {string} url - 技能包 zip 的 URL
  * @returns {Promise<{ success: boolean, name?: string, error?: string }>}
  */
 async function addSkillFromUrl(url) {

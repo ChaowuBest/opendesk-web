@@ -253,7 +253,7 @@ class SkillsEntryWidget extends HTMLElement {
         </div>
         <div class="add-section">
           <label>从 URL 添加</label>
-          <p class="add-hint">输入技能包 zip 的 URL（如 GitHub archive）</p>
+          <p class="add-hint">输入技能包 zip 的 URL</p>
           <div class="add-url-row">
             <input type="url" class="add-url-input" id="add-url-input" placeholder="https://..." value="${escapeHtml(this.addUrl)}" ${this.addingFromUrl ? 'disabled' : ''} />
             <button type="button" class="btn" id="add-from-url-btn" ${this.addingFromUrl ? 'disabled' : ''}>${this.addingFromUrl ? '下载中…' : '下载并添加'}</button>
