@@ -1193,6 +1193,7 @@ class MailboxWorker extends BaseWorker {
 
     notifyMailboxOpened() {
         this.isMailboxOpened = true;
+        this.clearNewEmailCount(this.currentProfileId);
     }
 
     async reloadProfilesFromConfig() {
