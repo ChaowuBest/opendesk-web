@@ -661,7 +661,7 @@ class MailboxStorage {
 
     async getEmailHeaderList(offset = 0, pageSize = 20) {
         const docs = await this.db.find({
-            deleted: { $ne: true }, 
+            deleted: { $ne: true },
             $and: [
                 { type: { $ne: 'draft' } },
                 { type: { $ne: 'sent' } }
@@ -879,6 +879,9 @@ class MailboxWorker extends BaseWorker {
         this.profileMap = new Map(); // username -> EmailProfileSchema
         this.currentProfileId = null; // 当前选中的 profile username
         this.isSyncing = false;
+        // 跟踪每个账号的新邮件数量（基于同步时新增的邮件）
+        this.newEmailCounts = new Map(); // username -> number
+        this.isMailboxOpened = false;
     }
 
     async syncPOP3Inbox(profile, storage) {
@@ -1123,6 +1126,13 @@ class MailboxWorker extends BaseWorker {
                         newEmailCount = await this.syncPOP3Inbox(profile, storage);
                     }
                     if (newEmailCount > 0) {
+                        // 只有当 isMailboxOpened 为true且currentProfileId = id 时，才认为用户正在查看该账号，不增加计数
+                        const isViewingThisAccount = (this.isMailboxOpened === true && this.currentProfileId === id);
+                        if (!isViewingThisAccount) {
+                            const currentNewCount = this.newEmailCounts.get(id) || 0;
+                            this.newEmailCounts.set(id, currentNewCount + newEmailCount);
+                            this.emitEvent('newEmailCountsUpdated', this.getAllNewEmailCounts());
+                        }
                         this.notifyEmailListUpdated(id);
                     }
                 } catch (accError) {
@@ -1171,8 +1181,18 @@ class MailboxWorker extends BaseWorker {
             }
         }
         this.currentProfileId = email;
-        logger.info(`switched to profile: ${email}`);
+        // 清除该账号的新邮件标记（用户已进入邮件应用并切换到此账号）
+        // 无论之前是否是不同的账号，都清除新邮件标记
+        this.clearNewEmailCount(email);
         return true;
+    }
+
+    notifyMailboxClosed() {
+        this.isMailboxOpened = false;
+    }
+
+    notifyMailboxOpened() {
+        this.isMailboxOpened = true;
     }
 
     async reloadProfilesFromConfig() {
@@ -1292,6 +1312,26 @@ class MailboxWorker extends BaseWorker {
         if (storage) await storage.deleteEmail(uid);
     }
 
+    getNewEmailCount(username) {
+        return this.newEmailCounts.get(username) || 0;
+    }
+
+    getAllNewEmailCounts() {
+        const counts = {};
+        for (const [username, _] of this.profileMap) {
+            counts[username] = this.getNewEmailCount(username);
+        }
+        return counts;
+    }
+
+    clearNewEmailCount(username) {
+        // 无论该账号是否在 Map 中，都设置为 0（确保清除标记）
+        this.newEmailCounts.set(username, 0);
+        // 无论之前是否有数量，都通知前端更新标记（确保标记被清除）
+        const allCounts = this.getAllNewEmailCounts();
+        this.emitEvent('newEmailCountsUpdated', allCounts);
+    }
+
     async getEmailContent(uid) {
         logger.info(`getting email content: ${uid}`);
         const storage = this.getCurrentStorage();
@@ -1405,7 +1445,7 @@ class MailboxWorker extends BaseWorker {
             );
             const result = await smtp.sendMail(sendEmailSchema.to , sendEmailSchema.cc, sendEmailSchema.bcc,
                 sendEmailSchema.subject, sendEmailSchema.text, sendEmailSchema.html, sendEmailSchema.attachments);
-            
+
             if (result && storage) {
                 // 发送成功后保存到已发送
                 const uid = `sent_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -1422,7 +1462,7 @@ class MailboxWorker extends BaseWorker {
                     attachments: sendEmailSchema.attachments || []
                 };
                 await storage.saveSentEmail(uid, emailHeader, emailContent);
-            
+
             } else if (!result && storage) {
                 // 发送失败，保存到草稿箱
                 const draftUid = sendEmailSchema.draftUid || `draft_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -1441,7 +1481,7 @@ class MailboxWorker extends BaseWorker {
                 await storage.saveDraft(draftUid, emailHeader, emailContent);
                 logger.info(`email send failed, saved to drafts: ${draftUid}`);
             }
-            
+
             return result;
         } else {
             logger.error(`no valid outbox server configured`);

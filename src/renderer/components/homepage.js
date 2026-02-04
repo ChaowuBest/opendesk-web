@@ -14,11 +14,64 @@ class HomePage extends HTMLElement {
 
         /** @type {NodeJS.Timeout | null} */
         this.__search_timeout = null;
+        this.unreadCount = 0;
     }
 
     connectedCallback() {
         this.render();
         this.setUpEventListeners();
+        this.subscribeToUnreadCounts();
+    }
+
+    disconnectedCallback() {
+        // 清理订阅
+        if (this.unreadCountsUnsubscribe) {
+            this.unreadCountsUnsubscribe();
+        }
+    }
+
+    async subscribeToUnreadCounts() {
+        try {
+            await window.applicationRegistryAPI.subscribeEvent('mailbox', 'newEmailCountsUpdated', (counts) => {
+                this.updateNewEmailCount(counts);
+            });
+            // 初始加载新邮件数量
+            try {
+                const counts = await window.applicationRegistryAPI.call('mailbox', 'getAllNewEmailCounts');
+                this.updateNewEmailCount(counts);
+            } catch (error) {
+                console.error('Failed to get initial new email counts:', error);
+            }
+        } catch (error) {
+            console.error('Failed to subscribe to new email counts:', error);
+        }
+    }
+
+    updateNewEmailCount(counts) {
+        // 计算总新邮件数量
+        const total = Object.values(counts || {}).reduce((sum, count) => sum + (count || 0), 0);
+        this.unreadCount = total;
+        this.updateBadge();
+    }
+
+    updateBadge() {
+        const inboxButton = this.querySelector('[onclick*="mailbox"]');
+        if (!inboxButton) return;
+
+        // 移除现有的标记
+        const existingBadge = inboxButton.querySelector('.unread-badge');
+        if (existingBadge) {
+            existingBadge.remove();
+        }
+
+        // 如果有未读邮件，添加标记
+        if (this.unreadCount > 0) {
+            const badge = document.createElement('span');
+            badge.className = 'unread-badge absolute -top-1 -right-1 bg-red-500 text-white text-xs font-bold rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1';
+            badge.textContent = this.unreadCount > 99 ? '99+' : this.unreadCount.toString();
+            inboxButton.style.position = 'relative';
+            inboxButton.appendChild(badge);
+        }
     }
 
     setUpEventListeners() {
@@ -73,7 +126,7 @@ class HomePage extends HTMLElement {
                 <div class="flex flex-wrap justify-center gap-3">
 
                     <!-- 收件箱 -->
-                    <button class="flex items-center space-x-2 px-3 py-2 bg-white rounded-full shadow-sm hover:shadow-md border border-gray-200 transition-all"
+                    <button class="flex items-center space-x-2 px-3 py-2 bg-white rounded-full shadow-sm hover:shadow-md border border-gray-200 transition-all relative"
                         onclick="window.globalControlAPI.openApplication('mailbox')">
                         <i class="fas fa-inbox text-indigo-500 text-sm"></i>
                         <span class="text-sm text-gray-700">收件箱</span>

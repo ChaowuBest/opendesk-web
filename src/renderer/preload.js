@@ -397,6 +397,21 @@ if (window.self !== window.top) {
                 throw new Error(result.message);
             }
             return result.data;
+        },
+        subscribeEvent: async (bundleName, eventName, callback) => {
+            const result = await ipcRenderer.invoke('applicationRegistry:subscribe', bundleName, eventName);
+            if (result.status !== 'ok') {
+                console.error('subscribing event failed', bundleName, eventName, result.message);
+                throw new Error(result.message);
+            }
+            ipcRenderer.on(`applicationRegistry:event:${eventName}`, (event, ...args) => {
+                callback(...args);
+            });
+            // 返回取消订阅函数
+            return () => {
+                ipcRenderer.removeAllListeners(`applicationRegistry:event:${eventName}`);
+                ipcRenderer.invoke('applicationRegistry:unsubscribe', bundleName, eventName);
+            };
         }
     });
 
