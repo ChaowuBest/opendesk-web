@@ -92,6 +92,7 @@
 
         function openTask(taskId) {
             ensureSlots();
+            window.applicationRegistryAPI.call('mailbox', 'notifyMailboxClosed')
             if (taskId === null) {
                 nonAppSlot.innerHTML = '<home-page id="home-page" class="h-full w-full" style="width:100%;height:100%;"/>';
             } else {
@@ -102,6 +103,7 @@
 
         function openHomePage() {
             ensureSlots();
+            window.applicationRegistryAPI.call('mailbox', 'notifyMailboxClosed')
             nonAppSlot.innerHTML = '<home-page id="home-page" class="h-full w-full" style="width:100%;height:100%;"/>';
             showNonApp();
         }
@@ -133,6 +135,12 @@
             openHomePage: openHomePage,
             openApplication: function (bundleName) {
                 ensureSlots();
+                // 如果切换到其他应用，通知邮箱应用用户已离开
+                if (bundleName !== 'mailbox') {
+                    window.applicationRegistryAPI.call('mailbox', 'notifyMailboxClosed')
+                } else {
+                    window.applicationRegistryAPI.call('mailbox', 'notifyMailboxOpened')
+                }
                 if (!appFrameCache[bundleName]) {
                     var iframe = document.createElement('iframe');
                     iframe.className = 'w-full h-full';

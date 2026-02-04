@@ -96,6 +96,9 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         this.setupAccountSelectorListeners();
         this.setupScrollListener();
 
+        // 通知后端用户已进入邮箱应用
+        await window.applicationAPI.call('notifyMailboxOpened');
+
         // 初始化加载
         try {
             await this.loadAccounts();
@@ -156,10 +159,9 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             if (this.accounts && this.accounts.length > 0) {
                 // 找到当前活跃的账号，如果没有则默认第一个
                 this.currentAccount = this.accounts.find(a => a.active) || this.accounts[0];
-                // 如果后端没有标记任何 active，则主动切换到第一个
-                if (!this.accounts.find(a => a.active)) {
-                    await this.switchAccount(this.currentAccount.email);
-                }
+                // 无论后端是否有 active 账号，都调用 switchAccount 来确保状态同步
+                // 这样可以确保 currentProfileId 被设置，并清除新邮件标记
+                await this.switchAccount(this.currentAccount.email);
             } else {
                 this.accounts = [];
                 this.currentAccount = null;
@@ -175,8 +177,6 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
      * @param {string} email
      */
     async switchAccount(email) {
-        if (this.currentAccount && this.currentAccount.email === email && this.accounts.length > 1) return;
-
         try {
             await window.applicationAPI.call('switchAccount', email);
 
@@ -554,14 +554,14 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         let infoLine = '';
         if (email.type === 'sent' || email.type === 'draft') {
             // 已发送和草稿显示收件人
-            const toAddresses = email.to && email.to.length > 0 
-                ? email.to.map(t => t.name || t.address).join(', ') 
+            const toAddresses = email.to && email.to.length > 0
+                ? email.to.map(t => t.name || t.address).join(', ')
                 : '无收件人';
             infoLine = `<p class="text-gray-500 text-xs truncate mb-1">收件人: ${toAddresses}</p>`;
         } else {
             // 收件箱显示发件人
-            const fromAddress = email.from && email.from.length > 0 
-                ? (email.from[0].name || email.from[0].address) 
+            const fromAddress = email.from && email.from.length > 0
+                ? (email.from[0].name || email.from[0].address)
                 : '未知发件人';
             infoLine = `<p class="text-gray-500 text-xs truncate mb-1">发件人: ${fromAddress}</p>`;
         }
@@ -948,9 +948,9 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         const toast = document.createElement('div');
         toast.id = 'email-sending-toast';
         toast.innerHTML = `
-            <div style="position: fixed; top: 80px; right: 20px; z-index: 9999; 
-                        background: white; padding: 12px 20px; border-radius: 8px; 
-                        box-shadow: 0 4px 12px rgba(0,0,0,0.15); 
+            <div style="position: fixed; top: 80px; right: 20px; z-index: 9999;
+                        background: white; padding: 12px 20px; border-radius: 8px;
+                        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
                         display: flex; align-items: center; gap: 10px;
                         border-left: 4px solid #3b82f6;">
                 <i class="fas fa-spinner fa-spin" style="color: #3b82f6;"></i>
@@ -1297,7 +1297,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
 
         // 根据邮件类型显示不同的操作按钮
         let topButtons = [];
-        
+
         if (this.selectedEmailHeader.type === 'draft') {
             // 草稿：编辑、删除
             topButtons = [
@@ -1400,21 +1400,21 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         editor.draftUid = uid; // 保存草稿 uid
         emailContent.innerHTML = '';
         emailContent.appendChild(editor);
-        
+
         editor.addEventListener('cancel', () => {
             this.reloadCurrentEmailContent();
         });
-        
+
         editor.addEventListener('send', async() => {
             const mailSchema = await editor.getMailContent();
-            mailSchema.draftUid = uid; 
+            mailSchema.draftUid = uid;
             // 先关闭编辑器
             this.reloadCurrentEmailContent();
             // 再发送邮件（带加载提示）
             await this.sendEmail(mailSchema);
             this.deleteEmail(uid);
         });
-        
+
         editor.addEventListener('saveDraft', async() => {
             const mailSchema = await editor.getMailContent();
             mailSchema.uid = uid; // 更新现有草稿
@@ -1444,7 +1444,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             try {
                 await window.applicationAPI.call('deleteDraft', uid);
                 this.emailHeaderList.delete(uid);
-                
+
                 // 移除邮件项的 DOM
                 const emailListContainer = this.querySelector('#email-list');
                 if (emailListContainer) {
@@ -2005,7 +2005,7 @@ class MailEditorWidget extends AgentOperableHTMLElement {
 
     async cancel() {
         console.info('cancel');
-        
+
         // 弹出确认对话框，询问是否保存草稿
         const result = await Swal.fire({
             title: '是否保存草稿？',

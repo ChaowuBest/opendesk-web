@@ -24,7 +24,9 @@ class SideBar extends HTMLElement {
     }
 
     disconnectedCallback() {
-
+        if (this.unreadCountsUnsubscribe) {
+            this.unreadCountsUnsubscribe();
+        }
     }
 
     setUpEventListeners() {
@@ -152,14 +154,80 @@ class SideBar extends HTMLElement {
         const app_container = this.querySelector('#app-container');
         app_container.innerHTML = '';
         for (let app of await window.applicationRegistryAPI.getApplicationList()) {
+            const isMailbox = app.bundleName === 'mailbox';
             app_container.innerHTML += `
-            <div class="flex flex-col items-center group cursor-pointer" onclick="window.globalControlAPI.openApplication('${app.bundleName}')">
-                <div class="rounded-full w-12 h-12 shadow-lg transform transition duration-200 group-hover:brightness-90 group-active:scale-95 flex items-center justify-center">
+            <div class="flex flex-col items-center group cursor-pointer relative" onclick="window.globalControlAPI.openApplication('${app.bundleName}')" data-bundle-name="${app.bundleName}">
+                <div class="rounded-full w-12 h-12 shadow-lg transform transition duration-200 group-hover:brightness-90 group-active:scale-95 flex items-center justify-center relative">
                     <img src="./applications/${app.bundleName}/icon.png" alt="${app.name}" class="w-full h-full object-cover">
+                    ${isMailbox ? '<span class="mailbox-unread-badge absolute -top-1 -right-1 bg-red-500 text-white text-xs font-bold rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1 hidden">0</span>' : ''}
                 </div>
                 <span class="mt-2 text-xs font-medium text-gray-800 drop-shadow-sm w-16 text-center truncate">${app.name}</span>
             </div>
             `
+        }
+        // 更新邮箱应用的未读数量标记
+        this.updateMailboxBadge();
+    }
+
+    async updateMailboxBadge() {
+        try {
+            const counts = await window.applicationRegistryAPI.call('mailbox', 'getAllNewEmailCounts');
+            const total = Object.values(counts || {}).reduce((sum, count) => sum + (count || 0), 0);
+            const mailboxApp = this.querySelector('[data-bundle-name="mailbox"]');
+            if (mailboxApp) {
+                const badge = mailboxApp.querySelector('.mailbox-unread-badge');
+                if (badge) {
+                    if (total > 0) {
+                        badge.textContent = total > 99 ? '99+' : total.toString();
+                        badge.classList.remove('hidden');
+                    } else {
+                        badge.classList.add('hidden');
+                    }
+                }
+            }
+        } catch (error) {
+            console.error('Failed to update mailbox badge:', error);
+        }
+    }
+
+    connectedCallback() {
+        this.render();
+        window.taskManagerAPI.getTaskList().then(taskList => {
+            this.taskList = taskList;
+            this.reloadTaskList();
+            this.setUpEventListeners();
+            this.subscribeToUnreadCounts();
+        })
+    }
+
+    disconnectedCallback() {
+        if (this.unreadCountsUnsubscribe) {
+            this.unreadCountsUnsubscribe();
+        }
+    }
+
+    async subscribeToUnreadCounts() {
+        // 订阅新邮件数量更新事件
+        try {
+            this.unreadCountsUnsubscribe = await window.applicationRegistryAPI.subscribeEvent('mailbox', 'newEmailCountsUpdated', (counts) => {
+                const total = Object.values(counts || {}).reduce((sum, count) => sum + (count || 0), 0);
+                const mailboxApp = this.querySelector('[data-bundle-name="mailbox"]');
+                if (mailboxApp) {
+                    const badge = mailboxApp.querySelector('.mailbox-unread-badge');
+                    if (badge) {
+                        if (total > 0) {
+                            badge.textContent = total > 99 ? '99+' : total.toString();
+                            badge.classList.remove('hidden');
+                        } else {
+                            badge.classList.add('hidden');
+                        }
+                    }
+                }
+            });
+            // 初始加载新邮件数量
+            this.updateMailboxBadge();
+        } catch (error) {
+            console.error('Failed to subscribe to new email counts:', error);
         }
     }
 
