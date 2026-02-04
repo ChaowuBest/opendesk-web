@@ -11,7 +11,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20OpenHarmony-blue?style=for-the-badge" alt="Platform">
   <img src="https://img.shields.io/badge/Intelli%20OS-Subproject-orange?style=for-the-badge" alt="Subproject">
-  <img src="https://img.shields.io/badge/Version-0.1.3-green?style=for-the-badge" alt="Version">
+  <img src="https://img.shields.io/badge/Version-0.1.4-green?style=for-the-badge" alt="Version">
 </p>
 
 <p align="center">
