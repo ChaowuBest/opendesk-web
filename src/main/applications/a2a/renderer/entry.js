@@ -158,6 +158,8 @@ class A2AEntryWidget extends HTMLElement {
                 const allRadios = messageBubble.querySelectorAll('input[type="radio"]');
                 const seenGroups = new Set();
                 let originalQuestionsMap = [];
+                let currentArticleTitle = "";
+                let currentArticleContent = "";
                 try {
                     const rawModelStr = messageBubble.getAttribute('data-a2ui-model');
                     if (rawModelStr) {
@@ -169,8 +171,15 @@ class A2AEntryWidget extends HTMLElement {
                             if (update.dataModelUpdate && update.dataModelUpdate.contents) {
                                 const qData = update.dataModelUpdate.contents.find(c => c.key === 'questions');
                                 if (qData && qData.valueMap) {
-                                    originalQuestionsMap = qData.valueMap;
-                                    break;
+                                    originalQuestionsMap = qData.valueMap;                                  
+                                }
+                                const contentData = update.dataModelUpdate.contents.find(c => c.key === 'articleContent');
+                                if (contentData && contentData.valueString) {
+                                    currentArticleContent = contentData.valueString;
+                                }
+                                const titleData = update.dataModelUpdate.contents.find(c => c.key === 'articleTitle');
+                                if (titleData && titleData.valueString) {
+                                    currentArticleTitle = titleData.valueString;
                                 }
                             }
                         }
@@ -233,8 +242,10 @@ class A2AEntryWidget extends HTMLElement {
                 }
                 const payload = {
                     results: {
-                        questions: answers
-                    }
+                        questions: answers, 
+                    },
+                    articleTitle: currentArticleTitle,
+                    articleContent: currentArticleContent
                 };
                 messageToSend = `ACTION: submit_quiz with data: ${JSON.stringify(payload)}`;
             }
