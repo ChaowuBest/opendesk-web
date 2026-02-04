@@ -455,6 +455,48 @@ function addSkillFromPath(sourceDir) {
 }
 
 /**
+ * 从本地 zip 文件添加技能：解压到临时目录，查找含 SKILL.md 的根后复制到用户技能目录
+ * @param {string} zipPath - 本地 .zip 文件路径
+ * @returns {{ success: boolean, name?: string, error?: string }}
+ */
+function addSkillFromZipPath(zipPath) {
+  if (!zipPath || typeof zipPath !== 'string') {
+    return { success: false, error: '请选择有效的 zip 文件' };
+  }
+  const resolved = path.resolve(zipPath);
+  if (!fs.existsSync(resolved) || !fs.statSync(resolved).isFile()) {
+    return { success: false, error: '文件不存在或不是文件' };
+  }
+  const ext = path.extname(resolved).toLowerCase();
+  if (ext !== '.zip') {
+    return { success: false, error: '请选择 .zip 格式的压缩包' };
+  }
+  const tmpDir = path.join(os.tmpdir(), `skill-zip-${Date.now()}`);
+  try {
+    fs.mkdirSync(tmpDir, { recursive: true });
+    const zip = new AdmZip(resolved);
+    zip.extractAllTo(tmpDir, true);
+    const entries = fs.readdirSync(tmpDir, { withFileTypes: true });
+    let skillRoot = null;
+    if (entries.length === 1 && entries[0].isDirectory()) {
+      const sub = path.join(tmpDir, entries[0].name);
+      if (fs.existsSync(path.join(sub, SKILL_MD_FILENAME))) skillRoot = sub;
+    }
+    if (!skillRoot && fs.existsSync(path.join(tmpDir, SKILL_MD_FILENAME))) {
+      skillRoot = tmpDir;
+    }
+    if (!skillRoot) {
+      return { success: false, error: '压缩包内未找到含 SKILL.md 的技能目录' };
+    }
+    return addSkillFromPath(skillRoot);
+  } catch (e) {
+    return { success: false, error: e.message || '解压或添加失败' };
+  } finally {
+    if (fs.existsSync(tmpDir)) rmRecursive(tmpDir);
+  }
+}
+
+/**
  * 从 URL 添加技能：下载 zip 并解压，查找含 SKILL.md 的根后复制到用户技能目录
  * @param {string} url - 技能包 zip 的 URL（如 GitHub archive）
  * @returns {Promise<{ success: boolean, name?: string, error?: string }>}
@@ -531,6 +573,7 @@ export const SkillRegistry = {
   refresh,
   listSkills,
   addSkillFromPath,
+  addSkillFromZipPath,
   addSkillFromUrl,
   deleteSkill
 };

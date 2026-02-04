@@ -435,9 +435,31 @@ const registerSkillRegistryHandlers = () => {
       return { status: 'error', message: error.message };
     }
   });
+  ipcMain.handle('skillRegistry:pickZip', async () => {
+    try {
+      const win = BrowserWindow.getFocusedWindow();
+      const { canceled, filePaths } = await dialog.showOpenDialog(win || null, {
+        properties: ['openFile'],
+        title: '选择技能压缩包',
+        filters: [{ name: 'ZIP', extensions: ['zip'] }]
+      });
+      if (canceled || !filePaths?.length) return { status: 'ok', data: null };
+      return { status: 'ok', data: filePaths[0] };
+    } catch (error) {
+      return { status: 'error', message: error.message };
+    }
+  });
   ipcMain.handle('skillRegistry:addFromPath', (event, sourcePath) => {
     try {
       const result = SkillRegistry.addSkillFromPath(sourcePath);
+      return result.success ? { status: 'ok', data: { name: result.name } } : { status: 'error', message: result.error };
+    } catch (error) {
+      return { status: 'error', message: error.message };
+    }
+  });
+  ipcMain.handle('skillRegistry:addFromZip', (event, zipPath) => {
+    try {
+      const result = SkillRegistry.addSkillFromZipPath(zipPath);
       return result.success ? { status: 'ok', data: { name: result.name } } : { status: 'error', message: result.error };
     } catch (error) {
       return { status: 'error', message: error.message };

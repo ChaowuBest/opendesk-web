@@ -21,6 +21,7 @@ class SkillsEntryWidget extends HTMLElement {
     this.showAddPanel = false;
     this.addUrl = '';
     this.addingFromPath = false;
+    this.addingFromZip = false;
     this.addingFromUrl = false;
     this.message = null;
     this.deletingId = null;
@@ -127,6 +128,39 @@ class SkillsEntryWidget extends HTMLElement {
     }
   }
 
+  async addFromZip() {
+    const api = getSkillRegistryAPI();
+    if (!api?.pickZip || !api?.addFromZip) return;
+    this.addingFromZip = true;
+    this.render();
+    try {
+      const pickRes = await api.pickZip();
+      if (pickRes?.status !== 'ok') {
+        this.setMessage(pickRes?.message || '未选择文件', true);
+        return;
+      }
+      const zipPath = pickRes.data;
+      if (!zipPath) {
+        this.addingFromZip = false;
+        this.render();
+        return;
+      }
+      const addRes = await api.addFromZip(zipPath);
+      if (addRes?.status === 'ok') {
+        this.setMessage(`已添加技能：${addRes.data?.name ?? ''}`);
+        this.showAddPanel = false;
+        await this.loadSkills();
+      } else {
+        this.setMessage(addRes?.message || '添加失败', true);
+      }
+    } catch (e) {
+      this.setMessage(e?.message || '添加失败', true);
+    } finally {
+      this.addingFromZip = false;
+      this.render();
+    }
+  }
+
   async addFromUrl() {
     const api = getSkillRegistryAPI();
     if (!api?.addFromUrl || !this.addUrl.trim()) {
@@ -184,7 +218,7 @@ class SkillsEntryWidget extends HTMLElement {
           ? `
             <div class="empty-state">
               <p class="empty-title">暂无技能</p>
-              <p class="empty-hint">点击「添加」从本地目录或 URL 添加技能，或将技能目录复制到下方路径后点击「刷新」：</p>
+              <p class="empty-hint">点击「添加」从本地目录、zip 压缩包或 URL 添加技能，或将技能目录复制到下方路径后点击「刷新」：</p>
               <code class="skills-dir">${escapeHtml(this.skillsDir || '（获取中…）')}</code>
               <p class="empty-doc">技能格式见 <a href="https://agentskills.io/specification" target="_blank" rel="noopener">Anthropic Agent Skills</a>。</p>
             </div>
@@ -210,9 +244,12 @@ class SkillsEntryWidget extends HTMLElement {
           <button type="button" class="btn btn-ghost" id="add-panel-close">关闭</button>
         </div>
         <div class="add-section">
-          <label>从本地目录添加</label>
-          <p class="add-hint">选择包含 SKILL.md 的技能目录</p>
-          <button type="button" class="btn" id="add-from-path-btn" ${this.addingFromPath ? 'disabled' : ''}>${this.addingFromPath ? '选择中…' : '选择目录'}</button>
+          <label>从本地添加</label>
+          <p class="add-hint">选择包含 SKILL.md 的技能目录，或选择 .zip 技能压缩包</p>
+          <div class="add-local-row">
+            <button type="button" class="btn" id="add-from-path-btn" ${this.addingFromPath ? 'disabled' : ''}>${this.addingFromPath ? '选择中…' : '选择目录'}</button>
+            <button type="button" class="btn" id="add-from-zip-btn" ${this.addingFromZip ? 'disabled' : ''}>${this.addingFromZip ? '添加中…' : '选择 zip'}</button>
+          </div>
         </div>
         <div class="add-section">
           <label>从 URL 添加</label>
@@ -295,6 +332,7 @@ class SkillsEntryWidget extends HTMLElement {
         .add-section:last-child { margin-bottom: 0; }
         .add-section label { display: block; font-size: 13px; color: #475569; margin-bottom: 4px; }
         .add-hint { font-size: 12px; color: #94a3b8; margin-bottom: 8px; }
+        .add-local-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
         .add-url-row { display: flex; gap: 8px; align-items: center; }
         .add-url-input { flex: 1; padding: 8px 12px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 13px; }
         .add-url-input:focus { outline: none; border-color: #6366f1; }
@@ -321,6 +359,7 @@ class SkillsEntryWidget extends HTMLElement {
     this.shadowRoot.getElementById('add-btn')?.addEventListener('click', () => this.toggleAddPanel());
     this.shadowRoot.getElementById('add-panel-close')?.addEventListener('click', () => this.toggleAddPanel());
     this.shadowRoot.getElementById('add-from-path-btn')?.addEventListener('click', () => this.addFromLocal());
+    this.shadowRoot.getElementById('add-from-zip-btn')?.addEventListener('click', () => this.addFromZip());
     this.shadowRoot.getElementById('add-from-url-btn')?.addEventListener('click', () => this.addFromUrl());
     const urlInput = this.shadowRoot.getElementById('add-url-input');
     if (urlInput) {
