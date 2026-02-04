@@ -19,6 +19,31 @@ const REFERENCES_DIR = 'references';
 const SCRIPTS_DIR = 'scripts';
 const ASSETS_DIR = 'assets';
 
+/** zip 解压体积上限：500MB，防止 zip 炸弹或过大技能包 */
+const ZIP_MAX_UNCOMPRESSED_BYTES = 500 * 1024 * 1024;
+
+/**
+ * 计算 zip 内所有文件的解压后体积之和（不含目录条目），超限或无法解析时返回 error
+ * @param {InstanceType<typeof AdmZip>} zip - AdmZip 实例
+ * @returns {{ total: number, error?: string }}
+ */
+function getZipUncompressedSize(zip) {
+  const entries = zip.getEntries();
+  let total = 0;
+  for (const e of entries) {
+    if (e.isDirectory) continue;
+    const size = e.header && typeof e.header.size === 'number' ? e.header.size : null;
+    if (size == null || size < 0) {
+      return { total: 0, error: '压缩包包含无法解析体积的条目，拒绝解压' };
+    }
+    total += size;
+    if (total > ZIP_MAX_UNCOMPRESSED_BYTES) {
+      return { total, error: `解压后体积超过限制（${(ZIP_MAX_UNCOMPRESSED_BYTES / 1024 / 1024).toFixed(0)}MB），当前约 ${(total / 1024 / 1024).toFixed(1)}MB` };
+    }
+  }
+  return { total };
+}
+
 /** @type {Map<string, { frontmatter: object, body: string, skillDir: string }>} */
 const skillsCache = new Map();
 /** 所有本地技能共用一个 toolset，工具 ID 为 skill-<name>，避免 skill-pdf-pdf 重复 */
@@ -475,6 +500,10 @@ function addSkillFromZipPath(zipPath) {
   try {
     fs.mkdirSync(tmpDir, { recursive: true });
     const zip = new AdmZip(resolved);
+    const sizeCheck = getZipUncompressedSize(zip);
+    if (sizeCheck.error) {
+      return { success: false, error: sizeCheck.error };
+    }
     zip.extractAllTo(tmpDir, true);
     const entries = fs.readdirSync(tmpDir, { withFileTypes: true });
     let skillRoot = null;
@@ -518,6 +547,10 @@ async function addSkillFromUrl(url) {
     }
     const buf = Buffer.from(await res.arrayBuffer());
     const zip = new AdmZip(buf);
+    const sizeCheck = getZipUncompressedSize(zip);
+    if (sizeCheck.error) {
+      return { success: false, error: sizeCheck.error };
+    }
     zip.extractAllTo(tmpDir, true);
     const entries = fs.readdirSync(tmpDir, { withFileTypes: true });
     let skillRoot = null;
