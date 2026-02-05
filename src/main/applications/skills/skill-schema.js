@@ -2,7 +2,7 @@
  * Agent Skills 格式：对齐 Anthropic 发布的行业标准（agentskills.io）
  *
  * 规范要点：
- * - 每个技能为一个目录，目录名必须与 SKILL.md 中的 name 一致
+ * - 每个技能为一个目录；拷贝到用户目录时以 SKILL.md 中的 name 作为目录名
  * - 必含文件：SKILL.md（YAML frontmatter + Markdown 正文）
  * - 必填字段：name（1-64 字符，小写字母/数字/连字符，不可首尾或连续连字符）, description（1-1024 字符）
  * - 可选字段：license, compatibility（≤500 字符）, metadata, allowed-tools（实验性）
@@ -97,19 +97,14 @@ export function validateSkillDescription(description) {
 /**
  * 校验完整 frontmatter（必填 name、description；可选 license、compatibility、metadata、allowed-tools）
  * @param {object} frontmatter - 解析后的 YAML 对象
- * @param {string} directoryName - 技能目录名，须与 name 一致
  * @returns {{ valid: boolean, error?: string }}
  */
-export function validateSkillFrontmatter(frontmatter, directoryName) {
+export function validateSkillFrontmatter(frontmatter) {
   if (!frontmatter || typeof frontmatter !== 'object') {
     return { valid: false, error: 'frontmatter 必须为非空对象' };
   }
   const nameResult = validateSkillName(frontmatter.name);
   if (!nameResult.valid) return nameResult;
-  const name = String(frontmatter.name).trim();
-  if (directoryName !== undefined && directoryName !== name) {
-    return { valid: false, error: `name（${name}）必须与目录名（${directoryName}）一致` };
-  }
   const descResult = validateSkillDescription(frontmatter.description);
   if (!descResult.valid) return descResult;
   if (frontmatter.compatibility != null) {
@@ -124,16 +119,15 @@ export function validateSkillFrontmatter(frontmatter, directoryName) {
 /**
  * 解析并校验 SKILL.md，返回可用于注册的 skill 元数据
  * @param {string} raw - SKILL.md 文件内容
- * @param {string} directoryName - 技能目录名
  * @returns {{ valid: boolean, name?: string, description?: string, body?: string, frontmatter?: object, error?: string }}
  */
-export function parseAndValidateSkillMd(raw, directoryName) {
+export function parseAndValidateSkillMd(raw) {
   const parsed = parseSkillMd(raw);
   if (parsed.error) {
     return { valid: false, error: parsed.error };
   }
   const { frontmatter, body } = parsed;
-  const validation = validateSkillFrontmatter(frontmatter, directoryName);
+  const validation = validateSkillFrontmatter(frontmatter);
   if (!validation.valid) {
     return { valid: false, error: validation.error };
   }

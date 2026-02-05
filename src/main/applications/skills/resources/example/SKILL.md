@@ -27,7 +27,7 @@ fillipdesk:
 
 本技能演示 Anthropic Agent Skills 标准格式（agentskills.io）：
 
-- **name** 与目录名一致，仅小写字母、数字、连字符
+- **name** 仅小写字母、数字、连字符；添加后技能目录以 name 命名
 - **description** 描述能力与适用场景
 - 正文为 Markdown，可写使用说明与步骤
 

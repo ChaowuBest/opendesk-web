@@ -196,7 +196,7 @@ function getSkillsDirectory() {
   return skillsDir;
 }
 
-function loadSkillFromDir(skillDir, dirName) {
+function loadSkillFromDir(skillDir) {
   const skillMdPath = path.join(skillDir, SKILL_MD_FILENAME);
   if (!fs.existsSync(skillMdPath)) {
     return { success: false, error: `缺少 ${SKILL_MD_FILENAME}` };
@@ -209,7 +209,7 @@ function loadSkillFromDir(skillDir, dirName) {
     return { success: false, error: `读取 ${SKILL_MD_FILENAME} 失败: ${e.message}` };
   }
 
-  const parsed = parseAndValidateSkillMd(raw, dirName);
+  const parsed = parseAndValidateSkillMd(raw);
   if (!parsed.valid) {
     return { success: false, error: parsed.error };
   }
@@ -375,7 +375,7 @@ function loadAll() {
   for (const ent of entries) {
     if (!ent.isDirectory()) continue;
     const skillDir = path.join(skillsDir, ent.name);
-    const result = loadSkillFromDir(skillDir, ent.name);
+    const result = loadSkillFromDir(skillDir);
     if (result.success) {
       skillsCache.set(result.name, {
         frontmatter: result.frontmatter,
@@ -462,7 +462,7 @@ function addSkillFromPath(sourceDir) {
   if (!fs.existsSync(resolved) || !fs.statSync(resolved).isDirectory()) {
     return { success: false, error: '源路径不存在或不是目录' };
   }
-  const result = loadSkillFromDir(resolved, path.basename(resolved));
+  const result = loadSkillFromDir(resolved);
   if (!result.success) return { success: false, error: result.error };
   const skillsDir = getSkillsDirectory();
   const destDir = path.join(skillsDir, result.name);
@@ -500,9 +500,9 @@ function addSkillFromZipPath(zipPath) {
   try {
     fs.mkdirSync(tmpDir, { recursive: true });
     const zip = new AdmZip(resolved);
-    const sizeCheck = getZipUncompressedSize(zip);
-    if (sizeCheck.error) {
-      return { success: false, error: sizeCheck.error };
+    const uncompressedSize = getZipUncompressedSize(zip);
+    if (uncompressedSize.error) {
+      return { success: false, error: uncompressedSize.error };
     }
     zip.extractAllTo(tmpDir, true);
     const entries = fs.readdirSync(tmpDir, { withFileTypes: true });
@@ -547,9 +547,9 @@ async function addSkillFromUrl(url) {
     }
     const buf = Buffer.from(await res.arrayBuffer());
     const zip = new AdmZip(buf);
-    const sizeCheck = getZipUncompressedSize(zip);
-    if (sizeCheck.error) {
-      return { success: false, error: sizeCheck.error };
+    const uncompressedSize = getZipUncompressedSize(zip);
+    if (uncompressedSize.error) {
+      return { success: false, error: uncompressedSize.error };
     }
     zip.extractAllTo(tmpDir, true);
     const entries = fs.readdirSync(tmpDir, { withFileTypes: true });

@@ -11,7 +11,7 @@
 
 ## 技能目录结构
 
-每个技能一个子目录，**目录名必须与 SKILL.md 中的 `name` 一致**。
+每个技能一个子目录。通过「添加」导入时，**拷贝到应用数据目录下的子目录名以 SKILL.md 中的 `name` 为准**（源目录或 zip 内目录名可与 `name` 不一致）。
 
 - **SKILL.md**（必填）：YAML frontmatter + Markdown 正文
 - **scripts/**（可选）：支持脚本
