@@ -11,7 +11,11 @@ class A2AApplication extends BaseApplication {
     }
 
     static getConfigSchema() {
-        return z.object({});
+        return z.object({
+            default_a2a_model: z.string()
+                .describe('在 A2A Agent 选择中使用的专用模型（留空则使用默认模型）')
+                .default('')
+        });
     }
 
     getGUIConfig() {

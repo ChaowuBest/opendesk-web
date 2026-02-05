@@ -24,6 +24,27 @@ class A2AWorker extends BaseWorker {
         await super.initialize();
     }
 
+    async applicationConfigChanged(config) {
+        super.applicationConfigChanged(config);
+        logger.info(`A2A config updated: ${JSON.stringify(config)}`);
+    }
+
+    async getA2AModelInstance() {
+        if (!this.config || !this.config.default_a2a_model || this.config.default_a2a_model.trim() === '') {
+            return null;
+        }
+
+        const { Setting } = await import('../../../utils/setting.js');
+        const modelInstance = Setting.getInstance().getModelInstance(this.config.default_a2a_model.trim());
+
+        if (!modelInstance) {
+            logger.warn(`A2A model '${this.config.default_a2a_model}' not found, using default model`);
+            return null;
+        }
+
+        return modelInstance;
+    }
+
     async listAgents(options = {}) {
         try {
             const result = await this.client.listAgents(options);
@@ -69,6 +90,13 @@ class A2AWorker extends BaseWorker {
     async selectAgent(userPrompt, agentCards) {
         if (!agentCards || agentCards.length === 0) {
             throw new Error('No agents available for selection');
+        }
+
+        const a2aModelInstance = await this.getA2AModelInstance();
+        if (a2aModelInstance) {
+            logger.info(`Using A2A specific model: ${a2aModelInstance.model_name}`);
+        } else {
+            logger.info(`No A2A model configured, using default model`);
         }
 
         // 构建 agent cards 的详细描述
@@ -160,7 +188,7 @@ ${agentsDescription}
 
         try {
             const question = new UserMessage(prompt);
-            const result = await LLM.askForObjectWithSchema(question, selectionSchema);
+            const result = await LLM.askForObjectWithSchema(question, selectionSchema, a2aModelInstance);
 
             logger.info(`Selected agent: ${result.agentId} (confidence: ${result.confidence})`);
             logger.info(`Selection reason: ${result.reason}`);
