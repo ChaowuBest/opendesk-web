@@ -126,6 +126,10 @@ class A2AEntryWidget extends HTMLElement {
      */
     async handleA2UIAction(btn) {
         try {
+            const messageContainer = btn.closest('[data-agent-id]');
+            const boundAgentId = messageContainer ? messageContainer.getAttribute('data-agent-id') : null;
+            const targetAgentId = boundAgentId || this.lastAgentId;
+            console.log(`[A2UI Action] Button clicked. Bound Agent: ${boundAgentId}, Global Last Agent: ${this.lastAgentId}, Target: ${targetAgentId}`);
             const actionDef = JSON.parse(btn.dataset.a2uiAction);
             const actionName = actionDef.name;
             const contextDefs = actionDef.context || []; 
@@ -298,7 +302,7 @@ class A2AEntryWidget extends HTMLElement {
                 return; 
             }
             if (messageToSend) {
-                this.sendMessage(messageToSend, true, this.lastAgentId); 
+                this.sendMessage(messageToSend, true, targetAgentId);
             }
 
         } catch (error) {
@@ -535,9 +539,14 @@ class A2AEntryWidget extends HTMLElement {
         const { type, agentId, chunk, error, success, message, agentName, skillName } = data;
 
         if (type === 'agent_selection') {
+            const currentAssistantMsg = this.conversationHistory.find(msg => msg.id === assistantMessageId);
             if (agentId) {
                 this.lastAgentId = agentId; // [新增] 记住这个 Agent
                 console.log('Current active agent:', this.lastAgentId);
+                if (currentAssistantMsg) {
+                    currentAssistantMsg.agentId = agentId;
+                    console.log(`[Binding] 消息 ${assistantMessageId} 绑定 Agent: ${agentId}`);
+                }
             }
             // 处理 Agent 选择提示消息
             const selectionMessageId = `selection_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -735,9 +744,9 @@ class A2AEntryWidget extends HTMLElement {
                                 const contentClass = isHTMLContent 
                                     ? 'a2a-html-content' 
                                     : 'text-sm text-gray-800 a2a-markdown-body markdown-body';
-
+                                const boundAgentId = msg.agentId || '';
                                 return `
-                                    <div class="flex justify-start">
+                                    <div class="flex justify-start" data-agent-id="${boundAgentId}">
                                         <div class="max-w-[80%] p-3 ${errorClass} rounded-lg border border-gray-200 shadow-sm">
                                             <div class="${contentClass}">${renderedContent}${isStreaming}</div>
                                         </div>
