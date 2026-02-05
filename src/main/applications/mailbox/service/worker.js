@@ -896,6 +896,10 @@ class IMAPEmailClient extends POP3EmailClient {
         const localImapUidSet = new Set(localMeta.map(doc => doc.imapUid));
 
         const newUids = serverUids.filter(uid => !localImapUidSet.has(uid));
+        if (type === 'inbox' && newUids.length > 0) {
+            logger.info(`IMAP syncing inbox for ${this.usr}, new emails: ${newUids.length}`);
+            NotificationManager.getInstance().info('邮箱', '收取新邮件', `即将从${this.usr}收取 ${newUids.length} 封新邮件`);
+        }
         if (newUids.length > 0) {
             const fetched = await this.fetchHeaders(imap, newUids);
             const headers = await pMap(
