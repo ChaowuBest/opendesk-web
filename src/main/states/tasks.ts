@@ -1,4 +1,5 @@
-import { ChatContext, UserMessage, AssistantMessage, ToolCallMessagePart, FileMessagePart, SystemMessage } from '../agents/messages';
+import { ChatContext, UserMessage, AssistantMessage, FileMessagePart, SystemMessage, AssistantResponse, AssistantMessagePart, Usage } from '../agents/messages.js';
+import { BaseToolset } from '../agents/tool.js';
 import { LLM } from '../agents/llm.js';
 import { getTaskDirectory } from '../utils/setting.js';
 import path from 'path';
@@ -9,59 +10,61 @@ import { ApplicationRegistry } from '../applications/registry.js';
 import { jsonrepair } from 'jsonrepair';
 
 
-class TaskUpdateSubscriber {
+type TaskStatus = 'waiting' | 'running' | 'stopped';
 
-    /**
-     * A subscriber for task update
-     * @param {import('electron').WebFrameMain} senderFrame
-     */
-    constructor (senderFrame) {
-        /** @type {import('electron').WebFrameMain} */
-        this.senderFrame = senderFrame;
-        /** @type {string} */
-        this.subscription_id = crypto.randomUUID();
-    }
+export interface TaskUpdateChunk {
+    task_id: string;
+    task_status: TaskStatus;
+    message_id: string;
+    last_part_index: number;
+    last_part: AssistantMessagePart;
+    usage?: Usage;
+}
+
+export class BaseTaskUpdateSubscriber {
+    subscription_id: string = crypto.randomUUID();
 
     isAvailable() {
-        return !this.senderFrame.isDestroyed();
+        return true;
     }
 
-    /**
-     * Send a message to the subscriber
-     * @param {any} message the message to send
-     */
-    send(message) {
-        this.senderFrame.send(`taskManager:taskUpdate:${this.subscription_id}`, message);
+    send(chunkUpdate: TaskUpdateChunk) {
+        throw new Error('send not implemented');
     }
 }
 
-/**
- * @property {ChatContext} chat_context
- */
-class TaskState {
-    constructor (task_manager_state) {
-        /** @type {string} */
-        this.task_id = crypto.randomUUID();
-        /** @type {string | null} */
-        this.task_name = null;
-        /** @type {string} */
-        this.task_status = 'waiting';
-        /** @type {ChatContext} */
-        this.chat_context = new ChatContext();
+class CallbackTaskUpdateSubscriber extends BaseTaskUpdateSubscriber {
+    callback: (chunkUpdate: TaskUpdateChunk) => void;
 
-        /** @type {TaskUpdateSubscriber[]} */
-        this.subscribers = [];
-        /** @type {TaskManagerState} */
+    constructor(callback: (chunkUpdate: TaskUpdateChunk) => void) {
+        super();
+        this.callback = callback;
+    }
+
+    send(chunkUpdate: TaskUpdateChunk) {
+        this.callback(chunkUpdate);
+    }
+}
+
+export class TaskState {
+    task_id: string = crypto.randomUUID();
+    task_name: string | null = null;
+    task_status: TaskStatus = 'waiting';
+    chat_context: ChatContext = new ChatContext();
+    subscribers: BaseTaskUpdateSubscriber[] = [];
+    task_manager_state: TaskManagerState;
+
+    constructor (task_manager_state: TaskManagerState) {
         this.task_manager_state = task_manager_state;
     }
 
-    static load(task_json_path, task_manager_state) {
+    static load(task_json_path: string, task_manager_state: TaskManagerState): TaskState {
         const task_json = JSON.parse(fs.readFileSync(task_json_path, 'utf8'));
         const task = new TaskState(task_manager_state);
         task.task_id = task_json.task_id;
         task.task_name = task_json.task_name;
-        // 从硬盘加载的任务不能是running状态（应用重启后任务已停止）
-        task.task_status = task_json.task_status === 'running' ? 'waiting' : task_json.task_status;
+        // 从硬盘加载的任务如果是running状态，则说明其在运行时被异常中断关闭了
+        task.task_status = task_json.task_status === 'running' ? 'failed' : task_json.task_status;
         task.chat_context = ChatContext.assign(task_json.chat_context);
         return task;
     }
@@ -83,17 +86,17 @@ class TaskState {
         }
     }
 
-    async setSystemPrompt(prompt) {
+    async setSystemPrompt(prompt: string) {
         logger.info(`setting system prompt ${prompt} to task ${this.task_id}`);
         this.chat_context.system_prompt = new SystemMessage(prompt);
     }
 
-    async attachToolset(toolset) {
+    async attachToolset(toolset: BaseToolset) {
         logger.info(`attaching toolset ${toolset.name} to task ${this.task_id}`);
         this.chat_context.toolsets.set(toolset.name, toolset);
     }
 
-    async attachFiles(filePaths) {
+    async attachFiles(filePaths: string[]) {
         if (filePaths.length === 0) {
             return;
         }
@@ -111,9 +114,8 @@ class TaskState {
 
     /**
      * Submit a message to the task
-     * @param {string} message
      */
-     async submitUserMessage(message) {
+    async submitUserMessage(message: string) {
         this.task_status = 'running';
         this.task_manager_state.publishTaskListUpdate();
 
@@ -148,7 +150,28 @@ class TaskState {
         this.task_manager_state.publishTaskListUpdate();
     }
 
-    async generateTaskName(user_message) {
+    /**
+     * Wait until task_status is no longer 'running' or 'waiting'.
+     */
+    async waitUntilFinished(callback?: (updateChunk: TaskUpdateChunk) => void): Promise<void> {
+        const activeStatuses: TaskStatus[] = ['running', 'waiting'];
+        if (!activeStatuses.includes(this.task_status)) {
+            return;
+        }
+        return new Promise<void>((resolve) => {
+            const subscriber = new CallbackTaskUpdateSubscriber((chunkUpdate: TaskUpdateChunk) => {
+                callback?.(chunkUpdate);
+
+                if (!activeStatuses.includes(chunkUpdate.task_status)) {
+                    this.removeSubscriber(subscriber.subscription_id);
+                    resolve();
+                }
+            });
+            this.addSubscriber(subscriber);
+        });
+    }
+
+    async generateTaskName(user_message: string) {
         const prompt = `
         你是一个任务管理助手，请根据以下用户消息生成一个任务名称: ${user_message}
         请返回一个简洁明了的任务名称，不要超过10个字符。不要包含任何其他内容。
@@ -164,13 +187,10 @@ class TaskState {
     /**
      * 向前端的订阅者发布任务状态更新，如果指定了part_index，则只更新该part
      * 否则更新最后一个part
-     *
-     * @param {number | undefined} part_index the index of the part to update
-     * @returns {Promise<void>}
      */
-    async sendSubscriptionFeedback(part_index = undefined) {
+    async sendSubscriptionFeedback(part_index: number | undefined = undefined) {
         let last_message = this.chat_context.lastMessage();
-        if (last_message.content.length === 0) {
+        if (last_message === undefined || last_message.content.length === 0 || last_message instanceof UserMessage) {
             return;
         }
 
@@ -180,7 +200,7 @@ class TaskState {
 
         try {
             await last_part.render();
-            var subscription_feedback = {
+            var chunkUpdate: TaskUpdateChunk = {
                 task_id: this.task_id,
                 task_status: this.task_status,
                 message_id: last_message.message_id,
@@ -191,7 +211,7 @@ class TaskState {
 
             this.subscribers = this.subscribers.filter(subscriber => subscriber.isAvailable());
             for (let subscriber of this.subscribers) {
-                subscriber.send(subscription_feedback);
+                subscriber.send(chunkUpdate);
             }
         } catch (err) {
             logger.error(`error sending subscription feedback for task ${this.task_id}: ${err.message}`);
@@ -199,7 +219,11 @@ class TaskState {
     }
 
     async processCompletion() {
-        let assistant_message = this.chat_context.messages[this.chat_context.messages.length - 1];
+        let assistant_message = this.chat_context.lastMessage()
+        if (assistant_message === undefined || assistant_message instanceof UserMessage) {
+            return;
+        }
+
         for await (const chunk_resp of LLM.streamComplete(this.chat_context)) {
             // 检查是否已停止
             if (this.task_status === 'stopped') {
@@ -319,8 +343,9 @@ class TaskState {
     async processTask() {
         while (this.task_status !== 'stopped') {
             await this.processCompletion();
+            // @ts-ignore 这里的task_status可能通过前端的请求被随时中止
             if (this.task_status === 'stopped') {
-                break;  /* task is stopped, break */
+                break;
             }
 
             if (!await this.processToolCalls()) {
@@ -341,24 +366,17 @@ class TaskState {
         }
     }
 
-    /**
-     * Add a subscriber for task update
-     * @param {Electron.SenderFrame} senderFrame
-     * @returns {string} the subscription id
-     */
-    addSubscriber(senderFrame) {
-        let subscriber = new TaskUpdateSubscriber(senderFrame);
-        logger.info('task update subscriber added for task', this.task_id)
+    addSubscriber(subscriber: BaseTaskUpdateSubscriber) {
         this.subscribers.push(subscriber);
         return subscriber.subscription_id;
     }
 
     /**
      * Remove a subscriber for task update
-     * @param {string} subscription_id
-     * @returns {boolean} true if the subscriber was removed, false otherwise
+     * @param subscription_id the subscription id
+     * @returns true if the subscriber was removed, false otherwise
      */
-    removeSubscriber(subscription_id) {
+    removeSubscriber(subscription_id: string) {
         let subscriber = this.subscribers.find(s => s.subscription_id === subscription_id);
         if (subscriber === undefined) {
             logger.error('subscriber not found for task', this.task_id)
@@ -371,21 +389,23 @@ class TaskState {
     }
 }
 
-class TaskManagerState {
-    constructor () {
+export class BaseTaskManagerUpdateSubscriber {
+    subscription_id: string = crypto.randomUUID();
 
-        /** @type {TaskState[]} */
-        this.tasks = [];
-
-        /** @type {Electron.WebContents[]} for task list update */
-        this.subscribers = [];
+    send(taskList: object[]): void {
+        throw new Error('send not implemented');
     }
+}
+
+export class TaskManagerState {
+    tasks: TaskState[] = [];
+    subscribers: BaseTaskManagerUpdateSubscriber[] = [];
 
     /**
      * Load the task manager state from the file system
-     * @returns {TaskManagerState | null} the task manager state, or null if the files does not exist
+     * @returns the task manager state, or null if the files does not exist
      */
-    static load() {
+    static load(): TaskManagerState | null {
         const taskDirectory = getTaskDirectory();
         const taskListFile = path.join(taskDirectory, 'task_list.json');
         if (!fs.existsSync(taskListFile)) {
@@ -404,7 +424,7 @@ class TaskManagerState {
         return taskManagerState.tasks.length > 0 ? taskManagerState : null;
     }
 
-    save() {
+    save(): void {
         const taskDirectory = getTaskDirectory();
         const taskListFile = path.join(taskDirectory, 'task_list.json');
 
@@ -426,18 +446,17 @@ class TaskManagerState {
 
     /**
      * Get a simplified list of tasks
-     * @returns {object[]} the list of tasks
+     * @returns the list of tasks
      */
-    getTaskList() {
+    getTaskList(): object[] {
         return this.tasks.map(task => task.toSimplifiedJSON());
     }
 
     /**
      * Create a task from user request
-     * @param {string} userRequest
-     * @returns
+     * @returns the created task
      */
-    createTask() {
+    createTask(): TaskState {
         const task = new TaskState(this);
         logger.info('task created', task.task_id)
         this.tasks.push(task);
@@ -447,9 +466,8 @@ class TaskManagerState {
 
     /**
      * Remove a task by its id
-     * @param {string} taskId
      */
-    removeTask(taskId) {
+    removeTask(taskId: string): void {
         this.tasks = this.tasks.filter(task => task.task_id !== taskId);
         this.publishTaskListUpdate();
         this.save();
@@ -457,35 +475,40 @@ class TaskManagerState {
 
     /**
      * Find a task by its id
-     * @param {string} taskId
-     * @returns {TaskState | undefined}
+     * @returns the task, or undefined if the task is not found
      */
-    getTask(taskId) {
+    getTask(taskId: string): TaskState | undefined {
         return this.tasks.find(task => task.task_id === taskId);
     }
 
     publishTaskListUpdate() {
         for (let subscriber of this.subscribers) {
-            subscriber.send('taskManager:taskListUpdate', this.getTaskList());
+            subscriber.send(this.getTaskList());
         }
     }
 
     /**
      * Add a subscriber for task list update
-     * @param {Electron.WebContents} webContents
+     * @param subscriber the subscriber to add
      */
-    addSubscriber(webContents) {
-        logger.info('task list subscriber added')
-        this.subscribers.push(webContents);
+    addSubscriber(subscriber: BaseTaskManagerUpdateSubscriber) {
+        this.subscribers.push(subscriber);
+        return subscriber.subscription_id;
     }
 
     /**
      * Remove a subscriber for task list update
      * @param {Electron.WebContents} webContents
      */
-    removeSubscriber(webContents) {
-        this.subscribers = this.subscribers.filter(subscriber => subscriber !== webContents);
+    removeSubscriber(subscription_id: string) {
+        let subscriber = this.subscribers.find(s => s.subscription_id === subscription_id);
+        if (subscriber === undefined) {
+            logger.warn('subscriber not found for task list update')
+            return false;
+        }
+    }
+
+    removeSubscriberByFilter(filter: (subscriber: BaseTaskManagerUpdateSubscriber) => boolean) {
+        this.subscribers = this.subscribers.filter(filter);
     }
 }
-
-export { TaskManagerState, TaskState };
