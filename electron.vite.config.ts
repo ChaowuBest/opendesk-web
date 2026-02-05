@@ -13,6 +13,7 @@ export default defineConfig({
         input: {
           main: path.join(__dirname, 'src', 'main', 'main.js'),
           worker: path.join(__dirname, 'src', 'main', 'worker.ts'),
+          cli: path.join(__dirname, 'src', 'main', 'cli.ts'),
         }
       },
       sourcemap: true

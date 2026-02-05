@@ -2,18 +2,7 @@ import z from 'zod';
 import path from 'path';
 import fs from 'fs';
 import { workerData, isMainThread } from 'worker_threads';
-import { createRequire } from 'module';
 
-const require = createRequire(import.meta.url);
-
-let electronApp = null;
-
-try {
-    const electron = require('electron');
-    electronApp = electron.app;
-} catch (error) {
-    console.info('electron is not loaded in the worker thread');
-}
 
 const ProviderSchema = z.object({
     name: z.string().default('openrouter').describe('模型提供商名称'),
@@ -176,7 +165,6 @@ class Setting {
     static load() {
         const settingDirectory = getAppDirectory();
         let settingFile = path.join(settingDirectory, 'setting.json');
-        console.info(`loading setting from ${settingFile}`);
         if (!fs.existsSync(settingFile)) {
             return null;
         }
@@ -279,7 +267,15 @@ function getAppDirectory() {
         return workerData.paths.appDirectory;
     }
 
-    const userDataPath = electronApp.getPath('userData');
+    var userDataPath = '';
+    if (process.env.APPDATA) {
+        userDataPath = path.join(process.env.APPDATA, 'fillipdesk');
+    } else if (process.env.HOME) {
+        userDataPath = path.join(process.env.HOME, '.fillipdesk');
+    } else {
+        throw new Error('user data path not found');
+    }
+
     if (fs.existsSync(userDataPath)) {
         return userDataPath;
     } else {
