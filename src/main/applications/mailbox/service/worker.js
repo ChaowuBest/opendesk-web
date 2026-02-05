@@ -15,6 +15,7 @@ import { logger } from '../../../utils/logger.js';
 import { NotificationManager } from "../../../utils/notificationmgr.js";
 
 import Pop3Command from 'node-pop3';
+import Imap from 'node-imap';
 import nodemailer from 'nodemailer';
 import fs from 'fs';
 import nedb from 'nedb-promises';
@@ -41,6 +42,212 @@ async function withTimeout(promise, timeoutMs, operation = 'operation') {
         }, timeoutMs);
     });
     return Promise.race([promise, timeoutPromise]);
+}
+
+function encodeMailboxName(mailbox) {
+    if (!mailbox) return '';
+    const base64 = Buffer.from(mailbox, 'utf-8').toString('base64');
+    return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+function shouldAttachImapId(host) {
+    if (!host) return false;
+    const normalized = String(host).toLowerCase();
+    return normalized === 'imap.163.com'
+        || normalized.endsWith('.163.com')
+        || normalized.includes('.163.com');
+}
+
+function buildImapIdInfo(host) {
+    if (!shouldAttachImapId(host)) return null;
+    return {
+        name: 'FillipDesk',
+        version: '0.1.4',
+        vendor: 'FillipDesk',
+        'support-email': 'support@fillipdesk.local'
+    };
+}
+
+function buildImapLocalUid(mailbox, imapUid) {
+    const encoded = encodeMailboxName(mailbox);
+    return `imap_${encoded}_${imapUid}`;
+}
+
+function ensureHeaderTerminated(rawHeader) {
+    if (!rawHeader) return '';
+    if (rawHeader.includes('\r\n\r\n')) {
+        return rawHeader;
+    }
+    return `${rawHeader}\r\n\r\n`;
+}
+
+function flattenImapBoxes(boxes, prefix = '') {
+    const result = [];
+    if (!boxes) return result;
+    for (const [name, box] of Object.entries(boxes)) {
+        const delimiter = box.delimiter || '/';
+        const path = prefix ? `${prefix}${delimiter}${name}` : name;
+        result.push({ path, attribs: box.attribs || [] });
+        if (box.children) {
+            result.push(...flattenImapBoxes(box.children, path));
+        }
+    }
+    return result;
+}
+
+function findBoxByAttrib(flatBoxes, attrib) {
+    if (!flatBoxes || flatBoxes.length === 0) return null;
+    const match = flatBoxes.find(box => box.attribs?.some(a => a.toLowerCase() === attrib.toLowerCase()));
+    return match?.path || null;
+}
+
+function findBoxByName(flatBoxes, keywords) {
+    if (!flatBoxes || flatBoxes.length === 0) return null;
+    const lowered = flatBoxes.map(box => ({ path: box.path, name: box.path.toLowerCase() }));
+    for (const keyword of keywords) {
+        const match = lowered.find(box => box.name.includes(keyword));
+        if (match) return match.path;
+    }
+    return null;
+}
+
+async function buildRawEmailMessage(mailOptions) {
+    const transport = nodemailer.createTransport({
+        streamTransport: true,
+        buffer: true,
+        newline: 'unix'
+    });
+    const info = await transport.sendMail(mailOptions);
+    if (Buffer.isBuffer(info.message)) {
+        return info.message;
+    }
+    if (typeof info.message === 'string') {
+        return Buffer.from(info.message);
+    }
+    return Buffer.from('');
+}
+
+function connectImap(imap, idInfo = null, context = '') {
+    return new Promise((resolve, reject) => {
+        let settled = false;
+        const cleanup = () => {
+            imap.removeListener('ready', onReady);
+            imap.removeListener('error', onError);
+        };
+        const onReady = () => {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            if (idInfo && imap.serverSupports && imap.serverSupports('ID')) {
+                try {
+                    imap.id(idInfo, (err) => {
+                        if (err) {
+                            logger.warn(`IMAP ID failed${context ? ` (${context})` : ''}: ${err.message}`);
+                        }
+                        resolve(imap);
+                    });
+                } catch (error) {
+                    logger.warn(`IMAP ID failed${context ? ` (${context})` : ''}: ${error.message}`);
+                    resolve(imap);
+                }
+            } else {
+                resolve(imap);
+            }
+        };
+        const onError = (err) => {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            reject(err);
+        };
+        imap.once('ready', onReady);
+        imap.once('error', onError);
+        imap.connect();
+    });
+}
+
+function endImap(imap) {
+    return new Promise((resolve) => {
+        let settled = false;
+        const cleanup = () => {
+            imap.removeListener('end', onEnd);
+            imap.removeListener('close', onEnd);
+        };
+        const onEnd = () => {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            resolve();
+        };
+        imap.once('end', onEnd);
+        imap.once('close', onEnd);
+        try {
+            imap.end();
+        } catch (error) {
+            cleanup();
+            resolve();
+        }
+        setTimeout(() => {
+            if (!settled) {
+                cleanup();
+                resolve();
+            }
+        }, 2000);
+    });
+}
+
+function openImapBox(imap, boxName, readOnly = true) {
+    return new Promise((resolve, reject) => {
+        imap.openBox(boxName, readOnly, (err, box) => {
+            if (err) reject(err);
+            else resolve(box);
+        });
+    });
+}
+
+function getImapBoxes(imap) {
+    return new Promise((resolve, reject) => {
+        imap.getBoxes((err, boxes) => {
+            if (err) reject(err);
+            else resolve(boxes);
+        });
+    });
+}
+
+function searchImap(imap, criteria) {
+    return new Promise((resolve, reject) => {
+        imap.search(criteria, (err, uids) => {
+            if (err) reject(err);
+            else resolve(uids || []);
+        });
+    });
+}
+
+function appendImap(imap, raw, options) {
+    return new Promise((resolve, reject) => {
+        imap.append(raw, options, (err) => {
+            if (err) reject(err);
+            else resolve(true);
+        });
+    });
+}
+
+function addImapFlags(imap, uid, flags) {
+    return new Promise((resolve, reject) => {
+        imap.addFlags(uid, flags, (err) => {
+            if (err) reject(err);
+            else resolve(true);
+        });
+    });
+}
+
+function delImapFlags(imap, uid, flags) {
+    return new Promise((resolve, reject) => {
+        imap.delFlags(uid, flags, (err) => {
+            if (err) reject(err);
+            else resolve(true);
+        });
+    });
 }
 
 class POP3EmailClient {
@@ -474,6 +681,87 @@ class POP3EmailClient {
     }
 }
 
+class IMAPEmailClient extends POP3EmailClient {
+
+    constructor(usr, pwd, tls, host, port) {
+        super(usr, pwd, tls, host, port);
+    }
+
+    createImap() {
+        return new Imap({
+            user: this.usr,
+            password: this.pwd,
+            host: this.host,
+            port: this.port,
+            tls: this.tls,
+            tlsOptions: {
+                rejectUnauthorized: false
+            }
+        });
+    }
+
+    async fetchRawMessage(imap, uid) {
+        return new Promise((resolve, reject) => {
+            const chunks = [];
+            const fetcher = imap.fetch(uid, { bodies: '', struct: true, uid: true });
+            fetcher.on('message', (msg) => {
+                msg.on('body', (stream) => {
+                    stream.on('data', (chunk) => chunks.push(chunk));
+                });
+            });
+            fetcher.once('error', reject);
+            fetcher.once('end', () => resolve(Buffer.concat(chunks)));
+        });
+    }
+
+    async getEmail(localUid, imapBox, imapUid, attachmentDirectory) {
+        const imap = this.createImap();
+        const operationTimeout = 120000;
+        try {
+            await withTimeout(connectImap(imap, buildImapIdInfo(this.host), 'IMAP connect'), 30000, 'IMAP connect');
+            await withTimeout(openImapBox(imap, imapBox, true), 30000, `IMAP open ${imapBox}`);
+            const rawMessage = await withTimeout(
+                this.fetchRawMessage(imap, imapUid),
+                operationTimeout,
+                `IMAP fetch ${imapUid}`
+            );
+            if (!rawMessage || rawMessage.length === 0) {
+                logger.warn(`IMAP empty message for uid ${imapUid} in ${imapBox}`);
+                return null;
+            }
+            const parsed = await simpleParser(rawMessage);
+            const attachments = await this.prepareAttachments(localUid, parsed.attachments, attachmentDirectory);
+            const content = new EmailContent(parsed.html, parsed.text, attachments);
+            const header = new EmailHeader(
+                localUid,
+                parsed.subject,
+                parsed.from?.value, parsed.to?.value,
+                parsed.cc?.value, parsed.bcc?.value,
+                parsed.date?.getTime()
+            );
+            header.messageId = parsed.messageId || null;
+            header.imapUid = imapUid;
+            header.imapBox = imapBox;
+            return { header, content };
+        } catch (error) {
+            logger.error(`IMAP error getting email content: ${localUid}: ${error.message || String(error)}`);
+            return null;
+        } finally {
+            await endImap(imap);
+        }
+    }
+
+    async getEmailContent(localUid, imapBox, imapUid, attachmentDirectory) {
+        const emailResult = await this.getEmail(localUid, imapBox, imapUid, attachmentDirectory);
+        if (!emailResult) {
+            logger.error(`failed to get email content: ${localUid}, IMAP getEmail returned null`);
+            return null;
+        }
+        const { _, content } = emailResult;
+        return content;
+    }
+}
+
 class SmtpEmailClient {
     constructor(account, user, pass, fromName, host, port, secure) {
         this.account = account;
@@ -485,7 +773,27 @@ class SmtpEmailClient {
         this.secure = secure;
     }
 
-    async sendMail(to, cc, bcc, subject, text, html, attachments) {
+    async sendMail(to, cc, bcc, subject, text, html, attachments, messageId = null, headers = null) {
+        const mailOptions = {
+            from: `"${this.fromName}" <${this.account}>`,
+            to: Array.isArray(to) ? to.join(', ') : to,
+            cc: Array.isArray(cc) ? cc.join(', ') : cc,
+            bcc: Array.isArray(bcc) ? bcc.join(', ') : bcc,
+            subject: subject,
+            text: text,
+            html: html,
+            attachments: attachments
+        };
+        if (messageId) {
+            mailOptions.messageId = messageId;
+        }
+        if (headers) {
+            mailOptions.headers = headers;
+        }
+        return await this.sendMailWithOptions(mailOptions);
+    }
+
+    async sendMailWithOptions(mailOptions) {
         const transport = nodemailer.createTransport({
             host: this.host,
             port: this.port,
@@ -499,16 +807,6 @@ class SmtpEmailClient {
             }
         })
 
-        const mailOptions = {
-            from: `"${this.fromName}" <${this.account}>`,
-            to: Array.isArray(to) ? to.join(', ') : to,
-            cc: Array.isArray(cc) ? cc.join(', ') : cc,
-            bcc: Array.isArray(bcc) ? bcc.join(', ') : bcc,
-            subject: subject,
-            text: text,
-            html: html,
-            attachments: attachments
-        };
         try {
             await transport.sendMail(mailOptions);
             NotificationManager.getInstance().info('邮箱', '发送成功', '邮件发送成功')
@@ -568,6 +866,22 @@ class MailboxStorage {
     async getRawEmailHeader(uid) {
         const doc = await this.rawdb.findOne({ uid: uid });
         return doc?.header;
+    }
+
+    async getEmailMeta(uid) {
+        return await this.db.findOne({ uid: uid });
+    }
+
+    async getEmailMetaByMessageId(messageId, type = null) {
+        if (!messageId) return null;
+        const query = { messageId: messageId };
+        if (type) query.type = type;
+        return await this.db.findOne(query);
+    }
+
+    async getImapMetaByBox(imapBox) {
+        if (!imapBox) return [];
+        return await this.db.find({ imapBox: imapBox });
     }
 
     async markEmailAsRead(uid) {
@@ -711,6 +1025,7 @@ class MailboxStorage {
             to: emailHeader.to,
             cc: emailHeader.cc,
             bcc: emailHeader.bcc,
+            messageId: emailHeader.messageId || null,
             date: Date.now(),
             unread: false,
             starred: false,
@@ -738,6 +1053,7 @@ class MailboxStorage {
             to: emailHeader.to,
             cc: emailHeader.cc,
             bcc: emailHeader.bcc,
+            messageId: emailHeader.messageId || null,
             date: Date.now(),
             unread: false,
             starred: false,
@@ -878,6 +1194,46 @@ class MailboxStorage {
         }
         return cleanedCount;
     }
+
+    async pruneExpiredEmailsByBox(imapBox, serverUidSet) {
+        if (!imapBox) return 0;
+        const localActiveDocs = await this.db.find({ deleted: { $ne: true }, imapBox: imapBox }, { uid: 1 });
+        let cleanedCount = 0;
+        for (const doc of localActiveDocs) {
+            if (!serverUidSet.has(doc.uid)) {
+                const contentCount = await this.contentdb.count({ uid: doc.uid });
+                if (contentCount === 0) {
+                    await this.db.remove({ uid: doc.uid }, { multi: false });
+                    await this.rawdb.remove({ uid: doc.uid }, { multi: false });
+                    cleanedCount++;
+                }
+            }
+        }
+        return cleanedCount;
+    }
+
+    async updateImapUnread(imapBox, unreadUids) {
+        if (!imapBox) return;
+        const unreadArray = Array.from(unreadUids || []);
+        if (unreadArray.length > 0) {
+            await this.db.update(
+                { imapBox: imapBox, imapUid: { $in: unreadArray } },
+                { $set: { unread: true } },
+                { multi: true }
+            );
+            await this.db.update(
+                { imapBox: imapBox, imapUid: { $nin: unreadArray } },
+                { $set: { unread: false } },
+                { multi: true }
+            );
+        } else {
+            await this.db.update(
+                { imapBox: imapBox },
+                { $set: { unread: false } },
+                { multi: true }
+            );
+        }
+    }
 }
 
 class MailboxWorker extends BaseWorker {
@@ -893,6 +1249,7 @@ class MailboxWorker extends BaseWorker {
         // 跟踪每个账号的新邮件数量（基于同步时新增的邮件）
         this.newEmailCounts = new Map(); // username -> number
         this.isMailboxOpened = false;
+        this.imapBoxCache = new Map(); // username -> { inbox, sent, drafts }
     }
 
     async syncPOP3Inbox(profile, storage) {
@@ -1050,6 +1407,301 @@ class MailboxWorker extends BaseWorker {
         }
     }
 
+    async resolveImapBoxMap(profile, imap = null, forceRefresh = false) {
+        if (!profile?.inbox?.imap) return null;
+        const cacheKey = profile.username;
+        if (!forceRefresh && this.imapBoxCache.has(cacheKey)) {
+            return this.imapBoxCache.get(cacheKey);
+        }
+
+        let localImap = imap;
+        let shouldClose = false;
+        try {
+            if (!localImap) {
+                const client = new IMAPEmailClient(
+                    profile.username,
+                    profile.password,
+                    profile.inbox.imap.tls,
+                    profile.inbox.imap.host,
+                    profile.inbox.imap.port
+                );
+                localImap = client.createImap();
+                await withTimeout(
+                    connectImap(localImap, buildImapIdInfo(profile?.inbox?.imap?.host), 'IMAP connect (resolve boxes)'),
+                    30000,
+                    'IMAP connect (resolve boxes)'
+                );
+                shouldClose = true;
+            }
+
+            const boxes = await withTimeout(getImapBoxes(localImap), 30000, 'IMAP getBoxes');
+            const flat = flattenImapBoxes(boxes);
+
+            const inboxBox = flat.find(box => box.path.toUpperCase() === 'INBOX')?.path
+                || findBoxByAttrib(flat, '\\Inbox')
+                || 'INBOX';
+
+            const sentBox = findBoxByAttrib(flat, '\\Sent')
+                || findBoxByName(flat, ['sent items', 'sent mail', 'sent', '已发送', '已發送', '发件箱', '已寄', '已送']);
+
+            const draftsBox = findBoxByAttrib(flat, '\\Drafts')
+                || findBoxByName(flat, ['drafts', 'draft', '草稿箱', '草稿']);
+
+            const map = {
+                inbox: inboxBox,
+                sent: sentBox,
+                drafts: draftsBox
+            };
+            this.imapBoxCache.set(cacheKey, map);
+            return map;
+        } finally {
+            if (shouldClose && localImap) {
+                await endImap(localImap);
+            }
+        }
+    }
+
+    async fetchImapHeaders(imap, uids) {
+        if (!uids || uids.length === 0) return [];
+        return new Promise((resolve, reject) => {
+            const results = [];
+            const fetcher = imap.fetch(uids, {
+                bodies: 'HEADER.FIELDS (FROM TO CC BCC SUBJECT DATE MESSAGE-ID)',
+                struct: false,
+                uid: true
+            });
+            fetcher.on('message', (msg) => {
+                let uid = null;
+                let flags = [];
+                const chunks = [];
+                msg.on('attributes', (attrs) => {
+                    uid = attrs.uid;
+                    flags = attrs.flags || [];
+                });
+                msg.on('body', (stream) => {
+                    stream.on('data', (chunk) => chunks.push(chunk));
+                });
+                msg.once('end', () => {
+                    results.push({
+                        uid,
+                        flags,
+                        raw: Buffer.concat(chunks).toString('utf-8')
+                    });
+                });
+            });
+            fetcher.once('error', reject);
+            fetcher.once('end', () => resolve(results));
+        });
+    }
+
+    async syncIMAPMailbox(profile, storage, imap, boxName, type) {
+        if (!boxName) return 0;
+        await openImapBox(imap, boxName, true);
+
+        const serverUids = await searchImap(imap, ['ALL']);
+        const unreadUids = type === 'inbox'
+            ? new Set(await searchImap(imap, ['UNSEEN']))
+            : new Set();
+
+        const localMeta = await storage.getImapMetaByBox(boxName);
+        const localImapUidSet = new Set(localMeta.map(doc => doc.imapUid));
+
+        const newUids = serverUids.filter(uid => !localImapUidSet.has(uid));
+        if (newUids.length > 0) {
+            const fetched = await this.fetchImapHeaders(imap, newUids);
+            const headers = await pMap(
+                fetched,
+                async (item) => {
+                    if (!item?.uid) return null;
+                    const rawHeader = ensureHeaderTerminated(item.raw || '');
+                    try {
+                        const parsed = await simpleParser(rawHeader);
+                        const messageId = parsed.messageId || null;
+
+                        let existingDoc = null;
+                        if (messageId) {
+                            existingDoc = await storage.getEmailMetaByMessageId(messageId, type);
+                        }
+                        const localUid = existingDoc?.uid || buildImapLocalUid(boxName, item.uid);
+
+                        await storage.saveRawEmailHeader(localUid, rawHeader);
+
+                        const header = new EmailHeader(
+                            localUid,
+                            parsed.subject,
+                            parsed.from?.value, parsed.to?.value,
+                            parsed.cc?.value, parsed.bcc?.value,
+                            parsed.date?.getTime(),
+                            type === 'inbox' ? unreadUids.has(item.uid) : false,
+                            item.flags?.includes('\\Flagged') || false,
+                            false,
+                            type
+                        );
+                        header.imapUid = item.uid;
+                        header.imapBox = boxName;
+                        header.messageId = messageId;
+                        return header;
+                    } catch (error) {
+                        logger.error(`error parsing IMAP header: ${item.uid}: ${error.message}`);
+                        return null;
+                    }
+                },
+                { concurrency: 8 }
+            );
+
+            const filteredHeaders = headers.filter(Boolean);
+            if (filteredHeaders.length > 0) {
+                await storage.saveEmailHeaders(...filteredHeaders);
+            }
+        }
+
+        if (type === 'inbox') {
+            await storage.updateImapUnread(boxName, unreadUids);
+        }
+
+        try {
+            const serverLocalUidSet = new Set(serverUids.map(uid => buildImapLocalUid(boxName, uid)));
+            const cleanedCount = await storage.pruneExpiredEmailsByBox(boxName, serverLocalUidSet);
+            if (cleanedCount > 0) {
+                logger.info(`[IMAP Sync] Physically removed ${cleanedCount} expired emails in ${boxName}.`);
+            }
+        } catch (e) {
+            logger.warn(`[IMAP Sync] Failed to prune expired emails in ${boxName}: ${e.message}`);
+        }
+
+        return newUids.length;
+    }
+
+    async syncIMAPInbox(profile, storage) {
+        const { username, password, inbox } = profile;
+        if (!inbox?.imap) return 0;
+
+        const imapClient = new IMAPEmailClient(
+            username,
+            password,
+            inbox.imap.tls,
+            inbox.imap.host,
+            inbox.imap.port
+        );
+
+        const maxRetries = 2;
+        const overallTimeout = 300000;
+        let lastError = null;
+
+        const syncPromise = (async () => {
+            for (let attempt = 0; attempt < maxRetries; attempt++) {
+                let imap = null;
+                try {
+                    imap = imapClient.createImap();
+                    await withTimeout(
+                        connectImap(imap, buildImapIdInfo(profile?.inbox?.imap?.host), 'IMAP connect'),
+                        30000,
+                        'IMAP connect'
+                    );
+                    const boxMap = await this.resolveImapBoxMap(profile, imap, true);
+
+                    let totalNew = 0;
+                    if (boxMap?.inbox) {
+                        totalNew += await this.syncIMAPMailbox(profile, storage, imap, boxMap.inbox, 'inbox');
+                    }
+                    if (boxMap?.drafts) {
+                        totalNew += await this.syncIMAPMailbox(profile, storage, imap, boxMap.drafts, 'draft');
+                    }
+                    if (boxMap?.sent) {
+                        totalNew += await this.syncIMAPMailbox(profile, storage, imap, boxMap.sent, 'sent');
+                    }
+
+                    return totalNew;
+                } catch (error) {
+                    lastError = error;
+                    const shouldRetry = attempt < maxRetries - 1 && this.isRetryableError(error);
+                    if (shouldRetry) {
+                        const delay = (attempt + 1) * 1000;
+                        logger.warn(`retrying syncIMAPInbox, attempt ${attempt + 1}/${maxRetries}, delay ${delay}ms, error: ${error.message}`);
+                        await new Promise(resolve => setTimeout(resolve, delay));
+                    } else {
+                        break;
+                    }
+                } finally {
+                    if (imap) {
+                        await endImap(imap);
+                    }
+                }
+            }
+            logger.error(`failed to sync IMAP inbox after ${maxRetries} attempts: ${lastError?.message || 'unknown error'}`);
+            throw lastError || new Error('同步邮件失败');
+        })();
+
+        try {
+            return await withTimeout(syncPromise, overallTimeout, 'syncIMAPInbox');
+        } catch (error) {
+            if (error.message?.includes('超时')) {
+                logger.error(`syncIMAPInbox overall timeout after ${overallTimeout}ms`);
+                throw new Error(`同步邮件超时，请检查网络连接或稍后重试`);
+            }
+            throw error;
+        }
+    }
+
+    async updateImapSeen(profile, imapBox, imapUid, seen) {
+        if (!profile?.inbox?.imap || !imapBox || !imapUid) return;
+        const imapClient = new IMAPEmailClient(
+            profile.username,
+            profile.password,
+            profile.inbox.imap.tls,
+            profile.inbox.imap.host,
+            profile.inbox.imap.port
+        );
+        const imap = imapClient.createImap();
+        try {
+            await withTimeout(
+                connectImap(imap, buildImapIdInfo(profile?.inbox?.imap?.host), 'IMAP connect (flags)'),
+                30000,
+                'IMAP connect (flags)'
+            );
+            await withTimeout(openImapBox(imap, imapBox, false), 30000, `IMAP open ${imapBox}`);
+            if (seen) {
+                await withTimeout(addImapFlags(imap, imapUid, ['\\Seen']), 30000, 'IMAP add \\Seen');
+            } else {
+                await withTimeout(delImapFlags(imap, imapUid, ['\\Seen']), 30000, 'IMAP del \\Seen');
+            }
+        } catch (error) {
+            logger.warn(`failed to update IMAP seen flag: ${error.message}`);
+        } finally {
+            await endImap(imap);
+        }
+    }
+
+    async appendToImap(profile, boxName, rawMessage, flags = []) {
+        if (!profile?.inbox?.imap || !boxName || !rawMessage) return false;
+        const imapClient = new IMAPEmailClient(
+            profile.username,
+            profile.password,
+            profile.inbox.imap.tls,
+            profile.inbox.imap.host,
+            profile.inbox.imap.port
+        );
+        const imap = imapClient.createImap();
+        try {
+            await withTimeout(
+                connectImap(imap, buildImapIdInfo(profile?.inbox?.imap?.host), 'IMAP connect (append)'),
+                30000,
+                'IMAP connect (append)'
+            );
+            await withTimeout(
+                appendImap(imap, rawMessage, { mailbox: boxName, flags: flags, date: new Date() }),
+                30000,
+                `IMAP append ${boxName}`
+            );
+            return true;
+        } catch (error) {
+            logger.warn(`failed to append to IMAP ${boxName}: ${error.message}`);
+            return false;
+        } finally {
+            await endImap(imap);
+        }
+    }
+
     getCurrentStorage() {
         if (!this.currentProfileId) return null;
         return this.storageMap.get(this.currentProfileId);
@@ -1133,7 +1785,11 @@ class MailboxWorker extends BaseWorker {
                 try {
                     logger.info(`starting sync for profile: ${id}`);
                     let newEmailCount = 0;
-                    if (profile.inbox?.pop3) {
+                    let usedImap = false;
+                    if (profile.inbox?.imap) {
+                        usedImap = true;
+                        newEmailCount = await this.syncIMAPInbox(profile, storage);
+                    } else if (profile.inbox?.pop3) {
                         newEmailCount = await this.syncPOP3Inbox(profile, storage);
                     }
                     if (newEmailCount > 0) {
@@ -1213,6 +1869,7 @@ class MailboxWorker extends BaseWorker {
             this.profileMap.clear();
             this.storageMap.clear();
             this.currentProfileId = null;
+            this.imapBoxCache.clear();
             this.emitEvent('accountsUpdated', []);
             return;
         }
@@ -1251,6 +1908,7 @@ class MailboxWorker extends BaseWorker {
                 logger.info(`Profile removed from config, cleaning up: ${existingUsername}`);
                 this.profileMap.delete(existingUsername);
                 this.storageMap.delete(existingUsername);
+                this.imapBoxCache.delete(existingUsername);
             }
         }
 
@@ -1311,12 +1969,26 @@ class MailboxWorker extends BaseWorker {
 
     async markEmailAsRead(uid) {
         const storage = this.getCurrentStorage();
+        const profile = this.getCurrentProfile();
         if (storage) await storage.markEmailAsRead(uid);
+        if (storage && profile?.inbox?.imap) {
+            const meta = await storage.getEmailMeta(uid);
+            if (meta?.imapUid && meta?.imapBox) {
+                await this.updateImapSeen(profile, meta.imapBox, meta.imapUid, true);
+            }
+        }
     }
 
     async markEmailAsUnread(uid) {
         const storage = this.getCurrentStorage();
+        const profile = this.getCurrentProfile();
         if (storage) await storage.markEmailAsUnread(uid);
+        if (storage && profile?.inbox?.imap) {
+            const meta = await storage.getEmailMeta(uid);
+            if (meta?.imapUid && meta?.imapBox) {
+                await this.updateImapSeen(profile, meta.imapBox, meta.imapUid, false);
+            }
+        }
     }
 
     async deleteEmail(uid) {
@@ -1353,6 +2025,51 @@ class MailboxWorker extends BaseWorker {
         const cachedContent = await storage.getEmailContent(uid);
         if (cachedContent) {
             return cachedContent;
+        }
+
+        const meta = await storage.getEmailMeta(uid);
+
+        if (profile.inbox?.imap && meta?.imapUid && meta?.imapBox) {
+            const maxRetries = 2;
+            let lastError = null;
+
+            for (let attempt = 0; attempt <= maxRetries; attempt++) {
+                try {
+                    const imapClient = new IMAPEmailClient(
+                        profile.username, profile.password,
+                        profile.inbox.imap.tls,
+                        profile.inbox.imap.host,
+                        profile.inbox.imap.port
+                    );
+                    const attachmentDir = this.getCurrentAttachmentDir();
+                    const result = await withTimeout(
+                        imapClient.getEmailContent(uid, meta.imapBox, meta.imapUid, attachmentDir),
+                        120000,
+                        `getEmailContent(IMAP:${uid})`
+                    );
+                    if (!result) {
+                        if (attempt === 0) {
+                            logger.error(`failed to get email content from IMAP server: ${uid}`);
+                        }
+                        throw new Error(`无法获取邮件内容: ${uid}`);
+                    }
+                    await storage.saveEmailContent(uid, result);
+                    return result;
+                } catch (error) {
+                    lastError = error;
+                    const shouldRetry = attempt < maxRetries && this.isRetryableError(error);
+                    if (shouldRetry) {
+                        const delay = (attempt + 1) * 1000;
+                        logger.warn(`retrying getEmailContent(IMAP) for ${uid}, attempt ${attempt + 1}/${maxRetries + 1}, delay ${delay}ms`);
+                        await new Promise(resolve => setTimeout(resolve, delay));
+                    } else {
+                        break;
+                    }
+                }
+            }
+
+            logger.error(`failed to get email content from IMAP server after ${maxRetries + 1} attempts: ${uid}`);
+            throw lastError || new Error(`无法获取邮件内容: ${uid}`);
         }
 
         if (profile.inbox?.pop3) {
@@ -1423,6 +2140,22 @@ class MailboxWorker extends BaseWorker {
 
         if (!storage || !profile) throw new Error('No active profile');
 
+        const meta = await storage.getEmailMeta(uid);
+
+        if (profile.inbox?.imap && meta?.imapUid && meta?.imapBox) {
+            const imapClient = new IMAPEmailClient(
+                profile.username, profile.password,
+                profile.inbox.imap.tls, profile.inbox.imap.host, profile.inbox.imap.port
+            );
+            const attachmentDir = this.getCurrentAttachmentDir();
+            const result = await imapClient.getEmail(uid, meta.imapBox, meta.imapUid, attachmentDir);
+            if (!result) throw new Error('无法通过IMAP重新下载邮件');
+            const { header, content } = result;
+            await storage.saveEmailContent(uid, content);
+            await storage.saveEmailHeader(header);
+            return content;
+        }
+
         if (profile.inbox?.pop3) {
             const pop3 = new POP3EmailClient(
                 profile.username, profile.password,
@@ -1450,17 +2183,34 @@ class MailboxWorker extends BaseWorker {
         if (!profile) throw new Error('No active profile');
 
         if (profile.outbox?.smtp) {
+            const smtpAccount = profile.outbox.smtp.account ? profile.outbox.smtp.account : profile.username;
             const smtp = new SmtpEmailClient(
-                profile.outbox.smtp.account ? profile.outbox.smtp.account : profile.username,
+                smtpAccount,
                 profile.username, profile.password, profile.name,
                 profile.outbox.smtp.host, profile.outbox.smtp.port, profile.outbox.smtp.tls
             );
-            const result = await smtp.sendMail(sendEmailSchema.to , sendEmailSchema.cc, sendEmailSchema.bcc,
-                sendEmailSchema.subject, sendEmailSchema.text, sendEmailSchema.html, sendEmailSchema.attachments);
+            const sentUid = `sent_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+            const draftUid = sendEmailSchema.draftUid || `draft_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+            const messageId = sendEmailSchema.messageId || `<fillipdesk-${Date.now()}-${Math.random().toString(36).slice(2)}@fillipdesk>`;
+
+            const sentHeaders = { 'X-Fillipdesk-UID': sentUid };
+            const sentMailOptions = {
+                from: `"${profile.name}" <${smtpAccount}>`,
+                to: Array.isArray(sendEmailSchema.to) ? sendEmailSchema.to.join(', ') : sendEmailSchema.to,
+                cc: Array.isArray(sendEmailSchema.cc) ? sendEmailSchema.cc.join(', ') : sendEmailSchema.cc,
+                bcc: Array.isArray(sendEmailSchema.bcc) ? sendEmailSchema.bcc.join(', ') : sendEmailSchema.bcc,
+                subject: sendEmailSchema.subject,
+                text: sendEmailSchema.text,
+                html: sendEmailSchema.html,
+                attachments: sendEmailSchema.attachments,
+                messageId: messageId,
+                headers: sentHeaders
+            };
+
+            const result = await smtp.sendMailWithOptions(sentMailOptions);
 
             if (result && storage) {
                 // 发送成功后保存到已发送
-                const uid = `sent_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
                 const emailHeader = {
                     subject: sendEmailSchema.subject,
                     from: [{ name: profile.name, address: profile.username }],
@@ -1468,16 +2218,29 @@ class MailboxWorker extends BaseWorker {
                     cc: Array.isArray(sendEmailSchema.cc) ? sendEmailSchema.cc.map(addr => ({ name: '', address: addr })) : (sendEmailSchema.cc ? [{ name: '', address: sendEmailSchema.cc }] : []),
                     bcc: Array.isArray(sendEmailSchema.bcc) ? sendEmailSchema.bcc.map(addr => ({ name: '', address: addr })) : (sendEmailSchema.bcc ? [{ name: '', address: sendEmailSchema.bcc }] : [])
                 };
+                emailHeader.messageId = messageId;
                 const emailContent = {
                     htmlContent: sendEmailSchema.html,
                     textContent: sendEmailSchema.text,
                     attachments: sendEmailSchema.attachments || []
                 };
-                await storage.saveSentEmail(uid, emailHeader, emailContent);
+                await storage.saveSentEmail(sentUid, emailHeader, emailContent);
+
+                if (profile.inbox?.imap) {
+                    try {
+                        const boxMap = await this.resolveImapBoxMap(profile);
+                        if (boxMap?.sent) {
+                            const rawMessage = await buildRawEmailMessage(sentMailOptions);
+                            await this.appendToImap(profile, boxMap.sent, rawMessage, ['\\Seen']);
+                        }
+                    } catch (e) {
+                        logger.warn(`failed to append sent mail to IMAP: ${e.message}`);
+                    }
+                }
 
             } else if (!result && storage) {
                 // 发送失败，保存到草稿箱
-                const draftUid = sendEmailSchema.draftUid || `draft_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+                const draftHeaders = { 'X-Fillipdesk-UID': draftUid };
                 const emailHeader = {
                     subject: sendEmailSchema.subject,
                     from: [{ name: profile.name, address: profile.username }],
@@ -1485,6 +2248,7 @@ class MailboxWorker extends BaseWorker {
                     cc: Array.isArray(sendEmailSchema.cc) ? sendEmailSchema.cc.map(addr => ({ name: '', address: addr })) : (sendEmailSchema.cc ? [{ name: '', address: sendEmailSchema.cc }] : []),
                     bcc: Array.isArray(sendEmailSchema.bcc) ? sendEmailSchema.bcc.map(addr => ({ name: '', address: addr })) : (sendEmailSchema.bcc ? [{ name: '', address: sendEmailSchema.bcc }] : [])
                 };
+                emailHeader.messageId = messageId;
                 const emailContent = {
                     htmlContent: sendEmailSchema.html,
                     textContent: sendEmailSchema.text,
@@ -1492,6 +2256,22 @@ class MailboxWorker extends BaseWorker {
                 };
                 await storage.saveDraft(draftUid, emailHeader, emailContent);
                 logger.info(`email send failed, saved to drafts: ${draftUid}`);
+
+                if (profile.inbox?.imap) {
+                    try {
+                        const boxMap = await this.resolveImapBoxMap(profile);
+                        if (boxMap?.drafts) {
+                            const draftMailOptions = {
+                                ...sentMailOptions,
+                                headers: draftHeaders
+                            };
+                            const rawMessage = await buildRawEmailMessage(draftMailOptions);
+                            await this.appendToImap(profile, boxMap.drafts, rawMessage, ['\\Draft']);
+                        }
+                    } catch (e) {
+                        logger.warn(`failed to append draft mail to IMAP: ${e.message}`);
+                    }
+                }
             }
 
             return result;
@@ -1508,6 +2288,7 @@ class MailboxWorker extends BaseWorker {
         if (!profile || !storage) throw new Error('No active profile');
 
         const uid = draftSchema.uid || `draft_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        const messageId = draftSchema.messageId || `<fillipdesk-${uid}@fillipdesk>`;
         const emailHeader = {
             subject: draftSchema.subject,
             from: [{ name: profile.name, address: profile.username }],
@@ -1515,12 +2296,39 @@ class MailboxWorker extends BaseWorker {
             cc: Array.isArray(draftSchema.cc) ? draftSchema.cc.map(addr => ({ name: '', address: addr })) : (draftSchema.cc ? [{ name: '', address: draftSchema.cc }] : []),
             bcc: Array.isArray(draftSchema.bcc) ? draftSchema.bcc.map(addr => ({ name: '', address: addr })) : (draftSchema.bcc ? [{ name: '', address: draftSchema.bcc }] : [])
         };
+        emailHeader.messageId = messageId;
         const emailContent = {
             htmlContent: draftSchema.html,
             textContent: draftSchema.text,
             attachments: draftSchema.attachments || []
         };
         await storage.saveDraft(uid, emailHeader, emailContent);
+
+        if (profile.inbox?.imap) {
+            try {
+                const boxMap = await this.resolveImapBoxMap(profile);
+                if (boxMap?.drafts) {
+                    const smtpAccount = profile.outbox?.smtp?.account ? profile.outbox.smtp.account : profile.username;
+                    const mailOptions = {
+                        from: `"${profile.name}" <${smtpAccount}>`,
+                        to: Array.isArray(draftSchema.to) ? draftSchema.to.join(', ') : draftSchema.to,
+                        cc: Array.isArray(draftSchema.cc) ? draftSchema.cc.join(', ') : draftSchema.cc,
+                        bcc: Array.isArray(draftSchema.bcc) ? draftSchema.bcc.join(', ') : draftSchema.bcc,
+                        subject: draftSchema.subject,
+                        text: draftSchema.text,
+                        html: draftSchema.html,
+                        attachments: draftSchema.attachments,
+                        messageId: messageId,
+                        headers: { 'X-Fillipdesk-UID': uid }
+                    };
+                    const rawMessage = await buildRawEmailMessage(mailOptions);
+                    await this.appendToImap(profile, boxMap.drafts, rawMessage, ['\\Draft']);
+                }
+            } catch (e) {
+                logger.warn(`failed to append draft to IMAP: ${e.message}`);
+            }
+        }
+
         return uid;
     }
 
