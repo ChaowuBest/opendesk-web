@@ -1,14 +1,19 @@
 /**
- * Skills 子应用：技能列表、添加（本地目录 / URL）、删除
- * 注：应用在 iframe 中加载，需从父窗口取 skillRegistryAPI
+ * Skills 子应用：与其它应用统一，走 applicationAPI.call（Worker）；仅需弹窗的 pickDirectory/pickZip 走 callMainWorld（主进程 dialog）
  */
-function getSkillRegistryAPI() {
-  if (typeof window.skillRegistryAPI !== 'undefined') return window.skillRegistryAPI;
-  if (typeof window.parent !== 'undefined' && window.parent !== window && typeof window.parent.skillRegistryAPI !== 'undefined') {
-    return window.parent.skillRegistryAPI;
-  }
-  if (typeof window.top !== 'undefined' && window.top.skillRegistryAPI) return window.top.skillRegistryAPI;
-  return null;
+function getSkillsAPI() {
+  if (typeof window.applicationAPI === 'undefined') return null;
+  return {
+    list: () => window.applicationAPI.call('list'),
+    refresh: () => window.applicationAPI.call('refresh'),
+    getSkillsDirectory: () => window.applicationAPI.call('getSkillsDirectory'),
+    pickDirectory: () => window.applicationAPI.callMainWorld('pickDirectory'),
+    pickZip: () => window.applicationAPI.callMainWorld('pickZip'),
+    addFromPath: (sourcePath) => window.applicationAPI.call('addFromPath', sourcePath),
+    addFromZip: (zipPath) => window.applicationAPI.call('addFromZip', zipPath),
+    addFromUrl: (url) => window.applicationAPI.call('addFromUrl', url),
+    delete: (skillId) => window.applicationAPI.call('delete', skillId)
+  };
 }
 
 class SkillsEntryWidget extends HTMLElement {
@@ -34,7 +39,7 @@ class SkillsEntryWidget extends HTMLElement {
   }
 
   async loadSkills() {
-    const api = getSkillRegistryAPI();
+    const api = getSkillsAPI();
     if (!api) {
       this.error = '无法连接技能服务（请在主窗口打开应用）';
       this.render();
@@ -44,14 +49,10 @@ class SkillsEntryWidget extends HTMLElement {
     this.error = null;
     this.render();
     try {
-      const res = await api.list();
-      if (res?.status === 'ok' && Array.isArray(res.data)) {
-        this.skills = res.data;
-      } else {
-        this.skills = [];
-      }
-      const dirRes = await api.getSkillsDirectory();
-      if (dirRes?.status === 'ok' && dirRes.data) this.skillsDir = dirRes.data;
+      this.skills = await api.list();
+      if (!Array.isArray(this.skills)) this.skills = [];
+      const dir = await api.getSkillsDirectory();
+      if (dir) this.skillsDir = dir;
     } catch (e) {
       this.error = e?.message || '加载失败';
       this.skills = [];
@@ -71,7 +72,7 @@ class SkillsEntryWidget extends HTMLElement {
   }
 
   async refresh() {
-    const api = getSkillRegistryAPI();
+    const api = getSkillsAPI();
     if (!api) return;
     this.loading = true;
     this.error = null;
@@ -96,30 +97,21 @@ class SkillsEntryWidget extends HTMLElement {
   }
 
   async addFromLocal() {
-    const api = getSkillRegistryAPI();
+    const api = getSkillsAPI();
     if (!api?.pickDirectory || !api?.addFromPath) return;
     this.addingFromPath = true;
     this.render();
     try {
-      const pickRes = await api.pickDirectory();
-      if (pickRes?.status !== 'ok') {
-        this.setMessage(pickRes?.message || '未选择目录', true);
-        return;
-      }
-      const path = pickRes.data;
+      const path = await api.pickDirectory();
       if (!path) {
         this.addingFromPath = false;
         this.render();
         return;
       }
       const addRes = await api.addFromPath(path);
-      if (addRes?.status === 'ok') {
-        this.setMessage(`已添加技能：${addRes.data?.name ?? ''}`);
-        this.showAddPanel = false;
-        await this.loadSkills();
-      } else {
-        this.setMessage(addRes?.message || '添加失败', true);
-      }
+      this.setMessage(`已添加技能：${addRes?.name ?? ''}`);
+      this.showAddPanel = false;
+      await this.loadSkills();
     } catch (e) {
       this.setMessage(e?.message || '添加失败', true);
     } finally {
@@ -129,30 +121,21 @@ class SkillsEntryWidget extends HTMLElement {
   }
 
   async addFromZip() {
-    const api = getSkillRegistryAPI();
+    const api = getSkillsAPI();
     if (!api?.pickZip || !api?.addFromZip) return;
     this.addingFromZip = true;
     this.render();
     try {
-      const pickRes = await api.pickZip();
-      if (pickRes?.status !== 'ok') {
-        this.setMessage(pickRes?.message || '未选择文件', true);
-        return;
-      }
-      const zipPath = pickRes.data;
+      const zipPath = await api.pickZip();
       if (!zipPath) {
         this.addingFromZip = false;
         this.render();
         return;
       }
       const addRes = await api.addFromZip(zipPath);
-      if (addRes?.status === 'ok') {
-        this.setMessage(`已添加技能：${addRes.data?.name ?? ''}`);
-        this.showAddPanel = false;
-        await this.loadSkills();
-      } else {
-        this.setMessage(addRes?.message || '添加失败', true);
-      }
+      this.setMessage(`已添加技能：${addRes?.name ?? ''}`);
+      this.showAddPanel = false;
+      await this.loadSkills();
     } catch (e) {
       this.setMessage(e?.message || '添加失败', true);
     } finally {
@@ -162,7 +145,7 @@ class SkillsEntryWidget extends HTMLElement {
   }
 
   async addFromUrl() {
-    const api = getSkillRegistryAPI();
+    const api = getSkillsAPI();
     if (!api?.addFromUrl || !this.addUrl.trim()) {
       this.setMessage('请输入技能包 URL（zip 格式）', true);
       return;
@@ -171,14 +154,10 @@ class SkillsEntryWidget extends HTMLElement {
     this.render();
     try {
       const addRes = await api.addFromUrl(this.addUrl.trim());
-      if (addRes?.status === 'ok') {
-        this.setMessage(`已添加技能：${addRes.data?.name ?? ''}`);
-        this.showAddPanel = false;
-        this.addUrl = '';
-        await this.loadSkills();
-      } else {
-        this.setMessage(addRes?.message || '添加失败', true);
-      }
+      this.setMessage(`已添加技能：${addRes?.name ?? ''}`);
+      this.showAddPanel = false;
+      this.addUrl = '';
+      await this.loadSkills();
     } catch (e) {
       this.setMessage(e?.message || '添加失败', true);
     } finally {
@@ -188,19 +167,15 @@ class SkillsEntryWidget extends HTMLElement {
   }
 
   async deleteSkill(skillId) {
-    const api = getSkillRegistryAPI();
+    const api = getSkillsAPI();
     if (!api?.delete) return;
     if (!confirm(`确定要删除技能「${skillId}」吗？`)) return;
     this.deletingId = skillId;
     this.render();
     try {
-      const res = await api.delete(skillId);
-      if (res?.status === 'ok') {
-        this.setMessage('已删除');
-        await this.loadSkills();
-      } else {
-        this.setMessage(res?.message || '删除失败', true);
-      }
+      await api.delete(skillId);
+      this.setMessage('已删除');
+      await this.loadSkills();
     } catch (e) {
       this.setMessage(e?.message || '删除失败', true);
     } finally {

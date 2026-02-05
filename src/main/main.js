@@ -399,90 +399,6 @@ const registerSettingAPIHandlers = () => {
 
 }
 
-const registerSkillRegistryHandlers = () => {
-  ipcMain.handle('skillRegistry:list', () => {
-    try {
-      return { status: 'ok', data: SkillRegistry.listSkills() };
-    } catch (error) {
-      return { status: 'error', message: error.message };
-    }
-  });
-  ipcMain.handle('skillRegistry:refresh', () => {
-    try {
-      const { toolsets, errors } = SkillRegistry.refresh();
-      return { status: 'ok', data: { count: toolsets.length, errors } };
-    } catch (error) {
-      return { status: 'error', message: error.message };
-    }
-  });
-  ipcMain.handle('skillRegistry:getSkillsDirectory', () => {
-    try {
-      return { status: 'ok', data: SkillRegistry.getSkillsDirectory() };
-    } catch (error) {
-      return { status: 'error', message: error.message };
-    }
-  });
-  ipcMain.handle('skillRegistry:pickDirectory', async () => {
-    try {
-      const win = BrowserWindow.getFocusedWindow();
-      const { canceled, filePaths } = await dialog.showOpenDialog(win || null, {
-        properties: ['openDirectory'],
-        title: '选择技能目录（须含 SKILL.md）'
-      });
-      if (canceled || !filePaths?.length) return { status: 'ok', data: null };
-      return { status: 'ok', data: filePaths[0] };
-    } catch (error) {
-      return { status: 'error', message: error.message };
-    }
-  });
-  ipcMain.handle('skillRegistry:pickZip', async () => {
-    try {
-      const win = BrowserWindow.getFocusedWindow();
-      const { canceled, filePaths } = await dialog.showOpenDialog(win || null, {
-        properties: ['openFile'],
-        title: '选择技能压缩包',
-        filters: [{ name: 'ZIP', extensions: ['zip'] }]
-      });
-      if (canceled || !filePaths?.length) return { status: 'ok', data: null };
-      return { status: 'ok', data: filePaths[0] };
-    } catch (error) {
-      return { status: 'error', message: error.message };
-    }
-  });
-  ipcMain.handle('skillRegistry:addFromPath', (event, sourcePath) => {
-    try {
-      const result = SkillRegistry.addSkillFromPath(sourcePath);
-      return result.success ? { status: 'ok', data: { name: result.name } } : { status: 'error', message: result.error };
-    } catch (error) {
-      return { status: 'error', message: error.message };
-    }
-  });
-  ipcMain.handle('skillRegistry:addFromZip', (event, zipPath) => {
-    try {
-      const result = SkillRegistry.addSkillFromZipPath(zipPath);
-      return result.success ? { status: 'ok', data: { name: result.name } } : { status: 'error', message: result.error };
-    } catch (error) {
-      return { status: 'error', message: error.message };
-    }
-  });
-  ipcMain.handle('skillRegistry:addFromUrl', async (event, url) => {
-    try {
-      const result = await SkillRegistry.addSkillFromUrl(url);
-      return result.success ? { status: 'ok', data: { name: result.name } } : { status: 'error', message: result.error };
-    } catch (error) {
-      return { status: 'error', message: error.message };
-    }
-  });
-  ipcMain.handle('skillRegistry:delete', (event, skillId) => {
-    try {
-      const result = SkillRegistry.deleteSkill(skillId);
-      return result.success ? { status: 'ok' } : { status: 'error', message: result.error };
-    } catch (error) {
-      return { status: 'error', message: error.message };
-    }
-  });
-};
-
 const registerNotificationAPIHandlers = () => {
     ipcMain.handle('notification:sendNotification', (event, ...args) => {
         try {
@@ -580,7 +496,6 @@ app.whenReady().then(async () => {
     registerFSAPIHandlers();
     registerSettingAPIHandlers();
     registerApplicationRegistryHandlers(ipcMain);
-    registerSkillRegistryHandlers();
     registerNotificationAPIHandlers();
     registerHotKeys();
     registerTray();

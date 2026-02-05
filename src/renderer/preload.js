@@ -414,16 +414,4 @@ if (window.self !== window.top) {
             };
         }
     });
-
-    contextBridge.exposeInMainWorld('skillRegistryAPI', {
-        list: () => ipcRenderer.invoke('skillRegistry:list'),
-        refresh: () => ipcRenderer.invoke('skillRegistry:refresh'),
-        getSkillsDirectory: () => ipcRenderer.invoke('skillRegistry:getSkillsDirectory'),
-        pickDirectory: () => ipcRenderer.invoke('skillRegistry:pickDirectory'),
-        pickZip: () => ipcRenderer.invoke('skillRegistry:pickZip'),
-        addFromPath: (sourcePath) => ipcRenderer.invoke('skillRegistry:addFromPath', sourcePath),
-        addFromZip: (zipPath) => ipcRenderer.invoke('skillRegistry:addFromZip', zipPath),
-        addFromUrl: (url) => ipcRenderer.invoke('skillRegistry:addFromUrl', url),
-        delete: (skillId) => ipcRenderer.invoke('skillRegistry:delete', skillId)
-    });
 }
