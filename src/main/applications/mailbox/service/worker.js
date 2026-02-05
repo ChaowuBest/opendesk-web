@@ -746,6 +746,31 @@ class IMAPEmailClient extends POP3EmailClient {
         });
     }
 
+    move(imap, uids, boxTo) {
+        return new Promise((resolve, reject) => {
+            imap.move(uids, boxTo, (err) => {
+                if (err) reject(err);
+                else resolve(true);
+            });
+        });
+    }
+
+    expunge(imap, uids = null) {
+        return new Promise((resolve, reject) => {
+            if (uids === null || uids === undefined) {
+                imap.expunge((err) => {
+                    if (err) reject(err);
+                    else resolve(true);
+                });
+            } else {
+                imap.expunge(uids, (err) => {
+                    if (err) reject(err);
+                    else resolve(true);
+                });
+            }
+        });
+    }
+
     addFlags(imap, uid, flags) {
         return new Promise((resolve, reject) => {
             imap.addFlags(uid, flags, (err) => {
@@ -807,10 +832,14 @@ class IMAPEmailClient extends POP3EmailClient {
             const draftsBox = IMAPEmailClient.findBoxByAttrib(flat, '\\Drafts')
                 || IMAPEmailClient.findBoxByName(flat, ['drafts', 'draft', '草稿箱', '草稿']);
 
+            const trashBox = IMAPEmailClient.findBoxByAttrib(flat, '\\Trash')
+                || IMAPEmailClient.findBoxByName(flat, ['trash', 'deleted', 'bin', 'junk', '垃圾箱', '已删除', '已刪除', '回收站', '废纸篓', '已删除邮件']);
+
             const map = {
                 inbox: inboxBox,
                 sent: sentBox,
-                drafts: draftsBox
+                drafts: draftsBox,
+                trash: trashBox
             };
             cache.set(cacheKey, map);
             return map;
@@ -1064,6 +1093,41 @@ class IMAPEmailClient extends POP3EmailClient {
                     return false;
                 }
             }
+        } finally {
+            await this.end(imap);
+        }
+    }
+
+    async deleteMessage(imapBox, imapUid, trashBox = null) {
+        if (!imapBox || !imapUid) return false;
+        const normalizedBox = IMAPEmailClient.normalizeMailboxName(imapBox);
+        const normalizedTrash = IMAPEmailClient.normalizeMailboxName(trashBox);
+        const imap = this.createImap();
+        try {
+            await withTimeout(this.connect(imap, 'IMAP connect (delete)'), 30000, 'IMAP connect (delete)');
+            await withTimeout(this.openBox(imap, normalizedBox, false), 30000, `IMAP open ${normalizedBox}`);
+
+            if (normalizedTrash && normalizedTrash !== normalizedBox) {
+                try {
+                    await withTimeout(this.move(imap, imapUid, normalizedTrash), 30000, `IMAP move ${normalizedTrash}`);
+                    return true;
+                } catch (moveError) {
+                    logger.warn(`failed to move IMAP message to trash: ${moveError.message}`);
+                }
+            }
+
+            await withTimeout(this.addFlags(imap, imapUid, ['\\Deleted']), 30000, 'IMAP add \\Deleted');
+            if (imap.serverSupports && imap.serverSupports('UIDPLUS')) {
+                try {
+                    await withTimeout(this.expunge(imap, imapUid), 30000, 'IMAP expunge');
+                } catch (expungeError) {
+                    logger.warn(`failed to expunge IMAP message: ${expungeError.message}`);
+                }
+            }
+            return true;
+        } catch (error) {
+            logger.warn(`failed to delete IMAP message: ${error.message}`);
+            return false;
         } finally {
             await this.end(imap);
         }
@@ -2074,7 +2138,22 @@ class MailboxWorker extends BaseWorker {
 
     async deleteEmail(uid) {
         const storage = this.getCurrentStorage();
+        const profile = this.getCurrentProfile();
         if (storage) await storage.deleteEmail(uid);
+        if (storage && profile?.inbox?.imap) {
+            const meta = await storage.getEmailMeta(uid);
+            if (meta?.imapUid && meta?.imapBox) {
+                const imapClient = new IMAPEmailClient(
+                    profile.username,
+                    profile.password,
+                    profile.inbox.imap.tls,
+                    profile.inbox.imap.host,
+                    profile.inbox.imap.port
+                );
+                const boxMap = await imapClient.resolveBoxMap(this.imapBoxCache);
+                await imapClient.deleteMessage(meta.imapBox, meta.imapUid, boxMap?.trash);
+            }
+        }
     }
 
     getNewEmailCount(username) {
