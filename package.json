@@ -19,7 +19,9 @@
     "make:win32": "electron-forge make --platform=win32",
     "make:darwin": "electron-forge make --platform=darwin",
     "updater:server": "tsx src/updater/server.ts",
-    "updater:publish": "tsx src/updater/publish-update.ts"
+    "updater:publish": "tsx src/updater/publish-update.ts",
+    "cli": "tsx src/main/cli.ts",
+    "build-cli": "npm run build && ncc build dist/main/cli.js -o dist/cli-bundle && sed -i '1i var parcelRequire = undefined;' dist/cli-bundle/index.js"
   },
   "devDependencies": {
     "@electron-forge/cli": "^7.10.2",
@@ -45,6 +47,7 @@
   "dependencies": {
     "@a2a-js/sdk": "^0.3.7",
     "@a2ui/lit": "^0.8.0",
+    "@clack/prompts": "^1.0.0",
     "@electron-toolkit/utils": "^4.0.0",
     "@fortawesome/fontawesome-free": "^7.1.0",
     "@lydell/node-pty": "^1.2.0-beta.3",
@@ -52,6 +55,7 @@
     "@tailwindcss/postcss": "^4.1.18",
     "@tailwindcss/vite": "^4.1.18",
     "@types/better-sqlite3": "^7.6.13",
+    "@vercel/ncc": "^0.38.4",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
     "@yaireo/tagify": "^4.31.3",
@@ -61,6 +65,7 @@
     "async-mutex": "^0.5.0",
     "autoprefixer": "^10.4.23",
     "better-sqlite3": "^12.6.2",
+    "cli-markdown": "^3.5.1",
     "crypto-js": "^4.2.0",
     "dhash": "^0.0.4",
     "electron-squirrel-startup": "^1.0.1",
