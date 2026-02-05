@@ -1,6 +1,7 @@
 import { BaseApplication, BaseGUIConfig } from '../base.js';
 import { z } from 'zod';
 import path from 'path';
+import { BrowserWindow, dialog } from 'electron';
 import { SkillRegistry } from './skillregistry.js';
 
 const __dirname = import.meta.dirname;
@@ -48,7 +49,31 @@ class SkillsApplication extends BaseApplication {
   }
 
   refresh() {
-    return SkillRegistry.refresh();
+    const { toolsets, errors } = SkillRegistry.refresh();
+    return { count: toolsets.length, errors };
+  }
+
+  /** 仅此二项需主进程 dialog，供渲染进程 applicationAPI.callMainWorld 调用 */
+  async pickDirectory() {
+    const win = BrowserWindow.getFocusedWindow();
+    const { canceled, filePaths } = await dialog.showOpenDialog(win || null, {
+      properties: ['openDirectory'],
+      title: '选择技能目录（须含 SKILL.md）'
+    });
+    if (canceled || !filePaths?.length) return null;
+    return filePaths[0];
+  }
+
+  /** 供渲染进程 applicationAPI.callMainWorld 调用 */
+  async pickZip() {
+    const win = BrowserWindow.getFocusedWindow();
+    const { canceled, filePaths } = await dialog.showOpenDialog(win || null, {
+      properties: ['openFile'],
+      title: '选择技能压缩包',
+      filters: [{ name: 'ZIP', extensions: ['zip'] }]
+    });
+    if (canceled || !filePaths?.length) return null;
+    return filePaths[0];
   }
 }
 

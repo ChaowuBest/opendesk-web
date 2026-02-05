@@ -11,6 +11,7 @@ import { TerminalApplication } from "./terminal/app.js";
 import { PPTCreatorApplication } from "./ppt/app.js";
 import { DesignerApplication } from "./designer/app.js";
 import { SkillsApplication } from "./skills/app.js";
+import { SkillRegistry } from "./skills/skillregistry.js";
 import { Setting, getAppDirectory } from "../utils/setting.js";
 import { logger, LogStream } from "../utils/logger.js";
 import { NotificationManager } from "../utils/notificationmgr.js";
@@ -322,6 +323,10 @@ export function initializeRegistryWorker() {
             }
             case 'log': {
                 LogStream.getStream().write(event.message + '\n');
+                break;
+            }
+            case 'skillsRegistryChanged': {
+                SkillRegistry.refresh();
                 break;
             }
             case 'subscribeEvent': {

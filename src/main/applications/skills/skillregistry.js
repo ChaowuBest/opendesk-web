@@ -7,6 +7,8 @@ import path from 'path';
 import fs from 'fs';
 import { pathToFileURL } from 'url';
 import { spawn } from 'child_process';
+import os from 'os';
+import AdmZip from 'adm-zip';
 import { getAppDirectory } from '../../utils/setting.js';
 import { BaseTool, BaseToolset } from '../../agents/tool.js';
 import { parseAndValidateSkillMd, SKILL_MD_FILENAME } from './skill-schema.js';
@@ -16,6 +18,31 @@ const SKILLS_DIR_NAME = 'skills';
 const REFERENCES_DIR = 'references';
 const SCRIPTS_DIR = 'scripts';
 const ASSETS_DIR = 'assets';
+
+/** zip 解压体积上限：500MB，防止 zip 炸弹或过大技能包 */
+const ZIP_MAX_UNCOMPRESSED_BYTES = 500 * 1024 * 1024;
+
+/**
+ * 计算 zip 内所有文件的解压后体积之和（不含目录条目），超限或无法解析时返回 error
+ * @param {InstanceType<typeof AdmZip>} zip - AdmZip 实例
+ * @returns {{ total: number, error?: string }}
+ */
+function getZipUncompressedSize(zip) {
+  const entries = zip.getEntries();
+  let total = 0;
+  for (const e of entries) {
+    if (e.isDirectory) continue;
+    const size = e.header && typeof e.header.size === 'number' ? e.header.size : null;
+    if (size == null || size < 0) {
+      return { total: 0, error: '压缩包包含无法解析体积的条目，拒绝解压' };
+    }
+    total += size;
+    if (total > ZIP_MAX_UNCOMPRESSED_BYTES) {
+      return { total, error: `解压后体积超过限制（${(ZIP_MAX_UNCOMPRESSED_BYTES / 1024 / 1024).toFixed(0)}MB），当前约 ${(total / 1024 / 1024).toFixed(1)}MB` };
+    }
+  }
+  return { total };
+}
 
 /** @type {Map<string, { frontmatter: object, body: string, skillDir: string }>} */
 const skillsCache = new Map();
@@ -169,7 +196,7 @@ function getSkillsDirectory() {
   return skillsDir;
 }
 
-function loadSkillFromDir(skillDir, dirName) {
+function loadSkillFromDir(skillDir) {
   const skillMdPath = path.join(skillDir, SKILL_MD_FILENAME);
   if (!fs.existsSync(skillMdPath)) {
     return { success: false, error: `缺少 ${SKILL_MD_FILENAME}` };
@@ -182,7 +209,7 @@ function loadSkillFromDir(skillDir, dirName) {
     return { success: false, error: `读取 ${SKILL_MD_FILENAME} 失败: ${e.message}` };
   }
 
-  const parsed = parseAndValidateSkillMd(raw, dirName);
+  const parsed = parseAndValidateSkillMd(raw);
   if (!parsed.valid) {
     return { success: false, error: parsed.error };
   }
@@ -348,7 +375,7 @@ function loadAll() {
   for (const ent of entries) {
     if (!ent.isDirectory()) continue;
     const skillDir = path.join(skillsDir, ent.name);
-    const result = loadSkillFromDir(skillDir, ent.name);
+    const result = loadSkillFromDir(skillDir);
     if (result.success) {
       skillsCache.set(result.name, {
         frontmatter: result.frontmatter,
@@ -380,15 +407,195 @@ function refresh() {
 
 function listSkills() {
   if (skillsCache.size === 0) loadAll();
-  return Array.from(skillsCache.entries()).map(([id, s]) => ({
-    id,
-    name: s.frontmatter.name,
-    description: s.frontmatter.description ?? '',
-    license: s.frontmatter.license,
-    compatibility: s.frontmatter.compatibility,
-    metadata: s.frontmatter.metadata,
-    allowedTools: s.frontmatter['allowed-tools']
-  }));
+  const skillsDir = getSkillsDirectory();
+  const list = Array.from(skillsCache.entries()).map(([id, s]) => {
+    let addedAt = 0;
+    try {
+      const dirPath = path.join(skillsDir, id);
+      if (fs.existsSync(dirPath)) {
+        const stat = fs.statSync(dirPath);
+        addedAt = (stat.birthtimeMs != null ? stat.birthtimeMs : stat.mtimeMs) || 0;
+      }
+    } catch (_) {}
+    return {
+      id,
+      name: s.frontmatter.name,
+      description: s.frontmatter.description ?? '',
+      license: s.frontmatter.license,
+      compatibility: s.frontmatter.compatibility,
+      metadata: s.frontmatter.metadata,
+      allowedTools: s.frontmatter['allowed-tools'],
+      addedAt
+    };
+  });
+  list.sort((a, b) => (b.addedAt - a.addedAt));
+  return list.map(({ addedAt, ...rest }) => rest);
+}
+
+/** 递归复制目录 */
+function copyDirRecursive(src, dest) {
+  fs.mkdirSync(dest, { recursive: true });
+  for (const ent of fs.readdirSync(src, { withFileTypes: true })) {
+    const s = path.join(src, ent.name);
+    const d = path.join(dest, ent.name);
+    if (ent.isDirectory()) copyDirRecursive(s, d);
+    else fs.copyFileSync(s, d);
+  }
+}
+
+/** 递归删除目录或文件 */
+function rmRecursive(p) {
+  if (!fs.existsSync(p)) return;
+  if (fs.statSync(p).isDirectory()) {
+    for (const name of fs.readdirSync(p)) rmRecursive(path.join(p, name));
+    fs.rmdirSync(p);
+  } else fs.unlinkSync(p);
+}
+
+/**
+ * 从本地目录添加技能：校验 SKILL.md 后复制到用户技能目录
+ * @param {string} sourceDir - 源目录（须含 SKILL.md，目录名可与 name 不一致，以 frontmatter name 为准）
+ * @returns {{ success: boolean, name?: string, error?: string }}
+ */
+function addSkillFromPath(sourceDir) {
+  const resolved = path.resolve(sourceDir);
+  if (!fs.existsSync(resolved) || !fs.statSync(resolved).isDirectory()) {
+    return { success: false, error: '源路径不存在或不是目录' };
+  }
+  const result = loadSkillFromDir(resolved);
+  if (!result.success) return { success: false, error: result.error };
+  const skillsDir = getSkillsDirectory();
+  const destDir = path.join(skillsDir, result.name);
+  if (fs.existsSync(destDir)) {
+    return { success: false, error: `技能 "${result.name}" 已存在，请先删除或改用其它名称` };
+  }
+  try {
+    copyDirRecursive(resolved, destDir);
+    loadAll();
+    return { success: true, name: result.name };
+  } catch (e) {
+    rmRecursive(destDir);
+    return { success: false, error: `复制失败: ${e.message}` };
+  }
+}
+
+/**
+ * 从本地 zip 文件添加技能：解压到临时目录，查找含 SKILL.md 的根后复制到用户技能目录
+ * @param {string} zipPath - 本地 .zip 文件路径
+ * @returns {{ success: boolean, name?: string, error?: string }}
+ */
+function addSkillFromZipPath(zipPath) {
+  if (!zipPath || typeof zipPath !== 'string') {
+    return { success: false, error: '请选择有效的 zip 文件' };
+  }
+  const resolved = path.resolve(zipPath);
+  if (!fs.existsSync(resolved) || !fs.statSync(resolved).isFile()) {
+    return { success: false, error: '文件不存在或不是文件' };
+  }
+  const ext = path.extname(resolved).toLowerCase();
+  if (ext !== '.zip') {
+    return { success: false, error: '请选择 .zip 格式的压缩包' };
+  }
+  const tmpDir = path.join(os.tmpdir(), `skill-zip-${Date.now()}`);
+  try {
+    fs.mkdirSync(tmpDir, { recursive: true });
+    const zip = new AdmZip(resolved);
+    const uncompressedSize = getZipUncompressedSize(zip);
+    if (uncompressedSize.error) {
+      return { success: false, error: uncompressedSize.error };
+    }
+    zip.extractAllTo(tmpDir, true);
+    const entries = fs.readdirSync(tmpDir, { withFileTypes: true });
+    let skillRoot = null;
+    if (entries.length === 1 && entries[0].isDirectory()) {
+      const sub = path.join(tmpDir, entries[0].name);
+      if (fs.existsSync(path.join(sub, SKILL_MD_FILENAME))) skillRoot = sub;
+    }
+    if (!skillRoot && fs.existsSync(path.join(tmpDir, SKILL_MD_FILENAME))) {
+      skillRoot = tmpDir;
+    }
+    if (!skillRoot) {
+      return { success: false, error: '压缩包内未找到含 SKILL.md 的技能目录' };
+    }
+    return addSkillFromPath(skillRoot);
+  } catch (e) {
+    return { success: false, error: e.message || '解压或添加失败' };
+  } finally {
+    if (fs.existsSync(tmpDir)) rmRecursive(tmpDir);
+  }
+}
+
+/**
+ * 从 URL 添加技能：下载 zip 并解压，查找含 SKILL.md 的根后复制到用户技能目录
+ * @param {string} url - 技能包 zip 的 URL
+ * @returns {Promise<{ success: boolean, name?: string, error?: string }>}
+ */
+async function addSkillFromUrl(url) {
+  if (!url || typeof url !== 'string') {
+    return { success: false, error: '请提供有效的 URL' };
+  }
+  const trimmed = url.trim();
+  if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) {
+    return { success: false, error: 'URL 须以 http:// 或 https:// 开头' };
+  }
+  const tmpDir = path.join(os.tmpdir(), `skill-download-${Date.now()}`);
+  try {
+    fs.mkdirSync(tmpDir, { recursive: true });
+    const res = await fetch(trimmed, { redirect: 'follow' });
+    if (!res.ok) {
+      return { success: false, error: `下载失败: ${res.status} ${res.statusText}` };
+    }
+    const buf = Buffer.from(await res.arrayBuffer());
+    const zip = new AdmZip(buf);
+    const uncompressedSize = getZipUncompressedSize(zip);
+    if (uncompressedSize.error) {
+      return { success: false, error: uncompressedSize.error };
+    }
+    zip.extractAllTo(tmpDir, true);
+    const entries = fs.readdirSync(tmpDir, { withFileTypes: true });
+    let skillRoot = null;
+    if (entries.length === 1 && entries[0].isDirectory()) {
+      const sub = path.join(tmpDir, entries[0].name);
+      if (fs.existsSync(path.join(sub, SKILL_MD_FILENAME))) skillRoot = sub;
+    }
+    if (!skillRoot && fs.existsSync(path.join(tmpDir, SKILL_MD_FILENAME))) {
+      skillRoot = tmpDir;
+    }
+    if (!skillRoot) {
+      return { success: false, error: '压缩包内未找到含 SKILL.md 的技能目录' };
+    }
+    const addResult = addSkillFromPath(skillRoot);
+    return addResult;
+  } catch (e) {
+    return { success: false, error: e.message || '下载或解压失败' };
+  } finally {
+    if (fs.existsSync(tmpDir)) rmRecursive(tmpDir);
+  }
+}
+
+/**
+ * 删除指定技能（按 id，即目录名）
+ * @param {string} skillId - 技能 id（目录名）
+ * @returns {{ success: boolean, error?: string }}
+ */
+function deleteSkill(skillId) {
+  if (!skillId || typeof skillId !== 'string') {
+    return { success: false, error: '请指定要删除的技能' };
+  }
+  const safeName = path.basename(skillId).replace(/[/\\]/g, '');
+  if (!safeName) return { success: false, error: '无效的技能 id' };
+  const skillsDir = getSkillsDirectory();
+  const targetDir = path.join(skillsDir, safeName);
+  if (!fs.existsSync(targetDir)) {
+    return { success: false, error: `技能 "${safeName}" 不存在` };
+  }
+  try {
+    rmRecursive(targetDir);
+    loadAll();
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: `删除失败: ${e.message}` };
+  }
 }
 
 export const SkillRegistry = {
@@ -397,5 +604,9 @@ export const SkillRegistry = {
   loadAll,
   getToolsets,
   refresh,
-  listSkills
+  listSkills,
+  addSkillFromPath,
+  addSkillFromZipPath,
+  addSkillFromUrl,
+  deleteSkill
 };

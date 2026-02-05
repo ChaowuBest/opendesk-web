@@ -414,10 +414,4 @@ if (window.self !== window.top) {
             };
         }
     });
-
-    contextBridge.exposeInMainWorld('skillRegistryAPI', {
-        list: () => ipcRenderer.invoke('skillRegistry:list'),
-        refresh: () => ipcRenderer.invoke('skillRegistry:refresh'),
-        getSkillsDirectory: () => ipcRenderer.invoke('skillRegistry:getSkillsDirectory')
-    });
 }
