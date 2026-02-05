@@ -566,6 +566,54 @@ class IMAPEmailClient extends POP3EmailClient {
         return Buffer.from('');
     }
 
+    static sanitizeRecipientField(value) {
+        if (!value) return null;
+        if (Array.isArray(value)) {
+            const cleaned = value.map(v => String(v).trim()).filter(Boolean);
+            return cleaned.length > 0 ? cleaned : null;
+        }
+        if (typeof value === 'string') {
+            const cleaned = value.trim();
+            return cleaned.length > 0 ? cleaned : null;
+        }
+        return null;
+    }
+
+    static applyDraftEnvelope(mailOptions, fallbackAddress) {
+        let to = IMAPEmailClient.sanitizeRecipientField(mailOptions.to);
+        let cc = IMAPEmailClient.sanitizeRecipientField(mailOptions.cc);
+        let bcc = IMAPEmailClient.sanitizeRecipientField(mailOptions.bcc);
+
+        if (to === null) delete mailOptions.to;
+        else mailOptions.to = to;
+        if (cc === null) delete mailOptions.cc;
+        else mailOptions.cc = cc;
+        if (bcc === null) delete mailOptions.bcc;
+        else mailOptions.bcc = bcc;
+
+        const hasRecipients = Boolean(
+            (Array.isArray(to) ? to.length > 0 : to) ||
+            (Array.isArray(cc) ? cc.length > 0 : cc) ||
+            (Array.isArray(bcc) ? bcc.length > 0 : bcc)
+        );
+
+        if (!hasRecipients && fallbackAddress) {
+            mailOptions.envelope = {
+                from: mailOptions.from || fallbackAddress,
+                to: fallbackAddress
+            };
+        }
+        return mailOptions;
+    }
+
+    static normalizeMailboxName(boxName) {
+        if (!boxName) return '';
+        if (typeof boxName === 'object' && boxName.path) {
+            boxName = boxName.path;
+        }
+        return String(boxName).replace(/[\r\n\0]/g, '').trim();
+    }
+
     createImap() {
         return new Imap({
             user: this.usr,
@@ -683,6 +731,15 @@ class IMAPEmailClient extends POP3EmailClient {
     append(imap, raw, options) {
         return new Promise((resolve, reject) => {
             imap.append(raw, options, (err) => {
+                if (err) reject(err);
+                else resolve(true);
+            });
+        });
+    }
+
+    addBox(imap, name) {
+        return new Promise((resolve, reject) => {
+            imap.addBox(name, (err) => {
                 if (err) reject(err);
                 else resolve(true);
             });
@@ -953,19 +1010,60 @@ class IMAPEmailClient extends POP3EmailClient {
     }
 
     async appendMessage(boxName, rawMessage, flags = []) {
-        if (!boxName || !rawMessage) return false;
+        const normalizedBox = IMAPEmailClient.normalizeMailboxName(boxName);
+        if (!normalizedBox || !rawMessage) return false;
+        if (Buffer.isBuffer(rawMessage) && rawMessage.length === 0) {
+            logger.warn(`skip IMAP append: empty raw message for ${normalizedBox}`);
+            return false;
+        }
+        const safeFlags = Array.isArray(flags) ? flags.filter(Boolean) : (flags ? [flags] : []);
         const imap = this.createImap();
         try {
             await withTimeout(this.connect(imap, 'IMAP connect (append)'), 30000, 'IMAP connect (append)');
-            await withTimeout(
-                this.append(imap, rawMessage, { mailbox: boxName, flags: flags, date: new Date() }),
-                30000,
-                `IMAP append ${boxName}`
-            );
-            return true;
-        } catch (error) {
-            logger.warn(`failed to append to IMAP ${boxName}: ${error.message}`);
-            return false;
+            try {
+                const options = { mailbox: normalizedBox };
+                if (safeFlags.length > 0) {
+                    options.flags = safeFlags;
+                }
+                await withTimeout(
+                    this.append(imap, rawMessage, options),
+                    30000,
+                    `IMAP append ${normalizedBox}`
+                );
+                return true;
+            } catch (error) {
+                logger.warn(`failed to append to IMAP ${normalizedBox}: ${error.message}`);
+                if (error?.stack) {
+                    logger.warn(`append IMAP stack: ${error.stack}`);
+                }
+                try {
+                    await withTimeout(this.openBox(imap, normalizedBox, false), 30000, `IMAP open ${normalizedBox}`);
+                } catch (openError) {
+                    const openMessage = openError?.message || '';
+                    if (/not found|no such|does not exist|mailbox/i.test(openMessage)) {
+                        try {
+                            await withTimeout(this.addBox(imap, normalizedBox), 30000, `IMAP add ${normalizedBox}`);
+                        } catch (addError) {
+                            logger.warn(`failed to create IMAP mailbox ${normalizedBox}: ${addError.message || addError}`);
+                        }
+                    }
+                }
+                try {
+                    const fallbackOptions = { mailbox: normalizedBox };
+                    await withTimeout(
+                        this.append(imap, rawMessage, fallbackOptions),
+                        30000,
+                        `IMAP append fallback ${normalizedBox}`
+                    );
+                    return true;
+                } catch (fallbackError) {
+                    logger.warn(`fallback append to IMAP ${normalizedBox} failed: ${fallbackError.message}`);
+                    if (fallbackError?.stack) {
+                        logger.warn(`append fallback stack: ${fallbackError.stack}`);
+                    }
+                    return false;
+                }
+            }
         } finally {
             await this.end(imap);
         }
@@ -2262,6 +2360,7 @@ class MailboxWorker extends BaseWorker {
                                 ...sentMailOptions,
                                 headers: draftHeaders
                             };
+                            IMAPEmailClient.applyDraftEnvelope(draftMailOptions, profile.username);
                             const rawMessage = await IMAPEmailClient.buildRawEmailMessage(draftMailOptions);
                             await imapClient.appendMessage(boxMap.drafts, rawMessage, ['\\Draft']);
                         }
@@ -2325,6 +2424,7 @@ class MailboxWorker extends BaseWorker {
                         messageId: messageId,
                         headers: { 'X-Fillipdesk-UID': uid }
                     };
+                    IMAPEmailClient.applyDraftEnvelope(mailOptions, profile.username);
                     const rawMessage = await IMAPEmailClient.buildRawEmailMessage(mailOptions);
                     await imapClient.appendMessage(boxMap.drafts, rawMessage, ['\\Draft']);
                 }
