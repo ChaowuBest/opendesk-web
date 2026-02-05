@@ -237,11 +237,13 @@ class A2AEntryWidget extends HTMLElement {
                 btn.textContent = '已提交'; 
                 btn.classList.add('a2ui-btn-disabled');
                 const updatedHtml = messageBubble.outerHTML;
-                for (let i = this.conversationHistory.length - 1; i >= 0; i--) {
-                    const msg = this.conversationHistory[i];
-                    if (msg.role === 'assistant') {
-                        msg.content = updatedHtml; 
-                        break; 
+                const messageContainer = btn.closest('[data-message-id]');
+                if (messageContainer) {
+                    const targetMsgId = messageContainer.getAttribute('data-message-id');
+                    const targetMsg = this.conversationHistory.find(m => m.id === targetMsgId);
+                    if (targetMsg) {
+                        targetMsg.content = updatedHtml;
+                        console.log(`[UI Update] Updated specific message: ${targetMsgId}`);
                     }
                 }
                 const payload = {
@@ -746,7 +748,7 @@ class A2AEntryWidget extends HTMLElement {
                                     : 'text-sm text-gray-800 a2a-markdown-body markdown-body';
                                 const boundAgentId = msg.agentId || '';
                                 return `
-                                    <div class="flex justify-start" data-agent-id="${boundAgentId}">
+                                    <div class="flex justify-start" data-agent-id="${boundAgentId}" data-message-id="${msg.id}">
                                         <div class="max-w-[80%] p-3 ${errorClass} rounded-lg border border-gray-200 shadow-sm">
                                             <div class="${contentClass}">${renderedContent}${isStreaming}</div>
                                         </div>
