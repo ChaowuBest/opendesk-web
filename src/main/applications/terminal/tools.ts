@@ -178,7 +178,7 @@ export class ExecuteBashTool extends BaseTool<typeof ExecuteBashArgsSchema> {
             });
 
             bash.on('close', (code: number) => {
-                let result = '';
+                let result = ``;
                 if (stdout) { result += `标准输出流：\n${stdout}\n`; }
                 if (stderr) { result += `标准错误流：\n${stderr}\n`; }
                 if (!stdout && !stderr) { result = `进程退出，代码 ${code}`; }
@@ -187,6 +187,77 @@ export class ExecuteBashTool extends BaseTool<typeof ExecuteBashArgsSchema> {
             });
 
             bash.on('error', (err: Error) => {
+                resolve(`执行命令时出错: ${err.message}`);
+            });
+        });
+    }
+
+    async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
+        return renderTerminalToolCall('BASH', toolcall);
+    }
+}
+
+const ExecuteZshArgsSchema = z.object({
+    command: z.string().describe('要执行的ZSH命令'),
+    workingDirectory: z.string().optional().describe('执行命令的工作目录，如果不指定则使用当前目录')
+});
+
+export class ExecuteZshTool extends BaseTool<typeof ExecuteZshArgsSchema> {
+    constructor() {
+        super(
+            'executeZsh',
+            '执行 zsh 命令。可以执行任何有效的ZSH 命令，如 ls、cd、cat、echo 等',
+            ExecuteZshArgsSchema
+        );
+
+        this.executor = this.executeCommand;
+    }
+
+    executeCommand(args: z.output<typeof ExecuteBashArgsSchema>): Promise<string> {
+        let command: string = args.command;
+        let workingDirectory: string | undefined = args.workingDirectory;
+
+        // MacOS/Linux 下执行命令
+        return new Promise((resolve, reject) => {
+            const { spawn } = require('child_process');
+            const fs = require('fs');
+            const path = require('path');
+
+            // 校验命令
+            if (!command || typeof command !== 'string') {
+                return resolve('请输入要执行的 bash 命令。');
+            }
+
+            // 设置工作目录
+            let cwd: string | undefined = undefined;
+            if (workingDirectory && typeof workingDirectory === 'string' && fs.existsSync(workingDirectory)) {
+                cwd = workingDirectory;
+            }
+
+            // 开启进程
+            const zsh = spawn('/bin/zsh', ['-c', command], { cwd });
+
+            let stdout = '';
+            let stderr = '';
+
+            zsh.stdout.on('data', (data: Buffer) => {
+                stdout += data.toString();
+            });
+
+            zsh.stderr.on('data', (data: Buffer) => {
+                stderr += data.toString();
+            });
+
+            zsh.on('close', (code: number) => {
+                let result = `> ${args.command} 的执行结果为:`;
+                if (stdout) { result += `标准输出流：\n${stdout}\n`; }
+                if (stderr) { result += `标准错误流：\n${stderr}\n`; }
+                if (!stdout && !stderr) { result = `进程退出，代码 ${code}`; }
+                const output = result.trim() || '命令执行完成。';
+                resolve(output);
+            });
+
+            zsh.on('error', (err: Error) => {
                 resolve(`执行命令时出错: ${err.message}`);
             });
         });

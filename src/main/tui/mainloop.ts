@@ -1,10 +1,9 @@
 import { intro, outro, text, note, spinner, box, select, SpinnerResult } from '@clack/prompts';
 import { GlobalState } from './../states/global.js';
-import { ChatContext, UserMessage } from '../agents/messages.js';
+import { ChatContext, ToolCallMessagePart, TextMessagePart, UserMessage } from '../agents/messages.js';
 import { argv } from 'process';
 import cliMarkdown from 'cli-markdown';
-import { ApplicationRegistry } from '../applications/registry.js';
-import { BaseTaskUpdateSubscriber, TaskUpdateChunk } from '../states/tasks.js';
+import { TaskState, TaskUpdateChunk } from '../states/tasks.js';
 
 
 const state = GlobalState.getInstance();
@@ -17,50 +16,68 @@ const banner = `
 ██║  ██║██║██████╔╝███████╗███████║██║  ██╗
 ╚═╝  ╚═╝╚═╝╚═════╝ ╚══════╝╚══════╝╚═╝  ╚═╝`
 
-class CliTaskUpdateSubscriber extends BaseTaskUpdateSubscriber {
-    s: SpinnerResult;
+let currentTask: TaskState | null = null;
+let providedPrompt: string | null = argv[2] ?? null;
 
-    constructor(s: SpinnerResult) {
-        super();
-        this.s = s;
-        s.start('思考中...');
-    }
-
-    send(chunkUpdate: TaskUpdateChunk) {
-        this.s.message(`正在组织回答 (已产生 ${chunkUpdate.usage?.total_tokens} 词) `);
-    }
-}
-
-export async function mainloop() {
-    intro(banner);
+async function step(): Promise<void> {
     var prompt = '';
-    if (argv[2]) {
-        prompt = argv[2];
+    if (providedPrompt) {
+        prompt = providedPrompt;
+        providedPrompt = null;
     } else {
         prompt = await text({
-            message: '你好呀，需要我帮你做什么?',
-            placeholder: 'I want to create a new project',
+            message: currentTask === null ? '你好呀，需要我帮你做什么?' : '接下来有什么新的指示?',
+            placeholder: '(bye - 退出)',
         }).then(result => result.toString());
     }
 
     if (prompt.trim() === 'bye') {
-        outro('再见');
-        return;
+        throw new Error('bye');
+    }
+
+    if (currentTask === null) {
+        currentTask = state.taskManagerState.createTask();
     }
 
     const s = spinner();
     s.start('思考中...');
-    const task = state.taskManagerState.createTask();
-    await task.submitUserMessage(prompt.toString());
-    await task.waitUntilFinished((chunkUpdate: TaskUpdateChunk) => {
+
+    await currentTask.submitUserMessage(prompt.toString());
+    await currentTask.waitUntilFinished((chunkUpdate: TaskUpdateChunk) => {
         s.message(`正在组织回答 (已产生 ${chunkUpdate.usage?.total_tokens} 词) `);
+        if (chunkUpdate.last_part instanceof ToolCallMessagePart) {
+            for (const tc of chunkUpdate.last_part.toolcalls) {
+                if (tc.status === 'success') {
+                    s.stop();
+                    box(tc.result, `工具调用完成: ${tc.tool_name}`, { rounded: true });
+                    s.start('思考中...');
+                }
+            }
+        }
         if (chunkUpdate.task_status === 'stopped') {
             s.stop('思考完成');
-            box(
-                cliMarkdown((chunkUpdate.last_part as TextMessagePart).text), 'Response',
-                { rounded: true, titleAlign: 'center' }
-            )
-            console.info(chunkUpdate);
+            if (chunkUpdate.last_part instanceof TextMessagePart) {
+                box(
+                    cliMarkdown((chunkUpdate.last_part as TextMessagePart).text), 'Response',
+                    { rounded: true, titleAlign: 'center' }
+                )
+            }
         }
     });
+}
+
+export async function mainloop() {
+    intro(banner);
+
+    while (true) {
+        try {
+            await step();
+        } catch (err) {
+            if (err.message === 'bye') {
+                outro('再见');
+                return;
+            }
+            throw err;
+        }
+    }
 }

@@ -783,6 +783,6 @@ export {
     SystemMessage, UserMessage, AssistantMessage,
     AssistantResponse,
     ChatContext,
-    ToolCallMessagePart, FileMessagePart, AssistantMessagePart,
+    ToolCallMessagePart, TextMessagePart,FileMessagePart, AssistantMessagePart,
     Usage, ToolCall
 };

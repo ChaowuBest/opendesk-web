@@ -37,7 +37,7 @@ export class ElectronTaskManagerUpdateSubscriber extends BaseTaskManagerUpdateSu
     }
 
     send(taskList: object[]): void {
-        this.senderFrame.send(`taskManager:taskListUpdate:${this.subscription_id}`, taskList);
+        this.senderFrame.send(`taskManager:taskListUpdate`, taskList);
     }
 }
 

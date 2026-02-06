@@ -105,7 +105,7 @@ export class ApplicationRegistry {
 
         if (application === undefined) {
             return { status: 'error', message: `application ${bundleName} not found` }
-        } else if (this.globalWorker === null) {
+        } else if (!ApplicationRegistry.hasGlobalWorker()) {
             return { status: 'error', message: 'global worker not initialized yet' }
         }
 
@@ -135,11 +135,11 @@ export class ApplicationRegistry {
  * @param settingData - 新的设置数据
  */
 export function notifyWorkerSettingUpdate(settingData: object) {
-    if (this.globalWorker === null) {
+    if (ApplicationRegistry.getGlobalWorker() === null) {
         logger.warn('global worker not initialized, cannot notify setting update');
         return;
     }
-    this.globalWorker.postMessage({
+    ApplicationRegistry.getGlobalWorker().postMessage({
         bundleName: '__system',
         requestId: crypto.randomUUID(),
         methodName: '__updateGlobalSetting',

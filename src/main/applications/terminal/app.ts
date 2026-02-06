@@ -1,6 +1,6 @@
 import { BaseToolset } from "../../agents/tool";
 import { BaseApplication, BaseGUIConfig } from "../base.js";
-import { ExecuteCmdTool, ExecuteBashTool, WriteFileTool, ReadFileTool } from "./tools.js";
+import { ExecuteCmdTool, ExecuteBashTool, WriteFileTool, ReadFileTool, ExecuteZshTool } from "./tools.js";
 
 
 export class TerminalApplication extends BaseApplication {
@@ -10,10 +10,17 @@ export class TerminalApplication extends BaseApplication {
 
     async getToolsets(): Promise<BaseToolset[]> {
         const toolset = new BaseToolset('terminal');
-        if (process.platform === 'win32') {
-            toolset.addTool(new ExecuteCmdTool());
-        } else {
-            toolset.addTool(new ExecuteBashTool());
+
+        switch (process.platform as string) {
+            case 'win32':
+                toolset.addTool(new ExecuteCmdTool());
+                break;
+            case 'openharmony':
+                toolset.addTool(new ExecuteZshTool());
+                break;
+            default:
+                toolset.addTool(new ExecuteBashTool());
+                break;
         }
 
         toolset.addTool(new ReadFileTool());
