@@ -1,9 +1,9 @@
-import { net } from 'electron';
 import { BaseTool, ToolResult } from '../../agents/tool';
 import { z } from 'zod';
 import { logger } from '../../utils/logger.js';
 import { ToolCall } from '../../agents/messages';
 import { marked } from '../../agents/messages';
+import { fetch } from 'undici';
 import AdmZip from 'adm-zip';
 import path from 'path';
 import fs from 'fs';
@@ -44,7 +44,7 @@ export class PPTAgent {
     }
 
     async initializeFromRequest(request: string) {
-        var response = await net.fetch(this.getServiceUrl() + "/create_pptagent", { method: 'POST' })
+        var response = await fetch(this.getServiceUrl() + "/create_pptagent", { method: 'POST' })
         if (!response.ok) {
             throw new Error('错误：无法创建PPT智能体')
         }
@@ -54,7 +54,7 @@ export class PPTAgent {
         this.instanceId = this.instanceId.slice(1, -1);
         logger.info(`PPT智能体分配成功，实例ID: ${this.instanceId}`);
 
-        response = await net.fetch(this.getServiceUrl() + "/ainvoke", {
+        response = await fetch(this.getServiceUrl() + "/ainvoke", {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -73,7 +73,7 @@ export class PPTAgent {
             throw new Error('错误：PPT智能体未初始化')
         }
 
-        const response = await net.fetch(this.getServiceUrl() + "/aresume", {
+        const response = await fetch(this.getServiceUrl() + "/aresume", {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -171,7 +171,7 @@ export class CreatePPTTool extends BaseTool<typeof CreatePPTSchema> {
 
         if (zipUrl && !fs.existsSync(targetDir)) {
             // 下载zip文件
-            const response = await net.fetch(zipUrl);
+            const response = await fetch(zipUrl);
             if (!response.ok) {
                 throw new Error(`下载PPT压缩包失败: ${response.statusText}`);
             }

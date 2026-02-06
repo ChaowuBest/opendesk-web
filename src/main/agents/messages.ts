@@ -488,13 +488,15 @@ class UserMessage {
     }
 }
 
+type AssistantMessagePart = TextMessagePart | ReasoningMessagePart | ToolCallMessagePart;
+
 class AssistantMessage {
     role: 'assistant' = 'assistant';
     message_id: string = crypto.randomUUID();
-    content: Array<TextMessagePart | ReasoningMessagePart | ToolCallMessagePart> = [];
+    content: Array<AssistantMessagePart> = [];
     usage?: Usage;
 
-    constructor (content: Array<TextMessagePart | ReasoningMessagePart> = []) {
+    constructor (content: Array<AssistantMessagePart> = []) {
         this.content = content;
     }
 
@@ -781,5 +783,6 @@ export {
     SystemMessage, UserMessage, AssistantMessage,
     AssistantResponse,
     ChatContext,
-    ToolCallMessagePart, FileMessagePart, ToolCall
+    ToolCallMessagePart, TextMessagePart,FileMessagePart, AssistantMessagePart,
+    Usage, ToolCall
 };

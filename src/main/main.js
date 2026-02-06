@@ -1,15 +1,17 @@
 import { app, BrowserWindow, Tray, globalShortcut, nativeImage, ipcMain, shell, Menu, dialog, protocol } from 'electron'
 import { Setting, getAppDirectory } from './utils/setting.js'
 import { GlobalState } from './states/global.js'
-import { openFloatWindow } from './windows/floatwindow.js'
 import { BaseToolset } from './agents/tool';
 import { is } from '@electron-toolkit/utils';
 import { z } from 'zod';
 import { NotificationManager } from './utils/notificationmgr.js';
 import { LogStream, logger } from './utils/logger.js'
 import { SkillRegistry } from './applications/skills/skillregistry.js';
-import { registerApplicationRegistryHandlers, initializeRegistry, initializeRegistryWorker, initializeProtocolHandlers, notifyWorkerSettingUpdate, ApplicationRegistry } from './applications/registry';
+import { initializeRegistry, initializeRegistryWorker, notifyWorkerSettingUpdate, ApplicationRegistry } from './applications/registry';
+import { initializeRegistryProtocols, initializeProtocolHandlers, registerApplicationRegistryHandlers } from './applications/registry_electron.js';
 import { UpdateClient } from '../updater/client.js';
+import { setPlatform } from '../platforms/base.js';
+import { ElectronTaskUpdateSubscriber, ElectronPlatform, ElectronTaskManagerUpdateSubscriber } from '../platforms/electron.js';
 
 import Convert from 'ansi-to-html';
 import path from 'path';
@@ -18,6 +20,7 @@ import fs from 'fs';
 import appIcon from '../../resources/main/images/icon_round.png?asset'
 
 
+setPlatform(ElectronPlatform);
 const __dirname = import.meta.dirname;
 const converter = new Convert();
 
@@ -212,7 +215,12 @@ const registerTaskManagerAPIHandlers = () => {
             return { status: 'error', message: `task ${taskId} not found` }
         }
 
-        return { status: 'ok', data: task.addSubscriber(event.senderFrame) };
+        if (!event.senderFrame) {
+            return { status: 'error', message: 'sender frame not found' }
+        }
+
+        const subscriber = new ElectronTaskUpdateSubscriber(event.senderFrame);
+        return { status: 'ok', data: task.addSubscriber(subscriber) };
     })
     ipcMain.handle('taskManager:unsubscribeTaskUpdate', (event, taskId, subscriptionId) => {
         var task = globalState.taskManagerState.getTask(taskId);
@@ -227,7 +235,11 @@ const registerTaskManagerAPIHandlers = () => {
         return { status: 'ok', data: globalState.taskManagerState.getTaskList() };
     })
     ipcMain.handle('taskManager:subscribeTaskListUpdate', (event) => {
-        return { status: 'ok', data: globalState.taskManagerState.addSubscriber(event.sender) };
+        if (!event.senderFrame) {
+            return { status: 'error', message: 'sender frame not found' }
+        }
+        const subscriber = new ElectronTaskManagerUpdateSubscriber(event.senderFrame);
+        return { status: 'ok', data: globalState.taskManagerState.addSubscriber(subscriber) };
     })
     ipcMain.handle('taskManager:attachToolset', async (event, taskId, toolsetObject) => {
         const task = globalState.taskManagerState.getTask(taskId);
@@ -270,7 +282,7 @@ const registerTaskManagerAPIHandlers = () => {
             await task.attachFiles(details.attachedFilePaths);
         }
 
-        await task.submitUserMessage(details.message);
+        task.submitUserMessage(details.message);
         return { status: 'ok' };
     });
     ipcMain.handle('taskManager:stopTask', (event, taskId) => {
@@ -491,6 +503,7 @@ const initializeUpdater = () => {
 
 // 在 app.whenReady() 之前初始化 Registry 和协议 schemes
 initializeRegistry();
+initializeRegistryProtocols();
 
 app.whenReady().then(async () => {
     GlobalState.initialize();

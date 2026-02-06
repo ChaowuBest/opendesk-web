@@ -87,6 +87,7 @@
     "nodejieba": "^3.5.2",
     "nodemailer": "^7.0.12",
     "officeparser": "^5.2.2",
+    "open": "^11.0.0",
     "openai": "^6.10.0",
     "p-map": "^4.0.0",
     "p-queue": "^9.0.1",

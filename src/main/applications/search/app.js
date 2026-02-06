@@ -10,9 +10,10 @@ class ExaSearchTool extends BaseTool {
             query: z.string(),
         }));
         this.api_key = api_key;
+        this.setExecutor(this.search);
     }
 
-    async execute(args) {
+    async search(args) {
         const exa = new Exa(this.api_key);
         const searchResults = await exa.search(args.query, {
             numResults: 15,

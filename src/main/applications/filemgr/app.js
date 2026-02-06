@@ -1,7 +1,7 @@
 import { BaseApplication, BaseGUIConfig } from "../base.js";
 import { BaseTool, BaseToolset } from "../../agents/tool";
 import { FSEntrySchema } from './setting.js';
-import { shell } from 'electron';
+import open from 'open';
 import { z } from 'zod';
 import path from 'path';
 
@@ -45,7 +45,7 @@ class FileMgrApplication extends BaseApplication {
     }
 
     openPath(filePath) {
-        shell.openPath(filePath);
+        open(filePath);
     }
 }
 

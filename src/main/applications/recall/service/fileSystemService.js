@@ -3,7 +3,7 @@
  * 负责处理文件和文件夹的系统级操作
  */
 
-import { shell } from 'electron';
+import { getPlatform } from '../../../../platforms/base';
 import fs from 'fs';
 
 class FileSystemService {
@@ -12,7 +12,7 @@ class FileSystemService {
      * @param {string} dirPath 活动文件夹路径
      */
     async openActivityFolder(dirPath) {
-        await shell.openPath(dirPath);
+        await getPlatform().openPath(dirPath);
         return { success: true, message: 'activity folder opened' };
     }
 
@@ -22,8 +22,7 @@ class FileSystemService {
      */
     async previewActivityPDF(pdfPath) {
         try {
-            // 在主进程中使用shell打开PDF
-            await shell.openPath(pdfPath);
+            await getPlatform().openPath(pdfPath);
             return { success: true, message: 'PDF opened for preview' };
         } catch (error) {
             return { success: false, message: error.message };
@@ -40,8 +39,7 @@ class FileSystemService {
                 return { success: false, message: 'File does not exist' };
             }
 
-            // 在主进程中使用shell显示文件
-            shell.showItemInFolder(filePath);
+            await getPlatform().showItemInFolder(filePath);
             return { success: true, message: 'File shown in folder' };
         } catch (error) {
             return { success: false, message: error.message };

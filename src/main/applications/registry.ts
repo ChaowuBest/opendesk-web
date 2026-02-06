@@ -15,8 +15,9 @@ import { SkillRegistry } from "./skills/skillregistry.js";
 import { Setting, getAppDirectory } from "../utils/setting.js";
 import { logger, LogStream } from "../utils/logger.js";
 import { NotificationManager } from "../utils/notificationmgr.js";
-import { app, protocol } from 'electron';
+import { getPlatform } from "../../platforms/base.js";
 import { Worker } from "worker_threads";
+
 import path from 'path';
 
 
@@ -40,23 +41,33 @@ export type ProtocolHandlerEntry = {
     handler: (request: Electron.ProtocolRequest) => Response | Promise<Response>;
 };
 
-var pendingRequests: Map<string, {
-    resolve: (value: any) => void,
-    reject: (reason?: any) => void
-}> = new Map();
-var pendingStreamRequests: Map<string, (chunk: any) => void> = new Map();
-var globalWorker: Worker | null = null;
-
 
 export class ApplicationRegistry {
     static applications: Map<string, BaseApplication> = new Map();
+    static pendingRequests: Map<string, {
+        resolve: (value: any) => void,
+        reject: (reason?: any) => void
+    }> = new Map();
+    static pendingStreamRequests: Map<string, (chunk: any) => void> = new Map();
+    static globalWorker: Worker | null = null;
+
+    static hasGlobalWorker(): boolean {
+        return this.globalWorker !== null;
+    }
+
+    static getGlobalWorker(): Worker {
+        if (this.globalWorker === null) {
+            throw new Error('global worker not initialized yet');
+        }
+        return this.globalWorker;
+    }
 
     static registerApplication(application: BaseApplication) {
         this.applications.set(application.bundleName, application);
         application.setRegistry(this);
         Setting.registerApplicationSettings(application, () => {
             application.onConfigChanged();
-            globalWorker?.postMessage({
+            this.globalWorker?.postMessage({
                 bundleName: application.bundleName,
                 methodName: 'applicationConfigChanged',
                 args: [application.getConfig()],
@@ -95,16 +106,16 @@ export class ApplicationRegistry {
 
         if (application === undefined) {
             return { status: 'error', message: `application ${bundleName} not found` }
-        } else if (globalWorker === null) {
+        } else if (!ApplicationRegistry.hasGlobalWorker()) {
             return { status: 'error', message: 'global worker not initialized yet' }
         }
 
         try {
             let promise = new Promise((resolve, reject) => {
-                pendingRequests.set(requestId, { resolve, reject });
+                ApplicationRegistry.pendingRequests.set(requestId, { resolve, reject });
             });
 
-            globalWorker.postMessage({
+            ApplicationRegistry.getGlobalWorker().postMessage({
                 bundleName: bundleName,
                 requestId: requestId,
                 methodName: methodName,
@@ -112,7 +123,7 @@ export class ApplicationRegistry {
             })
 
             const data = await promise;
-            pendingRequests.delete(requestId);
+            ApplicationRegistry.pendingRequests.delete(requestId);
             return { status: 'ok', data: data };
         } catch (error) {
             return { status: 'error', message: error.message };
@@ -121,120 +132,15 @@ export class ApplicationRegistry {
 };
 
 /**
- * 注册应用注册器IPC处理程序
- */
-export function registerApplicationRegistryHandlers(ipcMain: Electron.IpcMain) {
-    ipcMain.handle('applicationRegistry:getApplicationGUIConfig', async (event, bundleName) => {
-        const application = ApplicationRegistry.getApplication(bundleName);
-        if (application === undefined) {
-            return { status: 'error', message: `application ${bundleName} not found` }
-        }
-        return { status: 'ok', data: application.getGUIConfig() };
-    })
-    ipcMain.handle('applicationRegistry:getApplicationList', async (event) => {
-        return { status: 'ok', data: ApplicationRegistry.getApplicationList() };
-    })
-    ipcMain.handle('applicationRegistry:call', async (event, bundleName, methodName, ...args) => {
-        return ApplicationRegistry.callWorker(bundleName, methodName, ...args);
-    })
-    ipcMain.handle('applicationRegistry:callMainWorld', async (event, bundleName, methodName, ...args) => {
-        const application = ApplicationRegistry.getApplication(bundleName);
-        if (application === undefined) {
-            return { status: 'error', message: `application ${bundleName} not found` }
-        }
-        const method = application[methodName];
-        if (method === undefined) {
-            return { status: 'error', message: `method ${methodName} not found in application ${bundleName}` }
-        }
-        return { status: 'ok', data: await method(...args) };
-    })
-    ipcMain.handle('applicationRegistry:streamCall', async (event, bundleName, methodName, ...args) => {
-        const application = ApplicationRegistry.getApplication(bundleName);
-        const requestId = crypto.randomUUID();
-
-        if (application === undefined) {
-            return { status: 'error', message: `application ${bundleName} not found` }
-        } else if (globalWorker === null) {
-            return { status: 'error', message: 'global worker not initialized yet' }
-        }
-
-        try {
-            const callback = (chunk) => {
-                event.senderFrame?.send?.(`applicationRegistry:streamChunk:${requestId}`, chunk);
-            }
-            pendingStreamRequests.set(requestId, callback);
-
-            globalWorker.postMessage({
-                bundleName: bundleName,
-                requestId: requestId,
-                methodName: methodName,
-                args: args,
-                stream: true,
-            })
-
-            return { status: 'ok', requestId: requestId };
-        } catch (error) {
-            return { status: 'error', message: error.message };
-        }
-    })
-    ipcMain.handle('applicationRegistry:streamCallMainWorld', async (event, bundleName, methodName, ...args) => {
-        const application = ApplicationRegistry.getApplication(bundleName);
-        const requestId = crypto.randomUUID();
-
-        if (application === undefined) {
-            return { status: 'error', message: `application ${bundleName} not found` }
-        }
-        const method = application[methodName];
-        if (method === undefined) {
-            return { status: 'error', message: `method ${methodName} not found in application ${bundleName}` }
-        }
-
-        const send = (chunk: any) => {
-            event.senderFrame?.send?.(`applicationRegistry:streamChunk:${requestId}`, chunk);
-        };
-
-        (async () => {
-            try {
-                for await (const chunk of method.apply(application, args)) {
-                    send(chunk);
-                }
-                send(undefined);
-            } catch (error) {
-                logger.error(`streamCallMainWorld ${bundleName}.${methodName} error: ${error}`);
-                send(undefined);
-            }
-        })();
-
-        return { status: 'ok', requestId };
-    })
-    ipcMain.handle('applicationRegistry:subscribe', async (event, bundleName, eventName) => {
-        const application = ApplicationRegistry.getApplication(bundleName);
-        if (application === undefined) {
-            return { status: 'error', message: `application ${bundleName} not found` };
-        }
-        application.addSubscriber(eventName, event.senderFrame);
-        return { status: 'ok' };
-    })
-    ipcMain.handle('applicationRegistry:unsubscribe', async (event, bundleName, eventName) => {
-        const application = ApplicationRegistry.getApplication(bundleName);
-        if (application === undefined) {
-            return { status: 'error', message: `application ${bundleName} not found` };
-        }
-        application.removeSubscriber(eventName, event.senderFrame);
-        return { status: 'ok' };
-    })
-}
-
-/**
  * 通知 Worker 线程更新全局设置
  * @param settingData - 新的设置数据
  */
 export function notifyWorkerSettingUpdate(settingData: object) {
-    if (globalWorker === null) {
+    if (ApplicationRegistry.getGlobalWorker() === null) {
         logger.warn('global worker not initialized, cannot notify setting update');
         return;
     }
-    globalWorker.postMessage({
+    ApplicationRegistry.getGlobalWorker().postMessage({
         bundleName: '__system',
         requestId: crypto.randomUUID(),
         methodName: '__updateGlobalSetting',
@@ -257,16 +163,6 @@ export function initializeRegistry() {
 
     // 应用注册的时候会改变设置的Schema，所以这里需要清空一下重新载入
     Setting.clearCache();
-    // 收集协议配置并注册 schemes（必须在 app.whenReady() 之前）
-    const protocolConfigs = ApplicationRegistry.collectProtocolHandlerEntries();
-    const schemes = protocolConfigs.map(config => ({
-        scheme: config.scheme,
-        privileges: config.privileges || { standard: true, secure: true, supportFetchAPI: true }
-    }));
-
-    if (schemes.length > 0) {
-        protocol.registerSchemesAsPrivileged(schemes);
-    }
 }
 
 /**
@@ -275,8 +171,8 @@ export function initializeRegistry() {
  */
 export function initializeRegistryWorker() {
     // 创建 Worker（需要在 app.whenReady() 之后，因为需要 app.getAppPath()）
-    globalWorker = new Worker(
-        path.join(app.getAppPath(), 'dist', 'main', 'worker.js'),
+    ApplicationRegistry.globalWorker = new Worker(
+        getPlatform().getWorkerPath(),
         {
             workerData: {
                 paths: { appDirectory: getAppDirectory() },
@@ -285,13 +181,13 @@ export function initializeRegistryWorker() {
         }
     );
 
-    globalWorker.on('message', (event) => {
+    ApplicationRegistry.globalWorker.on('message', (event) => {
         // 处理来自 worker 的日志消息
         switch (event.type) {
             case 'response': {
-                const pending = pendingRequests.get(event.id);
+                const pending = ApplicationRegistry.pendingRequests.get(event.id);
                 if (pending) {
-                    pendingRequests.delete(event.id);
+                    ApplicationRegistry.pendingRequests.delete(event.id);
                     if (event.status === 'ok') {
                         pending.resolve(event.data);
                     } else {
@@ -301,17 +197,17 @@ export function initializeRegistryWorker() {
                 break;
             }
             case 'response_chunk': {
-                const callback = pendingStreamRequests.get(event.id);
+                const callback = ApplicationRegistry.pendingStreamRequests.get(event.id);
                 if (callback) {
                     callback(event.chunk);
                 }
                 break;
             }
             case 'response_complete': {
-                const callback = pendingStreamRequests.get(event.id);
+                const callback = ApplicationRegistry.pendingStreamRequests.get(event.id);
                 if (callback) {
                     callback(undefined);
-                    pendingStreamRequests.delete(event.id);
+                    ApplicationRegistry.pendingStreamRequests.delete(event.id);
                     break;
                 }
                 break;
@@ -352,17 +248,4 @@ export function initializeRegistryWorker() {
             }
         }
     });
-}
-
-/**
- * 注册协议 handlers
- * 在 app.whenReady() 之后调用
- */
-export function initializeProtocolHandlers() {
-    // 由各应用通过 base.getProtocolHandlers 注册自定义协议；主进程在此统一注册 handler
-    const protocolConfigs = ApplicationRegistry.collectProtocolHandlerEntries();
-    for (const { scheme, handler } of protocolConfigs) {
-        // protocol.handle 期望的 handler 类型与我们的类型定义兼容，使用类型断言
-        protocol.handle(scheme, handler as any);
-    }
 }
