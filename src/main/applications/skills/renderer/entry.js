@@ -14,9 +14,12 @@ function getSkillsAPI() {
     refresh: () => window.applicationAPI.call('refresh'),
     getSkillsDirectory: () => window.applicationAPI.call('getSkillsDirectory'),
     addFromPath: (sourcePath) => window.applicationAPI.call('addFromPath', sourcePath),
-    addFromZip: (zipPath) => window.applicationAPI.call('addFromZip', zipPath),
+    addFromZip: (zipPath, skillRelPath) => window.applicationAPI.call('addFromZip', zipPath, skillRelPath),
     addFromUrl: (url) => window.applicationAPI.call('addFromUrl', url),
-    delete: (skillId) => window.applicationAPI.call('delete', skillId)
+    delete: (skillId) => window.applicationAPI.call('delete', skillId),
+    searchRegistry: (registryId, query, page, limit) =>
+      window.applicationAPI.call('searchRegistry', registryId, query, page, limit),
+    installFromRegistry: (installUrl) => window.applicationAPI.call('installFromRegistry', installUrl)
   };
 }
 
@@ -34,6 +37,15 @@ class SkillsEntryWidget extends HTMLElement {
     this.addingFromUrl = false;
     this.message = null;
     this.deletingId = null;
+    this.registrySelected = 'skill0';
+    this.registryQuery = '';
+    this.registryResults = [];
+    this.registryPage = 1;
+    this.registryTotal = 0;
+    this.registrySearching = false;
+    this.registryHasSearched = false;
+    this.registryMessage = null;
+    this.installingRegistryId = null;
     this.attachShadow({ mode: 'open' });
   }
 
@@ -96,8 +108,65 @@ class SkillsEntryWidget extends HTMLElement {
   toggleAddPanel() {
     this.showAddPanel = !this.showAddPanel;
     this.addUrl = '';
+    this.registryResults = [];
+    this.registryMessage = null;
     this.message = null;
     this.render();
+  }
+
+  async searchRegistry() {
+    const api = getSkillsAPI();
+    if (!api?.searchRegistry) {
+      this.registryMessage = { text: '无法连接技能服务，请确认应用已加载', isError: true };
+      this.render();
+      return;
+    }
+    this.registrySearching = true;
+    this.registryMessage = null;
+    this.registryResults = [];
+    this.render();
+    const timeoutMs = 20000;
+    const searchPromise = api.searchRegistry(this.registrySelected, this.registryQuery, 1, 20);
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('搜索超时，请检查网络或稍后重试')), timeoutMs);
+    });
+    try {
+      const res = await Promise.race([searchPromise, timeoutPromise]);
+      this.registryResults = res?.skills ?? [];
+      this.registryTotal = res?.total ?? this.registryResults.length;
+      this.registryPage = 1;
+      if (res?.error) {
+        this.registryMessage = { text: res.error, isError: true };
+      } else if (res?.message) {
+        this.registryMessage = { text: res.message, isError: false };
+      }
+    } catch (e) {
+      const msg = e?.message || '搜索失败';
+      this.registryMessage = { text: msg, isError: true };
+      this.registryResults = [];
+    } finally {
+      this.registrySearching = false;
+      this.registryHasSearched = true;
+      this.render();
+    }
+  }
+
+  async installFromRegistry(installUrl, skillId) {
+    const api = getSkillsAPI();
+    if (!installUrl || !api?.installFromRegistry) return;
+    this.installingRegistryId = skillId;
+    this.render();
+    try {
+      const addRes = await api.installFromRegistry(installUrl);
+      this.setMessage(`已添加技能：${addRes?.name ?? ''}`);
+      this.showAddPanel = false;
+      await this.loadSkills();
+    } catch (e) {
+      this.setMessage(e?.message || '安装失败', true);
+    } finally {
+      this.installingRegistryId = null;
+      this.render();
+    }
   }
 
   async onPathPicked(file) {
@@ -236,6 +305,31 @@ class SkillsEntryWidget extends HTMLElement {
             <button type="button" class="btn" id="add-from-url-btn" ${this.addingFromUrl ? 'disabled' : ''}>${this.addingFromUrl ? '下载中…' : '下载并添加'}</button>
           </div>
         </div>
+        <div class="add-section registry-section">
+          <label>从 Registry 搜索</label>
+          <p class="add-hint">搜索 skill0.io 平台的技能</p>
+          <div class="registry-row">
+            <span class="registry-label">skill0.io</span>
+            <input type="text" class="registry-search-input" id="registry-search-input" placeholder="输入关键词搜索…" value="${escapeHtml(this.registryQuery)}" ${this.registrySearching ? 'disabled' : ''} />
+            <button type="button" class="btn" id="registry-search-btn" ${this.registrySearching ? 'disabled' : ''}>${this.registrySearching ? '搜索中…' : '搜索'}</button>
+          </div>
+          ${this.registryMessage ? `<p class="registry-msg ${this.registryMessage.isError ? 'error' : ''}">${escapeHtml(this.registryMessage.text)}</p>` : ''}
+          ${this.registryHasSearched && !this.registrySearching ? `
+            <div class="registry-results">
+              <p class="registry-count">共 ${this.registryTotal} 个结果${this.registryResults.length === 0 ? '，可换个关键词试试' : ''}</p>
+              ${this.registryResults.length > 0 ? this.registryResults.map(s => `
+                <div class="registry-card">
+                  <div class="registry-card-body">
+                    <div class="registry-card-name">${escapeHtml(s.name || s.id || '')} ${s.author ? `<span class="registry-author">@${escapeHtml(s.author)}</span>` : ''}</div>
+                    ${s.description ? `<div class="registry-card-desc">${escapeHtml(s.description)}</div>` : ''}
+                    ${s.stars ? `<span class="registry-stars">★ ${s.stars}</span>` : ''}
+                  </div>
+                  <button type="button" class="btn btn-sm registry-install-btn" data-install-url="${escapeHtml(s.installUrl || '')}" data-skill-id="${escapeHtml(s.id || '')}" ${!s.canInstall || this.installingRegistryId === s.id ? 'disabled' : ''}>${this.installingRegistryId === s.id ? '安装中…' : s.canInstall ? '安装' : '不可安装'}</button>
+                </div>
+              `).join('') : ''}
+            </div>
+          ` : ''}
+        </div>
       </div>
     ` : '';
 
@@ -317,6 +411,26 @@ class SkillsEntryWidget extends HTMLElement {
         .add-url-row { display: flex; gap: 8px; align-items: center; }
         .add-url-input { flex: 1; padding: 8px 12px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 13px; }
         .add-url-input:focus { outline: none; border-color: #6366f1; }
+        .registry-section { border-top: 1px solid #e2e8f0; padding-top: 14px; margin-top: 14px; }
+        .registry-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+        .registry-label { font-size: 13px; color: #475569; min-width: 72px; }
+        .registry-search-input { flex: 1; min-width: 140px; padding: 8px 12px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 13px; }
+        .registry-search-input:focus { outline: none; border-color: #6366f1; }
+        .registry-msg { font-size: 12px; color: #64748b; margin: 8px 0; }
+        .registry-msg.error { color: #dc2626; }
+        .registry-results { max-height: 320px; overflow-y: auto; margin-top: 12px; }
+        .registry-count { font-size: 12px; color: #64748b; margin-bottom: 10px; }
+        .registry-card {
+          display: flex; align-items: flex-start; justify-content: space-between; gap: 10px;
+          padding: 12px 14px; margin-bottom: 8px; border-radius: 10px;
+          border: 1px solid #e2e8f0; background: #fff;
+        }
+        .registry-card-body { flex: 1; min-width: 0; }
+        .registry-card-name { font-weight: 600; color: #334155; font-size: 13px; margin-bottom: 4px; }
+        .registry-author { font-weight: 400; color: #94a3b8; font-size: 12px; }
+        .registry-card-desc { font-size: 12px; color: #64748b; line-height: 1.45; max-height: 2.9em; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+        .registry-stars { font-size: 11px; color: #f59e0b; margin-top: 4px; display: inline-block; }
+        .registry-install-btn { flex-shrink: 0; }
       </style>
       <div class="head">
         <div class="header">
@@ -361,6 +475,20 @@ class SkillsEntryWidget extends HTMLElement {
       urlInput.value = this.addUrl;
       urlInput.addEventListener('input', (e) => { this.addUrl = e.target.value; });
     }
+    const regSearchInput = this.shadowRoot.getElementById('registry-search-input');
+    if (regSearchInput) {
+      regSearchInput.value = this.registryQuery;
+      regSearchInput.addEventListener('input', (e) => { this.registryQuery = e.target.value; });
+      regSearchInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') this.searchRegistry(); });
+    }
+    this.shadowRoot.getElementById('registry-search-btn')?.addEventListener('click', () => this.searchRegistry());
+    this.shadowRoot.querySelectorAll('.registry-install-btn').forEach(el => {
+      const installUrl = el.getAttribute('data-install-url');
+      const skillId = el.getAttribute('data-skill-id');
+      if (installUrl && el.getAttribute('disabled') !== 'disabled') {
+        el.addEventListener('click', () => this.installFromRegistry(installUrl, skillId));
+      }
+    });
     this.shadowRoot.querySelectorAll('[data-delete]').forEach(el => {
       el.addEventListener('click', () => this.deleteSkill(el.getAttribute('data-delete')));
     });
