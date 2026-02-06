@@ -1674,6 +1674,22 @@ class MailboxWorker extends BaseWorker {
         this.imapBoxCache = new Map(); // username -> { inbox, sent, drafts }
     }
 
+    resolveInboxProtocol(profile) {
+        const inbox = profile?.inbox;
+        if (!inbox) return null;
+
+        if (inbox.protocol === 'imap' && inbox.imap) return 'imap';
+        if (inbox.protocol === 'pop3' && inbox.pop3) return 'pop3';
+
+        if (inbox.imap && !inbox.pop3) return 'imap';
+        if (inbox.pop3 && !inbox.imap) return 'pop3';
+
+        if (inbox.imap) return 'imap';
+        if (inbox.pop3) return 'pop3';
+
+        return null;
+    }
+
     async syncPOP3Inbox(profile, storage) {
         const { username, password, inbox } = profile;
         if (!inbox?.pop3) return 0;
@@ -1912,9 +1928,8 @@ class MailboxWorker extends BaseWorker {
                 try {
                     logger.info(`starting sync for profile: ${id}`);
                     let newEmailCount = 0;
-                    let usedImap = false;
-                    if (profile.inbox?.imap) {
-                        usedImap = true;
+                    const protocol = this.resolveInboxProtocol(profile);
+                    if (protocol === 'imap') {
                         const imapClient = new IMAPEmailClient(
                             profile.username,
                             profile.password,
@@ -1923,8 +1938,10 @@ class MailboxWorker extends BaseWorker {
                             profile.inbox.imap.port
                         );
                         newEmailCount = await imapClient.syncAll(storage, this.imapBoxCache, this.isRetryableError.bind(this));
-                    } else if (profile.inbox?.pop3) {
+                    } else if (protocol === 'pop3') {
                         newEmailCount = await this.syncPOP3Inbox(profile, storage);
+                    } else {
+                        logger.warn(`no valid inbox protocol configured for profile: ${id}`);
                     }
                     if (newEmailCount > 0) {
                         // 只有当 isMailboxOpened 为true且currentProfileId = id 时，才认为用户正在查看该账号，不增加计数
@@ -2105,7 +2122,8 @@ class MailboxWorker extends BaseWorker {
         const storage = this.getCurrentStorage();
         const profile = this.getCurrentProfile();
         if (storage) await storage.markEmailAsRead(uid);
-        if (storage && profile?.inbox?.imap) {
+        const protocol = this.resolveInboxProtocol(profile);
+        if (storage && protocol === 'imap') {
             const meta = await storage.getEmailMeta(uid);
             if (meta?.imapUid && meta?.imapBox) {
                 const imapClient = new IMAPEmailClient(
@@ -2124,7 +2142,8 @@ class MailboxWorker extends BaseWorker {
         const storage = this.getCurrentStorage();
         const profile = this.getCurrentProfile();
         if (storage) await storage.markEmailAsUnread(uid);
-        if (storage && profile?.inbox?.imap) {
+        const protocol = this.resolveInboxProtocol(profile);
+        if (storage && protocol === 'imap') {
             const meta = await storage.getEmailMeta(uid);
             if (meta?.imapUid && meta?.imapBox) {
                 const imapClient = new IMAPEmailClient(
@@ -2143,7 +2162,8 @@ class MailboxWorker extends BaseWorker {
         const storage = this.getCurrentStorage();
         const profile = this.getCurrentProfile();
         if (storage) await storage.deleteEmail(uid);
-        if (storage && profile?.inbox?.imap) {
+        const protocol = this.resolveInboxProtocol(profile);
+        if (storage && protocol === 'imap') {
             const meta = await storage.getEmailMeta(uid);
             if (meta?.imapUid && meta?.imapBox) {
                 const imapClient = new IMAPEmailClient(
@@ -2192,7 +2212,8 @@ class MailboxWorker extends BaseWorker {
 
         const meta = await storage.getEmailMeta(uid);
 
-        if (profile.inbox?.imap && meta?.imapUid && meta?.imapBox) {
+        const protocol = this.resolveInboxProtocol(profile);
+        if (protocol === 'imap' && meta?.imapUid && meta?.imapBox) {
             const maxRetries = 2;
             let lastError = null;
 
@@ -2235,7 +2256,7 @@ class MailboxWorker extends BaseWorker {
             throw lastError || new Error(`无法获取邮件内容: ${uid}`);
         }
 
-        if (profile.inbox?.pop3) {
+        if (protocol === 'pop3') {
             // 重试机制：对于概率性错误（如网络问题、超时等）进行重试
             const maxRetries = 2;
             let lastError = null;
@@ -2304,8 +2325,9 @@ class MailboxWorker extends BaseWorker {
         if (!storage || !profile) throw new Error('No active profile');
 
         const meta = await storage.getEmailMeta(uid);
+        const protocol = this.resolveInboxProtocol(profile);
 
-        if (profile.inbox?.imap && meta?.imapUid && meta?.imapBox) {
+        if (protocol === 'imap' && meta?.imapUid && meta?.imapBox) {
             const imapClient = new IMAPEmailClient(
                 profile.username, profile.password,
                 profile.inbox.imap.tls, profile.inbox.imap.host, profile.inbox.imap.port
@@ -2319,7 +2341,7 @@ class MailboxWorker extends BaseWorker {
             return content;
         }
 
-        if (profile.inbox?.pop3) {
+        if (protocol === 'pop3') {
             const pop3 = new POP3EmailClient(
                 profile.username, profile.password,
                 profile.inbox.pop3.tls, profile.inbox.pop3.host, profile.inbox.pop3.port
@@ -2389,7 +2411,7 @@ class MailboxWorker extends BaseWorker {
                 };
                 await storage.saveSentEmail(sentUid, emailHeader, emailContent);
 
-                if (profile.inbox?.imap) {
+                if (this.resolveInboxProtocol(profile) === 'imap') {
                     try {
                         const imapClient = new IMAPEmailClient(
                             profile.username,
@@ -2427,7 +2449,7 @@ class MailboxWorker extends BaseWorker {
                 await storage.saveDraft(draftUid, emailHeader, emailContent);
                 logger.info(`email send failed, saved to drafts: ${draftUid}`);
 
-                if (profile.inbox?.imap) {
+                if (this.resolveInboxProtocol(profile) === 'imap') {
                     try {
                         const imapClient = new IMAPEmailClient(
                             profile.username,
@@ -2482,7 +2504,7 @@ class MailboxWorker extends BaseWorker {
         };
         await storage.saveDraft(uid, emailHeader, emailContent);
 
-        if (profile.inbox?.imap) {
+        if (this.resolveInboxProtocol(profile) === 'imap') {
             try {
                 const imapClient = new IMAPEmailClient(
                     profile.username,

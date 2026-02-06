@@ -12,6 +12,7 @@
 import { z } from 'zod';
 
 const InboxServerSchema = z.object({
+    protocol: z.enum(['pop3', 'imap']).optional().describe('收信协议(pop3/imap)'),
     pop3: z.object({
         host: z.string().default(''),
         tls: z.boolean().default(true),
