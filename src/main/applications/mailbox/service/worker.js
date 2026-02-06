@@ -46,20 +46,7 @@ async function withTimeout(promise, timeoutMs, operation = 'operation') {
 
 
 
-class POP3EmailClient {
-
-    constructor(usr, pwd, tls, host, port) {
-        this.usr = usr;
-        this.pwd = pwd;
-        this.tls = tls;
-        this.host = host;
-        this.port = port;
-    }
-
-    pop3() {
-        return new Pop3Command({ user: this.usr, password: this.pwd, host: this.host, port: this.port, tls: this.tls });
-    }
-
+class EmailContentHelper {
     extractFilenameFromContentDisposition(contentDisposition) {
         if (!contentDisposition) return null;
 
@@ -398,6 +385,22 @@ class POP3EmailClient {
 
         return result;
     }
+}
+
+class POP3EmailClient extends EmailContentHelper {
+
+    constructor(usr, pwd, tls, host, port) {
+        super();
+        this.usr = usr;
+        this.pwd = pwd;
+        this.tls = tls;
+        this.host = host;
+        this.port = port;
+    }
+
+    pop3() {
+        return new Pop3Command({ user: this.usr, password: this.pwd, host: this.host, port: this.port, tls: this.tls });
+    }
 
     async getEmail(uid, attachmentDirectory) {
         const pop3 = this.pop3();
@@ -477,10 +480,15 @@ class POP3EmailClient {
     }
 }
 
-class IMAPEmailClient extends POP3EmailClient {
+class IMAPEmailClient extends EmailContentHelper {
 
     constructor(usr, pwd, tls, host, port) {
-        super(usr, pwd, tls, host, port);
+        super();
+        this.usr = usr;
+        this.pwd = pwd;
+        this.tls = tls;
+        this.host = host;
+        this.port = port;
     }
 
     static encodeMailboxName(mailbox) {
@@ -532,16 +540,7 @@ class IMAPEmailClient extends POP3EmailClient {
         return null;
     }
 
-    static shouldAttachImapId(host) {
-        if (!host) return false;
-        const normalized = String(host).toLowerCase();
-        return normalized === 'imap.163.com'
-            || normalized.endsWith('.163.com')
-            || normalized.includes('.163.com');
-    }
-
     static buildImapIdInfo(host) {
-        if (!IMAPEmailClient.shouldAttachImapId(host)) return null;
         return {
             name: 'FillipDesk',
             version: '0.1.4',
