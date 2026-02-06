@@ -435,6 +435,7 @@ class POP3EmailClient extends EmailContentHelper {
                 parsed.cc?.value, parsed.bcc?.value,
                 parsed.date?.getTime()
             );
+            header.protocol = 'pop3';
             return { header, content };
         }
         catch (error) {
@@ -932,6 +933,7 @@ class IMAPEmailClient extends EmailContentHelper {
                         header.imapUid = item.uid;
                         header.imapBox = boxName;
                         header.messageId = messageId;
+                        header.protocol = 'imap';
                         return header;
                     } catch (error) {
                         logger.error(`error parsing IMAP header: ${item.uid}: ${error.message}`);
@@ -979,13 +981,13 @@ class IMAPEmailClient extends EmailContentHelper {
 
                     let totalNew = 0;
                     if (boxMap?.inbox) {
-                        totalNew += await this.syncMailbox(storage, imap, boxMap.inbox, 'inbox');
+                        totalNew = await this.syncMailbox(storage, imap, boxMap.inbox, 'inbox');
                     }
                     if (boxMap?.drafts) {
-                        totalNew += await this.syncMailbox(storage, imap, boxMap.drafts, 'draft');
+                        await this.syncMailbox(storage, imap, boxMap.drafts, 'draft');
                     }
                     if (boxMap?.sent) {
-                        totalNew += await this.syncMailbox(storage, imap, boxMap.sent, 'sent');
+                        await this.syncMailbox(storage, imap, boxMap.sent, 'sent');
                     }
 
                     return totalNew;
@@ -1164,6 +1166,7 @@ class IMAPEmailClient extends EmailContentHelper {
             header.messageId = parsed.messageId || null;
             header.imapUid = imapUid;
             header.imapBox = imapBox;
+            header.protocol = 'imap';
             return { header, content };
         } catch (error) {
             logger.error(`IMAP error getting email content: ${localUid}: ${error.message || String(error)}`);
@@ -1358,7 +1361,7 @@ class MailboxStorage {
         }
     }
 
-    async saveRawEmailHeaders(...rawHeaders) {
+    async saveRawEmailHeaders(protocol, ...rawHeaders) {
         const headers = await pMap(
             rawHeaders,
             async ([uid, header]) => {
@@ -1371,6 +1374,7 @@ class MailboxStorage {
                         parsed.cc?.value, parsed.bcc?.value,
                         parsed.date?.getTime()
                     );
+                    header.protocol = protocol;
                     return header;
                 } catch (error) {
                     logger.error(`error parsing email header: ${uid}: ${error}`);
@@ -1406,14 +1410,18 @@ class MailboxStorage {
         return set;
     }
 
-    async getEmailHeaderList(offset = 0, pageSize = 20) {
-        const docs = await this.db.find({
+    async getEmailHeaderList(protocol, offset = 0, pageSize = 20) {
+        const dbQuery = {
             deleted: { $ne: true },
             $and: [
                 { type: { $ne: 'draft' } },
                 { type: { $ne: 'sent' } }
             ]
-        }).sort({ date: -1 }).skip(offset).limit(pageSize);
+        };
+        if (protocol) {
+            dbQuery.protocol = protocol;
+        }
+        const docs = await this.db.find(dbQuery).sort({ date: -1 }).skip(offset).limit(pageSize);
         return docs.map(doc => new EmailHeader(
             doc.uid, doc.subject,
             doc.from, doc.to, doc.cc, doc.bcc,
@@ -1421,8 +1429,12 @@ class MailboxStorage {
         ));
     }
 
-    async getDraftList(offset = 0, pageSize = 20) {
-        const docs = await this.db.find({deleted: { $ne: true }, type: 'draft'}).sort({ date: -1 }).skip(offset).limit(pageSize);
+    async getDraftList(protocol, offset = 0, pageSize = 20) {
+        const dbQuery = { deleted: { $ne: true }, type: 'draft' };
+        if (protocol) {
+            dbQuery.protocol = protocol;
+        }
+        const docs = await this.db.find(dbQuery).sort({ date: -1 }).skip(offset).limit(pageSize);
         return docs.map(doc => new EmailHeader(
             doc.uid, doc.subject,
             doc.from, doc.to, doc.cc, doc.bcc,
@@ -1430,8 +1442,12 @@ class MailboxStorage {
         ));
     }
 
-    async getSentList(offset = 0, pageSize = 20) {
-        const docs = await this.db.find({deleted: { $ne: true }, type: 'sent'}).sort({ date: -1 }).skip(offset).limit(pageSize);
+    async getSentList(protocol, offset = 0, pageSize = 20) {
+        const dbQuery = { deleted: { $ne: true }, type: 'sent' };
+        if (protocol) {
+            dbQuery.protocol = protocol;
+        }
+        const docs = await this.db.find(dbQuery).sort({ date: -1 }).skip(offset).limit(pageSize);
         return docs.map(doc => new EmailHeader(
             doc.uid, doc.subject,
             doc.from, doc.to, doc.cc, doc.bcc,
@@ -1439,7 +1455,7 @@ class MailboxStorage {
         ));
     }
 
-    async saveDraft(uid, emailHeader, emailContent) {
+    async saveDraft(uid, emailHeader, emailContent, protocol = null) {
         const draftData = {
             uid: uid,
             subject: emailHeader.subject,
@@ -1454,6 +1470,9 @@ class MailboxStorage {
             deleted: false,
             type: 'draft'
         };
+        if (protocol) {
+            draftData.protocol = protocol;
+        }
         await this.db.update({ uid: uid }, { $set: draftData }, { upsert: true });
         await this.contentdb.update(
             { uid: uid },
@@ -1467,7 +1486,7 @@ class MailboxStorage {
         await this.contentdb.remove({ uid: uid });
     }
 
-    async saveSentEmail(uid, emailHeader, emailContent) {
+    async saveSentEmail(uid, emailHeader, emailContent, protocol = null) {
         const sentData = {
             uid: uid,
             subject: emailHeader.subject,
@@ -1482,6 +1501,9 @@ class MailboxStorage {
             deleted: false,
             type: 'sent'
         };
+        if (protocol) {
+            sentData.protocol = protocol;
+        }
         await this.db.update({ uid: uid }, { $set: sentData }, { upsert: true });
         await this.contentdb.update(
             { uid: uid },
@@ -1490,19 +1512,23 @@ class MailboxStorage {
         );
     }
 
-    async searchEmails(query) {
+    async searchEmails(protocol, query) {
         const dbQuery = {};
         const orConditions = [];
 
         if (query.general) {
             const generalRegex = new RegExp(query.general, 'i');
             const matchingUids = new Set();
-            const subjectDocs = await this.db.find({ subject: { $regex: generalRegex } });
+            const subjectQuery = { subject: { $regex: generalRegex } };
+            if (protocol) subjectQuery.protocol = protocol;
+            const subjectDocs = await this.db.find(subjectQuery);
             for (const doc of subjectDocs) matchingUids.add(doc.uid);
 
-            const fromDocs = await this.db.find({
+            const fromQuery = {
                 $or: [ { 'from.address': { $regex: generalRegex } }, { 'from.name': { $regex: generalRegex } } ]
-            });
+            };
+            if (protocol) fromQuery.protocol = protocol;
+            const fromDocs = await this.db.find(fromQuery);
             for (const doc of fromDocs) matchingUids.add(doc.uid);
 
             const bodyRegex = new RegExp(query.general, 'i');
@@ -1553,6 +1579,11 @@ class MailboxStorage {
         // Type filter (draft, sent, inbox)
         if (query.type !== undefined) {
             dbQuery.type = query.type;
+        }
+
+        // Protocol filter
+        if (protocol) {
+            dbQuery.protocol = protocol;
         }
 
         // Always exclude deleted emails
@@ -1773,13 +1804,13 @@ class MailboxWorker extends BaseWorker {
                         }
 
                         if (pendingHeaders.length >= 100) {
-                            storage.saveRawEmailHeaders(...pendingHeaders);
+                            storage.saveRawEmailHeaders('pop3', ...pendingHeaders);
                             pendingHeaders = [];
                         }
                     }
 
                     if (pendingHeaders.length > 0) {
-                        storage.saveRawEmailHeaders(...pendingHeaders);
+                        storage.saveRawEmailHeaders('pop3', ...pendingHeaders);
                     }
 
                     // 尝试关闭连接，但不让QUIT的错误影响整体结果
@@ -2098,10 +2129,12 @@ class MailboxWorker extends BaseWorker {
 
     async getEmailHeaderList(offset = 0, pageSize = 20) {
         const storage = this.getCurrentStorage();
-        if (!storage) return [];
+        const profile = this.getCurrentProfile();
+        if (!storage || !profile) return [];
 
+        const protocol = this.resolveInboxProtocol(profile);
         let startTime = Date.now();
-        const result = await storage.getEmailHeaderList(offset, pageSize);
+        const result = await storage.getEmailHeaderList(protocol, offset, pageSize);
         let cost = (Date.now() - startTime) / 1000;
         logger.info(`get email list cost: ${cost.toFixed(2)}s`);
         return result;
@@ -2109,10 +2142,12 @@ class MailboxWorker extends BaseWorker {
 
     async searchEmails(query) {
         const storage = this.getCurrentStorage();
-        if (!storage) return [];
+        const profile = this.getCurrentProfile();
+        if (!storage || !profile) return [];
 
+        const protocol = this.resolveInboxProtocol(profile);
         let startTime = Date.now();
-        const result = await storage.searchEmails(query);
+        const result = await storage.searchEmails(protocol, query);
         let cost = (Date.now() - startTime) / 1000;
         logger.info(`search emails cost: ${cost.toFixed(2)}s, found ${result.length} results`);
         return result;
@@ -2254,9 +2289,7 @@ class MailboxWorker extends BaseWorker {
 
             logger.error(`failed to get email content from IMAP server after ${maxRetries + 1} attempts: ${uid}`);
             throw lastError || new Error(`无法获取邮件内容: ${uid}`);
-        }
-
-        if (protocol === 'pop3') {
+        } else if (protocol === 'pop3') {
             // 重试机制：对于概率性错误（如网络问题、超时等）进行重试
             const maxRetries = 2;
             let lastError = null;
@@ -2339,9 +2372,7 @@ class MailboxWorker extends BaseWorker {
             await storage.saveEmailContent(uid, content);
             await storage.saveEmailHeader(header);
             return content;
-        }
-
-        if (protocol === 'pop3') {
+        } else if (protocol === 'pop3') {
             const pop3 = new POP3EmailClient(
                 profile.username, profile.password,
                 profile.inbox.pop3.tls, profile.inbox.pop3.host, profile.inbox.pop3.port
@@ -2409,9 +2440,10 @@ class MailboxWorker extends BaseWorker {
                     textContent: sendEmailSchema.text,
                     attachments: sendEmailSchema.attachments || []
                 };
-                await storage.saveSentEmail(sentUid, emailHeader, emailContent);
+                const protocol = this.resolveInboxProtocol(profile);
+                await storage.saveSentEmail(sentUid, emailHeader, emailContent, protocol);
 
-                if (this.resolveInboxProtocol(profile) === 'imap') {
+                if (protocol === 'imap') {
                     try {
                         const imapClient = new IMAPEmailClient(
                             profile.username,
@@ -2446,7 +2478,8 @@ class MailboxWorker extends BaseWorker {
                     textContent: sendEmailSchema.text,
                     attachments: sendEmailSchema.attachments || []
                 };
-                await storage.saveDraft(draftUid, emailHeader, emailContent);
+                const protocol = this.resolveInboxProtocol(profile);
+                await storage.saveDraft(draftUid, emailHeader, emailContent, protocol);
                 logger.info(`email send failed, saved to drafts: ${draftUid}`);
 
                 if (this.resolveInboxProtocol(profile) === 'imap') {
@@ -2502,9 +2535,10 @@ class MailboxWorker extends BaseWorker {
             textContent: draftSchema.text,
             attachments: draftSchema.attachments || []
         };
-        await storage.saveDraft(uid, emailHeader, emailContent);
+        const protocol = this.resolveInboxProtocol(profile);
+        await storage.saveDraft(uid, emailHeader, emailContent, protocol);
 
-        if (this.resolveInboxProtocol(profile) === 'imap') {
+        if (protocol === 'imap') {
             try {
                 const imapClient = new IMAPEmailClient(
                     profile.username,
@@ -2542,14 +2576,18 @@ class MailboxWorker extends BaseWorker {
 
     async getDraftList(offset = 0, pageSize = 20) {
         const storage = this.getCurrentStorage();
-        if (!storage) return [];
-        return await storage.getDraftList(offset, pageSize);
+        const profile = this.getCurrentProfile();
+        if (!storage || !profile) return [];
+        const protocol = this.resolveInboxProtocol(profile);
+        return await storage.getDraftList(protocol, offset, pageSize);
     }
 
     async getSentList(offset = 0, pageSize = 20) {
         const storage = this.getCurrentStorage();
-        if (!storage) return [];
-        return await storage.getSentList(offset, pageSize);
+        const profile = this.getCurrentProfile();
+        if (!storage || !profile) return [];
+        const protocol = this.resolveInboxProtocol(profile);
+        return await storage.getSentList(protocol, offset, pageSize);
     }
 
     async deleteDraft(uid) {
