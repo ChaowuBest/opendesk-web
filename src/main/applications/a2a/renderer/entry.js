@@ -126,6 +126,10 @@ class A2AEntryWidget extends HTMLElement {
      */
     async handleA2UIAction(btn) {
         try {
+            const messageContainer = btn.closest('[data-agent-id]');
+            const boundAgentId = messageContainer ? messageContainer.getAttribute('data-agent-id') : null;
+            const targetAgentId = boundAgentId || this.lastAgentId;
+            console.log(`[A2UI Action] Button clicked. Bound Agent: ${boundAgentId}, Global Last Agent: ${this.lastAgentId}, Target: ${targetAgentId}`);
             const actionDef = JSON.parse(btn.dataset.a2uiAction);
             const actionName = actionDef.name;
             const contextDefs = actionDef.context || []; 
@@ -148,52 +152,109 @@ class A2AEntryWidget extends HTMLElement {
                 }
             }
 
-            // 提交答案 (submit_quiz) ---
             else if (actionName === 'submit_quiz') {
-                const messageBubble = btn.closest('.a2ui-root') || document;                
+                if (btn.disabled || btn.classList.contains('a2ui-btn-disabled')) {
+                    return;
+                }
+
+                const messageBubble = btn.closest('.a2ui-root') || document;
                 const answers = [];
                 const allRadios = messageBubble.querySelectorAll('input[type="radio"]');
                 const seenGroups = new Set();
+                let originalQuestionsMap = [];
+                let currentArticleTitle = "";
+                let currentArticleContent = "";
+                try {
+                    const rawModelStr = messageBubble.getAttribute('data-a2ui-model');
+                    if (rawModelStr) {
+                        const decodedStr = decodeURIComponent(rawModelStr);
+                        const parsedMessages = JSON.parse(decodedStr);
+                        
+                        const updates = Array.isArray(parsedMessages) ? parsedMessages : [parsedMessages];
+                        for (const update of updates) {
+                            if (update.dataModelUpdate && update.dataModelUpdate.contents) {
+                                const qData = update.dataModelUpdate.contents.find(c => c.key === 'questions');
+                                if (qData && qData.valueMap) {
+                                    originalQuestionsMap = qData.valueMap;                                  
+                                }
+                                const contentData = update.dataModelUpdate.contents.find(c => c.key === 'articleContent');
+                                if (contentData && contentData.valueString) {
+                                    currentArticleContent = contentData.valueString;
+                                }
+                                const titleData = update.dataModelUpdate.contents.find(c => c.key === 'articleTitle');
+                                if (titleData && titleData.valueString) {
+                                    currentArticleTitle = titleData.valueString;
+                                }
+                            }
+                        }
+                    }
+                } catch (e) {
+                    console.error("[Debug] 读取原始数据失败:", e);
+                }
 
+                let groupIndex = 0; 
                 allRadios.forEach(radio => {
-                    radio.disabled = true; 
-                    radio.setAttribute('disabled', 'disabled'); // 显式写入 HTML 属性
+                    radio.disabled = true;
+                    radio.setAttribute('disabled', 'disabled');
                     if (radio.checked) {
                         radio.setAttribute('checked', 'checked');
+                    } else {
+                        radio.removeAttribute('checked');
                     }
                     if (seenGroups.has(radio.name)) return;
                     seenGroups.add(radio.name);
-
                     const checked = messageBubble.querySelector(`input[name="${radio.name}"]:checked`);
                     const qIndex = answers.length + 1;
                     const qId = `question${qIndex}`;
-                    
                     const userSelection = checked ? checked.value : "OptionA"; 
-                    
-                    answers.push({
+
+                    const answerObj = {
                         questionId: qId,
                         userSelection: `Option${userSelection}`
-                    });
+                    };
+                    if (originalQuestionsMap.length > groupIndex) {
+                        const originalQ = originalQuestionsMap[groupIndex];
+                        if (originalQ && originalQ.valueMap) {
+                            const getValue = (key) => {
+                                const item = originalQ.valueMap.find(v => v.key === key);
+                                return item ? (item.valueString || '') : '';
+                            };
+                            
+                            answerObj.question = getValue('question');
+                            answerObj.correctAnswer = getValue('correctAnswer');
+                            answerObj.optionA = getValue('optionA');
+                            answerObj.optionB = getValue('optionB');
+                            answerObj.optionC = getValue('optionC');
+                            answerObj.optionD = getValue('optionD');
+                        }
+                    }
+                    
+                    answers.push(answerObj);
+                    groupIndex++;
                 });
                 btn.disabled = true;
-                btn.textContent = '已提交'; // 更改按钮文字提供反馈
+                btn.setAttribute('disabled', 'disabled'); 
+                btn.textContent = '已提交'; 
                 btn.classList.add('a2ui-btn-disabled');
                 const updatedHtml = messageBubble.outerHTML;
-                for (let i = this.conversationHistory.length - 1; i >= 0; i--) {
-                    const msg = this.conversationHistory[i];
-                    if (msg.role === 'assistant') {
-                        msg.content = updatedHtml;
-                        break; 
+                const messageContainer = btn.closest('[data-message-id]');
+                if (messageContainer) {
+                    const targetMsgId = messageContainer.getAttribute('data-message-id');
+                    const targetMsg = this.conversationHistory.find(m => m.id === targetMsgId);
+                    if (targetMsg) {
+                        targetMsg.content = updatedHtml;
+                        console.log(`[UI Update] Updated specific message: ${targetMsgId}`);
                     }
                 }
                 const payload = {
                     results: {
-                        questions: answers
-                    }
+                        questions: answers, 
+                    },
+                    articleTitle: currentArticleTitle,
+                    articleContent: currentArticleContent
                 };
-                // 触发 agent_executor.py:129
                 messageToSend = `ACTION: submit_quiz with data: ${JSON.stringify(payload)}`;
-            } 
+            }
             // 处理打开链接 (open_url) ---
             else if (actionName === 'open_url') {
                 let url = actionDef.context ? actionDef.context.url : null;
@@ -243,7 +304,7 @@ class A2AEntryWidget extends HTMLElement {
                 return; 
             }
             if (messageToSend) {
-                this.sendMessage(messageToSend, true, this.lastAgentId); 
+                this.sendMessage(messageToSend, true, targetAgentId);
             }
 
         } catch (error) {
@@ -480,9 +541,14 @@ class A2AEntryWidget extends HTMLElement {
         const { type, agentId, chunk, error, success, message, agentName, skillName } = data;
 
         if (type === 'agent_selection') {
+            const currentAssistantMsg = this.conversationHistory.find(msg => msg.id === assistantMessageId);
             if (agentId) {
                 this.lastAgentId = agentId; // [新增] 记住这个 Agent
                 console.log('Current active agent:', this.lastAgentId);
+                if (currentAssistantMsg) {
+                    currentAssistantMsg.agentId = agentId;
+                    console.log(`[Binding] 消息 ${assistantMessageId} 绑定 Agent: ${agentId}`);
+                }
             }
             // 处理 Agent 选择提示消息
             const selectionMessageId = `selection_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -680,9 +746,9 @@ class A2AEntryWidget extends HTMLElement {
                                 const contentClass = isHTMLContent 
                                     ? 'a2a-html-content' 
                                     : 'text-sm text-gray-800 a2a-markdown-body markdown-body';
-
+                                const boundAgentId = msg.agentId || '';
                                 return `
-                                    <div class="flex justify-start">
+                                    <div class="flex justify-start" data-agent-id="${boundAgentId}" data-message-id="${msg.id}">
                                         <div class="max-w-[80%] p-3 ${errorClass} rounded-lg border border-gray-200 shadow-sm">
                                             <div class="${contentClass}">${renderedContent}${isStreaming}</div>
                                         </div>

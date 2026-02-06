@@ -1403,8 +1403,15 @@ class A2UIToHTMLConverter {
 
     const rootHtml = this.renderComponentById(this.renderRootId, compBuf, dataModel);
     const rootAdditionalStyle = this.getAdditionalStyles('Root');
-    const contentHtml = `<div class="a2ui-root"${rootAdditionalStyle ? ` style="${rootAdditionalStyle}"` : ''}>${rootHtml}</div>`;
-    
+    let rawDataSafe = '';
+    try {
+        if (messages) {
+            rawDataSafe = encodeURIComponent(JSON.stringify(messages));
+        }
+    } catch (e) {
+        console.error("序列化 A2UI 数据失败:", e);
+    }
+    const contentHtml = `<div class="a2ui-root" data-a2ui-model="${rawDataSafe}"${rootAdditionalStyle ? ` style="${rootAdditionalStyle}"` : ''}>${rootHtml}</div>`;
     const styleBlock = includeStyles ? `<style>${this.generateBaseStyles()}</style>` : '';
 
     if (fullDocument) {
