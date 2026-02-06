@@ -105,6 +105,17 @@ app.on('before-quit', () => {
     isAppQuitting = true;
 });
 
+// macOS: 点击 Dock 图标时恢复并显示主窗口（解决最小化后点击图标不显示的问题）
+app.on('activate', () => {
+    if (globalMainWindow) {
+        if (globalMainWindow.isMinimized()) {
+            globalMainWindow.restore();
+        }
+        globalMainWindow.show();
+        globalMainWindow.focus();
+    }
+});
+
 const createWindow = () => {
     const mainWindow = new BrowserWindow({
         width: 1200,
