@@ -1,5 +1,11 @@
+function getPathFromFile(file) {
+  if (!file) return null;
+  const path = window.fsAPI.getFilePath(file);
+  return path ? String(path).replace(/\\/g, '/') : null;
+}
+
 /**
- * Skills 子应用：与其它应用统一，走 applicationAPI.call（Worker）；仅需弹窗的 pickDirectory/pickZip 走 callMainWorld（主进程 dialog）
+ * Skills 子应用：与其它应用统一，走 applicationAPI.call（Worker）
  */
 function getSkillsAPI() {
   if (typeof window.applicationAPI === 'undefined') return null;
@@ -7,8 +13,6 @@ function getSkillsAPI() {
     list: () => window.applicationAPI.call('list'),
     refresh: () => window.applicationAPI.call('refresh'),
     getSkillsDirectory: () => window.applicationAPI.call('getSkillsDirectory'),
-    pickDirectory: () => window.applicationAPI.callMainWorld('pickDirectory'),
-    pickZip: () => window.applicationAPI.callMainWorld('pickZip'),
     addFromPath: (sourcePath) => window.applicationAPI.call('addFromPath', sourcePath),
     addFromZip: (zipPath) => window.applicationAPI.call('addFromZip', zipPath),
     addFromUrl: (url) => window.applicationAPI.call('addFromUrl', url),
@@ -96,18 +100,14 @@ class SkillsEntryWidget extends HTMLElement {
     this.render();
   }
 
-  async addFromLocal() {
+  async onPathPicked(file) {
+    const path = getPathFromFile(file);
+    if (!path) return;
     const api = getSkillsAPI();
-    if (!api?.pickDirectory || !api?.addFromPath) return;
+    if (!api?.addFromPath) return;
     this.addingFromPath = true;
     this.render();
     try {
-      const path = await api.pickDirectory();
-      if (!path) {
-        this.addingFromPath = false;
-        this.render();
-        return;
-      }
       const addRes = await api.addFromPath(path);
       this.setMessage(`已添加技能：${addRes?.name ?? ''}`);
       this.showAddPanel = false;
@@ -120,19 +120,15 @@ class SkillsEntryWidget extends HTMLElement {
     }
   }
 
-  async addFromZip() {
+  async onZipPicked(file) {
+    const path = getPathFromFile(file);
+    if (!path) return;
     const api = getSkillsAPI();
-    if (!api?.pickZip || !api?.addFromZip) return;
+    if (!api?.addFromZip) return;
     this.addingFromZip = true;
     this.render();
     try {
-      const zipPath = await api.pickZip();
-      if (!zipPath) {
-        this.addingFromZip = false;
-        this.render();
-        return;
-      }
-      const addRes = await api.addFromZip(zipPath);
+      const addRes = await api.addFromZip(path);
       this.setMessage(`已添加技能：${addRes?.name ?? ''}`);
       this.showAddPanel = false;
       await this.loadSkills();
@@ -222,8 +218,14 @@ class SkillsEntryWidget extends HTMLElement {
           <label>从本地添加</label>
           <p class="add-hint">选择包含 SKILL.md 的技能目录，或选择 .zip 技能压缩包</p>
           <div class="add-local-row">
-            <button type="button" class="btn" id="add-from-path-btn" ${this.addingFromPath ? 'disabled' : ''}>${this.addingFromPath ? '选择中…' : '选择目录'}</button>
-            <button type="button" class="btn" id="add-from-zip-btn" ${this.addingFromZip ? 'disabled' : ''}>${this.addingFromZip ? '添加中…' : '选择 zip'}</button>
+            <label class="btn btn-file ${this.addingFromPath ? 'disabled' : ''}">
+              <input type="file" id="add-from-path-input" webkitdirectory directory ${this.addingFromPath ? 'disabled' : ''} />
+              <span>${this.addingFromPath ? '添加中…' : '选择目录'}</span>
+            </label>
+            <label class="btn btn-file ${this.addingFromZip ? 'disabled' : ''}">
+              <input type="file" id="add-from-zip-input" accept=".zip" ${this.addingFromZip ? 'disabled' : ''} />
+              <span>${this.addingFromZip ? '添加中…' : '选择 zip'}</span>
+            </label>
           </div>
         </div>
         <div class="add-section">
@@ -262,6 +264,10 @@ class SkillsEntryWidget extends HTMLElement {
         }
         .btn:hover { background: #f8fafc; border-color: #cbd5e1; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
         .btn:disabled { opacity: 0.6; cursor: not-allowed; box-shadow: none; }
+        .btn-file { position: relative; display: inline-block; cursor: pointer; }
+        .btn-file.disabled { opacity: 0.6; cursor: not-allowed; }
+        .btn-file input[type=file] { position: absolute; left: 0; top: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; font-size: 0; }
+        .btn-file.disabled input[type=file] { cursor: not-allowed; }
         .btn-ghost { border-color: transparent; background: transparent; box-shadow: none; }
         .btn-ghost:hover { background: #f1f5f9; }
         .btn-sm { padding: 6px 10px; font-size: 12px; }
@@ -333,8 +339,22 @@ class SkillsEntryWidget extends HTMLElement {
     this.shadowRoot.getElementById('refresh-btn')?.addEventListener('click', () => this.refresh());
     this.shadowRoot.getElementById('add-btn')?.addEventListener('click', () => this.toggleAddPanel());
     this.shadowRoot.getElementById('add-panel-close')?.addEventListener('click', () => this.toggleAddPanel());
-    this.shadowRoot.getElementById('add-from-path-btn')?.addEventListener('click', () => this.addFromLocal());
-    this.shadowRoot.getElementById('add-from-zip-btn')?.addEventListener('click', () => this.addFromZip());
+    const pathInput = this.shadowRoot.getElementById('add-from-path-input');
+    if (pathInput) {
+      pathInput.addEventListener('change', (e) => {
+        const file = e.target.files?.[0];
+        if (file) this.onPathPicked(file);
+        e.target.value = '';
+      });
+    }
+    const zipInput = this.shadowRoot.getElementById('add-from-zip-input');
+    if (zipInput) {
+      zipInput.addEventListener('change', (e) => {
+        const file = e.target.files?.[0];
+        if (file) this.onZipPicked(file);
+        e.target.value = '';
+      });
+    }
     this.shadowRoot.getElementById('add-from-url-btn')?.addEventListener('click', () => this.addFromUrl());
     const urlInput = this.shadowRoot.getElementById('add-url-input');
     if (urlInput) {
