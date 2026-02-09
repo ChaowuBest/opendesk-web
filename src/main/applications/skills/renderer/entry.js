@@ -528,7 +528,16 @@ class SkillsEntryWidget extends HTMLElement {
       urlInput.addEventListener('input', (e) => { this.addUrl = e.target.value; });
     }
     const regSelect = this.shadowRoot.getElementById('registry-select');
-    if (regSelect) regSelect.addEventListener('change', (e) => { this.registrySelected = e.target.value; this.render(); });
+    if (regSelect) regSelect.addEventListener('change', (e) => {
+      this.registrySelected = e.target.value;
+      // 切换 registry（如 skill0.io / SkillsMP）时清空下方搜索结果
+      this.registryResults = [];
+      this.registryTotal = 0;
+      this.registryHasSearched = false;
+      this.registryMessage = null;
+      this.registryPage = 1;
+      this.render();
+    });
     const regSearchInput = this.shadowRoot.getElementById('registry-search-input');
     if (regSearchInput) {
       regSearchInput.value = this.registryQuery;
