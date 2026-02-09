@@ -30,7 +30,7 @@ class SkillsEntryWidget extends HTMLElement {
     this.skillsDir = '';
     this.loading = false;
     this.error = null;
-    this.showAddPanel = false;
+    this.showAddPanel = true;
     this.addUrl = '';
     this.addingFromPath = false;
     this.addingFromZip = false;
@@ -107,10 +107,6 @@ class SkillsEntryWidget extends HTMLElement {
 
   toggleAddPanel() {
     this.showAddPanel = !this.showAddPanel;
-    this.addUrl = '';
-    this.registryResults = [];
-    this.registryMessage = null;
-    this.message = null;
     this.render();
   }
 
@@ -159,7 +155,6 @@ class SkillsEntryWidget extends HTMLElement {
     try {
       const addRes = await api.installFromRegistry(installUrl);
       this.setMessage(`已添加技能：${addRes?.name ?? ''}`);
-      this.showAddPanel = false;
       await this.loadSkills();
     } catch (e) {
       this.setMessage(e?.message || '安装失败', true);
@@ -182,7 +177,6 @@ class SkillsEntryWidget extends HTMLElement {
     try {
       const addRes = await api.addFromPath(dirPath);
       this.setMessage(`已添加技能：${addRes?.name ?? ''}`);
-      this.showAddPanel = false;
       await this.loadSkills();
     } catch (e) {
       this.setMessage(e?.message || '添加失败', true);
@@ -202,7 +196,6 @@ class SkillsEntryWidget extends HTMLElement {
     try {
       const addRes = await api.addFromZip(path);
       this.setMessage(`已添加技能：${addRes?.name ?? ''}`);
-      this.showAddPanel = false;
       await this.loadSkills();
     } catch (e) {
       this.setMessage(e?.message || '添加失败', true);
@@ -223,7 +216,6 @@ class SkillsEntryWidget extends HTMLElement {
     try {
       const addRes = await api.addFromUrl(this.addUrl.trim());
       this.setMessage(`已添加技能：${addRes?.name ?? ''}`);
-      this.showAddPanel = false;
       this.addUrl = '';
       await this.loadSkills();
     } catch (e) {
@@ -280,66 +272,68 @@ class SkillsEntryWidget extends HTMLElement {
       ? `<div class="message ${this.message.isError ? 'error' : 'success'}">${escapeHtml(this.message.text)}</div>`
       : '';
 
-    const addPanelHtml = this.showAddPanel ? `
-      <div class="add-panel">
+    const addPanelHtml = `
+      <div class="add-panel ${this.showAddPanel ? '' : 'add-panel-collapsed'}">
         <div class="add-panel-header">
           <span>添加技能</span>
-          <button type="button" class="btn btn-ghost" id="add-panel-close">关闭</button>
+          <button type="button" class="btn btn-ghost btn-icon" id="add-panel-toggle" title="${this.showAddPanel ? '收起' : '展开'}">${this.showAddPanel ? '◀' : '▶'}</button>
         </div>
-        <div class="add-section">
-          <label>从本地添加</label>
-          <p class="add-hint">选择包含 SKILL.md 的技能目录，或选择 .zip 技能压缩包</p>
-          <div class="add-local-row">
-            <label class="btn btn-file ${this.addingFromPath ? 'disabled' : ''}">
-              <input type="file" id="add-from-path-input" webkitdirectory directory ${this.addingFromPath ? 'disabled' : ''} />
-              <span>${this.addingFromPath ? '添加中…' : '选择目录'}</span>
-            </label>
-            <label class="btn btn-file ${this.addingFromZip ? 'disabled' : ''}">
-              <input type="file" id="add-from-zip-input" accept=".zip" ${this.addingFromZip ? 'disabled' : ''} />
-              <span>${this.addingFromZip ? '添加中…' : '选择 zip'}</span>
-            </label>
-          </div>
-        </div>
-        <div class="add-section">
-          <label>从 URL 添加</label>
-          <p class="add-hint">输入技能包 zip 的 URL</p>
-          <div class="add-url-row">
-            <input type="url" class="add-url-input" id="add-url-input" placeholder="https://..." value="${escapeHtml(this.addUrl)}" ${this.addingFromUrl ? 'disabled' : ''} />
-            <button type="button" class="btn" id="add-from-url-btn" ${this.addingFromUrl ? 'disabled' : ''}>${this.addingFromUrl ? '下载中…' : '下载并添加'}</button>
-          </div>
-        </div>
-        <div class="add-section registry-section">
-          <label>从 Registry 搜索</label>
-          <p class="add-hint">搜索 skill0、SkillsMP、ClawHub 等平台的技能</p>
-          <div class="registry-row">
-            <select class="registry-select" id="registry-select">
-              <option value="skill0" ${this.registrySelected === 'skill0' ? 'selected' : ''}>skill0.io</option>
-              <option value="skillsmp" ${this.registrySelected === 'skillsmp' ? 'selected' : ''}>SkillsMP</option>
-              <option value="clawhub" ${this.registrySelected === 'clawhub' ? 'selected' : ''}>ClawHub</option>
-            </select>
-            <input type="text" class="registry-search-input" id="registry-search-input" placeholder="输入关键词搜索…" value="${escapeHtml(this.registryQuery)}" ${this.registrySearching ? 'disabled' : ''} />
-            <button type="button" class="btn" id="registry-search-btn" ${this.registrySearching ? 'disabled' : ''}>${this.registrySearching ? '搜索中…' : '搜索'}</button>
-          </div>
-          ${this.registrySelected === 'skillsmp' ? '<p class="registry-msg registry-hint">使用 SkillsMP 需在「设置」→ 应用配置 → Skills 中填写 SkillsMP API Key，保存后搜索即可生效。</p>' : ''}
-          ${this.registryMessage ? `<p class="registry-msg ${this.registryMessage.isError ? 'error' : ''}">${escapeHtml(this.registryMessage.text)}</p>` : ''}
-          ${this.registryHasSearched && !this.registrySearching ? `
-            <div class="registry-results">
-              <p class="registry-count">共 ${this.registryTotal} 个结果${this.registryResults.length === 0 ? '，可换个关键词试试' : ''}</p>
-              ${this.registryResults.length > 0 ? this.registryResults.map(s => `
-                <div class="registry-card">
-                  <div class="registry-card-body">
-                    <div class="registry-card-name">${escapeHtml(s.name || s.id || '')} ${s.author ? `<span class="registry-author">@${escapeHtml(s.author)}</span>` : ''}</div>
-                    ${s.description ? `<div class="registry-card-desc">${escapeHtml(s.description)}</div>` : ''}
-                    ${s.stars ? `<span class="registry-stars">★ ${s.stars}</span>` : ''}
-                  </div>
-                  <button type="button" class="btn btn-sm registry-install-btn" data-install-url="${escapeHtml(s.installUrl || '')}" data-skill-id="${escapeHtml(s.id || '')}" ${!s.canInstall || this.installingRegistryId === s.id ? 'disabled' : ''}>${this.installingRegistryId === s.id ? '安装中…' : s.canInstall ? '安装' : '不可安装'}</button>
-                </div>
-              `).join('') : ''}
+        <div class="add-panel-body">
+          <div class="add-section">
+            <label>从本地添加</label>
+            <p class="add-hint">选择包含 SKILL.md 的技能目录，或选择 .zip 技能压缩包</p>
+            <div class="add-local-row">
+              <label class="btn btn-file ${this.addingFromPath ? 'disabled' : ''}">
+                <input type="file" id="add-from-path-input" webkitdirectory directory ${this.addingFromPath ? 'disabled' : ''} />
+                <span>${this.addingFromPath ? '添加中…' : '选择目录'}</span>
+              </label>
+              <label class="btn btn-file ${this.addingFromZip ? 'disabled' : ''}">
+                <input type="file" id="add-from-zip-input" accept=".zip" ${this.addingFromZip ? 'disabled' : ''} />
+                <span>${this.addingFromZip ? '添加中…' : '选择 zip'}</span>
+              </label>
             </div>
-          ` : ''}
+          </div>
+          <div class="add-section">
+            <label>从 URL 添加</label>
+            <p class="add-hint">输入技能包 zip 的 URL</p>
+            <div class="add-url-row">
+              <input type="url" class="add-url-input" id="add-url-input" placeholder="https://..." value="${escapeHtml(this.addUrl)}" ${this.addingFromUrl ? 'disabled' : ''} />
+              <button type="button" class="btn" id="add-from-url-btn" ${this.addingFromUrl ? 'disabled' : ''}>${this.addingFromUrl ? '下载中…' : '下载并添加'}</button>
+            </div>
+          </div>
+          <div class="add-section registry-section">
+            <label>从 Registry 搜索</label>
+            <p class="add-hint">搜索 skill0、SkillsMP、ClawHub 等平台的技能</p>
+            <div class="registry-row">
+              <select class="registry-select" id="registry-select">
+                <option value="skill0" ${this.registrySelected === 'skill0' ? 'selected' : ''}>skill0.io</option>
+                <option value="skillsmp" ${this.registrySelected === 'skillsmp' ? 'selected' : ''}>SkillsMP</option>
+                <option value="clawhub" ${this.registrySelected === 'clawhub' ? 'selected' : ''}>ClawHub</option>
+              </select>
+              <input type="text" class="registry-search-input" id="registry-search-input" placeholder="输入关键词搜索…" value="${escapeHtml(this.registryQuery)}" ${this.registrySearching ? 'disabled' : ''} />
+              <button type="button" class="btn" id="registry-search-btn" ${this.registrySearching ? 'disabled' : ''}>${this.registrySearching ? '搜索中…' : '搜索'}</button>
+            </div>
+            ${this.registrySelected === 'skillsmp' ? '<p class="registry-msg registry-hint">使用 SkillsMP 需在「设置」→ 应用配置 → Skills 中填写 SkillsMP API Key，保存后搜索即可生效。</p>' : ''}
+            ${this.registryMessage ? `<p class="registry-msg ${this.registryMessage.isError ? 'error' : ''}">${escapeHtml(this.registryMessage.text)}</p>` : ''}
+            ${this.registryHasSearched && !this.registrySearching ? `
+              <div class="registry-results">
+                <p class="registry-count">共 ${this.registryTotal} 个结果${this.registryResults.length === 0 ? '，可换个关键词试试' : ''}</p>
+                ${this.registryResults.length > 0 ? this.registryResults.map(s => `
+                  <div class="registry-card">
+                    <div class="registry-card-body">
+                      <div class="registry-card-name">${escapeHtml(s.name || s.id || '')} ${s.author ? `<span class="registry-author">@${escapeHtml(s.author)}</span>` : ''}</div>
+                      ${s.description ? `<div class="registry-card-desc">${escapeHtml(s.description)}</div>` : ''}
+                      ${s.stars ? `<span class="registry-stars">★ ${s.stars}</span>` : ''}
+                    </div>
+                    <button type="button" class="btn btn-sm registry-install-btn" data-install-url="${escapeHtml(s.installUrl || '')}" data-skill-id="${escapeHtml(s.id || '')}" ${!s.canInstall || this.installingRegistryId === s.id ? 'disabled' : ''}>${this.installingRegistryId === s.id ? '安装中…' : s.canInstall ? '安装' : '不可安装'}</button>
+                  </div>
+                `).join('') : ''}
+              </div>
+            ` : ''}
+          </div>
         </div>
       </div>
-    ` : '';
+    `;
 
     this.shadowRoot.innerHTML = `
       <style>
@@ -353,6 +347,31 @@ class SkillsEntryWidget extends HTMLElement {
         .head .header {
           display: flex; align-items: center; justify-content: flex-start;
           flex-wrap: wrap; gap: 12px;
+        }
+        .body-wrap {
+          flex: 1; min-height: 0; display: flex; overflow: hidden;
+        }
+        .add-panel {
+          flex-shrink: 0; width: 320px; min-width: 280px; max-width: 380px;
+          display: flex; flex-direction: column; border-right: 1px solid #e2e8f0; background: #f8fafc;
+          transition: width 0.2s ease, min-width 0.2s ease;
+        }
+        .add-panel.add-panel-collapsed {
+          width: 48px; min-width: 48px; max-width: 48px;
+        }
+        .add-panel.add-panel-collapsed .add-panel-header span,
+        .add-panel.add-panel-collapsed .add-panel-body { display: none; }
+        .add-panel.add-panel-collapsed .add-panel-header { justify-content: center; padding: 12px 8px; }
+        .add-panel-header {
+          flex-shrink: 0; display: flex; justify-content: space-between; align-items: center;
+          padding: 16px 18px; font-weight: 600; color: #334155; border-bottom: 1px solid #e2e8f0; background: #fff;
+        }
+        .btn-icon { padding: 6px 10px; min-width: 32px; }
+        .add-panel-body {
+          flex: 1; min-height: 0; overflow-y: auto; padding: 16px 18px;
+        }
+        .main-area {
+          flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden;
         }
         .scroll-area {
           flex: 1; min-height: 0; overflow: auto; padding: 20px 28px 32px 28px;
@@ -407,26 +426,22 @@ class SkillsEntryWidget extends HTMLElement {
         .message { padding: 10px 14px; border-radius: 8px; margin-bottom: 16px; font-size: 13px; }
         .message.success { background: #ecfdf5; color: #059669; border: 1px solid #a7f3d0; }
         .message.error { background: #fef2f2; color: #dc2626; border: 1px solid #fecaca; }
-        .add-panel {
-          border: 1px solid #e2e8f0; border-radius: 12px; background: #f8fafc; padding: 16px 18px; margin-bottom: 20px;
-        }
-        .add-panel-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; font-weight: 600; color: #334155; }
         .add-section { margin-bottom: 14px; }
         .add-section:last-child { margin-bottom: 0; }
         .add-section label { display: block; font-size: 13px; color: #475569; margin-bottom: 4px; }
         .add-hint { font-size: 12px; color: #94a3b8; margin-bottom: 8px; }
         .add-local-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
         .add-url-row { display: flex; gap: 8px; align-items: center; }
-        .add-url-input { flex: 1; padding: 8px 12px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 13px; }
+        .add-url-input { flex: 1; min-width: 0; padding: 8px 12px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 13px; }
         .add-url-input:focus { outline: none; border-color: #6366f1; }
         .registry-section { border-top: 1px solid #e2e8f0; padding-top: 14px; margin-top: 14px; }
         .registry-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
-        .registry-select { padding: 8px 10px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 13px; min-width: 120px; }
-        .registry-search-input { flex: 1; min-width: 140px; padding: 8px 12px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 13px; }
+        .registry-select { padding: 8px 10px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 13px; min-width: 100px; }
+        .registry-search-input { flex: 1; min-width: 80px; padding: 8px 12px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 13px; }
         .registry-search-input:focus { outline: none; border-color: #6366f1; }
         .registry-msg { font-size: 12px; color: #64748b; margin: 8px 0; }
         .registry-msg.error { color: #dc2626; }
-        .registry-results { max-height: 320px; overflow-y: auto; margin-top: 12px; }
+        .registry-results { max-height: 280px; overflow-y: auto; margin-top: 12px; }
         .registry-count { font-size: 12px; color: #64748b; margin-bottom: 10px; }
         .registry-card {
           display: flex; align-items: flex-start; justify-content: space-between; gap: 10px;
@@ -444,23 +459,25 @@ class SkillsEntryWidget extends HTMLElement {
         <div class="header">
           <h2>Skills</h2>
           <button type="button" class="btn" id="refresh-btn" ${this.loading ? 'disabled' : ''}>${this.loading ? '刷新中…' : '刷新'}</button>
-          <button type="button" class="btn" id="add-btn" ${this.loading ? 'disabled' : ''}>添加</button>
         </div>
       </div>
-      <div class="scroll-area">
-        <div class="scroll-wrap">
-          ${msgHtml}
-          ${addPanelHtml}
-          <div class="skill-list">
-            ${listHtml}
+      <div class="body-wrap">
+        ${addPanelHtml}
+        <div class="main-area">
+          <div class="scroll-area">
+            <div class="scroll-wrap">
+              ${msgHtml}
+              <div class="skill-list">
+                ${listHtml}
+              </div>
+            </div>
           </div>
         </div>
       </div>
     `;
 
     this.shadowRoot.getElementById('refresh-btn')?.addEventListener('click', () => this.refresh());
-    this.shadowRoot.getElementById('add-btn')?.addEventListener('click', () => this.toggleAddPanel());
-    this.shadowRoot.getElementById('add-panel-close')?.addEventListener('click', () => this.toggleAddPanel());
+    this.shadowRoot.getElementById('add-panel-toggle')?.addEventListener('click', () => this.toggleAddPanel());
     const pathInput = this.shadowRoot.getElementById('add-from-path-input');
     if (pathInput) {
       pathInput.addEventListener('change', (e) => {
