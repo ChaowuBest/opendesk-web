@@ -15,7 +15,8 @@ class SkillsApplication extends BaseApplication {
 
   static getConfigSchema() {
     return z.object({
-        enabled: z.boolean().describe('是否启用技能').default(false)
+        enabled: z.boolean().describe('是否启用技能').default(false),
+        skillsmp_api_key: z.string().optional().describe('SkillsMP API Key（可选，用于从 skillsmp.com 搜索技能）')
     });
   }
 

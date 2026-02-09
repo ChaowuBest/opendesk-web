@@ -307,12 +307,17 @@ class SkillsEntryWidget extends HTMLElement {
         </div>
         <div class="add-section registry-section">
           <label>从 Registry 搜索</label>
-          <p class="add-hint">搜索 skill0.io 平台的技能</p>
+          <p class="add-hint">搜索 skill0、SkillsMP、ClawHub 等平台的技能</p>
           <div class="registry-row">
-            <span class="registry-label">skill0.io</span>
+            <select class="registry-select" id="registry-select">
+              <option value="skill0" ${this.registrySelected === 'skill0' ? 'selected' : ''}>skill0.io</option>
+              <option value="skillsmp" ${this.registrySelected === 'skillsmp' ? 'selected' : ''}>SkillsMP</option>
+              <option value="clawhub" ${this.registrySelected === 'clawhub' ? 'selected' : ''}>ClawHub</option>
+            </select>
             <input type="text" class="registry-search-input" id="registry-search-input" placeholder="输入关键词搜索…" value="${escapeHtml(this.registryQuery)}" ${this.registrySearching ? 'disabled' : ''} />
             <button type="button" class="btn" id="registry-search-btn" ${this.registrySearching ? 'disabled' : ''}>${this.registrySearching ? '搜索中…' : '搜索'}</button>
           </div>
+          ${this.registrySelected === 'skillsmp' ? '<p class="registry-msg registry-hint">使用 SkillsMP 需在「设置」→ 应用配置 → Skills 中填写 SkillsMP API Key，保存后搜索即可生效。</p>' : ''}
           ${this.registryMessage ? `<p class="registry-msg ${this.registryMessage.isError ? 'error' : ''}">${escapeHtml(this.registryMessage.text)}</p>` : ''}
           ${this.registryHasSearched && !this.registrySearching ? `
             <div class="registry-results">
@@ -413,7 +418,7 @@ class SkillsEntryWidget extends HTMLElement {
         .add-url-input:focus { outline: none; border-color: #6366f1; }
         .registry-section { border-top: 1px solid #e2e8f0; padding-top: 14px; margin-top: 14px; }
         .registry-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
-        .registry-label { font-size: 13px; color: #475569; min-width: 72px; }
+        .registry-select { padding: 8px 10px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 13px; min-width: 120px; }
         .registry-search-input { flex: 1; min-width: 140px; padding: 8px 12px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 13px; }
         .registry-search-input:focus { outline: none; border-color: #6366f1; }
         .registry-msg { font-size: 12px; color: #64748b; margin: 8px 0; }
@@ -475,6 +480,8 @@ class SkillsEntryWidget extends HTMLElement {
       urlInput.value = this.addUrl;
       urlInput.addEventListener('input', (e) => { this.addUrl = e.target.value; });
     }
+    const regSelect = this.shadowRoot.getElementById('registry-select');
+    if (regSelect) regSelect.addEventListener('change', (e) => { this.registrySelected = e.target.value; this.render(); });
     const regSearchInput = this.shadowRoot.getElementById('registry-search-input');
     if (regSearchInput) {
       regSearchInput.value = this.registryQuery;

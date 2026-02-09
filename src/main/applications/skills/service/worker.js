@@ -62,10 +62,13 @@ class SkillsWorker extends BaseWorker {
     notifyMainSync();
   }
 
-  /** 从 skill0 Registry 搜索技能 */
+  /** 从第三方 Registry 搜索技能：skill0 | skillsmp | clawhub。SkillsMP API Key 从 this.config 读取（由 worker 初始化与主进程保存设置时的 applicationConfigChanged 写入）。 */
   async searchRegistry(registryId, query = '', page = 1, limit = 20) {
     const opts = { query: String(query || ''), page: Number(page) || 1, limit: Number(limit) || 20 };
-    return RegistryAdapters.searchRegistry(registryId || 'skill0', opts);
+    if (registryId === 'skillsmp') {
+      opts.apiKey = (this.config?.skillsmp_api_key || '').trim();
+    }
+    return RegistryAdapters.searchRegistry(registryId, opts);
   }
 
   /** 从 Registry 安装技能（installUrl 为 GitHub tree URL 或 zip URL） */
