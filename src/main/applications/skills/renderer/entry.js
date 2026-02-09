@@ -461,13 +461,14 @@ class SkillsEntryWidget extends HTMLElement {
         .add-url-input { flex: 1; min-width: 0; padding: 8px 12px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 13px; }
         .add-url-input:focus { outline: none; border-color: #6366f1; }
         .registry-section { border-top: 1px solid #e2e8f0; padding-top: 14px; margin-top: 14px; }
-        .registry-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
-        .registry-select { padding: 8px 10px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 13px; min-width: 100px; }
-        .registry-search-input { flex: 1; min-width: 80px; padding: 8px 12px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 13px; }
+        .registry-row { display: flex; gap: 8px; align-items: center; flex-wrap: nowrap; margin-bottom: 10px; min-width: 0; }
+        .registry-select { padding: 8px 10px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 13px; min-width: 90px; flex-shrink: 0; }
+        .registry-search-input { flex: 1; min-width: 0; max-width: 100%; padding: 8px 12px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 13px; box-sizing: border-box; }
         .registry-search-input:focus { outline: none; border-color: #6366f1; }
+        .registry-row .btn { flex-shrink: 0; }
         .registry-msg { font-size: 12px; color: #64748b; margin: 8px 0; }
         .registry-msg.error { color: #dc2626; }
-        .registry-results { max-height: 280px; overflow-y: auto; margin-top: 12px; }
+        .registry-results { width: 100%; min-width: 0; max-height: 280px; overflow-y: auto; margin-top: 12px; box-sizing: border-box; }
         .registry-count { font-size: 12px; color: #64748b; margin-bottom: 10px; }
         .registry-card {
           display: flex; align-items: flex-start; justify-content: space-between; gap: 10px;
