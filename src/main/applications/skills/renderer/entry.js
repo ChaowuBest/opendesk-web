@@ -359,7 +359,7 @@ class SkillsEntryWidget extends HTMLElement {
                   <div class="registry-card">
                     <div class="registry-card-body">
                       <div class="registry-card-name">${escapeHtml(s.name || s.id || '')} ${s.author ? `<span class="registry-author">@${escapeHtml(s.author)}</span>` : ''}</div>
-                      ${s.description ? `<div class="registry-card-desc">${escapeHtml(s.description)}</div>` : ''}
+                      <div class="registry-card-desc" data-description="${escapeHtml(s.description || '暂无描述')}">${escapeHtml(s.description || '暂无描述')}</div>
                       ${s.stars ? `<span class="registry-stars">★ ${s.stars}</span>` : ''}
                     </div>
                     <button type="button" class="btn btn-sm registry-install-btn" data-install-url="${escapeHtml(s.installUrl || '')}" data-skill-id="${escapeHtml(s.id || '')}" ${!s.canInstall || this.installingRegistryId === s.id ? 'disabled' : ''}>${this.installingRegistryId === s.id ? '安装中…' : s.canInstall ? '安装' : '不可安装'}</button>
@@ -492,6 +492,28 @@ class SkillsEntryWidget extends HTMLElement {
         .registry-card-desc { font-size: 12px; color: #64748b; line-height: 1.45; max-height: 2.9em; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
         .registry-stars { font-size: 11px; color: #f59e0b; margin-top: 4px; display: inline-block; }
         .registry-install-btn { flex-shrink: 0; }
+        .registry-card-desc { position: relative; cursor: help; border-bottom: 1px dashed #94a3b8; }
+        .description-tooltip {
+          position: fixed;
+          z-index: 10000;
+          padding: 12px 16px;
+          background: #1f2937;
+          color: #f9fafb;
+          border-radius: 8px;
+          font-size: 13px;
+          line-height: 1.5;
+          max-width: 400px;
+          min-width: 200px;
+          word-wrap: break-word;
+          box-shadow: 0 10px 25px rgba(0,0,0,0.3);
+          white-space: pre-wrap;
+          pointer-events: none;
+          opacity: 0;
+          transition: opacity 0.2s ease;
+        }
+        .description-tooltip.visible {
+          opacity: 1;
+        }
       </style>
       <div class="head">
         <div class="header">
@@ -576,6 +598,47 @@ class SkillsEntryWidget extends HTMLElement {
     });
     this.shadowRoot.querySelectorAll('[data-delete]').forEach(el => {
       el.addEventListener('click', () => this.deleteSkill(el.getAttribute('data-delete')));
+    });
+
+    // 为 description 添加悬停提示功能
+    const descElements = this.shadowRoot.querySelectorAll('.registry-card-desc');
+    let tooltip = null;
+
+    descElements.forEach(desc => {
+      desc.addEventListener('mouseenter', (e) => {
+        const description = desc.getAttribute('data-description');
+        if (!description) return;
+
+        // 创建或获取 tooltip 元素
+        if (!tooltip) {
+          tooltip = document.createElement('div');
+          tooltip.className = 'description-tooltip';
+          this.shadowRoot.appendChild(tooltip);
+        }
+
+        // 设置 tooltip 内容
+        tooltip.textContent = description;
+
+        // 计算位置
+        const rect = desc.getBoundingClientRect();
+        const scrollLeft = window.pageXOffset || document.documentElement.scrollLeft;
+        const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
+
+        // 设置 tooltip 位置（在鼠标下方）
+        tooltip.style.left = `${rect.left + scrollLeft}px`;
+        tooltip.style.top = `${rect.bottom + scrollTop + 8}px`;
+
+        // 显示 tooltip
+        requestAnimationFrame(() => {
+          tooltip.classList.add('visible');
+        });
+      });
+
+      desc.addEventListener('mouseleave', () => {
+        if (tooltip) {
+          tooltip.classList.remove('visible');
+        }
+      });
     });
   }
 }
