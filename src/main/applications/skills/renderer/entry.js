@@ -170,14 +170,17 @@ class SkillsEntryWidget extends HTMLElement {
   }
 
   async onPathPicked(file) {
-    const path = getPathFromFile(file);
-    if (!path) return;
+    const filePath = getPathFromFile(file);
+    if (!filePath) return;
+    // 目录选择器返回的是目录内某个文件的路径，需改为目录路径（主进程要求传目录）
+    const dirPath = filePath.replace(/[/\\][^/\\]*$/, '');
+    if (!dirPath) return;
     const api = getSkillsAPI();
     if (!api?.addFromPath) return;
     this.addingFromPath = true;
     this.render();
     try {
-      const addRes = await api.addFromPath(path);
+      const addRes = await api.addFromPath(dirPath);
       this.setMessage(`已添加技能：${addRes?.name ?? ''}`);
       this.showAddPanel = false;
       await this.loadSkills();
