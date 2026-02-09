@@ -8,14 +8,6 @@ import { TaskState, TaskUpdateChunk } from '../states/tasks.js';
 
 const state = GlobalState.getInstance();
 
-const banner = `
-██╗  ██╗██╗██████╗ ███████╗███████╗██╗  ██╗
-██║  ██║██║██╔══██╗██╔════╝██╔════╝██║ ██╔╝
-███████║██║██║  ██║█████╗  ███████╗█████╔╝
-██╔══██║██║██║  ██║██╔══╝  ╚════██║██╔═██╗
-██║  ██║██║██████╔╝███████╗███████║██║  ██╗
-╚═╝  ╚═╝╚═╝╚═════╝ ╚══════╝╚══════╝╚═╝  ╚═╝`
-
 let currentTask: TaskState | null = null;
 let providedPrompt: string | null = argv[2] ?? null;
 
@@ -67,8 +59,6 @@ async function step(): Promise<void> {
 }
 
 export async function mainloop() {
-    intro(banner);
-
     while (true) {
         try {
             await step();

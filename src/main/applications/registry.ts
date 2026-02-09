@@ -177,7 +177,8 @@ export function initializeRegistryWorker() {
             workerData: {
                 paths: { appDirectory: getAppDirectory() },
                 setting: Setting.getInstance().getData()
-            }
+            },
+            execArgv: ['tsx']
         }
     );
 
