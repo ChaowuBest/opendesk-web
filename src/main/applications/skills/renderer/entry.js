@@ -46,6 +46,8 @@ class SkillsEntryWidget extends HTMLElement {
     this.registryHasSearched = false;
     this.registryMessage = null;
     this.installingRegistryId = null;
+    this.clawhubSlug = '';
+    this.installingClawhubSlug = false;
     this.attachShadow({ mode: 'open' });
   }
 
@@ -143,6 +145,26 @@ class SkillsEntryWidget extends HTMLElement {
     } finally {
       this.registrySearching = false;
       this.registryHasSearched = true;
+      this.render();
+    }
+  }
+
+  async installFromClawHubSlug() {
+    const api = getSkillsAPI();
+    const slug = (this.clawhubSlug || '').trim();
+    if (!api?.installFromRegistry || !slug) return;
+    this.installingClawhubSlug = true;
+    this.render();
+    try {
+      const installUrl = slug.startsWith('clawhub:') ? slug : `clawhub:${slug}`;
+      const addRes = await api.installFromRegistry(installUrl);
+      this.setMessage(`已添加技能：${addRes?.name ?? ''}`);
+      this.clawhubSlug = '';
+      await this.loadSkills();
+    } catch (e) {
+      this.setMessage(e?.message || '安装失败', true);
+    } finally {
+      this.installingClawhubSlug = false;
       this.render();
     }
   }
@@ -303,19 +325,23 @@ class SkillsEntryWidget extends HTMLElement {
           </div>
           <div class="add-section registry-section">
             <label>从 Registry 搜索</label>
-            <p class="add-hint">搜索 skill0、SkillsMP、ClawHub 等平台的技能</p>
+            <p class="add-hint">${this.registrySelected === 'clawhub' ? 'ClawHub：按 slug 安装，需已安装 clawhub CLI（npm i -g clawhub）' : '搜索 skill0、SkillsMP 等平台的技能'}</p>
             <div class="registry-row">
               <select class="registry-select" id="registry-select">
                 <option value="skill0" ${this.registrySelected === 'skill0' ? 'selected' : ''}>skill0.io</option>
                 <option value="skillsmp" ${this.registrySelected === 'skillsmp' ? 'selected' : ''}>SkillsMP</option>
                 <option value="clawhub" ${this.registrySelected === 'clawhub' ? 'selected' : ''}>ClawHub</option>
               </select>
-              <input type="text" class="registry-search-input" id="registry-search-input" placeholder="输入关键词搜索…" value="${escapeHtml(this.registryQuery)}" ${this.registrySearching ? 'disabled' : ''} />
-              <button type="button" class="btn" id="registry-search-btn" ${this.registrySearching ? 'disabled' : ''}>${this.registrySearching ? '搜索中…' : '搜索'}</button>
+              ${this.registrySelected === 'clawhub'
+                ? `<input type="text" class="registry-search-input" id="clawhub-slug-input" placeholder="输入技能 slug，如 my-skill 或 my-skill@1.2.3" value="${escapeHtml(this.clawhubSlug)}" ${this.installingClawhubSlug ? 'disabled' : ''} />
+                  <button type="button" class="btn" id="clawhub-slug-install-btn" ${this.installingClawhubSlug || !this.clawhubSlug.trim() ? 'disabled' : ''}>${this.installingClawhubSlug ? '安装中…' : '安装'}</button>`
+                : `<input type="text" class="registry-search-input" id="registry-search-input" placeholder="输入关键词搜索…" value="${escapeHtml(this.registryQuery)}" ${this.registrySearching ? 'disabled' : ''} />
+                  <button type="button" class="btn" id="registry-search-btn" ${this.registrySearching ? 'disabled' : ''}>${this.registrySearching ? '搜索中…' : '搜索'}</button>`
+              }
             </div>
             ${this.registrySelected === 'skillsmp' ? '<p class="registry-msg registry-hint">使用 SkillsMP 需在「设置」→ 应用配置 → Skills 中填写 SkillsMP API Key，保存后搜索即可生效。</p>' : ''}
             ${this.registryMessage ? `<p class="registry-msg ${this.registryMessage.isError ? 'error' : ''}">${escapeHtml(this.registryMessage.text)}</p>` : ''}
-            ${this.registryHasSearched && !this.registrySearching ? `
+            ${this.registrySelected !== 'clawhub' && this.registryHasSearched && !this.registrySearching ? `
               <div class="registry-results">
                 <p class="registry-count">共 ${this.registryTotal} 个结果${this.registryResults.length === 0 ? '，可换个关键词试试' : ''}</p>
                 ${this.registryResults.length > 0 ? this.registryResults.map(s => `
@@ -509,6 +535,17 @@ class SkillsEntryWidget extends HTMLElement {
       regSearchInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') this.searchRegistry(); });
     }
     this.shadowRoot.getElementById('registry-search-btn')?.addEventListener('click', () => this.searchRegistry());
+    const clawhubSlugInput = this.shadowRoot.getElementById('clawhub-slug-input');
+    if (clawhubSlugInput) {
+      clawhubSlugInput.value = this.clawhubSlug;
+      clawhubSlugInput.addEventListener('input', (e) => {
+        this.clawhubSlug = e.target.value;
+        const btn = this.shadowRoot.getElementById('clawhub-slug-install-btn');
+        if (btn) btn.disabled = !this.clawhubSlug.trim() || this.installingClawhubSlug;
+      });
+      clawhubSlugInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') this.installFromClawHubSlug(); });
+    }
+    this.shadowRoot.getElementById('clawhub-slug-install-btn')?.addEventListener('click', () => this.installFromClawHubSlug());
     this.shadowRoot.querySelectorAll('.registry-install-btn').forEach(el => {
       const installUrl = el.getAttribute('data-install-url');
       const skillId = el.getAttribute('data-skill-id');

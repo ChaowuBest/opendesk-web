@@ -71,14 +71,18 @@ class SkillsWorker extends BaseWorker {
     return RegistryAdapters.searchRegistry(registryId, opts);
   }
 
-  /** 从 Registry 安装技能（installUrl 为 GitHub tree URL 或 zip URL） */
+  /** 从 Registry 安装技能（installUrl 为 GitHub tree URL、zip URL 或 clawhub:slug、clawhub:slug@version） */
   async installFromRegistry(installUrl) {
     if (!installUrl || typeof installUrl !== 'string') {
       throw new Error('无效的安装 URL');
     }
     const method = RegistryAdapters.getInstallMethod(installUrl);
     let result;
-    if (method === 'github') {
+    if (method === 'clawhub') {
+      const parsed = RegistryAdapters.parseClawHubInstallUrl(installUrl);
+      if (!parsed) throw new Error('无效的 ClawHub installUrl，应为 clawhub:slug 或 clawhub:slug@version');
+      result = await SkillRegistry.addSkillFromClawHubSlug(parsed.slug, parsed.version);
+    } else if (method === 'github') {
       result = await SkillRegistry.addSkillFromGitHubUrl(installUrl);
     } else {
       result = await SkillRegistry.addSkillFromUrl(installUrl);

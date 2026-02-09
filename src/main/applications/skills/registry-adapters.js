@@ -7,6 +7,8 @@
 const SKILL0_BASE = 'https://skill0.io';
 const SKILLSMP_BASE = 'https://skillsmp.com';
 const CLAWHUB_BASE = 'https://clawhub.ai';
+/** 通过 slug 安装时的 installUrl 前缀，格式 clawhub:slug 或 clawhub:slug@version */
+const CLAWHUB_INSTALL_PREFIX = 'clawhub:';
 
 /**
  * @typedef {Object} RegistrySkill
@@ -126,17 +128,71 @@ async function searchSkillsMP(opts = {}) {
 }
 
 /**
- * ClawHub 暂无公开 API，返回空结果并提示
- * @param {Object} opts
+ * ClawHub 搜索：尝试公开 API；若无则返回空并提示。技能安装通过 installUrl = clawhub:slug 或 clawhub:slug@version 由 worker 调 clawhub CLI 安装。
+ * @param {Object} opts - { query: string, page?: number, limit?: number }
  * @returns {Promise<{ skills: RegistrySkill[], total?: number, hasMore?: boolean, message?: string }>}
  */
 async function searchClawHub(opts = {}) {
+  const { query = '', page = 1, limit = 20 } = opts;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 12000);
+  try {
+    const params = new URLSearchParams();
+    if (query.trim()) params.set('q', query.trim());
+    params.set('limit', String(limit));
+    params.set('offset', String((page - 1) * limit));
+    const url = `${CLAWHUB_BASE}/api/skills?${params}`;
+    const res = await fetch(url, { signal: controller.signal });
+    clearTimeout(timeoutId);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    const rawList = Array.isArray(data) ? data : (data.skills ?? data.data ?? data.items ?? []);
+    const skills = rawList.map((s) => {
+      const slug = s.slug ?? s.id ?? s.name ?? '';
+      const version = s.version ?? s.latestVersion;
+      const installUrl = slug ? (version ? `${CLAWHUB_INSTALL_PREFIX}${slug}@${version}` : `${CLAWHUB_INSTALL_PREFIX}${slug}`) : '';
+      return {
+        id: slug || s.id || s.name,
+        name: s.name ?? s.title ?? slug ?? '',
+        description: s.description ?? s.summary ?? '',
+        author: s.author?.name ?? s.author ?? s.owner ?? '',
+        source: 'clawhub',
+        installUrl,
+        stars: s.stars ?? s.stargazersCount ?? 0,
+        canInstall: !!slug
+      };
+    });
+    const total = data.total ?? data.pagination?.total ?? skills.length;
+    return {
+      skills,
+      total,
+      hasMore: (page * limit) < (total ?? 0)
+    };
+  } catch (_) {
+    clearTimeout(timeoutId);
+  }
   return {
     skills: [],
     total: 0,
     hasMore: false,
-    message: 'ClawHub 暂未提供公开 API，请前往 https://clawhub.ai/skills 浏览并手动安装'
+    message: 'ClawHub 暂未提供公开搜索 API。请在上方输入框中输入技能 slug（如 my-skill）或 my-skill@1.2.3，点击「按 slug 安装」。需已安装 clawhub CLI：npm i -g clawhub'
   };
+}
+
+/**
+ * 解析 clawhub:slug 或 clawhub:slug@version 格式的 installUrl
+ * @param {string} installUrl
+ * @returns {{ slug: string, version?: string } | null}
+ */
+function parseClawHubInstallUrl(installUrl) {
+  if (!installUrl || typeof installUrl !== 'string' || !installUrl.startsWith(CLAWHUB_INSTALL_PREFIX)) {
+    return null;
+  }
+  const rest = installUrl.slice(CLAWHUB_INSTALL_PREFIX.length).trim();
+  if (!rest) return null;
+  const at = rest.indexOf('@');
+  if (at === -1) return { slug: rest };
+  return { slug: rest.slice(0, at), version: rest.slice(at + 1).trim() || undefined };
 }
 
 /**
@@ -158,12 +214,13 @@ async function searchRegistry(registryId, opts = {}) {
 }
 
 /**
- * 判断 installUrl 是否为 GitHub tree URL，从而选择安装方式
+ * 判断 installUrl 的安装方式：clawhub:slug | github tree | zip
  * @param {string} installUrl
- * @returns {'github' | 'zip'}
+ * @returns {'clawhub' | 'github' | 'zip'}
  */
 function getInstallMethod(installUrl) {
   if (!installUrl || typeof installUrl !== 'string') return 'zip';
+  if (installUrl.startsWith(CLAWHUB_INSTALL_PREFIX)) return 'clawhub';
   return installUrl.includes('github.com') && installUrl.includes('/tree/') ? 'github' : 'zip';
 }
 
@@ -172,5 +229,7 @@ export const RegistryAdapters = {
   searchSkillsMP,
   searchClawHub,
   searchRegistry,
-  getInstallMethod
+  getInstallMethod,
+  parseClawHubInstallUrl,
+  CLAWHUB_INSTALL_PREFIX
 };

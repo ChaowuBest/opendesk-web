@@ -696,6 +696,60 @@ async function addSkillFromUrl(url) {
 }
 
 /**
+ * 通过 ClawHub CLI 按 slug（及可选版本）安装技能，参考 clawhub install my-skill [--version 1.2.3]
+ * 需已安装 clawhub：npm i -g clawhub。在临时目录执行 npx clawhub install，再从输出目录查找 SKILL.md 并复制到用户技能目录。
+ * @param {string} slug - 技能 slug（如 my-skill）
+ * @param {string} [version] - 可选版本号
+ * @returns {Promise<{ success: boolean, name?: string, error?: string }>}
+ */
+async function addSkillFromClawHubSlug(slug, version) {
+  if (!slug || typeof slug !== 'string' || !slug.trim()) {
+    return { success: false, error: '请提供 ClawHub 技能 slug（如 my-skill）' };
+  }
+  const safeSlug = slug.trim();
+  const tmpDir = path.join(os.tmpdir(), `skill-clawhub-${Date.now()}`);
+  try {
+    fs.mkdirSync(tmpDir, { recursive: true });
+    const args = ['clawhub', 'install', safeSlug];
+    if (version && String(version).trim()) args.push('--version', String(version).trim());
+    const run = () =>
+      new Promise((resolve, reject) => {
+        const child = spawn('npx', args, {
+          cwd: tmpDir,
+          shell: process.platform === 'win32',
+          stdio: ['ignore', 'pipe', 'pipe']
+        });
+        let stdout = '';
+        let stderr = '';
+        child.stdout?.on('data', (ch) => { stdout += ch; });
+        child.stderr?.on('data', (ch) => { stderr += ch; });
+        child.on('error', (err) => reject(err));
+        child.on('close', (code) => resolve({ code, stdout, stderr }));
+      });
+    const timeoutMs = 120000;
+    const race = Promise.race([
+      run(),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('ClawHub 安装超时（2 分钟）')), timeoutMs))
+    ]);
+    const { code, stderr } = await race;
+    if (code !== 0) {
+      const msg = (stderr || '').trim() || `退出码 ${code}`;
+      return { success: false, error: `ClawHub 安装失败: ${msg}` };
+    }
+    const skillRoot = findSkillRootInDir(tmpDir, null);
+    if (!skillRoot) {
+      return { success: false, error: 'ClawHub 安装后未在输出目录中找到 SKILL.md，请确认 slug 正确且已安装 clawhub（npm i -g clawhub）' };
+    }
+    const addResult = addSkillFromPath(skillRoot);
+    return addResult;
+  } catch (e) {
+    return { success: false, error: e.message || 'ClawHub 安装异常' };
+  } finally {
+    if (fs.existsSync(tmpDir)) rmRecursive(tmpDir);
+  }
+}
+
+/**
  * 删除指定技能（按 id，即目录名）
  * @param {string} skillId - 技能 id（目录名）
  * @returns {{ success: boolean, error?: string }}
@@ -731,6 +785,7 @@ export const SkillRegistry = {
   addSkillFromZipPath,
   addSkillFromUrl,
   addSkillFromGitHubUrl,
+  addSkillFromClawHubSlug,
   parseGitHubTreeUrl,
   deleteSkill
 };
