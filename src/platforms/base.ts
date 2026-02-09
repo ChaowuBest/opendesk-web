@@ -11,7 +11,9 @@ export abstract class AbstractPlatform {
     }
 
     static getWorkerPath(): string {
-        throw new Error('getWorkerPath not implemented');
+        // 返回当前正在执行的入口文件路径
+        console.log(process.argv);
+        return process.argv[1];
     }
 }
 

@@ -1,5 +1,5 @@
 {
-  "name": "fillipdesk",
+  "name": "opendesk",
   "version": "0.1.4",
   "description": "An all-in-one ai studio for productivity scenarios",
   "license": "BSD-3-Clause",
@@ -20,8 +20,8 @@
     "make:darwin": "electron-forge make --platform=darwin",
     "updater:server": "tsx src/updater/server.ts",
     "updater:publish": "tsx src/updater/publish-update.ts",
-    "cli": "tsx src/main/cli.ts",
-    "build-cli": "npm run build && ncc build dist/main/cli.js -o dist/cli-bundle && sed -i '1i var parcelRequire = undefined;' dist/cli-bundle/index.js"
+    "build-cli": "tsx esbuild.config.ts",
+    "cli": "npm run build-cli && node dist/cli/cli.cjs"
   },
   "devDependencies": {
     "@electron-forge/cli": "^7.10.2",
@@ -38,6 +38,7 @@
     "electron": "^39.2.6",
     "electron-reload": "^2.0.0-alpha.1",
     "electron-vite": "^5.0.0",
+    "esbuild": "^0.27.3",
     "eslint": "^9.39.2",
     "globals": "^16.5.0",
     "run-script-os": "^1.1.6",

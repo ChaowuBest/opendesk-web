@@ -21,6 +21,7 @@ import appIcon from '../../resources/main/images/icon_round.png?asset'
 
 
 setPlatform(ElectronPlatform);
+
 const __dirname = import.meta.dirname;
 const converter = new Convert();
 
@@ -92,32 +93,6 @@ async function installBundledSkillsIfNeeded() {
     console.error('installBundledSkillsIfNeeded failed', error);
   }
 }
-
-if (app.requestSingleInstanceLock()) {
-    app.on('second-instance', (event, path) => {
-        if (globalMainWindow) {
-            globalMainWindow.show();
-        }
-    })
-} else {
-    app.quit();
-    process.exit(1);
-}
-
-app.on('before-quit', () => {
-    isAppQuitting = true;
-});
-
-// macOS: 点击 Dock 图标时恢复并显示主窗口（解决最小化后点击图标不显示的问题）
-app.on('activate', () => {
-    if (globalMainWindow) {
-        if (globalMainWindow.isMinimized()) {
-            globalMainWindow.restore();
-        }
-        globalMainWindow.show();
-        globalMainWindow.focus();
-    }
-});
 
 const createWindow = () => {
     const mainWindow = new BrowserWindow({
@@ -474,6 +449,7 @@ const registerTray = () => {
 
 // 初始化自动更新客户端
 let updateClient = null;
+
 const initializeUpdater = () => {
     // 配置多个备选更新服务器地址，按顺序尝试
     // 如果第一个服务器不可用，会自动尝试下一个
@@ -501,37 +477,67 @@ const initializeUpdater = () => {
     }
 }
 
-// 在 app.whenReady() 之前初始化 Registry 和协议 schemes
-initializeRegistry();
-initializeRegistryProtocols();
-
-app.whenReady().then(async () => {
-    GlobalState.initialize();
-    createWindow();
-
-    // 将内置 skills（applications/skills/resources）自动同步到用户 skills 目录（先完成再注册，确保首次对话能发现技能）
-    try {
-      await installBundledSkillsIfNeeded();
-    } catch (err) {
-      console.error('installBundledSkillsIfNeeded error', err);
+function startApplication() {
+    if (app.requestSingleInstanceLock()) {
+        app.on('second-instance', (event, path) => {
+            if (globalMainWindow) {
+                globalMainWindow.show();
+            }
+        })
+    } else {
+        app.quit();
+        process.exit(1);
     }
 
-    registerTaskManagerAPIHandlers();
-    registerFSAPIHandlers();
-    registerSettingAPIHandlers();
-    registerApplicationRegistryHandlers(ipcMain);
-    registerNotificationAPIHandlers();
-    registerHotKeys();
-    registerTray();
-    initializeRegistryWorker();
-    initializeProtocolHandlers();
-    initializeUpdater();
-})
+    // 在 app.whenReady() 之前初始化 Registry 和协议 schemes
+    initializeRegistry();
+    initializeRegistryProtocols();
 
-app.on('will-quit', async () => {
-    globalShortcut.unregisterAll()
-    // 停止自动更新检查
-    if (updateClient) {
-        updateClient.stopAutoCheck();
-    }
-})
+    app.on('before-quit', () => {
+        isAppQuitting = true;
+    });
+
+    // macOS: 点击 Dock 图标时恢复并显示主窗口（解决最小化后点击图标不显示的问题）
+    app.on('activate', () => {
+        if (globalMainWindow) {
+            if (globalMainWindow.isMinimized()) {
+                globalMainWindow.restore();
+            }
+            globalMainWindow.show();
+            globalMainWindow.focus();
+        }
+    });
+
+    app.whenReady().then(async () => {
+        GlobalState.initialize();
+        createWindow();
+
+        // 将内置 skills（applications/skills/resources）自动同步到用户 skills 目录（先完成再注册，确保首次对话能发现技能）
+        try {
+        await installBundledSkillsIfNeeded();
+        } catch (err) {
+        console.error('installBundledSkillsIfNeeded error', err);
+        }
+
+        registerTaskManagerAPIHandlers();
+        registerFSAPIHandlers();
+        registerSettingAPIHandlers();
+        registerApplicationRegistryHandlers(ipcMain);
+        registerNotificationAPIHandlers();
+        registerHotKeys();
+        registerTray();
+        initializeRegistryWorker();
+        initializeProtocolHandlers();
+        initializeUpdater();
+    })
+
+    app.on('will-quit', async () => {
+        globalShortcut.unregisterAll()
+        // 停止自动更新检查
+        if (updateClient) {
+            updateClient.stopAutoCheck();
+        }
+    })
+}
+
+startApplication();
