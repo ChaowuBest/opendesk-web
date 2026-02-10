@@ -5,7 +5,7 @@ import { BaseToolset } from './agents/tool';
 import { is } from '@electron-toolkit/utils';
 import { z } from 'zod';
 import { NotificationManager } from './utils/notificationmgr.js';
-import { LogStream, logger } from './utils/logger.js'
+import { LogStream, logger, useConsoleTransport } from './utils/logger.js'
 import { SkillRegistry } from './applications/skills/skillregistry.js';
 import { initializeRegistry, initializeRegistryWorker, notifyWorkerSettingUpdate, ApplicationRegistry } from './applications/registry';
 import { initializeRegistryProtocols, initializeProtocolHandlers, registerApplicationRegistryHandlers } from './applications/registry_electron.js';
@@ -20,7 +20,8 @@ import fs from 'fs';
 import appIcon from '../../resources/main/images/icon_round.png?asset'
 
 
-setPlatform(ElectronPlatform);
+setPlatform(new ElectronPlatform(app));
+useConsoleTransport();
 
 const __dirname = import.meta.dirname;
 const converter = new Convert();

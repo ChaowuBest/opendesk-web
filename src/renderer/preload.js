@@ -175,14 +175,8 @@ if (window.self !== window.top) {
     var applicationBundleName = null;
 
     contextBridge.exposeInMainWorld('applicationAPI', {
-        getApplicationGUIConfig: async (bundleName) => {
-            const result = await ipcRenderer.invoke('applicationRegistry:getApplicationGUIConfig', bundleName);
-            if (result.status !== 'ok') {
-                console.error('getting application GUI config failed', result.message);
-                throw new Error(result.message);
-            }
+        setApplicationBundleName: async (bundleName) => {
             applicationBundleName = bundleName;
-            return result.data;
         },
         call: async (methodName, ...args) => {
             if (applicationBundleName === null) {

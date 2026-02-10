@@ -1,9 +1,7 @@
-import { BaseApplication, BaseGUIConfig } from "../base.js";
+import { BaseApplication } from "../base.js";
 import { z } from 'zod';
-import path from 'path';
 import { fileSystemService } from './service/fileSystemService.js';
-
-const __dirname = import.meta.dirname;
+import RecallWorker from "./service/worker";
 
 
 class RecallApplication extends BaseApplication {
@@ -11,25 +9,14 @@ class RecallApplication extends BaseApplication {
         super('recall', 'Recall');
     }
 
+    static getWorkerClass() {
+        return RecallWorker;
+    }
+
     static getConfigSchema() {
         return z.object({
 
         });
-    }
-
-    getGUIConfig() {
-        return new BaseGUIConfig(
-            [
-                path.join(__dirname, 'widgets', 'entry.js'),
-                // 录制页面
-                path.join(__dirname, 'widgets', 'recording', 'recordingPage.js'),
-                // 浏览页面及子组件
-                path.join(__dirname, 'widgets', 'browser', 'browserPage.js'),
-                path.join(__dirname, 'widgets', 'browser', 'components', 'activityList.js'),
-            ],
-            'recall-entry-widget',
-            `/applications/recall/icon.png`
-        );
     }
 
     /**

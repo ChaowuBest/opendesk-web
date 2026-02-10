@@ -1,15 +1,17 @@
-import { BaseApplication, BaseGUIConfig } from "../base.js";
+import { BaseApplication } from "../base.js";
 import { MailboxConfigSchema } from "./common.js"; // 引入新的 Schema
 import { logger } from "../../utils/logger.js";
+import MailboxWorker from "./service/worker";
 
-import path from 'path';
-
-const __dirname = import.meta.dirname;
 
 class MailboxApplication extends BaseApplication {
 
     constructor() {
         super('mailbox', '邮箱');
+    }
+
+    static getWorkerClass() {
+        return MailboxWorker;
     }
 
     // 【重要】这里必须返回包含 profiles 数组的 Schema
@@ -19,14 +21,6 @@ class MailboxApplication extends BaseApplication {
 
     onConfigChanged() {
         logger.info(`mailbox application config changed`);
-    }
-
-    getGUIConfig() {
-        return new BaseGUIConfig(
-            [path.join(__dirname, 'renderer', 'entry.js')],
-            'mailbox-entry-widget',
-
-        );
     }
 
 }

@@ -1,3 +1,8 @@
+/**
+ * 用于实现ApplicationRegistry中部分与Electron强绑定的功能
+ * 其他标准功能（可以在CLI版本中复用的仍然在registry.ts中实现）
+ */
+
 import { ApplicationRegistry } from "./registry.js";
 import { app, protocol } from 'electron';
 import { logger } from "../utils/logger.js";
@@ -21,13 +26,6 @@ export function initializeRegistryProtocols() {
  * 注册应用注册器IPC处理程序
  */
 export function registerApplicationRegistryHandlers(ipcMain: Electron.IpcMain) {
-    ipcMain.handle('applicationRegistry:getApplicationGUIConfig', async (event, bundleName) => {
-        const application = ApplicationRegistry.getApplication(bundleName);
-        if (application === undefined) {
-            return { status: 'error', message: `application ${bundleName} not found` }
-        }
-        return { status: 'ok', data: application.getGUIConfig() };
-    })
     ipcMain.handle('applicationRegistry:getApplicationList', async (event) => {
         return { status: 'ok', data: ApplicationRegistry.getApplicationList() };
     })

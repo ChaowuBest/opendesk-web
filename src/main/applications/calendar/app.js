@@ -1,9 +1,8 @@
 import { BaseApplication } from "../base.js";
-import { BaseGUIConfig } from "../base.js";
 import { BaseToolset, BaseTool } from "../../agents/tool";
 import { z } from 'zod';
 import { logger } from "../../utils/logger.js";
-import path from 'path';
+import CalendarWorker from "./service/worker";
 
 
 class CalendarApplication extends BaseApplication {
@@ -12,12 +11,8 @@ class CalendarApplication extends BaseApplication {
         super('calendar', '日历');
     }
 
-    getGUIConfig() {
-        return new BaseGUIConfig(
-            [path.join(import.meta.dirname, 'renderer', 'entry.js')],
-            'calendar-entry-widget',
-            "/applications/calendar/icon.png",
-        );
+    static getWorkerClass() {
+        return CalendarWorker;
     }
 
     static getConfigSchema() {

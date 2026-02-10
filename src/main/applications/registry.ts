@@ -1,39 +1,13 @@
 import { BaseToolset } from "../agents/tool";
 import { BaseApplication } from "./base.js";
-import { MailboxApplication } from "./mailbox/app.js";
-import { FileMgrApplication } from "./filemgr/app.js";
-import { CalendarApplication } from "./calendar/app.js";
-import { A2AApplication } from "./a2a/app.js";
-import { RecallApplication } from "./recall/app.js";
-import { SearchApplication } from "./search/app.js";
-import { NewsApplication } from "./news/app.js";
-import { TerminalApplication } from "./terminal/app.js";
-import { PPTCreatorApplication } from "./ppt/app.js";
-import { DesignerApplication } from "./designer/app.js";
-import { SkillsApplication } from "./skills/app.js";
 import { SkillRegistry } from "./skills/skillregistry.js";
 import { Setting, getAppDirectory } from "../utils/setting.js";
 import { logger, LogStream } from "../utils/logger.js";
+import { addLine as addCliLogLine } from "../utils/cliLogStore.js";
 import { NotificationManager } from "../utils/notificationmgr.js";
 import { getPlatform } from "../../platforms/base.js";
 import { Worker } from "worker_threads";
 
-import path from 'path';
-
-
-export const APPLICATION_CLASSES: (typeof BaseApplication)[] = [
-    MailboxApplication,
-    FileMgrApplication,
-    CalendarApplication,
-    TerminalApplication,
-    A2AApplication,
-    RecallApplication,
-    SearchApplication,
-    NewsApplication,
-    PPTCreatorApplication,
-    DesignerApplication,
-    SkillsApplication,
-];
 
 export type ProtocolHandlerEntry = {
     scheme: string;
@@ -154,7 +128,7 @@ export function notifyWorkerSettingUpdate(settingData: object) {
  */
 export function initializeRegistry() {
     // 注册所有应用实例
-    for (const APPLICATION_CLASS of APPLICATION_CLASSES) {
+    for (const APPLICATION_CLASS of getPlatform().getApplicationClasses()) {
         const appInstance = new APPLICATION_CLASS();
         if (!ApplicationRegistry.applications.has(appInstance.bundleName)) {
             ApplicationRegistry.registerApplication(appInstance);
@@ -219,7 +193,9 @@ export function initializeRegistryWorker() {
                 break;
             }
             case 'log': {
-                LogStream.getStream().write(event.message + '\n');
+                const msg = event.message + '\n';
+                LogStream.getStream().write(msg);
+                addCliLogLine(event.message);
                 break;
             }
             case 'skillsRegistryChanged': {

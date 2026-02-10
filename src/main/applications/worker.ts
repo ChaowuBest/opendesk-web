@@ -11,15 +11,7 @@
 import { logger } from "../utils/logger";
 import { BaseWorker } from "../applications/base";
 import { getAppDirectory, Setting } from "../utils/setting";
-
-import MailboxWorker from '../applications/mailbox/service/worker'
-import CalendarWorker from '../applications/calendar/service/worker'
-import A2AWorker from '../applications/a2a/service/worker'
-import RecallWorker from '../applications/recall/service/worker'
-import FileManagerWorker from '../applications/filemgr/worker'
-import TerminalWorker from '../applications/terminal/worker'
-import PPTWorker from '../applications/ppt/worker'
-import SkillsWorker from '../applications/skills/service/worker'
+import { getPlatform } from '../../platforms/base';
 
 import { parentPort, workerData } from 'worker_threads';
 import path from 'path';
@@ -33,15 +25,16 @@ const workerInitPromises: Map<string, Promise<void>> = new Map();
 const setting: object = workerData?.setting;
 
 export function initializeAppWorkers() {
+    for (const APPLICATION_CLASS of getPlatform().getApplicationClasses()) {
+        const WORKER_CLASS = APPLICATION_CLASS.getWorkerClass();
+        if (!WORKER_CLASS) {
+            continue;
+        }
 
-    appWorkers.set('mailbox', new MailboxWorker(path.join(getAppDirectory(), 'apps', 'mailbox')));
-    appWorkers.set('calendar', new CalendarWorker(path.join(getAppDirectory(), 'apps', 'calendar')));
-    appWorkers.set('a2a', new A2AWorker(path.join(getAppDirectory(), 'apps', 'a2a')));
-    appWorkers.set('recall', new RecallWorker(path.join(getAppDirectory(), 'apps', 'recall')));
-    appWorkers.set('filemgr', new FileManagerWorker(path.join(getAppDirectory(), 'apps', 'filemgr')));
-    appWorkers.set('terminal', new TerminalWorker(path.join(getAppDirectory(), 'apps', 'terminal')));
-    appWorkers.set('ppt', new PPTWorker(path.join(getAppDirectory(), 'apps', 'ppt')));
-    appWorkers.set('skills', new SkillsWorker(path.join(getAppDirectory(), 'apps', 'skills')));
+        const app = new APPLICATION_CLASS();
+        const appWorker = new WORKER_CLASS(path.join(getAppDirectory(), 'apps', app.bundleName));
+        appWorkers.set(app.bundleName, appWorker);
+    }
 
     for (const [name, appWorker] of appWorkers.entries()) {
         logger.info(`initializing worker ${name}`);
