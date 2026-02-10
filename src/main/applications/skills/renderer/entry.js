@@ -278,6 +278,16 @@ class SkillsEntryWidget extends HTMLElement {
   }
 
   render() {
+    // 保存所有可滚动区域的滚动位置
+    const scrollArea = this.shadowRoot.querySelector('.scroll-area');
+    const addPanelBody = this.shadowRoot.querySelector('.add-panel-body');
+    const registryResults = this.shadowRoot.querySelector('.registry-results');
+    const savedScroll = {
+      scrollArea: scrollArea ? scrollArea.scrollTop : 0,
+      addPanelBody: addPanelBody ? addPanelBody.scrollTop : 0,
+      registryResults: registryResults ? registryResults.scrollTop : 0,
+    };
+
     const listHtml = this.loading
       ? '<div class="empty loading">加载中…</div>'
       : this.error
@@ -599,6 +609,14 @@ class SkillsEntryWidget extends HTMLElement {
     this.shadowRoot.querySelectorAll('[data-delete]').forEach(el => {
       el.addEventListener('click', () => this.deleteSkill(el.getAttribute('data-delete')));
     });
+
+    // 恢复所有可滚动区域的滚动位置
+    const newScrollArea = this.shadowRoot.querySelector('.scroll-area');
+    const newAddPanelBody = this.shadowRoot.querySelector('.add-panel-body');
+    const newRegistryResults = this.shadowRoot.querySelector('.registry-results');
+    if (newScrollArea) newScrollArea.scrollTop = savedScroll.scrollArea;
+    if (newAddPanelBody) newAddPanelBody.scrollTop = savedScroll.addPanelBody;
+    if (newRegistryResults) newRegistryResults.scrollTop = savedScroll.registryResults;
 
     // 为 description 添加悬停提示功能
     const descElements = this.shadowRoot.querySelectorAll('.registry-card-desc');
