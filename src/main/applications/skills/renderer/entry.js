@@ -94,10 +94,11 @@ class SkillsEntryWidget extends HTMLElement {
   setMessage(text, isError = false) {
     this.message = { text, isError };
     this.render();
-    setTimeout(() => {
-      this.message = null;
-      this.render();
-    }, 4000);
+  }
+
+  clearMessage() {
+    this.message = null;
+    this.render();
   }
 
   async refresh() {
@@ -312,7 +313,10 @@ class SkillsEntryWidget extends HTMLElement {
           `).join('');
 
     const msgHtml = this.message
-      ? `<div class="message ${this.message.isError ? 'error' : 'success'}">${escapeHtml(this.message.text)}</div>`
+      ? `<div class="message ${this.message.isError ? 'error' : 'success'}">
+          <span class="message-text">${escapeHtml(this.message.text)}</span>
+          <button type="button" class="message-close" id="message-close-btn" title="关闭">×</button>
+        </div>`
       : '';
 
     const addPanelHtml = `
@@ -470,9 +474,13 @@ class SkillsEntryWidget extends HTMLElement {
         .empty-doc { font-size: 12px; color: #94a3b8; }
         .empty-doc a { color: #6366f1; text-decoration: none; }
         .empty-doc a:hover { text-decoration: underline; }
-        .message { padding: 10px 14px; border-radius: 8px; margin-bottom: 16px; font-size: 13px; }
+        .message { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px; border-radius: 8px; margin-bottom: 16px; font-size: 13px; }
         .message.success { background: #ecfdf5; color: #059669; border: 1px solid #a7f3d0; }
         .message.error { background: #fef2f2; color: #dc2626; border: 1px solid #fecaca; }
+        .message-text { flex: 1; min-width: 0; }
+        .message-close { flex-shrink: 0; width: 24px; height: 24px; padding: 0; border: none; background: transparent; color: inherit; opacity: 0.7; font-size: 18px; line-height: 1; cursor: pointer; border-radius: 4px; display: flex; align-items: center; justify-content: center; }
+        .message-close:hover { opacity: 1; background: rgba(0,0,0,0.06); }
+        .message.error .message-close:hover { background: rgba(0,0,0,0.08); }
         .add-section { margin-bottom: 14px; }
         .add-section:last-child { margin-bottom: 0; }
         .add-section label { display: block; font-size: 13px; color: #475569; margin-bottom: 4px; }
@@ -547,6 +555,7 @@ class SkillsEntryWidget extends HTMLElement {
     `;
 
     this.shadowRoot.getElementById('refresh-btn')?.addEventListener('click', () => this.refresh());
+    this.shadowRoot.getElementById('message-close-btn')?.addEventListener('click', () => this.clearMessage());
     this.shadowRoot.getElementById('add-panel-toggle')?.addEventListener('click', () => this.toggleAddPanel());
     const pathInput = this.shadowRoot.getElementById('add-from-path-input');
     if (pathInput) {
