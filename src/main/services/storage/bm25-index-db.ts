@@ -7,11 +7,14 @@
 
 // @ts-ignore - search-index 没有类型声明
 import { SearchIndex } from 'search-index';
-import nodejieba from 'nodejieba';
+import { Jieba } from '@node-rs/jieba';
+import { dict } from '@node-rs/jieba/dict';
 import { Mutex } from 'async-mutex';
 import { ColumnSchema } from './abstract-storage';
 import path from 'path';
 import fs from 'fs';
+
+const jieba = Jieba.withDict(dict);
 
 /**
  * 存储记录
@@ -89,7 +92,7 @@ export class BM25IndexDB {
         if (!text) return [];
 
         // 使用 nodejieba 对整个文本进行分词
-        const tokens = nodejieba.cutForSearch(text);
+        const tokens = jieba.cut(text);
 
         // 过滤空白 token，并将所有 token 转为小写（提高英文匹配率）
         return tokens
