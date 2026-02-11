@@ -453,6 +453,39 @@ function rmRecursive(p) {
 }
 
 /**
+ * 在目录内递归查找包含 SKILL.md 的子目录（优先匹配 relPath 相对路径）
+ * @param {string} rootDir - 解压根目录（如 skills-main）
+ * @param {string} [relPath] - 可选，GitHub 中的相对路径（如 skills/pdf）
+ * @returns {string|null}
+ */
+function findSkillRootInDir(rootDir, relPath) {
+  const skillMdAt = path.join(rootDir, SKILL_MD_FILENAME);
+  if (fs.existsSync(skillMdAt) && fs.statSync(skillMdAt).isFile()) {
+    return rootDir;
+  }
+  if (relPath && typeof relPath === 'string') {
+    const parts = relPath.split('/').filter(Boolean);
+    if (parts.length > 0) {
+      const candidate = path.join(rootDir, ...parts);
+      if (fs.existsSync(candidate) && fs.statSync(candidate).isDirectory()) {
+        const md = path.join(candidate, SKILL_MD_FILENAME);
+        if (fs.existsSync(md)) return candidate;
+      }
+    }
+  }
+  try {
+    const entries = fs.readdirSync(rootDir, { withFileTypes: true });
+    for (const e of entries) {
+      if (!e.isDirectory()) continue;
+      const sub = path.join(rootDir, e.name);
+      const found = findSkillRootInDir(sub, null);
+      if (found) return found;
+    }
+  } catch (_) {}
+  return null;
+}
+
+/**
  * 从本地目录添加技能：校验 SKILL.md 后复制到用户技能目录
  * @param {string} sourceDir - 源目录（须含 SKILL.md，目录名可与 name 不一致，以 frontmatter name 为准）
  * @returns {{ success: boolean, name?: string, error?: string }}
@@ -482,9 +515,10 @@ function addSkillFromPath(sourceDir) {
 /**
  * 从本地 zip 文件添加技能：解压到临时目录，查找含 SKILL.md 的根后复制到用户技能目录
  * @param {string} zipPath - 本地 .zip 文件路径
+ * @param {{ skillRelPath?: string }} [opts] - 可选，GitHub 安装时传入技能相对路径（如 skills/canvas-design），用于在整仓 zip 中定位
  * @returns {{ success: boolean, name?: string, error?: string }}
  */
-function addSkillFromZipPath(zipPath) {
+function addSkillFromZipPath(zipPath, opts = {}) {
   if (!zipPath || typeof zipPath !== 'string') {
     return { success: false, error: '请选择有效的 zip 文件' };
   }
@@ -497,6 +531,7 @@ function addSkillFromZipPath(zipPath) {
     return { success: false, error: '请选择 .zip 格式的压缩包' };
   }
   const tmpDir = path.join(os.tmpdir(), `skill-zip-${Date.now()}`);
+  const skillRelPath = opts.skillRelPath && typeof opts.skillRelPath === 'string' ? opts.skillRelPath.trim() : null;
   try {
     fs.mkdirSync(tmpDir, { recursive: true });
     const zip = new AdmZip(resolved);
@@ -506,13 +541,17 @@ function addSkillFromZipPath(zipPath) {
     }
     zip.extractAllTo(tmpDir, true);
     const entries = fs.readdirSync(tmpDir, { withFileTypes: true });
-    let skillRoot = null;
-    if (entries.length === 1 && entries[0].isDirectory()) {
-      const sub = path.join(tmpDir, entries[0].name);
-      if (fs.existsSync(path.join(sub, SKILL_MD_FILENAME))) skillRoot = sub;
-    }
-    if (!skillRoot && fs.existsSync(path.join(tmpDir, SKILL_MD_FILENAME))) {
-      skillRoot = tmpDir;
+    const extractRoot = entries.length === 1 && entries[0].isDirectory()
+      ? path.join(tmpDir, entries[0].name)
+      : tmpDir;
+    let skillRoot = skillRelPath
+      ? findSkillRootInDir(extractRoot, skillRelPath)
+      : (fs.existsSync(path.join(tmpDir, SKILL_MD_FILENAME)) ? tmpDir : findSkillRootInDir(tmpDir, null));
+    if (!skillRoot && skillRelPath) {
+      const anySkill = findSkillRootInDir(extractRoot, null);
+      if (anySkill) {
+        return { success: false, error: `压缩包内路径 "${skillRelPath}" 未找到技能，但发现其它技能目录。请检查 URL` };
+      }
     }
     if (!skillRoot) {
       return { success: false, error: '压缩包内未找到含 SKILL.md 的技能目录' };
@@ -520,6 +559,97 @@ function addSkillFromZipPath(zipPath) {
     return addSkillFromPath(skillRoot);
   } catch (e) {
     return { success: false, error: e.message || '解压或添加失败' };
+  } finally {
+    if (fs.existsSync(tmpDir)) rmRecursive(tmpDir);
+  }
+}
+
+/**
+ * 解析 GitHub 树形 URL 为 { owner, repo, branch, path }
+ * 如 https://github.com/anthropics/skills/tree/main/skills/pdf -> { owner, repo, branch, path: 'skills/pdf' }
+ * @param {string} githubUrl - GitHub tree 或 blob URL
+ * @returns {{ owner: string, repo: string, branch: string, path: string } | null}
+ */
+function parseGitHubTreeUrl(githubUrl) {
+  if (!githubUrl || typeof githubUrl !== 'string') return null;
+  const m = githubUrl.trim().match(/github\.com\/([^/]+)\/([^/]+)\/tree\/([^/]+)\/(.*)/i);
+  if (!m) return null;
+  const [, owner, repo, branch, relPath] = m;
+  const pathPart = (relPath || '').replace(/\/+$/, '');
+  if (!owner || !repo || !branch) return null;
+  return { owner, repo, branch, path: pathPart };
+}
+
+/**
+ * 从 GitHub 树形 URL 添加技能：下载仓库 zip，解压后定位到技能目录并安装
+ * @param {string} githubUrl - 如 https://github.com/anthropics/skills/tree/main/skills/pdf
+ * @returns {Promise<{ success: boolean, name?: string, error?: string }>}
+ */
+const GITHUB_ZIP_TIMEOUT_MS = 60000;
+
+async function fetchWithFallback(zipUrl) {
+  const opts = () => ({ redirect: 'follow', signal: AbortSignal.timeout(GITHUB_ZIP_TIMEOUT_MS) });
+  try {
+    return await fetch(zipUrl, opts());
+  } catch (e) {
+    const msg = e?.message || String(e);
+    if (msg.includes('fetch failed') || msg.includes('ECONNREFUSED') || msg.includes('ENOTFOUND') || msg.includes('ETIMEDOUT') || msg.includes('network')) {
+      const mirrorUrl = `https://ghproxy.com/${zipUrl}`;
+      logger.info(`SkillRegistry: 直连 GitHub 失败，尝试镜像 ${mirrorUrl}`);
+      try {
+        return await fetch(mirrorUrl, opts());
+      } catch (e2) {
+        throw new Error(`直连与镜像均失败。直连: ${msg}；镜像: ${e2?.message || e2}`);
+      }
+    }
+    throw e;
+  }
+}
+
+async function addSkillFromGitHubUrl(githubUrl) {
+  const parsed = parseGitHubTreeUrl(githubUrl);
+  if (!parsed) {
+    return { success: false, error: '无效的 GitHub 技能 URL，需为 tree 格式：https://github.com/owner/repo/tree/branch/path' };
+  }
+  const { owner, repo, branch, path: relPath } = parsed;
+  if (!relPath || !relPath.trim()) {
+    return { success: false, error: 'GitHub URL 须包含技能路径，如 .../tree/main/skills/pdf。当前 URL 可能缺少路径：' + githubUrl };
+  }
+  const zipUrl = `https://github.com/${owner}/${repo}/archive/refs/heads/${branch}.zip`;
+  const tmpDir = path.join(os.tmpdir(), `skill-github-${Date.now()}`);
+  try {
+    fs.mkdirSync(tmpDir, { recursive: true });
+    const res = await fetchWithFallback(zipUrl);
+    if (!res.ok) {
+      return { success: false, error: `下载失败: ${res.status} ${res.statusText}` };
+    }
+    const buf = Buffer.from(await res.arrayBuffer());
+    const zip = new AdmZip(buf);
+    const uncompressedSize = getZipUncompressedSize(zip);
+    if (uncompressedSize.error) {
+      return { success: false, error: uncompressedSize.error };
+    }
+    zip.extractAllTo(tmpDir, true);
+    const entries = fs.readdirSync(tmpDir, { withFileTypes: true });
+    const extractRoot = entries.length === 1 && entries[0].isDirectory()
+      ? path.join(tmpDir, entries[0].name)
+      : tmpDir;
+    let skillRoot = findSkillRootInDir(extractRoot, relPath);
+    if (!skillRoot && relPath) {
+      const anySkill = findSkillRootInDir(extractRoot, null);
+      if (anySkill) {
+        return { success: false, error: `仓库内路径 "${relPath}" 未找到技能，但发现其它技能目录。请检查 skill0 返回的 URL 是否正确：${githubUrl}` };
+      }
+    }
+    if (!skillRoot && !relPath) {
+      skillRoot = findSkillRootInDir(extractRoot, null);
+    }
+    if (!skillRoot) {
+      return { success: false, error: '仓库内未找到含 SKILL.md 的技能目录' };
+    }
+    return addSkillFromPath(skillRoot);
+  } catch (e) {
+    return { success: false, error: e.message || '下载或解压失败' };
   } finally {
     if (fs.existsSync(tmpDir)) rmRecursive(tmpDir);
   }
@@ -552,15 +682,7 @@ async function addSkillFromUrl(url) {
       return { success: false, error: uncompressedSize.error };
     }
     zip.extractAllTo(tmpDir, true);
-    const entries = fs.readdirSync(tmpDir, { withFileTypes: true });
-    let skillRoot = null;
-    if (entries.length === 1 && entries[0].isDirectory()) {
-      const sub = path.join(tmpDir, entries[0].name);
-      if (fs.existsSync(path.join(sub, SKILL_MD_FILENAME))) skillRoot = sub;
-    }
-    if (!skillRoot && fs.existsSync(path.join(tmpDir, SKILL_MD_FILENAME))) {
-      skillRoot = tmpDir;
-    }
+    let skillRoot = fs.existsSync(path.join(tmpDir, SKILL_MD_FILENAME)) ? tmpDir : findSkillRootInDir(tmpDir, null);
     if (!skillRoot) {
       return { success: false, error: '压缩包内未找到含 SKILL.md 的技能目录' };
     }
@@ -568,6 +690,60 @@ async function addSkillFromUrl(url) {
     return addResult;
   } catch (e) {
     return { success: false, error: e.message || '下载或解压失败' };
+  } finally {
+    if (fs.existsSync(tmpDir)) rmRecursive(tmpDir);
+  }
+}
+
+/**
+ * 通过 ClawHub CLI 按 slug（及可选版本）安装技能，参考 clawhub install my-skill [--version 1.2.3]
+ * 需已安装 clawhub：npm i -g clawhub。在临时目录执行 npx clawhub install，再从输出目录查找 SKILL.md 并复制到用户技能目录。
+ * @param {string} slug - 技能 slug（如 my-skill）
+ * @param {string} [version] - 可选版本号
+ * @returns {Promise<{ success: boolean, name?: string, error?: string }>}
+ */
+async function addSkillFromClawHubSlug(slug, version) {
+  if (!slug || typeof slug !== 'string' || !slug.trim()) {
+    return { success: false, error: '请提供 ClawHub 技能 slug（如 my-skill）' };
+  }
+  const safeSlug = slug.trim();
+  const tmpDir = path.join(os.tmpdir(), `skill-clawhub-${Date.now()}`);
+  try {
+    fs.mkdirSync(tmpDir, { recursive: true });
+    const args = ['clawhub', 'install', safeSlug];
+    if (version && String(version).trim()) args.push('--version', String(version).trim());
+    const run = () =>
+      new Promise((resolve, reject) => {
+        const child = spawn('npx', args, {
+          cwd: tmpDir,
+          shell: process.platform === 'win32',
+          stdio: ['ignore', 'pipe', 'pipe']
+        });
+        let stdout = '';
+        let stderr = '';
+        child.stdout?.on('data', (ch) => { stdout += ch; });
+        child.stderr?.on('data', (ch) => { stderr += ch; });
+        child.on('error', (err) => reject(err));
+        child.on('close', (code) => resolve({ code, stdout, stderr }));
+      });
+    const timeoutMs = 120000;
+    const race = Promise.race([
+      run(),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('ClawHub 安装超时（2 分钟）')), timeoutMs))
+    ]);
+    const { code, stderr } = await race;
+    if (code !== 0) {
+      const msg = (stderr || '').trim() || `退出码 ${code}`;
+      return { success: false, error: `ClawHub 安装失败: ${msg}` };
+    }
+    const skillRoot = findSkillRootInDir(tmpDir, null);
+    if (!skillRoot) {
+      return { success: false, error: 'ClawHub 安装后未在输出目录中找到 SKILL.md，请确认 slug 正确且已安装 clawhub（npm i -g clawhub）' };
+    }
+    const addResult = addSkillFromPath(skillRoot);
+    return addResult;
+  } catch (e) {
+    return { success: false, error: e.message || 'ClawHub 安装异常' };
   } finally {
     if (fs.existsSync(tmpDir)) rmRecursive(tmpDir);
   }
@@ -608,5 +784,8 @@ export const SkillRegistry = {
   addSkillFromPath,
   addSkillFromZipPath,
   addSkillFromUrl,
+  addSkillFromGitHubUrl,
+  addSkillFromClawHubSlug,
+  parseGitHubTreeUrl,
   deleteSkill
 };

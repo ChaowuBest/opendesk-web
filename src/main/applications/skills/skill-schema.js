@@ -4,7 +4,7 @@
  * 规范要点：
  * - 每个技能为一个目录；拷贝到用户目录时以 SKILL.md 中的 name 作为目录名
  * - 必含文件：SKILL.md（YAML frontmatter + Markdown 正文）
- * - 必填字段：name（1-64 字符，小写字母/数字/连字符，不可首尾或连续连字符）, description（1-1024 字符）
+ * - 必填字段：name（1-64 字符）, description（1-1024 字符）
  * - 可选字段：license, compatibility（≤500 字符）, metadata, allowed-tools（实验性）
  * - 可选子目录：scripts/, references/, assets/
  *
@@ -16,8 +16,6 @@ import { parse as parseYaml } from 'yaml';
 /** SKILL.md 文件名（规范要求） */
 export const SKILL_MD_FILENAME = 'SKILL.md';
 
-/** name 合法格式：小写字母、数字、连字符，1-64 字符，不可首尾或连续连字符 */
-const NAME_REGEX = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 const NAME_MAX_LEN = 64;
 const DESCRIPTION_MAX_LEN = 1024;
 const COMPATIBILITY_MAX_LEN = 500;
@@ -54,7 +52,7 @@ export function parseSkillMd(raw) {
 }
 
 /**
- * 校验 name 字段（规范：1-64 字符，小写字母/数字/连字符，不可首尾或连续连字符）
+ * 校验 name 字段（1-64 字符，非空即可）
  * @param {string} name
  * @returns {{ valid: boolean, error?: string }}
  */
@@ -68,9 +66,6 @@ export function validateSkillName(name) {
   }
   if (trimmed.length > NAME_MAX_LEN) {
     return { valid: false, error: `name 长度不能超过 ${NAME_MAX_LEN} 字符` };
-  }
-  if (!NAME_REGEX.test(trimmed)) {
-    return { valid: false, error: 'name 仅允许小写字母、数字与连字符，且不可以连字符开头/结尾或包含连续连字符' };
   }
   return { valid: true };
 }
