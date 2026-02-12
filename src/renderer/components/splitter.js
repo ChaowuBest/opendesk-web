@@ -1,0 +1,98 @@
+/**
+ * Copyright (c) 2026 The OpenDesk Team
+ * OpenDesk is licensed under Mulan PSL v2.
+ * You can use this software according to the terms and conditions of the Mulan PSL v2.
+ * You may obtain a copy of Mulan PSL v2 at: http://license.coscl.org.cn/MulanPSL2
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
+ * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+ * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+ * See the Mulan PSL v2 for more details.
+ */
+
+class SplitterWidget extends HTMLElement {
+    constructor() {
+        super();
+        this.attachShadow({ mode: 'open' });
+    }
+
+    connectedCallback() {
+        this.render();
+    }
+
+    render() {
+        this.shadowRoot.innerHTML = `
+        <style>
+            :host {
+                display: flex;
+                width: 100%;
+                height: 100%;
+                min-height: 0;
+            }
+        </style>
+        <!-- TODO: 需要提供一个可配置的宽度属性 -->
+        <slot id="leftPanel" name="left" style="display: flex; flex-direction: column; width: 350px; height: 100%; flex-shrink: 0; min-height: 0; overflow: visible;"></slot>
+
+        <div id="resizer"
+            class="w-[4px] relative group transition-all duration-150"
+            style="background: linear-gradient(to right, transparent 40%, #e0e0e0 50%, transparent 60%); min-width: 4px; cursor: col-resize; flex-shrink: 0;"
+        >
+            <div class="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 pointer-events-none">
+                <!-- macOS 风格：轻微内凹或者几乎看不见，只是微微一条淡色线 -->
+                <div class="w-[2px] h-12 bg-gray-200 rounded-full opacity-70 group-hover:opacity-100 group-hover:bg-blue-400 transition"></div>
+            </div>
+        </div>
+
+        <!-- 槽位 2：右侧内容 -->
+        <div id="rightPanelWrapper" style="display: flex; flex-direction: column; flex: 1 1 0; min-width: 0; min-height: 0; height: 100%; overflow: hidden;">
+            <slot id="rightPanel" name="right" style="display: flex; flex-direction: column; width: 100%; height: 100%; min-width: 0; min-height: 0;"></slot>
+        </div>
+        `;
+
+        const resizer = this.shadowRoot.getElementById('resizer');
+        const leftPanel = this.shadowRoot.getElementById('leftPanel');
+        const rightPanel = this.shadowRoot.getElementById('rightPanel');
+
+        let isResizing = false;
+
+        resizer.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            isResizing = true;
+            document.body.style.cursor = 'col-resize';
+            document.body.style.userSelect = 'none';
+        });
+
+        document.addEventListener('mousemove', (e) => {
+            if (!isResizing) return;
+
+            // 获取容器的位置和宽度
+            const containerRect = this.getBoundingClientRect();
+            const containerWidth = containerRect.width;
+
+            // 计算鼠标相对于容器的位置
+            const mouseX = e.clientX - containerRect.left;
+
+            // 计算左侧面板的宽度（像素值）
+            const leftWidth = mouseX;
+
+            // 限制最小和最大宽度（最小200px，最大容器宽度的85%）
+            const minWidth = 200;
+            const maxWidth = containerWidth * 0.85;
+
+            if (leftWidth < minWidth || leftWidth > maxWidth) return;
+
+            // 设置左侧面板宽度，右侧面板会自动填充剩余空间
+            leftPanel.style.width = leftWidth + 'px';
+            rightPanel.style.flex = '1';
+        });
+
+        document.addEventListener('mouseup', () => {
+            if (isResizing) {
+                isResizing = false;
+                document.body.style.cursor = '';
+                document.body.style.userSelect = '';
+            }
+        });
+    }
+}
+
+customElements.define('splitter-widget', SplitterWidget);

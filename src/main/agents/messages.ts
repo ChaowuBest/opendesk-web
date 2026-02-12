@@ -1,0 +1,799 @@
+/**
+ * Copyright (c) 2026 The OpenDesk Team
+ * OpenDesk is licensed under Mulan PSL v2.
+ * You can use this software according to the terms and conditions of the Mulan PSL v2.
+ * You may obtain a copy of Mulan PSL v2 at: http://license.coscl.org.cn/MulanPSL2
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
+ * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+ * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+ * See the Mulan PSL v2 for more details.
+ */
+
+import { Marked } from 'marked';
+import { markedHighlight } from 'marked-highlight';
+import { logger } from '../utils/logger.js';
+import { BaseTool, BaseToolset } from './tool';
+
+import markedKatex from 'marked-katex-extension';
+import hljs from 'highlight.js';
+import path from 'path';
+
+
+export const marked = new Marked(
+    markedHighlight({
+        emptyLangClass: 'hljs',
+        langPrefix: 'hljs language-',
+        highlight(code, lang, info) {
+        const language = hljs.getLanguage(lang) ? lang : 'plaintext';
+        return hljs.highlight(code, { language }).value;
+        }
+    })
+);
+
+marked.use(markedKatex({
+    throwOnError: false,
+    displayMode: true,
+    nonStandard: true
+}));
+
+/**
+ * This is NOT an OpenAI message part, but a message part for our own message system.
+ */
+class ReasoningMessagePart {
+    type: 'reasoning' = 'reasoning';
+    content: string;
+    /** cached render result of the reasoning */
+    rendered?: string;
+
+    constructor (content: string) {
+        this.content = content;
+    }
+
+    async render() {
+        this.rendered = this.content;
+    }
+
+    /**
+     * Assign the prototype of the given object to the ReasoningMessagePart prototype,
+     * mainly used for deserialization.
+     *
+     * @param reasoning_message_part_obj - The object to assign the prototype to
+     * @returns The assigned reasoning message part
+     */
+    static assign(reasoning_message_part_obj: object): ReasoningMessagePart {
+        Object.setPrototypeOf(reasoning_message_part_obj, ReasoningMessagePart.prototype);
+        return reasoning_message_part_obj as ReasoningMessagePart;
+    }
+}
+
+class ToolCall {
+
+    index: number;
+    id: string
+    tool_name: string;
+    args_string: string;
+    args_object: object = {};
+    status: 'pending' | 'running' | 'success' | 'error' = 'pending';
+    result?: string;
+    result_object?: object;
+    rendered?: string;
+    tool?: BaseTool<any>;
+
+    constructor(index: number, id: string, tool_name: string, args_string: string) {
+        this.index = index;
+        this.id = id;
+        this.tool_name = tool_name;
+        this.args_string = args_string;
+
+        Object.defineProperty(this, 'tool', { value: undefined, writable: true, enumerable: false });
+    }
+
+    toOpenAIMessagePart(): object {
+        return {
+            type: 'tool_call',
+            id: this.id,
+            index: this.index,
+            tool_name: this.tool_name,
+            args_string: this.args_string || "",
+        };
+    }
+
+    setTool(tool: BaseTool<any>) {
+        this.tool = tool;
+    }
+
+    async freezeRenderResult() {
+        this.rendered = await this.render();
+    }
+
+    /**
+     * 渲染工具调用
+     */
+    async render(): Promise<string> {
+        if (this.rendered !== undefined) {
+            /* 如果已经确认冻结了渲染结果，则直接返回 */
+            return this.rendered;
+        }
+
+        /* 如果工具自定义了渲染函数，则使用工具的渲染函数 */
+        if (this.tool !== undefined) {
+            let rendered = await this.tool.renderToolCall(this);
+            if (rendered !== undefined) {
+                return rendered;
+            }
+        }
+
+        if (this.status === 'running') {
+            return `
+            <div class="flex mt-3 mb-3 text-sm items-center space-x-4 bg-white/80 backdrop-blur-md border border-slate-200 py-2 px-4 rounded-full shadow-sm w-fit">
+                <span class="ml-2 font-semibold text-slate-600">工具调用</span>
+                <div class="h-1 w-1 rounded-full bg-slate-300"></div>
+                <!-- 状态：进行中 (呼吸灯效果) -->
+                <div class="flex items-center">
+                    <div class="h-2 w-2 rounded-full bg-blue-500 animate-pulse ring-4 ring-blue-100/50"></div>
+                    <span class="ml-2 font-semibold text-slate-800">${this.tool_name}</span>
+                </div>
+            </div>
+            `
+        } else if (this.status === 'success') {
+            return `
+            <div class="flex mt-3 mb-3 text-sm items-center space-x-4 bg-white/80 backdrop-blur-md border border-slate-200 py-2 px-4 rounded-full shadow-sm w-fit">
+                <span class="ml-2 font-semibold text-slate-600">工具调用</span>
+                <div class="h-1 w-1 rounded-full bg-slate-300"></div>
+                <div class="flex items-center group cursor-help relative">
+                    <div class="h-2 w-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.6)]"></div>
+                    <span class="ml-2 font-medium text-slate-600">${this.tool_name}</span>
+                </div>
+            </div>
+            `
+        } else if (this.status === 'error') {
+            return `
+            <div class="flex mt-3 mb-3 text-sm items-center space-x-4 bg-white/80 backdrop-blur-md border border-slate-200 py-2 px-4 rounded-full shadow-sm w-fit">
+                <span class="ml-2 font-semibold text-slate-600">工具调用</span>
+                <div class="h-1 w-1 rounded-full bg-slate-300"></div>
+                <div class="flex items-center cursor-pointer group relative animate-[shake_0.5s_ease-in-out]">
+                    <!-- 错误光晕效果 -->
+                    <div class="h-2.5 w-2.5 rounded-full bg-rose-500 shadow-[0_0_10px_rgba(244,63,94,0.6)] flex items-center justify-center">
+                        <!-- 小感叹号图标 -->
+                        <svg class="h-1.5 w-1.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="5">
+                            <path d="M12 8v4m0 4h.01" />
+                        </svg>
+                    </div>
+
+                    <!-- 错误文字 -->
+                    <span class="ml-2 text-[13px] font-semibold text-rose-600">${this.tool_name} Failed</span>
+
+                    <!-- 悬浮弹窗 (Error Tooltip) -->
+                    <div class="absolute bottom-full mb-3 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-all pointer-events-none">
+                        <div class="bg-white border border-slate-200 shadow-xl rounded-xl p-3 w-48 text-xs text-slate-600">
+                            <p class="font-bold text-slate-800 mb-1">Execution Error</p>
+                            <p class="font-mono text-[10px] leading-relaxed text-rose-500 bg-rose-50 p-1.5 rounded">${this.result}</p>
+                            <!-- 小箭头 -->
+                            <div class="absolute -bottom-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-white border-b border-r border-slate-200 rotate-45"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            `;
+        } else {
+            return `
+            <div class="flex mt-3 mb-3 text-sm items-center space-x-4 bg-white/80 backdrop-blur-md border border-slate-200 py-2 px-4 rounded-full shadow-sm w-fit">
+                <span class="ml-2 font-semibold text-slate-600">工具调用</span>
+                <div class="flex items-center opacity-40">
+                    <div class="h-2 w-2 rounded-full bg-slate-400"></div>
+                    <span class="ml-2 font-medium text-slate-500">${this.tool_name}</span>
+                </div>
+            </div>
+            `;
+        }
+    }
+
+    static assign(tool_call_obj: object): ToolCall {
+        Object.setPrototypeOf(tool_call_obj, ToolCall.prototype);
+        return tool_call_obj as ToolCall;
+    }
+}
+
+class ToolCallMessagePart {
+    type: 'tool_call' = 'tool_call';
+    toolcalls: ToolCall[] = [];
+    rendered?: string;
+
+    /**
+     * 初始化一个ToolCallMessagePart
+     * 需要注意，我们特意设计成不允许在构造函数中传递toolcalls，这是因为如果模型直接输出
+     * 了多个ToolCall（但实际上是同一个TC的多个流式组件的话，直接初始化会造成它们无法自动合并
+     */
+    constructor() { }
+
+    push(toolcall: ToolCall) {
+        if (typeof toolcall.id === 'string') {
+            this.toolcalls.push(toolcall);
+        } else {
+            let last_toolcall = this.toolcalls[this.toolcalls.length - 1];
+            if (last_toolcall === undefined) {
+                // 有的消息片段中是没有第一个初始id的，因为带id的片段在上一条消息中
+                this.toolcalls.push(toolcall);
+            } else {
+                last_toolcall.args_string += toolcall.args_string;
+            }
+        }
+    }
+
+    extend(tool_call_message_part: ToolCallMessagePart) {
+        for (let toolcall of tool_call_message_part.toolcalls) {
+            this.push(toolcall)
+        }
+    }
+
+    /**
+     * 用来生成OpenAI工具调用的Assistant消息中的tool_calls
+     */
+    toOpenAIToolCalls(): object[] {
+        return this.toolcalls.map(toolcall => {
+            return {
+                id: toolcall.id,
+                type: 'function',
+                function: {
+                    name: toolcall.tool_name,
+                    arguments: toolcall.args_string
+                }
+            }
+        });
+    }
+
+    /**
+     * 用来生成OpenAI工具调用的Response消息
+     */
+    toOpenAIMessagePart(): object[] {
+        return [
+            ...this.toolcalls.map(toolcall => toolcall.toOpenAIMessagePart())
+        ];
+    }
+
+    async render(): Promise<string> {
+        this.rendered = '';
+        for (const toolcall of this.toolcalls) {
+            this.rendered += await toolcall.render();
+        }
+        return this.rendered;
+    }
+
+    static assign(tool_call_message_part_obj) {
+        Object.setPrototypeOf(tool_call_message_part_obj, ToolCallMessagePart.prototype);
+        for (let toolcall of tool_call_message_part_obj.toolcalls) {
+            ToolCall.assign(toolcall)
+        }
+        return tool_call_message_part_obj;
+    }
+}
+
+class FileMessagePart {
+    type: 'file' = 'file';
+    path: string;
+    content: string;
+    rendered?: string;
+
+    constructor(path: string, content: string) {
+        this.path = path;
+        this.content = content;
+    }
+
+    toOpenAIMessagePart(): object {
+        return {
+            type: 'text',
+            text: `用户添加了文件附件: ${this.path}，其内容以文本形式提取如下，供你参考: <content>${this.content}</content>`
+        }
+    }
+
+    async render(): Promise<string> {
+        this.rendered = `
+        <div class="flex items-center group cursor-pointer w-fit min-w-[280px] max-w-sm
+            bg-white/70 backdrop-blur-xl
+            rounded-xl px-3.5 py-2.5
+            border border-black/[0.08] shadow-sm
+            hover:shadow-md hover:bg-white/90 hover:-translate-y-0.5
+            transition-all duration-200 ease-out select-none">
+
+            <!-- 文件图标容器 -->
+            <div class="relative w-10 h-10 flex items-center justify-center
+                        bg-white rounded-lg shadow-[0_2px_5px_rgba(0,0,0,0.08)]
+                        mr-3 shrink-0">
+                <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M14 2H6C4.89543 2 4 2.89543 4 4V20C4 21.1046 4.89543 22 6 22H18C19.1046 22 20 21.1046 20 20V8L14 2Z" fill="#E2E2E2"/>
+                <path d="M14 2V8H20L14 2Z" fill="#B0B0B0"/>
+                <rect x="8" y="13" width="8" height="1.5" rx="0.75" fill="white"/>
+                <rect x="8" y="16" width="5" height="1.5" rx="0.75" fill="white"/>
+                </svg>
+            </div>
+
+            <!-- 文件详细信息 -->
+            <div class="flex flex-col min-w-0 flex-1 overflow-hidden">
+                <span class="text-[13px] font-medium text-gray-900 truncate tracking-tight font-sans">
+                ${path.basename(this.path)}
+                </span>
+                <span class="text-[11px] text-gray-500 font-normal leading-tight">
+                    ${path.extname(this.path).toUpperCase().slice(1)} 文档
+                </span>
+            </div>
+
+            <!-- 尾部操作图标 (通常是下拉或下载) -->
+            <div class="ml-2 text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+                <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7" />
+                </svg>
+            </div>
+        </div>
+        `;
+        return this.rendered;
+    }
+
+    static assign(file_message_part_obj: object): FileMessagePart {
+        Object.setPrototypeOf(file_message_part_obj, FileMessagePart.prototype);
+        return file_message_part_obj as FileMessagePart;
+    }
+}
+
+class TextMessagePart {
+    type: 'text' = 'text';
+    text: string;
+    rendered?: string;
+
+    constructor (text: string) {
+        this.text = text;
+    }
+
+    toOpenAIMessagePart(): object {
+        return { type: 'text', text: this.text }
+    }
+
+    static assign(text_message_part_obj: object): TextMessagePart {
+        Object.setPrototypeOf(text_message_part_obj, TextMessagePart.prototype);
+        return text_message_part_obj as TextMessagePart;
+    }
+
+    async render(): Promise<string> {
+        this.rendered = await marked.parse(this.text)
+        return this.rendered;
+    }
+}
+
+class ImageMessagePart {
+    type: 'image_url' = 'image_url';
+    image_url: { url: string };
+    rendered?: string;
+
+    constructor (image_url: string) {
+        this.image_url = { url: image_url };
+    }
+
+    toOpenAIMessagePart(): object {
+        return { type: this.type, image_url: this.image_url };
+    }
+
+    async render(): Promise<string> {
+        this.rendered = `<img src="${this.image_url.url}" alt="image" />`;
+        return this.rendered;
+    }
+
+    static assign(image_message_part_obj: object): ImageMessagePart {
+        Object.setPrototypeOf(image_message_part_obj, ImageMessagePart.prototype);
+        return image_message_part_obj as ImageMessagePart;
+    }
+}
+
+
+/**
+ * @class Usage
+ */
+class Usage {
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+
+    constructor(prompt_tokens: number, completion_tokens: number, total_tokens: number) {
+        this.prompt_tokens = prompt_tokens;
+        this.completion_tokens = completion_tokens;
+        this.total_tokens = total_tokens;
+    }
+}
+
+/**
+ * @class SystemMessage
+ */
+class SystemMessage {
+    role: 'system' = 'system';
+    content: string;
+
+    constructor(content: string) {
+        this.content = content;
+    }
+
+    static assign(system_message_obj: object): SystemMessage {
+        Object.setPrototypeOf(system_message_obj, SystemMessage.prototype);
+        return system_message_obj as SystemMessage;
+    }
+
+    toOpenAIMessage(): object {
+        return {
+            role: this.role,
+            content: this.content
+        }
+    }
+}
+
+class UserMessage {
+    role: 'user' = 'user';
+    content: Array<TextMessagePart | ImageMessagePart | FileMessagePart> = [];
+
+    constructor (content?: string) {
+        if (content) {
+            this.content.push(new TextMessagePart(content));
+        }
+    }
+
+    /**
+     * Append a text part to the message
+     * @param {string} text
+     * @returns {UserMessage}
+     */
+    appendText(text: string): UserMessage {
+        const last_part = this.content[this.content.length - 1];
+        if (last_part && last_part.type === 'text') {
+            last_part.text += text;
+        } else {
+            this.content.push(new TextMessagePart(text));
+        }
+        return this;
+    }
+
+    appendPart(part: TextMessagePart | ImageMessagePart | FileMessagePart): UserMessage {
+        if (part.type === 'text') {
+            this.appendText(part.text);
+        } else if (part.type === 'file') {
+            this.content.push(part);
+        } else {
+            throw new Error(`unsupported part type ${part.type}`);
+        }
+        return this;
+    }
+
+    /**
+     * Append an image URL to the message
+     * @param {string} image_url
+     * @returns {UserMessage}
+     */
+    appendImageURL(image_url: string): UserMessage {
+        this.content.push(new ImageMessagePart(image_url));
+        return this;
+    }
+
+    static assign(raw_obj: object): UserMessage {
+        Object.setPrototypeOf(raw_obj, UserMessage.prototype);
+        let user_message = raw_obj as UserMessage;
+        if (user_message.content !== undefined) {
+            for (let part of user_message.content) {
+                if (part.type === 'text') {
+                    TextMessagePart.assign(part);
+                } else if (part.type === 'file') {
+                    FileMessagePart.assign(part);
+                } else {
+                    throw new Error(`unsupported part type ${part.constructor.name}`);
+                }
+            }
+        }
+        return user_message;
+    }
+
+    async render(): Promise<void> {
+        for (let part of this.content) {
+            await part.render();
+        }
+    }
+
+    toOpenAIMessage(): object {
+        return {
+            role: this.role,
+            content: this.content.map(part => part.toOpenAIMessagePart())
+        }
+    }
+}
+
+type AssistantMessagePart = TextMessagePart | ReasoningMessagePart | ToolCallMessagePart;
+
+class AssistantMessage {
+    role: 'assistant' = 'assistant';
+    message_id: string = crypto.randomUUID();
+    content: Array<AssistantMessagePart> = [];
+    usage?: Usage;
+
+    constructor (content: Array<AssistantMessagePart> = []) {
+        this.content = content;
+    }
+
+    /**
+     * Assign the prototype of the given object to the AssistantMessage prototype
+     */
+    static assign(raw_obj: object): AssistantMessage {
+        Object.setPrototypeOf(raw_obj, AssistantMessage.prototype);
+        let assistant_message = raw_obj as AssistantMessage;
+        if (assistant_message.content !== undefined) {
+            for (let part of assistant_message.content) {
+                if (part.type === 'text') {
+                    TextMessagePart.assign(part);
+                } else if (part.type === 'reasoning') {
+                    ReasoningMessagePart.assign(part);
+                } else if (part.type === 'tool_call') {
+                    ToolCallMessagePart.assign(part);
+                }
+            }
+        }
+        return assistant_message;
+    }
+
+    async render(): Promise<void> {
+        for (let part of this.content) {
+            await part.render();
+        }
+    }
+
+    /**
+     * Merges the give message to this message and returns itself
+     */
+    mergeChunk(chunk: AssistantMessage): AssistantMessage {
+        for (var part of chunk.content) {
+            this.appendPart(part);
+        }
+        return this;
+    }
+
+    appendPart(part: TextMessagePart | ReasoningMessagePart | ToolCallMessagePart): AssistantMessage {
+        if (part.type === 'text') {
+            this.appendText(part.text);
+        } else if (part.type === 'reasoning') {
+            this.appendReasoningContent(part.content);
+        } else if (part.type === 'tool_call') {
+            this.appendToolCallPart(part);
+        }
+        return this;
+    }
+
+    appendReasoningContent(content: string): AssistantMessage {
+        const last_part = this.content[this.content.length - 1];
+        if (last_part && last_part.type === 'reasoning') {
+            last_part.content += content;
+        } else {
+            this.content.push(new ReasoningMessagePart(content));
+        }
+        return this;
+    }
+
+    /**
+     * Append a text part to the message
+     * @param {string} text
+     */
+    appendText(text: string): AssistantMessage {
+        const last_part = this.content[this.content.length - 1];
+        if (last_part && last_part.type === 'text') {
+            last_part.text += text;
+        } else {
+            this.content.push(new TextMessagePart(text));
+        }
+        return this;
+    }
+
+    /**
+     * Append a tool call part to the message
+     */
+    appendToolCallPart(part: ToolCallMessagePart): AssistantMessage {
+        const last_part = this.content[this.content.length - 1];
+        if (last_part && last_part.type === 'tool_call') {
+            last_part.extend(part);
+        } else {
+            this.content.push(part);
+        }
+        return this;
+    }
+
+    toOpenAIMessage(): object {
+        var content: object[] = [];
+        var toolcalls: object[] = [];
+        for (let part of this.content) {
+            switch (part.type) {
+                case 'reasoning':
+                    break;
+                case 'tool_call':
+                    toolcalls.push(...part.toOpenAIToolCalls());
+                    break;
+                case 'text':
+                    let openai_part = part.toOpenAIMessagePart();
+                    if (Array.isArray(openai_part)) {
+                        content.push(...openai_part);
+                    } else {
+                        content.push(openai_part);
+                    }
+                    break;
+            }
+        }
+        return { role: this.role, content: content, tool_calls: toolcalls }
+    }
+
+    getOpenAIToolMessages(): object[] {
+        var messages: object[] = [];
+        var tool_call_parts = this.content.filter(part => part.type === 'tool_call');
+        for (let part of tool_call_parts) {
+            for (let toolcall of part.toolcalls) {
+                if (toolcall.status === 'error') {
+                    messages.push({
+                        role: 'tool',
+                        tool_call_id: toolcall.id,
+                        content: `Toolcall failed: ${toolcall.result}`
+                    });
+                } else if (toolcall.status === 'success') {
+                    messages.push({
+                        role: 'tool',
+                        tool_call_id: toolcall.id,
+                        content: toolcall.result
+                    });
+                } else {
+                    throw new Error(`unfinished toolcall status ${toolcall.status}`);
+                }
+            }
+        }
+        return messages;
+    }
+
+    static parseOpenAIMessage(openai_message: object): AssistantMessage {
+        var message = new AssistantMessage();
+
+        const reasoning_content = openai_message['reasoning_content'];
+        if (reasoning_content) {
+            message.content.push(new ReasoningMessagePart(reasoning_content));
+        }
+
+        const tool_calls = openai_message['tool_calls'];
+        if (tool_calls) {
+            let part = new ToolCallMessagePart()
+            for (let tool_call of tool_calls) {
+                let tc = new ToolCall(
+                    tool_call['index'],
+                    tool_call['id'],
+                    tool_call['function']['name'],
+                    tool_call['function']['arguments']
+                );
+                part.push(tc);
+            }
+            message.content.push(part);
+        }
+        const content = openai_message['content'];
+        if (content) {
+            message.content.push(new TextMessagePart(content));
+        }
+        return message;
+    }
+}
+
+class AssistantResponse {
+    content: AssistantMessage;
+    finish_reason: 'stop' | 'error' | 'tool_calls' | null;
+    usage?: Usage;
+
+    constructor (content: AssistantMessage, finish_reason: 'stop' | 'error' | 'tool_calls' | null = null) {
+        this.content = content;
+        this.finish_reason = finish_reason;
+    }
+
+    static error(reason: string): AssistantResponse {
+        var response = new AssistantResponse(new AssistantMessage(), 'error');
+        response.content.appendText(reason);
+        return response;
+    }
+
+    static parseOpenAIResponse(openai_response: object): AssistantResponse {
+        const choice = openai_response['choices'][0];
+        let finish_reason = choice.finish_reason;
+        let response: AssistantResponse;
+
+        if (choice.delta !== undefined) {
+            // parsing chunk in a stream response
+            const chunk = AssistantMessage.parseOpenAIMessage(choice.delta);
+            response = new AssistantResponse(chunk, finish_reason ?? null);
+        } else if (choice.message !== undefined) {
+            const message = AssistantMessage.parseOpenAIMessage(choice.message);
+            response = new AssistantResponse(message, finish_reason ?? null);
+        } else {
+            logger.error('invalid openai response', choice);
+            throw new Error('invalid openai response');
+        }
+
+        const usage = openai_response['usage'];
+        if (usage) {
+            response.usage = new Usage(
+                usage['prompt_tokens'],
+                usage['completion_tokens'],
+                usage['total_tokens']
+            );
+        }
+        return response;
+    }
+}
+
+/**
+ * Chat context for a chat session
+ */
+class ChatContext {
+    system_prompt?: SystemMessage;
+    messages: (UserMessage | AssistantMessage)[] = [];
+    toolsets: Map<string, BaseToolset> = new Map();
+
+    /**
+     * Attach multiple toolsets to the chat context
+     */
+    attachToolsets(...toolsets: BaseToolset[]) {
+        for (let toolset of toolsets) {
+            this.toolsets.set(toolset.name, toolset);
+        }
+    }
+
+    getTool(name: string): BaseTool<any> | undefined {
+        let tools = this.getTools()
+        return tools.get(name);
+    }
+
+    getTools(): Map<string, BaseTool<any>> {
+        let tools: Map<string, BaseTool<any>> = new Map();
+        for (let toolset of this.toolsets.values()) {
+            for (let tool of toolset.tools.values()) {
+                tools.set(`${toolset.name}-${tool.name}`, tool);
+            }
+        }
+        return tools;
+    }
+
+    toJSON(): object {
+        return {
+            system_prompt: this.system_prompt,
+            messages: this.messages
+        }
+    }
+
+    appendMessage(message: UserMessage | AssistantMessage): void {
+        this.messages.push(message);
+    }
+
+    lastMessage(): UserMessage | AssistantMessage | undefined {
+        return this.messages[this.messages.length - 1];
+    }
+
+    /**
+     * Assign the prototype of the given object to the ChatContext prototype
+     */
+    static assign(chat_context_obj: object): ChatContext {
+        let ctx = new ChatContext();
+        const system_prompt = chat_context_obj['system_prompt'];
+        if (system_prompt !== undefined) {
+            ctx.system_prompt = SystemMessage.assign(system_prompt);
+        }
+
+        const messages = chat_context_obj['messages'];
+        if (messages !== undefined) {
+            for (let message of messages) {
+                if (message.role === 'user') {
+                    ctx.messages.push(UserMessage.assign(message));
+                } else if (message.role === 'assistant') {
+                    ctx.messages.push(AssistantMessage.assign(message));
+                }
+            }
+        }
+        // we cannot load any toolset from the saved chat context
+        return ctx;
+    }
+}
+
+export {
+    SystemMessage, UserMessage, AssistantMessage,
+    AssistantResponse,
+    ChatContext,
+    ToolCallMessagePart, TextMessagePart,FileMessagePart, AssistantMessagePart,
+    Usage, ToolCall
+};

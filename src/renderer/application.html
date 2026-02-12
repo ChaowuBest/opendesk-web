@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Flipper Desk | 一站式办公生活空间</title>
+
+        <link rel="stylesheet" href="./styles/common.css">
+
+        <script type="module" src="./scripts/application.js"></script>
+
+        <style>
+            html, body {
+                height: 100%; /* 关键：让html继承窗口高度 */
+                margin: 0;    /* 移除默认外边距，防止出现滚动条 */
+                padding: 0;
+                overflow: hidden; /* 可选：如果你不希望内部出现滚动条 */
+            }
+            [x-cloak] {
+                display: none !important;
+            }
+        </style>
+    </head>
+    <body x-data="{ showFloatingChatPanel: false, isMaximized: false }">
+        <div id="application-container" class="flex w-full h-full">
+
+        </div>
+
+        <div
+            id="floating-ai-chat-panel"
+            x-ref="chatPanel"
+            x-cloak
+            :class="isMaximized ? 'max-w-full h-full pt-20 transition-all duration-500 ease-in-out' : 'max-w-2xl h-96 transition-all duration-500 ease-in-out'"
+            class="fixed bottom-0 left-1/2 z-50 -translate-x-1/2 w-full px-4 mb-3 pointer-events-none flex flex-col items-center"
+            x-show="showFloatingChatPanel"
+            @click.outside="
+            if (!$refs.chatPanel.contains($event.target) && !$refs.agentInput.contains($event.target)) {
+                showFloatingChatPanel = false
+            }
+            "
+            x-transition:enter="transition ease-out duration-300 transform"
+            x-transition:enter-start="translate-y-full"
+            x-transition:enter-end="translate-y-0"
+            x-transition:leave="transition ease-in duration-300 transform"
+            x-transition:leave-start="translate-y-0"
+            x-transition:leave-end="translate-y-full"
+        >
+            <div id="floating-ai-task-view-container"
+                class="w-full h-full bg-white/60 backdrop-blur-md shadow-xl rounded-3xl border border-gray-200 pb-14 pt-1 flex flex-col overflow-hidden pointer-events-auto"
+            >
+            </div>
+        </div>
+
+        <div
+            class="fixed bottom-3 left-1/2 -translate-x-1/2 w-full max-w-2xl px-4 z-50 pointer-events-none"
+            x-ref="agentInput"
+        >
+            <application-agent-input id="application-agent-input" style="pointer-events:auto"/>
+        </div>
+
+        <script type="module">
+            var currentTaskId = null;
+            var currentToolset = null;
+
+            async function clearTask() {
+                currentTaskId = null;
+            }
+
+            async function submitRequest(request) {
+                const floatingChatPanel = document.querySelector('#floating-ai-chat-panel');
+                const applicationEntryWidget = document.querySelector('#application-entry-widget');
+
+                if (currentTaskId === null) {
+                    currentTaskId = await window.taskManagerAPI.createTask();
+                    const taskViewContainer = document.querySelector('#floating-ai-task-view-container');
+                    taskViewContainer.innerHTML = `
+                    <header class="w-full px-2.5 py-1.5 text-xs flex justify-left items-center text-center">
+                        <button id='floating-ai-chat-panel-maximize-button' class="group flex items-center px-2 py-1 rounded-full
+                            bg-transparent hover:bg-white/60 hover:shadow-md
+                            transition-all duration-500 ease-[cubic-bezier(0.23,1,0.32,1)]
+                            text-gray-700 hover:text-blue-600"
+                            @click="isMaximized = !isMaximized"
+                        >
+                            <i class="fa-solid fa-maximize"></i>
+                            <span class="max-w-0 overflow-hidden opacity-0
+                                group-hover:max-w-[120px] group-hover:opacity-100
+                                group-hover:ml-2 transition-all duration-500 ease-in-out
+                                whitespace-nowrap font-medium tracking-tight"
+                                x-text="isMaximized ? '还原' : '最大化'"
+                            >
+                            </span>
+                        </button>
+                    </header>
+                    <embedded-task-view id='task-view-${currentTaskId}' task_id="${currentTaskId}" class="flex-1 overflow-y-auto" />
+                    `;
+
+                    // 监听任务状态变化事件
+                    const taskView = document.querySelector(`#task-view-${currentTaskId}`);
+                    const agentInput = document.querySelector('#application-agent-input');
+
+                    taskView.addEventListener('task-status-changed', (e) => {
+                        const { taskId, status } = e.detail;
+                        if (taskId === currentTaskId) {
+                            // 更新悬浮球状态
+                            if (status === 'running') {
+                                // 显示停止图标，传入停止回调
+                                agentInput.setTaskStatus('running', async () => {
+                                    try {
+                                        await window.taskManagerAPI.stopTask(currentTaskId);
+                                    } catch (error) {
+                                        console.error('Failed to stop task:', error);
+                                    }
+                                });
+                            } else {
+                                // 恢复渐变效果
+                                agentInput.setTaskStatus(status);
+                            }
+                        }
+                    });
+                }
+
+                const currentToolset = applicationEntryWidget.getToolset?.();
+                if (currentToolset) {
+                    console.info('attaching toolset', currentToolset.toJSON());
+                    await window.taskManagerAPI.attachToolset(
+                        currentTaskId, currentToolset.toJSON(),
+                        currentToolset.callTool.bind(currentToolset)
+                    );
+                    console.info('attached toolset finished');
+                }
+                const agentInstruct = applicationEntryWidget.getAgentInstruct?.();
+                if (agentInstruct) {
+                    await window.taskManagerAPI.setSystemPrompt(currentTaskId, agentInstruct);
+                }
+
+                await window.taskManagerAPI.submitMessage(currentTaskId, request);
+                document.querySelector(`#task-view-${currentTaskId}`).reload();
+                Alpine.$data(document.body).showFloatingChatPanel = true;
+            }
+
+            (async () => {
+                const apps = import.meta.glob('../main/applications/**/renderer/entry.{js,ts}');
+                const applicationBundleName = new URLSearchParams(window.location.search).get('applicationBundleName');
+                await window.applicationAPI.setApplicationBundleName(applicationBundleName);
+
+                const entryJSPath = `../main/applications/${applicationBundleName}/renderer/entry.js`;
+                const entryTSPath = `../main/applications/${applicationBundleName}/renderer/entry.ts`;
+                if (apps[entryJSPath]) {
+                    await apps[entryJSPath]();
+                } else if (apps[entryTSPath]) {
+                    await apps[entryTSPath]();
+                } else {
+                    throw new Error(`Entry file not found for application ${applicationBundleName}`);
+                }
+
+                const entryName = `${applicationBundleName}-entry-widget`;
+
+                window.aiBarAPI = {
+                    submitRequest: (request) => submitRequest({message: request}),
+                    submitRequestInNewTask: async (request) => {
+                        await clearTask();
+                        await submitRequest({message: request});
+                    }
+                }
+
+                document.querySelector('#application-container').innerHTML = `<${entryName} id='application-entry-widget' class="w-full h-full"/>`
+                document.querySelector('#application-agent-input').addEventListener('focus', () => {
+                    // 如果用户激活了聊天输入浮窗，且当前有任务，则显示浮动聊天面板
+                    if (currentTaskId !== null) {
+                        Alpine.$data(document.body).showFloatingChatPanel = true;
+                    }
+                });
+                document.querySelector('#application-agent-input').addEventListener('submit', (e) => {
+                    submitRequest(e.detail);
+                });
+            })()
+        </script>
+    </body>
+</html>

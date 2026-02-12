@@ -1,0 +1,41 @@
+/* 负责拖拽的隐形层 */
+.drag-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 20px; /* 你希望的拖拽区域高度 */
+
+    /* 关键：设置为拖拽区域 */
+    -webkit-app-region: drag;
+
+    /* 确保它在最顶层，但不会遮挡点击事件（如果你需要点击下层的话） */
+    z-index: 9999;
+
+    /* 调试时可以设置背景色查看位置，正式发布时设为 transparent */
+    /* background-color: rgba(255, 0, 0, 0.2); */
+    background-color: transparent;
+}
+
+/* 窗口控制按钮样式 */
+.window-control-btn {
+    -webkit-app-region: no-drag; /* 按钮区域不可拖拽 */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    border: none;
+    outline: none;
+}
+
+.window-control-btn:hover {
+    transform: scale(1.05);
+}
+
+.window-control-btn:active {
+    transform: scale(0.95);
+}
+
+.markdown-body {
+    font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif;
+}

@@ -1,0 +1,7 @@
+body {
+    overflow: hidden;
+}
+
+[x-cloak] {
+    display: none !important;
+}
