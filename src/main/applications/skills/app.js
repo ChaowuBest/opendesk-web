@@ -13,6 +13,7 @@ import { BaseApplication } from '../base.js';
 import { z } from 'zod';
 import path from 'path';
 import { SkillRegistry } from './skillregistry.js';
+import SkillsWorker from './service/worker.js';
 
 const __dirname = import.meta.dirname;
 
@@ -22,6 +23,10 @@ const __dirname = import.meta.dirname;
 class SkillsApplication extends BaseApplication {
   constructor() {
     super('skills', 'Skills');
+  }
+
+  static getWorkerClass() {
+    return SkillsWorker;
   }
 
   static getConfigSchema() {
