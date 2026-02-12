@@ -1,29 +1,37 @@
+import { BaseApplication } from '../main/applications/base';
 import open from 'open';
 
 
 export abstract class AbstractPlatform {
-    static async openPath(filePath: string) {
+
+    getName(): string {
+        throw new Error('Not implemented');
+    }
+
+    async openPath(filePath: string) {
         await open(filePath);
     }
 
-    static async showItemInFolder(filePath: string) {
+    async showItemInFolder(filePath: string) {
 
     }
 
-    static getWorkerPath(): string {
-        // 返回当前正在执行的入口文件路径
-        console.log(process.argv);
+    getWorkerPath(): string {
         return process.argv[1];
+    }
+
+    getApplicationClasses(): typeof BaseApplication[] {
+        return [];
     }
 }
 
-let __platform: typeof AbstractPlatform | null = null;
+let __platform: AbstractPlatform | null = null;
 
-export function setPlatform(platform: typeof AbstractPlatform) {
+export function setPlatform(platform: AbstractPlatform) {
     __platform = platform;
 }
 
-export function getPlatform(): typeof AbstractPlatform {
+export function getPlatform(): AbstractPlatform {
     if (__platform === null) {
         throw new Error('Platform is not set');
     }

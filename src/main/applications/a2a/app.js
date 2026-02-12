@@ -1,13 +1,15 @@
-import { BaseApplication, BaseGUIConfig } from "../base.js";
+import { BaseApplication } from "../base.js";
 import { z } from 'zod';
-import path from 'path';
+import A2AWorker from "./service/worker";
 
-
-const __dirname = import.meta.dirname;
 
 class A2AApplication extends BaseApplication {
     constructor() {
         super('a2a', '智能体中心');
+    }
+
+    static getWorkerClass() {
+        return A2AWorker;
     }
 
     static getConfigSchema() {
@@ -16,14 +18,6 @@ class A2AApplication extends BaseApplication {
                 .describe('在 A2A Agent 选择中使用的专用模型（留空则使用默认模型）')
                 .default('')
         });
-    }
-
-    getGUIConfig() {
-        return new BaseGUIConfig(
-            [path.join(__dirname, 'renderer', 'entry.js')],
-            'a2a-entry-widget',
-            `/applications/a2a/icon.png`
-        );
     }
 
 }

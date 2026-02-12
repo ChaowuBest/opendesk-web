@@ -1,21 +1,11 @@
-import { BaseApplication, BaseGUIConfig } from "../base.js";
-import path from "path";
+import { BaseApplication } from "../base.js";
 import { logger } from "../../utils/logger.js";
 import https from "https";
 
-const __dirname = import.meta.dirname;
 
 class NewsApplication extends BaseApplication {
     constructor() {
         super("news", "新闻聚合");
-    }
-
-    getGUIConfig() {
-        return new BaseGUIConfig(
-            [path.join(__dirname, "renderer", "entry.js")],
-            "news-entry-widget",
-            `/applications/news/icon.png`
-        );
     }
 
     /**

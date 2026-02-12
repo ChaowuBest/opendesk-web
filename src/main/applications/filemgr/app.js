@@ -1,9 +1,9 @@
-import { BaseApplication, BaseGUIConfig } from "../base.js";
+import { BaseApplication } from "../base.js";
 import { BaseTool, BaseToolset } from "../../agents/tool";
 import { FSEntrySchema } from './setting.js';
 import open from 'open';
 import { z } from 'zod';
-import path from 'path';
+import FileManagerWorker from "./worker";
 
 
 class FileMgrApplication extends BaseApplication {
@@ -11,12 +11,8 @@ class FileMgrApplication extends BaseApplication {
         super('filemgr', '文件');
     }
 
-    getGUIConfig() {
-        return new BaseGUIConfig(
-            [path.join(import.meta.dirname, 'renderer', 'entry.js')],
-            'filemgr-entry-widget',
-            `/applications/filemgr/icon.png`
-        );
+    static getWorkerClass() {
+        return FileManagerWorker;
     }
 
     static getConfigSchema() {

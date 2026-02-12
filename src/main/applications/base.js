@@ -3,13 +3,12 @@ import { Worker, parentPort, workerData } from 'worker_threads';
 import { logger, LogStream } from '../utils/logger.js';
 import { Setting, getAppDirectory } from '../utils/setting.js';
 import { BaseToolset } from '../agents/tool';
-import { NotificationManager } from '../utils/notificationmgr.js';
 import path from 'path';
 import fs from 'fs';
 import PQueue from 'p-queue';
 
 
-class BaseWorker {
+export class BaseWorker {
 
     constructor(bundleName, appDataDirectory) {
         this.bundleName = bundleName;
@@ -75,20 +74,7 @@ class BaseWorker {
     }
 }
 
-class BaseGUIConfig {
-    /**
-     * @param {string[]} javascripts
-     * @param {string} entry
-     * @param {string | undefined} icon
-     */
-    constructor(javascripts, entry, icon = undefined) {
-        this.javascripts = javascripts;
-        this.entry = entry;
-        this.icon = icon;
-    }
-}
-
-class BaseApplication {
+export class BaseApplication {
 
     constructor(bundleName, name = "未命名应用") {
         /** @type {string} */
@@ -99,6 +85,14 @@ class BaseApplication {
         this.eventSubscribers = new Map();
         /** @type {ApplicationRegistry | undefined} */
         this.registry = undefined;
+    }
+
+    /**
+     * 获取应用的工作线程类
+     * @returns {typeof BaseWorker | undefined}
+     */
+    static getWorkerClass() {
+        return undefined;
     }
 
     toJSON() {
@@ -200,14 +194,6 @@ class BaseApplication {
         return [];
     }
 
-    /**
-     * 获取应用的 GUI 配置
-     * @returns {BaseGUIConfig | undefined}
-     */
-    getGUIConfig() {
-        return undefined;
-    }
-
     async getDataDirectory() {
         let data_directory = path.join(await getAppDirectory(), 'apps', this.bundleName);
         if (!fs.existsSync(data_directory)) {
@@ -223,9 +209,3 @@ class BaseApplication {
         return await this.registry.callWorker(this.bundleName, methodName, ...args);
     }
 }
-
-export {
-    BaseApplication,
-    BaseWorker,
-    BaseGUIConfig
-};

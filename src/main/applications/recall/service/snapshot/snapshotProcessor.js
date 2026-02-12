@@ -6,8 +6,6 @@ import path from 'path';
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
 import sharp from 'sharp';
-import crypto from 'crypto';
-import { fileURLToPath } from 'url';
 import { RecallMapper } from '../persistence/RecallMapper.js';
 import { RecallExtraction } from '../entities/RecallExtraction.js';
 import { v4 as uuidv4 } from 'uuid';
@@ -496,7 +494,7 @@ class SnapshotProcessor {
             for (const char of chars) {
                 const testLine = currentLine + char;
                 let width;
-                
+
                 try {
                     width = font.widthOfTextAtSize(testLine, fontSize);
                 } catch (error) {

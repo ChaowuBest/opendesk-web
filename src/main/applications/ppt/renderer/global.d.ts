@@ -4,7 +4,6 @@
 declare global {
   interface Window {
     applicationAPI: {
-      getApplicationGUIConfig: (bundleName: string) => Promise<unknown>;
       call: <T = unknown>(methodName: string, ...args: unknown[]) => Promise<T>;
       callMainWorld: <T = unknown>(methodName: string, ...args: unknown[]) => Promise<T>;
       streamCall: (

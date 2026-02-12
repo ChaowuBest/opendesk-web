@@ -4,6 +4,7 @@ import { CreatePPTTool, PPTAgent } from "./tools";
 import path from "path";
 import fs from "fs";
 import { z } from "zod";
+import PPTWorker from "./worker";
 
 
 const DEFAULT_SERVICE_URL = 'http://119.8.241.85:59801';
@@ -16,6 +17,10 @@ export class PPTCreatorApplication extends BaseApplication {
     constructor() {
         super('ppt', 'PPT制作');
         this.reloadServiceUrl();
+    }
+
+    static getWorkerClass() {
+        return PPTWorker;
     }
 
     static getConfigSchema(): z.ZodObject<any> {

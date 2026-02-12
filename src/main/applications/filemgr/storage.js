@@ -1,12 +1,13 @@
 import { getAppDirectory } from '../../utils/setting.js';
-import path from 'path';
-import fs from 'fs';
-import readline from 'readline';
-import nedb from 'nedb-promises';
 import { z } from 'zod';
 import { logger } from '../../utils/logger.js';
 import { LocalIndex } from 'vectra';
 import { LLM } from '../../agents/llm.js';
+import { NotificationManager } from '../../utils/notificationmgr';
+import path from 'path';
+import fs from 'fs';
+import readline from 'readline';
+import nedb from 'nedb-promises';
 import PQueue from 'p-queue';
 
 
@@ -48,8 +49,14 @@ class FSStorage {
         this.vecdb = new LocalIndex(path.join(getAppDirectory(), 'vec_storage.db'));
     }
 
+    async loaddb() {
+        await this.db.load();
+        await this.db.ensureIndex({ fieldName: 'path', unique: true, sparse: true });
+        await this.db.ensureIndex({ fieldName: 'filename', sparse: true });
+    }
+
     async initialize() {
-        await this.db.load().catch(err => {
+        await this.loaddb().catch(err => {
             logger.error(`error loading fs_storage.db: ${err}`);
             fs.rmSync(FSStorage.dbPath);
             this.db = new nedb({ filename: FSStorage.dbPath, autoload: true });

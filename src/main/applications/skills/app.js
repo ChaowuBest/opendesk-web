@@ -1,4 +1,4 @@
-import { BaseApplication, BaseGUIConfig } from '../base.js';
+import { BaseApplication } from '../base.js';
 import { z } from 'zod';
 import path from 'path';
 import { SkillRegistry } from './skillregistry.js';
@@ -18,14 +18,6 @@ class SkillsApplication extends BaseApplication {
         enabled: z.boolean().describe('是否启用技能').default(false),
         skillsmp_api_key: z.string().optional().describe('SkillsMP API Key（可选，用于从 skillsmp.com 搜索技能）')
     });
-  }
-
-  getGUIConfig() {
-    return new BaseGUIConfig(
-      [path.join(__dirname, 'renderer', 'entry.js')],
-      'skills-entry-widget',
-      '/applications/skills/icon.png'
-    );
   }
 
   async getToolsets() {

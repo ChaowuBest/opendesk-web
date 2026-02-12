@@ -22,7 +22,6 @@ class GlobalState {
         if (!GlobalState.instance) {
             let existingGlobalState = GlobalState.load();
             if (existingGlobalState !== null) {
-                console.info('loading existing global state instance')
                 GlobalState.instance = existingGlobalState;
             } else {
                 console.info('creating new global state instance')
