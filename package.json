@@ -2,7 +2,7 @@
   "name": "opendesk",
   "version": "0.1.4",
   "description": "An all-in-one ai studio for productivity scenarios",
-  "license": "Mulan PSL v2",
+  "license": "MulanPSL-2.0",
   "author": "uv0xab",
   "type": "module",
   "main": "./dist/main/main.js",
