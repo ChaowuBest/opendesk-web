@@ -1,3 +1,5 @@
+#!/usr/bin/env node
+
 /**
  * Copyright (c) 2026 The OpenDesk Team
  * OpenDesk is licensed under Mulan PSL v2.
@@ -9,7 +11,6 @@
  * See the Mulan PSL v2 for more details.
  */
 
-#!/usr/bin/env node
 /**
  * 通用 A2A Registry 注册客户端 - JavaScript版本
  * 支持通过 JSON 配置文件注册任意 Agent
@@ -608,4 +609,3 @@ export class A2ARegistryClient {
     }
   }
 }
-

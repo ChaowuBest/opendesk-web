@@ -14,24 +14,13 @@ import { Box, Text, measureElement } from 'ink';
 import { useStdoutDimensions } from 'ink-hooks';
 
 
-const openDeskSmallLogo =`
+const LOGO = `
 ░█▀█░█▀█░█▀▀░█▀█░█▀▄░█▀▀░█▀▀░█░█
 ░█░█░█▀▀░█▀▀░█░█░█░█░█▀▀░▀▀█░█▀▄
 ░▀▀▀░▀░░░▀▀▀░▀░▀░▀▀░░▀▀▀░▀▀▀░▀░▀
 `;
 
-const openDeskLargeLogo = `
- ██████╗ ██████╗ ███████╗███╗   ██╗██████╗ ███████╗███████╗██╗  ██╗
-██╔═══██╗██╔══██╗██╔════╝████╗  ██║██╔══██╗██╔════╝██╔════╝██║ ██╔╝
-██║   ██║██████╔╝█████╗  ██╔██╗ ██║██║  ██║█████╗  ███████╗█████╔╝
-██║   ██║██╔═══╝ ██╔══╝  ██║╚██╗██║██║  ██║██╔══╝  ╚════██║██╔═██╗
-╚██████╔╝██║     ███████╗██║ ╚████║██████╔╝███████╗███████║██║  ██╗
- ╚═════╝ ╚═╝     ╚══════╝╚═╝  ╚═══╝╚═════╝ ╚══════╝╚══════╝╚═╝  ╚═╝
- `;
-
-
 export function Banner() {
-    const cwd = process.cwd();
     const pkg = { name: 'OpenDesk', version: '0.1.4' };
 
     const ref = useRef(null);
@@ -43,56 +32,18 @@ export function Banner() {
         setWidth(w);
     }, [columns]);
 
-    let logoWidth: number;
-    let logo: string;
-    if (width >= 160) {
-        logoWidth = 72;
-        logo = openDeskLargeLogo;
-    } else {
-        logoWidth = 34;
-        logo = openDeskSmallLogo;
-    }
-
     return (
         <Box
             ref={ref}
             marginBottom={1}
-            paddingX={4}
-            paddingY={1}
+            paddingX={2}
             flexDirection="row"
             width="100%"
-            minWidth={80}
-            borderStyle="double"
+            justifyContent="center"
         >
-            <Box flexDirection="column" flexGrow={0} flexShrink={0} width={logoWidth}>
-                <Box>
-                    <Text>{logo}</Text>
-                </Box>
-                <Box flexDirection="column">
-                    <Text bold dimColor>OpenDesk CLI v{pkg.version}</Text>
-                </Box>
-            </Box>
-
-            {/* 竖线分隔 */}
-            <Box borderLeft={true} borderStyle="single" width={1} marginX={1} minHeight={8} />
-
-            {/* 右栏：入门提示、最近活动 */}
-            <Box flexDirection="column" flexGrow={1} minWidth={24}>
-                <Box marginBottom={1}>
-                    <Text>Tips for getting started</Text>
-                    <Text> </Text>
-                </Box>
-                <Box marginBottom={1}>
-                    <Text dimColor>Run /init to create a CLAUDE.md file with instructions for Claude</Text>
-                </Box>
-                <Box borderBottom={true} borderStyle="single" marginBottom={1} />
-                <Box>
-                    <Text>Recent activity</Text>
-                    <Text> </Text>
-                </Box>
-                <Box>
-                    <Text dimColor>No recent activity</Text>
-                </Box>
+            <Box flexDirection="column" alignItems="center">
+                <Text>{LOGO.substring(1)}</Text>
+                <Text bold>Version {pkg.version}</Text>
             </Box>
         </Box>
     );
