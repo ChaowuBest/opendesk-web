@@ -1,3 +1,5 @@
+#!/usr/bin/env node
+
 /**
  * Copyright (c) 2026 The OpenDesk Team
  * OpenDesk is licensed under Mulan PSL v2.

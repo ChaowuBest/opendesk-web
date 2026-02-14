@@ -12,13 +12,15 @@
 import React, { useState, useCallback } from 'react';
 import { Box, Text } from 'ink';
 import TextInput from 'ink-text-input';
+import { TaskState } from '../states/tasks';
 
 type AgentInputProps = {
     promptLabel: string;
     onSubmit: (value: string) => void;
+    currentTask: TaskState | null;
 };
 
-export function AgentInput({ promptLabel, onSubmit }: AgentInputProps) {
+export function AgentInput({ promptLabel, onSubmit, currentTask }: AgentInputProps) {
     const [value, setValue] = useState('');
 
     const handleSubmit = useCallback(
@@ -38,13 +40,17 @@ export function AgentInput({ promptLabel, onSubmit }: AgentInputProps) {
             borderLeft={false}
             borderRight={false}
             borderColor="gray"
-            width="100%"
+            backgroundColor={'#303030'}
+            marginTop={currentTask === null ? 0 : 1}
+            padding={1}
+            width={currentTask === null ? '60%' : '100%'}
         >
-            <Box>
+            <Box minHeight={currentTask === null ? '10' : '3'}>
                 <Box marginRight={1}>
-                    <Text>{promptLabel} </Text>
+                    <Text color="cyan">〔HiShell〕</Text>
                 </Box>
                 <TextInput
+                    color="white"
                     value={value}
                     onChange={setValue}
                     onSubmit={handleSubmit}
