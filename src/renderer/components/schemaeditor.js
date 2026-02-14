@@ -90,6 +90,16 @@ class SchemaEditor extends HTMLElement {
             });
         });
 
+        // 处理收件协议切换（POP3/IMAP）
+        container.querySelectorAll('select[data-field-path]').forEach(select => {
+            const fieldPath = select.getAttribute('data-field-path') || '';
+            if (this.isInboxProtocolPath(fieldPath)) {
+                select.addEventListener('change', () => {
+                    this.applyInboxProtocolSelection(select);
+                });
+            }
+        });
+
         // 处理数组添加按钮
         container.querySelectorAll('[data-array-add-btn]').forEach(btn => {
             btn.addEventListener('click', (e) => {
@@ -188,6 +198,9 @@ class SchemaEditor extends HTMLElement {
                 }));
             });
         });
+
+        // 初始渲染时应用协议约束
+        this.applyInboxProtocolConstraints(container);
     }
 
     /**
@@ -480,7 +493,8 @@ class SchemaEditor extends HTMLElement {
             let fieldValue = value && value[key] !== undefined ? value[key] : undefined;
             const currentPath = fieldPath ? `${fieldPath}.${key}` : key;
 
-            const isOptional = this.isOptionalField(propertySchema, required, key);
+            const isInboxProtocolField = this.isInboxFieldPath(fieldPath) && key === 'protocol';
+            const isOptional = isInboxProtocolField ? false : this.isOptionalField(propertySchema, required, key);
             const fieldName = propertySchema.title || key;
             const isRequired = required.includes(key);
             const requiredMark = isRequired ? '<span class="text-red-500 ml-1">*</span>' : '';
@@ -488,6 +502,16 @@ class SchemaEditor extends HTMLElement {
             // 如果值为 undefined 且有 default 值，使用 default 值
             if (fieldValue === undefined && propertySchema.default !== undefined) {
                 fieldValue = propertySchema.default;
+            }
+
+            if (isInboxProtocolField && fieldValue === undefined) {
+                if (value?.imap && !value?.pop3) {
+                    fieldValue = 'imap';
+                } else if (value?.pop3 && !value?.imap) {
+                    fieldValue = 'pop3';
+                } else {
+                    fieldValue = 'imap';
+                }
             }
 
             if (isOptional && fieldValue === undefined) {
@@ -768,7 +792,12 @@ class SchemaEditor extends HTMLElement {
             }
 
             let value;
-            if (input.type === 'checkbox') {
+            if (input.tagName === 'SELECT') {
+                value = input.value;
+                if (isOptional && value === '') {
+                    value = undefined;
+                }
+            } else if (input.type === 'checkbox') {
                 value = input.checked;
             } else if (input.type === 'number') {
                 value = input.value === '' ? undefined : Number(input.value);
@@ -799,6 +828,74 @@ class SchemaEditor extends HTMLElement {
         this.cleanupOptionalEmptyValues(result, container);
 
         return result;
+    }
+
+    isInboxFieldPath(fieldPath) {
+        if (!fieldPath) return false;
+        return fieldPath === 'inbox' || fieldPath.endsWith('.inbox');
+    }
+
+    isInboxProtocolPath(fieldPath) {
+        if (!fieldPath) return false;
+        return fieldPath === 'inbox.protocol' || fieldPath.endsWith('.inbox.protocol');
+    }
+
+    applyInboxProtocolSelection(select) {
+        const protocol = select.value;
+        const fieldPath = select.getAttribute('data-field-path') || '';
+        if (!this.isInboxProtocolPath(fieldPath)) return;
+
+        const nextValue = this.getValue();
+        const basePath = fieldPath.replace(/\.protocol$/, '');
+        if (protocol === 'pop3') {
+            this.removeNestedValue(nextValue, `${basePath}.imap`);
+        } else if (protocol === 'imap') {
+            this.removeNestedValue(nextValue, `${basePath}.pop3`);
+        }
+
+        this.currentValue = nextValue;
+        this.render();
+    }
+
+    applyInboxProtocolConstraints(container) {
+        let normalized = false;
+        container.querySelectorAll('select[data-field-path]').forEach(select => {
+            const fieldPath = select.getAttribute('data-field-path') || '';
+            if (!this.isInboxProtocolPath(fieldPath)) return;
+
+            const protocol = select.value || 'imap';
+            const basePath = fieldPath.replace(/\.protocol$/, '');
+
+            if (protocol === 'pop3') {
+                if (this.getNestedValue(this.currentValue, `${basePath}.imap`) !== undefined) {
+                    this.removeNestedValue(this.currentValue, `${basePath}.imap`);
+                    normalized = true;
+                }
+            } else if (protocol === 'imap') {
+                if (this.getNestedValue(this.currentValue, `${basePath}.pop3`) !== undefined) {
+                    this.removeNestedValue(this.currentValue, `${basePath}.pop3`);
+                    normalized = true;
+                }
+            }
+
+            const inboxWrapper = select.closest('[data-field-key="inbox"]');
+            if (!inboxWrapper) return;
+
+            const pop3Wrapper = inboxWrapper.querySelector('[data-field-key="pop3"]');
+            const imapWrapper = inboxWrapper.querySelector('[data-field-key="imap"]');
+
+            if (protocol === 'pop3') {
+                if (imapWrapper) imapWrapper.style.display = 'none';
+                if (pop3Wrapper) pop3Wrapper.style.display = '';
+            } else if (protocol === 'imap') {
+                if (pop3Wrapper) pop3Wrapper.style.display = 'none';
+                if (imapWrapper) imapWrapper.style.display = '';
+            }
+        });
+
+        if (normalized) {
+            this.render();
+        }
     }
 
     /**
