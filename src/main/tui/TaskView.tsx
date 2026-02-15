@@ -9,56 +9,49 @@
  * See the Mulan PSL v2 for the full details.
  */
 
-import React, { useMemo } from 'react';
+import { ToolCall } from '../agents/messages';
+import React, { useMemo, memo } from 'react';
 import { Box, Text } from 'ink';
 import cliMarkdown from 'cli-markdown';
+import { Usage } from '../agents/messages';
 
-export type TaskViewItem =
-    | { type: 'user'; text: string }
-    | { type: 'tool'; name: string; result: string; status?: 'pending' | 'running' | 'success' | 'error' }
-    | { type: 'assistant'; text: string };
 
-export type TaskViewRef = {
-    scrollUp: () => void;
-    scrollDown: () => void;
-    scrollToEnd: () => void;
-};
-
-type Block =
-    | { type: 'user'; lineCount: number; text: string }
-    | { type: 'tool'; lineCount: number; name: string; result: string; status?: string }
-    | { type: 'assistant'; lineCount: number; text: string; renderedLines: string[] };
-
-function itemsToBlocks(items: TaskViewItem[]): Block[] {
-    const out: Block[] = [];
-    for (const item of items) {
-        if (item.type === 'user') {
-            const lines = item.text.split(/\r?\n/);
-            out.push({ type: 'user', lineCount: lines.length, text: item.text });
-        } else if (item.type === 'tool') {
-            const resultLines = (item.result ?? '').split(/\r?\n/);
-            out.push({
-                type: 'tool',
-                lineCount: 1 + resultLines.length,
-                name: item.name,
-                result: item.result ?? '',
-                status: item.status === 'error' ? 'err' : 'ok',
-            });
-        } else if (item.type === 'assistant') {
-            const rendered = cliMarkdown(item.text);
-            const renderedLines = rendered.split(/\r?\n/);
-            out.push({
-                type: 'assistant',
-                lineCount: renderedLines.length,
-                text: item.text,
-                renderedLines,
-            });
-        }
-    }
-    return out;
+export interface UserMessageBlock {
+    role: 'user';
+    text: string;
+    rendered?: string;
 }
 
-function UserMessageBlock({ lines }: { lines: string[] }) {
+export interface AssistantTextBlock {
+    role: 'assistant';
+    type: 'text';
+    text: string;
+    rendered?: string;
+}
+
+export interface AssistantReasoningBlock {
+    role: 'assistant';
+    type: 'reasoning';
+    text: string;
+}
+
+export interface AssistantToolCallBlock {
+    role: 'assistant';
+    type: 'tool_call';
+    toolcalls: ToolCall[];
+}
+
+export type AssistantMessageBlock = AssistantTextBlock | AssistantReasoningBlock | AssistantToolCallBlock;
+
+export type MessageBlock = UserMessageBlock | AssistantMessageBlock;
+
+export interface TaskStatus {
+    finishedBlocks: MessageBlock[];
+    completingBlocks: MessageBlock[];
+    usage?: Usage;
+}
+
+function UserMessage({ block }: { block: UserMessageBlock }) {
     return (
         <Box
             flexDirection="column"
@@ -74,22 +67,54 @@ function UserMessageBlock({ lines }: { lines: string[] }) {
             borderTop={false}
             borderBottom={false}
         >
-            {lines.map((line, i) => (
-                <Text key={i} color="white">{line}</Text>
-            ))}
+            <Text color="white">{block.text}</Text>
         </Box>
     );
 }
 
-function AssistantMessageBlock({ lines }: { lines: string[] }) {
+function AssistantReasoningMessage({ block }: { block: AssistantReasoningBlock }) {
+    return (
+        <Box
+            flexDirection="column"
+            marginBottom={1}
+            backgroundColor="yellowBright"
+            paddingX={2}
+            paddingY={1}
+        >
+            <Text color="black" italic>{block.text}</Text>
+        </Box>
+    );
+}
+
+function AssistantTextMessage({ block }: { block: AssistantTextBlock }) {
+    if (block.rendered == null) {
+        try {
+            block.rendered = cliMarkdown(block.text);
+        } catch (error) {
+            block.rendered = block.text;
+        }
+    }
     return (
         <Box
             flexDirection="column"
             marginBottom={1}
         >
-            {lines.map((line, i) => (
-                <Text key={i}>{line}</Text>
-            ))}
+            <Text color="white">{block.rendered}</Text>
+        </Box>
+    );
+}
+
+function AssistantToolCallMessage({ block }: { block: AssistantToolCallBlock }) {
+    return (
+        <Box
+            flexDirection="column"
+            paddingX={1}
+            marginBottom={1}
+            minHeight={1}
+        >
+            <Text color="green" bold>
+                ● {block.toolcalls.map((toolcall: ToolCall) => toolcall.tool_name).join(', ')}
+            </Text>
         </Box>
     );
 }
@@ -113,58 +138,33 @@ function ToolCallBlock({
 }
 
 type TaskViewProps = {
-    items: TaskViewItem[];
-    status: 'idle' | 'running';
-    tokenCount: number | null;
-    width: number;
+    taskStatus: TaskStatus;
 };
 
-export const TaskView = function TaskView(
-    { items, status, tokenCount, width }: TaskViewProps
-) {
-    const blocks = useMemo(() => itemsToBlocks(items), [items]);
-    const hasRunning = status === 'running';
-    const runningBlock: Block | null = hasRunning
-        ? (() => {
-            const text =
-                tokenCount != null
-                    ? `… 思考中 (${tokenCount} 词)`
-                    : '… 思考中...';
-            return {
-                type: 'assistant' as const,
-                lineCount: 1,
-                text,
-                renderedLines: [text],
-            };
-        })()
-        : null;
+function renderBlock(block: MessageBlock, idx: number): React.ReactNode {
+    switch (block.role) {
+        case 'user':
+            return <UserMessage key={`u-${idx}`} block={block} />;
+        case 'assistant':
+            switch (block.type) {
+                case 'text':
+                    return <AssistantTextMessage key={`a-${idx}`} block={block} />;
+                case 'reasoning':
+                    return <AssistantReasoningMessage key={`a-${idx}`} block={block} />;
+                case 'tool_call':
+                    return <AssistantToolCallMessage key={`a-${idx}`} block={block} />;
+            }
+    }
+}
 
-    const allBlocks = runningBlock ? [...blocks, runningBlock] : blocks;
+export function TaskView({ taskStatus }: TaskViewProps): React.ReactNode {
+    const finishedItems = useMemo(() => taskStatus.finishedBlocks.map(renderBlock), [taskStatus.finishedBlocks]);
+    const completingItems = useMemo(() => taskStatus.completingBlocks.map(renderBlock), [taskStatus.completingBlocks]);
     return (
-        <Box flexDirection="column" width={width}>
-            <Box flexDirection="column" paddingX={1}>
-                {allBlocks.map((block, idx) => {
-                    if (block.type === 'user') {
-                        const lines = block.text.split(/\r?\n/);
-                        return <UserMessageBlock key={`u-${idx}`} lines={lines} />;
-                    }
-                    if (block.type === 'assistant') {
-                        return (
-                            <AssistantMessageBlock
-                                key={`a-${idx}`}
-                                lines={block.renderedLines}
-                            />
-                        );
-                    }
-                    const resultLines = block.result.split(/\r?\n/);
-                    return (
-                        <ToolCallBlock
-                            key={`t-${idx}`}
-                            header={`[${block.name}] ${block.status}`}
-                            resultLines={resultLines}
-                        />
-                    );
-                })}
+        <Box flexDirection="column" width='100%'>
+            <Box flexDirection="column">
+                {finishedItems}
+                {completingItems}
             </Box>
         </Box>
     );
