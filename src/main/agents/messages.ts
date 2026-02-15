@@ -39,7 +39,7 @@ marked.use(markedKatex({
 /**
  * This is NOT an OpenAI message part, but a message part for our own message system.
  */
-class ReasoningMessagePart {
+export class ReasoningMessagePart {
     type: 'reasoning' = 'reasoning';
     content: string;
     /** cached render result of the reasoning */
@@ -66,7 +66,7 @@ class ReasoningMessagePart {
     }
 }
 
-class ToolCall {
+export class ToolCall {
 
     index: number;
     id: string
@@ -194,7 +194,7 @@ class ToolCall {
     }
 }
 
-class ToolCallMessagePart {
+export class ToolCallMessagePart {
     type: 'tool_call' = 'tool_call';
     toolcalls: ToolCall[] = [];
     rendered?: string;
@@ -268,7 +268,7 @@ class ToolCallMessagePart {
     }
 }
 
-class FileMessagePart {
+export class FileMessagePart {
     type: 'file' = 'file';
     path: string;
     content: string;
@@ -334,7 +334,7 @@ class FileMessagePart {
     }
 }
 
-class TextMessagePart {
+export class TextMessagePart {
     type: 'text' = 'text';
     text: string;
     rendered?: string;
@@ -358,7 +358,7 @@ class TextMessagePart {
     }
 }
 
-class ImageMessagePart {
+export class ImageMessagePart {
     type: 'image_url' = 'image_url';
     image_url: { url: string };
     rendered?: string;
@@ -386,7 +386,7 @@ class ImageMessagePart {
 /**
  * @class Usage
  */
-class Usage {
+export class Usage {
     prompt_tokens: number;
     completion_tokens: number;
     total_tokens: number;
@@ -401,7 +401,7 @@ class Usage {
 /**
  * @class SystemMessage
  */
-class SystemMessage {
+export class SystemMessage {
     role: 'system' = 'system';
     content: string;
 
@@ -422,7 +422,7 @@ class SystemMessage {
     }
 }
 
-class UserMessage {
+export class UserMessage {
     role: 'user' = 'user';
     content: Array<TextMessagePart | ImageMessagePart | FileMessagePart> = [];
 
@@ -499,9 +499,9 @@ class UserMessage {
     }
 }
 
-type AssistantMessagePart = TextMessagePart | ReasoningMessagePart | ToolCallMessagePart;
+export type AssistantMessagePart = TextMessagePart | ReasoningMessagePart | ToolCallMessagePart;
 
-class AssistantMessage {
+export class AssistantMessage {
     role: 'assistant' = 'assistant';
     message_id: string = crypto.randomUUID();
     content: Array<AssistantMessagePart> = [];
@@ -673,7 +673,7 @@ class AssistantMessage {
     }
 }
 
-class AssistantResponse {
+export class AssistantResponse {
     content: AssistantMessage;
     finish_reason: 'stop' | 'error' | 'tool_calls' | null;
     usage?: Usage;
@@ -721,7 +721,7 @@ class AssistantResponse {
 /**
  * Chat context for a chat session
  */
-class ChatContext {
+export class ChatContext {
     system_prompt?: SystemMessage;
     messages: (UserMessage | AssistantMessage)[] = [];
     toolsets: Map<string, BaseToolset> = new Map();
@@ -789,11 +789,3 @@ class ChatContext {
         return ctx;
     }
 }
-
-export {
-    SystemMessage, UserMessage, AssistantMessage,
-    AssistantResponse,
-    ChatContext,
-    ToolCallMessagePart, TextMessagePart,FileMessagePart, AssistantMessagePart,
-    Usage, ToolCall
-};

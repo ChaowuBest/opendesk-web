@@ -14,11 +14,14 @@ import { Box, useStdout, useInput } from 'ink';
 
 import { GlobalState } from '../states/global.js';
 import { TaskState, TaskUpdateChunk } from '../states/tasks.js';
-import { ToolCallMessagePart, TextMessagePart } from '../agents/messages.js';
+import { ToolCallMessagePart, TextMessagePart, ReasoningMessagePart } from '../agents/messages.js';
 import { Banner } from '../tui/Banner';
 import { AgentInput } from '../tui/AgentInput';
-import { TaskView, type TaskViewItem, type TaskViewRef } from './TaskView.js';
+import { TaskView, type MessageBlock, type UserMessageBlock, type AssistantMessageBlock, AssistantTextBlock, TaskStatus } from './TaskView.js';
 
+
+function renderTaskUpdate(chunkUpdate: TaskUpdateChunk) {
+}
 
 export function AgentCLI() {
     const { stdout } = useStdout();
@@ -36,79 +39,77 @@ export function AgentCLI() {
 
     const [status, setStatus] = useState<'idle' | 'running'>('idle');
     const [tokenCount, setTokenCount] = useState<number | null>(null);
-    const [items, setItems] = useState<TaskViewItem[]>([]);
-    const [streamingAssistantText, setStreamingAssistantText] = useState<string | null>(null);
-    const [promptMessage, setPromptMessage] = useState('❯');
+    const [taskStatus, setTaskStatus] = useState<TaskStatus>({ finishedBlocks: [], completingBlocks: [] });
     const currentTaskRef = useRef<TaskState | null>(null);
-    const taskViewRef = useRef<TaskViewRef>(null);
-    const rootBoxRef = useRef<React.ComponentRef<typeof Box> | null>(null);
     const state = GlobalState.getInstance();
     const initialPromptHandled = useRef(false);
 
     const createNewTask = useCallback(() => {
         currentTaskRef.current = state.taskManagerState.createTask();
-        setItems([]);
-        setStreamingAssistantText(null);
-        setPromptMessage('❯ 新任务');
+        setTaskStatus({ finishedBlocks: [], completingBlocks: [] });
     }, [state.taskManagerState]);
 
     useInput((input, key) => {
         if (key.ctrl && (input === 'n' || input === '\x0e')) {
             createNewTask();
-        } else if (key.escape) {
-            taskViewRef.current?.scrollToEnd();
         }
     });
 
-    const handleSubmit = useCallback(
-        async (value: string) => {
-            const prompt = value.trim();
-            if (prompt === '') return;
+    const handleSubmit = async (value: string) => {
+        const prompt = value.trim();
+        if (prompt === '') return;
+        else if (prompt === '/exit') {
+            process.exit(0);
+        }
 
-            if (prompt === 'bye') {
-                process.stdout.write('再见\n');
-                process.exit(0);
+        if (currentTaskRef.current === null) {
+            /* 如果当前没有任务就创建一个 */
+            currentTaskRef.current = state.taskManagerState.createTask();
+        }
+        const task = currentTaskRef.current;
+
+        setStatus('running');
+        setTokenCount(null);
+
+        setTaskStatus((prev) => ({
+            ...prev,
+            finishedBlocks: [...prev.finishedBlocks, { role: 'user', text: prompt } as UserMessageBlock],
+        }));
+
+        await task.submitUserMessage(prompt);
+        await task.waitUntilFinished((chunkUpdate: TaskUpdateChunk) => {
+            // todo: this should be replaced by a more general task status
+            const lastPart = chunkUpdate.last_part;
+            let editedBlock: AssistantMessageBlock | undefined = undefined;
+
+            if (lastPart instanceof TextMessagePart) {
+                editedBlock = { role: 'assistant', type: 'text', text: lastPart.text };
+            } else if (lastPart instanceof ReasoningMessagePart) {
+                editedBlock = { role: 'assistant', type: 'reasoning', text: lastPart.content };
+            } else if (lastPart instanceof ToolCallMessagePart) {
+                editedBlock = { role: 'assistant', type: 'tool_call', toolcalls: lastPart.toolcalls };
             }
 
-            if (currentTaskRef.current === null) {
-                currentTaskRef.current = state.taskManagerState.createTask();
-            }
-            const task = currentTaskRef.current;
+            if (!editedBlock) return;
 
-            setStatus('running');
-            setTokenCount(null);
-            setStreamingAssistantText(null);
-            setItems((prev) => [...prev, { type: 'user', text: prompt }]);
-
-            await task.submitUserMessage(prompt);
-            await task.waitUntilFinished((chunkUpdate: TaskUpdateChunk) => {
-                setTokenCount(chunkUpdate.usage?.total_tokens ?? null);
-                if (chunkUpdate.last_part instanceof ToolCallMessagePart) {
-                    for (const tc of chunkUpdate.last_part.toolcalls) {
-                        if (tc.status === 'success' && tc.result != null) {
-                            setItems((prev) => [
-                                ...prev,
-                                { type: 'tool', name: tc.tool_name, result: tc.result!, status: tc.status },
-                            ]);
-                        }
-                    }
+            setTaskStatus((prev: TaskStatus) => {
+                const completingBlocks = [...prev.completingBlocks];
+                if (chunkUpdate.last_part_index >= completingBlocks.length) {
+                    completingBlocks.push(editedBlock);
+                } else {
+                    completingBlocks[chunkUpdate.last_part_index] = editedBlock;
                 }
-                if (chunkUpdate.last_part instanceof TextMessagePart) {
-                    const text = (chunkUpdate.last_part as TextMessagePart).text;
-                    if (chunkUpdate.task_status === 'stopped') {
-                        setItems((prev) => [...prev, { type: 'assistant', text }]);
-                        setStreamingAssistantText(null);
-                    } else {
-                        setStreamingAssistantText(text);
-                    }
-                }
-            });
+                return { ...prev, completingBlocks: completingBlocks };
+            })
+        });
 
-            setPromptMessage('接下来有什么新的指示?');
-            setStatus('idle');
-        },
-        [state.taskManagerState]
-    );
+        setStatus('idle');
+        setTaskStatus((prev) => ({
+            ...prev,
+            finishedBlocks: [...prev.finishedBlocks, ...prev.completingBlocks],
+            completingBlocks: [],
+        }));
+    };
 
     // 首次启动时若带有命令行参数 (argv[2])，自动作为第一条提示提交
     useEffect(() => {
@@ -121,15 +122,9 @@ export function AgentCLI() {
     }, [status, handleSubmit]);
 
     const { columns, rows } = terminalSize;
-    const taskViewWidth = Math.max(20, columns - 2);
-    const displayItems: TaskViewItem[] =
-        streamingAssistantText != null
-            ? [...items, { type: 'assistant', text: streamingAssistantText }]
-            : items;
 
     return (
         <Box
-            ref={rootBoxRef}
             flexDirection="column"
             justifyContent='center'
             alignItems='center'
@@ -140,22 +135,15 @@ export function AgentCLI() {
         >
             <Box flexShrink={0}>
                 <Banner />
-
             </Box>
 
-            <Box flexDirection="column" minHeight={1}>
-                <TaskView
-                    ref={taskViewRef}
-                    items={displayItems}
-                    status={status}
-                    tokenCount={tokenCount}
-                    width={taskViewWidth}
-                />
+            <Box flexDirection="column" minHeight={1} width='100%'>
+                <TaskView taskStatus={taskStatus} />
             </Box>
 
             <Box flexShrink={0}>
                 <AgentInput
-                    promptLabel={promptMessage}
+                    promptLabel='@ HiShell'
                     onSubmit={handleSubmit}
                     currentTask={currentTaskRef.current}
                 />

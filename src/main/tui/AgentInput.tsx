@@ -47,14 +47,14 @@ export function AgentInput({ promptLabel, onSubmit, currentTask }: AgentInputPro
         >
             <Box minHeight={currentTask === null ? '10' : '3'}>
                 <Box marginRight={1}>
-                    <Text color="cyan">〔HiShell〕</Text>
+                    <Text color="cyan">〔{promptLabel}〕</Text>
                 </Box>
                 <TextInput
                     color="white"
                     value={value}
                     onChange={setValue}
                     onSubmit={handleSubmit}
-                    placeholder="(bye - 退出)"
+                    placeholder="(/exit - 退出)"
                 />
             </Box>
         </Box>
