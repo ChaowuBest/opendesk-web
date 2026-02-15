@@ -207,15 +207,18 @@ class ToolCallMessagePart {
     constructor() { }
 
     push(toolcall: ToolCall) {
-        if (typeof toolcall.id === 'string') {
+        const hasValidId = typeof toolcall.id === 'string' && toolcall.id.trim().length > 0;
+        if (hasValidId) {
             this.toolcalls.push(toolcall);
         } else {
-            let last_toolcall = this.toolcalls[this.toolcalls.length - 1];
-            if (last_toolcall === undefined) {
-                // 有的消息片段中是没有第一个初始id的，因为带id的片段在上一条消息中
+            const target = this.toolcalls.find(tc => tc.index === toolcall.index);
+            if (target === undefined) {
                 this.toolcalls.push(toolcall);
             } else {
-                last_toolcall.args_string += toolcall.args_string;
+                target.args_string += toolcall.args_string;
+                if (toolcall.tool_name && toolcall.tool_name !== 'unknown') {
+                    target.tool_name = toolcall.tool_name;
+                }
             }
         }
     }
