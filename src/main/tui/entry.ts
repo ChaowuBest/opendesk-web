@@ -46,7 +46,7 @@ export class OpenDeskTUI {
                 if (this.taskView.taskState === undefined) {
                     this.taskView.taskState = this.taskManagerState.createTask();
                 }
-                const task = this.taskView.taskState;
+
                 await this.taskView.communicate(text);
             }
         };

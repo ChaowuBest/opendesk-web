@@ -1,21 +1,24 @@
-import { Component, Text, Box, type TUI } from "@mariozechner/pi-tui";
+import { Component, Text, Markdown, Box, type TUI } from "@mariozechner/pi-tui";
 import { TaskState } from "../../states/tasks";
-import { AssistantMessage, ReasoningMessagePart, TextMessagePart, ToolCallMessagePart, UserMessage } from "../../agents/messages";
+import { AssistantMessage, ReasoningMessagePart, TextMessagePart, ToolCallMessagePart, UserMessage, ToolCall } from "../../agents/messages";
 import { TaskUpdateChunk } from "../../states/tasks";
+import { defaultMarkdownTheme } from "../theme";
+import { logger } from "../../utils/logger";
 import chalk from "chalk";
-import cliMarkdown from "cli-markdown";
 
 
 export class TextMessagePartView implements Component {
-    text: Text = new Text('');
+    text: Markdown = new Markdown('', 0, 0, defaultMarkdownTheme);
 
     constructor(text?: string) {
-        this.text.setText(text ?? '');
+        if (text) {
+            this.text.setText(text);
+        }
     }
 
     setMarkdown(markdown: string) {
         try {
-            this.text.setText(cliMarkdown(markdown));
+            this.text.setText(markdown);
         } catch (error) {
             // ignore error
         }
@@ -29,17 +32,18 @@ export class TextMessagePartView implements Component {
 }
 
 export class ReasoningMessagePartView implements Component {
-    private text: Text = new Text('');
-    private box: Box = new Box(1, 1);
+    private text: Markdown = new Markdown('', 0, 0, defaultMarkdownTheme);
+    private box: Box = new Box();
 
     constructor(text?: string) {
-        this.text.setText(text ?? '');
+        if (text) {
+            this.text.setText(text);
+        }
         this.box.setBgFn((text: string) => chalk.grey.bgYellowBright.italic((text)));
         this.box.addChild(this.text);
     }
 
     setMarkdown(markdown: string) {
-        // this.text = cliMarkdown(markdown);
         this.text.setText(markdown);
     }
 
@@ -50,15 +54,41 @@ export class ReasoningMessagePartView implements Component {
     }
 }
 
-export class ToolCallMessagePartView implements Component {
-    toolCallPart: ToolCallMessagePart;
+export class ToolCallView implements Component {
+
+    title: Text = new Text('');
+    box: Box = new Box(0, 0);
+
+    constructor(toolCall: ToolCall) {
+        this.box.addChild(this.title);
+        this.title.setText(toolCall.tool_name);
+    }
 
     invalidate() {
-        throw new Error("Method not implemented.");
     }
 
     render(width: number): string[] {
-        throw new Error("Method not implemented.");
+        return this.box.render(width);
+    }
+}
+
+export class ToolCallMessagePartView implements Component {
+
+    private box: Box = new Box(0, 0);
+
+    setToolcalls(toolcalls: ToolCall[]) {
+        this.box.clear();
+        for (const toolcall of toolcalls) {
+            this.box.addChild(new ToolCallView(toolcall));
+        }
+    }
+
+    invalidate() {
+        this.box.invalidate();
+    }
+
+    render(width: number): string[] {
+        return this.box.render(width);
     }
 }
 
@@ -90,47 +120,53 @@ export class UserMessageView implements Component {
 }
 
 export class AssistantMessageView implements Component {
-    message: AssistantMessage;
-    box: Box = new Box();
+
+    box: Box = new Box(0, 1);
     parts: Array<ReasoningMessagePartView | TextMessagePartView | ToolCallMessagePartView> = [];
 
     async updateTextPart(index: number, textPart: TextMessagePart) {
-        let updatedPartView: TextMessagePartView;
         while (index >= this.parts.length) {
-            updatedPartView = new TextMessagePartView();
-            this.parts.push(updatedPartView);
-            this.box.addChild(updatedPartView);
+            const newPartView = new TextMessagePartView();
+            this.parts.push(newPartView);
+            this.box.addChild(newPartView);
         }
 
         const existingPartView = this.parts[index];
-        if (existingPartView instanceof TextMessagePartView) {
-            updatedPartView = existingPartView;
-        } else {
+        if (!(existingPartView instanceof TextMessagePartView)) {
             throw new Error(`part type mismatch`)
         }
 
-        updatedPartView.setMarkdown(textPart.text);
+        existingPartView.setMarkdown(textPart.text);
     }
 
     async updateReasoningPart(index: number, reasoningPart: ReasoningMessagePart) {
-        let updatedPartView: ReasoningMessagePartView;
         while (index >= this.parts.length) {
-            updatedPartView = new ReasoningMessagePartView();
-            this.parts.push(updatedPartView);
-            this.box.addChild(updatedPartView);
+            const newPartView = new ReasoningMessagePartView();
+            this.parts.push(newPartView);
+            this.box.addChild(newPartView);
         }
 
         const existingPartView = this.parts[index];
-        if (existingPartView instanceof ReasoningMessagePartView) {
-            updatedPartView = existingPartView;
-        } else {
+        if (!(existingPartView instanceof ReasoningMessagePartView)) {
             throw new Error(`part type mismatch`)
         }
 
-        updatedPartView.setMarkdown(reasoningPart.content);
+        existingPartView.setMarkdown(reasoningPart.content);
     }
 
-    async updateToolCallPart(index: number,toolCallPart: ToolCallMessagePart) {
+    async updateToolCallPart(index: number, toolCallPart: ToolCallMessagePart) {
+        while (index >= this.parts.length) {
+            const newPartView = new ToolCallMessagePartView();
+            this.parts.push(newPartView);
+            this.box.addChild(newPartView);
+        }
+
+        const existingPartView = this.parts[index];
+        if (!(existingPartView instanceof ToolCallMessagePartView)) {
+            throw new Error(`part type mismatch`)
+        }
+
+        existingPartView.setToolcalls(toolCallPart.toolcalls);
     }
 
     /**
@@ -157,7 +193,12 @@ export class AssistantMessageView implements Component {
     }
 }
 
+/**
+ * 任务视图
+ * 用于显示任务的对话历史
+ */
 export class TaskView implements Component {
+
     taskState?: TaskState;
     messages: Array<UserMessageView | AssistantMessageView> = [];
 
