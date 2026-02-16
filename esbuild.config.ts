@@ -45,7 +45,7 @@ const requireShimPlugin: esbuild.Plugin = {
 };
 
 const config: esbuild.BuildOptions = {
-    entryPoints: ['src/main/cli.tsx'],
+    entryPoints: ['src/main/cli.ts'],
     bundle: true,
     platform: 'node',
     format: 'esm',
