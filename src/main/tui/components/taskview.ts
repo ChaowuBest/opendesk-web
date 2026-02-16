@@ -200,13 +200,18 @@ export class AssistantMessageView implements Component {
 export class TaskView implements Component {
 
     taskState?: TaskState;
+    statusBar: Text = new Text('');
     messages: Array<UserMessageView | AssistantMessageView> = [];
 
     /** 持有 TUI 引用以便在子组件内调用 requestRender；由上层在挂载时注入 */
     private tui: TUI;
+    private messageLayout: Box = new Box(0, 0);
+    private mainLayout: Box = new Box(0, 0);
 
     constructor(tui: TUI) {
         this.tui = tui;
+        this.mainLayout.addChild(this.messageLayout);
+        this.mainLayout.addChild(this.statusBar);
     }
 
     /**
@@ -222,12 +227,13 @@ export class TaskView implements Component {
         }
 
         const responseView = new AssistantMessageView();
-        this.messages.push(UserMessageView.text(text));
-        this.messages.push(responseView);
+        this.messageLayout.addChild(UserMessageView.text(text));
+        this.messageLayout.addChild(responseView);
 
         await this.taskState.submitUserMessage(text);
         await this.taskState.waitUntilFinished(async (chunkUpdate: TaskUpdateChunk) => {
             responseView.update(chunkUpdate);
+            this.statusBar.setText(`上下文开销：${chunkUpdate.usage?.total_tokens} tokens`);
             this.tui.requestRender();
         })
     }
@@ -237,6 +243,6 @@ export class TaskView implements Component {
     }
 
     render(width: number): string[] {
-        return this.messages.flatMap(message => message.render(width));
+        return this.mainLayout.render(width);
     }
 }
