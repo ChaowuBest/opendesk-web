@@ -1,4 +1,4 @@
-import { TUI, Text, Editor } from "@mariozechner/pi-tui";
+import { TUI, Text, Editor, Box, Component } from "@mariozechner/pi-tui";
 import { defaultEditorTheme } from './theme';
 import { LOGO } from './banner';
 import { CenteredText } from './components/texts';
@@ -13,27 +13,36 @@ export class OpenDeskTUI {
 
     private taskManagerState: TaskManagerState;
 
-    private tui: TUI = new TUI(new OpenDeskTerminal());
+    private tui: TUI;
+    private container: VerticalLayout = new VerticalLayout();
     private taskView: TaskView;
     private statusBar: Text;
 
     constructor() {
         this.taskManagerState = GlobalState.getInstance().taskManagerState;
+
+        const terminal = new OpenDeskTerminal();
+        terminal.onResize((cols, rows) => {
+            this.container.setMinLines(rows);
+            this.tui.requestRender(true);
+        });
+        this.tui = new TUI(terminal);
         this.taskView = new TaskView(this.tui);
     }
 
     start() {
-        const mainLayout = new VerticalLayout();
         const editor = new Editor(this.tui, defaultEditorTheme);
         this.statusBar = new Text("");
 
-        this.tui.addChild(mainLayout);
-        mainLayout.addChild(new CenteredText(LOGO.substring(1)));
-        mainLayout.addChild(this.taskView);
-        mainLayout.addChild(editor);
-        mainLayout.addChild(this.statusBar);
-        mainLayout.setSpacing(1);
-        mainLayout.setPadding(1);
+        this.tui.addChild(this.container);
+        this.container.addChild(new CenteredText(LOGO.substring(1)));
+        this.container.addChild(this.taskView);
+        this.container.addChild(editor);
+        this.container.addChild(this.statusBar);
+        this.container.setSpacing(1);
+        this.container.setPadding(1);
+        this.container.setMinLines(this.tui.terminal.rows);
+        this.container.setVerticalAlign("center");
 
         editor.onChange = (text) => {
             this.statusBar.setText(`Status: Editing (${text.length} characters)`);

@@ -134,6 +134,8 @@ export class VerticalLayout implements Component {
         // 下 padding
         for (let i = 0; i < padB; i++) contentLines.push(emptyLine);
 
+        this._lastContentHeight = contentLines.length;
+
         const minPad = Math.max(0, this.minLines - contentLines.length);
         if (minPad <= 0) return contentLines;
 
@@ -151,5 +153,159 @@ export class VerticalLayout implements Component {
             ...contentLines,
             ...Array(bottomExtra).fill(emptyLine),
         ];
+    }
+}
+
+export interface HorizontalLayoutOptions {
+    /** 最小行数，不足时在底部补空行 */
+    minLines?: number;
+    /** 四边内边距 */
+    padding?: number | VerticalLayoutPadding;
+    /** 子组件之间的水平间距（列数） */
+    spacing?: number;
+    /** 垂直对齐：不同高度的子组件在行内的对齐方式 */
+    alignVertical?: VerticalAlign;
+}
+
+/**
+ * 水平布局容器：子组件按顺序从左到右排列，支持权重分配宽度、四边 padding、子组件间距与垂直对齐。
+ */
+export class HorizontalLayout implements Component {
+    readonly children: { component: Component; weight: number }[] = [];
+    private minLines: number;
+    private padding: { top: number; right: number; bottom: number; left: number };
+    private spacing: number;
+    private alignVertical: VerticalAlign;
+
+    constructor(options: HorizontalLayoutOptions = {}) {
+        this.minLines = options.minLines ?? 0;
+        this.padding = normalizePadding(options.padding);
+        this.spacing = Math.max(0, options.spacing ?? 0);
+        this.alignVertical = options.alignVertical ?? "top";
+    }
+
+    /** 添加子组件，weight 决定该组件分配到的宽度比例（默认 1） */
+    addChild(component: Component, weight: number = 1): void {
+        this.children.push({ component, weight: Math.max(0, weight) });
+    }
+
+    removeChild(component: Component): void {
+        const index = this.children.findIndex((c) => c.component === component);
+        if (index !== -1) {
+            this.children.splice(index, 1);
+        }
+    }
+
+    clear(): void {
+        this.children.length = 0;
+    }
+
+    setMinLines(lines: number): void {
+        this.minLines = Math.max(0, lines);
+        this.invalidate();
+    }
+
+    setPadding(padding: number | VerticalLayoutPadding): void {
+        this.padding = normalizePadding(padding);
+    }
+
+    setSpacing(columns: number): void {
+        this.spacing = Math.max(0, columns);
+    }
+
+    setVerticalAlign(align: VerticalAlign): void {
+        this.alignVertical = align;
+    }
+
+    invalidate(): void {
+        for (const { component } of this.children) {
+            component.invalidate?.();
+        }
+    }
+
+    render(width: number): string[] {
+        const { top: padT, right: padR, bottom: padB, left: padL } = this.padding;
+        const contentWidth = Math.max(1, width - padL - padR);
+        const emptyLine = " ".repeat(width);
+
+        if (this.children.length === 0) {
+            const lines: string[] = [];
+            for (let i = 0; i < padT + padB; i++) lines.push(emptyLine);
+            while (lines.length < this.minLines) lines.push(emptyLine);
+            return lines;
+        }
+
+        // 计算子组件可用总宽度（减去间距）
+        const totalSpacing = this.spacing * (this.children.length - 1);
+        const availableWidth = Math.max(this.children.length, contentWidth - totalSpacing);
+
+        // 按权重分配宽度
+        const totalWeight = this.children.reduce((sum, c) => sum + c.weight, 0);
+        const childWidths: number[] = [];
+        let usedWidth = 0;
+        for (let i = 0; i < this.children.length; i++) {
+            if (i === this.children.length - 1) {
+                childWidths.push(Math.max(1, availableWidth - usedWidth));
+            } else {
+                const w = Math.max(1, Math.floor((availableWidth * this.children[i].weight) / totalWeight));
+                childWidths.push(w);
+                usedWidth += w;
+            }
+        }
+
+        // 渲染每个子组件并记录最大高度
+        const childOutputs: string[][] = [];
+        let maxHeight = 0;
+        for (let i = 0; i < this.children.length; i++) {
+            const lines = this.children[i].component.render(childWidths[i]);
+            childOutputs.push(lines);
+            maxHeight = Math.max(maxHeight, lines.length);
+        }
+
+        // 水平拼接
+        const contentLines: string[] = [];
+        for (let i = 0; i < padT; i++) contentLines.push(emptyLine);
+
+        const spacer = " ".repeat(this.spacing);
+        for (let row = 0; row < maxHeight; row++) {
+            let line = " ".repeat(padL);
+            for (let c = 0; c < this.children.length; c++) {
+                if (c > 0) line += spacer;
+
+                const output = childOutputs[c];
+                const childWidth = childWidths[c];
+                const childHeight = output.length;
+
+                // 根据垂直对齐计算偏移
+                let offset: number;
+                if (this.alignVertical === "top") {
+                    offset = 0;
+                } else if (this.alignVertical === "bottom") {
+                    offset = maxHeight - childHeight;
+                } else {
+                    offset = Math.floor((maxHeight - childHeight) / 2);
+                }
+
+                const childRow = row - offset;
+                if (childRow >= 0 && childRow < childHeight) {
+                    const cellContent = output[childRow];
+                    const vis = visibleWidth(cellContent);
+                    line += cellContent + " ".repeat(Math.max(0, childWidth - vis));
+                } else {
+                    line += " ".repeat(childWidth);
+                }
+            }
+
+            // 补齐右侧到总宽度
+            const vis = visibleWidth(line);
+            line += " ".repeat(Math.max(0, width - vis));
+            contentLines.push(line);
+        }
+
+        for (let i = 0; i < padB; i++) contentLines.push(emptyLine);
+
+        // 处理最小行数
+        while (contentLines.length < this.minLines) contentLines.push(emptyLine);
+        return contentLines;
     }
 }
