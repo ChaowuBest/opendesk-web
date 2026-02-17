@@ -13,6 +13,7 @@ import { BaseApplication } from "../base.js";
 import { BaseTool, BaseToolset } from "../../agents/tool";
 import { z } from 'zod';
 import { Exa } from 'exa-js';
+import { WebFetchTool } from './tools/webfetch';
 
 
 class ExaSearchTool extends BaseTool {
@@ -66,6 +67,7 @@ class SearchApplication extends BaseApplication {
         if (exa_search?.enabled && exa_search?.api_key !== '') {
             toolset.addTool(new ExaSearchTool(exa_search?.api_key));
         }
+        toolset.addTool(new WebFetchTool());
         return [toolset];
     }
 }
