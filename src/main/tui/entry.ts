@@ -1,6 +1,6 @@
 import { TUI, Text, Editor, Box, Component } from "@mariozechner/pi-tui";
 import { defaultEditorTheme } from './theme';
-import { LOGO } from './banner';
+import { OpenDeskBanner } from './banner';
 import { CenteredText } from './components/texts';
 import { VerticalLayout } from './components/layout';
 import { OpenDeskTerminal } from './terminal';
@@ -37,7 +37,7 @@ export class OpenDeskTUI {
         this.inputArea = new AgentInputArea(this.tui);
 
         this.tui.addChild(this.container);
-        this.container.addChild(new CenteredText(LOGO.substring(1)));
+        this.container.addChild(new OpenDeskBanner());
         this.container.addChild(this.taskView);
         this.container.addChild(this.inputArea)
         this.container.setMinLines(this.tui.terminal.rows);

@@ -88,6 +88,13 @@ export class BaseTool<T extends z.ZodType> {
     }
 
     /**
+     * 自定义的工具调用结果渲染函数，用于在命令行中渲染工具调用
+     */
+    async renderToolCallCli(toolcall: ToolCall) {
+
+    }
+
+    /**
      * 设置工具的执行函数
      */
     setExecutor(executor: (args: z.output<T>) => Promise<string>): ThisType<T> {

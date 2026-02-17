@@ -38,6 +38,10 @@ export class AgentInputArea implements Component {
         // this.layout.addChild(this.statusText);
 
         this.input.onSubmit = (text: string) => {
+            if (text.trim() === '') {
+                return;
+            }
+
             this.input.addToHistory(text);
             this.setStatus('running');
             this.submitCallback?.(text);
