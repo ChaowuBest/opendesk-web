@@ -618,7 +618,14 @@ export class AssistantMessage {
                     break;
             }
         }
-        return { role: this.role, content: content, tool_calls: toolcalls }
+        const message: Record<string, any> = {
+            role: this.role,
+            content: content.length > 0 ? content : "",
+        };
+        if (toolcalls.length > 0) {
+            message.tool_calls = toolcalls;
+        }
+        return message;
     }
 
     getOpenAIToolMessages(): object[] {
@@ -693,17 +700,18 @@ export class AssistantResponse {
     }
 
     static parseOpenAIResponse(openai_response: object): AssistantResponse {
-        const choice = openai_response['choices'][0];
-        let finish_reason = choice.finish_reason;
+        const choices = openai_response['choices'];
+        const choice = choices && choices.length > 0 ? choices[0] : undefined;
         let response: AssistantResponse;
 
-        if (choice.delta !== undefined) {
-            // parsing chunk in a stream response
+        if (choice === undefined) {
+            response = new AssistantResponse(new AssistantMessage(), null);
+        } else if (choice.delta !== undefined) {
             const chunk = AssistantMessage.parseOpenAIMessage(choice.delta);
-            response = new AssistantResponse(chunk, finish_reason ?? null);
+            response = new AssistantResponse(chunk, choice.finish_reason ?? null);
         } else if (choice.message !== undefined) {
             const message = AssistantMessage.parseOpenAIMessage(choice.message);
-            response = new AssistantResponse(message, finish_reason ?? null);
+            response = new AssistantResponse(message, choice.finish_reason ?? null);
         } else {
             logger.error('invalid openai response', choice);
             throw new Error('invalid openai response');

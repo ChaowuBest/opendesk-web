@@ -195,7 +195,7 @@ class LLM {
         var final_response = undefined;
         var num_retries = 0;
         var question = options.question;
-        var messages = [question];
+        var messages = [question.toOpenAIMessage()];
 
         while (final_response === undefined && num_retries < 5) {
             let response = await client.chat.completions.create({
@@ -206,7 +206,7 @@ class LLM {
             if (response.choices.length !== 1) {
                 throw new Error('unsupported openai response type');
             }
-            messages.push(response.choices[0]);
+            messages.push({ role: 'assistant', content: response.choices[0].message.content });
             let content = response.choices[0].message.content;
             if (options.validator === undefined) {
                 final_response = content;
@@ -215,7 +215,7 @@ class LLM {
                 if (validation_result.validated_content !== undefined) {
                     final_response = validation_result.validated_content;
                 } else {
-                    messages.push(new UserMessage(validation_result.message));
+                    messages.push(new UserMessage(validation_result.message).toOpenAIMessage());
                     num_retries++;
                 }
             }
@@ -310,7 +310,7 @@ class LLM {
      * @returns {Promise<AssistantResponse>}
      */
     static async complete(chat_context, model = undefined) {
-        var model_instance = this._getModelInstance(model);
+        var model_instance = this.__getModelInstance(model);
         var client = new OpenAI({
             apiKey: model_instance.api_key,
             baseURL: model_instance.base_url
@@ -342,6 +342,9 @@ class LLM {
             messages.push(chat_context.system_prompt.toOpenAIMessage())
         }
         for (let message of chat_context.messages) {
+            if (message instanceof AssistantMessage && message.content.length === 0) {
+                continue;
+            }
             messages.push(message.toOpenAIMessage())
             if (message instanceof AssistantMessage) {
                 messages.push(...message.getOpenAIToolMessages());
@@ -370,6 +373,7 @@ class LLM {
             model: model_instance.model_name,
             messages: messages,
             stream: true,
+            stream_options: { include_usage: true },
             ...tool_options
         }).catch(error => {
             error_message = `error: completion failed: ${error.message}`;

@@ -233,7 +233,9 @@ export class TaskView implements Component {
         await this.taskState.submitUserMessage(text);
         await this.taskState.waitUntilFinished(async (chunkUpdate: TaskUpdateChunk) => {
             responseView.update(chunkUpdate);
-            this.statusBar.setText(`上下文开销：${chunkUpdate.usage?.total_tokens} tokens`);
+            if (chunkUpdate.usage) {
+                this.statusBar.setText(`上下文开销：${chunkUpdate.usage.total_tokens} tokens`);
+            }
             this.tui.requestRender();
         })
     }
