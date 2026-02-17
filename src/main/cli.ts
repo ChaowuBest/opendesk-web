@@ -9,9 +9,6 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import React from 'react';
-import { render } from 'ink';
-import process from 'node:process';
 import { setPlatform } from '../platforms/base';
 import { CliPlatform } from '../platforms/cli.js';
 import { isMainThread } from 'worker_threads';
@@ -19,8 +16,10 @@ import { useCliTransport } from './utils/logger.js';
 import { initializeRegistry, initializeRegistryWorker } from './applications/registry';
 import { initializeAppWorkers } from './applications/worker';
 import { GlobalState } from './states/global.js';
-import { AgentCLI } from './tui/Entry';
-import { CLEAR_SCREEN, CURSOR_HOME } from './tui/Constants.js';
+import { FULL_CLEAR } from './tui/components/constants';
+import { OpenDeskTUI } from './tui/entry.js';
+
+import process from 'process';
 
 
 function main() {
@@ -33,10 +32,12 @@ function main() {
     } else {
         GlobalState.initialize();
         if (process.stdout.isTTY) {
-            process.stdout.write(CLEAR_SCREEN);
-            process.stdout.write(CURSOR_HOME);
+            process.stdout.write(FULL_CLEAR);
         }
-        render(<AgentCLI />);
+
+        const tui = new OpenDeskTUI();
+        tui.start();
+
         initializeRegistry();
         initializeRegistryWorker();
     }
