@@ -41,6 +41,7 @@
     "esbuild": "^0.27.3",
     "eslint": "^9.39.2",
     "globals": "^16.5.0",
+    "node-gyp": "^12.2.0",
     "react-devtools-core": "^6.1.5",
     "run-script-os": "^1.1.6",
     "tsx": "^4.21.0",

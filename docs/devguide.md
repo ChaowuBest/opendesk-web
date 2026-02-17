@@ -36,14 +36,16 @@ export ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/
 #### 安装
 
 首先安装最新版本的NodeJS。你可以按照下面的命令始终安装最新版本（建议），也可以安装某个固定的版本。
+
+> 注：Windows Arm用户请参考[Windows Arm上开发所需要的额外配置](./platforms/win32-arm64.md)这里
+> 进行安装，否则可能导致运行速度非常慢（很容易安装成x86版本，windows也可以通过转译层运行）
+
 ```shell
 nvm install latest
 nvm use latest
 node -v
 # v22.15.1
 ```
-
-> 注: 如果使用的是arm64的windows，如鸿蒙PC的虚拟机或者Microsoft Copilot+PC，那么需要`nvm use latest arm64`
 
 接下来只要进入FillipDesk的代码仓库，执行`npm install`命令就可以自动安装所有依赖(也包括Electron)。
 
