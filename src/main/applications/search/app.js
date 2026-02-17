@@ -14,6 +14,7 @@ import { BaseTool, BaseToolset } from "../../agents/tool";
 import { z } from 'zod';
 import { Exa } from 'exa-js';
 import { WebFetchTool } from './tools/webfetch';
+import { BingSearchTool } from './tools/bing';
 
 
 class ExaSearchTool extends BaseTool {
@@ -64,8 +65,11 @@ class SearchApplication extends BaseApplication {
     async getToolsets() {
         const exa_search = this.getConfig()?.exa_search;
         const toolset = new BaseToolset('search');
-        if (exa_search?.enabled && exa_search?.api_key !== '') {
+        const hasSearchApi = exa_search?.enabled && exa_search?.api_key !== '';
+        if (hasSearchApi) {
             toolset.addTool(new ExaSearchTool(exa_search?.api_key));
+        } else {
+            toolset.addTool(new BingSearchTool());
         }
         toolset.addTool(new WebFetchTool());
         return [toolset];
