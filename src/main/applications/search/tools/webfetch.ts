@@ -26,6 +26,14 @@ const FETCH_TIMEOUT_MS = 30000;
 const MIN_CONTENT_LENGTH = 500;
 const MIN_EXTRACTION_RATIO = 0.01;
 
+/**
+ * 域名黑名单：匹配到的域名将直接拒绝抓取，避免在反爬严格的站点上浪费时间。
+ * 匹配逻辑：URL 的 hostname 以列表中的某项结尾即命中（支持子域名）。
+ */
+const BLOCKED_DOMAINS: string[] = [
+    'zhihu.com',
+];
+
 const DEFAULT_USER_AGENT =
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 
@@ -152,6 +160,18 @@ export class WebFetchTool extends BaseTool<typeof WebFetchArgsSchema> {
 
         if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
             throw new Error(`不支持的协议: ${parsedUrl.protocol}，仅支持 http 和 https`);
+        }
+
+        const hostname = parsedUrl.hostname.toLowerCase();
+        const blockedDomain = BLOCKED_DOMAINS.find(
+            d => hostname === d || hostname.endsWith('.' + d),
+        );
+        if (blockedDomain) {
+            throw new Error(
+                `域名 ${blockedDomain} 在黑名单中，不支持对该网站进行抓取。` +
+                '该网站具有严格的反爬虫策略，抓取将无法获取有效内容。' +
+                '请尝试从其他来源获取相关信息。',
+            );
         }
 
         // 策略1: 直接获取 + Readability 提取

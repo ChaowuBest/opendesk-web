@@ -11,6 +11,9 @@
 
 import { BaseApplication } from "../base.js";
 import { BaseTool, BaseToolset } from "../../agents/tool";
+import { Card } from '../../tui/components/card';
+import { statusDisplay, truncText } from '../../tui/components/toolcall';
+import chalk from 'chalk';
 import { z } from 'zod';
 import { Exa } from 'exa-js';
 import { WebFetchTool } from './tools/webfetch';
@@ -24,6 +27,28 @@ class ExaSearchTool extends BaseTool {
         }));
         this.api_key = api_key;
         this.setExecutor(this.search);
+    }
+
+    renderToolCallCli(toolcall, width) {
+        const query = toolcall.args_object?.['query'];
+        const body = [];
+
+        if (query) {
+            body.push(chalk.dim('关键词: ') + chalk.cyan(`"${truncText(String(query), width - 16)}"`));
+        }
+
+        if (toolcall.status === 'running') {
+            body.push(chalk.dim('  ⏳ 搜索中…'));
+        } else if (toolcall.status === 'success' && toolcall.result) {
+            const match = toolcall.result.match(/总计找到\s*(\d+)\s*条结果/);
+            if (match) {
+                body.push(chalk.dim('  找到 ') + chalk.white(match[1]) + chalk.dim(' 条结果'));
+            }
+        } else if (toolcall.status === 'error' && toolcall.result) {
+            body.push(chalk.redBright('  ' + truncText(toolcall.result, width - 10)));
+        }
+
+        return new Card({ icon: '🔍', title: '搜索 (Exa)', status: statusDisplay(toolcall.status), body }).render(width);
     }
 
     async search(args) {

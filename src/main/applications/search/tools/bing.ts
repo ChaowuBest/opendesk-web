@@ -20,7 +20,7 @@ import { parseHTML } from 'linkedom';
 
 const FETCH_TIMEOUT_MS = 30000;
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
-const DEFAULT_RESULT_COUNT = 10;
+const DEFAULT_RESULT_COUNT = 15;
 
 const BING_SEARCH_URL = 'https://www.bing.com/search';
 
@@ -51,7 +51,7 @@ interface BingSearchResult {
 
 const BingSearchArgsSchema = z.object({
     query: z.string().describe('搜索关键词'),
-    count: z.number().optional().describe('期望返回的搜索结果数量，默认为10'),
+    count: z.number().optional().describe('期望返回的搜索结果数量，默认为15'),
 });
 
 export class BingSearchTool extends BaseTool<typeof BingSearchArgsSchema> {
@@ -118,7 +118,12 @@ export class BingSearchTool extends BaseTool<typeof BingSearchArgsSchema> {
     private async fetchBingPage(query: string): Promise<string> {
         const url = new URL(BING_SEARCH_URL);
         url.searchParams.set('q', query);
-        url.searchParams.set('ensearch', '0');
+
+        /**
+         * ensearch = 0 -- 国内版
+         * ensearch = 1 -- 国际版
+         */
+        url.searchParams.set('ensearch', '1');
 
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
