@@ -14,6 +14,9 @@ import { z } from 'zod';
 import { logger } from '../../utils/logger.js';
 import { ToolCall } from '../../agents/messages';
 import { marked } from '../../agents/messages';
+import { Card } from '../../tui/components/card';
+import { statusDisplay, truncText } from '../../tui/components/toolcall';
+import chalk from 'chalk';
 import { fetch } from 'undici';
 import AdmZip from 'adm-zip';
 import path from 'path';
@@ -140,6 +143,27 @@ export class CreatePPTTool extends BaseTool<typeof CreatePPTSchema> {
         super('CreatePPT', '根据指定的需求创建PPT', CreatePPTSchema);
         this.appDataDirectory = appDataDirectory;
         this.setUniversalExecutor(this.createPPT);
+    }
+
+    renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
+        const request = toolcall.args_object?.['request'];
+        const body: string[] = [];
+
+        if (request) {
+            body.push(chalk.dim('需求: ') + chalk.white(truncText(String(request), width - 14)));
+        }
+
+        if (toolcall.status === 'running' && toolcall.result) {
+            const lines = toolcall.result.split('\n').filter((l: string) => l.trim());
+            const lastLine = lines[lines.length - 1]?.trim();
+            if (lastLine) {
+                body.push(chalk.dim('  ' + truncText(lastLine, width - 10)));
+            }
+        } else if (toolcall.status === 'success') {
+            body.push(chalk.greenBright('  ✨ PPT 制作完成'));
+        }
+
+        return new Card({ icon: '📊', title: '制作 PPT', status: statusDisplay(toolcall.status), body }).render(width);
     }
 
     async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {

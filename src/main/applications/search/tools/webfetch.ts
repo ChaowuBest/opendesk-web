@@ -10,6 +10,10 @@
  */
 
 import { BaseTool } from '../../../agents/tool';
+import { ToolCall } from '../../../agents/messages';
+import { Card } from '../../../tui/components/card';
+import { statusDisplay, truncText } from '../../../tui/components/toolcall';
+import chalk from 'chalk';
 import { z } from 'zod';
 import { fetch } from 'undici';
 import { Readability } from '@mozilla/readability';
@@ -66,6 +70,32 @@ export class WebFetchTool extends BaseTool<typeof WebFetchArgsSchema> {
 
         this.turndownService = this.createTurndownService();
         this.executor = this.fetchPage.bind(this);
+    }
+
+    renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
+        const url = toolcall.args_object?.['url'];
+        const body: string[] = [];
+
+        if (url) {
+            body.push(chalk.underline.blueBright(truncText(String(url), width - 8)));
+        }
+
+        if (toolcall.status === 'running') {
+            body.push(chalk.dim('  ⏳ 正在获取…'));
+        } else if (toolcall.status === 'success' && toolcall.result) {
+            const chars = toolcall.result.length;
+            const strategyMatch = toolcall.result.match(/\*\*获取方式\*\*:\s*(.+)/);
+            const strategy = strategyMatch ? strategyMatch[1].trim() : '';
+            let info = chalk.dim('  获取到 ') + chalk.white(chars.toLocaleString()) + chalk.dim(' 字符');
+            if (strategy) {
+                info += chalk.dim(' · ') + chalk.dim(strategy);
+            }
+            body.push(info);
+        } else if (toolcall.status === 'error' && toolcall.result) {
+            body.push(chalk.redBright('  ' + truncText(toolcall.result, width - 10)));
+        }
+
+        return new Card({ icon: '🌐', title: '网页获取', status: statusDisplay(toolcall.status), body }).render(width);
     }
 
     // ───────────────────── Turndown 配置 ─────────────────────

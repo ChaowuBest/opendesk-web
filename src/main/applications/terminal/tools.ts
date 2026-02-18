@@ -13,11 +13,51 @@ import { exec } from "child_process";
 import { BaseTool } from "../../agents/tool";
 import { ToolCall } from "../../agents/messages";
 import { escapeHtml } from "../../utils/escape";
+import { Card } from "../../tui/components/card";
+import { statusDisplay, truncText } from "../../tui/components/toolcall";
+import chalk from "chalk";
 import { z } from 'zod';
 import { promisify } from 'util';
 import fs from 'fs';
 import iconv from 'iconv-lite';
 
+
+const MAX_CLI_OUTPUT_LINES = 8;
+
+function renderTerminalToolCallCli(shellLabel: string, toolcall: ToolCall, width: number): string[] {
+    const command = toolcall.args_object?.['command'];
+    const cwd = toolcall.args_object?.['workingDirectory'];
+    const body: string[] = [];
+
+    if (cwd) {
+        body.push(chalk.dim('📂 ') + chalk.yellow(truncText(cwd, width - 10)));
+    }
+
+    if (command) {
+        body.push(chalk.blueBright('❯ ') + chalk.white(truncText(String(command), width - 10)));
+    }
+
+    if (toolcall.status === 'running' && !toolcall.result) {
+        body.push(chalk.dim('  ⏳ 命令执行中…'));
+    } else if (toolcall.result) {
+        body.push(chalk.dim('─'.repeat(Math.min(40, Math.max(4, width - 8)))));
+        const rawLines = toolcall.result.replace(/\r/g, '').split('\n');
+        const displayLines = rawLines.slice(0, MAX_CLI_OUTPUT_LINES);
+        for (const line of displayLines) {
+            body.push('  ' + chalk.dim(truncText(line, width - 10)));
+        }
+        if (rawLines.length > MAX_CLI_OUTPUT_LINES) {
+            body.push(chalk.dim.italic(`  … 共 ${rawLines.length} 行输出`));
+        }
+    }
+
+    return new Card({
+        icon: '🖥',
+        title: shellLabel,
+        status: statusDisplay(toolcall.status),
+        body,
+    }).render(width);
+}
 
 function renderTerminalToolCall(cmdName: string, toolcall: ToolCall): string | undefined {
     return `
@@ -94,10 +134,10 @@ export class ExecuteCmdTool extends BaseTool<typeof ExecuteCmdArgsSchema> {
         return renderTerminalToolCall('CMD', toolcall);
     }
 
-    /**
-     * Execute a command in cmd.
-     * 整条命令用双引号包裹传给 cmd /c，避免 & 被父进程拆成多条；若含 "cd /d path & rest" 则解析并设置 cwd。
-     */
+    renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
+        return renderTerminalToolCallCli('CMD', toolcall, width);
+    }
+
     async executeCommand(args: z.output<typeof ExecuteCmdArgsSchema>): Promise<string> {
         let command: string = args.command;
         let workingDirectory: string | undefined = args.workingDirectory;
@@ -206,6 +246,10 @@ export class ExecuteBashTool extends BaseTool<typeof ExecuteBashArgsSchema> {
     async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
         return renderTerminalToolCall('BASH', toolcall);
     }
+
+    renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
+        return renderTerminalToolCallCli('Bash', toolcall, width);
+    }
 }
 
 const ExecuteZshArgsSchema = z.object({
@@ -275,7 +319,11 @@ export class ExecuteZshTool extends BaseTool<typeof ExecuteZshArgsSchema> {
     }
 
     async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
-        return renderTerminalToolCall('BASH', toolcall);
+        return renderTerminalToolCall('Zsh', toolcall);
+    }
+
+    renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
+        return renderTerminalToolCallCli('Zsh', toolcall, width);
     }
 }
 
@@ -292,6 +340,25 @@ export class ReadFileTool extends BaseTool<typeof readFileSchema> {
         );
 
         this.executor = this.executeCommand;
+    }
+
+    renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
+        const filePath = toolcall.args_object?.['path'];
+        const body: string[] = [];
+
+        if (filePath) {
+            body.push(chalk.yellow(truncText(String(filePath), width - 8)));
+        }
+
+        if (toolcall.status === 'running') {
+            body.push(chalk.dim('  ⏳ 读取中…'));
+        } else if (toolcall.status === 'success' && toolcall.result) {
+            const lineCount = toolcall.result.split('\n').length;
+            const charCount = toolcall.result.length;
+            body.push(chalk.dim(`  ${lineCount} 行, ${charCount.toLocaleString()} 字符`));
+        }
+
+        return new Card({ icon: '📖', title: '读取文件', status: statusDisplay(toolcall.status), body }).render(width);
     }
 
     executeCommand(args: z.output<typeof readFileSchema>): Promise<string> {
@@ -320,6 +387,23 @@ export class WriteFileTool extends BaseTool<typeof writeFileSchema> {
         );
 
         this.executor = this.executeCommand;
+    }
+
+    renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
+        const filePath = toolcall.args_object?.['path'];
+        const content = toolcall.args_object?.['content'];
+        const body: string[] = [];
+
+        if (filePath) {
+            body.push(chalk.yellow(truncText(String(filePath), width - 8)));
+        }
+
+        if (content && typeof content === 'string') {
+            const lineCount = content.split('\n').length;
+            body.push(chalk.dim(`  ${lineCount} 行内容`));
+        }
+
+        return new Card({ icon: '✏️', title: '写入文件', status: statusDisplay(toolcall.status), body }).render(width);
     }
 
     executeCommand(args: z.output<typeof writeFileSchema>): Promise<string> {

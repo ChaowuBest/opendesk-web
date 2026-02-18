@@ -1,11 +1,9 @@
-import { TUI, Text, Editor, Box, Component } from "@mariozechner/pi-tui";
-import { defaultEditorTheme } from './theme';
+import { TUI } from "@mariozechner/pi-tui";
 import { OpenDeskBanner } from './banner';
-import { CenteredText } from './components/texts';
 import { VerticalLayout } from './components/layout';
 import { OpenDeskTerminal } from './terminal';
 import { TaskView } from "./components/taskview";
-import { TaskManagerState, TaskUpdateChunk } from "../states/tasks";
+import { TaskManagerState } from "../states/tasks";
 import { GlobalState } from "../states/global";
 import { AgentInputArea } from "./components/input";
 import { ApplicationRegistry } from "../applications/registry";

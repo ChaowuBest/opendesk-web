@@ -10,6 +10,10 @@
  */
 
 import { BaseTool } from '../../../agents/tool';
+import { ToolCall } from '../../../agents/messages';
+import { Card } from '../../../tui/components/card';
+import { statusDisplay, truncText } from '../../../tui/components/toolcall';
+import chalk from 'chalk';
 import { z } from 'zod';
 import { fetch } from 'undici';
 import { parseHTML } from 'linkedom';
@@ -59,6 +63,28 @@ export class BingSearchTool extends BaseTool<typeof BingSearchArgsSchema> {
         );
 
         this.executor = this.search.bind(this);
+    }
+
+    renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
+        const query = toolcall.args_object?.['query'];
+        const body: string[] = [];
+
+        if (query) {
+            body.push(chalk.dim('关键词: ') + chalk.cyan(`"${truncText(String(query), width - 16)}"`));
+        }
+
+        if (toolcall.status === 'running') {
+            body.push(chalk.dim('  ⏳ 搜索中…'));
+        } else if (toolcall.status === 'success' && toolcall.result) {
+            const match = toolcall.result.match(/\*\*结果数量\*\*:\s*(\d+)/);
+            if (match) {
+                body.push(chalk.dim('  找到 ') + chalk.white(match[1]) + chalk.dim(' 条结果'));
+            }
+        } else if (toolcall.status === 'error' && toolcall.result) {
+            body.push(chalk.redBright('  ' + truncText(toolcall.result, width - 10)));
+        }
+
+        return new Card({ icon: '🔍', title: '搜索 (Bing)', status: statusDisplay(toolcall.status), body }).render(width);
     }
 
     // ───────────────────── 主入口 ─────────────────────
