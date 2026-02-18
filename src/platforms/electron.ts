@@ -22,6 +22,7 @@ import { TerminalApplication } from "../main/applications/terminal/app.js";
 import { PPTCreatorApplication } from "../main/applications/ppt/app.js";
 import { DesignerApplication } from "../main/applications/designer/app.js";
 import { SkillsApplication } from "../main/applications/skills/app.js";
+import { McpMgrApplication } from "../main/applications/mcpmgr/app.js";
 import { BaseApplication } from "../main/applications/base.js";
 
 import path from 'path';
@@ -101,6 +102,7 @@ export class ElectronPlatform extends AbstractPlatform {
             PPTCreatorApplication,
             DesignerApplication,
             SkillsApplication,
+            McpMgrApplication,
         ];
     }
 }

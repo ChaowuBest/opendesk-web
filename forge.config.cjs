@@ -22,11 +22,11 @@ module.exports = {
       name: '@electron-forge/maker-wix',
       platforms: ['win32'],
       config: {
-        name: "FillipDesk",
-        setupExe: 'FillipDesk-${version}-Setup.exe',
-        manufacturer: 'OS Kernel Lab, Huawei.',
+        name: "OpenDesk",
+        setupExe: 'OpenDesk-${version}-Setup.exe',
+        manufacturer: 'OpenDesk Team, Openharmony',
         description: 'An All-in-One AI Office Suite for Productivity Scenarios',
-        shortcutFolderName: 'FillipDesk',
+        shortcutFolderName: 'OpenDesk',
         language: 1033,
         upgradeCode: '017f8634-a16c-4194-8c94-d9a3f1319d13',
         icon: path.join(__dirname, 'resources', 'package', 'icons', 'icon_round.ico'),
@@ -36,8 +36,8 @@ module.exports = {
       name: '@electron-forge/maker-dmg',
       platforms: ['darwin'],
       config: {
-        name: "FillipDesk",
-        productName: "Fillip Desk"
+        name: "OpenDesk",
+        productName: "OpenDesk"
       },
     },
     {

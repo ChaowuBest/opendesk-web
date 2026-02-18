@@ -269,7 +269,8 @@ const registerTaskManagerAPIHandlers = () => {
             await task.attachFiles(details.attachedFilePaths);
         }
 
-        task.submitUserMessage(details.message);
+        task.submitUserMessage(details.message)
+            .catch(err => logger.error(`submitUserMessage failed for task ${taskId}:`, err));
         return { status: 'ok' };
     });
     ipcMain.handle('taskManager:stopTask', (event, taskId) => {

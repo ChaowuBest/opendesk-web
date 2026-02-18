@@ -24,8 +24,8 @@ function notifyMainSync() {
 }
 
 class SkillsWorker extends BaseWorker {
-  constructor(appDataDirectory) {
-    super('skills', appDataDirectory);
+  constructor(bundleName, appDataDirectory) {
+    super(bundleName, appDataDirectory);
   }
 
   async initialize() {

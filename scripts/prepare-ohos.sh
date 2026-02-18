@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# prepare-ohos.sh - 为鸿蒙构建准备 FillipDesk app（构建、拷贝到目标目录，在目标内裁剪）
+# prepare-ohos.sh - 为鸿蒙构建准备 OpenDesk app（构建、拷贝到目标目录，在目标内裁剪）
 #
 # 用法:
 #   ./prepare-ohos.sh /foo/bar/app             # 构建并拷贝到指定目录（仓库可放任意位置）
@@ -11,7 +11,7 @@
 #       --no-slim   不裁剪 node_modules   -h, --help  显示帮助
 #
 # 环境变量:
-#   APP_ROOT  - FillipDesk 源码目录，默认: 脚本所在目录的上一级 (app/)
+#   APP_ROOT  - OpenDesk 源码目录，默认: 脚本所在目录的上一级 (app/)
 
 set -e
 

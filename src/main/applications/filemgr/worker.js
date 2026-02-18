@@ -268,8 +268,8 @@ class FSScanner {
 
 class FileManagerWorker extends BaseWorker {
 
-    constructor(appDataDirectory) {
-        super('filemgr', appDataDirectory);
+    constructor(bundleName, appDataDirectory) {
+        super(bundleName, appDataDirectory);
         this.status = "idle";
         /** @type {Map<string, FSScanner>} */
         this.scanners = new Map();

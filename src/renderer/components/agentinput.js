@@ -379,8 +379,8 @@ class ApplicationAgentInput extends HTMLElement {
         </style>
 
         <div class="flex-none p-3 flex justify-center items-center">
-            <!-- 交互容器：group 负责监听悬停 -->
-            <div class="group relative flex items-center justify-center">
+            <!-- pointer-events-auto 确保球体区域可以响应鼠标事件（父元素 application-agent-input 为 none） -->
+            <div class="group relative flex items-center justify-center pointer-events-auto">
 
                 <!-- 外部动态光晕 (只在圆框状态下明显) -->
                 <div class="absolute inset-0 bg-blue-500/30 blur-2xl rounded-full opacity-0 group-hover:opacity-0 transition-opacity duration-1500"></div>

@@ -1691,8 +1691,8 @@ class MailboxStorage {
 
 class MailboxWorker extends BaseWorker {
 
-    constructor(appDataDirectory) {
-        super('mailbox', appDataDirectory);
+    constructor(bundleName, appDataDirectory) {
+        super(bundleName, appDataDirectory);
         this.appDataDirectory = appDataDirectory;
         // 使用 Map 管理多个 storage 和 profile
         this.storageMap = new Map(); // username -> MailboxStorage
