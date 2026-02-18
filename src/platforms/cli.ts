@@ -18,6 +18,7 @@ import { CalendarApplication } from "../main/applications/calendar/app.js";
 import { SearchApplication } from "../main/applications/search/app.js";
 import { NewsApplication } from "../main/applications/news/app.js";
 import { TerminalApplication } from "../main/applications/terminal/app.js";
+import { McpMgrApplication } from "../main/applications/mcpmgr/app.js";
 
 
 export class CliPlatform extends AbstractPlatform {
@@ -33,6 +34,7 @@ export class CliPlatform extends AbstractPlatform {
             SearchApplication,
             NewsApplication,
             TerminalApplication,
+            McpMgrApplication,
         ];
     }
 }

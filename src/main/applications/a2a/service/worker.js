@@ -24,8 +24,8 @@ import { isJSON, jsonToHTML } from '../../../services/a2ui/json-to-html.js'
 const GATEWAY_URL = "http://1.92.70.52:8080";
 
 class A2AWorker extends BaseWorker {
-    constructor(appDataDirectory) {
-        super('a2a', appDataDirectory);
+    constructor(bundleName, appDataDirectory) {
+        super(bundleName, appDataDirectory);
         this.client = new A2ARegistryClient(GATEWAY_URL);
         /** @type {Map<string, ChatContext>} */
         this.conversations = new Map();

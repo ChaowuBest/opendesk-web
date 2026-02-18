@@ -27,7 +27,7 @@ function renderTerminalToolCall(cmdName: string, toolcall: ToolCall): string | u
         <div class="flex items-center justify-between px-4 py-3 bg-gradient-to-b from-gray-100 to-gray-200 border-b border-gray-300">
             <div class="text-[12px] font-medium text-gray-600 flex items-center gap-2">
                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
-                FillipDesk Agent -- ${cmdName} Terminal
+                OpenDesk Agent -- ${cmdName} Terminal
             </div>
             <div class="w-12"></div>
         </div>

@@ -11,7 +11,7 @@
 
 /**
  * 工作线程入口文件
- * 当前设计上整个FillipDesk只保留一个工作线程。这主要是考虑到：
+ * 当前设计上整个OpenDesk只保留一个工作线程。这主要是考虑到：
  * 1️⃣ 工作线程过多导致内存开销变大
  * 2️⃣ 原始设计中，由各个应用自行动态导入的工作线程会导致Electron Vite打包识别困难
  *
@@ -43,7 +43,8 @@ export function initializeAppWorkers() {
         }
 
         const app = new APPLICATION_CLASS();
-        const appWorker = new WORKER_CLASS(path.join(getAppDirectory(), 'apps', app.bundleName));
+        const appDataDir = path.join(getAppDirectory(), 'apps', app.bundleName);
+        const appWorker = new WORKER_CLASS(app.bundleName, appDataDir);
         appWorkers.set(app.bundleName, appWorker);
     }
 

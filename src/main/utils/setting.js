@@ -44,7 +44,7 @@ function getSettingSchema() {
         models: z.array(ModelSchema)
             .describe('可用AI模型')
             .default([]),
-        applications: ApplicationConfigSchema.describe('FillipDesk应用相关配置').default({})
+        applications: ApplicationConfigSchema.describe('OpenDesk应用相关配置').default({})
     })
 }
 
@@ -106,8 +106,7 @@ class Setting {
             }
         }
 
-        // Optionally update and save settings (if that's still desired)
-        let oldSettingData = this.data;
+        // update and save settings
         this.data = newSettingData;
         this.save();
 
@@ -280,9 +279,9 @@ function getAppDirectory() {
 
     var userDataPath = '';
     if (process.env.APPDATA) {
-        userDataPath = path.join(process.env.APPDATA, 'fillipdesk');
+        userDataPath = path.join(process.env.APPDATA, 'opendesk');
     } else if (process.env.HOME) {
-        userDataPath = path.join(process.env.HOME, '.fillipdesk');
+        userDataPath = path.join(process.env.HOME, '.opendesk');
     } else {
         throw new Error('user data path not found');
     }

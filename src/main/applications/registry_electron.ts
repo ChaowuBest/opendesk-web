@@ -48,11 +48,10 @@ export function registerApplicationRegistryHandlers(ipcMain: Electron.IpcMain) {
         if (application === undefined) {
             return { status: 'error', message: `application ${bundleName} not found` }
         }
-        const method = application[methodName];
-        if (method === undefined) {
+        if (typeof application[methodName] !== 'function') {
             return { status: 'error', message: `method ${methodName} not found in application ${bundleName}` }
         }
-        return { status: 'ok', data: await method(...args) };
+        return { status: 'ok', data: await application[methodName](...args) };
     })
     ipcMain.handle('applicationRegistry:streamCall', async (event, bundleName, methodName, ...args) => {
         const application = ApplicationRegistry.getApplication(bundleName);

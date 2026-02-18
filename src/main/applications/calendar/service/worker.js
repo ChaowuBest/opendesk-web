@@ -24,8 +24,8 @@ const task_queue = new PQueue({ concurrency: 1 });
 
 class CalendarWorker extends BaseWorker {
 
-    constructor(appDataDirectory) {
-        super('calendar', appDataDirectory);
+    constructor(bundleName, appDataDirectory) {
+        super(bundleName, appDataDirectory);
         this.db = new nedb({ filename: path.join(this.appDataDirectory, 'calendar.db') });
         /** @type {NodeJS.Timeout | null} */
         this._interval = null;

@@ -1,8 +1,8 @@
-# FillipDesk 开发说明
+# OpenDesk 开发说明
 
-本文档介绍了如何快速上手开发FillipDesk。
+本文档介绍了如何快速上手开发OpenDesk。
 
-大多数情况下，着手开发FillipDesk是一个易于上手并且能够快速看到成果的工作 ;) 然而，对于面向鸿蒙设备的，以及在Windows Arm环境下的开发者，你需要额外阅读下面的教程：
+大多数情况下，着手开发OpenDesk是一个易于上手并且能够快速看到成果的工作 ;) 然而，对于面向鸿蒙设备的，以及在Windows Arm环境下的开发者，你需要额外阅读下面的教程：
 
 - [鸿蒙化适配说明](./platforms/openharmony.md)
 - [Windows Arm上开发所需要的额外配置](./platforms/win32-arm64.md)
@@ -47,11 +47,11 @@ node -v
 # v22.15.1
 ```
 
-接下来只要进入FillipDesk的代码仓库，执行`npm install`命令就可以自动安装所有依赖(也包括Electron)。
+接下来只要进入OpenDesk的代码仓库，执行`npm install`命令就可以自动安装所有依赖(也包括Electron)。
 
 ## 2. 安装包构建
 
-当前FillipDesk通过Electron Forge支持Windows和MacOS平台上的安装包构建。
+当前OpenDesk通过Electron Forge支持Windows和MacOS平台上的安装包构建。
 
 ### MacOS (dmg)
 
@@ -85,7 +85,7 @@ npm run make
 
 ## 3. 代码结构介绍
 
-FillipDesk 采用经典的 Electron 应用架构支持跨平台开发。为了保持开发过程的简洁清晰，并没有使用诸如`React`, `Vue`一类的前端框架，暂时也没有使用JS的打包工具。仅仅引入[Tailwind CSS](https://tailwindcss.com/)支撑前端的样式设计，以及[Alpine.js](https://alpinejs.dev/)来实现少量动态行为。同时这两个轻量级的框架均对大模型辅助开发非常亲和，在Gemini 3, Claude等模型中可以很容易一键直出生成可用的UI实现。
+OpenDesk 采用经典的 Electron 应用架构支持跨平台开发。为了保持开发过程的简洁清晰，并没有使用诸如`React`, `Vue`一类的前端框架，暂时也没有使用JS的打包工具。仅仅引入[Tailwind CSS](https://tailwindcss.com/)支撑前端的样式设计，以及[Alpine.js](https://alpinejs.dev/)来实现少量动态行为。同时这两个轻量级的框架均对大模型辅助开发非常亲和，在Gemini 3, Claude等模型中可以很容易一键直出生成可用的UI实现。
 
 ### 3.1. 整体架构
 
@@ -99,7 +99,7 @@ FillipDesk 采用经典的 Electron 应用架构支持跨平台开发。为了�
 
 2. **渲染进程（Renderer Process）** - `src/renderer/`
    - 用户界面展示
-   - FillipDesk主程序的前端组件和交互逻辑（各个内嵌应用的逻辑分布在应用系统中）
+   - OpenDesk主程序的前端组件和交互逻辑（各个内嵌应用的逻辑分布在应用系统中）
    - 通过 IPC 与主进程通信
 
 3. **应用系统（Applications）** - `src/main/applications/`
@@ -167,10 +167,10 @@ src/renderer/
 
 主进程对话会自动发现并挂载**本地端侧归档的 Agent Skills**，与内建应用工具集一起参与工具调用。格式对齐 **Anthropic 发布的 Agent Skills 行业标准**（[agentskills.io](https://agentskills.io/specification)）。
 
-- **技能目录**：应用数据目录下的 `skills/`（如 Windows `%APPDATA%/fillipdesk/skills/`）。
+- **技能目录**：应用数据目录下的 `skills/`（如 Windows `%APPDATA%/OpenDesk/skills/`）。
 - **单技能结构**：每个技能一个子目录，**目录名必须与 SKILL.md 中的 name 一致**；目录内必含 **SKILL.md**（YAML frontmatter + Markdown 正文），可选子目录 `scripts/`、`references/`、`assets/`。
 - **SKILL.md 格式**：YAML 必填字段 `name`（1–64 字符，小写字母/数字/连字符，不可首尾或连续连字符）、`description`（1–1024 字符）；可选 `license`、`compatibility`（≤500 字符）、`metadata`、`allowed-tools`（实验性）。正文为 Markdown，供模型按需加载。
-- **调用方式**：每个技能在主进程中暴露为一个 tool（name = 技能 name，description = 技能 description）。默认执行时返回 SKILL.md 正文；若在 frontmatter 中配置 FillipDesk 扩展 `fillipdesk.handler`（script/module/url），则执行对应脚本/模块并返回结果。
+- **调用方式**：每个技能在主进程中暴露为一个 tool（name = 技能 name，description = 技能 description）。默认执行时返回 SKILL.md 正文；若在 frontmatter 中配置 OpenDesk 扩展 `OpenDesk.handler`（script/module/url），则执行对应脚本/模块并返回结果。
 - **示例**：见 `src/main/applications/skills/resources/example/`（含 SKILL.md 与可选 handler.js），复制到应用数据目录 `skills/` 后即可被主进程检测并调用。
 - **前端 API**：`window.skillRegistryAPI.list()`、`skillRegistryAPI.refresh()`、`skillRegistryAPI.getSkillsDirectory()`。
 

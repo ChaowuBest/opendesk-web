@@ -56,8 +56,8 @@ function generateCaptureFolderName(captureIndex) {
 
 class RecallWorker extends BaseWorker {
 
-    constructor(appDataDirectory) {
-        super('recall', appDataDirectory);
+    constructor(bundleName, appDataDirectory) {
+        super(bundleName, appDataDirectory);
 
         /** @type {RecallActivity | null} */
         this.currentActivity = null;

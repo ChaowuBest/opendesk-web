@@ -17,8 +17,8 @@ import { logger } from "../../utils/logger";
 
 
 export default class PPTWorker extends BaseWorker {
-    constructor(appDataDirectory: string) {
-        super('ppt', appDataDirectory);
+    constructor(bundleName: string, appDataDirectory: string) {
+        super(bundleName, appDataDirectory);
     }
 
     async initialize() {

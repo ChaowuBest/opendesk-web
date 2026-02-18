@@ -381,7 +381,7 @@ export class UpdateClient {
             path: urlObj.pathname + urlObj.search,
             method: 'GET',
             headers: {
-              'User-Agent': 'FillipDesk-Updater/1.0',
+              'User-Agent': 'OpenDesk-Updater/1.0',
               'Accept': '*/*',
               'Connection': 'keep-alive',
             },
@@ -439,7 +439,7 @@ export class UpdateClient {
               path: urlObj.pathname + urlObj.search,
               headers: {
                 'Host': urlObj.host,
-                'User-Agent': 'FillipDesk-Updater/1.0',
+                'User-Agent': 'OpenDesk-Updater/1.0',
                 'Accept': '*/*',
                 'Connection': 'keep-alive',
               },
@@ -480,7 +480,7 @@ export class UpdateClient {
             path: url,
             headers: {
               'Host': urlObj.host,
-              'User-Agent': 'FillipDesk-Updater/1.0',
+              'User-Agent': 'OpenDesk-Updater/1.0',
               'Accept': '*/*',
               'Connection': 'keep-alive',
             },
