@@ -26,7 +26,6 @@ const ModelSchema = z.object({
     alias: z.string().default('model_alias').describe('模型别名(在本地配置中使用的名称)'),
     provider_name: z.string().default('openrouter').describe('模型提供商'),
     model_name: z.string().default('google/gemini-2.5-flash').describe('模型名称(在提供商一侧的名称)'),
-    context_size: z.number().default(32768).describe('模型上下文大小(单位: 词)')
 })
 
 var ApplicationConfigSchema = z.object({});
