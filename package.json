@@ -21,7 +21,7 @@
     "updater:server": "tsx src/updater/server.ts",
     "updater:publish": "tsx src/updater/publish-update.ts",
     "build-cli": "tsx esbuild.config.ts",
-    "cli": "npm run build-cli && node --no-warnings dist/cli/opendesk",
+    "cli": "npm run build-cli && node --no-warnings --enable-source-maps dist/cli/opendesk",
     "test-cli": "tsx src/tests/cli.ts"
   },
   "devDependencies": {

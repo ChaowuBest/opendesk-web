@@ -53,6 +53,7 @@ const config: esbuild.BuildOptions = {
     outfile,
     minify: true,
     treeShaking: true,
+    sourcemap: true,
     external: ['node-screenshots', 'vectra', 'number-to-alphabet'],
     plugins: [requireShimPlugin],
 };
