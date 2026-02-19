@@ -4,6 +4,7 @@ import { AssistantMessage, ReasoningMessagePart, TextMessagePart, ToolCallMessag
 import { TaskUpdateChunk } from "../../states/tasks";
 import { defaultMarkdownTheme } from "../theme";
 import { DefaultToolCallView } from "./toolcall";
+import { Card } from "./card";
 import chalk from "chalk";
 import type { StatusBarData } from "./input";
 
@@ -32,26 +33,50 @@ export class TextMessagePartView implements Component {
     }
 }
 
+/** 思考进行中时使用的旋转图标帧（约每 120ms 一帧） */
+const REASONING_SPINNER_FRAMES = ['◐', '◓', '◑', '◒'];
+const REASONING_SPINNER_MS = 120;
+
+/** 思考/推理内容用卡片展示，内容始终完整显示（不设 maxLines） */
 export class ReasoningMessagePartView implements Component {
     private text: Markdown = new Markdown('', 0, 0, defaultMarkdownTheme);
-    private box: Box = new Box();
+    /** 是否正在流式输出思考内容，用于显示旋转图标 */
+    private _streaming = false;
 
     constructor(text?: string) {
         if (text) {
             this.text.setText(text);
         }
-        this.box.setBgFn((text: string) => chalk.grey.bgYellowBright.italic((text)));
-        this.box.addChild(this.text);
     }
 
     setMarkdown(markdown: string) {
         this.text.setText(markdown);
     }
 
+    setStreaming(streaming: boolean) {
+        this._streaming = streaming;
+    }
+
     invalidate() { }
 
+    private getIcon(): string {
+        if (!this._streaming) {
+            return chalk.dim('◆');
+        }
+        const idx = Math.floor(Date.now() / REASONING_SPINNER_MS) % REASONING_SPINNER_FRAMES.length;
+        return chalk.blueBright(REASONING_SPINNER_FRAMES[idx]);
+    }
+
     render(width: number): string[] {
-        return this.box.render(width);
+        const contentWidth = Math.max(1, width - 4);
+        const bodyLines = this.text.render(contentWidth);
+        const card = new Card({
+            icon: this.getIcon(),
+            title: '思考',
+            body: bodyLines,
+            // 不设 maxLines，思考过程中内容完整展示
+        });
+        return card.render(width);
     }
 }
 
@@ -156,7 +181,17 @@ export class AssistantMessageView implements Component {
             throw new Error(`part type mismatch`)
         }
 
+        existingPartView.setStreaming(true);
         existingPartView.setMarkdown(reasoningPart.content);
+    }
+
+    /** 思考/流式结束，停止所有 reasoning 部分的动画 */
+    setStreamingComplete() {
+        for (const part of this.parts) {
+            if (part instanceof ReasoningMessagePartView) {
+                part.setStreaming(false);
+            }
+        }
     }
 
     async updateToolCallPart(index: number, toolCallPart: ToolCallMessagePart) {
@@ -181,10 +216,12 @@ export class AssistantMessageView implements Component {
     async update(chunkUpdate: TaskUpdateChunk) {
         switch (chunkUpdate.last_part.type) {
             case 'text':
+                this.setStreamingComplete();
                 return await this.updateTextPart(chunkUpdate.last_part_index, chunkUpdate.last_part);
             case 'reasoning':
                 return await this.updateReasoningPart(chunkUpdate.last_part_index, chunkUpdate.last_part);
             case 'tool_call':
+                this.setStreamingComplete();
                 return await this.updateToolCallPart(chunkUpdate.last_part_index, chunkUpdate.last_part);
         }
     }
@@ -234,13 +271,20 @@ export class TaskView implements Component {
         this.messageLayout.addChild(responseView);
 
         await this.taskState.submitUserMessage(text);
-        await this.taskState.waitUntilFinished(async (chunkUpdate: TaskUpdateChunk) => {
-            responseView.update(chunkUpdate);
-            if (chunkUpdate.usage) {
-                this.onStatusBarUpdate?.({ totalTokens: chunkUpdate.usage.total_tokens });
-            }
+        const renderInterval = setInterval(() => this.tui.requestRender(), REASONING_SPINNER_MS);
+        try {
+            await this.taskState.waitUntilFinished(async (chunkUpdate: TaskUpdateChunk) => {
+                responseView.update(chunkUpdate);
+                if (chunkUpdate.usage) {
+                    this.onStatusBarUpdate?.({ totalTokens: chunkUpdate.usage.total_tokens });
+                }
+                this.tui.requestRender();
+            });
+        } finally {
+            clearInterval(renderInterval);
+            responseView.setStreamingComplete();
             this.tui.requestRender();
-        })
+        }
     }
 
     /** 清空消息视图（用于切换任务时） */
