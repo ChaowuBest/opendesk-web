@@ -378,6 +378,56 @@ const writeFileSchema = z.object({
     content: z.string().describe('要写入的文件内容')
 });
 
+const WRITE_FILE_TAIL_LINES = 5;
+
+interface WriteFileRenderCache {
+    contentLen: number;
+    lineCount: number;
+    tailLines: string[];
+}
+
+const _writeFileCache = new WeakMap<ToolCall, WriteFileRenderCache>();
+
+/**
+ * 增量计算 content 的行数 + 反向提取尾部行。
+ * - 行数：仅扫描自上次缓存位置以来的新增字符，O(delta)
+ * - 尾部：从末尾向前查找 N 个换行符，O(tail) 而非 O(content)
+ */
+function getWriteFileInfo(toolcall: ToolCall, content: string): WriteFileRenderCache {
+    const prev = _writeFileCache.get(toolcall);
+    if (prev && prev.contentLen === content.length) return prev;
+
+    let lineCount: number;
+    if (prev && content.length > prev.contentLen) {
+        lineCount = prev.lineCount;
+        for (let i = prev.contentLen; i < content.length; i++) {
+            if (content.charCodeAt(i) === 10) lineCount++;
+        }
+    } else {
+        lineCount = 1;
+        for (let i = 0; i < content.length; i++) {
+            if (content.charCodeAt(i) === 10) lineCount++;
+        }
+    }
+
+    let end = content.length;
+    if (end > 0 && content.charCodeAt(end - 1) === 10) end--;
+    const tailLines: string[] = [];
+    while (tailLines.length < WRITE_FILE_TAIL_LINES && end > 0) {
+        const nlPos = content.lastIndexOf('\n', end - 1);
+        if (nlPos === -1) {
+            tailLines.unshift(content.substring(0, end));
+            break;
+        }
+        tailLines.unshift(content.substring(nlPos + 1, end));
+        end = nlPos;
+    }
+
+    const info: WriteFileRenderCache = { contentLen: content.length, lineCount, tailLines };
+    _writeFileCache.set(toolcall, info);
+    return info;
+}
+
 export class WriteFileTool extends BaseTool<typeof writeFileSchema> {
     constructor() {
         super(
@@ -398,9 +448,20 @@ export class WriteFileTool extends BaseTool<typeof writeFileSchema> {
             body.push(chalk.yellow(truncText(String(filePath), width - 8)));
         }
 
-        if (content && typeof content === 'string') {
-            const lineCount = content.split('\n').length;
-            body.push(chalk.dim(`  ${lineCount} 行内容`));
+        if (content && typeof content === 'string' && content.length > 0) {
+            const info = getWriteFileInfo(toolcall, content);
+
+            if (toolcall.status === 'success') {
+                body.push(chalk.dim(`  ${info.lineCount} 行, ${info.contentLen.toLocaleString()} 字符`));
+            } else {
+                body.push(chalk.dim(`  ✍ 正在写入… ${info.lineCount} 行`));
+                body.push(chalk.dim('─'.repeat(Math.min(40, Math.max(4, width - 8)))));
+                for (const line of info.tailLines) {
+                    body.push('  ' + chalk.cyan(truncText(line, width - 10)));
+                }
+            }
+        } else if (toolcall.status === 'running') {
+            body.push(chalk.dim('  ⏳ 等待内容…'));
         }
 
         return new Card({ icon: '✏️', title: '写入文件', status: statusDisplay(toolcall.status), body }).render(width);

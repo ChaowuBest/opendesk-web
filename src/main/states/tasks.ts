@@ -244,6 +244,9 @@ export class TaskState {
 
             assistant_message.mergeChunk(chunk_resp.content);
             assistant_message.usage = chunk_resp.usage;
+
+            this.resolveStreamingToolCalls(assistant_message);
+
             if (this.subscribers.length == 0) {
                 // no subscribers, skip
                 continue;
@@ -253,6 +256,27 @@ export class TaskState {
         }
 
         this.task_manager_state.save();
+    }
+
+    /**
+     * 在流式输出阶段提前解析 ToolCall 的 tool 引用和 args_object，
+     * 使 CLI 自定义卡片能在参数生成过程中实时渲染。
+     */
+    private resolveStreamingToolCalls(message: AssistantMessage) {
+        for (const part of message.content) {
+            if (part.type !== 'tool_call') continue;
+            for (const tc of part.toolcalls) {
+                if (!tc.tool && tc.tool_name) {
+                    const tool = this.chat_context.getTool(tc.tool_name);
+                    if (tool) tc.setTool(tool);
+                }
+                if (tc.args_string) {
+                    try {
+                        tc.args_object = JSON.parse(jsonrepair(tc.args_string));
+                    } catch { /* streaming 阶段 JSON 不完整属正常现象 */ }
+                }
+            }
+        }
     }
 
     /**
