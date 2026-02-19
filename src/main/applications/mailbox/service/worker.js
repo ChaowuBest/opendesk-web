@@ -22,9 +22,6 @@ import nedb from 'nedb-promises';
 import path from 'path';
 import pMap from 'p-map';
 import { simpleParser } from "mailparser";
-import pkg from 'lodash';
-
-const _ = pkg;
 
 var mailboxDataDirectory = null;
 
