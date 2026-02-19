@@ -10,6 +10,10 @@
  */
 
 import { BaseTool } from '../../../agents/tool';
+import { ToolCall } from '../../../agents/messages';
+import { Card } from '../../../tui/components/card';
+import { statusDisplay, truncText } from '../../../tui/components/toolcall';
+import chalk from 'chalk';
 import { z } from 'zod';
 import { fetch } from 'undici';
 import { Readability } from '@mozilla/readability';
@@ -21,6 +25,14 @@ const MAX_OUTPUT_CHARS = 50000;
 const FETCH_TIMEOUT_MS = 30000;
 const MIN_CONTENT_LENGTH = 500;
 const MIN_EXTRACTION_RATIO = 0.01;
+
+/**
+ * 域名黑名单：匹配到的域名将直接拒绝抓取，避免在反爬严格的站点上浪费时间。
+ * 匹配逻辑：URL 的 hostname 以列表中的某项结尾即命中（支持子域名）。
+ */
+const BLOCKED_DOMAINS: string[] = [
+    'zhihu.com',
+];
 
 const DEFAULT_USER_AGENT =
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
@@ -66,6 +78,32 @@ export class WebFetchTool extends BaseTool<typeof WebFetchArgsSchema> {
 
         this.turndownService = this.createTurndownService();
         this.executor = this.fetchPage.bind(this);
+    }
+
+    renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
+        const url = toolcall.args_object?.['url'];
+        const body: string[] = [];
+
+        if (url) {
+            body.push(chalk.underline.blueBright(truncText(String(url), width - 8)));
+        }
+
+        if (toolcall.status === 'running') {
+            body.push(chalk.dim('  ⏳ 正在获取…'));
+        } else if (toolcall.status === 'success' && toolcall.result) {
+            const chars = toolcall.result.length;
+            const strategyMatch = toolcall.result.match(/\*\*获取方式\*\*:\s*(.+)/);
+            const strategy = strategyMatch ? strategyMatch[1].trim() : '';
+            let info = chalk.dim('  获取到 ') + chalk.white(chars.toLocaleString()) + chalk.dim(' 字符');
+            if (strategy) {
+                info += chalk.dim(' · ') + chalk.dim(strategy);
+            }
+            body.push(info);
+        } else if (toolcall.status === 'error' && toolcall.result) {
+            body.push(chalk.redBright('  ' + truncText(toolcall.result, width - 10)));
+        }
+
+        return new Card({ icon: '🌐', title: '网页获取', status: statusDisplay(toolcall.status), body }).render(width);
     }
 
     // ───────────────────── Turndown 配置 ─────────────────────
@@ -122,6 +160,18 @@ export class WebFetchTool extends BaseTool<typeof WebFetchArgsSchema> {
 
         if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
             throw new Error(`不支持的协议: ${parsedUrl.protocol}，仅支持 http 和 https`);
+        }
+
+        const hostname = parsedUrl.hostname.toLowerCase();
+        const blockedDomain = BLOCKED_DOMAINS.find(
+            d => hostname === d || hostname.endsWith('.' + d),
+        );
+        if (blockedDomain) {
+            throw new Error(
+                `域名 ${blockedDomain} 在黑名单中，不支持对该网站进行抓取。` +
+                '该网站具有严格的反爬虫策略，抓取将无法获取有效内容。' +
+                '请尝试从其他来源获取相关信息。',
+            );
         }
 
         // 策略1: 直接获取 + Readability 提取

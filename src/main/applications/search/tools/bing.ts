@@ -10,13 +10,17 @@
  */
 
 import { BaseTool } from '../../../agents/tool';
+import { ToolCall } from '../../../agents/messages';
+import { Card } from '../../../tui/components/card';
+import { statusDisplay, truncText } from '../../../tui/components/toolcall';
+import chalk from 'chalk';
 import { z } from 'zod';
 import { fetch } from 'undici';
 import { parseHTML } from 'linkedom';
 
 const FETCH_TIMEOUT_MS = 30000;
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
-const DEFAULT_RESULT_COUNT = 10;
+const DEFAULT_RESULT_COUNT = 15;
 
 const BING_SEARCH_URL = 'https://www.bing.com/search';
 
@@ -47,7 +51,7 @@ interface BingSearchResult {
 
 const BingSearchArgsSchema = z.object({
     query: z.string().describe('搜索关键词'),
-    count: z.number().optional().describe('期望返回的搜索结果数量，默认为10'),
+    count: z.number().optional().describe('期望返回的搜索结果数量，默认为15'),
 });
 
 export class BingSearchTool extends BaseTool<typeof BingSearchArgsSchema> {
@@ -59,6 +63,28 @@ export class BingSearchTool extends BaseTool<typeof BingSearchArgsSchema> {
         );
 
         this.executor = this.search.bind(this);
+    }
+
+    renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
+        const query = toolcall.args_object?.['query'];
+        const body: string[] = [];
+
+        if (query) {
+            body.push(chalk.dim('关键词: ') + chalk.cyan(`"${truncText(String(query), width - 16)}"`));
+        }
+
+        if (toolcall.status === 'running') {
+            body.push(chalk.dim('  ⏳ 搜索中…'));
+        } else if (toolcall.status === 'success' && toolcall.result) {
+            const match = toolcall.result.match(/\*\*结果数量\*\*:\s*(\d+)/);
+            if (match) {
+                body.push(chalk.dim('  找到 ') + chalk.white(match[1]) + chalk.dim(' 条结果'));
+            }
+        } else if (toolcall.status === 'error' && toolcall.result) {
+            body.push(chalk.redBright('  ' + truncText(toolcall.result, width - 10)));
+        }
+
+        return new Card({ icon: '🔍', title: '搜索 (Bing)', status: statusDisplay(toolcall.status), body }).render(width);
     }
 
     // ───────────────────── 主入口 ─────────────────────
@@ -92,7 +118,12 @@ export class BingSearchTool extends BaseTool<typeof BingSearchArgsSchema> {
     private async fetchBingPage(query: string): Promise<string> {
         const url = new URL(BING_SEARCH_URL);
         url.searchParams.set('q', query);
-        url.searchParams.set('ensearch', '0');
+
+        /**
+         * ensearch = 0 -- 国内版
+         * ensearch = 1 -- 国际版
+         */
+        url.searchParams.set('ensearch', '1');
 
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);

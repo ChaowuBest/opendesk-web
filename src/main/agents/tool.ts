@@ -88,10 +88,11 @@ export class BaseTool<T extends z.ZodType> {
     }
 
     /**
-     * 自定义的工具调用结果渲染函数，用于在命令行中渲染工具调用
+     * 自定义的工具调用结果渲染函数，用于在命令行中渲染工具调用。
+     * 返回 string[] 表示渲染后的行，返回 undefined 则使用默认渲染。
      */
-    async renderToolCallCli(toolcall: ToolCall) {
-
+    renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
+        return undefined;
     }
 
     /**

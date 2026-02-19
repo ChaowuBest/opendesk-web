@@ -3,7 +3,7 @@ import { TaskState } from "../../states/tasks";
 import { AssistantMessage, ReasoningMessagePart, TextMessagePart, ToolCallMessagePart, UserMessage, ToolCall } from "../../agents/messages";
 import { TaskUpdateChunk } from "../../states/tasks";
 import { defaultMarkdownTheme } from "../theme";
-import { logger } from "../../utils/logger";
+import { DefaultToolCallView } from "./toolcall";
 import chalk from "chalk";
 
 
@@ -56,19 +56,23 @@ export class ReasoningMessagePartView implements Component {
 
 export class ToolCallView implements Component {
 
-    title: Text = new Text('');
-    box: Box = new Box(0, 0);
+    private toolCall: ToolCall;
+    private defaultView: DefaultToolCallView;
 
     constructor(toolCall: ToolCall) {
-        this.box.addChild(this.title);
-        this.title.setText(toolCall.tool_name);
+        this.toolCall = toolCall;
+        this.defaultView = new DefaultToolCallView(toolCall);
     }
 
     invalidate() {
     }
 
     render(width: number): string[] {
-        return this.box.render(width);
+        if (this.toolCall.tool) {
+            const custom = this.toolCall.tool.renderToolCallCli(this.toolCall, width);
+            if (custom) return custom;
+        }
+        return this.defaultView.render(width);
     }
 }
 
