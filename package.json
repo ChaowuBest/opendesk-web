@@ -21,7 +21,8 @@
     "updater:server": "tsx src/updater/server.ts",
     "updater:publish": "tsx src/updater/publish-update.ts",
     "build-cli": "tsx esbuild.config.ts",
-    "cli": "npm run build-cli && node --no-warnings dist/cli/opendesk"
+    "cli": "npm run build-cli && node --no-warnings dist/cli/opendesk",
+    "test-cli": "tsx src/tests/cli.ts"
   },
   "devDependencies": {
     "@electron-forge/cli": "^7.10.2",
@@ -70,7 +71,6 @@
     "better-sqlite3": "^12.6.2",
     "crypto-js": "^4.2.0",
     "dhash": "^0.0.4",
-    "exa-js": "^2.0.12",
     "fast-glob": "^3.3.3",
     "highlight.js": "^11.11.1",
     "iconv-lite": "^0.7.2",

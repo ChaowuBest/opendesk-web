@@ -16,7 +16,7 @@ import { FileMgrApplication } from "../main/applications/filemgr/app.js";
 import { CalendarApplication } from "../main/applications/calendar/app.js";
 import { A2AApplication } from "../main/applications/a2a/app.js";
 import { RecallApplication } from "../main/applications/recall/app.js";
-import { SearchApplication } from "../main/applications/search/app.js";
+import { SearchApplication } from "../main/applications/search/app";
 import { NewsApplication } from "../main/applications/news/app.js";
 import { TerminalApplication } from "../main/applications/terminal/app.js";
 import { PPTCreatorApplication } from "../main/applications/ppt/app.js";
