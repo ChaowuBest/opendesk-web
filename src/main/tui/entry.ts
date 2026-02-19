@@ -1,4 +1,4 @@
-import { TUI, SelectList, Box, Key, visibleWidth, truncateToWidth } from "@mariozechner/pi-tui";
+import { TUI, SelectList, Box, Text, Key, visibleWidth, truncateToWidth } from "@mariozechner/pi-tui";
 import { OpenDeskBanner } from './banner';
 import { VerticalLayout } from './components/layout';
 import { OpenDeskTerminal } from './terminal';
@@ -12,95 +12,8 @@ import { SlashCommandRegistry } from "./commands";
 import { Setting } from "../utils/setting.js";
 import { defaultSelectListTheme } from "./theme";
 import { logger } from "../utils/logger.js";
-import { lookupKnownContextSize } from "../utils/model-context";
+import { lookupKnownContextSize, fetchContextSizeFromAPI } from "../utils/model-context";
 import chalk from "chalk";
-
-
-/**
- * 从模型对象中提取上下文窗口大小，兼容多种 API 格式：
- * - 火山引擎 Ark: token_limits.context_window
- * - OpenRouter: context_length
- * - vLLM: max_model_len
- * - 通用: context_window, max_context_length
- */
-function extractContextSize(model: any): number {
-    if (!model) return 0;
-    const candidates = [
-        model.token_limits?.context_window,
-        model.token_limits?.max_input_token_length,
-        model.context_length,
-        model.context_window,
-        model.max_context_length,
-        model.max_model_len,
-        model.model_info?.context_length,
-        model.model_info?.context_window,
-    ];
-    for (const val of candidates) {
-        if (typeof val === 'number' && val > 0) return val;
-    }
-    return 0;
-}
-
-/**
- * 在模型列表中查找目标模型，支持多种匹配策略：
- * 1. id 精确匹配
- * 2. name 精确匹配
- * 3. id 或 name 前缀匹配（取最新的）
- */
-function findModelInList(models: any[], modelName: string): any | undefined {
-    const norm = modelName.toLowerCase().replace(/[._]/g, '-');
-    const normId = (m: any) => (m.id ?? '').toLowerCase().replace(/[._]/g, '-');
-    const normName = (m: any) => (m.name ?? '').toLowerCase().replace(/[._]/g, '-');
-
-    return models.find((m: any) => m.id === modelName)
-        ?? models.find((m: any) => m.name === modelName)
-        ?? models.find((m: any) => normId(m) === norm)
-        ?? models.find((m: any) => normName(m) === norm)
-        ?? models
-            .filter((m: any) => {
-                const id = normId(m), name = normName(m);
-                return id.startsWith(norm) || name.startsWith(norm)
-                    || norm.startsWith(id) || norm.startsWith(name);
-            })
-            .sort((a: any, b: any) => (b.created ?? 0) - (a.created ?? 0))[0];
-}
-
-/**
- * 尝试通过 OpenAI 兼容 API 的 /models 端点获取模型的上下文窗口大小。
- * 失败时返回 0 表示未知。
- */
-async function fetchContextSizeFromAPI(modelInstance: any): Promise<number> {
-    const baseUrl: string = modelInstance.base_url;
-    const apiKey: string = modelInstance.api_key;
-    const modelName: string = modelInstance.model_name;
-    const headers: Record<string, string> = {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-    };
-
-    try {
-        const resp = await fetch(`${baseUrl}/models/${encodeURIComponent(modelName)}`, { headers, signal: AbortSignal.timeout(5000) });
-        if (resp.ok) {
-            const size = extractContextSize(await resp.json());
-            if (size > 0) return size;
-        }
-    } catch { /* 忽略单模型端点错误 */ }
-
-    try {
-        const resp = await fetch(`${baseUrl}/models`, { headers, signal: AbortSignal.timeout(8000) });
-        if (resp.ok) {
-            const body = await resp.json();
-            const models: any[] = body.data ?? body;
-            const match = findModelInList(models, modelName);
-            if (match) {
-                const size = extractContextSize(match);
-                if (size > 0) return size;
-            }
-        }
-    } catch { /* 忽略列表端点错误 */ }
-
-    return 0;
-}
 
 
 export class OpenDeskTUI {
@@ -150,39 +63,28 @@ export class OpenDeskTUI {
             }
         };
 
-        // 快捷键
-        this.shortcutManager = new KeyboardShortcutManager();
-        this.setupShortcuts();
-
-        // 斜杠指令
+        // 指令注册（含快捷键绑定）
         this.commandRegistry = new SlashCommandRegistry();
         this.setupCommands();
         this.inputArea.setCommandRegistry(this.commandRegistry);
-    }
 
-    private setupShortcuts() {
-        this.shortcutManager.register({
-            key: Key.ctrl("n"),
-            description: "新建任务",
-            handler: () => { this.createNewTask(); },
-        });
-        this.shortcutManager.register({
-            key: Key.ctrl("t"),
-            description: "切换任务",
-            handler: () => { this.showTaskSwitcher(); },
-        });
+        // 从已注册指令中提取快捷键
+        this.shortcutManager = new KeyboardShortcutManager();
+        for (const cmd of this.commandRegistry.getAll()) {
+            if (cmd.shortcut) {
+                this.shortcutManager.register({
+                    key: cmd.shortcut,
+                    handler: () => { cmd.execute(''); },
+                });
+            }
+        }
     }
 
     private setupCommands() {
         this.commandRegistry.register({
-            name: "exit",
-            description: "退出 OpenDesk",
-            execute: async () => { await this.exit(); },
-        });
-
-        this.commandRegistry.register({
             name: "new",
             description: "启动新任务并发送消息",
+            shortcut: Key.ctrl("n"),
             execute: async (args: string) => {
                 this.createNewTask();
                 if (args.trim()) {
@@ -194,7 +96,20 @@ export class OpenDeskTUI {
         this.commandRegistry.register({
             name: "switch",
             description: "切换到其他任务",
+            shortcut: Key.ctrl("l"),
             execute: async () => { this.showTaskSwitcher(); },
+        });
+
+        this.commandRegistry.register({
+            name: "help",
+            description: "显示快捷键与指令帮助",
+            execute: async () => { this.showHelp(); },
+        });
+
+        this.commandRegistry.register({
+            name: "exit",
+            description: "退出 OpenDesk",
+            execute: async () => { await this.exit(); },
         });
     }
 
@@ -261,6 +176,48 @@ export class OpenDeskTUI {
             if (task) {
                 this.switchToTask(task);
             }
+        };
+
+        list.onCancel = () => {
+            handle.hide();
+            this.tui.setFocus(this.inputArea.input);
+        };
+    }
+
+    private showHelp() {
+        const commands = this.commandRegistry.getAll();
+
+        const items = commands.map(cmd => {
+            const cmdName = ('/' + cmd.name).padEnd(10);
+            const shortcut = cmd.shortcut
+                ? chalk.cyan(SlashCommandRegistry.formatKeyLabel(cmd.shortcut).padEnd(10))
+                : ' '.repeat(10);
+            return {
+                value: cmd.name,
+                label: `${chalk.bold(cmdName)}${shortcut}${cmd.description}`,
+            };
+        });
+
+        const overlayWidth = Math.min(50, Math.floor(this.tui.terminal.columns * 0.6));
+
+        const header = new Text(chalk.bold(' 指令列表'));
+        const list = new SelectList(items, items.length, defaultSelectListTheme);
+        const box = new Box(1, 1);
+        box.setBgFn((text: string) => chalk.bgHex('#2d2d2d').hex('#e0e0e0')(text));
+        box.addChild(header);
+        box.addChild(list);
+
+        const handle = this.tui.showOverlay(box, {
+            width: overlayWidth,
+            maxHeight: "50%",
+            anchor: "center",
+        });
+
+        this.tui.setFocus(list);
+
+        list.onSelect = () => {
+            handle.hide();
+            this.tui.setFocus(this.inputArea.input);
         };
 
         list.onCancel = () => {

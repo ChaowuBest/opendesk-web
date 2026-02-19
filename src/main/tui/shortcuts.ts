@@ -2,7 +2,6 @@ import { type TUI, matchesKey, type KeyId } from "@mariozechner/pi-tui";
 
 export interface ShortcutEntry {
     key: KeyId;
-    description: string;
     handler: () => void | boolean;
 }
 
@@ -16,10 +15,6 @@ export class KeyboardShortcutManager {
 
     register(entry: ShortcutEntry) {
         this.shortcuts.push(entry);
-    }
-
-    unregister(key: KeyId) {
-        this.shortcuts = this.shortcuts.filter(s => s.key !== key);
     }
 
     attach(tui: TUI) {

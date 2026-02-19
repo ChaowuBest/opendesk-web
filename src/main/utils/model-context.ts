@@ -1,4 +1,88 @@
 /**
+ * 从模型对象中提取上下文窗口大小，兼容多种 API 格式：
+ * - 火山引擎 Ark: token_limits.context_window
+ * - OpenRouter: context_length
+ * - vLLM: max_model_len
+ * - 通用: context_window, max_context_length
+ */
+function extractContextSize(model: any): number {
+    if (!model) return 0;
+    const candidates = [
+        model.token_limits?.context_window,
+        model.token_limits?.max_input_token_length,
+        model.context_length,
+        model.context_window,
+        model.max_context_length,
+        model.max_model_len,
+        model.model_info?.context_length,
+        model.model_info?.context_window,
+    ];
+    for (const val of candidates) {
+        if (typeof val === 'number' && val > 0) return val;
+    }
+    return 0;
+}
+
+/**
+ * 在模型列表中查找目标模型，支持多种匹配策略：
+ * 1. id 精确匹配
+ * 2. name 精确匹配
+ * 3. id 或 name 前缀匹配（取最新的）
+ */
+function findModelInList(models: any[], modelName: string): any | undefined {
+    const norm = modelName.toLowerCase().replace(/[._]/g, '-');
+    const normId = (m: any) => (m.id ?? '').toLowerCase().replace(/[._]/g, '-');
+    const normName = (m: any) => (m.name ?? '').toLowerCase().replace(/[._]/g, '-');
+
+    return models.find((m: any) => m.id === modelName)
+        ?? models.find((m: any) => m.name === modelName)
+        ?? models.find((m: any) => normId(m) === norm)
+        ?? models.find((m: any) => normName(m) === norm)
+        ?? models
+            .filter((m: any) => {
+                const id = normId(m), name = normName(m);
+                return id.startsWith(norm) || name.startsWith(norm)
+                    || norm.startsWith(id) || norm.startsWith(name);
+            })
+            .sort((a: any, b: any) => (b.created ?? 0) - (a.created ?? 0))[0];
+}
+
+/**
+ * 尝试通过 OpenAI 兼容 API 的 /models 端点获取模型的上下文窗口大小。
+ * 失败时返回 0 表示未知。
+ */
+export async function fetchContextSizeFromAPI(modelInstance: { base_url: string; api_key: string; model_name: string }): Promise<number> {
+    const { base_url: baseUrl, api_key: apiKey, model_name: modelName } = modelInstance;
+    const headers: Record<string, string> = {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+    };
+
+    try {
+        const resp = await fetch(`${baseUrl}/models/${encodeURIComponent(modelName)}`, { headers, signal: AbortSignal.timeout(5000) });
+        if (resp.ok) {
+            const size = extractContextSize(await resp.json());
+            if (size > 0) return size;
+        }
+    } catch { /* 忽略单模型端点错误 */ }
+
+    try {
+        const resp = await fetch(`${baseUrl}/models`, { headers, signal: AbortSignal.timeout(8000) });
+        if (resp.ok) {
+            const body = await resp.json();
+            const models: any[] = body.data ?? body;
+            const match = findModelInList(models, modelName);
+            if (match) {
+                const size = extractContextSize(match);
+                if (size > 0) return size;
+            }
+        }
+    } catch { /* 忽略列表端点错误 */ }
+
+    return 0;
+}
+
+/**
  * 常见模型上下文窗口大小查找表及鲁棒匹配逻辑。
  * 当 API 无法返回上下文信息时用作兜底。
  *
@@ -66,11 +150,14 @@ const KNOWN_CONTEXT_SIZES: Record<string, number> = {
     'doubao-seed-2-0-code': 262144,
 
     // ── OpenAI ──
+    'gpt-5-2': 400000,
+    'gpt-5-3-codex': 400000,
+    'gpt-5': 272000,
     'gpt-4o': 128000,
     'gpt-4o-mini': 128000,
     'gpt-4-turbo': 128000,
     'gpt-4': 8192,
-    'gpt-4-32k': 32768,
+    'gpt-4-32k': 32768,          // 旧版，API 兼容
     'gpt-3-5-turbo': 16384,
     'gpt-3-5-turbo-16k': 16384,
     'o1': 200000,
@@ -81,6 +168,8 @@ const KNOWN_CONTEXT_SIZES: Record<string, number> = {
     'o4-mini': 200000,
 
     // ── Claude / Anthropic ──
+    'claude-4-6-opus': 200000,   // 1M 需 beta header
+    'claude-4-6-sonnet': 200000,
     'claude-4-opus': 200000,
     'claude-4-sonnet': 200000,
     'claude-3-7-sonnet': 200000,
@@ -91,6 +180,8 @@ const KNOWN_CONTEXT_SIZES: Record<string, number> = {
     'claude-3-haiku': 200000,
 
     // ── Gemini / Google ──
+    'gemini-3-pro': 1048576,
+    'gemini-3-flash': 200000,
     'gemini-2-5-flash': 1048576,
     'gemini-2-5-pro': 1048576,
     'gemini-2-0-flash': 1048576,
@@ -114,15 +205,10 @@ const KNOWN_CONTEXT_SIZES: Record<string, number> = {
     'mixtral-8x22b': 65536,
 
     // ── MiniMax ──
-    'minimax-m2-5': 1048576,
-
-    // ── Yi / 01.AI ──
-    'yi-large': 32768,
-    'yi-lightning': 16384,
-
-    // ── Internlm ──
-    'internlm3-8b': 32768,
-    'internlm2-5-20b': 32768,
+    'minimax-01': 4194304,       // 4M 开源长上下文
+    'minimax-m2-5': 204800,
+    'minimax-m2-5-highspeed': 204800,
+    'minimax-m2': 204800
 };
 
 /**

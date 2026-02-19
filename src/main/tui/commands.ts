@@ -1,8 +1,9 @@
-import type { SlashCommand as PiTuiSlashCommand, AutocompleteItem } from "@mariozechner/pi-tui";
+import type { SlashCommand as PiTuiSlashCommand, AutocompleteItem, KeyId } from "@mariozechner/pi-tui";
 
 export interface SlashCommandHandler {
     name: string;
     description: string;
+    shortcut?: KeyId;
     execute: (args: string) => void | Promise<void>;
     getArgumentCompletions?: (argPrefix: string) => AutocompleteItem[] | null;
 }
@@ -32,6 +33,15 @@ export class SlashCommandRegistry {
             description: cmd.description,
             getArgumentCompletions: cmd.getArgumentCompletions,
         }));
+    }
+
+    static formatKeyLabel(key: KeyId): string {
+        return key.split('+').map(part => {
+            if (part === 'ctrl') return 'Ctrl';
+            if (part === 'shift') return 'Shift';
+            if (part === 'alt') return 'Alt';
+            return part.toUpperCase();
+        }).join('+');
     }
 
     /**

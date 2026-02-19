@@ -76,12 +76,14 @@ export class StatusBar implements Component {
             parts.push(`模型: ${modelName}`);
         }
 
-        if (parts.length === 0) return [];
-
-        const content = ` ${parts.join('  │  ')} `;
-        const vis = visibleWidth(content);
-        const pad = Math.max(0, width - vis);
-        const line = chalk.bgHex('#3a3a3a').hex('#d4d4d4')(content + ' '.repeat(pad));
+        const leftContent = parts.length > 0 ? ` ${parts.join('  │  ')}` : '';
+        const rightHint = '/help 帮助 ';
+        const leftW = visibleWidth(leftContent);
+        const rightW = visibleWidth(rightHint);
+        const gap = Math.max(1, width - leftW - rightW);
+        const line = chalk.bgHex('#3a3a3a')(
+            chalk.hex('#d4d4d4')(leftContent) + ' '.repeat(gap) + chalk.dim(rightHint)
+        );
         return [line];
     }
 }
@@ -162,12 +164,15 @@ export class AgentInputArea implements Component {
 
     setStatus(status: AgentInputStatus) {
         this.status = status;
-        if (this.status === 'running') {
+        this.input.setText('');
+        if (this.messageQueue.length > 0) {
+            this.updateQueueHint();
+        } else if (this.status === 'running') {
             this.hintText.setText(chalk.dim('任务进行中，你仍然可以继续输入...'));
-            this.input.setText('');
         } else {
             this.hintText.setText('');
-            this.input.setText('');
+        }
+        if (this.status === 'idle') {
             this.tui.setFocus(this.input);
         }
     }
