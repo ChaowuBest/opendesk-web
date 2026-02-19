@@ -14,6 +14,15 @@ import { defaultSelectListTheme } from "./theme";
 import { logger } from "../utils/logger.js";
 import { lookupKnownContextSize, fetchContextSizeFromAPI } from "../utils/model-context";
 import chalk from "chalk";
+import { CenteredText } from "./components/texts.js";
+import { AgentDecl } from "../agents/agentdecl.js";
+import { ShellAgentDecl } from "../agents/agentdecls/shellagent.js";
+
+
+export interface CommandLineArgs {
+    workspace: string;
+    command?: string;
+}
 
 
 export class OpenDeskTUI {
@@ -33,8 +42,12 @@ export class OpenDeskTUI {
     private modelInfoResolved = false;
     private activeTaskId?: string;
 
-    constructor() {
+    private workspace: string;
+    private agentDecl: AgentDecl;
+
+    constructor(args: CommandLineArgs) {
         this.taskManagerState = GlobalState.getInstance().taskManagerState;
+        this.agentDecl = new ShellAgentDecl({ workspace: args.workspace });
 
         const terminal = new OpenDeskTerminal();
         terminal.onResize((cols, rows) => {
@@ -45,9 +58,10 @@ export class OpenDeskTUI {
         this.tui = new TUI(terminal);
         this.taskView = new TaskView(this.tui);
         this.inputArea = new AgentInputArea(this.tui);
+        this.workspace = args.workspace;
 
         this.tui.addChild(this.container);
-        this.container.addChild(new OpenDeskBanner());
+        this.container.addChild(new OpenDeskBanner(this.workspace));
         this.container.addChild(this.taskView);
         this.container.addChild(this.inputArea)
         this.container.setMinLines(this.tui.terminal.rows);
@@ -78,6 +92,10 @@ export class OpenDeskTUI {
                 });
             }
         }
+
+        if (args.command) {
+            this.onRequestSubmit(args.command);
+        }
     }
 
     private setupCommands() {
@@ -86,7 +104,7 @@ export class OpenDeskTUI {
             description: "启动新任务并发送消息",
             shortcut: Key.ctrl("n"),
             execute: async (args: string) => {
-                this.createNewTask();
+                await this.createNewTask();
                 if (args.trim()) {
                     await this.onRequestSubmit(args.trim());
                 }
@@ -113,8 +131,9 @@ export class OpenDeskTUI {
         });
     }
 
-    private createNewTask() {
+    private async createNewTask() {
         const task = this.taskManagerState.createTask();
+        await task.setSystemPrompt(this.agentDecl.createSystemPrompt());
         this.activeTaskId = task.task_id;
         this.taskView.taskState = task;
         this.taskView.clearMessages();
@@ -286,6 +305,7 @@ export class OpenDeskTUI {
     async onRequestSubmit(request: string) {
         if (this.taskView.taskState === undefined) {
             this.taskView.taskState = this.taskManagerState.createTask();
+            await this.taskView.taskState.setSystemPrompt(this.agentDecl.createSystemPrompt());
         }
 
         const taskId = this.taskView.taskState.task_id;

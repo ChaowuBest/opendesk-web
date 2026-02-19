@@ -9,18 +9,16 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { AssistantMessage } from './messages';
-
-
-class Agent {
-    execute(userMessage, chatCtx) {
-
-    }
+export interface AgentEnvironment {
+    workspace: string;
 }
 
-class BasicAgent extends Agent {
-    execute(userMessage, chatCtx) {
-        let new_msg = new AssistantMessage(userMessage.content)
-        chatCtx.appendMessage(new_msg);
+export abstract class AgentDecl {
+    protected environment: AgentEnvironment;
+
+    constructor(environment: AgentEnvironment) {
+        this.environment = environment;
     }
+
+    abstract createSystemPrompt(): string;
 }
