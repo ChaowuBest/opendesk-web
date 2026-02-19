@@ -14,7 +14,7 @@ import { Setting } from '../../utils/setting.js';
 import { FileEntrySchema, FSStorage, FileScannerMetadataSchema } from './storage.js';
 import { NotificationManager } from '../../utils/notificationmgr.js';
 import { logger } from '../../utils/logger.js';
-import { BaseWorker } from '../base.js';
+import { BaseWorker } from '../base';
 import fastGlob from 'fast-glob';
 
 

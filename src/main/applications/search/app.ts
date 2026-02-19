@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { BaseApplication } from '../base.js';
+import { BaseApplication } from '../base';
 import { BaseToolset } from '../../agents/tool';
 import { z } from 'zod';
 import { WebFetchTool } from './tools/webfetch';
@@ -19,7 +19,7 @@ import { ExaSearchTool } from './tools/exa';
 
 class SearchApplication extends BaseApplication {
     constructor() {
-        super('search', '融合搜索');
+        super('search', '融合搜索', false);
     }
 
     static getConfigSchema() {

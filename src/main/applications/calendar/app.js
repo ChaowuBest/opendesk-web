@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { BaseApplication } from "../base.js";
+import { BaseApplication } from "../base";
 import { BaseToolset, BaseTool } from "../../agents/tool";
 import { z } from 'zod';
 import { logger } from "../../utils/logger.js";

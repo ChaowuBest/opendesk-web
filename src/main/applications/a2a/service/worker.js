@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { BaseWorker } from "../../base.js";
+import { BaseWorker } from "../../base";
 import { A2ARegistryClient } from "./client.js";
 import { LLM } from "../../../agents/llm.js";
 import { ChatContext, UserMessage, AssistantMessage, FileMessagePart } from "../../../agents/messages";

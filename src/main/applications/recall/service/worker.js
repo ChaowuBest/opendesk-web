@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { BaseWorker } from "../../base.js";
+import { BaseWorker } from "../../base";
 import { logger } from '../../../utils/logger.js';
 import { Monitor, Window } from 'node-screenshots';
 import { SnapshotProcessor } from './snapshot/snapshotProcessor.js';

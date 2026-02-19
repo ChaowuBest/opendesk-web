@@ -10,46 +10,42 @@
  */
 
 import { z } from 'zod';
-import { Worker, parentPort, workerData } from 'worker_threads';
-import { logger, LogStream } from '../utils/logger.js';
+import { parentPort } from 'worker_threads';
+import { logger } from '../utils/logger.js';
 import { Setting, getAppDirectory } from '../utils/setting.js';
-import { BaseToolset } from '../agents/tool';
+import { BaseToolset } from '../agents/tool.js';
 import path from 'path';
 import fs from 'fs';
 import PQueue from 'p-queue';
 
-
 export class BaseWorker {
 
-    constructor(bundleName, appDataDirectory) {
+    bundleName: string;
+    config: object;
+    appDataDirectory: string;
+    taskQueue: PQueue;
+
+    constructor(bundleName: string, appDataDirectory: string) {
         this.bundleName = bundleName;
-        /** @type {object} */
         this.config = {};
-        /** @type {string} */
         this.appDataDirectory = appDataDirectory;
-        /** @type {boolean} */
-        this._autoListen = false;
-        /** @type {PQueue} */
         this.taskQueue = new PQueue({ concurrency: 1 });
     }
 
     /**
      * 消息处理封装，由上级Worker统一接收消息并调用
-     * @param {string} methodName
-     * @param {any[]} args
-     * @returns {Promise<any>}
      */
-    async handleMessage(methodName, ...args) {
-        if (typeof this[methodName] === "function") {
-            return await this[methodName](...args);
+    async handleMessage(methodName: string, ...args: any[]): Promise<any> {
+        if (typeof (this as any)[methodName] === "function") {
+            return await (this as any)[methodName](...args);
         } else {
             throw new Error(`unknown message ${methodName}, implement this method in the worker class`);
         }
     }
 
-    async* handleStreamMessage(methodName, ...args) {
-        if (typeof this[methodName] === "function") {
-            yield* this[methodName](...args);
+    async * handleStreamMessage(methodName: string, ...args: any[]): AsyncGenerator<any> {
+        if (typeof (this as any)[methodName] === "function") {
+            yield* (this as any)[methodName](...args);
         } else {
             throw new Error(`unknown message ${methodName}, implement this method in the worker class`);
         }
@@ -58,15 +54,15 @@ export class BaseWorker {
     /**
      * 初始化工作，各个应用的Worker需要自己继承并实现
      */
-    async initialize() { }
+    async initialize(): Promise<void> { }
 
-    async finalize() { }
+    async finalize(): Promise<void> { }
 
-    async applicationConfigChanged(config) {
+    async applicationConfigChanged(config: object): Promise<void> {
         this.config = config;
     }
 
-    async emitEvent(eventName, ...args) {
+    async emitEvent(eventName: string, ...args: any[]): Promise<void> {
         parentPort?.postMessage({
             type: 'subscribeEvent',
             bundleName: this.bundleName,
@@ -77,87 +73,85 @@ export class BaseWorker {
 
     /**
      * 顺序执行任务
-     * @param {() => Promise<void>} task
-     * @returns {Promise<void>}
      */
-    async runSequentially(task) {
+    async runSequentially(task: () => Promise<void>): Promise<void> {
         return await this.taskQueue.add(task);
     }
 }
 
+export interface ProtocolHandlerConfig {
+    scheme: string;
+    privileges?: Electron.Privileges;
+    handler: (request: Electron.ProtocolRequest) => Promise<Response> | Response;
+}
+
 export class BaseApplication {
 
-    constructor(bundleName, name = "未命名应用") {
-        /** @type {string} */
+    bundleName: string;
+    name: string;
+    /** 是否在侧边栏应用列表中显示图标，仅提供工具不提供界面的应用可设为 false */
+    showIcon: boolean;
+    eventSubscribers: Map<string, Set<Electron.WebFrameMain>>;
+    registry?: { callWorker(bundleName: string, methodName: string, ...args: any[]): Promise<any> };
+
+    constructor(bundleName: string, name: string = "未命名应用", showIcon: boolean = true) {
         this.bundleName = bundleName;
-        /** @type {string} */
         this.name = name;
-        /** @type {Map<string, Set<Electron.SenderFrame>>} */
+        this.showIcon = showIcon;
         this.eventSubscribers = new Map();
-        /** @type {ApplicationRegistry | undefined} */
         this.registry = undefined;
     }
 
     /**
      * 获取应用的工作线程类
-     * @returns {typeof BaseWorker | undefined}
      */
-    static getWorkerClass() {
+    static getWorkerClass(): typeof BaseWorker | undefined {
         return undefined;
     }
 
-    toJSON() {
+    toJSON(): { bundleName: string; name: string; showIcon: boolean } {
         return {
             bundleName: this.bundleName,
             name: this.name,
+            showIcon: this.showIcon,
         };
     }
 
     /**
      * 添加事件订阅者
-     * @param {string} eventName
-     * @param {Electron.SenderFrame} senderFrame
      */
-    addSubscriber(eventName, senderFrame) {
+    addSubscriber(eventName: string, senderFrame: Electron.WebFrameMain): void {
         if (!this.eventSubscribers.has(eventName)) {
             this.eventSubscribers.set(eventName, new Set());
         }
-        this.eventSubscribers.get(eventName).add(senderFrame);
+        this.eventSubscribers.get(eventName)!.add(senderFrame);
     }
 
     /**
      * 移除事件订阅者
-     * @param {string} eventName
-     * @param {Electron.SenderFrame} senderFrame
      */
-    removeSubscriber(eventName, senderFrame) {
+    removeSubscriber(eventName: string, senderFrame: Electron.WebFrameMain): void {
         if (this.eventSubscribers.has(eventName)) {
-            this.eventSubscribers.get(eventName).delete(senderFrame);
+            this.eventSubscribers.get(eventName)!.delete(senderFrame);
         }
     }
 
     /**
      * 获取应用的自定义协议配置，用于在应用内安全加载资源（如 ppt://）。
      * 每个应用可返回多组配置；主进程会在启动时据此注册 scheme 与 handler。
-     * @returns {Array<{ scheme: string, privileges?: import('electron').ProtocolHandlerPrivileges, handler: (request: import('electron').ProtocolRequest) => Promise<Response> | Response }>}
      */
-    getProtocolHandlers() {
+    getProtocolHandlers(): ProtocolHandlerConfig[] {
         return [];
     }
 
     /**
      * 发送事件到所有订阅者
-     * @param {string} eventName
-     * @param {any[]} args
      */
-    sendEventToSubscribers(eventName, ...args) {
+    sendEventToSubscribers(eventName: string, ...args: any[]): void {
         const subscribers = this.eventSubscribers.get(eventName);
         if (!subscribers) return;
 
-        // 使用 [...subscribers] 避免迭代时删除出错
         for (const subscriber of [...subscribers]) {
-            // Electron BrowserWindow/WebContents 都有 isDestroyed 方法
-            // 如果对象已经失效，则删除
             if (typeof subscriber.isDestroyed === 'function' && subscriber.isDestroyed()) {
                 subscribers.delete(subscriber);
                 continue;
@@ -168,44 +162,40 @@ export class BaseApplication {
 
     /**
      * 设置应用注册器
-     * @param {ApplicationRegistry} registry
      */
-    setRegistry(registry) {
+    setRegistry(registry: { callWorker(bundleName: string, methodName: string, ...args: any[]): Promise<any> }): void {
         this.registry = registry;
     }
 
     /**
      * 返回应用的配置 schema，用于在设置界面中显示和编辑配置。如果不需要配置，则返回空对象。
-     * @returns {z.ZodObject<any>}
      */
-    static getConfigSchema() {
+    static getConfigSchema(): z.ZodObject<any> {
         return z.object({});
     }
 
     /**
      * 获取应用的配置
-     * @returns {z.output<z.ZodObject<any>>}
      */
-    getConfig() {
+    getConfig(): z.output<z.ZodObject<any>> {
         return Setting.getInstance().data.applications[this.bundleName];
     }
 
     /**
      * 配置发生变化时调用
      */
-    onConfigChanged() {
+    onConfigChanged(): void {
         logger.info(`application ${this.bundleName} config changed`);
     }
 
     /**
      * 获取应用提供的工具
-     * @returns {Promise<BaseToolset[]>}
      */
-    async getToolsets() {
+    async getToolsets(): Promise<BaseToolset[]> {
         return [];
     }
 
-    async getDataDirectory() {
+    async getDataDirectory(): Promise<string> {
         let data_directory = path.join(await getAppDirectory(), 'apps', this.bundleName);
         if (!fs.existsSync(data_directory)) {
             fs.mkdirSync(data_directory, { recursive: true });
@@ -213,7 +203,7 @@ export class BaseApplication {
         return data_directory;
     }
 
-    async callWorker(methodName, ...args) {
+    async callWorker(methodName: string, ...args: any[]): Promise<any> {
         if (this.registry === undefined) {
             throw new Error(`application's registry is not configured`);
         }

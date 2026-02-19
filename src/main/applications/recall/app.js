@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { BaseApplication } from "../base.js";
+import { BaseApplication } from "../base";
 import { z } from 'zod';
 import { fileSystemService } from './service/fileSystemService.js';
 import RecallWorker from "./service/worker";

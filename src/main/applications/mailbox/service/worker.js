@@ -10,7 +10,7 @@
  */
 
 import { EmailHeader, EmailProfileSchema, MailboxConfigSchema, EmailContent, EmailAttachment } from "../common.js";
-import { BaseWorker } from "../../base.js";
+import { BaseWorker } from "../../base";
 import { logger } from '../../../utils/logger.js';
 import { NotificationManager } from "../../../utils/notificationmgr.js";
 

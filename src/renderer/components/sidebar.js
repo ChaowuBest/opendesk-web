@@ -164,7 +164,9 @@ class SideBar extends HTMLElement {
     async reloadApplicationList() {
         const app_container = this.querySelector('#app-container');
         app_container.innerHTML = '';
-        for (let app of await window.applicationRegistryAPI.getApplicationList()) {
+        const appList = await window.applicationRegistryAPI.getApplicationList();
+        for (let app of appList) {
+            if (app.showIcon === false) continue;
             const isMailbox = app.bundleName === 'mailbox';
             app_container.innerHTML += `
             <div class="flex flex-col items-center group cursor-pointer relative" onclick="window.globalControlAPI.openApplication('${app.bundleName}')" data-bundle-name="${app.bundleName}">

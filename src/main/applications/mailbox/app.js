@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { BaseApplication } from "../base.js";
+import { BaseApplication } from "../base";
 import { MailboxConfigSchema } from "./common.js"; // 引入新的 Schema
 import { logger } from "../../utils/logger.js";
 import MailboxWorker from "./service/worker";

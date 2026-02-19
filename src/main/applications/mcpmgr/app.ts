@@ -1,4 +1,4 @@
-import { BaseApplication } from "../base.js";
+import { BaseApplication } from "../base";
 import { BaseTool, BaseToolset } from "../../agents/tool";
 import { z } from 'zod';
 import { Setting } from '../../utils/setting.js';
