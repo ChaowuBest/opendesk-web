@@ -15,12 +15,16 @@ import { UserMessage, ChatContext } from '../../agents/messages';
 import { Setting } from '../../utils/setting.js';
 import { IntentRegistry } from './intents.js';
 import { z } from 'zod';
-import pkg from 'lodash';
-
-const _ = pkg;
 
 
-const INTENT_PARSING_PROMPT = _.template(`
+function buildIntentParsingPrompt(intents) {
+    const intentList = intents.map(intent =>
+        `- 意图名称: ${intent.name}\n` +
+        `  * 意图描述: ${intent.description}\n` +
+        `  * 意图的输入参数Schema: ${JSON.stringify(z.toJSONSchema(intent.params))}`
+    ).join('\n');
+
+    return `
 你是一个熟悉手机和电脑操作的，善解人意的智能体，总是用中文回答用户的问题。
 
 你需要通过用户给定的设备截图，来猜测用户接下来可能需要你帮忙执行的任务（我们称之为意图）。
@@ -28,24 +32,21 @@ const INTENT_PARSING_PROMPT = _.template(`
 
 ## 当前系统中已经支持的可以执行的意图
 
-<% _.forEach(intents, (intent) => { %>
-- 意图名称: <%= intent.name %>
-  * 意图描述: <%= intent.description %>
-  * 意图的输入参数Schema: <%= JSON.stringify(z.toJSONSchema(intent.params)) %>
-<% }); %>
+${intentList}
 
 ## 返回格式
 
 你的返回格式应该为JSON格式的数组，表示所有可能的意图。这些意图需要按照可能性由大到小排序，
 数组中的每个元素应当符合下面的格式:
 
-    {{
+    {
         "name": <意图的名称>,
         "reasoning": <简短描述该意图与当前屏幕内容相关的原因，使用自然轻快的语气>,
         "confidence": <该意图的置信度，也就是可能性评分，范围从0到1>,
         "params": <意图的参数，需要与该意图的输入参数Schema匹配>
-    }}
-`, { imports: { z } })
+    }
+`;
+}
 
 class IntentInstance {
     /**
@@ -104,7 +105,7 @@ class IntentParser {
 
     static getScreenParsingPrompt() {
         let intents = IntentRegistry.getInstance().getIntents()
-        let prompt = INTENT_PARSING_PROMPT({ intents: intents })
+        let prompt = buildIntentParsingPrompt(intents)
         // console.info(prompt)
         return prompt
     }

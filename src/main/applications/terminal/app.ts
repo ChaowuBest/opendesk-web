@@ -10,13 +10,13 @@
  */
 
 import { BaseToolset } from "../../agents/tool";
-import { BaseApplication } from "../base.js";
+import { BaseApplication } from "../base";
 import { ExecuteCmdTool, ExecuteBashTool, WriteFileTool, ReadFileTool, ExecuteZshTool } from "./tools.js";
 
 
 export class TerminalApplication extends BaseApplication {
     constructor() {
-        super('terminal', '终端');
+        super('terminal', '终端', false);
     }
 
     async getToolsets(): Promise<BaseToolset[]> {

@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { BaseApplication } from '../base.js';
+import { BaseApplication } from '../base';
 import { z } from 'zod';
 import path from 'path';
 import { SkillRegistry } from './skillregistry.js';

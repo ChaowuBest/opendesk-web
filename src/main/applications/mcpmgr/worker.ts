@@ -1,4 +1,4 @@
-import { BaseWorker } from "../base.js";
+import { BaseWorker } from "../base";
 import { logger } from '../../utils/logger.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';

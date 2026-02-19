@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { BaseWorker } from "../../base.js";
+import { BaseWorker } from "../../base";
 import { logger } from "../../../utils/logger.js";
 import { OutlookUtils } from "../../../utils/outlook.js";
 import { CalendarItemSchema } from "../common.js";

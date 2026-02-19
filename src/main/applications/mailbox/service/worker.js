@@ -10,7 +10,7 @@
  */
 
 import { EmailHeader, EmailProfileSchema, MailboxConfigSchema, EmailContent, EmailAttachment } from "../common.js";
-import { BaseWorker } from "../../base.js";
+import { BaseWorker } from "../../base";
 import { logger } from '../../../utils/logger.js';
 import { NotificationManager } from "../../../utils/notificationmgr.js";
 
@@ -22,9 +22,6 @@ import nedb from 'nedb-promises';
 import path from 'path';
 import pMap from 'p-map';
 import { simpleParser } from "mailparser";
-import pkg from 'lodash';
-
-const _ = pkg;
 
 var mailboxDataDirectory = null;
 

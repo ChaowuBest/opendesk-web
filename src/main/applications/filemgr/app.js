@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { BaseApplication } from "../base.js";
+import { BaseApplication } from "../base";
 import { BaseTool, BaseToolset } from "../../agents/tool";
 import { FSEntrySchema } from './setting.js';
 import open from 'open';

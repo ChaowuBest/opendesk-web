@@ -28,8 +28,8 @@ const requireShimPlugin: esbuild.Plugin = {
                 const __createRequire = createRequire(import.meta.url);
                 `;
                 const replaced = text.replace(
-                    /if \(typeof require !== "undefined"\) return require\.apply\(this, arguments\);\s*throw Error\('Dynamic require of "' \+ (\w+) \+ '" is not supported'\);/,
-                    'return __createRequire($1);'
+                    /if\s*\(typeof require\s*(?:!==\s*"undefined"|<"u")\s*\)\s*return require\.apply\(this,\s*arguments\)\s*;\s*throw\s+Error\(\s*'Dynamic require of "'\s*\+\s*(\w+)\s*\+\s*'" is not supported'\s*\)/,
+                    'return __createRequire($1)'
                 );
                 if (replaced !== text) {
                     text = replaced.startsWith('import { createRequire }') ? replaced : shim + replaced;
@@ -48,8 +48,11 @@ const config: esbuild.BuildOptions = {
     entryPoints: ['src/main/cli.ts'],
     bundle: true,
     platform: 'node',
+    target: 'node20',
     format: 'esm',
     outfile,
+    minify: true,
+    treeShaking: true,
     external: ['node-screenshots', 'vectra', 'number-to-alphabet'],
     plugins: [requireShimPlugin],
 };

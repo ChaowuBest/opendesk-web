@@ -10,7 +10,7 @@
  */
 
 import { BaseToolset } from "../agents/tool";
-import { BaseApplication } from "./base.js";
+import { BaseApplication } from "./base";
 import { SkillRegistry } from "./skills/skillregistry.js";
 import { Setting, getAppDirectory } from "../utils/setting.js";
 import { logger, LogStream } from "../utils/logger.js";
