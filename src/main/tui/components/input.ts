@@ -185,10 +185,18 @@ export class AgentInputArea implements Component {
             const preview = this.messageQueue[0].length > 60
                 ? this.messageQueue[0].slice(0, 57) + '...'
                 : this.messageQueue[0];
-            this.hintText.setText(chalk.yellow(`📨 待发送: ${preview}`));
+            this.hintText.setText(chalk.yellow(`📨 待发送: ${preview} (输入 /cancel 撤销)`));
         } else {
-            this.hintText.setText(chalk.yellow(`📨 ${len} 条消息待发送`));
+            this.hintText.setText(chalk.yellow(`📨 ${len} 条消息待发送 (输入 /cancel 撤销)`));
         }
+    }
+
+    /**
+     * 清空消息队列中的所有待发送消息
+     */
+    clearMessageQueue(): void {
+        this.messageQueue = [];
+        this.updateQueueHint();
     }
 
     /**

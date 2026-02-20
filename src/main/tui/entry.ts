@@ -139,6 +139,12 @@ export class OpenDeskTUI {
             description: "退出 OpenDesk",
             execute: async () => { await this.exit(); },
         });
+
+        this.commandRegistry.register({
+            name: "cancel",
+            description: "撤销消息队列中的所有待发送消息",
+            execute: async () => { this.inputArea.clearMessageQueue(); },
+        });
     }
 
     private async createNewTask() {
