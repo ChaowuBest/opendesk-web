@@ -22,6 +22,7 @@ import { ShellAgentDecl } from "../agents/agentdecls/shellagent.js";
 export interface CommandLineArgs {
     workspace: string;
     command?: string;
+    model?: string;
 }
 
 
@@ -44,6 +45,13 @@ export class OpenDeskTUI {
 
     private workspace: string;
     private agentDecl: AgentDecl;
+    private model?: string;
+
+    /**
+     * 如果在命令行中给了-c参数，就用singleShot模式执行，第一轮补全后就自动退出.
+     * todo: 这个地方未来可以考虑用LLM来判断任务是不是已经完成了还是需要后续的互动 ;)
+     */
+    private singleShot?: boolean;
 
     constructor(args: CommandLineArgs) {
         this.taskManagerState = GlobalState.getInstance().taskManagerState;
@@ -59,6 +67,8 @@ export class OpenDeskTUI {
         this.taskView = new TaskView(this.tui);
         this.inputArea = new AgentInputArea(this.tui);
         this.workspace = args.workspace;
+        this.model = args.model;
+        this.singleShot = !!args.command;
 
         this.tui.addChild(this.container);
         this.container.addChild(new OpenDeskBanner(this.workspace));
@@ -132,7 +142,7 @@ export class OpenDeskTUI {
     }
 
     private async createNewTask() {
-        const task = this.taskManagerState.createTask();
+        const task = this.taskManagerState.createTask(this.model);
         await task.setSystemPrompt(this.agentDecl.createSystemPrompt());
         this.activeTaskId = task.task_id;
         this.taskView.taskState = task;
@@ -304,7 +314,7 @@ export class OpenDeskTUI {
 
     async onRequestSubmit(request: string) {
         if (this.taskView.taskState === undefined) {
-            this.taskView.taskState = this.taskManagerState.createTask();
+            this.taskView.taskState = this.taskManagerState.createTask(this.model);
             await this.taskView.taskState.setSystemPrompt(this.agentDecl.createSystemPrompt());
         }
 
@@ -314,11 +324,16 @@ export class OpenDeskTUI {
         this.resolveModelInfo();
         this.inputArea.statusBar.startTimer();
 
-        await this.taskView.communicate(request).finally(() => {
+        await this.taskView.communicate(request).finally(async () => {
             if (this.activeTaskId === taskId) {
                 this.inputArea.statusBar.stopTimer();
                 this.inputArea.setStatus('idle');
                 this.processQueue();
+
+                // 如果使用了 -c 参数，在任务完成后退出
+                if (this.singleShot) {
+                    await this.exit();
+                }
             }
         });
     }
@@ -334,9 +349,9 @@ export class OpenDeskTUI {
         try {
             const setting = Setting.getInstance();
             const data = setting.getData() as any;
-            const defaultAlias = data.default_model;
-            const modelCfg = data.models?.find((m: any) => m.alias === defaultAlias);
-            const modelName = modelCfg?.model_name ?? defaultAlias;
+            const aliasToUse = this.model || data.default_model;
+            const modelCfg = data.models?.find((m: any) => m.alias === aliasToUse);
+            const modelName = modelCfg?.model_name ?? aliasToUse;
 
             this.inputArea.statusBar.update({ modelName });
 

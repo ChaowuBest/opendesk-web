@@ -64,6 +64,7 @@ export class TaskState {
     chat_context: ChatContext = new ChatContext();
     subscribers: BaseTaskUpdateSubscriber[] = [];
     task_manager_state: TaskManagerState;
+    model?: string;
 
     constructor (task_manager_state: TaskManagerState) {
         this.task_manager_state = task_manager_state;
@@ -235,7 +236,7 @@ export class TaskState {
             return;
         }
 
-        for await (const chunk_resp of LLM.streamComplete(this.chat_context)) {
+        for await (const chunk_resp of LLM.streamComplete(this.chat_context, this.model)) {
             // 检查是否已停止
             if (this.task_status === 'stopped') {
                 logger.info(`task ${this.task_id} completion interrupted by stop request`);
@@ -491,8 +492,11 @@ export class TaskManagerState {
      * Create a task from user request
      * @returns the created task
      */
-    createTask(): TaskState {
+    createTask(model?: string): TaskState {
         const task = new TaskState(this);
+        if (model) {
+            task.model = model;
+        }
         logger.info('task created', task.task_id)
         this.tasks.push(task);
         this.publishTaskListUpdate();
