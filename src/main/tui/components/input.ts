@@ -103,9 +103,11 @@ export class AgentInputArea implements Component {
     private status: AgentInputStatus = 'idle';
     private hintText: Text = new Text('');
 
+    private currentTaskId?: string;
     private messageQueue: string[] = [];
     private submitCallback?: (text: string) => void;
     private commandRegistry?: SlashCommandRegistry;
+    private onQueueChange?: (queue: string[]) => void;
 
     constructor(tui: TUI) {
         this.tui = tui;
@@ -154,12 +156,29 @@ export class AgentInputArea implements Component {
         if (this.status === 'running') {
             this.messageQueue.push(text);
             this.updateQueueHint();
+            this.notifyQueueChange();
             this.input.setText('');
             return;
         }
 
         this.setStatus('running');
         this.submitCallback?.(text);
+    }
+
+    /**
+     * 设置队列变化回调
+     */
+    setOnQueueChange(callback: (queue: string[]) => void) {
+        this.onQueueChange = callback;
+    }
+
+    /**
+     * 通知队列变化
+     */
+    private notifyQueueChange() {
+        if (this.onQueueChange) {
+            this.onQueueChange(this.getQueueSnapshot());
+        }
     }
 
     setStatus(status: AgentInputStatus) {
@@ -194,9 +213,12 @@ export class AgentInputArea implements Component {
     /**
      * 清空消息队列中的所有待发送消息
      */
-    clearMessageQueue(): void {
+    clearMessageQueue(): string[] {
+        const oldQueue = [...this.messageQueue];
         this.messageQueue = [];
         this.updateQueueHint();
+        this.notifyQueueChange();
+        return oldQueue;
     }
 
     /**
@@ -205,11 +227,37 @@ export class AgentInputArea implements Component {
     dequeueMessage(): string | undefined {
         const msg = this.messageQueue.shift();
         this.updateQueueHint();
+        this.notifyQueueChange();
         return msg;
     }
 
     hasQueuedMessages(): boolean {
         return this.messageQueue.length > 0;
+    }
+
+    /**
+     * 绑定到特定任务的队列
+     */
+    bindToTaskQueue(taskId: string, queue: string[]) {
+        this.currentTaskId = taskId;
+        this.messageQueue = [...queue];
+        this.updateQueueHint();
+    }
+
+    /**
+     * 获取当前队列的副本（用于保存）
+     */
+    getQueueSnapshot(): string[] {
+        return [...this.messageQueue];
+    }
+
+    /**
+     * 解除当前任务的绑定
+     */
+    unbindTaskQueue(): void {
+        this.currentTaskId = undefined;
+        this.messageQueue = [];
+        this.updateQueueHint();
     }
 
     invalidate() {

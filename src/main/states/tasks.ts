@@ -65,6 +65,7 @@ export class TaskState {
     subscribers: BaseTaskUpdateSubscriber[] = [];
     task_manager_state: TaskManagerState;
     model?: string;
+    message_queue: string[] = [];
 
     constructor (task_manager_state: TaskManagerState) {
         this.task_manager_state = task_manager_state;

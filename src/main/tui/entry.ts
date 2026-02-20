@@ -79,6 +79,16 @@ export class OpenDeskTUI {
 
         this.inputArea.onSubmit(this.onRequestSubmit.bind(this));
 
+        // 当队列变化时，更新当前任务的队列
+        this.inputArea.setOnQueueChange((queue) => {
+            if (this.activeTaskId) {
+                const currentTask = this.taskManagerState.getTask(this.activeTaskId);
+                if (currentTask) {
+                    currentTask.message_queue = [...queue];
+                }
+            }
+        });
+
         // StatusBar: 只接受当前活跃任务的 token 数据
         this.taskView.onStatusBarUpdate = (data) => {
             if (this.taskView.taskState &&
@@ -143,16 +153,35 @@ export class OpenDeskTUI {
         this.commandRegistry.register({
             name: "cancel",
             description: "撤销消息队列中的所有待发送消息",
-            execute: async () => { this.inputArea.clearMessageQueue(); },
+            execute: async () => {
+                this.inputArea.clearMessageQueue();
+                // 同时更新当前任务的队列
+                if (this.activeTaskId) {
+                    const currentTask = this.taskManagerState.getTask(this.activeTaskId);
+                    if (currentTask) {
+                        currentTask.message_queue = this.inputArea.getQueueSnapshot();
+                    }
+                }
+            },
         });
     }
 
     private async createNewTask() {
+        // 保存当前任务的队列（如果有）
+        if (this.activeTaskId) {
+            const currentTask = this.taskManagerState.getTask(this.activeTaskId);
+            if (currentTask) {
+                currentTask.message_queue = this.inputArea.getQueueSnapshot();
+            }
+        }
+
         const task = this.taskManagerState.createTask(this.model);
         await task.setSystemPrompt(this.agentDecl.createSystemPrompt());
         this.activeTaskId = task.task_id;
         this.taskView.taskState = task;
         this.taskView.clearMessages();
+        // 绑定到新任务的队列（应该是空的）
+        this.inputArea.bindToTaskQueue(task.task_id, task.message_queue);
         this.inputArea.setStatus('idle');
         this.inputArea.statusBar.stopTimer();
         this.inputArea.statusBar.update({ elapsedMs: 0, totalTokens: 0 });
@@ -262,9 +291,19 @@ export class OpenDeskTUI {
     }
 
     private switchToTask(task: TaskState) {
+        // 保存当前任务的队列（如果有）
+        if (this.activeTaskId) {
+            const currentTask = this.taskManagerState.getTask(this.activeTaskId);
+            if (currentTask) {
+                currentTask.message_queue = this.inputArea.getQueueSnapshot();
+            }
+        }
+
         this.activeTaskId = task.task_id;
         this.taskView.taskState = task;
         this.taskView.clearMessages();
+        // 绑定到新任务的队列
+        this.inputArea.bindToTaskQueue(task.task_id, task.message_queue);
         this.inputArea.statusBar.stopTimer();
         this.inputArea.statusBar.update({ elapsedMs: 0, totalTokens: 0 });
         this.taskView.rebuildFromHistory();
@@ -289,6 +328,7 @@ export class OpenDeskTUI {
 
         const snapshotTaskId = task.task_id;
         task.waitUntilFinished(async (chunkUpdate: TaskUpdateChunk) => {
+            // 只有当前任务仍然是活跃任务时才更新视图
             if (this.activeTaskId !== snapshotTaskId) return;
             lastView.update(chunkUpdate);
             if (chunkUpdate.usage) {
@@ -322,6 +362,8 @@ export class OpenDeskTUI {
         if (this.taskView.taskState === undefined) {
             this.taskView.taskState = this.taskManagerState.createTask(this.model);
             await this.taskView.taskState.setSystemPrompt(this.agentDecl.createSystemPrompt());
+            // 绑定到新任务的队列
+            this.inputArea.bindToTaskQueue(this.taskView.taskState.task_id, this.taskView.taskState.message_queue);
         }
 
         const taskId = this.taskView.taskState.task_id;
@@ -382,8 +424,20 @@ export class OpenDeskTUI {
     private async processQueue() {
         const taskId = this.activeTaskId;
         while (this.inputArea.hasQueuedMessages() && this.activeTaskId === taskId) {
+            // 每次出队后更新任务的队列
+            const currentTask = this.taskManagerState.getTask(taskId!);
+            if (currentTask) {
+                currentTask.message_queue = this.inputArea.getQueueSnapshot();
+            }
+
             const next = this.inputArea.dequeueMessage();
             if (!next) break;
+
+            // 再次更新队列
+            if (currentTask) {
+                currentTask.message_queue = this.inputArea.getQueueSnapshot();
+            }
+
             this.inputArea.setStatus('running');
             this.inputArea.statusBar.startTimer();
             await this.taskView.communicate(next).finally(() => {
