@@ -655,6 +655,7 @@ export class AssistantMessage {
                             } else {
                                 toolCallMsg.content = `Toolcall failed: unfinished tool call`;
                             }
+                            messages.push(toolCallMsg);
                         }
                     }
                     break;
