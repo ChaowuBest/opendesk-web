@@ -211,13 +211,7 @@ export class ToolCallMessagePart {
         if (hasValidId) {
             this.toolcalls.push(toolcall);
         } else {
-            let target = undefined;
-            for (let i = this.toolcalls.length - 1; i >= 0; i--) {
-                if (this.toolcalls[i].index === toolcall.index) {
-                    target = this.toolcalls[i];
-                    break;
-                }
-            }
+            const target = this.toolcalls.find(tc => tc.index === toolcall.index);
             if (target === undefined) {
                 this.toolcalls.push(toolcall);
             } else {
@@ -661,6 +655,7 @@ export class AssistantMessage {
                             } else {
                                 toolCallMsg.content = `Toolcall failed: unfinished tool call`;
                             }
+                            messages.push(toolCallMsg);
                         }
                     }
                     break;
