@@ -1,6 +1,7 @@
 import { Box, Component, Text, Editor, TUI, CombinedAutocompleteProvider } from "@mariozechner/pi-tui";
 import { defaultEditorTheme } from "../theme";
 import { SlashCommandRegistry } from "../commands";
+import type { OpenDeskTUI } from "../entry";
 import chalk from "chalk";
 import { visibleWidth } from "@mariozechner/pi-tui";
 
@@ -109,6 +110,9 @@ export class AgentInputArea implements Component {
     private commandRegistry?: SlashCommandRegistry;
     private onQueueChange?: (queue: string[]) => void;
 
+    /** 宿主引用，用于查询是否有 overlay 打开 */
+    private host?: OpenDeskTUI;
+
     constructor(tui: TUI) {
         this.tui = tui;
         this.layout = new Box(0, 0);
@@ -191,9 +195,17 @@ export class AgentInputArea implements Component {
         } else {
             this.hintText.setText('');
         }
-        if (this.status === 'idle') {
+        // 只有在没有 overlay 打开时才设置焦点
+        if (this.status === 'idle' && !this.host?.hasOpenOverlay) {
             this.tui.setFocus(this.input);
         }
+    }
+
+    /**
+     * 设置宿主引用
+     */
+    setHost(host: OpenDeskTUI) {
+        this.host = host;
     }
 
     private updateQueueHint() {

@@ -43,6 +43,9 @@ export class OpenDeskTUI {
     private modelInfoResolved = false;
     private activeTaskId?: string;
 
+    /** 跟踪是否有 overlay 打开 */
+    hasOpenOverlay = false;
+
     private workspace: string;
     private agentDecl: AgentDecl;
     private model?: string;
@@ -76,6 +79,9 @@ export class OpenDeskTUI {
         this.container.addChild(this.inputArea)
         this.container.setMinLines(this.tui.terminal.rows);
         this.container.setVerticalAlign("center");
+
+        // 设置宿主引用
+        this.inputArea.setHost(this);
 
         this.inputArea.onSubmit(this.onRequestSubmit.bind(this));
 
@@ -231,10 +237,15 @@ export class OpenDeskTUI {
             anchor: "center",
         });
 
+        // 标记有 overlay 打开
+        this.hasOpenOverlay = true;
+
         this.tui.setFocus(list);
 
         list.onSelect = (item) => {
             handle.hide();
+            // 标记 overlay 关闭
+            this.hasOpenOverlay = false;
             this.tui.setFocus(this.inputArea.input);
             const task = this.taskManagerState.getTask(item.value);
             if (task) {
@@ -244,6 +255,8 @@ export class OpenDeskTUI {
 
         list.onCancel = () => {
             handle.hide();
+            // 标记 overlay 关闭
+            this.hasOpenOverlay = false;
             this.tui.setFocus(this.inputArea.input);
         };
     }
@@ -277,15 +290,22 @@ export class OpenDeskTUI {
             anchor: "center",
         });
 
+        // 标记有 overlay 打开
+        this.hasOpenOverlay = true;
+
         this.tui.setFocus(list);
 
         list.onSelect = () => {
             handle.hide();
+            // 标记 overlay 关闭
+            this.hasOpenOverlay = false;
             this.tui.setFocus(this.inputArea.input);
         };
 
         list.onCancel = () => {
             handle.hide();
+            // 标记 overlay 关闭
+            this.hasOpenOverlay = false;
             this.tui.setFocus(this.inputArea.input);
         };
     }
