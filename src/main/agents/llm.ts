@@ -299,22 +299,32 @@ class LLM {
 
     /**
      * 将 ChatContext 中的消息序列转换为 OpenAI API 所需的 messages 数组。
-     * 跳过空内容的 AssistantMessage，并将 tool call 结果展开为独立消息。
+     * 对于 AssistantMessage，会调用其 toOpenAIMessages() 方法进行拆分，
+     * 以保持 reasoning、tool_call、text 的正确顺序。
      */
     static buildMessages(chatContext: ChatContext): object[] {
         const messages: object[] = [];
+
+        // 添加 system prompt
         if (chatContext.system_prompt !== undefined) {
             messages.push(chatContext.system_prompt.toOpenAIMessage());
         }
+
+        // 处理每条消息
         for (const message of chatContext.messages) {
-            if (message instanceof AssistantMessage && message.content.length === 0) {
-                continue;
-            }
-            messages.push(message.toOpenAIMessage());
             if (message instanceof AssistantMessage) {
-                messages.push(...message.getOpenAIToolMessages());
+                // 跳过空内容的 AssistantMessage
+                if (message.content.length === 0) {
+                    continue;
+                }
+                // 使用 toOpenAIMessages() 拆分 AssistantMessage
+                messages.push(...message.toOpenAIMessages());
+            } else {
+                // UserMessage 或其他消息类型直接添加
+                messages.push(message.toOpenAIMessage());
             }
         }
+
         return messages;
     }
 

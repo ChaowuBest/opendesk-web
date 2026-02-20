@@ -262,7 +262,7 @@ export class ToolCallMessagePart {
         return this.rendered;
     }
 
-    static assign(tool_call_message_part_obj) {
+    static assign(tool_call_message_part_obj: any) {
         Object.setPrototypeOf(tool_call_message_part_obj, ToolCallMessagePart.prototype);
         for (let toolcall of tool_call_message_part_obj.toolcalls) {
             ToolCall.assign(toolcall)
@@ -598,34 +598,76 @@ export class AssistantMessage {
         return this;
     }
 
-    toOpenAIMessage(): object {
-        var content: object[] = [];
-        var toolcalls: object[] = [];
-        for (let part of this.content) {
+    /**
+     * 将 AssistantMessage 拆分为多个 OpenAI 消息，以保持 reasoning、tool_call、text 的正确顺序。
+     *
+     * 消息拆分规则：
+     * - reasoning 累积后，遇到 tool_call 或消息结束才输出
+     * - tool_call 独立输出为 assistant 消息，后跟 tool 响应消息
+     * - text 累积后，在消息结束时输出
+     * - 如果 reasoning 和 text 都有，合并到同一个 assistant 消息中
+     *
+     * @returns OpenAI 消息数组
+     */
+    toOpenAIMessages(): object[] {
+        const messages: object[] = [];
+
+        // 拆分 AssistantMessage：处理交错出现的 reasoning、tool_call、text
+        let currentReasoning = '';
+        let currentText = '';
+
+        const processCurrentMessage = () => {
+            currentReasoning = currentReasoning.trim();
+            currentText = currentText.trim();
+            if (currentText.length === 0 && currentReasoning.length === 0) {
+                return;
+            }
+            var message: any = { 'role': 'assistant' };
+            if (currentReasoning.length > 0) {
+                message.reasoning_content = currentReasoning;
+            }
+            if (currentText.length > 0) {
+                message.content = [{ type: 'text', text: currentText }]
+            }
+            currentReasoning = '';
+            currentText = '';
+            messages.push(message);
+        }
+
+        for (const part of this.content) {
             switch (part.type) {
-                case 'reasoning':
+                case 'reasoning': {
+                    currentReasoning += part.content;
                     break;
-                case 'tool_call':
-                    toolcalls.push(...part.toOpenAIToolCalls());
-                    break;
-                case 'text':
-                    let openai_part = part.toOpenAIMessagePart();
-                    if (Array.isArray(openai_part)) {
-                        content.push(...openai_part);
-                    } else {
-                        content.push(openai_part);
+                }
+                case 'tool_call': {
+                    processCurrentMessage();
+                    // 输出 tool_call 消息
+                    const toolCalls = part.toOpenAIToolCalls();
+                    if (toolCalls.length > 0) {
+                        messages.push({ role: 'assistant', tool_calls: toolCalls });
+                        for (const toolcall of part.toolcalls) {
+                            let toolCallMsg: any  = { 'role': 'tool', tool_call_id: toolcall.id }
+                            if (toolcall.status === 'error') {
+                                toolCallMsg.content = `Toolcall failed: ${toolcall.result}`;
+                            } else if (toolcall.status === 'success') {
+                                toolCallMsg.content = toolcall.result ?? '工具调用成功完成';
+                            } else {
+                                toolCallMsg.content = `Toolcall failed: unfinished tool call`;
+                            }
+                        }
                     }
                     break;
+                }
+                case 'text': {
+                    currentText += part.text;
+                    break;
+                }
             }
         }
-        const message: Record<string, any> = {
-            role: this.role,
-            content: content.length > 0 ? content : "",
-        };
-        if (toolcalls.length > 0) {
-            message.tool_calls = toolcalls;
-        }
-        return message;
+
+        processCurrentMessage();
+        return messages;
     }
 
     getOpenAIToolMessages(): object[] {
@@ -653,7 +695,7 @@ export class AssistantMessage {
         return messages;
     }
 
-    static parseOpenAIMessage(openai_message: object): AssistantMessage {
+    static parseOpenAIMessage(openai_message: any): AssistantMessage {
         var message = new AssistantMessage();
 
         const reasoning_content = openai_message['reasoning_content'];
@@ -699,7 +741,7 @@ export class AssistantResponse {
         return response;
     }
 
-    static parseOpenAIResponse(openai_response: object): AssistantResponse {
+    static parseOpenAIResponse(openai_response: any): AssistantResponse {
         const choices = openai_response['choices'];
         const choice = choices && choices.length > 0 ? choices[0] : undefined;
         let response: AssistantResponse;
@@ -779,7 +821,7 @@ export class ChatContext {
     /**
      * Assign the prototype of the given object to the ChatContext prototype
      */
-    static assign(chat_context_obj: object): ChatContext {
+    static assign(chat_context_obj: any): ChatContext {
         let ctx = new ChatContext();
         const system_prompt = chat_context_obj['system_prompt'];
         if (system_prompt !== undefined) {
