@@ -9,7 +9,16 @@
  * See the Mulan PSL v2 for more details.
  */
 
-class AIKernel {
-    constructor() {
+export interface AgentEnvironment {
+    workspace: string;
+}
+
+export abstract class AgentDecl {
+    protected environment: AgentEnvironment;
+
+    constructor(environment: AgentEnvironment) {
+        this.environment = environment;
     }
+
+    abstract createSystemPrompt(): string;
 }

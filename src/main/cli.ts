@@ -17,12 +17,52 @@ import { initializeRegistry, initializeRegistryWorker } from './applications/reg
 import { initializeAppWorkers } from './applications/worker';
 import { GlobalState } from './states/global.js';
 import { FULL_CLEAR } from './tui/components/constants';
-import { OpenDeskTUI } from './tui/entry.js';
+import { OpenDeskTUI, CommandLineArgs } from './tui/entry.js';
+import { Setting } from './utils/setting';
+import { program as prog } from 'commander';
 
 import process from 'process';
+import path from 'path';
+import fs from 'fs';
 
+function parseCommandLineArgs() {
+    prog.name('opendesk');
+    prog.argument('[workspace]', 'the workspace to open', v => v, ".");
+    prog.option('--model <alias>', 'model alias to use', v => v);
+    prog.option('-c, --command <command>', 'the command to execute', v => v);
+    prog.option('-v, --version', 'print the version');
+    prog.action((workspace, kwargs) => {
+        const workspacePath = path.resolve(workspace);
+        if (!fs.existsSync(workspacePath)) {
+            console.error(`[error] workspace ${workspacePath} does not exist`);
+            process.exit(1);
+        }
 
-function main() {
+        // 验证模型别名合法性
+        if (kwargs.model) {
+            try {
+                const setting = Setting.getInstance();
+                const modelInstance = setting.getModelInstance(kwargs.model);
+                if (!modelInstance) {
+                    console.error(`[error] model alias '${kwargs.model}' not found`);
+                    process.exit(1);
+                }
+            } catch (err) {
+                console.error(`[error] invalid model alias '${kwargs.model}': ${err.message}`);
+                process.exit(1);
+            }
+        }
+
+        main({
+            workspace: workspacePath,
+            command: kwargs.command,
+            model: kwargs.model,
+        })
+    });
+    return prog.parse();
+}
+
+function main(args: CommandLineArgs) {
     setPlatform(new CliPlatform());
     useCliTransport();
 
@@ -35,7 +75,7 @@ function main() {
             process.stdout.write(FULL_CLEAR);
         }
 
-        const tui = new OpenDeskTUI();
+        const tui = new OpenDeskTUI(args);
         tui.start();
 
         initializeRegistry();
@@ -43,4 +83,4 @@ function main() {
     }
 }
 
-main();
+parseCommandLineArgs();

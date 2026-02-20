@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { Component, Text } from "@mariozechner/pi-tui";
+import { Box, Component, Text } from "@mariozechner/pi-tui";
 import { HorizontalLayout } from "./components/layout";
 import { CenteredText } from "./components/texts";
 import chalk from "chalk";
@@ -93,17 +93,22 @@ function horizentalMerge(...pieces: string[]): string {
 }
 
 export class OpenDeskBanner implements Component {
+    private workspace: string;
+    private layout: Box = new Box(0, 0);
 
-    private layout: HorizontalLayout = new HorizontalLayout({
+    private logo: HorizontalLayout = new HorizontalLayout({
         spacing: 1,
         padding: { left: 1, right: 1 },
     });
 
-    constructor() {
-        this.layout.addChild(new CenteredText(horizentalMerge(
+    constructor(workspace: string) {
+        this.logo.addChild(new CenteredText(horizentalMerge(
             Creators.O(), Creators.PEN(),
             Creators.D(), Creators.ESK()
         )));
+        this.workspace = workspace;
+        this.layout.addChild(this.logo);
+        this.layout.addChild(new CenteredText(this.workspace));
     }
 
     invalidate() {

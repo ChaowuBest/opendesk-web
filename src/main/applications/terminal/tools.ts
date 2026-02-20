@@ -375,6 +375,9 @@ export class ReadFileTool extends BaseTool<typeof readFileSchema> {
 
 const writeFileSchema = z.object({
     path: z.string().describe('要写入的文件路径'),
+    mode: z.enum(['append', 'overwrite'])
+        .default('overwrite')
+        .describe('写入模式(append - 在原有内容基础上追加, overwrite - 覆盖原有内容)，默认为覆盖原有内容'),
     content: z.string().describe('要写入的文件内容')
 });
 
@@ -432,7 +435,7 @@ export class WriteFileTool extends BaseTool<typeof writeFileSchema> {
     constructor() {
         super(
             'writeFile',
-            '将文件内容写入执行的路径',
+            '将文件内容写入给定的文件路径中，支持覆盖模式与追加模式, 默认为覆盖模式',
             writeFileSchema
         );
 
@@ -464,17 +467,28 @@ export class WriteFileTool extends BaseTool<typeof writeFileSchema> {
             body.push(chalk.dim('  ⏳ 等待内容…'));
         }
 
-        return new Card({ icon: '✏️', title: '写入文件', status: statusDisplay(toolcall.status), body }).render(width);
+        const mode = toolcall.args_object?.['mode'];
+        const title = '写入文件' + (mode === 'append' ? ' (追加)' : '');
+        return new Card({ icon: '✏️', title: title, status: statusDisplay(toolcall.status), body }).render(width);
     }
 
     executeCommand(args: z.output<typeof writeFileSchema>): Promise<string> {
         return new Promise((resolve, reject) => {
-            fs.writeFile(args.path, args.content, 'utf8', (err) => {
-                if (err) {
-                    reject(err);
-                }
-                resolve('文件写入成功');
-            });
+            if (args.mode === 'append') {
+                fs.appendFile(args.path, args.content, 'utf8', (err) => {
+                    if (err) {
+                        reject(err);
+                    }
+                    resolve('文件内容追加成功');
+                });
+            } else {
+                fs.writeFile(args.path, args.content, 'utf8', (err) => {
+                    if (err) {
+                        reject(err);
+                    }
+                    resolve('文件内容写入成功');
+                });
+            }
         });
     }
 }
