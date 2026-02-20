@@ -303,6 +303,44 @@ class LLM {
         }
     }
 
+    static buildMessages(chat_context) {
+        var messages = []
+        if (chat_context.system_prompt !== undefined) {
+            messages.push(chat_context.system_prompt.toOpenAIMessage())
+        }
+        for (let message of chat_context.messages) {
+            if (message instanceof AssistantMessage && message.content.length === 0) {
+                continue;
+            }
+            messages.push(message.toOpenAIMessage())
+            if (message instanceof AssistantMessage) {
+                messages.push(...message.getOpenAIToolMessages());
+            }
+        }
+        return messages;
+    }
+
+    static buildToolOptions(chat_context) {
+        let tool_options = {}
+        let tools = chat_context.getTools();
+        if (tools.size > 0) {
+            tool_options = {
+                tool_choice: 'auto',
+                tools: Array.from(tools.entries()).map(([tool_id, tool]) => {
+                    return {
+                        type: 'function',
+                        function: {
+                            name: tool_id,
+                            description: tool.description,
+                            parameters: tool.params.toJSONSchema(),
+                        },
+                    }
+                }),
+            }
+        }
+        return tool_options;
+    }
+
     /**
      *
      * @param {ChatContext} chat_context
@@ -315,9 +353,14 @@ class LLM {
             apiKey: model_instance.api_key,
             baseURL: model_instance.base_url
         });
+        var messages = this.buildMessages(chat_context);
+        var tool_options = this.buildToolOptions(chat_context);
+
         const response = await client.chat.completions.create({
             model: model_instance.model_name,
-            messages: chat_context.messages.map(message => message.toOpenAIMessage()),
+            messages: messages,
+            max_completion_tokens: 16384,
+            ...tool_options
         })
         return AssistantResponse.parseOpenAIResponse(response);
     }
@@ -337,56 +380,20 @@ class LLM {
             apiKey: model_instance.api_key,
             baseURL: model_instance.base_url
         });
-        var messages = []
-        if (chat_context.system_prompt !== undefined) {
-            messages.push(chat_context.system_prompt.toOpenAIMessage())
-        }
-        for (let message of chat_context.messages) {
-            if (message instanceof AssistantMessage && message.content.length === 0) {
-                continue;
-            }
-            messages.push(message.toOpenAIMessage())
-            if (message instanceof AssistantMessage) {
-                messages.push(...message.getOpenAIToolMessages());
-            }
-        }
+        var messages = this.buildMessages(chat_context);
+        var tool_options = this.buildToolOptions(chat_context);
 
-        let tool_options = {}
-        let tools = chat_context.getTools();
-        if (tools.size > 0) {
-            tool_options = {
-                tool_choice: 'auto',
-                tools: Array.from(tools.entries()).map(([tool_id, tool]) => {
-                    return {
-                        type: 'function',
-                        function: {
-                            name: tool_id,
-                            description: tool.description,
-                            parameters: tool.params.toJSONSchema(),
-                        },
-                    }
-                }),
-            }
-        }
-
-        const stream = await client.chat.completions.create({
+        const stream = client.chat.completions.stream({
             model: model_instance.model_name,
             messages: messages,
+            max_completion_tokens: 16384,
             stream: true,
             stream_options: { include_usage: true },
             ...tool_options
-        }).catch(error => {
-            error_message = `error: completion failed: ${error.message}`;
-            logger.error(error_message);
-            return undefined;
-        });
+        })
 
-        if (stream === undefined) {
-            yield AssistantResponse.error(error_message);
-            return;
-        }
         for await (const chunk of stream) {
-            yield await AssistantResponse.parseOpenAIResponse(chunk);
+            yield AssistantResponse.parseOpenAIResponse(chunk);
         }
     }
 }
