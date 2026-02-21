@@ -1,3 +1,4 @@
+
 import type { Component } from "@mariozechner/pi-tui";
 import { visibleWidth } from "@mariozechner/pi-tui";
 
@@ -133,8 +134,6 @@ export class VerticalLayout implements Component {
 
         // 下 padding
         for (let i = 0; i < padB; i++) contentLines.push(emptyLine);
-
-        this._lastContentHeight = contentLines.length;
 
         const minPad = Math.max(0, this.minLines - contentLines.length);
         if (minPad <= 0) return contentLines;

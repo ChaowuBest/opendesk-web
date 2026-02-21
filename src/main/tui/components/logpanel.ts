@@ -1,3 +1,4 @@
+
 /**
  * Copyright (c) 2026 The OpenDesk Team
  * OpenDesk is licensed under Mulan PSL v2.
@@ -30,12 +31,16 @@ export class LogPanel implements Component {
     private _tui?: TUI;
     private _unsubscribe?: () => void;
     private _onModeChange?: LogPanelChangeCallback;
+    private invalidated = true;
+    private lastWidth?: number;
+    private cachedOutput?: string[];
 
     constructor(tui?: TUI) {
         this._tui = tui;
         this._lines = getLines();
         this._unsubscribe = subscribe(() => {
             this._lines = getLines();
+            this.invalidated = true;
             this._tui?.requestRender();
         });
     }
@@ -70,10 +75,13 @@ export class LogPanel implements Component {
         if (oldMode !== mode && this._onModeChange) {
             this._onModeChange(mode);
         }
+        this.invalidated = true;
         this._tui?.requestRender();
     }
 
-    invalidate() { }
+    invalidate() {
+        this.invalidated = true;
+    }
 
     /**
      * 清理资源
@@ -86,8 +94,15 @@ export class LogPanel implements Component {
     }
 
     render(width: number): string[] {
+        if (!this.invalidated && this.lastWidth === width && this.cachedOutput) {
+            return this.cachedOutput;
+        }
+        this.lastWidth = width;
+
         if (this._mode === 'off') {
-            return [];
+            this.cachedOutput = [];
+            this.invalidated = false;
+            return this.cachedOutput;
         }
 
         // 准备要显示的日志行
@@ -110,6 +125,8 @@ export class LogPanel implements Component {
             truncateStrategy: 'tail'
         });
 
-        return card.render(width);
+        this.cachedOutput = card.render(width);
+        this.invalidated = false;
+        return this.cachedOutput;
     }
 }
