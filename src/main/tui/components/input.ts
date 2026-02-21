@@ -187,7 +187,6 @@ export class AgentInputArea implements Component {
 
     setStatus(status: AgentInputStatus) {
         this.status = status;
-        this.input.setText('');
         if (this.messageQueue.length > 0) {
             this.updateQueueHint();
         } else if (this.status === 'running') {
