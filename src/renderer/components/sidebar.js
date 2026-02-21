@@ -299,10 +299,7 @@ class SideBar extends HTMLElement {
             if (!window.confirm("确定要删除所有任务吗？删除后无法恢复。")) return;
             window.globalControlAPI.openHomePage();
             this.currentTaskId = null;
-            this.reloadTaskList();
-            for (const task of this.taskList) {
-                await window.taskManagerAPI.removeTask(task.task_id);
-            }
+            await window.taskManagerAPI.clearAllTasks();
             this.reloadTaskList();
         });
 

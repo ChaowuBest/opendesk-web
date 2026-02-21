@@ -29,7 +29,6 @@ export class ShellAgentDecl extends AgentDecl {
             date: new Date().toLocaleString(),
             workspace: this.environment.workspace
         });
-        console.info(result);
         return result;
     }
 }

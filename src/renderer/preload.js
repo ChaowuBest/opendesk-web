@@ -34,6 +34,13 @@ function exposeTaskManagerAPI() {
                 throw new Error(result.message);
             }
         },
+        clearAllTasks: async () => {
+            const result = await ipcRenderer.invoke('taskManager:clearAllTasks');
+            if (result.status !== 'ok') {
+                console.error('clearing all tasks failed', result.message);
+                throw new Error(result.message);
+            }
+        },
         stopTask: async (taskId) => {
             const result = await ipcRenderer.invoke('taskManager:stopTask', taskId);
             if (result.status !== 'ok') {

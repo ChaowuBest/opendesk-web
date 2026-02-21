@@ -247,6 +247,9 @@ export class TaskView implements Component {
     /** 用于向外部回传 StatusBar 数据 */
     onStatusBarUpdate?: (data: Partial<StatusBarData>) => void;
 
+    /** 当前任务的ID，用于判断是否仍为活跃任务 */
+    private currentTaskId?: string;
+
     private tui: TUI;
     private messageLayout: Box = new Box(0, 0);
     private mainLayout: Box = new Box(0, 0);
@@ -266,14 +269,25 @@ export class TaskView implements Component {
             return;
         }
 
+        // 记录当前任务的ID
+        const snapshotTaskId = this.taskState.task_id;
+        this.currentTaskId = snapshotTaskId;
+
         const responseView = new AssistantMessageView();
         this.messageLayout.addChild(UserMessageView.text(text));
         this.messageLayout.addChild(responseView);
 
         await this.taskState.submitUserMessage(text);
-        const renderInterval = setInterval(() => this.tui.requestRender(), REASONING_SPINNER_MS);
+        const renderInterval = setInterval(() => {
+            // 只有当前任务仍然是活跃任务时才渲染
+            if (this.currentTaskId === snapshotTaskId) {
+                this.tui.requestRender();
+            }
+        }, REASONING_SPINNER_MS);
         try {
             await this.taskState.waitUntilFinished(async (chunkUpdate: TaskUpdateChunk) => {
+                // 只有当前任务仍然是活跃任务时才更新视图
+                if (this.currentTaskId !== snapshotTaskId) return;
                 responseView.update(chunkUpdate);
                 if (chunkUpdate.usage) {
                     this.onStatusBarUpdate?.({ totalTokens: chunkUpdate.usage.total_tokens });
@@ -282,8 +296,11 @@ export class TaskView implements Component {
             });
         } finally {
             clearInterval(renderInterval);
-            responseView.setStreamingComplete();
-            this.tui.requestRender();
+            // 只有当前任务仍然是活跃任务时才更新视图
+            if (this.currentTaskId === snapshotTaskId) {
+                responseView.setStreamingComplete();
+                this.tui.requestRender();
+            }
         }
     }
 
@@ -291,6 +308,7 @@ export class TaskView implements Component {
     clearMessages() {
         this.messageLayout.clear();
         this.messages = [];
+        this.currentTaskId = undefined;
     }
 
     /**
@@ -299,6 +317,9 @@ export class TaskView implements Component {
      */
     rebuildFromHistory() {
         if (!this.taskState) return;
+
+        // 更新当前任务ID
+        this.currentTaskId = this.taskState.task_id;
 
         for (const msg of this.taskState.chat_context.messages) {
             if (msg instanceof UserMessage) {
