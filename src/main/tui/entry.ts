@@ -17,8 +17,10 @@ import { AgentDecl } from "../agents/agentdecl.js";
 import { ShellAgentDecl } from "../agents/agentdecls/shellagent.js";
 import { HelpOverlay } from "./components/help";
 import { ConfirmOverlay, InfoOverlay } from "./components/notice";
+import { LogPanel, LogPanelMode } from "./components/logpanel";
 import { exportTaskToHtml } from "../utils/export";
 import path from "path";
+import fs from "fs";
 import chalk from "chalk";
 
 
@@ -38,6 +40,7 @@ export class OpenDeskTUI {
         padding: { left: 1, right: 1 }
     });
     private taskView: TaskView;
+    private logPanel: LogPanel;
     public inputArea: AgentInputArea;
 
     private shortcutManager: KeyboardShortcutManager;
@@ -70,6 +73,7 @@ export class OpenDeskTUI {
 
         this.tui = new TUI(terminal);
         this.taskView = new TaskView(this.tui);
+        this.logPanel = new LogPanel(this.tui);
         this.inputArea = new AgentInputArea(this.tui);
         this.workspace = args.workspace;
         this.model = args.model;
@@ -81,6 +85,11 @@ export class OpenDeskTUI {
         this.container.addChild(this.inputArea)
         this.container.setMinLines(this.tui.terminal.rows);
         this.container.setVerticalAlign("center");
+
+        // 设置日志面板模式变更回调，用于动态调整布局
+        this.logPanel.onModeChange((mode) => {
+            this.updateLayoutForLogMode(mode);
+        });
 
         // 设置宿主引用
         this.inputArea.setHost(this);
@@ -228,17 +237,84 @@ export class OpenDeskTUI {
                 }
 
                 const absolutePath = path.resolve(this.workspace, filePath);
-                await exportTaskToHtml(task, absolutePath);
-                logger.info(`Session exported to: ${absolutePath}`);
 
-                const info = new InfoOverlay(this, {
-                    title: "导出成功",
-                    message: `会话已成功导出到：\n${absolutePath}`,
-                    closeLabel: "确定"
-                });
-                info.show();
+                // 检查文件是否存在
+                if (fs.existsSync(absolutePath)) {
+                    const confirm = new ConfirmOverlay(this, {
+                        title: "文件已存在",
+                        message: `文件 ${absolutePath} 已存在。是否覆盖？`,
+                        confirmLabel: "覆盖",
+                        cancelLabel: "取消"
+                    });
+                    confirm.show(async () => {
+                        // 用户确认覆盖
+                        await this.doExport(task, absolutePath);
+                    });
+                } else {
+                    // 文件不存在，直接导出
+                    await this.doExport(task, absolutePath);
+                }
             },
         });
+
+        this.commandRegistry.register({
+            name: "log",
+            description: "显示日志面板，用法: /log [off|last|all]",
+            getArgumentCompletions: (argPrefix: string) => {
+                const options = ['off', 'last', 'all'];
+                return options
+                    .filter(opt => opt.startsWith(argPrefix.toLowerCase()))
+                    .map(opt => ({ value: opt, label: opt, description: opt === 'off' ? '不显示' : (opt === 'last' ? '最后10条' : '全部') }));
+            },
+            execute: async (args: string) => {
+                const modeArg = args.trim().toLowerCase();
+                if (modeArg === 'off' || modeArg === 'last' || modeArg === 'all') {
+                    this.logPanel.setMode(modeArg);
+                } else {
+                    // 默认不显示
+                    this.logPanel.setMode('off');
+                }
+            },
+        });
+    }
+
+    private async doExport(task: any, absolutePath: string) {
+        await exportTaskToHtml(task, absolutePath);
+        logger.info(`Session exported to: ${absolutePath}`);
+
+        const info = new InfoOverlay(this, {
+            title: "导出成功",
+            message: `会话已成功导出到：\n${absolutePath}`,
+            closeLabel: "确定"
+        });
+        info.show();
+    }
+
+    /**
+     * 根据日志面板模式更新 VerticalLayout 的子组件排列
+     */
+    private updateLayoutForLogMode(mode: LogPanelMode) {
+        // 先清空容器，然后按照所需顺序重新添加
+        this.container.clear();
+
+        this.container.addChild(new OpenDeskBanner(this.workspace));
+
+        if (mode === 'all') {
+            // 全部模式：只显示日志面板，隐藏 TaskView
+            this.container.addChild(this.logPanel);
+        } else if (mode === 'last') {
+            // 最后 10 条模式：在 TaskView 和 Input 中间显示日志面板
+            this.container.addChild(this.taskView);
+            this.container.addChild(this.logPanel);
+        } else {
+            // off 模式：不显示日志面板，恢复默认布局
+            this.container.addChild(this.taskView);
+        }
+
+        this.container.addChild(this.inputArea);
+        this.container.setMinLines(this.tui.terminal.rows);
+
+        this.tui.requestRender();
     }
 
     private async createNewTask() {
@@ -458,7 +534,7 @@ export class OpenDeskTUI {
                 } else if (knownSize > 0) {
                     logger.info(`model context size from builtin table: ${knownSize}`);
                 }
-            }).catch(() => {});
+            }).catch(() => { });
         } catch { /* 配置读取失败不影响主流程 */ }
     }
 

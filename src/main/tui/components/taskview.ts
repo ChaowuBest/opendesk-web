@@ -1,3 +1,4 @@
+
 import { Component, Text, Markdown, Box, type TUI } from "@mariozechner/pi-tui";
 import { TaskState } from "../../states/tasks";
 import { AssistantMessage, ReasoningMessagePart, TextMessagePart, ToolCallMessagePart, UserMessage, ToolCall } from "../../agents/messages";
@@ -11,6 +12,9 @@ import type { StatusBarData } from "./input";
 
 export class TextMessagePartView implements Component {
     text: Markdown = new Markdown('', 0, 0, defaultMarkdownTheme);
+    private invalidated = true;
+    private lastWidth?: number;
+    private cachedOutput?: string[];
 
     constructor(text?: string) {
         if (text) {
@@ -21,15 +25,24 @@ export class TextMessagePartView implements Component {
     setMarkdown(markdown: string) {
         try {
             this.text.setText(markdown);
+            this.invalidated = true;
         } catch (error) {
             // ignore error
         }
     }
 
-    invalidate() { }
+    invalidate() {
+        this.invalidated = true;
+    }
 
     render(width: number): string[] {
-        return this.text.render(width);
+        if (!this.invalidated && this.lastWidth === width && this.cachedOutput) {
+            return this.cachedOutput;
+        }
+        this.lastWidth = width;
+        this.cachedOutput = this.text.render(width);
+        this.invalidated = false;
+        return this.cachedOutput;
     }
 }
 
@@ -42,6 +55,9 @@ export class ReasoningMessagePartView implements Component {
     private text: Markdown = new Markdown('', 0, 0, defaultMarkdownTheme);
     /** 是否正在流式输出思考内容，用于显示旋转图标 */
     private _streaming = false;
+    private invalidated = true;
+    private lastWidth?: number;
+    private cachedOutput?: string[];
 
     constructor(text?: string) {
         if (text) {
@@ -51,13 +67,17 @@ export class ReasoningMessagePartView implements Component {
 
     setMarkdown(markdown: string) {
         this.text.setText(markdown);
+        this.invalidated = true;
     }
 
     setStreaming(streaming: boolean) {
         this._streaming = streaming;
+        this.invalidated = true;
     }
 
-    invalidate() { }
+    invalidate() {
+        this.invalidated = true;
+    }
 
     private getIcon(): string {
         if (!this._streaming) {
@@ -68,15 +88,33 @@ export class ReasoningMessagePartView implements Component {
     }
 
     render(width: number): string[] {
+        if (this._streaming) {
+            // When streaming, always re-render to update spinner
+            const contentWidth = Math.max(1, width - 4);
+            const bodyLines = this.text.render(contentWidth);
+            const card = new Card({
+                icon: this.getIcon(),
+                title: '思考',
+                body: bodyLines,
+            });
+            return card.render(width);
+        }
+
+        if (!this.invalidated && this.lastWidth === width && this.cachedOutput) {
+            return this.cachedOutput;
+        }
+
+        this.lastWidth = width;
         const contentWidth = Math.max(1, width - 4);
         const bodyLines = this.text.render(contentWidth);
         const card = new Card({
             icon: this.getIcon(),
             title: '思考',
             body: bodyLines,
-            // 不设 maxLines，思考过程中内容完整展示
         });
-        return card.render(width);
+        this.cachedOutput = card.render(width);
+        this.invalidated = false;
+        return this.cachedOutput;
     }
 }
 
@@ -84,6 +122,9 @@ export class ToolCallView implements Component {
 
     private toolCall: ToolCall;
     private defaultView: DefaultToolCallView;
+    private invalidated = true;
+    private lastWidth?: number;
+    private cachedOutput?: string[];
 
     constructor(toolCall: ToolCall) {
         this.toolCall = toolCall;
@@ -91,40 +132,65 @@ export class ToolCallView implements Component {
     }
 
     invalidate() {
+        this.invalidated = true;
     }
 
     render(width: number): string[] {
+        if (!this.invalidated && this.lastWidth === width && this.cachedOutput) {
+            return this.cachedOutput;
+        }
+        this.lastWidth = width;
         if (this.toolCall.tool) {
             const custom = this.toolCall.tool.renderToolCallCli(this.toolCall, width);
-            if (custom) return custom;
+            if (custom) {
+                this.cachedOutput = custom;
+                this.invalidated = false;
+                return custom;
+            }
         }
-        return this.defaultView.render(width);
+        this.cachedOutput = this.defaultView.render(width);
+        this.invalidated = false;
+        return this.cachedOutput;
     }
 }
 
 export class ToolCallMessagePartView implements Component {
 
     private box: Box = new Box(0, 0);
+    private invalidated = true;
+    private lastWidth?: number;
+    private cachedOutput?: string[];
 
     setToolcalls(toolcalls: ToolCall[]) {
         this.box.clear();
         for (const toolcall of toolcalls) {
             this.box.addChild(new ToolCallView(toolcall));
         }
+        this.invalidated = true;
     }
 
     invalidate() {
         this.box.invalidate();
+        this.invalidated = true;
     }
 
     render(width: number): string[] {
-        return this.box.render(width);
+        if (!this.invalidated && this.lastWidth === width && this.cachedOutput) {
+            return this.cachedOutput;
+        }
+        this.lastWidth = width;
+        this.cachedOutput = this.box.render(width);
+        this.invalidated = false;
+        return this.cachedOutput;
     }
 }
 
 export class UserMessageView implements Component {
     message: UserMessage;
     box: Box = new Box(1, 1);
+    private invalidated = true;
+    private lastWidth?: number;
+    private cachedOutput?: string[];
 
     constructor(message: UserMessage) {
         this.box.setBgFn((text: string) => chalk.white.bgGrey((text)));
@@ -142,10 +208,17 @@ export class UserMessageView implements Component {
 
     invalidate() {
         this.box.invalidate();
+        this.invalidated = true;
     }
 
     render(width: number): string[] {
-        return this.box.render(width);
+        if (!this.invalidated && this.lastWidth === width && this.cachedOutput) {
+            return this.cachedOutput;
+        }
+        this.lastWidth = width;
+        this.cachedOutput = this.box.render(width);
+        this.invalidated = false;
+        return this.cachedOutput;
     }
 }
 
@@ -153,6 +226,9 @@ export class AssistantMessageView implements Component {
 
     box: Box = new Box(0, 1);
     parts: Array<ReasoningMessagePartView | TextMessagePartView | ToolCallMessagePartView> = [];
+    private invalidated = true;
+    private lastWidth?: number;
+    private cachedOutput?: string[];
 
     async updateTextPart(index: number, textPart: TextMessagePart) {
         while (index >= this.parts.length) {
@@ -167,6 +243,7 @@ export class AssistantMessageView implements Component {
         }
 
         existingPartView.setMarkdown(textPart.text);
+        this.invalidated = true;
     }
 
     async updateReasoningPart(index: number, reasoningPart: ReasoningMessagePart) {
@@ -183,6 +260,7 @@ export class AssistantMessageView implements Component {
 
         existingPartView.setStreaming(true);
         existingPartView.setMarkdown(reasoningPart.content);
+        this.invalidated = true;
     }
 
     /** 思考/流式结束，停止所有 reasoning 部分的动画 */
@@ -192,6 +270,7 @@ export class AssistantMessageView implements Component {
                 part.setStreaming(false);
             }
         }
+        this.invalidated = true;
     }
 
     async updateToolCallPart(index: number, toolCallPart: ToolCallMessagePart) {
@@ -207,6 +286,7 @@ export class AssistantMessageView implements Component {
         }
 
         existingPartView.setToolcalls(toolCallPart.toolcalls);
+        this.invalidated = true;
     }
 
     /**
@@ -228,10 +308,17 @@ export class AssistantMessageView implements Component {
 
     invalidate() {
         this.box.invalidate();
+        this.invalidated = true;
     }
 
     render(width: number): string[] {
-        return this.box.render(width);
+        if (!this.invalidated && this.lastWidth === width && this.cachedOutput) {
+            return this.cachedOutput;
+        }
+        this.lastWidth = width;
+        this.cachedOutput = this.box.render(width);
+        this.invalidated = false;
+        return this.cachedOutput;
     }
 }
 
@@ -253,6 +340,9 @@ export class TaskView implements Component {
     private tui: TUI;
     private messageLayout: Box = new Box(0, 0);
     private mainLayout: Box = new Box(0, 0);
+    private invalidated = true;
+    private lastWidth?: number;
+    private cachedOutput?: string[];
 
     constructor(tui: TUI) {
         this.tui = tui;
@@ -276,6 +366,7 @@ export class TaskView implements Component {
         const responseView = new AssistantMessageView();
         this.messageLayout.addChild(UserMessageView.text(text));
         this.messageLayout.addChild(responseView);
+        this.invalidated = true;
 
         await this.taskState.submitUserMessage(text);
         const renderInterval = setInterval(() => {
@@ -289,6 +380,7 @@ export class TaskView implements Component {
                 // 只有当前任务仍然是活跃任务时才更新视图
                 if (this.currentTaskId !== snapshotTaskId) return;
                 responseView.update(chunkUpdate);
+                this.invalidated = true;
                 if (chunkUpdate.usage) {
                     this.onStatusBarUpdate?.({ totalTokens: chunkUpdate.usage.total_tokens });
                 }
@@ -299,6 +391,7 @@ export class TaskView implements Component {
             // 只有当前任务仍然是活跃任务时才更新视图
             if (this.currentTaskId === snapshotTaskId) {
                 responseView.setStreamingComplete();
+                this.invalidated = true;
                 this.tui.requestRender();
             }
         }
@@ -309,6 +402,7 @@ export class TaskView implements Component {
         this.messageLayout.clear();
         this.messages = [];
         this.currentTaskId = undefined;
+        this.invalidated = true;
     }
 
     /**
@@ -353,6 +447,7 @@ export class TaskView implements Component {
                 this.onStatusBarUpdate?.({ totalTokens: lastMsg.usage.total_tokens });
             }
         }
+        this.invalidated = true;
     }
 
     /**
@@ -369,9 +464,16 @@ export class TaskView implements Component {
 
     invalidate() {
         this.messages.forEach(message => message.invalidate());
+        this.invalidated = true;
     }
 
     render(width: number): string[] {
-        return this.mainLayout.render(width);
+        if (!this.invalidated && this.lastWidth === width && this.cachedOutput) {
+            return this.cachedOutput;
+        }
+        this.lastWidth = width;
+        this.cachedOutput = this.mainLayout.render(width);
+        this.invalidated = false;
+        return this.cachedOutput;
     }
 }

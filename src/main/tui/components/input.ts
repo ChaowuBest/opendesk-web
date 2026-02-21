@@ -1,3 +1,4 @@
+
 import { Box, Component, Text, Editor, TUI, CombinedAutocompleteProvider } from "@mariozechner/pi-tui";
 import { defaultEditorTheme } from "../theme";
 import { SlashCommandRegistry } from "../commands";
@@ -23,6 +24,9 @@ export class StatusBar implements Component {
     private timerStart: number = 0;
     private timerInterval?: ReturnType<typeof setInterval>;
     private tui?: TUI;
+    private invalidated = true;
+    private lastWidth?: number;
+    private cachedOutput?: string[];
 
     setTUI(tui: TUI) {
         this.tui = tui;
@@ -34,6 +38,7 @@ export class StatusBar implements Component {
         this.timerStart = Date.now();
         this.timerInterval = setInterval(() => {
             this.data.elapsedMs = Date.now() - this.timerStart;
+            this.invalidated = true;
             this.tui?.requestRender();
         }, 1000);
     }
@@ -48,6 +53,7 @@ export class StatusBar implements Component {
 
     update(partial: Partial<StatusBarData>) {
         Object.assign(this.data, partial);
+        this.invalidated = true;
         if (this.timerStarted) {
             this.data.elapsedMs = Date.now() - this.timerStart;
         }
@@ -60,9 +66,15 @@ export class StatusBar implements Component {
         return `${String(min).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
     }
 
-    invalidate() {}
+    invalidate() {
+        this.invalidated = true;
+    }
 
     render(width: number): string[] {
+        if (!this.invalidated && this.lastWidth === width && this.cachedOutput) {
+            return this.cachedOutput;
+        }
+        this.lastWidth = width;
         const { elapsedMs, totalTokens, contextSize, modelName } = this.data;
 
         const parts: string[] = [];
@@ -85,7 +97,9 @@ export class StatusBar implements Component {
         const line = chalk.bgHex('#3a3a3a')(
             chalk.hex('#d4d4d4')(leftContent) + ' '.repeat(gap) + chalk.dim(rightHint)
         );
-        return [line];
+        this.cachedOutput = [line];
+        this.invalidated = false;
+        return this.cachedOutput;
     }
 }
 
@@ -187,7 +201,6 @@ export class AgentInputArea implements Component {
 
     setStatus(status: AgentInputStatus) {
         this.status = status;
-        this.input.setText('');
         if (this.messageQueue.length > 0) {
             this.updateQueueHint();
         } else if (this.status === 'running') {

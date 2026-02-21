@@ -286,6 +286,26 @@ const registerTaskManagerAPIHandlers = () => {
         task.stop();
         return { status: 'ok' };
     });
+    // 检查文件是否存在
+    ipcMain.handle('fs:fileExists', async (event, filePath) => {
+        try {
+            const exists = fs.existsSync(filePath);
+            return { status: 'ok', data: exists };
+        } catch (error) {
+            logger.error('checking file exists failed', error);
+            return { status: 'error', message: error.message };
+        }
+    });
+    // 显示保存文件对话框
+    ipcMain.handle('dialog:saveFile', async (event, options) => {
+        try {
+            const result = await dialog.showSaveDialog(globalMainWindow, options);
+            return { status: 'ok', data: result };
+        } catch (error) {
+            logger.error('showing save dialog failed', error);
+            return { status: 'error', message: error.message };
+        }
+    });
     ipcMain.handle('taskManager:exportTask', async (event, taskId, filePath) => {
         const task = globalState.taskManagerState.getTask(taskId);
         if (task === undefined) {

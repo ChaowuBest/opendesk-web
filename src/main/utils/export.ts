@@ -10,16 +10,22 @@
  */
 
 import fs from 'fs';
+import path from 'path';
 import type { TaskState } from '../states/tasks';
 import { UserMessage, AssistantMessage, TextMessagePart, ToolCallMessagePart, FileMessagePart, ReasoningMessagePart } from '../agents/messages';
 
-const HIGHLIGHT_JS_CSS = `
-/* highlight.js v11.9.0 */
+const HIGHLIGHT_JS_CSS_LIGHT = `
+/* highlight.js v11.9.0 - Light theme */
 .hljs{color:#24292e;background:#ffffff}.hljs-doctag,.hljs-keyword,.hljs-meta .hljs-keyword,.hljs-template-tag,.hljs-template-variable,.hljs-type,.hljs-variable.language_{color:#d73a49}.hljs-title,.hljs-title.class_,.hljs-title.class_.inherited__,.hljs-title.function_{color:#6f42c1}.hljs-attr,.hljs-attribute,.hljs-literal,.hljs-meta,.hljs-number,.hljs-operator,.hljs-selector-attr,.hljs-selector-class,.hljs-selector-id,.hljs-variable{color:#005cc5}.hljs-meta .hljs-string,.hljs-regexp,.hljs-string{color:#032f62}.hljs-built_in,.hljs-symbol{color:#e36209}.hljs-code,.hljs-comment,.hljs-formula{color:#6a737d}.hljs-name,.hljs-quote,.hljs-selector-pseudo,.hljs-selector-tag{color:#22863a}.hljs-subst{color:#24292e}.hljs-section{color:#005cc5;font-weight:700}.hljs-bullet{color:#735c0f}.hljs-emphasis{color:#24292e;font-style:italic}.hljs-strong{color:#24292e;font-weight:700}.hljs-addition{color:#22863a;background-color:#f0fff4}.hljs-deletion{color:#b31d28;background-color:#ffeef0}
 `;
 
+const HIGHLIGHT_JS_CSS_DARK = `
+/* highlight.js v11.9.0 - Dark theme (GitHub Dark) */
+.hljs{color:#c9d1d9;background:#0d1117}.hljs-doctag,.hljs-keyword,.hljs-meta .hljs-keyword,.hljs-template-tag,.hljs-template-variable,.hljs-type,.hljs-variable.language_{color:#ff7b72}.hljs-title,.hljs-title.class_,.hljs-title.class_.inherited__,.hljs-title.function_{color:#d2a8ff}.hljs-attr,.hljs-attribute,.hljs-literal,.hljs-meta,.hljs-number,.hljs-operator,.hljs-selector-attr,.hljs-selector-class,.hljs-selector-id,.hljs-variable{color:#79c0ff}.hljs-meta .hljs-string,.hljs-regexp,.hljs-string{color:#a5d6ff}.hljs-built_in,.hljs-symbol{color:#ffa657}.hljs-code,.hljs-comment,.hljs-formula{color:#8b949e}.hljs-name,.hljs-quote,.hljs-selector-pseudo,.hljs-selector-tag{color:#7ee787}.hljs-subst{color:#c9d1d9}.hljs-section{color:#79c0ff;font-weight:700}.hljs-bullet{color:#d29922}.hljs-emphasis{color:#c9d1d9;font-style:italic}.hljs-strong{color:#c9d1d9;font-weight:700}.hljs-addition{color:#7ee787;background-color:#1a3f2c}.hljs-deletion{color:#f85149;background-color:#3d1e23}
+`;
+
 const STYLES = `
-${HIGHLIGHT_JS_CSS}
+${HIGHLIGHT_JS_CSS_LIGHT}
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
 * {
@@ -30,6 +36,7 @@ pre, code {
     font-family: 'JetBrains Mono', monospace;
 }
 
+/* Light mode styles */
 .prose {
     color: #1e293b;
     line-height: 1.7;
@@ -94,12 +101,50 @@ pre, code {
     border-radius: 0.75rem;
     margin: 1em 0;
 }
+
+/* Dark mode styles */
+@media (prefers-color-scheme: dark) {
+    ${HIGHLIGHT_JS_CSS_DARK}
+
+    .prose {
+        color: #e2e8f0;
+    }
+
+    .prose h1, .prose h2, .prose h3 {
+        color: #f1f5f9;
+    }
+
+    .prose pre {
+        background: #1e293b;
+        border: 1px solid #334155;
+    }
+
+    .prose code {
+        background: #334155;
+        color: #e2e8f0;
+    }
+
+    .prose blockquote {
+        border-left: 4px solid #60a5fa;
+        color: #94a3b8;
+    }
+
+    .prose a {
+        color: #60a5fa;
+    }
+}
 `
 
 export async function exportTaskToHtml(task: TaskState, filePath: string): Promise<void> {
     const html = await generateTaskHtml(task);
+    // 创建目录
+    const dir = path.dirname(filePath);
+    if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+    }
     fs.writeFileSync(filePath, html, 'utf-8');
 }
+
 
 export async function generateTaskHtml(task: TaskState): Promise<string> {
     await task.render();
@@ -137,15 +182,15 @@ async function renderUserMessage(message: UserMessage): Promise<string> {
     }
 
     return `
-    <div class="flex gap-4 p-6">
+    <div class="message-container flex gap-4 p-6">
         <div class="flex-shrink-0">
             <div class="w-10 h-10 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-full flex items-center justify-center text-white font-semibold shadow-lg">
                 U
             </div>
         </div>
         <div class="flex-1 min-w-0">
-            <div class="text-sm font-medium text-slate-700 mb-2">用户</div>
-            <div class="bg-slate-50 rounded-2xl px-6 py-4 shadow-sm">
+            <div class="message-author text-sm font-medium text-slate-700 mb-2">用户</div>
+            <div class="user-message-bubble bg-slate-50 rounded-2xl px-6 py-4 shadow-sm">
                 ${contentHtml}
             </div>
         </div>
@@ -162,29 +207,29 @@ async function renderAssistantMessage(message: AssistantMessage): Promise<string
             contentHtml += await part.render();
         } else if (part instanceof ReasoningMessagePart) {
             contentHtml += `
-            <div class="bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 rounded-xl p-4 mb-4">
-                <div class="flex items-center gap-2 text-amber-800 font-medium mb-2">
+            <div class="reasoning-box bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 rounded-xl p-4 mb-4">
+                <div class="flex items-center gap-2 reasoning-title text-amber-800 font-medium mb-2">
                     <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
                     </svg>
                     推理过程
                 </div>
-                <div class="text-amber-900 text-sm font-mono whitespace-pre-wrap">${escapeHtml(part.content)}</div>
+                <div class="reasoning-content text-amber-900 text-sm font-mono whitespace-pre-wrap">${escapeHtml(part.content)}</div>
             </div>
             `;
         }
     }
 
     return `
-    <div class="flex gap-4 p-6">
+    <div class="message-container flex gap-4 p-6">
         <div class="flex-shrink-0">
             <div class="w-10 h-10 bg-gradient-to-br from-emerald-500 to-teal-600 rounded-full flex items-center justify-center text-white font-semibold shadow-lg">
                 AI
             </div>
         </div>
         <div class="flex-1 min-w-0">
-            <div class="text-sm font-medium text-slate-700 mb-2">OpenDesk Assistant</div>
-            <div class="bg-white rounded-2xl px-6 py-4 shadow-sm border border-slate-100">
+            <div class="message-author text-sm font-medium text-slate-700 mb-2">OpenDesk Assistant</div>
+            <div class="assistant-message-bubble bg-white rounded-2xl px-6 py-4 shadow-sm border border-slate-100">
                 ${contentHtml}
             </div>
         </div>
@@ -217,8 +262,84 @@ function generateHtmlTemplate(title: string, taskId: string, messagesHtml: strin
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>${escapeHtml(title)} - OpenDesk 会话导出</title>
+        <!-- Inline base styles to prevent FOUC -->
+        <style>
+            /* Base background for immediate rendering */
+            html, body {
+                margin: 0;
+                padding: 0;
+                min-height: 100vh;
+            }
+            /* Light mode base background */
+            body {
+                background: linear-gradient(to bottom right, #f8fafc, #f1f5f9, #eff6ff);
+            }
+            /* Dark mode base background */
+            @media (prefers-color-scheme: dark) {
+                body {
+                    background: linear-gradient(to bottom right, #0f172a, #1e293b, #1e3a5f) !important;
+                }
+            }
+        </style>
         <script src="https://cdn.tailwindcss.com"></script>
-        <style>${STYLES}</style>
+        <style>
+            ${STYLES}
+            /* Additional dark mode styles using direct selectors */
+            @media (prefers-color-scheme: dark) {
+                /* Header and main */
+                header, main {
+                    background-color: #1e293b !important;
+                    border-color: #334155 !important;
+                }
+
+                /* Page title */
+                h1 {
+                    color: #f1f5f9 !important;
+                }
+
+                /* Subtitle text */
+                header p, footer p {
+                    color: #94a3b8 !important;
+                }
+
+                /* Task ID badge */
+                header span.inline-flex {
+                    background-color: #334155 !important;
+                    color: #cbd5e1 !important;
+                }
+
+                /* Dividers */
+                .divide-y > * + * {
+                    border-top-color: #334155 !important;
+                }
+
+                /* Message author text */
+                .message-author {
+                    color: #cbd5e1 !important;
+                }
+
+                /* User message bubble */
+                .user-message-bubble {
+                    background-color: #334155 !important;
+                }
+
+                /* Assistant message bubble */
+                .assistant-message-bubble {
+                    background-color: #0f172a !important;
+                    border-color: #334155 !important;
+                }
+
+                /* Reasoning box */
+                .reasoning-box {
+                    background: linear-gradient(to right, rgba(120, 53, 15, 0.3), rgba(124, 45, 18, 0.3)) !important;
+                    border-color: #92400e !important;
+                }
+
+                .reasoning-title, .reasoning-content {
+                    color: #fbbf24 !important;
+                }
+            }
+        </style>
     </head>
     <body class="bg-gradient-to-br from-slate-50 via-slate-100 to-blue-50 min-h-screen">
         <div class="max-w-6xl mx-auto px-6 py-12">

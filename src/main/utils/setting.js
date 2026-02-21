@@ -99,7 +99,6 @@ class Setting {
                 // 深度比较对象内容
                 const isEqual = JSON.stringify(newConfig) === JSON.stringify(oldConfig);
                 if (!isEqual) {
-                    console.info(`application ${applicationName} config changed`);
                     settingChangedApplications.push(applicationName);
                 }
             }
@@ -111,7 +110,6 @@ class Setting {
 
         // 如果配置发生变化，则通知应用程序
         if (settingChangedApplications.length > 0) {
-            console.info(`setting changed applications: ${settingChangedApplications}`);
             for (const applicationName of settingChangedApplications) {
                 const callback = Setting.applicationConfigChangedCallbacks.get(applicationName);
                 if (callback !== undefined) {
