@@ -13,10 +13,10 @@ import { Setting } from "../utils/setting.js";
 import { defaultSelectListTheme } from "./theme";
 import { logger } from "../utils/logger.js";
 import { lookupKnownContextSize, fetchContextSizeFromAPI } from "../utils/model-context";
-import chalk from "chalk";
-import { CenteredText } from "./components/texts.js";
 import { AgentDecl } from "../agents/agentdecl.js";
 import { ShellAgentDecl } from "../agents/agentdecls/shellagent.js";
+import { HelpOverlay } from "./components/help";
+import chalk from "chalk";
 
 
 export interface CommandLineArgs {
@@ -25,21 +25,20 @@ export interface CommandLineArgs {
     model?: string;
 }
 
-
 export class OpenDeskTUI {
 
     private taskManagerState: TaskManagerState;
 
-    private tui: TUI;
+    public tui: TUI;
     private container: VerticalLayout = new VerticalLayout({
         spacing: 1,
         padding: { left: 1, right: 1 }
     });
     private taskView: TaskView;
-    private inputArea: AgentInputArea;
+    public inputArea: AgentInputArea;
 
     private shortcutManager: KeyboardShortcutManager;
-    private commandRegistry: SlashCommandRegistry;
+    public commandRegistry: SlashCommandRegistry;
     private modelInfoResolved = false;
     private activeTaskId?: string;
 
@@ -147,7 +146,9 @@ export class OpenDeskTUI {
         this.commandRegistry.register({
             name: "help",
             description: "显示快捷键与指令帮助",
-            execute: async () => { this.showHelp(); },
+            execute: async () => {
+                new HelpOverlay(this).show();
+            },
         });
 
         this.commandRegistry.register({
@@ -261,54 +262,6 @@ export class OpenDeskTUI {
         };
     }
 
-    private showHelp() {
-        const commands = this.commandRegistry.getAll();
-
-        const items = commands.map(cmd => {
-            const cmdName = ('/' + cmd.name).padEnd(10);
-            const shortcut = cmd.shortcut
-                ? chalk.cyan(SlashCommandRegistry.formatKeyLabel(cmd.shortcut).padEnd(10))
-                : ' '.repeat(10);
-            return {
-                value: cmd.name,
-                label: `${chalk.bold(cmdName)}${shortcut}${cmd.description}`,
-            };
-        });
-
-        const overlayWidth = Math.min(50, Math.floor(this.tui.terminal.columns * 0.6));
-
-        const header = new Text(chalk.bold(' 指令列表'));
-        const list = new SelectList(items, items.length, defaultSelectListTheme);
-        const box = new Box(1, 1);
-        box.setBgFn((text: string) => chalk.bgHex('#2d2d2d').hex('#e0e0e0')(text));
-        box.addChild(header);
-        box.addChild(list);
-
-        const handle = this.tui.showOverlay(box, {
-            width: overlayWidth,
-            maxHeight: "50%",
-            anchor: "center",
-        });
-
-        // 标记有 overlay 打开
-        this.hasOpenOverlay = true;
-
-        this.tui.setFocus(list);
-
-        list.onSelect = () => {
-            handle.hide();
-            // 标记 overlay 关闭
-            this.hasOpenOverlay = false;
-            this.tui.setFocus(this.inputArea.input);
-        };
-
-        list.onCancel = () => {
-            handle.hide();
-            // 标记 overlay 关闭
-            this.hasOpenOverlay = false;
-            this.tui.setFocus(this.inputArea.input);
-        };
-    }
 
     private switchToTask(task: TaskState) {
         // 保存当前任务的队列（如果有）
