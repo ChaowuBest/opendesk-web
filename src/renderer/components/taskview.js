@@ -182,28 +182,30 @@ class TaskView extends HTMLElement {
 
     async exportTask() {
         try {
-            // 创建一个隐藏的 input 元素用于文件保存
-            const input = document.createElement('input');
-            input.type = 'file';
-            input.accept = '.html';
             const timestamp = new Date().toISOString().slice(0, 10);
             const defaultFileName = `conversation-${timestamp}.html`;
 
-            // 先获取完整的 HTML 内容
-            const htmlContent = await window.taskManagerAPI.exportTaskToHtml(this.task_id);
+            // 1. 显示保存文件对话框（Electron 会自动处理文件覆盖确认）
+            const saveResult = await window.fsAPI.saveFile({
+                title: '导出会话',
+                defaultPath: defaultFileName,
+                filters: [
+                    { name: 'HTML Files', extensions: ['html'] },
+                    { name: 'All Files', extensions: ['*'] }
+                ]
+            });
 
-            // 创建 Blob 和下载链接
-            const blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = defaultFileName;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
+            if (saveResult.canceled || !saveResult.filePath) {
+                return; // 用户取消了操作
+            }
+
+            const filePath = saveResult.filePath;
+
+            // 2. 保存文件
+            await window.taskManagerAPI.exportTask(this.task_id, filePath);
         } catch (error) {
             console.error('Failed to export task:', error);
+            alert('导出失败：' + error.message);
         }
     }
 

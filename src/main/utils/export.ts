@@ -10,6 +10,7 @@
  */
 
 import fs from 'fs';
+import path from 'path';
 import type { TaskState } from '../states/tasks';
 import { UserMessage, AssistantMessage, TextMessagePart, ToolCallMessagePart, FileMessagePart, ReasoningMessagePart } from '../agents/messages';
 
@@ -95,11 +96,16 @@ pre, code {
     margin: 1em 0;
 }
 `
-
 export async function exportTaskToHtml(task: TaskState, filePath: string): Promise<void> {
     const html = await generateTaskHtml(task);
+    // 创建目录
+    const dir = path.dirname(filePath);
+    if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+    }
     fs.writeFileSync(filePath, html, 'utf-8');
 }
+
 
 export async function generateTaskHtml(task: TaskState): Promise<string> {
     await task.render();

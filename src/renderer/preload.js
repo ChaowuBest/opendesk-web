@@ -120,6 +120,14 @@ function exposeTaskManagerAPI() {
                 throw new Error(result.message);
             }
             return result.data;
+        },
+        exportTask: async (taskId, filePath) => {
+            const result = await ipcRenderer.invoke('taskManager:exportTask', taskId, filePath);
+            if (result.status !== 'ok') {
+                console.error('exporting task failed', result.message);
+                throw new Error(result.message);
+            }
+            return result.data;
         }
     });
 
@@ -176,6 +184,24 @@ function exposeFSAPI() {
             // 这里的返回值直接就是路径数组 ['C:/Users/.../a.pdf']，或者空数组(用户取消)
             return filePaths;
         },
+        saveFile: async (options) => {
+            // 调用主进程的保存对话框
+            const result = await ipcRenderer.invoke('dialog:saveFile', options);
+            if (result.status !== 'ok') {
+                console.error('showing save dialog failed', result.message);
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
+        fileExists: async (filePath) => {
+            // 检查文件是否存在
+            const result = await ipcRenderer.invoke('fs:fileExists', filePath);
+            if (result.status !== 'ok') {
+                console.error('checking file exists failed', result.message);
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
         getFilePath: (file) => {
             // 统一为跨平台路径，始终返回如 c:/xxx 格式
             let p = webUtils.getPathForFile(file);
@@ -191,6 +217,7 @@ function exposeFSAPI() {
                 console.error('getting path type failed', result.message);
                 throw new Error(result.message);
             }
+
             return result.data;
         }
     })

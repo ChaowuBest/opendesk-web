@@ -19,6 +19,7 @@ import { HelpOverlay } from "./components/help";
 import { ConfirmOverlay, InfoOverlay } from "./components/notice";
 import { exportTaskToHtml } from "../utils/export";
 import path from "path";
+import fs from "fs";
 import chalk from "chalk";
 
 
@@ -228,17 +229,37 @@ export class OpenDeskTUI {
                 }
 
                 const absolutePath = path.resolve(this.workspace, filePath);
-                await exportTaskToHtml(task, absolutePath);
-                logger.info(`Session exported to: ${absolutePath}`);
 
-                const info = new InfoOverlay(this, {
-                    title: "导出成功",
-                    message: `会话已成功导出到：\n${absolutePath}`,
-                    closeLabel: "确定"
-                });
-                info.show();
+                // 检查文件是否存在
+                if (fs.existsSync(absolutePath)) {
+                    const confirm = new ConfirmOverlay(this, {
+                        title: "文件已存在",
+                        message: `文件 ${absolutePath} 已存在。是否覆盖？`,
+                        confirmLabel: "覆盖",
+                        cancelLabel: "取消"
+                    });
+                    confirm.show(async () => {
+                        // 用户确认覆盖
+                        await this.doExport(task, absolutePath);
+                    });
+                } else {
+                    // 文件不存在，直接导出
+                    await this.doExport(task, absolutePath);
+                }
             },
         });
+    }
+
+    private async doExport(task: any, absolutePath: string) {
+        await exportTaskToHtml(task, absolutePath);
+        logger.info(`Session exported to: ${absolutePath}`);
+
+        const info = new InfoOverlay(this, {
+            title: "导出成功",
+            message: `会话已成功导出到：\n${absolutePath}`,
+            closeLabel: "确定"
+        });
+        info.show();
     }
 
     private async createNewTask() {
