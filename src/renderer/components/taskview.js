@@ -1,3 +1,5 @@
+import { ElasticToolbarWidget } from './toolbar.ts';
+
 /**
  * Copyright (c) 2026 The OpenDesk Team
  * OpenDesk is licensed under Mulan PSL v2.
@@ -178,8 +180,51 @@ class TaskView extends HTMLElement {
         }
     }
 
+    async exportTask() {
+        try {
+            // 创建一个隐藏的 input 元素用于文件保存
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = '.html';
+            const timestamp = new Date().toISOString().slice(0, 10);
+            const defaultFileName = `conversation-${timestamp}.html`;
+
+            // 先获取完整的 HTML 内容
+            const htmlContent = await window.taskManagerAPI.exportTaskToHtml(this.task_id);
+
+            // 创建 Blob 和下载链接
+            const blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = defaultFileName;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        } catch (error) {
+            console.error('Failed to export task:', error);
+        }
+    }
+
     connectedCallback() {
         this.render();
+
+        // Initialize toolbar
+        const toolbarContainer = this.querySelector('#taskview-toolbar');
+        if (toolbarContainer) {
+            const toolbar = new ElasticToolbarWidget([
+                {
+                    id: 'taskview-export-btn',
+                    icon: 'fa-download',
+                    label: '导出',
+                    labelStayVisible: false,
+                    action: () => { this.exportTask(); }
+                }
+            ], '智能体对话');
+            toolbarContainer.appendChild(toolbar);
+        }
+
         this.setUpEventListeners();
         this.reload().then(async () => {
             this.subscription_id = await window.taskManagerAPI.subscribeTaskUpdate(this.task_id, progress => {
@@ -215,9 +260,7 @@ class TaskView extends HTMLElement {
     render() {
         this.innerHTML = `
         <div class="bg-gray-30 h-full flex flex-col">
-            <header class="w-full px-4 py-3 flex justify-center items-center text-center">
-                <div class="inline-block rounded-full bg-white px-5 py-2 shadow font-semibold text-gray-800 text-sm">智能体对话</div>
-            </header>
+            <header id="taskview-toolbar" class="w-full pt-2"></header>
 
             <div class="relative flex-1 overflow-y-auto">
                 <!-- 对话历史区域 - 可滚动 -->

@@ -1,9 +1,22 @@
+/**
+ * Copyright (c) 2026 The OpenDesk Team
+ * OpenDesk is licensed under Mulan PSL v2.
+ * You can use this software according to the terms and conditions of the Mulan PSL v2.
+ * You may obtain a copy of Mulan PSL v2 at: http://license.coscl.org.cn/MulanPSL2
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
+ * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+ * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+ * See the Mulan PSL v2 for more details.
+ */
+
 import { BaseApplication } from "../base";
 import { BaseTool, BaseToolset } from "../../agents/tool";
 import { z } from 'zod';
 import { Setting } from '../../utils/setting.js';
-import McpMgrWorker from "./worker";
+import { InstallMcpServerTool, ListMcpServersTool, DeleteMcpServerTool } from './tools';
 import type { McpServerConfig, McpToolInfo } from './common.js';
+import McpMgrWorker from "./worker";
+
 
 const McpServerConfigSchema = z.object({
     id: z.string().describe('服务唯一标识符（自动生成）').default(''),
@@ -37,7 +50,7 @@ export class McpMgrApplication extends BaseApplication {
         return McpMgrConfigSchema;
     }
 
-    private getServersFromConfig(): McpServerConfig[] {
+    public getServersFromConfig(): McpServerConfig[] {
         const config = this.getConfig() as z.output<typeof McpMgrConfigSchema>;
         return JSON.parse(JSON.stringify(config?.servers || []));
     }
@@ -53,8 +66,37 @@ export class McpMgrApplication extends BaseApplication {
         setting.setData(fullData);
     }
 
+    public isServerDuplicate(a: McpServerConfig, b: McpServerConfig): boolean {
+        // 名称相同直接认为是重复
+        if (a.name === b.name) return true;
+
+        // stdio 传输：检查 command + args 是否相同
+        if (a.transport === 'stdio' && b.transport === 'stdio') {
+            if (a.command === b.command && JSON.stringify(a.args) === JSON.stringify(b.args)) {
+                return true;
+            }
+        }
+
+        // sse/streamableHttp 传输：检查 url 是否相同
+        if ((a.transport === 'sse' || a.transport === 'streamableHttp') &&
+            (b.transport === 'sse' || b.transport === 'streamableHttp')) {
+            if (a.url === b.url) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     async addServer(config: McpServerConfig): Promise<McpServerConfig> {
         const servers = this.getServersFromConfig();
+
+        // 检查是否已存在相同配置的服务器
+        const duplicate = servers.find(s => this.isServerDuplicate(s, config));
+        if (duplicate) {
+            throw new Error(`MCP server "${config.name}" already exists with similar configuration`);
+        }
+
         config.id = `mcp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
         servers.push(config);
         this.saveServersToConfig(servers);
@@ -117,44 +159,56 @@ export class McpMgrApplication extends BaseApplication {
     }
 
     async getToolsets(): Promise<BaseToolset[]> {
+        const toolsets: BaseToolset[] = [];
+
+        // 1. 现有的 MCP 工具（来自已连接的服务器）
         let tools: McpToolInfo[];
         try {
             const result = await this.callWorker('getDiscoveredTools');
             if (result.status !== 'ok') return [];
             tools = result.data as McpToolInfo[];
         } catch {
-            return [];
+            tools = [];
         }
-        if (!tools || tools.length === 0) return [];
 
-        const toolset = new BaseToolset('mcpmgr');
+        if (tools && tools.length > 0) {
+            const toolset = new BaseToolset('mcpmgr');
+            for (const tool of tools) {
+                const safeName = `${tool.serverName.replace(/[^a-zA-Z0-9_]/g, '_')}__${tool.name}`;
+                let schema: z.ZodType;
+                try {
+                    schema = z.fromJSONSchema(tool.inputSchema as any);
+                } catch {
+                    schema = z.object({}).passthrough();
+                }
 
-        for (const tool of tools) {
-            const safeName = `${tool.serverName.replace(/[^a-zA-Z0-9_]/g, '_')}__${tool.name}`;
-            let schema: z.ZodType;
-            try {
-                schema = z.fromJSONSchema(tool.inputSchema as any);
-            } catch {
-                schema = z.object({}).passthrough();
+                const baseTool = new BaseTool(
+                    safeName,
+                    `[MCP: ${tool.serverName}] ${tool.description}`,
+                    schema,
+                );
+
+                const serverId = tool.serverId;
+                const toolName = tool.name;
+                baseTool.setExecutor(async (args) => {
+                    const result = await this.callWorker('callMcpTool', serverId, toolName, args);
+                    if (result.status !== 'ok') throw new Error(result.message || 'MCP tool call failed');
+                    return result.data as string;
+                });
+
+                toolset.addTool(baseTool);
             }
-
-            const baseTool = new BaseTool(
-                safeName,
-                `[MCP: ${tool.serverName}] ${tool.description}`,
-                schema,
-            );
-
-            const serverId = tool.serverId;
-            const toolName = tool.name;
-            baseTool.setExecutor(async (args) => {
-                const result = await this.callWorker('callMcpTool', serverId, toolName, args);
-                if (result.status !== 'ok') throw new Error(result.message || 'MCP tool call failed');
-                return result.data as string;
-            });
-
-            toolset.addTool(baseTool);
+            toolsets.push(toolset);
         }
 
-        return [toolset];
+        // 2. 新增的 MCP 安装工具
+        const installToolset = new BaseToolset('mcp_install');
+
+        installToolset.addTool(new InstallMcpServerTool(this));
+        installToolset.addTool(new ListMcpServersTool(this));
+        installToolset.addTool(new DeleteMcpServerTool(this));
+
+        toolsets.push(installToolset);
+        return toolsets;
     }
 }
