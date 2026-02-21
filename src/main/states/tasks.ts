@@ -9,16 +9,16 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { ChatContext, UserMessage, AssistantMessage, FileMessagePart, SystemMessage, AssistantResponse, AssistantMessagePart, Usage } from '../agents/messages.js';
+import { ChatContext, UserMessage, AssistantMessage, FileMessagePart, SystemMessage, AssistantResponse, AssistantMessagePart, Usage, ToolCall } from '../agents/messages.js';
 import { BaseToolset } from '../agents/tool.js';
 import { LLM } from '../agents/llm.js';
 import { getTaskDirectory } from '../utils/setting.js';
-import path from 'path';
-import fs from 'fs';
 import { logger } from '../utils/logger.js';
-import officeParser from 'officeparser';
 import { ApplicationRegistry } from '../applications/registry.js';
 import { jsonrepair } from 'jsonrepair';
+import officeParser from 'officeparser';
+import path from 'path';
+import fs from 'fs';
 
 
 type TaskStatus = 'waiting' | 'running' | 'stopped';
@@ -67,7 +67,7 @@ export class TaskState {
     model?: string;
     message_queue: string[] = [];
 
-    constructor (task_manager_state: TaskManagerState) {
+    constructor(task_manager_state: TaskManagerState) {
         this.task_manager_state = task_manager_state;
     }
 
@@ -283,10 +283,8 @@ export class TaskState {
 
     /**
      * Process a tool call
-     * @param {import('../agents/messages').ToolCall} tool_call
-     * @returns {Promise<void>}
      */
-    async processToolCall(tool_call) {
+    async processToolCall(tool_call: ToolCall): Promise<void> {
         let tool = this.chat_context.getTool(tool_call.tool_name);
         if (tool === undefined) {
             logger.error(`tool ${tool_call.tool_name} not found`);
@@ -465,12 +463,14 @@ export class TaskManagerState {
         const taskDirectory = getTaskDirectory();
         const taskListFile = path.join(taskDirectory, 'task_list.json');
 
+        // Write task list
         fs.writeFileSync(
             taskListFile,
             JSON.stringify(this.tasks.map(task => task.toSimplifiedJSON()), null, 4),
             { encoding: 'utf8' }
         );
 
+        // Write individual task files
         for (let task of this.tasks) {
             const taskFile = path.join(taskDirectory, `${task.task_id}.json`);
             fs.writeFileSync(
@@ -479,6 +479,23 @@ export class TaskManagerState {
                 { encoding: 'utf8' }
             );
         }
+    }
+
+    /**
+     * Clean up task files that are no longer in the current tasks list
+     */
+    private cleanupOldTaskFiles(): void {
+        const taskDirectory = getTaskDirectory();
+        const existingTaskIds = new Set(this.tasks.map(task => task.task_id));
+
+        fs.readdirSync(taskDirectory).forEach(file => {
+            if (file.endsWith('.json') && file !== 'task_list.json') {
+                const taskIdFromFile = path.basename(file, '.json');
+                if (!existingTaskIds.has(taskIdFromFile)) {
+                    fs.unlinkSync(path.join(taskDirectory, file));
+                }
+            }
+        });
     }
 
     /**
@@ -510,6 +527,24 @@ export class TaskManagerState {
     removeTask(taskId: string): void {
         this.tasks = this.tasks.filter(task => task.task_id !== taskId);
         this.publishTaskListUpdate();
+
+        // Delete just the specific task's file
+        const taskDirectory = getTaskDirectory();
+        const taskFile = path.join(taskDirectory, `${taskId}.json`);
+        if (fs.existsSync(taskFile)) {
+            fs.unlinkSync(taskFile);
+        }
+
+        this.save();
+    }
+
+    /**
+     * Remove all tasks from the task manager
+     */
+    clearAllTasks(): void {
+        this.tasks = [];
+        this.publishTaskListUpdate();
+        this.cleanupOldTaskFiles();
         this.save();
     }
 

@@ -16,6 +16,7 @@ import { lookupKnownContextSize, fetchContextSizeFromAPI } from "../utils/model-
 import { AgentDecl } from "../agents/agentdecl.js";
 import { ShellAgentDecl } from "../agents/agentdecls/shellagent.js";
 import { HelpOverlay } from "./components/help";
+import { ConfirmOverlay } from "./components/confirm";
 import chalk from "chalk";
 
 
@@ -169,6 +170,32 @@ export class OpenDeskTUI {
                         currentTask.message_queue = this.inputArea.getQueueSnapshot();
                     }
                 }
+            },
+        });
+
+        this.commandRegistry.register({
+            name: "clear",
+            description: "删除所有任务历史",
+            execute: async () => {
+                const confirm = new ConfirmOverlay(this, {
+                    title: "确认删除",
+                    message: "确定要删除所有任务历史吗？此操作不可恢复。",
+                    confirmLabel: "删除所有",
+                    cancelLabel: "取消"
+                });
+                confirm.show(() => {
+                    // On confirm
+                    this.taskManagerState.clearAllTasks();
+                    // Reset the current task view
+                    this.taskView.taskState = undefined;
+                    this.taskView.clearMessages();
+                    this.activeTaskId = undefined;
+                    this.inputArea.clearMessageQueue();
+                    this.inputArea.setStatus('idle');
+                    this.inputArea.statusBar.stopTimer();
+                    this.inputArea.statusBar.update({ elapsedMs: 0, totalTokens: 0 });
+                    this.tui.requestRender();
+                });
             },
         });
     }

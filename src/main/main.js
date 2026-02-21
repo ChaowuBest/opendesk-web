@@ -187,6 +187,10 @@ const registerTaskManagerAPIHandlers = () => {
         globalState.taskManagerState.removeTask(taskId);
         return { status: 'ok', data: task.task_id };
     })
+    ipcMain.handle('taskManager:clearAllTasks', () => {
+        globalState.taskManagerState.clearAllTasks();
+        return { status: 'ok' };
+    })
     ipcMain.handle('taskManager:getFullTask', async (event, taskId) => {
         var task = globalState.taskManagerState.getTask(taskId);
         if (task === undefined) {
