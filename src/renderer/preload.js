@@ -112,7 +112,15 @@ function exposeTaskManagerAPI() {
             return result.data;
         },
         setSystemPrompt: (taskId, prompt) => ipcRenderer.invoke('taskManager:setSystemPrompt', taskId, prompt),
-        submitMessage: (taskId, message) => ipcRenderer.invoke('taskManager:submitMessage', taskId, message)
+        submitMessage: (taskId, message) => ipcRenderer.invoke('taskManager:submitMessage', taskId, message),
+        exportTaskToHtml: async (taskId) => {
+            const result = await ipcRenderer.invoke('taskManager:exportTaskToHtml', taskId);
+            if (result.status !== 'ok') {
+                console.error('exporting task failed', result.message);
+                throw new Error(result.message);
+            }
+            return result.data;
+        }
     });
 
     ipcRenderer.on('taskManager:callTool', async (event, taskId, toolCallId, toolsetName, toolName, args) => {

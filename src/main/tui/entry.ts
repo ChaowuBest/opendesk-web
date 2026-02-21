@@ -16,7 +16,9 @@ import { lookupKnownContextSize, fetchContextSizeFromAPI } from "../utils/model-
 import { AgentDecl } from "../agents/agentdecl.js";
 import { ShellAgentDecl } from "../agents/agentdecls/shellagent.js";
 import { HelpOverlay } from "./components/help";
-import { ConfirmOverlay } from "./components/confirm";
+import { ConfirmOverlay, InfoOverlay } from "./components/notice";
+import { exportTaskToHtml } from "../utils/export";
+import path from "path";
 import chalk from "chalk";
 
 
@@ -196,6 +198,45 @@ export class OpenDeskTUI {
                     this.inputArea.statusBar.update({ elapsedMs: 0, totalTokens: 0 });
                     this.tui.requestRender();
                 });
+            },
+        });
+
+        this.commandRegistry.register({
+            name: "export",
+            description: "导出当前会话为 HTML 文件，用法：/export filename.html",
+            execute: async (args: string) => {
+                if (!this.activeTaskId) {
+                    logger.warn('No active task to export');
+                    return;
+                }
+
+                const task = this.taskManagerState.getTask(this.activeTaskId);
+                if (!task) {
+                    logger.warn('Task not found');
+                    return;
+                }
+
+                let filePath = args.trim();
+                if (!filePath) {
+                    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+                    filePath = `opendesk-session-${timestamp}.html`;
+                    logger.info(`未指定文件名，将使用自动生成的文件名：${filePath}`);
+                }
+
+                if (!filePath.endsWith('.html')) {
+                    filePath += '.html';
+                }
+
+                const absolutePath = path.resolve(this.workspace, filePath);
+                await exportTaskToHtml(task, absolutePath);
+                logger.info(`Session exported to: ${absolutePath}`);
+
+                const info = new InfoOverlay(this, {
+                    title: "导出成功",
+                    message: `会话已成功导出到：\n${absolutePath}`,
+                    closeLabel: "确定"
+                });
+                info.show();
             },
         });
     }

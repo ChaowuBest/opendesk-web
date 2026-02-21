@@ -9,13 +9,13 @@
  * See the Mulan PSL v2 for more details.
  */
 
-export function escapeHtml(content: string) {
-    const map = {
+export function escapeHtml(content: string): string {
+    const map: Record<string, string> = {
         '&': '&amp;',
         '<': '&lt;',
         '>': '&gt;',
         '"': '&quot;',
         "'": '&#039;'
     };
-    return content.replace(/[&<>"']/g, function (m) { return map[m]; });
+    return content.replace(/[&<>"']/g, function (m: string) { return map[m]; });
 }

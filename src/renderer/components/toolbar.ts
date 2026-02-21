@@ -21,15 +21,18 @@ export class ElasticToolbarWidget extends HTMLElement {
 
     uid: string;
     buttons: Button[];
+    toolbarTitle?: string;
 
     /**
      * 创建一个弹性工具栏组件
      * @param buttons 工具栏按钮列表
+     * @param toolbarTitle 工具栏标题（可选）
      */
-    constructor(buttons: Button[] = []) {
+    constructor(buttons: Button[] = [], toolbarTitle?: string) {
         super();
         this.uid = crypto.randomUUID();
         this.buttons = buttons;
+        this.toolbarTitle = toolbarTitle;
     }
 
     connectedCallback() {
@@ -41,6 +44,11 @@ export class ElasticToolbarWidget extends HTMLElement {
         this.render();
     }
 
+    setToolbarTitle(toolbarTitle: string) {
+        this.toolbarTitle = toolbarTitle;
+        this.render();
+    }
+
     render() {
         const topButtonsHTML = this.buttons.map(button => {
             const labelStayVisible = !!button.labelStayVisible;
@@ -49,7 +57,7 @@ export class ElasticToolbarWidget extends HTMLElement {
                 : 'max-w-0 overflow-hidden opacity-0 group-hover:max-w-[120px] group-hover:opacity-100 group-hover:ml-2 transition-all duration-500 ease-in-out whitespace-nowrap font-medium tracking-tight text-sm';
             return `
             <button id='${button.id}-${this.uid}' class="group flex items-center px-2 py-2 rounded-full
-                        bg-transparent hover:bg-white/60 hover:shadow-md
+                        bg-transparent hover:bg-gray-100
                         transition-all duration-500 ease-[cubic-bezier(0.23,1,0.32,1)]
                         text-gray-700 hover:text-blue-600">
                 <i class="fa-solid ${button.icon}"></i>
@@ -60,9 +68,14 @@ export class ElasticToolbarWidget extends HTMLElement {
             `;
         }).join('');
 
+        const titleHTML = this.toolbarTitle
+            ? `<div class="inline-block pl-4 py-2 font-semibold text-gray-800 text-sm">${this.toolbarTitle}</div>`
+            : '';
+
         let toolbarHTML = `
-        <header class="h-16 px-0 flex items-center justify-between">
-            <div class="flex items-center gap-2 p-1">
+        <header class="h-16 px-4 flex items-center justify-center">
+            <div class="flex items-center gap-3 p-1 rounded-full bg-white shadow">
+                ${titleHTML}
                 ${topButtonsHTML}
             </div>
         </header>

@@ -23,6 +23,7 @@ import { initializeRegistryProtocols, initializeProtocolHandlers, registerApplic
 import { UpdateClient } from '../updater/client.js';
 import { setPlatform } from '../platforms/base.js';
 import { ElectronTaskUpdateSubscriber, ElectronPlatform, ElectronTaskManagerUpdateSubscriber } from '../platforms/electron.js';
+import { exportTaskToHtml, generateTaskHtml } from './utils/export';
 
 import Convert from 'ansi-to-html';
 import path from 'path';
@@ -284,6 +285,35 @@ const registerTaskManagerAPIHandlers = () => {
         }
         task.stop();
         return { status: 'ok' };
+    });
+    ipcMain.handle('taskManager:exportTask', async (event, taskId, filePath) => {
+        const task = globalState.taskManagerState.getTask(taskId);
+        if (task === undefined) {
+            return { status: 'error', message: `task ${taskId} not found` }
+        }
+        try {
+            await task.render();
+            await exportTaskToHtml(task, filePath);
+            return { status: 'ok', data: filePath };
+        } catch (error) {
+            logger.error('exporting task failed', error);
+            return { status: 'error', message: error.message };
+        }
+    });
+    ipcMain.handle('taskManager:exportTaskToHtml', async (event, taskId) => {
+        const task = globalState.taskManagerState.getTask(taskId);
+        if (task === undefined) {
+            return { status: 'error', message: `task ${taskId} not found` }
+        }
+        try {
+            await task.render();
+            // 创建一个临时函数来获取 HTML 内容而不写入文件
+            const htmlContent = await generateTaskHtml(task);
+            return { status: 'ok', data: htmlContent };
+        } catch (error) {
+            logger.error('exporting task failed', error);
+            return { status: 'error', message: error.message };
+        }
     });
 }
 
