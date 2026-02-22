@@ -1,4 +1,4 @@
-import { TUI, SelectList, Box, Text, Key, visibleWidth, truncateToWidth, matchesKey } from "@mariozechner/pi-tui";
+import { TUI, SelectList, Box, Text, Key, visibleWidth, truncateToWidth, matchesKey, type Component } from "@mariozechner/pi-tui";
 import { OpenDeskBanner } from './banner';
 import { VerticalLayout } from './components/layout';
 import { OpenDeskTerminal } from './terminal';
@@ -19,6 +19,8 @@ import { HelpOverlay } from "./components/help";
 import { ConfirmOverlay, InfoOverlay } from "./components/notice";
 import { LogPanel, LogPanelMode } from "./components/logpanel";
 import { TodoList } from "./components/todolist";
+import { ProviderConfigPage } from "./components/config/provider-config";
+import { ModelConfigPage } from "./components/config/model-config";
 import { getTaskTodosForDisplay } from "../applications/todomgr/tools";
 import { exportTaskToHtml } from "../utils/export";
 import path from "path";
@@ -53,6 +55,9 @@ export class OpenDeskTUI {
 
     /** 跟踪是否有 overlay 打开 */
     hasOpenOverlay = false;
+
+    /** 当前激活的配置页面组件（非 null 时表示处于配置模式） */
+    private configComponent?: Component;
 
     private workspace: string;
     private agentDecl: AgentDecl;
@@ -276,6 +281,28 @@ export class OpenDeskTUI {
         });
 
         this.commandRegistry.register({
+            name: "config",
+            description: "打开配置界面，用法: /config [providers|models]",
+            getArgumentCompletions: (argPrefix: string) => {
+                const options = [
+                    { value: 'providers', label: 'providers', description: '供应商配置' },
+                    { value: 'models', label: 'models', description: '模型配置' },
+                ];
+                return options.filter(o => o.value.startsWith(argPrefix.toLowerCase()));
+            },
+            execute: async (args: string) => {
+                const sub = args.trim().toLowerCase();
+                if (sub === 'providers') {
+                    this.enterConfigMode('providers');
+                } else if (sub === 'models') {
+                    this.enterConfigMode('models');
+                } else {
+                    this.enterConfigMode('providers');
+                }
+            },
+        });
+
+        this.commandRegistry.register({
             name: "log",
             description: "显示日志面板，用法: /log [off|last|all]",
             getArgumentCompletions: (argPrefix: string) => {
@@ -334,6 +361,44 @@ export class OpenDeskTUI {
         this.container.addChild(this.inputArea);
         this.container.setMinLines(this.tui.terminal.rows);
 
+        this.tui.requestRender();
+    }
+
+    private enterConfigMode(mode: 'providers' | 'models') {
+        const onClose = () => this.exitConfigMode();
+
+        if (mode === 'providers') {
+            this.configComponent = new ProviderConfigPage(this.tui, onClose);
+        } else {
+            this.configComponent = new ModelConfigPage(this.tui, onClose);
+        }
+
+        this.shortcutManager.detach();
+
+        this.container.clear();
+        this.container.addChild(new OpenDeskBanner(this.workspace));
+        this.container.addChild(this.configComponent);
+        this.container.setMinLines(this.tui.terminal.rows);
+        this.tui.requestRender();
+    }
+
+    private exitConfigMode() {
+        this.configComponent = undefined;
+
+        this.shortcutManager.attach(this.tui);
+
+        this.container.clear();
+        this.container.addChild(new OpenDeskBanner(this.workspace));
+        this.container.addChild(this.taskView);
+        this.container.addChild(this.todoList);
+
+        if (this.logPanel.mode !== 'off') {
+            this.container.addChild(this.logPanel);
+        }
+
+        this.container.addChild(this.inputArea);
+        this.container.setMinLines(this.tui.terminal.rows);
+        this.tui.setFocus(this.inputArea.input);
         this.tui.requestRender();
     }
 
@@ -622,6 +687,11 @@ export class OpenDeskTUI {
                 // 有 overlay 打开时不处理
                 if (this.hasOpenOverlay) {
                     return undefined; // 不消费，让 overlay 处理
+                }
+
+                // 配置模式下静默消费，不干扰配置页面
+                if (this.configComponent) {
+                    return { consume: true };
                 }
 
                 // 首先，取消自动补全（如果正在显示）
