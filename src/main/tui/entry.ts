@@ -1,4 +1,4 @@
-import { TUI, SelectList, Box, Text, Key, visibleWidth, truncateToWidth } from "@mariozechner/pi-tui";
+import { TUI, SelectList, Box, Text, Key, visibleWidth, truncateToWidth, matchesKey } from "@mariozechner/pi-tui";
 import { OpenDeskBanner } from './banner';
 import { VerticalLayout } from './components/layout';
 import { OpenDeskTerminal } from './terminal';
@@ -174,7 +174,17 @@ export class OpenDeskTUI {
         this.commandRegistry.register({
             name: "exit",
             description: "退出 OpenDesk",
-            execute: async () => { await this.exit(); },
+            execute: async () => {
+                const confirm = new ConfirmOverlay(this, {
+                    title: "确认退出",
+                    message: "确定要退出 OpenDesk 吗？",
+                    confirmLabel: "退出",
+                    cancelLabel: "取消"
+                });
+                confirm.show(async () => {
+                    await this.exit();
+                });
+            },
         });
 
         this.commandRegistry.register({
@@ -605,6 +615,41 @@ export class OpenDeskTUI {
 
     start() {
         this.tui.start();
+
+        // Attach a direct input listener to TUI FIRST, to hijack Ctrl+C before Editor gets it!
+        this.tui.addInputListener((data) => {
+            if (matchesKey(data, Key.ctrl("c"))) {
+                // 有 overlay 打开时不处理
+                if (this.hasOpenOverlay) {
+                    return undefined; // 不消费，让 overlay 处理
+                }
+
+                // 首先，取消自动补全（如果正在显示）
+                (this.inputArea.input as any).cancelAutocomplete();
+
+                // 检查输入框是否有内容
+                const currentText = this.inputArea.input.getText();
+                if (currentText.trim() === '') {
+                    // 输入框为空，显示提示
+                    const info = new InfoOverlay(this, {
+                        title: "提示",
+                        message: "你可以输入 /exit 退出或者输入 /help 查看帮助",
+                        closeLabel: "确定"
+                    });
+                    info.show();
+                } else {
+                    // 清空输入框
+                    this.inputArea.input.setText('');
+                }
+
+                // 强制重新渲染
+                this.tui.requestRender(true);
+
+                return { consume: true }; // 完全消费掉，不传给 Editor！
+            }
+            return undefined;
+        });
+
         this.shortcutManager.attach(this.tui);
         this.tui.setFocus(this.inputArea.input);
     }
