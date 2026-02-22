@@ -1,4 +1,4 @@
-import chalk from 'chalk';
+import chalk, { Chalk } from 'chalk';
 import { type Component, visibleWidth, truncateToWidth } from '@mariozechner/pi-tui';
 
 /**
@@ -26,6 +26,22 @@ export interface CardStatus {
  */
 export type TruncateStrategy = 'head' | 'tail' | 'head-tail';
 
+/**
+ * 边框样式类型：
+ *  - 'rounded'   圆角 ╭╮╰╯
+ *  - 'square'    方角 ┌┐└┘
+ *  - 'double'    双线 ╔╗╚╝
+ *  - 'single'    单线 ┌┐└┘
+ */
+export type BorderStyle = 'rounded' | 'square' | 'double' | 'single';
+
+export interface BorderConfig {
+    /** 边框样式 */
+    style?: BorderStyle;
+    /** 边框颜色函数，默认 chalk.dim */
+    colorFn?: Chalk;
+}
+
 export interface CardOptions {
     /** 图标，显示在标题左侧 */
     icon?: string;
@@ -41,6 +57,8 @@ export interface CardOptions {
     maxLines?: number;
     /** 超出 maxLines 时的裁剪策略，默认 'tail' */
     truncateStrategy?: TruncateStrategy;
+    /** 边框配置 */
+    border?: BorderConfig;
 }
 
 /**
@@ -62,6 +80,7 @@ export class Card implements Component {
     private _collapsed: boolean;
     private _maxLines?: number;
     private _truncateStrategy: TruncateStrategy;
+    private _border: BorderConfig;
 
     constructor(options: CardOptions) {
         this._icon = options.icon ?? '';
@@ -71,6 +90,7 @@ export class Card implements Component {
         this._collapsed = options.collapsed ?? false;
         this._maxLines = options.maxLines;
         this._truncateStrategy = options.truncateStrategy ?? 'tail';
+        this._border = options.border ?? { style: 'rounded', colorFn: chalk.dim };
     }
 
     setIcon(icon: string) { this._icon = icon; }
@@ -80,11 +100,28 @@ export class Card implements Component {
     setCollapsed(collapsed: boolean) { this._collapsed = collapsed; }
     setMaxLines(maxLines?: number) { this._maxLines = maxLines; }
     setTruncateStrategy(strategy: TruncateStrategy) { this._truncateStrategy = strategy; }
+    setBorder(border: BorderConfig) { this._border = border; }
 
     invalidate() {}
 
+    private getBorderChars(): { topLeft: string; topRight: string; bottomLeft: string; bottomRight: string; horizontal: string; vertical: string } {
+        const style = this._border.style ?? 'rounded';
+        switch (style) {
+            case 'square':
+                return { topLeft: '┌', topRight: '┐', bottomLeft: '└', bottomRight: '┘', horizontal: '─', vertical: '│' };
+            case 'double':
+                return { topLeft: '╔', topRight: '╗', bottomLeft: '╚', bottomRight: '╝', horizontal: '═', vertical: '║' };
+            case 'single':
+                return { topLeft: '┌', topRight: '┐', bottomLeft: '└', bottomRight: '┘', horizontal: '─', vertical: '│' };
+            case 'rounded':
+            default:
+                return { topLeft: '╭', topRight: '╮', bottomLeft: '╰', bottomRight: '╯', horizontal: '─', vertical: '│' };
+        }
+    }
+
     render(width: number): string[] {
-        const dim = (s: string) => chalk.dim(s);
+        const border = this.getBorderChars();
+        const colorFn = this._border.colorFn ?? chalk.dim;
         const contentWidth = Math.max(1, width - 4);
         const result: string[] = [];
 
@@ -96,11 +133,11 @@ export class Card implements Component {
             for (const raw of displayLines) {
                 const line = sanitizeLine(String(raw));
                 const padded = truncateToWidth(line, contentWidth, '…', true);
-                result.push(dim('│') + ' ' + padded + ' ' + dim('│'));
+                result.push(colorFn(border.vertical) + ' ' + padded + ' ' + colorFn(border.vertical));
             }
         }
 
-        result.push(dim('╰' + '─'.repeat(Math.max(0, width - 2)) + '╯'));
+        result.push(colorFn(border.bottomLeft + border.horizontal.repeat(Math.max(0, width - 2)) + border.bottomRight));
 
         return result.map(l => truncateToWidth(l, width, '…', true));
     }
@@ -108,13 +145,14 @@ export class Card implements Component {
     // ───────────────────── Header ─────────────────────
 
     private renderHeader(width: number): string {
-        const dim = (s: string) => chalk.dim(s);
+        const border = this.getBorderChars();
+        const colorFn = this._border.colorFn ?? chalk.dim;
         const titleContent = this._icon
             ? `${this._icon} ${chalk.bold(this._title)}`
             : chalk.bold(this._title);
 
-        const prefix = dim('╭─ ');
-        const suffix = dim(' ─╮');
+        const prefix = colorFn(border.topLeft + '─ ');
+        const suffix = colorFn(' ─' + border.topRight);
         const prefixVis = visibleWidth(prefix);
         const suffixVis = visibleWidth(suffix);
         const titleVis = visibleWidth(titleContent);
@@ -132,7 +170,7 @@ export class Card implements Component {
             const fillLen = width - fixedParts;
             return (
                 prefix + titleContent + ' ' +
-                dim('─'.repeat(fillLen)) +
+                colorFn(border.horizontal.repeat(fillLen)) +
                 statusContent + suffix
             );
         }
@@ -145,7 +183,7 @@ export class Card implements Component {
         }
 
         const fillLen = width - fixedParts;
-        return prefix + titleContent + ' ' + dim('─'.repeat(fillLen)) + suffix;
+        return prefix + titleContent + ' ' + colorFn(border.horizontal.repeat(fillLen)) + suffix;
     }
 
     // ───────────────────── 行裁剪 ─────────────────────

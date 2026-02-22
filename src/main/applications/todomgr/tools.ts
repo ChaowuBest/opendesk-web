@@ -11,12 +11,13 @@
 
 import { BaseTool } from '../../agents/tool';
 import { ToolCall } from '../../agents/messages';
-import { Card } from '../../tui/components/card';
+import { Card, type BorderConfig } from '../../tui/components/card';
 import { statusDisplay, truncText } from '../../tui/components/toolcall';
 import chalk from 'chalk';
 import { z } from 'zod';
 import type { TaskTodo } from './common';
 import type { TaskState } from '../../states/tasks';
+import { escapeHtml } from '../../utils/escape';
 
 // ========== TodoWrite 工具 ==========
 
@@ -31,6 +32,18 @@ const TodoWriteArgsSchema = z.object({
 });
 
 const taskTodosMap = new Map<string, TaskTodo[]>();
+
+/**
+ * Get todos for a specific task (for display purposes)
+ * @param taskId - The task ID to get todos for
+ * @returns Array of todos for the task
+ */
+export function getTaskTodosForDisplay(taskId: string): TaskTodo[] {
+    if (!taskTodosMap.has(taskId)) {
+        return [];
+    }
+    return taskTodosMap.get(taskId)!;
+}
 
 export class TodoWriteTool extends BaseTool<typeof TodoWriteArgsSchema> {
     private todoMgrApp: any;
@@ -73,7 +86,7 @@ export class TodoWriteTool extends BaseTool<typeof TodoWriteArgsSchema> {
             <span style="font-size: 16px;">${statusIcon}</span>
             <div style="flex: 1;">
               <div style="display: flex; align-items: center; gap: 8px;">
-                <span style="font-weight: 500; ${isCompleted ? 'text-decoration: line-through; opacity: 0.7;' : ''}">${this.escapeHtml(todo.content)}</span>
+                <span style="font-weight: 500; ${isCompleted ? 'text-decoration: line-through; opacity: 0.7;' : ''}">${escapeHtml(todo.content)}</span>
               </div>
             </div>
           </div>
@@ -91,26 +104,53 @@ export class TodoWriteTool extends BaseTool<typeof TodoWriteArgsSchema> {
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
         const args = toolcall.args_object as any;
         const todos = Array.isArray(args?.['todos']) ? args['todos'] : [];
-        const body: string[] = [];
 
-        if (toolcall.status === 'running') {
-            body.push(chalk.dim('  ⏳ 处理中…'));
-        } else if (toolcall.status === 'success') {
-            if (todos.length > 0) {
-                for (const todo of todos) {
-                    const statusIcon = this.getStatusIconCli(String(todo.status));
-                    const content = truncText(String(todo.content), width - 30);
-                    const isCompleted = todo.status === 'completed';
-                    body.push(`  ${statusIcon} ${isCompleted ? chalk.dim.strikethrough(content) : content}`);
-                }
-            } else {
-                body.push(chalk.dim('  暂无待办'));
-            }
-        } else if (toolcall.status === 'error' && toolcall.result) {
-            body.push(chalk.redBright('  ' + truncText(String(toolcall.result), width - 10)));
+        const total = todos.length;
+        const completed = todos.filter(t => t.status === 'completed').length;
+        const inProgress = todos.filter(t => t.status === 'in_progress').length;
+        const pending = todos.filter(t => t.status === 'pending').length;
+
+        // 如果所有任务都已完成，显示完整列表
+        if (total > 0 && completed === total) {
+            return this.renderCompletedTodosCli(todos, width);
         }
 
-        return new Card({ icon: '📝', title: '任务待办列表', status: statusDisplay(toolcall.status), body }).render(width);
+        // 否则显示简洁摘要
+        let summary = `共 ${total} 个待办`;
+        if (total > 0) {
+            summary += ` · 已完成 ${completed}`;
+            if (inProgress > 0) summary += ` · 进行中 ${inProgress}`;
+            if (pending > 0) summary += ` · 待处理 ${pending}`;
+        }
+
+        return [
+            `📋 ${summary}`,
+        ];
+    }
+
+    private renderCompletedTodosCli(todos: any[], width: number): string[] {
+        const accentColor = chalk.hex('#F96850');
+        const borderConfig: BorderConfig = {
+            style: 'square',
+            colorFn: accentColor,
+        };
+
+        // Build body lines
+        const bodyLines: string[] = [];
+        for (const todo of todos) {
+            const content = truncText(String(todo.content), width - 8);
+            bodyLines.push(chalk.green('✓ ') + chalk.gray.strikethrough(content));
+        }
+
+        // Use Card component with custom border
+        const card = new Card({
+            icon: '✅',
+            title: '所有待办已完成!',
+            body: bodyLines,
+            border: borderConfig,
+        });
+
+        return card.render(width);
     }
 
     private getStatusIcon(status: string): string {
@@ -132,9 +172,6 @@ export class TodoWriteTool extends BaseTool<typeof TodoWriteArgsSchema> {
     }
 
 
-    private escapeHtml(s: string): string {
-        return s.replace(/&/g, '&').replace(/</g, '<').replace(/>/g, '>');
-    }
 
     private async handleExecute(args: z.output<typeof TodoWriteArgsSchema>, taskState?: TaskState): Promise<string> {
       const { todos } = args;
@@ -154,7 +191,14 @@ export class TodoWriteTool extends BaseTool<typeof TodoWriteArgsSchema> {
         };
       });
 
-      this.setTaskTodos(taskId, currentTodos);
+      // 如果所有任务都已完成，清空待办列表（不再保留）
+      const allCompleted = currentTodos.length > 0 && currentTodos.every(t => t.status === 'completed');
+      if (allCompleted) {
+        taskTodosMap.delete(taskId);
+      } else {
+        this.setTaskTodos(taskId, currentTodos);
+      }
+
       return JSON.stringify({ success: true, todos: currentTodos });
     }
 }

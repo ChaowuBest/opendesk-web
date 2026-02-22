@@ -10,6 +10,7 @@
  */
 
 import { AgentOperableHTMLElement } from '../../widget_utils.js';
+import { escapeHtml } from '../../../utils/escape.js';
 
 class TodoMgrEntryWidget extends AgentOperableHTMLElement {
     private _onGlobalTodosUpdated: ((todos: any[]) => void) | null = null;
@@ -115,11 +116,11 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
               <div class="flex-1">
                 <div class="flex items-center gap-2">
                   ${getPriorityBadge(todo.priority)}
-                  <span class="font-semibold text-gray-800">${this.escapeHtml(todo.content)}</span>
+                  <span class="font-semibold text-gray-800">${escapeHtml(todo.content)}</span>
                 </div>
                 <div class="text-xs text-gray-400 mt-1">
                   创建于 ${new Date(todo.created_at).toLocaleString()}
-                  ${todo.category ? ` · ${this.escapeHtml(todo.category)}` : ''}
+                  ${todo.category ? ` · ${escapeHtml(todo.category)}` : ''}
                   ${todo.completed_at ? ` · 完成于 ${new Date(todo.completed_at).toLocaleString()}` : ''}
                 </div>
               </div>
@@ -130,9 +131,6 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
     `;
     }
 
-    private escapeHtml(s: string): string {
-        return s.replace(/&/g, '&').replace(/</g, '<').replace(/>/g, '>');
-    }
 }
 
 customElements.define('todomgr-entry-widget', TodoMgrEntryWidget);

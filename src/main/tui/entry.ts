@@ -18,6 +18,8 @@ import { ShellAgentDecl } from "../agents/agentdecls/shellagent.js";
 import { HelpOverlay } from "./components/help";
 import { ConfirmOverlay, InfoOverlay } from "./components/notice";
 import { LogPanel, LogPanelMode } from "./components/logpanel";
+import { TodoList } from "./components/todolist";
+import { getTaskTodosForDisplay } from "../applications/todomgr/tools";
 import { exportTaskToHtml } from "../utils/export";
 import path from "path";
 import fs from "fs";
@@ -41,6 +43,7 @@ export class OpenDeskTUI {
     });
     private taskView: TaskView;
     private logPanel: LogPanel;
+    private todoList: TodoList;
     public inputArea: AgentInputArea;
 
     private shortcutManager: KeyboardShortcutManager;
@@ -74,6 +77,7 @@ export class OpenDeskTUI {
         this.tui = new TUI(terminal);
         this.taskView = new TaskView(this.tui);
         this.logPanel = new LogPanel(this.tui);
+        this.todoList = new TodoList();
         this.inputArea = new AgentInputArea(this.tui);
         this.workspace = args.workspace;
         this.model = args.model;
@@ -82,6 +86,7 @@ export class OpenDeskTUI {
         this.tui.addChild(this.container);
         this.container.addChild(new OpenDeskBanner(this.workspace));
         this.container.addChild(this.taskView);
+        this.container.addChild(this.todoList);
         this.container.addChild(this.inputArea)
         this.container.setMinLines(this.tui.terminal.rows);
         this.container.setVerticalAlign("center");
@@ -113,6 +118,9 @@ export class OpenDeskTUI {
                 this.inputArea.statusBar.update(data);
             }
         };
+
+        // 获取 TodoWrite 工具使用的 taskTodosMap 并绑定更新回调
+        this.bindTodoUpdates();
 
         // 指令注册（含快捷键绑定）
         this.commandRegistry = new SlashCommandRegistry();
@@ -300,15 +308,17 @@ export class OpenDeskTUI {
         this.container.addChild(new OpenDeskBanner(this.workspace));
 
         if (mode === 'all') {
-            // 全部模式：只显示日志面板，隐藏 TaskView
+            // 全部模式：只显示日志面板，隐藏 TaskView 和 TodoList
             this.container.addChild(this.logPanel);
         } else if (mode === 'last') {
             // 最后 10 条模式：在 TaskView 和 Input 中间显示日志面板
             this.container.addChild(this.taskView);
+            this.container.addChild(this.todoList);
             this.container.addChild(this.logPanel);
         } else {
             // off 模式：不显示日志面板，恢复默认布局
             this.container.addChild(this.taskView);
+            this.container.addChild(this.todoList);
         }
 
         this.container.addChild(this.inputArea);
@@ -564,6 +574,33 @@ export class OpenDeskTUI {
                 }
             });
         }
+    }
+
+    /**
+     * Bind todo updates from the TodoWrite tool's internal map to the TodoList component.
+     * This allows the TodoList to be updated whenever TodoWrite is called.
+     */
+    private bindTodoUpdates() {
+        // Poll for todo changes and update the TodoList component
+        const checkTodoChanges = () => {
+            if (!this.activeTaskId) {
+                setTimeout(checkTodoChanges, 500);
+                return;
+            }
+
+            const todos = getTaskTodosForDisplay(this.activeTaskId);
+            this.todoList.setTodos(todos);
+            this.tui.requestRender();
+            setTimeout(checkTodoChanges, 300);
+        };
+        checkTodoChanges();
+    }
+
+    /**
+     * Get the TodoList component
+     */
+    getTodoList(): TodoList {
+        return this.todoList;
     }
 
     start() {
