@@ -19,8 +19,7 @@ import { HelpOverlay } from "./components/help";
 import { ConfirmOverlay, InfoOverlay } from "./components/notice";
 import { LogPanel, LogPanelMode } from "./components/logpanel";
 import { TodoList } from "./components/todolist";
-import { ProviderConfigPage } from "./components/config/provider-config";
-import { ModelConfigPage } from "./components/config/model-config";
+import { ConfigMainPage } from "./components/config/configMain";
 import { getTaskTodosForDisplay } from "../applications/todomgr/tools";
 import { exportTaskToHtml } from "../utils/export";
 import path from "path";
@@ -282,23 +281,9 @@ export class OpenDeskTUI {
 
         this.commandRegistry.register({
             name: "config",
-            description: "打开配置界面，用法: /config [providers|models]",
-            getArgumentCompletions: (argPrefix: string) => {
-                const options = [
-                    { value: 'providers', label: 'providers', description: '供应商配置' },
-                    { value: 'models', label: 'models', description: '模型配置' },
-                ];
-                return options.filter(o => o.value.startsWith(argPrefix.toLowerCase()));
-            },
-            execute: async (args: string) => {
-                const sub = args.trim().toLowerCase();
-                if (sub === 'providers') {
-                    this.enterConfigMode('providers');
-                } else if (sub === 'models') {
-                    this.enterConfigMode('models');
-                } else {
-                    this.enterConfigMode('providers');
-                }
+            description: "打开系统设置",
+            execute: async () => {
+                this.enterConfigMode();
             },
         });
 
@@ -364,15 +349,8 @@ export class OpenDeskTUI {
         this.tui.requestRender();
     }
 
-    private enterConfigMode(mode: 'providers' | 'models') {
-        const onClose = () => this.exitConfigMode();
-
-        if (mode === 'providers') {
-            this.configComponent = new ProviderConfigPage(this.tui, onClose);
-        } else {
-            this.configComponent = new ModelConfigPage(this.tui, onClose);
-        }
-
+    private enterConfigMode() {
+        this.configComponent = new ConfigMainPage(this.tui, () => this.exitConfigMode());
         this.shortcutManager.detach();
 
         this.container.clear();

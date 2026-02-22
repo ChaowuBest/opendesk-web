@@ -1,7 +1,7 @@
 import { type Component, SelectList, type TUI } from "@mariozechner/pi-tui";
-import { defaultSelectListTheme } from "../../theme";
+import { defaultSelectListTheme } from "../../theme.js";
 import { Setting } from "../../../utils/setting.js";
-import { ConfigForm, type FieldDef, type ActionDef } from "./config-form";
+import { ConfigForm, type FieldDef, type ActionDef } from "./form";
 import chalk from "chalk";
 
 interface ModelData {
