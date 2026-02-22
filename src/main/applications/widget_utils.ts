@@ -11,6 +11,7 @@
 
 import { BaseTool, BaseToolset } from '../agents/tool';
 import { z } from 'zod';
+import type { TaskState } from '../states/tasks';
 
 
 export class AgentOperableHTMLElement extends HTMLElement {
@@ -41,7 +42,7 @@ export class RendererTool<T extends z.ZodType> extends BaseTool<T> {
     /**
      * 设置工具的执行器。
      */
-    setExecutor(executor: (args: z.output<T>) => Promise<string>): ThisType<T> {
+    setExecutor(executor: (args: z.output<T>, taskState?: TaskState) => Promise<string>): ThisType<T> {
         this.executor = executor;
         return this;
     }
@@ -51,11 +52,11 @@ export class RendererTool<T extends z.ZodType> extends BaseTool<T> {
         return this;
     }
 
-    async execute(args: z.output<T>): Promise<string> {
+    async execute(args: z.output<T>, updatedCallback?: (result: any) => void, taskState?: TaskState): Promise<any> {
         if (!this.executor) {
             throw new Error(`executor of tool ${this.name} hasn't been set yet`);
         }
-        return this.executor(args);
+        return this.executor(args, taskState);
     }
 }
 

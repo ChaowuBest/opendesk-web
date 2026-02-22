@@ -322,11 +322,15 @@ export class TaskState {
                 return;
             }
 
-            let result = await tool.execute(args, async (result) => {
-                tool_call.result = result.result;
-                tool_call.result_object = result.result_object;
-                await this.sendSubscriptionFeedback();
-            });
+            let result = await tool.execute(
+                args,
+                async (result) => {
+                    tool_call.result = result.result;
+                    tool_call.result_object = result.result_object;
+                    await this.sendSubscriptionFeedback();
+                },
+                this
+            );
             tool_call.status = result.status;
             tool_call.result = result.result;
             tool_call.result_object = result.result_object;

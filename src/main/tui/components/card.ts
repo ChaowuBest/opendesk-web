@@ -91,10 +91,10 @@ export class Card implements Component {
         result.push(this.renderHeader(width));
 
         if (!this._collapsed) {
-            const flatBody = this._body.flatMap(l => l.split('\n'));
+            const flatBody = this._body.filter(l => l != null).flatMap(l => String(l).split('\n'));
             const displayLines = this.applyTruncation(flatBody);
             for (const raw of displayLines) {
-                const line = sanitizeLine(raw);
+                const line = sanitizeLine(String(raw));
                 const padded = truncateToWidth(line, contentWidth, '…', true);
                 result.push(dim('│') + ' ' + padded + ' ' + dim('│'));
             }

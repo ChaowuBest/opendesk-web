@@ -1,0 +1,54 @@
+/**
+ * Copyright (c) 2026 The OpenDesk Team
+ * OpenDesk is licensed under Mulan PSL v2.
+ * You can use this software according to the terms and conditions of the Mulan PSL v2.
+ * You may obtain a copy of Mulan PSL v2 at: http://license.coscl.org.cn/MulanPSL2
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
+ * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+ * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+ * See the Mulan PSL v2 for more details.
+ */
+
+// 待办状态类型
+export type TodoStatus = 'pending' | 'in_progress' | 'completed';
+
+// 优先级类型
+export type TodoPriority = 'low' | 'medium' | 'high';
+
+// 任务级待办项（会话级，任务结束后不保留）
+export interface TaskTodo {
+    id: string;
+    task_id: string;        // 关联的任务ID
+    content: string;          // 待办内容
+    status: TodoStatus;
+    created_at: string;
+    updated_at: string;
+    completed_at?: string;
+}
+
+// 全局待办项（持久化，跨任务共享）
+export interface GlobalTodo {
+    id: string;
+    content: string;
+    status: TodoStatus;
+    priority: TodoPriority;
+    category?: string;        // 分类标签，如 "bug", "feature", "idea"
+    source_task_id?: string;  // 来源任务ID（可选）
+    created_at: string;
+    updated_at: string;
+    completed_at?: string;
+}
+
+// 全局待办存储结构
+export interface GlobalTodoStorage {
+    version: string;
+    todos: GlobalTodo[];
+    last_updated: string;
+}
+
+// TodoWrite 工具的待办参数
+export interface TodoWriteTodoParam {
+    id?: string;              // 可选，更新时使用
+    content: string;          // 待办内容
+    status: TodoStatus;
+}

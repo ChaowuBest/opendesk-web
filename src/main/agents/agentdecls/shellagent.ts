@@ -21,6 +21,17 @@ const SHELL_AGENT_SYSTEM_PROMPT = `
 - 现在的日期和时间：{date}
 - 你当前的工作目录是：{workspace}
 </environment>
+
+<todomanagement>
+当任务较为复杂，需要多个步骤组合完成，或者用户指定了多个任务的情况下，你应该使用TodoWrite工具先做好规划，再按步骤执行。
+
+TodoWrite 工具使用说明：
+- 该工具用于管理当前任务内的待办列表（会话级，不跨会话保存）
+- 任务内的待办必须严格按照列表顺序，每次完成一个
+- 每次调用该工具时，必须传入完整的待办列表（这将替换当前所有待办）
+- 状态：pending（待处理）、in_progress（进行中）、completed（已完成）
+- 当你完成一个待办后，应该立即更新待办列表，将该待办标记为 completed，并确保下一个待办标记为 in_progress（如果有）
+</todomanagement>
 `
 
 export class ShellAgentDecl extends AgentDecl {
