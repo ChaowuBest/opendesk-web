@@ -5,6 +5,18 @@ import { OpenDeskTUI } from "../entry";
 import chalk from "chalk";
 
 
+class Splitter implements Component {
+    invalidate(): void {
+        // 不需要实现
+    }
+
+    render(width: number): string[] {
+        const separator = "━".repeat(width);
+        return [chalk.hex('#b6b6b6')(separator)];
+    }
+}
+
+
 export interface ConfirmOptions {
     title: string;
     message: string;
@@ -38,12 +50,13 @@ export class ConfirmOverlay implements Component {
             { value: "cancel", label: chalk.red(cancelLabel) }
         ];
 
-        this.header = new Text(chalk.bold(` ${options.title}`));
+        this.header = new Text(chalk.bold(`⚠️ ${options.title}`));
         this.messageText = new Text(options.message);
         this.list = new SelectList(items, items.length, defaultSelectListTheme);
         this.box = new Box(1, 1);
         this.box.setBgFn((text: string) => chalk.bgHex('#2d2d2d').hex('#e0e0e0')(text));
         this.box.addChild(this.header);
+        this.box.addChild(new Splitter());
         this.box.addChild(new Text("")); // Empty line for spacing
         this.box.addChild(this.messageText);
         this.box.addChild(new Text("")); // Empty line for spacing
@@ -117,12 +130,13 @@ export class InfoOverlay implements Component {
             { value: "close", label: chalk.cyan(closeLabel) }
         ];
 
-        this.header = new Text(chalk.bold(` ${options.title}`));
+        this.header = new Text(chalk.bold(`ℹ️ ${options.title}`));
         this.messageText = new Text(options.message);
         this.list = new SelectList(items, items.length, defaultSelectListTheme);
         this.box = new Box(1, 1);
         this.box.setBgFn((text: string) => chalk.bgHex('#2d2d2d').hex('#e0e0e0')(text));
         this.box.addChild(this.header);
+        this.box.addChild(new Splitter());
         this.box.addChild(new Text("")); // Empty line for spacing
         this.box.addChild(this.messageText);
         this.box.addChild(new Text("")); // Empty line for spacing

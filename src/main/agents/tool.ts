@@ -11,6 +11,7 @@
 
 import { z } from 'zod';
 import { ToolCall } from './messages';
+import type { TaskState } from '../states/tasks';
 
 
 export class ToolResult {
@@ -53,8 +54,8 @@ export class BaseTool<T extends z.ZodType> {
     name: string;
     description: string;
     params: T;
-    executor?: ((args: z.output<T>) => Promise<string>);
-    universalExecutor?: ((args: z.output<T>, result: ToolResult) => Promise<void>);
+    executor?: ((args: z.output<T>, taskState?: TaskState) => Promise<string>);
+    universalExecutor?: ((args: z.output<T>, result: ToolResult, taskState?: TaskState) => Promise<void>);
 
     constructor(name: string, description: string, params: T) {
         this.name = name;
@@ -98,7 +99,7 @@ export class BaseTool<T extends z.ZodType> {
     /**
      * 设置工具的执行函数
      */
-    setExecutor(executor: (args: z.output<T>) => Promise<string>): ThisType<T> {
+    setExecutor(executor: (args: z.output<T>, taskState?: TaskState) => Promise<string>): ThisType<T> {
         this.executor = executor;
         return this;
     }
@@ -106,7 +107,7 @@ export class BaseTool<T extends z.ZodType> {
     /**
      * 设置工具的通用执行函数，如果设置，则优先使用通用执行函数，否则使用普通执行函数
      */
-    setUniversalExecutor(universalExecutor: (args: z.output<T>, result: ToolResult) => Promise<void>): ThisType<T> {
+    setUniversalExecutor(universalExecutor: (args: z.output<T>, result: ToolResult, taskState?: TaskState) => Promise<void>): ThisType<T> {
         this.universalExecutor = universalExecutor;
         return this;
     }
@@ -114,11 +115,11 @@ export class BaseTool<T extends z.ZodType> {
     /**
      * 执行工具
      */
-    async execute(args: z.output<T>, updatedCallback?: (result: ToolResult) => void): Promise<ToolResult> {
+    async execute(args: z.output<T>, updatedCallback?: (result: ToolResult) => void, taskState?: TaskState): Promise<ToolResult> {
         if (this.universalExecutor) {
             let result = new ToolResult();
             result.updatedCallback = updatedCallback;
-            return await this.universalExecutor(args, result).then(() => {
+            return await this.universalExecutor(args, result, taskState).then(() => {
                 result.status = 'success';
                 return result;
             }).catch((err) => {
@@ -128,7 +129,7 @@ export class BaseTool<T extends z.ZodType> {
             });
         } else if (this.executor) {
             let result = new ToolResult();
-            return await this.executor(args).then((stringResult) => {
+            return await this.executor(args, taskState).then((stringResult) => {
                 result.status = 'success';
                 result.result = stringResult;
                 return result;
@@ -182,12 +183,12 @@ export class BaseToolset {
         return this.tools.get(name);
     }
 
-    async callTool(toolName: string, args: object): Promise<ToolResult> {
+    async callTool(toolName: string, args: object, taskState?: TaskState): Promise<ToolResult> {
         let tool = this.getTool(toolName);
         if (tool === undefined) {
             throw new Error(`tool ${toolName} not found`);
         }
-        return await tool.execute(args);
+        return await tool.execute(args, undefined, taskState);
     }
 
     toJSON() {

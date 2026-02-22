@@ -1,4 +1,4 @@
-import { TUI, SelectList, Box, Text, Key, visibleWidth, truncateToWidth } from "@mariozechner/pi-tui";
+import { TUI, SelectList, Box, Text, Key, visibleWidth, truncateToWidth, matchesKey } from "@mariozechner/pi-tui";
 import { OpenDeskBanner } from './banner';
 import { VerticalLayout } from './components/layout';
 import { OpenDeskTerminal } from './terminal';
@@ -18,6 +18,8 @@ import { ShellAgentDecl } from "../agents/agentdecls/shellagent.js";
 import { HelpOverlay } from "./components/help";
 import { ConfirmOverlay, InfoOverlay } from "./components/notice";
 import { LogPanel, LogPanelMode } from "./components/logpanel";
+import { TodoList } from "./components/todolist";
+import { getTaskTodosForDisplay } from "../applications/todomgr/tools";
 import { exportTaskToHtml } from "../utils/export";
 import path from "path";
 import fs from "fs";
@@ -41,6 +43,7 @@ export class OpenDeskTUI {
     });
     private taskView: TaskView;
     private logPanel: LogPanel;
+    private todoList: TodoList;
     public inputArea: AgentInputArea;
 
     private shortcutManager: KeyboardShortcutManager;
@@ -74,6 +77,7 @@ export class OpenDeskTUI {
         this.tui = new TUI(terminal);
         this.taskView = new TaskView(this.tui);
         this.logPanel = new LogPanel(this.tui);
+        this.todoList = new TodoList();
         this.inputArea = new AgentInputArea(this.tui);
         this.workspace = args.workspace;
         this.model = args.model;
@@ -82,6 +86,7 @@ export class OpenDeskTUI {
         this.tui.addChild(this.container);
         this.container.addChild(new OpenDeskBanner(this.workspace));
         this.container.addChild(this.taskView);
+        this.container.addChild(this.todoList);
         this.container.addChild(this.inputArea)
         this.container.setMinLines(this.tui.terminal.rows);
         this.container.setVerticalAlign("center");
@@ -113,6 +118,9 @@ export class OpenDeskTUI {
                 this.inputArea.statusBar.update(data);
             }
         };
+
+        // 获取 TodoWrite 工具使用的 taskTodosMap 并绑定更新回调
+        this.bindTodoUpdates();
 
         // 指令注册（含快捷键绑定）
         this.commandRegistry = new SlashCommandRegistry();
@@ -166,7 +174,17 @@ export class OpenDeskTUI {
         this.commandRegistry.register({
             name: "exit",
             description: "退出 OpenDesk",
-            execute: async () => { await this.exit(); },
+            execute: async () => {
+                const confirm = new ConfirmOverlay(this, {
+                    title: "确认退出",
+                    message: "确定要退出 OpenDesk 吗？",
+                    confirmLabel: "退出",
+                    cancelLabel: "取消"
+                });
+                confirm.show(async () => {
+                    await this.exit();
+                });
+            },
         });
 
         this.commandRegistry.register({
@@ -300,15 +318,17 @@ export class OpenDeskTUI {
         this.container.addChild(new OpenDeskBanner(this.workspace));
 
         if (mode === 'all') {
-            // 全部模式：只显示日志面板，隐藏 TaskView
+            // 全部模式：只显示日志面板，隐藏 TaskView 和 TodoList
             this.container.addChild(this.logPanel);
         } else if (mode === 'last') {
             // 最后 10 条模式：在 TaskView 和 Input 中间显示日志面板
             this.container.addChild(this.taskView);
+            this.container.addChild(this.todoList);
             this.container.addChild(this.logPanel);
         } else {
             // off 模式：不显示日志面板，恢复默认布局
             this.container.addChild(this.taskView);
+            this.container.addChild(this.todoList);
         }
 
         this.container.addChild(this.inputArea);
@@ -566,8 +586,70 @@ export class OpenDeskTUI {
         }
     }
 
+    /**
+     * Bind todo updates from the TodoWrite tool's internal map to the TodoList component.
+     * This allows the TodoList to be updated whenever TodoWrite is called.
+     */
+    private bindTodoUpdates() {
+        // Poll for todo changes and update the TodoList component
+        const checkTodoChanges = () => {
+            if (!this.activeTaskId) {
+                setTimeout(checkTodoChanges, 500);
+                return;
+            }
+
+            const todos = getTaskTodosForDisplay(this.activeTaskId);
+            this.todoList.setTodos(todos);
+            this.tui.requestRender();
+            setTimeout(checkTodoChanges, 300);
+        };
+        checkTodoChanges();
+    }
+
+    /**
+     * Get the TodoList component
+     */
+    getTodoList(): TodoList {
+        return this.todoList;
+    }
+
     start() {
         this.tui.start();
+
+        // Attach a direct input listener to TUI FIRST, to hijack Ctrl+C before Editor gets it!
+        this.tui.addInputListener((data) => {
+            if (matchesKey(data, Key.ctrl("c"))) {
+                // 有 overlay 打开时不处理
+                if (this.hasOpenOverlay) {
+                    return undefined; // 不消费，让 overlay 处理
+                }
+
+                // 首先，取消自动补全（如果正在显示）
+                (this.inputArea.input as any).cancelAutocomplete();
+
+                // 检查输入框是否有内容
+                const currentText = this.inputArea.input.getText();
+                if (currentText.trim() === '') {
+                    // 输入框为空，显示提示
+                    const info = new InfoOverlay(this, {
+                        title: "提示",
+                        message: "你可以输入 /exit 退出或者输入 /help 查看帮助",
+                        closeLabel: "确定"
+                    });
+                    info.show();
+                } else {
+                    // 清空输入框
+                    this.inputArea.input.setText('');
+                }
+
+                // 强制重新渲染
+                this.tui.requestRender(true);
+
+                return { consume: true }; // 完全消费掉，不传给 Editor！
+            }
+            return undefined;
+        });
+
         this.shortcutManager.attach(this.tui);
         this.tui.setFocus(this.inputArea.input);
     }

@@ -13,6 +13,7 @@ import fs from 'fs';
 import path from 'path';
 import type { TaskState } from '../states/tasks';
 import { UserMessage, AssistantMessage, TextMessagePart, ToolCallMessagePart, FileMessagePart, ReasoningMessagePart } from '../agents/messages';
+import { escapeHtml } from './escape';
 
 const HIGHLIGHT_JS_CSS_LIGHT = `
 /* highlight.js v11.9.0 - Light theme */
@@ -237,14 +238,6 @@ async function renderAssistantMessage(message: AssistantMessage): Promise<string
     `;
 }
 
-function escapeHtml(text: string): string {
-    return text
-        .replace(/&/g, '&')
-        .replace(/</g, '<')
-        .replace(/>/g, '>')
-        .replace(/"/g, '"')
-        .replace(/'/g, '&#039;');
-}
 
 function generateHtmlTemplate(title: string, taskId: string, messagesHtml: string): string {
     const now = new Date().toLocaleString('zh-CN', {
