@@ -681,33 +681,44 @@ export class OpenDeskTUI {
 
         // 创建提示组件，使用 Text 组件显示多行文本
         const noticeText = [
-            '',
             chalk.bold.yellow('⚠️  模型未配置'),
             '',
             chalk.dim('请先配置模型才能使用 OpenDesk'),
             '',
-            chalk.cyan('  使用方法：'),
+            chalk.cyan('使用方法：'),
+            '',
             chalk.white('  1. 输入 /config 打开配置菜单'),
-            chalk.white('  2. 选择 "默认模型配置"'),
-            chalk.white('  3. 选择您要使用的默认模型'),
+            chalk.white('  2. 选择"供应商配置"并添加一个模型供应商'),
+            chalk.white('  3. 选择"模型配置"并添加一个模型'),
+            chalk.white('  4. 选择 "默认模型配置", 并选择你要使用的模型'),
             '',
-            chalk.dim('  按 Enter 打开配置菜单'),
-            '',
+            chalk.dim('然后? 你可以休息了，让我开始工作吧!'),
         ].join('\n');
 
         this.modelNotConfiguredNotice = new Text(noticeText);
 
-        // 隐藏 taskview 和 todoList
+        // 标记需要处理回车键
+        this.modelNotConfiguredMode = true;
+
+        // 如果当前处于配置模式，不破坏配置页面布局；
+        // exitConfigMode() 退出时会根据 modelNotConfiguredMode 标记处理布局。
+        if (this.configComponent) {
+            return;
+        }
+
+        // 隐藏 taskview 和 todoList，显示提示
         this.container.clear();
         this.container.addChild(new OpenDeskBanner(this.workspace));
         this.container.addChild(this.modelNotConfiguredNotice);
         this.container.addChild(this.inputArea);
         this.container.setMinLines(this.tui.terminal.rows);
 
-        // 标记需要处理回车键
-        this.modelNotConfiguredMode = true;
-
         this.tui.requestRender();
+        // 重建布局后，重新将焦点设置回输入框
+        setTimeout(() => {
+            this.tui.setFocus(this.inputArea.input);
+            this.tui.requestRender();
+        }, 10);
     }
 
     /**
@@ -734,6 +745,11 @@ export class OpenDeskTUI {
         this.container.setMinLines(this.tui.terminal.rows);
 
         this.tui.requestRender();
+        // 重建布局后，重新将焦点设置回输入框
+        setTimeout(() => {
+            this.tui.setFocus(this.inputArea.input);
+            this.tui.requestRender();
+        }, 10);
     }
 
     private modelNotConfiguredNotice?: Text;
