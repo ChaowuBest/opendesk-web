@@ -395,6 +395,32 @@ export class OpenDeskTUI {
 
         this.shortcutManager.attach(this.tui);
 
+        // 退出配置模式时，检查模型是否已配置
+        // 如果仍未配置，则重新显示提示页面
+        if (this.modelNotConfiguredMode) {
+            const setting = Setting.getInstance();
+            const data = setting.getData() as any;
+            if (!data.default_model || data.default_model.trim() === '') {
+                // 模型仍未配置，重新显示提示
+                this.container.clear();
+                this.container.addChild(new OpenDeskBanner(this.workspace));
+                this.container.addChild(this.modelNotConfiguredNotice!);
+                this.container.addChild(this.inputArea);
+                this.container.setMinLines(this.tui.terminal.rows);
+                this.tui.requestRender();
+                // 延迟设置焦点
+                setTimeout(() => {
+                    this.tui.setFocus(this.inputArea.input);
+                    this.tui.requestRender();
+                }, 10);
+                return;
+            } else {
+                // 模型已配置，清除提示状态
+                this.modelNotConfiguredNotice = undefined;
+                this.modelNotConfiguredMode = false;
+            }
+        }
+
         this.container.clear();
         this.container.addChild(new OpenDeskBanner(this.workspace));
         this.container.addChild(this.taskView);
@@ -406,8 +432,12 @@ export class OpenDeskTUI {
 
         this.container.addChild(this.inputArea);
         this.container.setMinLines(this.tui.terminal.rows);
-        this.tui.setFocus(this.inputArea.input);
         this.tui.requestRender();
+        // 延迟设置焦点
+        setTimeout(() => {
+            this.tui.setFocus(this.inputArea.input);
+            this.tui.requestRender();
+        }, 10);
     }
 
     private async createNewTask() {
@@ -599,12 +629,24 @@ export class OpenDeskTUI {
     /**
      * 解析模型信息（名称、上下文长度）。首次调用时触发异步 API 查询，
      * 结果缓存，不会重复请求。
+     * 如果检测到没有配置模型（default_model 为空），则隐藏 taskview 并提醒用户配置。
      */
     public resolveModelInfo() {
         try {
             const setting = Setting.getInstance();
             const data = setting.getData() as any;
             const aliasToUse = this.model || data.default_model;
+
+            // 检查是否没有配置模型
+            if (!aliasToUse || aliasToUse.trim() === '') {
+                // 没有配置模型，隐藏 taskview 并显示提示信息
+                this.showModelNotConfiguredNotice();
+                return;
+            }
+
+            // 模型已配置，恢复正常的 taskview 显示
+            this.hideModelNotConfiguredNotice();
+
             const modelCfg = data.models?.find((m: any) => m.alias === aliasToUse);
             const modelName = modelCfg?.model_name ?? aliasToUse;
 
@@ -628,6 +670,74 @@ export class OpenDeskTUI {
         } catch { /* 配置读取失败不影响主流程 */ }
         this.tui.requestRender();
     }
+
+    /**
+     * 显示模型未配置的提示信息，隐藏 taskview 和 todoList
+     */
+    private showModelNotConfiguredNotice() {
+        if (this.modelNotConfiguredNotice) {
+            return; // 已经显示
+        }
+
+        // 创建提示组件，使用 Text 组件显示多行文本
+        const noticeText = [
+            '',
+            chalk.bold.yellow('⚠️  模型未配置'),
+            '',
+            chalk.dim('请先配置模型才能使用 OpenDesk'),
+            '',
+            chalk.cyan('  使用方法：'),
+            chalk.white('  1. 输入 /config 打开配置菜单'),
+            chalk.white('  2. 选择 "默认模型配置"'),
+            chalk.white('  3. 选择您要使用的默认模型'),
+            '',
+            chalk.dim('  按 Enter 打开配置菜单'),
+            '',
+        ].join('\n');
+
+        this.modelNotConfiguredNotice = new Text(noticeText);
+
+        // 隐藏 taskview 和 todoList
+        this.container.clear();
+        this.container.addChild(new OpenDeskBanner(this.workspace));
+        this.container.addChild(this.modelNotConfiguredNotice);
+        this.container.addChild(this.inputArea);
+        this.container.setMinLines(this.tui.terminal.rows);
+
+        // 标记需要处理回车键
+        this.modelNotConfiguredMode = true;
+
+        this.tui.requestRender();
+    }
+
+    /**
+     * 隐藏模型未配置的提示信息，恢复正常的 taskview 显示
+     */
+    private hideModelNotConfiguredNotice() {
+        if (!this.modelNotConfiguredNotice) {
+            return; // 本来就没有显示提示
+        }
+
+        // 移除提示组件
+        this.modelNotConfiguredNotice = undefined;
+        this.modelNotConfiguredMode = false;
+
+        // 恢复原始布局
+        this.container.clear();
+        this.container.addChild(new OpenDeskBanner(this.workspace));
+        this.container.addChild(this.taskView);
+        this.container.addChild(this.todoList);
+        if (this.logPanel.mode !== 'off') {
+            this.container.addChild(this.logPanel);
+        }
+        this.container.addChild(this.inputArea);
+        this.container.setMinLines(this.tui.terminal.rows);
+
+        this.tui.requestRender();
+    }
+
+    private modelNotConfiguredNotice?: Text;
+    private modelNotConfiguredMode = false;
 
     private async processQueue() {
         const taskId = this.activeTaskId;
