@@ -28,10 +28,37 @@ export function getDebugMode() {
     return debugMode;
 }
 
+// 统一的日志格式化函数
+const logFormat = winston.format.combine(
+    winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
+    winston.format.errors({ stack: true }),
+    winston.format.colorize(),
+    winston.format.printf(
+        (info) =>
+            `[${info.timestamp} | ${info.level}] ${info.stack || info.message}`
+    )
+);
+
 class CliLogTransport extends Transport {
+    constructor(opts?: any) {
+        super(opts);
+    }
+
     log(info: any, callback: () => void) {
         setImmediate(() => this.emit('logged', info));
-        const message = info[Symbol.for('message')] ?? info.message ?? String(info);
+
+        // 直接手动格式化消息，不依赖 winston 的 format 链
+        let message: string;
+        if (info[Symbol.for('message')]) {
+            message = info[Symbol.for('message')];
+        } else {
+            // 手动格式化
+            const timestamp = info.timestamp || new Date().toISOString().replace('T', ' ').substring(0, 19);
+            const level = info.level || 'info';
+            const msg = info.stack || info.message || String(info);
+            message = `[${timestamp} | ${level}] ${msg}`;
+        }
+
         addLine(message);
         callback();
     }
@@ -60,15 +87,26 @@ class LogStream extends Writable {
 }
 
 class WorkerLogTransport extends Transport {
+    constructor(opts?: any) {
+        super(opts);
+    }
+
     log(info: any, callback: () => void) {
         setImmediate(() => {
             this.emit('logged', info);
         });
 
-        // 格式化消息 - 使用与主线程相同的格式
-        // winston.format.cli() 会在 info 对象上设置 Symbol.for('message')
-        const formattedMessage = info[Symbol.for('message')];
-        const message = formattedMessage || info.message || JSON.stringify(info);
+        // 格式化消息
+        let message: string;
+        if (info[Symbol.for('message')]) {
+            message = info[Symbol.for('message')];
+        } else {
+            // 手动格式化
+            const timestamp = info.timestamp || new Date().toISOString().replace('T', ' ').substring(0, 19);
+            const level = info.level || 'info';
+            const msg = info.stack || info.message || String(info);
+            message = `[${timestamp} | ${level}] ${msg}`;
+        }
 
         // 将日志消息发送到主线程
         parentPort?.postMessage({ type: 'log', message: message });
@@ -76,12 +114,19 @@ class WorkerLogTransport extends Transport {
     }
 }
 
+// 存储 logger 实例的变量
+let loggerInstance: winston.Logger | null = null;
+
 export function useCliTransport() {
-    logger.transports.push(new CliLogTransport());
+    if (loggerInstance) {
+        loggerInstance.add(new CliLogTransport());
+    }
 }
 
 export function useConsoleTransport() {
-    logger.transports.push(new winston.transports.Console());
+    if (loggerInstance) {
+        loggerInstance.add(new winston.transports.Console());
+    }
 }
 
 function createLogger() {
@@ -92,19 +137,13 @@ function createLogger() {
         transports.push(new WorkerLogTransport());
     }
 
-    return winston.createLogger({
+    loggerInstance = winston.createLogger({
         level: 'info',
-        format: winston.format.combine(
-            winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
-            winston.format.errors({ stack: true }),
-            winston.format.colorize(),
-            winston.format.printf(
-                (info) =>
-                    `[${info.timestamp} | ${info.level}] ${info.stack || info.message}`
-            )
-        ),
+        format: logFormat,
         transports: transports
     });
+
+    return loggerInstance;
 }
 
 const logger = createLogger();

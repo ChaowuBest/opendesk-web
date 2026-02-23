@@ -18,19 +18,19 @@ const listeners = new Set();
 const MAX_LINES = 300;
 
 function addLine(line) {
-  if (typeof line !== 'string') line = String(line);
-  lines.push(line);
-  if (lines.length > MAX_LINES) lines.shift();
-  listeners.forEach((cb) => cb());
+    if (typeof line !== 'string') line = String(line);
+    lines.push(line);
+    if (lines.length > MAX_LINES) lines.shift();
+    listeners.forEach((cb) => cb());
 }
 
 function getLines() {
-  return [...lines];
+    return [...lines];
 }
 
 function subscribe(callback) {
-  listeners.add(callback);
-  return () => listeners.delete(callback);
+    listeners.add(callback);
+    return () => listeners.delete(callback);
 }
 
 export { addLine, getLines, subscribe };
