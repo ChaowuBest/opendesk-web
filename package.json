@@ -21,7 +21,7 @@
     "updater:server": "tsx src/updater/server.ts",
     "updater:publish": "tsx src/updater/publish-update.ts",
     "build-cli": "tsx esbuild.config.ts",
-    "cli": "npm run build-cli && node --no-warnings --enable-source-maps dist/cli/opendesk",
+    "cli": "npm run build-cli && node --no-warnings --enable-source-maps dist/cli/opendesk-debug",
     "test-cli": "tsx src/tests/cli.ts"
   },
   "devDependencies": {
@@ -46,6 +46,7 @@
     "node-gyp": "^12.2.0",
     "react-devtools-core": "^6.1.5",
     "run-script-os": "^1.1.6",
+    "source-map": "^0.7.6",
     "tsx": "^4.21.0",
     "vite": "^7.3.1"
   },

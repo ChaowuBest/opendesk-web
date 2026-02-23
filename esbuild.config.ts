@@ -2,49 +2,53 @@ import * as esbuild from 'esbuild';
 import { readFileSync, writeFileSync } from 'node:fs';
 
 const outfile = 'dist/cli/opendesk';
+const outfileDebug = 'dist/cli/opendesk-debug';
 
 /**
- * 注入 shebang，复制到别处可用 ./opendesk 或 node --input-type=module opendesk
- * 为了保持对OpenHarmony HiShell的兼容性，这里使用 #!/bin/env node 而不是 #!/usr/bin/env node
- * 未来当HiShell支持 #!/usr/bin/env node 时，这里就可以改掉了
+ * 注入 shebang 和 require shim 作为 banner
+ * 为了保持对 OpenHarmony HiShell 的兼容性，这里使用 #!/bin/env node 而不是 #!/usr/bin/env node
  */
-const SHEBANG = '#!/bin/env node\n';
+const BANNER = `#!/bin/env node
+import { createRequire } from 'node:module';
+const __createRequire = createRequire(import.meta.url);
+`;
 
-const requireShimPlugin: esbuild.Plugin = {
-    name: 'require-shim',
-    setup(build) {
-        build.onEnd((result) => {
-            if (result.errors.length > 0) return;
-            let text: string;
-            try {
-                text = readFileSync(outfile, 'utf8');
-            } catch {
-                return;
-            }
-            // 1. 将 esbuild 注入的“动态 require 抛错”改为 Node 的 createRequire（变量名可能是 x、x3 等）
-            if (text.includes('Dynamic require')) {
-                const shim = `
-                import { createRequire } from 'node:module';
-                const __createRequire = createRequire(import.meta.url);
-                `;
-                const replaced = text.replace(
-                    /if\s*\(typeof require\s*(?:!==\s*"undefined"|<"u")\s*\)\s*return require\.apply\(this,\s*arguments\)\s*;\s*throw\s+Error\(\s*'Dynamic require of "'\s*\+\s*(\w+)\s*\+\s*'" is not supported'\s*\)/,
-                    'return __createRequire($1)'
-                );
-                if (replaced !== text) {
-                    text = replaced.startsWith('import { createRequire }') ? replaced : shim + replaced;
+/**
+ * 创建 require shim 插件，用于处理 esbuild 注入的动态 require 抛错逻辑
+ * @param outputPath - 输出文件路径
+ */
+function createRequireShimPlugin(outputPath: string): esbuild.Plugin {
+    return {
+        name: `require-shim-${outputPath.split('/').pop()}`,
+        setup(build) {
+            build.onEnd((result) => {
+                if (result.errors.length > 0) return;
+
+                // 读取生成的 JS 文件
+                let jsText: string;
+                try {
+                    jsText = readFileSync(outputPath, 'utf8');
+                } catch {
+                    return;
                 }
-            }
-            // 2. 无扩展名时无 package.json 仍按 ESM 执行：注入 shebang，复制到别处可用 ./opendesk 或 node --input-type=module opendesk
-            if (!text.startsWith('#!')) {
-                text = SHEBANG + text;
-            }
-            writeFileSync(outfile, text, 'utf8');
-        });
-    },
-};
 
-const config: esbuild.BuildOptions = {
+                // 替换 Dynamic require 错误为使用 __createRequire
+                const originalPattern = /if\s*\(typeof require\s*(?:!==\s*"undefined"|<"u")\s*\)\s*return require\.apply\(this,\s*arguments\)\s*;\s*throw\s+Error\(\s*'Dynamic require of "'\s*\+\s*(\w+)\s*\+\s*'" is not supported'\s*\)/g;
+
+                // 替换为使用 __createRequire
+                const replacement = 'if (typeof require !== "undefined") return require.apply(this, arguments); return __createRequire($1)';
+
+                const replaced = jsText.replace(originalPattern, replacement);
+                if (replaced !== jsText) {
+                    jsText = replaced;
+                    writeFileSync(outputPath, jsText, 'utf8');
+                }
+            });
+        },
+    };
+}
+
+const prodConfig: esbuild.BuildOptions = {
     entryPoints: ['src/main/cli.ts'],
     bundle: true,
     platform: 'node',
@@ -53,13 +57,36 @@ const config: esbuild.BuildOptions = {
     outfile,
     minify: true,
     treeShaking: true,
-    sourcemap: true,
+    sourcemap: false,
+    banner: { js: BANNER },
     external: ['node-screenshots', 'vectra', 'number-to-alphabet'],
-    plugins: [requireShimPlugin],
+    plugins: [createRequireShimPlugin(outfile)],
+};
+
+const debugConfig: esbuild.BuildOptions = {
+    entryPoints: ['src/main/cli.ts'],
+    bundle: true,
+    platform: 'node',
+    target: 'node20',
+    format: 'esm',
+    outfile: outfileDebug,
+    minify: false,
+    treeShaking: true,
+    sourcemap: 'inline',
+    sourcesContent: true,
+    banner: { js: BANNER },
+    external: ['node-screenshots', 'vectra', 'number-to-alphabet'],
+    plugins: [createRequireShimPlugin(outfileDebug)],
 };
 
 async function build() {
-    await esbuild.build(config);
+    await Promise.all([
+        esbuild.build(prodConfig),
+        esbuild.build(debugConfig)
+    ]);
+    console.log('Built both production and debug versions:');
+    console.log(`  - ${outfile} (minified, no sourcemap)`);
+    console.log(`  - ${outfileDebug} (unminified, with inline sourcemap)`);
 }
 
 build().catch((error) => {
