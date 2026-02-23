@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { AgentDecl } from "../agentdecl";
+import { AgentDecl } from "../agent";
 import format from "string-template";
 
 

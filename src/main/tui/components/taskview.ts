@@ -1,7 +1,10 @@
 
 import { Component, Text, Markdown, Box, type TUI } from "@mariozechner/pi-tui";
 import { TaskState } from "../../states/tasks";
-import { AssistantMessage, ReasoningMessagePart, TextMessagePart, ToolCallMessagePart, UserMessage, ToolCall } from "../../agents/messages";
+import {
+    AssistantMessage, ReasoningMessagePart, TextMessagePart,
+    ToolCallMessagePart, UserMessage, ToolCall
+} from "../../aikernel/messages";
 import { TaskUpdateChunk } from "../../states/tasks";
 import { defaultMarkdownTheme } from "../theme";
 import { DefaultToolCallView } from "./toolcall";

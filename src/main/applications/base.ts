@@ -13,7 +13,7 @@ import { z } from 'zod';
 import { parentPort } from 'worker_threads';
 import { logger } from '../utils/logger.js';
 import { Setting, getAppDirectory } from '../utils/setting.js';
-import { BaseToolset } from '../agents/tool.js';
+import { BaseToolset } from '../aikernel/tool.js';
 import path from 'path';
 import fs from 'fs';
 import PQueue from 'p-queue';

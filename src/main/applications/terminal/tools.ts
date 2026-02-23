@@ -10,8 +10,8 @@
  */
 
 import { exec } from "child_process";
-import { BaseTool } from "../../agents/tool";
-import { ToolCall } from "../../agents/messages";
+import { BaseTool } from "../../aikernel/tool";
+import { ToolCall } from "../../aikernel/messages";
 import { escapeHtml } from "../../utils/escape";
 import { Card } from "../../tui/components/card";
 import { statusDisplay, truncText } from "../../tui/components/toolcall";

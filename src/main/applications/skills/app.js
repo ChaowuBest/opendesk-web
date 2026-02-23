@@ -21,45 +21,45 @@ const __dirname = import.meta.dirname;
  * 本地 Agent Skills 子应用：以 Anthropic Agent Skills 标准管理端侧技能，并对外提供 toolsets 供主进程对话调用
  */
 class SkillsApplication extends BaseApplication {
-  constructor() {
-    super('skills', 'Skills');
-  }
-
-  static getWorkerClass() {
-    return SkillsWorker;
-  }
-
-  static getConfigSchema() {
-    return z.object({
-        enabled: z.boolean().describe('是否启用技能').default(false),
-        skillsmp_api_key: z.string().optional().describe('SkillsMP API Key（可选，用于从 skillsmp.com 搜索技能）')
-    });
-  }
-
-  async getToolsets() {
-    if (this.getConfig()?.enabled === true) {
-        return SkillRegistry.getToolsets();
-    } else {
-        return [];
+    constructor() {
+        super('skills', 'Skills');
     }
-  }
 
-  getSkillsDirectory() {
-    return SkillRegistry.getSkillsDirectory();
-  }
+    static getWorkerClass() {
+        return SkillsWorker;
+    }
 
-  getBundledSkillsDirectory() {
-    return SkillRegistry.getBundledSkillsDirectory();
-  }
+    static getConfigSchema() {
+        return z.object({
+            enabled: z.boolean().describe('是否启用技能').default(false),
+            skillsmp_api_key: z.string().optional().describe('SkillsMP API Key（可选，用于从 skillsmp.com 搜索技能）')
+        });
+    }
 
-  listSkills() {
-    return SkillRegistry.listSkills();
-  }
+    async getToolsets() {
+        if (this.getConfig()?.enabled === true) {
+            return SkillRegistry.getToolsets();
+        } else {
+            return [];
+        }
+    }
 
-  refresh() {
-    const { toolsets, errors } = SkillRegistry.refresh();
-    return { count: toolsets.length, errors };
-  }
+    getSkillsDirectory() {
+        return SkillRegistry.getSkillsDirectory();
+    }
+
+    getBundledSkillsDirectory() {
+        return SkillRegistry.getBundledSkillsDirectory();
+    }
+
+    listSkills() {
+        return SkillRegistry.listSkills();
+    }
+
+    refresh() {
+        const { toolsets, errors } = SkillRegistry.refresh();
+        return { count: toolsets.length, errors };
+    }
 }
 
 export { SkillsApplication };

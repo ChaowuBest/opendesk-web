@@ -9,9 +9,9 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { ChatContext, UserMessage, AssistantMessage, FileMessagePart, SystemMessage, AssistantResponse, AssistantMessagePart, Usage, ToolCall } from '../agents/messages.js';
-import { BaseToolset } from '../agents/tool.js';
-import { LLM } from '../agents/llm.js';
+import { ChatContext, UserMessage, AssistantMessage, FileMessagePart, SystemMessage, AssistantResponse, AssistantMessagePart, Usage, ToolCall } from '../aikernel/messages.js';
+import { BaseToolset } from '../aikernel/tool.js';
+import { LLM } from '../aikernel/llm.js';
 import { getTaskDirectory } from '../utils/setting.js';
 import { logger } from '../utils/logger.js';
 import { ApplicationRegistry } from '../applications/registry.js';

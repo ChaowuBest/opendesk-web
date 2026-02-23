@@ -14,7 +14,7 @@ import { defaultSelectListTheme } from "./theme";
 import { logger, setDebugMode, getDebugMode } from "../utils/logger.js";
 import { lookupKnownContextSize, fetchContextSizeFromAPI } from "../utils/model-context";
 import { AgentDecl } from "../agents/agentdecl.js";
-import { ShellAgentDecl } from "../agents/agentdecls/shellagent.js";
+import { ShellAgentDecl } from "../aikernel/agents/shellagent.js";
 import { HelpOverlay } from "./components/help";
 import { ConfirmOverlay, InfoOverlay } from "./components/notice";
 import { LogPanel, LogPanelMode } from "./components/logpanel";

@@ -60,7 +60,7 @@ resources/renderer/applications/<bundleName>/
 ```typescript
 // src/main/applications/myapp/app.ts
 import { BaseApplication } from "../base.js";
-import { BaseToolset } from "../../agents/tool";
+import { BaseToolset } from "../../aikernel/tool";
 import { z } from 'zod';
 import MyAppWorker from "./worker";
 
@@ -152,7 +152,7 @@ OpenDesk 内置的 Agent 可以调用应用注册的"工具（Tool）"来感知�
 ```typescript
 // src/main/applications/myapp/app.ts
 import { BaseApplication } from "../base.js";
-import { BaseTool, BaseToolset } from "../../agents/tool";
+import { BaseTool, BaseToolset } from "../../aikernel/tool";
 import { z } from 'zod';
 
 export class MyAppApplication extends BaseApplication {
@@ -683,7 +683,7 @@ resources/renderer/applications/notes/
 ```typescript
 // src/main/applications/notes/app.ts
 import { BaseApplication } from "../base.js";
-import { BaseTool, BaseToolset } from "../../agents/tool";
+import { BaseTool, BaseToolset } from "../../aikernel/tool";
 import { z } from 'zod';
 import NotesWorker from "./worker";
 

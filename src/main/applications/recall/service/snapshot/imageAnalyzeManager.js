@@ -16,7 +16,7 @@ import { logger } from '../../../../utils/logger.js';
 import fs from 'fs';
 import sharp from 'sharp';
 import { Setting } from '../../../../utils/setting.js';
-import { UserMessage } from '../../../../agents/messages';
+import { UserMessage } from '../../../../aikernel/messages';
 import { LLM } from '../../../../agents/llm.js';
 
 // 关键帧检测阈值常量

@@ -10,7 +10,7 @@
  */
 
 import { BaseApplication } from '../base';
-import { BaseToolset } from '../../agents/tool';
+import { BaseToolset } from '../../aikernel/tool';
 import { z } from 'zod';
 import { WebFetchTool } from './tools/webfetch';
 import { BingSearchTool } from './tools/bing';

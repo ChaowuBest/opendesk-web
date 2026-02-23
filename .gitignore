@@ -1,3 +1,6 @@
+# IDE-specified files
+.roo
+
 **/.DS_Store
 package-lock.json
 

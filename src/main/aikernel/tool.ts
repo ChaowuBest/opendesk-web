@@ -72,7 +72,7 @@ export class BaseTool<T extends z.ZodType> {
         };
     }
 
-    static fromJSON(jsonObject: object) {
+    static fromJSON(jsonObject: Record<string, any>) {
         let tool = new BaseTool(
             jsonObject['name'],
             jsonObject['description'],
@@ -200,7 +200,7 @@ export class BaseToolset {
         };
     }
 
-    static fromJSON(jsonObject: object) {
+    static fromJSON(jsonObject: Record<string, any>) {
         let toolset = new BaseToolset(jsonObject['name']);
         for (let tool of jsonObject['tools']) {
             toolset.addTool(BaseTool.fromJSON(tool));

@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { BaseToolset } from "../agents/tool";
+import { BaseToolset } from "../aikernel/tool.js";
 import { BaseApplication } from "./base";
 import { SkillRegistry } from "./skills/skillregistry.js";
 import { Setting, getAppDirectory } from "../utils/setting.js";

@@ -9,8 +9,8 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { BaseTool } from '../../agents/tool';
-import { ToolCall } from '../../agents/messages';
+import { BaseTool } from '../../aikernel/tool';
+import { ToolCall } from '../../aikernel/messages';
 import { Card } from '../../tui/components/card';
 import { statusDisplay, truncText } from '../../tui/components/toolcall';
 import chalk from 'chalk';

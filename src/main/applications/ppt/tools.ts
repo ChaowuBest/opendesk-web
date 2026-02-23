@@ -9,11 +9,11 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { BaseTool, ToolResult } from '../../agents/tool';
+import { BaseTool, ToolResult } from '../../aikernel/tool';
 import { z } from 'zod';
 import { logger } from '../../utils/logger.js';
-import { ToolCall } from '../../agents/messages';
-import { marked } from '../../agents/messages';
+import { ToolCall } from '../../aikernel/messages';
+import { marked } from '../../aikernel/messages';
 import { Card } from '../../tui/components/card';
 import { statusDisplay, truncText } from '../../tui/components/toolcall';
 import chalk from 'chalk';

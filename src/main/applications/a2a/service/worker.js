@@ -12,7 +12,7 @@
 import { BaseWorker } from "../../base";
 import { A2ARegistryClient } from "./client.js";
 import { LLM } from "../../../agents/llm.js";
-import { ChatContext, UserMessage, AssistantMessage, FileMessagePart } from "../../../agents/messages";
+import { ChatContext, UserMessage, AssistantMessage, FileMessagePart } from "../../../aikernel/messages";
 import { logger } from "../../../utils/logger.js";
 import { z } from "zod";
 import { ClientFactory } from "@a2a-js/sdk/client";
@@ -380,7 +380,7 @@ ${agentsDescription}
                          const id = name.includes('/') ? name.split('/').pop() : name;
                          return id === targetAgentId;
                     });
-                    
+
                     if (foundEntry) {
                         // 伪造一个 selectedAgent 对象，假装是 LLM 选出来的
                         const card = foundEntry.card || {};

@@ -10,7 +10,7 @@
  */
 
 import { BaseApplication } from "../base";
-import { BaseToolset, BaseTool } from "../../agents/tool";
+import { BaseToolset, BaseTool } from "../../aikernel/tool";
 import { z } from 'zod';
 import { logger } from "../../utils/logger.js";
 import CalendarWorker from "./service/worker";

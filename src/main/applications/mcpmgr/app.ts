@@ -10,7 +10,7 @@
  */
 
 import { BaseApplication } from "../base";
-import { BaseTool, BaseToolset } from "../../agents/tool";
+import { BaseTool, BaseToolset } from "../../aikernel/tool";
 import { z } from 'zod';
 import { Setting } from '../../utils/setting.js';
 import { InstallMcpServerTool, ListMcpServersTool, DeleteMcpServerTool } from './tools';
