@@ -382,17 +382,24 @@ class LLM {
         const messages = this.buildMessages(chatContext);
         const toolOptions = this.buildToolOptions(chatContext);
 
-        const stream = client.chat.completions.stream({
-            model: modelInstance.model_name,
-            messages: messages as OpenAI.ChatCompletionMessageParam[],
-            max_completion_tokens: 16384,
-            stream: true,
-            stream_options: { include_usage: true },
-            ...toolOptions,
-        });
+        try {
+            const stream = client.chat.completions.stream({
+                model: modelInstance.model_name,
+                messages: messages as OpenAI.ChatCompletionMessageParam[],
+                max_completion_tokens: 16384,
+                stream: true,
+                stream_options: { include_usage: true },
+                ...toolOptions,
+            });
 
-        for await (const chunk of stream) {
-            yield AssistantResponse.parseOpenAIResponse(chunk);
+            for await (const chunk of stream) {
+                yield AssistantResponse.parseOpenAIResponse(chunk);
+            }
+        } catch (err) {
+            yield AssistantResponse.richError(
+                'Stream Completion Failed', String(err),
+                JSON.stringify(messages, undefined, 2)
+            );
         }
     }
 }

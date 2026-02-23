@@ -11,7 +11,7 @@
 
 import { Marked } from 'marked';
 import { markedHighlight } from 'marked-highlight';
-import { logger } from '../utils/logger.js';
+import { logger, getDebugMode } from '../utils/logger.js';
 import { BaseTool, BaseToolset } from './tool';
 
 import markedKatex from 'marked-katex-extension';
@@ -628,6 +628,9 @@ export class AssistantMessage {
             }
             if (currentText.length > 0) {
                 message.content = [{ type: 'text', text: currentText }]
+            } else {
+                // 确保 content 字段始终存在，即使为空字符串
+                message.content = "";
             }
             currentReasoning = '';
             currentText = '';
@@ -680,13 +683,13 @@ export class AssistantMessage {
                     messages.push({
                         role: 'tool',
                         tool_call_id: toolcall.id,
-                        content: `Toolcall failed: ${toolcall.result}`
+                        content: `Toolcall failed: ${toolcall.result ?? ''}`
                     });
                 } else if (toolcall.status === 'success') {
                     messages.push({
                         role: 'tool',
                         tool_call_id: toolcall.id,
-                        content: toolcall.result
+                        content: toolcall.result ?? '工具调用成功完成'
                     });
                 } else {
                     throw new Error(`unfinished toolcall status ${toolcall.status}`);
@@ -734,6 +737,23 @@ export class AssistantResponse {
     constructor (content: AssistantMessage, finish_reason: 'stop' | 'error' | 'tool_calls' | null = null) {
         this.content = content;
         this.finish_reason = finish_reason;
+    }
+
+    static richError(title: string, reason: string, ...attachments: string[]) {
+        var response = new AssistantResponse(new AssistantMessage(), 'error');
+        var content = `🔴 ${title}\n`;
+        content += `---\n`
+        content += `${reason}\n`
+        if (getDebugMode()) {
+            // 仅在调试模式下才打印复杂的附件信息
+            for (const attachment of attachments) {
+                content += "```\n";
+                content += attachment + "\n";
+                content += "```\n";
+            }
+        }
+        response.content.appendText(content);
+        return response;
     }
 
     static error(reason: string): AssistantResponse {

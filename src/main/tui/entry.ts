@@ -1,4 +1,4 @@
-import { TUI, SelectList, Box, Text, Key, visibleWidth, truncateToWidth, matchesKey } from "@mariozechner/pi-tui";
+import { TUI, SelectList, Box, Text, Key, visibleWidth, truncateToWidth, matchesKey, type Component } from "@mariozechner/pi-tui";
 import { OpenDeskBanner } from './banner';
 import { VerticalLayout } from './components/layout';
 import { OpenDeskTerminal } from './terminal';
@@ -11,7 +11,7 @@ import { KeyboardShortcutManager } from "./shortcuts";
 import { SlashCommandRegistry } from "./commands";
 import { Setting } from "../utils/setting.js";
 import { defaultSelectListTheme } from "./theme";
-import { logger } from "../utils/logger.js";
+import { logger, setDebugMode, getDebugMode } from "../utils/logger.js";
 import { lookupKnownContextSize, fetchContextSizeFromAPI } from "../utils/model-context";
 import { AgentDecl } from "../agents/agentdecl.js";
 import { ShellAgentDecl } from "../agents/agentdecls/shellagent.js";
@@ -19,6 +19,7 @@ import { HelpOverlay } from "./components/help";
 import { ConfirmOverlay, InfoOverlay } from "./components/notice";
 import { LogPanel, LogPanelMode } from "./components/logpanel";
 import { TodoList } from "./components/todolist";
+import { ConfigMainPage } from "./components/config/configMain";
 import { getTaskTodosForDisplay } from "../applications/todomgr/tools";
 import { exportTaskToHtml } from "../utils/export";
 import path from "path";
@@ -53,6 +54,9 @@ export class OpenDeskTUI {
 
     /** 跟踪是否有 overlay 打开 */
     hasOpenOverlay = false;
+
+    /** 当前激活的配置页面组件（非 null 时表示处于配置模式） */
+    private configComponent?: Component;
 
     private workspace: string;
     private agentDecl: AgentDecl;
@@ -141,6 +145,9 @@ export class OpenDeskTUI {
         if (args.command) {
             this.onRequestSubmit(args.command);
         }
+
+        // 立即解析模型信息，让状态栏一进去就能显示当前模型
+        this.resolveModelInfo();
     }
 
     private setupCommands() {
@@ -276,6 +283,14 @@ export class OpenDeskTUI {
         });
 
         this.commandRegistry.register({
+            name: "config",
+            description: "打开系统设置",
+            execute: async () => {
+                this.enterConfigMode();
+            },
+        });
+
+        this.commandRegistry.register({
             name: "log",
             description: "显示日志面板，用法: /log [off|last|all]",
             getArgumentCompletions: (argPrefix: string) => {
@@ -291,6 +306,31 @@ export class OpenDeskTUI {
                 } else {
                     // 默认不显示
                     this.logPanel.setMode('off');
+                }
+            },
+        });
+
+        this.commandRegistry.register({
+            name: "debug",
+            description: "调试模式开关，用法: /debug [on|off]",
+            getArgumentCompletions: (argPrefix: string) => {
+                const options = ['on', 'off'];
+                return options
+                    .filter(opt => opt.startsWith(argPrefix.toLowerCase()))
+                    .map(opt => ({ value: opt, label: opt, description: opt === 'on' ? '开启调试模式' : '关闭调试模式' }));
+            },
+            execute: async (args: string) => {
+                const modeArg = args.trim().toLowerCase();
+                if (modeArg === 'on') {
+                    setDebugMode(true);
+                    logger.info('调试模式已开启');
+                } else if (modeArg === 'off') {
+                    setDebugMode(false);
+                    logger.info('调试模式已关闭');
+                } else {
+                    // 显示当前状态
+                    const currentMode = getDebugMode();
+                    logger.info(`当前调试模式: ${currentMode ? 'on' : 'off'}`);
                 }
             },
         });
@@ -335,6 +375,69 @@ export class OpenDeskTUI {
         this.container.setMinLines(this.tui.terminal.rows);
 
         this.tui.requestRender();
+    }
+
+    private enterConfigMode() {
+        this.configComponent = new ConfigMainPage(this.tui, () => this.exitConfigMode(), () => {
+            this.resolveModelInfo();
+        });
+        this.shortcutManager.detach();
+
+        this.container.clear();
+        this.container.addChild(new OpenDeskBanner(this.workspace));
+        this.container.addChild(this.configComponent);
+        this.container.setMinLines(this.tui.terminal.rows);
+        this.tui.requestRender();
+    }
+
+    private exitConfigMode() {
+        this.configComponent = undefined;
+
+        this.shortcutManager.attach(this.tui);
+
+        // 退出配置模式时，检查模型是否已配置
+        // 如果仍未配置，则重新显示提示页面
+        if (this.modelNotConfiguredMode) {
+            const setting = Setting.getInstance();
+            const data = setting.getData() as any;
+            if (!data.default_model || data.default_model.trim() === '') {
+                // 模型仍未配置，重新显示提示
+                this.container.clear();
+                this.container.addChild(new OpenDeskBanner(this.workspace));
+                this.container.addChild(this.modelNotConfiguredNotice!);
+                this.container.addChild(this.inputArea);
+                this.container.setMinLines(this.tui.terminal.rows);
+                this.tui.requestRender();
+                // 延迟设置焦点
+                setTimeout(() => {
+                    this.tui.setFocus(this.inputArea.input);
+                    this.tui.requestRender();
+                }, 10);
+                return;
+            } else {
+                // 模型已配置，清除提示状态
+                this.modelNotConfiguredNotice = undefined;
+                this.modelNotConfiguredMode = false;
+            }
+        }
+
+        this.container.clear();
+        this.container.addChild(new OpenDeskBanner(this.workspace));
+        this.container.addChild(this.taskView);
+        this.container.addChild(this.todoList);
+
+        if (this.logPanel.mode !== 'off') {
+            this.container.addChild(this.logPanel);
+        }
+
+        this.container.addChild(this.inputArea);
+        this.container.setMinLines(this.tui.terminal.rows);
+        this.tui.requestRender();
+        // 延迟设置焦点
+        setTimeout(() => {
+            this.tui.setFocus(this.inputArea.input);
+            this.tui.requestRender();
+        }, 10);
     }
 
     private async createNewTask() {
@@ -526,15 +629,24 @@ export class OpenDeskTUI {
     /**
      * 解析模型信息（名称、上下文长度）。首次调用时触发异步 API 查询，
      * 结果缓存，不会重复请求。
+     * 如果检测到没有配置模型（default_model 为空），则隐藏 taskview 并提醒用户配置。
      */
-    private resolveModelInfo() {
-        if (this.modelInfoResolved) return;
-        this.modelInfoResolved = true;
-
+    public resolveModelInfo() {
         try {
             const setting = Setting.getInstance();
             const data = setting.getData() as any;
             const aliasToUse = this.model || data.default_model;
+
+            // 检查是否没有配置模型
+            if (!aliasToUse || aliasToUse.trim() === '') {
+                // 没有配置模型，隐藏 taskview 并显示提示信息
+                this.showModelNotConfiguredNotice();
+                return;
+            }
+
+            // 模型已配置，恢复正常的 taskview 显示
+            this.hideModelNotConfiguredNotice();
+
             const modelCfg = data.models?.find((m: any) => m.alias === aliasToUse);
             const modelName = modelCfg?.model_name ?? aliasToUse;
 
@@ -556,7 +668,92 @@ export class OpenDeskTUI {
                 }
             }).catch(() => { });
         } catch { /* 配置读取失败不影响主流程 */ }
+        this.tui.requestRender();
     }
+
+    /**
+     * 显示模型未配置的提示信息，隐藏 taskview 和 todoList
+     */
+    private showModelNotConfiguredNotice() {
+        if (this.modelNotConfiguredNotice) {
+            return; // 已经显示
+        }
+
+        // 创建提示组件，使用 Text 组件显示多行文本
+        const noticeText = [
+            chalk.bold.yellow('⚠️  模型未配置'),
+            '',
+            chalk.dim('请先配置模型才能使用 OpenDesk'),
+            '',
+            chalk.cyan('使用方法：'),
+            '',
+            chalk.white('  1. 输入 /config 打开配置菜单'),
+            chalk.white('  2. 选择"供应商配置"并添加一个模型供应商'),
+            chalk.white('  3. 选择"模型配置"并添加一个模型'),
+            chalk.white('  4. 选择 "默认模型配置", 并选择你要使用的模型'),
+            '',
+            chalk.dim('然后? 你可以休息了，让我开始工作吧!'),
+        ].join('\n');
+
+        this.modelNotConfiguredNotice = new Text(noticeText);
+
+        // 标记需要处理回车键
+        this.modelNotConfiguredMode = true;
+
+        // 如果当前处于配置模式，不破坏配置页面布局；
+        // exitConfigMode() 退出时会根据 modelNotConfiguredMode 标记处理布局。
+        if (this.configComponent) {
+            return;
+        }
+
+        // 隐藏 taskview 和 todoList，显示提示
+        this.container.clear();
+        this.container.addChild(new OpenDeskBanner(this.workspace));
+        this.container.addChild(this.modelNotConfiguredNotice);
+        this.container.addChild(this.inputArea);
+        this.container.setMinLines(this.tui.terminal.rows);
+
+        this.tui.requestRender();
+        // 重建布局后，重新将焦点设置回输入框
+        setTimeout(() => {
+            this.tui.setFocus(this.inputArea.input);
+            this.tui.requestRender();
+        }, 10);
+    }
+
+    /**
+     * 隐藏模型未配置的提示信息，恢复正常的 taskview 显示
+     */
+    private hideModelNotConfiguredNotice() {
+        if (!this.modelNotConfiguredNotice) {
+            return; // 本来就没有显示提示
+        }
+
+        // 移除提示组件
+        this.modelNotConfiguredNotice = undefined;
+        this.modelNotConfiguredMode = false;
+
+        // 恢复原始布局
+        this.container.clear();
+        this.container.addChild(new OpenDeskBanner(this.workspace));
+        this.container.addChild(this.taskView);
+        this.container.addChild(this.todoList);
+        if (this.logPanel.mode !== 'off') {
+            this.container.addChild(this.logPanel);
+        }
+        this.container.addChild(this.inputArea);
+        this.container.setMinLines(this.tui.terminal.rows);
+
+        this.tui.requestRender();
+        // 重建布局后，重新将焦点设置回输入框
+        setTimeout(() => {
+            this.tui.setFocus(this.inputArea.input);
+            this.tui.requestRender();
+        }, 10);
+    }
+
+    private modelNotConfiguredNotice?: Text;
+    private modelNotConfiguredMode = false;
 
     private async processQueue() {
         const taskId = this.activeTaskId;
@@ -622,6 +819,11 @@ export class OpenDeskTUI {
                 // 有 overlay 打开时不处理
                 if (this.hasOpenOverlay) {
                     return undefined; // 不消费，让 overlay 处理
+                }
+
+                // 配置模式下静默消费，不干扰配置页面
+                if (this.configComponent) {
+                    return { consume: true };
                 }
 
                 // 首先，取消自动补全（如果正在显示）

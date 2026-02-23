@@ -18,6 +18,16 @@ import winston from 'winston';
 import Transport from 'winston-transport';
 
 
+var debugMode: boolean = false;
+
+export function setDebugMode(_debugMode: boolean) {
+    debugMode = _debugMode;
+}
+
+export function getDebugMode() {
+    return debugMode;
+}
+
 class CliLogTransport extends Transport {
     log(info: any, callback: () => void) {
         setImmediate(() => this.emit('logged', info));
