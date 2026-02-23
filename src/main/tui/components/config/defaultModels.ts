@@ -19,11 +19,13 @@ const DEFAULT_MODEL_FIELDS = [
 export class DefaultModelConfigPage implements Component {
     private tui: TUI;
     private onClose: () => void;
+    private onConfigChange?: () => void;
     private form?: ConfigForm;
 
-    constructor(tui: TUI, onClose: () => void) {
+    constructor(tui: TUI, onClose: () => void, onConfigChange?: () => void) {
         this.tui = tui;
         this.onClose = onClose;
+        this.onConfigChange = onConfigChange;
         this.showForm();
     }
 
@@ -78,6 +80,9 @@ export class DefaultModelConfigPage implements Component {
         }
 
         setting.setData(data);
+        if (this.onConfigChange) {
+            this.onConfigChange();
+        }
         this.close();
     }
 

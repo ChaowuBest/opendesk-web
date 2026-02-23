@@ -8,7 +8,7 @@ import chalk from "chalk";
 interface ConfigSection {
     value: string;
     label: string;
-    create: (tui: TUI, onBack: () => void) => Component;
+    create: (tui: TUI, onBack: () => void, onConfigChange?: () => void) => Component;
 }
 
 const CONFIG_SECTIONS: ConfigSection[] = [
@@ -25,7 +25,7 @@ const CONFIG_SECTIONS: ConfigSection[] = [
     {
         value: 'default-model',
         label: `🎯  默认模型配置     ${chalk.dim('选择各场景默认模型')}`,
-        create: (tui, onBack) => new DefaultModelConfigPage(tui, onBack),
+        create: (tui, onBack, onConfigChange) => new DefaultModelConfigPage(tui, onBack, onConfigChange),
     },
 ];
 
@@ -36,14 +36,16 @@ const CONFIG_SECTIONS: ConfigSection[] = [
 export class ConfigMainPage implements Component {
     private tui: TUI;
     private onClose: () => void;
+    private onConfigChange?: () => void;
     private state: 'main' | 'sub' = 'main';
 
     private list?: SelectList;
     private subPage?: Component;
 
-    constructor(tui: TUI, onClose: () => void) {
+    constructor(tui: TUI, onClose: () => void, onConfigChange?: () => void) {
         this.tui = tui;
         this.onClose = onClose;
+        this.onConfigChange = onConfigChange;
         this.showMain();
     }
 
@@ -67,7 +69,7 @@ export class ConfigMainPage implements Component {
     private enterSection(section: ConfigSection) {
         this.state = 'sub';
         this.list = undefined;
-        this.subPage = section.create(this.tui, () => this.showMain());
+        this.subPage = section.create(this.tui, () => this.showMain(), this.onConfigChange);
         this.tui.requestRender();
     }
 

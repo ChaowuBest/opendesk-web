@@ -2,8 +2,28 @@ import { type Component, SelectList, type TUI } from "@mariozechner/pi-tui";
 import { defaultSelectListTheme } from "../../theme.js";
 import { Setting } from "../../../utils/setting.js";
 import { ConfigForm, type FieldDef, type ActionDef } from "./form";
-import { PROVIDER_TEMPLATES } from "./templates.js";
 import chalk from "chalk";
+
+
+export interface ProviderTemplate {
+    name: string;
+    displayName: string;
+    base_url: string;
+}
+
+export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
+    { name: 'openai', displayName: 'OpenAI', base_url: 'https://api.openai.com/v1' },
+    { name: 'openrouter', displayName: 'OpenRouter', base_url: 'https://openrouter.ai/api/v1' },
+    { name: 'cerebras', displayName: 'Cerebras AI', base_url: 'https://api.cerebras.ai/v1' },
+    { name: 'siliconflow', displayName: '硅基流动', base_url: 'https://api.siliconflow.cn/v1' },
+    { name: 'deepseek', displayName: '深度求索', base_url: 'https://api.deepseek.com' },
+    { name: 'z-ai', displayName: '智谱开放平台', base_url: 'https://open.bigmodel.cn/api/paas/v4' },
+    { name: 'local', displayName: 'Ollama', base_url: 'http://127.0.0.1:11434/v1' },
+    { name: 'aliyun-cn', displayName: '阿里云百炼', base_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1' },
+    { name: 'aliyun-code-cn', displayName: '阿里云百炼(CodingPlan)', base_url: 'https://coding.dashscope.aliyuncs.com/v1' },
+    { name: 'volcengine', displayName: '火山引擎', base_url: 'https://ark.cn-beijing.volces.com/api/v3' },
+    { name: 'volcengine-code', displayName: '火山引擎(CodingPlan)', base_url: 'https://ark.cn-beijing.volces.com/api/coding/v3' },
+];
 
 interface ProviderData {
     name: string;

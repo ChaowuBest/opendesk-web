@@ -11,7 +11,7 @@ import { KeyboardShortcutManager } from "./shortcuts";
 import { SlashCommandRegistry } from "./commands";
 import { Setting } from "../utils/setting.js";
 import { defaultSelectListTheme } from "./theme";
-import { logger } from "../utils/logger.js";
+import { logger, setDebugMode, getDebugMode } from "../utils/logger.js";
 import { lookupKnownContextSize, fetchContextSizeFromAPI } from "../utils/model-context";
 import { AgentDecl } from "../agents/agentdecl.js";
 import { ShellAgentDecl } from "../agents/agentdecls/shellagent.js";
@@ -145,6 +145,9 @@ export class OpenDeskTUI {
         if (args.command) {
             this.onRequestSubmit(args.command);
         }
+
+        // 立即解析模型信息，让状态栏一进去就能显示当前模型
+        this.resolveModelInfo();
     }
 
     private setupCommands() {
@@ -306,6 +309,31 @@ export class OpenDeskTUI {
                 }
             },
         });
+
+        this.commandRegistry.register({
+            name: "debug",
+            description: "调试模式开关，用法: /debug [on|off]",
+            getArgumentCompletions: (argPrefix: string) => {
+                const options = ['on', 'off'];
+                return options
+                    .filter(opt => opt.startsWith(argPrefix.toLowerCase()))
+                    .map(opt => ({ value: opt, label: opt, description: opt === 'on' ? '开启调试模式' : '关闭调试模式' }));
+            },
+            execute: async (args: string) => {
+                const modeArg = args.trim().toLowerCase();
+                if (modeArg === 'on') {
+                    setDebugMode(true);
+                    logger.info('调试模式已开启');
+                } else if (modeArg === 'off') {
+                    setDebugMode(false);
+                    logger.info('调试模式已关闭');
+                } else {
+                    // 显示当前状态
+                    const currentMode = getDebugMode();
+                    logger.info(`当前调试模式: ${currentMode ? 'on' : 'off'}`);
+                }
+            },
+        });
     }
 
     private async doExport(task: any, absolutePath: string) {
@@ -350,7 +378,9 @@ export class OpenDeskTUI {
     }
 
     private enterConfigMode() {
-        this.configComponent = new ConfigMainPage(this.tui, () => this.exitConfigMode());
+        this.configComponent = new ConfigMainPage(this.tui, () => this.exitConfigMode(), () => {
+            this.resolveModelInfo();
+        });
         this.shortcutManager.detach();
 
         this.container.clear();
@@ -570,10 +600,7 @@ export class OpenDeskTUI {
      * 解析模型信息（名称、上下文长度）。首次调用时触发异步 API 查询，
      * 结果缓存，不会重复请求。
      */
-    private resolveModelInfo() {
-        if (this.modelInfoResolved) return;
-        this.modelInfoResolved = true;
-
+    public resolveModelInfo() {
         try {
             const setting = Setting.getInstance();
             const data = setting.getData() as any;
@@ -599,6 +626,7 @@ export class OpenDeskTUI {
                 }
             }).catch(() => { });
         } catch { /* 配置读取失败不影响主流程 */ }
+        this.tui.requestRender();
     }
 
     private async processQueue() {
