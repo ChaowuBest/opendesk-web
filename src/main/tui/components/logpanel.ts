@@ -12,7 +12,6 @@
 
 import type { Component, TUI } from '@mariozechner/pi-tui';
 import { Card } from './card';
-import chalk from 'chalk';
 import { getLines, subscribe } from '../../utils/cliLogStore.js';
 
 export type LogPanelMode = 'off' | 'last' | 'all';
