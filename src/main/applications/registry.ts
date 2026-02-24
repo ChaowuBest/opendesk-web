@@ -54,7 +54,7 @@ export class ApplicationRegistry {
 
         // 注册Skill
         const skillRegistry = SkillRegistry.getInstance();
-        application.getSkills().then(skills => skillRegistry.registerSkills(application.bundleName, ...skills));
+        skillRegistry.registerSkillProvider(application.bundleName, application);
 
         Setting.registerApplicationSettings(application, () => {
             application.onConfigChanged();

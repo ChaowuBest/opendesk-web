@@ -10,7 +10,6 @@
  */
 
 import { AgentDecl } from "../agent";
-import { ApplicationRegistry } from "../../applications/registry";
 import format from "string-template";
 import { SkillRegistry } from "../skill";
 
@@ -43,7 +42,7 @@ TodoWrite 工具使用说明：
 export class ShellAgentDecl extends AgentDecl {
 
     async createSystemPrompt(): Promise<string> {
-        const skillFrontmatters = SkillRegistry.getInstance().getSkillFrontmatterXml();
+        const skillFrontmatters = await SkillRegistry.getInstance().getSkillFrontmatterXml();
         const result = format(SHELL_AGENT_SYSTEM_PROMPT, {
             date: new Date().toLocaleString(),
             workspace: this.environment.workspace,
