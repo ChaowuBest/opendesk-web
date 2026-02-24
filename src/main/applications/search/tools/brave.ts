@@ -9,13 +9,14 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { BaseTool } from '../../../agents/tool';
-import { ToolCall } from '../../../agents/messages';
+import { BaseTool } from '../../../aikernel/tool';
+import { ToolCall } from '../../../aikernel/messages';
 import { Card } from '../../../tui/components/card';
 import { statusDisplay, truncText } from '../../../tui/components/toolcall';
 import chalk from 'chalk';
 import { z } from 'zod';
 import { fetch, ProxyAgent, type Dispatcher } from 'undici';
+
 
 const BRAVE_SEARCH_URL = 'https://api.search.brave.com/res/v1/web/search';
 const FETCH_TIMEOUT_MS = 30000;

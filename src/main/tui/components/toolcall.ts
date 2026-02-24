@@ -1,7 +1,7 @@
 import chalk from 'chalk';
 import { type Component, visibleWidth, truncateToWidth } from '@mariozechner/pi-tui';
 import type { CardStatus } from './card';
-import type { ToolCall } from '../../agents/messages';
+import type { ToolCall } from '../../aikernel/messages';
 
 
 /**

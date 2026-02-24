@@ -21,7 +21,7 @@ import { spawn } from 'child_process';
 import os from 'os';
 import AdmZip from 'adm-zip';
 import { getAppDirectory } from '../../utils/setting.js';
-import { BaseTool, BaseToolset } from '../../agents/tool.js';
+import { BaseTool, BaseToolset } from '../../aikernel/tool.js';
 import { parseAndValidateSkillMd, SKILL_MD_FILENAME } from './skill-schema.js';
 import { logger } from '../../utils/logger.js';
 

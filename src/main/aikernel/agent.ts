@@ -9,8 +9,11 @@
  * See the Mulan PSL v2 for more details.
  */
 
+import { SkillFrontmatter } from "./skill";
+
 export interface AgentEnvironment {
     workspace: string;
+    getSkillFrontmatter(): Promise<SkillFrontmatter[]>;
 }
 
 export abstract class AgentDecl {
@@ -20,5 +23,5 @@ export abstract class AgentDecl {
         this.environment = environment;
     }
 
-    abstract createSystemPrompt(): string;
+    abstract createSystemPrompt(): Promise<string>;
 }

@@ -9,9 +9,9 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { ChatContext, UserMessage, AssistantMessage, FileMessagePart, SystemMessage, AssistantResponse, AssistantMessagePart, Usage, ToolCall } from '../agents/messages.js';
-import { BaseToolset } from '../agents/tool.js';
-import { LLM } from '../agents/llm.js';
+import { ChatContext, UserMessage, AssistantMessage, FileMessagePart, SystemMessage, AssistantResponse, AssistantMessagePart, Usage, ToolCall } from '../aikernel/messages.js';
+import { BaseToolset } from '../aikernel/tool.js';
+import { LLM } from '../aikernel/llm.js';
 import { getTaskDirectory } from '../utils/setting.js';
 import { logger } from '../utils/logger.js';
 import { ApplicationRegistry } from '../applications/registry.js';
@@ -19,6 +19,7 @@ import { jsonrepair } from 'jsonrepair';
 import officeParser from 'officeparser';
 import path from 'path';
 import fs from 'fs';
+import { SkillRegistry } from '../aikernel/skill.js';
 
 
 type TaskStatus = 'waiting' | 'running' | 'stopped';
@@ -138,7 +139,9 @@ export class TaskState {
         this.chat_context.appendMessage(assistant_message);
 
         let toolsets = await ApplicationRegistry.listAvailableToolsets();
+        let skillToolset = SkillRegistry.getInstance().getToolset();
         this.chat_context.attachToolsets(...toolsets);
+        this.chat_context.attachToolsets(skillToolset);
 
         logger.info(`messsage submitted to task ${this.task_id}`)
 
@@ -345,9 +348,9 @@ export class TaskState {
 
     /**
      * Process the tool calls in the last message
-     * @returns {Promise<boolean>} true if there are tool calls to process, false otherwise
+     * @returns true if there are tool calls to process, false otherwise
      */
-    async processToolCalls() {
+    async processToolCalls(): Promise<boolean> {
         let lastMessage = this.chat_context.lastMessage();
         if (lastMessage instanceof UserMessage) {
             return false;

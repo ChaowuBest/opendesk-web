@@ -12,7 +12,7 @@
 import fs from 'fs';
 import path from 'path';
 import type { TaskState } from '../states/tasks';
-import { UserMessage, AssistantMessage, TextMessagePart, ToolCallMessagePart, FileMessagePart, ReasoningMessagePart } from '../agents/messages';
+import { UserMessage, AssistantMessage, TextMessagePart, ToolCallMessagePart, FileMessagePart, ReasoningMessagePart } from '../aikernel/messages';
 import { escapeHtml } from './escape';
 
 const HIGHLIGHT_JS_CSS_LIGHT = `

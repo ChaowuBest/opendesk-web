@@ -19,7 +19,7 @@ import path from 'path';
 import fs from 'fs';
 import readline from 'readline';
 import { LocalIndex } from 'vectra';
-import { LLM } from '../../../../agents/llm.js';
+import { LLM } from '../../../../aikernel/llm.js';
 import { logger } from '../../../../utils/logger.js';
 import PQueue from 'p-queue';
 

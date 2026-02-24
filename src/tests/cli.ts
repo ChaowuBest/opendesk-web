@@ -1,5 +1,17 @@
+/**
+ * Copyright (c) 2026 The OpenDesk Team
+ * OpenDesk is licensed under Mulan PSL v2.
+ * You can use this software according to the terms and conditions of the Mulan PSL v2.
+ * You may obtain a copy of Mulan PSL v2 at: http://license.coscl.org.cn/MulanPSL2
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
+ * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+ * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+ * See the Mulan PSL v2 for more details.
+ */
+
 import fs from 'fs';
 import path from 'path';
+import { runSkillParserTests } from './ut/skills/parser.test.js';
 
 function getSettingPath(): string {
     const appData = process.env.APPDATA;
@@ -32,11 +44,27 @@ function cmdGetConfig(appName?: string) {
     }
 }
 
-const commands: Record<string, (...args: string[]) => void> = {
+async function cmdUt() {
+    console.log('运行单元测试...');
+
+    // 运行技能解析器测试
+    const skillTestsPassed = await runSkillParserTests();
+
+    if (skillTestsPassed) {
+        console.log('\n✅ 所有单元测试通过');
+        process.exit(0);
+    } else {
+        console.log('\n❌ 部分单元测试失败');
+        process.exit(1);
+    }
+}
+
+const commands: Record<string, (...args: string[]) => void | Promise<void>> = {
     'get-config': cmdGetConfig,
+    'ut': cmdUt,
 };
 
-function main() {
+async function main() {
     const args = process.argv.slice(2);
     const command = args[0];
 
@@ -44,6 +72,7 @@ function main() {
         console.log('用法: npm run test-cli -- <command> [args...]');
         console.log('可用命令:');
         console.log('  get-config [app-name]  获取配置（可选指定应用名）');
+        console.log('  ut                     运行单元测试');
         process.exit(0);
     }
 
@@ -54,7 +83,7 @@ function main() {
         process.exit(1);
     }
 
-    handler(...args.slice(1));
+    await handler(...args.slice(1));
 }
 
 main();

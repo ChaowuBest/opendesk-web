@@ -13,10 +13,11 @@ import { z } from 'zod';
 import { parentPort } from 'worker_threads';
 import { logger } from '../utils/logger.js';
 import { Setting, getAppDirectory } from '../utils/setting.js';
-import { BaseToolset } from '../agents/tool.js';
+import { BaseToolset } from '../aikernel/tool.js';
 import path from 'path';
 import fs from 'fs';
 import PQueue from 'p-queue';
+import { Skill } from '../aikernel/skill.js';
 
 export class BaseWorker {
 
@@ -192,6 +193,14 @@ export class BaseApplication {
      * 获取应用提供的工具
      */
     async getToolsets(): Promise<BaseToolset[]> {
+        return [];
+    }
+
+    /**
+     * 获取应用提供的Skills
+     * @returns
+     */
+    async getSkills(): Promise<Skill[]> {
         return [];
     }
 

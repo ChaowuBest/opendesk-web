@@ -13,7 +13,7 @@ import { getAppDirectory } from '../../utils/setting.js';
 import { z } from 'zod';
 import { logger } from '../../utils/logger.js';
 import { LocalIndex } from 'vectra';
-import { LLM } from '../../agents/llm.js';
+import { LLM } from '../../aikernel/llm.js';
 import { NotificationManager } from '../../utils/notificationmgr';
 import path from 'path';
 import fs from 'fs';

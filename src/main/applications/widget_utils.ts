@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { BaseTool, BaseToolset } from '../agents/tool';
+import { BaseTool, BaseToolset } from '../aikernel/tool';
 import { z } from 'zod';
 import type { TaskState } from '../states/tasks';
 

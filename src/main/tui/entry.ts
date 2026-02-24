@@ -14,7 +14,7 @@ import { defaultSelectListTheme } from "./theme";
 import { logger, setDebugMode, getDebugMode } from "../utils/logger.js";
 import { lookupKnownContextSize, fetchContextSizeFromAPI } from "../utils/model-context";
 import { AgentDecl } from "../agents/agentdecl.js";
-import { ShellAgentDecl } from "../agents/agentdecls/shellagent.js";
+import { ShellAgentDecl } from "../aikernel/agents/shellagent.js";
 import { HelpOverlay } from "./components/help";
 import { ConfirmOverlay, InfoOverlay } from "./components/notice";
 import { LogPanel, LogPanelMode } from "./components/logpanel";
@@ -450,7 +450,8 @@ export class OpenDeskTUI {
         }
 
         const task = this.taskManagerState.createTask(this.model);
-        await task.setSystemPrompt(this.agentDecl.createSystemPrompt());
+        const systemPrompt = await this.agentDecl.createSystemPrompt();
+        await task.setSystemPrompt(systemPrompt);
         this.activeTaskId = task.task_id;
         this.taskView.taskState = task;
         this.taskView.clearMessages();
@@ -601,7 +602,8 @@ export class OpenDeskTUI {
     async onRequestSubmit(request: string) {
         if (this.taskView.taskState === undefined) {
             this.taskView.taskState = this.taskManagerState.createTask(this.model);
-            await this.taskView.taskState.setSystemPrompt(this.agentDecl.createSystemPrompt());
+            const systemPrompt = await this.agentDecl.createSystemPrompt();
+            await this.taskView.taskState.setSystemPrompt(systemPrompt);
             // 绑定到新任务的队列
             this.inputArea.bindToTaskQueue(this.taskView.taskState.task_id, this.taskView.taskState.message_queue);
         }

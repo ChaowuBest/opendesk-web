@@ -10,12 +10,14 @@
  */
 
 import { BaseApplication } from "../base";
-import { BaseTool, BaseToolset } from "../../agents/tool";
+import { BaseTool, BaseToolset } from "../../aikernel/tool";
 import { z } from 'zod';
 import { Setting } from '../../utils/setting.js';
 import { InstallMcpServerTool, ListMcpServersTool, DeleteMcpServerTool } from './tools';
+import { Skill } from "../../aikernel/skill.js";
 import type { McpServerConfig, McpToolInfo } from './common.js';
 import McpMgrWorker from "./worker";
+import { MANAGE_MCP_SKILL } from "./skills.js";
 
 
 const McpServerConfigSchema = z.object({
@@ -201,14 +203,17 @@ export class McpMgrApplication extends BaseApplication {
             toolsets.push(toolset);
         }
 
-        // 2. 新增的 MCP 安装工具
-        const installToolset = new BaseToolset('mcp_install');
-
-        installToolset.addTool(new InstallMcpServerTool(this));
-        installToolset.addTool(new ListMcpServersTool(this));
-        installToolset.addTool(new DeleteMcpServerTool(this));
-
-        toolsets.push(installToolset);
         return toolsets;
+    }
+
+    async getSkills(): Promise<Skill[]> {
+        let mcpManageSkill = Skill.parseMd(MANAGE_MCP_SKILL);
+        let mcpManageToolset = new BaseToolset('mcp-manage');
+
+        mcpManageToolset.addTool(new InstallMcpServerTool(this));
+        mcpManageToolset.addTool(new ListMcpServersTool(this));
+        mcpManageToolset.addTool(new DeleteMcpServerTool(this));
+        mcpManageSkill.toolsets = [mcpManageToolset]
+        return [mcpManageSkill];
     }
 }

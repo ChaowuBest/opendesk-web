@@ -10,7 +10,7 @@
  */
 
 import { BaseApplication } from "../base";
-import { BaseTool, BaseToolset } from "../../agents/tool";
+import { BaseTool, BaseToolset } from "../../aikernel/tool";
 import { FSEntrySchema } from './setting.js';
 import open from 'open';
 import { z } from 'zod';

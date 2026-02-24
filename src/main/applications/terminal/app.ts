@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { BaseToolset } from "../../agents/tool";
+import { BaseToolset } from "../../aikernel/tool";
 import { BaseApplication } from "../base";
 import { ExecuteCmdTool, ExecuteBashTool, WriteFileTool, ReadFileTool, ExecuteZshTool } from "./tools.js";
 

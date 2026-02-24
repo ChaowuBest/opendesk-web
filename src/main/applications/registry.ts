@@ -9,15 +9,15 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { BaseToolset } from "../agents/tool";
+import { BaseToolset } from "../aikernel/tool.js";
 import { BaseApplication } from "./base";
-import { SkillRegistry } from "./skills/skillregistry.js";
 import { Setting, getAppDirectory } from "../utils/setting.js";
 import { logger, LogStream } from "../utils/logger.js";
 import { addLine as addCliLogLine } from "../utils/cliLogStore.js";
 import { NotificationManager } from "../utils/notificationmgr.js";
 import { getPlatform } from "../../platforms/base.js";
 import { Worker } from "worker_threads";
+import { Skill, SkillRegistry } from "../aikernel/skill.js";
 
 
 export type ProtocolHandlerEntry = {
@@ -28,6 +28,7 @@ export type ProtocolHandlerEntry = {
 
 
 export class ApplicationRegistry {
+
     static applications: Map<string, BaseApplication> = new Map();
     static pendingRequests: Map<string, {
         resolve: (value: any) => void,
@@ -50,6 +51,11 @@ export class ApplicationRegistry {
     static registerApplication(application: BaseApplication) {
         this.applications.set(application.bundleName, application);
         application.setRegistry(this);
+
+        // 注册Skill
+        const skillRegistry = SkillRegistry.getInstance();
+        application.getSkills().then(skills => skillRegistry.registerSkills(application.bundleName, ...skills));
+
         Setting.registerApplicationSettings(application, () => {
             application.onConfigChanged();
             this.globalWorker?.postMessage({
@@ -76,12 +82,12 @@ export class ApplicationRegistry {
         return this.applications.get(bundleName);
     }
 
-    /** 应用内建 toolsets（含 skills 子应用的本地技能） */
     static async listAvailableToolsets(): Promise<BaseToolset[]> {
         let result: BaseToolset[] = [];
         for (const application of this.applications.values()) {
             result.push(...(await application.getToolsets()));
         }
+
         return result;
     }
 
@@ -207,10 +213,6 @@ export function initializeRegistryWorker() {
                 const msg = event.message + '\n';
                 LogStream.getStream().write(msg);
                 addCliLogLine(event.message);
-                break;
-            }
-            case 'skillsRegistryChanged': {
-                SkillRegistry.refresh();
                 break;
             }
             case 'subscribeEvent': {

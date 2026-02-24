@@ -9,8 +9,10 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { AgentDecl } from "../agentdecl";
+import { AgentDecl } from "../agent";
+import { ApplicationRegistry } from "../../applications/registry";
 import format from "string-template";
+import { SkillRegistry } from "../skill";
 
 
 const SHELL_AGENT_SYSTEM_PROMPT = `
@@ -32,13 +34,20 @@ TodoWrite 工具使用说明：
 - 状态：pending（待处理）、in_progress（进行中）、completed（已完成）
 - 当你完成一个待办后，应该立即更新待办列表，将该待办标记为 completed，并确保下一个待办标记为 in_progress（如果有）
 </todomanagement>
+
+## 你可以使用的技能 (Skills)
+
+{skillFrontmatters}
 `
 
 export class ShellAgentDecl extends AgentDecl {
-    createSystemPrompt(): string {
+
+    async createSystemPrompt(): Promise<string> {
+        const skillFrontmatters = SkillRegistry.getInstance().getSkillFrontmatterXml();
         const result = format(SHELL_AGENT_SYSTEM_PROMPT, {
             date: new Date().toLocaleString(),
-            workspace: this.environment.workspace
+            workspace: this.environment.workspace,
+            skillFrontmatters: skillFrontmatters
         });
         return result;
     }
