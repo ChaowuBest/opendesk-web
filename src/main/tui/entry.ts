@@ -13,7 +13,7 @@ import { Setting } from "../utils/setting.js";
 import { defaultSelectListTheme } from "./theme";
 import { logger, setDebugMode, getDebugMode } from "../utils/logger.js";
 import { lookupKnownContextSize, fetchContextSizeFromAPI } from "../utils/model-context";
-import { AgentDecl } from "../agents/agentdecl.js";
+import { AgentDecl } from "../aikernel/agent.js";
 import { ShellAgentDecl } from "../aikernel/agents/shellagent.js";
 import { HelpOverlay } from "./components/help";
 import { ConfirmOverlay, InfoOverlay } from "./components/notice";
@@ -82,7 +82,7 @@ export class OpenDeskTUI {
         this.taskView = new TaskView(this.tui);
         this.logPanel = new LogPanel(this.tui);
         this.todoList = new TodoList();
-        this.inputArea = new AgentInputArea(this.tui);
+        this.inputArea = new AgentInputArea(this);
         this.workspace = args.workspace;
         this.model = args.model;
         this.singleShot = !!args.command;
@@ -99,9 +99,6 @@ export class OpenDeskTUI {
         this.logPanel.onModeChange((mode) => {
             this.updateLayoutForLogMode(mode);
         });
-
-        // 设置宿主引用
-        this.inputArea.setHost(this);
 
         this.inputArea.onSubmit(this.onRequestSubmit.bind(this));
 
@@ -810,6 +807,13 @@ export class OpenDeskTUI {
      */
     getTodoList(): TodoList {
         return this.todoList;
+    }
+
+    /**
+     * 检查是否处于模型未配置模式
+     */
+    isModelNotConfiguredMode(): boolean {
+        return this.modelNotConfiguredMode;
     }
 
     start() {
