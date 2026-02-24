@@ -9,11 +9,11 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { BaseTool } from '../../aikernel/tool';
-import { ToolCall } from '../../aikernel/messages';
-import { Card } from '../../tui/components/card';
-import { statusDisplay, truncText } from '../../tui/components/toolcall';
-import { type SearchApplication } from './app';
+import { BaseTool } from '../../../aikernel/tool';
+import { ToolCall } from '../../../aikernel/messages';
+import { Card } from '../../../tui/components/card';
+import { statusDisplay, truncText } from '../../../tui/components/toolcall';
+import { type SearchApplication } from '../app';
 import chalk from 'chalk';
 import { z } from 'zod';
 
@@ -168,7 +168,7 @@ export class ToggleSearchToolTool extends BaseTool<typeof ToggleSearchToolArgsSc
             ToggleSearchToolArgsSchema,
         );
         this.searchApp = searchApp;
-        this.executor = this.toggle.bind(this);
+        this.setExecutor(this.toggle.bind(this))
     }
 
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {

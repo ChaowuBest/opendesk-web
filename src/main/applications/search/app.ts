@@ -16,72 +16,50 @@ import { WebFetchTool } from './tools/webfetch';
 import { BingSearchTool } from './tools/bing';
 import { BraveSearchTool } from './tools/brave';
 import { ExaSearchTool } from './tools/exa';
+import { ConfigureSearchTool, ListSearchToolsTool, ToggleSearchToolTool } from './tools/manage';
 import { Setting } from '../../utils/setting.js';
 import { Skill } from '../../aikernel/skill.js';
-import { ConfigureSearchTool, ListSearchToolsTool, ToggleSearchToolTool } from './tools';
 import { MANAGE_SEARCH_TOOLS_SKILL } from './skills';
 
-class SearchApplication extends BaseApplication {
+
+const SearchApplicationConfigSchema = z.object({
+    bing_search: z.object({
+        enabled: z.boolean().default(true).describe('是否启用Bing搜索'),
+    }).optional(),
+    exa_search: z.object({
+        api_key: z.string().default('').describe('ExaSearch的API密钥'),
+        enabled: z.boolean().default(false).describe('是否启用ExaSearch'),
+    }).optional(),
+    brave_search: z.object({
+        api_key: z.string().default('').describe('Brave Search的API密钥'),
+        enabled: z.boolean().default(false).describe('是否启用Brave Search'),
+    }).optional(),
+});
+
+export class SearchApplication extends BaseApplication {
     constructor() {
         super('search', '融合搜索', false);
     }
 
     static getConfigSchema() {
-        return z.object({
-            bing_search: z.object({
-                enabled: z.boolean().default(true).describe('是否启用Bing搜索'),
-            }).optional(),
-            exa_search: z.object({
-                api_key: z.string().default('').describe('ExaSearch的API密钥'),
-                enabled: z.boolean().default(false).describe('是否启用ExaSearch'),
-            }).optional(),
-            brave_search: z.object({
-                api_key: z.string().default('').describe('Brave Search的API密钥'),
-                enabled: z.boolean().default(false).describe('是否启用Brave Search'),
-            }).optional(),
-        });
+        return SearchApplicationConfigSchema;
     }
 
     /**
      * 配置搜索工具
      */
     async configureSearchTool(id: string, updates: { api_key?: string; enabled?: boolean }): Promise<void> {
-        const setting = Setting.getInstance();
-        const fullData = JSON.parse(JSON.stringify(setting.data));
-        if (!fullData.applications) fullData.applications = {};
-        if (!fullData.applications[this.bundleName]) fullData.applications[this.bundleName] = {};
+        const config = this.getConfig();
 
         if (id === 'exa') {
-            if (!fullData.applications[this.bundleName].exa_search) {
-                fullData.applications[this.bundleName].exa_search = { api_key: '', enabled: false };
-            }
-            if (updates.api_key !== undefined) {
-                fullData.applications[this.bundleName].exa_search.api_key = updates.api_key;
-            }
-            if (updates.enabled !== undefined) {
-                fullData.applications[this.bundleName].exa_search.enabled = updates.enabled;
-            }
+            config.exa_search = { api_key: updates.api_key ?? '', enabled: updates.enabled ?? false };
         } else if (id === 'brave') {
-            if (!fullData.applications[this.bundleName].brave_search) {
-                fullData.applications[this.bundleName].brave_search = { api_key: '', enabled: false };
-            }
-            if (updates.api_key !== undefined) {
-                fullData.applications[this.bundleName].brave_search.api_key = updates.api_key;
-            }
-            if (updates.enabled !== undefined) {
-                fullData.applications[this.bundleName].brave_search.enabled = updates.enabled;
-            }
+            config.brave_search = { api_key: updates.api_key ?? '', enabled: updates.enabled ?? false };
         } else if (id === 'bing') {
-            if (!fullData.applications[this.bundleName].bing_search) {
-                fullData.applications[this.bundleName].bing_search = { enabled: true };
-            }
-            if (updates.enabled !== undefined) {
-                fullData.applications[this.bundleName].bing_search.enabled = updates.enabled;
-            }
+            config.bing_search = { enabled: updates.enabled ?? false };
         }
 
-        setting.setData(fullData);
-        this.sendEventToSubscribers('toolsUpdated');
+        this.setConfig(config);
     }
 
     /**
@@ -103,26 +81,28 @@ class SearchApplication extends BaseApplication {
         ];
     }
 
+    getConfig(): z.output<typeof SearchApplicationConfigSchema> {
+        return super.getConfig();
+    }
+
     async getToolsets() {
-        const config: any = this.getConfig();
-        const exa_search = config?.exa_search;
-        const brave_search = config?.brave_search;
-        const bing_enabled = config?.bing_search?.enabled !== false;
+        const config = this.getConfig();
         const toolset = new BaseToolset('search');
-        const hasExaApi = exa_search?.enabled && exa_search?.api_key !== '';
-        const hasBraveApi = brave_search?.enabled && brave_search?.api_key !== '';
+
+        const hasExaApi = config.exa_search?.enabled && config.exa_search.api_key !== '';
+        const hasBraveApi = config.brave_search?.enabled && config.brave_search.api_key !== '';
+        const hasBingApi = config.bing_search?.enabled;
 
         if (hasBraveApi) {
-            toolset.addTool(new BraveSearchTool(brave_search?.api_key));
+            toolset.addTool(new BraveSearchTool(config.brave_search!.api_key));
         }
         if (hasExaApi) {
-            toolset.addTool(new ExaSearchTool(exa_search?.api_key));
+            toolset.addTool(new ExaSearchTool(config.exa_search!.api_key));
         }
-        // 只有当没有启用其他API搜索工具且Bing搜索启用时才添加Bing搜索
-        if (!hasBraveApi && !hasExaApi && bing_enabled) {
+        if (hasBingApi) {
             toolset.addTool(new BingSearchTool());
         }
-        // WebFetch总是添加，不管理
+
         toolset.addTool(new WebFetchTool());
         return [toolset];
     }
@@ -135,8 +115,7 @@ class SearchApplication extends BaseApplication {
         searchManageToolset.addTool(new ListSearchToolsTool(this));
         searchManageToolset.addTool(new ToggleSearchToolTool(this));
         searchManageSkill.toolsets = [searchManageToolset];
+
         return [searchManageSkill];
     }
 }
-
-export { SearchApplication };

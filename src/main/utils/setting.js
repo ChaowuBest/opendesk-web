@@ -74,7 +74,7 @@ class Setting {
     static applicationConfigChangedCallbacks = new Map();
 
     constructor() {
-        /** @type {z.core.output<getSettingSchema()>} */
+        /** @type {any} */
         this.data = getSettingSchema().parse({});
     }
 

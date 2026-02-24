@@ -182,6 +182,14 @@ export class BaseApplication {
         return Setting.getInstance().data.applications[this.bundleName];
     }
 
+    setConfig(config: any) {
+        const schema: z.ZodObject<any> = Object.getPrototypeOf(this).constructor.getConfigSchema();
+        schema.parse(config);
+        const setting = Setting.getInstance();
+        setting.data.applications[this.bundleName] = config;
+        setting.save();
+    }
+
     /**
      * 配置发生变化时调用
      */
