@@ -178,7 +178,7 @@ export class BaseApplication {
     /**
      * 获取应用的配置
      */
-    getConfig(): z.output<z.ZodObject<any>> {
+    getConfig(): z.output<z.ZodObject<any>> | undefined {
         return Setting.getInstance().data.applications[this.bundleName];
     }
 

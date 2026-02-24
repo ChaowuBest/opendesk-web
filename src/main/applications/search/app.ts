@@ -49,7 +49,7 @@ export class SearchApplication extends BaseApplication {
      * 配置搜索工具
      */
     async configureSearchTool(id: string, updates: { api_key?: string; enabled?: boolean }): Promise<void> {
-        const config = this.getConfig();
+        const config = this.getConfig() ?? {};
 
         if (id === 'exa') {
             config.exa_search = { api_key: updates.api_key ?? '', enabled: updates.enabled ?? false };
@@ -81,7 +81,7 @@ export class SearchApplication extends BaseApplication {
         ];
     }
 
-    getConfig(): z.output<typeof SearchApplicationConfigSchema> {
+    getConfig(): z.output<typeof SearchApplicationConfigSchema> | undefined {
         return super.getConfig();
     }
 
@@ -89,9 +89,9 @@ export class SearchApplication extends BaseApplication {
         const config = this.getConfig();
         const toolset = new BaseToolset('search');
 
-        const hasExaApi = config.exa_search?.enabled && config.exa_search.api_key !== '';
-        const hasBraveApi = config.brave_search?.enabled && config.brave_search.api_key !== '';
-        const hasBingApi = config.bing_search?.enabled;
+        const hasExaApi = config?.exa_search?.enabled && config.exa_search.api_key !== '';
+        const hasBraveApi = config?.brave_search?.enabled && config.brave_search.api_key !== '';
+        const hasBingApi = config?.bing_search?.enabled;
 
         if (hasBraveApi) {
             toolset.addTool(new BraveSearchTool(config.brave_search!.api_key));
