@@ -17,7 +17,7 @@ import { is } from '@electron-toolkit/utils';
 import { z } from 'zod';
 import { NotificationManager } from './utils/notificationmgr.js';
 import { LogStream, logger, useConsoleTransport } from './utils/logger.js'
-import { SkillRegistry } from './applications/skills/skillregistry.js';
+import { SkillRegistry } from './applications/skillmgr/skillregistry.js';
 import { initializeRegistry, initializeRegistryWorker, notifyWorkerSettingUpdate, ApplicationRegistry } from './applications/registry';
 import { initializeRegistryProtocols, initializeProtocolHandlers, registerApplicationRegistryHandlers } from './applications/registry_electron.js';
 import { UpdateClient } from '../updater/client.js';

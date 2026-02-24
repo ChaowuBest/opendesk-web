@@ -15,7 +15,7 @@
  */
 
 import { parentPort } from 'worker_threads';
-import { BaseWorker } from '../../base';
+import { BaseWorker } from '../../base.js';
 import { SkillRegistry } from '../skillregistry.js';
 import { RegistryAdapters } from '../registry-adapters.js';
 

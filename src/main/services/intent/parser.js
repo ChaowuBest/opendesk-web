@@ -10,7 +10,7 @@
  */
 
 import { desktopCapturer } from 'electron';
-import { LLM } from '../../agents/llm.js';
+import { LLM } from '../../aikernel/llm.js';
 import { UserMessage, ChatContext } from '../../aikernel/messages';
 import { Setting } from '../../utils/setting.js';
 import { IntentRegistry } from './intents.js';

@@ -17,7 +17,7 @@ import fs from 'fs';
 import sharp from 'sharp';
 import { Setting } from '../../../../utils/setting.js';
 import { UserMessage } from '../../../../aikernel/messages';
-import { LLM } from '../../../../agents/llm.js';
+import { LLM } from '../../../../aikernel/llm.js';
 
 // 关键帧检测阈值常量
 const KEYFRAME_DETECTION = {

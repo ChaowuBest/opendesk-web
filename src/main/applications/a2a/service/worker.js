@@ -11,13 +11,13 @@
 
 import { BaseWorker } from "../../base";
 import { A2ARegistryClient } from "./client.js";
-import { LLM } from "../../../agents/llm.js";
+import { LLM } from "../../../aikernel/llm.js";
 import { ChatContext, UserMessage, AssistantMessage, FileMessagePart } from "../../../aikernel/messages";
 import { logger } from "../../../utils/logger.js";
 import { z } from "zod";
 import { ClientFactory } from "@a2a-js/sdk/client";
 import { randomUUID } from "crypto";
-import {A2UIToHTMLConverter} from '../../../services/a2ui/a2ui-to-html.js'
+import { A2UIToHTMLConverter} from '../../../services/a2ui/a2ui-to-html.js'
 import { isJSON, jsonToHTML } from '../../../services/a2ui/json-to-html.js'
 
 // 硬编码的服务器地址

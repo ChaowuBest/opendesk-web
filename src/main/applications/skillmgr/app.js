@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { BaseApplication } from '../base';
+import { BaseApplication } from '../base.js';
 import { z } from 'zod';
 import path from 'path';
 import { SkillRegistry } from './skillregistry.js';
@@ -20,9 +20,9 @@ const __dirname = import.meta.dirname;
 /**
  * 本地 Agent Skills 子应用：以 Anthropic Agent Skills 标准管理端侧技能，并对外提供 toolsets 供主进程对话调用
  */
-class SkillsApplication extends BaseApplication {
+export class SkillMgrApplication extends BaseApplication {
     constructor() {
-        super('skills', 'Skills');
+        super('skillmgr', 'Skills');
     }
 
     static getWorkerClass() {
@@ -61,5 +61,3 @@ class SkillsApplication extends BaseApplication {
         return { count: toolsets.length, errors };
     }
 }
-
-export { SkillsApplication };

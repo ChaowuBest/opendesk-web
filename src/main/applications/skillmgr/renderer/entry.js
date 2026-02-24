@@ -34,7 +34,7 @@ function getSkillsAPI() {
   };
 }
 
-class SkillsEntryWidget extends HTMLElement {
+class SkillMgrEntryWidget extends HTMLElement {
   constructor() {
     super();
     this.skills = [];
@@ -677,4 +677,4 @@ function escapeHtml(s) {
   return div.innerHTML;
 }
 
-customElements.define('skills-entry-widget', SkillsEntryWidget);
+customElements.define('skillmgr-entry-widget', SkillMgrEntryWidget);
