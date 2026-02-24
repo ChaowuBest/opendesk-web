@@ -123,7 +123,7 @@ export class BingSearchTool extends BaseTool<typeof BingSearchArgsSchema> {
          * ensearch = 0 -- 国内版
          * ensearch = 1 -- 国际版
          */
-        url.searchParams.set('ensearch', '1');
+        url.searchParams.set('ensearch', '0');
 
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);

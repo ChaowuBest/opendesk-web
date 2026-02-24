@@ -412,19 +412,9 @@ export class WebFetchTool extends BaseTool<typeof WebFetchArgsSchema> {
     private htmlToMarkdown(html: string, _url: string): string {
         const { document } = parseHTML(html);
 
-        const selectorsToRemove = [
-            'script', 'style', 'noscript', 'iframe',
-            'nav', 'footer', 'header',
-            '.sidebar', '.advertisement', '.ads', '.ad',
-            '.cookie-banner', '.popup', '.modal',
-            '[role="navigation"]', '[role="banner"]', '[role="complementary"]',
-        ];
-        for (const selector of selectorsToRemove) {
-            try {
-                document.querySelectorAll(selector).forEach((el: Element) => el.remove());
-            } catch {
-                // linkedom 可能不支持某些复杂选择器
-            }
+        // 仅移除不可见元素，让 Readability 自行决定如何处理 nav/header/footer
+        for (const tag of ['script', 'style', 'noscript', 'iframe']) {
+            document.querySelectorAll(tag).forEach((el: Element) => el.remove());
         }
 
         const reader = new Readability(document as unknown as Document, {
@@ -447,23 +437,62 @@ export class WebFetchTool extends BaseTool<typeof WebFetchArgsSchema> {
             if (meta.length > 0) {
                 markdownContent = meta.join('\n') + '\n\n---\n\n' + markdownContent;
             }
-        } else {
-            title = document.querySelector('title')?.textContent || '';
-            const body = document.querySelector('body');
-            if (body) {
-                markdownContent = this.turndownService.turndown(body.innerHTML || html);
-            } else {
-                markdownContent = this.turndownService.turndown(html);
+        }
+
+        // Readability 对非文章页面（搜索结果、列表页等）效果差，内容太少时使用 body fallback
+        if (!markdownContent || markdownContent.length < MIN_CONTENT_LENGTH) {
+            const fallbackMd = this.bodyFallbackExtraction(html);
+            if (fallbackMd && fallbackMd.length > markdownContent.length) {
+                markdownContent = fallbackMd;
+                if (!title) {
+                    const { document: doc } = parseHTML(html);
+                    title = doc.querySelector('title')?.textContent?.trim() || '';
+                }
             }
         }
 
         markdownContent = this.cleanMarkdown(markdownContent);
 
-        if (title && !markdownContent.startsWith(`# ${title}`)) {
+        if (title && !markdownContent.includes(`# ${title}`)) {
             markdownContent = `# ${title}\n\n${markdownContent}`;
         }
 
         return this.truncate(markdownContent);
+    }
+
+    /**
+     * 当 Readability 无法有效提取内容时，从 DOM 主容器直接转换。
+     * 重新解析 HTML（因 Readability 会修改 DOM），优先取 <main>、#__next 等容器。
+     */
+    private bodyFallbackExtraction(html: string): string {
+        const { document } = parseHTML(html);
+
+        for (const tag of ['script', 'style', 'noscript', 'iframe']) {
+            document.querySelectorAll(tag).forEach((el: Element) => el.remove());
+        }
+
+        const adSelectors = [
+            '.sidebar', '.advertisement', '.ads', '.ad',
+            '.cookie-banner', '.popup', '.modal',
+            '[role="complementary"]',
+        ];
+        for (const sel of adSelectors) {
+            try {
+                document.querySelectorAll(sel).forEach((el: Element) => el.remove());
+            } catch { /* linkedom 可能不支持某些选择器 */ }
+        }
+
+        const mainEl =
+            document.querySelector('main') ||
+            document.querySelector('[role="main"]') ||
+            document.querySelector('#__next') ||
+            document.querySelector('#app') ||
+            document.querySelector('#root') ||
+            document.querySelector('body');
+
+        if (!mainEl) return '';
+
+        return this.turndownService.turndown(mainEl.innerHTML);
     }
 
     // ───────────────────── 工具函数 ─────────────────────
