@@ -23,5 +23,5 @@ export abstract class AgentDecl {
         this.environment = environment;
     }
 
-    abstract createSystemPrompt(): string;
+    abstract createSystemPrompt(): Promise<string>;
 }
