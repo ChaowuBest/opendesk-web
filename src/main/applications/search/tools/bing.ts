@@ -51,6 +51,9 @@ interface BingSearchResult {
 
 const BingSearchArgsSchema = z.object({
     query: z.string().describe('搜索关键词'),
+    lang: z.enum(['zh', 'en'])
+        .optional()
+        .describe('搜索语言：(zh=中文，en=英文)，默认为zh。如果指定为en则使用Bing全球版，搜索结果将以英文为主'),
     count: z.number().optional().describe('期望返回的搜索结果数量，默认为15'),
 });
 
@@ -84,7 +87,11 @@ export class BingSearchTool extends BaseTool<typeof BingSearchArgsSchema> {
             body.push(chalk.redBright('  ' + truncText(toolcall.result, width - 10)));
         }
 
-        return new Card({ icon: '🔍', title: '搜索 (Bing)', status: statusDisplay(toolcall.status), body }).render(width);
+        let title = '搜索 (Bing)';
+        if (toolcall.args_object?.['lang'] === 'en') {
+            title = '搜索 (Bing 全球版)';
+        }
+        return new Card({ icon: '🔍', title: title, status: statusDisplay(toolcall.status), body }).render(width);
     }
 
     // ───────────────────── 主入口 ─────────────────────
@@ -97,7 +104,7 @@ export class BingSearchTool extends BaseTool<typeof BingSearchArgsSchema> {
             throw new Error('搜索关键词不能为空');
         }
 
-        const html = await this.fetchBingPage(query);
+        const html = await this.fetchBingPage(query, args.lang ?? 'zh');
         const results = this.parseSearchResults(html, maxResults);
 
         if (results.length === 0) {
@@ -115,7 +122,7 @@ export class BingSearchTool extends BaseTool<typeof BingSearchArgsSchema> {
 
     // ───────────────────── HTTP 请求 ─────────────────────
 
-    private async fetchBingPage(query: string): Promise<string> {
+    private async fetchBingPage(query: string, lang: 'zh' | 'en' = 'zh'): Promise<string> {
         const url = new URL(BING_SEARCH_URL);
         url.searchParams.set('q', query);
 
@@ -123,7 +130,7 @@ export class BingSearchTool extends BaseTool<typeof BingSearchArgsSchema> {
          * ensearch = 0 -- 国内版
          * ensearch = 1 -- 国际版
          */
-        url.searchParams.set('ensearch', '0');
+        url.searchParams.set('ensearch', lang === 'en' ? '1' : '0');
 
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);

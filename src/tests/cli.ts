@@ -12,6 +12,7 @@
 import fs from 'fs';
 import path from 'path';
 import { runSkillParserTests } from './ut/skills/parser.test.js';
+import { runArxivSearchTests } from './ut/search/arxiv.test.js';
 
 function getSettingPath(): string {
     const appData = process.env.APPDATA;
@@ -50,7 +51,10 @@ async function cmdUt() {
     // 运行技能解析器测试
     const skillTestsPassed = await runSkillParserTests();
 
-    if (skillTestsPassed) {
+    // 运行arXiv搜索测试
+    const arxivTestsPassed = await runArxivSearchTests();
+
+    if (skillTestsPassed && arxivTestsPassed) {
         console.log('\n✅ 所有单元测试通过');
         process.exit(0);
     } else {
