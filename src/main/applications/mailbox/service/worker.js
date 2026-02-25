@@ -639,6 +639,11 @@ class IMAPEmailClient extends EmailContentHelper {
                 if (settled) return;
                 settled = true;
                 cleanup();
+                // 连接成功后，注册一个持久的 error 监听器，防止后续 socket 错误
+                // （如 ECONNRESET）变成未捕获异常导致进程崩溃
+                imap.on('error', (err) => {
+                    logger.warn(`IMAP socket error after connect${context ? ` (${context})` : ''}: ${err.message || err}`);
+                });
                 const idInfo = this.getImapIdInfo();
                 if (idInfo && imap.serverSupports && imap.serverSupports('ID')) {
                     try {

@@ -10,9 +10,13 @@
  */
 
 import { BaseApplication } from "../base";
+import { BaseToolset } from "../../aikernel/tool";
+import { Skill } from "../../aikernel/skill.js";
 import { MailboxConfigSchema } from "./common.js"; // 引入新的 Schema
 import { logger } from "../../utils/logger.js";
 import MailboxWorker from "./service/worker";
+import { MANAGE_MAILBOX_SKILL } from "./skills";
+import { AddMailAccountTool, ListMailAccountsTool, RemoveMailAccountTool, SwitchMailAccountTool } from "./tools";
 
 
 class MailboxApplication extends BaseApplication {
@@ -32,6 +36,19 @@ class MailboxApplication extends BaseApplication {
 
     onConfigChanged() {
         logger.info(`mailbox application config changed`);
+    }
+
+    async getSkills() {
+        const skill = Skill.parseMd(MANAGE_MAILBOX_SKILL);
+        const toolset = new BaseToolset('mailbox-manage');
+
+        toolset.addTool(new AddMailAccountTool(this));
+        toolset.addTool(new ListMailAccountsTool(this));
+        toolset.addTool(new RemoveMailAccountTool(this));
+        toolset.addTool(new SwitchMailAccountTool(this));
+        skill.toolsets = [toolset];
+
+        return [skill];
     }
 
 }
