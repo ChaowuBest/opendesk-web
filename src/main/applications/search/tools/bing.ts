@@ -89,7 +89,7 @@ export class BingSearchTool extends BaseTool<typeof BingSearchArgsSchema> {
 
         let title = '搜索 (Bing)';
         if (toolcall.args_object?.['lang'] === 'en') {
-            title = '搜索 (Bing全球版)';
+            title = '搜索 (Bing 全球版)';
         }
         return new Card({ icon: '🔍', title: title, status: statusDisplay(toolcall.status), body }).render(width);
     }
