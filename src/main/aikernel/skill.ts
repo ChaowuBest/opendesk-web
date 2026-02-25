@@ -234,7 +234,7 @@ class LoadSkillTool extends BaseTool<typeof LoadSkillSchema> {
     }
 
     private async loadSkill(args: z.output<typeof LoadSkillSchema>): Promise<string> {
-        const skill = SkillRegistry.getInstance().getSkill(
+        const skill = await SkillRegistry.getInstance().getSkill(
             args.bundleName,
             args.skillName
         );
@@ -262,7 +262,7 @@ class CallSkillTool extends BaseTool<typeof CallSkillToolSchema> {
     }
 
     private async callSkillTool(args: z.output<typeof CallSkillToolSchema>) {
-        const skill = SkillRegistry.getInstance().getSkill(
+        const skill = await SkillRegistry.getInstance().getSkill(
             args.bundleName,
             args.skillName
         );
@@ -296,10 +296,14 @@ class CallSkillTool extends BaseTool<typeof CallSkillToolSchema> {
     }
 }
 
+interface SkillProvider {
+    getSkills(): Promise<Skill[]>;
+}
+
 export class SkillRegistry {
     static instance: SkillRegistry | null = null;
 
-    skills: Map<string, Map<string, Skill>> = new Map();
+    providers: Map<string, SkillProvider> = new Map();
 
     static getInstance(): SkillRegistry {
         if (SkillRegistry.instance === null) {
@@ -308,24 +312,35 @@ export class SkillRegistry {
         return SkillRegistry.instance;
     }
 
-    registerSkills(bundleName: string, ...skills: Skill[]) {
-        if (!this.skills.has(bundleName)) {
-            this.skills.set(bundleName, new Map());
-        }
-
-        let bundleSkills = this.skills.get(bundleName);
-        for (const skill of skills) {
-            bundleSkills?.set(skill.frontmatter.name, skill);
-        }
+    registerSkillProvider(bundleName: string, provider: SkillProvider) {
+        this.providers.set(bundleName, provider);
     }
 
-    getSkillFrontmatterXml(): string {
+    getSkillProvider(bundleName: string): SkillProvider | undefined {
+        return this.providers.get(bundleName);
+    }
+
+    async getAvailableSkills(): Promise<Map<string, Skill[]>> {
+        let result: Map<string, Skill[]> = new Map();
+        for (const [bundleName, provider] of this.providers) {
+            try {
+                const skills = await provider.getSkills();
+                result.set(bundleName, skills);
+            } catch (err) {
+                logger.error(`获取技能失败: ${err}`);
+            }
+        }
+        return result;
+    }
+
+    async getSkillFrontmatterXml(): Promise<string> {
         let result = "<available_skills>\n";
-        for (const [bundleName, skills] of this.skills) {
-            for (const [skillName, skill] of skills) {
+        for (const [bundleName, provider] of this.providers) {
+            const skills = await provider.getSkills();
+            for (const skill of skills) {
                 result += format(SKILL_FRONTMATTER_XML, {
                     bundleName: bundleName,
-                    skillName: skillName,
+                    skillName: skill.frontmatter.name,
                     description: skill.frontmatter.description
                 })
             }
@@ -334,13 +349,14 @@ export class SkillRegistry {
         return result;
     }
 
-    getSkill(bundleName: string, skillName: string): Skill | undefined {
-        const bundleSkills = this.skills.get(bundleName);
-        return bundleSkills?.get(skillName);
-    }
+    async getSkill(bundleName: string, skillName: string): Promise<Skill | undefined> {
+        const provider = this.providers.get(bundleName);
+        if (!provider) {
+            return undefined;
+        }
 
-    clearSkills(bundleName: string) {
-        this.skills.delete(bundleName);
+        const skills = await provider.getSkills();
+        return skills.find(skill => skill.frontmatter.name === skillName);
     }
 
     getToolset(): BaseToolset {

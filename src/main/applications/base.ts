@@ -86,7 +86,7 @@ export interface ProtocolHandlerConfig {
     handler: (request: Electron.ProtocolRequest) => Promise<Response> | Response;
 }
 
-export class BaseApplication {
+export abstract class BaseApplication {
 
     bundleName: string;
     name: string;

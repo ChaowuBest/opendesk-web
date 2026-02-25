@@ -95,7 +95,7 @@ export class StatusBar implements Component {
         const rightW = visibleWidth(rightHint);
         const gap = Math.max(1, width - leftW - rightW);
         const line = chalk.bgHex('#3a3a3a')(
-            chalk.hex('#d4d4d4')(leftContent) + ' '.repeat(gap) + chalk.dim(rightHint)
+            chalk.hex('#d4d4d4')(leftContent) + ' '.repeat(gap) + chalk.hex('#d4d4d4')(rightHint)
         );
         this.cachedOutput = [line];
         this.invalidated = false;
@@ -113,28 +113,24 @@ export class AgentInputArea implements Component {
     input: Editor;
     statusBar: StatusBar = new StatusBar();
 
-    private tui: TUI;
+    private openDeskTUI: OpenDeskTUI;
     private layout: Box;
     private status: AgentInputStatus = 'idle';
     private hintText: Text = new Text('');
 
-    private currentTaskId?: string;
     private messageQueue: string[] = [];
     private submitCallback?: (text: string) => void;
     private commandRegistry?: SlashCommandRegistry;
     private onQueueChange?: (queue: string[]) => void;
 
-    /** 宿主引用，用于查询是否有 overlay 打开 */
-    private host?: OpenDeskTUI;
-
-    constructor(tui: TUI) {
-        this.tui = tui;
+    constructor(openDeskTUI: OpenDeskTUI) {
+        this.openDeskTUI = openDeskTUI;
         this.layout = new Box(0, 0);
-        this.input = new Editor(this.tui, defaultEditorTheme);
+        this.input = new Editor(this.openDeskTUI.tui, defaultEditorTheme);
         this.layout.addChild(this.hintText);
         this.layout.addChild(this.input);
         this.layout.addChild(this.statusBar);
-        this.statusBar.setTUI(tui);
+        this.statusBar.setTUI(this.openDeskTUI.tui);
 
         this.input.onSubmit = (text: string) => {
             if (text.trim() === '') return;
@@ -163,6 +159,21 @@ export class AgentInputArea implements Component {
     }
 
     private async handleSubmit(text: string) {
+        // 检查是否处于模型未配置模式
+        if (this.openDeskTUI.isModelNotConfiguredMode()) {
+            // 模型未配置，只尝试执行斜杠命令，不进行任何任务操作
+            if (this.commandRegistry) {
+                const handled = await this.commandRegistry.execute(text);
+                if (handled) {
+                    this.input.setText('');
+                    return;
+                }
+            }
+            // 不是斜杠命令或者命令未处理，只清空输入框
+            this.input.setText('');
+            return;
+        }
+
         if (this.commandRegistry) {
             const handled = await this.commandRegistry.execute(text);
             if (handled) {
@@ -209,16 +220,9 @@ export class AgentInputArea implements Component {
             this.hintText.setText('');
         }
         // 只有在没有 overlay 打开时才设置焦点
-        if (this.status === 'idle' && !this.host?.hasOpenOverlay) {
-            this.tui.setFocus(this.input);
+        if (this.status === 'idle' && !this.openDeskTUI.hasOpenOverlay) {
+            this.openDeskTUI.tui.setFocus(this.input);
         }
-    }
-
-    /**
-     * 设置宿主引用
-     */
-    setHost(host: OpenDeskTUI) {
-        this.host = host;
     }
 
     private updateQueueHint() {
