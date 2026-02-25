@@ -37,6 +37,11 @@ export class ApplicationRegistry {
     static pendingStreamRequests: Map<string, (chunk: any) => void> = new Map();
     static globalWorker: Worker | null = null;
 
+    /**
+     * 当触发器触发待办任务时的回调（由 TUI 或 Electron 主进程设置）
+     */
+    static onTriggerTask?: (todoId: string, todoContent: string, trigger: any) => void;
+
     static hasGlobalWorker(): boolean {
         return this.globalWorker !== null;
     }
@@ -89,6 +94,25 @@ export class ApplicationRegistry {
         }
 
         return result;
+    }
+
+    /**
+     * 从主进程侧派发应用事件，同时通知 renderer 订阅者和 todomgr worker（触发器匹配）
+     */
+    static dispatchEvent(bundleName: string, eventName: string, ...args: any[]): void {
+        const application = this.getApplication(bundleName);
+        if (application) {
+            application.sendEventToSubscribers(eventName, ...args);
+        }
+        // 转发给 todomgr worker 进行触发器匹配
+        if (this.hasGlobalWorker() && bundleName !== 'todomgr') {
+            this.getGlobalWorker().postMessage({
+                bundleName: 'todomgr',
+                requestId: crypto.randomUUID(),
+                methodName: 'handleApplicationEvent',
+                args: [bundleName, eventName, args],
+            });
+        }
     }
 
     static async callWorker(bundleName: string, methodName: string, ...args: any[]): Promise<any> {
@@ -223,6 +247,21 @@ export function initializeRegistryWorker() {
                     return;
                 }
                 application.sendEventToSubscribers(eventName, ...args);
+                // 转发给 todomgr worker 进行事件触发器匹配（避免自身事件循环）
+                if (bundleName !== 'todomgr') {
+                    ApplicationRegistry.getGlobalWorker().postMessage({
+                        bundleName: 'todomgr',
+                        requestId: crypto.randomUUID(),
+                        methodName: 'handleApplicationEvent',
+                        args: [bundleName, eventName, args],
+                    });
+                }
+                break;
+            }
+            case 'triggerTodoTask': {
+                const { todoId, todoContent, trigger } = event;
+                logger.info(`收到触发器任务请求: todo=${todoId}`);
+                ApplicationRegistry.onTriggerTask?.(todoId, todoContent, trigger);
                 break;
             }
             case 'emailListUpdated': {

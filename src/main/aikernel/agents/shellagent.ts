@@ -19,7 +19,7 @@ const SHELL_AGENT_SYSTEM_PROMPT = `
 你可以自由使用它们。
 
 <environment>
-- 现在的日期和时间：{date}
+- 会话发起时间：{date}（注意：该时间为会话创建时的快照，随着对话进行可能已过时。如需精确的当前时间，请调用 getCurrentTime 工具）
 - 你当前的工作目录是：{workspace}
 </environment>
 

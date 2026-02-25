@@ -11,8 +11,76 @@
  */
 
 import type { Component, TUI } from '@mariozechner/pi-tui';
+import { visibleWidth } from '@mariozechner/pi-tui';
 import { Card } from './card';
 import { getLines, subscribe } from '../../utils/cliLogStore.js';
+
+/**
+ * 将超长文本按指定宽度拆分成多行
+ * 注意：这里处理的是可见宽度（考虑ANSI颜色代码）
+ */
+function wrapText(text: string, maxWidth: number): string[] {
+    if (maxWidth <= 0) return [];
+
+    const lines: string[] = [];
+    let currentLine = '';
+    let currentWidth = 0;
+
+    // 按字符处理，考虑ANSI颜色代码
+    let i = 0;
+    const len = text.length;
+    let inAnsi = false;
+    let ansiSeq = '';
+
+    while (i < len) {
+        const char = text[i];
+
+        // 检测ANSI转义序列
+        if (char === '\x1b') {
+            inAnsi = true;
+            ansiSeq = char;
+            i++;
+            continue;
+        }
+
+        if (inAnsi) {
+            ansiSeq += char;
+            // ANSI序列结束于 m, K, H, f, J, A, B, C, D 等字符
+            if (char.match(/[mKHfJABCDsuLK]$/)) {
+                currentLine += ansiSeq;
+                ansiSeq = '';
+                inAnsi = false;
+            }
+            i++;
+            continue;
+        }
+
+        // 普通字符，检查宽度
+        const charWidth = visibleWidth(char);
+
+        if (currentWidth + charWidth <= maxWidth) {
+            currentLine += char;
+            currentWidth += charWidth;
+        } else {
+            // 当前行已满，保存并开始新行
+            if (currentLine) {
+                lines.push(currentLine);
+            }
+            currentLine = char;
+            currentWidth = charWidth;
+        }
+
+        i++;
+    }
+
+    // 添加最后一行
+    if (currentLine) {
+        lines.push(currentLine);
+    }
+
+    return lines.length > 0 ? lines : [''];
+}
+
 
 export type LogPanelMode = 'off' | 'last' | 'all';
 
@@ -116,10 +184,23 @@ export class LogPanel implements Component {
             title = '📋 日志';
         }
 
+        // 将超长行拆分成多行
+        // contentWidth 是边框内的可用宽度 (width - 4)
+        const contentWidth = Math.max(1, width - 4);
+        const wrappedLines: string[] = [];
+        for (const line of displayLines) {
+            if (line) {
+                const subLines = wrapText(line, contentWidth);
+                wrappedLines.push(...subLines);
+            } else {
+                wrappedLines.push('');
+            }
+        }
+
         // 使用 Card 组件渲染
         const card = new Card({
             title,
-            body: displayLines,
+            body: wrappedLines,
             maxLines: this._mode === 'all' ? undefined : 12,
             truncateStrategy: 'tail'
         });

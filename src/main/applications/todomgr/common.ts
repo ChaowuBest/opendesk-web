@@ -15,6 +15,30 @@ export type TodoStatus = 'pending' | 'in_progress' | 'completed';
 // 优先级类型
 export type TodoPriority = 'low' | 'medium' | 'high';
 
+// ========== 触发器类型定义 ==========
+
+export interface EventTriggerConfig {
+    type: 'event';
+    bundleName: string;       // 触发事件的应用标识
+    eventName: string;        // 事件名称
+}
+
+export interface ScheduledTriggerConfig {
+    type: 'scheduled';
+    /**
+     * UTC 时间（ISO 8601 格式，以 Z 结尾），仅触发一次。
+     * 例如：当地时间 2026-03-01 09:00 (UTC+8) 应存储为 "2026-03-01T01:00:00Z"
+     */
+    triggerAt: string;
+}
+
+export interface CronTriggerConfig {
+    type: 'cron';
+    cronExpression: string;   // crontab 表达式: "分 时 日 月 周"
+}
+
+export type TodoTrigger = EventTriggerConfig | ScheduledTriggerConfig | CronTriggerConfig;
+
 // 任务级待办项（会话级，任务结束后不保留）
 export interface TaskTodo {
     id: string;
@@ -34,6 +58,8 @@ export interface GlobalTodo {
     priority: TodoPriority;
     category?: string;        // 分类标签，如 "bug", "feature", "idea"
     source_task_id?: string;  // 来源任务ID（可选）
+    trigger?: TodoTrigger;    // 触发器配置
+    last_triggered_at?: string; // 上次触发时间
     created_at: string;
     updated_at: string;
     completed_at?: string;
