@@ -95,7 +95,7 @@ export class StatusBar implements Component {
         const rightW = visibleWidth(rightHint);
         const gap = Math.max(1, width - leftW - rightW);
         const line = chalk.bgHex('#3a3a3a')(
-            chalk.hex('#d4d4d4')(leftContent) + ' '.repeat(gap) + chalk.dim(rightHint)
+            chalk.hex('#d4d4d4')(leftContent) + ' '.repeat(gap) + chalk.hex('#d4d4d4')(rightHint)
         );
         this.cachedOutput = [line];
         this.invalidated = false;

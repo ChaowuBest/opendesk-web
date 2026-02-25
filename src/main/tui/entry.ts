@@ -1,4 +1,5 @@
 import { TUI, SelectList, Box, Text, Key, visibleWidth, truncateToWidth, matchesKey, type Component } from "@mariozechner/pi-tui";
+import { FULL_CLEAR } from './components/constants';
 import { OpenDeskBanner } from './banner';
 import { VerticalLayout } from './components/layout';
 import { OpenDeskTerminal } from './terminal';
@@ -438,6 +439,9 @@ export class OpenDeskTUI {
     }
 
     private async createNewTask() {
+        // 先清屏，防止旧内容残留
+        process.stdout.write(FULL_CLEAR);
+
         // 保存当前任务的队列（如果有）
         if (this.activeTaskId) {
             const currentTask = this.taskManagerState.getTask(this.activeTaskId);
@@ -529,6 +533,9 @@ export class OpenDeskTUI {
 
 
     private switchToTask(task: TaskState) {
+        // 先清屏，防止旧内容残留
+        process.stdout.write(FULL_CLEAR);
+
         // 保存当前任务的队列（如果有）
         if (this.activeTaskId) {
             const currentTask = this.taskManagerState.getTask(this.activeTaskId);
