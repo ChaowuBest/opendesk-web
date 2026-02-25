@@ -72,7 +72,7 @@ export class ToolCall {
     id: string
     tool_name: string;
     args_string: string;
-    args_object: object = {};
+    args_object: any = {};
     status: 'pending' | 'running' | 'success' | 'error' = 'pending';
     result?: string;
     result_object?: object;
