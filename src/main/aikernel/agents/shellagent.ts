@@ -10,8 +10,8 @@
  */
 
 import { AgentDecl } from "../agent";
-import format from "string-template";
 import { SkillRegistry } from "../skill";
+import format from "string-template";
 
 
 const SHELL_AGENT_SYSTEM_PROMPT = `
