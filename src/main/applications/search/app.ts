@@ -15,6 +15,7 @@ import { z } from 'zod';
 import { WebFetchTool } from './tools/webfetch';
 import { BingSearchTool } from './tools/bing';
 import { BraveSearchTool } from './tools/brave';
+import { TavilySearchTool } from './tools/tavily';
 import { ExaSearchTool } from './tools/exa';
 import { ArxivSearchTool } from './tools/arxiv';
 import { ConfigureSearchTool, ListSearchToolsTool, ToggleSearchToolTool } from './tools/manage';
@@ -34,6 +35,10 @@ const SearchApplicationConfigSchema = z.object({
     brave_search: z.object({
         api_key: z.string().default('').describe('Brave Search的API密钥'),
         enabled: z.boolean().default(false).describe('是否启用Brave Search'),
+    }).optional(),
+    tavily_search: z.object({
+        api_key: z.string().default('').describe('Tavily Search的API密钥'),
+        enabled: z.boolean().default(false).describe('是否启用Tavily Search'),
     }).optional(),
     arxiv_search: z.object({
         enabled: z.boolean().default(true).describe('是否启用arXiv搜索'),
@@ -59,6 +64,8 @@ export class SearchApplication extends BaseApplication {
             config.exa_search = { api_key: updates.api_key ?? '', enabled: updates.enabled ?? false };
         } else if (id === 'brave') {
             config.brave_search = { api_key: updates.api_key ?? '', enabled: updates.enabled ?? false };
+        } else if (id === 'tavily') {
+            config.tavily_search = { api_key: updates.api_key ?? '', enabled: updates.enabled ?? false };
         } else if (id === 'bing') {
             config.bing_search = { enabled: updates.enabled ?? false };
         } else if (id === 'arxiv') {
@@ -83,6 +90,7 @@ export class SearchApplication extends BaseApplication {
         return [
             { id: 'bing', name: 'Bing 搜索', type: 'bing', enabled: config?.bing_search?.enabled !== false, description: '免费的网页搜索引擎', canDisable: true },
             { id: 'brave', name: 'Brave 搜索', type: 'brave', enabled: !!config?.brave_search?.enabled, api_key: config?.brave_search?.api_key, description: '隐私优先的搜索引擎', canDisable: true },
+            { id: 'tavily', name: 'Tavily 搜索', type: 'tavily', enabled: !!config?.tavily_search?.enabled, api_key: config?.tavily_search?.api_key, description: '专为AI设计的搜索引擎', canDisable: true },
             { id: 'exa', name: 'Exa 搜索', type: 'exa', enabled: !!config?.exa_search?.enabled, api_key: config?.exa_search?.api_key, description: 'AI驱动的搜索引擎', canDisable: true },
             { id: 'arxiv', name: 'arXiv 搜索', type: 'arxiv', enabled: config?.arxiv_search?.enabled !== false, description: '学术论文搜索引擎', canDisable: true },
         ];
@@ -98,11 +106,15 @@ export class SearchApplication extends BaseApplication {
 
         const hasExaApi = config?.exa_search?.enabled && config.exa_search.api_key !== '';
         const hasBraveApi = config?.brave_search?.enabled && config.brave_search.api_key !== '';
+        const hasTavilyApi = config?.tavily_search?.enabled && config.tavily_search.api_key !== '';
         const hasBingApi = config?.bing_search?.enabled;
         const hasArxivApi = config?.arxiv_search?.enabled !== false;
 
         if (hasBraveApi) {
             toolset.addTool(new BraveSearchTool(config.brave_search!.api_key));
+        }
+        if (hasTavilyApi) {
+            toolset.addTool(new TavilySearchTool(config.tavily_search!.api_key));
         }
         if (hasExaApi) {
             toolset.addTool(new ExaSearchTool(config.exa_search!.api_key));
