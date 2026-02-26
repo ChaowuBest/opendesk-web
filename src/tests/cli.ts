@@ -13,6 +13,7 @@ import fs from 'fs';
 import path from 'path';
 import { runArxivSearchTests } from './ut/search/arxiv.test.js';
 import { runTavilySearchTests } from './ut/search/tavily.test.js';
+import { runBochaSearchTests } from './ut/search/bocha.test.js';
 
 function getSettingPath(): string {
     const appData = process.env.APPDATA;
@@ -54,7 +55,10 @@ async function cmdUt() {
     // 运行Tavily搜索测试
     const tavilyTestsPassed = await runTavilySearchTests();
 
-    if (arxivTestsPassed && tavilyTestsPassed) {
+    // 运行博查搜索测试
+    const bochaTestsPassed = await runBochaSearchTests();
+
+    if (arxivTestsPassed && tavilyTestsPassed && bochaTestsPassed) {
         console.log('\n✅ 所有单元测试通过');
         process.exit(0);
     } else {
