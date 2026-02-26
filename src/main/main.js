@@ -24,6 +24,7 @@ import { UpdateClient } from '../updater/client.js';
 import { setPlatform } from '../platforms/base.js';
 import { ElectronTaskUpdateSubscriber, ElectronPlatform, ElectronTaskManagerUpdateSubscriber } from '../platforms/electron.js';
 import { exportTaskToHtml, generateTaskHtml } from './utils/export';
+import { MainAgentDecl } from './aikernel/agents/mainagent.js';
 
 import Convert from 'ansi-to-html';
 import path from 'path';
@@ -175,8 +176,10 @@ const createWindow = () => {
 const registerTaskManagerAPIHandlers = () => {
     const globalState = GlobalState.getInstance();
 
-    ipcMain.handle('taskManager:createTask', () => {
+    ipcMain.handle('taskManager:createTask', async () => {
         var task = globalState.taskManagerState.createTask();
+        const agentDecl = new MainAgentDecl();
+        task.setSystemPrompt(await agentDecl.createSystemPrompt())
         return { status: 'ok', data: task.task_id };
     });
     ipcMain.handle('taskManager:removeTask', (event, taskId) => {

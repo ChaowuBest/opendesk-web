@@ -9,15 +9,6 @@
  * See the Mulan PSL v2 for more details.
  */
 
-const SYSTEM_PROMPT = () => `
-你是一个有用的助手，请根据用户的问题给出回答。你被赋予了丰富的工具来帮用户解决问题，
-你可以自由使用它们。
-
-## 补充信息
-- 现在的日期和时间：${new Date().toLocaleString()}
-- 当用户提到“文件”的时候，这通常是指本地AI文件系统中的文件，而不是互联网上的文件
-- 不要过度使用搜索类工具
-`;
 
 class HomePage extends HTMLElement {
     constructor() {
@@ -91,7 +82,6 @@ class HomePage extends HTMLElement {
 
         agentInput.addEventListener('submit', async (event) => {
             const task = await window.taskManagerAPI.createTask();
-            await window.taskManagerAPI.setSystemPrompt(task, SYSTEM_PROMPT());
             await window.taskManagerAPI.submitMessage(task, event.detail);
             window.globalControlAPI.openTask(task);
         });
