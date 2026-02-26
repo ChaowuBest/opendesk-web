@@ -34,7 +34,7 @@ export class ConfigureSearchTool extends BaseTool<typeof ConfigureSearchToolArgs
             ConfigureSearchToolArgsSchema,
         );
         this.searchApp = searchApp;
-        this.executor = this.configure.bind(this);
+        this.setExecutor(this.configure.bind(this));
     }
 
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
@@ -108,7 +108,7 @@ export class ListSearchToolsTool extends BaseTool<typeof ListSearchToolsArgsSche
             ListSearchToolsArgsSchema,
         );
         this.searchApp = searchApp;
-        this.executor = this.list.bind(this);
+        this.setExecutor(this.list.bind(this));
     }
 
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {

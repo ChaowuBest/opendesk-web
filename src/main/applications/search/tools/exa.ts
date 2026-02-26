@@ -45,7 +45,7 @@ export class ExaSearchTool extends BaseTool<typeof ExaSearchArgsSchema> {
             ExaSearchArgsSchema,
         );
         this.apiKey = apiKey;
-        this.executor = this.search.bind(this);
+        this.setExecutor(this.search.bind(this));
     }
 
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {

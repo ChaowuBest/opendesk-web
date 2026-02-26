@@ -52,7 +52,7 @@ export class ArxivSearchTool extends BaseTool<typeof ArxivSearchArgsSchema> {
             ArxivSearchArgsSchema,
         );
 
-        this.executor = this.search.bind(this);
+        this.setExecutor(this.search.bind(this));
     }
 
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {

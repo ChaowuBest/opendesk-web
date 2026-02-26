@@ -77,7 +77,7 @@ export class WebFetchTool extends BaseTool<typeof WebFetchArgsSchema> {
         );
 
         this.turndownService = this.createTurndownService();
-        this.executor = this.fetchPage.bind(this);
+        this.setExecutor(this.fetchPage.bind(this));
     }
 
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {

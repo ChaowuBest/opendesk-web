@@ -30,7 +30,7 @@ export class GetCurrentTimeTool extends BaseTool<typeof GetCurrentTimeArgsSchema
             '获取当前精确的日期和时间。返回包含 UTC 时间、本地时间和时区信息',
             GetCurrentTimeArgsSchema,
         );
-        this.executor = this.handleExecute.bind(this);
+        this.setExecutor(this.handleExecute.bind(this));
     }
 
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
@@ -188,7 +188,7 @@ export class TodoWriteTool extends BaseTool<typeof TodoWriteArgsSchema> {
             TodoWriteArgsSchema,
         );
         this.todoMgrApp = todoMgrApp;
-        this.executor = this.handleExecute.bind(this);
+        this.setExecutor(this.handleExecute.bind(this));
     }
 
     private getTaskTodos(taskId: string): TaskTodo[] {
@@ -381,7 +381,7 @@ export class AddGlobalTodoTool extends BaseTool<typeof AddGlobalTodoArgsSchema> 
             AddGlobalTodoArgsSchema,
         );
         this.todoMgrApp = todoMgrApp;
-        this.executor = this.handleExecute.bind(this);
+        this.setExecutor(this.handleExecute.bind(this));
     }
 
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
@@ -462,7 +462,7 @@ export class UpdateGlobalTodoTool extends BaseTool<typeof UpdateGlobalTodoArgsSc
             UpdateGlobalTodoArgsSchema,
         );
         this.todoMgrApp = todoMgrApp;
-        this.executor = this.handleExecute.bind(this);
+        this.setExecutor(this.handleExecute.bind(this));
     }
 
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
@@ -530,7 +530,7 @@ export class ListGlobalTodosTool extends BaseTool<typeof ListGlobalTodosArgsSche
             ListGlobalTodosArgsSchema,
         );
         this.todoMgrApp = todoMgrApp;
-        this.executor = this.handleExecute.bind(this);
+        this.setExecutor(this.handleExecute.bind(this));
     }
 
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
@@ -601,7 +601,7 @@ export class DeleteGlobalTodoTool extends BaseTool<typeof DeleteGlobalTodoArgsSc
             DeleteGlobalTodoArgsSchema,
         );
         this.todoMgrApp = todoMgrApp;
-        this.executor = this.handleExecute.bind(this);
+        this.setExecutor(this.handleExecute.bind(this));
     }
 
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {

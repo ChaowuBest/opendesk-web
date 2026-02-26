@@ -62,7 +62,7 @@ export class BraveSearchTool extends BaseTool<typeof BraveSearchArgsSchema> {
             BraveSearchArgsSchema,
         );
         this.apiKey = apiKey;
-        this.executor = this.search.bind(this);
+        this.setExecutor(this.search.bind(this));
     }
 
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {

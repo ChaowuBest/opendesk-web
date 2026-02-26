@@ -65,7 +65,7 @@ export class BingSearchTool extends BaseTool<typeof BingSearchArgsSchema> {
             BingSearchArgsSchema,
         );
 
-        this.executor = this.search.bind(this);
+        this.setExecutor(this.search.bind(this));
     }
 
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {

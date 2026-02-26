@@ -371,6 +371,35 @@ export class OpenDeskTUI {
                 }
             },
         });
+
+        this.commandRegistry.register({
+            name: "stop",
+            description: "停止当前正在执行的任务",
+            execute: async () => {
+                if (!this.activeTaskId) {
+                    logger.warn('没有活跃的任务');
+                    return;
+                }
+
+                const currentTask = this.taskManagerState.getTask(this.activeTaskId);
+                if (!currentTask) {
+                    logger.warn('未找到当前任务');
+                    return;
+                }
+
+                if (currentTask.task_status !== 'running') {
+                    logger.warn('当前任务不在运行中');
+                    return;
+                }
+
+                currentTask.stop();
+                this.inputArea.statusBar.stopTimer();
+                this.inputArea.setStatus('idle');
+                this.inputArea.clearMessageQueue();
+                logger.info('任务已停止');
+                this.tui.requestRender();
+            },
+        });
     }
 
     private async showDashboard() {
