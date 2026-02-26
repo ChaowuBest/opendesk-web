@@ -162,6 +162,7 @@ export default class McpMgrWorker extends BaseWorker {
                     args: server.args || [],
                     cwd: server.cwd || undefined,
                     env,
+                    stderr: 'pipe', // 捕获子进程stderr，避免泄漏到主进程stdout/stderr
                 });
             case 'sse':
                 return new SSEClientTransport(new URL(server.url!), {

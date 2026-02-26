@@ -12,7 +12,7 @@
 import { BaseApplication } from "../base";
 import { BaseToolset } from "../../aikernel/tool";
 import { z } from 'zod';
-import { TodoWriteTool, AddGlobalTodoTool, UpdateGlobalTodoTool, ListGlobalTodosTool } from './tools';
+import { TodoWriteTool, AddGlobalTodoTool, UpdateGlobalTodoTool, ListGlobalTodosTool, DeleteGlobalTodoTool, GetCurrentTimeTool } from './tools';
 import TodoMgrWorker from "./worker";
 
 
@@ -32,6 +32,9 @@ export class TodoMgrApplication extends BaseApplication {
     async getToolsets(): Promise<BaseToolset[]> {
         const toolset = new BaseToolset('todomgr');
 
+        // ========== getCurrentTime 工具 ==========
+        toolset.addTool(new GetCurrentTimeTool());
+
         // ========== TodoWrite 工具 ==========
         toolset.addTool(new TodoWriteTool(this));
 
@@ -43,6 +46,9 @@ export class TodoMgrApplication extends BaseApplication {
 
         // ========== listGlobalTodos 工具 ==========
         toolset.addTool(new ListGlobalTodosTool(this));
+
+        // ========== deleteGlobalTodo 工具 ==========
+        toolset.addTool(new DeleteGlobalTodoTool(this));
 
         return [toolset];
     }

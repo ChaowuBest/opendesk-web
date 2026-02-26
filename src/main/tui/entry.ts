@@ -18,6 +18,7 @@ import { AgentDecl } from "../aikernel/agent.js";
 import { ShellAgentDecl } from "../aikernel/agents/shellagent.js";
 import { HelpOverlay } from "./components/help";
 import { ConfirmOverlay, InfoOverlay } from "./components/notice";
+import { DashboardOverlay } from "./components/dashboard";
 import { LogPanel, LogPanelMode } from "./components/logpanel";
 import { TodoList } from "./components/todolist";
 import { ConfigMainPage } from "./components/config/configMain";
@@ -144,8 +145,38 @@ export class OpenDeskTUI {
             this.onRequestSubmit(args.command);
         }
 
+        // 设置触发器任务回调
+        this.setupTriggerTaskHandler();
+
         // 立即解析模型信息，让状态栏一进去就能显示当前模型
         this.resolveModelInfo();
+    }
+
+    /**
+     * 设置全局待办触发器的任务创建回调
+     */
+    private setupTriggerTaskHandler(): void {
+        ApplicationRegistry.onTriggerTask = async (todoId: string, todoContent: string, trigger: any) => {
+            try {
+                const task = this.taskManagerState.createTask(this.model);
+                const systemPrompt = await this.agentDecl.createSystemPrompt();
+                await task.setSystemPrompt(systemPrompt);
+
+                let triggerInfo = '';
+                if (trigger?.type === 'event') {
+                    triggerInfo = `[由事件 ${trigger.bundleName}:${trigger.eventName} 自动触发] `;
+                } else if (trigger?.type === 'scheduled') {
+                    triggerInfo = `[定时自动触发] `;
+                } else if (trigger?.type === 'cron') {
+                    triggerInfo = `[定期自动触发: ${trigger.cronExpression}] `;
+                }
+
+                logger.info(`触发器创建任务: ${todoId} -> task ${task.task_id}`);
+                await task.submitUserMessage(`${triggerInfo}请执行以下全局待办事项（ID: ${todoId}）：${todoContent}`);
+            } catch (err) {
+                logger.error(`触发器任务创建失败: ${err}`);
+            }
+        };
     }
 
     private setupCommands() {
@@ -281,6 +312,14 @@ export class OpenDeskTUI {
         });
 
         this.commandRegistry.register({
+            name: "dashboard",
+            description: "查看系统仪表盘（任务、待办、状态）",
+            execute: async () => {
+                await this.showDashboard();
+            },
+        });
+
+        this.commandRegistry.register({
             name: "config",
             description: "打开系统设置",
             execute: async () => {
@@ -332,6 +371,19 @@ export class OpenDeskTUI {
                 }
             },
         });
+    }
+
+    private async showDashboard() {
+        try {
+            // 从 worker 获取全局待办数据
+            const todosResult = await ApplicationRegistry.callWorker('todomgr', 'listGlobalTodos', 'all');
+            const todos = todosResult?.data || [];
+            const tasks = this.taskManagerState.tasks;
+
+            new DashboardOverlay(this, { globalTodos: todos, tasks }).show();
+        } catch (err) {
+            logger.error(`打开仪表盘失败: ${err}`);
+        }
     }
 
     private async doExport(task: any, absolutePath: string) {
