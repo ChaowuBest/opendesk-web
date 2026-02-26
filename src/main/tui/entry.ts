@@ -19,6 +19,7 @@ import { ShellAgentDecl } from "../aikernel/agents/shellagent.js";
 import { HelpOverlay } from "./components/help";
 import { ConfirmOverlay, InfoOverlay } from "./components/notice";
 import { DashboardOverlay } from "./components/dashboard";
+import { MailOverlay } from "./components/mail";
 import { LogPanel, LogPanelMode } from "./components/logpanel";
 import { TodoList } from "./components/todolist";
 import { ConfigMainPage } from "./components/config/configMain";
@@ -320,6 +321,14 @@ export class OpenDeskTUI {
         });
 
         this.commandRegistry.register({
+            name: "mail",
+            description: "打开邮箱",
+            execute: async () => {
+                await this.showMailbox();
+            },
+        });
+
+        this.commandRegistry.register({
             name: "config",
             description: "打开系统设置",
             execute: async () => {
@@ -400,6 +409,15 @@ export class OpenDeskTUI {
                 this.tui.requestRender();
             },
         });
+    }
+
+    private async showMailbox() {
+        try {
+            const mailOverlay = new MailOverlay(this);
+            await mailOverlay.show();
+        } catch (err) {
+            logger.error(`打开邮箱失败: ${err}`);
+        }
     }
 
     private async showDashboard() {
