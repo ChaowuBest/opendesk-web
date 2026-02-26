@@ -14,12 +14,20 @@ import { z } from 'zod';
 import { logger } from '../../utils/logger.js';
 import { SkillRegistry } from './skillregistry.js';
 import { Skill } from '../../aikernel/skill.js';
+import { BaseToolset } from '../../aikernel/tool.js';
 import SkillsWorker from './service/worker.js';
+import { MANAGE_SKILLS_SKILL } from './skills.js';
+import {
+    AddSkillFromPathTool,
+    AddSkillFromUrlTool,
+    AddSkillFromGitHubUrlTool,
+    ListSkillsTool,
+    DeleteSkillTool,
+    RefreshSkillsTool,
+    GetSkillsDirectoryTool
+} from './tools.js';
 
 
-/**
- * 本地 Agent Skills 子应用：以 Anthropic Agent Skills 标准管理端侧技能，并对外提供 toolsets 供主进程对话调用
- */
 export class SkillMgrApplication extends BaseApplication {
     constructor() {
         super('skillmgr', 'Skills');
@@ -38,31 +46,40 @@ export class SkillMgrApplication extends BaseApplication {
         });
     }
 
-    /**
-     * 获取应用提供的 Skills，应用注册时会被调用
-     */
     async getSkills(): Promise<Skill[]> {
+        const skills: Skill[] = [];
+
         if (this.getConfig()?.enabled === true) {
-            return SkillRegistry.listSkills().map(skill => new Skill(
+            skills.push(...SkillRegistry.listSkills().map(skill => new Skill(
                 {
                     name: String(skill.name),
                     description: String(skill.description),
                 },
                 SkillRegistry.getSkillBody(skill.id)?.body || '',
-            ));
+            )));
         }
 
-        return [];
+        const manageSkillsSkill = Skill.parseMd(MANAGE_SKILLS_SKILL);
+        const manageSkillsToolset = new BaseToolset('manage-skills');
+
+        manageSkillsToolset.addTool(new AddSkillFromPathTool(this));
+        manageSkillsToolset.addTool(new AddSkillFromUrlTool(this));
+        manageSkillsToolset.addTool(new AddSkillFromGitHubUrlTool(this));
+        manageSkillsToolset.addTool(new ListSkillsTool(this));
+        manageSkillsToolset.addTool(new DeleteSkillTool(this));
+        manageSkillsToolset.addTool(new RefreshSkillsTool(this));
+        manageSkillsToolset.addTool(new GetSkillsDirectoryTool(this));
+
+        manageSkillsSkill.toolsets = [manageSkillsToolset];
+        skills.push(manageSkillsSkill);
+
+        return skills;
     }
 
-    /**
-     * 配置变化时：刷新 skills 并重新注册到 aikernel
-     */
     onConfigChanged(): void {
         super.onConfigChanged();
         logger.info('[skillmgr] config changed, refreshing skills...');
         if (this.getConfig()?.enabled === true) {
-            // 重新加载 skills（会自动注册到 aikernel）
             SkillRegistry.refresh();
         }
     }
@@ -79,6 +96,22 @@ export class SkillMgrApplication extends BaseApplication {
         return SkillRegistry.listSkills();
     }
 
+    addSkillFromPath(sourcePath: string) {
+        return SkillRegistry.addSkillFromPath(sourcePath);
+    }
+
+    addSkillFromUrl(url: string) {
+        return SkillRegistry.addSkillFromUrl(url);
+    }
+
+    addSkillFromGitHubUrl(githubUrl: string) {
+        return SkillRegistry.addSkillFromGitHubUrl(githubUrl);
+    }
+
+    deleteSkill(skillId: string) {
+        return SkillRegistry.deleteSkill(skillId);
+    }
+
     clearSkills() {
 
     }
@@ -87,5 +120,4 @@ export class SkillMgrApplication extends BaseApplication {
         const { toolsets, errors } = SkillRegistry.refresh();
         return { count: toolsets.length, errors };
     }
-
 }
