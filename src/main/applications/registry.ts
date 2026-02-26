@@ -37,10 +37,50 @@ export class ApplicationRegistry {
     static pendingStreamRequests: Map<string, (chunk: any) => void> = new Map();
     static globalWorker: Worker | null = null;
 
+    /** 应用注册表是否已就绪 */
+    private static isReady: boolean = false;
+
+    /** 就绪回调队列 */
+    private static readyCallbacks: (() => void)[] = [];
+
     /**
      * 当触发器触发待办任务时的回调（由 TUI 或 Electron 主进程设置）
      */
     static onTriggerTask?: (todoId: string, todoContent: string, trigger: any) => void;
+
+    /**
+     * 注册就绪回调。如果应用注册表已就绪，则立即执行；否则加入队列等待。
+     * @param callback 就绪后执行的回调函数
+     */
+    static onReady(callback: () => void): void {
+        if (this.isReady) {
+            callback();
+        } else {
+            this.readyCallbacks.push(callback);
+        }
+    }
+
+    /**
+     * 标记应用注册表为已就绪，并执行所有等待中的回调。
+     */
+    static markAsReady(): void {
+        this.isReady = true;
+        for (const callback of this.readyCallbacks) {
+            try {
+                callback();
+            } catch (err) {
+                logger.error('Error in ApplicationRegistry ready callback:', err);
+            }
+        }
+        this.readyCallbacks = [];
+    }
+
+    /**
+     * 检查应用注册表是否已就绪
+     */
+    static isRegistryReady(): boolean {
+        return this.isReady;
+    }
 
     static hasGlobalWorker(): boolean {
         return this.globalWorker !== null;
@@ -178,6 +218,9 @@ export function initializeRegistry() {
 
     // 应用注册的时候会改变设置的Schema，所以这里需要清空一下重新载入
     Setting.clearCache();
+
+    // 标记应用注册表已就绪，执行所有等待中的回调
+    ApplicationRegistry.markAsReady();
 }
 
 /**

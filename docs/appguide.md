@@ -11,10 +11,11 @@
 1. [应用的基本概念](#1-应用的基本概念)
 2. [创建一个新应用](#2-创建一个新应用)
 3. [为 Agent 提供工具](#3-为-agent-提供工具)
-4. [开发应用主界面](#4-开发应用主界面)
-5. [使用 Worker 执行后台任务](#5-使用-worker-执行后台任务)
-6. [注册应用](#6-注册应用)
-7. [完整示例](#7-完整示例)
+4. [开发终端字符界面](#4-开发终端字符界面)
+5. [开发应用主界面](#5-开发应用主界面)
+6. [使用 Worker 执行后台任务](#6-使用-worker-执行后台任务)
+7. [注册应用](#7-注册应用)
+8. [完整示例](#8-完整示例)
 
 ---
 
@@ -275,9 +276,158 @@ customElements.define('myapp-entry-widget', MyAppEntryWidget);
 
 ---
 
-## 4. 开发应用主界面
+## 4. 开发终端字符界面
 
-### 4.1 入口 Web Component
+OpenDesk 支持在终端中以 TUI（Text User Interface，文本用户界面）模式运行。应用可以通过覆写 `getCliSlashCommands()` 方法，为 CLI（Command-Line Interface，命令行界面）模式注册自定义的斜杠命令。这使得用户可以在终端中通过 `/命令名` 的形式快速调用应用的功能。
+
+### 4.1 基本用法
+
+在应用类中覆写 `getCliSlashCommands()` 方法，返回一个 `SlashCommandHandler` 数组：
+
+```typescript
+// src/main/applications/myapp/app.ts
+import { BaseApplication } from "../base.js";
+import type { SlashCommandHandler } from "../../tui/commands.js";
+
+export class MyAppApplication extends BaseApplication {
+    constructor() {
+        super('myapp', '我的应用');
+    }
+
+    /**
+     * 返回应用提供的 CLI 斜杠命令
+     * @param tui TUI 实例，用于显示 overlay 等
+     */
+    getCliSlashCommands(tui: any): SlashCommandHandler[] {
+        return [
+            {
+                name: 'myapp',           // 命令名称（用户输入 /myapp 来调用）
+                description: '打开我的应用', // 在帮助中显示的描述
+                execute: async (args: string) => {
+                    // 命令执行逻辑
+                    console.log(`执行 myapp 命令，参数: ${args}`);
+                    // 可以调用 Worker 方法
+                    await this.callWorker('doSomething', args);
+                },
+            },
+        ];
+    }
+}
+```
+
+### 4.2 命令处理器字段说明
+
+`SlashCommandHandler` 接口包含以下字段：
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `name` | `string` | 是 | 命令名称（不含 `/` 前缀） |
+| `description` | `string` | 是 | 命令描述，显示在帮助列表中 |
+| `execute` | `(args: string) => void \| Promise<void>` | 是 | 命令执行函数，`args` 为用户输入的参数 |
+| `shortcut` | `KeyId` | 否 | 快捷键，如 `Key.ctrl('m')` |
+| `getArgumentCompletions` | `(argPrefix: string) => AutocompleteItem[] \| null` | 否 | 参数自动补全函数 |
+
+### 4.3 完整示例：带参数补全的命令
+
+以下示例展示了一个带参数自动补全功能的命令：
+
+```typescript
+// src/main/applications/myapp/app.ts
+import { BaseApplication } from "../base.js";
+import type { SlashCommandHandler } from "../../tui/commands.js";
+import { Key } from "@mariozechner/pi-tui";
+
+export class MyAppApplication extends BaseApplication {
+    constructor() {
+        super('myapp', '我的应用');
+    }
+
+    getCliSlashCommands(tui: any): SlashCommandHandler[] {
+        return [
+            {
+                name: 'myapp',
+                description: '管理我的应用，用法: /myapp [list|add|remove]',
+                shortcut: Key.ctrl('m'), // 可选：绑定快捷键
+                getArgumentCompletions: (argPrefix: string) => {
+                    const options = ['list', 'add', 'remove'];
+                    return options
+                        .filter(opt => opt.startsWith(argPrefix.toLowerCase()))
+                        .map(opt => ({
+                            value: opt,
+                            label: opt,
+                            description: opt === 'list' ? '列出所有项目' :
+                                         opt === 'add' ? '添加新项目' : '移除项目'
+                        }));
+                },
+                execute: async (args: string) => {
+                    const subCommand = args.trim().split(/\s+/)[0];
+                    switch (subCommand) {
+                        case 'list':
+                            await this.callWorker('listItems');
+                            break;
+                        case 'add':
+                            await this.callWorker('addItem', args.trim().split(/\s+/).slice(1).join(' '));
+                            break;
+                        case 'remove':
+                            await this.callWorker('removeItem', args.trim().split(/\s+/)[1]);
+                            break;
+                        default:
+                            console.log('用法: /myapp [list|add|remove]');
+                    }
+                },
+            },
+        ];
+    }
+}
+```
+
+### 4.4 实际案例：邮箱应用的 `/mail` 命令
+
+邮箱应用通过此机制注册了 `/mail` 命令，用户输入 `/mail` 即可打开邮箱界面：
+
+```javascript
+// src/main/applications/mailbox/app.js
+import { BaseApplication } from "../base";
+import { MailOverlay } from "./tui.js";
+import { logger } from "../../utils/logger.js";
+
+class MailboxApplication extends BaseApplication {
+    constructor() {
+        super('mailbox', '邮箱');
+    }
+
+    getCliSlashCommands(tui) {
+        return [
+            {
+                name: 'mail',
+                description: '打开邮箱',
+                execute: async () => {
+                    try {
+                        const mailOverlay = new MailOverlay(tui);
+                        await mailOverlay.show();
+                    } catch (err) {
+                        logger.error(`打开邮箱失败: ${err}`);
+                    }
+                },
+            },
+        ];
+    }
+}
+```
+
+### 4.5 命令重复检测
+
+如果多个应用注册了同名命令，系统会在启动时发出警告，并保留先注册的命令。命令的 `source` 字段会自动设置为应用名称，便于追踪：
+
+```
+[SlashCommandRegistry] 命令 "/mail" 已被 "邮箱" 注册，忽略来自 "其他应用" 的重复注册
+```
+
+---
+
+## 5. 开发应用主界面
+
+### 5.1 入口 Web Component
 
 应用的主界面通过一个自定义 HTML 元素（Web Component）来实现。框架在打开应用时，会动态加载 `renderer/entry.ts`，并将其中定义的 `<bundleName>-entry-widget` 元素挂载到应用容器中。
 
@@ -355,7 +505,7 @@ class MyAppEntryWidget extends AgentOperableHTMLElement {
 customElements.define('myapp-entry-widget', MyAppEntryWidget);
 ```
 
-### 4.2 渲染进程 API（`window.applicationAPI`）
+### 5.2 渲染进程 API（`window.applicationAPI`）
 
 在 `renderer/entry.ts` 中，可通过 `window.applicationAPI` 与主进程通信。这是渲染进程与后端逻辑交互的唯一入口，所有调用都经过 Electron 的 IPC 安全通道。
 
@@ -367,7 +517,7 @@ customElements.define('myapp-entry-widget', MyAppEntryWidget);
 | `window.applicationAPI.subscribe(eventName, callback)` | 订阅来自 Worker 的事件，`callback` 将在事件触发时被调用 |
 | `window.applicationAPI.unsubscribe(eventName, callback)` | 取消事件订阅，建议在 `disconnectedCallback` 中调用，防止内存泄漏 |
 
-### 4.3 样式规范
+### 5.3 样式规范
 
 界面使用 **Tailwind CSS** 构建，已在项目中全局配置，无需额外导入。建议遵循以下视觉规范，与其他应用保持一致的风格：
 
@@ -377,7 +527,7 @@ customElements.define('myapp-entry-widget', MyAppEntryWidget);
 - **顶部 Header**：使用 `bg-white/80 backdrop-blur` 实现毛玻璃效果
 - **文字颜色**：主标题用 `text-gray-800`，正文用 `text-gray-700`，次要信息用 `text-[#86868B]`
 
-### 4.4 订阅 Worker 事件
+### 5.4 订阅 Worker 事件
 
 当 Worker 中的后台任务产生数据更新时，不应由前端轮询，而应由 Worker 主动通过 `emitEvent()` 推送事件，前端订阅后实时更新界面。
 
@@ -410,9 +560,9 @@ disconnectedCallback() {
 
 ---
 
-## 5. 使用 Worker 执行后台任务
+## 6. 使用 Worker 执行后台任务
 
-### 5.1 何时需要 Worker
+### 6.1 何时需要 Worker
 
 Worker 运行在独立的 Node.js 线程中，与主进程完全隔离。当你的应用需要执行以下类型的操作时，应当将其放入 Worker 而不是直接在主进程中运行：
 
@@ -423,7 +573,7 @@ Worker 运行在独立的 Node.js 线程中，与主进程完全隔离。当你�
 
 所有应用共用同一个 Worker 线程，框架负责按 `bundleName` 将消息路由到对应应用的 Worker 实例。
 
-### 5.2 创建 Worker 类
+### 6.2 创建 Worker 类
 
 Worker 类必须继承 `BaseWorker`。框架在 Worker 线程启动后，会自动创建每个应用的 Worker 实例并调用其 `initialize()` 方法。Worker 实例拥有 `appDataDirectory` 属性，指向该应用专属的数据目录，适合在此存储本地数据库文件或缓存。
 
@@ -504,7 +654,7 @@ export default class MyAppWorker extends BaseWorker {
 }
 ```
 
-### 5.3 在 `app.ts` 中关联 Worker
+### 6.3 在 `app.ts` 中关联 Worker
 
 在应用类中通过 `static getWorkerClass()` 返回 Worker 类，框架会自动处理后续的实例化和生命周期管理。工具执行器中可以通过 `this.callWorker()` 代理调用 Worker 的方法：
 
@@ -539,7 +689,7 @@ export class MyAppApplication extends BaseApplication {
 }
 ```
 
-### 5.4 从渲染进程调用 Worker
+### 6.4 从渲染进程调用 Worker
 
 渲染进程中可以直接通过 `window.applicationAPI` 调用当前应用 Worker 的方法，与工具执行器中的 `callWorker()` 本质相同，但前者可在组件的任意方法中使用：
 
@@ -565,7 +715,7 @@ async streamSearch(query: string) {
 }
 ```
 
-### 5.5 从 Worker 主动推送事件到渲染进程
+### 6.5 从 Worker 主动推送事件到渲染进程
 
 Worker 中的方法执行完毕后，可以通过 `this.emitEvent()` 向所有订阅了该事件的渲染进程帧推送消息。这是实现"后台任务完成后自动刷新界面"的标准方式。
 
@@ -587,7 +737,7 @@ async syncData(): Promise<void> {
 
 渲染进程在 `connectedCallback` 中订阅同名事件，并在 `disconnectedCallback` 中取消（参见 [4.4 节](#44-订阅-worker-事件)）。
 
-### 5.6 Worker 开发注意事项
+### 6.6 Worker 开发注意事项
 
 - Worker 运行在独立的 Node.js 线程中，**无法访问** `window`、`document`、`localStorage` 等浏览器 API
 - Worker 中可以使用全部 Node.js 内置模块（`fs`、`path`、`net`、`crypto` 等）以及通过 npm 安装的第三方包
@@ -596,7 +746,7 @@ async syncData(): Promise<void> {
 
 ---
 
-## 6. 注册应用
+## 7. 注册应用
 
 OpenDesk 支持两种运行平台，每个平台维护各自独立的应用注册列表：
 
@@ -607,7 +757,7 @@ OpenDesk 支持两种运行平台，每个平台维护各自独立的应用注�
 
 所有需要在 OpenDesk 中运行的应用，都必须在对应平台的配置文件中注册。注册时，框架会在启动时实例化应用类，并将其加入全局的应用注册表。
 
-### 6.1 选择注册到哪个平台
+### 7.1 选择注册到哪个平台
 
 在注册前，先根据应用的特性判断它应当注册到哪些平台：
 
@@ -617,7 +767,7 @@ OpenDesk 支持两种运行平台，每个平台维护各自独立的应用注�
 
 **仅注册到 CLI 平台**：目前较少见，适合专为终端场景设计、不需要图形界面的应用。
 
-### 6.2 在 Electron 平台注册
+### 7.2 在 Electron 平台注册
 
 打开 `src/platforms/electron.ts`，将新应用的类导入，然后在 `getApplicationClasses()` 方法的返回数组中追加：
 
@@ -637,7 +787,7 @@ export class ElectronPlatform extends AbstractPlatform {
 
 注册完成后，重新构建并运行项目，新应用的图标即会出现在侧边栏中。
 
-### 6.3 在 CLI 平台注册
+### 7.3 在 CLI 平台注册
 
 如果应用也需要在命令行模式下提供工具，同样打开 `src/platforms/cli.ts`，以相同方式导入并追加：
 
@@ -659,7 +809,7 @@ export class CliPlatform extends AbstractPlatform {
 
 ---
 
-## 7. 完整示例
+## 8. 完整示例
 
 以下是一个简单的"笔记"应用的完整 TypeScript 实现，综合展示了以上各节的核心概念。该应用支持新建笔记、列表展示、关键词搜索，并向 Agent 提供工具以便通过对话管理笔记。
 

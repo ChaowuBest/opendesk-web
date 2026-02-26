@@ -10,13 +10,14 @@
  */
 
 import { type Component, SelectList, Box, Text, Editor, Input, Key, matchesKey, visibleWidth, truncateToWidth } from "@mariozechner/pi-tui";
-import { defaultSelectListTheme, defaultEditorTheme } from "../theme";
-import type { OpenDeskTUI } from "../entry";
+import { defaultSelectListTheme, defaultEditorTheme } from "../../tui/theme";
+import type { OpenDeskTUI } from "../../tui/entry";
 import { ApplicationRegistry } from "../../applications/registry";
 import { LLM } from "../../aikernel/llm.js";
 import { UserMessage } from "../../aikernel/messages.js";
 import { logger } from "../../utils/logger.js";
 import chalk from "chalk";
+
 
 // ━━━ 邮箱配色 ━━━
 const MC = {
@@ -226,7 +227,7 @@ export class MailOverlay implements Component {
 
     // ──────────────────── 输入处理 ────────────────────
 
-    private handleInput(data: string): { consume: boolean } | undefined {
+    handleInput(data: string): { consume: boolean } | undefined {
         if (this.state === 'compose') {
             // AI 生成期间锁定所有键盘输入
             if (this.isAiGenerating) {

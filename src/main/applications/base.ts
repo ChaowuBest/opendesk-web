@@ -18,6 +18,7 @@ import path from 'path';
 import fs from 'fs';
 import PQueue from 'p-queue';
 import { Skill } from '../aikernel/skill.js';
+import type { SlashCommandHandler } from '../tui/commands.js';
 
 export class BaseWorker {
 
@@ -209,6 +210,16 @@ export abstract class BaseApplication {
      * @returns
      */
     async getSkills(): Promise<Skill[]> {
+        return [];
+    }
+
+    /**
+     * 获取应用提供的 CLI 斜杠命令
+     * 应用可以重写此方法来注册自己的斜杠命令
+     * @param tui TUI 实例，用于显示 overlay 等
+     * @returns SlashCommandHandler 数组
+     */
+    getCliSlashCommands(tui: any): SlashCommandHandler[] {
         return [];
     }
 

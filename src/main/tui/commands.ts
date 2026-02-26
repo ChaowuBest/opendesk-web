@@ -4,6 +4,8 @@ export interface SlashCommandHandler {
     name: string;
     description: string;
     shortcut?: KeyId;
+    /** 命令来源，用于重复检测时的提示 */
+    source?: string;
     execute: (args: string) => void | Promise<void>;
     getArgumentCompletions?: (argPrefix: string) => AutocompleteItem[] | null;
 }
@@ -11,7 +13,37 @@ export interface SlashCommandHandler {
 export class SlashCommandRegistry {
     private commands: Map<string, SlashCommandHandler> = new Map();
 
-    register(command: SlashCommandHandler) {
+    /**
+     * 注册命令，如果命令已存在则返回 false 并发出警告
+     * @param command 要注册的命令
+     * @param warnOnDuplicate 是否在重复时发出警告（默认 true）
+     * @returns 是否注册成功
+     */
+    register(command: SlashCommandHandler, warnOnDuplicate: boolean = true): boolean {
+        const existing = this.commands.get(command.name);
+        if (existing) {
+            if (warnOnDuplicate) {
+                const existingSource = existing.source || '未知来源';
+                const newSource = command.source || '未知来源';
+                console.warn(`[SlashCommandRegistry] 命令 "/${command.name}" 已被 "${existingSource}" 注册，忽略来自 "${newSource}" 的重复注册`);
+            }
+            return false;
+        }
+        this.commands.set(command.name, command);
+        return true;
+    }
+
+    /**
+     * 强制注册命令，覆盖已存在的同名命令
+     * @param command 要注册的命令
+     */
+    registerOverride(command: SlashCommandHandler): void {
+        const existing = this.commands.get(command.name);
+        if (existing) {
+            const existingSource = existing.source || '未知来源';
+            const newSource = command.source || '未知来源';
+            console.warn(`[SlashCommandRegistry] 命令 "/${command.name}" 已被 "${existingSource}" 注册，被 "${newSource}" 覆盖`);
+        }
         this.commands.set(command.name, command);
     }
 
@@ -25,6 +57,13 @@ export class SlashCommandRegistry {
 
     getAll(): SlashCommandHandler[] {
         return Array.from(this.commands.values());
+    }
+
+    /**
+     * 检查命令是否已存在
+     */
+    has(name: string): boolean {
+        return this.commands.has(name);
     }
 
     toPiTuiSlashCommands(): PiTuiSlashCommand[] {
