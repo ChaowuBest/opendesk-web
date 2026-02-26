@@ -12,6 +12,7 @@
 import { type Component, SelectList, Box, Text, truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
 import { defaultSelectListTheme } from "../theme";
 import { OpenDeskTUI } from "../entry";
+import { Card, type CardStatus, type BorderConfig } from "./card";
 import chalk from "chalk";
 import type { GlobalTodo } from "../../applications/todomgr/common";
 import type { TaskState } from "../../states/tasks";
@@ -31,39 +32,6 @@ const C = {
     panel:     chalk.hex('#1a1a2e'),       // 面板底色参考
     headerBg:  chalk.bgHex('#0a1628').hex('#00E5FF').bold,
 };
-
-/** 用可见字符宽度生成右对齐填充 */
-function padRight(str: string, targetWidth: number): string {
-    const w = visibleWidth(str);
-    if (w >= targetWidth) return truncateToWidth(str, targetWidth, '…');
-    return str + ' '.repeat(targetWidth - w);
-}
-
-/** 带两侧竖线的内容行 */
-function framedLine(content: string, width: number, borderColor: (s: string) => string): string {
-    const inner = width - 4;
-    const padded = padRight(content, inner);
-    return borderColor('│') + ' ' + padded + ' ' + borderColor('│');
-}
-
-/** 面板顶边 ┌─ TITLE ──────── extra ─┐ */
-function panelTop(title: string, extra: string, width: number, borderColor: (s: string) => string, titleColor: (s: string) => string): string {
-    const inner = width - 2;
-    const prefix = borderColor('┌') + borderColor('─ ');
-    const titleStr = titleColor(title);
-    const extraStr = extra ? ' ' + C.dim(extra) + ' ' : ' ';
-    const prefixVis = 3; // ┌─_
-    const titleVis = visibleWidth(titleStr);
-    const extraVis = visibleWidth(extraStr);
-    const suffixVis = 1; // ┐
-    const fillLen = Math.max(0, width - prefixVis - titleVis - extraVis - suffixVis);
-    return prefix + titleStr + ' ' + borderColor('─'.repeat(fillLen)) + extraStr + borderColor('┐');
-}
-
-/** 面板底边 └──────────────────────────┘ */
-function panelBottom(width: number, borderColor: (s: string) => string): string {
-    return borderColor('└' + '─'.repeat(Math.max(0, width - 2)) + '┘');
-}
 
 /** 进度条 */
 function progressBar(ratio: number, barWidth: number): string {
@@ -244,24 +212,27 @@ class DashboardRenderer implements Component {
         const todos = this.data.globalTodos;
         const active = todos.filter(t => t.status !== 'completed').length;
         const done = todos.filter(t => t.status === 'completed').length;
-        const bc = C.ghost;
-        const lines: string[] = [];
 
-        lines.push(panelTop('GLOBAL TODOS', `${active} ACTIVE / ${done} DONE`, W, bc, C.neonBold));
-
+        const body: string[] = [];
         if (todos.length === 0) {
-            lines.push(framedLine(C.dim('  ∅ 暂无全局待办事项'), W, bc));
+            body.push(C.dim('  ∅ 暂无全局待办事项'));
         } else {
             for (const todo of todos.slice(0, 10)) {
-                lines.push(framedLine(this.renderTodoLine(todo, W - 6), W, bc));
+                body.push(this.renderTodoLine(todo, W - 6));
             }
             if (todos.length > 10) {
-                lines.push(framedLine(C.dim(`  ··· 还有 ${todos.length - 10} 项 ···`), W, bc));
+                body.push(C.dim(`  ··· 还有 ${todos.length - 10} 项 ···`));
             }
         }
 
-        lines.push(panelBottom(W, bc));
-        return lines;
+        const card = new Card({
+            title: '全局待办事项',
+            status: { icon: C.neon('▣'), text: C.dim(`${active} ACTIVE / ${done} DONE`) },
+            body: body,
+            border: { style: 'single', colorFn: C.ghost },
+        });
+
+        return card.render(W);
     }
 
     private renderTodoLine(todo: GlobalTodo, maxContentW: number): string {
@@ -314,25 +285,27 @@ class DashboardRenderer implements Component {
 
     private renderActivePanel(W: number): string[] {
         const running = this.data.tasks.filter(t => t.task_status === 'running');
-        const bc = C.ghost;
-        const lines: string[] = [];
 
-        lines.push(panelTop('ACTIVE PROCESSES', `${running.length} RUNNING`, W, bc, C.neonBold));
-
+        const body: string[] = [];
         if (running.length === 0) {
-            lines.push(framedLine(C.dim('  ∅ 当前没有活跃进程'), W, bc));
+            body.push(C.dim('  ∅ 当前没有活跃进程'));
         } else {
             for (const task of running) {
                 const name = task.task_name || '未命名任务';
                 const bar = progressBar(0.6, 8);
                 const label = C.glow(' EXEC');
-                const line = `  ${C.glow('◆')} ${C.text(name)}  ${bar}${label}`;
-                lines.push(framedLine(line, W, bc));
+                body.push(`  ${C.glow('◆')} ${C.text(name)}  ${bar}${label}`);
             }
         }
 
-        lines.push(panelBottom(W, bc));
-        return lines;
+        const card = new Card({
+            title: '当前运行中任务',
+            status: { icon: C.neon('▶'), text: C.dim(`${running.length} RUNNING`) },
+            body: body,
+            border: { style: 'single', colorFn: C.ghost },
+        });
+
+        return card.render(W);
     }
 
     // ──────────────────── 任务归档面板（弹性高度） ────────────────────
@@ -341,21 +314,18 @@ class DashboardRenderer implements Component {
         const allHistory = this.data.tasks
             .filter(t => t.task_status !== 'running')
             .reverse();
-        const bc = C.ghost;
-        const lines: string[] = [];
 
         // 面板框架占 2 行（top + bottom）
         const contentSlots = Math.max(1, availableHeight - 2);
         const displayCount = Math.min(allHistory.length, contentSlots);
         const history = allHistory.slice(0, displayCount);
 
-        lines.push(panelTop('TASK ARCHIVE', `${history.length}/${allHistory.length} ITEMS`, W, bc, C.neonBold));
-
+        const body: string[] = [];
         if (allHistory.length === 0) {
-            lines.push(framedLine(C.dim('  ∅ 暂无归档任务'), W, bc));
-            // 用空的 framed 行填满剩余
+            body.push(C.dim('  ∅ 暂无归档任务'));
+            // 用空行填满剩余
             for (let i = 1; i < contentSlots; i++) {
-                lines.push(framedLine('', W, bc));
+                body.push('');
             }
         } else {
             const statusCfg: Record<string, { icon: string; label: string }> = {
@@ -373,30 +343,32 @@ class DashboardRenderer implements Component {
                 const rightVis = visibleWidth(rightPart);
                 const inner = W - 6;
                 const gap = Math.max(1, inner - leftVis - rightVis);
-                const line = leftPart + C.ghost(' ' + '·'.repeat(Math.max(0, gap - 2)) + ' ') + rightPart;
-                lines.push(framedLine(line, W, bc));
+                body.push(leftPart + C.ghost(' ' + '·'.repeat(Math.max(0, gap - 2)) + ' ') + rightPart);
             }
 
-            // 任务不够填满时，用空 framed 行撑满
+            // 任务不够填满时，用空行撑满
             const remaining = contentSlots - displayCount;
             for (let i = 0; i < remaining; i++) {
-                lines.push(framedLine('', W, bc));
+                body.push('');
             }
         }
 
-        lines.push(panelBottom(W, bc));
-        return lines;
+        const card = new Card({
+            title: '历史任务记录',
+            status: { icon: C.neon('▣'), text: C.dim(`${history.length}/${allHistory.length} ITEMS`) },
+            body: body,
+            border: { style: 'single', colorFn: C.ghost },
+        });
+
+        return card.render(W);
     }
 
     // ──────────────────── 资源遥测面板 ────────────────────
 
     private renderTelemetryPanel(W: number): string[] {
-        const bc = C.ghost;
-        const lines: string[] = [];
         const barW = 20;
 
-        lines.push(panelTop('RESOURCE TELEMETRY', 'TOKEN USAGE', W, bc, C.neonBold));
-
+        const body: string[] = [];
         const metrics = [
             { label: '1H', value: '--.-K', ratio: 0 },
             { label: '1D', value: '--.-K', ratio: 0 },
@@ -407,12 +379,18 @@ class DashboardRenderer implements Component {
             const tag = C.neon('⬡') + ' ' + C.dim(m.label.padEnd(3));
             const bar = progressBar(m.ratio, barW);
             const val = C.bright(m.value.padStart(10));
-            const line = `  ${tag} ${bar} ${val} ${C.dim('tokens')}`;
-            lines.push(framedLine(line, W, bc));
+            body.push(`  ${tag} ${bar} ${val} ${C.dim('tokens')}`);
         }
 
-        lines.push(framedLine(C.dim('  (遥测模块开发中 ─ TELEMETRY MODULE IN DEV)'), W, bc));
-        lines.push(panelBottom(W, bc));
-        return lines;
+        body.push(C.dim('  (遥测模块开发中 ─ TELEMETRY MODULE IN DEV)'));
+
+        const card = new Card({
+            title: '资源使用累计',
+            status: { icon: C.neon('◎'), text: C.dim('TOKEN USAGE') },
+            body: body,
+            border: { style: 'single', colorFn: C.ghost },
+        });
+
+        return card.render(W);
     }
 }

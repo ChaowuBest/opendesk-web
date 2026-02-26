@@ -40,7 +40,7 @@ export class InstallMcpServerTool extends BaseTool<typeof InstallMcpServerArgsSc
             InstallMcpServerArgsSchema,
         );
         this.mcpApp = mcpApp;
-        this.executor = this.install.bind(this);
+        this.setExecutor(this.install.bind(this));
     }
 
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
@@ -143,7 +143,7 @@ export class ListMcpServersTool extends BaseTool<typeof ListMcpServersArgsSchema
             ListMcpServersArgsSchema,
         );
         this.mcpApp = mcpApp;
-        this.executor = this.list.bind(this);
+        this.setExecutor(this.list.bind(this));
     }
 
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
@@ -198,7 +198,7 @@ export class DeleteMcpServerTool extends BaseTool<typeof DeleteMcpServerArgsSche
             DeleteMcpServerArgsSchema,
         );
         this.mcpApp = mcpApp;
-        this.executor = this.delete.bind(this);
+        this.setExecutor(this.delete.bind(this));
     }
 
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
@@ -243,5 +243,120 @@ export class DeleteMcpServerTool extends BaseTool<typeof DeleteMcpServerArgsSche
             serverId: server.id,
             name: server.name,
         });
+    }
+}
+
+const ToggleMcpServerArgsSchema = z.object({
+    nameOrId: z.string().describe('Server name or ID to toggle'),
+    enabled: z.boolean().describe('Whether to enable (true) or disable (false) the server'),
+});
+
+export class ToggleMcpServerTool extends BaseTool<typeof ToggleMcpServerArgsSchema> {
+    private mcpApp: any;
+
+    constructor(mcpApp: any) {
+        super(
+            'toggleMcpServer',
+            'Toggle an MCP server on/off by name or ID. Set enabled=true to activate the server, enabled=false to deactivate it. The server configuration is preserved.',
+            ToggleMcpServerArgsSchema,
+        );
+        this.mcpApp = mcpApp;
+        this.setExecutor(this.toggle.bind(this));
+    }
+
+    renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
+        const args = toolcall.args_object as any;
+        const nameOrId = args?.['nameOrId'];
+        const enabled = args?.['enabled'];
+        const body: string[] = [];
+
+        if (nameOrId) {
+            body.push(chalk.dim('目标: ') + chalk.magenta(String(nameOrId)));
+        }
+        if (enabled !== undefined) {
+            const statusText = enabled ? chalk.green('启用') : chalk.yellow('禁用');
+            body.push(chalk.dim('操作: ') + statusText);
+        }
+
+        if (toolcall.status === 'running') {
+            body.push(chalk.dim('  ⏳ 执行中…'));
+        } else if (toolcall.status === 'success' && toolcall.result) {
+            try {
+                const result = JSON.parse(toolcall.result);
+                const icon = result.enabled ? '✓' : '⏸';
+                const color = result.enabled ? chalk.green : chalk.yellow;
+                body.push(chalk.dim(`  ${icon} `) + color(`${result.name} 已${result.enabled ? '启用' : '禁用'}`));
+            } catch {
+                body.push(chalk.dim('  ✓ 操作成功!'));
+            }
+        } else if (toolcall.status === 'error' && toolcall.result) {
+            body.push(chalk.redBright('  ' + truncText(toolcall.result, width - 10)));
+        }
+
+        const icon = enabled ? '▶️' : '⏸️';
+        const title = enabled ? '启用 MCP 服务' : '禁用 MCP 服务';
+        return new Card({ icon, title, status: statusDisplay(toolcall.status), body }).render(width);
+    }
+
+    private async toggle(args: z.output<typeof ToggleMcpServerArgsSchema>): Promise<string> {
+        const servers = this.mcpApp.getServersFromConfig();
+        const server = servers.find((s: any) =>
+            s.name === args.nameOrId || s.id === args.nameOrId
+        );
+
+        if (!server) {
+            throw new Error(`MCP server "${args.nameOrId}" not found`);
+        }
+
+        if (server.enabled === args.enabled) {
+            return JSON.stringify({
+                success: true,
+                message: `MCP server "${server.name}" is already ${args.enabled ? 'enabled' : 'disabled'}`,
+                serverId: server.id,
+                name: server.name,
+                enabled: args.enabled,
+                alreadyInState: true,
+            });
+        }
+
+        if (args.enabled) {
+            // 启用服务器：更新配置并尝试连接
+            await this.mcpApp.toggleServer(server.id, true);
+            try {
+                await this.mcpApp.callWorker('connectServer', server.id);
+                return JSON.stringify({
+                    success: true,
+                    message: `MCP server "${server.name}" enabled and connected successfully`,
+                    serverId: server.id,
+                    name: server.name,
+                    enabled: true,
+                });
+            } catch (err: any) {
+                return JSON.stringify({
+                    success: true,
+                    message: `MCP server "${server.name}" enabled but connection failed: ${err.message}`,
+                    serverId: server.id,
+                    name: server.name,
+                    enabled: true,
+                    warning: 'Server enabled but not connected. Please check the configuration.',
+                });
+            }
+        } else {
+            // 禁用服务器：先断开连接再更新配置
+            try {
+                await this.mcpApp.callWorker('disconnectServer', server.id);
+            } catch {
+                // 忽略断开连接的错误
+            }
+
+            await this.mcpApp.toggleServer(server.id, false);
+            return JSON.stringify({
+                success: true,
+                message: `MCP server "${server.name}" disabled successfully`,
+                serverId: server.id,
+                name: server.name,
+                enabled: false,
+            });
+        }
     }
 }

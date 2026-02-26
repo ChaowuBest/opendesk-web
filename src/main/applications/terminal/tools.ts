@@ -127,7 +127,7 @@ export class ExecuteCmdTool extends BaseTool<typeof ExecuteCmdArgsSchema> {
             ExecuteCmdArgsSchema
         );
 
-        this.executor = this.executeCommand;
+        this.setExecutor(this.executeCommand);
     }
 
     async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
@@ -190,7 +190,7 @@ export class ExecuteBashTool extends BaseTool<typeof ExecuteBashArgsSchema> {
             ExecuteBashArgsSchema
         );
 
-        this.executor = this.executeCommand;
+        this.setExecutor(this.executeCommand);
     }
 
     executeCommand(args: z.output<typeof ExecuteBashArgsSchema>): Promise<string> {
@@ -265,7 +265,7 @@ export class ExecuteZshTool extends BaseTool<typeof ExecuteZshArgsSchema> {
             ExecuteZshArgsSchema
         );
 
-        this.executor = this.executeCommand;
+        this.setExecutor(this.executeCommand);
     }
 
     executeCommand(args: z.output<typeof ExecuteBashArgsSchema>): Promise<string> {
@@ -339,7 +339,7 @@ export class ReadFileTool extends BaseTool<typeof readFileSchema> {
             readFileSchema
         );
 
-        this.executor = this.executeCommand;
+        this.setExecutor(this.executeCommand);
     }
 
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
@@ -439,7 +439,7 @@ export class WriteFileTool extends BaseTool<typeof writeFileSchema> {
             writeFileSchema
         );
 
-        this.executor = this.executeCommand;
+        this.setExecutor(this.executeCommand);
     }
 
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {

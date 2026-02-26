@@ -13,7 +13,7 @@ import { BaseApplication } from "../base";
 import { BaseTool, BaseToolset } from "../../aikernel/tool";
 import { z } from 'zod';
 import { Setting } from '../../utils/setting.js';
-import { InstallMcpServerTool, ListMcpServersTool, DeleteMcpServerTool } from './tools';
+import { InstallMcpServerTool, ListMcpServersTool, DeleteMcpServerTool, ToggleMcpServerTool } from './tools';
 import { Skill } from "../../aikernel/skill.js";
 import type { McpServerConfig, McpToolInfo } from './common.js';
 import McpMgrWorker from "./worker";
@@ -213,6 +213,7 @@ export class McpMgrApplication extends BaseApplication {
         mcpManageToolset.addTool(new InstallMcpServerTool(this));
         mcpManageToolset.addTool(new ListMcpServersTool(this));
         mcpManageToolset.addTool(new DeleteMcpServerTool(this));
+        mcpManageToolset.addTool(new ToggleMcpServerTool(this));
         mcpManageSkill.toolsets = [mcpManageToolset]
         return [mcpManageSkill];
     }

@@ -26,6 +26,10 @@ description: 介绍MCP服务器的管理：安装，卸载与查询等的方法
 
 使用本Skill内置的listMcpServers工具可以查看当前已经安装的所有MCP Server及其状态。
 
+## MCP Server禁用与启用
+
+使用本Skill内置的ToggleMcpServerTool可以切换MCP服务的启用或禁用状态。
+
 ## MCP Server卸载
 
 使用本Skill内置的deleteMcpServer工具可以卸载已经安装的MCP Server。
