@@ -40,6 +40,8 @@ export class SkillsOverlay implements Component {
     private selectedRegistry = 'skill0';
     private message: { text: string; isError: boolean } | null = null;
     private loading = false;
+    private removeInputListener?: () => void;
+    private messageTimeout?: NodeJS.Timeout;
 
     constructor(openDeskTUI: OpenDeskTUI) {
         this.openDeskTUI = openDeskTUI;
@@ -58,20 +60,35 @@ export class SkillsOverlay implements Component {
     }
 
     private showMessage(text: string, isError: boolean = false) {
+        if (this.messageTimeout) {
+            clearTimeout(this.messageTimeout);
+        }
         this.message = { text, isError };
-        this.openDeskTUI.tui.requestRender();
-        setTimeout(() => {
+        this.renderBox();
+        this.messageTimeout = setTimeout(() => {
             this.message = null;
-            this.openDeskTUI.tui.requestRender();
+            this.renderBox();
         }, 3000);
     }
 
     private setLoading(loading: boolean) {
         this.loading = loading;
-        this.openDeskTUI.tui.requestRender();
+        this.renderBox();
+    }
+
+    private cleanup() {
+        if (this.removeInputListener) {
+            this.removeInputListener();
+            this.removeInputListener = undefined;
+        }
+        if (this.messageTimeout) {
+            clearTimeout(this.messageTimeout);
+            this.messageTimeout = undefined;
+        }
     }
 
     private showMain() {
+        this.cleanup();
         this.state = 'main';
         this.input = undefined;
 
@@ -87,15 +104,21 @@ export class SkillsOverlay implements Component {
         this.list = new SelectList(items, items.length, defaultSelectListTheme);
         this.setupListHandlers();
         this.renderBox();
+        this.openDeskTUI.tui.setFocus(this.list);
     }
 
     private showSearch() {
+        this.cleanup();
         this.state = 'search';
         this.list = undefined;
 
         this.input = new Input();
         this.input.setValue(this.selectedInputValue);
-        this.input.onSubmit = () => this.performSearch();
+        this.input.onSubmit = () => {
+            this.performSearch().catch(err => {
+                console.error('Search error:', err);
+            });
+        };
 
         this.setupInputHandlers();
         this.renderBox();
@@ -137,6 +160,7 @@ export class SkillsOverlay implements Component {
     }
 
     private showSearchResults() {
+        this.cleanup();
         this.state = 'search-results';
         this.input = undefined;
 
@@ -154,15 +178,21 @@ export class SkillsOverlay implements Component {
         this.list = new SelectList(items, Math.min(items.length, 10), defaultSelectListTheme);
         this.setupListHandlers();
         this.renderBox();
+        this.openDeskTUI.tui.setFocus(this.list);
     }
 
     private showInstallLocal() {
+        this.cleanup();
         this.state = 'install-local';
         this.list = undefined;
 
         this.input = new Input();
         this.input.setValue(this.selectedInputValue);
-        this.input.onSubmit = () => this.performInstallLocal();
+        this.input.onSubmit = () => {
+            this.performInstallLocal().catch(err => {
+                console.error('Install local error:', err);
+            });
+        };
 
         this.setupInputHandlers();
         this.renderBox();
@@ -196,12 +226,17 @@ export class SkillsOverlay implements Component {
     }
 
     private showInstallUrl() {
+        this.cleanup();
         this.state = 'install-url';
         this.list = undefined;
 
         this.input = new Input();
         this.input.setValue(this.selectedInputValue);
-        this.input.onSubmit = () => this.performInstallUrl();
+        this.input.onSubmit = () => {
+            this.performInstallUrl().catch(err => {
+                console.error('Install URL error:', err);
+            });
+        };
 
         this.setupInputHandlers();
         this.renderBox();
@@ -235,12 +270,17 @@ export class SkillsOverlay implements Component {
     }
 
     private showInstallGitHub() {
+        this.cleanup();
         this.state = 'install-github';
         this.list = undefined;
 
         this.input = new Input();
         this.input.setValue(this.selectedInputValue);
-        this.input.onSubmit = () => this.performInstallGitHub();
+        this.input.onSubmit = () => {
+            this.performInstallGitHub().catch(err => {
+                console.error('Install GitHub error:', err);
+            });
+        };
 
         this.setupInputHandlers();
         this.renderBox();
@@ -274,12 +314,17 @@ export class SkillsOverlay implements Component {
     }
 
     private showInstallClawHub() {
+        this.cleanup();
         this.state = 'install-clawhub';
         this.list = undefined;
 
         this.input = new Input();
         this.input.setValue(this.selectedInputValue);
-        this.input.onSubmit = () => this.performInstallClawHub();
+        this.input.onSubmit = () => {
+            this.performInstallClawHub().catch(err => {
+                console.error('Install ClawHub error:', err);
+            });
+        };
 
         this.setupInputHandlers();
         this.renderBox();
@@ -313,6 +358,7 @@ export class SkillsOverlay implements Component {
     }
 
     private showViewInstalled() {
+        this.cleanup();
         this.state = 'view-installed';
         this.input = undefined;
 
@@ -320,7 +366,7 @@ export class SkillsOverlay implements Component {
             const items = [{ value: 'back', label: chalk.gray('暂无已安装技能，按 Enter 返回') }];
             this.list = new SelectList(items, 1, defaultSelectListTheme);
         } else {
-            const items = this.installedSkills.map(skill => ({
+            const items = this.installedSkills.map((skill: any) => ({
                 value: skill.id,
                 label: `${chalk.bold(skill.name)} - ${skill.description || '无描述'}`,
             }));
@@ -329,6 +375,7 @@ export class SkillsOverlay implements Component {
 
         this.setupListHandlers();
         this.renderBox();
+        this.openDeskTUI.tui.setFocus(this.list);
     }
 
     private async deleteSkill(skillId: string) {
@@ -354,7 +401,7 @@ export class SkillsOverlay implements Component {
     private setupListHandlers() {
         if (!this.list) return;
 
-        this.list.onSelect = (item) => {
+        this.list.onSelect = (item: any) => {
             switch (this.state) {
                 case 'main':
                     this.handleMainSelection(item.value);
@@ -413,7 +460,7 @@ export class SkillsOverlay implements Component {
                 if (parsed) {
                     result = await SkillRegistry.addSkillFromClawHubSlug(parsed.slug, parsed.version);
                 }
-            } else if (skill.installUrl.includes('github.com') && skill) {
+            } else if (skill.installUrl.includes('github.com') && skill.installUrl.includes('/tree/')) {
                 result = await SkillRegistry.addSkillFromGitHubUrl(skill.installUrl);
             } else {
                 result = await SkillRegistry.addSkillFromUrl(skill.installUrl);
@@ -439,7 +486,7 @@ export class SkillsOverlay implements Component {
             return;
         }
 
-        const skill = this.installedSkills.find(s => s.id === skillId);
+        const skill = this.installedSkills.find((s: any) => s.id === skillId);
         if (!skill) return;
 
         this.deleteSkill(skillId);
@@ -448,17 +495,13 @@ export class SkillsOverlay implements Component {
     private setupInputHandlers() {
         if (!this.input) return;
 
-        const listener = this.openDeskTUI.tui.addInputListener((data: string) => {
+        this.removeInputListener = this.openDeskTUI.tui.addInputListener((data: string) => {
             if (matchesKey(data, Key.escape)) {
                 this.goBack();
                 return { consume: true };
             }
             return undefined;
         });
-
-        this.input.onSubmit = () => {
-            listener();
-        };
     }
 
     private goBack() {
@@ -547,15 +590,14 @@ export class SkillsOverlay implements Component {
         });
 
         this.openDeskTUI.hasOpenOverlay = true;
-        this.showMain();
-        this.openDeskTUI.tui.setFocus(this.list);
+        this.loadInstalledSkills().then(() => {
+            this.showMain();
+        });
 
-        if (this.list) {
-            this.list.onCancel = () => {
-                handle.hide();
-                this.openDeskTUI.hasOpenOverlay = false;
-                this.openDeskTUI.tui.setFocus(this.openDeskTUI.inputArea.input);
-            };
-        }
+        handle.onHide = () => {
+            this.cleanup();
+            this.openDeskTUI.hasOpenOverlay = false;
+            this.openDeskTUI.tui.setFocus(this.openDeskTUI.inputArea.input);
+        };
     }
 }
