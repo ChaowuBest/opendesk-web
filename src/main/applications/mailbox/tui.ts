@@ -91,10 +91,11 @@ async function callMailWorker(method: string, ...args: any[]): Promise<any> {
  * 清洗终端不安全的控制字符（与 Card 组件一致）。
  * \t → 3 空格（匹配 pi-tui visibleWidth 行为）
  * \r 及其余 C0 控制字符（保留 \x1b 以兼容 ANSI 色码）→ 移除
+ * 保留 \x07 (BEL)，以免破坏 pi-tui 的 CURSOR_MARKER (\x1b_pi:c\x07)，否则会露出 "pi:c" 且光标无法定位
  */
 function sanitizeLine(line: string): string {
     // eslint-disable-next-line no-control-regex
-    return line.replace(/[\x00-\x08\x0b\x0c\x0e-\x1a\x1c-\x1f\r]/g, '').replace(/\t/g, '   ');
+    return line.replace(/[\x00-\x06\x08\x0b\x0c\x0e-\x1a\x1c-\x1f\r]/g, '').replace(/\t/g, '   ');
 }
 
 function stripHtml(html: string): string {
