@@ -26,6 +26,7 @@ import {
     RefreshSkillsTool,
     GetSkillsDirectoryTool
 } from './tools.js';
+import type { SlashCommandHandler } from '../../tui/commands.js';
 
 
 export class SkillMgrApplication extends BaseApplication {
@@ -108,6 +109,27 @@ export class SkillMgrApplication extends BaseApplication {
         return SkillRegistry.addSkillFromGitHubUrl(githubUrl);
     }
 
+    async installFromRegistry(installUrl: string) {
+        const { RegistryAdapters } = await import('./registry-adapters.js');
+        const method = RegistryAdapters.getInstallMethod(installUrl);
+        let result;
+        if (method === 'clawhub') {
+            const parsed = RegistryAdapters.parseClawHubInstallUrl(installUrl);
+            if (!parsed) {
+                throw new Error('无效的 ClawHub installUrl');
+            }
+            result = await SkillRegistry.addSkillFromClawHubSlug(parsed.slug, parsed.version);
+        } else if (method === 'github') {
+            result = await SkillRegistry.addSkillFromGitHubUrl(installUrl);
+        } else {
+            result = await SkillRegistry.addSkillFromUrl(installUrl);
+        }
+        if (!result.success) {
+            throw new Error(result.error);
+        }
+        return { name: result.name };
+    }
+
     deleteSkill(skillId: string) {
         return SkillRegistry.deleteSkill(skillId);
     }
@@ -119,5 +141,23 @@ export class SkillMgrApplication extends BaseApplication {
     refresh() {
         const { toolsets, errors } = SkillRegistry.refresh();
         return { count: toolsets.length, errors };
+    }
+
+    getCliSlashCommands(tui: any): SlashCommandHandler[] {
+        return [
+            {
+                name: 'skills',
+                description: '打开技能管理界面',
+                execute: async () => {
+                    try {
+                        const { SkillsOverlay } = await import('../../tui/components/skills.js');
+                        const skillsOverlay = new SkillsOverlay(tui);
+                        skillsOverlay.show();
+                    } catch (err) {
+                        logger.error(`打开技能管理失败: ${err}`);
+                    }
+                },
+            },
+        ];
     }
 }
