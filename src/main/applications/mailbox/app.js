@@ -17,6 +17,7 @@ import { logger } from "../../utils/logger.js";
 import MailboxWorker from "./service/worker";
 import { MANAGE_MAILBOX_SKILL } from "./skills";
 import { AddMailAccountTool, ListMailAccountsTool, RemoveMailAccountTool, SwitchMailAccountTool } from "./tools";
+import { MailOverlay } from "./tui.js";
 
 
 class MailboxApplication extends BaseApplication {
@@ -49,6 +50,28 @@ class MailboxApplication extends BaseApplication {
         skill.toolsets = [toolset];
 
         return [skill];
+    }
+
+    /**
+     * 获取邮箱应用提供的 CLI 斜杠命令
+     * @param tui TUI 实例
+     * @returns SlashCommandHandler 数组
+     */
+    getCliSlashCommands(tui) {
+        return [
+            {
+                name: 'mail',
+                description: '打开邮箱',
+                execute: async () => {
+                    try {
+                        const mailOverlay = new MailOverlay(tui);
+                        await mailOverlay.show();
+                    } catch (err) {
+                        logger.error(`打开邮箱失败: ${err}`);
+                    }
+                },
+            },
+        ];
     }
 
 }

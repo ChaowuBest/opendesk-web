@@ -400,6 +400,32 @@ export class OpenDeskTUI {
                 this.tui.requestRender();
             },
         });
+
+        // 使用 onReady 回调确保应用注册表初始化完成后再注册命令
+        ApplicationRegistry.onReady(() => {
+            this.registerApplicationCommands();
+        });
+    }
+
+    /**
+     * 从应用中收集 CLI 斜杠命令并注册
+     */
+    private registerApplicationCommands() {
+        const apps = ApplicationRegistry.getApplicationList();
+        for (const appInfo of apps) {
+            const appInfoTyped = appInfo as { bundleName: string; name: string; showIcon: boolean };
+            const app = ApplicationRegistry.getApplication(appInfoTyped.bundleName);
+            if (app) {
+                const commands = app.getCliSlashCommands(this);
+                for (const cmd of commands) {
+                    // 设置命令来源为应用名称
+                    cmd.source = app.name;
+                    this.commandRegistry.register(cmd);
+                }
+            }
+        }
+        // 刷新自动补全，确保新注册的命令能被提示
+        this.inputArea.refreshAutocomplete();
     }
 
     private async showDashboard() {
