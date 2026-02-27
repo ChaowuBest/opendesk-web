@@ -19,7 +19,7 @@ import { z } from 'zod';
 
 
 const ConfigureSearchToolArgsSchema = z.object({
-    id: z.string().describe('搜索工具的ID，如 "bing", "brave", "exa", "webfetch"'),
+    id: z.string().describe('搜索工具的ID，如 "bing", "duckduckgo", "brave", "tavily", "bocha", "exa", "arxiv"'),
     api_key: z.string().optional().describe('API密钥，适用于需要API的搜索工具'),
     enabled: z.boolean().optional().describe('是否启用该搜索工具'),
 });
@@ -30,7 +30,7 @@ export class ConfigureSearchTool extends BaseTool<typeof ConfigureSearchToolArgs
     constructor(searchApp: SearchApplication) {
         super(
             'configureSearchTool',
-            '配置搜索工具，包括设置API密钥和启用/禁用状态。使用此工具来配置Brave Search、Exa Search等需要API的工具。',
+            '配置搜索工具，包括设置API密钥和启用/禁用状态。使用此工具来配置Brave Search、Tavily Search、Exa Search等需要API的工具。',
             ConfigureSearchToolArgsSchema,
         );
         this.searchApp = searchApp;

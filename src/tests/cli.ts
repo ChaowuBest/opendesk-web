@@ -11,8 +11,10 @@
 
 import fs from 'fs';
 import path from 'path';
-import { runSkillParserTests } from './ut/skills/parser.test.js';
 import { runArxivSearchTests } from './ut/search/arxiv.test.js';
+import { runTavilySearchTests } from './ut/search/tavily.test.js';
+import { runBochaSearchTests } from './ut/search/bocha.test.js';
+import { runDuckDuckGoSearchTests } from './ut/search/duckduckgo.test.js';
 
 function getSettingPath(): string {
     const appData = process.env.APPDATA;
@@ -48,13 +50,19 @@ function cmdGetConfig(appName?: string) {
 async function cmdUt() {
     console.log('运行单元测试...');
 
-    // 运行技能解析器测试
-    const skillTestsPassed = await runSkillParserTests();
-
     // 运行arXiv搜索测试
     const arxivTestsPassed = await runArxivSearchTests();
 
-    if (skillTestsPassed && arxivTestsPassed) {
+    // 运行Tavily搜索测试
+    const tavilyTestsPassed = await runTavilySearchTests();
+
+    // 运行博查搜索测试
+    const bochaTestsPassed = await runBochaSearchTests();
+
+    // 运行DuckDuckGo搜索测试
+    const duckduckgoTestsPassed = await runDuckDuckGoSearchTests();
+
+    if (arxivTestsPassed && tavilyTestsPassed && bochaTestsPassed && duckduckgoTestsPassed) {
         console.log('\n✅ 所有单元测试通过');
         process.exit(0);
     } else {
