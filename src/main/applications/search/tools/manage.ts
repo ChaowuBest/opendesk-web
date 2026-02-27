@@ -19,7 +19,7 @@ import { z } from 'zod';
 
 
 const ConfigureSearchToolArgsSchema = z.object({
-    id: z.string().describe('搜索工具的ID，如 "bing", "brave", "tavily", "bocha", "exa", "arxiv"'),
+    id: z.string().describe('搜索工具的ID，如 "bing", "duckduckgo", "brave", "tavily", "bocha", "exa", "arxiv"'),
     api_key: z.string().optional().describe('API密钥，适用于需要API的搜索工具'),
     enabled: z.boolean().optional().describe('是否启用该搜索工具'),
 });
