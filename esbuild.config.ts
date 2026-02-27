@@ -8,7 +8,8 @@ const outfileDebug = 'dist/cli/opendesk-debug';
  * 注入 shebang 和 require shim 作为 banner
  * 为了保持对 OpenHarmony HiShell 的兼容性，这里使用 #!/bin/env node 而不是 #!/usr/bin/env node
  */
-const BANNER = `#!/bin/env node
+const BANNER = `#!/bin/sh
+// 2>/dev/null; exec "$(command -v node || command -v nodejs)" "$0" "$@"
 import { createRequire } from 'node:module';
 const __createRequire = createRequire(import.meta.url);
 `;
