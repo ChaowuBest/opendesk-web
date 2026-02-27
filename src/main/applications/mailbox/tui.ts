@@ -173,6 +173,11 @@ export class MailOverlay implements Component {
     private handle?: any;
     private inputListenerRemove?: () => void;
 
+    // 详情视图滚动状态
+    private detailScrollOffset = 0;
+    private detailBodyTotalLines = 0;
+    private detailBodyVisibleLines = 0;
+
     // compose 相关
     private composeType?: ComposeType;
     private composeToInput?: Input;
@@ -259,6 +264,70 @@ export class MailOverlay implements Component {
                 return { consume: true };
             }
             return undefined;
+        }
+
+        if (this.state === 'detail') {
+            // j / ↓ 向下滚动邮件正文
+            if (data === 'j' || data === 'J' || matchesKey(data, Key.down)) {
+                this.scrollDetailBody(1);
+                return { consume: true };
+            }
+            // k / ↑ 向上滚动邮件正文
+            if (data === 'k' || data === 'K' || matchesKey(data, Key.up)) {
+                this.scrollDetailBody(-1);
+                return { consume: true };
+            }
+            // PageDown / 空格 翻页
+            if (matchesKey(data, Key.pageDown) || matchesKey(data, Key.space)) {
+                this.scrollDetailBody(Math.max(1, this.detailBodyVisibleLines - 2));
+                return { consume: true };
+            }
+            // PageUp / b 翻页
+            if (matchesKey(data, Key.pageUp) || data === 'b' || data === 'B') {
+                this.scrollDetailBody(-(Math.max(1, this.detailBodyVisibleLines - 2)));
+                return { consume: true };
+            }
+            // Home / g 跳到顶部
+            if (matchesKey(data, Key.home) || data === 'g') {
+                this.detailScrollOffset = 0;
+                this.openDeskTUI.tui.requestRender();
+                return { consume: true };
+            }
+            // End / G 跳到底部
+            if (matchesKey(data, Key.end) || data === 'G') {
+                const bodyArea = Math.max(1, this.detailBodyVisibleLines - 1);
+                this.detailScrollOffset = Math.max(0, this.detailBodyTotalLines - bodyArea);
+                this.openDeskTUI.tui.requestRender();
+                return { consume: true };
+            }
+            // r 回复
+            if (data === 'r') {
+                this.startCompose('reply');
+                return { consume: true };
+            }
+            // R 回复全部
+            if (data === 'R') {
+                this.startCompose('replyall');
+                return { consume: true };
+            }
+            // d 删除
+            if (data === 'd') {
+                this.handleDetailAction('delete');
+                return { consume: true };
+            }
+            // f 收藏切换
+            if (data === 'f' || data === 'F') {
+                this.handleDetailAction('star');
+                return { consume: true };
+            }
+            // ESC / q 返回列表
+            if (matchesKey(data, Key.escape) || data === 'q') {
+                this.selectedEmail = undefined;
+                this.selectedEmailContent = undefined;
+                this.buildEmailList();
+                return { consume: true };
+            }
+            return { consume: true }; // 详情视图消费所有按键，避免穿透
         }
 
         if (this.state === 'list') {
@@ -489,48 +558,21 @@ export class MailOverlay implements Component {
      *   EmailMetadata            metaH (动态计算)
      *   空行                     1
      *   SeparatorLine(─)         1
-     *   空行                     1
-     *   EmailBodyView            ← 弹性区域
-     *   空行                     1
+     *   ScrollableEmailBody      ← 弹性区域（含滚动条指示）
      *   SeparatorLine(━)         1
-     *   SelectList(actions)      actionCount
+     *   DetailFooter             1
      *   Box bottom padding       1
      *   ──────────────────────────
-     *   固定合计(不含 meta/body/actions): 12
+     *   固定合计(不含 meta/body): 10
      */
     private buildDetailView() {
         this.state = 'detail';
+        this.detailScrollOffset = 0;
 
-        const actionItems: Array<{ value: string; label: string }> = [
-            { value: 'back', label: MC.accent('◀ 返回列表') },
-        ];
-
-        if (this.selectedEmail) {
-            actionItems.push({ value: 'reply', label: MC.neon('  ✉ 回复') });
-            actionItems.push({ value: 'replyall', label: MC.neon('  ✉ 回复全部') });
-            actionItems.push({
-                value: this.selectedEmail.unread ? 'mark-read' : 'mark-unread',
-                label: this.selectedEmail.unread ? '  ◎ 标为已读' : '  ◉ 标为未读',
-            });
-            actionItems.push({
-                value: 'star',
-                label: this.selectedEmail.starred
-                    ? `  ${MC.amber('★')} 取消收藏`
-                    : `  ☆ 收藏`,
-            });
-            actionItems.push({ value: 'delete', label: MC.red('  ✕ 删除') });
-        }
-
-        this.detailList = new SelectList(actionItems, actionItems.length, mailSelectListTheme);
-        this.openDeskTUI.tui.setFocus(this.detailList);
-
-        this.detailList.onSelect = async (item: any) => {
-            await this.handleDetailAction(item.value);
-        };
-
-        this.detailList.onCancel = () => {
-            this.buildEmailList();
-        };
+        // 不再使用 SelectList，键盘快捷键直接处理操作
+        this.detailList = undefined;
+        // 取消焦点（所有按键由 handleInput 拦截）
+        this.openDeskTUI.tui.setFocus(null);
 
         this.openDeskTUI.tui.requestRender();
     }
@@ -583,6 +625,16 @@ export class MailOverlay implements Component {
                 this.buildEmailList();
                 break;
         }
+    }
+
+    // ──────────────────── 滚动 ────────────────────
+
+    private scrollDetailBody(delta: number) {
+        // bodyArea = visibleLines - 1（ScrollableEmailBody 留了 1 行给滚动指示器）
+        const bodyArea = Math.max(1, this.detailBodyVisibleLines - 1);
+        const maxOffset = Math.max(0, this.detailBodyTotalLines - bodyArea);
+        this.detailScrollOffset = Math.max(0, Math.min(this.detailScrollOffset + delta, maxOffset));
+        this.openDeskTUI.tui.requestRender();
     }
 
     // ──────────────────── 操作方法 ────────────────────
@@ -828,10 +880,8 @@ export class MailOverlay implements Component {
 
             case 'detail': {
                 const metaH = this.computeMetadataLineCount();
-                const actionCount = this.detailList ? (this.detailList as any).items?.length ?? 6 : 6;
-                // fixed = header(3) + blank(1) + meta(metaH) + blank(1) + sep(1) + blank(1)
-                //       + blank(1) + sep(1) + actions(actionCount)
-                const fixedDetailLines = 3 + 1 + metaH + 1 + 1 + 1 + 1 + 1 + actionCount;
+                // fixed = header(3) + blank(1) + meta(metaH) + blank(1) + sep(1) + sep(1) + footer(1)
+                const fixedDetailLines = 3 + 1 + metaH + 1 + 1 + 1 + 1;
                 const bodyLines = Math.max(3, availableForContent - fixedDetailLines);
 
                 this.box.addChild(new DetailHeaderBar());                                   // 3
@@ -840,14 +890,23 @@ export class MailOverlay implements Component {
                     this.box.addChild(new EmailMetadata(this.selectedEmail, this.selectedEmailContent));
                     this.box.addChild(new Text(''));                                         // 1
                     this.box.addChild(new SeparatorLine('─'));                               // 1
-                    this.box.addChild(new Text(''));                                         // 1
-                    this.box.addChild(new EmailBodyView(this.selectedEmailContent, bodyLines));
+
+                    const bodyView = new ScrollableEmailBody(
+                        this.selectedEmailContent, bodyLines, this.detailScrollOffset
+                    );
+                    this.box.addChild(bodyView);
+
+                    // 更新总行数供滚动逻辑使用
+                    this.detailBodyTotalLines = bodyView.getTotalLines();
+                    this.detailBodyVisibleLines = bodyLines;
                 }
-                this.box.addChild(new Text(''));                                             // 1
                 this.box.addChild(new SeparatorLine());                                     // 1
-                if (this.detailList) {
-                    this.box.addChild(this.detailList);
-                }
+                this.box.addChild(new DetailFooter(
+                    this.detailScrollOffset,
+                    this.detailBodyTotalLines,
+                    this.detailBodyVisibleLines,
+                    this.selectedEmail,
+                ));                                                                          // 1
                 break;
             }
 
@@ -1144,11 +1203,26 @@ class EditorWrapper implements Component {
     }
 }
 
-/** 邮件正文视图，精确输出 maxLines 行（不足用空行补齐） */
-class EmailBodyView implements Component {
-    constructor(private content: EmailContent, private maxLines: number) { }
+/**
+ * 可滚动的邮件正文视图。
+ * 将邮件文本按行拆分后，根据 scrollOffset 显示一个窗口。
+ * 支持 ↑↓/j/k 逐行滚动、PgUp/PgDn/Space/b 翻页、g/G 首尾跳转。
+ */
+class ScrollableEmailBody implements Component {
+    private allLines: string[] = [];
+
+    constructor(
+        private content: EmailContent,
+        private visibleLines: number,
+        private scrollOffset: number,
+    ) {
+        this.allLines = this.prepareLines();
+    }
+
     invalidate() { }
-    render(width: number): string[] {
+
+    /** 预处理：将邮件内容拆成纯文本行数组 */
+    private prepareLines(): string[] {
         let bodyText: string;
         if (this.content.textContent) {
             bodyText = sanitizeLine(this.content.textContent);
@@ -1157,10 +1231,35 @@ class EmailBodyView implements Component {
         } else {
             bodyText = '(邮件内容为空)';
         }
+        return bodyText.split('\n');
+    }
 
-        const allLines = bodyText.split('\n');
-        const cap = Math.max(1, this.maxLines);
-        const display = allLines.slice(0, cap);
+    /** 外部可获取总行数，用于更新 MailOverlay 的滚动状态 */
+    getTotalLines(): number {
+        return this.allLines.length;
+    }
+
+    render(width: number): string[] {
+        const total = this.allLines.length;
+        const cap = Math.max(1, this.visibleLines);
+
+        // 如果内容不超过可视区域，无需滚动
+        if (total <= cap) {
+            const result: string[] = [];
+            for (const rawLine of this.allLines) {
+                const line = sanitizeLine(rawLine);
+                result.push(MC.text(truncateToWidth('  ' + line, width - 2, '…')));
+            }
+            while (result.length < cap) {
+                result.push('');
+            }
+            return result;
+        }
+
+        // 有滚动：留出 1 行给滚动指示器
+        const bodyArea = cap - 1;
+        const offset = Math.max(0, Math.min(this.scrollOffset, total - bodyArea));
+        const display = this.allLines.slice(offset, offset + bodyArea);
 
         const result: string[] = [];
         for (const rawLine of display) {
@@ -1168,15 +1267,69 @@ class EmailBodyView implements Component {
             result.push(MC.text(truncateToWidth('  ' + line, width - 2, '…')));
         }
 
-        if (allLines.length > cap) {
-            result.push(MC.dim(`  ··· 还有 ${allLines.length - cap} 行 ···`));
-        }
-
-        // 精确补齐到 maxLines 行以填满屏幕
-        while (result.length < this.maxLines) {
+        // 补齐 bodyArea 行
+        while (result.length < bodyArea) {
             result.push('');
         }
 
+        // 滚动指示器
+        const progress = total > bodyArea
+            ? Math.round((offset / (total - bodyArea)) * 100)
+            : 100;
+        const scrollBar = this.renderScrollBar(width - 6, bodyArea, total, offset);
+        const indicator = MC.dim(`  ${scrollBar}  ${progress}%  (${offset + 1}-${Math.min(offset + bodyArea, total)}/${total}行)`);
+        result.push(truncateToWidth(indicator, width, '…'));
+
         return result;
+    }
+
+    /** 渲染一个迷你横向滚动条 */
+    private renderScrollBar(barWidth: number, visible: number, total: number, offset: number): string {
+        const w = Math.max(4, Math.min(barWidth, 30));
+        const thumbSize = Math.max(1, Math.round((visible / total) * w));
+        const maxThumbPos = w - thumbSize;
+        const thumbPos = total <= visible ? 0 : Math.round((offset / (total - visible)) * maxThumbPos);
+
+        let bar = '';
+        for (let i = 0; i < w; i++) {
+            if (i >= thumbPos && i < thumbPos + thumbSize) {
+                bar += MC.neon('█');
+            } else {
+                bar += MC.ghost('░');
+            }
+        }
+        return bar;
+    }
+}
+
+/** 详情视图底部操作提示栏 */
+class DetailFooter implements Component {
+    constructor(
+        private scrollOffset: number,
+        private totalLines: number,
+        private visibleLines: number,
+        private email?: EmailHeader,
+    ) { }
+    invalidate() { }
+    render(width: number): string[] {
+        const hints: string[] = [];
+
+        // 滚动提示（仅在有溢出时显示）
+        if (this.totalLines > this.visibleLines) {
+            hints.push(MC.neon('↑↓/jk') + MC.dim(' 滚动'));
+            hints.push(MC.neon('Space/b') + MC.dim(' 翻页'));
+            hints.push(MC.neon('g/G') + MC.dim(' 首/尾'));
+        }
+
+        // 操作提示
+        hints.push(MC.neon('r') + MC.dim(' 回复'));
+        hints.push(MC.neon('R') + MC.dim(' 全部回复'));
+        if (this.email) {
+            hints.push(MC.neon('f') + MC.dim(this.email.starred ? ' 取消收藏' : ' 收藏'));
+        }
+        hints.push(MC.neon('d') + MC.dim(' 删除'));
+        hints.push(MC.neon('q/ESC') + MC.dim(' 返回'));
+
+        return [truncateToWidth('  ' + hints.join('   '), width, '…')];
     }
 }
