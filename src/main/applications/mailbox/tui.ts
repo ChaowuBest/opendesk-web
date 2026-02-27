@@ -487,6 +487,11 @@ export class MailOverlay implements Component {
             this.close();
         };
 
+        // 列表选择变化时强制全量重绘，避免差异更新导致表头/标签行重复堆叠
+        this.emailList.onSelectionChange = () => {
+            this.openDeskTUI.tui.requestRender(true);
+        };
+
         this.openDeskTUI.tui.requestRender();
     }
 
