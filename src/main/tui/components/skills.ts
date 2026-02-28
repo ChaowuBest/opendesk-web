@@ -19,6 +19,7 @@ interface RegistrySkill {
 
 type ViewState =
     | 'main'
+    | 'select-registry'
     | 'search'
     | 'search-results'
     | 'install-local'
@@ -93,6 +94,7 @@ export class SkillsOverlay implements Component {
         this.cleanup();
         this.state = 'main';
         this.input = undefined;
+        this.header = new Text(chalk.bold(' 技能管理'));
 
         const items = [
             { value: 'search', label: chalk.cyan('🔍 从 Registry 搜索技能') },
@@ -111,9 +113,33 @@ export class SkillsOverlay implements Component {
     }
 
     private showSearch() {
+        this.showSelectRegistry();
+    }
+
+    private showSelectRegistry() {
+        this.cleanup();
+        this.state = 'select-registry';
+        this.input = undefined;
+
+        const registries = [
+            { value: 'skill0', label: 'skill0.io - 公开技能库' },
+            { value: 'skillsmp', label: 'SkillsMP - 技能市场 (需 API Key)' },
+            { value: 'clawhub', label: 'ClawHub - 技能仓库 (需 CLI)' },
+        ];
+
+        this.list = new SelectList(registries, registries.length, defaultSelectListTheme);
+        this.setupListHandlers();
+        this.renderBox();
+        this.openDeskTUI.tui.setFocus(this.list);
+    }
+
+    private showSearchInput() {
         this.cleanup();
         this.state = 'search';
         this.list = undefined;
+
+        const registryLabel = this.getRegistryLabel(this.selectedRegistry);
+        this.header = new Text(chalk.bold(` 搜索技能 [${registryLabel}]`));
 
         this.input = new Input();
         this.input.setValue(this.selectedInputValue);
@@ -167,6 +193,9 @@ export class SkillsOverlay implements Component {
         this.state = 'search-results';
         this.input = undefined;
 
+        const registryLabel = this.getRegistryLabel(this.selectedRegistry);
+        this.header = new Text(chalk.bold(` 搜索结果 [${registryLabel}]`));
+
         const items = this.searchResults.map(skill => {
             const stars = skill.stars ? chalk.yellow(`★${skill.stars}`) : '';
             const author = skill.author ? chalk.dim(`@${skill.author}`) : '';
@@ -182,6 +211,19 @@ export class SkillsOverlay implements Component {
         this.setupListHandlers();
         this.renderBox();
         this.openDeskTUI.tui.setFocus(this.list);
+    }
+
+    private getRegistryLabel(registry: string): string {
+        switch (registry) {
+            case 'skill0':
+                return 'skill0.io';
+            case 'skillsmp':
+                return 'SkillsMP';
+            case 'clawhub':
+                return 'ClawHub';
+            default:
+                return registry;
+        }
     }
 
     private showInstallLocal() {
@@ -453,6 +495,9 @@ export class SkillsOverlay implements Component {
                 case 'main':
                     this.handleMainSelection(item.value);
                     break;
+                case 'select-registry':
+                    this.handleRegistrySelection(item.value);
+                    break;
                 case 'search-results':
                     this.handleSearchResultSelection(item.value);
                     break;
@@ -495,6 +540,11 @@ export class SkillsOverlay implements Component {
                 this.showViewInstalled();
                 break;
         }
+    }
+
+    private handleRegistrySelection(value: string) {
+        this.selectedRegistry = value;
+        this.showSearchInput();
     }
 
     private async handleSearchResultSelection(skillId: string) {
@@ -565,6 +615,9 @@ export class SkillsOverlay implements Component {
     private goBack() {
         switch (this.state) {
             case 'search':
+                this.showSelectRegistry();
+                break;
+            case 'select-registry':
             case 'install-local':
             case 'install-zip':
             case 'install-url':
@@ -656,6 +709,8 @@ export class SkillsOverlay implements Component {
         switch (this.state) {
             case 'main':
                 return '↑↓ 选择  Enter 确认  Esc 退出';
+            case 'select-registry':
+                return '↑↓ 选择 Registry  Enter 确认  Esc 返回';
             case 'search':
                 return '输入搜索关键词  Enter 搜索  Esc 返回';
             case 'search-results':
