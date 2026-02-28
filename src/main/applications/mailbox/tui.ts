@@ -60,7 +60,7 @@ interface EmailContent {
     attachments: Array<{ filename: string; path: string }>;
 }
 
-type MailViewState = 'loading' | 'list' | 'detail' | 'compose' | 'assistant' | 'assistant-result';
+type MailViewState = 'loading' | 'list' | 'detail' | 'compose' | 'assistant' | 'assistant-result' | 'search' | 'search-list';
 type FilterType = 'all' | 'unread' | 'starred' | 'draft' | 'sent';
 type ComposeType = 'reply' | 'replyall' | 'new';
 
@@ -290,6 +290,13 @@ export class MailOverlay implements Component {
     private assistantResultTotalLines = 0;
     private assistantResultVisibleLines = 0;
 
+    // 搜索模式
+    private isInSearchMode = false;
+    private searchQuery = '';
+    private searchResults: EmailHeader[] = [];
+    private originalEmails: EmailHeader[] = [];
+    private searchInput?: Input;
+
     constructor(openDeskTUI: OpenDeskTUI) {
         this.openDeskTUI = openDeskTUI;
         this.box = new Box(1, 1);
@@ -433,13 +440,13 @@ export class MailOverlay implements Component {
             if (matchesKey(data, Key.escape) || data === 'q') {
                 this.selectedEmail = undefined;
                 this.selectedEmailContent = undefined;
-                this.buildEmailList();
+                this.buildEmailList(this.isInSearchMode);
                 return { consume: true };
             }
             return { consume: true }; // 详情视图消费所有按键，避免穿透
         }
 
-        if (this.state === 'list') {
+        if (this.state === 'list' || this.state === 'search-list') {
             for (const f of FILTERS) {
                 if (data === f.key) {
                     this.switchFilter(f.value);
@@ -462,6 +469,30 @@ export class MailOverlay implements Component {
                 this.enterAssistantMode();
                 return { consume: true };
             }
+            if (data === 'l' || data === 'L') {
+                this.enterSearchMode();
+                return { consume: true };
+            }
+            if (this.state === 'search-list' && matchesKey(data, Key.escape)) {
+                this.exitSearchMode();
+                return { consume: true };
+            }
+        }
+
+        if (this.state === 'search') {
+            if (matchesKey(data, Key.escape)) {
+                this.exitSearchMode();
+                return { consume: true };
+            }
+            if (matchesKey(data, Key.enter)) {
+                const query = this.searchInput?.getValue()?.trim() || '';
+                if (query) {
+                    this.searchQuery = query;
+                    this.executeSearch();
+                }
+                return { consume: true };
+            }
+            return undefined;
         }
 
         if (this.state === 'assistant') {
@@ -483,7 +514,12 @@ export class MailOverlay implements Component {
             // 任意键返回列表
             this.assistantResult = '';
             this.assistantResultScrollOffset = 0;
-            this.buildEmailList();
+            if (this.isInSearchMode) {
+                this.state = 'search-list';
+                this.openDeskTUI.tui.setFocus(this.emailList!);
+            } else {
+                this.buildEmailList();
+            }
             return { consume: true };
         }
         return undefined;
@@ -527,7 +563,13 @@ export class MailOverlay implements Component {
         if (this.selectedEmail) {
             this.buildDetailView();
         } else {
-            this.buildEmailList();
+            // 如果来自搜索模式，返回搜索结果列表
+            if (this.isInSearchMode) {
+                this.state = 'search-list';
+                this.buildEmailList(true);
+            } else {
+                this.buildEmailList(false);
+            }
         }
     }
 
@@ -579,6 +621,105 @@ export class MailOverlay implements Component {
         }
     }
 
+    private parseSearchQuery(queryString: string): any {
+        const query: any = { limit: 100, offset: 0 };
+        const terms = queryString.split(/\s+/).filter(t => t.length > 0);
+
+        for (const term of terms) {
+            const match = term.match(/^(from|to|subject|body|date):(.+)$/i);
+            if (match) {
+                const [, field, value] = match;
+                const normalizedField = field.toLowerCase();
+                if (normalizedField === 'from') {
+                    query.from = value;
+                } else if (normalizedField === 'to') {
+                    query.to = value;
+                } else if (normalizedField === 'subject') {
+                    query.subject = value;
+                } else if (normalizedField === 'body') {
+                    query.body = value;
+                } else if (normalizedField === 'date') {
+                    // 处理日期，支持单个日期或日期范围
+                    if (value.includes('~')) {
+                        const [startDate, endDate] = value.split('~').map(d => d.trim());
+                        query.startDate = startDate;
+                        query.endDate = endDate || startDate;
+                    } else {
+                        query.startDate = value;
+                        query.endDate = value;
+                    }
+                }
+            } else {
+                // 无前缀的关键词，默认在主题和发件人中搜索
+                if (!query.general) {
+                    query.general = term;
+                } else {
+                    query.general += ' ' + term;
+                }
+            }
+        }
+
+        return query;
+    }
+
+    private async executeSearch() {
+        this.state = 'loading';
+        this.loadingText = '正在搜索邮件...';
+        this.errorText = undefined;
+        this.openDeskTUI.tui.requestRender();
+
+        try {
+            const searchQuery = this.parseSearchQuery(this.searchQuery);
+            const data = await callMailWorker('searchEmails', searchQuery);
+            const emails: EmailHeader[] = Array.isArray(data) ? data : [];
+            emails.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+            
+            // 保存原始邮件列表以便退出搜索时恢复
+            this.originalEmails = this.emails;
+            this.searchResults = emails;
+            this.emails = emails;
+            
+            this.buildEmailList(true);
+        } catch (err: any) {
+            logger.error(`搜索邮件失败：${err}`);
+            this.errorText = `搜索失败：${err?.message || '未知错误'}`;
+            this.emails = this.originalEmails.length > 0 ? this.originalEmails : [];
+            // 返回初始列表时清除错误信息
+            this.errorText = undefined;
+            this.buildEmailList(false);
+        }
+    }
+
+    private enterSearchMode() {
+        this.isInSearchMode = true;
+        this.searchQuery = '';
+        this.searchInput = new Input();
+        this.searchInput.setValue('');
+        this.state = 'search';
+        // 保存原始邮件列表用于退出搜索时恢复
+        this.originalEmails = [...this.emails];
+        this.openDeskTUI.tui.setFocus(this.searchInput);
+        this.openDeskTUI.tui.requestRender();
+    }
+
+    private exitSearchMode() {
+        this.isInSearchMode = false;
+        this.searchQuery = '';
+        this.searchInput = undefined;
+        this.searchResults = [];
+        
+        // 恢复原始邮件列表
+        if (this.originalEmails.length > 0) {
+            this.emails = this.originalEmails;
+            this.originalEmails = [];
+        }
+        
+        this.state = 'list';
+        this.buildEmailList(false);
+        this.openDeskTUI.tui.setFocus(this.emailList!);
+        this.openDeskTUI.tui.requestRender();
+    }
+
     // ──────────────────── 列表视图 ────────────────────
 
     /**
@@ -596,8 +737,8 @@ export class MailOverlay implements Component {
      *   ─────────────────────────
      *   固定合计(无error)       10
      */
-    private buildEmailList() {
-        this.state = 'list';
+    private buildEmailList(isSearchMode = false) {
+        this.state = isSearchMode ? 'search-list' : 'list';
 
         const rows = this.openDeskTUI.tui.terminal.rows;
         const fixedLines = 10 + (this.errorText ? 1 : 0);
@@ -622,7 +763,11 @@ export class MailOverlay implements Component {
         };
 
         this.emailList.onCancel = () => {
-            this.close();
+            if (isSearchMode) {
+                this.exitSearchMode();
+            } else {
+                this.close();
+            }
         };
 
         // 列表选择变化时强制全量重绘，避免差异更新导致表头/标签行重复堆叠
@@ -689,7 +834,15 @@ export class MailOverlay implements Component {
         } catch (err: any) {
             logger.error(`加载邮件内容失败: ${err}`);
             this.errorText = `加载邮件失败: ${err?.message || '未知错误'}`;
-            this.buildEmailList();
+            // 如果来自搜索模式，返回搜索结果列表
+            if (this.isInSearchMode) {
+                this.state = 'search-list';
+                this.buildEmailList(true);
+            } else {
+                // 返回初始列表时清除错误信息
+                this.errorText = undefined;
+                this.buildEmailList(false);
+            }
         }
     }
 
@@ -711,6 +864,8 @@ export class MailOverlay implements Component {
     private buildDetailView() {
         this.state = 'detail';
         this.detailScrollOffset = 0;
+        // 记录是否来自搜索模式，以便 ESC 返回搜索结果列表
+        this.isInSearchMode = this.searchResults.length > 0;
 
         // 不再使用 SelectList，键盘快捷键直接处理操作
         this.detailList = undefined;
@@ -765,7 +920,7 @@ export class MailOverlay implements Component {
                 this.emails = this.emails.filter(e => e.uid !== this.selectedEmail!.uid);
                 this.selectedEmail = undefined;
                 this.selectedEmailContent = undefined;
-                this.buildEmailList();
+                this.buildEmailList(this.isInSearchMode);
                 break;
         }
     }
@@ -1225,6 +1380,40 @@ export class MailOverlay implements Component {
                 break;
             }
 
+            case 'search-list': {
+                this.box.addChild(new MailHeaderBar(this.currentAccount, this.isSyncing));  // 3
+                this.box.addChild(new Text(''));                                             // 1
+                this.box.addChild(new SearchResultsBar(this.searchQuery));                  // 1
+                this.box.addChild(new SeparatorLine());                                     // 1
+                if (this.errorText) {
+                    this.box.addChild(new Text(MC.red(`  ⚠ ${this.errorText}`)));           // 1
+                }
+                if (this.emailList) {
+                    this.box.addChild(this.emailList);                                      // flex
+                }
+                this.box.addChild(new Text(''));                                             // 1
+                this.box.addChild(new SearchFooter());                                      // 1
+                break;
+            }
+
+            case 'search': {
+                this.box.addChild(new MailHeaderBar(this.currentAccount, this.isSyncing));  // 3
+                this.box.addChild(new Text(''));                                             // 1
+                this.box.addChild(new Text(MC.dim('  输入搜索关键词，支持语法：from: 发件人 | to: 收件人 | subject: 主题 | body: 正文 | date: 日期'))); // 1
+                this.box.addChild(new Text(''));                                             // 1
+                if (this.searchInput) {
+                    this.box.addChild(new SearchInputWrapper(this.searchInput));            // 1
+                }
+                this.box.addChild(new SeparatorLine());                                     // 1
+                // 显示邮件列表（与 list 视图一致）
+                if (this.emailList) {
+                    this.box.addChild(this.emailList);                                      // flex
+                }
+                this.box.addChild(new Text(''));                                             // 1
+                this.box.addChild(new SearchModeFooter());                                  // 1
+                break;
+            }
+
             case 'assistant': {
                 this.box.addChild(new MailHeaderBar(this.currentAccount, this.isSyncing));
                 this.box.addChild(new Text(''));
@@ -1467,6 +1656,7 @@ class ListFooter implements Component {
             MC.neon('1-5') + MC.dim(' 筛选'),
             MC.neon('s') + MC.dim(' 同步'),
             MC.neon('p') + MC.dim(' 助手'),
+            MC.neon('l') + MC.dim(' 搜索'),
         ];
         if (this.multiAccount) {
             hints.push(MC.neon('a') + MC.dim(' 切换账号'));
@@ -1484,6 +1674,55 @@ class AssistantFooter implements Component {
             MC.neon('ESC') + MC.dim(' 返回'),
         ];
         return [truncateToWidth('  ' + hints.join('   '), width, '…')];
+    }
+}
+
+class SearchResultsBar implements Component {
+    constructor(private query: string) { }
+    invalidate() { }
+    render(width: number): string[] {
+        const label = MC.neonBold(' 🔍 搜索结果');
+        const queryText = MC.bright(`"${this.query}"`);
+        const leftPart = `  ${label}: ${queryText}`;
+        const leftVis = visibleWidth(leftPart);
+        const gap = Math.max(1, width - leftVis - 10);
+        return [truncateToWidth(leftPart + ' '.repeat(gap), width, '…')];
+    }
+}
+
+class SearchFooter implements Component {
+    invalidate() { }
+    render(width: number): string[] {
+        const hints = [
+            MC.neon('↑↓') + MC.dim(' 选择'),
+            MC.neon('Enter') + MC.dim(' 查看'),
+            MC.neon('ESC') + MC.dim(' 退出搜索'),
+        ];
+        return [truncateToWidth('  ' + hints.join('   '), width, '…')];
+    }
+}
+
+class SearchModeFooter implements Component {
+    invalidate() { }
+    render(width: number): string[] {
+        const hints = [
+            MC.neon('Enter') + MC.dim(' 搜索'),
+            MC.neon('ESC') + MC.dim(' 取消'),
+        ];
+        return [truncateToWidth('  ' + hints.join('   '), width, '…')];
+    }
+}
+
+class SearchInputWrapper implements Component {
+    constructor(private input: Input) { }
+    invalidate() { this.input.invalidate(); }
+    render(width: number): string[] {
+        const prefix = MC.dim('  搜索: ');
+        const prefixVis = visibleWidth(prefix);
+        const inputW = Math.max(10, width - prefixVis - 2);
+        const inputOut = this.input.render(inputW);
+        const line = prefix + (inputOut[0] || '');
+        return [truncateToWidth(line, width, '…')];
     }
 }
 
