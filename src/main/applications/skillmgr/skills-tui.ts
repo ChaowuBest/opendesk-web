@@ -1,9 +1,9 @@
 import { type Component, SelectList, Box, Text, Input, TUI, Key, matchesKey } from "@mariozechner/pi-tui";
 import chalk from "chalk";
-import { defaultSelectListTheme } from "../theme";
-import { OpenDeskTUI } from "../entry";
-import { SkillRegistry } from "../../applications/skillmgr/skillregistry.js";
-import { RegistryAdapters } from "../../applications/skillmgr/registry-adapters.js";
+import { defaultSelectListTheme } from "../../tui/theme";
+import { OpenDeskTUI } from "../../tui/entry";
+import { SkillRegistry } from "./skillregistry.js";
+import { RegistryAdapters } from "./registry-adapters.js";
 import { Setting } from "../../utils/setting.js";
 
 interface RegistrySkill {
@@ -719,7 +719,7 @@ export class SkillsOverlay implements Component {
                 return '输入本地目录路径  Enter 添加  Esc 返回';
             case 'install-zip':
                 return '输入本地 zip 文件路径  Enter 添加  Esc 返回';
-            case 'install-url':
+            case 'installiert-url':
                 return '输入技能包 URL  Enter 添加  Esc 返回';
             case 'install-github':
                 return '输入 GitHub URL (如 https://github.com/user/repo/tree/branch)  Enter 添加  Esc 返回';

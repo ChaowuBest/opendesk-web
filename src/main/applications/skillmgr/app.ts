@@ -150,7 +150,7 @@ export class SkillMgrApplication extends BaseApplication {
                 description: '打开技能管理界面',
                 execute: async () => {
                     try {
-                        const { SkillsOverlay } = await import('../../tui/components/skills.js');
+                        const { SkillsOverlay } = await import('./skills-tui.js');
                         const skillsOverlay = new SkillsOverlay(tui);
                         skillsOverlay.show();
                     } catch (err) {
