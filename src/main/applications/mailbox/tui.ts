@@ -277,6 +277,10 @@ export class MailOverlay implements Component {
     private composeSending = false;
     private aiSpinnerTimer?: ReturnType<typeof setInterval>;
     private aiSpinnerFrame = 0;
+    /** 回复时的原始邮件引用文本（不放入编辑器，单独渲染在编辑器下方） */
+    private composeQuotedText?: string;
+    /** 回复时引用区域的滚动偏移 */
+    private composeQuoteScrollOffset = 0;
 
     // 助手模式
     private assistantPromptInput?: Input;
@@ -358,6 +362,15 @@ export class MailOverlay implements Component {
             if (matchesKey(data, Key.enter) && this.composeFocusIdx < this.getComposeFocusFields().length - 1) {
                 this.cycleComposeFocus(1);
                 return { consume: true };
+            }
+            // 当焦点在 Editor 上，Enter 换行（默认 Enter 是 submit，需要转换为 \n 让 Editor 插入新行）
+            if (matchesKey(data, Key.enter)) {
+                const fields = this.getComposeFocusFields();
+                if (fields[this.composeFocusIdx] === this.composeEditor && this.composeEditor) {
+                    this.composeEditor.handleInput('\n');
+                    this.openDeskTUI.tui.requestRender();
+                    return { consume: true };
+                }
             }
             return undefined;
         }
@@ -508,6 +521,8 @@ export class MailOverlay implements Component {
         this.composeToInput = undefined;
         this.composeCcInput = undefined;
         this.composeSubjectInput = undefined;
+        this.composeQuotedText = undefined;
+        this.composeQuoteScrollOffset = 0;
         this.errorText = undefined;
         if (this.selectedEmail) {
             this.buildDetailView();
@@ -944,7 +959,17 @@ export class MailOverlay implements Component {
             ...defaultEditorTheme,
             borderColor: () => '',
         });
+
         this.composeEditor.setText('');
+
+        // 回复/回复全部时，构建原始邮件引用（不放入编辑器，单独渲染在编辑器下方）
+        if ((type === 'reply' || type === 'replyall') && this.selectedEmail && this.selectedEmailContent) {
+            this.composeQuotedText = this.buildQuotedText(this.selectedEmail, this.selectedEmailContent);
+            this.composeQuoteScrollOffset = 0;
+        } else {
+            this.composeQuotedText = undefined;
+            this.composeQuoteScrollOffset = 0;
+        }
 
         this.state = 'compose';
 
@@ -963,7 +988,7 @@ export class MailOverlay implements Component {
         const to = this.composeToInput?.getValue()?.trim() || '';
         const cc = this.composeCcInput?.getValue()?.trim() || '';
         const subject = this.composeSubjectInput?.getValue()?.trim() || '';
-        const body = this.composeEditor.getText().trim();
+        const replyBody = this.composeEditor.getText().trim();
         if (!to) {
             this.errorText = '请填写收件人地址';
             this.openDeskTUI.tui.requestRender();
@@ -974,13 +999,29 @@ export class MailOverlay implements Component {
         this.openDeskTUI.tui.requestRender();
 
         try {
+            // 拼接完整纯文本：回复正文 + 引用
+            let fullText = replyBody;
+            if (this.composeQuotedText) {
+                fullText = replyBody + '\n\n' + this.composeQuotedText;
+            }
+
+            // 生成 HTML：回复/回复全部时附带原始邮件引用
+            let html = '';
+            if ((this.composeType === 'reply' || this.composeType === 'replyall')
+                && this.selectedEmail && this.selectedEmailContent) {
+                html = this.buildReplyHtml(replyBody, this.selectedEmail, this.selectedEmailContent);
+            } else {
+                // 新邮件：纯文本转简单 HTML
+                html = replyBody.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>');
+            }
+
             await callMailWorker('sendEmail', {
                 to,
                 cc,
                 bcc: '',
                 subject,
-                text: body,
-                html: '',
+                text: fullText,
+                html,
                 attachments: [],
             });
 
@@ -991,6 +1032,84 @@ export class MailOverlay implements Component {
             this.errorText = `发送失败: ${err?.message || '未知错误'}`;
             this.openDeskTUI.tui.requestRender();
         }
+    }
+
+    /**
+     * 构建回复邮件时的原始邮件引用文本（纯文本格式）。
+     * 参考 Electron 前端的 composeContent 方法，在 CLI 下以文本方式呈现。
+     */
+    private buildQuotedText(email: EmailHeader, content: EmailContent): string {
+        const sender = formatAddresses(email.from);
+        const sendTime = new Date(email.date).toLocaleString();
+        const receivers = formatAddresses(email.to);
+        const cc = email.cc && email.cc.length > 0 ? formatAddresses(email.cc) : '';
+        const subject = email.subject || '(无主题)';
+
+        let originalBody = '';
+        if (content.textContent) {
+            originalBody = content.textContent;
+        } else if (content.htmlContent) {
+            originalBody = stripHtml(content.htmlContent);
+        }
+
+        // 每行加 > 前缀
+        const quotedBody = originalBody
+            .split('\n')
+            .map(line => `> ${line}`)
+            .join('\n');
+
+        const lines = [
+            '---------- 原始邮件 ----------',
+            `发件人: ${sender}`,
+            `发送时间: ${sendTime}`,
+            `收件人: ${receivers}`,
+        ];
+        if (cc) {
+            lines.push(`抄送: ${cc}`);
+        }
+        lines.push(`主题: ${subject}`);
+        lines.push('');
+        lines.push(quotedBody);
+
+        return lines.join('\n');
+    }
+
+    /**
+     * 构建回复邮件的 HTML 内容（用户正文 + 原始邮件引用）。
+     * 参考 Electron 前端 MailEditorWidget.composeContent 的样式。
+     */
+    /**
+     * 构建回复邮件的 HTML 内容（用户正文 + 原始邮件引用）。
+     * replyBody 仅为用户输入的回复正文（不含引用）。
+     */
+    private buildReplyHtml(replyBody: string, email: EmailHeader, content: EmailContent): string {
+        const escHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        const userHtml = escHtml(replyBody).replace(/\n/g, '<br>');
+
+        const sender = formatAddresses(email.from);
+        const sendTime = new Date(email.date).toLocaleString();
+        const receivers = formatAddresses(email.to);
+        const cc = email.cc && email.cc.length > 0 ? formatAddresses(email.cc) : '';
+        const subject = email.subject || '(无主题)';
+
+        const originContent = content.htmlContent
+            ? content.htmlContent
+            : escHtml(content.textContent || '').replace(/\n/g, '<br>');
+
+        return `<div>${userHtml}</div>
+<br><br>
+<hr style="border: 0; border-top: 1px solid #e5e7eb; margin: 20px 0;">
+<div style="background-color: #f3f4f6; padding: 16px; border-radius: 8px; font-size: 13px; color: #374151; margin-bottom: 20px;">
+  <div style="font-weight: bold; font-size: 14px; margin-bottom: 12px; color: #111827; border-bottom: 1px solid #e5e7eb; padding-bottom: 8px;">
+    ----- 原始邮件 -----
+  </div>
+  <div style="margin-bottom: 6px;"><span style="color: #6b7280; font-weight: bold;">发件人:</span> ${escHtml(sender)}</div>
+  <div style="margin-bottom: 6px;"><span style="color: #6b7280; font-weight: bold;">发送时间:</span> ${escHtml(sendTime)}</div>
+  <div style="margin-bottom: 6px;"><span style="color: #6b7280; font-weight: bold;">收件人:</span> ${escHtml(receivers)}</div>
+  ${cc ? `<div style="margin-bottom: 6px;"><span style="color: #6b7280; font-weight: bold;">抄送:</span> ${escHtml(cc)}</div>` : ''}
+  <div><span style="color: #6b7280; font-weight: bold;">主题:</span> ${escHtml(subject)}</div>
+</div>
+<div style="font-size: 14px; line-height: 1.6;">${originContent}</div>`;
     }
 
     private startAiSpinner() {
@@ -1059,6 +1178,7 @@ export class MailOverlay implements Component {
 
             const reply = await LLM.ask(new UserMessage(prompt));
             if (this.composeEditor && this.state === 'compose') {
+                // 只替换编辑器中的回复正文，引用内容在编辑器外部，不受影响
                 this.composeEditor.setText(reply.trim());
             }
         } catch (err: any) {
@@ -1179,15 +1299,28 @@ export class MailOverlay implements Component {
                 //   ComposeField (主题)     1
                 //   SeparatorLine(─)        1
                 //   error (可选)            0|1
-                //   Editor/SpinnerView      ← 弹性区域
+                //   Editor/SpinnerView      ← 弹性区域（回复时分给编辑器和引用）
+                //   QuotedTextView (回复时) ← 引用区域
                 //   SeparatorLine(━)        1
                 //   ComposeFooterBar        1
                 //   Box bottom padding      1
                 const fields = this.getComposeFocusFields();
                 const fieldLineCount = this.composeCcInput ? 3 : 2;
                 const hasError = this.errorText ? 1 : 0;
-                const composeFixed = 3 + fieldLineCount + 1 + hasError + 1 + 1;
-                const editorLines = Math.max(3, availableForContent - composeFixed);
+                const hasQuote = this.composeQuotedText ? 1 : 0; // 引用分隔线
+                const composeFixed = 3 + fieldLineCount + 1 + hasError + hasQuote + 1 + 1;
+                const flexLines = Math.max(3, availableForContent - composeFixed);
+
+                // 有引用时：编辑器占 40%，引用占 60%（最少各 3 行）
+                let editorLines: number;
+                let quoteLines: number;
+                if (this.composeQuotedText) {
+                    editorLines = Math.max(3, Math.floor(flexLines * 0.4));
+                    quoteLines = Math.max(3, flexLines - editorLines);
+                } else {
+                    editorLines = flexLines;
+                    quoteLines = 0;
+                }
 
                 const typeLabel = this.composeType === 'new' ? '写信'
                     : this.composeType === 'replyall' ? '回复全部'
@@ -1211,6 +1344,13 @@ export class MailOverlay implements Component {
                 } else if (this.composeEditor) {
                     this.box.addChild(new EditorWrapper(this.composeEditor, editorLines));
                 }
+
+                // 回复时在编辑器下方显示原始邮件引用
+                if (this.composeQuotedText && quoteLines > 0) {
+                    this.box.addChild(new SeparatorLine('┄'));
+                    this.box.addChild(new QuotedTextView(this.composeQuotedText, quoteLines, this.composeQuoteScrollOffset));
+                }
+
                 this.box.addChild(new SeparatorLine());
                 this.box.addChild(new ComposeFooterBar());
                 break;
@@ -1458,6 +1598,66 @@ class ComposeFooterBar implements Component {
             MC.neon('ESC') + MC.dim(' 取消'),
         ];
         return [truncateToWidth('  ' + hints.join('   '), width, '…')];
+    }
+}
+
+/** 回复时在编辑器下方显示的原始邮件引用区域 */
+class QuotedTextView implements Component {
+    private allLines: string[] = [];
+
+    constructor(
+        private quotedText: string,
+        private maxLines: number,
+        private scrollOffset: number,
+    ) {
+        this.allLines = quotedText.split('\n');
+    }
+
+    invalidate() { }
+
+    getTotalLines(): number {
+        return this.allLines.length;
+    }
+
+    render(width: number): string[] {
+        const result: string[] = [];
+        const total = this.allLines.length;
+        const cap = Math.max(1, this.maxLines);
+
+        if (total <= cap) {
+            for (const rawLine of this.allLines) {
+                const line = sanitizeLine(rawLine);
+                if (line.startsWith('>')) {
+                    result.push(MC.ghost(truncateToWidth('  ' + line, width - 2, '…')));
+                } else {
+                    result.push(MC.dim(truncateToWidth('  ' + line, width - 2, '…')));
+                }
+            }
+            while (result.length < cap) result.push('');
+            return result;
+        }
+
+        const bodyArea = cap - 1; // 1 行给滚动指示器
+        const offset = Math.max(0, Math.min(this.scrollOffset, total - bodyArea));
+        const display = this.allLines.slice(offset, offset + bodyArea);
+
+        for (const rawLine of display) {
+            const line = sanitizeLine(rawLine);
+            if (line.startsWith('>')) {
+                result.push(MC.ghost(truncateToWidth('  ' + line, width - 2, '…')));
+            } else {
+                result.push(MC.dim(truncateToWidth('  ' + line, width - 2, '…')));
+            }
+        }
+        while (result.length < bodyArea) result.push('');
+
+        const progress = total > bodyArea
+            ? Math.round((offset / (total - bodyArea)) * 100)
+            : 100;
+        const indicator = MC.ghost(`  ── 原始邮件 ${progress}%  (${offset + 1}-${Math.min(offset + bodyArea, total)}/${total}行) ──`);
+        result.push(truncateToWidth(indicator, width, '…'));
+
+        return result;
     }
 }
 
