@@ -202,7 +202,15 @@ registry=https://registry.npmjs.org/
 //registry.npmjs.org/:_authToken=$NPM_TOKEN
 EOF
 
-# Step 6: Cleanup and success message
+# Step 6: Copy README file
+if [ "$RELEASE_TYPE" = "nightly" ]; then
+  echo "Step 6: Copying README file..."
+else
+  echo "Step 5: Copying README file..."
+fi
+cp docs/readmes/README_cli.md "$RELEASE_DIR/README.md"
+
+# Step 7: Cleanup and success message
 echo "=== CLI Release Created Successfully ==="
 echo "Release location: $RELEASE_DIR"
 echo ""
