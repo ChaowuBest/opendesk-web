@@ -14,9 +14,12 @@ import { defaultSelectListTheme, defaultEditorTheme } from "../../tui/theme";
 import type { OpenDeskTUI } from "../../tui/entry";
 import { ApplicationRegistry } from "../../applications/registry";
 import { LLM } from "../../aikernel/llm.js";
-import { UserMessage } from "../../aikernel/messages.js";
+import { UserMessage, ChatContext, AssistantMessage, AssistantResponse, SystemMessage } from "../../aikernel/messages.js";
+import { BaseTool, BaseToolset } from "../../aikernel/tool.js";
 import { logger } from "../../utils/logger.js";
 import chalk from "chalk";
+import { z } from "zod";
+import { jsonrepair } from "jsonrepair";
 
 
 // ━━━ 邮箱配色 ━━━
@@ -57,7 +60,7 @@ interface EmailContent {
     attachments: Array<{ filename: string; path: string }>;
 }
 
-type MailViewState = 'loading' | 'list' | 'detail' | 'compose';
+type MailViewState = 'loading' | 'list' | 'detail' | 'compose' | 'assistant' | 'assistant-result';
 type FilterType = 'all' | 'unread' | 'starred' | 'draft' | 'sent';
 type ComposeType = 'reply' | 'replyall' | 'new';
 
@@ -74,6 +77,90 @@ const FILTERS: FilterDef[] = [
     { key: '4', value: 'draft', label: '草稿' },
     { key: '5', value: 'sent', label: '已发送' },
 ];
+
+// ━━━ 邮件助手工具（供模型调用） ━━━
+
+const GetEmailListArgsSchema = z.object({
+    offset: z.number().optional().describe('从第几条开始，默认 0'),
+    limit: z.number().optional().describe('最多返回条数，默认 20'),
+});
+const getEmailListTool = new BaseTool(
+    'getEmailList',
+    '获取当前邮箱的邮件列表。返回每封邮件的 uid、主题、发件人、日期、是否未读等，用于列举或查找邮件。',
+    GetEmailListArgsSchema,
+);
+getEmailListTool.setExecutor(async (args) => {
+    const offset = args.offset ?? 0;
+    const limit = args.limit ?? 20;
+    const data = await callMailWorker('getEmailHeaderList', offset, limit);
+    const emails: EmailHeader[] = Array.isArray(data) ? data : [];
+    if (emails.length === 0) {
+        return JSON.stringify({ total: 0, emails: [], message: '暂无邮件' });
+    }
+    const items = emails.map((e: EmailHeader) => ({
+        uid: e.uid,
+        subject: e.subject || '(无主题)',
+        from: formatSender(e.from),
+        date: new Date(e.date).toISOString(),
+        unread: e.unread,
+        starred: e.starred,
+        type: e.type,
+    }));
+    return JSON.stringify({ total: items.length, emails: items });
+});
+
+const GetEmailContentArgsSchema = z.object({
+    uid: z.string().describe('邮件唯一标识 uid，从 getEmailList 或 searchEmails 结果中获取'),
+});
+const getEmailContentTool = new BaseTool(
+    'getEmailContent',
+    '获取指定 uid 的邮件完整内容（主题、发件人、收件人、日期、正文纯文本）。用于查看邮件详情或做摘要。',
+    GetEmailContentArgsSchema,
+);
+getEmailContentTool.setExecutor(async (args) => {
+    const content = await callMailWorker('getEmailContent', args.uid);
+    if (!content) {
+        return JSON.stringify({ error: '未找到该邮件' });
+    }
+    const text = (content.textContent && content.textContent.trim()) || stripHtml(content.htmlContent || '');
+    return JSON.stringify({
+        uid: args.uid,
+        textContent: text.slice(0, 5000),
+        fullLength: text.length,
+    });
+});
+
+const SearchEmailsArgsSchema = z.object({
+    subject: z.string().optional().describe('按主题关键词搜索（模糊匹配）'),
+    general: z.string().optional().describe('在主题、发件人、正文中搜索的关键词'),
+    limit: z.number().optional().describe('最多返回条数，默认 50'),
+    offset: z.number().optional().describe('跳过前 N 条'),
+});
+const searchEmailsTool = new BaseTool(
+    'searchEmails',
+    '按条件搜索邮件。可按主题(subject)、或通用关键词(general)在主题/发件人/正文中搜索。返回与 getEmailList 相同结构的列表。',
+    SearchEmailsArgsSchema,
+);
+searchEmailsTool.setExecutor(async (args) => {
+    const query: any = { limit: args.limit ?? 50, offset: args.offset ?? 0 };
+    if (args.subject) query.subject = args.subject;
+    if (args.general) query.general = args.general;
+    const data = await callMailWorker('searchEmails', query);
+    const emails: EmailHeader[] = Array.isArray(data) ? data : [];
+    const items = emails.map((e: EmailHeader) => ({
+        uid: e.uid,
+        subject: e.subject || '(无主题)',
+        from: formatSender(e.from),
+        date: new Date(e.date).toISOString(),
+        unread: e.unread,
+        starred: e.starred,
+        type: e.type,
+    }));
+    return JSON.stringify({ total: items.length, emails: items });
+});
+
+const mailAssistantToolset = new BaseToolset('mailbox');
+mailAssistantToolset.addTools(getEmailListTool, getEmailContentTool, searchEmailsTool);
 
 // ━━━ Worker 通信助手 ━━━
 
@@ -190,6 +277,14 @@ export class MailOverlay implements Component {
     private composeSending = false;
     private aiSpinnerTimer?: ReturnType<typeof setInterval>;
     private aiSpinnerFrame = 0;
+
+    // 助手模式
+    private assistantPromptInput?: Input;
+    private assistantResult = '';
+    private assistantBusy = false;
+    private assistantResultScrollOffset = 0;
+    private assistantResultTotalLines = 0;
+    private assistantResultVisibleLines = 0;
 
     constructor(openDeskTUI: OpenDeskTUI) {
         this.openDeskTUI = openDeskTUI;
@@ -350,6 +445,33 @@ export class MailOverlay implements Component {
                 this.cycleAccount();
                 return { consume: true };
             }
+            if (data === 'p' || data === 'P') {
+                this.enterAssistantMode();
+                return { consume: true };
+            }
+        }
+
+        if (this.state === 'assistant') {
+            if (matchesKey(data, Key.escape)) {
+                this.exitAssistantMode();
+                return { consume: true };
+            }
+            if (matchesKey(data, Key.enter)) {
+                const query = this.assistantPromptInput?.getValue()?.trim() || '';
+                if (query) {
+                    this.runAssistant(query);
+                }
+                return { consume: true };
+            }
+            return undefined;
+        }
+
+        if (this.state === 'assistant-result') {
+            // 任意键返回列表
+            this.assistantResult = '';
+            this.assistantResultScrollOffset = 0;
+            this.buildEmailList();
+            return { consume: true };
         }
         return undefined;
     }
@@ -683,6 +805,105 @@ export class MailOverlay implements Component {
         }
     }
 
+    // ──────────────────── 助手模式 ────────────────────
+
+    private enterAssistantMode() {
+        this.assistantPromptInput = new Input();
+        this.assistantPromptInput.setValue('');
+        this.assistantResult = '';
+        this.assistantBusy = false;
+        this.state = 'assistant';
+        this.openDeskTUI.tui.setFocus(this.assistantPromptInput);
+        this.openDeskTUI.tui.requestRender();
+    }
+
+    private exitAssistantMode() {
+        this.assistantPromptInput = undefined;
+        this.assistantResult = '';
+        this.assistantBusy = false;
+        this.state = 'list';
+        this.openDeskTUI.tui.setFocus(this.emailList!);
+        this.openDeskTUI.tui.requestRender();
+    }
+
+    private async runAssistant(userInput: string) {
+        this.assistantBusy = true;
+        this.openDeskTUI.tui.setFocus(null);
+        this.openDeskTUI.tui.requestRender();
+
+        try {
+            const ctx = new ChatContext();
+            ctx.system_prompt = new SystemMessage(
+                '你是邮件助手。用户会在 TUI 邮件界面中描述需求，例如：查找最近关于某主题的邮件、对某封邮件做摘要、列出最近 N 封邮件等。\n' +
+                '你可以调用工具：\n' +
+                '- mailbox-getEmailList: 获取邮件列表（offset, limit）\n' +
+                '- mailbox-getEmailContent: 根据 uid 获取邮件正文\n' +
+                '- mailbox-searchEmails: 按 subject 或 general 关键词搜索邮件\n' +
+                '根据用户意图先调用相应工具获取数据，再给出简洁清晰的中文回答。若用户要求摘要，先 getEmailList 或 searchEmails 定位邮件，再用 getEmailContent 取正文后总结。'
+            );
+            ctx.attachToolsets(mailAssistantToolset);
+            ctx.appendMessage(new UserMessage(userInput));
+
+            let lastText = '';
+            for (;;) {
+                const resp: AssistantResponse = await LLM.complete(ctx);
+                ctx.appendMessage(resp.content);
+
+                if (resp.finish_reason === 'tool_calls') {
+                    for (const part of resp.content.content) {
+                        if (part.type !== 'tool_call') continue;
+                        for (const tc of part.toolcalls) {
+                            const tool = ctx.getTool(tc.tool_name);
+                            if (!tool) {
+                                tc.status = 'error';
+                                tc.result = `未知工具: ${tc.tool_name}`;
+                                continue;
+                            }
+                            tc.setTool(tool);
+                            let args: any;
+                            try {
+                                args = tc.args_string ? JSON.parse(jsonrepair(tc.args_string)) : {};
+                            } catch (e) {
+                                tc.status = 'error';
+                                tc.result = (e as Error).message;
+                                continue;
+                            }
+                            tc.status = 'running';
+                            try {
+                                const result = await tool.execute(args);
+                                tc.status = result.status;
+                                tc.result = result.result;
+                            } catch (e) {
+                                tc.status = 'error';
+                                tc.result = (e as Error).message;
+                            }
+                        }
+                    }
+                    continue;
+                }
+
+                for (const part of resp.content.content) {
+                    if (part.type === 'text') lastText = part.text;
+                }
+                break;
+            }
+
+            this.assistantResult = lastText.trim() || '（无回复内容）';
+            this.state = 'assistant-result';
+            this.assistantResultScrollOffset = 0;
+            const lines = this.assistantResult.split('\n');
+            this.assistantResultTotalLines = lines.length;
+            this.assistantResultVisibleLines = Math.max(3, this.openDeskTUI.tui.terminal.rows - 10);
+        } catch (err: any) {
+            logger.error(`邮件助手失败: ${err}`);
+            this.assistantResult = `助手出错: ${err?.message || '未知错误'}`;
+            this.state = 'assistant-result';
+        } finally {
+            this.assistantBusy = false;
+            this.openDeskTUI.tui.requestRender();
+        }
+    }
+
     // ──────────────────── 撰写/回复邮件 ────────────────────
 
     private startCompose(type: ComposeType) {
@@ -884,6 +1105,39 @@ export class MailOverlay implements Component {
                 break;
             }
 
+            case 'assistant': {
+                this.box.addChild(new MailHeaderBar(this.currentAccount, this.isSyncing));
+                this.box.addChild(new Text(''));
+                this.box.addChild(new Text(MC.dim('  描述你的需求，例如：查找最近关于「周报」的邮件；对第3封邮件做摘要。')));
+                this.box.addChild(new Text(''));
+                if (this.assistantBusy) {
+                    this.box.addChild(new Text(MC.neon('  ⟳ 正在处理…')));
+                    this.box.addChild(new VerticalFiller('', availableForContent - 8));
+                } else if (this.assistantPromptInput) {
+                    this.box.addChild(this.assistantPromptInput);
+                    this.box.addChild(new VerticalFiller('', availableForContent - 8));
+                }
+                this.box.addChild(new Text(''));
+                this.box.addChild(new AssistantFooter());
+                break;
+            }
+
+            case 'assistant-result': {
+                this.box.addChild(new MailHeaderBar(this.currentAccount, this.isSyncing));
+                this.box.addChild(new Text(''));
+                this.box.addChild(new Text(MC.neonBold('  邮件助手 回复')));
+                this.box.addChild(new SeparatorLine('─'));
+                const resultLines = this.assistantResult.split('\n');
+                const visibleH = Math.max(3, availableForContent - 8);
+                const start = Math.min(this.assistantResultScrollOffset, Math.max(0, resultLines.length - visibleH));
+                for (let i = start; i < Math.min(start + visibleH, resultLines.length); i++) {
+                    this.box.addChild(new Text('  ' + sanitizeLine(resultLines[i] || ' ')));
+                }
+                this.box.addChild(new Text(''));
+                this.box.addChild(new Text(MC.dim('  按任意键返回列表')));
+                break;
+            }
+
             case 'detail': {
                 const metaH = this.computeMetadataLineCount();
                 // fixed = header(3) + blank(1) + meta(metaH) + blank(1) + sep(1) + sep(1) + footer(1)
@@ -1072,11 +1326,23 @@ class ListFooter implements Component {
             MC.neon('c') + MC.dim(' 写信'),
             MC.neon('1-5') + MC.dim(' 筛选'),
             MC.neon('s') + MC.dim(' 同步'),
+            MC.neon('p') + MC.dim(' 助手'),
         ];
         if (this.multiAccount) {
             hints.push(MC.neon('a') + MC.dim(' 切换账号'));
         }
         hints.push(MC.neon('ESC') + MC.dim(' 关闭'));
+        return [truncateToWidth('  ' + hints.join('   '), width, '…')];
+    }
+}
+
+class AssistantFooter implements Component {
+    invalidate() { }
+    render(width: number): string[] {
+        const hints = [
+            MC.neon('Enter') + MC.dim(' 发送'),
+            MC.neon('ESC') + MC.dim(' 返回'),
+        ];
         return [truncateToWidth('  ' + hints.join('   '), width, '…')];
     }
 }
