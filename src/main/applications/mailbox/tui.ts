@@ -62,7 +62,7 @@ interface EmailContent {
 
 type MailViewState = 'loading' | 'list' | 'detail' | 'compose' | 'assistant' | 'assistant-result' | 'search' | 'search-list';
 type FilterType = 'all' | 'unread' | 'starred' | 'draft' | 'sent';
-type ComposeType = 'reply' | 'replyall' | 'new';
+type ComposeType = 'reply' | 'replyall' | 'new' | 'forward';
 
 interface FilterDef {
     key: string;
@@ -426,6 +426,11 @@ export class MailOverlay implements Component {
                 this.startCompose('replyall');
                 return { consume: true };
             }
+            // w 转发
+            if (data === 'w' || data === 'W') {
+                this.startCompose('forward');
+                return { consume: true };
+            }
             // d 删除
             if (data === 'd') {
                 this.handleDetailAction('delete');
@@ -673,12 +678,12 @@ export class MailOverlay implements Component {
             const data = await callMailWorker('searchEmails', searchQuery);
             const emails: EmailHeader[] = Array.isArray(data) ? data : [];
             emails.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-            
+
             // 保存原始邮件列表以便退出搜索时恢复
             this.originalEmails = this.emails;
             this.searchResults = emails;
             this.emails = emails;
-            
+
             this.buildEmailList(true);
         } catch (err: any) {
             logger.error(`搜索邮件失败：${err}`);
@@ -707,13 +712,13 @@ export class MailOverlay implements Component {
         this.searchQuery = '';
         this.searchInput = undefined;
         this.searchResults = [];
-        
+
         // 恢复原始邮件列表
         if (this.originalEmails.length > 0) {
             this.emails = this.originalEmails;
             this.originalEmails = [];
         }
-        
+
         this.state = 'list';
         this.buildEmailList(false);
         this.openDeskTUI.tui.setFocus(this.emailList!);
@@ -1103,7 +1108,11 @@ export class MailOverlay implements Component {
             this.composeCcInput = new Input();
             this.composeCcInput.setValue((this.selectedEmail.cc || []).map(a => a.address).join(', '));
             this.composeSubjectInput.setValue('答复全部: ' + (this.selectedEmail.subject || ''));
-        } else {
+        } else if (type === 'forward' && this.selectedEmail) {
+            // 新增：转发逻辑
+            this.composeToInput.setValue('');
+            this.composeSubjectInput.setValue('转发: ' + (this.selectedEmail.subject || ''));
+        }else {
             // 'new' — 空白邮件
             this.composeToInput.setValue('');
             this.composeSubjectInput.setValue('');
@@ -1118,7 +1127,7 @@ export class MailOverlay implements Component {
         this.composeEditor.setText('');
 
         // 回复/回复全部时，构建原始邮件引用（不放入编辑器，单独渲染在编辑器下方）
-        if ((type === 'reply' || type === 'replyall') && this.selectedEmail && this.selectedEmailContent) {
+        if ((type === 'reply' || type === 'replyall'|| type === 'forward') && this.selectedEmail && this.selectedEmailContent) {
             this.composeQuotedText = this.buildQuotedText(this.selectedEmail, this.selectedEmailContent);
             this.composeQuoteScrollOffset = 0;
         } else {
@@ -1129,7 +1138,7 @@ export class MailOverlay implements Component {
         this.state = 'compose';
 
         // 新邮件焦点从收件人开始；回复焦点直接到编辑器
-        if (type === 'new') {
+        if (type === 'new' ) {
             this.composeFocusIdx = 0;
             this.openDeskTUI.tui.setFocus(this.composeToInput);
         } else {
@@ -1162,7 +1171,7 @@ export class MailOverlay implements Component {
 
             // 生成 HTML：回复/回复全部时附带原始邮件引用
             let html = '';
-            if ((this.composeType === 'reply' || this.composeType === 'replyall')
+            if ((this.composeType === 'reply' || this.composeType === 'replyall' || this.composeType === 'forward')
                 && this.selectedEmail && this.selectedEmailContent) {
                 html = this.buildReplyHtml(replyBody, this.selectedEmail, this.selectedEmailContent);
             } else {
@@ -1513,6 +1522,7 @@ export class MailOverlay implements Component {
 
                 const typeLabel = this.composeType === 'new' ? '写信'
                     : this.composeType === 'replyall' ? '回复全部'
+                    : this.composeType === 'forward' ? '转发邮件'
                         : '回复邮件';
                 this.box.addChild(new ComposeHeaderBar(typeLabel, this.composeSending, this.isAiGenerating));
                 if (this.composeToInput) {
@@ -2035,6 +2045,7 @@ class DetailFooter implements Component {
         // 操作提示
         hints.push(MC.neon('r') + MC.dim(' 回复'));
         hints.push(MC.neon('R') + MC.dim(' 全部回复'));
+        hints.push(MC.neon('w') + MC.dim(' 转发'));
         if (this.email) {
             hints.push(MC.neon('f') + MC.dim(this.email.starred ? ' 取消收藏' : ' 收藏'));
         }
