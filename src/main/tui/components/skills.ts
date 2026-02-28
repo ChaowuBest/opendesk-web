@@ -42,6 +42,7 @@ export class SkillsOverlay implements Component {
     private loading = false;
     private removeInputListener?: () => void;
     private messageTimeout?: NodeJS.Timeout;
+    private overlayHandle?: any;
 
     constructor(openDeskTUI: OpenDeskTUI) {
         this.openDeskTUI = openDeskTUI;
@@ -416,7 +417,11 @@ export class SkillsOverlay implements Component {
         };
 
         this.list.onCancel = () => {
-            this.goBack();
+            if (this.state === 'main') {
+                this.close();
+            } else {
+                this.goBack();
+            }
         };
     }
 
@@ -497,7 +502,11 @@ export class SkillsOverlay implements Component {
 
         this.removeInputListener = this.openDeskTUI.tui.addInputListener((data: string) => {
             if (matchesKey(data, Key.escape)) {
-                this.goBack();
+                if (this.state === 'main') {
+                    this.close();
+                } else {
+                    this.goBack();
+                }
                 return { consume: true };
             }
             return undefined;
@@ -517,9 +526,25 @@ export class SkillsOverlay implements Component {
             case 'search-results':
                 this.showSearch();
                 break;
+            case 'main':
+                this.close();
+                break;
             default:
-                this.showMain();
+                this.close();
         }
+    }
+
+    private close() {
+        if (!this.overlayHandle) return;
+        
+        const handle = this.overlayHandle;
+        this.overlayHandle = undefined;
+        
+        this.openDeskTUI.hasOpenOverlay = false;
+        handle.hide();
+        
+        this.cleanup();
+        this.openDeskTUI.tui.setFocus(this.openDeskTUI.inputArea.input);
     }
 
     private renderBox() {
@@ -583,7 +608,7 @@ export class SkillsOverlay implements Component {
         const overlayWidth = Math.min(80, terminalWidth - 4);
         const overlayMaxHeight = Math.max(10, terminalHeight - 4);
 
-        const handle = this.openDeskTUI.tui.showOverlay(this, {
+        this.overlayHandle = this.openDeskTUI.tui.showOverlay(this, {
             width: overlayWidth,
             maxHeight: overlayMaxHeight,
             anchor: "center",
@@ -594,10 +619,12 @@ export class SkillsOverlay implements Component {
             this.showMain();
         });
 
-        handle.onHide = () => {
-            this.cleanup();
-            this.openDeskTUI.hasOpenOverlay = false;
-            this.openDeskTUI.tui.setFocus(this.openDeskTUI.inputArea.input);
+        this.overlayHandle.onHide = () => {
+            if (this.overlayHandle) {
+                this.cleanup();
+                this.openDeskTUI.hasOpenOverlay = false;
+                this.openDeskTUI.tui.setFocus(this.openDeskTUI.inputArea.input);
+            }
         };
     }
 }
