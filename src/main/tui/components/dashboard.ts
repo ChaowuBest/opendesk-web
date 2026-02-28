@@ -264,9 +264,11 @@ class DashboardRenderer implements Component {
             }
         }
 
+        // 优先显示 title，如果没有则显示 content（兼容旧数据）
+        const displayText = todo.title || todo.content;
         const content = todo.status === 'completed'
-            ? chalk.strikethrough(C.dim(todo.content))
-            : C.text(todo.content);
+            ? chalk.strikethrough(C.dim(displayText))
+            : C.text(displayText);
 
         // 计算布局: icon pTag content ... triggerTag
         const leftPart = `  ${icon} ${pTag} ${content}`;

@@ -11,9 +11,11 @@
 
 import { BaseApplication } from "../base";
 import { BaseToolset } from "../../aikernel/tool";
+import { Skill } from "../../aikernel/skill.js";
 import { z } from 'zod';
 import { TodoWriteTool, AddGlobalTodoTool, UpdateGlobalTodoTool, ListGlobalTodosTool, DeleteGlobalTodoTool, GetCurrentTimeTool } from './tools';
 import TodoMgrWorker from "./worker";
+import { MANAGE_GLOBAL_TODOS_SKILL } from "./skills.js";
 
 
 export class TodoMgrApplication extends BaseApplication {
@@ -35,21 +37,25 @@ export class TodoMgrApplication extends BaseApplication {
         // ========== getCurrentTime 工具 ==========
         toolset.addTool(new GetCurrentTimeTool());
 
-        // ========== TodoWrite 工具 ==========
+        // ========== TodoWrite 工具（任务级待办） ==========
         toolset.addTool(new TodoWriteTool(this));
 
-        // ========== addGlobalTodo 工具 ==========
-        toolset.addTool(new AddGlobalTodoTool(this));
-
-        // ========== updateGlobalTodo 工具 ==========
-        toolset.addTool(new UpdateGlobalTodoTool(this));
-
-        // ========== listGlobalTodos 工具 ==========
-        toolset.addTool(new ListGlobalTodosTool(this));
-
-        // ========== deleteGlobalTodo 工具 ==========
-        toolset.addTool(new DeleteGlobalTodoTool(this));
-
         return [toolset];
+    }
+
+    async getSkills(): Promise<Skill[]> {
+        const manageGlobalTodosSkill = Skill.parseMd(MANAGE_GLOBAL_TODOS_SKILL);
+        const globalTodosToolset = new BaseToolset('global-todos');
+
+        // 全局待办管理工具作为 skill 的内置工具
+        globalTodosToolset.addTool(new GetCurrentTimeTool());
+        globalTodosToolset.addTool(new AddGlobalTodoTool(this));
+        globalTodosToolset.addTool(new UpdateGlobalTodoTool(this));
+        globalTodosToolset.addTool(new ListGlobalTodosTool(this));
+        globalTodosToolset.addTool(new DeleteGlobalTodoTool(this));
+
+        manageGlobalTodosSkill.toolsets = [globalTodosToolset];
+
+        return [manageGlobalTodosSkill];
     }
 }

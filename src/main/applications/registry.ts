@@ -17,13 +17,15 @@ import { addLine as addCliLogLine } from "../utils/cliLogStore.js";
 import { NotificationManager } from "../utils/notificationmgr.js";
 import { getPlatform } from "../../platforms/base.js";
 import { Worker } from "worker_threads";
-import { Skill, SkillRegistry } from "../aikernel/skill.js";
+import { SkillRegistry } from "../aikernel/skill.js";
+import { type Privileges, type ProtocolRequest } from 'electron';
+import { TodoTrigger } from "./todomgr/common.js";
 
 
 export type ProtocolHandlerEntry = {
     scheme: string;
-    privileges?: Electron.Privileges;
-    handler: (request: Electron.ProtocolRequest) => Response | Promise<Response>;
+    privileges?: Privileges;
+    handler: (request: ProtocolRequest) => Response | Promise<Response>;
 };
 
 
@@ -46,7 +48,7 @@ export class ApplicationRegistry {
     /**
      * 当触发器触发待办任务时的回调（由 TUI 或 Electron 主进程设置）
      */
-    static onTriggerTask?: (todoId: string, todoContent: string, trigger: any) => void;
+    static onTriggerTask?: (todoId: string, todoTitle: string, todoContent: string, trigger: TodoTrigger) => void;
 
     /**
      * 注册就绪回调。如果应用注册表已就绪，则立即执行；否则加入队列等待。
@@ -181,7 +183,7 @@ export class ApplicationRegistry {
             ApplicationRegistry.pendingRequests.delete(requestId);
             return { status: 'ok', data: data };
         } catch (error) {
-            return { status: 'error', message: error.message };
+            return { status: 'error', message: String(error) };
         }
     }
 };
@@ -210,6 +212,7 @@ export function notifyWorkerSettingUpdate(settingData: object) {
 export function initializeRegistry() {
     // 注册所有应用实例
     for (const APPLICATION_CLASS of getPlatform().getApplicationClasses()) {
+        // @ts-ignore 这个地方后边再改 ...
         const appInstance = new APPLICATION_CLASS();
         if (!ApplicationRegistry.applications.has(appInstance.bundleName)) {
             ApplicationRegistry.registerApplication(appInstance);
@@ -302,9 +305,9 @@ export function initializeRegistryWorker() {
                 break;
             }
             case 'triggerTodoTask': {
-                const { todoId, todoContent, trigger } = event;
+                const { todoId, todoTitle, todoContent, trigger } = event;
                 logger.info(`收到触发器任务请求: todo=${todoId}`);
-                ApplicationRegistry.onTriggerTask?.(todoId, todoContent, trigger);
+                ApplicationRegistry.onTriggerTask?.(todoId, todoTitle, todoContent, trigger);
                 break;
             }
             case 'emailListUpdated': {

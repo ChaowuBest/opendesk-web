@@ -24,10 +24,31 @@ import { TodoList } from "./components/todolist";
 import { ConfigMainPage } from "./components/config/configMain";
 import { getTaskTodosForDisplay } from "../applications/todomgr/tools";
 import { exportTaskToHtml } from "../utils/export";
+
+import format from "string-template";
 import path from "path";
 import fs from "fs";
 import chalk from "chalk";
 
+
+const TODO_HANDLER_TEMPLATE = `
+请执行以下全局待办事项：
+
+- 待办事项ID: {todoId}
+- 待办事项标题：{todoTitle}
+- 待办事项触发方式：{todoTrigger}
+
+待办事项内容
+---
+
+{todoContent}
+
+注意事项
+---
+1. 这条消息是由待办事项管理器自动创建的，你的回复应当专注于完成用户在待办事项中指定的任务;
+2. 待办事项的所有信息已经告诉你了，不需要尝试获取待办事项的更多信息，你也**不需要**将待办事项标记为已完成；
+3. 如果周期型待办事项无法成功完成，你应当检查过往的执行历史，如果失败次数过多，应当提醒用户取消待办事项；
+`;
 
 export interface CommandLineArgs {
     workspace: string;
@@ -156,7 +177,7 @@ export class OpenDeskTUI {
      * 设置全局待办触发器的任务创建回调
      */
     private setupTriggerTaskHandler(): void {
-        ApplicationRegistry.onTriggerTask = async (todoId: string, todoContent: string, trigger: any) => {
+        ApplicationRegistry.onTriggerTask = async (todoId: string, todoTitle: string, todoContent: string, trigger: any) => {
             try {
                 const task = this.taskManagerState.createTask(this.model);
                 const systemPrompt = await this.agentDecl.createSystemPrompt();
@@ -164,15 +185,20 @@ export class OpenDeskTUI {
 
                 let triggerInfo = '';
                 if (trigger?.type === 'event') {
-                    triggerInfo = `[由事件 ${trigger.bundleName}:${trigger.eventName} 自动触发] `;
+                    triggerInfo = `[event] 事件驱动任务，由事件 ${trigger.bundleName}:${trigger.eventName} 自动触发 `;
                 } else if (trigger?.type === 'scheduled') {
-                    triggerInfo = `[定时自动触发] `;
+                    triggerInfo = `[scheduled] 定时任务，仅执行一次 `;
                 } else if (trigger?.type === 'cron') {
-                    triggerInfo = `[定期自动触发: ${trigger.cronExpression}] `;
+                    triggerInfo = `[cron] 定时任务, 触发时机为 ${trigger.cronExpression} `;
                 }
 
                 logger.info(`触发器创建任务: ${todoId} -> task ${task.task_id}`);
-                await task.submitUserMessage(`${triggerInfo}请执行以下全局待办事项（ID: ${todoId}）：${todoContent}`);
+                await task.submitUserMessage(format(TODO_HANDLER_TEMPLATE, {
+                    todoId: todoId,
+                    todoTitle: todoTitle,
+                    todoContent: todoContent,
+                    todoTrigger: triggerInfo
+                }));
             } catch (err) {
                 logger.error(`触发器任务创建失败: ${err}`);
             }
@@ -582,7 +608,7 @@ export class OpenDeskTUI {
             failed: '✖ 异常中断',
         };
 
-        const overlayWidth = Math.floor(this.tui.terminal.columns * 0.6);
+        const overlayWidth = this.tui.terminal.columns;
         const contentWidth = overlayWidth - 6;
 
         const items = [...tasks].reverse().map(t => {
@@ -609,7 +635,7 @@ export class OpenDeskTUI {
         box.addChild(list);
 
         const handle = this.tui.showOverlay(box, {
-            width: "60%",
+            width: "100%",
             maxHeight: "50%",
             anchor: "center",
         });
