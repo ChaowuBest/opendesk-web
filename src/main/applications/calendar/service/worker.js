@@ -84,6 +84,43 @@ class CalendarWorker extends BaseWorker {
         return result;
     }
 
+    /**
+     * @param {object} item
+     * @param {string} item.subject
+     * @param {number} item.startTime
+     * @param {number} item.endTime
+     * @param {string} [item.location]
+     * @param {boolean} [item.isAllDay]
+     * @returns {Promise<z.output<CalendarItemSchema>>}
+     */
+    async addCalendarItem(item) {
+        const doc = CalendarItemSchema.parse({
+            uid: `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+            subject: item.subject,
+            startTime: item.startTime,
+            endTime: item.endTime,
+            location: item.location || '',
+            isAllDay: item.isAllDay ?? false,
+            isCancelled: false,
+        });
+        await this.db.insert(doc);
+        logger.info(`added calendar item: ${doc.uid} - ${doc.subject}`);
+        return doc;
+    }
+
+    /**
+     * @param {string} uid
+     * @returns {Promise<{deleted: boolean, uid: string}>}
+     */
+    async deleteCalendarItem(uid) {
+        const numRemoved = await this.db.remove({ uid }, {});
+        if (numRemoved === 0) {
+            throw new Error(`未找到 uid 为 "${uid}" 的日程项`);
+        }
+        logger.info(`deleted calendar item: ${uid}`);
+        return { deleted: true, uid };
+    }
+
     async initialize() {
         await this.loadDatabase();
         const syncImmediately = async () => {

@@ -10,10 +10,12 @@
  */
 
 import { BaseApplication } from "../base";
-import { BaseToolset, BaseTool } from "../../aikernel/tool";
+import { BaseToolset } from "../../aikernel/tool";
 import { z } from 'zod';
 import { logger } from "../../utils/logger.js";
 import CalendarWorker from "./service/worker";
+import { CalendarOverlay } from "./tui";
+import { GetCalendarItemsTool, AddCalendarItemTool, DeleteCalendarItemTool } from "./tools";
 
 
 class CalendarApplication extends BaseApplication {
@@ -36,38 +38,33 @@ class CalendarApplication extends BaseApplication {
         });
     }
 
+    getCliSlashCommands(tui) {
+        return [
+            {
+                name: 'calendar',
+                description: '打开日历',
+                execute: async () => {
+                    try {
+                        const calendarOverlay = new CalendarOverlay(tui);
+                        await calendarOverlay.show();
+                    } catch (err) {
+                        logger.error(`打开日历失败: ${err}`);
+                    }
+                },
+            },
+        ];
+    }
+
     /**
      * Get the toolsets for the calendar application
      * @returns {Promise<BaseToolset[]>}
      */
     async getToolsets() {
-        let calendarToolset = new BaseToolset('calendar');
-        let getCalendarItemsTool = new BaseTool(
-            'getCalendarItems',
-            '获取指定日期的日程安排和会议列表（注：交流，研讨，培训等各种广义的日程安排也包含在内）',
-            z.object({
-                dateString: z.string().describe('日期字符串，格式为YYYY-MM-DD')
-            })
-        );
-        getCalendarItemsTool.setExecutor(async (args) => {
-            let items = await this.callWorker('getCalendarItems', args.dateString);
-            if (items.status !== 'ok') {
-                return `错误: 无法获取日程信息: ${items.message}`;
-            }
+        const calendarToolset = new BaseToolset('calendar');
 
-            let result = `在${args.dateString}的日程安排列表为: \n`;
-            for (let item of items.data) {
-                result += `- ${item.subject}\n`;
-                result += `  - 开始时间: ${new Date(item.startTime).toLocaleString()}\n`;
-                result += `  - 结束时间: ${new Date(item.endTime).toLocaleString()}\n`;
-                if (item.location) {
-                    result += `  - 地点: ${item.location}\n`;
-                }
-            }
-            logger.info(`getCalendarItemsTool: ${result}`);
-            return result;
-        });
-        calendarToolset.addTool(getCalendarItemsTool);
+        calendarToolset.addTool(new GetCalendarItemsTool(this));
+        calendarToolset.addTool(new AddCalendarItemTool(this));
+        calendarToolset.addTool(new DeleteCalendarItemTool(this));
 
         return [calendarToolset];
     }
