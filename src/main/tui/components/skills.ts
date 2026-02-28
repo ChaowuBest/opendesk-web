@@ -22,6 +22,7 @@ type ViewState =
     | 'search'
     | 'search-results'
     | 'install-local'
+    | 'install-zip'
     | 'install-url'
     | 'install-github'
     | 'install-clawhub'
@@ -96,6 +97,7 @@ export class SkillsOverlay implements Component {
         const items = [
             { value: 'search', label: chalk.cyan('🔍 从 Registry 搜索技能') },
             { value: 'install-local', label: chalk.green('📁 从本地目录添加') },
+            { value: 'install-zip', label: chalk.green('📦 从本地 zip 添加') },
             { value: 'install-url', label: chalk.blue('🌐 从 URL 添加') },
             { value: 'install-github', label: chalk.magenta('📦 从 GitHub 添加') },
             { value: 'install-clawhub', label: chalk.yellow('⚡ 从 ClawHub 添加') },
@@ -221,6 +223,50 @@ export class SkillsOverlay implements Component {
         } catch (e: any) {
             this.showMessage(e?.message || '添加失败', true);
             this.showInstallLocal();
+        } finally {
+            this.setLoading(false);
+        }
+    }
+
+    private showInstallZip() {
+        this.cleanup();
+        this.state = 'install-zip';
+        this.list = undefined;
+
+        this.input = new Input();
+        this.input.setValue(this.selectedInputValue);
+        this.input.onSubmit = () => {
+            this.performInstallZip().catch(err => {
+                console.error('Install zip error:', err);
+            });
+        };
+
+        this.setupInputHandlers();
+        this.renderBox();
+        this.openDeskTUI.tui.setFocus(this.input);
+    }
+
+    private async performInstallZip() {
+        const path = this.input?.getValue().trim() || '';
+        if (!path) {
+            this.showMessage('请输入 zip 文件路径', true);
+            return;
+        }
+
+        this.setLoading(true);
+        try {
+            const result = SkillRegistry.addSkillFromZipPath(path);
+            if (result.success) {
+                this.showMessage(`成功添加技能: ${result.name}`);
+                await this.loadInstalledSkills();
+                this.showMain();
+            } else {
+                this.showMessage(result.error || '添加失败', true);
+                this.showInstallZip();
+            }
+        } catch (e: any) {
+            this.showMessage(e?.message || '添加失败', true);
+            this.showInstallZip();
         } finally {
             this.setLoading(false);
         }
@@ -433,6 +479,9 @@ export class SkillsOverlay implements Component {
             case 'install-local':
                 this.showInstallLocal();
                 break;
+            case 'install-zip':
+                this.showInstallZip();
+                break;
             case 'install-url':
                 this.showInstallUrl();
                 break;
@@ -517,6 +566,7 @@ export class SkillsOverlay implements Component {
         switch (this.state) {
             case 'search':
             case 'install-local':
+            case 'install-zip':
             case 'install-url':
             case 'install-github':
             case 'install-clawhub':
@@ -589,6 +639,8 @@ export class SkillsOverlay implements Component {
                 return `搜索 [${this.selectedRegistry}]:`;
             case 'install-local':
                 return '输入本地目录路径:';
+            case 'install-zip':
+                return '输入本地 zip 文件路径:';
             case 'install-url':
                 return '输入技能包 URL:';
             case 'install-github':
@@ -610,6 +662,8 @@ export class SkillsOverlay implements Component {
                 return '↑↓ 选择  Enter 安装  Esc 返回';
             case 'install-local':
                 return '输入本地目录路径  Enter 添加  Esc 返回';
+            case 'install-zip':
+                return '输入本地 zip 文件路径  Enter 添加  Esc 返回';
             case 'install-url':
                 return '输入技能包 URL  Enter 添加  Esc 返回';
             case 'install-github':
