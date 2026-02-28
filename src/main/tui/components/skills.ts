@@ -574,6 +574,12 @@ export class SkillsOverlay implements Component {
             this.box.addChild(this.input);
         }
 
+        const helpText = this.getHelpText();
+        if (helpText) {
+            this.box.addChild(new Text(''));
+            this.box.addChild(new Text(chalk.dim(helpText)));
+        }
+
         this.openDeskTUI.tui.requestRender();
     }
 
@@ -589,6 +595,29 @@ export class SkillsOverlay implements Component {
                 return '输入 GitHub URL (tree 格式):';
             case 'install-clawhub':
                 return '输入 ClawHub slug (如 my-skill 或 my-skill@1.2.3):';
+            default:
+                return '';
+        }
+    }
+
+    private getHelpText(): string {
+        switch (this.state) {
+            case 'main':
+                return '↑↓ 选择  Enter 确认  Esc 退出';
+            case 'search':
+                return '输入搜索关键词  Enter 搜索  Esc 返回';
+            case 'search-results':
+                return '↑↓ 选择  Enter 安装  Esc 返回';
+            case 'install-local':
+                return '输入本地目录路径  Enter 添加  Esc 返回';
+            case 'install-url':
+                return '输入技能包 URL  Enter 添加  Esc 返回';
+            case 'install-github':
+                return '输入 GitHub URL (如 https://github.com/user/repo/tree/branch)  Enter 添加  Esc 返回';
+            case 'install-clawhub':
+                return '输入 ClawHub slug (如 my-skill 或 my-skill@1.2.3)  Enter 添加  Esc 返回';
+            case 'view-installed':
+                return '↑↓ 选择  Enter 删除  Esc 返回';
             default:
                 return '';
         }
