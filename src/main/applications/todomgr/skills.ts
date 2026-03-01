@@ -117,4 +117,19 @@ Agent：好的，我来更新这个待办的状态...
 4. **content 字段的重要性**：content 是发送给 Agent 执行的详细指令，Agent 有能力调用工具访问文件、执行命令等，因此具体需求应明确写在 content 中
 
 5. **触发器的时间计算**：设置 scheduled 触发器前，务必先调用 \`getCurrentTime\` 获取当前 UTC 时间，然后根据用户描述的时间进行计算
+
+6. **事件触发型待办**：创建事件触发型待办时，需要指定 \`bundleName\`（应用标识）和 \`eventName\`（事件名称）。可使用 \`getSupportedEvents\` 工具查询所有应用已注册的事件清单。
+
+### getSupportedEvents 获取可用事件
+
+查询所有应用已注册的事件清单，用于创建事件触发型待办事项时选择合适的触发事件。
+
+\`\`\`
+用户：我想在收到新邮件时提醒我处理
+
+Agent：让我先查看有哪些可用的事件...
+[调用 getSupportedEvents 工具]
+[发现 mailbox 应用有 newEmailCountsUpdated 事件]
+[调用 addGlobalTodo 工具，trigger: {"type": "event", "bundleName": "mailbox", "eventName": "newEmailCountsUpdated"}]
+\`\`\`
 `;

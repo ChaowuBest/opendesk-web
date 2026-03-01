@@ -13,13 +13,13 @@ import { BaseTool } from '../../aikernel/tool';
 import { ToolCall } from '../../aikernel/messages';
 import { Card, type BorderConfig } from '../../tui/components/card';
 import { statusDisplay, truncText } from '../../tui/components/toolcall';
-import chalk from 'chalk';
 import { z } from 'zod';
 import type { TaskTodo } from './common';
 import type { TaskState } from '../../states/tasks';
 import { escapeHtml } from '../../utils/escape';
+import { type TodoMgrApplication } from './app';
+import chalk from 'chalk';
 
-// ========== getCurrentTime 工具 ==========
 
 const GetCurrentTimeArgsSchema = z.object({});
 
@@ -83,7 +83,7 @@ const TriggerSchema = z.discriminatedUnion('type', [
  * @param trigger - 原始 trigger 值（可能是对象或字符串）
  * @returns 解析后的 trigger 对象，如果解析失败则返回原始值
  */
-function parseTriggerField(trigger: unknown): unknown {
+function parseTriggerField(trigger: unknown): any {
     if (trigger === undefined || trigger === null) {
         return trigger;
     }
@@ -180,9 +180,9 @@ export function getTaskTodosForDisplay(taskId: string): TaskTodo[] {
 }
 
 export class TodoWriteTool extends BaseTool<typeof TodoWriteArgsSchema> {
-    private todoMgrApp: any;
+    private todoMgrApp: TodoMgrApplication;
 
-    constructor(todoMgrApp: any) {
+    constructor(todoMgrApp: TodoMgrApplication) {
         super(
             'TodoWrite',
             '管理任务级待办事项。每次调用传入完整的待办列表来替换当前所有待办。任务级待办仅在当前任务会话中有效，严格按列表顺序执行',
@@ -328,8 +328,6 @@ export class TodoWriteTool extends BaseTool<typeof TodoWriteArgsSchema> {
     }
 }
 
-// ========== addGlobalTodo 工具 ==========
-
 /**
  * 验证 scheduled trigger 的时间格式
  * @param trigger - 触发器配置
@@ -365,9 +363,9 @@ const AddGlobalTodoArgsSchema = z.object({
 });
 
 export class AddGlobalTodoTool extends BaseTool<typeof AddGlobalTodoArgsSchema> {
-    private todoMgrApp: any;
+    private todoMgrApp: TodoMgrApplication;
 
-    constructor(todoMgrApp: any) {
+    constructor(todoMgrApp: TodoMgrApplication) {
         super(
             'addGlobalTodo',
             '添加全局待办事项，跨所有任务持久保存。可选配置触发器实现自动执行：event(事件触发)、scheduled(定时一次性)、cron(crontab重复)。注意：content 是发送给 Agent 执行的详细指令，Agent 有能力调用工具访问文件、执行命令等，因此具体需求应明确写在 content 中。',
@@ -453,9 +451,9 @@ const UpdateGlobalTodoArgsSchema = z.object({
 });
 
 export class UpdateGlobalTodoTool extends BaseTool<typeof UpdateGlobalTodoArgsSchema> {
-    private todoMgrApp: any;
+    private todoMgrApp: TodoMgrApplication;
 
-    constructor(todoMgrApp: any) {
+    constructor(todoMgrApp: TodoMgrApplication) {
         super(
             'updateGlobalTodo',
             '更新全局待办事项的标题、内容、状态、优先级、分类或触发器。设 removeTrigger 为 true 可移除触发器。**注意**: 1. 设置 scheduled 触发器时，triggerAt 必须使用 UTC 时间（如 "2026-03-01T01:00:00Z"）；2. cron 类型的待办是周期性任务，不允许标记为 completed 状态；3. content 是发送给 Agent 执行的详细指令，Agent 有能力调用工具访问文件、执行命令等。',
@@ -522,9 +520,9 @@ const ListGlobalTodosArgsSchema = z.object({
 });
 
 export class ListGlobalTodosTool extends BaseTool<typeof ListGlobalTodosArgsSchema> {
-    private todoMgrApp: any;
+    private todoMgrApp: TodoMgrApplication;
 
-    constructor(todoMgrApp: any) {
+    constructor(todoMgrApp: TodoMgrApplication) {
         super(
             'listGlobalTodos',
             '列出所有全局待办事项，支持按状态、分类和优先级筛选。',
@@ -594,9 +592,9 @@ const DeleteGlobalTodoArgsSchema = z.object({
 });
 
 export class DeleteGlobalTodoTool extends BaseTool<typeof DeleteGlobalTodoArgsSchema> {
-    private todoMgrApp: any;
+    private todoMgrApp: TodoMgrApplication;
 
-    constructor(todoMgrApp: any) {
+    constructor(todoMgrApp: TodoMgrApplication) {
         super(
             'deleteGlobalTodo',
             '删除指定的全局待办事项。',
@@ -628,5 +626,48 @@ export class DeleteGlobalTodoTool extends BaseTool<typeof DeleteGlobalTodoArgsSc
         const result = await this.todoMgrApp.callWorker('deleteGlobalTodo', args.id);
         const todo = result?.data ?? result;
         return JSON.stringify({ success: true, id: args.id, deletedTodo: todo });
+    }
+}
+
+// ========== getSupportedEvents 工具 ==========
+
+const GetSupportedEventsArgsSchema = z.object({});
+
+export class GetSupportedEventsTool extends BaseTool<typeof GetSupportedEventsArgsSchema> {
+    private todoMgrApp: TodoMgrApplication
+
+    constructor(todoMgrApp: TodoMgrApplication) {
+        super(
+            'getSupportedEvents',
+            '获取所有应用已注册的事件清单。返回一个列表，包含每个应用声明的事件名称和描述，用于创建事件触发型待办事项时选择合适的触发事件。',
+            GetSupportedEventsArgsSchema,
+        );
+        this.setExecutor(this.handleExecute.bind(this));
+        this.todoMgrApp = todoMgrApp;
+    }
+
+    renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
+        return [chalk.dim('📡 获取应用事件清单')];
+    }
+
+    private async handleExecute(): Promise<string> {
+        const applicationRegistry = this.todoMgrApp.registry;
+        if (!applicationRegistry) {
+            return "错误：未找到ApplicationRegistry，无法获取可用事件"
+        }
+        const eventsMap = await applicationRegistry.getAllSupportedEvents();
+
+        const result: { bundleName: string; eventName: string; eventDescription: string }[] = [];
+        for (const [bundleName, events] of eventsMap) {
+            for (const event of events) {
+                result.push({
+                    bundleName,
+                    eventName: event.eventName,
+                    eventDescription: event.eventDescription,
+                });
+            }
+        }
+
+        return JSON.stringify({ success: true, events: result }, null, 2);
     }
 }

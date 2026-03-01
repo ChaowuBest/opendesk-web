@@ -217,4 +217,16 @@ export class McpMgrApplication extends BaseApplication {
         mcpManageSkill.toolsets = [mcpManageToolset]
         return [mcpManageSkill];
     }
+
+    /**
+     * 获取应用能够注册的事件
+     */
+    async getSupportedEvents(): Promise<{ eventName: string; eventDescription: string }[]> {
+        return [
+            {
+                eventName: 'serversUpdated',
+                eventDescription: 'MCP服务器列表更新事件，当添加、删除、修改服务器配置或连接状态变化时触发',
+            },
+        ];
+    }
 }

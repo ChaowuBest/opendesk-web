@@ -13,7 +13,7 @@ import { BaseApplication } from "../base";
 import { BaseToolset } from "../../aikernel/tool";
 import { Skill } from "../../aikernel/skill.js";
 import { z } from 'zod';
-import { TodoWriteTool, AddGlobalTodoTool, UpdateGlobalTodoTool, ListGlobalTodosTool, DeleteGlobalTodoTool, GetCurrentTimeTool } from './tools';
+import { TodoWriteTool, AddGlobalTodoTool, UpdateGlobalTodoTool, ListGlobalTodosTool, DeleteGlobalTodoTool, GetCurrentTimeTool, GetSupportedEventsTool } from './tools';
 import TodoMgrWorker from "./worker";
 import { MANAGE_GLOBAL_TODOS_SKILL } from "./skills.js";
 
@@ -34,10 +34,7 @@ export class TodoMgrApplication extends BaseApplication {
     async getToolsets(): Promise<BaseToolset[]> {
         const toolset = new BaseToolset('todomgr');
 
-        // ========== getCurrentTime 工具 ==========
         toolset.addTool(new GetCurrentTimeTool());
-
-        // ========== TodoWrite 工具（任务级待办） ==========
         toolset.addTool(new TodoWriteTool(this));
 
         return [toolset];
@@ -47,15 +44,26 @@ export class TodoMgrApplication extends BaseApplication {
         const manageGlobalTodosSkill = Skill.parseMd(MANAGE_GLOBAL_TODOS_SKILL);
         const globalTodosToolset = new BaseToolset('global-todos');
 
-        // 全局待办管理工具作为 skill 的内置工具
-        globalTodosToolset.addTool(new GetCurrentTimeTool());
         globalTodosToolset.addTool(new AddGlobalTodoTool(this));
         globalTodosToolset.addTool(new UpdateGlobalTodoTool(this));
         globalTodosToolset.addTool(new ListGlobalTodosTool(this));
         globalTodosToolset.addTool(new DeleteGlobalTodoTool(this));
+        globalTodosToolset.addTool(new GetSupportedEventsTool(this));
 
         manageGlobalTodosSkill.toolsets = [globalTodosToolset];
 
         return [manageGlobalTodosSkill];
+    }
+
+    /**
+     * 获取应用能够注册的事件
+     */
+    async getSupportedEvents(): Promise<{ eventName: string; eventDescription: string }[]> {
+        return [
+            {
+                eventName: 'globalTodosUpdated',
+                eventDescription: '全局待办列表更新事件，当添加、删除、更新待办事项时触发',
+            },
+        ];
     }
 }
