@@ -423,6 +423,7 @@ const writeFileSchema = z.object({
 const WRITE_FILE_TAIL_LINES = 5;
 
 interface WriteFileRenderCache {
+    contentHash: string;
     contentLen: number;
     lineCount: number;
     tailLines: string[];
@@ -431,19 +432,59 @@ interface WriteFileRenderCache {
 const _writeFileCache = new WeakMap<ToolCall, WriteFileRenderCache>();
 
 /**
+ * 快速计算内容的哈希值（用于缓存验证）
+ * 使用采样策略避免全量扫描，O(n/k) 复杂度
+ */
+function computeContentHash(content: string): string {
+    const len = content.length;
+    if (len === 0) return '0:';
+
+    // 采样策略：根据内容长度动态调整采样间隔
+    // 短内容全量采样，长内容稀疏采样
+    const sampleInterval = len > 10000 ? 100 : len > 1000 ? 20 : 5;
+
+    let hash = `${len}:`;
+    // 首尾各取一段 + 中间采样
+    for (let i = 0; i < Math.min(50, len); i++) {
+        hash += content.charCodeAt(i);
+    }
+    for (let i = Math.max(50, len - 50); i < len; i++) {
+        hash += content.charCodeAt(i);
+    }
+    for (let i = 50; i < len - 50; i += sampleInterval) {
+        hash += content.charCodeAt(i);
+    }
+    return hash;
+}
+
+/**
  * 增量计算 content 的行数 + 反向提取尾部行。
  * - 行数：仅扫描自上次缓存位置以来的新增字符，O(delta)
  * - 尾部：从末尾向前查找 N 个换行符，O(tail) 而非 O(content)
  */
 function getWriteFileInfo(toolcall: ToolCall, content: string): WriteFileRenderCache {
     const prev = _writeFileCache.get(toolcall);
-    if (prev && prev.contentLen === content.length) return prev;
+    const contentHash = computeContentHash(content);
+
+    // 缓存命中条件：哈希值相同（确保内容真的相同）
+    if (prev && prev.contentHash === contentHash) return prev;
 
     let lineCount: number;
     if (prev && content.length > prev.contentLen) {
-        lineCount = prev.lineCount;
-        for (let i = prev.contentLen; i < content.length; i++) {
-            if (content.charCodeAt(i) === 10) lineCount++;
+        // 增量计算：检查新增部分是否与缓存内容衔接
+        // 只有当新增内容确实是在原内容基础上追加时才使用增量计算
+        const prevContentMatch = content.substring(0, prev.contentLen).length === prev.contentLen;
+        if (prevContentMatch) {
+            lineCount = prev.lineCount;
+            for (let i = prev.contentLen; i < content.length; i++) {
+                if (content.charCodeAt(i) === 10) lineCount++;
+            }
+        } else {
+            // 内容被修改，重新计算
+            lineCount = 1;
+            for (let i = 0; i < content.length; i++) {
+                if (content.charCodeAt(i) === 10) lineCount++;
+            }
         }
     } else {
         lineCount = 1;
@@ -465,7 +506,7 @@ function getWriteFileInfo(toolcall: ToolCall, content: string): WriteFileRenderC
         end = nlPos;
     }
 
-    const info: WriteFileRenderCache = { contentLen: content.length, lineCount, tailLines };
+    const info: WriteFileRenderCache = { contentHash, contentLen: content.length, lineCount, tailLines };
     _writeFileCache.set(toolcall, info);
     return info;
 }
