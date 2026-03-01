@@ -14,7 +14,7 @@ interface ConfigSection {
 const CONFIG_SECTIONS: ConfigSection[] = [
     {
         value: 'providers',
-        label: `📡  供应商配置       ${chalk.dim('管理 API 供应商')}`,
+        label: `📡  模型服务商配置       ${chalk.dim('管理 API 模型服务商')}`,
         create: (tui, onBack) => new ProviderConfigPage(tui, onBack),
     },
     {

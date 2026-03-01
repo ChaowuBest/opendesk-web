@@ -453,13 +453,20 @@ export class TaskManagerState {
         if (!fs.existsSync(taskListFile)) {
             return null;
         }
-        const taskList = JSON.parse(fs.readFileSync(taskListFile, 'utf8'));
+
         let taskManagerState = new TaskManagerState();
+        let taskList: any[];
+        try {
+            taskList = JSON.parse(fs.readFileSync(taskListFile, 'utf8'));
+        } catch (err) {
+            logger.error(`failed to load task list: ${err}`)
+            return new TaskManagerState();
+        }
         for (let task of taskList) {
             try {
                 taskManagerState.tasks.push(TaskState.load(path.join(taskDirectory, `${task.task_id}.json`), taskManagerState));
             } catch (err) {
-                logger.warn(`error loading task ${task.task_id}: ${err.message}`);
+                logger.warn(`error loading task ${task.task_id}: ${err}`);
                 continue;
             }
         }

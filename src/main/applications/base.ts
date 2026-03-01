@@ -14,11 +14,18 @@ import { parentPort } from 'worker_threads';
 import { logger } from '../utils/logger.js';
 import { Setting, getAppDirectory } from '../utils/setting.js';
 import { BaseToolset } from '../aikernel/tool.js';
+import { Skill } from '../aikernel/skill.js';
+import type { SlashCommandHandler } from '../tui/commands.js';
+import type { ApplicationRegistry } from './registry.js';
 import path from 'path';
 import fs from 'fs';
 import PQueue from 'p-queue';
-import { Skill } from '../aikernel/skill.js';
-import type { SlashCommandHandler } from '../tui/commands.js';
+
+
+export interface EventDecl {
+    eventName: string;
+    eventDescription: string;
+}
 
 export class BaseWorker {
 
@@ -66,7 +73,7 @@ export class BaseWorker {
 
     async emitEvent(eventName: string, ...args: any[]): Promise<void> {
         parentPort?.postMessage({
-            type: 'subscribeEvent',
+            type: 'emitEvent',
             bundleName: this.bundleName,
             eventName: eventName,
             args: args,
@@ -94,7 +101,7 @@ export abstract class BaseApplication {
     /** 是否在侧边栏应用列表中显示图标，仅提供工具不提供界面的应用可设为 false */
     showIcon: boolean;
     eventSubscribers: Map<string, Set<Electron.WebFrameMain>>;
-    registry?: { callWorker(bundleName: string, methodName: string, ...args: any[]): Promise<any> };
+    registry?: typeof ApplicationRegistry;
 
     constructor(bundleName: string, name: string = "未命名应用", showIcon: boolean = true) {
         this.bundleName = bundleName;
@@ -163,9 +170,68 @@ export abstract class BaseApplication {
     }
 
     /**
+     * 缓存的已声明事件名称集合
+     * @private
+     */
+    private _declaredEventsCache: Set<string> | null = null;
+
+    /**
+     * 获取已声明的事件名称集合（带缓存）
+     * @private
+     */
+    private async _getDeclaredEvents(): Promise<Set<string>> {
+        if (this._declaredEventsCache !== null) {
+            return this._declaredEventsCache;
+        }
+        const events = await this.getSupportedEvents();
+        this._declaredEventsCache = new Set(events.map(e => e.eventName));
+        return this._declaredEventsCache;
+    }
+
+    /**
+     * 清除事件声明缓存（当事件声明可能发生变化时调用）
+     */
+    clearDeclaredEventsCache(): void {
+        this._declaredEventsCache = null;
+    }
+
+    /**
+     * 校验事件名是否已在 getSupportedEvents 中声明
+     * @param eventName 事件名称
+     * @throws Error 如果事件未声明
+     */
+    async validateEventName(eventName: string): Promise<void> {
+        const declaredEvents = await this._getDeclaredEvents();
+        if (!declaredEvents.has(eventName)) {
+            throw new Error(
+                `Event "${eventName}" is not declared in getSupportedEvents() for application "${this.bundleName}". ` +
+                `Please add it to the getSupportedEvents() return value.`
+            );
+        }
+    }
+
+    /**
+     * 从主进程侧触发事件
+     * 会先校验事件名是否已在 getSupportedEvents 中声明，然后发送给订阅者并转发给 todomgr 进行触发器匹配
+     * @param eventName 事件名称
+     * @param args 事件参数
+     */
+    async emitEvent(eventName: string, ...args: any[]): Promise<void> {
+        // 校验事件名是否已声明
+        await this.validateEventName(eventName);
+
+        // 发送事件给订阅者
+        this.sendEventToSubscribers(eventName, ...args);
+
+        if (this.registry) {
+            this.registry.dispatchEvent(this.bundleName, eventName, ...args);
+        }
+    }
+
+    /**
      * 设置应用注册器
      */
-    setRegistry(registry: { callWorker(bundleName: string, methodName: string, ...args: any[]): Promise<any> }): void {
+    setRegistry(registry: typeof ApplicationRegistry): void {
         this.registry = registry;
     }
 
@@ -210,6 +276,13 @@ export abstract class BaseApplication {
      * @returns
      */
     async getSkills(): Promise<Skill[]> {
+        return [];
+    }
+
+    /**
+     * 获取应用能够注册的事件
+     */
+    async getSupportedEvents(): Promise<EventDecl[]> {
         return [];
     }
 

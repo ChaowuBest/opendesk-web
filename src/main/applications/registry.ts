@@ -17,13 +17,15 @@ import { addLine as addCliLogLine } from "../utils/cliLogStore.js";
 import { NotificationManager } from "../utils/notificationmgr.js";
 import { getPlatform } from "../../platforms/base.js";
 import { Worker } from "worker_threads";
-import { Skill, SkillRegistry } from "../aikernel/skill.js";
+import { SkillRegistry } from "../aikernel/skill.js";
+import { type Privileges, type ProtocolRequest } from 'electron';
+import { TodoTrigger } from "./todomgr/common.js";
 
 
 export type ProtocolHandlerEntry = {
     scheme: string;
-    privileges?: Electron.Privileges;
-    handler: (request: Electron.ProtocolRequest) => Response | Promise<Response>;
+    privileges?: Privileges;
+    handler: (request: ProtocolRequest) => Response | Promise<Response>;
 };
 
 
@@ -46,7 +48,7 @@ export class ApplicationRegistry {
     /**
      * 当触发器触发待办任务时的回调（由 TUI 或 Electron 主进程设置）
      */
-    static onTriggerTask?: (todoId: string, todoContent: string, trigger: any) => void;
+    static onTriggerTask?: (todoId: string, todoTitle: string, todoContent: string, trigger: TodoTrigger) => void;
 
     /**
      * 注册就绪回调。如果应用注册表已就绪，则立即执行；否则加入队列等待。
@@ -138,6 +140,7 @@ export class ApplicationRegistry {
 
     /**
      * 从主进程侧派发应用事件，同时通知 renderer 订阅者和 todomgr worker（触发器匹配）
+     * 注意：此方法不进行事件校验，仅用于内部转发
      */
     static dispatchEvent(bundleName: string, eventName: string, ...args: any[]): void {
         const application = this.getApplication(bundleName);
@@ -153,6 +156,57 @@ export class ApplicationRegistry {
                 args: [bundleName, eventName, args],
             });
         }
+    }
+
+    /**
+     * 处理 Worker 侧发出的事件（带事件名校验）
+     */
+    static async handleWorkerEmitEvent(bundleName: string, eventName: string, args: any[]): Promise<void> {
+        const application = ApplicationRegistry.getApplication(bundleName);
+        if (!application) {
+            logger.warn(`application ${bundleName} not found`);
+            return;
+        }
+
+        // 校验事件名是否已声明
+        try {
+            await application.validateEventName(eventName);
+        } catch (error) {
+            logger.error(`Event validation failed for ${bundleName}.${eventName}: ${error}`);
+            return;
+        }
+
+        // 发送事件给订阅者
+        application.sendEventToSubscribers(eventName, ...args);
+
+        // 转发给 todomgr worker 进行事件触发器匹配（避免自身事件循环）
+        if (bundleName !== 'todomgr') {
+            ApplicationRegistry.getGlobalWorker().postMessage({
+                bundleName: 'todomgr',
+                requestId: crypto.randomUUID(),
+                methodName: 'handleApplicationEvent',
+                args: [bundleName, eventName, args],
+            });
+        }
+    }
+
+    /**
+     * 获取所有应用注册的事件清单
+     * @returns 返回一个 Map，key 为 bundleName，value 为该应用声明的事件列表
+     */
+    static async getAllSupportedEvents(): Promise<Map<string, { eventName: string; eventDescription: string }[]>> {
+        const result = new Map<string, { eventName: string; eventDescription: string }[]>();
+        for (const [bundleName, application] of this.applications) {
+            try {
+                const events = await application.getSupportedEvents();
+                if (events.length > 0) {
+                    result.set(bundleName, events);
+                }
+            } catch (error) {
+                logger.warn(`Failed to get supported events for ${bundleName}: ${error}`);
+            }
+        }
+        return result;
     }
 
     static async callWorker(bundleName: string, methodName: string, ...args: any[]): Promise<any> {
@@ -181,7 +235,7 @@ export class ApplicationRegistry {
             ApplicationRegistry.pendingRequests.delete(requestId);
             return { status: 'ok', data: data };
         } catch (error) {
-            return { status: 'error', message: error.message };
+            return { status: 'error', message: String(error) };
         }
     }
 };
@@ -210,6 +264,7 @@ export function notifyWorkerSettingUpdate(settingData: object) {
 export function initializeRegistry() {
     // 注册所有应用实例
     for (const APPLICATION_CLASS of getPlatform().getApplicationClasses()) {
+        // @ts-ignore 这个地方后边再改 ...
         const appInstance = new APPLICATION_CLASS();
         if (!ApplicationRegistry.applications.has(appInstance.bundleName)) {
             ApplicationRegistry.registerApplication(appInstance);
@@ -282,29 +337,15 @@ export function initializeRegistryWorker() {
                 addCliLogLine(event.message);
                 break;
             }
-            case 'subscribeEvent': {
+            case 'emitEvent': {
                 const { bundleName, eventName, args } = event;
-                const application = ApplicationRegistry.getApplication(bundleName);
-                if (!application) {
-                    logger.warn(`application ${bundleName} not found`);
-                    return;
-                }
-                application.sendEventToSubscribers(eventName, ...args);
-                // 转发给 todomgr worker 进行事件触发器匹配（避免自身事件循环）
-                if (bundleName !== 'todomgr') {
-                    ApplicationRegistry.getGlobalWorker().postMessage({
-                        bundleName: 'todomgr',
-                        requestId: crypto.randomUUID(),
-                        methodName: 'handleApplicationEvent',
-                        args: [bundleName, eventName, args],
-                    });
-                }
+                ApplicationRegistry.handleWorkerEmitEvent(bundleName, eventName, args);
                 break;
             }
             case 'triggerTodoTask': {
-                const { todoId, todoContent, trigger } = event;
+                const { todoId, todoTitle, todoContent, trigger } = event;
                 logger.info(`收到触发器任务请求: todo=${todoId}`);
-                ApplicationRegistry.onTriggerTask?.(todoId, todoContent, trigger);
+                ApplicationRegistry.onTriggerTask?.(todoId, todoTitle, todoContent, trigger);
                 break;
             }
             case 'emailListUpdated': {

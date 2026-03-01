@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { exec } from "child_process";
+import { spawn } from "child_process";
 import { BaseTool } from "../../aikernel/tool";
 import { ToolCall } from "../../aikernel/messages";
 import { escapeHtml } from "../../utils/escape";
@@ -17,9 +17,7 @@ import { Card } from "../../tui/components/card";
 import { statusDisplay, truncText } from "../../tui/components/toolcall";
 import chalk from "chalk";
 import { z } from 'zod';
-import { promisify } from 'util';
 import fs from 'fs';
-import iconv from 'iconv-lite';
 
 
 const MAX_CLI_OUTPUT_LINES = 8;
@@ -98,20 +96,21 @@ function renderTerminalToolCall(cmdName: string, toolcall: ToolCall): string | u
     `
 }
 
-const ExecuteCmdArgsSchema = z.object({
-    command: z.string().describe('要执行的CMD命令'),
+const ExecutePowerShellArgsSchema = z.object({
+    command: z.string().describe('要执行的PowerShell命令'),
     workingDirectory: z.string().optional().describe('执行命令的工作目录，如果不指定则使用系统默认目录')
 });
 
 /**
- * 解析命令中的 "cd /d path & rest" 或 "cd path && rest"，提取工作目录与剩余命令，避免 & 被父进程拆开导致后续命令在错误目录执行
+ * 解析命令中的 "cd path; rest" 或 "Set-Location path; rest"，提取工作目录与剩余命令
  */
 function parseCdAndCommand(command: string): { cwd?: string; command: string } {
     const t = command.trim();
-    const cdMatch = t.match(/^cd\s+(?:\/d\s+)?([^\s&]+)\s*(?:&&?|&)\s*(.+)$/s);
+    // 匹配 "cd path; rest" 或 "Set-Location path; rest"
+    const cdMatch = t.match(/^(?:cd|Set-Location)\s+(['"]?)([^\s'";]+)\1\s*;\s*(.+)$/is);
     if (cdMatch) {
-        const pathPart = cdMatch[1].trim();
-        const rest = cdMatch[2].trim();
+        const pathPart = cdMatch[2].trim();
+        const rest = cdMatch[3].trim();
         if (rest && fs.existsSync(pathPart)) {
             return { cwd: pathPart, command: rest };
         }
@@ -119,26 +118,26 @@ function parseCdAndCommand(command: string): { cwd?: string; command: string } {
     return { command: t };
 }
 
-export class ExecuteCmdTool extends BaseTool<typeof ExecuteCmdArgsSchema> {
+export class ExecutePowerShellTool extends BaseTool<typeof ExecutePowerShellArgsSchema> {
     constructor() {
         super(
-            'executeCmd',
-            '在 Windows 下执行 cmd 命令。可以执行任何有效的 Windows CMD 命令，如 dir、cd、type、echo 等。若命令含 "cd /d 路径 & 后续命令"，将自动在指定目录下执行后续命令',
-            ExecuteCmdArgsSchema
+            'executePowerShell',
+            '在 Windows 下执行 PowerShell 命令。可以执行任何有效的 PowerShell 命令，如 Get-ChildItem、Set-Location、Get-Content、Write-Output 等。若命令含 "cd 路径; 后续命令" 或 "Set-Location 路径; 后续命令"，将自动在指定目录下执行后续命令',
+            ExecutePowerShellArgsSchema
         );
 
         this.setExecutor(this.executeCommand);
     }
 
     async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
-        return renderTerminalToolCall('CMD', toolcall);
+        return renderTerminalToolCall('PowerShell', toolcall);
     }
 
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
-        return renderTerminalToolCallCli('CMD', toolcall, width);
+        return renderTerminalToolCallCli('PowerShell', toolcall, width);
     }
 
-    async executeCommand(args: z.output<typeof ExecuteCmdArgsSchema>): Promise<string> {
+    async executeCommand(args: z.output<typeof ExecutePowerShellArgsSchema>): Promise<string> {
         let command: string = args.command;
         let workingDirectory: string | undefined = args.workingDirectory;
 
@@ -148,32 +147,50 @@ export class ExecuteCmdTool extends BaseTool<typeof ExecuteCmdArgsSchema> {
             command = parsed.command;
         }
 
-        const execAsync = promisify(exec);
-        try {
-            const options: any = {
-                encoding: 'buffer',
-                maxBuffer: 10 * 1024 * 1024, // 10MB
-            };
+        // 使用 spawn 直接调用 powershell.exe，避免 exec 的引号转义问题
+        return new Promise((resolve) => {
+            const { spawn } = require('child_process');
 
-            if (workingDirectory && fs.existsSync(workingDirectory)) {
-                options.cwd = workingDirectory;
+            // 校验命令
+            if (!command || typeof command !== 'string') {
+                return resolve('请输入要执行的 PowerShell 命令。');
             }
 
-            const quoted = `"${command.replace(/"/g, '""')}"`;
-            const { stdout, stderr } = await execAsync(`cmd /c ${quoted}`, options);
-            const out = iconv.decode(stdout, 'cp936');
-            const err = iconv.decode(stderr, 'cp936');
+            // 设置工作目录
+            let cwd: string | undefined = undefined;
+            if (workingDirectory && typeof workingDirectory === 'string' && fs.existsSync(workingDirectory)) {
+                cwd = workingDirectory;
+            }
 
-            let result = '';
-            if (out) { result += `标准输出流：\n${out}\n`; }
-            if (err) { result += `标准错误流：\n${err}\n`; }
-            if (!out && !err) { result = '命令执行成功'; }
+            // 使用 -NoProfile 加快启动，-Command 执行命令
+            // 设置 Console.OutputEncoding 为 UTF-8 避免中文乱码
+            const utf8Command = `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ${command}`;
+            const powershell = spawn('powershell.exe', ['-NoProfile', '-Command', utf8Command], { cwd });
 
-            const output = result.trim() || '命令执行完成。';
-            return output;
-        } catch (error: any) {
-            return `执行命令时出错: ${error.message}\n${error.stdout || ''}\n${error.stderr || ''}`;
-        }
+            let stdout = '';
+            let stderr = '';
+
+            powershell.stdout.on('data', (data: Buffer) => {
+                stdout += data.toString('utf8');
+            });
+
+            powershell.stderr.on('data', (data: Buffer) => {
+                stderr += data.toString('utf8');
+            });
+
+            powershell.on('close', (code: number) => {
+                let result = '';
+                if (stdout) { result += `标准输出流：\n${stdout}\n`; }
+                if (stderr) { result += `标准错误流：\n${stderr}\n`; }
+                if (!stdout && !stderr) { result = `进程退出，代码 ${code}`; }
+                const output = result.trim() || '命令执行完成。';
+                resolve(output);
+            });
+
+            powershell.on('error', (err: Error) => {
+                resolve(`执行命令时出错: ${err.message}`);
+            });
+        });
     }
 }
 
@@ -182,14 +199,41 @@ const ExecuteBashArgsSchema = z.object({
     workingDirectory: z.string().optional().describe('执行命令的工作目录，如果不指定则使用系统默认目录')
 });
 
+/**
+ * 检测系统中是否存在指定的可执行文件
+ */
+export function findExecutable(executable: string): string | null {
+    const pathEnv = process.env.PATH || '';
+    const pathSeparator = process.platform === 'win32' ? ';' : ':';
+    const executableName = process.platform === 'win32' && !executable.endsWith('.exe')
+        ? `${executable}.exe`
+        : executable;
+
+    for (const dir of pathEnv.split(pathSeparator)) {
+        const fullPath = require('path').join(dir, executableName);
+        if (fs.existsSync(fullPath)) {
+            return fullPath;
+        }
+    }
+    return null;
+}
+
 export class ExecuteBashTool extends BaseTool<typeof ExecuteBashArgsSchema> {
-    constructor() {
+    private bashPath: string;
+
+    /**
+     * @param bashPath bash 可执行文件路径，默认为 '/bin/bash'
+     *   - Windows: 可传入 'bash' 自动从 PATH 中查找，或传入完整路径如 'C:\\Program Files\\Git\\bin\\bash.exe'
+     *   - macOS/Linux: 默认 '/bin/bash'
+     */
+    constructor(bashPath: string = '/bin/bash') {
         super(
             'executeBash',
-            '在 Linux/macOS 下执行 bash 命令。可以执行任何有效的 Linux/macOS BASH 命令，如 ls、cd、cat、echo 等',
+            '执行 bash 命令。可以执行任何有效的 BASH 命令，如 ls、cd、cat、echo 等',
             ExecuteBashArgsSchema
         );
 
+        this.bashPath = bashPath;
         this.setExecutor(this.executeCommand);
     }
 
@@ -197,12 +241,7 @@ export class ExecuteBashTool extends BaseTool<typeof ExecuteBashArgsSchema> {
         let command: string = args.command;
         let workingDirectory: string | undefined = args.workingDirectory;
 
-        // MacOS/Linux 下执行命令
         return new Promise((resolve, reject) => {
-            const { spawn } = require('child_process');
-            const fs = require('fs');
-            const path = require('path');
-
             // 校验命令
             if (!command || typeof command !== 'string') {
                 return resolve('请输入要执行的 bash 命令。');
@@ -215,7 +254,7 @@ export class ExecuteBashTool extends BaseTool<typeof ExecuteBashArgsSchema> {
             }
 
             // 开启进程
-            const bash = spawn('/bin/bash', ['-c', command], { cwd });
+            const bash = spawn(this.bashPath, ['-c', command], { cwd });
 
             let stdout = '';
             let stderr = '';
@@ -384,6 +423,7 @@ const writeFileSchema = z.object({
 const WRITE_FILE_TAIL_LINES = 5;
 
 interface WriteFileRenderCache {
+    contentHash: string;
     contentLen: number;
     lineCount: number;
     tailLines: string[];
@@ -392,19 +432,59 @@ interface WriteFileRenderCache {
 const _writeFileCache = new WeakMap<ToolCall, WriteFileRenderCache>();
 
 /**
+ * 快速计算内容的哈希值（用于缓存验证）
+ * 使用采样策略避免全量扫描，O(n/k) 复杂度
+ */
+function computeContentHash(content: string): string {
+    const len = content.length;
+    if (len === 0) return '0:';
+
+    // 采样策略：根据内容长度动态调整采样间隔
+    // 短内容全量采样，长内容稀疏采样
+    const sampleInterval = len > 10000 ? 100 : len > 1000 ? 20 : 5;
+
+    let hash = `${len}:`;
+    // 首尾各取一段 + 中间采样
+    for (let i = 0; i < Math.min(50, len); i++) {
+        hash += content.charCodeAt(i);
+    }
+    for (let i = Math.max(50, len - 50); i < len; i++) {
+        hash += content.charCodeAt(i);
+    }
+    for (let i = 50; i < len - 50; i += sampleInterval) {
+        hash += content.charCodeAt(i);
+    }
+    return hash;
+}
+
+/**
  * 增量计算 content 的行数 + 反向提取尾部行。
  * - 行数：仅扫描自上次缓存位置以来的新增字符，O(delta)
  * - 尾部：从末尾向前查找 N 个换行符，O(tail) 而非 O(content)
  */
 function getWriteFileInfo(toolcall: ToolCall, content: string): WriteFileRenderCache {
     const prev = _writeFileCache.get(toolcall);
-    if (prev && prev.contentLen === content.length) return prev;
+    const contentHash = computeContentHash(content);
+
+    // 缓存命中条件：哈希值相同（确保内容真的相同）
+    if (prev && prev.contentHash === contentHash) return prev;
 
     let lineCount: number;
     if (prev && content.length > prev.contentLen) {
-        lineCount = prev.lineCount;
-        for (let i = prev.contentLen; i < content.length; i++) {
-            if (content.charCodeAt(i) === 10) lineCount++;
+        // 增量计算：检查新增部分是否与缓存内容衔接
+        // 只有当新增内容确实是在原内容基础上追加时才使用增量计算
+        const prevContentMatch = content.substring(0, prev.contentLen).length === prev.contentLen;
+        if (prevContentMatch) {
+            lineCount = prev.lineCount;
+            for (let i = prev.contentLen; i < content.length; i++) {
+                if (content.charCodeAt(i) === 10) lineCount++;
+            }
+        } else {
+            // 内容被修改，重新计算
+            lineCount = 1;
+            for (let i = 0; i < content.length; i++) {
+                if (content.charCodeAt(i) === 10) lineCount++;
+            }
         }
     } else {
         lineCount = 1;
@@ -426,7 +506,7 @@ function getWriteFileInfo(toolcall: ToolCall, content: string): WriteFileRenderC
         end = nlPos;
     }
 
-    const info: WriteFileRenderCache = { contentLen: content.length, lineCount, tailLines };
+    const info: WriteFileRenderCache = { contentHash, contentLen: content.length, lineCount, tailLines };
     _writeFileCache.set(toolcall, info);
     return info;
 }

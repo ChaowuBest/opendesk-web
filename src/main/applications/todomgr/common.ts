@@ -43,7 +43,8 @@ export type TodoTrigger = EventTriggerConfig | ScheduledTriggerConfig | CronTrig
 export interface TaskTodo {
     id: string;
     task_id: string;        // 关联的任务ID
-    content: string;          // 待办内容
+    title: string;            // 待办标题（简短描述）
+    content: string;          // 待办内容（详细描述，发送给 Agent 执行）
     status: TodoStatus;
     created_at: string;
     updated_at: string;
@@ -53,7 +54,8 @@ export interface TaskTodo {
 // 全局待办项（持久化，跨任务共享）
 export interface GlobalTodo {
     id: string;
-    content: string;
+    title: string;            // 待办标题（简短描述）
+    content: string;          // 待办内容（详细描述，发送给 Agent 执行）
     status: TodoStatus;
     priority: TodoPriority;
     category?: string;        // 分类标签，如 "bug", "feature", "idea"
@@ -75,6 +77,7 @@ export interface GlobalTodoStorage {
 // TodoWrite 工具的待办参数
 export interface TodoWriteTodoParam {
     id?: string;              // 可选，更新时使用
-    content: string;          // 待办内容
+    title: string;            // 待办标题（简短描述，用于列表展示）
+    content: string;          // 待办内容（详细描述，发送给 Agent 执行。Agent 有能力调用工具访问文件、执行命令等，因此具体需求应明确写在 content 中）
     status: TodoStatus;
 }

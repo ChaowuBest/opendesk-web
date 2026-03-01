@@ -11,7 +11,7 @@
 
 import { BaseToolset } from "../../aikernel/tool";
 import { BaseApplication } from "../base";
-import { ExecuteCmdTool, ExecuteBashTool, WriteFileTool, ReadFileTool, ExecuteZshTool } from "./tools.js";
+import { ExecutePowerShellTool, ExecuteBashTool, WriteFileTool, ReadFileTool, ExecuteZshTool, findExecutable } from "./tools.js";
 
 
 export class TerminalApplication extends BaseApplication {
@@ -24,13 +24,19 @@ export class TerminalApplication extends BaseApplication {
 
         switch (process.platform as string) {
             case 'win32':
-                toolset.addTool(new ExecuteCmdTool());
+                toolset.addTool(new ExecutePowerShellTool());
+                // 检测 Windows 下是否有 bash.exe（如 Git Bash、WSL 等）
+                const bashPath = findExecutable('bash');
+                if (bashPath) {
+                    toolset.addTool(new ExecuteBashTool(bashPath));
+                }
                 break;
             case 'openharmony':
                 toolset.addTool(new ExecuteZshTool());
                 break;
             default:
-                toolset.addTool(new ExecuteBashTool());
+                // macOS/Linux 默认使用 /bin/bash
+                toolset.addTool(new ExecuteBashTool('/bin/bash'));
                 break;
         }
 
