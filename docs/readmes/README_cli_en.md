@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="../images/cli-logo.png" alt="Fillip Desk" style="max-width: 100%; height: 70px; object-fit: cover;" />
+  <img src="https://raw.gitcode.com/user-images/assets/9176732/f7dc5a26-2855-4435-9c3f-0d3440635ef9/cli-logo.png" alt="OpenDesk CLI" style="max-width: 100%; height: 60px; object-fit: cover;" />
 </p>
 
 <p align="center">
@@ -8,7 +8,7 @@
 </p>
 
 <p align="center">
-  OpenDesk CLI: <a href="./README_cli.md">中文</a> | English
+  OpenDesk CLI: <a href="https://gitcode.com/openharmony-robot/OpenDesk/blob/main/docs/readmes/README_cli.md">中文</a> | English
 </p>
 
 OpenDesk CLI is an AI assistant running in the terminal, built on the OpenDesk framework, designed to provide developers with a one-stop AI service for office and productivity scenarios.
