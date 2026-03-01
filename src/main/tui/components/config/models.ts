@@ -78,12 +78,12 @@ export class ModelConfigPage implements Component {
                 ? model.provider_name
                 : providerNames[0];
             fields.push({
-                type: 'select', key: 'provider_name', label: '供应商',
+                type: 'select', key: 'provider_name', label: '模型服务商',
                 value: currentProvider, options: providerNames,
             });
         } else {
             fields.push({
-                type: 'text', key: 'provider_name', label: '供应商',
+                type: 'text', key: 'provider_name', label: '模型服务商',
                 value: model.provider_name,
             });
         }

@@ -33,7 +33,7 @@ interface ProviderData {
 }
 
 /**
- * 供应商配置页面。
+ * 模型服务商配置页面。
  * 内部状态机：list → template → edit → list
  */
 export class ProviderConfigPage implements Component {
@@ -62,7 +62,7 @@ export class ProviderConfigPage implements Component {
         const providers: ProviderData[] = data.providers ?? [];
 
         const items = [
-            { value: '__add__', label: chalk.green('➕ 添加供应商') },
+            { value: '__add__', label: chalk.green('➕ 添加模型服务商') },
             ...providers.map((p: ProviderData, i: number) => ({
                 value: String(i),
                 label: `${p.name}  ${chalk.dim(p.base_url)}`,
@@ -135,7 +135,7 @@ export class ProviderConfigPage implements Component {
         }
         actions.push({ key: 'cancel', label: '↩  返回' });
 
-        const title = this.editingIndex >= 0 ? '编辑供应商' : '添加供应商';
+        const title = this.editingIndex >= 0 ? '编辑模型服务商' : '添加模型服务商';
         this.form = new ConfigForm(
             this.tui, title, fields, actions,
             (actionKey, values) => this.handleAction(actionKey, values),
@@ -195,7 +195,7 @@ export class ProviderConfigPage implements Component {
 
         switch (this.state) {
             case 'list':
-                lines.push(chalk.bold('⚙️  供应商配置'));
+                lines.push(chalk.bold('⚙️  模型服务商配置'));
                 lines.push(chalk.dim('─'.repeat(Math.min(width - 2, 50))));
                 lines.push('');
                 if (this.list) lines.push(...this.list.render(width));
@@ -204,7 +204,7 @@ export class ProviderConfigPage implements Component {
                 break;
 
             case 'template':
-                lines.push(chalk.bold('⚙️  选择供应商模板'));
+                lines.push(chalk.bold('⚙️  选择模型服务商模板'));
                 lines.push(chalk.dim('─'.repeat(Math.min(width - 2, 50))));
                 lines.push('');
                 if (this.templateList) lines.push(...this.templateList.render(width));

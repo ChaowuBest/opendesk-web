@@ -827,7 +827,7 @@ export class OpenDeskTUI {
             chalk.cyan('使用方法：'),
             '',
             chalk.white('  1. 输入 /config 打开配置菜单'),
-            chalk.white('  2. 选择"供应商配置"并添加一个模型供应商'),
+            chalk.white('  2. 选择"模型服务商配置"并添加一个模型模型服务商'),
             chalk.white('  3. 选择"模型配置"并添加一个模型'),
             chalk.white('  4. 选择 "默认模型配置", 并选择你要使用的模型'),
             '',
