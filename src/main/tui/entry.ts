@@ -72,7 +72,7 @@ export class OpenDeskTUI {
 
     private shortcutManager: KeyboardShortcutManager;
     public commandRegistry: SlashCommandRegistry;
-    private modelInfoResolved = false;
+
     private activeTaskId?: string;
 
     /** 跟踪是否有 overlay 打开 */
@@ -790,6 +790,15 @@ export class OpenDeskTUI {
             const modelName = modelCfg?.model_name ?? aliasToUse;
 
             this.inputArea.statusBar.update({ modelName });
+
+            // 如果没有通过命令行指定模型，则更新当前活跃任务的模型为新的默认模型
+            // 这样用户在 /config 中修改模型后，继续对话时会使用新模型
+            if (!this.model && this.activeTaskId) {
+                const currentTask = this.taskManagerState.getTask(this.activeTaskId);
+                if (currentTask) {
+                    currentTask.model = data.default_model;
+                }
+            }
 
             // 先用内置表即时填充，再异步 API 覆盖
             const knownSize = lookupKnownContextSize(modelName);
