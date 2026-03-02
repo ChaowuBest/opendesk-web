@@ -67,75 +67,87 @@ async function searchSkill0(opts = {}) {
   };
 }
 
-/**
- * skillsmp 搜索（需 API Key，可选）
- * @param {Object} opts - { query: string, page?: number, limit?: number, apiKey?: string }
- * @returns {Promise<{ skills: RegistrySkill[], total?: number, hasMore?: boolean }>}
- */
-async function searchSkillsMP(opts = {}) {
-  const { query = '', page = 1, limit = 20, apiKey } = opts;
+const SKILLSMP_FALLBACK_THRESHOLD = 0;
+
+function mapSkillsMPSkill(s) {
+  const repo = s.repository || s.repo || s.github?.url || s.githubUrl || '';
+  let installUrl = '';
+  if (typeof repo === 'string' && repo.includes('github.com')) {
+    installUrl = repo.replace('/blob/', '/tree/');
+    if (!installUrl.includes('/tree/')) {
+      installUrl = repo + (repo.endsWith('/') ? '' : '/') + 'tree/main';
+    }
+  } else if (s.downloadUrl || s.zipUrl) {
+    installUrl = s.downloadUrl || s.zipUrl;
+  }
+  return {
+    id: s.id || s.slug || s.name || '',
+    name: s.name || s.title || s.id || '',
+    description: s.description || '',
+    author: s.author?.login ?? s.author ?? s.owner ?? '',
+    source: 'skillsmp',
+    installUrl,
+    stars: s.stars ?? s.stargazers_count ?? 0,
+    canInstall: !!installUrl
+  };
+}
+
+async function fetchSkillsMP(endpoint, opts = {}) {
+  const { query = '', page = 1, limit = 20, apiKey, timeout = 15000 } = opts;
   if (!apiKey || !apiKey.trim()) {
     throw new Error('SkillsMP 需配置 API Key。请在 FillipDesk「设置」→ 应用配置 → Skills 中填写并保存后重试。获取 Key：https://skillsmp.com/auth/login');
   }
-  const params = new URLSearchParams({ q: query.trim() || 'skill', page: String(page), limit: String(limit) });
-  const url = `${SKILLSMP_BASE}/api/v1/skills/search?${params}`;
+  const params = new URLSearchParams({ q: query.trim() || 'skill', limit: String(Math.min(limit, 100)) });
+  if (endpoint === 'search') params.set('page', String(page));
+  const url = `${SKILLSMP_BASE}/api/v1/skills/${endpoint}?${params}`;
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 15000);
-  let res;
+  const timeoutId = setTimeout(() => controller.abort(), timeout);
   try {
-    res = await fetch(url, {
+    const res = await fetch(url, {
       headers: { Authorization: `Bearer ${apiKey.trim()}` },
       signal: controller.signal
     });
+    clearTimeout(timeoutId);
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      if (res.status === 401) throw new Error(err?.error?.message || 'API Key 无效或已过期');
+      throw new Error(err?.error?.message || `SkillsMP 请求失败: ${res.status}`);
+    }
+    const data = await res.json();
+    let items = [];
+    if (endpoint === 'ai-search' && Array.isArray(data.data?.data)) {
+      items = data.data.data.map(item => item.skill).filter(Boolean);
+    } else if (Array.isArray(data.data?.skills)) {
+      items = data.data.skills;
+    } else if (Array.isArray(data.data)) {
+      items = data.data;
+    } else if (Array.isArray(data)) {
+      items = data;
+    } else {
+      items = data.items ?? data.results ?? [];
+    }
+    const list = Array.isArray(items) ? items : [];
+    const total = data.data?.pagination?.total ?? data.data?.total ?? data.total ?? list.length;
+    return { skills: list.map(mapSkillsMPSkill), total, hasMore: (page * limit) < (total ?? 0) };
   } catch (e) {
     clearTimeout(timeoutId);
-    if (e.name === 'AbortError') {
-      throw new Error('SkillsMP 请求超时，请检查网络或稍后重试');
-    }
-    throw new Error(e?.message || 'SkillsMP 网络请求失败');
+    if (e.name === 'AbortError') throw new Error('SkillsMP 请求超时，请检查网络或稍后重试');
+    throw e;
   }
-  clearTimeout(timeoutId);
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    if (res.status === 401) {
-      throw new Error(err?.error?.message || 'API Key 无效或已过期');
-    }
-    throw new Error(err?.error?.message || `SkillsMP 请求失败: ${res.status}`);
-  }
-  const data = await res.json();
-  // SkillsMP 实际返回: data.data.skills、data.data.pagination.total（见 skillsmp-mcp-server）
-  const items = Array.isArray(data)
-    ? data
-    : (data.data?.skills ?? data.data?.items ?? data.data ?? data.items ?? data.skills ?? data.results ?? []);
-  const list = Array.isArray(items) ? items : [];
-  const total = data.data?.pagination?.total ?? data.data?.total ?? data.total ?? list.length;
-  const skills = list.map((s) => {
-    const repo = s.repository || s.repo || s.github?.url || s.githubUrl || '';
-    let installUrl = '';
-    if (typeof repo === 'string' && repo.includes('github.com')) {
-      installUrl = repo.replace('/blob/', '/tree/');
-      if (!installUrl.includes('/tree/')) {
-        installUrl = repo + (repo.endsWith('/') ? '' : '/') + 'tree/main';
+}
+
+async function searchSkillsMP(opts = {}) {
+  const { query, page, limit, apiKey } = opts;
+  const result = await fetchSkillsMP('search', { query, page, limit, apiKey });
+  if (result.skills.length <= SKILLSMP_FALLBACK_THRESHOLD) {
+    try {
+      const aiResult = await fetchSkillsMP('ai-search', { query, limit, apiKey, timeout: 30000 });
+      if (aiResult.skills.length > 0) {
+        return { ...aiResult, hasMore: false, message: '普通搜索无结果，已使用 AI 语义搜索补充' };
       }
-    } else if (s.downloadUrl || s.zipUrl) {
-      installUrl = s.downloadUrl || s.zipUrl;
-    }
-    return {
-      id: s.id || s.slug || s.name || '',
-      name: s.name || s.title || s.id || '',
-      description: s.description || '',
-      author: s.author?.login ?? s.author ?? s.owner ?? '',
-      source: 'skillsmp',
-      installUrl,
-      stars: s.stars ?? s.stargazers_count ?? 0,
-      canInstall: !!installUrl
-    };
-  });
-  return {
-    skills,
-    total,
-    hasMore: (page * limit) < (total ?? 0)
-  };
+    } catch (_) {}
+  }
+  return result;
 }
 
 /**
