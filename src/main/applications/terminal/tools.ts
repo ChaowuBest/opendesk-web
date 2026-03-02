@@ -330,8 +330,6 @@ export class ExecutePowerShellTool extends BaseTool<typeof ExecutePowerShellArgs
 
         // 使用 spawn 直接调用 powershell.exe，避免 exec 的引号转义问题
         return new Promise((resolve) => {
-            const { spawn } = require('child_process');
-
             // 校验命令
             if (!command || typeof command !== 'string') {
                 return resolve('请输入要执行的 PowerShell 命令。');
@@ -494,9 +492,6 @@ export class ExecuteZshTool extends BaseTool<typeof ExecuteZshArgsSchema> {
 
         // MacOS/Linux 下执行命令
         return new Promise((resolve, reject) => {
-            const { spawn } = require('child_process');
-            const fs = require('fs');
-            const path = require('path');
 
             // 校验命令
             if (!command || typeof command !== 'string') {

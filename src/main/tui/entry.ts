@@ -14,6 +14,7 @@ import { Setting } from "../utils/setting.js";
 import { defaultSelectListTheme } from "./theme";
 import { logger, setDebugMode, getDebugMode } from "../utils/logger.js";
 import { lookupKnownContextSize, fetchContextSizeFromAPI } from "../utils/model-context";
+import { UpgradeOverlay } from "./components/upgrade";
 import { AgentDecl } from "../aikernel/agent.js";
 import { ShellAgentDecl } from "../aikernel/agents/shellagent.js";
 import { HelpOverlay } from "./components/help";
@@ -424,6 +425,16 @@ export class OpenDeskTUI {
                 this.inputArea.clearMessageQueue();
                 logger.info('任务已停止');
                 this.tui.requestRender();
+            },
+        });
+
+        this.commandRegistry.register({
+            name: "upgrade",
+            description: "升级 OpenDesk CLI 到最新版本",
+            execute: async () => {
+                // 显示升级 overlay 界面，让用户选择 stable 或 nightly
+                const upgradeOverlay = new UpgradeOverlay(this);
+                upgradeOverlay.show();
             },
         });
 
