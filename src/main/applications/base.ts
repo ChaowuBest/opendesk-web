@@ -198,16 +198,18 @@ export abstract class BaseApplication {
     /**
      * 校验事件名是否已在 getSupportedEvents 中声明
      * @param eventName 事件名称
-     * @throws Error 如果事件未声明
+     * @returns 如果事件未声明返回 false，已声明返回 true
      */
-    async validateEventName(eventName: string): Promise<void> {
+    async validateEventName(eventName: string): Promise<boolean> {
         const declaredEvents = await this._getDeclaredEvents();
         if (!declaredEvents.has(eventName)) {
-            throw new Error(
+            logger.warn(
                 `Event "${eventName}" is not declared in getSupportedEvents() for application "${this.bundleName}". ` +
                 `Please add it to the getSupportedEvents() return value.`
             );
+            return false;
         }
+        return true;
     }
 
     /**
@@ -217,7 +219,7 @@ export abstract class BaseApplication {
      * @param args 事件参数
      */
     async emitEvent(eventName: string, ...args: any[]): Promise<void> {
-        // 校验事件名是否已声明
+        // 校验事件名是否已声明，未声明只报 warning，业务流程继续执行
         await this.validateEventName(eventName);
 
         // 发送事件给订阅者
