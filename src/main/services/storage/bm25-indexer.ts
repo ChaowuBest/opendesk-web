@@ -11,49 +11,43 @@
 
 /**
  * BM25Indexer - 基于 BM25IndexDB 的全文搜索索引器
- *
- * 包装 BM25IndexDB 实现 Indexer 接口。
- * 用于基于 BM25 算法的全文搜索。
  */
 
 import { Indexer, IndexerSearchOptions, IndexerSearchResult } from './indexer.js';
 import { Item, FilterCondition, QueryOperator, BM25Query, ItemType, ColumnSchema } from './abstract-storage.js';
-import { BM25IndexDB, BM25Record, BM25SearchResult } from './bm25-index-db.js';
+import { BM25Record, BM25SearchResult, IBM25IndexDB, createBM25IndexDB } from './bm25-index-db.js';
 import { randomUUID } from 'crypto';
 
-/**
- * BM25 全文搜索索引器
- *
- * 使用 search-index + nodejieba 实现 BM25 检索。
- * 支持中英文混合分词。
- */
 export class BM25Indexer extends Indexer {
     readonly name = 'BM25Indexer';
     readonly supportedFields = ['text'];
     readonly supportedOperators: QueryOperator[] = ['bm25_match'];
     private readonly columnName = 'text';
 
-    private db: BM25IndexDB;
-    private defaultTopK: number;
-    private schema: ColumnSchema;
+    private db: IBM25IndexDB | null = null;
+    private readonly _dbPath: string;
+    private readonly defaultTopK: number;
+    private readonly schema: ColumnSchema;
 
     constructor(schema: ColumnSchema, dbPath: string, defaultTopK = 10) {
         super();
-        this.db = new BM25IndexDB(schema, dbPath);
+        this._dbPath = dbPath;
         this.defaultTopK = defaultTopK;
         this.schema = schema;
     }
 
-    /**
-     * 初始化索引器
-     */
     async initialize(): Promise<void> {
+        if (!this.db) {
+            this.db = await createBM25IndexDB(this.schema, this._dbPath);
+        }
         await this.db.initialize();
     }
 
-    /**
-     * 验证字段是否支持
-     */
+    private ensureDB(): IBM25IndexDB {
+        if (!this.db) throw new Error('BM25Indexer not initialized. Call initialize() first.');
+        return this.db;
+    }
+
     private validateField(field: string): void {
         const indexers = this.schema.needIndexers?.[field];
         if (!indexers || !indexers.includes(this.name)) {
@@ -64,9 +58,6 @@ export class BM25Indexer extends Indexer {
         }
     }
 
-    /**
-     * 验证操作符是否支持
-     */
     private validateOperator(operator: QueryOperator): void {
         if (!this.supportsOperator(operator)) {
             throw new Error(
@@ -76,9 +67,6 @@ export class BM25Indexer extends Indexer {
         }
     }
 
-    /**
-     * BM25SearchResult → Item 转换
-     */
     private resultToItem(result: BM25SearchResult, metadata?: Partial<Item>): Item {
         const item: Item = {
             item_id: result.item_id,
@@ -86,7 +74,6 @@ export class BM25Indexer extends Indexer {
             text: result.text,
         };
 
-        // 从 metadata 复制额外字段
         if (metadata) {
             for (const [key, value] of Object.entries(metadata)) {
                 if (!(key in item) && value !== undefined) {
@@ -98,24 +85,18 @@ export class BM25Indexer extends Indexer {
         return item;
     }
 
-    /**
-     * Item → BM25Record 转换
-     */
-    private itemToRecord(item: Item, colName: string, new_id: string): BM25Record {
-        const col = item.indexer_columns?.[this.name]?.find(c => c.column === colName);
+    private itemToRecord(item: Item, colName: string, newId: string): BM25Record {
+        const col = item.indexer_columns?.[this.name]?.find((c) => c.column === colName);
         const text = (col?.content as string) ?? '';
 
         return {
-            bm25_id: new_id,
+            bm25_id: newId,
             item_id: item.item_id,
             item_type: colName,
-            text: text,
+            text,
         };
     }
 
-    /**
-     * 搜索匹配条件的 Item
-     */
     async search(
         conditions: FilterCondition[],
         options?: IndexerSearchOptions
@@ -134,29 +115,25 @@ export class BM25Indexer extends Indexer {
         }
 
         const topK = bm25Query.topK ?? options?.limit ?? this.defaultTopK;
-
-        // 调用 DB 层搜索
-        const results = await this.db.search(bm25Query.query, { columnName: condition.field, topK: topK * 2 });
+        const results = await this.ensureDB().search(bm25Query.query, {
+            columnName: condition.field,
+            topK: topK * 2,
+        });
 
         if (results.length === 0) {
             return { items: [], totalCount: 0 };
         }
 
-        // 构建 existingResults 的 ID 集合（用于 join 过滤）
         const existingIds = options?.existingResults
-            ? new Set(options.existingResults.map(r => r.item_id))
+            ? new Set(options.existingResults.map((r) => r.item_id))
             : null;
 
-        // 构建 existingResults 的元数据映射
-        const existingMap = new Map(
-            options?.existingResults?.map(i => [i.item_id, i])
-        );
+        const existingMap = new Map(options?.existingResults?.map((i) => [i.item_id, i]));
 
         const items: Item[] = [];
         const scores = new Map<string, number>();
 
         for (const result of results) {
-            // Join 过滤
             if (existingIds && !existingIds.has(result.item_id)) {
                 continue;
             }
@@ -168,13 +145,11 @@ export class BM25Indexer extends Indexer {
             if (items.length >= topK) break;
         }
 
-        // 应用 offset
         let finalItems = items;
         if (options?.offset !== undefined) {
             finalItems = finalItems.slice(options.offset);
         }
 
-        // 应用 limit
         if (options?.limit !== undefined && options.limit < finalItems.length) {
             finalItems = finalItems.slice(0, options.limit);
         }
@@ -186,11 +161,9 @@ export class BM25Indexer extends Indexer {
         };
     }
 
-    /**
-     * 向索引中插入 Item
-     */
     async insert(items: Item[]): Promise<void> {
         const records: BM25Record[] = [];
+
         for (const item of items) {
             const columns = item.indexer_columns?.[this.name] as Array<{ column: string; content: string }> | undefined;
             if (!columns || columns.length === 0) {
@@ -206,29 +179,22 @@ export class BM25Indexer extends Indexer {
                     continue;
                 }
 
-                const record = this.itemToRecord(item, columnName, randomUUID());
-                if (record) {
-                    records.push(record);
-                }
+                records.push(this.itemToRecord(item, columnName, randomUUID()));
             }
         }
+
         if (records.length > 0) {
-            await this.db.insert(records);
+            await this.ensureDB().insert(records);
         }
     }
 
-    /**
-     * 从索引中删除 Item
-     */
     async delete(itemIds: string[]): Promise<void> {
-        await this.db.delete(itemIds);
+        await this.ensureDB().delete(itemIds);
     }
 
-    /**
-     * 更新索引中的 Item
-     */
     async update(items: Item[]): Promise<void> {
         const records: BM25Record[] = [];
+
         for (const item of items) {
             const columns = item.indexer_columns?.[this.name] as Array<{ column: string; content: string }> | undefined;
             if (!columns || columns.length === 0) {
@@ -244,53 +210,32 @@ export class BM25Indexer extends Indexer {
                     continue;
                 }
 
-                const record = this.itemToRecord(item, columnName, randomUUID());
-                if (record) {
-                    records.push(record);
-                }
+                records.push(this.itemToRecord(item, columnName, randomUUID()));
             }
         }
+
         if (records.length > 0) {
-            await this.db.update(records);
+            await this.ensureDB().update(records);
         }
     }
 
-    /**
-     * 关闭索引器
-     */
     close(): void {
-        this.db.close();
+        this.db?.close();
     }
 
-    /**
-     * 刷新索引到磁盘
-     */
     async flush(): Promise<void> {
-        await this.db.flush();
+        await this.ensureDB().flush();
     }
 
-    /**
-     * 获取底层 BM25IndexDB 实例（用于高级操作）
-     */
-    getDB(): BM25IndexDB {
-        return this.db;
+    getDB(): IBM25IndexDB {
+        return this.ensureDB();
     }
 
-    /**
-     * 删除所有数据库内容
-     */
     async deleteAll(): Promise<void> {
-        if (this.db) {
-            await this.db.deleteAll();
-        } else {
-            throw new Error('[BM25Indexer] BM25IndexDB deleteAll fails');
-        }
+        await this.ensureDB().deleteAll();
     }
 }
 
-/**
- * 创建 BM25Indexer 实例的工厂函数
- */
 export function createBM25Indexer(schema: ColumnSchema, dbPath: string, defaultTopK = 10): BM25Indexer {
     return new BM25Indexer(schema, dbPath, defaultTopK);
 }
