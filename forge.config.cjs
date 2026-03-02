@@ -14,7 +14,10 @@ module.exports = {
     ),
     asar: {
       unpack: "**/node_modules/{sharp,@img}/**/*"
-    }
+    },
+    extraResource: [
+      path.join(__dirname, 'native')
+    ]
   },
   rebuildConfig: {},
   makers: [

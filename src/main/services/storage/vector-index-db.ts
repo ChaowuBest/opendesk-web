@@ -49,13 +49,31 @@ export interface VectorSearchOptions {
     topK?: number;
 }
 
+// ============================================================================
+// IVectorIndexDB - 统一异步接口（VectorIndexDB 和 VectorIndexDBHm 共同实现）
+// ============================================================================
+export interface IVectorIndexDB {
+    insert(record: VectorIndexRecord): Promise<boolean>;
+    insertMany(records: VectorIndexRecord[]): Promise<number>;
+    upsert(record: VectorIndexRecord): Promise<boolean>;
+    delete(itemId: string): Promise<boolean>;
+    deleteMany(itemIds: string[]): Promise<number>;
+    search(queryVector: Float32Array | number[], options?: VectorSearchOptions, filterItemIds?: string[]): Promise<VectorSearchResult[]>;
+    count(): Promise<number>;
+    exists(itemId: string): Promise<boolean>;
+    clear(): Promise<number>;
+    transaction<T>(fn: () => Promise<T>): Promise<T>;
+    close(): void;
+    getDimension(): number;
+}
+
 /**
  * 向量索引数据库管理类
  *
  * 使用 better-sqlite3 + sqlite-vec 实现同步 API
  * better-sqlite3 使用 SQLite 的 WAL 模式，支持多读单写
  */
-export class VectorIndexDB {
+export class VectorIndexDB implements IVectorIndexDB {
     private db: Database.Database;
     private readonly metaTableName = 'vector_index_meta';
     private readonly vecTableName = 'vector_index_vec';
@@ -182,7 +200,7 @@ export class VectorIndexDB {
      * @param record 要插入的记录
      * @returns 是否插入成功
      */
-    insert(record: VectorIndexRecord): boolean {
+    async insert(record: VectorIndexRecord): Promise<boolean> {
         this.validateDimension(record.repr);
         const vecData = this.toFloat32Array(record.repr);
 
@@ -218,7 +236,7 @@ export class VectorIndexDB {
      * @param records 要插入的记录数组
      * @returns 成功插入的记录数
      */
-    insertMany(records: VectorIndexRecord[]): number {
+    async insertMany(records: VectorIndexRecord[]): Promise<number> {
         if (records.length === 0) return 0;
 
         const insertMeta = this.db.prepare(`
@@ -260,7 +278,7 @@ export class VectorIndexDB {
      * @param record 要插入或更新的记录
      * @returns 是否操作成功
      */
-    upsert(record: VectorIndexRecord): boolean {
+    async upsert(record: VectorIndexRecord): Promise<boolean> {
         this.validateDimension(record.repr);
         const vecData = this.toFloat32Array(record.repr);
 
@@ -317,7 +335,7 @@ export class VectorIndexDB {
      * @param itemId 要删除的记录 ID
      * @returns 是否删除成功
      */
-    delete(itemId: string): boolean {
+    async delete(itemId: string): Promise<boolean> {
         const deleteMeta = this.db.prepare(`DELETE FROM ${this.metaTableName} WHERE item_id = ?`);
         const deleteVec = this.db.prepare(`DELETE FROM ${this.vecTableName} WHERE item_id = ?`);
 
@@ -335,7 +353,7 @@ export class VectorIndexDB {
      * @param itemIds 要删除的记录 ID 数组
      * @returns 删除的记录数
      */
-    deleteMany(itemIds: string[]): number {
+    async deleteMany(itemIds: string[]): Promise<number> {
         if (itemIds.length === 0) return 0;
 
         const selectVectorIds = this.db.prepare(`SELECT vector_id FROM ${this.metaTableName} WHERE item_id = ?`);
@@ -368,11 +386,11 @@ export class VectorIndexDB {
      * @param filterItemIds 可选的 item_id 过滤列表（用于 join）
      * @returns 搜索结果数组
      */
-    search(
+    async search(
         queryVector: Float32Array | number[],
         options?: VectorSearchOptions,
         filterItemIds?: string[]
-    ): VectorSearchResult[] {
+    ): Promise<VectorSearchResult[]> {
         this.validateDimension(queryVector);
         const vecData = this.toFloat32Array(queryVector);
         const metric = options?.metric || 'cosine';
@@ -456,7 +474,7 @@ export class VectorIndexDB {
      * 统计记录数
      * @returns 记录数
      */
-    count(): number {
+    async count(): Promise<number> {
         const stmt = this.db.prepare(`SELECT COUNT(*) as count FROM ${this.metaTableName}`);
         const result = stmt.get() as { count: number };
         return result.count;
@@ -467,7 +485,7 @@ export class VectorIndexDB {
      * @param itemId 记录 ID
      * @returns 是否存在
      */
-    exists(itemId: string): boolean {
+    async exists(itemId: string): Promise<boolean> {
         const stmt = this.db.prepare(`SELECT 1 FROM ${this.metaTableName} WHERE item_id = ? LIMIT 1`);
         return stmt.get(itemId) !== undefined;
     }
@@ -476,8 +494,8 @@ export class VectorIndexDB {
      * 清空所有记录
      * @returns 删除的记录数
      */
-    clear(): number {
-        const countBefore = this.count();
+    async clear(): Promise<number> {
+        const countBefore = await this.count();
         this.db.exec(`DELETE FROM ${this.metaTableName}`);
         this.db.exec(`DELETE FROM ${this.vecTableName}`);
         return countBefore;
@@ -488,9 +506,9 @@ export class VectorIndexDB {
      * @param fn 要在事务中执行的函数
      * @returns 函数的返回值
      */
-    transaction<T>(fn: () => T): T {
-        const transaction = this.db.transaction(fn);
-        return transaction();
+    async transaction<T>(fn: () => Promise<T>): Promise<T> {
+        const transact = this.db.transaction(() => fn());
+        return transact() as Promise<T>;
     }
 
     /**
@@ -510,8 +528,8 @@ export class VectorIndexDB {
     /**
      * 获取数据库统计信息
      */
-    getStats(): { totalRecords: number; dimension: number; dbSize: number } {
-        const totalRecords = this.count();
+    async getStats(): Promise<{ totalRecords: number; dimension: number; dbSize: number }> {
+        const totalRecords = await this.count();
         const pageCount = (this.db.pragma('page_count') as { page_count: number }[])[0].page_count;
         const pageSize = (this.db.pragma('page_size') as { page_size: number }[])[0].page_size;
         const dbSize = pageCount * pageSize;
@@ -522,12 +540,16 @@ export class VectorIndexDB {
 
 /**
  * 创建 VectorIndexDB 实例的工厂函数
- * @param dbPath 数据库文件路径
- * @param dimension 向量维度，默认 1024
- * @returns VectorIndexDB 实例
+export default VectorIndexDB;
+
+/**
+ * 工厂函数：根据当前平台自动选择 VectorIndexDB 实现
+ * 平台判断逻辑内聚在数据层， indexer 不感知平台
  */
-export function createVectorIndexDB(dbPath: string, dimension: number = 1024): VectorIndexDB {
+export async function createVectorIndexDB(dbPath: string, dimension: number = 1024): Promise<IVectorIndexDB> {
+    if ((process.platform as string) === 'openharmony') {
+        const { VectorIndexDBHm } = await import('./vector-index-db.hm.js');
+        return new VectorIndexDBHm(dbPath, dimension);
+    }
     return new VectorIndexDB(dbPath, dimension);
 }
-
-export default VectorIndexDB;

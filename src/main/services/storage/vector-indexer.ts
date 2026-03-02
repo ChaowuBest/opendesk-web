@@ -18,7 +18,7 @@
 
 import { Indexer, IndexerSearchOptions, IndexerSearchResult } from './indexer.js';
 import { Item, FilterCondition, VectorOperator, QueryOperator, VectorQuery, ItemType, ColumnSchema } from './abstract-storage.js';
-import { VectorIndexDB, VectorIndexRecord, VectorSearchOptions } from './vector-index-db.js';
+import { VectorIndexRecord, VectorSearchOptions, IVectorIndexDB, createVectorIndexDB } from './vector-index-db.js';
 import { randomUUID } from 'crypto';
 
 /**
@@ -41,7 +41,8 @@ export class VectorIndexer extends Indexer {
     ];
     private readonly columnName = 'repr';
 
-    private db: VectorIndexDB;
+    private db: IVectorIndexDB | null = null;
+    private readonly _dbPath: string;
     private readonly dimension: number;
     private schema: ColumnSchema;
     
@@ -49,14 +50,21 @@ export class VectorIndexer extends Indexer {
         super();
         this.dimension = dimension;
         this.schema = schema;
-        this.db = new VectorIndexDB(dbPath, dimension);
+        this._dbPath = dbPath;
     }
 
     /**
      * 初始化索引器
      */
     async initialize(): Promise<void> {
-        // VectorIndexDB 在构造函数中已初始化
+        if (!this.db) {
+            this.db = await createVectorIndexDB(this._dbPath, this.dimension);
+        }
+    }
+
+    private ensureDB(): IVectorIndexDB {
+        if (!this.db) throw new Error('VectorIndexer not initialized. Call initialize() first.');
+        return this.db;
     }
 
     /**
@@ -190,7 +198,7 @@ export class VectorIndexer extends Indexer {
         }
 
         // 执行向量搜索
-        const results = this.db.search(queryVector, searchOptions, filterItemIds);
+        const results = await this.ensureDB().search(queryVector, searchOptions, filterItemIds);
 
         // 根据操作符过滤结果
         let filteredResults = results;
@@ -271,7 +279,7 @@ export class VectorIndexer extends Indexer {
             }
         }
         if (records.length > 0) {
-            this.db.insertMany(records);
+            await this.ensureDB().insertMany(records);
         }
     }
 
@@ -279,7 +287,7 @@ export class VectorIndexer extends Indexer {
      * 从索引中删除 Item
      */
     async delete(itemIds: string[]): Promise<void> {
-        this.db.deleteMany(itemIds);
+        await this.ensureDB().deleteMany(itemIds);
     }
 
     /**
@@ -304,7 +312,7 @@ export class VectorIndexer extends Indexer {
 
                 const record = this.itemToRecord(item, columnName, repr as number[], randomUUID());
                 if (record) {
-                    this.db.upsert(record);
+                    await this.ensureDB().upsert(record);
                 }
             }
         }
@@ -314,14 +322,14 @@ export class VectorIndexer extends Indexer {
      * 关闭索引器
      */
     close(): void {
-        this.db.close();
+        this.db?.close();
     }
 
     /**
      * 获取底层 VectorIndexDB 实例（用于高级操作）
      */
-    getDB(): VectorIndexDB {
-        return this.db;
+    getDB(): IVectorIndexDB {
+        return this.ensureDB();
     }
 
     /**

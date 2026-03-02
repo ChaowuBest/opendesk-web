@@ -42,6 +42,30 @@ export interface BaseQueryOptions {
     offset?: number;
 }
 
+// ============================================================================
+// IBaseIndexDB - 统一异步接口（BaseIndexDB 和 BaseIndexDBHm 共同实现）
+// ============================================================================
+export interface IBaseIndexDB {
+    insert(record: Record<string, any>): Promise<boolean>;
+    insertMany(records: Record<string, any>[]): Promise<number>;
+    upsert(record: Record<string, any>): Promise<boolean>;
+    delete(itemId: string): Promise<boolean>;
+    deleteMany(itemIds: string[]): Promise<number>;
+    deleteByConditions(conditions: BaseQueryCondition[]): Promise<number>;
+    update(itemId: string, data: Record<string, any>): Promise<boolean>;
+    findById(itemId: string): Promise<Record<string, any> | undefined>;
+    findByIds(itemIds: string[]): Promise<Record<string, any>[]>;
+    findAll(options?: BaseQueryOptions): Promise<Record<string, any>[]>;
+    query(conditions: BaseQueryCondition[], options?: Omit<BaseQueryOptions, 'conditions'>): Promise<Record<string, any>[]>;
+    count(conditions?: BaseQueryCondition[]): Promise<number>;
+    exists(itemId: string): Promise<boolean>;
+    clear(): Promise<number>;
+    transaction<T>(fn: () => Promise<T>): Promise<T>;
+    close(): void;
+    getSchema(): ColumnSchema;
+    getValidFields(): string[];
+}
+
 // 支持的操作符列表
 const SUPPORTED_OPERATORS: BaseQueryOperator[] = [
     '=', '!=', '>', '<', '>=', '<=',
@@ -57,7 +81,7 @@ const SUPPORTED_OPERATORS: BaseQueryOperator[] = [
  *
  * 支持动态 Schema：根据传入的 ColumnSchema 动态创建表结构
  */
-export class BaseIndexDB {
+export class BaseIndexDB implements IBaseIndexDB {
     private db: Database.Database;
     private readonly tableName = 'base_index';
     private isInitialized = false;
@@ -179,7 +203,7 @@ export class BaseIndexDB {
     /**
      * 插入单条记录
      */
-    insert(record: Record<string, any>): boolean {
+    async insert(record: Record<string, any>): Promise<boolean> {
         const columns = this.validFields.filter(col => record[col] !== undefined);
         const placeholders = columns.map(() => '?').join(', ');
         const values = columns.map(col => record[col]);
@@ -203,7 +227,7 @@ export class BaseIndexDB {
     /**
      * 批量插入记录（使用事务确保原子性）
      */
-    insertMany(records: Record<string, any>[]): number {
+    async insertMany(records: Record<string, any>[]): Promise<number> {
         if (records.length === 0) return 0;
 
         const insertAll = this.db.transaction((records: Record<string, any>[]) => {
@@ -236,7 +260,7 @@ export class BaseIndexDB {
     /**
      * 插入或更新记录（upsert）
      */
-    upsert(record: Record<string, any>): boolean {
+    async upsert(record: Record<string, any>): Promise<boolean> {
         const columns = this.validFields.filter(col => record[col] !== undefined);
         const placeholders = columns.map(() => '?').join(', ');
         const values = columns.map(col => record[col]);
@@ -257,7 +281,7 @@ export class BaseIndexDB {
     /**
      * 根据 item_id 删除记录
      */
-    delete(itemId: string): boolean {
+    async delete(itemId: string): Promise<boolean> {
         const stmt = this.db.prepare(`DELETE FROM ${this.tableName} WHERE item_id = ?`);
         const result = stmt.run(itemId);
         return result.changes > 0;
@@ -266,7 +290,7 @@ export class BaseIndexDB {
     /**
      * 批量删除记录
      */
-    deleteMany(itemIds: string[]): number {
+    async deleteMany(itemIds: string[]): Promise<number> {
         if (itemIds.length === 0) return 0;
 
         const placeholders = itemIds.map(() => '?').join(', ');
@@ -278,7 +302,7 @@ export class BaseIndexDB {
     /**
      * 根据条件删除记录
      */
-    deleteByConditions(conditions: BaseQueryCondition[]): number {
+    async deleteByConditions(conditions: BaseQueryCondition[]): Promise<number> {
         if (conditions.length === 0) {
             throw new Error('At least one condition is required for deleteByConditions');
         }
@@ -292,7 +316,7 @@ export class BaseIndexDB {
     /**
      * 更新记录
      */
-    update(itemId: string, data: Record<string, any>): boolean {
+    async update(itemId: string, data: Record<string, any>): Promise<boolean> {
         const fields = Object.keys(data).filter(key =>
             this.validFields.includes(key) && key !== 'item_id' && data[key] !== undefined
         );
@@ -310,7 +334,7 @@ export class BaseIndexDB {
     /**
      * 根据 item_id 查询单条记录
      */
-    findById(itemId: string): Record<string, any> | undefined {
+    async findById(itemId: string): Promise<Record<string, any> | undefined> {
         const stmt = this.db.prepare(`SELECT * FROM ${this.tableName} WHERE item_id = ?`);
         return stmt.get(itemId) as Record<string, any> | undefined;
     }
@@ -318,7 +342,7 @@ export class BaseIndexDB {
     /**
      * 批量查询记录
      */
-    findByIds(itemIds: string[]): Record<string, any>[] {
+    async findByIds(itemIds: string[]): Promise<Record<string, any>[]> {
         if (itemIds.length === 0) return [];
 
         const placeholders = itemIds.map(() => '?').join(', ');
@@ -329,7 +353,7 @@ export class BaseIndexDB {
     /**
      * 查询所有记录
      */
-    findAll(options?: BaseQueryOptions): Record<string, any>[] {
+    async findAll(options?: BaseQueryOptions): Promise<Record<string, any>[]> {
         let sql = `SELECT * FROM ${this.tableName}`;
         const params: any[] = [];
 
@@ -361,14 +385,14 @@ export class BaseIndexDB {
     /**
      * 根据条件查询记录
      */
-    query(conditions: BaseQueryCondition[], options?: Omit<BaseQueryOptions, 'conditions'>): Record<string, any>[] {
+    async query(conditions: BaseQueryCondition[], options?: Omit<BaseQueryOptions, 'conditions'>): Promise<Record<string, any>[]> {
         return this.findAll({ ...options, conditions });
     }
 
     /**
      * 统计记录数
      */
-    count(conditions?: BaseQueryCondition[]): number {
+    async count(conditions?: BaseQueryCondition[]): Promise<number> {
         let sql = `SELECT COUNT(*) as count FROM ${this.tableName}`;
         const params: any[] = [];
 
@@ -386,7 +410,7 @@ export class BaseIndexDB {
     /**
      * 检查记录是否存在
      */
-    exists(itemId: string): boolean {
+    async exists(itemId: string): Promise<boolean> {
         const stmt = this.db.prepare(`SELECT 1 FROM ${this.tableName} WHERE item_id = ? LIMIT 1`);
         return stmt.get(itemId) !== undefined;
     }
@@ -394,8 +418,8 @@ export class BaseIndexDB {
     /**
      * 清空所有记录
      */
-    clear(): number {
-        const countBefore = this.count();
+    async clear(): Promise<number> {
+        const countBefore = await this.count();
         this.db.exec(`DELETE FROM ${this.tableName}`);
         return countBefore;
     }
@@ -403,9 +427,11 @@ export class BaseIndexDB {
     /**
      * 在事务中执行多个操作
      */
-    transaction<T>(fn: () => T): T {
-        const transaction = this.db.transaction(fn);
-        return transaction();
+    async transaction<T>(fn: () => Promise<T>): Promise<T> {
+        // better-sqlite3 是同步引擎，fn() 内部的 DB 调用虽然返回 Promise，
+        // 但在 BaseIndexDB 实现中这些 Promise 会即时 resolve（无真正异步 I/O）
+        const transact = this.db.transaction(() => fn());
+        return transact() as Promise<T>;
     }
 
     /**
@@ -492,8 +518,8 @@ export class BaseIndexDB {
     /**
      * 获取数据库统计信息
      */
-    getStats(): { totalRecords: number; dbSize: number } {
-        const totalRecords = this.count();
+    async getStats(): Promise<{ totalRecords: number; dbSize: number }> {
+        const totalRecords = await this.count();
         const pageCount = (this.db.pragma('page_count') as { page_count: number }[])[0].page_count;
         const pageSize = (this.db.pragma('page_size') as { page_size: number }[])[0].page_size;
         const dbSize = pageCount * pageSize;
@@ -503,3 +529,15 @@ export class BaseIndexDB {
 }
 
 export default BaseIndexDB;
+
+/**
+ * 工厂函数：根据当前平台自动选择 BaseIndexDB 实现
+ * 平台判断逻辑内聚在数据层， indexer 不感知平台
+ */
+export async function createBaseIndexDB(dbPath: string, schema: ColumnSchema): Promise<IBaseIndexDB> {
+    if ((process.platform as string) === 'openharmony') {
+        const { BaseIndexDBHm } = await import('./base-index-db.hm.js');
+        return new BaseIndexDBHm(dbPath, schema);
+    }
+    return new BaseIndexDB(dbPath, schema);
+}

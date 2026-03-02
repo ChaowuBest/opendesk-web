@@ -11,7 +11,7 @@
 
 import path from 'path';
 import { Indexer, IndexerSearchOptions as BaseIndexerSearchOptions, IndexerSearchResult } from './indexer.js';
-import { BaseIndexDB, BaseQueryCondition, BaseQueryOperator } from './base-index-db.js';
+import { BaseQueryCondition, BaseQueryOperator, IBaseIndexDB, createBaseIndexDB } from './base-index-db.js';
 import { ColumnSchema, validateColumnSchema, QueryOperator, FilterCondition, Item, ItemType } from './abstract-storage.js';
 // ============================================================================
 // BaseIndexer - 动态 Schema 的 SQLite 索引器
@@ -35,8 +35,9 @@ export class BaseIndexer extends Indexer {
     ];
 
     private _supportedFields: string[] = [];
-    private db: BaseIndexDB;
+    private db: IBaseIndexDB | null = null;
     private schema: ColumnSchema;
+    private readonly _dbPath: string;
     private isInitialized = false;
 
     constructor(schema: ColumnSchema, dbPath: string) {
@@ -44,7 +45,7 @@ export class BaseIndexer extends Indexer {
         validateColumnSchema(schema);
         this.schema = schema;
         this._supportedFields = Object.keys(schema.columns);
-        this.db = new BaseIndexDB(dbPath, schema);
+        this._dbPath = dbPath;
     }
 
     get supportedFields(): string[] {
@@ -55,7 +56,15 @@ export class BaseIndexer extends Indexer {
      * 初始化索引器
      */
     async initialize(): Promise<void> {
+        if (!this.db) {
+            this.db = await createBaseIndexDB(this._dbPath, this.schema);
+        }
         this.isInitialized = true;
+    }
+
+    private ensureDB(): IBaseIndexDB {
+        if (!this.db) throw new Error('BaseIndexer not initialized. Call initialize() first.');
+        return this.db;
     }
 
     /**
@@ -118,7 +127,7 @@ export class BaseIndexer extends Indexer {
         }
 
         // 执行查询
-        const records = this.db.query(queryConditions, {
+        const records = await this.ensureDB().query(queryConditions, {
             limit: options?.limit,
             offset: options?.offset,
             orderBy: options?.orderBy ? {
@@ -153,7 +162,7 @@ export class BaseIndexer extends Indexer {
         });
 
         // 获取总数
-        const totalCount = this.db.count(queryConditions);
+        const totalCount = await this.ensureDB().count(queryConditions);
 
         return { items, totalCount };
     }
@@ -174,7 +183,7 @@ export class BaseIndexer extends Indexer {
             return record;
         });
 
-        this.db.insertMany(records);
+        await this.ensureDB().insertMany(records);
     }
 
     /**
@@ -183,7 +192,7 @@ export class BaseIndexer extends Indexer {
     async delete(itemIds: string[]): Promise<void> {
         if (itemIds.length === 0) return;
 
-        this.db.deleteMany(itemIds);
+        await this.ensureDB().deleteMany(itemIds);
     }
 
     /**
@@ -199,7 +208,7 @@ export class BaseIndexer extends Indexer {
                     record[field] = item[field];
                 }
             }
-            this.db.upsert(record);
+            await this.ensureDB().upsert(record);
         }
     }
 
@@ -207,14 +216,14 @@ export class BaseIndexer extends Indexer {
      * 关闭索引器
      */
     close(): void {
-        this.db.close();
+        this.db?.close();
     }
 
     /**
      * 获取记录数
      */
-    getCount(): number {
-        return this.db.count();
+    async getCount(): Promise<number> {
+        return this.ensureDB().count();
     }
 
     /**
@@ -227,7 +236,7 @@ export class BaseIndexer extends Indexer {
     /**
      * 获取底层数据库实例
      */
-    getDB(): BaseIndexDB {
-        return this.db;
+    getDB(): IBaseIndexDB {
+        return this.ensureDB();
     }
 }
