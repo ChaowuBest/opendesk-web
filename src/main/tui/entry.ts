@@ -14,6 +14,7 @@ import { Setting } from "../utils/setting.js";
 import { defaultSelectListTheme } from "./theme";
 import { logger, setDebugMode, getDebugMode } from "../utils/logger.js";
 import { lookupKnownContextSize, fetchContextSizeFromAPI } from "../utils/model-context";
+import { UpgradeOverlay } from "./components/upgrade";
 import { AgentDecl } from "../aikernel/agent.js";
 import { ShellAgentDecl } from "../aikernel/agents/shellagent.js";
 import { HelpOverlay } from "./components/help";
@@ -72,7 +73,7 @@ export class OpenDeskTUI {
 
     private shortcutManager: KeyboardShortcutManager;
     public commandRegistry: SlashCommandRegistry;
-    private modelInfoResolved = false;
+
     private activeTaskId?: string;
 
     /** 跟踪是否有 overlay 打开 */
@@ -424,6 +425,16 @@ export class OpenDeskTUI {
                 this.inputArea.clearMessageQueue();
                 logger.info('任务已停止');
                 this.tui.requestRender();
+            },
+        });
+
+        this.commandRegistry.register({
+            name: "upgrade",
+            description: "升级 OpenDesk CLI 到最新版本",
+            execute: async () => {
+                // 显示升级 overlay 界面，让用户选择 stable 或 nightly
+                const upgradeOverlay = new UpgradeOverlay(this);
+                upgradeOverlay.show();
             },
         });
 
@@ -790,6 +801,15 @@ export class OpenDeskTUI {
             const modelName = modelCfg?.model_name ?? aliasToUse;
 
             this.inputArea.statusBar.update({ modelName });
+
+            // 如果没有通过命令行指定模型，则更新当前活跃任务的模型为新的默认模型
+            // 这样用户在 /config 中修改模型后，继续对话时会使用新模型
+            if (!this.model && this.activeTaskId) {
+                const currentTask = this.taskManagerState.getTask(this.activeTaskId);
+                if (currentTask) {
+                    currentTask.model = data.default_model;
+                }
+            }
 
             // 先用内置表即时填充，再异步 API 覆盖
             const knownSize = lookupKnownContextSize(modelName);
