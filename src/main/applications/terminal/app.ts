@@ -11,7 +11,7 @@
 
 import { BaseToolset } from "../../aikernel/tool";
 import { BaseApplication } from "../base";
-import { ExecutePowerShellTool, ExecuteBashTool, WriteFileTool, ReadFileTool, ExecuteZshTool, findExecutable } from "./tools.js";
+import { ExecutePowerShellTool, ExecuteBashTool, WriteFileTool, ReadFilesTool, ExecuteZshTool, EditFileTool, SearchReplaceTool, ApplyPatchTool, findExecutable } from "./tools.js";
 
 
 export class TerminalApplication extends BaseApplication {
@@ -40,8 +40,11 @@ export class TerminalApplication extends BaseApplication {
                 break;
         }
 
-        toolset.addTool(new ReadFileTool());
+        toolset.addTool(new ReadFilesTool());
         toolset.addTool(new WriteFileTool());
+        toolset.addTool(new EditFileTool());
+        toolset.addTool(new SearchReplaceTool());
+        toolset.addTool(new ApplyPatchTool());
         return [toolset];
     }
 }
