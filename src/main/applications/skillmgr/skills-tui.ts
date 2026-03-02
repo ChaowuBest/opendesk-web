@@ -173,9 +173,14 @@ export class SkillsOverlay implements Component {
                 apiKey: this.selectedRegistry === 'skillsmp' ? apiKey : undefined,
             });
 
-            this.searchResults = result.skills || [];
+this.searchResults = result.skills || [];
+            if (result.message) {
+                this.showMessage(result.message, false);
+            }
             if (this.searchResults.length === 0) {
-                this.showMessage('未找到匹配的技能', true);
+                if (!result.message) {
+                    this.showMessage('未找到匹配的技能', true);
+                }
                 this.showSearch();
             } else {
                 this.showSearchResults();
