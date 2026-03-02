@@ -67,6 +67,8 @@ export class TaskState {
     task_manager_state: TaskManagerState;
     model?: string;
     message_queue: string[] = [];
+    started_at?: Date;   // 任务开始时间
+    finished_at?: Date;  // 任务完成时间
 
     constructor(task_manager_state: TaskManagerState) {
         this.task_manager_state = task_manager_state;
@@ -80,6 +82,13 @@ export class TaskState {
         // 从硬盘加载的任务如果是running状态，则说明其在运行时被异常中断关闭了
         task.task_status = task_json.task_status === 'running' ? 'failed' : task_json.task_status;
         task.chat_context = ChatContext.assign(task_json.chat_context);
+        // 加载时间字段
+        if (task_json.started_at) {
+            task.started_at = new Date(task_json.started_at);
+        }
+        if (task_json.finished_at) {
+            task.finished_at = new Date(task_json.finished_at);
+        }
         return task;
     }
 
@@ -88,6 +97,8 @@ export class TaskState {
             task_id: this.task_id,
             task_name: this.task_name,
             task_status: this.task_status,
+            started_at: this.started_at?.toISOString(),
+            finished_at: this.finished_at?.toISOString(),
         }
     }
 
@@ -97,6 +108,8 @@ export class TaskState {
             task_name: this.task_name,
             task_status: this.task_status,
             chat_context: this.chat_context.toJSON(),
+            started_at: this.started_at?.toISOString(),
+            finished_at: this.finished_at?.toISOString(),
         }
     }
 
@@ -131,6 +144,8 @@ export class TaskState {
      */
     async submitUserMessage(message: string) {
         this.task_status = 'running';
+        this.started_at = new Date();  // 记录任务开始时间
+        this.finished_at = undefined;  // 清除之前的完成时间
         this.task_manager_state.publishTaskListUpdate();
 
         let user_message = new UserMessage(message);
@@ -162,6 +177,7 @@ export class TaskState {
             return;
         }
         this.task_status = 'stopped';
+        this.finished_at = new Date();  // 记录任务完成时间
         logger.info(`task ${this.task_id} stopped by user`);
         this.task_manager_state.publishTaskListUpdate();
     }
@@ -398,6 +414,7 @@ export class TaskState {
         if (this.task_status !== 'stopped') {
             this.task_status = 'stopped';
         }
+        this.finished_at = new Date();  // 记录任务完成时间
         this.sendSubscriptionFeedback();
         this.task_manager_state.publishTaskListUpdate();
     }
