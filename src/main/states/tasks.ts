@@ -217,6 +217,17 @@ export class TaskState {
     }
 
     /**
+     * Rename the task
+     * @param name the new name for the task
+     */
+    rename(name: string) {
+        this.task_name = name;
+        this.task_manager_state.save();
+        this.task_manager_state.publishTaskListUpdate();
+        logger.info(`task ${this.task_id} renamed to "${name}"`);
+    }
+
+    /**
      * 向前端的订阅者发布任务状态更新，如果指定了part_index，则只更新该part
      * 否则更新最后一个part
      */
