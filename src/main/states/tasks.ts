@@ -235,6 +235,40 @@ export class TaskState {
     }
 
     /**
+     * Fork the current task to create a copy with a new task_id
+     * The forked task's name will have "-fork" suffix
+     * @returns the forked task
+     */
+    fork(): TaskState {
+        const forkedTask = new TaskState(this.task_manager_state);
+
+        // Copy chat context via serialization
+        forkedTask.chat_context = ChatContext.assign(this.chat_context.toJSON());
+
+        // Copy model
+        forkedTask.model = this.model;
+
+        // Set forked name with "-fork" suffix
+        forkedTask.task_name = this.task_name ? `${this.task_name}-fork` : null;
+
+        // Copy task status (forked task should have the same status as the original)
+        forkedTask.task_status = this.task_status;
+
+        // Copy time fields
+        forkedTask.started_at = this.started_at;
+        forkedTask.finished_at = this.finished_at;
+
+        // Add to task manager
+        this.task_manager_state.tasks.push(forkedTask);
+        this.task_manager_state.save();
+        this.task_manager_state.publishTaskListUpdate();
+
+        logger.info(`task ${this.task_id} forked to ${forkedTask.task_id}`);
+
+        return forkedTask;
+    }
+
+    /**
      * Set bookmark path for the task
      * @param path the bookmark path, "/" for root, or unix-style path like "/folder/subfolder"
      */

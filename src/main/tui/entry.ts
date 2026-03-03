@@ -467,6 +467,47 @@ export class OpenDeskTUI {
         });
 
         this.commandRegistry.register({
+            name: "fork",
+            description: "复制当前会话并切换到新会话",
+            execute: async () => {
+                if (!this.activeTaskId) {
+                    const info = new InfoOverlay(this, {
+                        title: "Fork 失败",
+                        message: "没有活跃的任务",
+                        closeLabel: "确定"
+                    });
+                    info.show();
+                    return;
+                }
+
+                const currentTask = this.taskManagerState.getTask(this.activeTaskId);
+                if (!currentTask) {
+                    const info = new InfoOverlay(this, {
+                        title: "Fork 失败",
+                        message: "未找到当前任务",
+                        closeLabel: "确定"
+                    });
+                    info.show();
+                    return;
+                }
+
+                // Fork the current task
+                const forkedTask = currentTask.fork();
+
+                // Switch to the forked task
+                this.switchToTask(forkedTask);
+
+                // Show info notification
+                const info = new InfoOverlay(this, {
+                    title: "Fork 成功",
+                    message: `已切换到新的会话副本`,
+                    closeLabel: "确定"
+                });
+                info.show();
+            },
+        });
+
+        this.commandRegistry.register({
             name: "bookmark",
             description: "管理任务书签，用法：/bookmark add|list|remove",
             getArgumentCompletions: (argPrefix: string) => {
