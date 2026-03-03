@@ -14,8 +14,9 @@ import { defaultSelectListTheme, defaultEditorTheme } from "../../tui/theme";
 import type { OpenDeskTUI } from "../../tui/entry";
 import { ApplicationRegistry } from "../../applications/registry";
 import { LLM } from "../../aikernel/llm.js";
-import { UserMessage, ChatContext, AssistantMessage, AssistantResponse, SystemMessage } from "../../aikernel/messages.js";
+import { UserMessage, ChatContext, AssistantMessage, AssistantResponse, SystemMessage, ToolCall } from "../../aikernel/messages.js";
 import { BaseTool, BaseToolset } from "../../aikernel/tool.js";
+import { ToolCallView, ToolCallMessagePartView } from "../../tui/components/taskview.js";
 import { logger } from "../../utils/logger.js";
 import chalk from "chalk";
 import { z } from "zod";
@@ -289,6 +290,7 @@ export class MailOverlay implements Component {
     private assistantResultScrollOffset = 0;
     private assistantResultTotalLines = 0;
     private assistantResultVisibleLines = 0;
+    private assistantToolCalls: any[] = [];
 
     // 搜索模式
     private isInSearchMode = false;
@@ -1039,6 +1041,8 @@ export class MailOverlay implements Component {
 
     private async runAssistant(userInput: string) {
         this.assistantBusy = true;
+        this.assistantResult = '';
+        this.assistantToolCalls = [];
         this.openDeskTUI.tui.setFocus(null);
         this.openDeskTUI.tui.requestRender();
 
@@ -1055,51 +1059,103 @@ export class MailOverlay implements Component {
             ctx.attachToolsets(mailAssistantToolset);
             ctx.appendMessage(new UserMessage(userInput));
 
-            let lastText = '';
-            for (;;) {
-                const resp: AssistantResponse = await LLM.complete(ctx);
-                ctx.appendMessage(resp.content);
+            // 用于累积所有回复内容
+            let accumulatedText = '';
 
-                if (resp.finish_reason === 'tool_calls') {
-                    for (const part of resp.content.content) {
-                        if (part.type !== 'tool_call') continue;
-                        for (const tc of part.toolcalls) {
-                            const tool = ctx.getTool(tc.tool_name);
-                            if (!tool) {
-                                tc.status = 'error';
-                                tc.result = `未知工具: ${tc.tool_name}`;
-                                continue;
-                            }
-                            tc.setTool(tool);
-                            let args: any;
-                            try {
-                                args = tc.args_string ? JSON.parse(jsonrepair(tc.args_string)) : {};
-                            } catch (e) {
-                                tc.status = 'error';
-                                tc.result = (e as Error).message;
-                                continue;
-                            }
-                            tc.status = 'running';
-                            try {
-                                const result = await tool.execute(args);
-                                tc.status = result.status;
-                                tc.result = result.result;
-                            } catch (e) {
-                                tc.status = 'error';
-                                tc.result = (e as Error).message;
-                            }
+            // 循环处理，直到没有工具调用为止
+            for (;;) {
+                // 创建助手消息用于累积响应
+                const assistantMessage = new AssistantMessage();
+
+                // 使用流式完成
+                let hasToolCalls = false;
+                let currentText = '';
+                let toolCalls = [];
+                
+                for await (const chunkResponse of LLM.streamComplete(ctx)) {
+                    // 合并 chunk 到 assistant message
+                    assistantMessage.mergeChunk(chunkResponse.content);
+                    
+                    // 提取文本内容和工具调用
+                    currentText = '';
+                    toolCalls = [];
+                    
+                    for (const part of assistantMessage.content) {
+                        if (part.type === 'text') {
+                            currentText = part.text;
+                        } else if (part.type === 'tool_call') {
+                            toolCalls = part.toolcalls;
+                            hasToolCalls = true;
                         }
                     }
-                    continue;
+                    
+                    // 更新 UI，保持之前的内容
+                    this.assistantResult = (accumulatedText + currentText).trim() || '（生成中……）';
+                    this.assistantToolCalls = toolCalls;
+                    this.state = 'assistant-result';
+                    // 自动滚动到底部
+                    this.assistantResultScrollOffset = Number.MAX_SAFE_INTEGER;
+                    this.openDeskTUI.tui.requestRender();
                 }
 
-                for (const part of resp.content.content) {
-                    if (part.type === 'text') lastText = part.text;
+                // 将当前消息的文本内容添加到累积内容中
+                accumulatedText += currentText + '\n';
+
+                // 将助手消息添加到对话上下文
+                ctx.appendMessage(assistantMessage);
+
+                // 如果没有工具调用，结束循环
+                if (!hasToolCalls) {
+                    break;
                 }
-                break;
+
+                // 处理工具调用
+                if (toolCalls.length > 0) {
+                    for (const tc of toolCalls) {
+                        const tool = ctx.getTool(tc.tool_name);
+                        if (!tool) {
+                            tc.status = 'error';
+                            tc.result = `未知工具: ${tc.tool_name}`;
+                            continue;
+                        }
+                        tc.setTool(tool);
+                        let args: any;
+                        try {
+                            args = tc.args_string ? JSON.parse(jsonrepair(tc.args_string)) : {};
+                        } catch (e) {
+                            tc.status = 'error';
+                            tc.result = (e as Error).message;
+                            continue;
+                        }
+                        tc.status = 'running';
+                        
+                        // 更新 UI 显示工具调用状态，保持累积的内容并添加生成中提示
+                        this.assistantResult = (accumulatedText + '\n（生成中……）').trim() || '（生成中……）';
+                        this.assistantToolCalls = toolCalls;
+                        this.state = 'assistant-result';
+                        this.openDeskTUI.tui.requestRender();
+                        
+                        try {
+                            const result = await tool.execute(args);
+                            tc.status = result.status;
+                            tc.result = result.result;
+                        } catch (e) {
+                            tc.status = 'error';
+                            tc.result = (e as Error).message;
+                        }
+                        
+                        // 工具调用完成后更新 UI，保持累积的内容并继续显示生成中提示
+                        // 因为接下来要等待大模型的回复
+                        this.assistantResult = (accumulatedText + '\n（生成中……）').trim() || '（生成中……）';
+                        this.assistantToolCalls = toolCalls;
+                        this.state = 'assistant-result';
+                        this.openDeskTUI.tui.requestRender();
+                    }
+                }
             }
 
-            this.assistantResult = lastText.trim() || '（无回复内容）';
+            // 最终结果使用累积的内容
+            this.assistantResult = accumulatedText.trim() || '（无回复内容）';
             this.state = 'assistant-result';
             this.assistantResultScrollOffset = 0;
             const lines = this.assistantResult.split('\n');
@@ -1483,6 +1539,14 @@ export class MailOverlay implements Component {
                 this.box.addChild(new SeparatorLine('─'));
                 
                 const bodyLines = Math.max(3, availableForContent - 8);
+                
+                // 显示工具调用（如果有）
+                if (this.assistantToolCalls.length > 0) {
+                    const toolCallView = new ToolCallMessagePartView();
+                    toolCallView.setToolcalls(this.assistantToolCalls);
+                    this.box.addChild(toolCallView);
+                    this.box.addChild(new Text(''));
+                }
                 
                 const bodyView = new ScrollableEmailBody(
                     { textContent: this.assistantResult, htmlContent: '', attachments: [] },
