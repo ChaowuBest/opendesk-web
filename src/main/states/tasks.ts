@@ -69,6 +69,7 @@ export class TaskState {
     message_queue: string[] = [];
     started_at?: Date;   // 任务开始时间
     finished_at?: Date;  // 任务完成时间
+    bookmark_path?: string;  // 书签路径，"/" 表示根目录
 
     constructor(task_manager_state: TaskManagerState) {
         this.task_manager_state = task_manager_state;
@@ -89,6 +90,10 @@ export class TaskState {
         if (task_json.finished_at) {
             task.finished_at = new Date(task_json.finished_at);
         }
+        // 加载书签路径
+        if (task_json.bookmark_path) {
+            task.bookmark_path = task_json.bookmark_path;
+        }
         return task;
     }
 
@@ -99,6 +104,7 @@ export class TaskState {
             task_status: this.task_status,
             started_at: this.started_at?.toISOString(),
             finished_at: this.finished_at?.toISOString(),
+            bookmark_path: this.bookmark_path,
         }
     }
 
@@ -110,6 +116,7 @@ export class TaskState {
             chat_context: this.chat_context.toJSON(),
             started_at: this.started_at?.toISOString(),
             finished_at: this.finished_at?.toISOString(),
+            bookmark_path: this.bookmark_path,
         }
     }
 
@@ -225,6 +232,27 @@ export class TaskState {
         this.task_manager_state.save();
         this.task_manager_state.publishTaskListUpdate();
         logger.info(`task ${this.task_id} renamed to "${name}"`);
+    }
+
+    /**
+     * Set bookmark path for the task
+     * @param path the bookmark path, "/" for root, or unix-style path like "/folder/subfolder"
+     */
+    setBookmark(path: string) {
+        this.bookmark_path = path;
+        this.task_manager_state.save();
+        this.task_manager_state.publishTaskListUpdate();
+        logger.info(`task ${this.task_id} bookmark set to "${path}"`);
+    }
+
+    /**
+     * Remove bookmark from the task
+     */
+    removeBookmark() {
+        this.bookmark_path = undefined;
+        this.task_manager_state.save();
+        this.task_manager_state.publishTaskListUpdate();
+        logger.info(`task ${this.task_id} bookmark removed`);
     }
 
     /**
