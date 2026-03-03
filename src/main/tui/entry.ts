@@ -1,4 +1,4 @@
-import { TUI, SelectList, Box, Text, Key, visibleWidth, truncateToWidth, matchesKey, type Component } from "@mariozechner/pi-tui";
+import { TUI, Box, Text, Key, matchesKey, type Component } from "@mariozechner/pi-tui";
 import { FULL_CLEAR } from './components/constants';
 import { OpenDeskBanner } from './banner';
 import { VerticalLayout } from './components/layout';
@@ -11,7 +11,6 @@ import { ApplicationRegistry } from "../applications/registry";
 import { KeyboardShortcutManager } from "./shortcuts";
 import { SlashCommandRegistry } from "./commands";
 import { Setting } from "../utils/setting.js";
-import { defaultSelectListTheme } from "./theme";
 import { logger, setDebugMode, getDebugMode } from "../utils/logger.js";
 import { lookupKnownContextSize, fetchContextSizeFromAPI } from "../utils/model-context";
 import { UpgradeOverlay } from "./components/upgrade";
@@ -22,6 +21,7 @@ import { ConfirmOverlay, InfoOverlay } from "./components/notice";
 import { DashboardOverlay } from "./components/dashboard";
 import { LogPanel, LogPanelMode } from "./components/logpanel";
 import { TodoList } from "./components/todolist";
+import { TaskSwitcher } from "./components/taskswitcher";
 import { ConfigMainPage } from "./components/config/configMain";
 import { getTaskTodosForDisplay } from "../applications/todomgr/tools";
 import { exportTaskToHtml } from "../utils/export";
@@ -59,7 +59,7 @@ export interface CommandLineArgs {
 
 export class OpenDeskTUI {
 
-    private taskManagerState: TaskManagerState;
+    public taskManagerState: TaskManagerState;
 
     public tui: TUI;
     private container: VerticalLayout = new VerticalLayout({
@@ -609,74 +609,12 @@ export class OpenDeskTUI {
     }
 
     private showTaskSwitcher() {
-        const tasks = this.taskManagerState.tasks;
-        if (tasks.length === 0) return;
-
-        const statusIcons: Record<string, string> = {
-            running: '● 执行中',
-            waiting: '○ 空闲',
-            stopped: '■ 已完成',
-            failed: '✖ 异常中断',
-        };
-
-        const overlayWidth = this.tui.terminal.columns;
-        const contentWidth = overlayWidth - 6;
-
-        const items = [...tasks].reverse().map(t => {
-            const rawName = t.task_name || '未命名任务';
-            const status = statusIcons[t.task_status] ?? t.task_status;
-            const statusW = visibleWidth(status);
-            const maxNameW = contentWidth - statusW - 2;
-
-            let name = rawName;
-            if (visibleWidth(rawName) > maxNameW) {
-                name = truncateToWidth(rawName, Math.max(4, maxNameW - 2), '') + '..';
-            }
-
-            const gap = Math.max(2, contentWidth - visibleWidth(name) - statusW);
-            return {
-                value: t.task_id,
-                label: name + ' '.repeat(gap) + chalk.dim(status),
-            };
-        });
-
-        const list = new SelectList(items, Math.min(items.length, 10), defaultSelectListTheme);
-        const box = new Box(1, 1);
-        box.setBgFn((text: string) => chalk.bgHex('#2d2d2d').hex('#e0e0e0')(text));
-        box.addChild(list);
-
-        const handle = this.tui.showOverlay(box, {
-            width: "100%",
-            maxHeight: "50%",
-            anchor: "center",
-        });
-
-        // 标记有 overlay 打开
-        this.hasOpenOverlay = true;
-
-        this.tui.setFocus(list);
-
-        list.onSelect = (item) => {
-            handle.hide();
-            // 标记 overlay 关闭
-            this.hasOpenOverlay = false;
-            this.tui.setFocus(this.inputArea.input);
-            const task = this.taskManagerState.getTask(item.value);
-            if (task) {
-                this.switchToTask(task);
-            }
-        };
-
-        list.onCancel = () => {
-            handle.hide();
-            // 标记 overlay 关闭
-            this.hasOpenOverlay = false;
-            this.tui.setFocus(this.inputArea.input);
-        };
+        const switcher = new TaskSwitcher(this);
+        switcher.show();
     }
 
 
-    private switchToTask(task: TaskState) {
+    public switchToTask(task: TaskState) {
         // 先清屏，防止旧内容残留
         process.stdout.write(FULL_CLEAR);
 

@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { BaseApplication } from "../base";
+import { BaseApplication, EventDecl } from "../base";
 import { BaseTool, BaseToolset } from "../../aikernel/tool";
 import { z } from 'zod';
 import { Setting } from '../../utils/setting.js';
@@ -221,7 +221,7 @@ export class McpMgrApplication extends BaseApplication {
     /**
      * 获取应用能够注册的事件
      */
-    async getSupportedEvents(): Promise<{ eventName: string; eventDescription: string }[]> {
+    async getSupportedEvents(): Promise<EventDecl[]> {
         return [
             {
                 eventName: 'serversUpdated',

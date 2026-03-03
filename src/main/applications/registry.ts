@@ -168,13 +168,8 @@ export class ApplicationRegistry {
             return;
         }
 
-        // 校验事件名是否已声明
-        try {
-            await application.validateEventName(eventName);
-        } catch (error) {
-            logger.error(`Event validation failed for ${bundleName}.${eventName}: ${error}`);
-            return;
-        }
+        // 校验事件名是否已声明，未声明只报 warning，业务流程继续执行
+        await application.validateEventName(eventName);
 
         // 发送事件给订阅者
         application.sendEventToSubscribers(eventName, ...args);
