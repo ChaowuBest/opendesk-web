@@ -516,7 +516,35 @@ export class MailOverlay implements Component {
         }
 
         if (this.state === 'assistant-result') {
-            // 任意键返回列表
+            // 滚动控制
+            if (data === 'j' || data === 'J' || matchesKey(data, Key.down)) {
+                this.scrollAssistantResult(1);
+                return { consume: true };
+            }
+            if (data === 'k' || data === 'K' || matchesKey(data, Key.up)) {
+                this.scrollAssistantResult(-1);
+                return { consume: true };
+            }
+            if (matchesKey(data, Key.pageDown) || matchesKey(data, Key.space)) {
+                this.scrollAssistantResult(Math.max(1, this.assistantResultVisibleLines - 2));
+                return { consume: true };
+            }
+            if (matchesKey(data, Key.pageUp) || data === 'b' || data === 'B') {
+                this.scrollAssistantResult(-(Math.max(1, this.assistantResultVisibleLines - 2)));
+                return { consume: true };
+            }
+            if (matchesKey(data, Key.home) || data === 'g') {
+                this.assistantResultScrollOffset = 0;
+                this.openDeskTUI.tui.requestRender();
+                return { consume: true };
+            }
+            if (matchesKey(data, Key.end) || data === 'G') {
+                const bodyArea = Math.max(1, this.assistantResultVisibleLines - 1);
+                this.assistantResultScrollOffset = Math.max(0, this.assistantResultTotalLines - bodyArea);
+                this.openDeskTUI.tui.requestRender();
+                return { consume: true };
+            }
+            // ESC 或其他键返回列表
             this.assistantResult = '';
             this.assistantResultScrollOffset = 0;
             if (this.isInSearchMode) {
@@ -937,6 +965,14 @@ export class MailOverlay implements Component {
         const bodyArea = Math.max(1, this.detailBodyVisibleLines - 1);
         const maxOffset = Math.max(0, this.detailBodyTotalLines - bodyArea);
         this.detailScrollOffset = Math.max(0, Math.min(this.detailScrollOffset + delta, maxOffset));
+        this.openDeskTUI.tui.requestRender();
+    }
+
+    private scrollAssistantResult(delta: number) {
+        // bodyArea = visibleLines - 1（ScrollableEmailBody 留了 1 行给滚动指示器）
+        const bodyArea = Math.max(1, this.assistantResultVisibleLines - 1);
+        const maxOffset = Math.max(0, this.assistantResultTotalLines - bodyArea);
+        this.assistantResultScrollOffset = Math.max(0, Math.min(this.assistantResultScrollOffset + delta, maxOffset));
         this.openDeskTUI.tui.requestRender();
     }
 
@@ -1445,14 +1481,26 @@ export class MailOverlay implements Component {
                 this.box.addChild(new Text(''));
                 this.box.addChild(new Text(MC.neonBold('  邮件助手 回复')));
                 this.box.addChild(new SeparatorLine('─'));
-                const resultLines = this.assistantResult.split('\n');
-                const visibleH = Math.max(3, availableForContent - 8);
-                const start = Math.min(this.assistantResultScrollOffset, Math.max(0, resultLines.length - visibleH));
-                for (let i = start; i < Math.min(start + visibleH, resultLines.length); i++) {
-                    this.box.addChild(new Text('  ' + sanitizeLine(resultLines[i] || ' ')));
-                }
+                
+                const bodyLines = Math.max(3, availableForContent - 8);
+                
+                const bodyView = new ScrollableEmailBody(
+                    { textContent: this.assistantResult, htmlContent: '', attachments: [] },
+                    bodyLines,
+                    this.assistantResultScrollOffset
+                );
+                this.box.addChild(bodyView);
+                
+                // 更新总行数供滚动逻辑使用
+                this.assistantResultTotalLines = bodyView.getTotalLines();
+                this.assistantResultVisibleLines = bodyLines;
+                
                 this.box.addChild(new Text(''));
-                this.box.addChild(new Text(MC.dim('  按任意键返回列表')));
+                this.box.addChild(new AssistantResultFooter(
+                    this.assistantResultScrollOffset,
+                    this.assistantResultTotalLines,
+                    this.assistantResultVisibleLines
+                ));
                 break;
             }
 
@@ -2020,6 +2068,31 @@ class ScrollableEmailBody implements Component {
             }
         }
         return bar;
+    }
+}
+
+/** 助手结果底部操作提示栏 */
+class AssistantResultFooter implements Component {
+    constructor(
+        private scrollOffset: number,
+        private totalLines: number,
+        private visibleLines: number,
+    ) { }
+    invalidate() { }
+    render(width: number): string[] {
+        const hints: string[] = [];
+
+        // 滚动提示（仅在有溢出时显示）
+        if (this.totalLines > this.visibleLines) {
+            hints.push(MC.neon('↑↓/jk') + MC.dim(' 滚动'));
+            hints.push(MC.neon('Space/b') + MC.dim(' 翻页'));
+            hints.push(MC.neon('g/G') + MC.dim(' 首/尾'));
+        }
+
+        // 操作提示
+        hints.push(MC.neon('ESC/任意键') + MC.dim(' 返回'));
+
+        return [truncateToWidth('  ' + hints.join('   '), width, '…')];
     }
 }
 
