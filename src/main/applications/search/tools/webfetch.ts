@@ -41,7 +41,6 @@ const BROWSER_HEADERS: Record<string, string> = {
     'User-Agent': DEFAULT_USER_AGENT,
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
     'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-    'Accept-Encoding': 'gzip, deflate, br',
     'Connection': 'keep-alive',
     'Upgrade-Insecure-Requests': '1',
     'Sec-Fetch-Dest': 'document',
@@ -241,9 +240,11 @@ export class WebFetchTool extends BaseTool<typeof WebFetchArgsSchema> {
                 return null;
             }
 
-            // 检测 SPA 骨架：HTML 很大但提取出的内容极少（如 632KB HTML → 236字符 Markdown）
+            // 检测 SPA 骨架：HTML 很大但提取出的内容极少（如 632KB HTML → 236字符 Markdown）。
+            // 但如果 Readability 提取出了足够多的有效文本（>= 1500 字符），即使比例低也信任其结果，
+            // 因为 Next.js 等框架会在 HTML 中嵌入大量 JS/JSON 数据导致比例虚低。
             const extractionRatio = markdown.length / body.length;
-            if (extractionRatio < MIN_EXTRACTION_RATIO && body.length > 10000) {
+            if (extractionRatio < MIN_EXTRACTION_RATIO && body.length > 10000 && markdown.length < 1500) {
                 return null;
             }
 
@@ -327,25 +328,36 @@ export class WebFetchTool extends BaseTool<typeof WebFetchArgsSchema> {
 
     // ───────────────────── HTTP 请求 ─────────────────────
 
-    private async doFetch(url: string, headers: Record<string, string>): Promise<Awaited<ReturnType<typeof fetch>>> {
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    private async doFetch(url: string, headers: Record<string, string>, maxRetries = 2): Promise<Awaited<ReturnType<typeof fetch>>> {
+        let lastError: Error | undefined;
 
-        try {
-            return await fetch(url, {
-                method: 'GET',
-                redirect: 'follow',
-                headers,
-                signal: controller.signal,
-            });
-        } catch (err: any) {
-            if (err.name === 'AbortError') {
-                throw new Error(`请求超时 (${FETCH_TIMEOUT_MS / 1000}秒)`);
+        for (let attempt = 0; attempt <= maxRetries; attempt++) {
+            if (attempt > 0) {
+                await new Promise(r => setTimeout(r, 1000 * attempt));
             }
-            throw err;
-        } finally {
-            clearTimeout(timer);
+
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+
+            try {
+                return await fetch(url, {
+                    method: 'GET',
+                    redirect: 'follow',
+                    headers,
+                    signal: controller.signal,
+                });
+            } catch (err: any) {
+                clearTimeout(timer);
+                if (err.name === 'AbortError') {
+                    throw new Error(`请求超时 (${FETCH_TIMEOUT_MS / 1000}秒)`);
+                }
+                lastError = err;
+            } finally {
+                clearTimeout(timer);
+            }
         }
+
+        throw lastError!;
     }
 
     private async readResponseBody(response: Awaited<ReturnType<typeof fetch>>): Promise<string> {
@@ -381,20 +393,30 @@ export class WebFetchTool extends BaseTool<typeof WebFetchArgsSchema> {
 
     private isAntiBot(html: string): boolean {
         const lower = html.toLowerCase();
-        const indicators = [
+
+        // 强指标：明确表示反爬/挑战页面的文本
+        const strongIndicators = [
             'just a moment',
             'checking your browser',
             'verify you are human',
             'enable javascript and cookies',
-            'cloudflare',
             'cf-browser-verification',
-            'challenge-platform',
             'ddos-guard',
             'sucuri',
             'incapsula',
         ];
-        const matchCount = indicators.filter(s => lower.includes(s)).length;
-        return matchCount >= 2;
+        // 弱指标：常出现在正常页面的 Cloudflare CDN/分析脚本中，单独命中不足以判定反爬
+        const weakIndicators = [
+            'cf_chl_opt',         // Cloudflare 挑战页专用变量
+            'managed_checking_msg', // Cloudflare 挑战页提示文本
+            '_cf_chl_tk',         // Cloudflare 挑战 token
+        ];
+
+        const strongHits = strongIndicators.filter(s => lower.includes(s)).length;
+        const weakHits = weakIndicators.filter(s => lower.includes(s)).length;
+
+        // 需要至少 2 个强指标，或 1 个强指标 + 1 个弱指标
+        return strongHits >= 2 || (strongHits >= 1 && weakHits >= 1);
     }
 
     private isAntiBotTitle(title: string): boolean {
