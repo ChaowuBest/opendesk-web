@@ -167,10 +167,6 @@ export class OpenDeskTUI {
             }
         }
 
-        if (args.command) {
-            this.onRequestSubmit(args.command);
-        }
-
         // 设置触发器任务回调
         this.setupTriggerTaskHandler();
 
@@ -1013,6 +1009,14 @@ export class OpenDeskTUI {
                 }
             }
         });
+    }
+
+    /**
+     * 执行命令行传入的命令（供外部调用，在 registry 就绪后执行）
+     * @param command - 要执行的命令
+     */
+    executeCommand(command: string): void {
+        this.onRequestSubmit(command);
     }
 
     /**

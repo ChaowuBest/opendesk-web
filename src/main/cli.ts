@@ -13,7 +13,7 @@ import { setPlatform } from '../platforms/base';
 import { CliPlatform } from '../platforms/cli.js';
 import { isMainThread } from 'worker_threads';
 import { useCliTransport } from './utils/logger.js';
-import { initializeRegistry, initializeRegistryWorker } from './applications/registry';
+import { initializeRegistry, initializeRegistryWorker, ApplicationRegistry } from './applications/registry';
 import { initializeAppWorkers } from './applications/worker';
 import { GlobalState } from './states/global.js';
 import { FULL_CLEAR } from './tui/components/constants';
@@ -80,6 +80,13 @@ function main(args: CommandLineArgs) {
 
         initializeRegistry();
         initializeRegistryWorker();
+
+        // 如果有命令行参数 -c，在 registry 就绪后执行
+        if (args.command) {
+            ApplicationRegistry.onReady(() => {
+                tui.executeCommand(args.command!);
+            });
+        }
     }
 }
 
