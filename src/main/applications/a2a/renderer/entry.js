@@ -341,6 +341,28 @@ class A2AEntryWidget extends HTMLElement {
                 }
                 return; 
             }
+            else {
+ 	                 console.log(`[A2UI] 执行通用动作: ${actionName}`);
+ 	                 // 1. 动态提取并组装所有上下文参数 (context)
+ 	                 const actionPayload = {};                
+ 	                 if (Array.isArray(contextDefs)) {
+ 	                     for (const ctx of contextDefs) {
+ 	                         if (ctx.key) {
+ 	                             // 兼容获取数据，处理 literalString 嵌套的情况
+ 	                             let val = ctx.value;
+ 	                             if (val && typeof val === 'object' && val.literalString !== undefined) {
+ 	                                 val = val.literalString;
+ 	                             }
+ 	                             actionPayload[ctx.key] = val;
+ 	                         }
+ 	                     }
+ 	                 } else if (typeof contextDefs === 'object' && contextDefs !== null) {
+ 	                     // 兼容 context 直接是一个对象的情况
+ 	                     Object.assign(actionPayload, contextDefs);
+ 	                 }
+ 	                 // 2. 将动作名称和参数结构化，交给 sendMessage 统一发给后端/Agent
+ 	                 messageToSend = `ACTION: ${actionName} with data: ${JSON.stringify(actionPayload)}`;
+ 	             }
             if (messageToSend) {
                 this.sendMessage(messageToSend, true, targetAgentId);
             }
@@ -364,11 +386,24 @@ class A2AEntryWidget extends HTMLElement {
         this.isSending = true;
         if (!isSystemAction) {
         } else {
-             this.conversationHistory.push({
-                role: 'user',
-                content: `[系统指令] ${text.startsWith('ACTION') ? '提交答案...' : '生成题目...'}`,
-                id: `sys_${Date.now()}`,
-                isSystem: true // 可以在 render 里处理这个样式让它变灰
+             let displayAction = '执行操作';
+ 	             
+ 	             if (text.includes('submit_quiz')) {
+ 	                 displayAction = '提交答案';
+ 	             } else if (text.includes('start_quiz')) {
+ 	                 displayAction = '生成题目';
+ 	             } else {
+ 	                 const match = text.match(/ACTION:\s*([^\s]+)/);
+ 	                 if (match) {
+ 	                     displayAction = `触发动作: ${match[1]}`; 
+ 	                 }
+ 	             }
+ 	 
+ 	             this.conversationHistory.push({
+ 	                 role: 'user',
+ 	                 content: `[系统指令] ${displayAction}...`,
+ 	                 id: `sys_${Date.now()}`,
+ 	                 isSystem: true
             });
         }
         
