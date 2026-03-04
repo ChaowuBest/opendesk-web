@@ -35,9 +35,12 @@ const OutboxServerSchema = z.object({
 });
 
 // 单个账号的配置
+// username: 用于 IMAP/POP3/SMTP 认证的用户名（某些服务商如华为邮箱需要与邮箱地址不同的用户名）
+// email: 原始邮箱地址（可选，用于显示和唯一标识；未提供时回退到 username）
 const EmailProfileSchema = z.object({
     name: z.string().default(''),
     username: z.string().default(''),
+    email: z.string().optional(),
     password: z.string().default(''),
     inbox: InboxServerSchema.optional(),
     outbox: OutboxServerSchema.optional(),
