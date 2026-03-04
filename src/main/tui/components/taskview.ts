@@ -1,11 +1,13 @@
 
-import { Component, Text, Markdown, Box, type TUI } from "@mariozechner/pi-tui";
+import { Component, Text, Markdown, Box, type TUI, visibleWidth, truncateToWidth } from "@mariozechner/pi-tui";
 import { TaskState } from "../../states/tasks";
 import {
     AssistantMessage, ReasoningMessagePart, TextMessagePart,
-    ToolCallMessagePart, UserMessage, ToolCall
+    ToolCallMessagePart, UserMessage, ToolCall, CompactSeparatorMessage
 } from "../../aikernel/messages";
+import { shouldCompact, compactContext } from "../../aikernel/compact";
 import { TaskUpdateChunk } from "../../states/tasks";
+import { logger } from "../../utils/logger.js";
 import { defaultMarkdownTheme } from "../theme";
 import { DefaultToolCallView } from "./toolcall";
 import { Card } from "./card";
@@ -188,6 +190,53 @@ export class ToolCallMessagePartView implements Component {
     }
 }
 
+const COMPACT_SPINNER_FRAMES = ['◐', '◓', '◑', '◒'];
+const COMPACT_SPINNER_MS = 120;
+
+/**
+ * 上下文压缩分隔线视图。
+ * - 静态模式：渲染为一条带 ✂ 的水平分隔线
+ * - loading 模式：渲染为带旋转动画的"正在压缩…"提示
+ */
+export class CompactSeparatorView implements Component {
+    private _loading = false;
+    private invalidated = true;
+    private lastWidth?: number;
+    private cachedOutput?: string[];
+
+    setLoading(loading: boolean) {
+        this._loading = loading;
+        this.invalidated = true;
+    }
+
+    invalidate() { this.invalidated = true; }
+
+    private buildLine(label: string, width: number): string {
+        const labelW = visibleWidth(label);
+        const available = Math.max(0, width - labelW);
+        const left = Math.floor(available / 2);
+        const right = available - left;
+        const raw = chalk.dim('─'.repeat(left)) + chalk.yellow(label) + chalk.dim('─'.repeat(right));
+        return truncateToWidth(raw, width, '', true);
+    }
+
+    render(width: number): string[] {
+        if (this._loading) {
+            const idx = Math.floor(Date.now() / COMPACT_SPINNER_MS) % COMPACT_SPINNER_FRAMES.length;
+            const icon = chalk.blueBright(COMPACT_SPINNER_FRAMES[idx]);
+            return ['', this.buildLine(` ${icon} 正在压缩上下文... `, width), ''];
+        }
+
+        if (!this.invalidated && this.lastWidth === width && this.cachedOutput) {
+            return this.cachedOutput;
+        }
+        this.lastWidth = width;
+        this.cachedOutput = ['', this.buildLine(' ✂ 上下文已压缩 ', width), ''];
+        this.invalidated = false;
+        return this.cachedOutput;
+    }
+}
+
 export class UserMessageView implements Component {
     message: UserMessage;
     box: Box = new Box(1, 1);
@@ -232,6 +281,8 @@ export class AssistantMessageView implements Component {
     private invalidated = true;
     private lastWidth?: number;
     private cachedOutput?: string[];
+    /** 当前正在更新的 message_id，用于检测新的 AssistantMessage 并重置 parts */
+    private currentMessageId?: string;
 
     async updateTextPart(index: number, textPart: TextMessagePart) {
         while (index >= this.parts.length) {
@@ -297,6 +348,12 @@ export class AssistantMessageView implements Component {
      * @param chunkUpdate
      */
     async update(chunkUpdate: TaskUpdateChunk) {
+        if (this.currentMessageId && this.currentMessageId !== chunkUpdate.message_id) {
+            this.parts = [];
+            this.box.clear();
+        }
+        this.currentMessageId = chunkUpdate.message_id;
+
         switch (chunkUpdate.last_part.type) {
             case 'text':
                 this.setStreamingComplete();
@@ -332,13 +389,15 @@ export class AssistantMessageView implements Component {
 export class TaskView implements Component {
 
     taskState?: TaskState;
-    messages: Array<UserMessageView | AssistantMessageView> = [];
+    messages: Array<UserMessageView | AssistantMessageView | CompactSeparatorView> = [];
 
     /** 用于向外部回传 StatusBar 数据 */
     onStatusBarUpdate?: (data: Partial<StatusBarData>) => void;
 
     /** 当前任务的ID，用于判断是否仍为活跃任务 */
     private currentTaskId?: string;
+    /** 防止 performCompactWithAnimation 重入 */
+    private _compacting = false;
 
     private tui: TUI;
     private messageLayout: Box = new Box(0, 0);
@@ -347,9 +406,42 @@ export class TaskView implements Component {
     private lastWidth?: number;
     private cachedOutput?: string[];
 
+    get isCompacting() { return this._compacting; }
+
     constructor(tui: TUI) {
         this.tui = tui;
         this.mainLayout.addChild(this.messageLayout);
+    }
+
+    /**
+     * 执行上下文压缩并在消息列表中展示动画。
+     * 内置防重入：如果上一次压缩尚未完成，直接返回。
+     */
+    async performCompactWithAnimation(): Promise<void> {
+        if (!this.taskState || this._compacting) return;
+        this._compacting = true;
+
+        const indicatorView = new CompactSeparatorView();
+        indicatorView.setLoading(true);
+        this.messageLayout.addChild(indicatorView);
+        this.invalidated = true;
+
+        const spinnerInterval = setInterval(() => {
+            this.tui.requestRender();
+        }, COMPACT_SPINNER_MS);
+
+        try {
+            await compactContext(this.taskState.chat_context, this.taskState.model);
+            this.taskState.markCompacted();
+        } catch (err: any) {
+            logger.warn(`Context compact failed: ${err?.message ?? err}`);
+        } finally {
+            clearInterval(spinnerInterval);
+            this.messageLayout.removeChild(indicatorView);
+            this._compacting = false;
+            this.invalidated = true;
+            this.tui.requestRender();
+        }
     }
 
     /**
@@ -361,6 +453,17 @@ export class TaskView implements Component {
         if (!this.taskState) {
             return;
         }
+
+        // 在提交新消息前检查是否需要压缩上下文（TUI 层负责展示动画）
+        try {
+            if (await shouldCompact(this.taskState.chat_context, this.taskState.model)) {
+                logger.info(`Auto-compacting context for task ${this.taskState.task_id}`);
+                await this.performCompactWithAnimation();
+                // 压缩可能插入了 CompactSeparatorMessage，需要重建视图
+                this.clearMessages();
+                this.rebuildFromHistory();
+            }
+        } catch { /* shouldCompact 失败不影响正常流程 */ }
 
         // 记录当前任务的ID
         const snapshotTaskId = this.taskState.task_id;
@@ -419,7 +522,11 @@ export class TaskView implements Component {
         this.currentTaskId = this.taskState.task_id;
 
         for (const msg of this.taskState.chat_context.messages) {
-            if (msg instanceof UserMessage) {
+            if ((msg as any).role === 'compact_separator') {
+                const view = new CompactSeparatorView();
+                this.messages.push(view);
+                this.messageLayout.addChild(view);
+            } else if (msg instanceof UserMessage) {
                 const view = new UserMessageView(msg);
                 this.messages.push(view);
                 this.messageLayout.addChild(view);

@@ -110,10 +110,12 @@ const KNOWN_CONTEXT_SIZES: Record<string, number> = {
     'glm-4': 128000,
     'glm-4-5': 128000,
     'glm-4-5-air': 128000,
-    'glm-4-7': 204800,
-    'glm-5': 128000,
+    'glm-4-7': 202752,
+    'glm-5': 202752,
 
     // ── Qwen / Alibaba ──
+    'qwen3.5-max': 1000000,
+    'qwen3.5-397b': 262144,
     'qwen3-0-6b': 32768,
     'qwen3-1-7b': 131072,
     'qwen3-4b': 131072,

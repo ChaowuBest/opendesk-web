@@ -66,6 +66,9 @@ export class ReasoningMessagePart {
     }
 }
 
+/** 当压缩后的工具参数长度超过此阈值时，参数本身也会被替换为压缩占位 */
+const LARGE_ARGS_THRESHOLD = 500;
+
 export class ToolCall {
 
     index: number;
@@ -78,6 +81,8 @@ export class ToolCall {
     result_object?: object;
     rendered?: string;
     tool?: BaseTool<any>;
+    /** undefined = 未压缩；非空 UUID = 已被上下文压缩 */
+    compress_id?: string;
 
     constructor(index: number, id: string, tool_name: string, args_string: string) {
         this.index = index;
@@ -645,13 +650,28 @@ export class AssistantMessage {
                 }
                 case 'tool_call': {
                     processCurrentMessage();
-                    // 输出 tool_call 消息
-                    const toolCalls = part.toOpenAIToolCalls();
-                    if (toolCalls.length > 0) {
-                        messages.push({ role: 'assistant', tool_calls: toolCalls });
+                    const toolCallObjects = part.toolcalls.map(tc => {
+                        const shouldCompressArgs = tc.compress_id
+                            && tc.args_string
+                            && tc.args_string.length > LARGE_ARGS_THRESHOLD;
+                        return {
+                            id: tc.id,
+                            type: 'function',
+                            function: {
+                                name: tc.tool_name,
+                                arguments: shouldCompressArgs
+                                    ? `{"compressed":"工具参数已被压缩，数据ID为 ${tc.compress_id}"}`
+                                    : (tc.args_string || "")
+                            }
+                        };
+                    });
+                    if (toolCallObjects.length > 0) {
+                        messages.push({ role: 'assistant', tool_calls: toolCallObjects });
                         for (const toolcall of part.toolcalls) {
-                            let toolCallMsg: any  = { 'role': 'tool', tool_call_id: toolcall.id }
-                            if (toolcall.status === 'error') {
+                            let toolCallMsg: any = { 'role': 'tool', tool_call_id: toolcall.id };
+                            if (toolcall.compress_id) {
+                                toolCallMsg.content = `工具返回结果已被压缩，数据ID为 ${toolcall.compress_id}`;
+                            } else if (toolcall.status === 'error') {
                                 toolCallMsg.content = `Toolcall failed: ${toolcall.result}`;
                             } else if (toolcall.status === 'success') {
                                 toolCallMsg.content = toolcall.result ?? '工具调用成功完成';
@@ -679,7 +699,13 @@ export class AssistantMessage {
         var tool_call_parts = this.content.filter(part => part.type === 'tool_call');
         for (let part of tool_call_parts) {
             for (let toolcall of part.toolcalls) {
-                if (toolcall.status === 'error') {
+                if (toolcall.compress_id) {
+                    messages.push({
+                        role: 'tool',
+                        tool_call_id: toolcall.id,
+                        content: `工具返回结果已被压缩，数据ID为 ${toolcall.compress_id}`
+                    });
+                } else if (toolcall.status === 'error') {
                     messages.push({
                         role: 'tool',
                         tool_call_id: toolcall.id,
@@ -793,11 +819,44 @@ export class AssistantResponse {
 }
 
 /**
+ * 上下文压缩分隔消息。
+ * 消息历史中最多出现一次，其前面的消息在构建 OpenAI 上下文时会被跳过，
+ * 由 summary 字段中的结构化快照替代。
+ */
+export class CompactSeparatorMessage {
+    role: 'compact_separator' = 'compact_separator';
+    summary: string;
+
+    constructor(summary: string) {
+        this.summary = summary;
+    }
+
+    static assign(obj: object): CompactSeparatorMessage {
+        Object.setPrototypeOf(obj, CompactSeparatorMessage.prototype);
+        return obj as CompactSeparatorMessage;
+    }
+
+    toOpenAIMessage(): object {
+        return {
+            role: 'user',
+            content: [{
+                type: 'text',
+                text: `[上下文压缩通知] 以下是对之前对话历史的结构化总结。此前的消息已被压缩并省略，请基于以下总结继续对话：\n\n${this.summary}`
+            }]
+        };
+    }
+
+    async render(): Promise<void> { /* 渲染在 TUI/GUI 层处理 */ }
+}
+
+export type ChatMessage = UserMessage | AssistantMessage | CompactSeparatorMessage;
+
+/**
  * Chat context for a chat session
  */
 export class ChatContext {
     system_prompt?: SystemMessage;
-    messages: (UserMessage | AssistantMessage)[] = [];
+    messages: ChatMessage[] = [];
     toolsets: Map<string, BaseToolset> = new Map();
 
     /**
@@ -831,12 +890,42 @@ export class ChatContext {
         }
     }
 
-    appendMessage(message: UserMessage | AssistantMessage): void {
+    appendMessage(message: ChatMessage): void {
         this.messages.push(message);
     }
 
-    lastMessage(): UserMessage | AssistantMessage | undefined {
+    lastMessage(): ChatMessage | undefined {
         return this.messages[this.messages.length - 1];
+    }
+
+    /** 查找最后一条 CompactSeparatorMessage 的位置（从末尾搜索，确保多条时取最新的） */
+    findCompactSeparator(): { index: number; message: CompactSeparatorMessage } | undefined {
+        for (let i = this.messages.length - 1; i >= 0; i--) {
+            if ((this.messages[i] as any).role === 'compact_separator') {
+                return { index: i, message: this.messages[i] as CompactSeparatorMessage };
+            }
+        }
+        return undefined;
+    }
+
+    /** 移除已有的分隔符并在指定位置插入新的 CompactSeparatorMessage */
+    insertCompactSeparator(separator: CompactSeparatorMessage, position: number): void {
+        this.messages = this.messages.filter(m => (m as any).role !== 'compact_separator');
+        this.messages.splice(position, 0, separator);
+    }
+
+    /** 确保最多只有一条 CompactSeparatorMessage，保留最后一条 */
+    deduplicateSeparators(): void {
+        let lastIdx = -1;
+        for (let i = this.messages.length - 1; i >= 0; i--) {
+            if ((this.messages[i] as any).role === 'compact_separator') {
+                if (lastIdx === -1) {
+                    lastIdx = i;
+                } else {
+                    this.messages.splice(i, 1);
+                }
+            }
+        }
     }
 
     /**
@@ -856,9 +945,12 @@ export class ChatContext {
                     ctx.messages.push(UserMessage.assign(message));
                 } else if (message.role === 'assistant') {
                     ctx.messages.push(AssistantMessage.assign(message));
+                } else if (message.role === 'compact_separator') {
+                    ctx.messages.push(CompactSeparatorMessage.assign(message));
                 }
             }
         }
+        ctx.deduplicateSeparators();
         // we cannot load any toolset from the saved chat context
         return ctx;
     }

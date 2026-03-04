@@ -22,9 +22,11 @@ import { DashboardOverlay } from "./components/dashboard";
 import { LogPanel, LogPanelMode } from "./components/logpanel";
 import { TodoList } from "./components/todolist";
 import { TaskSwitcher } from "./components/taskswitcher";
+import { BookmarkList } from "./components/bookmarklist";
 import { ConfigMainPage } from "./components/config/configMain";
 import { getTaskTodosForDisplay } from "../applications/todomgr/tools";
 import { exportTaskToHtml } from "../utils/export";
+import { describeCron } from "../utils/cron";
 
 import format from "string-template";
 import path from "path";
@@ -190,7 +192,7 @@ export class OpenDeskTUI {
                 } else if (trigger?.type === 'scheduled') {
                     triggerInfo = `[scheduled] 定时任务，仅执行一次 `;
                 } else if (trigger?.type === 'cron') {
-                    triggerInfo = `[cron] 定时任务, 触发时机为 ${trigger.cronExpression} `;
+                    triggerInfo = `[cron] 定时任务, 触发时机为 ${describeCron(trigger.cronExpression)} `;
                 }
 
                 logger.info(`触发器创建任务: ${todoId} -> task ${task.task_id}`);
@@ -435,6 +437,237 @@ export class OpenDeskTUI {
                 // 显示升级 overlay 界面，让用户选择 stable 或 nightly
                 const upgradeOverlay = new UpgradeOverlay(this);
                 upgradeOverlay.show();
+            },
+        });
+
+        this.commandRegistry.register({
+            name: "rename",
+            description: "重命名当前任务，用法：/rename <新名称>",
+            execute: async (args: string) => {
+                if (!this.activeTaskId) {
+                    logger.warn('没有活跃的任务');
+                    return;
+                }
+
+                const currentTask = this.taskManagerState.getTask(this.activeTaskId);
+                if (!currentTask) {
+                    logger.warn('未找到当前任务');
+                    return;
+                }
+
+                const newName = args.trim();
+                if (!newName) {
+                    logger.warn('请提供新的任务名称，用法：/rename <新名称>');
+                    return;
+                }
+
+                currentTask.rename(newName);
+                logger.info(`任务已重命名为: ${newName}`);
+                this.tui.requestRender();
+            },
+        });
+
+        this.commandRegistry.register({
+            name: "fork",
+            description: "复制当前会话并切换到新会话",
+            execute: async () => {
+                if (!this.activeTaskId) {
+                    const info = new InfoOverlay(this, {
+                        title: "Fork 失败",
+                        message: "没有活跃的任务",
+                        closeLabel: "确定"
+                    });
+                    info.show();
+                    return;
+                }
+
+                const currentTask = this.taskManagerState.getTask(this.activeTaskId);
+                if (!currentTask) {
+                    const info = new InfoOverlay(this, {
+                        title: "Fork 失败",
+                        message: "未找到当前任务",
+                        closeLabel: "确定"
+                    });
+                    info.show();
+                    return;
+                }
+
+                // Fork the current task
+                const forkedTask = currentTask.fork();
+
+                // Switch to the forked task
+                this.switchToTask(forkedTask);
+
+                // Show info notification
+                const info = new InfoOverlay(this, {
+                    title: "Fork 成功",
+                    message: `已切换到新的会话副本`,
+                    closeLabel: "确定"
+                });
+                info.show();
+            },
+        });
+
+        this.commandRegistry.register({
+            name: "compact",
+            description: "手动压缩当前任务的上下文",
+            execute: async () => {
+                if (this.taskView.isCompacting) {
+                    return;
+                }
+
+                if (!this.activeTaskId) {
+                    logger.warn('没有活跃的任务');
+                    return;
+                }
+
+                const currentTask = this.taskManagerState.getTask(this.activeTaskId);
+                if (!currentTask) {
+                    logger.warn('未找到当前任务');
+                    return;
+                }
+
+                try {
+                    await this.taskView.performCompactWithAnimation();
+                    this.taskManagerState.save();
+
+                    // 重建视图，让分隔线正确显示
+                    this.taskView.clearMessages();
+                    this.taskView.rebuildFromHistory();
+                    this.tui.requestRender();
+
+                    const info = new InfoOverlay(this, {
+                        title: "上下文压缩",
+                        message: "上下文已成功压缩。压缩效果将在下次对话时体现。",
+                        closeLabel: "确定"
+                    });
+                    info.show();
+                } catch (err: any) {
+                    logger.error(`上下文压缩失败: ${err?.message ?? err}`);
+                    const info = new InfoOverlay(this, {
+                        title: "压缩失败",
+                        message: `上下文压缩过程中发生错误：${err?.message ?? err}`,
+                        closeLabel: "确定"
+                    });
+                    info.show();
+                }
+            },
+        });
+
+        this.commandRegistry.register({
+            name: "bookmark",
+            description: "管理任务书签，用法：/bookmark add|list|remove",
+            getArgumentCompletions: (argPrefix: string) => {
+                const options = ['add', 'list', 'remove'];
+                return options
+                    .filter(opt => opt.startsWith(argPrefix.toLowerCase()))
+                    .map(opt => ({
+                        value: opt,
+                        label: opt,
+                        description: opt === 'add' ? '将当前任务添加到书签' :
+                                    opt === 'list' ? '列出所有书签任务' :
+                                    '移除当前任务的书签'
+                    }));
+            },
+            execute: async (args: string) => {
+                const subCommand = args.trim().toLowerCase();
+
+                if (subCommand === 'list') {
+                    // 显示书签列表
+                    const bookmarkList = new BookmarkList(this);
+                    bookmarkList.show();
+                    return;
+                }
+
+                if (subCommand === 'add') {
+                    // 添加当前任务到书签
+                    if (!this.activeTaskId) {
+                        const info = new InfoOverlay(this, {
+                            title: "添加书签失败",
+                            message: "没有活跃的任务",
+                            closeLabel: "确定"
+                        });
+                        info.show();
+                        return;
+                    }
+
+                    const currentTask = this.taskManagerState.getTask(this.activeTaskId);
+                    if (!currentTask) {
+                        const info = new InfoOverlay(this, {
+                            title: "添加书签失败",
+                            message: "未找到当前任务",
+                            closeLabel: "确定"
+                        });
+                        info.show();
+                        return;
+                    }
+
+                    if (currentTask.bookmark_path) {
+                        const info = new InfoOverlay(this, {
+                            title: "添加书签失败",
+                            message: "当前任务已在书签中",
+                            closeLabel: "确定"
+                        });
+                        info.show();
+                        return;
+                    }
+
+                    currentTask.setBookmark('/');
+                    const info = new InfoOverlay(this, {
+                        title: "添加书签成功",
+                        message: `任务"${currentTask.task_name || '未命名任务'}"已添加到书签`,
+                        closeLabel: "确定"
+                    });
+                    info.show();
+                    return;
+                }
+
+                if (subCommand === 'remove') {
+                    // 移除当前任务的书签
+                    if (!this.activeTaskId) {
+                        const info = new InfoOverlay(this, {
+                            title: "移除书签失败",
+                            message: "没有活跃的任务",
+                            closeLabel: "确定"
+                        });
+                        info.show();
+                        return;
+                    }
+
+                    const currentTask = this.taskManagerState.getTask(this.activeTaskId);
+                    if (!currentTask) {
+                        const info = new InfoOverlay(this, {
+                            title: "移除书签失败",
+                            message: "未找到当前任务",
+                            closeLabel: "确定"
+                        });
+                        info.show();
+                        return;
+                    }
+
+                    if (!currentTask.bookmark_path) {
+                        const info = new InfoOverlay(this, {
+                            title: "移除书签失败",
+                            message: "当前任务不在书签中",
+                            closeLabel: "确定"
+                        });
+                        info.show();
+                        return;
+                    }
+
+                    const taskName = currentTask.task_name || '未命名任务';
+                    currentTask.removeBookmark();
+                    const info = new InfoOverlay(this, {
+                        title: "移除书签成功",
+                        message: `任务"${taskName}"已从书签中移除`,
+                        closeLabel: "确定"
+                    });
+                    info.show();
+                    return;
+                }
+
+                // 未提供子命令或子命令无效
+                logger.warn('用法：/bookmark add|list|remove');
             },
         });
 

@@ -255,7 +255,7 @@ export default class TodoMgrWorker extends BaseWorker {
             const cronExpression = todo.trigger.cronExpression;
             logger.info(`[todomgr] 启动 cron 任务 [${todo.id}]: ${cronExpression} - ${todo.content}`);
 
-            const job = new Cron(cronExpression, async () => {
+            const job = new Cron(cronExpression, { timezone: 'UTC' }, async () => {
                 logger.info(`[todomgr] cron 触发 [${todo.id}]: ${todo.content}`);
 
                 // 重新获取最新的 todo 状态

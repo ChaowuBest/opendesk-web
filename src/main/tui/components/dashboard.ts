@@ -16,6 +16,7 @@ import { Card, type CardStatus, type BorderConfig } from "./card";
 import chalk from "chalk";
 import type { GlobalTodo } from "../../applications/todomgr/common";
 import type { TaskState } from "../../states/tasks";
+import { describeCron } from "../../utils/cron";
 
 // ━━━ 科幻配色 ━━━
 const C = {
@@ -259,7 +260,7 @@ class DashboardRenderer implements Component {
                     triggerTag = C.amber('⏱  ') + C.dim(new Date(todo.trigger.triggerAt).toLocaleString());
                     break;
                 case 'cron':
-                    triggerTag = C.glow('⟳  ') + C.dim(todo.trigger.cronExpression);
+                    triggerTag = C.glow('⟳  ') + C.dim(describeCron(todo.trigger.cronExpression));
                     break;
             }
         }
