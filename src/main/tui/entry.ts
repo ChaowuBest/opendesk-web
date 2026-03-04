@@ -32,6 +32,8 @@ import format from "string-template";
 import path from "path";
 import fs from "fs";
 import chalk from "chalk";
+import { fileURLToPath } from "url";
+import open from "open";
 
 
 const TODO_HANDLER_TEMPLATE = `
@@ -249,6 +251,72 @@ export class OpenDeskTUI {
                 confirm.show(async () => {
                     await this.exit();
                 });
+            },
+        });
+
+        this.commandRegistry.register({
+            name: "quit",
+            description: "退出 OpenDesk",
+            execute: async () => {
+                const confirm = new ConfirmOverlay(this, {
+                    title: "确认退出",
+                    message: "确定要退出 OpenDesk 吗？",
+                    confirmLabel: "退出",
+                    cancelLabel: "取消"
+                });
+                confirm.show(async () => {
+                    await this.exit();
+                });
+            },
+        });
+
+        this.commandRegistry.register({
+            name: "manual",
+            description: "打开使用手册",
+            execute: async () => {
+                // 获取 manual.html 的路径
+                // 开发环境: 项目根目录/docs/manual.html
+                // 生产环境: 与 opendesk 可执行文件同目录的 manual.html
+                const __filename = fileURLToPath(import.meta.url);
+                const __dirname = path.dirname(__filename);
+
+                // 尝试多个可能的路径
+                const possiblePaths = [
+                    // 生产环境: 与可执行文件同目录
+                    path.join(__dirname, 'manual.html'),
+                    // 开发环境: 从 dist/cli/opendesk-debug 向上找到项目根目录
+                    path.join(__dirname, '..', '..', '..', 'docs', 'manual.html'),
+                    // 开发环境: 从 dist/main/main.js 向上找到项目根目录
+                    path.join(__dirname, '..', '..', 'docs', 'manual.html'),
+                ];
+
+                let manualPath: string | null = null;
+                for (const p of possiblePaths) {
+                    if (fs.existsSync(p)) {
+                        manualPath = p;
+                        break;
+                    }
+                }
+
+                if (manualPath) {
+                    try {
+                        await open(manualPath);
+                    } catch (err: any) {
+                        const info = new InfoOverlay(this, {
+                            title: "打开失败",
+                            message: `无法打开手册: ${err?.message ?? err}`,
+                            closeLabel: "确定"
+                        });
+                        info.show();
+                    }
+                } else {
+                    const info = new InfoOverlay(this, {
+                        title: "文件未找到",
+                        message: "未找到 manual.html 文件",
+                        closeLabel: "确定"
+                    });
+                    info.show();
+                }
             },
         });
 
