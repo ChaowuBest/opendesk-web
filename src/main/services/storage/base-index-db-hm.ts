@@ -21,7 +21,7 @@ import fs from 'fs';
 import { createRequire } from 'module';
 import { fileURLToPath } from 'url';
 import { ColumnSchema, validateColumnSchema } from './abstract-storage.js';
-import { BaseQueryCondition, BaseQueryOptions, BaseQueryOperator, IBaseIndexDB } from './base-index-db.js';
+import type { BaseQueryCondition, BaseQueryOptions, BaseQueryOperator, IBaseIndexDB } from './base-indexer.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -152,9 +152,12 @@ export class BaseIndexDBHm implements IBaseIndexDB {
     }
 
     /**
-     * 统一查询入口。鸿蒙 addon 的 exec() 返回行数组（适合 SELECT），
-     * prepare()+run() 适合 DML。SELECT 带参数时用字面量替换（addon 不支持 SELECT 的 prepared params）；
-     * DML 带参数时走 runSql()（prepared params），执行后返回空数组。
+     * 统一 SQL 执行入口：
+     * - SELECT：使用 exec()，其返回值是结果行数组。
+     * - DML（INSERT/UPDATE/DELETE）：使用 prepare()+run() 执行参数化语句。
+     *
+     * 说明：当前 HM addon 对 SELECT 的参数绑定支持受限，因此 SELECT 带参数时先做字面量替换再 exec()；
+     * DML 仍走参数化 runSql()。DML 不返回结果集，所以这里统一返回空数组。
      */
     private async queryAllSql(sql: string, params: any[] = []): Promise<any[]> {
         if (params.length === 0) return this.execSql(sql);

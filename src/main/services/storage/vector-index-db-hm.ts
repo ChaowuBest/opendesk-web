@@ -22,7 +22,7 @@ import path from 'path';
 import fs from 'fs';
 import { createRequire } from 'module';
 import { fileURLToPath } from 'url';
-import { VectorIndexRecord, VectorSearchResult, VectorSearchOptions, IVectorIndexDB } from './vector-index-db.js';
+import type { VectorIndexRecord, VectorSearchResult, VectorSearchOptions, IVectorIndexDB } from './vector-indexer.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);

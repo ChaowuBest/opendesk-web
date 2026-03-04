@@ -11,7 +11,7 @@
 
 /**
  * BM25IndexDB - 非鸿蒙平台：search-index + @node-rs/jieba
- * BM25IndexDBHm - 鸿蒙平台：SQLite FTS5 + 自编译 jieba addon（见 bm25-index-db.hm.ts）
+ * BM25IndexDBHm - 鸿蒙平台：SQLite FTS5 + 自编译 jieba addon（见 bm25-index-db-hm.ts）
  */
 
 import { createRequire } from 'module';
@@ -19,6 +19,7 @@ import { Mutex } from 'async-mutex';
 import { ColumnSchema } from './abstract-storage.js';
 import path from 'path';
 import fs from 'fs';
+import type { BM25Record, BM25SearchResult, BM25SearchOptions, IBM25IndexDB } from './bm25-indexer.js';
 
 const require = createRequire(import.meta.url);
 
@@ -41,36 +42,6 @@ function getJieba(): JiebaLike {
     const { dict } = require('@node-rs/jieba/dict') as { dict: unknown };
     jieba = Jieba.withDict(dict);
     return jieba;
-}
-
-export interface BM25Record {
-    bm25_id: string;
-    item_id: string;
-    item_type: string;
-    text: string;
-}
-
-export interface BM25SearchResult {
-    item_id: string;
-    item_type: string;
-    text: string;
-    score: number;
-}
-
-export interface BM25SearchOptions {
-    columnName: string;
-    topK?: number;
-}
-
-export interface IBM25IndexDB {
-    initialize(): Promise<void>;
-    search(query: string, options?: BM25SearchOptions): Promise<BM25SearchResult[]>;
-    insert(records: BM25Record[]): Promise<void>;
-    delete(itemIds: string[]): Promise<void>;
-    update(records: BM25Record[]): Promise<void>;
-    flush(): Promise<void>;
-    close(): void;
-    deleteAll(): Promise<void>;
 }
 
 export class BM25IndexDB implements IBM25IndexDB {
@@ -261,7 +232,7 @@ export class BM25IndexDB implements IBM25IndexDB {
  */
 export async function createBM25IndexDB(schema: ColumnSchema, dbPath: string): Promise<IBM25IndexDB> {
     if ((process.platform as string) === 'openharmony') {
-        const { BM25IndexDBHm } = await import('./bm25-index-db.hm.js');
+        const { BM25IndexDBHm } = await import('./bm25-index-db-hm.js');
         return new BM25IndexDBHm(schema, dbPath);
     }
     return new BM25IndexDB(schema, dbPath);

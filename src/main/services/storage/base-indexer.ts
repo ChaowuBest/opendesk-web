@@ -11,8 +11,53 @@
 
 import path from 'path';
 import { Indexer, IndexerSearchOptions as BaseIndexerSearchOptions, IndexerSearchResult } from './indexer.js';
-import { BaseQueryCondition, BaseQueryOperator, IBaseIndexDB, createBaseIndexDB } from './base-index-db.js';
-import { ColumnSchema, validateColumnSchema, QueryOperator, FilterCondition, Item, ItemType } from './abstract-storage.js';
+import { createBaseIndexDB } from './base-index-db.js';
+import { ColumnSchema, validateColumnSchema, QueryOperator, FilterCondition, Item, ItemType, ScalarOperator } from './abstract-storage.js';
+
+// BaseIndexDB 支持的操作符（从 abstract-storage 导入，保持类型别名以兼容）
+export type BaseQueryOperator = ScalarOperator;
+
+// 查询条件接口
+export interface BaseQueryCondition {
+    field: string;
+    operator: BaseQueryOperator;
+    value: string | string[] | number | number[] | [number, number] | [string, string];
+}
+
+// 查询选项接口
+export interface BaseQueryOptions {
+    conditions?: BaseQueryCondition[];
+    orderBy?: {
+        field: string;
+        direction: 'ASC' | 'DESC';
+    };
+    limit?: number;
+    offset?: number;
+}
+
+// ============================================================================
+// IBaseIndexDB - 统一异步接口（BaseIndexDB 和 BaseIndexDBHm 共同实现）
+// ============================================================================
+export interface IBaseIndexDB {
+    insert(record: Record<string, any>): Promise<boolean>;
+    insertMany(records: Record<string, any>[]): Promise<number>;
+    upsert(record: Record<string, any>): Promise<boolean>;
+    delete(itemId: string): Promise<boolean>;
+    deleteMany(itemIds: string[]): Promise<number>;
+    deleteByConditions(conditions: BaseQueryCondition[]): Promise<number>;
+    update(itemId: string, data: Record<string, any>): Promise<boolean>;
+    findById(itemId: string): Promise<Record<string, any> | undefined>;
+    findByIds(itemIds: string[]): Promise<Record<string, any>[]>;
+    findAll(options?: BaseQueryOptions): Promise<Record<string, any>[]>;
+    query(conditions: BaseQueryCondition[], options?: Omit<BaseQueryOptions, 'conditions'>): Promise<Record<string, any>[]>;
+    count(conditions?: BaseQueryCondition[]): Promise<number>;
+    exists(itemId: string): Promise<boolean>;
+    clear(): Promise<number>;
+    transaction<T>(fn: () => Promise<T>): Promise<T>;
+    close(): void;
+    getSchema(): ColumnSchema;
+    getValidFields(): string[];
+}
 // ============================================================================
 // BaseIndexer - 动态 Schema 的 SQLite 索引器
 // ============================================================================

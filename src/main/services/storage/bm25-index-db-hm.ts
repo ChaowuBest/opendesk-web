@@ -15,7 +15,7 @@ import fs from 'fs';
 import { createRequire } from 'module';
 import { fileURLToPath } from 'url';
 import { ColumnSchema } from './abstract-storage.js';
-import { BM25Record, BM25SearchOptions, BM25SearchResult, IBM25IndexDB } from './bm25-index-db.js';
+import type { BM25Record, BM25SearchOptions, BM25SearchResult, IBM25IndexDB } from './bm25-indexer.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);

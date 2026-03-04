@@ -17,9 +17,54 @@
  */
 
 import { Indexer, IndexerSearchOptions, IndexerSearchResult } from './indexer.js';
-import { Item, FilterCondition, VectorOperator, QueryOperator, VectorQuery, ItemType, ColumnSchema } from './abstract-storage.js';
-import { VectorIndexRecord, VectorSearchOptions, IVectorIndexDB, createVectorIndexDB } from './vector-index-db.js';
+import { Item, FilterCondition, VectorOperator, QueryOperator, VectorQuery, ItemType, ColumnSchema, SimilarityMetric } from './abstract-storage.js';
+import { createVectorIndexDB } from './vector-index-db.js';
 import { randomUUID } from 'crypto';
+
+// 向量索引记录接口 - 保持语义最小化
+export interface VectorIndexRecord {
+    vector_id: string;
+    item_id: string;
+    item_type: string;
+    repr: Float32Array | number[];
+}
+
+// 向量搜索结果
+export interface VectorSearchResult {
+    item_id: string;
+    item_type: string;
+    similarity: number;  // 0-1，越高越相似
+    distance: number;    // 原始距离值
+}
+
+// 向量搜索选项
+export interface VectorSearchOptions {
+    columnName: string;
+    /** 相似度计算方法，默认为 cosine */
+    metric?: SimilarityMetric;
+    /** 相似度阈值（0-1之间，值越大要求越相似） */
+    threshold?: number;
+    /** 返回最相似的 K 个结果 */
+    topK?: number;
+}
+
+// ============================================================================
+// IVectorIndexDB - 统一异步接口（VectorIndexDB 和 VectorIndexDBHm 共同实现）
+// ============================================================================
+export interface IVectorIndexDB {
+    insert(record: VectorIndexRecord): Promise<boolean>;
+    insertMany(records: VectorIndexRecord[]): Promise<number>;
+    upsert(record: VectorIndexRecord): Promise<boolean>;
+    delete(itemId: string): Promise<boolean>;
+    deleteMany(itemIds: string[]): Promise<number>;
+    search(queryVector: Float32Array | number[], options?: VectorSearchOptions, filterItemIds?: string[]): Promise<VectorSearchResult[]>;
+    count(): Promise<number>;
+    exists(itemId: string): Promise<boolean>;
+    clear(): Promise<number>;
+    transaction<T>(fn: () => Promise<T>): Promise<T>;
+    close(): void;
+    getDimension(): number;
+}
 
 /**
  * 向量索引器

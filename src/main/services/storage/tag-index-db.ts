@@ -19,63 +19,7 @@
 import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
-import { ScalarOperator } from './abstract-storage.js';
-
-// TagIndexDB 支持的操作符（从 object.ts 导入，保持类型别名以兼容）
-export type TagQueryOperator = ScalarOperator;
-
-// Tag 索引记录接口 - 保持语义最小化
-export interface TagIndexRecord {
-    item_id: string;
-    item_type: string;
-    tag: string;
-}
-
-// 查询条件接口
-export interface QueryCondition {
-    field: keyof TagIndexRecord;
-    operator: ScalarOperator;
-    value: string | string[] | number;
-}
-
-// 查询选项接口
-export interface QueryOptions {
-    conditions?: QueryCondition[];
-    orderBy?: {
-        field: keyof TagIndexRecord;
-        direction: 'ASC' | 'DESC';
-    };
-    limit?: number;
-    offset?: number;
-}
-
-// 更新数据接口
-export interface UpdateData {
-    item_type?: string;
-    tag?: string;
-}
-
-// ============================================================================
-// ITagIndexDB - 统一异步接口（TagIndexDB 和 TagIndexDBHm 共同实现）
-// ============================================================================
-export interface ITagIndexDB {
-    insert(record: TagIndexRecord): Promise<boolean>;
-    insertMany(records: TagIndexRecord[]): Promise<number>;
-    upsert(record: TagIndexRecord): Promise<boolean>;
-    delete(itemId: string): Promise<boolean>;
-    deleteByConditions(conditions: QueryCondition[]): Promise<number>;
-    deleteMany(itemIds: string[]): Promise<number>;
-    update(itemId: string, data: UpdateData): Promise<boolean>;
-    updateByConditions(conditions: QueryCondition[], data: UpdateData): Promise<number>;
-    findById(itemId: string): Promise<TagIndexRecord | undefined>;
-    findAll(options?: QueryOptions): Promise<TagIndexRecord[]>;
-    query(conditions: QueryCondition[], options?: Omit<QueryOptions, 'conditions'>): Promise<TagIndexRecord[]>;
-    count(conditions?: QueryCondition[]): Promise<number>;
-    exists(itemId: string): Promise<boolean>;
-    clear(): Promise<number>;
-    transaction<T>(fn: () => Promise<T>): Promise<T>;
-    close(): void;
-}
+import type { TagQueryOperator, TagIndexRecord, QueryCondition, QueryOptions, UpdateData, ITagIndexDB } from './tag-indexer.js';
 
 // 支持的操作符列表
 const SUPPORTED_OPERATORS: TagQueryOperator[] = ['=', '!=', '>', '<', '>=', '<=', 'like', 'in'];
@@ -484,7 +428,7 @@ export default TagIndexDB;
  */
 export async function createTagIndexDB(dbPath: string): Promise<ITagIndexDB> {
     if ((process.platform as string) === 'openharmony') {
-        const { TagIndexDBHm } = await import('./tag-index-db.hm.js');
+        const { TagIndexDBHm } = await import('./tag-index-db-hm.js');
         return new TagIndexDBHm(dbPath);
     }
     return new TagIndexDB(dbPath);

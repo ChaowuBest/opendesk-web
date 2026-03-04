@@ -15,8 +15,38 @@
 
 import { Indexer, IndexerSearchOptions, IndexerSearchResult } from './indexer.js';
 import { Item, FilterCondition, QueryOperator, BM25Query, ItemType, ColumnSchema } from './abstract-storage.js';
-import { BM25Record, BM25SearchResult, IBM25IndexDB, createBM25IndexDB } from './bm25-index-db.js';
+import { createBM25IndexDB } from './bm25-index-db.js';
 import { randomUUID } from 'crypto';
+
+export interface BM25Record {
+    bm25_id: string;
+    item_id: string;
+    item_type: string;
+    text: string;
+}
+
+export interface BM25SearchResult {
+    item_id: string;
+    item_type: string;
+    text: string;
+    score: number;
+}
+
+export interface BM25SearchOptions {
+    columnName: string;
+    topK?: number;
+}
+
+export interface IBM25IndexDB {
+    initialize(): Promise<void>;
+    search(query: string, options?: BM25SearchOptions): Promise<BM25SearchResult[]>;
+    insert(records: BM25Record[]): Promise<void>;
+    delete(itemIds: string[]): Promise<void>;
+    update(records: BM25Record[]): Promise<void>;
+    flush(): Promise<void>;
+    close(): void;
+    deleteAll(): Promise<void>;
+}
 
 export class BM25Indexer extends Indexer {
     readonly name = 'BM25Indexer';

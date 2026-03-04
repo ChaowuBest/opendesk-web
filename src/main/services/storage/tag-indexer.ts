@@ -18,7 +18,63 @@
 
 import { Indexer, IndexerSearchOptions, IndexerSearchResult } from './indexer.js';
 import { Item, FilterCondition, ScalarOperator, QueryOperator, ItemType, ColumnSchema } from './abstract-storage.js';
-import { TagIndexRecord, QueryCondition, ITagIndexDB, createTagIndexDB } from './tag-index-db.js';
+import { createTagIndexDB } from './tag-index-db.js';
+
+// TagIndexDB 支持的操作符（从 abstract-storage 导入，保持类型别名以兼容）
+export type TagQueryOperator = ScalarOperator;
+
+// Tag 索引记录接口 - 保持语义最小化
+export interface TagIndexRecord {
+    item_id: string;
+    item_type: string;
+    tag: string;
+}
+
+// 查询条件接口
+export interface QueryCondition {
+    field: keyof TagIndexRecord;
+    operator: ScalarOperator;
+    value: string | string[] | number;
+}
+
+// 查询选项接口
+export interface QueryOptions {
+    conditions?: QueryCondition[];
+    orderBy?: {
+        field: keyof TagIndexRecord;
+        direction: 'ASC' | 'DESC';
+    };
+    limit?: number;
+    offset?: number;
+}
+
+// 更新数据接口
+export interface UpdateData {
+    item_type?: string;
+    tag?: string;
+}
+
+// ============================================================================
+// ITagIndexDB - 统一异步接口（TagIndexDB 和 TagIndexDBHm 共同实现）
+// ============================================================================
+export interface ITagIndexDB {
+    insert(record: TagIndexRecord): Promise<boolean>;
+    insertMany(records: TagIndexRecord[]): Promise<number>;
+    upsert(record: TagIndexRecord): Promise<boolean>;
+    delete(itemId: string): Promise<boolean>;
+    deleteByConditions(conditions: QueryCondition[]): Promise<number>;
+    deleteMany(itemIds: string[]): Promise<number>;
+    update(itemId: string, data: UpdateData): Promise<boolean>;
+    updateByConditions(conditions: QueryCondition[], data: UpdateData): Promise<number>;
+    findById(itemId: string): Promise<TagIndexRecord | undefined>;
+    findAll(options?: QueryOptions): Promise<TagIndexRecord[]>;
+    query(conditions: QueryCondition[], options?: Omit<QueryOptions, 'conditions'>): Promise<TagIndexRecord[]>;
+    count(conditions?: QueryCondition[]): Promise<number>;
+    exists(itemId: string): Promise<boolean>;
+    clear(): Promise<number>;
+    transaction<T>(fn: () => Promise<T>): Promise<T>;
+    close(): void;
+}
 
 /**
  * 文件标签索引器

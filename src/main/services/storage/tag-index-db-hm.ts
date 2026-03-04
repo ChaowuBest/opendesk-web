@@ -14,7 +14,7 @@ import path from 'path';
 import fs from 'fs';
 import { createRequire } from 'module';
 import { fileURLToPath } from 'url';
-import { TagIndexRecord, QueryCondition, QueryOptions, UpdateData, TagQueryOperator, ITagIndexDB } from './tag-index-db.js';
+import type { TagIndexRecord, QueryCondition, QueryOptions, UpdateData, TagQueryOperator, ITagIndexDB } from './tag-indexer.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
