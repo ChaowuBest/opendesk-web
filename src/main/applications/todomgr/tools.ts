@@ -18,6 +18,7 @@ import type { TaskTodo } from './common';
 import type { TaskState } from '../../states/tasks';
 import { escapeHtml } from '../../utils/escape';
 import { type TodoMgrApplication } from './app';
+import { describeCron } from '../../utils/cron';
 import chalk from 'chalk';
 
 
@@ -146,7 +147,7 @@ function formatTriggerDisplay(trigger: any): string {
         case 'scheduled':
             return `⏱ ${new Date(trigger.triggerAt).toLocaleString()}`;
         case 'cron':
-            return `🔁 ${trigger.cronExpression}`;
+            return `🔁 ${describeCron(trigger.cronExpression)}`;
         default:
             return '';
     }

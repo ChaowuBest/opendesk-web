@@ -26,6 +26,7 @@ import { BookmarkList } from "./components/bookmarklist";
 import { ConfigMainPage } from "./components/config/configMain";
 import { getTaskTodosForDisplay } from "../applications/todomgr/tools";
 import { exportTaskToHtml } from "../utils/export";
+import { describeCron } from "../utils/cron";
 
 import format from "string-template";
 import path from "path";
@@ -191,7 +192,7 @@ export class OpenDeskTUI {
                 } else if (trigger?.type === 'scheduled') {
                     triggerInfo = `[scheduled] 定时任务，仅执行一次 `;
                 } else if (trigger?.type === 'cron') {
-                    triggerInfo = `[cron] 定时任务, 触发时机为 ${trigger.cronExpression} `;
+                    triggerInfo = `[cron] 定时任务, 触发时机为 ${describeCron(trigger.cronExpression)} `;
                 }
 
                 logger.info(`触发器创建任务: ${todoId} -> task ${task.task_id}`);
