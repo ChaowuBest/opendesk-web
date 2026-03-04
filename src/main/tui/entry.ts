@@ -508,6 +508,52 @@ export class OpenDeskTUI {
         });
 
         this.commandRegistry.register({
+            name: "compact",
+            description: "手动压缩当前任务的上下文",
+            execute: async () => {
+                if (this.taskView.isCompacting) {
+                    return;
+                }
+
+                if (!this.activeTaskId) {
+                    logger.warn('没有活跃的任务');
+                    return;
+                }
+
+                const currentTask = this.taskManagerState.getTask(this.activeTaskId);
+                if (!currentTask) {
+                    logger.warn('未找到当前任务');
+                    return;
+                }
+
+                try {
+                    await this.taskView.performCompactWithAnimation();
+                    this.taskManagerState.save();
+
+                    // 重建视图，让分隔线正确显示
+                    this.taskView.clearMessages();
+                    this.taskView.rebuildFromHistory();
+                    this.tui.requestRender();
+
+                    const info = new InfoOverlay(this, {
+                        title: "上下文压缩",
+                        message: "上下文已成功压缩。压缩效果将在下次对话时体现。",
+                        closeLabel: "确定"
+                    });
+                    info.show();
+                } catch (err: any) {
+                    logger.error(`上下文压缩失败: ${err?.message ?? err}`);
+                    const info = new InfoOverlay(this, {
+                        title: "压缩失败",
+                        message: `上下文压缩过程中发生错误：${err?.message ?? err}`,
+                        closeLabel: "确定"
+                    });
+                    info.show();
+                }
+            },
+        });
+
+        this.commandRegistry.register({
             name: "bookmark",
             description: "管理任务书签，用法：/bookmark add|list|remove",
             getArgumentCompletions: (argPrefix: string) => {

@@ -9,7 +9,8 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { ChatContext, UserMessage, AssistantMessage, FileMessagePart, SystemMessage, AssistantResponse, AssistantMessagePart, Usage, ToolCall } from '../aikernel/messages.js';
+import { ChatContext, UserMessage, AssistantMessage, FileMessagePart, SystemMessage, AssistantResponse, AssistantMessagePart, Usage, ToolCall, CompactSeparatorMessage } from '../aikernel/messages.js';
+import { shouldCompact, compactContext } from '../aikernel/compact.js';
 import { BaseToolset } from '../aikernel/tool.js';
 import { LLM } from '../aikernel/llm.js';
 import { getTaskDirectory } from '../utils/setting.js';
@@ -146,6 +147,19 @@ export class TaskState {
         this.chat_context.appendMessage(user_message);
     }
 
+    /** 当 TUI 层已经执行过压缩时置 true，防止 submitUserMessage 重复压缩 */
+    private _compactedBeforeSubmit = false;
+
+    /** 标记外部已经完成一次压缩，submitUserMessage 应跳过自动压缩 */
+    markCompacted() { this._compactedBeforeSubmit = true; }
+
+    /**
+     * 手动触发上下文压缩（供 /compact 命令调用）
+     */
+    async manualCompact(): Promise<boolean> {
+        return await compactContext(this.chat_context, this.model);
+    }
+
     /**
      * Submit a message to the task
      */
@@ -154,6 +168,20 @@ export class TaskState {
         this.started_at = new Date();  // 记录任务开始时间
         this.finished_at = undefined;  // 清除之前的完成时间
         this.task_manager_state.publishTaskListUpdate();
+
+        // 在追加新消息前检查是否需要自动压缩上下文（TUI 层可能已经做过，此处为 GUI 等场景的兜底）
+        if (this._compactedBeforeSubmit) {
+            this._compactedBeforeSubmit = false;
+        } else {
+            try {
+                if (await shouldCompact(this.chat_context, this.model)) {
+                    logger.info(`Auto-compacting context for task ${this.task_id}`);
+                    await compactContext(this.chat_context, this.model);
+                }
+            } catch (err: any) {
+                logger.warn(`Auto-compact check failed: ${err?.message ?? err}`);
+            }
+        }
 
         let user_message = new UserMessage(message);
         let assistant_message = new AssistantMessage();
@@ -295,7 +323,7 @@ export class TaskState {
      */
     async sendSubscriptionFeedback(part_index: number | undefined = undefined) {
         let last_message = this.chat_context.lastMessage();
-        if (last_message === undefined || last_message.content.length === 0 || last_message instanceof UserMessage) {
+        if (last_message === undefined || !(last_message instanceof AssistantMessage) || last_message.content.length === 0) {
             return;
         }
 
@@ -325,7 +353,7 @@ export class TaskState {
 
     async processCompletion() {
         let assistant_message = this.chat_context.lastMessage()
-        if (assistant_message === undefined || assistant_message instanceof UserMessage) {
+        if (assistant_message === undefined || !(assistant_message instanceof AssistantMessage)) {
             return;
         }
 
@@ -441,7 +469,7 @@ export class TaskState {
      */
     async processToolCalls(): Promise<boolean> {
         let lastMessage = this.chat_context.lastMessage();
-        if (lastMessage instanceof UserMessage) {
+        if (!(lastMessage instanceof AssistantMessage)) {
             return false;
         }
 

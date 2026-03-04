@@ -10,7 +10,7 @@
  */
 
 import { OpenAI } from 'openai';
-import { ChatContext, AssistantResponse, UserMessage, AssistantMessage } from './messages';
+import { ChatContext, AssistantResponse, UserMessage, AssistantMessage, CompactSeparatorMessage } from './messages';
 import { Setting, ModelInstance } from '../utils/setting.js';
 import { z } from 'zod';
 import { logger } from '../utils/logger.js';
@@ -299,28 +299,35 @@ class LLM {
 
     /**
      * 将 ChatContext 中的消息序列转换为 OpenAI API 所需的 messages 数组。
-     * 对于 AssistantMessage，会调用其 toOpenAIMessages() 方法进行拆分，
-     * 以保持 reasoning、tool_call、text 的正确顺序。
+     *
+     * - 若存在 CompactSeparatorMessage，则跳过其之前的所有消息（system prompt 除外），
+     *   并将 separator 本身作为一条 UserMessage（含结构化总结）插入上下文。
+     * - 对于 AssistantMessage，会调用其 toOpenAIMessages() 方法进行拆分，
+     *   以保持 reasoning、tool_call、text 的正确顺序。
      */
     static buildMessages(chatContext: ChatContext): object[] {
         const messages: object[] = [];
 
-        // 添加 system prompt
+        // system prompt 始终保留
         if (chatContext.system_prompt !== undefined) {
             messages.push(chatContext.system_prompt.toOpenAIMessage());
         }
 
-        // 处理每条消息
-        for (const message of chatContext.messages) {
-            if (message instanceof AssistantMessage) {
-                // 跳过空内容的 AssistantMessage
+        // 如果存在 CompactSeparatorMessage，从它的位置开始（跳过之前的所有消息）
+        const separator = chatContext.findCompactSeparator();
+        const startIndex = separator ? separator.index : 0;
+
+        for (let i = startIndex; i < chatContext.messages.length; i++) {
+            const message = chatContext.messages[i];
+
+            if ((message as any).role === 'compact_separator') {
+                messages.push((message as CompactSeparatorMessage).toOpenAIMessage());
+            } else if (message instanceof AssistantMessage) {
                 if (message.content.length === 0) {
                     continue;
                 }
-                // 使用 toOpenAIMessages() 拆分 AssistantMessage
                 messages.push(...message.toOpenAIMessages());
             } else {
-                // UserMessage 或其他消息类型直接添加
                 messages.push(message.toOpenAIMessage());
             }
         }

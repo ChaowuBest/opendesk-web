@@ -154,9 +154,25 @@ class TaskView extends HTMLElement {
                 history_container.innerHTML += this.renderUserMessage(message);
             } else if (message.role === 'assistant') {
                 history_container.innerHTML += this.renderAssistantMessage(message);
+            } else if (message.role === 'compact_separator') {
+                history_container.innerHTML += TaskView.renderCompactSeparator();
             }
             this.tryScrollToEnd()
         }
+    }
+
+    static renderCompactSeparator() {
+        return `
+        <div class="flex items-center my-6 select-none">
+            <div class="flex-grow border-t border-dashed border-amber-300/60"></div>
+            <span class="mx-4 text-xs text-amber-500/80 font-medium tracking-wide flex items-center gap-1.5">
+                <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M6 9l6 6 6-6"/>
+                </svg>
+                上下文已压缩
+            </span>
+            <div class="flex-grow border-t border-dashed border-amber-300/60"></div>
+        </div>`;
     }
 
     updateStopButtonVisibility() {
@@ -440,6 +456,8 @@ class EmbeddedTaskView extends HTMLElement {
                 history_container.innerHTML += this.renderUserMessage(message);
             } else if (message.role === 'assistant') {
                 history_container.innerHTML += this.renderAssistantMessage(message);
+            } else if (message.role === 'compact_separator') {
+                history_container.innerHTML += TaskView.renderCompactSeparator();
             }
             this.tryScrollToEnd()
         }
@@ -483,6 +501,8 @@ class EmbeddedTaskView extends HTMLElement {
                 history_container.innerHTML += this.renderUserMessage(message);
             } else if (message.role === 'assistant') {
                 history_container.innerHTML += this.renderAssistantMessage(message);
+            } else if (message.role === 'compact_separator') {
+                history_container.innerHTML += TaskView.renderCompactSeparator();
             }
             this.tryScrollToEnd()
         }
