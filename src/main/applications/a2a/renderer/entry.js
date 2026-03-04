@@ -147,19 +147,46 @@ class A2AEntryWidget extends HTMLElement {
             console.log(`[A2UI] 触发动作: ${actionName}`, contextDefs);
 
             let messageToSend = '';
-
             // 生成题目 (start_quiz) ---
             if (actionName === 'start_quiz') {
-                
                 let articleId = null;
-                messageToSend = "The user clicked 'Generate Quiz'."; 
-                for (const ctx of contextDefs) {
-                     if (ctx.key === 'articleId' && ctx.value && ctx.value.literalString) {
-                         articleId = ctx.value.literalString;
-                     }
+                // 1. 先尝试从 contextDefs 中获取
+                if (Array.isArray(contextDefs)) {
+                    for (const ctx of contextDefs) {
+                        if (ctx.key === 'articleId') {
+                            articleId = ctx.value?.literalString || (typeof ctx.value === 'string' ? ctx.value : null);
+                        }
+                    }
                 }
+                // 2. 如果没取到，则从 data-a2ui-model 属性中提取
+                if (!articleId) {
+                    const messageBubble = btn.closest('.a2ui-root') || document;
+                    try {
+                        const rawModelStr = messageBubble.getAttribute('data-a2ui-model');
+                        if (rawModelStr) {
+                            const decodedStr = decodeURIComponent(rawModelStr);
+                            const parsedMessages = JSON.parse(decodedStr);
+                            const updates = Array.isArray(parsedMessages) ? parsedMessages : [parsedMessages];
+                            
+                            for (const update of updates) {
+                                if (update.dataModelUpdate && update.dataModelUpdate.contents) {
+                                    // 查找 key 为 articleId 或 id 的数据
+                                    const idData = update.dataModelUpdate.contents.find(c => c.key === 'articleId' || c.key === 'id');
+                                    if (idData && idData.valueString) {
+                                        articleId = idData.valueString;
+                                    }
+                                }
+                            }
+                        }
+                    } catch (e) {
+                        console.error("[Debug] 读取 articleId 失败:", e);
+                    }
+                }
+                // 3. 构建规范的 ACTION 消息发送给 Agent
                 if (articleId) {
-                    messageToSend = `The user clicked 'Generate Quiz' for article with ID: ${articleId}.`;
+                    messageToSend = `ACTION: start_quiz with data: ${JSON.stringify({ articleId })}`;
+                } else {
+                    messageToSend = "The user clicked 'Generate Quiz'."; 
                 }
             }
 
