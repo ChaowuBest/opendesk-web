@@ -1604,6 +1604,20 @@ class MailboxStorage {
             docs = docs.filter(doc => matchingUids.has(doc.uid));
         }
 
+        if (query.attachmentName) {
+            const attachRegex = new RegExp(query.attachmentName, 'i');
+            const docUids = docs.map(doc => doc.uid);
+            const contentDocs = await this.contentdb.find({ uid: { $in: docUids } });
+            const matchingUids = new Set();
+            for (const contentDoc of contentDocs) {
+                const attachments = contentDoc.attachments || [];
+                if (attachments.some(a => a.filename && attachRegex.test(a.filename))) {
+                    matchingUids.add(contentDoc.uid);
+                }
+            }
+            docs = docs.filter(doc => matchingUids.has(doc.uid));
+        }
+
         // Apply limit and offset for pagination (after all filtering)
         if (query.offset !== undefined) {
             docs = docs.slice(query.offset);
