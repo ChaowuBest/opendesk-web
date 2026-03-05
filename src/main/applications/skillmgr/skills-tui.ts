@@ -53,7 +53,6 @@ type ViewState =
     | 'install-local'
     | 'install-zip'
     | 'install-url'
-    | 'install-github'
     | 'install-clawhub'
     | 'view-installed'
     | 'skill-detail'
@@ -140,7 +139,6 @@ export class SkillsOverlay implements Component {
             { value: 'install-local', label: chalk.green('📁 从本地目录添加') },
             { value: 'install-zip', label: chalk.green('📦 从本地 zip 添加') },
             { value: 'install-url', label: chalk.blue('🌐 从 URL 添加') },
-            { value: 'install-github', label: chalk.magenta('📦 从 GitHub 添加') },
             { value: 'install-clawhub', label: chalk.yellow('⚡ 从 ClawHub 添加') },
             { value: 'view-installed', label: chalk.white('📋 查看已安装技能') },
         ];
@@ -385,7 +383,13 @@ this.searchResults = result.skills || [];
 
         this.setLoading(true);
         try {
-            const result = await SkillRegistry.addSkillFromUrl(url);
+            const method = RegistryAdapters.getInstallMethod(url);
+            let result;
+            if (method === 'github') {
+                result = await SkillRegistry.addSkillFromGitHubUrl(url);
+            } else {
+                result = await SkillRegistry.addSkillFromUrl(url);
+            }
             if (result.success) {
                 this.showMessage(`成功添加技能: ${result.name}`, false, 'main');
                 await this.loadInstalledSkills();
@@ -397,50 +401,6 @@ this.searchResults = result.skills || [];
         } catch (e: any) {
             this.showMessage(e?.message || '添加失败', true);
             this.showInstallUrl();
-        } finally {
-            this.setLoading(false);
-        }
-    }
-
-    private showInstallGitHub() {
-        this.cleanup();
-        this.state = 'install-github';
-        this.list = undefined;
-
-        this.input = new Input();
-        this.input.setValue(this.selectedInputValue);
-        this.input.onSubmit = () => {
-            this.performInstallGitHub().catch(err => {
-                console.error('Install GitHub error:', err);
-            });
-        };
-
-        this.setupInputHandlers();
-        this.renderBox();
-        this.openDeskTUI.tui.setFocus(this.input);
-    }
-
-    private async performInstallGitHub() {
-        const url = this.input?.getValue().trim() || '';
-        if (!url) {
-            this.showMessage('请输入 GitHub URL', true);
-            return;
-        }
-
-        this.setLoading(true);
-        try {
-            const result = await SkillRegistry.addSkillFromGitHubUrl(url);
-            if (result.success) {
-                this.showMessage(`成功添加技能: ${result.name}`, false, 'main');
-                await this.loadInstalledSkills();
-                this.showMain();
-            } else {
-                this.showMessage(result.error || '添加失败', true);
-                this.showInstallGitHub();
-            }
-        } catch (e: any) {
-            this.showMessage(e?.message || '添加失败', true);
-            this.showInstallGitHub();
         } finally {
             this.setLoading(false);
         }
@@ -828,9 +788,6 @@ this.searchResults = result.skills || [];
             case 'install-url':
                 this.showInstallUrl();
                 break;
-            case 'install-github':
-                this.showInstallGitHub();
-                break;
             case 'install-clawhub':
                 this.showInstallClawHub();
                 break;
@@ -919,7 +876,6 @@ this.searchResults = result.skills || [];
             case 'install-local':
             case 'install-zip':
             case 'install-url':
-            case 'install-github':
             case 'install-clawhub':
             case 'view-installed':
                 this.showMain();
@@ -1047,9 +1003,7 @@ this.searchResults = result.skills || [];
             case 'install-zip':
                 return '输入本地 zip 文件路径:';
             case 'install-url':
-                return '输入技能包 URL:';
-            case 'install-github':
-                return '输入 GitHub URL (tree 格式):';
+                return '输入 URL (zip 或 GitHub tree):';
             case 'install-clawhub':
                 return '输入 ClawHub slug (如 my-skill 或 my-skill@1.2.3):';
             default:
@@ -1072,9 +1026,7 @@ this.searchResults = result.skills || [];
             case 'install-zip':
                 return '输入本地 zip 文件路径  Enter 添加  Esc 返回';
             case 'install-url':
-                return '输入技能包 URL  Enter 添加  Esc 返回';
-            case 'install-github':
-                return '输入 GitHub URL (如 https://github.com/user/repo/tree/branch)  Enter 添加  Esc 返回';
+                return '输入 URL (zip 或 GitHub tree)  Enter 添加  Esc 返回';
             case 'install-clawhub':
                 return '输入 ClawHub slug (如 my-skill 或 my-skill@1.2.3)  Enter 添加  Esc 返回';
             case 'view-installed':
