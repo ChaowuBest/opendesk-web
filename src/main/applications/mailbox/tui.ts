@@ -93,9 +93,11 @@ const getEmailListTool = new BaseTool(
 getEmailListTool.setExecutor(async (args) => {
     const offset = args.offset ?? 0;
     const limit = args.limit ?? 20;
+    logger.info(`[mailbox-getEmailList] 工具调用: offset=${offset}, limit=${limit}`);
     const data = await callMailWorker('getEmailHeaderList', offset, limit);
     const emails: EmailHeader[] = Array.isArray(data) ? data : [];
     if (emails.length === 0) {
+        logger.info(`[mailbox-getEmailList] 返回 0 条邮件`);
         return JSON.stringify({ total: 0, emails: [], message: '暂无邮件' });
     }
     const items = emails.map((e: EmailHeader) => ({
@@ -107,6 +109,7 @@ getEmailListTool.setExecutor(async (args) => {
         starred: e.starred,
         type: e.type,
     }));
+    logger.info(`[mailbox-getEmailList] 返回 ${items.length} 条邮件`);
     return JSON.stringify({ total: items.length, emails: items });
 });
 
@@ -119,11 +122,14 @@ const getEmailContentTool = new BaseTool(
     GetEmailContentArgsSchema,
 );
 getEmailContentTool.setExecutor(async (args) => {
+    logger.info(`[mailbox-getEmailContent] 工具调用: uid=${args.uid}`);
     const content = await callMailWorker('getEmailContent', args.uid);
     if (!content) {
+        logger.warn(`[mailbox-getEmailContent] 未找到邮件: uid=${args.uid}`);
         return JSON.stringify({ error: '未找到该邮件' });
     }
     const text = (content.textContent && content.textContent.trim()) || stripHtml(content.htmlContent || '');
+    logger.info(`[mailbox-getEmailContent] 获取成功: uid=${args.uid}, 正文长度=${text.length}`);
     return JSON.stringify({
         uid: args.uid,
         textContent: text.slice(0, 5000),
@@ -133,19 +139,38 @@ getEmailContentTool.setExecutor(async (args) => {
 
 const SearchEmailsArgsSchema = z.object({
     subject: z.string().optional().describe('按主题关键词搜索（模糊匹配）'),
-    general: z.string().optional().describe('在主题、发件人、正文中搜索的关键词'),
+    from: z.string().optional().describe('按发件人搜索（支持姓名或邮箱地址，模糊匹配）'),
+    to: z.string().optional().describe('按收件人搜索（支持姓名或邮箱地址，模糊匹配）'),
+    body: z.string().optional().describe('按正文内容搜索（模糊匹配）'),
+    general: z.string().optional().describe('在主题、发件人、正文中同时搜索的通用关键词（与 subject/from/body 互斥，用于简单搜索场景）'),
+    dateFrom: z.string().optional().describe('搜索起始日期（含），格式 YYYY-MM-DD，例如 "2026-01-01"'),
+    dateTo: z.string().optional().describe('搜索结束日期（含），格式 YYYY-MM-DD，例如 "2026-03-05"'),
+    unread: z.boolean().optional().describe('筛选已读/未读状态：true=仅未读，false=仅已读，不传=不限'),
+    starred: z.boolean().optional().describe('筛选收藏状态：true=仅收藏，false=仅非收藏，不传=不限'),
+    attachmentName: z.string().optional().describe('按附件文件名搜索（模糊匹配），例如 "报告.pdf"'),
     limit: z.number().optional().describe('最多返回条数，默认 50'),
     offset: z.number().optional().describe('跳过前 N 条'),
 });
 const searchEmailsTool = new BaseTool(
     'searchEmails',
-    '按条件搜索邮件。可按主题(subject)、或通用关键词(general)在主题/发件人/正文中搜索。返回与 getEmailList 相同结构的列表。',
+    '按条件搜索邮件（支持多条件组合）。可按主题(subject)、发件人(from)、收件人(to)、正文(body)、日期范围(dateFrom/dateTo)、已读/未读(unread)、收藏状态(starred)、附件文件名(attachmentName) 搜索，也可用通用关键词(general)在主题/发件人/正文中统一搜索。返回与 getEmailList 相同结构的列表。',
     SearchEmailsArgsSchema,
 );
 searchEmailsTool.setExecutor(async (args) => {
     const query: any = { limit: args.limit ?? 50, offset: args.offset ?? 0 };
     if (args.subject) query.subject = args.subject;
+    if (args.from) query.from = args.from;
+    if (args.to) query.to = args.to;
+    if (args.body) query.body = args.body;
     if (args.general) query.general = args.general;
+    if (args.dateFrom) query.startDate = args.dateFrom;
+    if (args.dateTo) query.endDate = args.dateTo;
+    if (args.unread !== undefined) query.unread = args.unread;
+    if (args.starred !== undefined) query.starred = args.starred;
+    if (args.attachmentName) query.attachmentName = args.attachmentName;
+
+    logger.info(`[mailbox-searchEmails] 工具调用参数: ${JSON.stringify(query)}`);
+
     const data = await callMailWorker('searchEmails', query);
     const emails: EmailHeader[] = Array.isArray(data) ? data : [];
     const items = emails.map((e: EmailHeader) => ({
@@ -157,11 +182,43 @@ searchEmailsTool.setExecutor(async (args) => {
         starred: e.starred,
         type: e.type,
     }));
+
+    logger.info(`[mailbox-searchEmails] 搜索完成, 返回 ${items.length} 条结果`);
     return JSON.stringify({ total: items.length, emails: items });
 });
 
 const mailAssistantToolset = new BaseToolset('mailbox');
 mailAssistantToolset.addTools(getEmailListTool, getEmailContentTool, searchEmailsTool);
+
+const MAIL_ASSISTANT_SYSTEM_PROMPT =
+    '你是邮件助手。用户会用自然语言描述需求，你需要理解用户意图并调用合适的工具来完成任务。\n\n' +
+    '## 可用工具\n\n' +
+    '### mailbox-getEmailList\n' +
+    '获取当前邮箱的邮件列表（支持分页：offset, limit）。\n\n' +
+    '### mailbox-getEmailContent\n' +
+    '根据邮件 uid 获取完整正文内容。\n\n' +
+    '### mailbox-searchEmails\n' +
+    '强大的邮件搜索工具，支持以下搜索条件（可组合使用）：\n' +
+    '- **subject**: 按主题关键词搜索（模糊匹配）\n' +
+    '- **from**: 按发件人搜索（姓名或邮箱地址，模糊匹配）\n' +
+    '- **to**: 按收件人搜索\n' +
+    '- **body**: 按正文内容搜索\n' +
+    '- **general**: 通用关键词，在主题/发件人/正文中统一搜索（与 subject/from/body 互斥）\n' +
+    '- **dateFrom** / **dateTo**: 日期范围筛选，格式 YYYY-MM-DD（如 "2026-01-01"）。支持只传一个做单边约束\n' +
+    '- **unread**: true=仅未读，false=仅已读\n' +
+    '- **starred**: true=仅收藏，false=仅非收藏\n' +
+    '- **attachmentName**: 按附件文件名搜索（模糊匹配）\n' +
+    '- **limit** / **offset**: 分页控制\n\n' +
+    '## 使用指南\n\n' +
+    '- 用户说"查找上周关于周报的邮件"→ 使用 subject + dateFrom/dateTo\n' +
+    '- 用户说"张三发给我的邮件"→ 使用 from\n' +
+    '- 用户说"有没有带附件的邮件"→ 可先 getEmailList 后通过内容判断\n' +
+    '- 用户说"找一下附件名包含报告的邮件"→ 使用 attachmentName\n' +
+    '- 用户说"最近的未读邮件"→ 使用 unread=true\n' +
+    '- 用户说"我收藏过的邮件"→ 使用 starred=true\n' +
+    '- 用户要求摘要 → 先定位邮件，再用 getEmailContent 获取正文后总结\n\n' +
+    '请根据用户意图先调用相应工具获取数据，再给出简洁清晰的中文回答。\n' +
+    `今天的日期是 ${new Date().toISOString().split('T')[0]}，请据此推断用户提到的相对时间（如"上周"、"最近三天"等）。`;
 
 // ━━━ Worker 通信助手 ━━━
 
@@ -1136,14 +1193,7 @@ export class MailOverlay implements Component {
         
         // 初始化或重置对话上下文
         this.chatContext = new ChatContext();
-        this.chatContext.system_prompt = new SystemMessage(
-            '你是邮件助手。用户会在 TUI 邮件界面中描述需求，例如：查找最近关于某主题的邮件、对某封邮件做摘要、列出最近 N 封邮件等。\n' +
-            '你可以调用工具：\n' +
-            '- mailbox-getEmailList: 获取邮件列表（offset, limit）\n' +
-            '- mailbox-getEmailContent: 根据 uid 获取邮件正文\n' +
-            '- mailbox-searchEmails: 按 subject 或 general 关键词搜索邮件\n' +
-            '根据用户意图先调用相应工具获取数据，再给出简洁清晰的中文回答。若用户要求摘要，先 getEmailList 或 searchEmails 定位邮件，再用 getEmailContent 取正文后总结。'
-        );
+        this.chatContext.system_prompt = new SystemMessage(MAIL_ASSISTANT_SYSTEM_PROMPT);
         this.chatContext.attachToolsets(mailAssistantToolset);
         
         this.state = 'assistant';
@@ -1169,6 +1219,8 @@ export class MailOverlay implements Component {
         this.assistantToolCalls = [];
         this.openDeskTUI.tui.setFocus(null);
         
+        logger.info(`[mail-assistant] 用户输入: "${userInput}"`);
+        
         // 更新对话历史，添加用户输入
         this.conversationHistory += `我: ${userInput}\n\n`;
         this.openDeskTUI.tui.requestRender();
@@ -1177,14 +1229,7 @@ export class MailOverlay implements Component {
             // 使用持久的对话上下文
             if (!this.chatContext) {
                 this.chatContext = new ChatContext();
-                this.chatContext.system_prompt = new SystemMessage(
-                    '你是邮件助手。用户会在 TUI 邮件界面中描述需求，例如：查找最近关于某主题的邮件、对某封邮件做摘要、列出最近 N 封邮件等。\n' +
-                    '你可以调用工具：\n' +
-                    '- mailbox-getEmailList: 获取邮件列表（offset, limit）\n' +
-                    '- mailbox-getEmailContent: 根据 uid 获取邮件正文\n' +
-                    '- mailbox-searchEmails: 按 subject 或 general 关键词搜索邮件\n' +
-                    '根据用户意图先调用相应工具获取数据，再给出简洁清晰的中文回答。若用户要求摘要，先 getEmailList 或 searchEmails 定位邮件，再用 getEmailContent 取正文后总结。'
-                );
+                this.chatContext.system_prompt = new SystemMessage(MAIL_ASSISTANT_SYSTEM_PROMPT);
                 this.chatContext.attachToolsets(mailAssistantToolset);
             }
             
@@ -1245,9 +1290,12 @@ export class MailOverlay implements Component {
 
                 // 处理工具调用
                 if (toolCalls.length > 0) {
+                    logger.info(`[mail-assistant] 模型请求调用 ${toolCalls.length} 个工具`);
                     for (const tc of toolCalls) {
+                        logger.info(`[mail-assistant] 工具调用: name=${tc.tool_name}, args=${tc.args_string}`);
                         const tool = ctx.getTool(tc.tool_name);
                         if (!tool) {
+                            logger.warn(`[mail-assistant] 未知工具: ${tc.tool_name}`);
                             tc.status = 'error';
                             tc.result = `未知工具: ${tc.tool_name}`;
                             continue;
@@ -1257,6 +1305,7 @@ export class MailOverlay implements Component {
                         try {
                             args = tc.args_string ? JSON.parse(jsonrepair(tc.args_string)) : {};
                         } catch (e) {
+                            logger.error(`[mail-assistant] 工具参数解析失败: ${tc.tool_name}, error=${(e as Error).message}`);
                             tc.status = 'error';
                             tc.result = (e as Error).message;
                             continue;
@@ -1271,12 +1320,16 @@ export class MailOverlay implements Component {
                         this.openDeskTUI.tui.requestRender();
                         
                         try {
+                            const startTime = Date.now();
                             const result = await tool.execute(args);
+                            const elapsed = Date.now() - startTime;
                             tc.status = result.status;
                             tc.result = result.result;
+                            logger.info(`[mail-assistant] 工具执行完成: ${tc.tool_name}, status=${result.status}, 耗时=${elapsed}ms, 结果长度=${(result.result || '').length}`);
                         } catch (e) {
                             tc.status = 'error';
                             tc.result = (e as Error).message;
+                            logger.error(`[mail-assistant] 工具执行异常: ${tc.tool_name}, error=${(e as Error).message}`);
                         }
                         
                         // 工具调用完成后更新 UI，保持累积的内容并继续显示生成中提示
@@ -1293,6 +1346,7 @@ export class MailOverlay implements Component {
             // 最终结果使用累积的内容
             const assistantReply = accumulatedText.trim() || '（无回复内容）';
             this.assistantResult = assistantReply;
+            logger.info(`[mail-assistant] 助手回复完成, 回复长度=${assistantReply.length}`);
             
             // 更新对话历史，添加助手回复
             this.conversationHistory += `助手: ${assistantReply}\n\n`;
