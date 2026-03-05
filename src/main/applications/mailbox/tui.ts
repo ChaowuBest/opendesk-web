@@ -262,6 +262,13 @@ export class MailOverlay implements Component {
     private handle?: any;
     private inputListenerRemove?: () => void;
 
+    // 分页加载相关
+    private currentOffset = 0;
+    private pageSize = 100;
+    private initialPageSize = 50;
+    private hasMoreEmails = true;
+    private isLoadingMore = false;
+
     // 详情视图滚动状态
     private detailScrollOffset = 0;
     private detailBodyTotalLines = 0;
@@ -661,18 +668,25 @@ export class MailOverlay implements Component {
         this.state = 'loading';
         this.loadingText = '正在加载邮件...';
         this.errorText = undefined;
+        this.currentOffset = 0;
+        this.hasMoreEmails = true;
         this.openDeskTUI.tui.requestRender();
 
         try {
             let data: any;
             if (this.currentFilter === 'all') {
-                data = await callMailWorker('getEmailHeaderList', 0, 100);
+                data = await callMailWorker('getEmailHeaderList', 0, this.initialPageSize);
             } else {
-                data = await callMailWorker('searchEmails', this.buildFilterQuery());
+                const query = this.buildFilterQuery();
+                query.limit = this.initialPageSize;
+                query.offset = 0;
+                data = await callMailWorker('searchEmails', query);
             }
             const emails: EmailHeader[] = Array.isArray(data) ? data : [];
             emails.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
             this.emails = emails;
+            this.currentOffset = this.initialPageSize;
+            this.hasMoreEmails = emails.length >= this.initialPageSize;
             this.buildEmailList();
         } catch (err: any) {
             logger.error(`加载邮件失败: ${err}`);
@@ -682,13 +696,56 @@ export class MailOverlay implements Component {
         }
     }
 
+    private async loadMoreEmails() {
+        if (!this.hasMoreEmails || this.isLoadingMore) return;
+
+        this.isLoadingMore = true;
+        this.openDeskTUI.tui.requestRender();
+
+        try {
+            let data: any;
+            if (this.currentFilter === 'all') {
+                data = await callMailWorker('getEmailHeaderList', this.currentOffset, this.pageSize);
+            } else {
+                const query = this.buildFilterQuery();
+                query.limit = this.pageSize;
+                query.offset = this.currentOffset;
+                data = await callMailWorker('searchEmails', query);
+            }
+            const newEmails: EmailHeader[] = Array.isArray(data) ? data : [];
+            
+            if (newEmails.length > 0) {
+                this.emails.push(...newEmails);
+                this.emails.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+                this.currentOffset += newEmails.length;
+                this.hasMoreEmails = newEmails.length >= this.pageSize;
+                
+                // 保存当前选中索引
+                const currentIndex = (this.emailList as any)?.selectedIndex || 0;
+                this.buildEmailList();
+                
+                // 恢复选中索引
+                if (this.emailList && currentIndex >= 0) {
+                    (this.emailList as any).selectedIndex = Math.min(currentIndex, this.emails.length - 1);
+                }
+            } else {
+                this.hasMoreEmails = false;
+            }
+        } catch (err: any) {
+            logger.error(`加载更多邮件失败: ${err}`);
+        } finally {
+            this.isLoadingMore = false;
+            this.openDeskTUI.tui.requestRender();
+        }
+    }
+
     private buildFilterQuery(): any {
         switch (this.currentFilter) {
-            case 'unread': return { unread: true, limit: 100, offset: 0 };
-            case 'starred': return { starred: true, limit: 100, offset: 0 };
-            case 'draft': return { type: 'draft', limit: 100, offset: 0 };
-            case 'sent': return { type: 'sent', limit: 100, offset: 0 };
-            default: return null;
+            case 'unread': return { unread: true, limit: this.initialPageSize, offset: 0 };
+            case 'starred': return { starred: true, limit: this.initialPageSize, offset: 0 };
+            case 'draft': return { type: 'draft', limit: this.initialPageSize, offset: 0 };
+            case 'sent': return { type: 'sent', limit: this.initialPageSize, offset: 0 };
+            default: return { limit: this.initialPageSize, offset: 0 };
         }
     }
 
@@ -802,6 +859,7 @@ export class MailOverlay implements Component {
      *   SeparatorLine           1
      *   [error]                 0 | 1
      *   SelectList              ← 弹性区域
+     *   [loading more]          0 | 1
      *   空行                    1
      *   ListFooter              1
      *   Box bottom padding      1
@@ -812,7 +870,7 @@ export class MailOverlay implements Component {
         this.state = isSearchMode ? 'search-list' : 'list';
 
         const rows = this.openDeskTUI.tui.terminal.rows;
-        const fixedLines = 10 + (this.errorText ? 1 : 0);
+        const fixedLines = 10 + (this.errorText ? 1 : 0) + (this.isLoadingMore ? 1 : 0);
         const visibleCount = Math.max(1, rows - fixedLines);
         const contentWidth = this.openDeskTUI.tui.terminal.columns - 6;
 
@@ -844,6 +902,18 @@ export class MailOverlay implements Component {
         // 列表选择变化时强制全量重绘，避免差异更新导致表头/标签行重复堆叠
         this.emailList.onSelectionChange = () => {
             this.openDeskTUI.tui.requestRender(true);
+            
+            // 检测是否滚动到底部，触发加载更多
+            if (this.hasMoreEmails && !this.isLoadingMore && this.emails.length > 0) {
+                const selectedIndex = (this.emailList as any)?.selectedIndex || 0;
+                const totalItems = this.emails.length;
+                // 当滚动到倒数第3项时开始加载更多
+                if (totalItems > 0 && selectedIndex >= totalItems - 3) {
+                    this.loadMoreEmails().catch(err => {
+                        logger.error(`自动加载更多邮件失败: ${err}`);
+                    });
+                }
+            }
         };
 
         this.openDeskTUI.tui.requestRender();
@@ -1564,8 +1634,11 @@ export class MailOverlay implements Component {
                 if (this.emailList) {
                     this.box.addChild(this.emailList);                                      // flex
                 }
+                if (this.isLoadingMore) {
+                    this.box.addChild(new Text(MC.neon('  ⟳ 正在加载更多邮件...')));        // 1
+                }
                 this.box.addChild(new Text(''));                                             // 1
-                this.box.addChild(new ListFooter(this.accounts.length > 1));                // 1
+                this.box.addChild(new ListFooter(this.accounts.length > 1, this.emails.length, this.hasMoreEmails));  // 1
                 break;
             }
 
@@ -1893,7 +1966,11 @@ class VerticalFiller implements Component {
 }
 
 class ListFooter implements Component {
-    constructor(private multiAccount: boolean) { }
+    constructor(
+        private multiAccount: boolean,
+        private emailCount: number,
+        private hasMore: boolean
+    ) { }
     invalidate() { }
     render(width: number): string[] {
         const hints = [
@@ -1909,7 +1986,21 @@ class ListFooter implements Component {
             hints.push(MC.neon('a') + MC.dim(' 切换账号'));
         }
         hints.push(MC.neon('ESC') + MC.dim(' 关闭'));
-        return [truncateToWidth('  ' + hints.join('   '), width, '…')];
+        
+        // 显示邮件数量和加载状态
+        const countInfo = this.hasMore 
+            ? MC.dim(` | 已加载 ${this.emailCount} 封`)
+            : MC.dim(` | 共 ${this.emailCount} 封`);
+        
+        const hintsText = '  ' + hints.join('   ');
+        const hintsVis = visibleWidth(hintsText);
+        const countVis = visibleWidth(countInfo);
+        
+        if (hintsVis + countVis > width) {
+            return [truncateToWidth(hintsText, width, '…')];
+        }
+        
+        return [truncateToWidth(hintsText + countInfo, width, '…')];
     }
 }
 
