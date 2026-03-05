@@ -93,11 +93,9 @@ const getEmailListTool = new BaseTool(
 getEmailListTool.setExecutor(async (args) => {
     const offset = args.offset ?? 0;
     const limit = args.limit ?? 20;
-    logger.info(`[mailbox-getEmailList] 工具调用: offset=${offset}, limit=${limit}`);
     const data = await callMailWorker('getEmailHeaderList', offset, limit);
     const emails: EmailHeader[] = Array.isArray(data) ? data : [];
     if (emails.length === 0) {
-        logger.info(`[mailbox-getEmailList] 返回 0 条邮件`);
         return JSON.stringify({ total: 0, emails: [], message: '暂无邮件' });
     }
     const items = emails.map((e: EmailHeader) => ({
@@ -109,7 +107,6 @@ getEmailListTool.setExecutor(async (args) => {
         starred: e.starred,
         type: e.type,
     }));
-    logger.info(`[mailbox-getEmailList] 返回 ${items.length} 条邮件`);
     return JSON.stringify({ total: items.length, emails: items });
 });
 
@@ -122,14 +119,11 @@ const getEmailContentTool = new BaseTool(
     GetEmailContentArgsSchema,
 );
 getEmailContentTool.setExecutor(async (args) => {
-    logger.info(`[mailbox-getEmailContent] 工具调用: uid=${args.uid}`);
     const content = await callMailWorker('getEmailContent', args.uid);
     if (!content) {
-        logger.warn(`[mailbox-getEmailContent] 未找到邮件: uid=${args.uid}`);
         return JSON.stringify({ error: '未找到该邮件' });
     }
     const text = (content.textContent && content.textContent.trim()) || stripHtml(content.htmlContent || '');
-    logger.info(`[mailbox-getEmailContent] 获取成功: uid=${args.uid}, 正文长度=${text.length}`);
     return JSON.stringify({
         uid: args.uid,
         textContent: text.slice(0, 5000),
@@ -169,8 +163,6 @@ searchEmailsTool.setExecutor(async (args) => {
     if (args.starred !== undefined) query.starred = args.starred;
     if (args.attachmentName) query.attachmentName = args.attachmentName;
 
-    logger.info(`[mailbox-searchEmails] 工具调用参数: ${JSON.stringify(query)}`);
-
     const data = await callMailWorker('searchEmails', query);
     const emails: EmailHeader[] = Array.isArray(data) ? data : [];
     const items = emails.map((e: EmailHeader) => ({
@@ -182,8 +174,6 @@ searchEmailsTool.setExecutor(async (args) => {
         starred: e.starred,
         type: e.type,
     }));
-
-    logger.info(`[mailbox-searchEmails] 搜索完成, 返回 ${items.length} 条结果`);
     return JSON.stringify({ total: items.length, emails: items });
 });
 
@@ -1219,8 +1209,6 @@ export class MailOverlay implements Component {
         this.assistantToolCalls = [];
         this.openDeskTUI.tui.setFocus(null);
         
-        logger.info(`[mail-assistant] 用户输入: "${userInput}"`);
-        
         // 更新对话历史，添加用户输入
         this.conversationHistory += `我: ${userInput}\n\n`;
         this.openDeskTUI.tui.requestRender();
@@ -1290,12 +1278,9 @@ export class MailOverlay implements Component {
 
                 // 处理工具调用
                 if (toolCalls.length > 0) {
-                    logger.info(`[mail-assistant] 模型请求调用 ${toolCalls.length} 个工具`);
                     for (const tc of toolCalls) {
-                        logger.info(`[mail-assistant] 工具调用: name=${tc.tool_name}, args=${tc.args_string}`);
                         const tool = ctx.getTool(tc.tool_name);
                         if (!tool) {
-                            logger.warn(`[mail-assistant] 未知工具: ${tc.tool_name}`);
                             tc.status = 'error';
                             tc.result = `未知工具: ${tc.tool_name}`;
                             continue;
@@ -1305,7 +1290,6 @@ export class MailOverlay implements Component {
                         try {
                             args = tc.args_string ? JSON.parse(jsonrepair(tc.args_string)) : {};
                         } catch (e) {
-                            logger.error(`[mail-assistant] 工具参数解析失败: ${tc.tool_name}, error=${(e as Error).message}`);
                             tc.status = 'error';
                             tc.result = (e as Error).message;
                             continue;
@@ -1320,16 +1304,12 @@ export class MailOverlay implements Component {
                         this.openDeskTUI.tui.requestRender();
                         
                         try {
-                            const startTime = Date.now();
                             const result = await tool.execute(args);
-                            const elapsed = Date.now() - startTime;
                             tc.status = result.status;
                             tc.result = result.result;
-                            logger.info(`[mail-assistant] 工具执行完成: ${tc.tool_name}, status=${result.status}, 耗时=${elapsed}ms, 结果长度=${(result.result || '').length}`);
                         } catch (e) {
                             tc.status = 'error';
                             tc.result = (e as Error).message;
-                            logger.error(`[mail-assistant] 工具执行异常: ${tc.tool_name}, error=${(e as Error).message}`);
                         }
                         
                         // 工具调用完成后更新 UI，保持累积的内容并继续显示生成中提示
@@ -1346,7 +1326,6 @@ export class MailOverlay implements Component {
             // 最终结果使用累积的内容
             const assistantReply = accumulatedText.trim() || '（无回复内容）';
             this.assistantResult = assistantReply;
-            logger.info(`[mail-assistant] 助手回复完成, 回复长度=${assistantReply.length}`);
             
             // 更新对话历史，添加助手回复
             this.conversationHistory += `助手: ${assistantReply}\n\n`;
