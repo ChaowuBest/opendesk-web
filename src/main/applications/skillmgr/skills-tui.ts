@@ -58,7 +58,8 @@ type ViewState =
     | 'view-installed'
     | 'skill-detail'
     | 'skill-content'
-    | 'skill-resources';
+    | 'skill-resources'
+    | 'confirm-delete';
 
 type DetailTab = 'info' | 'body' | 'resources';
 
@@ -73,7 +74,7 @@ export class SkillsOverlay implements Component {
     private searchResults: RegistrySkill[] = [];
     private selectedInputValue = '';
     private selectedRegistry = 'skill0';
-    private message: { text: string; isError: boolean } | null = null;
+    private message: { text: string; isError: boolean; state: ViewState } | null = null;
     private loading = false;
     private removeInputListener?: () => void;
     private messageTimeout?: NodeJS.Timeout;
@@ -100,15 +101,18 @@ export class SkillsOverlay implements Component {
         }
     }
 
-    private showMessage(text: string, isError: boolean = false) {
+    private showMessage(text: string, isError: boolean = false, targetState?: ViewState) {
         if (this.messageTimeout) {
             clearTimeout(this.messageTimeout);
         }
-        this.message = { text, isError };
+        const messageState = targetState ?? this.state;
+        this.message = { text, isError, state: messageState };
         this.renderBox();
         this.messageTimeout = setTimeout(() => {
-            this.message = null;
-            this.renderBox();
+            if (this.message && this.message.state === messageState) {
+                this.message = null;
+                this.renderBox();
+            }
         }, 3000);
     }
 
@@ -122,10 +126,7 @@ export class SkillsOverlay implements Component {
             this.removeInputListener();
             this.removeInputListener = undefined;
         }
-        if (this.messageTimeout) {
-            clearTimeout(this.messageTimeout);
-            this.messageTimeout = undefined;
-        }
+        this.loading = false;
     }
 
     private showMain() {
@@ -298,7 +299,7 @@ this.searchResults = result.skills || [];
         try {
             const result = SkillRegistry.addSkillFromPath(path);
             if (result.success) {
-                this.showMessage(`成功添加技能: ${result.name}`);
+                this.showMessage(`成功添加技能: ${result.name}`, false, 'main');
                 await this.loadInstalledSkills();
                 this.showMain();
             } else {
@@ -342,7 +343,7 @@ this.searchResults = result.skills || [];
         try {
             const result = SkillRegistry.addSkillFromZipPath(path);
             if (result.success) {
-                this.showMessage(`成功添加技能: ${result.name}`);
+                this.showMessage(`成功添加技能: ${result.name}`, false, 'main');
                 await this.loadInstalledSkills();
                 this.showMain();
             } else {
@@ -386,7 +387,7 @@ this.searchResults = result.skills || [];
         try {
             const result = await SkillRegistry.addSkillFromUrl(url);
             if (result.success) {
-                this.showMessage(`成功添加技能: ${result.name}`);
+                this.showMessage(`成功添加技能: ${result.name}`, false, 'main');
                 await this.loadInstalledSkills();
                 this.showMain();
             } else {
@@ -430,7 +431,7 @@ this.searchResults = result.skills || [];
         try {
             const result = await SkillRegistry.addSkillFromGitHubUrl(url);
             if (result.success) {
-                this.showMessage(`成功添加技能: ${result.name}`);
+                this.showMessage(`成功添加技能: ${result.name}`, false, 'main');
                 await this.loadInstalledSkills();
                 this.showMain();
             } else {
@@ -474,7 +475,7 @@ this.searchResults = result.skills || [];
         try {
             const result = await SkillRegistry.addSkillFromClawHubSlug(slug);
             if (result.success) {
-                this.showMessage(`成功添加技能: ${result.name}`);
+                this.showMessage(`成功添加技能: ${result.name}`, false, 'main');
                 await this.loadInstalledSkills();
                 this.showMain();
             } else {
@@ -493,6 +494,7 @@ this.searchResults = result.skills || [];
         this.cleanup();
         this.state = 'view-installed';
         this.input = undefined;
+        this.header = new Text(chalk.bold(' 已安装技能'));
 
         if (this.installedSkills.length === 0) {
             const items = [{ value: 'back', label: chalk.gray('暂无已安装技能，按 Enter 返回') }];
@@ -601,7 +603,7 @@ this.searchResults = result.skills || [];
 
     private confirmDeleteSkill(skillId: string) {
         this.cleanup();
-        this.state = 'skill-detail';
+        this.state = 'confirm-delete';
         this.header = new Text(chalk.red.bold(` 确认删除: ${skillId}?`));
 
         const items = [
@@ -754,7 +756,7 @@ this.searchResults = result.skills || [];
         try {
             const result = SkillRegistry.deleteSkill(skillId);
             if (result.success) {
-                this.showMessage(`成功删除技能: ${skillId}`);
+                this.showMessage(`成功删除技能: ${skillId}`, false, 'view-installed');
                 await this.loadInstalledSkills();
                 this.showViewInstalled();
             } else {
@@ -787,6 +789,9 @@ this.searchResults = result.skills || [];
                     this.handleInstalledSelection(item.value);
                     break;
                 case 'skill-detail':
+                    this.handleDetailSelection(item.value);
+                    break;
+                case 'confirm-delete':
                     this.handleDetailSelection(item.value);
                     break;
             }
@@ -864,7 +869,7 @@ this.searchResults = result.skills || [];
             }
 
             if (result?.success) {
-                this.showMessage(`成功安装技能: ${result.name}`);
+                this.showMessage(`成功安装技能: ${result.name}`, false, 'main');
                 await this.loadInstalledSkills();
                 this.showMain();
             } else {
@@ -926,6 +931,9 @@ this.searchResults = result.skills || [];
                 this.currentSkillDetail = null;
                 this.showViewInstalled();
                 break;
+            case 'confirm-delete':
+                this.renderSkillDetail();
+                break;
             case 'main':
                 this.close();
                 break;
@@ -944,6 +952,11 @@ this.searchResults = result.skills || [];
         handle.hide();
         
         this.cleanup();
+        if (this.messageTimeout) {
+            clearTimeout(this.messageTimeout);
+            this.messageTimeout = undefined;
+        }
+        this.message = null;
         this.openDeskTUI.tui.setFocus(this.openDeskTUI.inputArea.input);
     }
 
@@ -958,7 +971,7 @@ this.searchResults = result.skills || [];
             return;
         }
 
-        if (this.message) {
+        if (this.message && this.message.state === this.state) {
             const msgText = this.message.isError
                 ? chalk.red(`❌ ${this.message.text}`)
                 : chalk.green(`✓ ${this.message.text}`);
@@ -1068,6 +1081,8 @@ this.searchResults = result.skills || [];
                 return '↑↓ 选择  Enter 查看详情  Esc 返回';
             case 'skill-detail':
                 return '←/→ 切换标签  ↑/↓ 滚动  D 删除  Esc 返回';
+            case 'confirm-delete':
+                return '↑↓ 选择  Enter 确认  Esc 返回';
             default:
                 return '';
         }
@@ -1101,6 +1116,11 @@ this.searchResults = result.skills || [];
         this.overlayHandle.onHide = () => {
             if (this.overlayHandle) {
                 this.cleanup();
+                if (this.messageTimeout) {
+                    clearTimeout(this.messageTimeout);
+                    this.messageTimeout = undefined;
+                }
+                this.message = null;
                 this.openDeskTUI.hasOpenOverlay = false;
                 this.openDeskTUI.tui.setFocus(this.openDeskTUI.inputArea.input);
             }
