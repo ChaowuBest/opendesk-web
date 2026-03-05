@@ -455,6 +455,37 @@ function getSkillBody(skillId) {
     return skill || null;
 }
 
+/**
+ * 获取技能的完整详情，包括资源列表
+ * @param {string} skillId - 技能 id
+ * @returns {{ id: string, name: string, description: string, body: string, skillDir: string, license?: string, compatibility?: string, metadata?: object, allowedTools?: string[], resources: { references: Array<{name: string, content?: string}>, scripts: string[], assets: string[] } } | null}
+ */
+function getSkillDetail(skillId) {
+    if (skillsCache.size === 0) loadAll();
+    const skill = skillsCache.get(skillId);
+    if (!skill) return null;
+
+    const { frontmatter, body, skillDir } = skill;
+    const resources = loadSkillResources(skillDir, frontmatter.name);
+
+    return {
+        id: skillId,
+        name: frontmatter.name,
+        description: frontmatter.description ?? '',
+        body,
+        skillDir,
+        license: frontmatter.license,
+        compatibility: frontmatter.compatibility,
+        metadata: frontmatter.metadata,
+        allowedTools: frontmatter['allowed-tools'],
+        resources: {
+            references: resources.referencesSections,
+            scripts: resources.scriptsList,
+            assets: resources.assetsList
+        }
+    };
+}
+
 /** 递归复制目录 */
 function copyDirRecursive(src, dest) {
     fs.mkdirSync(dest, { recursive: true });
@@ -811,5 +842,6 @@ export const SkillRegistry = {
     addSkillFromClawHubSlug,
     parseGitHubTreeUrl,
     deleteSkill,
-    getSkillBody
+    getSkillBody,
+    getSkillDetail
 };

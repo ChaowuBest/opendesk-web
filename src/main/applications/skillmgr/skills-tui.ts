@@ -1,3 +1,14 @@
+/**
+ * Copyright (c) 2026 The OpenDesk Team
+ * OpenDesk is licensed under Mulan PSL v2.
+ * You can use this software according to the terms and conditions of the Mulan PSL v2.
+ * You may obtain a copy of Mulan PSL v2 at: http://license.coscl.org.cn/MulanPSL2
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
+ * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+ * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+ * See the Mulan PSL v2 for more details.
+ */
+
 import { type Component, SelectList, Box, Text, Input, TUI, Key, matchesKey } from "@mariozechner/pi-tui";
 import chalk from "chalk";
 import { defaultSelectListTheme } from "../../tui/theme";
@@ -17,6 +28,23 @@ interface RegistrySkill {
     canInstall: boolean;
 }
 
+interface SkillDetail {
+    id: string;
+    name: string;
+    description: string;
+    body: string;
+    skillDir: string;
+    license?: string;
+    compatibility?: string;
+    metadata?: Record<string, any>;
+    allowedTools?: string[];
+    resources: {
+        references: Array<{ name: string; content?: string }>;
+        scripts: string[];
+        assets: string[];
+    };
+}
+
 type ViewState =
     | 'main'
     | 'select-registry'
@@ -27,7 +55,12 @@ type ViewState =
     | 'install-url'
     | 'install-github'
     | 'install-clawhub'
-    | 'view-installed';
+    | 'view-installed'
+    | 'skill-detail'
+    | 'skill-content'
+    | 'skill-resources';
+
+type DetailTab = 'info' | 'body' | 'resources';
 
 export class SkillsOverlay implements Component {
     private openDeskTUI: OpenDeskTUI;
@@ -45,6 +78,11 @@ export class SkillsOverlay implements Component {
     private removeInputListener?: () => void;
     private messageTimeout?: NodeJS.Timeout;
     private overlayHandle?: any;
+    private currentSkillDetail: SkillDetail | null = null;
+    private currentDetailTab: DetailTab = 'info';
+    private previousState: ViewState = 'main';
+    private contentScrollOffset = 0;
+    private readonly detailMaxVisibleLines = 12;
 
     constructor(openDeskTUI: OpenDeskTUI) {
         this.openDeskTUI = openDeskTUI;
@@ -462,7 +500,7 @@ this.searchResults = result.skills || [];
         } else {
             const items = this.installedSkills.map((skill: any) => ({
                 value: skill.id,
-                label: `${chalk.bold(skill.name)} - ${skill.description || '无描述'}`,
+                label: `${chalk.bold(skill.name)} ${chalk.dim('·')} ${skill.description || '无描述'}`,
             }));
             this.list = new SelectList(items, Math.min(items.length, 10), defaultSelectListTheme);
         }
@@ -470,6 +508,245 @@ this.searchResults = result.skills || [];
         this.setupListHandlers();
         this.renderBox();
         this.openDeskTUI.tui.setFocus(this.list);
+    }
+
+    private showSkillDetail(skillId: string) {
+        this.setLoading(true);
+        try {
+            const detail = SkillRegistry.getSkillDetail(skillId);
+            if (!detail) {
+                this.showMessage('无法获取技能详情', true);
+                this.showViewInstalled();
+                return;
+            }
+            this.currentSkillDetail = detail;
+            this.currentDetailTab = 'info';
+            this.contentScrollOffset = 0;
+            this.previousState = 'view-installed';
+            this.renderSkillDetail();
+        } finally {
+            this.setLoading(false);
+        }
+    }
+
+    private renderSkillDetail() {
+        this.cleanup();
+        this.state = 'skill-detail';
+        this.list = undefined;
+        this.input = undefined;
+
+        if (!this.currentSkillDetail) {
+            this.showViewInstalled();
+            return;
+        }
+
+        const detail = this.currentSkillDetail;
+        this.header = new Text(chalk.bold(` 技能详情: ${detail.name}`));
+
+        this.renderBox();
+
+        this.removeInputListener = this.openDeskTUI.tui.addInputListener((data: string) => {
+            if (matchesKey(data, Key.escape)) {
+                this.currentSkillDetail = null;
+                this.showViewInstalled();
+                return { consume: true };
+            }
+            if (matchesKey(data, Key.left) || data === 'h') {
+                this.currentDetailTab = this.getPrevTab(this.currentDetailTab);
+                this.contentScrollOffset = 0;
+                this.renderBox();
+                return { consume: true };
+            }
+            if (matchesKey(data, Key.right) || data === 'l') {
+                this.currentDetailTab = this.getNextTab(this.currentDetailTab);
+                this.contentScrollOffset = 0;
+                this.renderBox();
+                return { consume: true };
+            }
+            if (matchesKey(data, Key.up) || data === 'k') {
+                if (this.contentScrollOffset > 0) {
+                    this.contentScrollOffset--;
+                    this.renderBox();
+                }
+                return { consume: true };
+            }
+            if (matchesKey(data, Key.down) || data === 'j') {
+                const contentLines = this.formatSkillDetailContent(detail);
+                const maxOffset = Math.max(0, contentLines.length - this.detailMaxVisibleLines);
+                if (this.contentScrollOffset < maxOffset) {
+                    this.contentScrollOffset++;
+                    this.renderBox();
+                }
+                return { consume: true };
+            }
+            if (data === 'd' || data === 'D') {
+                this.confirmDeleteSkill(detail.id);
+                return { consume: true };
+            }
+            return undefined;
+        });
+    }
+
+    private getPrevTab(tab: DetailTab): DetailTab {
+        const tabs: DetailTab[] = ['info', 'body', 'resources'];
+        const idx = tabs.indexOf(tab);
+        return tabs[(idx - 1 + tabs.length) % tabs.length];
+    }
+
+    private getNextTab(tab: DetailTab): DetailTab {
+        const tabs: DetailTab[] = ['info', 'body', 'resources'];
+        const idx = tabs.indexOf(tab);
+        return tabs[(idx + 1) % tabs.length];
+    }
+
+    private confirmDeleteSkill(skillId: string) {
+        this.cleanup();
+        this.state = 'skill-detail';
+        this.header = new Text(chalk.red.bold(` 确认删除: ${skillId}?`));
+
+        const items = [
+            { value: 'confirm-delete', label: chalk.red('确认删除') },
+            { value: 'cancel', label: chalk.green('取消') },
+        ];
+
+        this.list = new SelectList(items, items.length, defaultSelectListTheme);
+        this.setupListHandlers();
+        this.renderBox();
+        this.openDeskTUI.tui.setFocus(this.list);
+    }
+
+    private formatSkillDetailContent(detail: SkillDetail): string[] {
+        const lines: string[] = [];
+        const maxWidth = 76;
+
+        const wrapText = (text: string, indent: number = 0): string[] => {
+            const indentStr = ' '.repeat(indent);
+            const words = text.split(' ');
+            const result: string[] = [];
+            let currentLine = indentStr;
+
+            for (const word of words) {
+                if (currentLine.length + word.length + 1 > maxWidth) {
+                    if (currentLine.trim() !== indentStr.trim()) {
+                        result.push(currentLine);
+                    }
+                    currentLine = indentStr + word;
+                } else {
+                    currentLine += (currentLine === indentStr ? '' : ' ') + word;
+                }
+            }
+            if (currentLine.trim() !== indentStr.trim()) {
+                result.push(currentLine);
+            }
+            return result.length > 0 ? result : [indentStr];
+        };
+
+        if (this.currentDetailTab === 'info') {
+            lines.push(chalk.cyan('基本信息'));
+            lines.push('');
+            lines.push(`  ${chalk.bold('名称')}: ${detail.name}`);
+            lines.push(`  ${chalk.bold('ID')}: ${detail.id}`);
+            lines.push(`  ${chalk.bold('描述')}:`);
+            for (const line of wrapText(detail.description, 4)) {
+                lines.push(line);
+            }
+            if (detail.license) {
+                lines.push(`  ${chalk.bold('许可证')}: ${detail.license}`);
+            }
+            if (detail.compatibility) {
+                lines.push(`  ${chalk.bold('兼容性')}: ${detail.compatibility}`);
+            }
+            lines.push('');
+            lines.push(`  ${chalk.bold('目录')}: ${chalk.dim(detail.skillDir)}`);
+            lines.push('');
+
+            const res = detail.resources;
+            lines.push(chalk.cyan('资源统计'));
+            lines.push('');
+            lines.push(`  ${chalk.bold('参考文档')}: ${res.references.length > 0 ? chalk.green(res.references.length + ' 个') : chalk.dim('无')}`);
+            lines.push(`  ${chalk.bold('脚本文件')}: ${res.scripts.length > 0 ? chalk.green(res.scripts.length + ' 个') : chalk.dim('无')}`);
+            lines.push(`  ${chalk.bold('资源文件')}: ${res.assets.length > 0 ? chalk.green(res.assets.length + ' 个') : chalk.dim('无')}`);
+
+            if (detail.allowedTools && detail.allowedTools.length > 0) {
+                lines.push('');
+                lines.push(chalk.cyan('预授权工具'));
+                lines.push('');
+                for (const tool of detail.allowedTools) {
+                    lines.push(`  • ${tool}`);
+                }
+            }
+
+            if (detail.metadata && Object.keys(detail.metadata).length > 0) {
+                lines.push('');
+                lines.push(chalk.cyan('元数据'));
+                lines.push('');
+                for (const [key, value] of Object.entries(detail.metadata)) {
+                    const valStr = typeof value === 'object' ? JSON.stringify(value) : String(value);
+                    lines.push(`  ${key}: ${chalk.dim(valStr)}`);
+                }
+            }
+        } else if (this.currentDetailTab === 'body') {
+            lines.push(chalk.cyan('SKILL.md 内容'));
+            lines.push('');
+            const bodyLines = detail.body.split('\n');
+            for (const line of bodyLines) {
+                if (line.startsWith('# ')) {
+                    lines.push(chalk.bold.cyan(line));
+                } else if (line.startsWith('## ')) {
+                    lines.push(chalk.bold(line));
+                } else if (line.startsWith('### ')) {
+                    lines.push(chalk.yellow(line));
+                } else if (line.startsWith('- ') || line.startsWith('* ')) {
+                    lines.push(`  ${chalk.cyan('•')} ${line.slice(2)}`);
+                } else if (line.startsWith('```')) {
+                    lines.push(chalk.dim(line));
+                } else if (line.trim().startsWith('`') && line.trim().endsWith('`')) {
+                    lines.push(`  ${chalk.yellow(line.trim())}`);
+                } else {
+                    lines.push(`  ${line}`);
+                }
+            }
+        } else if (this.currentDetailTab === 'resources') {
+            const res = detail.resources;
+
+            if (res.references.length > 0) {
+                lines.push(chalk.cyan('参考文档'));
+                lines.push('');
+                for (const ref of res.references) {
+                    lines.push(`  ${chalk.green('📄')} ${ref.name}`);
+                    if (ref.content) {
+                        const preview = ref.content.split('\n').slice(0, 3).join('\n    ');
+                        lines.push(`    ${chalk.dim(preview.substring(0, 100))}${preview.length > 100 ? '...' : ''}`);
+                    }
+                    lines.push('');
+                }
+            }
+
+            if (res.scripts.length > 0) {
+                lines.push(chalk.cyan('脚本文件'));
+                lines.push('');
+                for (const script of res.scripts) {
+                    const ext = script.split('.').pop() || '';
+                    const icon = ext === 'js' || ext === 'mjs' ? '🟨' : ext === 'py' ? '🐍' : '📜';
+                    lines.push(`  ${icon} ${script}`);
+                }
+                lines.push('');
+            }
+
+            if (res.assets.length > 0) {
+                lines.push(chalk.cyan('资源文件'));
+                lines.push('');
+                for (const asset of res.assets) {
+                    lines.push(`  📦 ${asset}`);
+                }
+            }
+
+            if (res.references.length === 0 && res.scripts.length === 0 && res.assets.length === 0) {
+                lines.push(chalk.dim('  该技能没有额外的资源文件'));
+            }
+        }
+
+        return lines;
     }
 
     private async deleteSkill(skillId: string) {
@@ -509,6 +786,9 @@ this.searchResults = result.skills || [];
                 case 'view-installed':
                     this.handleInstalledSelection(item.value);
                     break;
+                case 'skill-detail':
+                    this.handleDetailSelection(item.value);
+                    break;
             }
         };
 
@@ -519,6 +799,14 @@ this.searchResults = result.skills || [];
                 this.goBack();
             }
         };
+    }
+
+    private handleDetailSelection(value: string) {
+        if (value === 'confirm-delete' && this.currentSkillDetail) {
+            this.deleteSkill(this.currentSkillDetail.id);
+        } else if (value === 'cancel') {
+            this.renderSkillDetail();
+        }
     }
 
     private handleMainSelection(value: string) {
@@ -598,7 +886,7 @@ this.searchResults = result.skills || [];
         const skill = this.installedSkills.find((s: any) => s.id === skillId);
         if (!skill) return;
 
-        this.deleteSkill(skillId);
+        this.showSkillDetail(skillId);
     }
 
     private setupInputHandlers() {
@@ -634,6 +922,10 @@ this.searchResults = result.skills || [];
             case 'search-results':
                 this.showSearch();
                 break;
+            case 'skill-detail':
+                this.currentSkillDetail = null;
+                this.showViewInstalled();
+                break;
             case 'main':
                 this.close();
                 break;
@@ -658,6 +950,13 @@ this.searchResults = result.skills || [];
     private renderBox() {
         this.box.clear();
         this.box.addChild(this.header);
+
+        if (this.state === 'skill-detail' && this.currentSkillDetail) {
+            this.box.addChild(new Text(chalk.dim('  ←/→ 切换标签  ↑/↓ 滚动  D 删除  Esc 返回')));
+            this.renderDetailContent();
+            this.openDeskTUI.tui.requestRender();
+            return;
+        }
 
         if (this.message) {
             const msgText = this.message.isError
@@ -689,6 +988,41 @@ this.searchResults = result.skills || [];
         }
 
         this.openDeskTUI.tui.requestRender();
+    }
+
+    private renderDetailContent() {
+        if (!this.currentSkillDetail) return;
+
+        const detail = this.currentSkillDetail;
+
+        const tabs = ['info', 'body', 'resources'] as DetailTab[];
+        const tabLabels = { info: '基本信息', body: 'SKILL.md', resources: '资源文件' };
+        const tabLine = tabs.map(t => {
+            const label = tabLabels[t];
+            return t === this.currentDetailTab
+                ? chalk.black.bgCyan(` ${label} `)
+                : chalk.dim(` ${label} `);
+        }).join(chalk.dim('│'));
+
+        this.box.addChild(new Text(''));
+        this.box.addChild(new Text(`  ${tabLine}`));
+        this.box.addChild(new Text(chalk.dim('  ──────────────────────────────────────────────────')));
+
+        const contentLines = this.formatSkillDetailContent(detail);
+        const maxOffset = Math.max(0, contentLines.length - this.detailMaxVisibleLines);
+        if (this.contentScrollOffset > maxOffset) {
+            this.contentScrollOffset = maxOffset;
+        }
+        const visibleLines = contentLines.slice(this.contentScrollOffset, this.contentScrollOffset + this.detailMaxVisibleLines);
+
+        for (const line of visibleLines) {
+            this.box.addChild(new Text(line));
+        }
+
+        if (contentLines.length > this.detailMaxVisibleLines) {
+            const scrollInfo = `  [行 ${this.contentScrollOffset + 1}-${Math.min(this.contentScrollOffset + this.detailMaxVisibleLines, contentLines.length)} / ${contentLines.length}]`;
+            this.box.addChild(new Text(chalk.dim(scrollInfo)));
+        }
     }
 
     private getInputLabel(): string {
@@ -724,14 +1058,16 @@ this.searchResults = result.skills || [];
                 return '输入本地目录路径  Enter 添加  Esc 返回';
             case 'install-zip':
                 return '输入本地 zip 文件路径  Enter 添加  Esc 返回';
-            case 'installiert-url':
+            case 'install-url':
                 return '输入技能包 URL  Enter 添加  Esc 返回';
             case 'install-github':
                 return '输入 GitHub URL (如 https://github.com/user/repo/tree/branch)  Enter 添加  Esc 返回';
             case 'install-clawhub':
                 return '输入 ClawHub slug (如 my-skill 或 my-skill@1.2.3)  Enter 添加  Esc 返回';
             case 'view-installed':
-                return '↑↓ 选择  Enter 删除  Esc 返回';
+                return '↑↓ 选择  Enter 查看详情  Esc 返回';
+            case 'skill-detail':
+                return '←/→ 切换标签  ↑/↓ 滚动  D 删除  Esc 返回';
             default:
                 return '';
         }
