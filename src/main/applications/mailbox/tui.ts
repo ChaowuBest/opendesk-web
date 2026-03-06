@@ -501,6 +501,7 @@ export class MailOverlay implements Component {
     private currentAccount?: any;
     private loadingText = '正在加载邮件...';
     private errorText?: string;
+    private successText?: string;
     private isSyncing = false;
 
     private emailList?: SelectList;
@@ -535,6 +536,8 @@ export class MailOverlay implements Component {
     private composeQuotedText?: string;
     /** 回复时引用区域的滚动偏移 */
     private composeQuoteScrollOffset = 0;
+    /** 正在编辑的草稿的 uid */
+    private draftUid?: string;
 
     // 助手模式
     private assistantPromptInput?: Input;
@@ -608,6 +611,10 @@ export class MailOverlay implements Component {
                 this.sendComposedEmail();
                 return { consume: true };
             }
+            if (matchesKey(data, Key.ctrl('d'))) {
+                this.saveDraft();
+                return { consume: true };
+            }
             if (matchesKey(data, Key.ctrl('w'))) {
                 this.aiGenerateReply();
                 return { consume: true };
@@ -675,30 +682,46 @@ export class MailOverlay implements Component {
                 this.openDeskTUI.tui.requestRender();
                 return { consume: true };
             }
-            // r 回复
-            if (data === 'r') {
-                this.startCompose('reply');
-                return { consume: true };
-            }
-            // R 回复全部
-            if (data === 'R') {
-                this.startCompose('replyall');
-                return { consume: true };
-            }
-            // w 转发
-            if (data === 'w' || data === 'W') {
-                this.startCompose('forward');
-                return { consume: true };
-            }
-            // d 删除
-            if (data === 'd') {
-                this.handleDetailAction('delete');
-                return { consume: true };
-            }
-            // f 收藏切换
-            if (data === 'f' || data === 'F') {
-                this.handleDetailAction('star');
-                return { consume: true };
+            
+            // 草稿邮件操作
+            if (this.selectedEmail && this.selectedEmail.type === 'draft') {
+                // e 编辑
+                if (data === 'e' || data === 'E') {
+                    this.editDraft();
+                    return { consume: true };
+                }
+                // d 删除
+                if (data === 'd') {
+                    this.handleDetailAction('deleteDraft');
+                    return { consume: true };
+                }
+            } else {
+                // 普通邮件操作
+                // r 回复
+                if (data === 'r') {
+                    this.startCompose('reply');
+                    return { consume: true };
+                }
+                // R 回复全部
+                if (data === 'R') {
+                    this.startCompose('replyall');
+                    return { consume: true };
+                }
+                // w 转发
+                if (data === 'w' || data === 'W') {
+                    this.startCompose('forward');
+                    return { consume: true };
+                }
+                // d 删除
+                if (data === 'd') {
+                    this.handleDetailAction('delete');
+                    return { consume: true };
+                }
+                // f 收藏切换
+                if (data === 'f' || data === 'F') {
+                    this.handleDetailAction('star');
+                    return { consume: true };
+                }
             }
             // p 唤起助手（带邮件上下文）
             if (data === 'p' || data === 'P') {
@@ -887,7 +910,7 @@ export class MailOverlay implements Component {
         }
     }
 
-    private exitCompose() {
+    private async exitCompose() {
         this.stopAiSpinner();
         this.composeEditor = undefined;
         this.composeToInput = undefined;
@@ -895,7 +918,10 @@ export class MailOverlay implements Component {
         this.composeSubjectInput = undefined;
         this.composeQuotedText = undefined;
         this.composeQuoteScrollOffset = 0;
+        const wasEditingDraft = this.draftUid !== undefined;
+        this.draftUid = undefined; // 重置草稿 uid
         this.errorText = undefined;
+        this.successText = undefined;
         if (this.selectedEmail) {
             this.buildDetailView();
         } else {
@@ -906,6 +932,10 @@ export class MailOverlay implements Component {
             } else {
                 this.buildEmailList(false);
             }
+        }
+        // 如果是编辑草稿后退出，且当前在草稿箱视图，更新列表
+        if (wasEditingDraft && this.currentFilter === 'draft') {
+            await this.loadEmails();
         }
     }
 
@@ -1321,6 +1351,13 @@ export class MailOverlay implements Component {
                 this.selectedEmailContent = undefined;
                 this.buildEmailList(this.isInSearchMode);
                 break;
+            case 'deleteDraft':
+                await callMailWorker('deleteDraft', this.selectedEmail.uid);
+                this.emails = this.emails.filter(e => e.uid !== this.selectedEmail!.uid);
+                this.selectedEmail = undefined;
+                this.selectedEmailContent = undefined;
+                this.buildEmailList(this.isInSearchMode);
+                break;
         }
     }
 
@@ -1648,6 +1685,7 @@ export class MailOverlay implements Component {
 
         this.composeType = type;
         this.errorText = undefined;
+        this.successText = undefined;
         this.isAiGenerating = false;
         this.composeSending = false;
         this.aiSpinnerFrame = 0;
@@ -1751,11 +1789,121 @@ export class MailOverlay implements Component {
                 attachments: [],
             });
 
-            this.exitCompose();
+            // 如果是编辑草稿后发送，删除原草稿
+            if (this.draftUid) {
+                await callMailWorker('deleteDraft', this.draftUid);
+            }
+
+            await this.exitCompose();
         } catch (err: any) {
             logger.error(`发送邮件失败: ${err}`);
             this.composeSending = false;
             this.errorText = `发送失败: ${err?.message || '未知错误'}`;
+            this.openDeskTUI.tui.requestRender();
+        }
+    }
+
+    private async saveDraft() {
+        if (!this.composeEditor) return;
+        const to = this.composeToInput?.getValue()?.trim() || '';
+        const cc = this.composeCcInput?.getValue()?.trim() || '';
+        const subject = this.composeSubjectInput?.getValue()?.trim() || '';
+        const replyBody = this.composeEditor.getText().trim();
+
+        try {
+            let fullText = replyBody;
+            if (this.composeQuotedText) {
+                fullText = replyBody + '\n\n' + this.composeQuotedText;
+            }
+            // 生成 HTML：回复/回复全部时附带原始邮件引用
+            let html = '';
+            if ((this.composeType === 'reply' || this.composeType === 'replyall' || this.composeType === 'forward')
+                && this.selectedEmail && this.selectedEmailContent) {
+                html = this.buildReplyHtml(replyBody, this.selectedEmail, this.selectedEmailContent);
+            } else {
+                // 新邮件：纯文本转简单 HTML
+                html = replyBody.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>');
+            }
+            // 如果是编辑草稿，先删除原草稿
+            if (this.draftUid) {
+                await callMailWorker('deleteDraft', this.draftUid);
+            }
+
+            const draftUid = await callMailWorker('saveDraft', {
+                to,
+                cc,
+                bcc: '',
+                subject,
+                text: fullText,
+                html,
+                attachments: [],
+            });
+            
+            // 存储返回的草稿 UID，以便后续编辑时能正确更新
+            this.draftUid = draftUid;
+
+            this.successText = '草稿保存成功';
+            this.openDeskTUI.tui.requestRender();
+            
+            setTimeout(async () => {
+                await this.exitCompose();
+                // 如果当前在草稿箱视图，更新列表
+                if (this.currentFilter === 'draft') {
+                    await this.loadEmails();
+                }
+            }, 1500);
+        } catch (err: any) {
+            logger.error(`保存草稿失败: ${err}`);
+            this.errorText = `保存失败: ${err?.message || '未知错误'}`;
+            this.openDeskTUI.tui.requestRender();
+        }
+    }
+
+    private async editDraft() {
+        if (!this.selectedEmail || this.selectedEmail.type !== 'draft') return;
+
+        try {
+            // 获取草稿内容
+            const content = await callMailWorker('getEmailContent', this.selectedEmail.uid);
+            if (!content) {
+                this.errorText = '加载草稿内容失败';
+                this.openDeskTUI.tui.requestRender();
+                return;
+            }
+
+            this.composeToInput = new Input();
+            this.composeSubjectInput = new Input();
+            this.composeCcInput = undefined;
+
+            this.composeToInput.setValue(this.selectedEmail.to?.map(a => a.address).join(', ') || '');
+            if (this.selectedEmail.cc && this.selectedEmail.cc.length > 0) {
+                this.composeCcInput = new Input();
+                this.composeCcInput.setValue(this.selectedEmail.cc.map(a => a.address).join(', '));
+            }
+            this.composeSubjectInput.setValue(this.selectedEmail.subject || '');
+
+            this.composeEditor = new Editor(this.openDeskTUI.tui, {
+                ...defaultEditorTheme,
+                borderColor: () => '',
+            });
+
+            const bodyText = content.textContent || stripHtml(content.htmlContent) || '';
+            this.composeEditor.setText(bodyText);
+
+            this.composeType = 'new'; 
+            this.errorText = undefined;
+            this.isAiGenerating = false;
+            this.composeSending = false;
+            this.aiSpinnerFrame = 0;
+            this.composeQuotedText = undefined;
+            this.draftUid = this.selectedEmail.uid;
+
+            this.state = 'compose';
+            this.setComposeFocusToEditor();
+            this.openDeskTUI.tui.requestRender();
+        } catch (err: any) {
+            logger.error(`编辑草稿失败: ${err}`);
+            this.errorText = `编辑失败: ${err?.message || '未知错误'}`;
             this.openDeskTUI.tui.requestRender();
         }
     }
@@ -2127,8 +2275,9 @@ export class MailOverlay implements Component {
                 const fields = this.getComposeFocusFields();
                 const fieldLineCount = this.composeCcInput ? 3 : 2;
                 const hasError = this.errorText ? 1 : 0;
+                const hasSuccess = this.successText ? 1 : 0;
                 const hasQuote = this.composeQuotedText ? 1 : 0; // 引用分隔线
-                const composeFixed = 3 + fieldLineCount + 1 + hasError + hasQuote + 1 + 1;
+                const composeFixed = 3 + fieldLineCount + 1 + hasError + hasSuccess + hasQuote + 1 + 1;
                 const flexLines = Math.max(3, availableForContent - composeFixed);
 
                 // 有引用时：编辑器占 40%，引用占 60%（最少各 3 行）
@@ -2159,6 +2308,9 @@ export class MailOverlay implements Component {
                 this.box.addChild(new SeparatorLine('─'));
                 if (this.errorText) {
                     this.box.addChild(new Text(MC.red(`  ⚠ ${this.errorText}`)));
+                }
+                if (this.successText) {
+                    this.box.addChild(new Text(MC.neon(`  ✓ ${this.successText}`)));
                 }
                 if (this.isAiGenerating) {
                     this.box.addChild(new SpinnerView('AI 正在帮你撰写...', this.aiSpinnerFrame, editorLines));
@@ -2483,6 +2635,7 @@ class ComposeFooterBar implements Component {
         const hints = [
             MC.neon('Tab') + MC.dim(' 切换字段'),
             MC.neon('Ctrl+S') + MC.dim(' 发送'),
+            MC.neon('Ctrl+D') + MC.dim(' 保存草稿'),
             MC.neon('Ctrl+W') + MC.dim(' 帮我写'),
             MC.neon('ESC') + MC.dim(' 取消'),
         ];
@@ -2716,11 +2869,19 @@ class DetailFooter implements Component {
         }
 
         // 操作提示
-        hints.push(MC.neon('r') + MC.dim(' 回复'));
-        hints.push(MC.neon('R') + MC.dim(' 全部回复'));
-        hints.push(MC.neon('w') + MC.dim(' 转发'));
-        if (this.email) {
-            hints.push(MC.neon('f') + MC.dim(this.email.starred ? ' 取消收藏' : ' 收藏'));
+        if (this.email && this.email.type === 'draft') {
+            // 草稿邮件：编辑、删除
+            hints.push(MC.neon('e') + MC.dim(' 编辑'));
+            hints.push(MC.neon('d') + MC.dim(' 删除'));
+        } else {
+            // 普通邮件：回复、转发、收藏、删除
+            hints.push(MC.neon('r') + MC.dim(' 回复'));
+            hints.push(MC.neon('R') + MC.dim(' 全部回复'));
+            hints.push(MC.neon('w') + MC.dim(' 转发'));
+            if (this.email) {
+                hints.push(MC.neon('f') + MC.dim(this.email.starred ? ' 取消收藏' : ' 收藏'));
+            }
+            hints.push(MC.neon('d') + MC.dim(' 删除'));
         }
         hints.push(MC.neon('p') + MC.dim(' 助手'));
         hints.push(MC.neon('d') + MC.dim(' 删除'));
