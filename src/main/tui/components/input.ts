@@ -162,6 +162,7 @@ export class AgentInputArea implements Component {
     private commandRegistry?: SlashCommandRegistry;
     private onQueueChange?: (queue: string[]) => void;
     private externalHint: string | null = null;
+    private quickPassHandler?: (text: string) => boolean;
 
     constructor(openDeskTUI: OpenDeskTUI) {
         this.openDeskTUI = openDeskTUI;
@@ -188,6 +189,13 @@ export class AgentInputArea implements Component {
     }
 
     /**
+     * 设置口令处理回调，返回 true 表示输入已作为口令处理
+     */
+    setQuickPassHandler(handler: (text: string) => boolean) {
+        this.quickPassHandler = handler;
+    }
+
+    /**
      * 刷新 Editor 的自动补全（在注册/注销命令后调用）
      */
     refreshAutocomplete() {
@@ -201,7 +209,7 @@ export class AgentInputArea implements Component {
     private async handleSubmit(text: string) {
         // 检查是否处于模型未配置模式
         if (this.openDeskTUI.isModelNotConfiguredMode()) {
-            // 模型未配置，只尝试执行斜杠命令，不进行任何任务操作
+            // 模型未配置，只尝试执行斜杠命令和口令导入，不进行任何任务操作
             if (this.commandRegistry) {
                 const handled = await this.commandRegistry.execute(text);
                 if (handled) {
@@ -209,7 +217,11 @@ export class AgentInputArea implements Component {
                     return;
                 }
             }
-            // 不是斜杠命令或者命令未处理，只清空输入框
+            if (this.quickPassHandler && this.quickPassHandler(text)) {
+                this.input.setText('');
+                return;
+            }
+            // 不是斜杠命令/口令或未处理，只清空输入框
             this.input.setText('');
             return;
         }
@@ -220,6 +232,11 @@ export class AgentInputArea implements Component {
                 this.input.setText('');
                 return;
             }
+        }
+
+        if (this.quickPassHandler && this.quickPassHandler(text)) {
+            this.input.setText('');
+            return;
         }
 
         if (this.status === 'running') {

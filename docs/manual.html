@@ -662,6 +662,12 @@ $ opendesk -c "分析当前目录的代码结构"</code></pre>
                             <td class="py-2 pr-4"><code>/memory add|search|forget|list</code></td>
                             <td class="py-2"></td>
                         </tr>
+                        <tr class="border-b border-surface-100">
+                            <td class="py-2 pr-4 font-mono text-brand-600"><code>/quickpass</code></td>
+                            <td class="py-2 pr-4">导出快捷口令（设置分享）</td>
+                            <td class="py-2 pr-4"><code>/quickpass config base|all</code></td>
+                            <td class="py-2"></td>
+                        </tr>
                     </tbody>
                 </table>
             </div>
@@ -748,6 +754,18 @@ $ opendesk -c "分析当前目录的代码结构"</code></pre>
                         <p><strong>记忆类型：</strong>用户偏好、重要事实、关键决策、有用上下文</p>
                         <p><strong>存储范围：</strong>全局记忆（跨项目共享）、工作区记忆（仅限当前项目）</p>
                         <p class="mt-1">AI 在对话中也会自动使用 <code>addMemory</code> 和 <code>searchMemory</code> 工具来管理记忆。</p>
+                    </div>
+                </div>
+
+                <div class="p-4 bg-surface-50 rounded-lg border border-surface-100">
+                    <h4 class="font-semibold text-sm"><code>/quickpass</code> — 快捷口令</h4>
+                    <p class="text-xs text-surface-500 mt-1">将当前设置导出为口令字符串，方便通过微信、邮件等渠道分享给其他 OpenDesk 用户。口令内置完整性校验，确保传输过程中数据不被意外修改。</p>
+                    <pre class="mt-2 bg-surface-900 text-surface-100 p-3 rounded-md text-xs"><code>/quickpass config base  <span class="text-surface-500"># 导出基础设置口令（不含应用配置）</span>
+/quickpass config all   <span class="text-surface-500"># 导出全部设置口令（含应用配置）</span></code></pre>
+                    <div class="mt-3 text-xs text-surface-500">
+                        <p><strong>导出：</strong>执行命令后，口令会在全宽弹窗中显示，方便复制。</p>
+                        <p><strong>导入：</strong>在 TUI 聊天输入框中粘贴完整口令并按回车，系统自动识别并导入。</p>
+                        <p><strong>口令格式：</strong><code>[[Opendesk 名称 -- &lt;base64+校验和&gt;]]</code></p>
                     </div>
                 </div>
             </div>

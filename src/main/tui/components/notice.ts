@@ -28,6 +28,8 @@ export interface InfoOptions {
     title: string;
     message: string;
     closeLabel?: string;
+    /** 是否让 Overlay 宽度拉满终端（用于口令等需要完整复制的场景） */
+    fullWidth?: boolean;
 }
 
 export class ConfirmOverlay implements Component {
@@ -120,9 +122,11 @@ export class InfoOverlay implements Component {
     private messageText: Text;
     private box: Box;
     private onClose?: () => void;
+    private fullWidth: boolean;
 
     constructor(openDeskTUI: OpenDeskTUI, options: InfoOptions) {
         this.openDeskTUI = openDeskTUI;
+        this.fullWidth = options.fullWidth ?? false;
 
         const closeLabel = options.closeLabel || "确定";
 
@@ -156,7 +160,9 @@ export class InfoOverlay implements Component {
 
         const terminalWidth = this.openDeskTUI.tui.terminal.columns;
         const terminalHeight = this.openDeskTUI.tui.terminal.rows;
-        const overlayWidth = Math.min(60, terminalWidth - 4);
+        const overlayWidth = this.fullWidth
+            ? terminalWidth - 2
+            : Math.min(60, terminalWidth - 4);
         const overlayMaxHeight = Math.max(8, terminalHeight - 4);
 
         const handle = this.openDeskTUI.tui.showOverlay(this, {

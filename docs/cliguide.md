@@ -123,6 +123,7 @@ OpenDesk CLI 提供了丰富的斜杠命令来增强交互体验。在输入框�
 | `/config` | 打开系统设置 | `/config` |
 | `/log` | 显示日志面板 | `/log [off\|last\|all]` |
 | `/debug` | 调试模式开关 | `/debug [on\|off]` |
+| `/quickpass` | 导出快捷口令 | `/quickpass config base\|all` |
 
 ### 命令详细说明
 
@@ -157,6 +158,18 @@ OpenDesk CLI 提供了丰富的斜杠命令来增强交互体验。在输入框�
 /debug off  # 关闭调试模式
 /debug      # 查看当前状态
 ```
+
+#### `/quickpass` - 快捷口令
+```bash
+/quickpass config base  # 导出基础设置口令（不含应用配置）
+/quickpass config all   # 导出全部设置口令（含应用配置）
+```
+
+口令是一段特殊格式的字符串，形如 `[[Opendesk 快捷口令 -- <base64数据>]]`，可以通过微信、邮件等方式发送给其他 OpenDesk 用户。对方只需将口令粘贴到 TUI 聊天输入框中提交，系统会自动识别并导入。
+
+**导出口令：** 使用 `/quickpass config base` 导出不含应用配置的基础设置，或使用 `/quickpass config all` 导出包含应用配置的全部设置。口令会通过弹窗显示，方便复制。
+
+**导入口令：** 在 TUI 聊天输入框中粘贴完整的口令字符串并按回车提交，系统会自动检测、校验并导入。如果口令仅包含基础设置，会保留当前的应用配置。
 
 ---
 
