@@ -9,9 +9,9 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { type Component, SelectList, Box, Text, Input, TUI, Key, matchesKey } from "@mariozechner/pi-tui";
+import { type Component, SelectList, Box, Text, Input, TUI, Key, matchesKey, Markdown, visibleWidth, wrapTextWithAnsi, truncateToWidth } from "@mariozechner/pi-tui";
 import chalk from "chalk";
-import { defaultSelectListTheme } from "../../tui/theme";
+import { defaultSelectListTheme, defaultMarkdownTheme } from "../../tui/theme";
 import { OpenDeskTUI } from "../../tui/entry";
 import { SkillRegistry } from "./skillregistry.js";
 import { RegistryAdapters } from "./registry-adapters.js";
@@ -533,7 +533,10 @@ this.searchResults = result.skills || [];
                 return { consume: true };
             }
             if (matchesKey(data, Key.down) || data === 'j') {
-                const contentLines = this.formatSkillDetailContent(detail);
+                const terminalWidth = this.openDeskTUI.tui.terminal.columns;
+                const overlayWidth = Math.min(80, terminalWidth - 4);
+                const contentWidth = overlayWidth - 4;
+                const contentLines = this.formatSkillDetailContent(detail, contentWidth);
                 const maxOffset = Math.max(0, contentLines.length - this.detailMaxVisibleLines);
                 if (this.contentScrollOffset < maxOffset) {
                     this.contentScrollOffset++;
@@ -577,64 +580,48 @@ this.searchResults = result.skills || [];
         this.openDeskTUI.tui.setFocus(this.list);
     }
 
-    private formatSkillDetailContent(detail: SkillDetail): string[] {
+    private formatSkillDetailContent(detail: SkillDetail, contentWidth: number): string[] {
         const lines: string[] = [];
-        const maxWidth = 76;
+        const indent = '  ';
 
-        const wrapText = (text: string, indent: number = 0): string[] => {
-            const indentStr = ' '.repeat(indent);
-            const words = text.split(' ');
-            const result: string[] = [];
-            let currentLine = indentStr;
-
-            for (const word of words) {
-                if (currentLine.length + word.length + 1 > maxWidth) {
-                    if (currentLine.trim() !== indentStr.trim()) {
-                        result.push(currentLine);
-                    }
-                    currentLine = indentStr + word;
-                } else {
-                    currentLine += (currentLine === indentStr ? '' : ' ') + word;
-                }
-            }
-            if (currentLine.trim() !== indentStr.trim()) {
-                result.push(currentLine);
-            }
-            return result.length > 0 ? result : [indentStr];
+        const wrapLine = (text: string, maxLen: number): string[] => {
+            return wrapTextWithAnsi(text, maxLen);
         };
 
         if (this.currentDetailTab === 'info') {
             lines.push(chalk.cyan('基本信息'));
             lines.push('');
-            lines.push(`  ${chalk.bold('名称')}: ${detail.name}`);
-            lines.push(`  ${chalk.bold('ID')}: ${detail.id}`);
-            lines.push(`  ${chalk.bold('描述')}:`);
-            for (const line of wrapText(detail.description, 4)) {
-                lines.push(line);
+            lines.push(`${indent}${chalk.bold('名称')}: ${detail.name}`);
+            lines.push(`${indent}${chalk.bold('ID')}: ${detail.id}`);
+            lines.push(`${indent}${chalk.bold('描述')}:`);
+            const descLines = wrapLine(detail.description, contentWidth - 4);
+            for (const dl of descLines) {
+                lines.push(`${indent}${indent}${dl}`);
             }
             if (detail.license) {
-                lines.push(`  ${chalk.bold('许可证')}: ${detail.license}`);
+                lines.push(`${indent}${chalk.bold('许可证')}: ${detail.license}`);
             }
             if (detail.compatibility) {
-                lines.push(`  ${chalk.bold('兼容性')}: ${detail.compatibility}`);
+                lines.push(`${indent}${chalk.bold('兼容性')}: ${detail.compatibility}`);
             }
             lines.push('');
-            lines.push(`  ${chalk.bold('目录')}: ${chalk.dim(detail.skillDir)}`);
+            const dirText = truncateToWidth(detail.skillDir, contentWidth - 8, '...', false);
+            lines.push(`${indent}${chalk.bold('目录')}: ${chalk.dim(dirText)}`);
             lines.push('');
 
             const res = detail.resources;
             lines.push(chalk.cyan('资源统计'));
             lines.push('');
-            lines.push(`  ${chalk.bold('参考文档')}: ${res.references.length > 0 ? chalk.green(res.references.length + ' 个') : chalk.dim('无')}`);
-            lines.push(`  ${chalk.bold('脚本文件')}: ${res.scripts.length > 0 ? chalk.green(res.scripts.length + ' 个') : chalk.dim('无')}`);
-            lines.push(`  ${chalk.bold('资源文件')}: ${res.assets.length > 0 ? chalk.green(res.assets.length + ' 个') : chalk.dim('无')}`);
+            lines.push(`${indent}${chalk.bold('参考文档')}: ${res.references.length > 0 ? chalk.green(res.references.length + ' 个') : chalk.dim('无')}`);
+            lines.push(`${indent}${chalk.bold('脚本文件')}: ${res.scripts.length > 0 ? chalk.green(res.scripts.length + ' 个') : chalk.dim('无')}`);
+            lines.push(`${indent}${chalk.bold('资源文件')}: ${res.assets.length > 0 ? chalk.green(res.assets.length + ' 个') : chalk.dim('无')}`);
 
             if (detail.allowedTools && detail.allowedTools.length > 0) {
                 lines.push('');
                 lines.push(chalk.cyan('预授权工具'));
                 lines.push('');
                 for (const tool of detail.allowedTools) {
-                    lines.push(`  • ${tool}`);
+                    lines.push(`${indent}• ${tool}`);
                 }
             }
 
@@ -644,29 +631,17 @@ this.searchResults = result.skills || [];
                 lines.push('');
                 for (const [key, value] of Object.entries(detail.metadata)) {
                     const valStr = typeof value === 'object' ? JSON.stringify(value) : String(value);
-                    lines.push(`  ${key}: ${chalk.dim(valStr)}`);
+                    const truncatedVal = truncateToWidth(valStr, contentWidth - 10, '...', false);
+                    lines.push(`${indent}${key}: ${chalk.dim(truncatedVal)}`);
                 }
             }
         } else if (this.currentDetailTab === 'body') {
             lines.push(chalk.cyan('SKILL.md 内容'));
             lines.push('');
-            const bodyLines = detail.body.split('\n');
-            for (const line of bodyLines) {
-                if (line.startsWith('# ')) {
-                    lines.push(chalk.bold.cyan(line));
-                } else if (line.startsWith('## ')) {
-                    lines.push(chalk.bold(line));
-                } else if (line.startsWith('### ')) {
-                    lines.push(chalk.yellow(line));
-                } else if (line.startsWith('- ') || line.startsWith('* ')) {
-                    lines.push(`  ${chalk.cyan('•')} ${line.slice(2)}`);
-                } else if (line.startsWith('```')) {
-                    lines.push(chalk.dim(line));
-                } else if (line.trim().startsWith('`') && line.trim().endsWith('`')) {
-                    lines.push(`  ${chalk.yellow(line.trim())}`);
-                } else {
-                    lines.push(`  ${line}`);
-                }
+            const markdown = new Markdown(detail.body, 0, 0, defaultMarkdownTheme);
+            const mdLines = markdown.render(contentWidth - 2);
+            for (const mdLine of mdLines) {
+                lines.push(`${indent}${mdLine}`);
             }
         } else if (this.currentDetailTab === 'resources') {
             const res = detail.resources;
@@ -675,10 +650,13 @@ this.searchResults = result.skills || [];
                 lines.push(chalk.cyan('参考文档'));
                 lines.push('');
                 for (const ref of res.references) {
-                    lines.push(`  ${chalk.green('📄')} ${ref.name}`);
+                    lines.push(`${indent}${chalk.green('📄')} ${ref.name}`);
                     if (ref.content) {
-                        const preview = ref.content.split('\n').slice(0, 3).join('\n    ');
-                        lines.push(`    ${chalk.dim(preview.substring(0, 100))}${preview.length > 100 ? '...' : ''}`);
+                        const previewLines = ref.content.split('\n').slice(0, 3);
+                        for (const pl of previewLines) {
+                            const truncated = truncateToWidth(pl, contentWidth - 8, '...', false);
+                            lines.push(`${indent}${indent}${chalk.dim(truncated)}`);
+                        }
                     }
                     lines.push('');
                 }
@@ -690,7 +668,7 @@ this.searchResults = result.skills || [];
                 for (const script of res.scripts) {
                     const ext = script.split('.').pop() || '';
                     const icon = ext === 'js' || ext === 'mjs' ? '🟨' : ext === 'py' ? '🐍' : '📜';
-                    lines.push(`  ${icon} ${script}`);
+                    lines.push(`${indent}${icon} ${script}`);
                 }
                 lines.push('');
             }
@@ -699,12 +677,12 @@ this.searchResults = result.skills || [];
                 lines.push(chalk.cyan('资源文件'));
                 lines.push('');
                 for (const asset of res.assets) {
-                    lines.push(`  📦 ${asset}`);
+                    lines.push(`${indent}📦 ${asset}`);
                 }
             }
 
             if (res.references.length === 0 && res.scripts.length === 0 && res.assets.length === 0) {
-                lines.push(chalk.dim('  该技能没有额外的资源文件'));
+                lines.push(chalk.dim(`${indent}该技能没有额外的资源文件`));
             }
         }
 
@@ -963,6 +941,9 @@ this.searchResults = result.skills || [];
         if (!this.currentSkillDetail) return;
 
         const detail = this.currentSkillDetail;
+        const terminalWidth = this.openDeskTUI.tui.terminal.columns;
+        const overlayWidth = Math.min(80, terminalWidth - 4);
+        const contentWidth = overlayWidth - 4;
 
         const tabs = ['info', 'body', 'resources'] as DetailTab[];
         const tabLabels = { info: '基本信息', body: 'SKILL.md', resources: '资源文件' };
@@ -975,23 +956,35 @@ this.searchResults = result.skills || [];
 
         this.box.addChild(new Text(''));
         this.box.addChild(new Text(`  ${tabLine}`));
-        this.box.addChild(new Text(chalk.dim('  ──────────────────────────────────────────────────')));
+        this.box.addChild(new Text(chalk.dim('  ' + '─'.repeat(overlayWidth - 4))));
 
-        const contentLines = this.formatSkillDetailContent(detail);
+        const contentLines = this.formatSkillDetailContent(detail, contentWidth);
         const maxOffset = Math.max(0, contentLines.length - this.detailMaxVisibleLines);
         if (this.contentScrollOffset > maxOffset) {
             this.contentScrollOffset = maxOffset;
         }
         const visibleLines = contentLines.slice(this.contentScrollOffset, this.contentScrollOffset + this.detailMaxVisibleLines);
 
-        for (const line of visibleLines) {
-            this.box.addChild(new Text(line));
+        const bgFn = (text: string) => chalk.bgHex('#2d2d2d').hex('#e0e0e0')(text);
+
+        for (let i = 0; i < visibleLines.length; i++) {
+            const line = visibleLines[i];
+            const paddedLine = this.padLineToWidth(line, overlayWidth - 2);
+            this.box.addChild(new Text(bgFn(`  ${paddedLine}`)));
         }
 
         if (contentLines.length > this.detailMaxVisibleLines) {
             const scrollInfo = `  [行 ${this.contentScrollOffset + 1}-${Math.min(this.contentScrollOffset + this.detailMaxVisibleLines, contentLines.length)} / ${contentLines.length}]`;
             this.box.addChild(new Text(chalk.dim(scrollInfo)));
         }
+    }
+
+    private padLineToWidth(line: string, width: number): string {
+        const visWidth = visibleWidth(line);
+        if (visWidth >= width) {
+            return truncateToWidth(line, width, '', false);
+        }
+        return line + ' '.repeat(width - visWidth);
     }
 
     private getInputLabel(): string {
