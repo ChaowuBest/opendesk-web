@@ -19,6 +19,7 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     { name: 'deepseek', displayName: '深度求索', base_url: 'https://api.deepseek.com' },
     { name: 'z-ai', displayName: '智谱开放平台', base_url: 'https://open.bigmodel.cn/api/paas/v4' },
     { name: 'local', displayName: 'Ollama', base_url: 'http://127.0.0.1:11434/v1' },
+    { name: 'lmstudio', displayName: 'LM Studio', base_url: 'http://127.0.0.1:1234/v1' },
     { name: 'aliyun-cn', displayName: '阿里云百炼', base_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1' },
     { name: 'aliyun-code-cn', displayName: '阿里云百炼(CodingPlan)', base_url: 'https://coding.dashscope.aliyuncs.com/v1' },
     { name: 'volcengine', displayName: '火山引擎', base_url: 'https://ark.cn-beijing.volces.com/api/v3' },
