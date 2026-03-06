@@ -21,6 +21,7 @@ const SHELL_AGENT_SYSTEM_PROMPT = `
 <environment>
 - 会话发起时间：{date}（注意：该时间为会话创建时的快照，随着对话进行可能已过时。如需精确的当前时间，请调用 getCurrentTime 工具）
 - 你当前的工作目录是：{workspace}
+- 你当前的操作系统是: {platform}
 </environment>
 
 <todomanagement>
@@ -59,9 +60,14 @@ TodoWrite 工具使用说明：
 - 记忆的关键词要精准，搜索时系统会使用 AI 语义匹配提升准确度
 </memory>
 
-## 你可以使用的技能 (Skills)
+<skills>
+你拥有技能管理能力，如果用户给出的任务与下面给出的已知技能相匹配，你应当首先载入技能，
+根据技能的内容判断如何完成任务。
+
+你可以使用的技能 (Skills)列表如下：
 
 {skillFrontmatters}
+</skills>
 `
 
 export class ShellAgentDecl extends AgentDecl {
@@ -70,6 +76,7 @@ export class ShellAgentDecl extends AgentDecl {
         const skillFrontmatters = await SkillRegistry.getInstance().getSkillFrontmatterXml();
         const result = format(SHELL_AGENT_SYSTEM_PROMPT, {
             date: new Date().toLocaleString(),
+            platform: process.platform,
             workspace: this.environment.workspace,
             skillFrontmatters: skillFrontmatters
         });

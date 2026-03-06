@@ -27,6 +27,80 @@ const MAX_DIFF_LINES = 50;
 const DIFF_CONTEXT_LINES = 3; // 上下文行数
 
 /**
+ * 通过 PATH 环境变量查找可执行文件的路径
+ * 支持跨平台：Windows、macOS、Linux
+ * @param executable 可执行文件名
+ * @returns 可执行文件的完整路径，如果找不到则返回 null
+ */
+function findExecutableInPath(executable: string): string | null {
+    // Windows 下需要添加 .exe 后缀
+    const isWindows = process.platform === 'win32';
+    const executableNames = isWindows
+        ? [executable, `${executable}.exe`, `${executable}.cmd`, `${executable}.bat`]
+        : [executable];
+
+    // 获取 PATH 环境变量
+    const pathEnv = process.env.PATH || '';
+    const pathSeparator = isWindows ? ';' : ':';
+    const pathDirs = pathEnv.split(pathSeparator);
+
+    // 遍历 PATH 中的每个目录
+    for (const dir of pathDirs) {
+        if (!dir) continue;
+        for (const execName of executableNames) {
+            const fullPath = path.join(dir, execName);
+            try {
+                if (fs.existsSync(fullPath)) {
+                    // 检查是否可执行（非 Windows 下）
+                    if (!isWindows) {
+                        try {
+                            fs.accessSync(fullPath, fs.constants.X_OK);
+                            return fullPath;
+                        } catch {
+                            continue;
+                        }
+                    } else {
+                        return fullPath;
+                    }
+                }
+            } catch {
+                continue;
+            }
+        }
+    }
+
+    // 尝试常见的安装路径作为后备
+    const commonPaths = isWindows
+        ? []
+        : [`/bin/${executable}`, `/usr/bin/${executable}`, `/usr/local/bin/${executable}`];
+
+    for (const commonPath of commonPaths) {
+        try {
+            if (fs.existsSync(commonPath)) {
+                try {
+                    fs.accessSync(commonPath, fs.constants.X_OK);
+                    return commonPath;
+                } catch {
+                    continue;
+                }
+            }
+        } catch {
+            continue;
+        }
+    }
+
+    return null;
+}
+
+/**
+ * 获取 zsh 可执行文件路径
+ * @returns zsh 路径，如果找不到则返回 null
+ */
+function getZshPath(): string | null {
+    return findExecutableInPath('zsh');
+}
+
+/**
  * 渲染类似 git diff 格式的输出
  * 显示行号、上下文、带背景色的增删行
  * 使用 diff 库进行差异计算
@@ -495,7 +569,13 @@ export class ExecuteZshTool extends BaseTool<typeof ExecuteZshArgsSchema> {
 
             // 校验命令
             if (!command || typeof command !== 'string') {
-                return resolve('请输入要执行的 bash 命令。');
+                return resolve('请输入要执行的 zsh 命令。');
+            }
+
+            // 获取 zsh 路径
+            const zshPath = getZshPath();
+            if (!zshPath) {
+                return resolve('错误：未找到 zsh 可执行文件。请确保 zsh 已安装并位于 PATH 环境变量中。');
             }
 
             // 设置工作目录
@@ -505,7 +585,7 @@ export class ExecuteZshTool extends BaseTool<typeof ExecuteZshArgsSchema> {
             }
 
             // 开启进程
-            const zsh = spawn('/bin/zsh', ['-c', command], { cwd });
+            const zsh = spawn(zshPath, ['-c', command], { cwd });
 
             let stdout = '';
             let stderr = '';
