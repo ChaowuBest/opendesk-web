@@ -177,18 +177,202 @@ searchEmailsTool.setExecutor(async (args) => {
     return JSON.stringify({ total: items.length, emails: items });
 });
 
+// ━━━ 跨应用联动工具：日历 ━━━
+
+const GetCalendarItemsArgsSchema = z.object({
+    dateString: z.string().describe('日期字符串，格式为 YYYY-MM-DD。例如 "2026-03-05"'),
+});
+const getCalendarItemsTool = new BaseTool(
+    'getCalendarItems',
+    '获取指定日期的日程/会议列表。当用户想查看某天的安排、检查时间冲突，或需要将邮件中的会议信息与日历比对时使用。',
+    GetCalendarItemsArgsSchema,
+);
+getCalendarItemsTool.setExecutor(async (args) => {
+    const result = await ApplicationRegistry.callWorker('calendar', 'getCalendarItems', args.dateString);
+    if (result?.status !== 'ok') {
+        return JSON.stringify({ error: `无法获取日程: ${result?.message || '未知错误'}` });
+    }
+    const items = result.data || [];
+    if (items.length === 0) {
+        return JSON.stringify({ total: 0, items: [], message: `${args.dateString} 暂无日程安排` });
+    }
+    const mapped = items.map((item: any) => ({
+        uid: item.uid,
+        subject: item.subject,
+        startTime: new Date(item.startTime).toLocaleString(),
+        endTime: new Date(item.endTime).toLocaleString(),
+        location: item.location || '',
+    }));
+    return JSON.stringify({ total: mapped.length, items: mapped });
+});
+getCalendarItemsTool.renderToolCallCli = function (toolcall: ToolCall, width: number): string[] | undefined {
+    const args = toolcall.args_object as any;
+    const lines: string[] = [];
+    if (args?.dateString) lines.push(MC.dim('日期: ') + MC.accent(String(args.dateString)));
+    if (toolcall.status === 'running') lines.push(MC.dim('  ⏳ 正在获取日程…'));
+    else if (toolcall.status === 'success' && toolcall.result) {
+        try {
+            const r = JSON.parse(toolcall.result);
+            lines.push(MC.dim(`  共 ${r.total} 项日程`));
+        } catch { lines.push(MC.dim('  ✓ 已获取日程')); }
+    } else if (toolcall.status === 'error') lines.push(MC.red(String(toolcall.result || '获取失败')));
+    return lines.length > 0 ? lines : undefined;
+};
+
+const AddCalendarItemArgsSchema = z.object({
+    subject: z.string().describe('日程标题'),
+    dateString: z.string().describe('日期，格式为 YYYY-MM-DD'),
+    startTime: z.string().describe('开始时间，格式为 HH:MM（24小时制）'),
+    endTime: z.string().describe('结束时间，格式为 HH:MM（24小时制）'),
+    location: z.string().optional().describe('地点（可选）'),
+    isAllDay: z.boolean().optional().default(false).describe('是否为全天事件'),
+});
+const addCalendarItemTool = new BaseTool(
+    'addCalendarItem',
+    '添加新日程/会议。当用户要求根据邮件内容创建日程、安排会议、或设置提醒时使用。',
+    AddCalendarItemArgsSchema,
+);
+addCalendarItemTool.setExecutor(async (args) => {
+    const { subject, dateString, startTime, endTime, location, isAllDay } = args;
+    const dateParts = dateString.replace(/-/g, '/');
+    let startTimestamp: number;
+    let endTimestamp: number;
+    if (isAllDay) {
+        startTimestamp = new Date(dateParts).getTime();
+        endTimestamp = startTimestamp + 86400000;
+    } else {
+        startTimestamp = new Date(`${dateParts} ${startTime}`).getTime();
+        endTimestamp = new Date(`${dateParts} ${endTime}`).getTime();
+    }
+    if (isNaN(startTimestamp) || isNaN(endTimestamp)) {
+        return JSON.stringify({ error: '日期或时间格式无效，请使用 YYYY-MM-DD 和 HH:MM' });
+    }
+    if (endTimestamp <= startTimestamp) {
+        return JSON.stringify({ error: '结束时间必须晚于开始时间' });
+    }
+
+    // ── 去重检查：查询同一天的日程，按主题和时间匹配 ──
+    try {
+        const existingResult = await ApplicationRegistry.callWorker('calendar', 'getCalendarItems', dateString);
+        if (existingResult?.status === 'ok' && Array.isArray(existingResult.data)) {
+            const subjectLower = subject.trim().toLowerCase();
+            const duplicate = existingResult.data.find((item: any) => {
+                const itemSubject = (item.subject || '').trim().toLowerCase();
+                const itemStart = new Date(item.startTime).getTime();
+                // 主题相似 且 开始时间相同 => 视为重复
+                if (itemSubject === subjectLower && itemStart === startTimestamp) return true;
+                // 主题包含关系 且 时间重叠 => 视为重复
+                const itemEnd = new Date(item.endTime).getTime();
+                const subjectMatch = itemSubject.includes(subjectLower) || subjectLower.includes(itemSubject);
+                const timeOverlap = startTimestamp < itemEnd && endTimestamp > itemStart;
+                return subjectMatch && timeOverlap;
+            });
+            if (duplicate) {
+                return JSON.stringify({
+                    skipped: true,
+                    reason: '已存在相同或相似的日程，无需重复添加',
+                    existing: {
+                        uid: duplicate.uid,
+                        subject: duplicate.subject,
+                        startTime: new Date(duplicate.startTime).toLocaleString(),
+                        endTime: new Date(duplicate.endTime).toLocaleString(),
+                    },
+                });
+            }
+        }
+    } catch { /* 去重检查失败不阻塞添加流程 */ }
+
+    const result = await ApplicationRegistry.callWorker('calendar', 'addCalendarItem', {
+        subject, startTime: startTimestamp, endTime: endTimestamp, location: location || '', isAllDay,
+    });
+    if (result?.status !== 'ok') {
+        return JSON.stringify({ error: `添加日程失败: ${result?.message || '未知错误'}` });
+    }
+    const item = result.data ?? result;
+    return JSON.stringify({ success: true, uid: item.uid, subject, dateString, startTime, endTime });
+});
+addCalendarItemTool.renderToolCallCli = function (toolcall: ToolCall, width: number): string[] | undefined {
+    const args = toolcall.args_object as any;
+    const lines: string[] = [];
+    if (args?.subject) lines.push(MC.dim('标题: ') + MC.bright(String(args.subject)));
+    if (args?.dateString) lines.push(MC.dim('日期: ') + MC.accent(String(args.dateString)));
+    if (args?.isAllDay) lines.push(MC.dim('时间: ') + MC.amber('全天'));
+    else if (args?.startTime && args?.endTime) lines.push(MC.dim('时间: ') + MC.accent(`${args.startTime} — ${args.endTime}`));
+    if (args?.location) lines.push(MC.dim('地点: ') + MC.accent(String(args.location)));
+    if (toolcall.status === 'running') lines.push(MC.dim('  ⏳ 添加中…'));
+    else if (toolcall.status === 'success') {
+        try {
+            const r = JSON.parse(toolcall.result!);
+            if (r.skipped) lines.push(MC.amber('  ⚠ 已存在相同日程，跳过添加'));
+            else lines.push(MC.green('  ✓ 日程已添加'));
+        } catch { lines.push(MC.green('  ✓ 已添加')); }
+    } else if (toolcall.status === 'error') lines.push(MC.red(String(toolcall.result || '添加失败')));
+    return lines.length > 0 ? lines : undefined;
+};
+
+
+const GetCurrentTimeArgsSchema = z.object({});
+const getCurrentTimeTool = new BaseTool(
+    'getCurrentTime',
+    '获取当前精确的日期和时间，包含日期字符串。在需要知道"今天"、"明天"等相对日期时使用。',
+    GetCurrentTimeArgsSchema,
+);
+getCurrentTimeTool.setExecutor(async () => {
+    const now = new Date();
+    const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    return JSON.stringify({
+        date: dateStr,
+        time: timeStr,
+        datetime: now.toLocaleString(),
+        dayOfWeek: ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][now.getDay()],
+    });
+});
+
+const DeleteCalendarItemArgsSchema = z.object({
+    uid: z.string().describe('要删除的日程项的唯一标识符（uid），可通过 getCalendarItems 获取'),
+});
+const deleteCalendarItemTool = new BaseTool(
+    'deleteCalendarItem',
+    '删除指定的日程项。当用户要求取消某个日程、会议时使用，需要先通过 getCalendarItems 获取日程的 uid。',
+    DeleteCalendarItemArgsSchema,
+);
+deleteCalendarItemTool.setExecutor(async (args) => {
+    const result = await ApplicationRegistry.callWorker('calendar', 'deleteCalendarItem', args.uid);
+    if (result?.status !== 'ok') {
+        return JSON.stringify({ error: `删除日程失败: ${result?.message || '未知错误'}` });
+    }
+    const data = result.data ?? result;
+    return JSON.stringify({ success: true, uid: args.uid, ...data });
+});
+deleteCalendarItemTool.renderToolCallCli = function (toolcall: ToolCall, width: number): string[] | undefined {
+    const args = toolcall.args_object as any;
+    const lines: string[] = [];
+    if (args?.uid) lines.push(MC.dim('ID: ') + MC.accent(String(args.uid).slice(0, width - 12)));
+    if (toolcall.status === 'running') lines.push(MC.dim('  ⏳ 删除中…'));
+    else if (toolcall.status === 'success') lines.push(MC.green('  ✓ 日程已删除'));
+    else if (toolcall.status === 'error') lines.push(MC.red(String(toolcall.result || '删除失败')));
+    return lines.length > 0 ? lines : undefined;
+};
+
+
 const mailAssistantToolset = new BaseToolset('mailbox');
 mailAssistantToolset.addTools(getEmailListTool, getEmailContentTool, searchEmailsTool);
 
+const crossAppToolset = new BaseToolset('cross-app');
+crossAppToolset.addTools(
+    getCalendarItemsTool,
+    addCalendarItemTool,
+    deleteCalendarItemTool,
+    getCurrentTimeTool,
+);
+
 const MAIL_ASSISTANT_SYSTEM_PROMPT =
     '你是邮件助手。用户会用自然语言描述需求，你需要理解用户意图并调用合适的工具来完成任务。\n\n' +
-    '## 可用工具\n\n' +
-    '### mailbox-getEmailList\n' +
-    '获取当前邮箱的邮件列表（支持分页：offset, limit）。\n\n' +
-    '### mailbox-getEmailContent\n' +
-    '根据邮件 uid 获取完整正文内容。\n\n' +
-    '### mailbox-searchEmails\n' +
-    '强大的邮件搜索工具，支持以下搜索条件（可组合使用）：\n' +
+    '## 邮件工具\n' +
+    '- mailbox-getEmailList: 获取邮件列表（offset, limit）\n' +
+    '- mailbox-getEmailContent: 根据 uid 获取邮件正文\n' +
+    '- mailbox-searchEmails: 强大的邮件搜索工具，支持以下搜索条件（可组合使用）：\n' +
     '- **subject**: 按主题关键词搜索（模糊匹配）\n' +
     '- **from**: 按发件人搜索（姓名或邮箱地址，模糊匹配）\n' +
     '- **to**: 按收件人搜索\n' +
@@ -208,7 +392,22 @@ const MAIL_ASSISTANT_SYSTEM_PROMPT =
     '- 用户说"我收藏过的邮件"→ 使用 starred=true\n' +
     '- 用户要求摘要 → 先定位邮件，再用 getEmailContent 获取正文后总结\n\n' +
     '请根据用户意图先调用相应工具获取数据，再给出简洁清晰的中文回答。\n' +
-    `今天的日期是 ${new Date().toISOString().split('T')[0]}，请据此推断用户提到的相对时间（如"上周"、"最近三天"等）。`;
+    `今天的日期是 ${new Date().toISOString().split('T')[0]}，请据此推断用户提到的相对时间（如"上周"、"最近三天"等）。
+
+    '## 跨应用联动工具\n' +
+    '- cross-app-getCurrentTime: 获取当前日期时间（在需要"今天"、"明天"等相对日期时先调用）\n' +
+    '- cross-app-getCalendarItems: 查询指定日期的日程列表\n' +
+    '- cross-app-addCalendarItem: 根据邮件中的会议/活动信息创建日程\n' +
+    '- cross-app-deleteCalendarItem: 删除指定日程（需提供 uid，可通过 getCalendarItems 获取）\n' +
+    '## 使用策略\n' +
+    '1. 邮件操作：根据用户意图先调用相应工具获取数据，再给出简洁清晰的中文回答。\n' +
+    '2. 邮件转日程：当用户要求将邮件中的会议/活动添加到日历时，先用 getEmailContent 获取邮件内容，提取日期、时间、地点等信息，然后调用 addCalendarItem 创建日程。工具内置了去重检查，如果返回 skipped=true 表示已存在相同日程，请告知用户无需重复添加。\n' +
+    '3. 日程查询：用户想查看某天安排时，先调用 getCurrentTime 获取当前日期，再调用 getCalendarItems。\n' +
+    '4. 删除操作：删除日程前，先调用 getCalendarItems 获取日程的 uid，再执行删除。\n' +
+    '5. 综合分析：用户可能要求"查看今天的邮件和日程"，此时需同时调用邮件和日历工具。\n' +
+    '6. 去重原则：添加日程时，工具会自动检查是否已存在相同或相似的日程（按主题和时间匹配）。若已存在则跳过添加并返回已有项信息，请据此给出友好提示。\n' +
+    '7. 回答始终使用简洁清晰的中文。';
+    `;
 
 // ━━━ Worker 通信助手 ━━━
 
@@ -347,6 +546,8 @@ export class MailOverlay implements Component {
     private assistantToolCalls: any[] = [];
     private chatContext?: ChatContext;
     private conversationHistory: string = '';
+    /** 标记助手是否从详情页唤起（ESC 时返回详情而非列表） */
+    private assistantFromDetail = false;
 
     // 搜索模式
     private isInSearchMode = false;
@@ -499,6 +700,11 @@ export class MailOverlay implements Component {
                 this.handleDetailAction('star');
                 return { consume: true };
             }
+            // p 唤起助手（带邮件上下文）
+            if (data === 'p' || data === 'P') {
+                this.enterAssistantModeFromDetail();
+                return { consume: true };
+            }
             // ESC / q 返回列表
             if (matchesKey(data, Key.escape) || data === 'q') {
                 this.selectedEmail = undefined;
@@ -587,7 +793,7 @@ export class MailOverlay implements Component {
                 this.openDeskTUI.tui.requestRender();
                 return { consume: true };
             }
-            
+
             if (matchesKey(data, Key.escape)) {
                 this.exitAssistantMode();
                 return { consume: true };
@@ -636,10 +842,15 @@ export class MailOverlay implements Component {
                 this.assistantResult = '';
                 this.assistantResultScrollOffset = 0;
                 this.chatContext = undefined; // 清理对话上下文
-                if (this.isInSearchMode) {
+                if (this.assistantFromDetail && this.selectedEmail) {
+                    this.assistantFromDetail = false;
+                    this.buildDetailView();
+                } else if (this.isInSearchMode) {
+                    this.assistantFromDetail = false;
                     this.state = 'search-list';
                     this.openDeskTUI.tui.setFocus(this.emailList!);
                 } else {
+                    this.assistantFromDetail = false;
                     this.buildEmailList();
                 }
                 return { consume: true };
@@ -760,17 +971,17 @@ export class MailOverlay implements Component {
                 data = await callMailWorker('searchEmails', query);
             }
             const newEmails: EmailHeader[] = Array.isArray(data) ? data : [];
-            
+
             if (newEmails.length > 0) {
                 this.emails.push(...newEmails);
                 this.emails.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
                 this.currentOffset += newEmails.length;
                 this.hasMoreEmails = newEmails.length >= this.pageSize;
-                
+
                 // 保存当前选中索引
                 const currentIndex = (this.emailList as any)?.selectedIndex || 0;
                 this.buildEmailList();
-                
+
                 // 恢复选中索引
                 if (this.emailList && currentIndex >= 0) {
                     (this.emailList as any).selectedIndex = Math.min(currentIndex, this.emails.length - 1);
@@ -949,7 +1160,7 @@ export class MailOverlay implements Component {
         // 列表选择变化时强制全量重绘，避免差异更新导致表头/标签行重复堆叠
         this.emailList.onSelectionChange = () => {
             this.openDeskTUI.tui.requestRender(true);
-            
+
             // 检测是否滚动到底部，触发加载更多
             if (this.hasMoreEmails && !this.isLoadingMore && this.emails.length > 0) {
                 const selectedIndex = (this.emailList as any)?.selectedIndex || 0;
@@ -1180,12 +1391,72 @@ export class MailOverlay implements Component {
         this.assistantBusy = false;
         this.assistantToolCalls = [];
         this.conversationHistory = ''; // 重置对话历史
-        
+        this.assistantFromDetail = false;
+
         // 初始化或重置对话上下文
         this.chatContext = new ChatContext();
         this.chatContext.system_prompt = new SystemMessage(MAIL_ASSISTANT_SYSTEM_PROMPT);
-        this.chatContext.attachToolsets(mailAssistantToolset);
-        
+        this.chatContext.attachToolsets(mailAssistantToolset, crossAppToolset);
+
+        this.state = 'assistant';
+        this.openDeskTUI.tui.setFocus(this.assistantPromptInput);
+        this.openDeskTUI.tui.requestRender();
+    }
+
+    /**
+     * 从邮件详情页唤起助手模式。
+     * 将当前邮件的主题、发件人、日期和正文摘要作为上下文预置到对话中，
+     * 并显示引导提示，让用户自由输入需求。
+     */
+    private enterAssistantModeFromDetail() {
+        if (!this.selectedEmail) return;
+
+        const email = this.selectedEmail;
+        const subject = email.subject || '(无主题)';
+        const from = formatSender(email.from);
+        const date = formatDate(email.date);
+
+        // 获取邮件正文摘要（取前 500 字）
+        let bodySnippet = '';
+        if (this.selectedEmailContent) {
+            const text = (this.selectedEmailContent.textContent?.trim())
+                || stripHtml(this.selectedEmailContent.htmlContent || '');
+            bodySnippet = text.slice(0, 500);
+        }
+
+        // 构建邮件上下文摘要
+        const emailContext =
+            `📧 当前邮件\n` +
+            `  主题: ${subject}\n` +
+            `  发件人: ${from}\n` +
+            `  日期: ${date}\n` +
+            (bodySnippet ? `  内容摘要: ${bodySnippet.slice(0, 200)}${bodySnippet.length > 200 ? '…' : ''}\n` : '') +
+            `\n🤖 我是邮件助手，请问有什么可以帮你？\n` +
+            `  例如：将这封邮件添加到日程 / 帮我总结这封邮件 / 查看今天的日程安排\n\n`;
+
+        // 初始化助手模式
+        this.assistantPromptInput = new Input();
+        this.assistantPromptInput.setValue('');
+        this.assistantResult = '';
+        this.assistantBusy = false;
+        this.assistantToolCalls = [];
+        this.assistantFromDetail = true;
+        this.conversationHistory = emailContext;
+
+        // 初始化对话上下文，将邮件信息注入 system prompt
+        this.chatContext = new ChatContext();
+        const detailSystemPrompt = MAIL_ASSISTANT_SYSTEM_PROMPT + '\n\n' +
+            '## 当前邮件上下文\n' +
+            `用户正在查看一封邮件，信息如下：\n` +
+            `- 主题: ${subject}\n` +
+            `- 发件人: ${from}\n` +
+            `- 日期: ${date}\n` +
+            (bodySnippet ? `- 正文（前500字）:\n${bodySnippet}\n` : '') +
+            '\n请根据用户的后续指令，结合这封邮件的内容来完成任务。' +
+            '用户可能会要求：添加日程、总结邮件、回复建议、查看日程安排等。';
+        this.chatContext.system_prompt = new SystemMessage(detailSystemPrompt);
+        this.chatContext.attachToolsets(mailAssistantToolset, crossAppToolset);
+
         this.state = 'assistant';
         this.openDeskTUI.tui.setFocus(this.assistantPromptInput);
         this.openDeskTUI.tui.requestRender();
@@ -1198,8 +1469,16 @@ export class MailOverlay implements Component {
         this.assistantToolCalls = [];
         this.chatContext = undefined; // 清理对话上下文
         this.conversationHistory = ''; // 清理对话历史
-        this.state = 'list';
-        this.openDeskTUI.tui.setFocus(this.emailList!);
+
+        if (this.assistantFromDetail && this.selectedEmail) {
+            // 从详情页唤起的助手，返回详情页
+            this.assistantFromDetail = false;
+            this.buildDetailView();
+        } else {
+            this.assistantFromDetail = false;
+            this.state = 'list';
+            this.openDeskTUI.tui.setFocus(this.emailList!);
+        }
         this.openDeskTUI.tui.requestRender();
     }
 
@@ -1208,7 +1487,7 @@ export class MailOverlay implements Component {
         this.assistantResult = '';
         this.assistantToolCalls = [];
         this.openDeskTUI.tui.setFocus(null);
-        
+
         // 更新对话历史，添加用户输入
         this.conversationHistory += `我: ${userInput}\n\n`;
         this.openDeskTUI.tui.requestRender();
@@ -1218,9 +1497,9 @@ export class MailOverlay implements Component {
             if (!this.chatContext) {
                 this.chatContext = new ChatContext();
                 this.chatContext.system_prompt = new SystemMessage(MAIL_ASSISTANT_SYSTEM_PROMPT);
-                this.chatContext.attachToolsets(mailAssistantToolset);
+                this.chatContext.attachToolsets(mailAssistantToolset, crossAppToolset);
             }
-            
+
             // 添加用户消息到对话上下文
             this.chatContext.appendMessage(new UserMessage(userInput));
             const ctx = this.chatContext;
@@ -1236,16 +1515,16 @@ export class MailOverlay implements Component {
                 // 使用流式完成
                 let hasToolCalls = false;
                 let currentText = '';
-                let toolCalls = [];
-                
+                let toolCalls: ToolCall[] = [];
+
                 for await (const chunkResponse of LLM.streamComplete(ctx)) {
                     // 合并 chunk 到 assistant message
                     assistantMessage.mergeChunk(chunkResponse.content);
-                    
+
                     // 提取文本内容和工具调用
                     currentText = '';
-                    toolCalls = [];
-                    
+                    toolCalls = [] as ToolCall[];
+
                     for (const part of assistantMessage.content) {
                         if (part.type === 'text') {
                             currentText = part.text;
@@ -1254,7 +1533,7 @@ export class MailOverlay implements Component {
                             hasToolCalls = true;
                         }
                     }
-                    
+
                     // 更新 UI，保持之前的内容
                     this.assistantResult = (accumulatedText + currentText).trim() || '（生成中……）';
                     this.assistantToolCalls = toolCalls;
@@ -1295,14 +1574,14 @@ export class MailOverlay implements Component {
                             continue;
                         }
                         tc.status = 'running';
-                        
+
                         // 更新 UI 显示工具调用状态，保持累积的内容并添加生成中提示
                         this.assistantResult = (accumulatedText + '\n（生成中……）').trim() || '（生成中……）';
                         this.assistantToolCalls = toolCalls;
                         // 保持在 assistant 状态，不切换到 assistant-result
                         this.state = 'assistant';
                         this.openDeskTUI.tui.requestRender();
-                        
+
                         try {
                             const result = await tool.execute(args);
                             tc.status = result.status;
@@ -1311,7 +1590,7 @@ export class MailOverlay implements Component {
                             tc.status = 'error';
                             tc.result = (e as Error).message;
                         }
-                        
+
                         // 工具调用完成后更新 UI，保持累积的内容并继续显示生成中提示
                         // 因为接下来要等待大模型的回复
                         this.assistantResult = (accumulatedText + '\n（生成中……）').trim() || '（生成中……）';
@@ -1326,16 +1605,16 @@ export class MailOverlay implements Component {
             // 最终结果使用累积的内容
             const assistantReply = accumulatedText.trim() || '（无回复内容）';
             this.assistantResult = assistantReply;
-            
+
             // 更新对话历史，添加助手回复
             this.conversationHistory += `助手: ${assistantReply}\n\n`;
-            
+
             this.state = 'assistant'; // 保持在助手模式，允许用户继续输入
             this.assistantResultScrollOffset = Number.MAX_SAFE_INTEGER; // 自动滚动到底部
             const lines = this.conversationHistory.split('\n');
             this.assistantResultTotalLines = lines.length;
             this.assistantResultVisibleLines = Math.max(3, this.openDeskTUI.tui.terminal.rows - 10);
-            
+
             // 重新聚焦到输入框
             if (this.assistantPromptInput) {
                 this.assistantPromptInput.setValue(''); // 清空输入框
@@ -1345,12 +1624,12 @@ export class MailOverlay implements Component {
             logger.error(`邮件助手失败: ${err}`);
             const errorMessage = `助手出错: ${err?.message || '未知错误'}`;
             this.assistantResult = errorMessage;
-            
+
             // 更新对话历史，添加错误信息
             this.conversationHistory += `助手: ${errorMessage}\n\n`;
-            
+
             this.state = 'assistant'; // 保持在助手模式，允许用户继续输入
-            
+
             // 重新聚焦到输入框
             if (this.assistantPromptInput) {
                 this.assistantPromptInput.setValue(''); // 清空输入框
@@ -1714,20 +1993,20 @@ export class MailOverlay implements Component {
                 this.box.addChild(new Text(''));
                 this.box.addChild(new Text(MC.dim('  描述你的需求，例如：查找最近关于「周报」的邮件；对第3封邮件做摘要。')));
                 this.box.addChild(new Text(''));
-                
+
                 // 计算可用空间
                 const headerLines = 5; // 标题和提示占 5 行
                 const footerLines = 3; // 底部提示和输入框占 3 行
                 let conversationLines = Math.max(3, availableForContent - headerLines - footerLines);
-                
+
                 // 构建完整的对话历史，包括正在生成的内容
                 let displayHistory = this.conversationHistory;
-                
+
                 // 如果正在生成内容，将其添加到对话历史中
                 if (this.assistantBusy && this.assistantResult) {
                     displayHistory += `助手: ${this.assistantResult}\n\n`;
                 }
-                
+
                 // 显示对话历史（如果有）
                 if (displayHistory) {
                     const bodyView = new ScrollableEmailBody(
@@ -1740,7 +2019,7 @@ export class MailOverlay implements Component {
                 } else {
                     this.box.addChild(new VerticalFiller(MC.dim('  对话历史将显示在这里'), conversationLines));
                 }
-                
+
                 // 显示工具调用（如果有）
                 if (this.assistantToolCalls.length > 0) {
                     this.box.addChild(new Text(''));
@@ -1748,16 +2027,16 @@ export class MailOverlay implements Component {
                     toolCallView.setToolcalls(this.assistantToolCalls);
                     this.box.addChild(toolCallView);
                 }
-                
+
                 this.box.addChild(new Text(''));
-                
+
                 // 显示输入框
                 if (this.assistantBusy) {
                     this.box.addChild(new Text(MC.neon('  ⟳ 正在处理…')));
                 } else if (this.assistantPromptInput) {
                     this.box.addChild(this.assistantPromptInput);
                 }
-                
+
                 this.box.addChild(new Text(''));
                 this.box.addChild(new AssistantFooter());
                 break;
@@ -1768,9 +2047,9 @@ export class MailOverlay implements Component {
                 this.box.addChild(new Text(''));
                 this.box.addChild(new Text(MC.neonBold('  邮件助手 回复')));
                 this.box.addChild(new SeparatorLine('─'));
-                
+
                 const bodyLines = Math.max(3, availableForContent - 8);
-                
+
                 // 显示工具调用（如果有）
                 if (this.assistantToolCalls.length > 0) {
                     const toolCallView = new ToolCallMessagePartView();
@@ -1778,18 +2057,18 @@ export class MailOverlay implements Component {
                     this.box.addChild(toolCallView);
                     this.box.addChild(new Text(''));
                 }
-                
+
                 const bodyView = new ScrollableEmailBody(
                     { textContent: this.assistantResult, htmlContent: '', attachments: [] },
                     bodyLines,
                     this.assistantResultScrollOffset
                 );
                 this.box.addChild(bodyView);
-                
+
                 // 更新总行数供滚动逻辑使用
                 this.assistantResultTotalLines = bodyView.getTotalLines();
                 this.assistantResultVisibleLines = bodyLines;
-                
+
                 this.box.addChild(new Text(''));
                 this.box.addChild(new AssistantResultFooter(
                     this.assistantResultScrollOffset,
@@ -2019,20 +2298,20 @@ class ListFooter implements Component {
             hints.push(MC.neon('a') + MC.dim(' 切换账号'));
         }
         hints.push(MC.neon('ESC') + MC.dim(' 关闭'));
-        
+
         // 显示邮件数量和加载状态
-        const countInfo = this.hasMore 
+        const countInfo = this.hasMore
             ? MC.dim(` | 已加载 ${this.emailCount} 封`)
             : MC.dim(` | 共 ${this.emailCount} 封`);
-        
+
         const hintsText = '  ' + hints.join('   ');
         const hintsVis = visibleWidth(hintsText);
         const countVis = visibleWidth(countInfo);
-        
+
         if (hintsVis + countVis > width) {
             return [truncateToWidth(hintsText, width, '…')];
         }
-        
+
         return [truncateToWidth(hintsText + countInfo, width, '…')];
     }
 }
@@ -2443,6 +2722,7 @@ class DetailFooter implements Component {
         if (this.email) {
             hints.push(MC.neon('f') + MC.dim(this.email.starred ? ' 取消收藏' : ' 收藏'));
         }
+        hints.push(MC.neon('p') + MC.dim(' 助手'));
         hints.push(MC.neon('d') + MC.dim(' 删除'));
         hints.push(MC.neon('q/ESC') + MC.dim(' 返回'));
 
