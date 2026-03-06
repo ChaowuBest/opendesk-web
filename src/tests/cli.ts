@@ -15,6 +15,7 @@ import { runArxivSearchTests } from './ut/search/arxiv.test.js';
 import { runTavilySearchTests } from './ut/search/tavily.test.js';
 import { runBochaSearchTests } from './ut/search/bocha.test.js';
 import { runDuckDuckGoSearchTests } from './ut/search/duckduckgo.test.js';
+import { runMemoryTests } from './ut/memory/memory.test.js';
 
 function getSettingPath(): string {
     const appData = process.env.APPDATA;
@@ -62,7 +63,10 @@ async function cmdUt() {
     // 运行DuckDuckGo搜索测试
     const duckduckgoTestsPassed = await runDuckDuckGoSearchTests();
 
-    if (arxivTestsPassed && tavilyTestsPassed && bochaTestsPassed && duckduckgoTestsPassed) {
+    // 运行记忆系统测试
+    const memoryTestsPassed = await runMemoryTests();
+
+    if (arxivTestsPassed && tavilyTestsPassed && bochaTestsPassed && duckduckgoTestsPassed && memoryTestsPassed) {
         console.log('\n✅ 所有单元测试通过');
         process.exit(0);
     } else {

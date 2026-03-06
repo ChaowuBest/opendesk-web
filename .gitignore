@@ -1,6 +1,7 @@
 # IDE-specified files
 .roo
 .vscode
+.opendesk
 
 **/.DS_Store
 package-lock.json

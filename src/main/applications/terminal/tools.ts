@@ -753,8 +753,17 @@ export class WriteFileTool extends BaseTool<typeof writeFileSchema> {
                     body.push('  ' + chalk.cyan(truncText(line, width - 10)));
                 }
             }
-        } else if (toolcall.status === 'running') {
-            body.push(chalk.dim('  ⏳ 等待内容…'));
+        } else {
+            const prev = _writeFileCache.get(toolcall);
+            if (prev && prev.contentLen > 0 && toolcall.status === 'running') {
+                body.push(chalk.dim(`  ✍ 正在写入… ${prev.lineCount} 行`));
+                body.push(chalk.dim('─'.repeat(Math.min(40, Math.max(4, width - 8)))));
+                for (const line of prev.tailLines) {
+                    body.push('  ' + chalk.cyan(truncText(line, width - 10)));
+                }
+            } else if (toolcall.status === 'running') {
+                body.push(chalk.dim('  ⏳ 等待内容…'));
+            }
         }
 
         const mode = toolcall.args_object?.['mode'];

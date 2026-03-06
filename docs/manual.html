@@ -656,6 +656,12 @@ $ opendesk -c "分析当前目录的代码结构"</code></pre>
                             <td class="py-2 pr-4"><code>/manual</code></td>
                             <td class="py-2"></td>
                         </tr>
+                        <tr class="border-b border-surface-100">
+                            <td class="py-2 pr-4 font-mono text-brand-600"><code>/memory</code></td>
+                            <td class="py-2 pr-4">记忆管理（添加、搜索、删除、列表）</td>
+                            <td class="py-2 pr-4"><code>/memory add|search|forget|list</code></td>
+                            <td class="py-2"></td>
+                        </tr>
                     </tbody>
                 </table>
             </div>
@@ -729,6 +735,20 @@ $ opendesk -c "分析当前目录的代码结构"</code></pre>
                     <pre class="mt-2 bg-surface-900 text-surface-100 p-3 rounded-md text-xs"><code>/debug on    <span class="text-surface-500"># 开启调试模式</span>
 /debug off   <span class="text-surface-500"># 关闭调试模式</span>
 /debug       <span class="text-surface-500"># 查看当前调试状态</span></code></pre>
+                </div>
+
+                <div class="p-4 bg-surface-50 rounded-lg border border-surface-100">
+                    <h4 class="font-semibold text-sm"><code>/memory</code> — 记忆管理</h4>
+                    <p class="text-xs text-surface-500 mt-1">管理 AI 的长期记忆。支持全局记忆与工作区记忆两种范围，可由 AI 自动调用或通过斜杠命令手动操作。记忆操作基于大模型进行语义去重、合并与智能搜索。同一时刻只允许一个记忆操作执行。</p>
+                    <pre class="mt-2 bg-surface-900 text-surface-100 p-3 rounded-md text-xs"><code>/memory add         <span class="text-surface-500"># 从当前对话中提取并保存有价值的记忆（后台执行）</span>
+/memory search 关键词  <span class="text-surface-500"># 语义搜索相关记忆并注入对话上下文</span>
+/memory forget 描述   <span class="text-surface-500"># 根据描述智能删除匹配的记忆</span>
+/memory list        <span class="text-surface-500"># 打开记忆浏览面板，查看/筛选所有记忆</span></code></pre>
+                    <div class="mt-3 text-xs text-surface-500">
+                        <p><strong>记忆类型：</strong>用户偏好、重要事实、关键决策、有用上下文</p>
+                        <p><strong>存储范围：</strong>全局记忆（跨项目共享）、工作区记忆（仅限当前项目）</p>
+                        <p class="mt-1">AI 在对话中也会自动使用 <code>addMemory</code> 和 <code>searchMemory</code> 工具来管理记忆。</p>
+                    </div>
                 </div>
             </div>
         </section>

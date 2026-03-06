@@ -27,6 +27,10 @@ import { ConfigMainPage } from "./components/config/configMain";
 import { getTaskTodosForDisplay } from "../applications/todomgr/tools";
 import { exportTaskToHtml } from "../utils/export";
 import { describeCron } from "../utils/cron";
+import { MemoryRegistry } from "../aikernel/memory/registry";
+import { MemoryListOverlay } from "./components/memorylist";
+import { ChatContext, UserMessage, SystemMessage, AssistantMessage } from "../aikernel/messages";
+import { createMemoryToolset } from "../aikernel/memory/tools";
 
 import format from "string-template";
 import path from "path";
@@ -96,6 +100,10 @@ export class OpenDeskTUI {
      */
     private singleShot?: boolean;
 
+    private memoryOpBusy = false;
+    private memorySpinnerInterval?: ReturnType<typeof setInterval>;
+    private static readonly SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+
     constructor(args: CommandLineArgs) {
         this.taskManagerState = GlobalState.getInstance().taskManagerState;
         this.agentDecl = new ShellAgentDecl({ workspace: args.workspace });
@@ -114,6 +122,8 @@ export class OpenDeskTUI {
         this.workspace = args.workspace;
         this.model = args.model;
         this.singleShot = !!args.command;
+
+        MemoryRegistry.getInstance(args.workspace);
 
         this.tui.addChild(this.container);
         this.container.addChild(new OpenDeskBanner(this.workspace));
@@ -139,6 +149,16 @@ export class OpenDeskTUI {
                 }
             }
         });
+
+        // 计时器停止时，把累计执行时间同步到当前任务元数据
+        this.inputArea.statusBar.onTimerStop = () => {
+            if (this.activeTaskId) {
+                const task = this.taskManagerState.getTask(this.activeTaskId);
+                if (task) {
+                    task.total_elapsed_ms = this.inputArea.statusBar.getAccumulatedMs();
+                }
+            }
+        };
 
         // StatusBar: 只接受当前活跃任务的 token 数据
         this.taskView.onStatusBarUpdate = (data) => {
@@ -351,7 +371,8 @@ export class OpenDeskTUI {
                     this.inputArea.clearMessageQueue();
                     this.inputArea.setStatus('idle');
                     this.inputArea.statusBar.stopTimer();
-                    this.inputArea.statusBar.update({ elapsedMs: 0, totalTokens: 0 });
+                    this.inputArea.statusBar.resetAccumulated();
+                    this.inputArea.statusBar.update({ totalTokens: 0 });
                     this.tui.requestRender();
                 });
             },
@@ -614,6 +635,53 @@ export class OpenDeskTUI {
                         closeLabel: "确定"
                     });
                     info.show();
+                }
+            },
+        });
+
+        this.commandRegistry.register({
+            name: "memory",
+            description: "记忆管理：/memory add [提示]、/memory search <查询>、/memory forget <描述>、/memory list",
+            getArgumentCompletions: (argPrefix: string) => {
+                const options = ['add', 'search', 'forget', 'list'];
+                const parts = argPrefix.split(/\s+/);
+                if (parts.length <= 1) {
+                    return options
+                        .filter(opt => opt.startsWith((parts[0] || '').toLowerCase()))
+                        .map(opt => ({
+                            value: opt,
+                            label: opt,
+                            description: opt === 'add' ? '添加记忆' :
+                                        opt === 'search' ? '搜索记忆' :
+                                        opt === 'forget' ? '删除记忆' :
+                                        '列出所有记忆',
+                        }));
+                }
+                return null;
+            },
+            execute: async (args: string) => {
+                const parts = args.trim().split(/\s+/);
+                const subCommand = (parts[0] || '').toLowerCase();
+                const restArgs = parts.slice(1).join(' ').trim();
+
+                if (subCommand === 'add') {
+                    await this.handleMemoryAdd(restArgs);
+                } else if (subCommand === 'search') {
+                    if (!restArgs) {
+                        logger.warn('用法：/memory search <查询关键词>');
+                        return;
+                    }
+                    await this.handleMemorySearch(restArgs);
+                } else if (subCommand === 'forget') {
+                    if (!restArgs) {
+                        logger.warn('用法：/memory forget <描述要删除的记忆>');
+                        return;
+                    }
+                    await this.handleMemoryForget(restArgs);
+                } else if (subCommand === 'list') {
+                    this.handleMemoryList();
+                } else {
+                    logger.warn('用法：/memory add [提示] | /memory search <查询> | /memory forget <描述> | /memory list');
                 }
             },
         });
@@ -901,7 +969,8 @@ export class OpenDeskTUI {
         this.inputArea.bindToTaskQueue(task.task_id, task.message_queue);
         this.inputArea.setStatus('idle');
         this.inputArea.statusBar.stopTimer();
-        this.inputArea.statusBar.update({ elapsedMs: 0, totalTokens: 0 });
+        this.inputArea.statusBar.resetAccumulated();
+        this.inputArea.statusBar.update({ totalTokens: 0 });
         this.tui.requestRender();
     }
 
@@ -929,7 +998,8 @@ export class OpenDeskTUI {
         // 绑定到新任务的队列
         this.inputArea.bindToTaskQueue(task.task_id, task.message_queue);
         this.inputArea.statusBar.stopTimer();
-        this.inputArea.statusBar.update({ elapsedMs: 0, totalTokens: 0 });
+        this.inputArea.statusBar.setAccumulatedMs(task.total_elapsed_ms);
+        this.inputArea.statusBar.update({ totalTokens: 0 });
         this.taskView.rebuildFromHistory();
 
         if (task.task_status === 'running') {
@@ -967,6 +1037,259 @@ export class OpenDeskTUI {
             }
         });
     }
+
+    // ─── Memory operation management ──────────────────────
+
+    private memoryAddStart = 0;
+
+    /**
+     * 尝试获取全局记忆操作锁。失败时弹出 InfoOverlay 提示。
+     */
+    private acquireMemoryLock(op: 'add' | 'search' | 'forget'): boolean {
+        const registry = MemoryRegistry.getInstance();
+        if (!registry.acquireLock(op)) {
+            const labels = { add: '添加', search: '搜索', forget: '删除' };
+            const currentOp = labels[registry.busyOp!] ?? registry.busyOp;
+            this.showMemoryResult(
+                '操作被忽略',
+                `当前有记忆${currentOp}操作正在进行中，请等待完成后再试。`,
+            );
+            return false;
+        }
+        return true;
+    }
+
+    private releaseMemoryLock() {
+        MemoryRegistry.getInstance().releaseLock();
+    }
+
+    /**
+     * 启动普通记忆操作 spinner（search/forget 用，静态文字 + 旋转图标）
+     */
+    private startMemorySpinner(message: string) {
+        this.memoryOpBusy = true;
+        let frame = 0;
+        const frames = OpenDeskTUI.SPINNER_FRAMES;
+        this.inputArea.setExternalHint(chalk.cyan(`${frames[0]} ${message}`));
+        this.memorySpinnerInterval = setInterval(() => {
+            frame = (frame + 1) % frames.length;
+            this.inputArea.setExternalHint(chalk.cyan(`${frames[frame]} ${message}`));
+            this.tui.requestRender();
+        }, 80);
+    }
+
+    /**
+     * 启动 /memory add 专用 spinner（动态更新耗时和条数）
+     */
+    private startMemoryAddSpinner() {
+        this.memoryOpBusy = true;
+        let frame = 0;
+        const frames = OpenDeskTUI.SPINNER_FRAMES;
+        this.memorySpinnerInterval = setInterval(() => {
+            frame = (frame + 1) % frames.length;
+            const elapsed = Math.floor((Date.now() - this.memoryAddStart) / 1000);
+            const count = MemoryRegistry.getInstance().opCounter;
+            this.inputArea.setExternalHint(
+                chalk.cyan(`${frames[frame]} 正在后台提取记忆... ${elapsed}s · 已提取 ${count} 条`)
+            );
+            this.tui.requestRender();
+        }, 200);
+    }
+
+    private stopMemorySpinner() {
+        if (this.memorySpinnerInterval) {
+            clearInterval(this.memorySpinnerInterval);
+            this.memorySpinnerInterval = undefined;
+        }
+        this.memoryOpBusy = false;
+        this.inputArea.clearExternalHint();
+    }
+
+    private showMemoryResult(title: string, message: string, onClose?: () => void) {
+        const info = new InfoOverlay(this, { title, message });
+        info.show(onClose);
+    }
+
+    // ─── Memory command handlers ────────────────────────
+
+    private static readonly MAX_MSG_CHARS = 2000;
+
+    /**
+     * 从当前对话构建一个精简的上下文摘要字符串，供后台记忆提取使用。
+     * 丢弃工具输出，截断过长的单条消息。
+     */
+    private buildConversationSnapshot(): string {
+        const task = this.taskView.taskState;
+        if (!task) return '';
+
+        const parts: string[] = [];
+        for (const msg of task.chat_context.messages) {
+            if (msg instanceof UserMessage) {
+                for (const p of msg.content) {
+                    if (p.type === 'text' && p.text) {
+                        const text = p.text.length > OpenDeskTUI.MAX_MSG_CHARS
+                            ? p.text.slice(0, OpenDeskTUI.MAX_MSG_CHARS) + '...(已截断)'
+                            : p.text;
+                        parts.push(`[用户]: ${text}`);
+                    }
+                }
+            } else if (msg instanceof AssistantMessage) {
+                for (const p of msg.content) {
+                    if (p.type === 'text' && (p as any).text) {
+                        const text = (p as any).text.length > OpenDeskTUI.MAX_MSG_CHARS
+                            ? (p as any).text.slice(0, OpenDeskTUI.MAX_MSG_CHARS) + '...(已截断)'
+                            : (p as any).text;
+                        parts.push(`[助手]: ${text}`);
+                    }
+                    // 工具调用只保留名称，丢弃输出
+                    if (p.type === 'tool_call') {
+                        for (const tc of p.toolcalls) {
+                            const argSnippet = tc.args_string
+                                ? (tc.args_string.length > OpenDeskTUI.MAX_MSG_CHARS
+                                    ? tc.args_string.slice(0, OpenDeskTUI.MAX_MSG_CHARS) + '...'
+                                    : tc.args_string)
+                                : '';
+                            parts.push(`[工具调用]: ${tc.tool_name}(${argSnippet})`);
+                            // 工具输出全部丢弃
+                        }
+                    }
+                }
+            }
+        }
+
+        return parts.join('\n\n');
+    }
+
+    private async handleMemoryAdd(prompt: string) {
+        if (!this.acquireMemoryLock('add')) return;
+
+        const registry = MemoryRegistry.getInstance();
+        registry.resetOpCounter();
+        this.memoryAddStart = Date.now();
+        this.startMemoryAddSpinner();
+
+        const conversationSnapshot = this.buildConversationSnapshot();
+
+        const addPrompt = prompt
+            ? `请根据以下指示，从对话中提取并保存相关记忆：\n\n${prompt}\n\n请使用 addMemory 工具保存。注意判断每条记忆应保存到全局(global)还是工作区(workspace)。`
+            : '请回顾以下对话，提取所有值得长期保存的信息（用户偏好、重要事实、关键决策、有用上下文等），并使用 addMemory 工具逐条保存。注意判断每条记忆应保存到全局(global)还是工作区(workspace)。';
+
+        const fullPrompt = `${addPrompt}\n\n---\n\n以下是对话记录：\n\n${conversationSnapshot}`;
+
+        try {
+            const bgContext = new ChatContext();
+            bgContext.system_prompt = new SystemMessage(
+                '你是一个记忆提取助手。你的唯一任务是从给定的对话历史中提取有价值的信息，并使用 addMemory 工具保存为长期记忆。' +
+                '你只需要调用 addMemory 工具，不要输出其他内容。'
+            );
+
+            const memoryToolset = createMemoryToolset();
+            bgContext.attachToolsets(memoryToolset);
+            bgContext.appendMessage(new UserMessage(fullPrompt));
+            bgContext.appendMessage(new AssistantMessage());
+
+            const bgTask = new TaskState(this.taskManagerState);
+            bgTask.chat_context = bgContext;
+            bgTask.model = this.model;
+
+            await bgTask.processTask();
+
+            this.stopMemorySpinner();
+            this.releaseMemoryLock();
+
+            const elapsed = Math.floor((Date.now() - this.memoryAddStart) / 1000);
+            const count = registry.opCounter;
+            if (count > 0) {
+                this.showMemoryResult(
+                    '记忆提取完成',
+                    `耗时 ${elapsed} 秒，共提取 ${count} 条记忆。`,
+                );
+            } else {
+                this.showMemoryResult(
+                    '记忆提取完成',
+                    `耗时 ${elapsed} 秒，未发现需要保存的新记忆。`,
+                );
+            }
+        } catch (err: any) {
+            this.stopMemorySpinner();
+            this.releaseMemoryLock();
+            this.showMemoryResult('记忆提取失败', `操作出错：${err?.message ?? err}`);
+        }
+    }
+
+    private async handleMemorySearch(query: string) {
+        if (!this.acquireMemoryLock('search')) return;
+        this.startMemorySpinner('正在搜索相关记忆...');
+
+        const registry = MemoryRegistry.getInstance();
+        try {
+            const results = await registry.smartSearch(query);
+            this.stopMemorySpinner();
+            this.releaseMemoryLock();
+
+            if (results.length === 0) {
+                this.showMemoryResult('记忆搜索', `未找到与「${query}」相关的记忆`);
+                return;
+            }
+
+            const topResults = results.slice(0, 5);
+            const memoriesForContext = topResults.map(r => ({ scope: r.scope, meta: r.meta }));
+            const formattedContent = registry.formatMemoriesForContext(memoriesForContext);
+
+            const resultLines = topResults.map(r =>
+                `  • ${r.meta.name}（相关度: ${r.relevance}/10）`
+            ).join('\n');
+
+            this.showMemoryResult(
+                '记忆搜索完成',
+                `找到 ${results.length} 条相关记忆，将前 ${topResults.length} 条注入对话上下文：\n\n${resultLines}`,
+                async () => {
+                    const searchPrompt = `以下是根据查询"${query}"检索到的相关记忆，请参考这些信息：\n\n${formattedContent}`;
+                    await this.onRequestSubmit(searchPrompt);
+                },
+            );
+        } catch (err: any) {
+            this.stopMemorySpinner();
+            this.releaseMemoryLock();
+            this.showMemoryResult('记忆搜索失败', `操作出错：${err?.message ?? err}`);
+        }
+    }
+
+    private async handleMemoryForget(description: string) {
+        if (!this.acquireMemoryLock('forget')) return;
+        this.startMemorySpinner('正在搜索并删除匹配的记忆...');
+
+        const registry = MemoryRegistry.getInstance();
+        try {
+            const result = await registry.smartForget(description);
+            this.stopMemorySpinner();
+            this.releaseMemoryLock();
+
+            if (result.deleted.length > 0) {
+                const lines = result.deleted.map(d => `  • ${d.name}`).join('\n');
+                this.showMemoryResult(
+                    '记忆删除完成',
+                    `已删除 ${result.deleted.length} 条记忆：\n\n${lines}`,
+                );
+            } else {
+                this.showMemoryResult(
+                    '记忆删除',
+                    `未找到与「${description}」匹配的记忆`,
+                );
+            }
+        } catch (err: any) {
+            this.stopMemorySpinner();
+            this.releaseMemoryLock();
+            this.showMemoryResult('记忆删除失败', `操作出错：${err?.message ?? err}`);
+        }
+    }
+
+    private handleMemoryList() {
+        const overlay = new MemoryListOverlay(this);
+        overlay.show();
+    }
+
+    // ─── Exit & Submit ────────────────────────────────────
 
     private async exit() {
         try {

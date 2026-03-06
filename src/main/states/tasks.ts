@@ -21,6 +21,8 @@ import officeParser from 'officeparser';
 import path from 'path';
 import fs from 'fs';
 import { SkillRegistry } from '../aikernel/skill.js';
+import { createMemoryToolset } from '../aikernel/memory/tools.js';
+import { MemoryRegistry } from '../aikernel/memory/registry.js';
 
 
 type TaskStatus = 'waiting' | 'running' | 'stopped';
@@ -70,6 +72,7 @@ export class TaskState {
     message_queue: string[] = [];
     started_at?: Date;   // 任务开始时间
     finished_at?: Date;  // 任务完成时间
+    total_elapsed_ms: number = 0;  // agent 累计执行时间（毫秒）
     bookmark_path?: string;  // 书签路径，"/" 表示根目录
 
     constructor(task_manager_state: TaskManagerState) {
@@ -91,7 +94,9 @@ export class TaskState {
         if (task_json.finished_at) {
             task.finished_at = new Date(task_json.finished_at);
         }
-        // 加载书签路径
+        if (typeof task_json.total_elapsed_ms === 'number') {
+            task.total_elapsed_ms = task_json.total_elapsed_ms;
+        }
         if (task_json.bookmark_path) {
             task.bookmark_path = task_json.bookmark_path;
         }
@@ -105,6 +110,7 @@ export class TaskState {
             task_status: this.task_status,
             started_at: this.started_at?.toISOString(),
             finished_at: this.finished_at?.toISOString(),
+            total_elapsed_ms: this.total_elapsed_ms,
             bookmark_path: this.bookmark_path,
         }
     }
@@ -117,6 +123,7 @@ export class TaskState {
             chat_context: this.chat_context.toJSON(),
             started_at: this.started_at?.toISOString(),
             finished_at: this.finished_at?.toISOString(),
+            total_elapsed_ms: this.total_elapsed_ms,
             bookmark_path: this.bookmark_path,
         }
     }
@@ -190,8 +197,10 @@ export class TaskState {
 
         let toolsets = await ApplicationRegistry.listAvailableToolsets();
         let skillToolset = SkillRegistry.getInstance().getToolset();
+        let memoryToolset = createMemoryToolset();
         this.chat_context.attachToolsets(...toolsets);
         this.chat_context.attachToolsets(skillToolset);
+        this.chat_context.attachToolsets(memoryToolset);
 
         logger.info(`messsage submitted to task ${this.task_id}`)
 
@@ -285,6 +294,7 @@ export class TaskState {
         // Copy time fields
         forkedTask.started_at = this.started_at;
         forkedTask.finished_at = this.finished_at;
+        forkedTask.total_elapsed_ms = this.total_elapsed_ms;
 
         // Add to task manager
         this.task_manager_state.tasks.push(forkedTask);
