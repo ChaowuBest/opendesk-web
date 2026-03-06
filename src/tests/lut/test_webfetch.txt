@@ -1,0 +1,11 @@
+在这个测试用例中，你需要依次用 WebFetch 工具获取下面列表中所有的网站内容。
+只有都获取到了，才认为测试通过。
+
+## 网站列表
+
+- https://aipositive.substack.com/p/a-look-at-context-engineering-in
+- https://medium.com/google-cloud/gemini-cli-tutorial-series-part-9-understanding-context-memory-and-conversational-branching-095feb3e5a43
+- https://www.philschmid.de/gemini-cli-cheatsheet
+- https://openai.com/zh-Hans-CN/index/gpt-5-3-instant/
+- https://blogs.microsoft.com/blog/2026/02/27/microsoft-and-openai-joint-statement-on-continuing-partnership/
+- https://x.com/OpenAI

@@ -16,17 +16,24 @@ export interface StatusBarData {
 }
 
 /**
- * 底部状态栏：灰色背景，显示任务执行时间、token 用量及上下文占比
+ * 底部状态栏：灰色背景，显示任务执行时间、token 用量及上下文占比。
+ * 计时器跟踪的是任务内所有 agent 执行时间的累计总和。
  */
 export class StatusBar implements Component {
+    private static readonly SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+
     private data: StatusBarData = { elapsedMs: 0, totalTokens: 0, contextSize: 0, modelName: '' };
     private timerStarted = false;
     private timerStart: number = 0;
+    private accumulatedMs: number = 0;
+    private spinnerFrame: number = 0;
     private timerInterval?: ReturnType<typeof setInterval>;
     private tui?: TUI;
     private invalidated = true;
     private lastWidth?: number;
     private cachedOutput?: string[];
+
+    onTimerStop?: () => void;
 
     setTUI(tui: TUI) {
         this.tui = tui;
@@ -36,26 +43,55 @@ export class StatusBar implements Component {
         this.stopTimer();
         this.timerStarted = true;
         this.timerStart = Date.now();
+        this.spinnerFrame = 0;
         this.timerInterval = setInterval(() => {
-            this.data.elapsedMs = Date.now() - this.timerStart;
+            this.data.elapsedMs = this.accumulatedMs + (Date.now() - this.timerStart);
+            this.spinnerFrame = (this.spinnerFrame + 1) % StatusBar.SPINNER.length;
             this.invalidated = true;
             this.tui?.requestRender();
-        }, 1000);
+        }, 200);
     }
 
     stopTimer() {
+        if (this.timerStarted) {
+            this.accumulatedMs += Date.now() - this.timerStart;
+            this.data.elapsedMs = this.accumulatedMs;
+        }
         this.timerStarted = false;
         if (this.timerInterval) {
             clearInterval(this.timerInterval);
             this.timerInterval = undefined;
         }
+        this.invalidated = true;
+        this.onTimerStop?.();
+    }
+
+    resetAccumulated() {
+        this.accumulatedMs = 0;
+        this.data.elapsedMs = 0;
+        this.invalidated = true;
+    }
+
+    setAccumulatedMs(ms: number) {
+        this.accumulatedMs = ms;
+        if (!this.timerStarted) {
+            this.data.elapsedMs = ms;
+        }
+        this.invalidated = true;
+    }
+
+    getAccumulatedMs(): number {
+        if (this.timerStarted) {
+            return this.accumulatedMs + (Date.now() - this.timerStart);
+        }
+        return this.accumulatedMs;
     }
 
     update(partial: Partial<StatusBarData>) {
         Object.assign(this.data, partial);
         this.invalidated = true;
         if (this.timerStarted) {
-            this.data.elapsedMs = Date.now() - this.timerStart;
+            this.data.elapsedMs = this.accumulatedMs + (Date.now() - this.timerStart);
         }
     }
 
@@ -78,8 +114,11 @@ export class StatusBar implements Component {
         const { elapsedMs, totalTokens, contextSize, modelName } = this.data;
 
         const parts: string[] = [];
-        if (this.timerStarted || elapsedMs > 0) {
-            parts.push(`⏱ ${this.formatElapsed(elapsedMs)}`);
+        if (this.timerStarted) {
+            const icon = StatusBar.SPINNER[this.spinnerFrame];
+            parts.push(chalk.greenBright(`${icon} ${this.formatElapsed(elapsedMs)}`));
+        } else if (elapsedMs > 0) {
+            parts.push(chalk.hex('#d4d4d4')(`⏱ ${this.formatElapsed(elapsedMs)}`));
         }
         if (totalTokens > 0) {
             const pct = contextSize > 0 ? ((totalTokens / contextSize) * 100).toFixed(1) : '—';
@@ -122,6 +161,7 @@ export class AgentInputArea implements Component {
     private submitCallback?: (text: string) => void;
     private commandRegistry?: SlashCommandRegistry;
     private onQueueChange?: (queue: string[]) => void;
+    private externalHint: string | null = null;
 
     constructor(openDeskTUI: OpenDeskTUI) {
         this.openDeskTUI = openDeskTUI;
@@ -210,8 +250,21 @@ export class AgentInputArea implements Component {
         }
     }
 
-    setStatus(status: AgentInputStatus) {
-        this.status = status;
+    setExternalHint(text: string) {
+        this.externalHint = text;
+        this.hintText.setText(text);
+    }
+
+    clearExternalHint() {
+        this.externalHint = null;
+        this.refreshHint();
+    }
+
+    private refreshHint() {
+        if (this.externalHint) {
+            this.hintText.setText(this.externalHint);
+            return;
+        }
         if (this.messageQueue.length > 0) {
             this.updateQueueHint();
         } else if (this.status === 'running') {
@@ -219,7 +272,11 @@ export class AgentInputArea implements Component {
         } else {
             this.hintText.setText('');
         }
-        // 只有在没有 overlay 打开时才设置焦点
+    }
+
+    setStatus(status: AgentInputStatus) {
+        this.status = status;
+        this.refreshHint();
         if (this.status === 'idle' && !this.openDeskTUI.hasOpenOverlay) {
             this.openDeskTUI.tui.setFocus(this.input);
         }
