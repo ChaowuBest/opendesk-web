@@ -2,6 +2,7 @@
 .roo
 .vscode
 .opendesk
+.cursor
 
 **/.DS_Store
 package-lock.json

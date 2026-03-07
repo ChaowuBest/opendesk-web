@@ -123,6 +123,26 @@ export function useCliTransport() {
     }
 }
 
+/**
+ * 拦截 console.log / console.warn / console.error / console.debug，
+ * 将它们全部重定向到 winston logger。
+ * 用于 CLI TUI 模式下防止外部插件直接向 stdout 输出破坏界面。
+ */
+export function interceptConsole() {
+    const stringify = (...args: any[]) =>
+        args.map(a => {
+            if (typeof a === 'string') return a;
+            try { return JSON.stringify(a, null, 2) ?? String(a); }
+            catch { return String(a); }
+        }).join(' ');
+
+    console.log = (...args: any[]) => { logger.info(stringify(...args)); };
+    console.warn = (...args: any[]) => { logger.warn(stringify(...args)); };
+    console.error = (...args: any[]) => { logger.error(stringify(...args)); };
+    console.debug = (...args: any[]) => { logger.info(`[debug] ${stringify(...args)}`); };
+    console.info = (...args: any[]) => { logger.info(stringify(...args)); };
+}
+
 export function useConsoleTransport() {
     if (loggerInstance) {
         loggerInstance.add(new winston.transports.Console());

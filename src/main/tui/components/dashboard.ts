@@ -17,6 +17,7 @@ import chalk from "chalk";
 import type { GlobalTodo } from "../../applications/todomgr/common";
 import type { TaskState } from "../../states/tasks";
 import { describeCron } from "../../utils/cron";
+import type { ChannelRuntimeState } from "../../applications/channels/app.js";
 
 // ━━━ 科幻配色 ━━━
 const C = {
@@ -44,6 +45,7 @@ function progressBar(ratio: number, barWidth: number): string {
 export interface DashboardData {
     globalTodos: GlobalTodo[];
     tasks: TaskState[];
+    channelStates?: ChannelRuntimeState[];
 }
 
 export class DashboardOverlay implements Component {
@@ -125,6 +127,7 @@ class DashboardRenderer implements Component {
         // 先渲染所有固定高度的面板
         const header = this.renderHeader(W);
         const statusBar = this.renderStatusBar(W);
+        const channelsPanel = this.renderChannelsPanel(W);
         const todosPanel = this.renderTodosPanel(W);
         const activePanel = this.renderActivePanel(W);
         const telemetryPanel = this.renderTelemetryPanel(W);
@@ -132,6 +135,7 @@ class DashboardRenderer implements Component {
         // 计算固定部分占据的行数（含面板间空行）
         const fixedLines = header.length + 1
             + statusBar.length + 1
+            + channelsPanel.length + 1
             + todosPanel.length + 1
             + activePanel.length + 1
             + 1  // history 与 telemetry 之间的空行
@@ -145,6 +149,8 @@ class DashboardRenderer implements Component {
         lines.push(...header);
         lines.push('');
         lines.push(...statusBar);
+        lines.push('');
+        lines.push(...channelsPanel);
         lines.push('');
         lines.push(...todosPanel);
         lines.push('');
@@ -195,16 +201,60 @@ class DashboardRenderer implements Component {
         const runningTasks = tasks.filter(t => t.task_status === 'running').length;
         const totalTasks = tasks.length;
 
+        const channelStates = this.data.channelStates || [];
+        const onlineChannels = channelStates.filter(c => c.status.online).length;
+        const totalChannels = channelStates.length;
+
         const cells = [
             C.neon('▣') + C.dim(' TODOS ') + C.bright(String(activeTodos)),
             C.neon('⟳') + C.dim(' CRON ') + C.bright(String(cronTodos)),
             C.neon('⚡') + C.dim(' EVENT ') + C.bright(String(eventTodos)),
             (runningTasks > 0 ? C.glow('●') : C.ghost('●')) + C.dim(' TASKS ') + C.bright(`${runningTasks}/${totalTasks}`),
+            (onlineChannels > 0 ? C.glow('◉') : C.ghost('◉')) + C.dim(' MSG ') + C.bright(`${onlineChannels}/${totalChannels}`),
         ];
 
         const sep = C.ghost('  │  ');
         const statusLine = '  ' + cells.join(sep);
         return [statusLine];
+    }
+
+    // ──────────────────── 消息插件状态面板 ────────────────────
+
+    private renderChannelsPanel(W: number): string[] {
+        const channels = this.data.channelStates || [];
+        const online = channels.filter(c => c.status.online).length;
+        const total = channels.length;
+
+        const body: string[] = [];
+        if (channels.length === 0) {
+            body.push(C.dim('  ∅ 暂无已加载的消息插件'));
+        } else {
+            for (const ch of channels) {
+                const icon = ch.status.online ? C.glow('●') : C.red('○');
+                const statusText = ch.status.statusText || (ch.status.online ? 'online' : 'offline');
+                const label = C.text(`${ch.label}`);
+                const idPart = C.dim(` (${ch.channelId}:${ch.accountId})`);
+                const stLabel = ch.status.online ? C.glow(statusText.toUpperCase()) : C.red(statusText.toUpperCase());
+                const errorText = ch.status.error ? C.red(` ${ch.status.error}`) : '';
+
+                const leftPart = `  ${icon} ${label}${idPart}`;
+                const leftVis = visibleWidth(leftPart);
+                const rightPart = `${stLabel}${errorText}`;
+                const rightVis = visibleWidth(rightPart);
+                const inner = W - 6;
+                const gap = Math.max(1, inner - leftVis - rightVis);
+                body.push(leftPart + C.ghost(' ' + '·'.repeat(Math.max(0, gap - 2)) + ' ') + rightPart);
+            }
+        }
+
+        const card = new Card({
+            title: '消息插件连接状态',
+            status: { icon: C.neon('◉'), text: C.dim(`${online}/${total} ONLINE`) },
+            body: body,
+            border: { style: 'single', colorFn: C.ghost },
+        });
+
+        return card.render(W);
     }
 
     // ──────────────────── 全局待办面板 ────────────────────

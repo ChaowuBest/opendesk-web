@@ -16,6 +16,7 @@ import { runTavilySearchTests } from './ut/search/tavily.test.js';
 import { runBochaSearchTests } from './ut/search/bocha.test.js';
 import { runDuckDuckGoSearchTests } from './ut/search/duckduckgo.test.js';
 import { runMemoryTests } from './ut/memory/memory.test.js';
+import { runChannelsTest } from './channels.test.js';
 
 function getSettingPath(): string {
     const appData = process.env.APPDATA;
@@ -75,9 +76,15 @@ async function cmdUt() {
     }
 }
 
+async function cmdChannels(...args: string[]) {
+    const passed = await runChannelsTest(args);
+    process.exit(passed ? 0 : 1);
+}
+
 const commands: Record<string, (...args: string[]) => void | Promise<void>> = {
     'get-config': cmdGetConfig,
     'ut': cmdUt,
+    'channels': cmdChannels,
 };
 
 async function main() {
@@ -89,6 +96,7 @@ async function main() {
         console.log('可用命令:');
         console.log('  get-config [app-name]  获取配置（可选指定应用名）');
         console.log('  ut                     运行单元测试');
+        console.log('  channels [subcmd]      消息插件测试 (info|connect|send|listen|mock)');
         process.exit(0);
     }
 
