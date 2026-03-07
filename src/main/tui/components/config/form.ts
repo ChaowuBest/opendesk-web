@@ -1,4 +1,4 @@
-import { type Component, Input, TUI, Key, matchesKey, visibleWidth } from "@mariozechner/pi-tui";
+import { type Component, Input, TUI, Key, matchesKey, visibleWidth, isKeyRelease } from "@mariozechner/pi-tui";
 import chalk from "chalk";
 
 export interface TextFieldDef {
@@ -103,6 +103,10 @@ export class ConfigForm implements Component {
     }
 
     private handleKeyInput(data: string): { consume?: boolean; data?: string } | undefined {
+        // 忽略 key release，否则在 Kitty 键盘协议下按一次方向键会触发「按下+松开」两次，导致移动两行
+        if (isKeyRelease(data)) {
+            return { consume: true };
+        }
         if (matchesKey(data, Key.up) || matchesKey(data, Key.shift("tab"))) {
             this.moveToPrev();
             return { consume: true };
