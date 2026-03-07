@@ -32,6 +32,8 @@ import { MemoryRegistry } from "../aikernel/memory/registry";
 import { MemoryListOverlay } from "./components/memorylist";
 import { ChatContext, UserMessage, SystemMessage, AssistantMessage } from "../aikernel/messages";
 import { createMemoryToolset } from "../aikernel/memory/tools";
+import { NotificationStore, NotificationCenterOverlay, ToastManager, getNotificationBadge } from "./components/notification";
+import { NotificationManager } from "../utils/notificationmgr.js";
 
 import format from "string-template";
 import path from "path";
@@ -104,6 +106,9 @@ export class OpenDeskTUI {
     private memoryOpBusy = false;
     private memorySpinnerInterval?: ReturnType<typeof setInterval>;
     private static readonly SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+
+    /** Toast 弹窗管理器 */
+    private toastManager: ToastManager;
 
     constructor(args: CommandLineArgs) {
         this.taskManagerState = GlobalState.getInstance().taskManagerState;
@@ -217,6 +222,11 @@ export class OpenDeskTUI {
         // 设置触发器任务回调
         this.setupTriggerTaskHandler();
 
+        // ── 全局通知系统初始化 ──
+        this.toastManager = new ToastManager(this);
+        this.toastManager.start();
+        this.bridgeNotificationManager();
+
         // 立即解析模型信息，让状态栏一进去就能显示当前模型
         this.resolveModelInfo();
     }
@@ -251,6 +261,34 @@ export class OpenDeskTUI {
                 logger.error(`触发器任务创建失败: ${err}`);
             }
         };
+    }
+
+    /**
+     * 将 NotificationManager（来自 worker/应用的通知）桥接到 TUI 通知系统
+     */
+    private bridgeNotificationManager(): void {
+        const store = NotificationStore.getInstance();
+        const mgr = NotificationManager.getInstance();
+
+        mgr.addCliCallback((type: string, source: string, title: string, message: string) => {
+            const notifType: 'info' | 'warning' | 'error' =
+                (type === 'error' || type === 'warning' || type === 'info') ? type : 'info';
+            // 根据通知类型设置优先级
+            const priority =
+                type === 'error' ? 'high' as const
+                : type === 'warning' ? 'normal' as const
+                : 'low' as const;
+            store.push(notifType, source, title, message, {
+                priority,
+                group: source,  // 按来源分组
+            });
+        });
+
+        // 通知数据变更时刷新 StatusBar 角标
+        store.onChange(() => {
+            this.inputArea.statusBar.invalidate();
+            this.tui.requestRender();
+        });
     }
 
     private setupCommands() {
@@ -890,6 +928,13 @@ export class OpenDeskTUI {
             },
         });
 
+        this.commandRegistry.register({
+            name: "notification",
+            description: "打开通知中心，查看所有通知",
+            execute: async () => {
+                this.showNotificationCenter();
+        }});
+
         // 使用 onReady 回调确保应用注册表初始化完成后再注册命令
         ApplicationRegistry.onReady(() => {
             this.registerApplicationCommands();
@@ -915,6 +960,13 @@ export class OpenDeskTUI {
         }
         // 刷新自动补全，确保新注册的命令能被提示
         this.inputArea.refreshAutocomplete();
+    }
+
+    private showNotificationCenter() {
+        // 打开通知中心时，先清除所有残留的 toast 弹窗
+        this.toastManager.dismissAll();
+        const overlay = new NotificationCenterOverlay(this);
+        overlay.show();
     }
 
     private async showDashboard() {
@@ -1426,6 +1478,7 @@ export class OpenDeskTUI {
 
     private async exit() {
         try {
+            this.toastManager.stop();
             this.inputArea.statusBar.stopTimer();
             this.shortcutManager.detach();
             this.tui.stop();

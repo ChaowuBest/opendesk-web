@@ -5,6 +5,7 @@ import { SlashCommandRegistry } from "../commands";
 import type { OpenDeskTUI } from "../entry";
 import chalk from "chalk";
 import { visibleWidth, truncateToWidth } from "@mariozechner/pi-tui";
+import { getNotificationBadge } from "./notification";
 
 type AgentInputStatus = 'idle' | 'running';
 
@@ -146,6 +147,10 @@ export class StatusBar implements Component {
                     : chalk.hex('#666666')(`○ ${ch.label}`)
             );
             rightParts.push(channelLabels.join('  '));
+        }
+        const badge = getNotificationBadge();
+        if (badge) {
+            rightParts.push(badge);
         }
         rightParts.push(chalk.hex('#d4d4d4')('/help 帮助'));
         const rightHint = rightParts.join(chalk.hex('#d4d4d4')('  │  ')) + ' ';
