@@ -14,7 +14,7 @@
  * 支持子命令: info | connect | send | listen
  */
 
-import { loadPlugins, listInstalledPlugins } from '../main/plugins/manager.js';
+import { loadPlugins, listInstalledPlugins } from '../main/aikernel/plugins/index.js';
 import type {
     PluginEntry,
     ChannelPlugin,
@@ -22,7 +22,8 @@ import type {
     ChannelGatewayContext,
     InboundChannelMessage,
     PluginLogger,
-} from '../main/plugins/types.js';
+} from '../main/aikernel/plugins/types.js';
+import { getAppDirectory } from '../main/utils/setting.js';
 import readline from 'readline';
 import fs from 'fs';
 import path from 'path';
@@ -251,7 +252,7 @@ async function cmdConnect(channelId?: string): Promise<boolean> {
         const abortController = new AbortController();
         (ctx as any).abortSignal = abortController.signal;
 
-        let startAccountError: Error | null = null;
+        let startAccountError: any = null;
         const startAccountPromise = cp.gateway.startAccount(ctx).catch((err: any) => {
             if (!abortController.signal.aborted) {
                 startAccountError = err;
@@ -263,7 +264,7 @@ async function cmdConnect(channelId?: string): Promise<boolean> {
         await sleep(8000);
 
         if (startAccountError) {
-            fail(`startAccount 失败: ${startAccountError.message}`);
+            fail(`startAccount 失败: ${startAccountError?.message || startAccountError}`);
             allPassed = false;
             continue;
         }
@@ -663,11 +664,15 @@ async function cmdMock(channelId?: string): Promise<boolean> {
 // ── 配置构建 ─────────────────────────────────────────────────────────────────
 
 function buildTestConfig(cp: ChannelPlugin): any {
-    const settingPath = path.join(process.env.HOME || '', '.opendesk', 'setting.json');
+    const settingDirectory = getAppDirectory();
+    const settingPath = path.join(settingDirectory, 'setting.json');
     try {
         if (fs.existsSync(settingPath)) {
             const setting = JSON.parse(fs.readFileSync(settingPath, 'utf-8'));
-            const channelConfig = setting?.applications?.channels?.[cp.id] || {};
+            // 支持 channelmgr (新名称) 和 channels (旧名称兼容)
+            const channelConfig = setting?.applications?.channelmgr?.[cp.id]
+                || setting?.applications?.channels?.[cp.id]
+                || {};
             return {
                 channels: { [cp.id]: channelConfig },
                 ...channelConfig,

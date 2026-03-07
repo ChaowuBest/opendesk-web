@@ -17,7 +17,7 @@ import chalk from "chalk";
 import type { GlobalTodo } from "../../applications/todomgr/common";
 import type { TaskState } from "../../states/tasks";
 import { describeCron } from "../../utils/cron";
-import type { ChannelRuntimeState } from "../../applications/channels/app.js";
+import type { ChannelRuntimeState } from "../../applications/channelmgr/app.js";
 
 // ━━━ 科幻配色 ━━━
 const C = {

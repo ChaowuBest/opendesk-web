@@ -20,9 +20,9 @@ import { FULL_CLEAR } from './tui/components/constants';
 import { OpenDeskTUI, CommandLineArgs } from './tui/entry.js';
 import { Setting } from './utils/setting';
 import { program as prog } from 'commander';
-import { installPlugin, uninstallPlugin, listInstalledPlugins, setPluginEnabled } from './plugins/manager.js';
-import { ChannelsApplication } from './applications/channels/app.js';
-import { ChannelMessageRouter } from './applications/channels/router.js';
+import { installPlugin, uninstallPlugin, listInstalledPlugins, setPluginEnabled } from './aikernel/plugins/index.js';
+import { ChannelMgrApplication } from './applications/channelmgr/app.js';
+import { ChannelMessageRouter } from './applications/channelmgr/router.js';
 import { ShellAgentDecl } from './aikernel/agents/shellagent.js';
 
 import process from 'process';
@@ -41,7 +41,7 @@ function parseCommandLineArgs() {
 
     pluginsCmd
         .command('install <spec>')
-        .description('安装插件 (npm 包名或路径)')
+        .description('安装插件 (npm 包名、路径或 .tgz 文件 URL)')
         .action(async (spec: string) => {
             useCliTransport();
             console.log(`正在安装插件: ${spec} ...`);
@@ -183,17 +183,17 @@ function main(args: CommandLineArgs) {
         initializeRegistry();
         initializeRegistryWorker();
 
-        // Initialize channels after registry is ready
+        // Initialize channelmgr after registry is ready
         ApplicationRegistry.onReady(async () => {
-            const channelsApp = ApplicationRegistry.getApplication('channels') as ChannelsApplication | undefined;
-            if (channelsApp) {
+            const channelMgrApp = ApplicationRegistry.getApplication('channelmgr') as ChannelMgrApplication | undefined;
+            if (channelMgrApp) {
                 const agentDecl = new ShellAgentDecl({ workspace: args.workspace });
                 const router = new ChannelMessageRouter(
                     tui.taskManagerState,
                     agentDecl,
                     args.model,
                 );
-                await channelsApp.initializeChannels(router);
+                await channelMgrApp.initializeChannels(router);
             }
         });
 

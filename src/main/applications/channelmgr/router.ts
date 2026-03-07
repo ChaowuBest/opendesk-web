@@ -19,7 +19,7 @@ import { ApplicationRegistry } from '../registry.js';
 import { SkillRegistry } from '../../aikernel/skill.js';
 import { createMemoryToolset } from '../../aikernel/memory/tools.js';
 import { logger } from '../../utils/logger.js';
-import type { InboundChannelMessage } from '../../plugins/types.js';
+import type { InboundChannelMessage } from '../../aikernel/plugins/types.js';
 import type { AgentDecl } from '../../aikernel/agent.js';
 
 /**

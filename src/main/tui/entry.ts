@@ -926,7 +926,7 @@ export class OpenDeskTUI {
 
             // 直接获取当前已有的消息插件状态，不阻塞等待初始化完成
             let channelStates: any[] = [];
-            const channelsApp = ApplicationRegistry.getApplication('channels');
+            const channelsApp = ApplicationRegistry.getApplication('channelmgr');
             if (channelsApp && 'getChannelStates' in channelsApp) {
                 channelStates = (channelsApp as any).getChannelStates();
             }

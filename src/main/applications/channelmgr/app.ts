@@ -24,7 +24,7 @@ import {
     uninstallPlugin,
     listInstalledPlugins,
     setPluginEnabled,
-} from '../../plugins/manager.js';
+} from '../../aikernel/plugins/index.js';
 import type {
     PluginEntry,
     ChannelPlugin,
@@ -32,7 +32,7 @@ import type {
     ChannelGatewayContext,
     InboundChannelMessage,
     ChannelAccountSnapshot,
-} from '../../plugins/types.js';
+} from '../../aikernel/plugins/types.js';
 import { ChannelMessageRouter } from './router.js';
 
 export interface ChannelRuntimeState {
@@ -43,7 +43,7 @@ export interface ChannelRuntimeState {
     label: string;
 }
 
-export class ChannelsApplication extends BaseApplication {
+export class ChannelMgrApplication extends BaseApplication {
 
     private plugins: PluginEntry[] = [];
     private channelStates: Map<string, ChannelRuntimeState> = new Map();
@@ -52,7 +52,7 @@ export class ChannelsApplication extends BaseApplication {
     private started = false;
 
     constructor() {
-        super('channels', '消息插件', false);
+        super('channelmgr', '消息', false);
     }
 
     static getConfigSchema() {
@@ -72,7 +72,7 @@ export class ChannelsApplication extends BaseApplication {
      * 初始化消息插件——加载插件并启动各 channel account。
      * 返回 Promise 以便外部能等待初始化完成。
      */
-    initializeChannels(router: ChannelMessageRouter): Promise<void> {
+    async initializeChannels(router: ChannelMessageRouter): Promise<void> {
         this.router = router;
         if (this.initPromise) return this.initPromise;
 
@@ -106,7 +106,7 @@ export class ChannelsApplication extends BaseApplication {
         const channelId = cp.id;
         const config = this.getChannelConfig(channelId);
 
-        logger.info(`正在启动消息插件: ${channelId} (${cp.meta.label})`);
+        logger.info(`[channelmgr] 正在启动消息插件: ${channelId} (${cp.meta.label}) ${JSON.stringify(config)}`);
 
         let accountIds: string[];
         try {
@@ -145,6 +145,8 @@ export class ChannelsApplication extends BaseApplication {
         }
     }
 
+    private abortControllers: Map<string, AbortController> = new Map();
+
     private createGatewayContext(
         cp: ChannelPlugin,
         accountId: string,
@@ -158,6 +160,11 @@ export class ChannelsApplication extends BaseApplication {
             error: (...args: any[]) => logger.error(`[${cp.id}:${accountId}]`, ...args),
             debug: (...args: any[]) => logger.info(`[${cp.id}:${accountId}][debug]`, ...args),
         };
+
+        // Create an AbortController for this channel account
+        const abortController = new AbortController();
+        this.abortControllers.set(stateKey, abortController);
+
         return {
             accountId,
             account,
@@ -170,6 +177,7 @@ export class ChannelsApplication extends BaseApplication {
                 warn: (...args: any[]) => logger.warn(`[${cp.id}:${accountId}]`, ...args),
                 platform: 'opendesk',
             },
+            abortSignal: abortController.signal,
             dispatch: async (message: InboundChannelMessage) => {
                 logger.info(`[${cp.id}:${accountId}] 收到消息: ${message.senderName || message.senderId}`);
                 this.emitEvent('channel:message', {
@@ -230,7 +238,7 @@ export class ChannelsApplication extends BaseApplication {
 
     /**
      * 获取某个消息插件的完整配置。
-     * 用户在 OpenDesk 配置中写 applications.channels.{channelId} 来设置参数。
+     * 用户在 OpenDesk 配置中写 applications.channelmgr.{channelId} 来设置参数。
      */
     private getChannelConfig(channelId: string): any {
         const config = this.getConfig() || {};
@@ -291,7 +299,7 @@ export class ChannelsApplication extends BaseApplication {
         return [
             {
                 name: 'plugins',
-                description: '插件管理: /plugins install|uninstall|list|enable|disable',
+                description: '插件管理: /plugins install <npm-spec|url>|uninstall|list|enable|disable',
                 getArgumentCompletions: (argPrefix: string) => {
                     const options = ['install', 'uninstall', 'list', 'enable', 'disable'];
                     const parts = argPrefix.split(/\s+/);
@@ -331,7 +339,7 @@ export class ChannelsApplication extends BaseApplication {
 
         switch (subCmd) {
             case 'install': {
-                if (!rest) { logger.warn('用法: /plugins install <npm-spec>'); return; }
+                if (!rest) { logger.warn('用法: /plugins install <npm-spec|url>'); return; }
                 logger.info(`正在安装插件: ${rest} ...`);
                 const result = await installPlugin(rest);
                 if (result.success) {

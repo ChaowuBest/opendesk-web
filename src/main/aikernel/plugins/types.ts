@@ -10,8 +10,11 @@
  */
 
 /**
- * Channel plugin types compatible with OpenClaw's plugin system.
+ * Plugin system type definitions.
+ * Core types for the plugin infrastructure.
  */
+
+// ── Plugin Manifest & Install Records ────────────────────────────────────────
 
 export interface PluginManifest {
     id: string;
@@ -28,8 +31,10 @@ export interface PluginInstallRecord {
     npmSpec: string;
     installedAt: string;
     enabled: boolean;
-    source: 'npm' | 'local';
+    source: 'npm' | 'local' | 'url';
     path?: string;
+    /** Original URL if source is 'url' */
+    url?: string;
 }
 
 export interface PluginEntry {
@@ -39,6 +44,13 @@ export interface PluginEntry {
     module?: any;
     channelPlugin?: ChannelPlugin;
 }
+
+export interface PluginsConfig {
+    enabled: boolean;
+    installs: PluginInstallRecord[];
+}
+
+// ── Channel Plugin Types ──────────────────────────────────────────────────────
 
 export type ChannelId = string;
 
@@ -189,6 +201,8 @@ export interface ChannelPlugin<ResolvedAccount = any, Probe = unknown, Audit = u
     gatewayMethods?: string[];
 }
 
+// ── Plugin Logger & API ───────────────────────────────────────────────────────
+
 export interface PluginLogger {
     info: (...args: any[]) => void;
     warn: (...args: any[]) => void;
@@ -218,9 +232,4 @@ export interface OpenClawPluginApi {
     registerCommand: (command: any) => void;
     resolvePath: (input: string) => string;
     on: (hookName: string, handler: any, opts?: any) => void;
-}
-
-export interface PluginsConfig {
-    enabled: boolean;
-    installs: PluginInstallRecord[];
 }
