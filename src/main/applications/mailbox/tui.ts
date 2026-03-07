@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { type Component, SelectList, Box, Text, Editor, Input, Key, matchesKey, visibleWidth, truncateToWidth } from "@mariozechner/pi-tui";
+import { type Component, SelectList, Box, Text, Editor, Input, Key, matchesKey, isKeyRelease, visibleWidth, truncateToWidth } from "@mariozechner/pi-tui";
 import { defaultSelectListTheme, defaultEditorTheme } from "../../tui/theme";
 import type { OpenDeskTUI } from "../../tui/entry";
 import { ApplicationRegistry } from "../../applications/registry";
@@ -505,6 +505,8 @@ export class MailOverlay implements Component {
     private isSyncing = false;
 
     private emailList?: SelectList;
+    /** 列表可见行数，用于左右键翻页 */
+    private emailListVisibleCount = 10;
     private detailList?: SelectList;
     private handle?: any;
     private inputListenerRemove?: () => void;
@@ -768,6 +770,26 @@ export class MailOverlay implements Component {
             if (this.state === 'search-list' && matchesKey(data, Key.escape)) {
                 this.exitSearchMode();
                 return { consume: true };
+            }
+            // 左键：向上翻页；右键：向下翻页（强制整屏重绘，避免差分渲染混帧出现双箭头；忽略 key release 防止一次按键触发两次）
+            if (this.emailList && this.emails.length > 0 && !isKeyRelease(data)) {
+                const list = this.emailList as { selectedIndex: number; setSelectedIndex?: (i: number) => void };
+                const currentIndex = list.selectedIndex ?? 0;
+                const pageSize = Math.max(1, this.emailListVisibleCount);
+                if (matchesKey(data, Key.left)) {
+                    const next = Math.max(0, currentIndex - pageSize);
+                    if (list.setSelectedIndex) list.setSelectedIndex(next);
+                    else list.selectedIndex = next;
+                    this.openDeskTUI.tui.requestRender(true);
+                    return { consume: true };
+                }
+                if (matchesKey(data, Key.right)) {
+                    const next = Math.min(this.emails.length - 1, currentIndex + pageSize);
+                    if (list.setSelectedIndex) list.setSelectedIndex(next);
+                    else list.selectedIndex = next;
+                    this.openDeskTUI.tui.requestRender(true);
+                    return { consume: true };
+                }
             }
         }
 
@@ -1160,6 +1182,7 @@ export class MailOverlay implements Component {
         const rows = this.openDeskTUI.tui.terminal.rows;
         const fixedLines = 10 + (this.errorText ? 1 : 0) + (this.isLoadingMore ? 1 : 0);
         const visibleCount = Math.max(1, rows - fixedLines);
+        this.emailListVisibleCount = visibleCount;
         const contentWidth = this.openDeskTUI.tui.terminal.columns - 6;
 
         const items = this.emails.map((email) => ({
