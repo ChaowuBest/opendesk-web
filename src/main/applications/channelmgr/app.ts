@@ -33,7 +33,18 @@ import type {
     InboundChannelMessage,
     ChannelAccountSnapshot,
 } from '../../aikernel/plugins/types.js';
+import { registerChannelDispatch } from '../../aikernel/plugins/openclaw/api.js';
 import { ChannelMessageRouter } from './router.js';
+import { Skill } from '../../aikernel/skill.js';
+import { BaseToolset } from '../../aikernel/tool.js';
+import { MANAGE_CHANNELS_SKILL } from './skills.js';
+import {
+    ListPairingRequestsTool,
+    ApprovePairingTool,
+    RevokePairingTool,
+    ListApprovedUsersTool,
+    ListChannelStatusTool,
+} from './tools.js';
 
 export interface ChannelRuntimeState {
     channelId: string;
@@ -66,6 +77,18 @@ export class ChannelMgrApplication extends BaseApplication {
             { eventName: 'channel:message', eventDescription: '收到消息插件消息' },
             { eventName: 'channel:error', eventDescription: '消息插件发生错误' },
         ];
+    }
+
+    async getSkills(): Promise<Skill[]> {
+        const skill = Skill.parseMd(MANAGE_CHANNELS_SKILL);
+        const toolset = new BaseToolset('channel-pairing');
+        toolset.addTool(new ListPairingRequestsTool());
+        toolset.addTool(new ApprovePairingTool());
+        toolset.addTool(new RevokePairingTool());
+        toolset.addTool(new ListApprovedUsersTool());
+        toolset.addTool(new ListChannelStatusTool(this));
+        skill.toolsets = [toolset];
+        return [skill];
     }
 
     /**
@@ -130,7 +153,31 @@ export class ChannelMgrApplication extends BaseApplication {
                 try {
                     const account = cp.config.resolveAccount(config, accountId);
                     const ctx = this.createGatewayContext(cp, accountId, account, config);
-                    await cp.gateway.startAccount(ctx);
+
+                    registerChannelDispatch(channelId, accountId, async (message) => {
+                        await this.handleInboundMessage(cp, accountId, message);
+                    });
+
+                    const startPromise = cp.gateway.startAccount(ctx);
+
+                    // Monitor for late runtime errors (plugin crash, connection lost, etc.)
+                    startPromise.catch((err: any) => {
+                        const s = this.channelStates.get(stateKey);
+                        if (s && s.status.online) {
+                            s.status = { online: false, statusText: '断开', error: err?.message };
+                            this.emitEvent('channel:error', { channelId, accountId, error: err?.message });
+                            logger.error(`消息插件 ${channelId}:${accountId} 断开连接: ${err?.message || err}`);
+                        }
+                    });
+
+                    // Many plugins (e.g. Feishu) start long-running event loops in startAccount
+                    // that never resolve. Wait briefly for fast failures (config/auth errors),
+                    // then assume the plugin is running.
+                    await Promise.race([
+                        startPromise,
+                        new Promise<void>(resolve => setTimeout(resolve, 5000)),
+                    ]);
+
                     state.status = { online: true, statusText: '已连接' };
                     this.emitEvent('channel:connected', { channelId, accountId });
                     logger.info(`消息插件 ${channelId}:${accountId} 启动成功`);
@@ -154,11 +201,18 @@ export class ChannelMgrApplication extends BaseApplication {
         config: any,
     ): ChannelGatewayContext {
         const stateKey = `${cp.id}:${accountId}`;
+        const tag = `[${cp.id}:${accountId}]`;
+        const fmt = (...args: any[]) => args.map(a => {
+            if (typeof a === 'string') return a;
+            try { return JSON.stringify(a, null, 2) ?? String(a); }
+            catch { return String(a); }
+        }).join(' ');
+
         const pluginLogger = {
-            info: (...args: any[]) => logger.info(`[${cp.id}:${accountId}]`, ...args),
-            warn: (...args: any[]) => logger.warn(`[${cp.id}:${accountId}]`, ...args),
-            error: (...args: any[]) => logger.error(`[${cp.id}:${accountId}]`, ...args),
-            debug: (...args: any[]) => logger.info(`[${cp.id}:${accountId}][debug]`, ...args),
+            info: (...args: any[]) => logger.info(`${tag} ${fmt(...args)}`),
+            warn: (...args: any[]) => logger.warn(`${tag} ${fmt(...args)}`),
+            error: (...args: any[]) => logger.error(`${tag} ${fmt(...args)}`),
+            debug: (...args: any[]) => logger.info(`${tag}[debug] ${fmt(...args)}`),
         };
 
         // Create an AbortController for this channel account
@@ -172,9 +226,9 @@ export class ChannelMgrApplication extends BaseApplication {
             logger: pluginLogger,
             log: pluginLogger,
             runtime: {
-                log: (...args: any[]) => logger.info(`[${cp.id}:${accountId}]`, ...args),
-                error: (...args: any[]) => logger.error(`[${cp.id}:${accountId}]`, ...args),
-                warn: (...args: any[]) => logger.warn(`[${cp.id}:${accountId}]`, ...args),
+                log: (...args: any[]) => logger.info(`${tag} ${fmt(...args)}`),
+                error: (...args: any[]) => logger.error(`${tag} ${fmt(...args)}`),
+                warn: (...args: any[]) => logger.warn(`${tag} ${fmt(...args)}`),
                 platform: 'opendesk',
             },
             abortSignal: abortController.signal,
@@ -209,11 +263,15 @@ export class ChannelMgrApplication extends BaseApplication {
         const reply = await this.router.routeInboundMessage(message);
         if (!reply) return;
 
+        const replyTo = (message.chatType === 'group' && message.groupId)
+            ? message.groupId
+            : message.senderId;
+
         if (cp.outbound?.sendText) {
             try {
                 await cp.outbound.sendText({
                     channelId: cp.id, accountId,
-                    to: message.senderId, text: reply,
+                    to: replyTo, text: reply,
                     threadId: message.threadId,
                     replyToMessageId: message.messageId,
                     cfg: this.getChannelConfig(cp.id),
@@ -225,7 +283,7 @@ export class ChannelMgrApplication extends BaseApplication {
             try {
                 await cp.outbound.sendPayload({
                     channelId: cp.id, accountId,
-                    to: message.senderId, payload: { text: reply },
+                    to: replyTo, payload: { text: reply },
                     threadId: message.threadId,
                     replyToMessageId: message.messageId,
                     cfg: this.getChannelConfig(cp.id),

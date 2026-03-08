@@ -174,9 +174,38 @@ export function normalizeSecretInputString(v) { return typeof v === 'string' ? v
 export function normalizeResolvedSecretInputString(v) { if (typeof v === 'string') return v; if (v && typeof v === 'object' && 'value' in v) { const raw = v.value; return typeof raw === 'string' ? raw : ''; } return ''; }
 export function buildSecretInputSchema() { return z.union([z.string(), z.object({ source: z.string(), provider: z.string(), id: z.string() })]); }
 
-// ── Pairing ──────────────────────────────────────────────────────────────────
+// ── Pairing (delegates to runtime's persistent pairing store) ────────────────
 
-export function createScopedPairingAccess() { return { check: async()=>({allowed:true}), revoke: async()=>{} }; }
+export function createScopedPairingAccess({ core, channel, accountId } = {}) {
+  const ch = channel || 'unknown';
+  const acc = accountId || 'default';
+  const p = core?.channel?.pairing;
+
+  return {
+    check: async ({ userId } = {}) => {
+      if (p?.isUserApproved) return { allowed: p.isUserApproved(ch, acc, userId) };
+      return { allowed: true };
+    },
+    revoke: async ({ userId } = {}) => {
+      if (p?.revokeUser) p.revokeUser(ch, acc, userId);
+    },
+    readAllowFromStore: async () => {
+      if (p?.readAllowFromStore) return p.readAllowFromStore(ch, acc);
+      return [];
+    },
+    upsertPairingRequest: async (params) => {
+      if (p?.upsertPairingRequest) return p.upsertPairingRequest(ch, acc, params?.id, params?.meta);
+      return { code: String(Math.floor(100000 + Math.random() * 900000)), created: true };
+    },
+    removePairingRequest: async ({ userId } = {}) => {
+      if (p?.removePairingRequest) return p.removePairingRequest(ch, acc, userId);
+    },
+    listPairingRequests: async () => {
+      if (p?.listPairingRequests) return p.listPairingRequests(ch, acc);
+      return [];
+    },
+  };
+}
 export function issuePairingChallenge() { return { code:'000000', expiresAt: new Date(Date.now()+300000) }; }
 export function isDangerousNameMatchingEnabled() { return false; }
 export function promptSingleChannelSecretInput() { return Promise.resolve(''); }

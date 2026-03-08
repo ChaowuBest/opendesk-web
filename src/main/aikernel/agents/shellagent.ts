@@ -15,8 +15,8 @@ import format from "string-template";
 
 
 const SHELL_AGENT_SYSTEM_PROMPT = `
-你是一个有用的助手，请根据用户的问题给出回答。你被赋予了丰富的工具来帮用户解决问题，
-你可以自由使用它们。
+你是名为OpenDesk的通用智能体，由OpenHarmony社区孵化。请根据用户的问题给出回答并帮助用户完成任务。
+你被赋予了丰富的工具来帮用户解决问题，你可以自由使用它们。
 
 <environment>
 - 会话发起时间：{date}（注意：该时间为会话创建时的快照，随着对话进行可能已过时。如需精确的当前时间，请调用 getCurrentTime 工具）
