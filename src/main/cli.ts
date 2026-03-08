@@ -20,7 +20,7 @@ import { FULL_CLEAR } from './tui/components/constants';
 import { OpenDeskTUI, CommandLineArgs } from './tui/entry.js';
 import { Setting } from './utils/setting';
 import { program as prog } from 'commander';
-import { installPlugin, uninstallPlugin, listInstalledPlugins, setPluginEnabled } from './aikernel/plugins/index.js';
+import { installPlugin, uninstallPlugin, listInstalledPlugins, setPluginEnabled, resetOpenClawShim } from './aikernel/plugins/index.js';
 import { ChannelMgrApplication } from './applications/channelmgr/app.js';
 import { ChannelMessageRouter } from './applications/channelmgr/router.js';
 import { ShellAgentDecl } from './aikernel/agents/shellagent.js';
@@ -109,6 +109,23 @@ function parseCommandLineArgs() {
                 console.log(`✓ 插件已禁用: ${id}`);
             } else {
                 console.error(`✗ 未找到插件: ${id}`);
+                process.exit(1);
+            }
+            process.exit(0);
+        });
+
+    pluginsCmd
+        .command('reset-openclaw-shim')
+        .description('删除并重新生成 openclaw 兼容层 (用于调试)')
+        .action(() => {
+            useCliTransport();
+            useConsoleTransport();
+            console.log('正在重置 openclaw shim...');
+            const result = resetOpenClawShim();
+            if (result.success) {
+                console.log('✓ openclaw shim 已重新生成');
+            } else {
+                console.error(`✗ 重置失败: ${result.error}`);
                 process.exit(1);
             }
             process.exit(0);

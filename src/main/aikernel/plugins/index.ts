@@ -21,6 +21,7 @@ export {
     listInstalledPlugins,
     setPluginEnabled,
     loadPlugins,
+    resetOpenClawShim,
 } from './manager.js';
 
 // Types

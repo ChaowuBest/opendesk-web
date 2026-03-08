@@ -638,6 +638,28 @@ async function loadSinglePlugin(record: PluginInstallRecord): Promise<PluginEntr
 
 // ── Internal: Utilities ──────────────────────────────────────────────────────
 
+/**
+ * Delete the generated openclaw shim and regenerate it.
+ * Useful for debugging when the shim gets out of date.
+ */
+export function resetOpenClawShim(): { success: boolean; error?: string } {
+    try {
+        const extensionsDir = getExtensionsDir();
+        const shimDir = path.join(extensionsDir, 'node_modules', 'openclaw');
+        if (fs.existsSync(shimDir)) {
+            fs.rmSync(shimDir, { recursive: true, force: true });
+            logger.info(`已删除 openclaw shim: ${shimDir}`);
+        }
+        ensureOpenClawShim(extensionsDir);
+        logger.info('openclaw shim 已重新生成');
+        return { success: true };
+    } catch (err: any) {
+        const message = err?.message || String(err);
+        logger.error(`重置 openclaw shim 失败: ${message}`);
+        return { success: false, error: message };
+    }
+}
+
 function extractPackageName(npmSpec: string): string | null {
     // Handle specs like @scope/name@version, name@version, @scope/name, name
     const match = npmSpec.match(/^(@[^@/]+\/[^@/]+|[^@/]+)(?:@.*)?$/);
