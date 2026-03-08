@@ -16,9 +16,6 @@
  * etc.) that channel plugins depend on for message processing and error handling.
  */
 
-import path from 'path';
-import fs from 'fs';
-import os from 'os';
 import { getAppDirectory } from '../../../utils/setting.js';
 import { logger, addConsoleInterceptHook } from '../../../utils/logger.js';
 import type {
@@ -31,12 +28,24 @@ import type {
 import {
     getApprovedUserIds,
     isUserApproved,
-    upsertPairingRequest as storageUpsert,
-    removePairingRequest as storageRemove,
+    upsertPairingRequest,
+    removePairingRequest,
     getPendingRequests,
     approveUser,
     revokeUser,
 } from '../../../applications/channelmgr/pairing.js';
+import path from 'path';
+import fs from 'fs';
+import os from 'os';
+import format from 'string-template';
+
+
+const PAIRING_RESPONSE = `为了让消息收发更加安全，你得先在OpenDesk中批准配对请求 😉
+请求ID: {idLine}
+配对码: {code}
+
+你可以在OpenDesk中直接问：现在有哪些设备配对请求？或者直接说：批准配对码尾号是{codeSuffix}的请求。
+`.trim();
 
 // Winston only uses the first argument as info.message; extra args are dropped.
 // Stringify all args into a single string so nothing is lost.
@@ -267,15 +276,19 @@ function buildPluginRuntime() {
             // ── pairing (delegates to persistent storage) ────────────────
             pairing: {
                 buildPairingReply: (params: any) =>
-                    `Your account requires pairing approval.\n${params.idLine || ''}\nPairing code: ${params.code || ''}`,
+                    format(PAIRING_RESPONSE, {
+                        idLine: params.idLine || '',
+                        code: params.code || '',
+                        codeSuffix: params.code ? String(params.code).slice(-4) : '',
+                    }),
                 readAllowFromStore: (channel: string, accountId: string) =>
                     getApprovedUserIds(channel, accountId),
                 isUserApproved: (channel: string, accountId: string, userId: string) =>
                     isUserApproved(channel, accountId, userId),
                 upsertPairingRequest: (channel: string, accountId: string, userId: string, meta?: any) =>
-                    storageUpsert(channel, accountId, userId, meta),
+                    upsertPairingRequest(channel, accountId, userId, meta),
                 removePairingRequest: (channel: string, accountId: string, userId: string) =>
-                    storageRemove(channel, accountId, userId),
+                    removePairingRequest(channel, accountId, userId),
                 listPairingRequests: (channel?: string, accountId?: string) =>
                     getPendingRequests(channel, accountId),
                 approveUser: (channel: string, accountId: string, userId: string, meta?: any) =>

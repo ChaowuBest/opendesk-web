@@ -22,6 +22,7 @@ import { logger } from '../../utils/logger.js';
 import type { InboundChannelMessage } from '../../aikernel/plugins/types.js';
 import type { AgentDecl } from '../../aikernel/agent.js';
 
+
 /**
  * Maps session keys (channelId:accountId:senderId) to active task IDs
  * so that follow-up messages from the same sender continue the same session.
@@ -29,6 +30,7 @@ import type { AgentDecl } from '../../aikernel/agent.js';
 const sessionMap = new Map<string, string>();
 
 export class ChannelMessageRouter {
+
     private taskManagerState: TaskManagerState;
     private agentDecl: AgentDecl;
     private model?: string;
@@ -172,7 +174,7 @@ export class ChannelMessageRouter {
             }
             return null;
         } catch (err) {
-            task.task_status = 'error';
+            task.task_status = 'stopped';
             task.finished_at = new Date();
             task.task_manager_state.publishTaskListUpdate();
             throw err;

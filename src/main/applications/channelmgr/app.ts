@@ -67,7 +67,7 @@ export class ChannelMgrApplication extends BaseApplication {
     }
 
     static getConfigSchema() {
-        return z.object({}).passthrough().describe('消息插件配置（按插件 ID 设置各插件参数）');
+        return z.object({}).loose().describe('消息插件配置（按插件 ID 设置各插件参数）');
     }
 
     async getSupportedEvents(): Promise<EventDecl[]> {
@@ -105,7 +105,9 @@ export class ChannelMgrApplication extends BaseApplication {
 
     /** 确保初始化已完成（dashboard 等调用方可 await） */
     async ensureReady(): Promise<void> {
-        if (this.initPromise) await this.initPromise;
+        if (this.initPromise) {
+            await this.initPromise;
+        }
     }
 
     private async doInitialize(): Promise<void> {
@@ -239,7 +241,7 @@ export class ChannelMgrApplication extends BaseApplication {
                     accountId,
                     senderId: message.senderId,
                     senderName: message.senderName,
-                    text: message.text?.substring(0, 100),
+                    text: message.text
                 });
                 await this.handleInboundMessage(cp, accountId, message);
             },
