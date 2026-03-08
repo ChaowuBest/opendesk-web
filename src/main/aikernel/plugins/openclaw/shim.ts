@@ -19,6 +19,12 @@ import path from 'path';
 import fs from 'fs';
 import { logger } from '../../../utils/logger.js';
 
+export const PAIRING_REPLY_TEMPLATE = `为了让消息收发更加安全，你得先在OpenDesk中批准配对请求 😉
+请求ID: {idLine}
+配对码: {code}
+
+你可以在OpenDesk中直接问：现在有哪些设备配对请求？或者直接说：批准配对码尾号是{codeSuffix}的请求。`.trim();
+
 /**
  * Ensure the openclaw shim is available in the extensions node_modules.
  * Generates the shim inline so plugins can resolve `openclaw/plugin-sdk`.
@@ -196,7 +202,23 @@ export function normalizeSecretInputString(v) { return typeof v === 'string' ? v
 export function normalizeResolvedSecretInputString(v) { if (typeof v === 'string') return v; if (v && typeof v === 'object' && 'value' in v) { const raw = v.value; return typeof raw === 'string' ? raw : ''; } return ''; }
 export function buildSecretInputSchema() { return z.union([z.string(), z.object({ source: z.string(), provider: z.string(), id: z.string() })]); }
 
-// ── Pairing (delegates to runtime's persistent pairing store) ────────────────
+// ── Pairing ─────────────────────────────────────────────────────────────────
+// buildPairingReply uses PAIRING_REPLY_TEMPLATE (exported from the top of
+// shim.ts). The same template is also imported by api.ts for the runtime's
+// channel.pairing.buildPairingReply, ensuring a single source of truth.
+
+const _PAIRING_TPL = ${JSON.stringify(PAIRING_REPLY_TEMPLATE)};
+export function buildPairingReply({ channel, idLine, code } = {}) {
+  const codeSuffix = code ? String(code).slice(-4) : '';
+  return _PAIRING_TPL
+    .replace('{idLine}', idLine || '')
+    .replace('{code}', code || '')
+    .replace('{codeSuffix}', codeSuffix);
+}
+
+// createScopedPairingAccess: wraps core.channel.pairing with pre-bound
+// channel + accountId so callers don't repeat them on every call.
+// Real SDK signature: { accountId, readAllowFromStore, readStoreForDmPolicy, upsertPairingRequest }
 
 export function createScopedPairingAccess({ core, channel, accountId } = {}) {
   const ch = channel || 'unknown';
@@ -204,31 +226,54 @@ export function createScopedPairingAccess({ core, channel, accountId } = {}) {
   const p = core?.channel?.pairing;
 
   return {
-    check: async ({ userId } = {}) => {
-      if (p?.isUserApproved) return { allowed: p.isUserApproved(ch, acc, userId) };
-      return { allowed: true };
-    },
-    revoke: async ({ userId } = {}) => {
-      if (p?.revokeUser) p.revokeUser(ch, acc, userId);
-    },
+    accountId: acc,
     readAllowFromStore: async () => {
-      if (p?.readAllowFromStore) return p.readAllowFromStore(ch, acc);
+      if (p?.readAllowFromStore) return p.readAllowFromStore({ channel: ch, accountId: acc });
       return [];
     },
-    upsertPairingRequest: async (params) => {
-      if (p?.upsertPairingRequest) return p.upsertPairingRequest(ch, acc, params?.id, params?.meta);
+    readStoreForDmPolicy: async (provider, acctId) => {
+      if (p?.readAllowFromStore) return p.readAllowFromStore({ channel: provider || ch, accountId: acctId || acc });
+      return [];
+    },
+    upsertPairingRequest: async (input) => {
+      if (p?.upsertPairingRequest) return p.upsertPairingRequest({ channel: ch, accountId: acc, id: input?.id, meta: input?.meta });
       return { code: String(Math.floor(100000 + Math.random() * 900000)), created: true };
-    },
-    removePairingRequest: async ({ userId } = {}) => {
-      if (p?.removePairingRequest) return p.removePairingRequest(ch, acc, userId);
-    },
-    listPairingRequests: async () => {
-      if (p?.listPairingRequests) return p.listPairingRequests(ch, acc);
-      return [];
     },
   };
 }
-export function issuePairingChallenge() { return { code:'000000', expiresAt: new Date(Date.now()+300000) }; }
+
+// issuePairingChallenge: shared pairing challenge issuance for DM pairing
+// policy pathways. Calls upsertPairingRequest to persist the request (and
+// obtain its code), then sends the challenge text via sendPairingReply.
+// Returns { created, code }.
+
+export async function issuePairingChallenge(params) {
+  if (!params) return { created: false };
+  let code;
+  let created = false;
+  try {
+    const result = await params.upsertPairingRequest({ id: params.senderId, meta: params.meta });
+    code = result?.code;
+    created = result?.created ?? false;
+  } catch {
+    return { created: false };
+  }
+  if (!code) return { created, code };
+  if (created) {
+    try { params.onCreated?.({ code }); } catch {}
+  }
+  if (params.sendPairingReply) {
+    const text = typeof params.buildReplyText === 'function'
+      ? params.buildReplyText({ code, senderIdLine: params.senderIdLine })
+      : buildPairingReply({ channel: params.channel, idLine: params.senderIdLine, code });
+    try {
+      await params.sendPairingReply(text);
+    } catch (err) {
+      try { params.onReplyError?.(err); } catch {}
+    }
+  }
+  return { created, code };
+}
 export function isDangerousNameMatchingEnabled() { return false; }
 export function promptSingleChannelSecretInput() { return Promise.resolve(''); }
 export function promptAccountId() { return Promise.resolve('default'); }
