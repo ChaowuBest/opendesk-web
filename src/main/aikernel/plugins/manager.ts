@@ -183,10 +183,11 @@ export async function installPlugin(npmSpecOrUrl: string): Promise<{ success: bo
 
             // Install from local file
             try {
-                execSync(`npm install "${tempTgzPath}" --save`, {
+                execSync(`npm install --prefix "${extensionsDir}" "${tempTgzPath}" --save`, {
                     cwd: extensionsDir,
-                    stdio: 'inherit',  // Show npm output to user
+                    stdio: 'inherit',
                     timeout: 180000,
+                    env: { ...process.env, npm_config_fund: 'false' },
                 });
             } catch (npmErr: any) {
                 const errMsg = npmErr?.message || String(npmErr);
@@ -282,12 +283,22 @@ export async function installPlugin(npmSpecOrUrl: string): Promise<{ success: bo
             logger.info(`Installing plugin: ${npmSpecOrUrl}`);
             logger.info(`Extensions directory: ${extensionsDir}`);
 
+            // Determine the package name early so we can verify installation
+            const pkgName = extractPackageName(npmSpecOrUrl);
+            if (!pkgName) {
+                return { success: false, error: `Could not determine package name from spec: ${npmSpecOrUrl}` };
+            }
+
             // Install the npm package
+            // Use --prefix to force npm to use the extensions directory as the
+            // project root, preventing it from walking up the directory tree and
+            // installing into a parent node_modules.
             try {
-                execSync(`npm install ${npmSpecOrUrl} --save`, {
+                execSync(`npm install --prefix "${extensionsDir}" ${npmSpecOrUrl} --save`, {
                     cwd: extensionsDir,
-                    stdio: 'inherit',  // Show npm output to user
+                    stdio: 'inherit',
                     timeout: 180000,
+                    env: { ...process.env, npm_config_fund: 'false' },
                 });
             } catch (npmErr: any) {
                 const errMsg = npmErr?.message || String(npmErr);
@@ -295,17 +306,15 @@ export async function installPlugin(npmSpecOrUrl: string): Promise<{ success: bo
                 return { success: false, error: `npm install failed: ${errMsg}` };
             }
 
-            // Ensure the openclaw shim is in place
-            ensureOpenClawShim(extensionsDir);
-
-            // Determine the installed package name
-            const pkgName = extractPackageName(npmSpecOrUrl);
-            if (!pkgName) {
-                return { success: false, error: `Could not determine package name from spec: ${npmSpecOrUrl}` };
+            // Verify the package was actually installed
+            const pluginDir = path.join(extensionsDir, 'node_modules', pkgName);
+            if (!fs.existsSync(pluginDir)) {
+                logger.error(`npm install completed but package directory not found: ${pluginDir}`);
+                return { success: false, error: `Package directory not found after install. npm may have installed to a different location. Check that no parent directory contains a package.json that could confuse npm.` };
             }
 
-            // Try to find the plugin manifest
-            const pluginDir = path.join(extensionsDir, 'node_modules', pkgName);
+            // Ensure the openclaw shim is in place
+            ensureOpenClawShim(extensionsDir);
             let manifest: PluginManifest = { id: pkgName };
             const manifestPath = path.join(pluginDir, PLUGIN_MANIFEST);
             if (fs.existsSync(manifestPath)) {
@@ -367,7 +376,7 @@ export async function uninstallPlugin(pluginId: string): Promise<{ success: bool
 
     try {
         const pkgName = extractPackageName(record.npmSpec) || pluginId;
-        execSync(`npm uninstall ${pkgName}`, {
+        execSync(`npm uninstall --prefix "${extensionsDir}" ${pkgName}`, {
             cwd: extensionsDir,
             stdio: 'pipe',
             timeout: 60000,
