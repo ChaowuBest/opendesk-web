@@ -25,13 +25,12 @@
 
 import { parse as parseYaml } from 'yaml';
 import { BaseToolset, BaseTool, ToolResult } from './tool';
-import { object, z } from 'zod';
+import { z } from 'zod';
 import { logger } from '../utils/logger';
 import { jsonrepair } from 'jsonrepair';
 import format from "string-template";
 import { ToolCall } from './messages';
 import chalk from 'chalk';
-import { Card, type BorderConfig } from '../tui/components/card';
 import { statusDisplay, truncText } from '../tui/components/toolcall';
 
 

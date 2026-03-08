@@ -924,7 +924,14 @@ export class OpenDeskTUI {
             const todos = todosResult?.data || [];
             const tasks = this.taskManagerState.tasks;
 
-            new DashboardOverlay(this, { globalTodos: todos, tasks }).show();
+            // 直接获取当前已有的消息插件状态，不阻塞等待初始化完成
+            let channelStates: any[] = [];
+            const channelsApp = ApplicationRegistry.getApplication('channelmgr');
+            if (channelsApp && 'getChannelStates' in channelsApp) {
+                channelStates = (channelsApp as any).getChannelStates();
+            }
+
+            new DashboardOverlay(this, { globalTodos: todos, tasks, channelStates }).show();
         } catch (err) {
             logger.error(`打开仪表盘失败: ${err}`);
         }

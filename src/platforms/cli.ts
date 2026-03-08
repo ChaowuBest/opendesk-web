@@ -21,6 +21,7 @@ import { TerminalApplication } from "../main/applications/terminal/app.js";
 import { McpMgrApplication } from "../main/applications/mcpmgr/app.js";
 import { TodoMgrApplication } from "../main/applications/todomgr/app.js";
 import { SkillMgrApplication } from '../main/applications/skillmgr/app.js';
+import { ChannelMgrApplication } from '../main/applications/channelmgr/app.js';
 
 
 export class CliPlatform extends AbstractPlatform {
@@ -39,6 +40,7 @@ export class CliPlatform extends AbstractPlatform {
             McpMgrApplication,
             TodoMgrApplication,
             SkillMgrApplication,
+            ChannelMgrApplication,
         ];
     }
 }
