@@ -45,6 +45,12 @@ import {
     RevokePairingTool,
     ListApprovedUsersTool,
     ListChannelStatusTool,
+    InstallChannelPluginTool,
+    UninstallChannelPluginTool,
+    ListChannelPluginsTool,
+    ToggleChannelPluginTool,
+    SetChannelConfigTool,
+    GetChannelConfigTool,
 } from './tools.js';
 
 export interface ChannelRuntimeState {
@@ -95,15 +101,26 @@ export class ChannelMgrApplication extends BaseApplication {
     }
 
     async getSkills(): Promise<Skill[]> {
-        const skill = Skill.parseMd(MANAGE_CHANNELS_SKILL);
-        const toolset = new BaseToolset('channel-pairing');
-        toolset.addTool(new ListPairingRequestsTool());
-        toolset.addTool(new ApprovePairingTool());
-        toolset.addTool(new RevokePairingTool());
-        toolset.addTool(new ListApprovedUsersTool());
-        toolset.addTool(new ListChannelStatusTool(this));
-        skill.toolsets = [toolset];
-        return [skill];
+        const manageSkill = Skill.parseMd(MANAGE_CHANNELS_SKILL);
+
+        const pairingToolset = new BaseToolset('channel-pairing');
+        pairingToolset.addTool(new ListPairingRequestsTool());
+        pairingToolset.addTool(new ApprovePairingTool());
+        pairingToolset.addTool(new RevokePairingTool());
+        pairingToolset.addTool(new ListApprovedUsersTool());
+        pairingToolset.addTool(new ListChannelStatusTool(this));
+
+        const pluginToolset = new BaseToolset('channel-plugin-management');
+        pluginToolset.addTool(new InstallChannelPluginTool());
+        pluginToolset.addTool(new UninstallChannelPluginTool());
+        pluginToolset.addTool(new ListChannelPluginsTool());
+        pluginToolset.addTool(new ToggleChannelPluginTool());
+        pluginToolset.addTool(new SetChannelConfigTool(this));
+        pluginToolset.addTool(new GetChannelConfigTool(this));
+
+        manageSkill.toolsets = [pairingToolset, pluginToolset];
+
+        return [manageSkill];
     }
 
     /**

@@ -19,6 +19,12 @@ import {
     removePairingRequest,
 } from './pairing.js';
 import type { ChannelMgrApplication } from './app.js';
+import {
+    installPlugin,
+    uninstallPlugin,
+    listInstalledPlugins,
+    setPluginEnabled,
+} from '../../aikernel/plugins/index.js';
 
 // ── List Pairing Requests ───────────────────────────────────────────────────
 
@@ -170,5 +176,167 @@ export class ListChannelStatusTool extends BaseTool<typeof ListChannelStatusSche
             return `${i + 1}. ${icon} ${s.label} (${s.channelId}:${s.accountId})\n   状态: ${statusText}${err}`;
         });
         return `共 ${states.length} 个渠道插件：\n\n${lines.join('\n\n')}`;
+    }
+}
+
+// ── Plugin Management Tools (for configure-channels skill) ──────────────────
+
+const InstallChannelPluginSchema = z.object({
+    spec: z.string().describe('要安装的插件包名或 URL，例如 "@openclaw/feishu" 或 .tgz 文件的下载链接'),
+});
+
+export class InstallChannelPluginTool extends BaseTool<typeof InstallChannelPluginSchema> {
+    constructor() {
+        super(
+            'installChannelPlugin',
+            'Install a channel plugin by npm package name or .tgz URL. Example: "@openclaw/feishu"',
+            InstallChannelPluginSchema,
+        );
+        this.setExecutor(this.run.bind(this));
+    }
+
+    private async run(args: z.infer<typeof InstallChannelPluginSchema>): Promise<string> {
+        const result = await installPlugin(args.spec);
+        if (result.success) {
+            return `插件安装成功: ${result.id}\n\n请注意：需要重启 OpenDesk 才能加载新安装的插件。`;
+        }
+        return `插件安装失败: ${result.error}`;
+    }
+}
+
+const UninstallChannelPluginSchema = z.object({
+    id: z.string().describe('要卸载的插件 ID（可通过 listChannelPlugins 工具获取）'),
+});
+
+export class UninstallChannelPluginTool extends BaseTool<typeof UninstallChannelPluginSchema> {
+    constructor() {
+        super(
+            'uninstallChannelPlugin',
+            'Uninstall a previously installed channel plugin by its ID.',
+            UninstallChannelPluginSchema,
+        );
+        this.setExecutor(this.run.bind(this));
+    }
+
+    private async run(args: z.infer<typeof UninstallChannelPluginSchema>): Promise<string> {
+        const result = await uninstallPlugin(args.id);
+        if (result.success) {
+            return `插件已卸载: ${args.id}`;
+        }
+        return `插件卸载失败: ${result.error}`;
+    }
+}
+
+const ListChannelPluginsSchema = z.object({});
+
+export class ListChannelPluginsTool extends BaseTool<typeof ListChannelPluginsSchema> {
+    constructor() {
+        super(
+            'listChannelPlugins',
+            'List all installed channel plugins with their status (enabled/disabled).',
+            ListChannelPluginsSchema,
+        );
+        this.setExecutor(this.run.bind(this));
+    }
+
+    private async run(): Promise<string> {
+        const records = listInstalledPlugins();
+        if (records.length === 0) {
+            return '当前没有已安装的插件。';
+        }
+        const lines = records.map((r, i) => {
+            const status = r.enabled ? '✓ 已启用' : '✗ 已禁用';
+            return `${i + 1}. ${r.id} (${r.npmSpec}) [${status}]\n   安装时间: ${r.installedAt}`;
+        });
+        return `共 ${records.length} 个已安装的插件：\n\n${lines.join('\n\n')}`;
+    }
+}
+
+const ToggleChannelPluginSchema = z.object({
+    id: z.string().describe('插件 ID'),
+    enabled: z.boolean().describe('true 为启用，false 为禁用'),
+});
+
+export class ToggleChannelPluginTool extends BaseTool<typeof ToggleChannelPluginSchema> {
+    constructor() {
+        super(
+            'toggleChannelPlugin',
+            'Enable or disable a channel plugin. Requires restart to take effect.',
+            ToggleChannelPluginSchema,
+        );
+        this.setExecutor(this.run.bind(this));
+    }
+
+    private async run(args: z.infer<typeof ToggleChannelPluginSchema>): Promise<string> {
+        const ok = setPluginEnabled(args.id, args.enabled);
+        if (ok) {
+            const action = args.enabled ? '启用' : '禁用';
+            return `插件已${action}: ${args.id}\n\n请重启 OpenDesk 以使更改生效。`;
+        }
+        return `未找到插件: ${args.id}`;
+    }
+}
+
+const SetChannelConfigSchema = z.object({
+    channelId: z.string().describe('消息渠道的 ID，例如 "feishu"'),
+    config: z.any().describe('要设置的渠道配置 JSON 对象，将写入 settings.json 的 applications.channelmgr.<channelId> 中'),
+});
+
+export class SetChannelConfigTool extends BaseTool<typeof SetChannelConfigSchema> {
+    private app: ChannelMgrApplication;
+
+    constructor(app: ChannelMgrApplication) {
+        super(
+            'setChannelConfig',
+            'Set the configuration for a channel plugin. The config will be saved to settings.json under applications.channelmgr.<channelId>.',
+            SetChannelConfigSchema,
+        );
+        this.app = app;
+        this.setExecutor(this.run.bind(this));
+    }
+
+    private async run(args: z.infer<typeof SetChannelConfigSchema>): Promise<string> {
+        try {
+            const currentConfig = this.app.getConfig() || {};
+            const updatedConfig = {
+                ...currentConfig,
+                [args.channelId]: args.config,
+            };
+            this.app.setConfig(updatedConfig);
+            return `渠道 ${args.channelId} 的配置已保存到 settings.json。\n\n请重启 OpenDesk 以使配置生效。\n\n已保存的配置:\n${JSON.stringify(args.config, null, 2)}`;
+        } catch (err: any) {
+            return `保存配置失败: ${err?.message || err}`;
+        }
+    }
+}
+
+const GetChannelConfigSchema = z.object({
+    channelId: z.string().describe('消息渠道的 ID，例如 "feishu"'),
+});
+
+export class GetChannelConfigTool extends BaseTool<typeof GetChannelConfigSchema> {
+    private app: ChannelMgrApplication;
+
+    constructor(app: ChannelMgrApplication) {
+        super(
+            'getChannelConfig',
+            'Get the configuration JSON for a specific channel plugin. Useful for debugging.',
+            GetChannelConfigSchema,
+        );
+        this.app = app;
+        this.setExecutor(this.run.bind(this));
+    }
+
+    private async run(args: z.infer<typeof GetChannelConfigSchema>): Promise<string> {
+        try {
+            const currentConfig = this.app.getConfig() || {};
+            const channelConfig = currentConfig[args.channelId];
+            if (channelConfig === undefined) {
+                return `渠道 ${args.channelId} 暂无配置。`;
+            }
+            return `渠道 ${args.channelId} 的配置:\n${JSON.stringify(channelConfig, null, 2)}`;
+        } catch (err: any) {
+            return `获取配置失败: ${err?.message || err}`;
+        }
     }
 }

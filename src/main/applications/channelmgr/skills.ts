@@ -12,12 +12,67 @@
 export const MANAGE_CHANNELS_SKILL = `
 ---
 name: manage-channels
-description: 管理消息渠道插件的设备配对、查看连接状态等功能
+description: 管理消息渠道插件，包括插件安装/配置、设备配对、查看连接状态等功能。
+    消息渠道插件主要用来支持用户通过第三方软件(飞书/小艺/)接入OpenDesk并与Agent对话。
 ---
 
 # 消息渠道管理
 
-本技能提供对消息渠道插件（如飞书、微信等）的管理功能，包括设备配对和连接状态监控。
+本技能提供对消息渠道插件（如飞书、小艺等）的完整管理功能，包括插件安装配置、设备配对和连接状态监控。
+
+## 插件安装与配置
+
+### 消息渠道1：飞书
+
+#### 飞书 (Feishu / Lark)
+
+插件包名: \`@openclaw/feishu\`
+
+##### 配置步骤
+
+1. 使用内置工具 installChannelPlugin 工具安装 \`@openclaw/feishu\` 插件
+2. 引导用户前往飞书开放平台创建机器人：https://www.volcengine.com/docs/82379/2183190?lang=zh
+3. 用户需要在飞书开放平台完成以下操作：
+   - 创建一个应用/机器人
+   - 获取 App ID 和 App Secret
+   - 将连接方式配置为 WebSocket 形式的长链接
+4. 收集用户提供的信息后，使用 setChannelConfig 工具将配置写入 settings.json
+
+##### 飞书配置项
+
+飞书渠道的配置 JSON 结构如下：
+
+\`\`\`json
+{
+    "enabled": true,
+    "connectionMode": "websocket",
+    "dmPolicy": "pairing",
+    "groupPolicy": "allowlist",
+    "requireMention": true,
+    "accounts": {
+        "default": {
+            "appId": "<在飞书开放平台获得的App ID>",
+            "appSecret": "<在飞书开放平台获得的App Secret>"
+        }
+    }
+}
+\`\`\`
+
+使用 setChannelConfig 工具时，channelId 填 "feishu"，config 填上述 JSON 对象。
+
+### 内置消息渠道插件管理工具清单
+
+- 使用 listChannelPlugins 查看已安装的插件
+- 使用 installChannelPlugin 安装新插件
+- 使用 uninstallChannelPlugin 卸载插件
+- 使用 toggleChannelPlugin 启用或禁用插件
+- 使用 setChannelConfig 设置渠道配置
+- 使用 getChannelConfig 获取某个渠道的配置 JSON（调试用）
+
+### 注意事项
+
+- 安装或配置插件后需要重启 OpenDesk 才能生效
+- 配置信息会保存在 settings.json 的 applications.channelmgr 下
 
 ## 设备配对
 
