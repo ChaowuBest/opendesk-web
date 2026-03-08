@@ -18,6 +18,7 @@ import { z } from 'zod';
 import { BaseApplication, EventDecl } from '../base.js';
 import type { SlashCommandHandler } from '../../tui/commands.js';
 import { logger } from '../../utils/logger.js';
+import { InfoOverlay } from '../../tui/components/notice.js';
 import {
     loadPlugins,
     installPlugin,
@@ -54,6 +55,8 @@ export interface ChannelRuntimeState {
     label: string;
 }
 
+export type ChannelStateChangeCallback = (states: ChannelRuntimeState[]) => void;
+
 export class ChannelMgrApplication extends BaseApplication {
 
     private plugins: PluginEntry[] = [];
@@ -61,9 +64,21 @@ export class ChannelMgrApplication extends BaseApplication {
     private router?: ChannelMessageRouter;
     private initPromise?: Promise<void>;
     private started = false;
+    private stateChangeCallbacks: ChannelStateChangeCallback[] = [];
 
     constructor() {
         super('channelmgr', '消息', false);
+    }
+
+    onChannelStateChange(callback: ChannelStateChangeCallback): void {
+        this.stateChangeCallbacks.push(callback);
+    }
+
+    private notifyStateChange(): void {
+        const states = this.getChannelStates();
+        for (const cb of this.stateChangeCallbacks) {
+            try { cb(states); } catch { /* ignore callback errors */ }
+        }
     }
 
     static getConfigSchema() {
@@ -167,6 +182,7 @@ export class ChannelMgrApplication extends BaseApplication {
                         const s = this.channelStates.get(stateKey);
                         if (s && s.status.online) {
                             s.status = { online: false, statusText: '断开', error: err?.message };
+                            this.notifyStateChange();
                             this.emitEvent('channel:error', { channelId, accountId, error: err?.message });
                             logger.error(`消息插件 ${channelId}:${accountId} 断开连接: ${err?.message || err}`);
                         }
@@ -181,15 +197,18 @@ export class ChannelMgrApplication extends BaseApplication {
                     ]);
 
                     state.status = { online: true, statusText: '已连接' };
+                    this.notifyStateChange();
                     this.emitEvent('channel:connected', { channelId, accountId });
                     logger.info(`消息插件 ${channelId}:${accountId} 启动成功`);
                 } catch (err: any) {
                     state.status = { online: false, statusText: '错误', error: err?.message };
+                    this.notifyStateChange();
                     this.emitEvent('channel:error', { channelId, accountId, error: err?.message });
                     logger.error(`消息插件 ${channelId}:${accountId} 启动失败: ${err?.message || err}`);
                 }
             } else {
                 state.status = { online: true, statusText: '就绪' };
+                this.notifyStateChange();
             }
         }
     }
@@ -247,7 +266,10 @@ export class ChannelMgrApplication extends BaseApplication {
             },
             setStatus: (status: ChannelAccountStatus) => {
                 const state = this.channelStates.get(stateKey);
-                if (state) state.status = status;
+                if (state) {
+                    state.status = status;
+                    this.notifyStateChange();
+                }
             },
         };
     }
@@ -343,7 +365,10 @@ export class ChannelMgrApplication extends BaseApplication {
                         dispatch: async () => {}, setStatus: () => {},
                     });
                     const state = this.channelStates.get(`${cp.id}:${accountId}`);
-                    if (state) state.status = { online: false, statusText: '已停止' };
+                    if (state) {
+                        state.status = { online: false, statusText: '已停止' };
+                        this.notifyStateChange();
+                    }
                     this.emitEvent('channel:disconnected', { channelId: cp.id, accountId });
                 } catch (err: any) {
                     logger.error(`停止消息插件 ${cp.id}:${accountId} 失败: ${err?.message || err}`);
@@ -373,7 +398,7 @@ export class ChannelMgrApplication extends BaseApplication {
                     }
                     return null;
                 },
-                execute: async (args: string) => { await this.handlePluginsCommand(args); },
+                execute: async (args: string) => { await this.handlePluginsCommand(args, tui); },
             },
             {
                 name: 'channels',
@@ -387,95 +412,106 @@ export class ChannelMgrApplication extends BaseApplication {
                             description: opt === 'list' ? '列出所有消息插件' : '查看消息插件状态',
                         }));
                 },
-                execute: async (args: string) => { await this.handleChannelsCommand(args); },
+                execute: async (args: string) => { await this.handleChannelsCommand(args, tui); },
             },
         ];
     }
 
-    private async handlePluginsCommand(args: string): Promise<void> {
+    private async handlePluginsCommand(args: string, tui: any): Promise<void> {
         const parts = args.trim().split(/\s+/);
         const subCmd = (parts[0] || '').toLowerCase();
         const rest = parts.slice(1).join(' ').trim();
 
+        const showInfo = (title: string, message: string) => {
+            new InfoOverlay(tui, { title, message }).show();
+        };
+
         switch (subCmd) {
             case 'install': {
-                if (!rest) { logger.warn('用法: /plugins install <npm-spec|url>'); return; }
-                logger.info(`正在安装插件: ${rest} ...`);
+                if (!rest) { showInfo('用法提示', '/plugins install <npm-spec|url>'); return; }
+                showInfo('安装中', `正在安装插件: ${rest} ...`);
                 const result = await installPlugin(rest);
                 if (result.success) {
-                    logger.info(`插件安装成功: ${result.id}`);
-                    logger.info('请重启 OpenDesk 以加载新插件');
+                    showInfo('安装成功', `插件安装成功: ${result.id}\n\n请重启 OpenDesk 以加载新插件`);
                 } else {
-                    logger.error(`插件安装失败: ${result.error}`);
+                    showInfo('安装失败', `插件安装失败: ${result.error}`);
                 }
                 break;
             }
             case 'uninstall': {
-                if (!rest) { logger.warn('用法: /plugins uninstall <plugin-id>'); return; }
+                if (!rest) { showInfo('用法提示', '/plugins uninstall <plugin-id>'); return; }
                 const result = await uninstallPlugin(rest);
-                if (result.success) logger.info(`插件已卸载: ${rest}`);
-                else logger.error(`插件卸载失败: ${result.error}`);
+                if (result.success) showInfo('卸载成功', `插件已卸载: ${rest}`);
+                else showInfo('卸载失败', `插件卸载失败: ${result.error}`);
                 break;
             }
             case 'list': {
                 const records = listInstalledPlugins();
                 if (records.length === 0) {
-                    logger.info('暂无已安装的插件');
+                    showInfo('插件列表', '暂无已安装的插件');
                 } else {
-                    for (const r of records) {
+                    const lines = records.map(r => {
                         const status = r.enabled ? '✓ 已启用' : '✗ 已禁用';
-                        logger.info(`  ${r.id} (${r.npmSpec}) [${status}]`);
-                    }
+                        return `  ${r.id} (${r.npmSpec}) [${status}]`;
+                    });
+                    showInfo('插件列表', lines.join('\n'));
                 }
                 break;
             }
             case 'enable': {
-                if (!rest) { logger.warn('用法: /plugins enable <plugin-id>'); return; }
-                if (setPluginEnabled(rest, true)) logger.info(`插件已启用: ${rest}，请重启 OpenDesk 以生效`);
-                else logger.error(`未找到插件: ${rest}`);
+                if (!rest) { showInfo('用法提示', '/plugins enable <plugin-id>'); return; }
+                if (setPluginEnabled(rest, true)) showInfo('启用成功', `插件已启用: ${rest}\n\n请重启 OpenDesk 以生效`);
+                else showInfo('启用失败', `未找到插件: ${rest}`);
                 break;
             }
             case 'disable': {
-                if (!rest) { logger.warn('用法: /plugins disable <plugin-id>'); return; }
-                if (setPluginEnabled(rest, false)) logger.info(`插件已禁用: ${rest}，请重启 OpenDesk 以生效`);
-                else logger.error(`未找到插件: ${rest}`);
+                if (!rest) { showInfo('用法提示', '/plugins disable <plugin-id>'); return; }
+                if (setPluginEnabled(rest, false)) showInfo('禁用成功', `插件已禁用: ${rest}\n\n请重启 OpenDesk 以生效`);
+                else showInfo('禁用失败', `未找到插件: ${rest}`);
                 break;
             }
             default:
-                logger.warn('用法: /plugins install|uninstall|list|enable|disable');
+                showInfo('用法提示', '用法: /plugins install|uninstall|list|enable|disable');
         }
     }
 
-    private async handleChannelsCommand(args: string): Promise<void> {
+    private async handleChannelsCommand(args: string, tui: any): Promise<void> {
         const subCmd = args.trim().toLowerCase();
+
+        const showInfo = (title: string, message: string) => {
+            new InfoOverlay(tui, { title, message }).show();
+        };
+
         switch (subCmd) {
             case 'list': {
                 const channels = this.getChannelPlugins();
                 if (channels.length === 0) {
-                    logger.info('暂无已注册的消息插件');
+                    showInfo('消息插件', '暂无已注册的消息插件');
                 } else {
-                    for (const ch of channels) {
-                        logger.info(`  ${ch.id}: ${ch.label}${ch.description ? ` - ${ch.description}` : ''}`);
-                    }
+                    const lines = channels.map(ch =>
+                        `  ${ch.id}: ${ch.label}${ch.description ? ` - ${ch.description}` : ''}`
+                    );
+                    showInfo('消息插件列表', lines.join('\n'));
                 }
                 break;
             }
             case 'status': {
                 const states = this.getChannelStates();
                 if (states.length === 0) {
-                    logger.info('暂无运行中的消息插件');
+                    showInfo('消息插件状态', '暂无运行中的消息插件');
                 } else {
-                    for (const s of states) {
+                    const lines = states.map(s => {
                         const icon = s.status.online ? '●' : '○';
                         const statusText = s.status.statusText || (s.status.online ? '在线' : '离线');
                         const errorText = s.status.error ? ` (${s.status.error})` : '';
-                        logger.info(`  ${icon} ${s.channelId}:${s.accountId} - ${s.label} [${statusText}]${errorText}`);
-                    }
+                        return `  ${icon} ${s.channelId}:${s.accountId} - ${s.label} [${statusText}]${errorText}`;
+                    });
+                    showInfo('消息插件状态', lines.join('\n'));
                 }
                 break;
             }
             default:
-                logger.warn('用法: /channels list|status');
+                showInfo('用法提示', '用法: /channels list|status');
         }
     }
 }

@@ -19,15 +19,21 @@ import { ApplicationRegistry } from '../registry.js';
 import { SkillRegistry } from '../../aikernel/skill.js';
 import { createMemoryToolset } from '../../aikernel/memory/tools.js';
 import { logger } from '../../utils/logger.js';
+import { LLM } from '../../aikernel/llm.js';
 import type { InboundChannelMessage } from '../../aikernel/plugins/types.js';
 import type { AgentDecl } from '../../aikernel/agent.js';
 
+const SESSION_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
+
+interface SessionEntry {
+    taskId: string;
+    lastMessageAt: number;
+}
 
 /**
- * Maps session keys (channelId:accountId:senderId) to active task IDs
- * so that follow-up messages from the same sender continue the same session.
+ * Maps session keys (channelId:accountId:senderId) to active session entries.
  */
-const sessionMap = new Map<string, string>();
+const sessionMap = new Map<string, SessionEntry>();
 
 export class ChannelMessageRouter {
 
@@ -49,26 +55,25 @@ export class ChannelMessageRouter {
     async routeInboundMessage(message: InboundChannelMessage): Promise<string | null> {
         const sessionKey = `${message.channelId}:${message.accountId}:${message.senderId}`;
 
-        // Find or create a task for this session
         let task: TaskState;
         try {
-            task = this.findActiveTask(sessionKey) ?? await this.createSessionTask(sessionKey, message);
+            task = await this.resolveSessionTask(sessionKey, message);
         } catch (err: any) {
             logger.error(`创建消息会话失败: ${err?.message || err}`);
             return `抱歉，系统在创建会话时遇到了问题：${err?.message || err}\n请联系管理员检查系统配置。`;
         }
 
-        // Wait for any currently running interaction to complete
         if (task.task_status === 'running') {
             await task.waitUntilFinished();
         }
 
-        // Prepare the user message with channel context
         const userText = this.formatInboundMessage(message);
 
-        // Submit and wait for assistant reply
         try {
             const reply = await this.submitAndWaitForReply(task, userText);
+            // Update last message timestamp
+            const entry = sessionMap.get(sessionKey);
+            if (entry) entry.lastMessageAt = Date.now();
             return reply;
         } catch (err: any) {
             logger.error(`消息插件处理失败: ${err?.message || err}`);
@@ -99,15 +104,106 @@ export class ChannelMessageRouter {
         return `抱歉，处理消息时遇到了错误。\n\n错误详情：${msg}\n\n请联系管理员查看日志以了解详情。`;
     }
 
-    private findActiveTask(sessionKey: string): TaskState | undefined {
-        const taskId = sessionMap.get(sessionKey);
-        if (!taskId) return undefined;
-        const task = this.taskManagerState.getTask(taskId);
+    /**
+     * Resolve a session task for the given key:
+     * 1. If no existing session, create a new task.
+     * 2. If existing session, check if it should expire:
+     *    a. Ask LLM if the new message is related to the previous conversation.
+     *    b. If LLM check fails, fall back to 15-minute timeout.
+     *    c. If expired, create a new task; otherwise reuse.
+     */
+    private async resolveSessionTask(sessionKey: string, message: InboundChannelMessage): Promise<TaskState> {
+        const entry = sessionMap.get(sessionKey);
+        if (!entry) {
+            return this.createSessionTask(sessionKey, message);
+        }
+
+        const task = this.taskManagerState.getTask(entry.taskId);
         if (!task) {
             sessionMap.delete(sessionKey);
-            return undefined;
+            return this.createSessionTask(sessionKey, message);
         }
+
+        const timeSinceLastMsg = Date.now() - entry.lastMessageAt;
+        const newText = message.text || '';
+
+        // Try LLM-based relevance check (with timeout protection)
+        try {
+            const shouldContinue = await this.checkSessionRelevance(task, newText);
+            if (!shouldContinue) {
+                logger.info(`[router] 会话 ${sessionKey} 被 LLM 判定为不相关，创建新任务`);
+                return this.createSessionTask(sessionKey, message);
+            }
+            return task;
+        } catch (err: any) {
+            logger.warn(`[router] LLM 关联性检查失败，回退到超时判断: ${err?.message || err}`);
+        }
+
+        // Fallback: 15-minute timeout
+        if (timeSinceLastMsg > SESSION_TIMEOUT_MS) {
+            logger.info(`[router] 会话 ${sessionKey} 超时 (${Math.floor(timeSinceLastMsg / 60000)}分钟)，创建新任务`);
+            return this.createSessionTask(sessionKey, message);
+        }
+
         return task;
+    }
+
+    /**
+     * Use the LLM to determine whether a new message belongs to the same conversation.
+     * Returns true if the conversation should continue, false if a new session should start.
+     */
+    private async checkSessionRelevance(task: TaskState, newMessageText: string): Promise<boolean> {
+        const recentMessages = this.getRecentConversationSummary(task, 3);
+        if (!recentMessages) return true; // No history to compare, keep session
+
+        const prompt = [
+            '你是一个会话管理助手。请判断用户的新消息是否与之前的对话相关。',
+            '',
+            '之前的对话摘要：',
+            recentMessages,
+            '',
+            '用户的新消息：',
+            newMessageText,
+            '',
+            '请仅回答 "相关" 或 "不相关"，不要包含其他内容。',
+        ].join('\n');
+
+        const answer = await Promise.race([
+            LLM.ask(new UserMessage(prompt), this.model),
+            new Promise<string>((_, reject) => setTimeout(() => reject(new Error('LLM relevance check timeout')), 8000)),
+        ]);
+
+        return !answer.includes('不相关');
+    }
+
+    /**
+     * Extract a brief summary of recent messages from a task for relevance checking.
+     */
+    private getRecentConversationSummary(task: TaskState, maxPairs: number): string | null {
+        const parts: string[] = [];
+        let pairCount = 0;
+
+        for (let i = task.chat_context.messages.length - 1; i >= 0 && pairCount < maxPairs; i--) {
+            const msg = task.chat_context.messages[i];
+            if (msg instanceof UserMessage) {
+                for (const p of msg.content) {
+                    if (p.type === 'text' && p.text) {
+                        const text = p.text.length > 200 ? p.text.slice(0, 200) + '...' : p.text;
+                        parts.unshift(`[用户]: ${text}`);
+                    }
+                }
+                pairCount++;
+            } else if (msg instanceof AssistantMessage) {
+                for (const p of msg.content) {
+                    if (p.type === 'text' && (p as any).text) {
+                        const text = (p as any).text.length > 200 ? (p as any).text.slice(0, 200) + '...' : (p as any).text;
+                        parts.unshift(`[助手]: ${text}`);
+                    }
+                }
+            }
+        }
+
+        return parts.length > 0 ? parts.join('\n') : null;
     }
 
     private async createSessionTask(sessionKey: string, message: InboundChannelMessage): Promise<TaskState> {
@@ -127,7 +223,7 @@ export class ChannelMessageRouter {
         await task.setSystemPrompt(channelContext);
 
         task.task_name = `消息: ${message.senderName || message.senderId}`;
-        sessionMap.set(sessionKey, task.task_id);
+        sessionMap.set(sessionKey, { taskId: task.task_id, lastMessageAt: Date.now() });
 
         return task;
     }

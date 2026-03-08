@@ -194,6 +194,19 @@ function main(args: CommandLineArgs) {
                     args.model,
                 );
                 await channelMgrApp.initializeChannels(router);
+
+                // Sync channel states to the status bar via event callback
+                const syncChannelStates = (states: { label: string; status: { online: boolean } }[]) => {
+                    tui.inputArea.statusBar.update({
+                        channelStates: states.map(s => ({
+                            label: s.label,
+                            online: s.status.online,
+                        })),
+                    });
+                };
+                channelMgrApp.onChannelStateChange(syncChannelStates);
+                // Initial sync
+                syncChannelStates(channelMgrApp.getChannelStates());
             }
         });
 
