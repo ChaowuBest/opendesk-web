@@ -3,7 +3,7 @@ import { FULL_CLEAR } from './components/constants';
 import { OpenDeskBanner } from './banner';
 import { VerticalLayout } from './components/layout';
 import { OpenDeskTerminal } from './terminal';
-import { TaskView } from "./components/taskview";
+import { TaskView, AssistantMessageView } from "./components/taskview";
 import { TaskManagerState, TaskState, TaskUpdateChunk } from "../states/tasks";
 import { GlobalState } from "../states/global";
 import { AgentInputArea } from "./components/input";
@@ -1109,27 +1109,66 @@ export class OpenDeskTUI {
     /**
      * 重新订阅一个正在运行的任务的更新流，确保切换回来后
      * 能继续看到新的输出消息。
+     * 当任务完成后，会继续监控任务是否重新变为 running 状态，
+     * 以支持用户通过 channel 持续交互的场景。
      */
     private resubscribeToRunningTask(task: TaskState) {
-        const lastView = this.taskView.getLastAssistantView();
-        if (!lastView) return;
-
         const snapshotTaskId = task.task_id;
-        task.waitUntilFinished(async (chunkUpdate: TaskUpdateChunk) => {
-            // 只有当前任务仍然是活跃任务时才更新视图
-            if (this.activeTaskId !== snapshotTaskId) return;
-            lastView.update(chunkUpdate);
-            if (chunkUpdate.usage) {
-                this.taskView.onStatusBarUpdate?.({ totalTokens: chunkUpdate.usage.total_tokens });
-            }
-            this.tui.requestRender();
-        }).then(() => {
-            if (this.activeTaskId === snapshotTaskId) {
+
+        const subscribeToUpdates = () => {
+            const lastView = this.taskView.getLastAssistantView();
+            if (!lastView) return;
+
+            task.waitUntilFinished(async (chunkUpdate: TaskUpdateChunk) => {
+                // 只有当前任务仍然是活跃任务时才更新视图
+                if (this.activeTaskId !== snapshotTaskId) return;
+                lastView.update(chunkUpdate);
+                this.taskView.invalidate();  // 标记 TaskView 需要重新渲染
+                if (chunkUpdate.usage) {
+                    this.taskView.onStatusBarUpdate?.({ totalTokens: chunkUpdate.usage.total_tokens });
+                }
+                this.tui.requestRender();
+            }).then(() => {
+                if (this.activeTaskId !== snapshotTaskId) return;
+
+                lastView.setStreamingComplete();
+                this.taskView.invalidate();
                 this.inputArea.statusBar.stopTimer();
                 this.inputArea.setStatus('idle');
+                this.tui.requestRender();
                 this.processQueue();
-            }
-        });
+
+                // 任务完成后，启动监控器检查任务是否重新变为 running
+                startRunningMonitor();
+            });
+        };
+
+        // 监控任务是否重新变为 running 状态（支持 channel 持续交互）
+        const startRunningMonitor = () => {
+            const monitorInterval = setInterval(() => {
+                // 如果已切换到其他任务，停止监控
+                if (this.activeTaskId !== snapshotTaskId) {
+                    clearInterval(monitorInterval);
+                    return;
+                }
+
+                // 如果任务重新变为 running，重新订阅并停止监控
+                if (task.task_status === 'running') {
+                    clearInterval(monitorInterval);
+                    this.inputArea.setStatus('running');
+                    this.inputArea.statusBar.startTimer();
+
+                    // 重建历史消息以显示新的用户消息
+                    this.taskView.clearMessages();
+                    this.taskView.rebuildFromHistory();
+                    this.tui.requestRender();
+
+                    subscribeToUpdates();
+                }
+            }, 500);  // 每 500ms 检查一次
+        };
+
+        subscribeToUpdates();
     }
 
     // ─── Memory operation management ──────────────────────

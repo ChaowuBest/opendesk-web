@@ -38,14 +38,7 @@ import path from 'path';
 import fs from 'fs';
 import os from 'os';
 import format from 'string-template';
-
-
-const PAIRING_RESPONSE = `为了让消息收发更加安全，你得先在OpenDesk中批准配对请求 😉
-请求ID: {idLine}
-配对码: {code}
-
-你可以在OpenDesk中直接问：现在有哪些设备配对请求？或者直接说：批准配对码尾号是{codeSuffix}的请求。
-`.trim();
+import { PAIRING_REPLY_TEMPLATE } from './shim.js';
 
 // Winston only uses the first argument as info.message; extra args are dropped.
 // Stringify all args into a single string so nothing is lost.
@@ -274,19 +267,26 @@ function buildPluginRuntime() {
             },
 
             // ── pairing (delegates to persistent storage) ────────────────
+            // The three core methods (buildPairingReply, readAllowFromStore,
+            // upsertPairingRequest) match PluginRuntime.channel.pairing from
+            // the OpenClaw SDK. Extra helpers are OpenDesk additions for the
+            // agent pairing-management commands.
             pairing: {
                 buildPairingReply: (params: any) =>
-                    format(PAIRING_RESPONSE, {
+                    format(PAIRING_REPLY_TEMPLATE, {
                         idLine: params.idLine || '',
                         code: params.code || '',
                         codeSuffix: params.code ? String(params.code).slice(-4) : '',
                     }),
-                readAllowFromStore: (channel: string, accountId: string) =>
-                    getApprovedUserIds(channel, accountId),
+                readAllowFromStore: (params: any) =>
+                    getApprovedUserIds(params?.channel || '', params?.accountId || 'default'),
+                upsertPairingRequest: (params: any) =>
+                    upsertPairingRequest(
+                        params?.channel || '', params?.accountId || 'default',
+                        params?.id || '', params?.meta,
+                    ),
                 isUserApproved: (channel: string, accountId: string, userId: string) =>
                     isUserApproved(channel, accountId, userId),
-                upsertPairingRequest: (channel: string, accountId: string, userId: string, meta?: any) =>
-                    upsertPairingRequest(channel, accountId, userId, meta),
                 removePairingRequest: (channel: string, accountId: string, userId: string) =>
                     removePairingRequest(channel, accountId, userId),
                 listPairingRequests: (channel?: string, accountId?: string) =>

@@ -162,6 +162,7 @@ function extractPackageNameFromTgz(tgzPath: string): string | null {
  */
 export async function installPlugin(npmSpecOrUrl: string): Promise<{ success: boolean; id?: string; error?: string }> {
     const extensionsDir = getExtensionsDir();
+    logger.info(`Extensions directory: ${extensionsDir}`);
     ensureExtensionPackageJson();
 
     // Check if the input is a URL
@@ -182,11 +183,16 @@ export async function installPlugin(npmSpecOrUrl: string): Promise<{ success: bo
 
             // Install from local file
             try {
-                execSync(`npm install "${tempTgzPath}" --save`, {
+                execSync(`npm install --prefix "${extensionsDir}" "${tempTgzPath}" --save`, {
                     cwd: extensionsDir,
-                    stdio: 'pipe',
+                    stdio: 'inherit',
                     timeout: 180000,
+                    env: { ...process.env, npm_config_fund: 'false' },
                 });
+            } catch (npmErr: any) {
+                const errMsg = npmErr?.message || String(npmErr);
+                logger.error(`npm install failed: ${errMsg}`);
+                return { success: false, error: `npm install failed: ${errMsg}` };
             } finally {
                 // Cleanup the temp file
                 if (fs.existsSync(tempTgzPath)) {
@@ -275,25 +281,40 @@ export async function installPlugin(npmSpecOrUrl: string): Promise<{ success: bo
         } else {
             // Original npm spec installation logic
             logger.info(`Installing plugin: ${npmSpecOrUrl}`);
+            logger.info(`Extensions directory: ${extensionsDir}`);
 
-            // Install the npm package
-            execSync(`npm install ${npmSpecOrUrl} --save`, {
-                cwd: extensionsDir,
-                stdio: 'pipe',
-                timeout: 180000,
-            });
-
-            // Ensure the openclaw shim is in place
-            ensureOpenClawShim(extensionsDir);
-
-            // Determine the installed package name
+            // Determine the package name early so we can verify installation
             const pkgName = extractPackageName(npmSpecOrUrl);
             if (!pkgName) {
                 return { success: false, error: `Could not determine package name from spec: ${npmSpecOrUrl}` };
             }
 
-            // Try to find the plugin manifest
+            // Install the npm package
+            // Use --prefix to force npm to use the extensions directory as the
+            // project root, preventing it from walking up the directory tree and
+            // installing into a parent node_modules.
+            try {
+                execSync(`npm install --prefix "${extensionsDir}" ${npmSpecOrUrl} --save`, {
+                    cwd: extensionsDir,
+                    stdio: 'inherit',
+                    timeout: 180000,
+                    env: { ...process.env, npm_config_fund: 'false' },
+                });
+            } catch (npmErr: any) {
+                const errMsg = npmErr?.message || String(npmErr);
+                logger.error(`npm install failed: ${errMsg}`);
+                return { success: false, error: `npm install failed: ${errMsg}` };
+            }
+
+            // Verify the package was actually installed
             const pluginDir = path.join(extensionsDir, 'node_modules', pkgName);
+            if (!fs.existsSync(pluginDir)) {
+                logger.error(`npm install completed but package directory not found: ${pluginDir}`);
+                return { success: false, error: `Package directory not found after install. npm may have installed to a different location. Check that no parent directory contains a package.json that could confuse npm.` };
+            }
+
+            // Ensure the openclaw shim is in place
+            ensureOpenClawShim(extensionsDir);
             let manifest: PluginManifest = { id: pkgName };
             const manifestPath = path.join(pluginDir, PLUGIN_MANIFEST);
             if (fs.existsSync(manifestPath)) {
@@ -355,7 +376,7 @@ export async function uninstallPlugin(pluginId: string): Promise<{ success: bool
 
     try {
         const pkgName = extractPackageName(record.npmSpec) || pluginId;
-        execSync(`npm uninstall ${pkgName}`, {
+        execSync(`npm uninstall --prefix "${extensionsDir}" ${pkgName}`, {
             cwd: extensionsDir,
             stdio: 'pipe',
             timeout: 60000,
@@ -616,6 +637,28 @@ async function loadSinglePlugin(record: PluginInstallRecord): Promise<PluginEntr
 }
 
 // ── Internal: Utilities ──────────────────────────────────────────────────────
+
+/**
+ * Delete the generated openclaw shim and regenerate it.
+ * Useful for debugging when the shim gets out of date.
+ */
+export function resetOpenClawShim(): { success: boolean; error?: string } {
+    try {
+        const extensionsDir = getExtensionsDir();
+        const shimDir = path.join(extensionsDir, 'node_modules', 'openclaw');
+        if (fs.existsSync(shimDir)) {
+            fs.rmSync(shimDir, { recursive: true, force: true });
+            logger.info(`已删除 openclaw shim: ${shimDir}`);
+        }
+        ensureOpenClawShim(extensionsDir);
+        logger.info('openclaw shim 已重新生成');
+        return { success: true };
+    } catch (err: any) {
+        const message = err?.message || String(err);
+        logger.error(`重置 openclaw shim 失败: ${message}`);
+        return { success: false, error: message };
+    }
+}
 
 function extractPackageName(npmSpec: string): string | null {
     // Handle specs like @scope/name@version, name@version, @scope/name, name

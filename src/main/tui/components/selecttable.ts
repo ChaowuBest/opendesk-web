@@ -11,6 +11,28 @@
 
 import { type Component, SelectList, visibleWidth, truncateToWidth, type SelectItem, SelectListTheme } from "@mariozechner/pi-tui";
 
+/**
+ * 清理文本，移除特殊字符和ANSI转义序列
+ */
+function sanitizeText(text: string): string {
+    let clean = text;
+
+    // 移除 <think> 等特殊标签
+    clean = clean.replace(/<think>[\s\S]*?<\/think>/gi, '');
+    clean = clean.replace(/<[^>]+>/g, '');
+
+    // 移除ANSI转义序列（颜色代码等）
+    clean = clean.replace(/\x1b\[[0-9;]*m/g, '');
+
+    // 移除换行符、回车符等会导致文本换行的字符
+    clean = clean.replace(/[\n\r\t]/g, ' ');
+
+    // 移除多余的空格
+    clean = clean.replace(/\s+/g, ' ');
+
+    return clean.trim();
+}
+
 
 export interface SelectRow {
     /** 每列的显示标签 */
@@ -80,7 +102,8 @@ export class SelectTable implements Component {
             let maxWidth = 0;
             for (const row of this.innerRows) {
                 if (row.labels[col] !== undefined) {
-                    maxWidth = Math.max(maxWidth, visibleWidth(row.labels[col]));
+                    const cleanValue = sanitizeText(row.labels[col]);
+                    maxWidth = Math.max(maxWidth, visibleWidth(cleanValue));
                 }
             }
             colMaxWidths.push(maxWidth);
@@ -130,7 +153,7 @@ export class SelectTable implements Component {
         for (const row of this.innerRows) {
             const formattedValues: string[] = [];
             for (let col = 0; col < numCols; col++) {
-                const value = row.labels[col] ?? '';
+                const value = sanitizeText(row.labels[col] ?? '');
                 const colWidth = colWidths[col];
                 const valueWidth = visibleWidth(value);
                 const alignment = this.alignments[col] ?? 'left';

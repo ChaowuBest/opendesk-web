@@ -8,11 +8,17 @@ import { visibleWidth } from "@mariozechner/pi-tui";
 
 type AgentInputStatus = 'idle' | 'running';
 
+export interface ChannelStatusEntry {
+    label: string;
+    online: boolean;
+}
+
 export interface StatusBarData {
     elapsedMs: number;
     totalTokens: number;
     contextSize: number;
     modelName: string;
+    channelStates?: ChannelStatusEntry[];
 }
 
 /**
@@ -93,6 +99,7 @@ export class StatusBar implements Component {
         if (this.timerStarted) {
             this.data.elapsedMs = this.accumulatedMs + (Date.now() - this.timerStart);
         }
+        this.tui?.requestRender();
     }
 
     private formatElapsed(ms: number): string {
@@ -111,7 +118,7 @@ export class StatusBar implements Component {
             return this.cachedOutput;
         }
         this.lastWidth = width;
-        const { elapsedMs, totalTokens, contextSize, modelName } = this.data;
+        const { elapsedMs, totalTokens, contextSize, modelName, channelStates } = this.data;
 
         const parts: string[] = [];
         if (this.timerStarted) {
@@ -129,12 +136,25 @@ export class StatusBar implements Component {
         }
 
         const leftContent = parts.length > 0 ? ` ${parts.join('  │  ')}` : '';
-        const rightHint = '/help 帮助 ';
+
+        // Build right-side content: channel states + /help
+        const rightParts: string[] = [];
+        if (channelStates && channelStates.length > 0) {
+            const channelLabels = channelStates.map(ch =>
+                ch.online
+                    ? chalk.greenBright(`● ${ch.label}`)
+                    : chalk.hex('#666666')(`○ ${ch.label}`)
+            );
+            rightParts.push(channelLabels.join('  '));
+        }
+        rightParts.push(chalk.hex('#d4d4d4')('/help 帮助'));
+        const rightHint = rightParts.join(chalk.hex('#d4d4d4')('  │  ')) + ' ';
+
         const leftW = visibleWidth(leftContent);
         const rightW = visibleWidth(rightHint);
         const gap = Math.max(1, width - leftW - rightW);
         const line = chalk.bgHex('#3a3a3a')(
-            chalk.hex('#d4d4d4')(leftContent) + ' '.repeat(gap) + chalk.hex('#d4d4d4')(rightHint)
+            chalk.hex('#d4d4d4')(leftContent) + ' '.repeat(gap) + rightHint
         );
         this.cachedOutput = [line];
         this.invalidated = false;

@@ -19,13 +19,29 @@ import path from 'path';
 import fs from 'fs';
 import { logger } from '../../../utils/logger.js';
 
+export const PAIRING_REPLY_TEMPLATE = `为了让消息收发更加安全，你得先在OpenDesk中批准配对请求 😉
+请求ID: {idLine}
+配对码: {code}
+
+你可以在OpenDesk中直接问：现在有哪些设备配对请求？或者直接说：批准配对码尾号是{codeSuffix}的请求。`.trim();
+
 /**
  * Ensure the openclaw shim is available in the extensions node_modules.
  * Generates the shim inline so plugins can resolve `openclaw/plugin-sdk`.
  */
 export function ensureOpenClawShim(extensionsDir: string): void {
     const shimTarget = path.join(extensionsDir, 'node_modules', 'openclaw');
-    if (fs.existsSync(path.join(shimTarget, 'package.json'))) {
+    const requiredFiles = [
+        'package.json',
+        'plugin-sdk/index.js',
+        'plugin-sdk/account-id.js',
+        'plugin-sdk/keyed-async-queue.js',
+        'plugin-sdk/feishu.js',
+        'plugin-sdk/compat.js',
+        'plugin-sdk/core.js',
+    ];
+    const allExist = requiredFiles.every(f => fs.existsSync(path.join(shimTarget, f)));
+    if (allExist) {
         return;
     }
     logger.info('正在生成 openclaw 兼容层...');
@@ -48,6 +64,9 @@ function generateInlineShim(shimTarget: string): void {
             './plugin-sdk': './plugin-sdk/index.js',
             './plugin-sdk/account-id': './plugin-sdk/account-id.js',
             './plugin-sdk/keyed-async-queue': './plugin-sdk/keyed-async-queue.js',
+            './plugin-sdk/feishu': './plugin-sdk/feishu.js',
+            './plugin-sdk/compat': './plugin-sdk/compat.js',
+            './plugin-sdk/core': './plugin-sdk/core.js',
         },
     }, null, 2));
 
@@ -63,6 +82,15 @@ function generateInlineShim(shimTarget: string): void {
 
     // Generate plugin-sdk/keyed-async-queue.js
     fs.writeFileSync(path.join(shimTarget, 'plugin-sdk', 'keyed-async-queue.js'), generateKeyedAsyncQueueShim());
+
+    // Generate plugin-sdk/feishu.js
+    fs.writeFileSync(path.join(shimTarget, 'plugin-sdk', 'feishu.js'), generateFeishuShim());
+
+    // Generate plugin-sdk/compat.js
+    fs.writeFileSync(path.join(shimTarget, 'plugin-sdk', 'compat.js'), generateCompatShim());
+
+    // Generate plugin-sdk/core.js
+    fs.writeFileSync(path.join(shimTarget, 'plugin-sdk', 'core.js'), generateCoreShim());
 }
 
 /**
@@ -174,7 +202,23 @@ export function normalizeSecretInputString(v) { return typeof v === 'string' ? v
 export function normalizeResolvedSecretInputString(v) { if (typeof v === 'string') return v; if (v && typeof v === 'object' && 'value' in v) { const raw = v.value; return typeof raw === 'string' ? raw : ''; } return ''; }
 export function buildSecretInputSchema() { return z.union([z.string(), z.object({ source: z.string(), provider: z.string(), id: z.string() })]); }
 
-// ── Pairing (delegates to runtime's persistent pairing store) ────────────────
+// ── Pairing ─────────────────────────────────────────────────────────────────
+// buildPairingReply uses PAIRING_REPLY_TEMPLATE (exported from the top of
+// shim.ts). The same template is also imported by api.ts for the runtime's
+// channel.pairing.buildPairingReply, ensuring a single source of truth.
+
+const _PAIRING_TPL = ${JSON.stringify(PAIRING_REPLY_TEMPLATE)};
+export function buildPairingReply({ channel, idLine, code } = {}) {
+  const codeSuffix = code ? String(code).slice(-4) : '';
+  return _PAIRING_TPL
+    .replace('{idLine}', idLine || '')
+    .replace('{code}', code || '')
+    .replace('{codeSuffix}', codeSuffix);
+}
+
+// createScopedPairingAccess: wraps core.channel.pairing with pre-bound
+// channel + accountId so callers don't repeat them on every call.
+// Real SDK signature: { accountId, readAllowFromStore, readStoreForDmPolicy, upsertPairingRequest }
 
 export function createScopedPairingAccess({ core, channel, accountId } = {}) {
   const ch = channel || 'unknown';
@@ -182,31 +226,54 @@ export function createScopedPairingAccess({ core, channel, accountId } = {}) {
   const p = core?.channel?.pairing;
 
   return {
-    check: async ({ userId } = {}) => {
-      if (p?.isUserApproved) return { allowed: p.isUserApproved(ch, acc, userId) };
-      return { allowed: true };
-    },
-    revoke: async ({ userId } = {}) => {
-      if (p?.revokeUser) p.revokeUser(ch, acc, userId);
-    },
+    accountId: acc,
     readAllowFromStore: async () => {
-      if (p?.readAllowFromStore) return p.readAllowFromStore(ch, acc);
+      if (p?.readAllowFromStore) return p.readAllowFromStore({ channel: ch, accountId: acc });
       return [];
     },
-    upsertPairingRequest: async (params) => {
-      if (p?.upsertPairingRequest) return p.upsertPairingRequest(ch, acc, params?.id, params?.meta);
+    readStoreForDmPolicy: async (provider, acctId) => {
+      if (p?.readAllowFromStore) return p.readAllowFromStore({ channel: provider || ch, accountId: acctId || acc });
+      return [];
+    },
+    upsertPairingRequest: async (input) => {
+      if (p?.upsertPairingRequest) return p.upsertPairingRequest({ channel: ch, accountId: acc, id: input?.id, meta: input?.meta });
       return { code: String(Math.floor(100000 + Math.random() * 900000)), created: true };
-    },
-    removePairingRequest: async ({ userId } = {}) => {
-      if (p?.removePairingRequest) return p.removePairingRequest(ch, acc, userId);
-    },
-    listPairingRequests: async () => {
-      if (p?.listPairingRequests) return p.listPairingRequests(ch, acc);
-      return [];
     },
   };
 }
-export function issuePairingChallenge() { return { code:'000000', expiresAt: new Date(Date.now()+300000) }; }
+
+// issuePairingChallenge: shared pairing challenge issuance for DM pairing
+// policy pathways. Calls upsertPairingRequest to persist the request (and
+// obtain its code), then sends the challenge text via sendPairingReply.
+// Returns { created, code }.
+
+export async function issuePairingChallenge(params) {
+  if (!params) return { created: false };
+  let code;
+  let created = false;
+  try {
+    const result = await params.upsertPairingRequest({ id: params.senderId, meta: params.meta });
+    code = result?.code;
+    created = result?.created ?? false;
+  } catch {
+    return { created: false };
+  }
+  if (!code) return { created, code };
+  if (created) {
+    try { params.onCreated?.({ code }); } catch {}
+  }
+  if (params.sendPairingReply) {
+    const text = typeof params.buildReplyText === 'function'
+      ? params.buildReplyText({ code, senderIdLine: params.senderIdLine })
+      : buildPairingReply({ channel: params.channel, idLine: params.senderIdLine, code });
+    try {
+      await params.sendPairingReply(text);
+    } catch (err) {
+      try { params.onReplyError?.(err); } catch {}
+    }
+  }
+  return { created, code };
+}
 export function isDangerousNameMatchingEnabled() { return false; }
 export function promptSingleChannelSecretInput() { return Promise.resolve(''); }
 export function promptAccountId() { return Promise.resolve('default'); }
@@ -352,6 +419,418 @@ export function registerAcpRuntimeBackend() {}
 export function requireAcpRuntimeBackend() { return null; }
 export function unregisterAcpRuntimeBackend() {}
 export class AcpRuntimeError extends Error { constructor(m,c) { super(m); this.code=c; } }
+
+// ── Additional constants ─────────────────────────────────────────────────────
+
+export const SILENT_REPLY_TOKEN = '__SILENT__';
+export const DEFAULT_WEBHOOK_BODY_TIMEOUT_MS = 30000;
+export const DEFAULT_WEBHOOK_MAX_BODY_BYTES = 10 * 1024 * 1024;
+export const DM_GROUP_ACCESS_REASON = 'dm';
+export const WEBHOOK_ANOMALY_STATUS_CODES = [429, 500, 502, 503, 504];
+export const WEBHOOK_BODY_READ_DEFAULTS = { timeoutMs: 30000, maxBytes: 10 * 1024 * 1024 };
+export const WEBHOOK_IN_FLIGHT_DEFAULTS = { maxConcurrent: 50 };
+export const SecretInputSchema = z.union([z.string(), z.object({ source: z.string(), provider: z.string(), id: z.string() })]);
+export const GoogleChatConfigSchema = z.object({}).passthrough();
+export const IMessageConfigSchema = z.object({}).passthrough();
+export const WhatsAppConfigSchema = z.object({}).passthrough();
+export const LineConfigSchema = z.object({}).passthrough();
+export const MSTeamsConfigSchema = z.object({}).passthrough();
+export const SignalConfigSchema = z.object({}).passthrough();
+export class RequestBodyLimitError extends Error { constructor(m) { super(m); this.name='RequestBodyLimitError'; } }
+export class SsrFBlockedError extends Error { constructor(m) { super(m); this.name='SsrFBlockedError'; } }
+export class KeyedAsyncQueue {
+  constructor() { this.tails = new Map(); }
+  getTailMapForTesting() { return this.tails; }
+  enqueue(key, task, hooks) {
+    return enqueueKeyedTask({ tails: this.tails, key, task, ...(hooks ? { hooks } : {}) });
+  }
+}
+export function enqueueKeyedTask(params) {
+  params.hooks?.onEnqueue?.();
+  const current = (params.tails.get(params.key) ?? Promise.resolve()).catch(() => void 0).then(params.task).finally(() => { params.hooks?.onSettle?.(); });
+  const tail = current.then(() => void 0, () => void 0);
+  params.tails.set(params.key, tail);
+  tail.finally(() => { if (params.tails.get(params.key) === tail) params.tails.delete(params.key); });
+  return current;
+}
+
+// ── Channel status (extended) ────────────────────────────────────────────────
+
+export function buildProbeChannelStatusSummary(p) { return { channelId: p?.channelId||'', accountId: p?.accountId||'default', online: false, statusText: 'probe' }; }
+export function buildRuntimeAccountStatusSnapshot(p) { return { channelId: p?.channelId||'', accountId: p?.accountId||'default', online: false, statusText: 'unknown', ...(p||{}) }; }
+export function buildBaseAccountStatusSnapshot(p) { return { channelId: p?.channelId||'', accountId: p?.accountId||'default', online: false, statusText: 'unknown' }; }
+export function buildComputedAccountStatusSnapshot(p) { return buildBaseAccountStatusSnapshot(p); }
+export function buildTokenChannelStatusSummary(p) { return buildBaseChannelStatusSummary(p); }
+export function buildChannelSendResult(p) { return { delivered: false, ...(p||{}) }; }
+
+// ── Config / Channel (extended) ──────────────────────────────────────────────
+
+export function evaluateSenderGroupAccessForPolicy() { return { allowed: true, reason: 'open' }; }
+export function mergeAllowFromEntries(...lists) { return lists.flat().filter(Boolean); }
+export function normalizeAgentId(id) { return String(id || 'default'); }
+export function normalizeChannelSlug(s) { return String(s||'').toLowerCase().replace(/[^a-z0-9_-]/g, '-'); }
+export function setTopLevelChannelAllowFrom(cfg, channelId, entries) { return cfg; }
+export function setTopLevelChannelDmPolicyWithAllowFrom(cfg, channelId, policy, entries) { return cfg; }
+export function setTopLevelChannelGroupPolicy(cfg, channelId, policy) { return cfg; }
+export function splitOnboardingEntries(entries) { return { valid: entries || [], invalid: [] }; }
+export function buildSingleChannelSecretPromptState() { return { prompted: false, value: '' }; }
+export function buildChannelConfigSchema(shape) { return z.object(shape || {}); }
+export function buildChannelKeyCandidates(channelId) { return [channelId]; }
+export function listConfiguredAccountIds(cfg, channelId) { return ['default']; }
+
+// ── Misc utilities ───────────────────────────────────────────────────────────
+
+export function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+export function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
+export function safeParseJson(s, fallback) { try { return JSON.parse(s); } catch { return fallback; } }
+export function escapeRegExp(s) { return String(s||'').replace(/[.*+?^\${}()|[\\]\\\\]/g, '\\\\$$&'); }
+export function stripAnsi(s) { return String(s||'').replace(/\\x1B\\[[0-9;]*[a-zA-Z]/g, ''); }
+export function stripMarkdown(s) { return String(s||''); }
+export function isSilentReplyText(t) { return t === '__SILENT__'; }
+export function isTruthyEnvValue(v) { return v === '1' || v === 'true' || v === 'yes'; }
+export function resolveTimezone(tz) { return tz || 'UTC'; }
+export function formatUtcTimestamp(d) { return (d || new Date()).toISOString(); }
+export function formatZonedTimestamp(d) { return (d || new Date()).toISOString(); }
+export function formatErrorMessage(e) { return e?.message || String(e || 'Unknown error'); }
+export function redactSensitiveText(t) { return t || ''; }
+export function rawDataToString(d) { return typeof d === 'string' ? d : JSON.stringify(d); }
+export function writeJsonFileAtomically(fp, data) { fs.writeFileSync(fp, JSON.stringify(data, null, 2), 'utf-8'); }
+export function assertSecretInputResolved() {}
+export function isSecretRef(v) { return v && typeof v === 'object' && 'source' in v; }
+export function isRequestBodyLimitError(e) { return e instanceof RequestBodyLimitError; }
+export function isJsonContentType(ct) { return /application\\/json/i.test(ct || ''); }
+export function jsonResult(data) { return { status: 200, body: data }; }
+export function resolveRuntimeEnv() { return {}; }
+export function resolveRuntimeEnvWithUnavailableExit() { return {}; }
+export function resolvePreferredOpenClawTmpDir() { return os.tmpdir(); }
+export function createLoggerBackedRuntime() { return {}; }
+export function waitUntilAbort(signal) { return new Promise((_, reject) => { signal?.addEventListener?.('abort', () => reject(signal.reason)); }); }
+export function keepHttpServerTaskAlive() {}
+
+// ── Inbound / Dispatch ───────────────────────────────────────────────────────
+
+export function buildInboundReplyDispatchBase(p) { return p || {}; }
+export function createInboundEnvelopeBuilder() { return (p) => p; }
+export function dispatchInboundReplyWithBase() { return Promise.resolve({ delivered: false }); }
+export function dispatchReplyFromConfigWithSettledDispatcher() { return Promise.resolve({ delivered: false }); }
+export function recordInboundSession() {}
+export function recordInboundSessionAndDispatchReply() { return Promise.resolve({ delivered: false }); }
+export function resolveInboundRouteEnvelopeBuilder() { return (p) => p; }
+export function resolveInboundRouteEnvelopeBuilderWithRuntime() { return (p) => p; }
+export function resolveInboundSessionEnvelopeContext(p) { return p || {}; }
+export function logInboundDrop() {}
+export function formatInboundFromLabel(p) { return p?.from || 'unknown'; }
+
+// ── Webhook (extended) ───────────────────────────────────────────────────────
+
+export function registerWebhookTarget() {}
+export function registerWebhookTargetWithPluginRoute() {}
+export function resolveWebhookTargets() { return []; }
+export function resolveSingleWebhookTarget() { return null; }
+export function resolveSingleWebhookTargetAsync() { return Promise.resolve(null); }
+export function resolveWebhookTargetWithAuthOrReject() { return null; }
+export function resolveWebhookTargetWithAuthOrRejectSync() { return null; }
+export function rejectNonPostWebhookRequest() { return false; }
+export function readWebhookBodyOrReject() { return Promise.resolve(null); }
+export function readJsonWebhookBodyOrReject() { return Promise.resolve(null); }
+export function readRequestBodyWithLimit() { return Promise.resolve(Buffer.alloc(0)); }
+export function readJsonBodyWithLimit() { return Promise.resolve({}); }
+export function requestBodyErrorToText(e) { return e?.message || ''; }
+export function beginWebhookRequestPipelineOrReject() { return Promise.resolve(null); }
+export function withResolvedWebhookRequestPipeline() { return Promise.resolve(); }
+export function createWebhookInFlightLimiter() { return { check: () => ({ allowed: true }), reset: () => {} }; }
+export function resolveRequestUrl(req) { return req?.url || ''; }
+
+// ── Allowlist / DM / Group (extended) ────────────────────────────────────────
+
+export function buildAccountScopedDmSecurityPolicy() { return { policy: 'open', allowFrom: [] }; }
+export function createAllowedChatSenderMatcher() { return () => true; }
+export function resolveEffectiveAllowFromLists() { return []; }
+export function resolveDmAllowState() { return { allowed: true }; }
+export function resolveDmGroupAccessDecision() { return { allowed: true, reason: 'open' }; }
+export function resolveDmGroupAccessWithCommandGate() { return { allowed: true, reason: 'open' }; }
+export function resolveDmGroupAccessWithLists() { return { allowed: true, reason: 'open' }; }
+export function resolveDirectDmAuthorizationOutcome() { return { allowed: true }; }
+export function resolveNestedAllowlistDecision() { return { allowed: true }; }
+export function evaluateGroupRouteAccessForPolicy() { return { allowed: true }; }
+export function evaluateMatchedGroupAccessForPolicy() { return { allowed: true }; }
+export function resolveSenderScopedGroupPolicy() { return 'open'; }
+export function resolveControlCommandGate() { return { allowed: true }; }
+export function resolveToolsBySender() { return []; }
+export function createActionGate() { return { check: () => true }; }
+export function mapAllowFromEntries(entries) { return entries || []; }
+export function mapAllowlistResolutionInputs(entries) { return entries || []; }
+export function mapBasicAllowlistResolutionEntries(entries) { return entries || []; }
+export function formatAllowlistMatchMeta() { return ''; }
+export function formatNormalizedAllowFromEntries(entries) { return entries || []; }
+export function formatTrimmedAllowFromEntries(entries) { return entries || []; }
+export function resolveAllowlistMatchByCandidates() { return null; }
+export function resolveAllowlistMatchSimple() { return null; }
+export function readStoreAllowFromForDmPolicy() { return []; }
+export function formatPairingApproveHint() { return ''; }
+export function formatResolvedUnresolvedNote() { return ''; }
+export function mergeAllowlist(...lists) { return lists.flat().filter(Boolean); }
+
+// ── Config helpers (extended) ────────────────────────────────────────────────
+
+export function createScopedAccountConfigAccessors() { return { get: () => ({}), set: () => {} }; }
+export function resolveAccountWithDefaultFallback(cfg, channelId, accountId) { return cfg?.channels?.[channelId]?.accounts?.[accountId] || {}; }
+export function resolveAccountIdForConfigure() { return 'default'; }
+export function resolveOptionalConfigString(v) { return v || undefined; }
+export function deleteAccountFromConfigSection() {}
+export function setAccountEnabledInConfigSection() {}
+export function clearAccountEntryFields() {}
+export function applyAccountNameToChannelSection() {}
+export function migrateBaseNameToDefaultAccount() {}
+export function resolveChannelEntryMatch() { return null; }
+export function resolveChannelEntryMatchWithFallback() { return null; }
+export function resolveChannelMediaMaxBytes() { return 10 * 1024 * 1024; }
+export function resolveChannelGroupRequireMention() { return false; }
+export function promptChannelAccessConfig() { return Promise.resolve({}); }
+
+// ── Mention / Gating (extended) ──────────────────────────────────────────────
+
+export function resolveMentionGating(opts) { return { allowed: true, reason: 'bypass' }; }
+
+// ── Outbound (extended) ──────────────────────────────────────────────────────
+
+export function chunkTextForOutbound(text) { return [text]; }
+export function sendPayloadWithChunkedTextAndMedia() { return Promise.resolve({ delivered: false }); }
+export function loadOutboundMediaFromUrl() { return Promise.resolve(null); }
+export function loadWebMedia() { return Promise.resolve(null); }
+export function detectMime() { return 'application/octet-stream'; }
+export function extensionForMime() { return ''; }
+export function getFileExtension(f) { return path.extname(f || ''); }
+export function extractOriginalFilename() { return ''; }
+export function buildRandomTempFilePath() { return path.join(os.tmpdir(), 'tmp-' + Date.now()); }
+export function missingTargetError(target) { return new Error('Missing target: ' + target); }
+
+// ── Ack / Reaction ──────────────────────────────────────────────────────────
+
+export function shouldAckReaction() { return false; }
+export function shouldAckReactionForWhatsApp() { return false; }
+export function resolveAckReaction() { return null; }
+export function removeAckReactionAfterReply() { return Promise.resolve(); }
+export function logAckFailure() {}
+
+// ── Reply prefix / history (extended) ────────────────────────────────────────
+
+export function createReplyPrefixOptions() { return {}; }
+export function recordPendingHistoryEntry() {}
+export function clearHistoryEntries() {}
+export function evictOldHistoryKeys() {}
+
+// ── Hostname / Network (extended) ────────────────────────────────────────────
+
+export function buildHostnameAllowlistPolicyFromSuffixAllowlist() { return { check: () => true }; }
+export function normalizeHostnameSuffixAllowlist() { return []; }
+export function isBlockedHostname() { return false; }
+export function isBlockedHostnameOrIp() { return false; }
+export function isHttpsUrlAllowedByHostnameSuffixAllowlist() { return true; }
+export function isPrivateIpAddress() { return false; }
+export function fetchWithBearerAuthScopeFallback(url, opts) { return fetch(url, opts); }
+export function resolveGatewayBindUrl() { return ''; }
+export function resolveTailnetHostWithRunner() { return Promise.resolve(''); }
+export function toFormUrlEncoded(obj) { return new URLSearchParams(obj).toString(); }
+
+// ── Windows / WSL ────────────────────────────────────────────────────────────
+
+export function isWSLEnv() { return false; }
+export function isWSLSync() { return false; }
+export function isWSL2Sync() { return false; }
+export function applyWindowsSpawnProgramPolicy() { return {}; }
+export function resolveWindowsExecutablePath() { return ''; }
+export function resolveWindowsSpawnProgram() { return ''; }
+export function resolveWindowsSpawnProgramCandidate() { return ''; }
+export function materializeWindowsSpawnProgram() { return ''; }
+
+// ── Diagnostics ──────────────────────────────────────────────────────────────
+
+export function isDiagnosticsEnabled() { return false; }
+export function emitDiagnosticEvent() {}
+export function onDiagnosticEvent() { return () => {}; }
+export function registerLogTransport() {}
+export function registerContextEngine() {}
+
+// ── Text / Format ────────────────────────────────────────────────────────────
+
+export function hasMarkdownToConvert(t) { return false; }
+export function toLocationContext() { return ''; }
+export function formatLocationText() { return ''; }
+export function summarizeMapping() { return ''; }
+export function optionalStringEnum() { return z.string().optional(); }
+export function stringEnum() { return z.string(); }
+export function readBooleanParam(p) { return !!p; }
+export function readNumberParam(p) { return Number(p) || 0; }
+export function readStringParam(p) { return String(p || ''); }
+export function readReactionParams() { return {}; }
+export function createBoundedCounter() { let c = 0; return { inc: () => ++c, dec: () => --c, value: () => c, reset: () => { c = 0; } }; }
+export function generatePkceVerifierChallenge() { return { verifier: '', challenge: '' }; }
+
+// ── Pairing (extended) ───────────────────────────────────────────────────────
+
+export function approveDevicePairing() { return Promise.resolve(); }
+export function rejectDevicePairing() { return Promise.resolve(); }
+export function listDevicePairing() { return Promise.resolve([]); }
+
+// ── Plugin command ───────────────────────────────────────────────────────────
+
+export function runPluginCommandWithTimeout() { return Promise.resolve(); }
+export function listSkillCommandsForAgents() { return []; }
+export function buildOauthProviderAuthResult() { return {}; }
+
+// ── Platform-specific stubs ──────────────────────────────────────────────────
+
+export function extractSlackToolSend() { return null; }
+export function buildSlackThreadingToolContext() { return {}; }
+export function listSlackMessageActions() { return []; }
+export function listEnabledSlackAccounts() { return []; }
+export function resolveSlackReplyToMode() { return 'thread'; }
+export function buildDiscordSendOptions() { return {}; }
+export function buildDiscordSendMediaOptions() { return {}; }
+export function tagDiscordChannelResult() { return {}; }
+export function collectDiscordAuditChannelIds() { return []; }
+export function processLineMessage() { return Promise.resolve(); }
+export function parseTelegramReplyToMessageId() { return null; }
+export function parseTelegramThreadId() { return null; }
+export function normalizeE164(v) { return String(v || ''); }
+export function isNumericTargetId(v) { return /^\\d+$/.test(v || ''); }
+export function isWhatsAppGroupJid(v) { return false; }
+export function getChatChannelMeta() { return {}; }
+export function parseChatAllowTargetPrefixes() { return []; }
+export function parseChatTargetPrefixesOrThrow() { return []; }
+export function resolveServicePrefixedTarget() { return ''; }
+export function resolveServicePrefixedChatTarget() { return ''; }
+export function resolveServicePrefixedAllowTarget() { return ''; }
+export function resolveServicePrefixedOrChatAllowTarget() { return ''; }
+
+// ── Platform account resolvers ───────────────────────────────────────────────
+
+export function listTelegramAccountIds() { return ['default']; }
+export function listDiscordAccountIds() { return ['default']; }
+export function listSlackAccountIds() { return ['default']; }
+export function listSignalAccountIds() { return ['default']; }
+export function listWhatsAppAccountIds() { return ['default']; }
+export function listIMessageAccountIds() { return ['default']; }
+export function listLineAccountIds() { return ['default']; }
+export function resolveDefaultTelegramAccountId() { return 'default'; }
+export function resolveDefaultDiscordAccountId() { return 'default'; }
+export function resolveDefaultSlackAccountId() { return 'default'; }
+export function resolveDefaultSignalAccountId() { return 'default'; }
+export function resolveDefaultWhatsAppAccountId() { return 'default'; }
+export function resolveDefaultIMessageAccountId() { return 'default'; }
+export function resolveDefaultLineAccountId() { return 'default'; }
+export function resolveTelegramAccount(cfg) { return cfg || {}; }
+export function resolveDiscordAccount(cfg) { return cfg || {}; }
+export function resolveSlackAccount(cfg) { return cfg || {}; }
+export function resolveSignalAccount(cfg) { return cfg || {}; }
+export function resolveWhatsAppAccount(cfg) { return cfg || {}; }
+export function resolveIMessageAccount(cfg) { return cfg || {}; }
+export function resolveLineAccount(cfg) { return cfg || {}; }
+
+// ── Platform directory ───────────────────────────────────────────────────────
+
+export function listTelegramDirectoryGroupsFromConfig() { return []; }
+export function listTelegramDirectoryPeersFromConfig() { return []; }
+export function listDiscordDirectoryGroupsFromConfig() { return []; }
+export function listDiscordDirectoryPeersFromConfig() { return []; }
+export function listSlackDirectoryGroupsFromConfig() { return []; }
+export function listSlackDirectoryPeersFromConfig() { return []; }
+export function listWhatsAppDirectoryGroupsFromConfig() { return []; }
+export function listWhatsAppDirectoryPeersFromConfig() { return []; }
+export function listDirectoryGroupEntriesFromMapKeys() { return []; }
+export function listDirectoryGroupEntriesFromMapKeysAndAllowFrom() { return []; }
+export function listDirectoryUserEntriesFromAllowFrom() { return []; }
+export function listDirectoryUserEntriesFromAllowFromAndMapKeys() { return []; }
+
+// ── Platform messaging targets ───────────────────────────────────────────────
+
+export function normalizeTelegramMessagingTarget(t) { return t || ''; }
+export function normalizeDiscordMessagingTarget(t) { return t || ''; }
+export function normalizeDiscordOutboundTarget(t) { return t || ''; }
+export function normalizeSlackMessagingTarget(t) { return t || ''; }
+export function normalizeSignalMessagingTarget(t) { return t || ''; }
+export function normalizeWhatsAppMessagingTarget(t) { return t || ''; }
+export function normalizeWhatsAppTarget(t) { return t || ''; }
+export function normalizeIMessageMessagingTarget(t) { return t || ''; }
+export function normalizeLineAccountId(id) { return id || 'default'; }
+
+// ── Platform looksLike targets ───────────────────────────────────────────────
+
+export function looksLikeTelegramTargetId() { return false; }
+export function looksLikeDiscordTargetId() { return false; }
+export function looksLikeSlackTargetId() { return false; }
+export function looksLikeSignalTargetId() { return false; }
+export function looksLikeWhatsAppTargetId() { return false; }
+export function looksLikeIMessageTargetId() { return false; }
+
+// ── Platform group policy ────────────────────────────────────────────────────
+
+export function resolveTelegramGroupRequireMention() { return false; }
+export function resolveDiscordGroupRequireMention() { return false; }
+export function resolveSlackGroupRequireMention() { return false; }
+export function resolveGoogleChatGroupRequireMention() { return false; }
+export function resolveBlueBubblesGroupRequireMention() { return false; }
+export function resolveIMessageGroupRequireMention() { return false; }
+export function resolveWhatsAppGroupRequireMention() { return false; }
+export function resolveTelegramGroupToolPolicy() { return 'auto'; }
+export function resolveDiscordGroupToolPolicy() { return 'auto'; }
+export function resolveSlackGroupToolPolicy() { return 'auto'; }
+export function resolveGoogleChatGroupToolPolicy() { return 'auto'; }
+export function resolveBlueBubblesGroupToolPolicy() { return 'auto'; }
+export function resolveIMessageGroupToolPolicy() { return 'auto'; }
+export function resolveWhatsAppGroupToolPolicy() { return 'auto'; }
+
+// ── Platform status / inspect ────────────────────────────────────────────────
+
+export function collectTelegramStatusIssues() { return []; }
+export function collectDiscordStatusIssues() { return []; }
+export function collectWhatsAppStatusIssues() { return []; }
+export function collectBlueBubblesStatusIssues() { return []; }
+export function collectStatusIssuesFromLastError() { return []; }
+export function inspectTelegramAccount() { return {}; }
+export function inspectDiscordAccount() { return {}; }
+export function inspectSlackAccount() { return {}; }
+
+// ── Platform onboarding adapters ─────────────────────────────────────────────
+
+export function telegramOnboardingAdapter() { return {}; }
+export function discordOnboardingAdapter() { return {}; }
+export function slackOnboardingAdapter() { return {}; }
+export function signalOnboardingAdapter() { return {}; }
+export function imessageOnboardingAdapter() { return {}; }
+export function whatsappOnboardingAdapter() { return {}; }
+
+// ── Platform config helpers ──────────────────────────────────────────────────
+
+export function resolveIMessageConfigAllowFrom() { return []; }
+export function resolveIMessageConfigDefaultTo() { return ''; }
+export function resolveWhatsAppConfigAllowFrom() { return []; }
+export function resolveWhatsAppConfigDefaultTo() { return ''; }
+export function normalizeWhatsAppAllowFromEntries() { return []; }
+export function formatWhatsAppConfigAllowFromEntries() { return []; }
+export function resolveWhatsAppOutboundTarget() { return ''; }
+export function resolveWhatsAppGroupIntroHint() { return ''; }
+export function resolveWhatsAppHeartbeatRecipients() { return []; }
+export function resolveWhatsAppMentionStripPatterns() { return []; }
+export function collectAllowlistProviderGroupPolicyWarnings() { return []; }
+export function collectAllowlistProviderRestrictSendersWarnings() { return []; }
+export function collectOpenProviderGroupPolicyWarnings() { return []; }
+export function collectOpenGroupPolicyConfiguredRouteWarnings() { return []; }
+export function collectOpenGroupPolicyRestrictSendersWarnings() { return []; }
+export function collectOpenGroupPolicyRouteAllowlistWarnings() { return []; }
+export function buildOpenGroupPolicyWarning() { return ''; }
+export function buildOpenGroupPolicyConfigureRouteAllowlistWarning() { return ''; }
+export function buildOpenGroupPolicyNoRouteAllowlistWarning() { return ''; }
+export function buildOpenGroupPolicyRestrictSendersWarning() { return ''; }
+
+// ── Cards ────────────────────────────────────────────────────────────────────
+
+export function createActionCard() { return {}; }
+export function createImageCard() { return {}; }
+export function createInfoCard() { return {}; }
+export function createListCard() { return {}; }
+export function createReceiptCard() { return {}; }
 `.trim();
 }
 
@@ -360,11 +839,26 @@ export class AcpRuntimeError extends Error { constructor(m,c) { super(m); this.c
  */
 function generateAccountIdShim(): string {
     return `
-export const DEFAULT_ACCOUNT_ID = 'default';
-export function normalizeAccountId(id) { return id || DEFAULT_ACCOUNT_ID; }
-export function isDefaultAccountId(id) { return !id || id === DEFAULT_ACCOUNT_ID; }
-export function parseAccountId(raw) { const p = String(raw||'').split(':'); return { channelId: p[0]||'', accountId: p[1]||DEFAULT_ACCOUNT_ID }; }
-export function formatAccountId(c, a) { return c + ':' + (a||DEFAULT_ACCOUNT_ID); }
+const DEFAULT_ACCOUNT_ID = 'default';
+const VALID_ID_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/i;
+const INVALID_CHARS_RE = /[^a-z0-9_-]+/g;
+function canonicalizeAccountId(value) {
+  if (VALID_ID_RE.test(value)) return value.toLowerCase();
+  return value.toLowerCase().replace(INVALID_CHARS_RE, '-').replace(/^-+/, '').replace(/-+$/, '').slice(0, 64);
+}
+function normalizeAccountId(value) {
+  const trimmed = (value ?? '').trim();
+  if (!trimmed) return DEFAULT_ACCOUNT_ID;
+  const canonical = canonicalizeAccountId(trimmed);
+  return (!canonical || canonical === '__proto__' || canonical === 'prototype' || canonical === 'constructor') ? 'default' : canonical;
+}
+function normalizeOptionalAccountId(value) {
+  const trimmed = (value ?? '').trim();
+  if (!trimmed) return undefined;
+  const canonical = canonicalizeAccountId(trimmed);
+  return (!canonical || canonical === '__proto__' || canonical === 'prototype' || canonical === 'constructor') ? undefined : canonical;
+}
+export { DEFAULT_ACCOUNT_ID, normalizeAccountId, normalizeOptionalAccountId };
 `.trim();
 }
 
@@ -373,12 +867,69 @@ export function formatAccountId(c, a) { return c + ':' + (a||DEFAULT_ACCOUNT_ID)
  */
 function generateKeyedAsyncQueueShim(): string {
     return `
-export class KeyedAsyncQueue {
-  constructor() { this._q = new Map(); }
-  async enqueue(k, fn) { if(!this._q.has(k)) this._q.set(k,Promise.resolve()); const p=this._q.get(k); const n=p.then(()=>fn()).catch(()=>fn()); this._q.set(k,n.catch(()=>{})); return n; }
-  has(k) { return this._q.has(k); }
-  clear(k) { k ? this._q.delete(k) : this._q.clear(); }
+function enqueueKeyedTask(params) {
+  params.hooks?.onEnqueue?.();
+  const current = (params.tails.get(params.key) ?? Promise.resolve()).catch(() => void 0).then(params.task).finally(() => { params.hooks?.onSettle?.(); });
+  const tail = current.then(() => void 0, () => void 0);
+  params.tails.set(params.key, tail);
+  tail.finally(() => { if (params.tails.get(params.key) === tail) params.tails.delete(params.key); });
+  return current;
 }
-export function createKeyedAsyncQueue() { return new KeyedAsyncQueue(); }
+class KeyedAsyncQueue {
+  constructor() { this.tails = new Map(); }
+  getTailMapForTesting() { return this.tails; }
+  enqueue(key, task, hooks) {
+    return enqueueKeyedTask({ tails: this.tails, key, task, ...(hooks ? { hooks } : {}) });
+  }
+}
+export { KeyedAsyncQueue, enqueueKeyedTask };
+`.trim();
+}
+
+/**
+ * Generate the feishu shim module.
+ */
+function generateFeishuShim(): string {
+    return `export {
+  DEFAULT_ACCOUNT_ID, DEFAULT_GROUP_HISTORY_LIMIT, PAIRING_APPROVED_MESSAGE,
+  WEBHOOK_ANOMALY_COUNTER_DEFAULTS, WEBHOOK_RATE_LIMIT_DEFAULTS,
+  addWildcardAllowFrom, applyBasicWebhookRequestGuards, buildAgentMediaPayload,
+  buildBaseChannelStatusSummary, buildPendingHistoryContextFromMap,
+  buildProbeChannelStatusSummary, buildRuntimeAccountStatusSnapshot,
+  buildSecretInputSchema, buildSingleChannelSecretPromptState,
+  clearHistoryEntriesIfEnabled, createDedupeCache, createDefaultChannelRuntimeState,
+  createFixedWindowRateLimiter, createPersistentDedupe, createReplyPrefixContext,
+  createScopedPairingAccess, createTypingCallbacks, createWebhookAnomalyTracker,
+  emptyPluginConfigSchema, evaluateSenderGroupAccessForPolicy, fetchWithSsrFGuard,
+  formatDocsLink, hasConfiguredSecretInput, installRequestBodyLimitGuard,
+  issuePairingChallenge, logTypingFailure, mergeAllowFromEntries, normalizeAgentId,
+  normalizeResolvedSecretInputString, normalizeSecretInputString,
+  promptSingleChannelSecretInput, readJsonFileWithFallback,
+  recordPendingHistoryEntryIfEnabled, resolveAllowlistProviderRuntimeGroupPolicy,
+  resolveDefaultGroupPolicy, resolveOpenProviderRuntimeGroupPolicy,
+  setTopLevelChannelAllowFrom, setTopLevelChannelDmPolicyWithAllowFrom,
+  setTopLevelChannelGroupPolicy, splitOnboardingEntries,
+  warnMissingProviderGroupPolicyFallbackOnce, withTempDownloadPath,
+} from './index.js';
+`.trim();
+}
+
+/**
+ * Generate the compat shim module.
+ */
+function generateCompatShim(): string {
+    return `export * from './index.js';`;
+}
+
+/**
+ * Generate the core shim module.
+ */
+function generateCoreShim(): string {
+    return `export {
+  approveDevicePairing, rejectDevicePairing, listDevicePairing,
+  emptyPluginConfigSchema, resolveGatewayBindUrl,
+  resolvePreferredOpenClawTmpDir, resolveTailnetHostWithRunner,
+  runPluginCommandWithTimeout, buildOauthProviderAuthResult,
+} from './index.js';
 `.trim();
 }

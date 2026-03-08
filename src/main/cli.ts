@@ -12,7 +12,7 @@
 import { setPlatform } from '../platforms/base';
 import { CliPlatform } from '../platforms/cli.js';
 import { isMainThread } from 'worker_threads';
-import { useCliTransport, interceptConsole } from './utils/logger.js';
+import { useCliTransport, useConsoleTransport, interceptConsole } from './utils/logger.js';
 import { initializeRegistry, initializeRegistryWorker, ApplicationRegistry } from './applications/registry';
 import { initializeAppWorkers } from './applications/worker';
 import { GlobalState } from './states/global.js';
@@ -20,7 +20,7 @@ import { FULL_CLEAR } from './tui/components/constants';
 import { OpenDeskTUI, CommandLineArgs } from './tui/entry.js';
 import { Setting } from './utils/setting';
 import { program as prog } from 'commander';
-import { installPlugin, uninstallPlugin, listInstalledPlugins, setPluginEnabled } from './aikernel/plugins/index.js';
+import { installPlugin, uninstallPlugin, listInstalledPlugins, setPluginEnabled, resetOpenClawShim } from './aikernel/plugins/index.js';
 import { ChannelMgrApplication } from './applications/channelmgr/app.js';
 import { ChannelMessageRouter } from './applications/channelmgr/router.js';
 import { ShellAgentDecl } from './aikernel/agents/shellagent.js';
@@ -44,6 +44,7 @@ function parseCommandLineArgs() {
         .description('安装插件 (npm 包名、路径或 .tgz 文件 URL)')
         .action(async (spec: string) => {
             useCliTransport();
+            useConsoleTransport();  // Also output logs to console
             console.log(`正在安装插件: ${spec} ...`);
             const result = await installPlugin(spec);
             if (result.success) {
@@ -108,6 +109,23 @@ function parseCommandLineArgs() {
                 console.log(`✓ 插件已禁用: ${id}`);
             } else {
                 console.error(`✗ 未找到插件: ${id}`);
+                process.exit(1);
+            }
+            process.exit(0);
+        });
+
+    pluginsCmd
+        .command('reset-openclaw-shim')
+        .description('删除并重新生成 openclaw 兼容层 (用于调试)')
+        .action(() => {
+            useCliTransport();
+            useConsoleTransport();
+            console.log('正在重置 openclaw shim...');
+            const result = resetOpenClawShim();
+            if (result.success) {
+                console.log('✓ openclaw shim 已重新生成');
+            } else {
+                console.error(`✗ 重置失败: ${result.error}`);
                 process.exit(1);
             }
             process.exit(0);
@@ -194,6 +212,19 @@ function main(args: CommandLineArgs) {
                     args.model,
                 );
                 await channelMgrApp.initializeChannels(router);
+
+                // Sync channel states to the status bar via event callback
+                const syncChannelStates = (states: { label: string; status: { online: boolean } }[]) => {
+                    tui.inputArea.statusBar.update({
+                        channelStates: states.map(s => ({
+                            label: s.label,
+                            online: s.status.online,
+                        })),
+                    });
+                };
+                channelMgrApp.onChannelStateChange(syncChannelStates);
+                // Initial sync
+                syncChannelStates(channelMgrApp.getChannelStates());
             }
         });
 
