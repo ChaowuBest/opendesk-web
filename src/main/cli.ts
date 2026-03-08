@@ -12,7 +12,7 @@
 import { setPlatform } from '../platforms/base';
 import { CliPlatform } from '../platforms/cli.js';
 import { isMainThread } from 'worker_threads';
-import { useCliTransport, interceptConsole } from './utils/logger.js';
+import { useCliTransport, useConsoleTransport, interceptConsole } from './utils/logger.js';
 import { initializeRegistry, initializeRegistryWorker, ApplicationRegistry } from './applications/registry';
 import { initializeAppWorkers } from './applications/worker';
 import { GlobalState } from './states/global.js';
@@ -44,6 +44,7 @@ function parseCommandLineArgs() {
         .description('安装插件 (npm 包名、路径或 .tgz 文件 URL)')
         .action(async (spec: string) => {
             useCliTransport();
+            useConsoleTransport();  // Also output logs to console
             console.log(`正在安装插件: ${spec} ...`);
             const result = await installPlugin(spec);
             if (result.success) {

@@ -162,6 +162,7 @@ function extractPackageNameFromTgz(tgzPath: string): string | null {
  */
 export async function installPlugin(npmSpecOrUrl: string): Promise<{ success: boolean; id?: string; error?: string }> {
     const extensionsDir = getExtensionsDir();
+    logger.info(`Extensions directory: ${extensionsDir}`);
     ensureExtensionPackageJson();
 
     // Check if the input is a URL
@@ -184,9 +185,13 @@ export async function installPlugin(npmSpecOrUrl: string): Promise<{ success: bo
             try {
                 execSync(`npm install "${tempTgzPath}" --save`, {
                     cwd: extensionsDir,
-                    stdio: 'pipe',
+                    stdio: 'inherit',  // Show npm output to user
                     timeout: 180000,
                 });
+            } catch (npmErr: any) {
+                const errMsg = npmErr?.message || String(npmErr);
+                logger.error(`npm install failed: ${errMsg}`);
+                return { success: false, error: `npm install failed: ${errMsg}` };
             } finally {
                 // Cleanup the temp file
                 if (fs.existsSync(tempTgzPath)) {
@@ -275,13 +280,20 @@ export async function installPlugin(npmSpecOrUrl: string): Promise<{ success: bo
         } else {
             // Original npm spec installation logic
             logger.info(`Installing plugin: ${npmSpecOrUrl}`);
+            logger.info(`Extensions directory: ${extensionsDir}`);
 
             // Install the npm package
-            execSync(`npm install ${npmSpecOrUrl} --save`, {
-                cwd: extensionsDir,
-                stdio: 'pipe',
-                timeout: 180000,
-            });
+            try {
+                execSync(`npm install ${npmSpecOrUrl} --save`, {
+                    cwd: extensionsDir,
+                    stdio: 'inherit',  // Show npm output to user
+                    timeout: 180000,
+                });
+            } catch (npmErr: any) {
+                const errMsg = npmErr?.message || String(npmErr);
+                logger.error(`npm install failed: ${errMsg}`);
+                return { success: false, error: `npm install failed: ${errMsg}` };
+            }
 
             // Ensure the openclaw shim is in place
             ensureOpenClawShim(extensionsDir);

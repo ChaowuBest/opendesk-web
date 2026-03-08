@@ -48,6 +48,7 @@ function generateInlineShim(shimTarget: string): void {
             './plugin-sdk': './plugin-sdk/index.js',
             './plugin-sdk/account-id': './plugin-sdk/account-id.js',
             './plugin-sdk/keyed-async-queue': './plugin-sdk/keyed-async-queue.js',
+            './plugin-sdk/feishu': './plugin-sdk/feishu.js',
         },
     }, null, 2));
 
@@ -63,6 +64,9 @@ function generateInlineShim(shimTarget: string): void {
 
     // Generate plugin-sdk/keyed-async-queue.js
     fs.writeFileSync(path.join(shimTarget, 'plugin-sdk', 'keyed-async-queue.js'), generateKeyedAsyncQueueShim());
+
+    // Generate plugin-sdk/feishu.js
+    fs.writeFileSync(path.join(shimTarget, 'plugin-sdk', 'feishu.js'), generateFeishuShim());
 }
 
 /**
