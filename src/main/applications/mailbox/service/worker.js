@@ -1231,7 +1231,10 @@ class SmtpEmailClient {
             },
             tls: {
                 rejectUnauthorized: false
-            }
+            },
+            // 增加连接和发送超时设置
+            connectionTimeout: 5 * 60 * 1000, // 5分钟
+            socketTimeout: 5 * 60 * 1000, // 5分钟
         })
 
         try {
@@ -1239,6 +1242,7 @@ class SmtpEmailClient {
             NotificationManager.getInstance().info('邮箱', '发送成功', '邮件发送成功')
             return true;
         } catch (error) {
+            logger.error(`SMTP send error: ${error.message}`);
             NotificationManager.getInstance().error(error, '邮箱', '发送失败', '邮件发送失败')
             return false;
         }
@@ -2439,7 +2443,10 @@ class MailboxWorker extends BaseWorker {
                 headers: sentHeaders
             };
 
-            const result = await smtp.sendMailWithOptions(sentMailOptions);
+            // 增加发送邮件的超时时间到 5 分钟
+            const sendTimeout = 5 * 60 * 1000; // 5分钟
+            const result = await withTimeout(smtp.sendMailWithOptions(sentMailOptions), sendTimeout, 'SMTP send email');
+            logger.info(`Email sent successfully to ${sendEmailSchema.to}`);
 
             if (result && storage) {
                 // 发送成功后保存到已发送
@@ -2610,6 +2617,12 @@ class MailboxWorker extends BaseWorker {
         const storage = this.getCurrentStorage();
         if (!storage) throw new Error('No active profile');
         await storage.deleteDraft(uid);
+    }
+
+    async getEmailMeta(uid) {
+        const storage = this.getCurrentStorage();
+        if (!storage) throw new Error('No active profile');
+        return await storage.getEmailMeta(uid);
     }
 }
 
