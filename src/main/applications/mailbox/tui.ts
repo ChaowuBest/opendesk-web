@@ -356,8 +356,258 @@ deleteCalendarItemTool.renderToolCallCli = function (toolcall: ToolCall, width: 
 };
 
 
+const SendEmailArgsSchema = z.object({
+    to: z.union([
+        z.string().describe('收件人邮箱地址'),
+        z.array(z.string()).describe('多个收件人邮箱地址数组'),
+        z.array(z.object({
+            name: z.string().optional().describe('收件人姓名'),
+            address: z.string().describe('收件人邮箱地址'),
+        })).describe('收件人对象列表')
+    ]).describe('收件人'),
+    cc: z.union([
+        z.string().describe('抄送邮箱地址'),
+        z.array(z.string()).describe('多个抄送邮箱地址数组'),
+        z.array(z.object({
+            name: z.string().optional().describe('抄送收件人姓名'),
+            address: z.string().describe('抄送收件人邮箱地址'),
+        })).describe('抄送对象列表')
+    ]).optional().describe('抄送'),
+    bcc: z.union([
+        z.string().describe('密送邮箱地址'),
+        z.array(z.string()).describe('多个密送邮箱地址数组'),
+        z.array(z.object({
+            name: z.string().optional().describe('密送收件人姓名'),
+            address: z.string().describe('密送收件人邮箱地址'),
+        })).describe('密送对象列表')
+    ]).optional().describe('密送'),
+    subject: z.string().describe('邮件主题'),
+    content: z.string().describe('邮件内容'),
+});
+const sendEmailTool = new BaseTool(
+    'sendEmail',
+    '发送邮件。需要提供收件人(to)、主题(subject)和内容(content)，可选抄送(cc)和密送(bcc)。',
+    SendEmailArgsSchema,
+);
+sendEmailTool.setExecutor(async (args) => {
+    try {
+        // 处理收件人格式
+        let to = args.to;
+        let cc = args.cc;
+        let bcc = args.bcc;
+        
+        // 转换对象列表为地址字符串或数组
+        if (Array.isArray(to) && to.length > 0 && typeof to[0] === 'object') {
+            to = to.map(item => item.address);
+        }
+        if (Array.isArray(cc) && cc.length > 0 && typeof cc[0] === 'object') {
+            cc = cc.map(item => item.address);
+        }
+        if (Array.isArray(bcc) && bcc.length > 0 && typeof bcc[0] === 'object') {
+            bcc = bcc.map(item => item.address);
+        }
+        
+        const sendArgs = {
+            to: to,
+            cc: cc,
+            bcc: bcc,
+            subject: args.subject,
+            text: args.content,
+            html: args.content.replace(/\n/g, '<br>'),
+            attachments: [],
+        };
+        const result = await callMailWorker('sendEmail', sendArgs);
+        return JSON.stringify({ success: true, message: '邮件发送成功', data: result });
+    } catch (error: any) {
+        return JSON.stringify({ success: false, error: error.message || '邮件发送失败' });
+    }
+});
+
+const ReplyEmailArgsSchema = z.object({
+    uid: z.string().describe('要回复的邮件唯一标识 uid'),
+    content: z.string().describe('回复内容'),
+    replyAll: z.boolean().optional().describe('是否回复所有人，默认 false'),
+});
+const replyEmailTool = new BaseTool(
+    'replyEmail',
+    '回复邮件。需要提供邮件 uid 和回复内容，可选是否回复所有人。',
+    ReplyEmailArgsSchema,
+);
+replyEmailTool.setExecutor(async (args) => {
+    try {
+        // 获取原邮件元数据
+        const emailMeta = await callMailWorker('getEmailMeta', args.uid);
+        if (!emailMeta) {
+            return JSON.stringify({ success: false, error: '未找到该邮件' });
+        }
+        
+        // 获取原邮件内容
+        const emailContent = await callMailWorker('getEmailContent', args.uid);
+        
+        // 构建回复对象
+        let replyTo = emailMeta.from || [];
+        let to = replyTo;
+        let cc = emailMeta.cc || [];
+        
+        // 确保 replyTo 是正确的格式
+        if (replyTo && !Array.isArray(replyTo)) {
+            // 如果是字符串，转换为对象格式
+            if (typeof replyTo === 'string') {
+                replyTo = [{ name: '', address: replyTo }];
+                to = replyTo;
+            }
+        } else if (Array.isArray(replyTo) && replyTo.length > 0) {
+            // 确保每个元素都有 address 字段
+            replyTo = replyTo.map(item => {
+                if (typeof item === 'string') {
+                    return { name: '', address: item };
+                }
+                return item;
+            });
+            to = replyTo;
+        }
+        
+        // 确保 cc 是正确的格式
+        if (cc && !Array.isArray(cc)) {
+            if (typeof cc === 'string') {
+                cc = [{ name: '', address: cc }];
+            }
+        } else if (Array.isArray(cc) && cc.length > 0) {
+            cc = cc.map(item => {
+                if (typeof item === 'string') {
+                    return { name: '', address: item };
+                }
+                return item;
+            });
+        }
+        
+        // 如果是回复所有人，需要将原邮件的收件人和抄送人都加入
+        if (args.replyAll) {
+            // 确保不重复添加发件人
+            const senderAddresses = new Set(replyTo.map(s => s.address));
+            
+            // 添加原邮件的收件人（排除发件人自己）
+            if (emailMeta.to) {
+                emailMeta.to.forEach(recipient => {
+                    if (!senderAddresses.has(recipient.address)) {
+                        to.push(recipient);
+                        senderAddresses.add(recipient.address);
+                    }
+                });
+            }
+            
+            // 添加原邮件的抄送人（排除发件人自己）
+            if (emailMeta.cc) {
+                emailMeta.cc.forEach(recipient => {
+                    if (!senderAddresses.has(recipient.address)) {
+                        cc.push(recipient);
+                        senderAddresses.add(recipient.address);
+                    }
+                });
+            }
+        }
+        
+        // 构建回复主题
+        const originalSubject = emailMeta.subject || '';
+        const subject = originalSubject.startsWith('Re:') ? originalSubject : `Re: ${originalSubject}`;
+        
+        // 构建回复内容，包含原始邮件引用
+        const fromStr = formatAddresses(emailMeta.from);
+        const toStr = formatAddresses(emailMeta.to);
+        const dateStr = new Date(emailMeta.date).toISOString();
+        const originalContent = (emailContent?.textContent && emailContent.textContent.trim()) || stripHtml(emailContent?.htmlContent || '');
+        
+        const quotedContent = `\n\n--- 原始邮件 ---\n发件人: ${fromStr}\n收件人: ${toStr}\n${emailMeta.cc ? `抄送: ${formatAddresses(emailMeta.cc)}\n` : ''}日期: ${dateStr}\n主题: ${originalSubject}\n\n${originalContent}`;
+        
+        const replyContent = args.content + quotedContent;
+        
+        // 转换收件人格式
+        let toAddresses = to;
+        let ccAddresses = cc;
+        
+        if (Array.isArray(to) && to.length > 0 && typeof to[0] === 'object') {
+            toAddresses = to.map(item => item.address);
+        }
+        if (Array.isArray(cc) && cc.length > 0 && typeof cc[0] === 'object') {
+            ccAddresses = cc.map(item => item.address);
+        }
+        
+        // 调用发送邮件
+        const sendArgs = {
+            to: toAddresses,
+            cc: ccAddresses.length > 0 ? ccAddresses : undefined,
+            subject,
+            text: replyContent,
+            html: replyContent.replace(/\n/g, '<br>'),
+            attachments: [],
+        };
+        
+        const result = await callMailWorker('sendEmail', sendArgs);
+        return JSON.stringify({ success: true, message: '邮件回复成功', data: result });
+    } catch (error: any) {
+        return JSON.stringify({ success: false, error: error.message || '邮件回复失败' });
+    }
+});
+
+const MarkEmailReadArgsSchema = z.object({
+    uid: z.string().describe('邮件唯一标识 uid，从 getEmailList 或 searchEmails 结果中获取'),
+    read: z.boolean().describe('是否标记为已读：true=标记为已读，false=标记为未读'),
+});
+const markEmailReadTool = new BaseTool(
+    'markEmailReadStatus',
+    '标记邮件已读/未读状态。需要提供邮件 uid 和是否标记为已读的布尔值。',
+    MarkEmailReadArgsSchema,
+);
+markEmailReadTool.setExecutor(async (args) => {
+    try {
+        if (args.read) {
+            await callMailWorker('markEmailAsRead', args.uid);
+        } else {
+            await callMailWorker('markEmailAsUnread', args.uid);
+        }
+        return JSON.stringify({ success: true, message: `邮件已${args.read ? '标记为已读' : '标记为未读'}` });
+    } catch (error: any) {
+        return JSON.stringify({ success: false, error: error.message || '标记邮件状态失败' });
+    }
+});
+
+const StarEmailArgsSchema = z.object({
+    uid: z.string().describe('邮件唯一标识 uid，从 getEmailList 或 searchEmails 结果中获取'),
+    starred: z.boolean().describe('是否收藏：true=收藏，false=取消收藏'),
+});
+const starEmailTool = new BaseTool(
+    'starEmail',
+    '收藏/取消收藏邮件。需要提供邮件 uid 和是否收藏的布尔值。',
+    StarEmailArgsSchema,
+);
+starEmailTool.setExecutor(async (args) => {
+    try {
+        await callMailWorker('starEmail', { uid: args.uid, starred: args.starred });
+        return JSON.stringify({ success: true, message: `邮件已${args.starred ? '收藏' : '取消收藏'}` });
+    } catch (error: any) {
+        return JSON.stringify({ success: false, error: error.message || '操作邮件收藏状态失败' });
+    }
+});
+
+const DeleteEmailArgsSchema = z.object({
+    uid: z.string().describe('邮件唯一标识 uid，从 getEmailList 或 searchEmails 结果中获取'),
+});
+const deleteEmailTool = new BaseTool(
+    'deleteEmail',
+    '删除邮件。需要提供邮件唯一标识 uid。',
+    DeleteEmailArgsSchema,
+);
+deleteEmailTool.setExecutor(async (args) => {
+    try {
+        await callMailWorker('deleteEmail', args.uid);
+        return JSON.stringify({ success: true, message: '邮件删除成功' });
+    } catch (error: any) {
+        return JSON.stringify({ success: false, error: error.message || '删除邮件失败' });
+    }
+});
+
 const mailAssistantToolset = new BaseToolset('mailbox');
-mailAssistantToolset.addTools(getEmailListTool, getEmailContentTool, searchEmailsTool);
+mailAssistantToolset.addTools(getEmailListTool, getEmailContentTool, searchEmailsTool, sendEmailTool, replyEmailTool, markEmailReadTool, starEmailTool, deleteEmailTool);
 
 const crossAppToolset = new BaseToolset('cross-app');
 crossAppToolset.addTools(
@@ -369,28 +619,92 @@ crossAppToolset.addTools(
 
 const MAIL_ASSISTANT_SYSTEM_PROMPT =
     '你是邮件助手。用户会用自然语言描述需求，你需要理解用户意图并调用合适的工具来完成任务。\n\n' +
-    '## 邮件工具\n' +
-    '- mailbox-getEmailList: 获取邮件列表（offset, limit）\n' +
-    '- mailbox-getEmailContent: 根据 uid 获取邮件正文\n' +
-    '- mailbox-searchEmails: 强大的邮件搜索工具，支持以下搜索条件（可组合使用）：\n' +
-    '- **subject**: 按主题关键词搜索（模糊匹配）\n' +
-    '- **from**: 按发件人搜索（姓名或邮箱地址，模糊匹配）\n' +
-    '- **to**: 按收件人搜索\n' +
-    '- **body**: 按正文内容搜索\n' +
-    '- **general**: 通用关键词，在主题/发件人/正文中统一搜索（与 subject/from/body 互斥）\n' +
-    '- **dateFrom** / **dateTo**: 日期范围筛选，格式 YYYY-MM-DD（如 "2026-01-01"）。支持只传一个做单边约束\n' +
-    '- **unread**: true=仅未读，false=仅已读\n' +
-    '- **starred**: true=仅收藏，false=仅非收藏\n' +
-    '- **attachmentName**: 按附件文件名搜索（模糊匹配）\n' +
-    '- **limit** / **offset**: 分页控制\n\n' +
-    '## 使用指南\n\n' +
-    '- 用户说"查找上周关于周报的邮件"→ 使用 subject + dateFrom/dateTo\n' +
-    '- 用户说"张三发给我的邮件"→ 使用 from\n' +
-    '- 用户说"有没有带附件的邮件"→ 可先 getEmailList 后通过内容判断\n' +
-    '- 用户说"找一下附件名包含报告的邮件"→ 使用 attachmentName\n' +
-    '- 用户说"最近的未读邮件"→ 使用 unread=true\n' +
-    '- 用户说"我收藏过的邮件"→ 使用 starred=true\n' +
-    '- 用户要求摘要 → 先定位邮件，再用 getEmailContent 获取正文后总结\n\n' +
+    '## 可用工具\n\n' +
+    '### mailbox-getEmailList\n' +
+    '**用途**：获取当前邮箱的邮件列表，返回每封邮件的基本信息。\n' +
+    '**参数**：\n' +
+    '- **offset**（可选）：从第几条开始，默认 0\n' +
+    '- **limit**（可选）：最多返回条数，默认 20\n' +
+    '**使用场景**：当需要查看邮箱中的邮件列表，或获取邮件的基本信息时使用。\n\n' +
+    '### mailbox-getEmailContent\n' +
+    '**用途**：根据邮件 uid 获取邮件的完整正文内容。\n' +
+    '**参数**：\n' +
+    '- **uid**（必需）：邮件唯一标识 uid，从 getEmailList 或 searchEmails 结果中获取\n' +
+    '**使用场景**：当需要查看邮件的详细内容，或对邮件内容进行分析、摘要时使用。\n\n' +
+    '### mailbox-searchEmails\n' +
+    '**用途**：按条件搜索邮件，支持多条件组合。\n' +
+    '**参数**：\n' +
+    '- **subject**（可选）：按主题关键词搜索（模糊匹配）\n' +
+    '- **from**（可选）：按发件人搜索（姓名或邮箱地址，模糊匹配）\n' +
+    '- **to**（可选）：按收件人搜索（姓名或邮箱地址，模糊匹配）\n' +
+    '- **body**（可选）：按正文内容搜索（模糊匹配）\n' +
+    '- **general**（可选）：通用关键词，在主题/发件人/正文中统一搜索（与 subject/from/body 互斥）\n' +
+    '- **dateFrom**（可选）：搜索起始日期（含），格式 YYYY-MM-DD，例如 "2026-01-01"\n' +
+    '- **dateTo**（可选）：搜索结束日期（含），格式 YYYY-MM-DD，例如 "2026-03-05"\n' +
+    '- **unread**（可选）：筛选已读/未读状态：true=仅未读，false=仅已读，不传=不限\n' +
+    '- **starred**（可选）：筛选收藏状态：true=仅收藏，false=仅非收藏，不传=不限\n' +
+    '- **attachmentName**（可选）：按附件文件名搜索（模糊匹配），例如 "报告.pdf"\n' +
+    '- **limit**（可选）：最多返回条数，默认 50\n' +
+    '- **offset**（可选）：跳过前 N 条\n' +
+    '**使用场景**：当需要根据特定条件查找邮件时使用，如按发件人、主题、日期等筛选。\n\n' +
+    '### mailbox-sendEmail\n' +
+    '**用途**：发送新邮件。\n' +
+    '**参数**：\n' +
+    '- **to**（必需）：收件人列表，每个收件人包含 name（可选）和 address（必需）\n' +
+    '- **cc**（可选）：抄送列表，格式同 to\n' +
+    '- **bcc**（可选）：密送列表，格式同 to\n' +
+    '- **subject**（必需）：邮件主题\n' +
+    '- **content**（必需）：邮件内容\n' +
+    '**使用场景**：当需要发送新邮件给他人时使用。\n\n' +
+    '### mailbox-replyEmail\n' +
+    '**用途**：回复邮件。\n' +
+    '**参数**：\n' +
+    '- **uid**（必需）：要回复的邮件唯一标识 uid\n' +
+    '- **content**（必需）：回复内容\n' +
+    '- **replyAll**（可选）：是否回复所有人，默认 false\n' +
+    '**使用场景**：当需要回复收到的邮件时使用。\n\n' +
+    '### mailbox-markEmailReadStatus\n' +
+    '**用途**：标记邮件已读/未读状态。\n' +
+    '**参数**：\n' +
+    '- **uid**（必需）：邮件唯一标识 uid，从 getEmailList 或 searchEmails 结果中获取\n' +
+    '- **read**（必需）：是否标记为已读：true=标记为已读，false=标记为未读\n' +
+    '**使用场景**：当需要改变邮件的已读/未读状态时使用。\n\n' +
+    '### mailbox-starEmail\n' +
+    '**用途**：收藏/取消收藏邮件。\n' +
+    '**参数**：\n' +
+    '- **uid**（必需）：邮件唯一标识 uid，从 getEmailList 或 searchEmails 结果中获取\n' +
+    '- **starred**（必需）：是否收藏：true=收藏，false=取消收藏\n' +
+    '**使用场景**：当需要将重要邮件标记为收藏，或取消收藏时使用。\n\n' +
+    '### mailbox-deleteEmail\n' +
+    '**用途**：删除邮件。\n' +
+    '**参数**：\n' +
+    '- **uid**（必需）：邮件唯一标识 uid，从 getEmailList 或 searchEmails 结果中获取\n' +
+    '**使用场景**：当需要删除不需要的邮件时使用。\n\n' +
+    '## 使用指南与示例\n\n' +
+    '### 场景示例\n' +
+    '- **查找特定邮件**：\n' +
+    '  - 用户说"查找上周关于周报的邮件"→ 调用 searchEmails，使用 subject: "周报" + dateFrom/dateTo 设置上周日期范围\n' +
+    '  - 用户说"张三发给我的邮件"→ 调用 searchEmails，使用 from: "张三"\n' +
+    '  - 用户说"找一下附件名包含报告的邮件"→ 调用 searchEmails，使用 attachmentName: "报告"\n' +
+    '  - 用户说"最近的未读邮件"→ 调用 searchEmails，使用 unread: true\n' +
+    '  - 用户说"我收藏过的邮件"→ 调用 searchEmails，使用 starred: true\n' +
+    '- **查看邮件内容**：\n' +
+    '  - 用户说"查看最新的邮件内容"→ 先调用 getEmailList 获取邮件列表，再调用 getEmailContent 获取最新邮件的内容\n' +
+    '  - 用户说"查看张三发来的邮件内容"→ 先调用 searchEmails 找到张三的邮件，再调用 getEmailContent 获取内容\n' +
+    '- **邮件操作**：\n' +
+    '  - 用户说"给张三发送邮件，主题是会议通知，内容是明天下午3点开会"→ 调用 sendEmail，设置 to、subject 和 content\n' +
+    '  - 用户说"回复刚才的邮件，告诉他我会参加会议"→ 先获取邮件 uid，再调用 replyEmail\n' +
+    '  - 用户说"标记这封邮件为已读"→ 调用 markEmailReadStatus，设置 read: true\n' +
+    '  - 用户说"收藏这封重要邮件"→ 调用 starEmail，设置 starred: true\n' +
+    '  - 用户说"删除这封垃圾邮件"→ 调用 deleteEmail\n' +
+    '- **邮件摘要**：\n' +
+    '  - 用户说"总结一下最近的项目邮件"→ 先调用 searchEmails 找到相关邮件，再调用 getEmailContent 获取内容，最后进行总结\n\n' +
+    '### 调用流程指导\n' +
+    '1. **理解用户意图**：分析用户需求，确定需要执行的操作类型\n' +
+    '2. **选择合适工具**：根据操作类型选择对应的工具\n' +
+    '3. **准备工具参数**：根据用户提供的信息，准备工具所需的参数\n' +
+    '4. **调用工具**：执行工具调用，获取结果\n' +
+    '5. **处理结果**：根据工具返回的结果，给用户提供清晰的回答\n\n' +
     '请根据用户意图先调用相应工具获取数据，再给出简洁清晰的中文回答。\n' +
     `今天的日期是 ${new Date().toISOString().split('T')[0]}，请据此推断用户提到的相对时间（如"上周"、"最近三天"等）。
 
