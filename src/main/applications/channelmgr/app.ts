@@ -18,12 +18,12 @@ import { z } from 'zod';
 import { BaseApplication, EventDecl } from '../base.js';
 import type { SlashCommandHandler } from '../../tui/commands.js';
 import { logger } from '../../utils/logger.js';
-import { InfoOverlay } from '../../tui/components/notice.js';
+import { InfoOverlay, ProgressOverlay } from '../../tui/components/notice.js';
+import { PluginsListOverlay } from './plugins-tui.js';
 import {
     loadPlugins,
     installPlugin,
     uninstallPlugin,
-    listInstalledPlugins,
     setPluginEnabled,
 } from '../../aikernel/plugins/index.js';
 import type {
@@ -446,33 +446,45 @@ export class ChannelMgrApplication extends BaseApplication {
         switch (subCmd) {
             case 'install': {
                 if (!rest) { showInfo('用法提示', '/plugins install <npm-spec|url>'); return; }
-                showInfo('安装中', `正在安装插件: ${rest} ...`);
-                const result = await installPlugin(rest);
-                if (result.success) {
-                    showInfo('安装成功', `插件安装成功: ${result.id}\n\n请重启 OpenDesk 以加载新插件`);
-                } else {
-                    showInfo('安装失败', `插件安装失败: ${result.error}`);
+                const progress = new ProgressOverlay(tui, {
+                    title: '安装中',
+                    message: `正在安装插件: ${rest} ...\n\n请稍候，安装完成后会自动提示。`,
+                });
+                progress.show();
+                try {
+                    const result = await installPlugin(rest);
+                    progress.hide();
+                    if (result.success) {
+                        showInfo('安装成功', `插件安装成功: ${result.id}\n\n请重启 OpenDesk 以加载新插件`);
+                    } else {
+                        showInfo('安装失败', `插件安装失败: ${result.error}`);
+                    }
+                } catch (err: any) {
+                    progress.hide();
+                    showInfo('安装失败', `插件安装出错: ${err?.message ?? err}`);
                 }
                 break;
             }
             case 'uninstall': {
                 if (!rest) { showInfo('用法提示', '/plugins uninstall <plugin-id>'); return; }
-                const result = await uninstallPlugin(rest);
-                if (result.success) showInfo('卸载成功', `插件已卸载: ${rest}`);
-                else showInfo('卸载失败', `插件卸载失败: ${result.error}`);
+                const progress = new ProgressOverlay(tui, {
+                    title: '卸载中',
+                    message: `正在卸载插件: ${rest} ...\n\n请稍候，卸载完成后会自动提示。`,
+                });
+                progress.show();
+                try {
+                    const result = await uninstallPlugin(rest);
+                    progress.hide();
+                    if (result.success) showInfo('卸载成功', `插件已卸载: ${rest}`);
+                    else showInfo('卸载失败', `插件卸载失败: ${result.error}`);
+                } catch (err: any) {
+                    progress.hide();
+                    showInfo('卸载失败', `插件卸载出错: ${err?.message ?? err}`);
+                }
                 break;
             }
             case 'list': {
-                const records = listInstalledPlugins();
-                if (records.length === 0) {
-                    showInfo('插件列表', '暂无已安装的插件');
-                } else {
-                    const lines = records.map(r => {
-                        const status = r.enabled ? '✓ 已启用' : '✗ 已禁用';
-                        return `  ${r.id} (${r.npmSpec}) [${status}]`;
-                    });
-                    showInfo('插件列表', lines.join('\n'));
-                }
+                new PluginsListOverlay(tui).show();
                 break;
             }
             case 'enable': {

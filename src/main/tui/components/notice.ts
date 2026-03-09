@@ -1,5 +1,5 @@
 
-import { type Component, SelectList, Box, Text } from "@mariozechner/pi-tui";
+import { type Component, SelectList, Box, Text, Loader } from "@mariozechner/pi-tui";
 import { defaultSelectListTheme } from "../theme";
 import { OpenDeskTUI } from "../entry";
 import chalk from "chalk";
@@ -112,6 +112,70 @@ export class ConfirmOverlay implements Component {
             this.openDeskTUI.tui.setFocus(this.openDeskTUI.inputArea.input);
             this.onCancel?.();
         };
+    }
+}
+
+export interface ProgressOptions {
+    title: string;
+    message: string;
+}
+
+export class ProgressOverlay implements Component {
+    private openDeskTUI: OpenDeskTUI;
+    private header: Text;
+    private loader: Loader;
+    private box: Box;
+    private handle?: { hide: () => void };
+
+    constructor(openDeskTUI: OpenDeskTUI, options: ProgressOptions) {
+        this.openDeskTUI = openDeskTUI;
+
+        this.header = new Text(chalk.bold(`ℹ️ ${options.title}`));
+        this.loader = new Loader(
+            openDeskTUI.tui,
+            (s: string) => chalk.cyan(s),
+            (s: string) => chalk.hex('#e0e0e0')(s),
+            options.message,
+        );
+        this.box = new Box(1, 1);
+        this.box.setBgFn((text: string) => chalk.bgHex('#2d2d2d').hex('#e0e0e0')(text));
+        this.box.addChild(this.header);
+        this.box.addChild(new Splitter());
+        this.box.addChild(this.loader);
+        this.box.addChild(new Text(""));
+    }
+
+    invalidate(): void {
+        this.box.invalidate();
+    }
+
+    render(width: number): string[] {
+        return this.box.render(width);
+    }
+
+    show() {
+        const terminalWidth = this.openDeskTUI.tui.terminal.columns;
+        const terminalHeight = this.openDeskTUI.tui.terminal.rows;
+        const overlayWidth = Math.min(60, terminalWidth - 4);
+        const overlayMaxHeight = Math.max(8, terminalHeight - 4);
+
+        this.handle = this.openDeskTUI.tui.showOverlay(this, {
+            width: overlayWidth,
+            maxHeight: overlayMaxHeight,
+            anchor: "center",
+        });
+
+        this.openDeskTUI.hasOpenOverlay = true;
+    }
+
+    hide() {
+        this.loader.stop();
+        if (this.handle) {
+            this.handle.hide();
+            this.handle = undefined;
+        }
+        this.openDeskTUI.hasOpenOverlay = false;
+        this.openDeskTUI.tui.setFocus(this.openDeskTUI.inputArea.input);
     }
 }
 
