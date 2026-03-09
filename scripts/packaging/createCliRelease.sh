@@ -180,7 +180,8 @@ cat > "$RELEASE_DIR/package.json" << EOF
   },
   "dependencies": {
     "number-to-alphabet": "^1.0.0",
-    "vectra": "^0.11.1"
+    "vectra": "^0.11.1",
+    "esbuild": "^0.27.3"
   }
 }
 EOF
