@@ -144,6 +144,19 @@ async function testBM25Search(storage: BaseStorage): Promise<void> {
     ]);
 
     console.log('[BM25Indexer] results:', results);
+
+    const zhResults = await storage.search([], [
+        {
+            indexer: 'BM25Indexer',
+            field: 'text',
+            operator: 'bm25_match',
+            value: { query: '项目计划书', topK: 10 } as BM25Query,
+        },
+    ]);
+    console.log('[BM25Indexer] zh results:', zhResults);
+    if (zhResults.length === 0 || zhResults[0]?.item?.item_id !== 'item-1') {
+        throw new Error('[BM25Indexer] FAIL: 中文查询 "项目计划书" 未命中预期文档 item-1');
+    }
 }
 
 async function testVectorBaseOnly(): Promise<void> {
@@ -387,11 +400,12 @@ async function testBM25Only(): Promise<void> {
     if (resultsText.length >= 2) {
         const scores = resultsText.map(r => r.BM25Score ?? 0);
         if (scores[0] <= scores[1]) {
-            console.error('[BM25Only] FAIL: 词频高的文档应该有更高的 BM25Score');
-            console.error(`  bm-1 (2个project) score: ${scores[0]}, bm-2 (1个project) score: ${scores[1]}`);
-        } else {
-            console.log('[BM25Only] PASS: 词频校验通过');
+            throw new Error(
+                `[BM25Only] FAIL: 词频高的文档应该有更高的 BM25Score. ` +
+                `bm-1 (2个project) score: ${scores[0]}, bm-2 (1个project) score: ${scores[1]}`
+            );
         }
+        console.log('[BM25Only] PASS: 词频校验通过');
     }
 
     const resultsSemi = await storage.search([], [
