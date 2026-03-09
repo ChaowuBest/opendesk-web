@@ -26,7 +26,6 @@ function getSkillsAPI() {
     getSkillsDirectory: () => window.applicationAPI.call('getSkillsDirectory'),
     addFromPath: (sourcePath) => window.applicationAPI.call('addFromPath', sourcePath),
     addFromZip: (zipPath, skillRelPath) => window.applicationAPI.call('addFromZip', zipPath, skillRelPath),
-    addFromUrl: (url) => window.applicationAPI.call('addFromUrl', url),
     delete: (skillId) => window.applicationAPI.call('delete', skillId),
     searchRegistry: (registryId, query, page, limit) =>
       window.applicationAPI.call('searchRegistry', registryId, query, page, limit),
@@ -241,14 +240,14 @@ class SkillMgrEntryWidget extends HTMLElement {
 
   async addFromUrl() {
     const api = getSkillsAPI();
-    if (!api?.addFromUrl || !this.addUrl.trim()) {
-      this.setMessage('请输入技能包 URL（zip 格式）', true);
+    if (!api?.installFromRegistry || !this.addUrl.trim()) {
+      this.setMessage('请输入 URL', true);
       return;
     }
     this.addingFromUrl = true;
     this.render();
     try {
-      const addRes = await api.addFromUrl(this.addUrl.trim());
+      const addRes = await api.installFromRegistry(this.addUrl.trim());
       this.setMessage(`已添加技能：${addRes?.name ?? ''}`);
       this.addUrl = '';
       await this.loadSkills();
@@ -342,10 +341,10 @@ class SkillMgrEntryWidget extends HTMLElement {
           </div>
           <div class="add-section">
             <label>从 URL 添加</label>
-            <p class="add-hint">输入技能包 zip 的 URL</p>
+            <p class="add-hint">支持 zip URL 或 GitHub tree URL（如 https://github.com/user/repo/tree/branch）</p>
             <div class="add-url-row">
               <input type="url" class="add-url-input" id="add-url-input" placeholder="https://..." value="${escapeHtml(this.addUrl)}" ${this.addingFromUrl ? 'disabled' : ''} />
-              <button type="button" class="btn" id="add-from-url-btn" ${this.addingFromUrl ? 'disabled' : ''}>${this.addingFromUrl ? '下载中…' : '下载并添加'}</button>
+              <button type="button" class="btn" id="add-from-url-btn" ${this.addingFromUrl ? 'disabled' : ''}>${this.addingFromUrl ? '添加中…' : '添加'}</button>
             </div>
           </div>
           <div class="add-section registry-section">

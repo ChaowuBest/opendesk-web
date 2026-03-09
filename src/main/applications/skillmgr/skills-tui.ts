@@ -1,6 +1,17 @@
-import { type Component, SelectList, Box, Text, Input, TUI, Key, matchesKey } from "@mariozechner/pi-tui";
+/**
+ * Copyright (c) 2026 The OpenDesk Team
+ * OpenDesk is licensed under Mulan PSL v2.
+ * You can use this software according to the terms and conditions of the Mulan PSL v2.
+ * You may obtain a copy of Mulan PSL v2 at: http://license.coscl.org.cn/MulanPSL2
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
+ * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+ * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+ * See the Mulan PSL v2 for more details.
+ */
+
+import { type Component, SelectList, Box, Text, Input, TUI, Key, matchesKey, Markdown, visibleWidth, wrapTextWithAnsi, truncateToWidth } from "@mariozechner/pi-tui";
 import chalk from "chalk";
-import { defaultSelectListTheme } from "../../tui/theme";
+import { defaultSelectListTheme, defaultMarkdownTheme } from "../../tui/theme";
 import { OpenDeskTUI } from "../../tui/entry";
 import { SkillRegistry } from "./skillregistry.js";
 import { RegistryAdapters } from "./registry-adapters.js";
@@ -17,6 +28,23 @@ interface RegistrySkill {
     canInstall: boolean;
 }
 
+interface SkillDetail {
+    id: string;
+    name: string;
+    description: string;
+    body: string;
+    skillDir: string;
+    license?: string;
+    compatibility?: string;
+    metadata?: Record<string, any>;
+    allowedTools?: string[];
+    resources: {
+        references: Array<{ name: string; content?: string }>;
+        scripts: string[];
+        assets: string[];
+    };
+}
+
 type ViewState =
     | 'main'
     | 'select-registry'
@@ -25,9 +53,14 @@ type ViewState =
     | 'install-local'
     | 'install-zip'
     | 'install-url'
-    | 'install-github'
     | 'install-clawhub'
-    | 'view-installed';
+    | 'view-installed'
+    | 'skill-detail'
+    | 'skill-content'
+    | 'skill-resources'
+    | 'confirm-delete';
+
+type DetailTab = 'info' | 'body' | 'resources';
 
 export class SkillsOverlay implements Component {
     private openDeskTUI: OpenDeskTUI;
@@ -40,11 +73,16 @@ export class SkillsOverlay implements Component {
     private searchResults: RegistrySkill[] = [];
     private selectedInputValue = '';
     private selectedRegistry = 'skill0';
-    private message: { text: string; isError: boolean } | null = null;
+    private message: { text: string; isError: boolean; state: ViewState } | null = null;
     private loading = false;
     private removeInputListener?: () => void;
     private messageTimeout?: NodeJS.Timeout;
     private overlayHandle?: any;
+    private currentSkillDetail: SkillDetail | null = null;
+    private currentDetailTab: DetailTab = 'info';
+    private previousState: ViewState = 'main';
+    private contentScrollOffset = 0;
+    private readonly detailMaxVisibleLines = 12;
 
     constructor(openDeskTUI: OpenDeskTUI) {
         this.openDeskTUI = openDeskTUI;
@@ -62,15 +100,18 @@ export class SkillsOverlay implements Component {
         }
     }
 
-    private showMessage(text: string, isError: boolean = false) {
+    private showMessage(text: string, isError: boolean = false, targetState?: ViewState) {
         if (this.messageTimeout) {
             clearTimeout(this.messageTimeout);
         }
-        this.message = { text, isError };
+        const messageState = targetState ?? this.state;
+        this.message = { text, isError, state: messageState };
         this.renderBox();
         this.messageTimeout = setTimeout(() => {
-            this.message = null;
-            this.renderBox();
+            if (this.message && this.message.state === messageState) {
+                this.message = null;
+                this.renderBox();
+            }
         }, 3000);
     }
 
@@ -84,10 +125,7 @@ export class SkillsOverlay implements Component {
             this.removeInputListener();
             this.removeInputListener = undefined;
         }
-        if (this.messageTimeout) {
-            clearTimeout(this.messageTimeout);
-            this.messageTimeout = undefined;
-        }
+        this.loading = false;
     }
 
     private showMain() {
@@ -101,7 +139,6 @@ export class SkillsOverlay implements Component {
             { value: 'install-local', label: chalk.green('📁 从本地目录添加') },
             { value: 'install-zip', label: chalk.green('📦 从本地 zip 添加') },
             { value: 'install-url', label: chalk.blue('🌐 从 URL 添加') },
-            { value: 'install-github', label: chalk.magenta('📦 从 GitHub 添加') },
             { value: 'install-clawhub', label: chalk.yellow('⚡ 从 ClawHub 添加') },
             { value: 'view-installed', label: chalk.white('📋 查看已安装技能') },
         ];
@@ -260,7 +297,7 @@ this.searchResults = result.skills || [];
         try {
             const result = SkillRegistry.addSkillFromPath(path);
             if (result.success) {
-                this.showMessage(`成功添加技能: ${result.name}`);
+                this.showMessage(`成功添加技能: ${result.name}`, false, 'main');
                 await this.loadInstalledSkills();
                 this.showMain();
             } else {
@@ -304,7 +341,7 @@ this.searchResults = result.skills || [];
         try {
             const result = SkillRegistry.addSkillFromZipPath(path);
             if (result.success) {
-                this.showMessage(`成功添加技能: ${result.name}`);
+                this.showMessage(`成功添加技能: ${result.name}`, false, 'main');
                 await this.loadInstalledSkills();
                 this.showMain();
             } else {
@@ -346,9 +383,15 @@ this.searchResults = result.skills || [];
 
         this.setLoading(true);
         try {
-            const result = await SkillRegistry.addSkillFromUrl(url);
+            const method = RegistryAdapters.getInstallMethod(url);
+            let result;
+            if (method === 'github') {
+                result = await SkillRegistry.addSkillFromGitHubUrl(url);
+            } else {
+                result = await SkillRegistry.addSkillFromUrl(url);
+            }
             if (result.success) {
-                this.showMessage(`成功添加技能: ${result.name}`);
+                this.showMessage(`成功添加技能: ${result.name}`, false, 'main');
                 await this.loadInstalledSkills();
                 this.showMain();
             } else {
@@ -358,50 +401,6 @@ this.searchResults = result.skills || [];
         } catch (e: any) {
             this.showMessage(e?.message || '添加失败', true);
             this.showInstallUrl();
-        } finally {
-            this.setLoading(false);
-        }
-    }
-
-    private showInstallGitHub() {
-        this.cleanup();
-        this.state = 'install-github';
-        this.list = undefined;
-
-        this.input = new Input();
-        this.input.setValue(this.selectedInputValue);
-        this.input.onSubmit = () => {
-            this.performInstallGitHub().catch(err => {
-                console.error('Install GitHub error:', err);
-            });
-        };
-
-        this.setupInputHandlers();
-        this.renderBox();
-        this.openDeskTUI.tui.setFocus(this.input);
-    }
-
-    private async performInstallGitHub() {
-        const url = this.input?.getValue().trim() || '';
-        if (!url) {
-            this.showMessage('请输入 GitHub URL', true);
-            return;
-        }
-
-        this.setLoading(true);
-        try {
-            const result = await SkillRegistry.addSkillFromGitHubUrl(url);
-            if (result.success) {
-                this.showMessage(`成功添加技能: ${result.name}`);
-                await this.loadInstalledSkills();
-                this.showMain();
-            } else {
-                this.showMessage(result.error || '添加失败', true);
-                this.showInstallGitHub();
-            }
-        } catch (e: any) {
-            this.showMessage(e?.message || '添加失败', true);
-            this.showInstallGitHub();
         } finally {
             this.setLoading(false);
         }
@@ -436,7 +435,7 @@ this.searchResults = result.skills || [];
         try {
             const result = await SkillRegistry.addSkillFromClawHubSlug(slug);
             if (result.success) {
-                this.showMessage(`成功添加技能: ${result.name}`);
+                this.showMessage(`成功添加技能: ${result.name}`, false, 'main');
                 await this.loadInstalledSkills();
                 this.showMain();
             } else {
@@ -455,6 +454,7 @@ this.searchResults = result.skills || [];
         this.cleanup();
         this.state = 'view-installed';
         this.input = undefined;
+        this.header = new Text(chalk.bold(' 已安装技能'));
 
         if (this.installedSkills.length === 0) {
             const items = [{ value: 'back', label: chalk.gray('暂无已安装技能，按 Enter 返回') }];
@@ -462,7 +462,7 @@ this.searchResults = result.skills || [];
         } else {
             const items = this.installedSkills.map((skill: any) => ({
                 value: skill.id,
-                label: `${chalk.bold(skill.name)} - ${skill.description || '无描述'}`,
+                label: `${chalk.bold(skill.name)} ${chalk.dim('·')} ${skill.description || '无描述'}`,
             }));
             this.list = new SelectList(items, Math.min(items.length, 10), defaultSelectListTheme);
         }
@@ -472,12 +472,229 @@ this.searchResults = result.skills || [];
         this.openDeskTUI.tui.setFocus(this.list);
     }
 
+    private showSkillDetail(skillId: string) {
+        this.setLoading(true);
+        try {
+            const detail = SkillRegistry.getSkillDetail(skillId);
+            if (!detail) {
+                this.showMessage('无法获取技能详情', true);
+                this.showViewInstalled();
+                return;
+            }
+            this.currentSkillDetail = detail;
+            this.currentDetailTab = 'info';
+            this.contentScrollOffset = 0;
+            this.previousState = 'view-installed';
+            this.renderSkillDetail();
+        } finally {
+            this.setLoading(false);
+        }
+    }
+
+    private renderSkillDetail() {
+        this.cleanup();
+        this.state = 'skill-detail';
+        this.list = undefined;
+        this.input = undefined;
+
+        if (!this.currentSkillDetail) {
+            this.showViewInstalled();
+            return;
+        }
+
+        const detail = this.currentSkillDetail;
+        this.header = new Text(chalk.bold(` 技能详情: ${detail.name}`));
+
+        this.renderBox();
+
+        this.removeInputListener = this.openDeskTUI.tui.addInputListener((data: string) => {
+            if (matchesKey(data, Key.escape)) {
+                this.currentSkillDetail = null;
+                this.showViewInstalled();
+                return { consume: true };
+            }
+            if (matchesKey(data, Key.left) || data === 'h') {
+                this.currentDetailTab = this.getPrevTab(this.currentDetailTab);
+                this.contentScrollOffset = 0;
+                this.renderBox();
+                return { consume: true };
+            }
+            if (matchesKey(data, Key.right) || data === 'l') {
+                this.currentDetailTab = this.getNextTab(this.currentDetailTab);
+                this.contentScrollOffset = 0;
+                this.renderBox();
+                return { consume: true };
+            }
+            if (matchesKey(data, Key.up) || data === 'k') {
+                if (this.contentScrollOffset > 0) {
+                    this.contentScrollOffset--;
+                    this.renderBox();
+                }
+                return { consume: true };
+            }
+            if (matchesKey(data, Key.down) || data === 'j') {
+                const terminalWidth = this.openDeskTUI.tui.terminal.columns;
+                const overlayWidth = Math.min(80, terminalWidth - 4);
+                const contentWidth = overlayWidth - 4;
+                const contentLines = this.formatSkillDetailContent(detail, contentWidth);
+                const maxOffset = Math.max(0, contentLines.length - this.detailMaxVisibleLines);
+                if (this.contentScrollOffset < maxOffset) {
+                    this.contentScrollOffset++;
+                    this.renderBox();
+                }
+                return { consume: true };
+            }
+            if (data === 'd' || data === 'D') {
+                this.confirmDeleteSkill(detail.id);
+                return { consume: true };
+            }
+            return undefined;
+        });
+    }
+
+    private getPrevTab(tab: DetailTab): DetailTab {
+        const tabs: DetailTab[] = ['info', 'body', 'resources'];
+        const idx = tabs.indexOf(tab);
+        return tabs[(idx - 1 + tabs.length) % tabs.length];
+    }
+
+    private getNextTab(tab: DetailTab): DetailTab {
+        const tabs: DetailTab[] = ['info', 'body', 'resources'];
+        const idx = tabs.indexOf(tab);
+        return tabs[(idx + 1) % tabs.length];
+    }
+
+    private confirmDeleteSkill(skillId: string) {
+        this.cleanup();
+        this.state = 'confirm-delete';
+        this.header = new Text(chalk.red.bold(` 确认删除: ${skillId}?`));
+
+        const items = [
+            { value: 'confirm-delete', label: chalk.red('确认删除') },
+            { value: 'cancel', label: chalk.green('取消') },
+        ];
+
+        this.list = new SelectList(items, items.length, defaultSelectListTheme);
+        this.setupListHandlers();
+        this.renderBox();
+        this.openDeskTUI.tui.setFocus(this.list);
+    }
+
+    private formatSkillDetailContent(detail: SkillDetail, contentWidth: number): string[] {
+        const lines: string[] = [];
+        const indent = '  ';
+
+        const wrapLine = (text: string, maxLen: number): string[] => {
+            return wrapTextWithAnsi(text, maxLen);
+        };
+
+        if (this.currentDetailTab === 'info') {
+            lines.push(chalk.cyan('基本信息'));
+            lines.push('');
+            lines.push(`${indent}${chalk.bold('名称')}: ${detail.name}`);
+            lines.push(`${indent}${chalk.bold('ID')}: ${detail.id}`);
+            lines.push(`${indent}${chalk.bold('描述')}:`);
+            const descLines = wrapLine(detail.description, contentWidth - 4);
+            for (const dl of descLines) {
+                lines.push(`${indent}${indent}${dl}`);
+            }
+            if (detail.license) {
+                lines.push(`${indent}${chalk.bold('许可证')}: ${detail.license}`);
+            }
+            if (detail.compatibility) {
+                lines.push(`${indent}${chalk.bold('兼容性')}: ${detail.compatibility}`);
+            }
+            lines.push('');
+            const dirText = truncateToWidth(detail.skillDir, contentWidth - 8, '...', false);
+            lines.push(`${indent}${chalk.bold('目录')}: ${chalk.dim(dirText)}`);
+            lines.push('');
+
+            const res = detail.resources;
+            lines.push(chalk.cyan('资源统计'));
+            lines.push('');
+            lines.push(`${indent}${chalk.bold('参考文档')}: ${res.references.length > 0 ? chalk.green(res.references.length + ' 个') : chalk.dim('无')}`);
+            lines.push(`${indent}${chalk.bold('脚本文件')}: ${res.scripts.length > 0 ? chalk.green(res.scripts.length + ' 个') : chalk.dim('无')}`);
+            lines.push(`${indent}${chalk.bold('资源文件')}: ${res.assets.length > 0 ? chalk.green(res.assets.length + ' 个') : chalk.dim('无')}`);
+
+            if (detail.allowedTools && detail.allowedTools.length > 0) {
+                lines.push('');
+                lines.push(chalk.cyan('预授权工具'));
+                lines.push('');
+                for (const tool of detail.allowedTools) {
+                    lines.push(`${indent}• ${tool}`);
+                }
+            }
+
+            if (detail.metadata && Object.keys(detail.metadata).length > 0) {
+                lines.push('');
+                lines.push(chalk.cyan('元数据'));
+                lines.push('');
+                for (const [key, value] of Object.entries(detail.metadata)) {
+                    const valStr = typeof value === 'object' ? JSON.stringify(value) : String(value);
+                    const truncatedVal = truncateToWidth(valStr, contentWidth - 10, '...', false);
+                    lines.push(`${indent}${key}: ${chalk.dim(truncatedVal)}`);
+                }
+            }
+        } else if (this.currentDetailTab === 'body') {
+            lines.push(chalk.cyan('SKILL.md 内容'));
+            lines.push('');
+            const markdown = new Markdown(detail.body, 0, 0, defaultMarkdownTheme);
+            const mdLines = markdown.render(contentWidth - 2);
+            for (const mdLine of mdLines) {
+                lines.push(`${indent}${mdLine}`);
+            }
+        } else if (this.currentDetailTab === 'resources') {
+            const res = detail.resources;
+
+            if (res.references.length > 0) {
+                lines.push(chalk.cyan('参考文档'));
+                lines.push('');
+                for (const ref of res.references) {
+                    lines.push(`${indent}${chalk.green('📄')} ${ref.name}`);
+                    if (ref.content) {
+                        const previewLines = ref.content.split('\n').slice(0, 3);
+                        for (const pl of previewLines) {
+                            const truncated = truncateToWidth(pl, contentWidth - 8, '...', false);
+                            lines.push(`${indent}${indent}${chalk.dim(truncated)}`);
+                        }
+                    }
+                    lines.push('');
+                }
+            }
+
+            if (res.scripts.length > 0) {
+                lines.push(chalk.cyan('脚本文件'));
+                lines.push('');
+                for (const script of res.scripts) {
+                    const ext = script.split('.').pop() || '';
+                    const icon = ext === 'js' || ext === 'mjs' ? '🟨' : ext === 'py' ? '🐍' : '📜';
+                    lines.push(`${indent}${icon} ${script}`);
+                }
+                lines.push('');
+            }
+
+            if (res.assets.length > 0) {
+                lines.push(chalk.cyan('资源文件'));
+                lines.push('');
+                for (const asset of res.assets) {
+                    lines.push(`${indent}📦 ${asset}`);
+                }
+            }
+
+            if (res.references.length === 0 && res.scripts.length === 0 && res.assets.length === 0) {
+                lines.push(chalk.dim(`${indent}该技能没有额外的资源文件`));
+            }
+        }
+
+        return lines;
+    }
+
     private async deleteSkill(skillId: string) {
         this.setLoading(true);
         try {
             const result = SkillRegistry.deleteSkill(skillId);
             if (result.success) {
-                this.showMessage(`成功删除技能: ${skillId}`);
+                this.showMessage(`成功删除技能: ${skillId}`, false, 'view-installed');
                 await this.loadInstalledSkills();
                 this.showViewInstalled();
             } else {
@@ -509,6 +726,12 @@ this.searchResults = result.skills || [];
                 case 'view-installed':
                     this.handleInstalledSelection(item.value);
                     break;
+                case 'skill-detail':
+                    this.handleDetailSelection(item.value);
+                    break;
+                case 'confirm-delete':
+                    this.handleDetailSelection(item.value);
+                    break;
             }
         };
 
@@ -519,6 +742,14 @@ this.searchResults = result.skills || [];
                 this.goBack();
             }
         };
+    }
+
+    private handleDetailSelection(value: string) {
+        if (value === 'confirm-delete' && this.currentSkillDetail) {
+            this.deleteSkill(this.currentSkillDetail.id);
+        } else if (value === 'cancel') {
+            this.renderSkillDetail();
+        }
     }
 
     private handleMainSelection(value: string) {
@@ -534,9 +765,6 @@ this.searchResults = result.skills || [];
                 break;
             case 'install-url':
                 this.showInstallUrl();
-                break;
-            case 'install-github':
-                this.showInstallGitHub();
                 break;
             case 'install-clawhub':
                 this.showInstallClawHub();
@@ -576,7 +804,7 @@ this.searchResults = result.skills || [];
             }
 
             if (result?.success) {
-                this.showMessage(`成功安装技能: ${result.name}`);
+                this.showMessage(`成功安装技能: ${result.name}`, false, 'main');
                 await this.loadInstalledSkills();
                 this.showMain();
             } else {
@@ -598,7 +826,7 @@ this.searchResults = result.skills || [];
         const skill = this.installedSkills.find((s: any) => s.id === skillId);
         if (!skill) return;
 
-        this.deleteSkill(skillId);
+        this.showSkillDetail(skillId);
     }
 
     private setupInputHandlers() {
@@ -626,13 +854,19 @@ this.searchResults = result.skills || [];
             case 'install-local':
             case 'install-zip':
             case 'install-url':
-            case 'install-github':
             case 'install-clawhub':
             case 'view-installed':
                 this.showMain();
                 break;
             case 'search-results':
                 this.showSearch();
+                break;
+            case 'skill-detail':
+                this.currentSkillDetail = null;
+                this.showViewInstalled();
+                break;
+            case 'confirm-delete':
+                this.renderSkillDetail();
                 break;
             case 'main':
                 this.close();
@@ -652,6 +886,11 @@ this.searchResults = result.skills || [];
         handle.hide();
         
         this.cleanup();
+        if (this.messageTimeout) {
+            clearTimeout(this.messageTimeout);
+            this.messageTimeout = undefined;
+        }
+        this.message = null;
         this.openDeskTUI.tui.setFocus(this.openDeskTUI.inputArea.input);
     }
 
@@ -659,7 +898,14 @@ this.searchResults = result.skills || [];
         this.box.clear();
         this.box.addChild(this.header);
 
-        if (this.message) {
+        if (this.state === 'skill-detail' && this.currentSkillDetail) {
+            this.box.addChild(new Text(chalk.dim('  ←/→ 切换标签  ↑/↓ 滚动  D 删除  Esc 返回')));
+            this.renderDetailContent();
+            this.openDeskTUI.tui.requestRender();
+            return;
+        }
+
+        if (this.message && this.message.state === this.state) {
             const msgText = this.message.isError
                 ? chalk.red(`❌ ${this.message.text}`)
                 : chalk.green(`✓ ${this.message.text}`);
@@ -691,6 +937,56 @@ this.searchResults = result.skills || [];
         this.openDeskTUI.tui.requestRender();
     }
 
+    private renderDetailContent() {
+        if (!this.currentSkillDetail) return;
+
+        const detail = this.currentSkillDetail;
+        const terminalWidth = this.openDeskTUI.tui.terminal.columns;
+        const overlayWidth = Math.min(80, terminalWidth - 4);
+        const contentWidth = overlayWidth - 4;
+
+        const tabs = ['info', 'body', 'resources'] as DetailTab[];
+        const tabLabels = { info: '基本信息', body: 'SKILL.md', resources: '资源文件' };
+        const tabLine = tabs.map(t => {
+            const label = tabLabels[t];
+            return t === this.currentDetailTab
+                ? chalk.black.bgCyan(` ${label} `)
+                : chalk.dim(` ${label} `);
+        }).join(chalk.dim('│'));
+
+        this.box.addChild(new Text(''));
+        this.box.addChild(new Text(`  ${tabLine}`));
+        this.box.addChild(new Text(chalk.dim('  ' + '─'.repeat(overlayWidth - 4))));
+
+        const contentLines = this.formatSkillDetailContent(detail, contentWidth);
+        const maxOffset = Math.max(0, contentLines.length - this.detailMaxVisibleLines);
+        if (this.contentScrollOffset > maxOffset) {
+            this.contentScrollOffset = maxOffset;
+        }
+        const visibleLines = contentLines.slice(this.contentScrollOffset, this.contentScrollOffset + this.detailMaxVisibleLines);
+
+        const bgFn = (text: string) => chalk.bgHex('#2d2d2d').hex('#e0e0e0')(text);
+
+        for (let i = 0; i < visibleLines.length; i++) {
+            const line = visibleLines[i];
+            const paddedLine = this.padLineToWidth(line, overlayWidth - 2);
+            this.box.addChild(new Text(bgFn(`  ${paddedLine}`)));
+        }
+
+        if (contentLines.length > this.detailMaxVisibleLines) {
+            const scrollInfo = `  [行 ${this.contentScrollOffset + 1}-${Math.min(this.contentScrollOffset + this.detailMaxVisibleLines, contentLines.length)} / ${contentLines.length}]`;
+            this.box.addChild(new Text(chalk.dim(scrollInfo)));
+        }
+    }
+
+    private padLineToWidth(line: string, width: number): string {
+        const visWidth = visibleWidth(line);
+        if (visWidth >= width) {
+            return truncateToWidth(line, width, '', false);
+        }
+        return line + ' '.repeat(width - visWidth);
+    }
+
     private getInputLabel(): string {
         switch (this.state) {
             case 'search':
@@ -700,9 +996,7 @@ this.searchResults = result.skills || [];
             case 'install-zip':
                 return '输入本地 zip 文件路径:';
             case 'install-url':
-                return '输入技能包 URL:';
-            case 'install-github':
-                return '输入 GitHub URL (tree 格式):';
+                return '输入 URL (zip 或 GitHub tree):';
             case 'install-clawhub':
                 return '输入 ClawHub slug (如 my-skill 或 my-skill@1.2.3):';
             default:
@@ -724,14 +1018,16 @@ this.searchResults = result.skills || [];
                 return '输入本地目录路径  Enter 添加  Esc 返回';
             case 'install-zip':
                 return '输入本地 zip 文件路径  Enter 添加  Esc 返回';
-            case 'installiert-url':
-                return '输入技能包 URL  Enter 添加  Esc 返回';
-            case 'install-github':
-                return '输入 GitHub URL (如 https://github.com/user/repo/tree/branch)  Enter 添加  Esc 返回';
+            case 'install-url':
+                return '输入 URL (zip 或 GitHub tree)  Enter 添加  Esc 返回';
             case 'install-clawhub':
                 return '输入 ClawHub slug (如 my-skill 或 my-skill@1.2.3)  Enter 添加  Esc 返回';
             case 'view-installed':
-                return '↑↓ 选择  Enter 删除  Esc 返回';
+                return '↑↓ 选择  Enter 查看详情  Esc 返回';
+            case 'skill-detail':
+                return '←/→ 切换标签  ↑/↓ 滚动  D 删除  Esc 返回';
+            case 'confirm-delete':
+                return '↑↓ 选择  Enter 确认  Esc 返回';
             default:
                 return '';
         }
@@ -765,6 +1061,11 @@ this.searchResults = result.skills || [];
         this.overlayHandle.onHide = () => {
             if (this.overlayHandle) {
                 this.cleanup();
+                if (this.messageTimeout) {
+                    clearTimeout(this.messageTimeout);
+                    this.messageTimeout = undefined;
+                }
+                this.message = null;
                 this.openDeskTUI.hasOpenOverlay = false;
                 this.openDeskTUI.tui.setFocus(this.openDeskTUI.inputArea.input);
             }
