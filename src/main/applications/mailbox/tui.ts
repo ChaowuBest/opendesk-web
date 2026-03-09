@@ -3212,8 +3212,6 @@ class DetailFooter implements Component {
         if (this.totalLines > this.visibleLines) {
             hints.push(MC.neon('↑↓/jk') + MC.dim(' 滚动'));
             hints.push(MC.neon('←/→') + MC.dim(' 翻页'));
-            hints.push(MC.neon('Space/b') + MC.dim(' 翻页'));
-            hints.push(MC.neon('g/G') + MC.dim(' 首/尾'));
         }
 
         // 操作提示

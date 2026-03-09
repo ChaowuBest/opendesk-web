@@ -1,9 +1,10 @@
-import { type Component, type OverlayHandle, Box, Text, SelectList, matchesKey, Key } from "@mariozechner/pi-tui";
+import { type Component, type OverlayHandle, Box, Text, matchesKey, Key } from "@mariozechner/pi-tui";
 import { defaultSelectListTheme } from "../theme";
 import type { OpenDeskTUI } from "../entry";
 import chalk from "chalk";
 import { visibleWidth } from "@mariozechner/pi-tui";
 import { InfoOverlay } from "./notice";
+import { SelectTable, type SelectRow } from "./selecttable";
 
 // ─── Notification Types & Store ──────────────────────────────
 
@@ -195,7 +196,7 @@ export class NotificationStore {
     }
 }
 
-// ─── Toast Overlay (非阻塞右上角弹窗) ──────────────────────
+// ─── Toast Overlay (非阻塞左上角弹窗) ──────────────────────
 
 const ICON_MAP: Record<NotificationType, string> = {
     info: '✅',
@@ -217,7 +218,7 @@ const PRIORITY_BADGE: Record<NotificationPriority, string> = {
 };
 
 /**
- * 单条 Toast 的完整渲染组件（带边框，右上角弹窗）
+ * 单条 Toast 的完整渲染组件（带边框，左上角弹窗）
  */
 class ToastComponent implements Component {
     private item: NotificationItem;
@@ -282,7 +283,7 @@ class ToastComponent implements Component {
 }
 
 /**
- * Toast 容器：管理右上角的 toast 弹窗队列
+ * Toast 容器：管理左上角的 toast 弹窗队列
  * 支持自动消失、堆叠显示、优先级排序
  */
 export class ToastManager {
@@ -344,23 +345,30 @@ export class ToastManager {
         const termWidth = this.openDeskTUI.tui.terminal.columns;
         const toastWidth = Math.min(50, termWidth - 4);
 
-        // 计算垂直偏移：每个 toast 往下偏移
-        const offsetY = 1 + this.activeToasts.length * 6;
+        const offsetY = this.activeToasts.length * 6
+
+        // showOverlay 会自动将焦点转移到 overlay 组件，需要先保存当前焦点
+        const previousFocus = this.openDeskTUI.tui['focusedComponent'] as Component | null;
 
         const handle = this.openDeskTUI.tui.showOverlay(component, {
             width: toastWidth,
             maxHeight: 8,
-            anchor: 'top-right',
-            offsetX: -1,
+            anchor: 'top-left',
+            offsetX: 0,
             offsetY: offsetY,
         });
 
+        // Toast 是纯展示型组件，不应抢占焦点，立即恢复之前的焦点
+        if (previousFocus) {
+            this.openDeskTUI.tui.setFocus(previousFocus);
+        }
+
         // 自动消失时间根据优先级调整
         const durations: Record<NotificationPriority, number> = {
-            low: 3000,
-            normal: 5000,
-            high: 8000,
-            urgent: 12000,
+            low: 2000,
+            normal: 3000,
+            high: 5000,
+            urgent: 8000,
         };
 
         const timer = setTimeout(() => {
@@ -397,25 +405,27 @@ class Splitter implements Component {
  * 支持筛选（全部/未读/已读）、标记已读、清空、免打扰切换
  *
  * 自身实现 handleInput 来拦截自定义按键（a/d/c/f/n），
- * 其余按键（上下）转发给内部 SelectList。
- * Enter 和 Esc 由 overlay 自身处理（不转发给 SelectList）。
+ * 其余按键（上下）转发给内部 SelectTable。
+ * Enter 和 Esc 由 overlay 自身处理（不转发给 SelectTable）。
  */
 export class NotificationCenterOverlay implements Component {
     private openDeskTUI: OpenDeskTUI;
-    private list: SelectList;
+    private table: SelectTable;
     private header: Text;
     private footer: Text;
     private box: Box;
     private filter: 'all' | 'unread' | 'read' = 'all';
     private overlayHandle?: OverlayHandle;
-    /** SelectList 可见行数，在 show() 时根据终端高度计算 */
+    /** 列表可见行数，在 show() 时根据终端高度计算 */
     private listMaxVisible = 15;
 
     constructor(openDeskTUI: OpenDeskTUI) {
         this.openDeskTUI = openDeskTUI;
 
-        const items = this.buildListItems();
-        this.list = new SelectList(items, this.listMaxVisible, defaultSelectListTheme);
+        const rows = this.buildTableRows();
+        this.table = new SelectTable(rows, this.listMaxVisible, defaultSelectListTheme);
+        this.table.setColumnStrechFactors([0, 0, 1, 0]);
+        this.table.setAlignments(['left', 'left', 'left', 'right']);
 
         this.header = new Text(this.buildHeaderText());
         this.footer = new Text(chalk.dim('  Enter 查看 │ a 全部已读 │ d 删除 │ c 清空 │ f 切换筛选 │ Esc 关闭'));
@@ -444,12 +454,12 @@ export class NotificationCenterOverlay implements Component {
         this.box.addChild(this.header);
         this.box.addChild(new Splitter());
         this.box.addChild(new Text(''));
-        this.box.addChild(this.list);
+        this.box.addChild(this.table);
         this.box.addChild(new Text(''));
         this.box.addChild(this.footer);
     }
 
-    private buildListItems(): { value: string; label: string; description?: string }[] {
+    private buildTableRows(): SelectRow[] {
         const store = NotificationStore.getInstance();
         let notifications = store.getAll();
 
@@ -464,26 +474,28 @@ export class NotificationCenterOverlay implements Component {
             const hint = this.filter === 'unread' ? '暂无未读通知'
                        : this.filter === 'read' ? '暂无已读通知'
                        : '暂无通知';
-            return [{ value: '__empty__', label: chalk.dim(`  ${hint}`) }];
+            return [{ value: '__empty__', labels: ['', '', chalk.dim(hint), ''] }];
         }
 
         return notifications.map(item => {
             const icon = ICON_MAP[item.type];
-            const readMark = item.read ? chalk.dim('○') : chalk.cyan('●');
-            const priorityMark = item.priority === 'urgent' ? chalk.red(' ‼') : item.priority === 'high' ? chalk.yellow(' !') : '';
-            const time = chalk.dim(formatRelativeTime(item.timestamp));
+            const readMark = item.read ? '○' : '●';
+            const priorityMark = item.priority === 'urgent' ? ' ‼' : item.priority === 'high' ? ' !' : '';
+            const titleCol = `${item.title}${priorityMark}`;
+            const desc = `@${item.source}  ${item.message.slice(0, 60)}${item.message.length > 60 ? '...' : ''}`;
             return {
                 value: item.id,
-                label: `${readMark} ${icon} ${chalk.bold(item.title)}${priorityMark}  ${time}`,
-                description: `  ${chalk.dim(`@${item.source}`)} ${item.message.slice(0, 60)}${item.message.length > 60 ? '...' : ''}`,
+                labels: [`${readMark} ${icon}`, titleCol, desc, formatRelativeTime(item.timestamp)],
             };
         });
     }
 
     private refreshList(): void {
-        const items = this.buildListItems();
+        const rows = this.buildTableRows();
         this.header.setText(this.buildHeaderText());
-        this.list = new SelectList(items, this.listMaxVisible, defaultSelectListTheme);
+        this.table = new SelectTable(rows, this.listMaxVisible, defaultSelectListTheme);
+        this.table.setColumnStrechFactors([0, 0, 1, 0]);
+        this.table.setAlignments(['left', 'left', 'left', 'right']);
         this.rebuildBox();
         this.openDeskTUI.tui.requestRender();
     }
@@ -497,7 +509,7 @@ export class NotificationCenterOverlay implements Component {
     }
 
     /**
-     * 自身拦截 Esc / Enter / 自定义按键，其余转发给 SelectList（上下翻页）
+     * 自身拦截 Esc / Enter / 自定义按键，其余转发给 SelectTable（上下翻页）
      */
     handleInput(keyData: string): void {
         const store = NotificationStore.getInstance();
@@ -510,7 +522,7 @@ export class NotificationCenterOverlay implements Component {
 
         // Enter → 查看详情并标记已读
         if (matchesKey(keyData, Key.enter)) {
-            const selected = this.list.getSelectedItem();
+            const selected = this.table.innerList.getSelectedItem();
             if (selected && selected.value !== '__empty__') {
                 const notification = store.getAll().find(n => n.id === selected.value);
                 if (notification) {
@@ -548,7 +560,7 @@ export class NotificationCenterOverlay implements Component {
         }
         if (keyData === 'd') {
             // 删除选中通知
-            const selected = this.list.getSelectedItem();
+            const selected = this.table.innerList.getSelectedItem();
             if (selected && selected.value !== '__empty__') {
                 store.remove(selected.value);
                 this.refreshList();
@@ -573,8 +585,8 @@ export class NotificationCenterOverlay implements Component {
             return;
         }
 
-        // 其余按键（上下翻页等）转发给 SelectList
-        this.list.handleInput(keyData);
+        // 其余按键（上下翻页等）转发给 SelectTable
+        this.table.handleInput(keyData);
     }
 
     invalidate(): void {
