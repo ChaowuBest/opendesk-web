@@ -6,7 +6,8 @@ const outfileDebug = 'dist/cli/opendesk-debug';
 
 /**
  * 注入 shebang 和 require shim 作为 banner
- * 为了保持对 OpenHarmony HiShell 的兼容性，这里使用 #!/bin/env node 而不是 #!/usr/bin/env node
+ * 使用 #!/bin/sh polyglot 技巧，兼容 OpenHarmony HiShell（其 env 在 /bin/env 而非 /usr/bin/env）
+ * npm 发布包会由打包脚本将 shebang 替换为 #!/usr/bin/env node 以兼容 Windows
  */
 const BANNER = `#!/bin/sh
 // 2>/dev/null; exec "$(command -v node || command -v nodejs)" "$0" "$@"

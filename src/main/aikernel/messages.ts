@@ -220,7 +220,7 @@ export class ToolCallMessagePart {
             if (target === undefined) {
                 this.toolcalls.push(toolcall);
             } else {
-                target.args_string += toolcall.args_string;
+                target.args_string += toolcall.args_string ?? '';
                 if (toolcall.tool_name && toolcall.tool_name !== 'unknown') {
                     target.tool_name = toolcall.tool_name;
                 }
@@ -741,7 +741,7 @@ export class AssistantMessage {
                     tool_call['index'],
                     tool_call['id'],
                     tool_call['function']['name'],
-                    tool_call['function']['arguments']
+                    tool_call['function']['arguments'] ?? ''
                 );
                 part.push(tc);
             }
