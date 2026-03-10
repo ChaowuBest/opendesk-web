@@ -39,7 +39,14 @@ export class SkillTestOverlay implements Component {
     private currentResult: TestSuiteResult | null = null;
     private selectedTestIndex = 0;
     private resultScrollOffset = 0;
-    private readonly maxVisibleLines = 15;
+    private detailScrollOffset = 0;
+    private detailContentLines: string[] = [];
+    private resultContentLines: string[] = [];
+    private testStartLineIndex = 0;
+    /**  overlay 实际可用高度（由 show() 设置），用于计算可显示内容行数 */
+    private overlayMaxHeight = 20;
+    private readonly maxVisibleLines = 40;
+    private readonly maxDetailLines = 30;
 
     constructor(openDeskTUI: OpenDeskTUI) {
         this.openDeskTUI = openDeskTUI;
@@ -217,6 +224,8 @@ export class SkillTestOverlay implements Component {
         this.input = undefined;
         this.resultScrollOffset = 0;
         this.selectedTestIndex = 0;
+        this.resultContentLines = [];
+        this.testStartLineIndex = 0;
 
         if (!this.currentResult) {
             this.showMain();
@@ -230,6 +239,7 @@ export class SkillTestOverlay implements Component {
         
         this.header = new Text(chalk.bold(` 测试结果 ${statusIcon} ${result.skillName}`));
 
+        this.buildResultContent();
         this.renderBox();
 
         this.removeInputListener = this.openDeskTUI.tui.addInputListener((data: string) => {
@@ -241,6 +251,7 @@ export class SkillTestOverlay implements Component {
             if (matchesKey(data, Key.up) || data === 'k') {
                 if (this.selectedTestIndex > 0) {
                     this.selectedTestIndex--;
+                    this.buildResultContent();
                     this.adjustScrollOffset();
                     this.renderBox();
                 }
@@ -249,7 +260,42 @@ export class SkillTestOverlay implements Component {
             if (matchesKey(data, Key.down) || data === 'j') {
                 if (this.currentResult && this.selectedTestIndex < this.currentResult.tests.length - 1) {
                     this.selectedTestIndex++;
+                    this.buildResultContent();
                     this.adjustScrollOffset();
+                    this.renderBox();
+                }
+                return { consume: true };
+            }
+            if (matchesKey(data, Key.pageUp) || data === 'b' || data === 'B') {
+                const h = this.contentHeight;
+                this.resultScrollOffset = Math.max(0, this.resultScrollOffset - h);
+                this.buildResultContent();
+                this.adjustScrollOffset();
+                this.renderBox();
+                return { consume: true };
+            }
+            if (matchesKey(data, Key.pageDown) || data === 'f' || data === 'F') {
+                const h = this.contentHeight;
+                const maxOffset = Math.max(0, this.resultContentLines.length - h);
+                this.resultScrollOffset = Math.min(maxOffset, this.resultScrollOffset + h);
+                this.buildResultContent();
+                this.adjustScrollOffset();
+                this.renderBox();
+                return { consume: true };
+            }
+            if (data === 'g') {
+                this.selectedTestIndex = 0;
+                this.resultScrollOffset = 0;
+                this.buildResultContent();
+                this.renderBox();
+                return { consume: true };
+            }
+            if (data === 'G') {
+                if (this.currentResult && this.currentResult.tests.length > 0) {
+                    this.selectedTestIndex = this.currentResult.tests.length - 1;
+                    this.buildResultContent();
+                    const maxOffset = Math.max(0, this.resultContentLines.length - this.contentHeight);
+                    this.resultScrollOffset = maxOffset;
                     this.renderBox();
                 }
                 return { consume: true };
@@ -275,10 +321,13 @@ export class SkillTestOverlay implements Component {
         this.state = 'test-detail';
         this.list = undefined;
         this.input = undefined;
+        this.detailScrollOffset = 0;
+        this.detailContentLines = [];
 
         const test = this.currentResult.tests[this.selectedTestIndex];
         this.header = new Text(chalk.bold(` 测试详情: ${test.name}`));
 
+        this.buildDetailContent();
         this.renderBox();
 
         this.removeInputListener = this.openDeskTUI.tui.addInputListener((data: string) => {
@@ -287,13 +336,39 @@ export class SkillTestOverlay implements Component {
                 return { consume: true };
             }
             if (matchesKey(data, Key.up) || data === 'k') {
-                if (this.resultScrollOffset > 0) {
-                    this.resultScrollOffset--;
+                if (this.detailScrollOffset > 0) {
+                    this.detailScrollOffset--;
                     this.renderBox();
                 }
                 return { consume: true };
             }
             if (matchesKey(data, Key.down) || data === 'j') {
+                const maxOffset = Math.max(0, this.detailContentLines.length - this.contentHeight);
+                if (this.detailScrollOffset < maxOffset) {
+                    this.detailScrollOffset++;
+                    this.renderBox();
+                }
+                return { consume: true };
+            }
+            if (matchesKey(data, Key.pageUp) || data === 'b' || data === 'B') {
+                this.detailScrollOffset = Math.max(0, this.detailScrollOffset - this.contentHeight);
+                this.renderBox();
+                return { consume: true };
+            }
+            if (matchesKey(data, Key.pageDown) || data === 'f' || data === 'F') {
+                const maxOffset = Math.max(0, this.detailContentLines.length - this.contentHeight);
+                this.detailScrollOffset = Math.min(maxOffset, this.detailScrollOffset + this.contentHeight);
+                this.renderBox();
+                return { consume: true };
+            }
+            if (data === 'g') {
+                this.detailScrollOffset = 0;
+                this.renderBox();
+                return { consume: true };
+            }
+            if (data === 'G') {
+                const maxOffset = Math.max(0, this.detailContentLines.length - this.contentHeight);
+                this.detailScrollOffset = maxOffset;
                 this.renderBox();
                 return { consume: true };
             }
@@ -301,13 +376,107 @@ export class SkillTestOverlay implements Component {
         });
     }
 
-    private adjustScrollOffset() {
-        const halfVisible = Math.floor(this.maxVisibleLines / 2);
-        if (this.selectedTestIndex < this.resultScrollOffset + halfVisible) {
-            this.resultScrollOffset = Math.max(0, this.selectedTestIndex - halfVisible);
-        } else if (this.selectedTestIndex >= this.resultScrollOffset + this.maxVisibleLines - halfVisible) {
-            this.resultScrollOffset = this.selectedTestIndex - this.maxVisibleLines + halfVisible + 1;
+    private buildDetailContent() {
+        this.detailContentLines = [];
+        if (!this.currentResult) return;
+
+        const test = this.currentResult.tests[this.selectedTestIndex];
+        const terminalWidth = this.openDeskTUI.tui.terminal.columns;
+        const overlayWidth = Math.min(90, terminalWidth - 4);
+
+        this.detailContentLines.push(`${chalk.bold('名称')}: ${test.name}`);
+        this.detailContentLines.push(`${chalk.bold('文件')}: ${truncateToWidth(test.file, overlayWidth - 10, '...', false)}`);
+        this.detailContentLines.push(`${chalk.bold('状态')}: ${this.formatStatus(test.status)}`);
+        this.detailContentLines.push(`${chalk.bold('耗时')}: ${test.duration}ms`);
+
+        if (test.message) {
+            this.detailContentLines.push(chalk.bold('消息:') + ` ${test.message}`);
         }
+
+        if (test.error) {
+            this.detailContentLines.push(chalk.bold('错误输出:'));
+            const errorLines = test.error.split('\n');
+            for (const line of errorLines) {
+                this.detailContentLines.push(chalk.red(`  ${truncateToWidth(line, overlayWidth - 6, '...', false)}`));
+            }
+        }
+
+        if (test.details) {
+            this.detailContentLines.push(chalk.bold('详细输出:'));
+            const detailLines = test.details.split('\n');
+            for (const line of detailLines) {
+                this.detailContentLines.push(chalk.dim(`  ${truncateToWidth(line, overlayWidth - 6, '...', false)}`));
+            }
+
+        }
+    }
+
+    private buildResultContent() {
+        this.resultContentLines = [];
+        this.testStartLineIndex = 0;
+        if (!this.currentResult) return;
+
+        const result = this.currentResult;
+        const terminalWidth = this.openDeskTUI.tui.terminal.columns;
+        const overlayWidth = Math.min(90, terminalWidth - 4);
+
+        this.resultContentLines.push(chalk.cyan('环境检查'));
+        for (const check of result.environment.checks) {
+            const icon = check.passed ? chalk.green('✓') : chalk.red('✗');
+            this.resultContentLines.push(`  ${icon} ${check.name}: ${check.message}`);
+        }
+
+        const summary = result.summary;
+        const summaryLine = `总计: ${summary.total} | ` +
+            chalk.green(`通过: ${summary.passed}`) + ' | ' +
+            chalk.red(`失败: ${summary.failed}`) + ' | ' +
+            chalk.yellow(`跳过: ${summary.skipped}`) + ' | ' +
+            `耗时: ${(summary.duration / 1000).toFixed(2)}s`;
+        this.resultContentLines.push(summaryLine);
+
+        this.testStartLineIndex = this.resultContentLines.length;
+
+        for (let i = 0; i < result.tests.length; i++) {
+            const test = result.tests[i];
+            const isSelected = i === this.selectedTestIndex;
+            const prefix = isSelected ? chalk.cyan('▶ ') : '  ';
+
+            let icon: string;
+            let color: (text: string) => string;
+            switch (test.status) {
+                case 'passed':
+                    icon = '✓';
+                    color = chalk.green;
+                    break;
+                case 'failed':
+                    icon = '✗';
+                    color = chalk.red;
+                    break;
+                case 'skipped':
+                    icon = '○';
+                    color = chalk.yellow;
+                    break;
+                default:
+                    icon = '!';
+                    color = chalk.red;
+            }
+
+            const duration = `(${test.duration}ms)`;
+            this.resultContentLines.push(`${prefix}${color(icon)} ${test.name} ${chalk.dim(duration)}`);
+        }
+    }
+
+    private adjustScrollOffset() {
+        if (!this.currentResult) return;
+        const h = this.contentHeight;
+        const maxOffset = Math.max(0, this.resultContentLines.length - h);
+        const selectedTestLine = this.testStartLineIndex + this.selectedTestIndex;
+        if (selectedTestLine < this.resultScrollOffset) {
+            this.resultScrollOffset = selectedTestLine;
+        } else if (selectedTestLine >= this.resultScrollOffset + h) {
+            this.resultScrollOffset = Math.min(maxOffset, selectedTestLine - h + 1);
+        }
+        this.resultScrollOffset = Math.max(0, Math.min(maxOffset, this.resultScrollOffset));
     }
 
     private setupListHandlers() {
@@ -432,131 +601,55 @@ export class SkillTestOverlay implements Component {
     }
 
     private renderResultsContent() {
-        if (!this.currentResult) return;
+        if (!this.currentResult || this.resultContentLines.length === 0) return;
 
-        const result = this.currentResult;
-        const terminalWidth = this.openDeskTUI.tui.terminal.columns;
-        const overlayWidth = Math.min(90, terminalWidth - 4);
-
-        this.box.addChild(new Text(''));
-
-        // 环境检查
-        this.box.addChild(new Text(chalk.cyan('环境检查')));
-        for (const check of result.environment.checks) {
-            const icon = check.passed ? chalk.green('✓') : chalk.red('✗');
-            const line = `  ${icon} ${check.name}: ${check.message}`;
-            this.box.addChild(new Text(line));
+        const h = this.contentHeight;
+        const maxOffset = Math.max(0, this.resultContentLines.length - h);
+        if (this.resultScrollOffset > maxOffset) {
+            this.resultScrollOffset = maxOffset;
         }
 
-        this.box.addChild(new Text(''));
-
-        // 测试摘要
-        const summary = result.summary;
-        const summaryLine = `总计: ${summary.total} | ` +
-            chalk.green(`通过: ${summary.passed}`) + ' | ' +
-            chalk.red(`失败: ${summary.failed}`) + ' | ' +
-            chalk.yellow(`跳过: ${summary.skipped}`) + ' | ' +
-            `耗时: ${(summary.duration / 1000).toFixed(2)}s`;
-        this.box.addChild(new Text(summaryLine));
-        this.box.addChild(new Text(chalk.dim('─'.repeat(overlayWidth - 4))));
-
-        // 测试用例列表
-        this.box.addChild(new Text(chalk.cyan('测试用例')));
-
-        const visibleTests = result.tests.slice(
+        const visibleLines = this.resultContentLines.slice(
             this.resultScrollOffset,
-            this.resultScrollOffset + this.maxVisibleLines
+            this.resultScrollOffset + h
         );
 
-        for (let i = 0; i < visibleTests.length; i++) {
-            const test = visibleTests[i];
-            const actualIndex = this.resultScrollOffset + i;
-            const isSelected = actualIndex === this.selectedTestIndex;
-            const prefix = isSelected ? chalk.cyan('▶ ') : '  ';
-
-            let icon: string;
-            let color: (text: string) => string;
-            switch (test.status) {
-                case 'passed':
-                    icon = '✓';
-                    color = chalk.green;
-                    break;
-                case 'failed':
-                    icon = '✗';
-                    color = chalk.red;
-                    break;
-                case 'skipped':
-                    icon = '○';
-                    color = chalk.yellow;
-                    break;
-                default:
-                    icon = '!';
-                    color = chalk.red;
-            }
-
-            const duration = `(${test.duration}ms)`;
-            const line = `${prefix}${color(icon)} ${test.name} ${chalk.dim(duration)}`;
+        for (const line of visibleLines) {
             this.box.addChild(new Text(line));
-
-            if (test.message && test.status !== 'passed') {
-                const msgLine = `      ${chalk.dim(truncateToWidth(test.message, overlayWidth - 10, '...', false))}`;
-                this.box.addChild(new Text(msgLine));
-            }
         }
 
-        if (result.tests.length > this.maxVisibleLines) {
-            const scrollInfo = `[${this.selectedTestIndex + 1}/${result.tests.length}]`;
+        if (this.resultContentLines.length > h) {
+            const scrollInfo = `[行 ${this.resultScrollOffset + 1}-${Math.min(this.resultScrollOffset + h, this.resultContentLines.length)} / ${this.resultContentLines.length}]`;
             this.box.addChild(new Text(chalk.dim(scrollInfo)));
         }
 
-        this.box.addChild(new Text(''));
-        this.box.addChild(new Text(chalk.dim('↑/↓ 选择  Enter 详情  R 重跑  Esc 返回')));
+        this.box.addChild(new Text(chalk.dim('↑/↓ 选择  PgUp/PgDn 翻页  g 顶部 G 底部  Enter 详情  R 重跑  Esc 返回')));
     }
 
     private renderTestDetailContent() {
-        if (!this.currentResult) return;
+        if (!this.currentResult || this.detailContentLines.length === 0) return;
 
-        const test = this.currentResult.tests[this.selectedTestIndex];
-        const terminalWidth = this.openDeskTUI.tui.terminal.columns;
-        const overlayWidth = Math.min(90, terminalWidth - 4);
-
-        this.box.addChild(new Text(''));
-
-        // 基本信息
-        this.box.addChild(new Text(`${chalk.bold('名称')}: ${test.name}`));
-        this.box.addChild(new Text(`${chalk.bold('文件')}: ${truncateToWidth(test.file, overlayWidth - 10, '...', false)}`));
-        this.box.addChild(new Text(`${chalk.bold('状态')}: ${this.formatStatus(test.status)}`));
-        this.box.addChild(new Text(`${chalk.bold('耗时')}: ${test.duration}ms`));
-
-        if (test.message) {
-            this.box.addChild(new Text(''));
-            this.box.addChild(new Text(chalk.bold('消息:')));
-            this.box.addChild(new Text(`  ${test.message}`));
+        const h = this.contentHeight;
+        const maxOffset = Math.max(0, this.detailContentLines.length - h);
+        if (this.detailScrollOffset > maxOffset) {
+            this.detailScrollOffset = maxOffset;
         }
 
-        if (test.error) {
-            this.box.addChild(new Text(''));
-            this.box.addChild(new Text(chalk.bold('错误输出:')));
-            const errorLines = test.error.split('\n').slice(0, 10);
-            for (const line of errorLines) {
-                this.box.addChild(new Text(chalk.red(`  ${truncateToWidth(line, overlayWidth - 6, '...', false)}`)));
-            }
-            if (test.error.split('\n').length > 10) {
-                this.box.addChild(new Text(chalk.dim('  ... (更多内容已截断)')));
-            }
+        const visibleLines = this.detailContentLines.slice(
+            this.detailScrollOffset,
+            this.detailScrollOffset + h
+        );
+
+        for (const line of visibleLines) {
+            this.box.addChild(new Text(line));
         }
 
-        if (test.details) {
-            this.box.addChild(new Text(''));
-            this.box.addChild(new Text(chalk.bold('详细输出:')));
-            const detailLines = test.details.split('\n').slice(0, 10);
-            for (const line of detailLines) {
-                this.box.addChild(new Text(chalk.dim(`  ${truncateToWidth(line, overlayWidth - 6, '...', false)}`)));
-            }
+        if (this.detailContentLines.length > h) {
+            const scrollInfo = `[行 ${this.detailScrollOffset + 1}-${Math.min(this.detailScrollOffset + h, this.detailContentLines.length)} / ${this.detailContentLines.length}]`;
+            this.box.addChild(new Text(chalk.dim(scrollInfo)));
         }
 
-        this.box.addChild(new Text(''));
-        this.box.addChild(new Text(chalk.dim('Esc 返回')));
+        this.box.addChild(new Text(chalk.dim('↑/↓ 滚动  PgUp/PgDn 翻页  g 顶部 G 底部  Esc 返回')));
     }
 
     private formatStatus(status: string): string {
@@ -593,11 +686,19 @@ export class SkillTestOverlay implements Component {
         return this.box.render(width);
     }
 
+    /** 结果/详情内容区可用行数（扣除 Box 上下 padding、标题、翻页提示、帮助行） */
+    private get contentHeight(): number {
+        // Box(1,1) 上下各 1 行 padding；再加 header(1) + scrollInfo(1) + help(1) = 5 行固定
+        const reserved = 5;
+        return Math.max(5, this.overlayMaxHeight - reserved);
+    }
+
     show(skillId?: string) {
         const terminalWidth = this.openDeskTUI.tui.terminal.columns;
         const terminalHeight = this.openDeskTUI.tui.terminal.rows;
         const overlayWidth = Math.min(90, terminalWidth - 4);
         const overlayMaxHeight = Math.max(15, terminalHeight - 4);
+        this.overlayMaxHeight = overlayMaxHeight;
 
         this.overlayHandle = this.openDeskTUI.tui.showOverlay(this, {
             width: overlayWidth,
