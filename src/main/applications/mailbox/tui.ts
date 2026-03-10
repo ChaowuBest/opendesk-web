@@ -998,7 +998,17 @@ export class MailOverlay implements Component {
                 this.openDeskTUI.tui.requestRender();
                 return { consume: true };
             }
-            
+            // ← 向左：向上翻一页（正文当前可见行数）；→ 向右：向下翻一页
+            const detailPageLines = Math.max(1, this.detailBodyVisibleLines - 2);
+            if (matchesKey(data, Key.left)) {
+                this.scrollDetailBody(-detailPageLines);
+                return { consume: true };
+            }
+            if (matchesKey(data, Key.right)) {
+                this.scrollDetailBody(detailPageLines);
+                return { consume: true };
+            }
+
             // 草稿邮件操作
             if (this.selectedEmail && this.selectedEmail.type === 'draft') {
                 // e 编辑
@@ -3057,7 +3067,7 @@ class EditorWrapper implements Component {
 /**
  * 可滚动的邮件正文视图。
  * 将邮件文本按行拆分后，根据 scrollOffset 显示一个窗口。
- * 支持 ↑↓/j/k 逐行滚动、PgUp/PgDn/Space/b 翻页、g/G 首尾跳转。
+ * 支持 ↑↓/j/k 逐行滚动、←/→/PgUp/PgDn/Space/b 翻页、g/G 首尾跳转。
  */
 class ScrollableEmailBody implements Component {
     private allLines: string[] = [];
@@ -3201,6 +3211,7 @@ class DetailFooter implements Component {
         // 滚动提示（仅在有溢出时显示）
         if (this.totalLines > this.visibleLines) {
             hints.push(MC.neon('↑↓/jk') + MC.dim(' 滚动'));
+            hints.push(MC.neon('←/→') + MC.dim(' 翻页'));
             hints.push(MC.neon('Space/b') + MC.dim(' 翻页'));
             hints.push(MC.neon('g/G') + MC.dim(' 首/尾'));
         }
