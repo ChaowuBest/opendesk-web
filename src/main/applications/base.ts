@@ -298,8 +298,8 @@ export abstract class BaseApplication {
         return [];
     }
 
-    async getDataDirectory(): Promise<string> {
-        let data_directory = path.join(await getAppDirectory(), 'apps', this.bundleName);
+    getDataDirectory(): string {
+        let data_directory = path.join(getAppDirectory(), 'apps', this.bundleName);
         if (!fs.existsSync(data_directory)) {
             fs.mkdirSync(data_directory, { recursive: true });
         }

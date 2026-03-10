@@ -50,7 +50,7 @@ export class PPTCreatorApplication extends BaseApplication {
 
     async getToolsets(): Promise<BaseToolset[]> {
         const toolset = new BaseToolset('pptcreator');
-        const appDataDirectory = await this.getDataDirectory();
+        const appDataDirectory = this.getDataDirectory();
         toolset.addTool(new CreatePPTTool(appDataDirectory));
         return [toolset];
     }
@@ -60,7 +60,7 @@ export class PPTCreatorApplication extends BaseApplication {
             scheme: 'ppt',
             privileges: { standard: true, secure: true, supportFetchAPI: true },
             handler: async (request: { url: string }) => {
-                const appDataDirectory = await this.getDataDirectory();
+                const appDataDirectory = this.getDataDirectory();
                 if (request.url.startsWith('ppt://data/')) {
                     const tokens = request.url.split('data/')[1].split('/');
                     const uid = tokens[0];

@@ -24,6 +24,7 @@ import { DesignerApplication } from "../main/applications/designer/app.js";
 import { SkillMgrApplication } from "../main/applications/skillmgr/app.js";
 import { McpMgrApplication } from "../main/applications/mcpmgr/app.js";
 import { TodoMgrApplication } from "../main/applications/todomgr/app.js";
+import { SoulMgrApplication } from "../main/applications/soulmgr/app.js";
 import { BaseApplication } from "../main/applications/base";
 
 import path from 'path';
@@ -105,6 +106,7 @@ export class ElectronPlatform extends AbstractPlatform {
             SkillMgrApplication,
             McpMgrApplication,
             TodoMgrApplication,
+            SoulMgrApplication,
         ];
     }
 }
