@@ -94,6 +94,7 @@ export interface TestResult {
     message?: string;
     error?: string;
     details?: any;
+    suggestion?: string;
 }
 
 export interface TestSuiteResult {
@@ -399,6 +400,111 @@ function getSkillsDirectory(): string {
     return path.join(appDir, 'apps', 'skills', 'resources');
 }
 
+interface FailureAnalysis {
+    cause: string;
+    suggestion: string;
+}
+
+function analyzeTestFailure(error: string, stdout: string, stderr: string, exitCode: number | null): FailureAnalysis {
+    const output = (error || '') + '\n' + (stderr || '') + '\n' + (stdout || '');
+    
+    const patterns: { pattern: RegExp; cause: string; suggestion: string }[] = [
+        {
+            pattern: /Cannot find module ['"](.+?)['"]/i,
+            cause: '缺少依赖模块',
+            suggestion: '运行 npm install 安装缺失的依赖，或检查模块名称是否正确'
+        },
+        {
+            pattern: /ENOENT[:：]\s*no such file or directory[,，]?\s*(?:open\s+)?['"](.+?)['"]/i,
+            cause: '文件或目录不存在',
+            suggestion: '检查测试所需的文件路径是否正确，确保测试数据文件已创建'
+        },
+        {
+            pattern: /EACCES|EPERM|permission denied/i,
+            cause: '权限不足',
+            suggestion: '检查文件权限，确保当前用户有读写执行权限'
+        },
+        {
+            pattern: /ECONNREFUSED|ENETUNREACH|ETIMEDOUT|network|networking/i,
+            cause: '网络连接失败',
+            suggestion: '检查网络连接，确保能访问所需的外部服务'
+        },
+        {
+            pattern: /TypeError[:：]\s*(.+?)\s+is not (?:a |an )?function/i,
+            cause: '类型错误：调用了非函数',
+            suggestion: '检查函数调用，确保对象方法存在且参数正确'
+        },
+        {
+            pattern: /TypeError[:：]\s*Cannot read propert(?:y|ies) ['"](.+?)['"] of (?:undefined|null)/i,
+            cause: '空值引用错误',
+            suggestion: '检查对象是否已正确初始化，添加空值检查'
+        },
+        {
+            pattern: /SyntaxError[:：]/i,
+            cause: '语法错误',
+            suggestion: '检查代码语法，确保括号、引号等配对正确'
+        },
+        {
+            pattern: /ReferenceError[:：]\s*(.+?)\s+is not defined/i,
+            cause: '引用错误：变量未定义',
+            suggestion: '检查变量是否已声明和初始化，注意作用域问题'
+        },
+        {
+            pattern: /AssertionError|assertion failed|expected.*to/i,
+            cause: '断言失败',
+            suggestion: '检查测试预期值与实际值是否匹配，验证业务逻辑'
+        },
+        {
+            pattern: /Timeout|timed out|超时/i,
+            cause: '测试超时',
+            suggestion: '增加测试超时时间，或优化测试代码执行效率'
+        },
+        {
+            pattern: /out of memory|heap out of memory/i,
+            cause: '内存不足',
+            suggestion: '增加 Node.js 内存限制 (--max-old-space-size)，或优化内存使用'
+        },
+        {
+            pattern: /spawn\s+.*\s+ENOENT/i,
+            cause: '无法执行外部命令',
+            suggestion: '确保所需的外部工具已安装并添加到系统 PATH'
+        },
+        {
+            pattern: /JSON\.parse|Unexpected token|Unexpected end of JSON/i,
+            cause: 'JSON 解析错误',
+            suggestion: '检查 JSON 数据格式是否正确，确保数据完整'
+        },
+        {
+            pattern: /async\s+callback\s+was\s+not\s+invoked|callback\s+timeout/i,
+            cause: '异步回调未执行',
+            suggestion: '确保异步操作正确完成，检查 Promise 或回调函数'
+        }
+    ];
+    
+    for (const { pattern, cause, suggestion } of patterns) {
+        const match = output.match(pattern);
+        if (match) {
+            const detail = match[1] ? ` (${match[1]})` : '';
+            return {
+                cause: cause + detail,
+                suggestion
+            };
+        }
+    }
+    
+    if (exitCode !== null && exitCode !== 0) {
+        return {
+            cause: `进程异常退出 (退出码: ${exitCode})`,
+            suggestion: '查看详细错误输出，检查测试代码逻辑是否正确'
+        };
+    }
+    
+    return {
+        cause: '未知错误',
+        suggestion: '查看详细错误输出以获取更多信息'
+    };
+}
+
 async function checkEnvironment(config: TestConfig | null): Promise<{ compatible: boolean; checks: EnvironmentCheck[] }> {
     const checks: EnvironmentCheck[] = [];
     
@@ -472,6 +578,7 @@ async function runTestCase(testCase: TestCase, skillDir: string, timeout: number
             if (!resolved) {
                 resolved = true;
                 child.kill();
+                const analysis = analyzeTestFailure('', stdout, stderr, null);
                 resolve({
                     name: testCase.name,
                     file: testCase.file,
@@ -479,6 +586,7 @@ async function runTestCase(testCase: TestCase, skillDir: string, timeout: number
                     duration: timeoutMs,
                     message: `测试超时 (${timeout}s)`,
                     error: stderr || stdout,
+                    suggestion: `原因: ${analysis.cause}\n建议: 增加测试超时时间，或优化测试代码执行效率`,
                 });
             }
         }, timeoutMs);
@@ -487,12 +595,14 @@ async function runTestCase(testCase: TestCase, skillDir: string, timeout: number
             if (!resolved) {
                 resolved = true;
                 clearTimeout(timeoutId);
+                const analysis = analyzeTestFailure(err.message, '', '', null);
                 resolve({
                     name: testCase.name,
                     file: testCase.file,
                     status: 'error',
                     duration: Date.now() - startTime,
                     error: err.message,
+                    suggestion: `原因: ${analysis.cause}\n建议: ${analysis.suggestion}`,
                 });
             }
         });
@@ -517,6 +627,7 @@ async function runTestCase(testCase: TestCase, skillDir: string, timeout: number
                     const output = stdout + '\n' + stderr;
                     const match = output.match(/(?:Error|FAIL|失败)[:：]?\s*(.+?)(?:\n|$)/i);
                     const errorMsg = match ? match[1].trim() : `退出码 ${code}`;
+                    const analysis = analyzeTestFailure('', stdout, stderr, code);
                     
                     resolve({
                         name: testCase.name,
@@ -525,6 +636,7 @@ async function runTestCase(testCase: TestCase, skillDir: string, timeout: number
                         duration,
                         message: errorMsg,
                         error: stderr || stdout,
+                        suggestion: `原因: ${analysis.cause}\n建议: ${analysis.suggestion}`,
                     });
                 }
             }

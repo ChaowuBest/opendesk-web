@@ -390,10 +390,32 @@ export class SkillTestOverlay implements Component {
         this.detailContentLines.push(`${chalk.bold('耗时')}: ${test.duration}ms`);
 
         if (test.message) {
-            this.detailContentLines.push(chalk.bold('消息:') + ` ${test.message}`);
+            this.detailContentLines.push(`${chalk.bold('消息')}: ${test.message}`);
+        }
+
+        if (test.status === 'failed' || test.status === 'error') {
+            this.detailContentLines.push('');
+            this.detailContentLines.push(chalk.bgRed.white(' 失败分析 '));
+            
+            if (test.suggestion) {
+                const suggestionLines = test.suggestion.split('\n');
+                for (const line of suggestionLines) {
+                    if (line.startsWith('原因:')) {
+                        this.detailContentLines.push(chalk.yellow(line));
+                    } else if (line.startsWith('建议:')) {
+                        this.detailContentLines.push(chalk.green(line));
+                    } else {
+                        this.detailContentLines.push(chalk.dim(line));
+                    }
+                }
+            } else {
+                this.detailContentLines.push(chalk.yellow('原因: 未能自动分析'));
+                this.detailContentLines.push(chalk.green('建议: 查看下方错误输出以获取更多信息'));
+            }
         }
 
         if (test.error) {
+            this.detailContentLines.push('');
             this.detailContentLines.push(chalk.bold('错误输出:'));
             const errorLines = test.error.split('\n');
             for (const line of errorLines) {
@@ -402,6 +424,7 @@ export class SkillTestOverlay implements Component {
         }
 
         if (test.details) {
+            this.detailContentLines.push('');
             this.detailContentLines.push(chalk.bold('详细输出:'));
             const detailLines = test.details.split('\n');
             for (const line of detailLines) {
