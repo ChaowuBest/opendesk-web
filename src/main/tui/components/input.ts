@@ -4,7 +4,7 @@ import { defaultEditorTheme } from "../theme";
 import { SlashCommandRegistry } from "../commands";
 import type { OpenDeskTUI } from "../entry";
 import chalk from "chalk";
-import { visibleWidth } from "@mariozechner/pi-tui";
+import { visibleWidth, truncateToWidth } from "@mariozechner/pi-tui";
 
 type AgentInputStatus = 'idle' | 'running';
 
@@ -150,11 +150,20 @@ export class StatusBar implements Component {
         rightParts.push(chalk.hex('#d4d4d4')('/help 帮助'));
         const rightHint = rightParts.join(chalk.hex('#d4d4d4')('  │  ')) + ' ';
 
-        const leftW = visibleWidth(leftContent);
+        let leftW = visibleWidth(leftContent);
         const rightW = visibleWidth(rightHint);
+        const totalNeeded = leftW + 1 + rightW;
+
+        let finalLeft = leftContent;
+        if (totalNeeded > width) {
+            const maxLeftW = Math.max(0, width - rightW - 2);
+            finalLeft = truncateToWidth(leftContent, maxLeftW);
+            leftW = visibleWidth(finalLeft);
+        }
+
         const gap = Math.max(1, width - leftW - rightW);
         const line = chalk.bgHex('#3a3a3a')(
-            chalk.hex('#d4d4d4')(leftContent) + ' '.repeat(gap) + rightHint
+            chalk.hex('#d4d4d4')(finalLeft) + ' '.repeat(gap) + rightHint
         );
         this.cachedOutput = [line];
         this.invalidated = false;

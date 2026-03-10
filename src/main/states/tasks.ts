@@ -74,6 +74,8 @@ export class TaskState {
     finished_at?: Date;  // 任务完成时间
     total_elapsed_ms: number = 0;  // agent 累计执行时间（毫秒）
     bookmark_path?: string;  // 书签路径，"/" 表示根目录
+    soul_uid?: string;  // 该任务关联的人设 UID
+    soul_name?: string; // 创建时的人设昵称快照（即使 soul 被删也能展示）
 
     constructor(task_manager_state: TaskManagerState) {
         this.task_manager_state = task_manager_state;
@@ -100,6 +102,12 @@ export class TaskState {
         if (task_json.bookmark_path) {
             task.bookmark_path = task_json.bookmark_path;
         }
+        if (task_json.soul_uid) {
+            task.soul_uid = task_json.soul_uid;
+        }
+        if (task_json.soul_name) {
+            task.soul_name = task_json.soul_name;
+        }
         return task;
     }
 
@@ -112,6 +120,8 @@ export class TaskState {
             finished_at: this.finished_at?.toISOString(),
             total_elapsed_ms: this.total_elapsed_ms,
             bookmark_path: this.bookmark_path,
+            soul_uid: this.soul_uid,
+            soul_name: this.soul_name,
         }
     }
 
@@ -125,6 +135,8 @@ export class TaskState {
             finished_at: this.finished_at?.toISOString(),
             total_elapsed_ms: this.total_elapsed_ms,
             bookmark_path: this.bookmark_path,
+            soul_uid: this.soul_uid,
+            soul_name: this.soul_name,
         }
     }
 
@@ -295,6 +307,9 @@ export class TaskState {
         forkedTask.started_at = this.started_at;
         forkedTask.finished_at = this.finished_at;
         forkedTask.total_elapsed_ms = this.total_elapsed_ms;
+
+        forkedTask.soul_uid = this.soul_uid;
+        forkedTask.soul_name = this.soul_name;
 
         // Add to task manager
         this.task_manager_state.tasks.push(forkedTask);
