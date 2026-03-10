@@ -315,7 +315,21 @@ function checkMemory(required?: string): EnvironmentCheck {
         };
     }
     
-    const requiredGB = parseFloat(required.replace(/[^\d.]/g, ''));
+    // 解析内存要求（支持 MB/GB）
+    const match = required.match(/(\d+(?:\.\d+)?)([MG]B)/i);
+    if (!match) {
+        return {
+            name: '内存',
+            required,
+            actual: `${totalGB.toFixed(1)}GB`,
+            passed: false,
+            message: `无效的内存格式: ${required}`,
+        };
+    }
+    
+    const [, value, unit] = match;
+    const num = parseFloat(value);
+    const requiredGB = unit.toLowerCase() === 'mb' ? num / 1024 : num;
     const passed = totalGB >= requiredGB;
     
     return {
@@ -352,7 +366,21 @@ function checkDisk(required?: string): EnvironmentCheck {
         };
     }
     
-    const requiredGB = parseFloat(required.replace(/[^\d.]/g, ''));
+    // 解析容量要求（支持 MB/GB）
+    const match = required.match(/(\d+(?:\.\d+)?)([MG]B)/i);
+    if (!match) {
+        return {
+            name: '磁盘空间',
+            required,
+            actual: `${freeGB.toFixed(1)}GB`,
+            passed: false,
+            message: `无效的容量格式: ${required}`,
+        };
+    }
+    
+    const [, value, unit] = match;
+    const num = parseFloat(value);
+    const requiredGB = unit.toLowerCase() === 'mb' ? num / 1024 : num;
     const passed = freeGB >= requiredGB;
     
     return {
