@@ -148,14 +148,30 @@ export class SkillMgrApplication extends BaseApplication {
         return [
             {
                 name: 'skills',
-                description: '打开技能管理界面',
-                execute: async () => {
-                    try {
-                        const { SkillsOverlay } = await import('./skills-tui.js');
-                        const skillsOverlay = new SkillsOverlay(tui);
-                        skillsOverlay.show();
-                    } catch (err) {
-                        logger.error(`打开技能管理失败: ${err}`);
+                description: '技能管理 (子命令: test <技能名> - 测试技能)',
+                execute: async (args: string) => {
+                    const trimmedArgs = args.trim();
+                    const parts = trimmedArgs.split(/\s+/);
+                    const subCommand = parts[0]?.toLowerCase();
+                    const subArgs = parts.slice(1).join(' ').trim();
+
+                    if (subCommand === 'test') {
+                        try {
+                            const { SkillTestOverlay } = await import('./skill-test-tui.js');
+                            const skillId = subArgs || undefined;
+                            const testOverlay = new SkillTestOverlay(tui);
+                            testOverlay.show(skillId);
+                        } catch (err) {
+                            logger.error(`打开技能测试失败: ${err}`);
+                        }
+                    } else {
+                        try {
+                            const { SkillsOverlay } = await import('./skills-tui.js');
+                            const skillsOverlay = new SkillsOverlay(tui);
+                            skillsOverlay.show();
+                        } catch (err) {
+                            logger.error(`打开技能管理失败: ${err}`);
+                        }
                     }
                 },
             },
