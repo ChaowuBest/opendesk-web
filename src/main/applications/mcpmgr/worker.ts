@@ -5,6 +5,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { McpServerConfig, McpToolInfo } from './common.js';
+import { ProxyAgent } from 'undici';
 
 interface McpConnection {
     client: Client;
@@ -152,11 +153,44 @@ export default class McpMgrWorker extends BaseWorker {
         await this.emitEvent('serversUpdated');
     }
 
-    private createTransport(server: McpServerConfig): any {
-        const env = { ...process.env, ...(server.env || {}) };
+    /**
+     * 创建支持系统代理的 fetch 函数。
+     * 优先使用 HTTPS_PROXY/HTTP_PROXY 环境变量，支持 HTTP/HTTPS 代理。
+     */
+    private createProxyFetch(): ((url: URL | string, init?: RequestInit) => Promise<Response>) | undefined {
+        const proxyUrl = process.env.HTTPS_PROXY || process.env.https_proxy ||
+                         process.env.HTTP_PROXY || process.env.http_proxy;
 
+        if (!proxyUrl) {
+            return undefined;
+        }
+
+        logger.info(`[mcpmgr] Using proxy: ${proxyUrl}`);
+        const proxyAgent = new ProxyAgent(proxyUrl);
+
+        return async (url: URL | string, init?: RequestInit) => {
+            const urlString = typeof url === 'string' ? url : url instanceof URL ? url.href : (url as Request).url;
+            const mergedInit = {
+                ...init,
+                dispatcher: proxyAgent,
+            } as RequestInit & { dispatcher: typeof proxyAgent };
+            return fetch(urlString, mergedInit as RequestInit);
+        };
+    }
+
+    private createTransport(server: McpServerConfig): any {
         switch (server.transport) {
-            case 'stdio':
+            case 'stdio': {
+                // 继承系统环境变量，并合并用户自定义的环境变量
+                const env: Record<string, string> = {};
+                for (const [key, value] of Object.entries(process.env)) {
+                    if (value !== undefined) {
+                        env[key] = value;
+                    }
+                }
+                for (const [key, value] of Object.entries(server.env || {})) {
+                    env[key] = value;
+                }
                 return new StdioClientTransport({
                     command: server.command!,
                     args: server.args || [],
@@ -164,14 +198,21 @@ export default class McpMgrWorker extends BaseWorker {
                     env,
                     stderr: 'pipe', // 捕获子进程stderr，避免泄漏到主进程stdout/stderr
                 });
-            case 'sse':
+            }
+            case 'sse': {
+                const proxyFetch = this.createProxyFetch();
                 return new SSEClientTransport(new URL(server.url!), {
                     requestInit: { headers: server.headers || {} },
+                    fetch: proxyFetch,
                 });
-            case 'streamableHttp':
+            }
+            case 'streamableHttp': {
+                const proxyFetch = this.createProxyFetch();
                 return new StreamableHTTPClientTransport(new URL(server.url!), {
                     requestInit: { headers: server.headers || {} },
+                    fetch: proxyFetch,
                 });
+            }
             default:
                 throw new Error(`Unsupported transport: ${server.transport}`);
         }
@@ -212,7 +253,7 @@ export default class McpMgrWorker extends BaseWorker {
         return tools;
     }
 
-    async callMcpTool(serverId: string, toolName: string, args: object): Promise<string> {
+    async callMcpTool(serverId: string, toolName: string, args: Record<string, unknown>): Promise<string> {
         const conn = this.connections.get(serverId);
         if (!conn || conn.status !== 'connected') {
             throw new Error(`Server ${serverId} is not connected`);
