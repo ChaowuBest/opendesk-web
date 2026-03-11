@@ -3257,12 +3257,6 @@ class AssistantResultFooter implements Component {
     render(width: number): string[] {
         const hints: string[] = [];
 
-        // 滚动提示（仅在有溢出时显示）
-        if (this.totalLines > this.visibleLines) {
-            hints.push(MC.neon('↑↓/jk') + MC.dim(' 滚动'));
-            hints.push(MC.neon('Space/b') + MC.dim(' 翻页'));
-            hints.push(MC.neon('g/G') + MC.dim(' 首/尾'));
-        }
 
         // 操作提示
         hints.push(MC.neon('ESC/任意键') + MC.dim(' 返回'));
@@ -3285,7 +3279,7 @@ class DetailFooter implements Component {
 
         // 滚动提示（仅在有溢出时显示）
         if (this.totalLines > this.visibleLines) {
-            hints.push(MC.neon('↑↓/jk') + MC.dim(' 滚动'));
+            hints.push(MC.neon('↑↓') + MC.dim(' 滚动'));
             hints.push(MC.neon('←/→') + MC.dim(' 翻页'));
         }
 
