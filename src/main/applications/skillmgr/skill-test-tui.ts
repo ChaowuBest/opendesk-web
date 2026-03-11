@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { type Component, SelectList, Box, Text, Input, TUI, Key, matchesKey, visibleWidth, truncateToWidth } from "@mariozechner/pi-tui";
+import { type Component, SelectList, Box, Text, Input, TUI, Key, matchesKey, visibleWidth, truncateToWidth, wrapTextWithAnsi } from "@mariozechner/pi-tui";
 import chalk from "chalk";
 import { defaultSelectListTheme } from "../../tui/theme";
 import { OpenDeskTUI } from "../../tui/entry";
@@ -376,6 +376,18 @@ export class SkillTestOverlay implements Component {
         });
     }
 
+    /** 清洗进程输出用于 TUI 显示：统一换行、去除 ANSI、替换控制字符，避免乱码与 \r 导致只显示末尾 */
+    private sanitizeForDisplay(raw: string): string {
+        if (!raw || typeof raw !== 'string') return '';
+        let s = raw
+            .replace(/\r\n/g, '\n')
+            .replace(/\r/g, '\n');
+        s = s.replace(/\x1b\[[0-9;]*[mGKHJ]/g, '');
+        s = s.replace(/\x1b\]8;;[^\x07]*\x07/g, '');
+        s = s.replace(/\x1b_[^\x07\x1b]*(?:\x07|\x1b\\)/g, '');
+        return s.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, ' ');
+    }
+
     private buildDetailContent() {
         this.detailContentLines = [];
         if (!this.currentResult) return;
@@ -383,6 +395,7 @@ export class SkillTestOverlay implements Component {
         const test = this.currentResult.tests[this.selectedTestIndex];
         const terminalWidth = this.openDeskTUI.tui.terminal.columns;
         const overlayWidth = Math.min(90, terminalWidth - 4);
+        const contentWidth = Math.max(18, overlayWidth - 8); // 每行前有 "  "，换行按 contentWidth 宽
 
         this.detailContentLines.push(`${chalk.bold('名称')}: ${test.name}`);
         this.detailContentLines.push(`${chalk.bold('文件')}: ${truncateToWidth(test.file, overlayWidth - 10, '...', false)}`);
@@ -417,20 +430,27 @@ export class SkillTestOverlay implements Component {
         if (test.error) {
             this.detailContentLines.push('');
             this.detailContentLines.push(chalk.bold('错误输出:'));
-            const errorLines = test.error.split('\n');
+            const sanitized = this.sanitizeForDisplay(test.error);
+            const errorLines = sanitized.split('\n');
             for (const line of errorLines) {
-                this.detailContentLines.push(chalk.red(`  ${truncateToWidth(line, overlayWidth - 6, '...', false)}`));
+                const wrapped = wrapTextWithAnsi(line, contentWidth);
+                for (const w of wrapped) {
+                    this.detailContentLines.push(chalk.red(`  ${w}`));
+                }
             }
         }
 
         if (test.details) {
             this.detailContentLines.push('');
             this.detailContentLines.push(chalk.bold('详细输出:'));
-            const detailLines = test.details.split('\n');
+            const sanitized = this.sanitizeForDisplay(test.details);
+            const detailLines = sanitized.split('\n');
             for (const line of detailLines) {
-                this.detailContentLines.push(chalk.dim(`  ${truncateToWidth(line, overlayWidth - 6, '...', false)}`));
+                const wrapped = wrapTextWithAnsi(line, contentWidth);
+                for (const w of wrapped) {
+                    this.detailContentLines.push(chalk.dim(`  ${w}`));
+                }
             }
-
         }
     }
 
