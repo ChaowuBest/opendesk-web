@@ -3280,7 +3280,7 @@ class DetailFooter implements Component {
         // 滚动提示（仅在有溢出时显示）
         if (this.totalLines > this.visibleLines) {
             hints.push(MC.neon('↑↓') + MC.dim(' 滚动'));
-            hints.push(MC.neon('←/→') + MC.dim(' 翻页'));
+            hints.push(MC.neon('←→') + MC.dim(' 翻页'));
         }
 
         // 操作提示
