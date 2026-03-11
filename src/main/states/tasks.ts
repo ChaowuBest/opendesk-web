@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Copyright (c) 2026 The OpenDesk Team
  * OpenDesk is licensed under Mulan PSL v2.
  * You can use this software according to the terms and conditions of the Mulan PSL v2.
@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { ChatContext, UserMessage, AssistantMessage, FileMessagePart, SystemMessage, AssistantResponse, AssistantMessagePart, Usage, ToolCall, CompactSeparatorMessage } from '../aikernel/messages.js';
+import { ChatContext, UserMessage, AssistantMessage, FileMessagePart, SystemMessage, AssistantMessagePart, Usage, ToolCall } from '../aikernel/messages.js';
 import { shouldCompact, compactContext } from '../aikernel/compact.js';
 import { BaseToolset } from '../aikernel/tool.js';
 import { LLM } from '../aikernel/llm.js';
@@ -22,7 +22,24 @@ import path from 'path';
 import fs from 'fs';
 import { SkillRegistry } from '../aikernel/skill.js';
 import { createMemoryToolset } from '../aikernel/memory/tools.js';
-import { MemoryRegistry } from '../aikernel/memory/registry.js';
+import { createPlanningToolset } from '../aikernel/planning/tools.js';
+import {
+    buildSubTaskSystemPrompt,
+    buildSubTaskUserPrompt,
+    parseSubTaskResult,
+    type SubTaskRequest,
+    type SubTaskResult
+} from '../aikernel/planning/subtask.js';
+import {
+    TaskExecutionMode,
+    analyzeExecutionMode,
+    buildMissionAnchor,
+    buildRuntimeExecutionPolicy,
+    isPlanningTool,
+    isToolAllowedBeforePlanning,
+    normalizeTodoWriteTodos,
+    shouldRequireInitialTodoWrite
+} from '../aikernel/planning/strategy.js';
 
 
 type TaskStatus = 'waiting' | 'running' | 'stopped';
@@ -34,6 +51,14 @@ export interface TaskUpdateChunk {
     last_part_index: number;
     last_part: AssistantMessagePart;
     usage?: Usage;
+}
+
+interface SubmitTaskOptions {
+    toolNameAllowlist?: string[];
+    forceExecutionMode?: TaskExecutionMode;
+    inheritMissionAnchor?: string;
+    skipInitialTodoRequirement?: boolean;
+    forceInitialTodoRequirement?: boolean;
 }
 
 export class BaseTaskUpdateSubscriber {
@@ -63,6 +88,7 @@ class CallbackTaskUpdateSubscriber extends BaseTaskUpdateSubscriber {
 
 export class TaskState {
     task_id: string = crypto.randomUUID();
+    parent_id: string | null = null; // [修改: 增加 parent_id 支持子任务]
     task_name: string | null = null;
     task_status: TaskStatus = 'waiting';
     chat_context: ChatContext = new ChatContext();
@@ -70,6 +96,9 @@ export class TaskState {
     task_manager_state: TaskManagerState;
     model?: string;
     message_queue: string[] = [];
+    execution_mode: TaskExecutionMode = 'none';
+    mission_anchor?: string;
+    stop_requested_by_user: boolean = false;
     started_at?: Date;   // 任务开始时间
     finished_at?: Date;  // 任务完成时间
     total_elapsed_ms: number = 0;  // agent 累计执行时间（毫秒）
@@ -77,13 +106,14 @@ export class TaskState {
     soul_uid?: string;  // 该任务关联的人设 UID
     soul_name?: string; // 创建时的人设昵称快照（即使 soul 被删也能展示）
 
-    constructor(task_manager_state: TaskManagerState) {
+    constructor(task_manager_state: TaskManagerState, parent_id: string | null = null) { // [修改: 构造函数增加 parent_id]
         this.task_manager_state = task_manager_state;
+        this.parent_id = parent_id;
     }
 
     static load(task_json_path: string, task_manager_state: TaskManagerState): TaskState {
         const task_json = JSON.parse(fs.readFileSync(task_json_path, 'utf8'));
-        const task = new TaskState(task_manager_state);
+        const task = new TaskState(task_manager_state, task_json.parent_id || null); // [修改: 加载 parent_id]
         task.task_id = task_json.task_id;
         task.task_name = task_json.task_name;
         // 从硬盘加载的任务如果是running状态，则说明其在运行时被异常中断关闭了
@@ -108,12 +138,22 @@ export class TaskState {
         if (task_json.soul_name) {
             task.soul_name = task_json.soul_name;
         }
+        if (typeof task_json.execution_mode === 'string') {
+            task.execution_mode = task_json.execution_mode as TaskExecutionMode;
+        }
+        if (typeof task_json.mission_anchor === 'string') {
+            task.mission_anchor = task_json.mission_anchor;
+        }
+        if (typeof task_json.stop_requested_by_user === 'boolean') {
+            task.stop_requested_by_user = task_json.stop_requested_by_user;
+        }
         return task;
     }
 
     toSimplifiedJSON() {
         return {
             task_id: this.task_id,
+            parent_id: this.parent_id, // [修改: 导出 parent_id]
             task_name: this.task_name,
             task_status: this.task_status,
             started_at: this.started_at?.toISOString(),
@@ -122,12 +162,15 @@ export class TaskState {
             bookmark_path: this.bookmark_path,
             soul_uid: this.soul_uid,
             soul_name: this.soul_name,
+            execution_mode: this.execution_mode,
+            stop_requested_by_user: this.stop_requested_by_user,
         }
     }
 
     toJSON() {
         return {
             task_id: this.task_id,
+            parent_id: this.parent_id, // [修改: 导出 parent_id]
             task_name: this.task_name,
             task_status: this.task_status,
             chat_context: this.chat_context.toJSON(),
@@ -137,6 +180,9 @@ export class TaskState {
             bookmark_path: this.bookmark_path,
             soul_uid: this.soul_uid,
             soul_name: this.soul_name,
+            execution_mode: this.execution_mode,
+            mission_anchor: this.mission_anchor,
+            stop_requested_by_user: this.stop_requested_by_user,
         }
     }
 
@@ -168,6 +214,13 @@ export class TaskState {
 
     /** 当 TUI 层已经执行过压缩时置 true，防止 submitUserMessage 重复压缩 */
     private _compactedBeforeSubmit = false;
+    private _todoPlanInitialized = false;
+    private _todoPlanRequired = false;
+    private _strategySuggestedMode: TaskExecutionMode = 'none';
+    private _strategyScore = 0;
+    private _strategyReasons: string[] = [];
+    private _executionModeLocked = false;
+    private _executionModeDecisionSource: 'strategy' | 'model' | 'forced' = 'strategy';
 
     /** 标记外部已经完成一次压缩，submitUserMessage 应跳过自动压缩 */
     markCompacted() { this._compactedBeforeSubmit = true; }
@@ -179,12 +232,332 @@ export class TaskState {
         return await compactContext(this.chat_context, this.model);
     }
 
+    private extractEnabledToolNames(toolsets: BaseToolset[]): string[] {
+        const names: string[] = [];
+        for (const toolset of toolsets) {
+            for (const toolName of toolset.tools.keys()) {
+                names.push(`${toolset.name}-${toolName}`);
+            }
+        }
+        return names;
+    }
+
+    private formatValueForLog(value: unknown, maxLen: number = 1200): string {
+        let text: string;
+        if (typeof value === 'string') {
+            text = value;
+        } else {
+            try {
+                text = JSON.stringify(value, null, 2);
+            } catch {
+                text = String(value);
+            }
+        }
+        return text.length <= maxLen ? text : `${text.slice(0, maxLen)}...(truncated)`;
+    }
+
+    private isExecutionModeMetaTool(toolName: string): boolean {
+        return toolName === 'todomgr-getCurrentTime' || toolName.startsWith('memory-');
+    }
+
+    private maybeResolveExecutionModeFromModel(toolName: string) {
+        if (this.parent_id || this._executionModeLocked) {
+            return;
+        }
+        if (!toolName || this.isExecutionModeMetaTool(toolName)) {
+            return;
+        }
+
+        let mode: TaskExecutionMode;
+        let signal: 'delegate_tool' | 'todowrite_tool' | 'direct_business_tool';
+        let requireInitialTodo = false;
+
+        if (toolName === 'planning-delegateTask') {
+            mode = 'delegate';
+            signal = 'delegate_tool';
+        } else if (toolName === 'todomgr-TodoWrite') {
+            mode = 'lite';
+            signal = 'todowrite_tool';
+            requireInitialTodo = true;
+        } else {
+            mode = this._strategySuggestedMode === 'none' ? 'none' : 'lite';
+            signal = 'direct_business_tool';
+        }
+
+        this.execution_mode = mode;
+        this._todoPlanRequired = requireInitialTodo;
+        this._executionModeLocked = true;
+        this._executionModeDecisionSource = 'model';
+        this.applyRuntimeExecutionPolicyToSystemPrompt();
+        logger.info(
+            `[planning-debug] model mode selected task=${this.task_id} mode=${mode} signal=${signal} ` +
+            `strategy_mode=${this._strategySuggestedMode} strategy_score=${this._strategyScore} ` +
+            `todo_required=${this._todoPlanRequired}`
+        );
+    }
+
+    private filterToolsetsByAllowlist(toolsets: BaseToolset[], allowlist?: string[]): BaseToolset[] {
+        if (!allowlist || allowlist.length === 0) {
+            return toolsets;
+        }
+        const allowSet = new Set(allowlist);
+        const filtered: BaseToolset[] = [];
+        for (const toolset of toolsets) {
+            const subset = new BaseToolset(toolset.name);
+            for (const [toolName, tool] of toolset.tools.entries()) {
+                const fullName = `${toolset.name}-${toolName}`;
+                if (allowSet.has(fullName)) {
+                    subset.addTool(tool);
+                }
+            }
+            if (subset.tools.size > 0) {
+                filtered.push(subset);
+            }
+        }
+        return filtered;
+    }
+
+    private extractLatestAssistantText(task: TaskState = this): string {
+        for (let i = task.chat_context.messages.length - 1; i >= 0; i--) {
+            const message = task.chat_context.messages[i];
+            if (!(message instanceof AssistantMessage)) continue;
+
+            const textParts: string[] = [];
+            for (const part of message.content) {
+                if (part.type === 'text' && part.text) {
+                    textParts.push(part.text);
+                }
+            }
+
+            if (textParts.length > 0) {
+                return textParts.join('\n').trim();
+            }
+        }
+        return '';
+    }
+
+    private collectTaskArtifactPaths(taskId: string, limit = 10): string[] {
+        const taskDir = getTaskDirectory();
+        const artifactsDir = path.join(taskDir, 'artifacts');
+        if (!fs.existsSync(artifactsDir)) {
+            return [];
+        }
+        const files = fs.readdirSync(artifactsDir)
+            .filter(file => file.startsWith(`${taskId}_`))
+            .map(file => {
+                const filePath = path.join(artifactsDir, file);
+                return {
+                    filePath,
+                    mtime: fs.statSync(filePath).mtimeMs,
+                };
+            })
+            .sort((a, b) => b.mtime - a.mtime)
+            .slice(0, limit)
+            .map(item => item.filePath);
+        return files;
+    }
+
+    private countToolCalls(task: TaskState): number {
+        let count = 0;
+        for (const message of task.chat_context.messages) {
+            if (!(message instanceof AssistantMessage)) {
+                continue;
+            }
+            for (const part of message.content) {
+                if (part.type === 'tool_call') {
+                    count += part.toolcalls.length;
+                }
+            }
+        }
+        return count;
+    }
+
+    private generateSubTaskName(request: SubTaskRequest): string {
+        const toShortTitle = (input: string, maxChars = 10): string => {
+            const normalized = input
+                .replace(/[<>:"/\\|?*\u0000-\u001f]/g, '')
+                .replace(/[\r\n]+/g, ' ')
+                .replace(/\s+/g, ' ')
+                .trim();
+            if (!normalized) return '';
+            const chars = Array.from(normalized);
+            return chars.length > maxChars ? chars.slice(0, maxChars).join('') : normalized;
+        };
+
+        const fromPayload = toShortTitle(request.subtask_title ?? '');
+        if (fromPayload) {
+            return fromPayload;
+        }
+
+        const seed = (request.sub_goal || request.done_criteria || '子任务')
+            .replace(/[\r\n]+/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+        const fallback = toShortTitle(seed, 10);
+        return fallback || '子任务';
+    }
+
+    async runSubTask(request: SubTaskRequest): Promise<SubTaskResult> {
+        if (this.task_status === 'stopped' || !this.task_manager_state.getTask(this.task_id)) {
+            const result: SubTaskResult = {
+                status: 'error',
+                summary: 'Subtask skipped because parent task is stopped or removed.',
+                key_data: {
+                    parent_stopped: true,
+                },
+                artifacts: [],
+                subtask_id: 'n/a',
+            };
+            logger.warn(`[planning-debug] parent task is stopped/removed before subtask creation parent=${this.task_id}`);
+            return result;
+        }
+        const subTask = this.task_manager_state.createSubTask(this.task_id);
+        subTask.model = this.model;
+        subTask.task_name = this.generateSubTaskName(request);
+        const subTaskExecutionContract = buildSubTaskSystemPrompt(request, this.mission_anchor);
+        const inheritedSystemPrompt = this.chat_context.system_prompt?.content?.trim();
+        const mergedSubTaskSystemPrompt = inheritedSystemPrompt
+            ? [
+                inheritedSystemPrompt,
+                '<delegated_subtask_contract>',
+                subTaskExecutionContract,
+                '</delegated_subtask_contract>',
+            ].join('\n\n')
+            : subTaskExecutionContract;
+        subTask.chat_context.system_prompt = new SystemMessage(mergedSubTaskSystemPrompt);
+        logger.info(
+            `[planning-debug] subtask system prompt prepared subtask=${subTask.task_id} ` +
+            `inherited_chars=${inheritedSystemPrompt?.length ?? 0} contract_chars=${subTaskExecutionContract.length}`
+        );
+        logger.info(`[planning-debug] subtask request subtask=${subTask.task_id} payload=${this.formatValueForLog(request)}`);
+        const prompt = buildSubTaskUserPrompt(request);
+        const defaultAllowedTools = Array.from(this.chat_context.getTools().keys())
+            .filter(name => name !== 'planning-delegateTask');
+        let allowlist = request.allowed_tools && request.allowed_tools.length > 0
+            ? request.allowed_tools
+            : defaultAllowedTools;
+        allowlist = allowlist.filter(name => name !== 'planning-delegateTask');
+        if (defaultAllowedTools.includes('todomgr-TodoWrite') && !allowlist.includes('todomgr-TodoWrite')) {
+            allowlist = ['todomgr-TodoWrite', ...allowlist];
+        }
+        const forceSubtaskTodoWrite = allowlist.includes('todomgr-TodoWrite');
+
+        try {
+            await subTask.submitUserMessage(prompt, {
+                toolNameAllowlist: allowlist,
+                forceExecutionMode: 'lite',
+                inheritMissionAnchor: `${this.mission_anchor ?? ''} | sub_goal: ${request.sub_goal}`,
+                forceInitialTodoRequirement: forceSubtaskTodoWrite,
+            });
+            await subTask.waitUntilFinished();
+
+            if (subTask.stop_requested_by_user) {
+                const rawOutput = this.extractLatestAssistantText(subTask);
+                const artifacts = this.collectTaskArtifactPaths(subTask.task_id);
+                const result: SubTaskResult = {
+                    status: 'error',
+                    summary: 'Subtask was stopped by user. Parent task should continue with remaining subtasks.',
+                    key_data: {
+                        stopped_by_user: true,
+                        continue_with_remaining_subtasks: true,
+                    },
+                    artifacts,
+                    subtask_id: subTask.task_id,
+                    raw_output: rawOutput || undefined,
+                };
+                logger.warn(`[planning-debug] subtask stopped by user subtask=${subTask.task_id} result=${this.formatValueForLog(result)}`);
+                return result;
+            }
+        } catch (err: any) {
+            subTask.stop('system');
+            const rawOutput = this.extractLatestAssistantText(subTask);
+            const artifacts = this.collectTaskArtifactPaths(subTask.task_id);
+            const result: SubTaskResult = {
+                status: 'error',
+                summary: `Subtask failed: ${err?.message ?? String(err)}`,
+                key_data: {
+                    error: err?.message ?? String(err),
+                },
+                artifacts,
+                subtask_id: subTask.task_id,
+                raw_output: rawOutput || undefined,
+            };
+            logger.warn(`[planning-debug] subtask failed subtask=${subTask.task_id} result=${this.formatValueForLog(result)}`);
+            return result;
+        }
+
+        const rawOutput = this.extractLatestAssistantText(subTask);
+        const parsed = parseSubTaskResult(rawOutput);
+        const artifacts = this.collectTaskArtifactPaths(subTask.task_id);
+        const executedSteps = this.countToolCalls(subTask);
+        const maxSteps = request.budget?.max_steps;
+
+        const overBudget = typeof maxSteps === 'number' && executedSteps > maxSteps;
+        const parsedStatus = parsed?.status === 'success' ? 'success' : 'error';
+        const finalStatus = overBudget ? 'error' : parsedStatus;
+        const summary = overBudget
+            ? `Subtask exceeded max_steps budget: ${executedSteps}/${maxSteps}`
+            : (parsed?.summary || (rawOutput ? rawOutput.slice(0, 500) : 'Subtask completed without textual output'));
+
+        const result: SubTaskResult = {
+            status: finalStatus,
+            summary,
+            key_data: {
+                ...(parsed?.key_data ?? {}),
+                executed_steps: executedSteps,
+                max_steps: maxSteps,
+            },
+            artifacts,
+            next_action: parsed?.next_action,
+            subtask_id: subTask.task_id,
+            raw_output: rawOutput || undefined,
+        };
+        logger.info(`[planning-debug] subtask finished subtask=${subTask.task_id} result=${this.formatValueForLog(result)}`);
+        return result;
+    }
+
+    private applyRuntimeExecutionPolicyToSystemPrompt() {
+        if (!this.mission_anchor) {
+            return;
+        }
+        const runtimePolicy = buildRuntimeExecutionPolicy({
+            missionAnchor: this.mission_anchor,
+            mode: this.execution_mode,
+            requireInitialTodo: this._todoPlanRequired,
+            decisionStyle: this._executionModeDecisionSource === 'forced' || !!this.parent_id
+                ? 'fixed'
+                : 'model_with_score',
+            scoreSuggestion: this._executionModeDecisionSource === 'forced' || !!this.parent_id
+                ? undefined
+                : {
+                    mode: this._strategySuggestedMode,
+                    score: this._strategyScore,
+                    reasons: this._strategyReasons,
+                },
+        });
+        const existingPrompt = this.chat_context.system_prompt?.content ?? '';
+        const cleanedPrompt = existingPrompt
+            .replace(/<!-- runtime_execution_policy:start -->[\s\S]*?<!-- runtime_execution_policy:end -->/g, '')
+            .trim();
+        const mergedPrompt = [
+            cleanedPrompt,
+            '<!-- runtime_execution_policy:start -->',
+            runtimePolicy,
+            '<!-- runtime_execution_policy:end -->',
+        ]
+            .filter(Boolean)
+            .join('\n\n')
+            .trim();
+        this.chat_context.system_prompt = new SystemMessage(mergedPrompt);
+    }
+
     /**
      * Submit a message to the task
      */
-    async submitUserMessage(message: string) {
+    async submitUserMessage(message: string, options?: SubmitTaskOptions) {
         this.task_status = 'running';
         this.started_at = new Date();  // 记录任务开始时间
+        this.stop_requested_by_user = false;
         this.finished_at = undefined;  // 清除之前的完成时间
         this.task_manager_state.publishTaskListUpdate();
 
@@ -202,17 +575,83 @@ export class TaskState {
             }
         }
 
+        let toolsets = await ApplicationRegistry.listAvailableToolsets();
+        let skillToolset = SkillRegistry.getInstance().getToolset();
+        let memoryToolset = createMemoryToolset();
+        let planningToolset = createPlanningToolset();
+        const allToolsets = this.filterToolsetsByAllowlist(
+            [...toolsets, skillToolset, memoryToolset, planningToolset],
+            options?.toolNameAllowlist
+        );
+        this.chat_context.attachToolsets(...allToolsets);
+
+        if (options?.inheritMissionAnchor) {
+            this.mission_anchor = buildMissionAnchor(options.inheritMissionAnchor);
+        } else {
+            // Refresh mission anchor for every new main-task user message to avoid stale goals.
+            this.mission_anchor = buildMissionAnchor(message);
+        }
+        const enabledToolNames = this.extractEnabledToolNames(allToolsets);
+        const strategyDecision = analyzeExecutionMode({
+            userMessage: message,
+            enabledToolNames,
+        });
+        this._strategySuggestedMode = strategyDecision.mode;
+        this._strategyScore = strategyDecision.score;
+        this._strategyReasons = strategyDecision.reasons;
+        this._executionModeLocked = false;
+        this._executionModeDecisionSource = 'strategy';
+
+        if (options?.forceExecutionMode) {
+            this.execution_mode = options.forceExecutionMode;
+            this._executionModeLocked = true;
+            this._executionModeDecisionSource = 'forced';
+        } else {
+            // Main-task model decides final mode during the same dialog.
+            // Strategy score is kept as reference signal in runtime policy.
+            this.execution_mode = 'none';
+        }
+        if (typeof options?.forceInitialTodoRequirement === 'boolean') {
+            this._todoPlanRequired = options.forceInitialTodoRequirement;
+        } else if (options?.forceExecutionMode) {
+            this._todoPlanRequired = options?.skipInitialTodoRequirement
+                ? false
+                : shouldRequireInitialTodoWrite(this.execution_mode, message);
+        } else {
+            // Wait for model mode signal from main-task tool decisions.
+            this._todoPlanRequired = false;
+        }
+        this._todoPlanInitialized = false;
+        this.applyRuntimeExecutionPolicyToSystemPrompt();
+        const strategyMeta = options?.forceExecutionMode
+            ? {
+                forced_mode: options.forceExecutionMode,
+                score: strategyDecision.score,
+                reasons: strategyDecision.reasons,
+                signals: strategyDecision.signals,
+                effective_mode: this.execution_mode,
+                mode_source: this._executionModeDecisionSource,
+            }
+            : {
+                suggested_mode: strategyDecision.mode,
+                score: strategyDecision.score,
+                reasons: strategyDecision.reasons,
+                signals: strategyDecision.signals,
+                effective_mode: this.execution_mode,
+                mode_source: this._executionModeDecisionSource,
+                score_reference_only: true,
+            };
+        logger.info(
+            `[planning-debug] strategy task=${this.task_id} mode=${this.execution_mode} ` +
+            `todo_required=${this._todoPlanRequired} enabled_tools=${enabledToolNames.length} ` +
+            `mission_anchor=${this.formatValueForLog(this.mission_anchor, 300)} ` +
+            `decision=${this.formatValueForLog(strategyMeta, 600)}`
+        );
+
         let user_message = new UserMessage(message);
         let assistant_message = new AssistantMessage();
         this.chat_context.appendMessage(user_message);
         this.chat_context.appendMessage(assistant_message);
-
-        let toolsets = await ApplicationRegistry.listAvailableToolsets();
-        let skillToolset = SkillRegistry.getInstance().getToolset();
-        let memoryToolset = createMemoryToolset();
-        this.chat_context.attachToolsets(...toolsets);
-        this.chat_context.attachToolsets(skillToolset);
-        this.chat_context.attachToolsets(memoryToolset);
 
         logger.info(`messsage submitted to task ${this.task_id}`)
 
@@ -224,17 +663,52 @@ export class TaskState {
 
         this.processTask();
     }
+    /**
+     * Clean up the task resources (delete JSON file and artifacts)
+     * Imported from tasks.js
+     * [修改: 增加 cleanup 方法，支持清理物理文件和 Artifacts 记录]
+     */
+    cleanup() {
+        const taskDirectory = getTaskDirectory();
 
+        // 1. Delete task JSON configuration
+        const taskJsonPath = path.join(taskDirectory, `${this.task_id}.json`);
+        if (fs.existsSync(taskJsonPath)) {
+            try {
+                fs.unlinkSync(taskJsonPath);
+            } catch (err) {
+                logger.error(`Failed to delete task file ${taskJsonPath}: ${err.message}`);
+            }
+        }
+
+        // 2. Delete associated Artifacts (logs)
+        const artifactsDir = path.join(taskDirectory, 'artifacts');
+        if (fs.existsSync(artifactsDir)) {
+            try {
+                const files = fs.readdirSync(artifactsDir);
+                for (const file of files) {
+                    // If filename starts with task_id, it belongs to this task
+                    if (file.startsWith(`${this.task_id}_`)) {
+                        const filePath = path.join(artifactsDir, file);
+                        fs.unlinkSync(filePath);
+                    }
+                }
+            } catch (err) {
+                logger.error(`Failed to cleanup artifacts for task ${this.task_id}: ${err.message}`);
+            }
+        }
+    }
     /**
      * Stop the task execution
      */
-    stop() {
+    stop(reason: 'user' | 'system' = 'user') {
         if (this.task_status === 'stopped') {
             return;
         }
         this.task_status = 'stopped';
-        this.finished_at = new Date();  // 记录任务完成时间
-        logger.info(`task ${this.task_id} stopped by user`);
+        this.stop_requested_by_user = reason === 'user';
+        this.finished_at = new Date();
+        logger.info(`task ${this.task_id} stopped (reason=${reason})`);
         this.task_manager_state.publishTaskListUpdate();
     }
 
@@ -289,7 +763,7 @@ export class TaskState {
      * @returns the forked task
      */
     fork(): TaskState {
-        const forkedTask = new TaskState(this.task_manager_state);
+        const forkedTask = new TaskState(this.task_manager_state, null);
 
         // Copy chat context via serialization
         forkedTask.chat_context = ChatContext.assign(this.chat_context.toJSON());
@@ -307,6 +781,8 @@ export class TaskState {
         forkedTask.started_at = this.started_at;
         forkedTask.finished_at = this.finished_at;
         forkedTask.total_elapsed_ms = this.total_elapsed_ms;
+        forkedTask.execution_mode = this.execution_mode;
+        forkedTask.mission_anchor = this.mission_anchor;
 
         forkedTask.soul_uid = this.soul_uid;
         forkedTask.soul_name = this.soul_name;
@@ -467,11 +943,16 @@ export class TaskState {
             }
         }
     }
-
     /**
      * Process a tool call
+     * @param {import('../agents/messages').ToolCall} tool_call
+     * @returns {Promise<void>}
      */
-    async processToolCall(tool_call: ToolCall): Promise<void> {
+    async processToolCall(tool_call: ToolCall): Promise<void>  {
+        logger.info(
+            `[tool-debug] task=${this.task_id} tool=${tool_call.tool_name} ` +
+            `raw_args=${this.formatValueForLog(tool_call.args_string ?? '', 1000)}`
+        );
         let tool = this.chat_context.getTool(tool_call.tool_name);
         if (tool === undefined) {
             logger.error(`tool ${tool_call.tool_name} not found`);
@@ -479,10 +960,9 @@ export class TaskState {
             tool_call.result = `tool ${tool_call.tool_name} not found`;
             return;
         }
-
         tool_call.setTool(tool);
-
         try {
+            // 参数解析
             let args = undefined;
             if (tool_call.args_string) {
                 try {
@@ -499,32 +979,201 @@ export class TaskState {
                 }
             }
             tool_call.args_object = args;
+            logger.info(
+                `[tool-debug] task=${this.task_id} tool=${tool_call.tool_name} ` +
+                `parsed_args=${this.formatValueForLog(args, 1200)}`
+            );
+            this.maybeResolveExecutionModeFromModel(tool_call.tool_name);
+
+            const isRootDelegateTask = this.execution_mode === 'delegate' && !this.parent_id;
+            const isDelegateExecutionTool = tool_call.tool_name === 'planning-delegateTask';
+            const isDelegateMetaTool =
+                tool_call.tool_name === 'todomgr-getCurrentTime' ||
+                tool_call.tool_name.startsWith('memory-');
+            if (isRootDelegateTask && tool_call.tool_name === 'todomgr-TodoWrite') {
+                tool_call.status = 'error';
+                tool_call.result_object = {
+                    error: 'delegate_root_disallows_todowrite',
+                    execution_mode: this.execution_mode,
+                };
+                tool_call.result = 'Delegate mode root task must use planning-delegateTask. Do not call todomgr-TodoWrite on root.';
+                logger.warn(`[planning] blocked TodoWrite in delegate root task ${this.task_id}`);
+                return;
+            }
+            if (isRootDelegateTask && !isDelegateExecutionTool && !isDelegateMetaTool) {
+                tool_call.status = 'error';
+                tool_call.result_object = {
+                    error: 'delegate_root_requires_subtask_execution',
+                    execution_mode: this.execution_mode,
+                    required_tool: 'planning-delegateTask',
+                };
+                tool_call.result = `Delegate mode root task only allows planning-delegateTask (blocked: ${tool_call.tool_name}).`;
+                logger.warn(`[planning] blocked direct tool ${tool_call.tool_name} in delegate root task ${this.task_id}`);
+                return;
+            }
+
+            if (isPlanningTool(tool_call.tool_name)) {
+                const rawTodos = Array.isArray(args?.todos) ? args.todos : [];
+                const normalized = normalizeTodoWriteTodos(rawTodos, {
+                    mode: this.execution_mode,
+                    firstPlan: !this._todoPlanInitialized,
+                });
+
+                if (normalized.blocked) {
+                    const resultObj = {
+                        success: true,
+                        skipped: true,
+                        reason: normalized.reason,
+                        todos: [],
+                    };
+                    tool_call.status = 'success';
+                    tool_call.result_object = resultObj;
+                    tool_call.result = JSON.stringify(resultObj);
+                    logger.info(`[planning] skip TodoWrite for simple task ${this.task_id}`);
+                    return;
+                }
+
+                if (normalized.changed) {
+                    args = { ...(args ?? {}), todos: normalized.todos };
+                    tool_call.args_object = args;
+                    tool_call.args_string = JSON.stringify(args);
+                    logger.info(
+                        `[tool-debug] task=${this.task_id} tool=${tool_call.tool_name} ` +
+                        `normalized_args=${this.formatValueForLog(args, 1200)}`
+                    );
+                }
+                this._todoPlanInitialized = true;
+            } else if (this._todoPlanRequired && !this._todoPlanInitialized && !isToolAllowedBeforePlanning(tool_call.tool_name)) {
+                tool_call.status = 'error';
+                tool_call.result_object = {
+                    error: 'todo_plan_required',
+                    execution_mode: this.execution_mode,
+                };
+                tool_call.result = `Planning policy requires calling todomgr-TodoWrite first (mode=${this.execution_mode}).`;
+                logger.warn(`[planning] blocked tool ${tool_call.tool_name} before TodoWrite for task ${this.task_id}`);
+                return;
+            }
+
             tool_call.status = 'running';
             await this.sendSubscriptionFeedback();
-
-            /* 在执行工具前检查是否任务已经被中止 */
             if (this.task_status === 'stopped') {
                 tool_call.status = 'error';
                 tool_call.result = '任务已停止';
                 return;
             }
+            if (tool_call.tool_name !== "terminal-executePowerShell"
+                && tool_call.tool_name !== "terminal-executeBash") {
+                let result = await tool.execute(
+                    args,
+                    async (result) => {
+                        tool_call.result = result.result;
+                        tool_call.result_object = result.result_object;
+                        await this.sendSubscriptionFeedback();
+                    },
+                    this
+                );
+                tool_call.status = result.status;
+                tool_call.result = result.result;
+                tool_call.result_object = result.result_object;
+                logger.info(
+                    `[tool-debug] task=${this.task_id} tool=${tool_call.tool_name} ` +
+                    `status=${result.status} result=${this.formatValueForLog(result.result, 1000)}`
+                );
+            }else{
+                // 步骤1：执行并记录
+                let accumulatedLog = "";
+                let result = await tool.execute(args, async (intermediate_result) => {
+                    const chunkStr = typeof intermediate_result === 'string'
+                        ? intermediate_result
+                        : JSON.stringify(intermediate_result, null, 2);
+                    accumulatedLog += chunkStr + "\n";
+                },this);
+                // 获取返回值
+                const returnValueStr = typeof result.result === 'string'
+                    ? result.result
+                    : JSON.stringify(result.result, null, 2);
+                // 步骤2：备份 Artifact
+                const taskDir = getTaskDirectory();
+                const artifactsDir = path.join(taskDir, 'artifacts');
+                if (!fs.existsSync(artifactsDir)) fs.mkdirSync(artifactsDir, { recursive: true });
+                const artifactFilename = `${this.task_id}_${tool_call.tool_name}_${Date.now()}.log.txt`;
+                const artifactPath = path.join(artifactsDir, artifactFilename);
 
-            let result = await tool.execute(
-                args,
-                async (result) => {
-                    tool_call.result = result.result;
-                    tool_call.result_object = result.result_object;
-                    await this.sendSubscriptionFeedback();
-                },
-                this
-            );
-            tool_call.status = result.status;
-            tool_call.result = result.result;
-            tool_call.result_object = result.result_object;
+                // 组合内容：优先使用返回值，如果返回值为空，使用累加的日志
+                // 这样能确保无论是哪种形式输出的技能书都能被捕获
+                const combinedContent = returnValueStr.length > 20 ? returnValueStr : (accumulatedLog + "\n" + returnValueStr);
+
+                fs.writeFileSync(artifactPath, combinedContent, 'utf8');
+                logger.info(`Output backup saved to: ${artifactPath}`);
+
+                const analysisPrompt = `
+    你是一个高级任务结果分析师 (Task Result Analyst)。
+    主任务 AI 调用了命令行工具，参数是 \`${JSON.stringify(args)}\`。
+
+    【当前上下文】
+    1. **用户意图**: 主任务希望通过此操作获取什么？(根据参数判断，如 dir 是想看文件列表，cat/read 是想看内容)。
+    2. **完整数据**: 已备份至 ${artifactPath}
+    3. **数据预览**:
+    ${combinedContent}
+
+    ## 🚨 核心铁律：防幻觉协议 (Anti-Hallucination Protocol)
+    在生成回答之前，你必须执行以下**事实核查**：
+    1. **核查证据**：请看上面的【工具输出预览】。里面**真的**包含 Excel 表格数据、文件列表或具体文本内容吗？
+    2. **禁止臆造**：**严禁** 编造任何不在【工具输出预览】中的文件名、数据行或统计结果。
+
+    ---
+    【你的决策逻辑】
+
+    请仔细阅读【数据预览】，并按优先级匹配以下情形：
+
+    ### 情形 A：信息检索与直接反馈
+    - **特征**：
+        1. 工具操作属于**查询类** (如 \`dir\`, \`ls\`, \`cat\`, \`type\`, \`head\`, \`grep\`)。
+        2. 或者用户意图是**读取文件、查看列表、搜索特定内容**。
+        3. 输出内容是具体的**文件列表、代码内容、配置文本**。
+    - **行动**：
+        1. **不要写摘要！不要写统计数据！** (例如不要只说“有84个文件”)。
+        2. **必须返回原始数据的关键部分**。主任务需要看到具体的文件名/文本内容才能进行下一步。
+        3. **智能截断策略**：
+            - 如果内容少于 2000 字：**原样返回全部内容**。
+            - 如果内容过长：保留**前 50 行** 和 **后 20 行**，如果是文件列表，确保包含用户可能感兴趣的文件扩展名（如 .pdf, .docx, .py）。
+            - 只有在内容真的极长且无明显规律时，才提示查看日志文件。
+        4. 结尾附上：“完整日志见：${artifactPath}”。
+
+    ### 情形 B：执行过程 / 纯日志
+    - **特征**：程序安装进度条、大段的调试日志、无意义的爬虫中间状态、简单的“成功/失败”确认。
+    - **行动**：
+        1. 提取关键结果（如：是否成功，生成的最终文件路径，报错的核心原因）。
+        2. 此时可以写摘要。
+        3. 结尾附上：“完整日志见：${artifactPath}”。
+
+    【最终回复格式】
+    直接输出你要返回给主任务的文本内容。
+    `;
+                let finalReport = "";
+                try {
+                    // 如果内容极短，通常不需要规划，直接透传
+                    if (combinedContent.length < 2000) {
+                        finalReport = combinedContent;
+                    } else {
+                        finalReport = await LLM.ask(new UserMessage(analysisPrompt));
+                    }
+                } catch (aiErr) {
+                    logger.warn(`AI Analysis failed: ${aiErr.message}`);
+                    finalReport = `Tool executed. Output saved to: ${artifactPath}.\nPreview:\n${combinedContent.substring(0, 500)}...`;
+                }
+                tool_call.status = result.status;
+                tool_call.result = finalReport;
+                tool_call.result_object = result.result_object;
+                logger.info(
+                    `[tool-debug] task=${this.task_id} tool=${tool_call.tool_name} ` +
+                    `status=${result.status} result=${this.formatValueForLog(finalReport, 1000)}`
+                );
+            }
         } catch (err) {
             logger.error(err);
             tool_call.status = 'error';
-            tool_call.result = err.message;
+            tool_call.result = `Error: ${err.message}`;
         } finally {
             await tool_call.freezeRenderResult();
         }
@@ -698,11 +1347,13 @@ export class TaskManagerState {
     }
 
     /**
-     * Get a simplified list of tasks
-     * @returns the list of tasks
+     * Get a simplified list of tasks (已修改：过滤掉子任务)
+     * @returns {object[]} the list of tasks
      */
-    getTaskList(): object[] {
-        return this.tasks.map(task => task.toSimplifiedJSON());
+    getTaskList() {
+        // 关键改动：只返回 parent_id 为 null 或 undefined 的任务
+        return this.tasks
+            .map(task => task.toSimplifiedJSON());
     }
 
     /**
@@ -719,21 +1370,49 @@ export class TaskManagerState {
         this.publishTaskListUpdate();
         return task;
     }
-
     /**
-     * Remove a task by its id
+     * Create a sub-task for tool isolation (新增方法)
+     * @param {string} parentId
+     * @returns {TaskState}
      */
-    removeTask(taskId: string): void {
-        this.tasks = this.tasks.filter(task => task.task_id !== taskId);
-        this.publishTaskListUpdate();
+    createSubTask(parentId: string) {
+        const subTask = new TaskState(this, parentId);
+        this.tasks.push(subTask);
+        this.save();
+        return subTask;
+    }
+    /**
+     * Remove a task by its id (Recursive deletion)
+     * @param {string} taskId
+     */
+    removeTask(taskId: string) {
+        // 1. 找到要删除的任务对象
+        const taskToRemove = this.getTask(taskId);
 
-        // Delete just the specific task's file
-        const taskDirectory = getTaskDirectory();
-        const taskFile = path.join(taskDirectory, `${taskId}.json`);
-        if (fs.existsSync(taskFile)) {
-            fs.unlinkSync(taskFile);
+        if (!taskToRemove) {
+            logger.warn(`Task ${taskId} not found for deletion.`);
+            return;
         }
 
+        // Stop execution first so parent task cannot continue creating more subtasks.
+        taskToRemove.stop('system');
+
+        // 2. [递归步骤] 查找所有 parent_id 为当前 taskId 的子任务
+        const children = this.tasks.filter(t => t.parent_id === taskId);
+
+        for (const child of children) {
+            // 递归调用，这样子任务的子任务也会被删除
+            this.removeTask(child.task_id);
+        }
+
+        // 3. [清理步骤] 调用 TaskState 的 cleanup 方法删除物理文件 (JSON + Logs)
+        taskToRemove.cleanup();
+
+        // 4. [内存清理] 从内存列表中移除
+        this.tasks = this.tasks.filter(task => task.task_id !== taskId);
+
+        // 5. 更新前端和保存列表
+        this.publishTaskListUpdate();
         this.save();
     }
 
@@ -741,6 +1420,11 @@ export class TaskManagerState {
      * Remove all tasks from the task manager
      */
     clearAllTasks(): void {
+        // [新增] 清空前，先遍历调用每个 task 的 cleanup，确保物理日志被销毁
+        for (const task of this.tasks) {
+            task.stop('system');
+            task.cleanup();
+        }
         this.tasks = [];
         this.publishTaskListUpdate();
         this.cleanupOldTaskFiles();

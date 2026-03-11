@@ -43,6 +43,14 @@ TodoWrite 工具使用说明：
 - 每次调用该工具时，必须传入完整的待办列表（这将替换当前所有待办）
 - 状态：pending（待处理）、in_progress（进行中）、completed（已完成）
 - 当你完成一个待办后，应该立即更新待办列表，将该待办标记为 completed，并确保下一个待办标记为 in_progress（如果有）
+Planning granularity policy:
+- Simple single-goal tasks should execute directly without TodoWrite.
+- For complex tasks, keep Todo items result-oriented, not operation-oriented.
+- Do not create tiny steps like "check file exists", "enter folder", "open terminal".
+- Keep initial Todo list in 2-5 items (hard max 6).
+- For long or cross-domain work, you may call planning-delegateTask to run an isolated sub-task and return structured JSON.
+- When calling planning-delegateTask, always provide subtask_title in payload and keep it within 10 characters.
+- Each planning-delegateTask call must contain one focused sub-goal; for multiple goals, call it multiple times.
 </todomanagement>
 
 <memory>
