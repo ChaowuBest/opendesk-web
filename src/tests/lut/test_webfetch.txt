@@ -9,3 +9,4 @@
 - https://openai.com/zh-Hans-CN/index/gpt-5-3-instant/
 - https://blogs.microsoft.com/blog/2026/02/27/microsoft-and-openai-joint-statement-on-continuing-partnership/
 - https://x.com/OpenAI
+- https://clawhub.ai/api/skills (该网站预期会返回404错误响应)

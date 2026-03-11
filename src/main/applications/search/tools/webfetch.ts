@@ -63,10 +63,12 @@ const WebFetchArgsSchema = z.object({
 interface FetchResult {
     content: string;
     strategy: string;
+    httpStatus?: number;
 }
 
 export class WebFetchTool extends BaseTool<typeof WebFetchArgsSchema> {
     private turndownService: TurndownService;
+    private lastHttpStatus: number | undefined;
 
     constructor() {
         super(
@@ -173,11 +175,14 @@ export class WebFetchTool extends BaseTool<typeof WebFetchArgsSchema> {
             );
         }
 
+        let lastHttpStatus: number | undefined;
+
         // 策略1: 直接获取 + Readability 提取
         const directResult = await this.tryDirectFetch(url);
         if (directResult) {
             return this.formatOutput(url, directResult);
         }
+        lastHttpStatus = this.lastHttpStatus;
 
         // 策略2: 通过 Jina Reader 获取（免费无需 Key 的在线解析服务，可处理 SPA 和部分反爬页面）
         const jinaResult = await this.tryJinaReader(url);
@@ -191,11 +196,19 @@ export class WebFetchTool extends BaseTool<typeof WebFetchArgsSchema> {
             return this.formatOutput(url, metaResult);
         }
 
+        const reasons: string[] = [];
+        if (lastHttpStatus && lastHttpStatus >= 400) {
+            reasons.push(`服务器返回了 HTTP ${lastHttpStatus} 错误`);
+        }
+        reasons.push(
+            '网站可能使用了反爬虫保护（如 Cloudflare JS 验证）',
+            '页面内容可能完全由 JavaScript 动态渲染',
+            '网站可能需要登录或特殊授权',
+        );
+
         throw new Error(
             `无法获取 ${url} 的有效内容。可能的原因：\n` +
-            '1. 网站使用了反爬虫保护（如 Cloudflare JS 验证）\n' +
-            '2. 页面内容完全由 JavaScript 动态渲染\n' +
-            '3. 网站需要登录或特殊授权',
+            reasons.map((r, i) => `${i + 1}. ${r}`).join('\n'),
         );
     }
 
@@ -204,28 +217,42 @@ export class WebFetchTool extends BaseTool<typeof WebFetchArgsSchema> {
     private async tryDirectFetch(url: string): Promise<FetchResult | null> {
         try {
             const response = await this.doFetch(url, BROWSER_HEADERS);
+            this.lastHttpStatus = response.status;
 
+            const contentType = response.headers.get('content-type') || '';
+            const isTextLike = contentType.includes('text/') ||
+                contentType.includes('application/json') ||
+                contentType.includes('application/xml');
+            const isHtml = contentType.includes('text/html') || contentType.includes('application/xhtml');
+
+            // 对于非 HTML 的文本类型（JSON/XML/plain text），不要求 200 状态码，
+            // 因为 API 端点常用 4xx/5xx 返回有意义的错误信息（如错误 JSON）
+            if (!response.ok && !isTextLike) {
+                return null;
+            }
+
+            const body = await this.readResponseBody(response);
+
+            // 非 HTML 文本类型（API 响应）使用宽松的门槛：只要有内容就返回
+            if (!isHtml && isTextLike) {
+                if (!body || body.trim().length === 0) {
+                    return null;
+                }
+
+                if (contentType.includes('text/markdown')) {
+                    return { content: this.truncate(body), strategy: 'Markdown by server', httpStatus: response.status };
+                }
+
+                const strategy = response.ok ? '文本内容' : `文本内容 (HTTP ${response.status})`;
+                return { content: this.truncate(body), strategy, httpStatus: response.status };
+            }
+
+            // HTML 响应：要求 200 且有足够内容
             if (!response.ok) {
                 return null;
             }
 
-            const contentType = response.headers.get('content-type') || '';
-            const body = await this.readResponseBody(response);
-
             if (!body || body.length < 50) {
-                return null;
-            }
-
-            // 服务器直接返回了 Markdown
-            if (contentType.includes('text/markdown')) {
-                return { content: this.truncate(body), strategy: 'Markdown by server' };
-            }
-
-            // 非 HTML 的文本类型直接返回
-            if (!contentType.includes('text/html') && !contentType.includes('application/xhtml')) {
-                if (contentType.includes('text/') || contentType.includes('application/json') || contentType.includes('application/xml')) {
-                    return { content: this.truncate(body), strategy: '文本内容' };
-                }
                 return null;
             }
 
@@ -248,7 +275,7 @@ export class WebFetchTool extends BaseTool<typeof WebFetchArgsSchema> {
                 return null;
             }
 
-            return { content: markdown, strategy: '直接获取' };
+            return { content: markdown, strategy: '直接获取', httpStatus: response.status };
         } catch {
             return null;
         }
@@ -269,12 +296,28 @@ export class WebFetchTool extends BaseTool<typeof WebFetchArgsSchema> {
             }
 
             const text = await this.readResponseBody(response);
-            if (!text || text.length < MIN_CONTENT_LENGTH) {
+            if (!text || text.trim().length === 0) {
                 return null;
             }
 
             // Jina Reader 在遇到反爬时会返回 Warning + 挑战页内容，检测并丢弃
             if (text.includes('Target URL returned error 403') || text.includes('requiring CAPTCHA')) {
+                return null;
+            }
+
+            // Jina Reader 检测到目标站 HTTP 错误（如 404），提取并报告
+            const httpErrorMatch = text.match(/Target URL returned error (\d+)/);
+            if (httpErrorMatch) {
+                const status = parseInt(httpErrorMatch[1], 10);
+                const markdownMatch = text.match(/Markdown Content:\s*([\s\S]*)/);
+                const content = markdownMatch ? markdownMatch[1].trim() : text;
+                if (content.length > 0) {
+                    return { content: this.truncate(content), strategy: `Jina Reader (HTTP ${status})`, httpStatus: status };
+                }
+                return null;
+            }
+
+            if (text.length < MIN_CONTENT_LENGTH) {
                 return null;
             }
 
@@ -549,7 +592,11 @@ export class WebFetchTool extends BaseTool<typeof WebFetchArgsSchema> {
     private formatOutput(url: string, result: FetchResult): string {
         let output = `## 网页内容\n`;
         output += `**来源**: ${url}\n`;
-        output += `**获取方式**: ${result.strategy}\n\n`;
+        output += `**获取方式**: ${result.strategy}\n`;
+        if (result.httpStatus && result.httpStatus >= 400) {
+            output += `**注意**: 服务器返回了 HTTP ${result.httpStatus} 状态码，以下内容可能为错误响应\n`;
+        }
+        output += '\n';
         output += result.content;
         return output;
     }
