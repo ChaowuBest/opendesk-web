@@ -23,6 +23,11 @@ import { z } from "zod";
 import { jsonrepair } from "jsonrepair";
 
 
+// SelectList.selectedIndex 在类型声明中是 private，但运行时可访问且无公开 getter
+function getListIndex(list: SelectList): number {
+    return ((list as unknown as Record<string, unknown>)['selectedIndex'] as number) ?? 0;
+}
+
 // ━━━ 邮箱配色 ━━━
 const MC = {
     accent: chalk.hex('#4A90D9'),
@@ -827,7 +832,7 @@ export class MailOverlay implements Component {
 
     // 分页加载相关
     private currentOffset = 0;
-    private pageSize = 100;
+    private pageSize = 50;
     private initialPageSize = 50;
     private hasMoreEmails = true;
     private isLoadingMore = false;
@@ -836,6 +841,10 @@ export class MailOverlay implements Component {
     private detailScrollOffset = 0;
     private detailBodyTotalLines = 0;
     private detailBodyVisibleLines = 0;
+
+    // 窗口自适应
+    private lastTermRows = 0;
+    private lastTermCols = 0;
 
     // compose 相关
     private composeType?: ComposeType;
@@ -1095,23 +1104,34 @@ export class MailOverlay implements Component {
                 this.exitSearchMode();
                 return { consume: true };
             }
-            // 左键：向上翻页；右键：向下翻页（强制整屏重绘，避免差分渲染混帧出现双箭头；忽略 key release 防止一次按键触发两次）
             if (this.emailList && this.emails.length > 0 && !isKeyRelease(data)) {
-                const list = this.emailList as { selectedIndex: number; setSelectedIndex?: (i: number) => void };
-                const currentIndex = list.selectedIndex ?? 0;
+                const currentIndex = getListIndex(this.emailList);
                 const pageSize = Math.max(1, this.emailListVisibleCount);
+
+                // ↑ 键：第一封时不动（阻止 SelectList 默认的循环跳到末尾）
+                if (matchesKey(data, Key.up) && currentIndex === 0) {
+                    return { consume: true };
+                }
+
+                // ← 键：向上翻一页
                 if (matchesKey(data, Key.left)) {
                     const next = Math.max(0, currentIndex - pageSize);
-                    if (list.setSelectedIndex) list.setSelectedIndex(next);
-                    else list.selectedIndex = next;
+                    this.emailList.setSelectedIndex(next);
                     this.openDeskTUI.tui.requestRender(true);
                     return { consume: true };
                 }
+
+                // → 键：向下翻一页，到底部时触发加载更多
                 if (matchesKey(data, Key.right)) {
                     const next = Math.min(this.emails.length - 1, currentIndex + pageSize);
-                    if (list.setSelectedIndex) list.setSelectedIndex(next);
-                    else list.selectedIndex = next;
+                    this.emailList.setSelectedIndex(next);
                     this.openDeskTUI.tui.requestRender(true);
+                    // 翻页到接近底部时加载更多
+                    if (this.hasMoreEmails && !this.isLoadingMore && next >= this.emails.length - 3) {
+                        this.loadMoreEmails().catch(err => {
+                            logger.error(`翻页加载更多邮件失败: ${err}`);
+                        });
+                    }
                     return { consume: true };
                 }
             }
@@ -1354,13 +1374,11 @@ export class MailOverlay implements Component {
                 this.currentOffset += newEmails.length;
                 this.hasMoreEmails = newEmails.length >= this.pageSize;
 
-                // 保存当前选中索引
-                const currentIndex = (this.emailList as any)?.selectedIndex || 0;
+                const currentIndex = this.emailList ? getListIndex(this.emailList) : 0;
                 this.buildEmailList();
 
-                // 恢复选中索引
                 if (this.emailList && currentIndex >= 0) {
-                    (this.emailList as any).selectedIndex = Math.min(currentIndex, this.emails.length - 1);
+                    this.emailList.setSelectedIndex(Math.min(currentIndex, this.emails.length - 1));
                 }
             } else {
                 this.hasMoreEmails = false;
@@ -1540,7 +1558,7 @@ export class MailOverlay implements Component {
 
             // 检测是否滚动到底部，触发加载更多
             if (this.hasMoreEmails && !this.isLoadingMore && this.emails.length > 0) {
-                const selectedIndex = (this.emailList as any)?.selectedIndex || 0;
+                const selectedIndex = getListIndex(this.emailList!);
                 const totalItems = this.emails.length;
                 // 当滚动到倒数第3项时开始加载更多
                 if (totalItems > 0 && selectedIndex >= totalItems - 3) {
@@ -2418,7 +2436,27 @@ export class MailOverlay implements Component {
     // ──────────────────── 渲染（精确填满屏幕） ────────────────────
 
     render(width: number): string[] {
-        const targetHeight = this.openDeskTUI.tui.terminal.rows;
+        const termRows = this.openDeskTUI.tui.terminal.rows;
+        const termCols = this.openDeskTUI.tui.terminal.columns;
+
+        // 窗口尺寸变化时异步重建列表（自适应）
+        if (termRows !== this.lastTermRows || termCols !== this.lastTermCols) {
+            const wasTracking = this.lastTermRows > 0;
+            this.lastTermRows = termRows;
+            this.lastTermCols = termCols;
+            if (wasTracking && (this.state === 'list' || this.state === 'search-list')) {
+                const isSearch = this.state === 'search-list';
+                const prevIdx = this.emailList ? getListIndex(this.emailList) : 0;
+                setTimeout(() => {
+                    this.buildEmailList(isSearch);
+                    if (this.emailList && prevIdx > 0) {
+                        this.emailList.setSelectedIndex(prevIdx);
+                    }
+                }, 0);
+            }
+        }
+
+        const targetHeight = termRows;
         // Box padding: top 1 + bottom 1 = 2
         const availableForContent = targetHeight - 2;
 
@@ -2431,6 +2469,11 @@ export class MailOverlay implements Component {
                 break;
 
             case 'list': {
+                const listFixedLines = 8 + (this.errorText ? 1 : 0) + (this.isLoadingMore ? 1 : 0);
+                const listFlexLines = Math.max(1, availableForContent - listFixedLines);
+                const emailCount = this.emailList ? this.emails.length || 1 : 0;
+                const listPadLines = Math.max(0, listFlexLines - emailCount);
+
                 this.box.addChild(new MailHeaderBar(this.currentAccount, this.isSyncing));  // 3
                 this.box.addChild(new Text(''));                                             // 1
                 this.box.addChild(new FilterTabsBar(this.currentFilter));                   // 1
@@ -2441,15 +2484,24 @@ export class MailOverlay implements Component {
                 if (this.emailList) {
                     this.box.addChild(this.emailList);                                      // flex
                 }
+                if (listPadLines > 0) {
+                    this.box.addChild(new EmptyFiller(listPadLines));
+                }
                 if (this.isLoadingMore) {
                     this.box.addChild(new Text(MC.neon('  ⟳ 正在加载更多邮件...')));        // 1
                 }
                 this.box.addChild(new Text(''));                                             // 1
-                this.box.addChild(new ListFooter(this.accounts.length > 1, this.emails.length, this.hasMoreEmails));  // 1
+                const listSelectedIdx = this.emailList ? getListIndex(this.emailList) : 0;
+                this.box.addChild(new ListFooter(this.accounts.length > 1, this.emails.length, this.hasMoreEmails, listSelectedIdx, this.emails.length));  // 1
                 break;
             }
 
             case 'search-list': {
+                const searchFixedLines = 8 + (this.errorText ? 1 : 0);
+                const searchFlexLines = Math.max(1, availableForContent - searchFixedLines);
+                const searchEmailCount = this.emailList ? this.emails.length || 1 : 0;
+                const searchPadLines = Math.max(0, searchFlexLines - searchEmailCount);
+
                 this.box.addChild(new MailHeaderBar(this.currentAccount, this.isSyncing));  // 3
                 this.box.addChild(new Text(''));                                             // 1
                 this.box.addChild(new SearchResultsBar(this.searchQuery));                  // 1
@@ -2460,12 +2512,20 @@ export class MailOverlay implements Component {
                 if (this.emailList) {
                     this.box.addChild(this.emailList);                                      // flex
                 }
+                if (searchPadLines > 0) {
+                    this.box.addChild(new EmptyFiller(searchPadLines));
+                }
                 this.box.addChild(new Text(''));                                             // 1
                 this.box.addChild(new SearchFooter());                                      // 1
                 break;
             }
 
             case 'search': {
+                const smFixedLines = 10;
+                const smFlexLines = Math.max(1, availableForContent - smFixedLines);
+                const smEmailCount = this.emailList ? this.emails.length || 1 : 0;
+                const smPadLines = Math.max(0, smFlexLines - smEmailCount);
+
                 this.box.addChild(new MailHeaderBar(this.currentAccount, this.isSyncing));  // 3
                 this.box.addChild(new Text(''));                                             // 1
                 this.box.addChild(new Text(MC.dim('  输入搜索关键词，支持语法：from: 发件人 | to: 收件人 | subject: 主题 | body: 正文 | date: 日期'))); // 1
@@ -2474,9 +2534,11 @@ export class MailOverlay implements Component {
                     this.box.addChild(new SearchInputWrapper(this.searchInput));            // 1
                 }
                 this.box.addChild(new SeparatorLine());                                     // 1
-                // 显示邮件列表（与 list 视图一致）
                 if (this.emailList) {
                     this.box.addChild(this.emailList);                                      // flex
+                }
+                if (smPadLines > 0) {
+                    this.box.addChild(new EmptyFiller(smPadLines));
                 }
                 this.box.addChild(new Text(''));                                             // 1
                 this.box.addChild(new SearchModeFooter());                                  // 1
@@ -2761,6 +2823,15 @@ class SeparatorLine implements Component {
     }
 }
 
+/** 空行填充，用于列表项不足时填满剩余空间 */
+class EmptyFiller implements Component {
+    constructor(private lines: number) { }
+    invalidate() { }
+    render(_width: number): string[] {
+        return Array(this.lines).fill('');
+    }
+}
+
 /** 加载状态占位：垂直居中显示加载文字，精确填满指定行数 */
 class VerticalFiller implements Component {
     constructor(private text: string, private totalLines: number) { }
@@ -2780,12 +2851,20 @@ class ListFooter implements Component {
     constructor(
         private multiAccount: boolean,
         private emailCount: number,
-        private hasMore: boolean
+        private hasMore: boolean,
+        private selectedIndex: number,
+        private totalCount: number,
     ) { }
     invalidate() { }
     render(width: number): string[] {
+        // 左侧：位置指示 + 操作提示
+        const position = this.totalCount > 0
+            ? MC.neonBold(` ${this.selectedIndex + 1}/${this.totalCount} `)
+            : MC.dim(' 0/0 ');
+
         const hints = [
             MC.neon('↑↓') + MC.dim(' 选择'),
+            MC.neon('←→') + MC.dim(' 翻页'),
             MC.neon('Enter') + MC.dim(' 查看'),
             MC.neon('c') + MC.dim(' 写信'),
             MC.neon('1-5') + MC.dim(' 筛选'),
@@ -2798,20 +2877,20 @@ class ListFooter implements Component {
         }
         hints.push(MC.neon('ESC') + MC.dim(' 关闭'));
 
-        // 显示邮件数量和加载状态
-        const countInfo = this.hasMore
-            ? MC.dim(` | 已加载 ${this.emailCount} 封`)
-            : MC.dim(` | 共 ${this.emailCount} 封`);
+        const leftText = position + ' ' + hints.join('   ');
 
-        const hintsText = '  ' + hints.join('   ');
-        const hintsVis = visibleWidth(hintsText);
-        const countVis = visibleWidth(countInfo);
+        // 右侧：已加载数量
+        const rightText = MC.dim(`已加载 ${this.emailCount} 封 `);
 
-        if (hintsVis + countVis > width) {
-            return [truncateToWidth(hintsText, width, '…')];
+        const leftVis = visibleWidth(leftText);
+        const rightVis = visibleWidth(rightText);
+        const gap = width - leftVis - rightVis;
+
+        if (gap < 1) {
+            return [truncateToWidth(leftText, width, '…')];
         }
 
-        return [truncateToWidth(hintsText + countInfo, width, '…')];
+        return [leftText + ' '.repeat(gap) + rightText];
     }
 }
 
