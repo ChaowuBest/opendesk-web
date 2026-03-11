@@ -552,6 +552,8 @@ async function runTestCase(testCase: TestCase, skillDir: string, timeout: number
         const timeoutMs = timeout * 1000;
         let resolved = false;
         
+        // 使用 shell: false 避免 Windows 下 process.execPath 含空格（如 C:\Program Files\nodejs\）
+        // 被 cmd 错误解析为 'C:\Program'，导致“不是内部或外部命令”错误
         const child = spawn(process.execPath, [testCase.file], {
             cwd: skillDir,
             env: {
@@ -560,7 +562,7 @@ async function runTestCase(testCase: TestCase, skillDir: string, timeout: number
                 TEST_TYPE: testCase.type,
                 NODE_ENV: 'test',
             },
-            shell: process.platform === 'win32',
+            shell: false,
         });
         
         let stdout = '';
