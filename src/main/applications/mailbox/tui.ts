@@ -978,34 +978,28 @@ export class MailOverlay implements Component {
             if (isKeyRelease(data)) {
                 return { consume: true };
             }
-            // j / ↓ 向下滚动邮件正文
-            if (data === 'j' || data === 'J' || matchesKey(data, Key.down)) {
+            if (matchesKey(data, Key.down)) {
                 this.scrollDetailBody(1);
                 return { consume: true };
             }
-            // k / ↑ 向上滚动邮件正文
-            if (data === 'k' || data === 'K' || matchesKey(data, Key.up)) {
+            if (matchesKey(data, Key.up)) {
                 this.scrollDetailBody(-1);
                 return { consume: true };
             }
-            // PageDown / 空格 翻页
-            if (matchesKey(data, Key.pageDown) || matchesKey(data, Key.space)) {
+            if (matchesKey(data, Key.pageDown)) {
                 this.scrollDetailBody(Math.max(1, this.detailBodyVisibleLines - 2));
                 return { consume: true };
             }
-            // PageUp / b 翻页
-            if (matchesKey(data, Key.pageUp) || data === 'b' || data === 'B') {
+            if (matchesKey(data, Key.pageUp)) {
                 this.scrollDetailBody(-(Math.max(1, this.detailBodyVisibleLines - 2)));
                 return { consume: true };
             }
-            // Home / g 跳到顶部
-            if (matchesKey(data, Key.home) || data === 'g') {
+            if (matchesKey(data, Key.home)) {
                 this.detailScrollOffset = 0;
                 this.openDeskTUI.tui.requestRender();
                 return { consume: true };
             }
-            // End / G 跳到底部
-            if (matchesKey(data, Key.end) || data === 'G') {
+            if (matchesKey(data, Key.end)) {
                 const bodyArea = Math.max(1, this.detailBodyVisibleLines - 1);
                 this.detailScrollOffset = Math.max(0, this.detailBodyTotalLines - bodyArea);
                 this.openDeskTUI.tui.requestRender();
@@ -1158,29 +1152,28 @@ export class MailOverlay implements Component {
         }
 
         if (this.state === 'assistant') {
-            // 滚动控制
-            if (data === 'j' || data === 'J' || matchesKey(data, Key.down)) {
+            if (matchesKey(data, Key.down)) {
                 this.scrollAssistantResult(1);
                 return { consume: true };
             }
-            if (data === 'k' || data === 'K' || matchesKey(data, Key.up)) {
+            if (matchesKey(data, Key.up)) {
                 this.scrollAssistantResult(-1);
                 return { consume: true };
             }
-            if (matchesKey(data, Key.pageDown) || matchesKey(data, Key.space)) {
+            if (matchesKey(data, Key.pageDown)) {
                 this.scrollAssistantResult(Math.max(1, this.assistantResultVisibleLines - 2));
                 return { consume: true };
             }
-            if (matchesKey(data, Key.pageUp) || data === 'b' || data === 'B') {
+            if (matchesKey(data, Key.pageUp)) {
                 this.scrollAssistantResult(-(Math.max(1, this.assistantResultVisibleLines - 2)));
                 return { consume: true };
             }
-            if (matchesKey(data, Key.home) || data === 'g') {
+            if (matchesKey(data, Key.home)) {
                 this.assistantResultScrollOffset = 0;
                 this.openDeskTUI.tui.requestRender();
                 return { consume: true };
             }
-            if (matchesKey(data, Key.end) || data === 'G') {
+            if (matchesKey(data, Key.end)) {
                 const bodyArea = Math.max(1, this.assistantResultVisibleLines - 1);
                 this.assistantResultScrollOffset = Math.max(0, this.assistantResultTotalLines - bodyArea);
                 this.openDeskTUI.tui.requestRender();
@@ -1202,29 +1195,28 @@ export class MailOverlay implements Component {
         }
 
         if (this.state === 'assistant-result') {
-            // 滚动控制
-            if (data === 'j' || data === 'J' || matchesKey(data, Key.down)) {
+            if (matchesKey(data, Key.down)) {
                 this.scrollAssistantResult(1);
                 return { consume: true };
             }
-            if (data === 'k' || data === 'K' || matchesKey(data, Key.up)) {
+            if (matchesKey(data, Key.up)) {
                 this.scrollAssistantResult(-1);
                 return { consume: true };
             }
-            if (matchesKey(data, Key.pageDown) || matchesKey(data, Key.space)) {
+            if (matchesKey(data, Key.pageDown)) {
                 this.scrollAssistantResult(Math.max(1, this.assistantResultVisibleLines - 2));
                 return { consume: true };
             }
-            if (matchesKey(data, Key.pageUp) || data === 'b' || data === 'B') {
+            if (matchesKey(data, Key.pageUp)) {
                 this.scrollAssistantResult(-(Math.max(1, this.assistantResultVisibleLines - 2)));
                 return { consume: true };
             }
-            if (matchesKey(data, Key.home) || data === 'g') {
+            if (matchesKey(data, Key.home)) {
                 this.assistantResultScrollOffset = 0;
                 this.openDeskTUI.tui.requestRender();
                 return { consume: true };
             }
-            if (matchesKey(data, Key.end) || data === 'G') {
+            if (matchesKey(data, Key.end)) {
                 const bodyArea = Math.max(1, this.assistantResultVisibleLines - 1);
                 this.assistantResultScrollOffset = Math.max(0, this.assistantResultTotalLines - bodyArea);
                 this.openDeskTUI.tui.requestRender();
