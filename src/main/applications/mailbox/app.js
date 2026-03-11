@@ -52,6 +52,14 @@ class MailboxApplication extends BaseApplication {
         return [skill];
     }
 
+    async getSupportedEvents() {
+        return [
+            { eventName: 'newEmailCountsUpdated', eventDescription: '新邮件数量更新（各账户未读邮件计数发生变化时触发）' },
+            { eventName: 'emailListUpdated', eventDescription: '当前账户的邮件列表已更新（收到新邮件或同步完成时触发）' },
+            { eventName: 'accountsUpdated', eventDescription: '邮箱账户列表已更新（账户增删或配置重载时触发）' },
+        ];
+    }
+
     /**
      * 获取邮箱应用提供的 CLI 斜杠命令
      * @param tui TUI 实例

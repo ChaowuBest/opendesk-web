@@ -160,8 +160,9 @@ export class SelectTable implements Component {
 
                 let formatted: string;
                 if (valueWidth > colWidth) {
-                    // 需要截断，使用 pad=true 确保截断后的宽度等于 colWidth
                     formatted = truncateToWidth(value, colWidth, '…', true);
+                    // truncateToWidth 会插入 \x1b[0m 重置码，这会破坏外层 Box 的背景色
+                    formatted = formatted.replace(/\x1b\[0m/g, '');
                 } else {
                     // 需要填充
                     const padding = colWidth - valueWidth;

@@ -395,7 +395,7 @@ sendEmailTool.setExecutor(async (args) => {
         let to = args.to;
         let cc = args.cc;
         let bcc = args.bcc;
-        
+
         // 转换对象列表为地址字符串或数组
         if (Array.isArray(to) && to.length > 0 && typeof to[0] === 'object') {
             to = to.map(item => item.address);
@@ -406,7 +406,7 @@ sendEmailTool.setExecutor(async (args) => {
         if (Array.isArray(bcc) && bcc.length > 0 && typeof bcc[0] === 'object') {
             bcc = bcc.map(item => item.address);
         }
-        
+
         const sendArgs = {
             to: to,
             cc: cc,
@@ -440,15 +440,15 @@ replyEmailTool.setExecutor(async (args) => {
         if (!emailMeta) {
             return JSON.stringify({ success: false, error: '未找到该邮件' });
         }
-        
+
         // 获取原邮件内容
         const emailContent = await callMailWorker('getEmailContent', args.uid);
-        
+
         // 构建回复对象
         let replyTo = emailMeta.from || [];
         let to = replyTo;
         let cc = emailMeta.cc || [];
-        
+
         // 确保 replyTo 是正确的格式
         if (replyTo && !Array.isArray(replyTo)) {
             // 如果是字符串，转换为对象格式
@@ -466,7 +466,7 @@ replyEmailTool.setExecutor(async (args) => {
             });
             to = replyTo;
         }
-        
+
         // 确保 cc 是正确的格式
         if (cc && !Array.isArray(cc)) {
             if (typeof cc === 'string') {
@@ -480,12 +480,12 @@ replyEmailTool.setExecutor(async (args) => {
                 return item;
             });
         }
-        
+
         // 如果是回复所有人，需要将原邮件的收件人和抄送人都加入
         if (args.replyAll) {
             // 确保不重复添加发件人
             const senderAddresses = new Set(replyTo.map(s => s.address));
-            
+
             // 添加原邮件的收件人（排除发件人自己）
             if (emailMeta.to) {
                 emailMeta.to.forEach(recipient => {
@@ -495,7 +495,7 @@ replyEmailTool.setExecutor(async (args) => {
                     }
                 });
             }
-            
+
             // 添加原邮件的抄送人（排除发件人自己）
             if (emailMeta.cc) {
                 emailMeta.cc.forEach(recipient => {
@@ -506,32 +506,32 @@ replyEmailTool.setExecutor(async (args) => {
                 });
             }
         }
-        
+
         // 构建回复主题
         const originalSubject = emailMeta.subject || '';
         const subject = originalSubject.startsWith('Re:') ? originalSubject : `Re: ${originalSubject}`;
-        
+
         // 构建回复内容，包含原始邮件引用
         const fromStr = formatAddresses(emailMeta.from);
         const toStr = formatAddresses(emailMeta.to);
         const dateStr = new Date(emailMeta.date).toISOString();
         const originalContent = (emailContent?.textContent && emailContent.textContent.trim()) || stripHtml(emailContent?.htmlContent || '');
-        
+
         const quotedContent = `\n\n--- 原始邮件 ---\n发件人: ${fromStr}\n收件人: ${toStr}\n${emailMeta.cc ? `抄送: ${formatAddresses(emailMeta.cc)}\n` : ''}日期: ${dateStr}\n主题: ${originalSubject}\n\n${originalContent}`;
-        
+
         const replyContent = args.content + quotedContent;
-        
+
         // 转换收件人格式
         let toAddresses = to;
         let ccAddresses = cc;
-        
+
         if (Array.isArray(to) && to.length > 0 && typeof to[0] === 'object') {
             toAddresses = to.map(item => item.address);
         }
         if (Array.isArray(cc) && cc.length > 0 && typeof cc[0] === 'object') {
             ccAddresses = cc.map(item => item.address);
         }
-        
+
         // 调用发送邮件
         const sendArgs = {
             to: toAddresses,
@@ -541,7 +541,7 @@ replyEmailTool.setExecutor(async (args) => {
             html: replyContent.replace(/\n/g, '<br>'),
             attachments: [],
         };
-        
+
         const result = await callMailWorker('sendEmail', sendArgs);
         return JSON.stringify({ success: true, message: '邮件回复成功', data: result });
     } catch (error: any) {
@@ -2185,13 +2185,13 @@ export class MailOverlay implements Component {
                 html,
                 attachments: [],
             });
-            
+
             // 存储返回的草稿 UID，以便后续编辑时能正确更新
             this.draftUid = draftUid;
 
             this.successText = '草稿保存成功';
             this.openDeskTUI.tui.requestRender();
-            
+
             setTimeout(async () => {
                 await this.exitCompose();
                 // 如果当前在草稿箱视图，更新列表
@@ -2237,7 +2237,7 @@ export class MailOverlay implements Component {
             const bodyText = content.textContent || stripHtml(content.htmlContent) || '';
             this.composeEditor.setText(bodyText);
 
-            this.composeType = 'new'; 
+            this.composeType = 'new';
             this.errorText = undefined;
             this.isAiGenerating = false;
             this.composeSending = false;
@@ -3212,15 +3212,12 @@ class DetailFooter implements Component {
         if (this.totalLines > this.visibleLines) {
             hints.push(MC.neon('↑↓/jk') + MC.dim(' 滚动'));
             hints.push(MC.neon('←/→') + MC.dim(' 翻页'));
-            hints.push(MC.neon('Space/b') + MC.dim(' 翻页'));
-            hints.push(MC.neon('g/G') + MC.dim(' 首/尾'));
         }
 
         // 操作提示
         if (this.email && this.email.type === 'draft') {
             // 草稿邮件：编辑、删除
             hints.push(MC.neon('e') + MC.dim(' 编辑'));
-            hints.push(MC.neon('d') + MC.dim(' 删除'));
         } else {
             // 普通邮件：回复、转发、收藏、删除
             hints.push(MC.neon('r') + MC.dim(' 回复'));
@@ -3229,7 +3226,6 @@ class DetailFooter implements Component {
             if (this.email) {
                 hints.push(MC.neon('f') + MC.dim(this.email.starred ? ' 取消收藏' : ' 收藏'));
             }
-            hints.push(MC.neon('d') + MC.dim(' 删除'));
         }
         hints.push(MC.neon('p') + MC.dim(' 助手'));
         hints.push(MC.neon('d') + MC.dim(' 删除'));

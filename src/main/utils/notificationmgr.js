@@ -24,6 +24,11 @@ class NotificationManager {
         this.notifications = [];
         /** @type {Electron.WebContents[]} */
         this.subscribers = [];
+        /**
+         * CLI 模式下的通知回调列表
+         * @type {Array<(type: string, source: string, title: string, message: string) => void>}
+         */
+        this.cliCallbacks = [];
     }
 
     /**
@@ -48,13 +53,34 @@ class NotificationManager {
         this.subscribers.push(subscriber);
     }
 
+    /**
+     * 注册 CLI 模式下的通知回调
+     * @param {(type: string, source: string, title: string, message: string) => void} callback
+     * @returns {() => void} 取消注册的函数
+     */
+    addCliCallback(callback) {
+        this.cliCallbacks.push(callback);
+        return () => {
+            this.cliCallbacks = this.cliCallbacks.filter(cb => cb !== callback);
+        };
+    }
+
     sendNotification(type, source, title, message) {
         if (!isMainThread) {
             parentPort.postMessage({ type: 'notification', payload: { type, source, title, message } });
         } else {
+            // Electron renderer 订阅者
             for (const subscriber of this.subscribers) {
                 logger.info(`sending notification ${message} to subscriber: ${subscriber.id}`);
                 subscriber.send('notification:notificationReceived', type, source, title, message);
+            }
+            // CLI 模式回调
+            for (const callback of this.cliCallbacks) {
+                try {
+                    callback(type, source, title, message);
+                } catch (err) {
+                    logger.error(`CLI notification callback error: ${err}`);
+                }
             }
         }
     }
