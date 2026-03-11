@@ -52,6 +52,7 @@ import {
     SetChannelConfigTool,
     GetChannelConfigTool,
 } from './tools.js';
+import { NotificationManager } from '../../utils/notificationmgr.js';
 
 export interface ChannelRuntimeState {
     channelId: string;
@@ -216,7 +217,7 @@ export class ChannelMgrApplication extends BaseApplication {
                     state.status = { online: true, statusText: '已连接' };
                     this.notifyStateChange();
                     this.emitEvent('channel:connected', { channelId, accountId });
-                    logger.info(`消息插件 ${channelId}:${accountId} 启动成功`);
+                    NotificationManager.getInstance().info('插件系统', '消息渠道', `${channelId}:${accountId} 已就绪`);
                 } catch (err: any) {
                     state.status = { online: false, statusText: '错误', error: err?.message };
                     this.notifyStateChange();
