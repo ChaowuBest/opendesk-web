@@ -281,7 +281,6 @@ export async function installPlugin(npmSpecOrUrl: string): Promise<{ success: bo
         } else {
             // Original npm spec installation logic
             logger.info(`Installing plugin: ${npmSpecOrUrl}`);
-            logger.info(`Extensions directory: ${extensionsDir}`);
 
             // Determine the package name early so we can verify installation
             const pkgName = extractPackageName(npmSpecOrUrl);

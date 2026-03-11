@@ -390,7 +390,10 @@ class LLM {
         const toolOptions = this.buildToolOptions(chatContext);
 
         try {
-            const stream = client.chat.completions.stream({
+            // 使用原始流式 API 而非 .stream() 方法
+            // 某些模型提供商的流式响应不包含 role 字段，会导致 SDK 的 finalizeChatCompletion 报错
+            // 使用 .create() with stream: true 可以绕过 SDK 的严格验证
+            const stream = await client.chat.completions.create({
                 model: modelInstance.model_name,
                 messages: messages as OpenAI.ChatCompletionMessageParam[],
                 max_completion_tokens: 16384,
