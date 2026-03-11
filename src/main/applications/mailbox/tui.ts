@@ -974,6 +974,10 @@ export class MailOverlay implements Component {
         }
 
         if (this.state === 'detail') {
+            // 忽略 key release，否则在 Kitty 键盘协议下按一次会触发「按下+松开」两次，导致左右键滚两行、上下键滚两页
+            if (isKeyRelease(data)) {
+                return { consume: true };
+            }
             // j / ↓ 向下滚动邮件正文
             if (data === 'j' || data === 'J' || matchesKey(data, Key.down)) {
                 this.scrollDetailBody(1);
