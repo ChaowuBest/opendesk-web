@@ -31,6 +31,31 @@ import { spawn } from 'child_process';
 import { parse as parseYaml } from 'yaml';
 import { logger } from '../../utils/logger.js';
 
+/** Windows: 获取合并后的 PATH（用户 + 系统），供测试子进程使用，使 python/pip 与终端一致 */
+function getWindowsPathForTests(): Promise<string | null> {
+    if (process.platform !== 'win32') return Promise.resolve(null);
+    return new Promise((resolve) => {
+        const ps = spawn(
+            'powershell',
+            ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command',
+                "([Environment]::GetEnvironmentVariable('Path','Machine') ?? '') + ';' + ([Environment]::GetEnvironmentVariable('Path','User') ?? '')"],
+            { shell: false, windowsHide: true }
+        );
+        let out = '';
+        let err = '';
+        ps.stdout?.on('data', (d) => { out += d.toString(); });
+        ps.stderr?.on('data', (d) => { err += d.toString(); });
+        ps.on('error', () => resolve(null));
+        ps.on('close', (code) => {
+            if (code === 0 && out.trim()) {
+                const merged = out.trim().replace(/\r\n?/g, '');
+                resolve(merged + ';' + (process.env.PATH ?? ''));
+            } else resolve(null);
+        });
+        setTimeout(() => { ps.kill(); resolve(null); }, 5000);
+    });
+}
+
 const TESTS_DIR = 'tests';
 const TEST_MD_FILENAME = 'TEST.md';
 const CASES_DIR = 'cases';
@@ -551,97 +576,101 @@ async function runTestCase(testCase: TestCase, skillDir: string, timeout: number
         
         const timeoutMs = timeout * 1000;
         let resolved = false;
-        
-        // 使用 shell: false 避免 Windows 下 process.execPath 含空格（如 C:\Program Files\nodejs\）
-        // 被 cmd 错误解析为 'C:\Program'，导致“不是内部或外部命令”错误
-        const child = spawn(process.execPath, [testCase.file], {
-            cwd: skillDir,
-            env: {
+
+        getWindowsPathForTests().then((pathForTests) => {
+            const env: Record<string, string> = {
                 ...process.env,
                 SKILL_DIR: skillDir,
                 TEST_TYPE: testCase.type,
                 NODE_ENV: 'test',
-            },
-            shell: false,
-        });
-        
-        let stdout = '';
-        let stderr = '';
-        
-        child.stdout?.on('data', (data) => {
-            stdout += data.toString();
-        });
-        
-        child.stderr?.on('data', (data) => {
-            stderr += data.toString();
-        });
-        
-        const timeoutId = setTimeout(() => {
-            if (!resolved) {
-                resolved = true;
-                child.kill();
-                const analysis = analyzeTestFailure('', stdout, stderr, null);
-                resolve({
-                    name: testCase.name,
-                    file: testCase.file,
-                    status: 'failed',
-                    duration: timeoutMs,
-                    message: `测试超时 (${timeout}s)`,
-                    error: stderr || stdout,
-                    suggestion: `原因: ${analysis.cause}\n建议: 增加测试超时时间，或优化测试代码执行效率`,
-                });
-            }
-        }, timeoutMs);
-        
-        child.on('error', (err) => {
-            if (!resolved) {
-                resolved = true;
-                clearTimeout(timeoutId);
-                const analysis = analyzeTestFailure(err.message, '', '', null);
-                resolve({
-                    name: testCase.name,
-                    file: testCase.file,
-                    status: 'error',
-                    duration: Date.now() - startTime,
-                    error: err.message,
-                    suggestion: `原因: ${analysis.cause}\n建议: ${analysis.suggestion}`,
-                });
-            }
-        });
-        
-        child.on('close', (code) => {
-            if (!resolved) {
-                resolved = true;
-                clearTimeout(timeoutId);
-                
-                const duration = Date.now() - startTime;
-                
-                if (code === 0) {
-                    resolve({
-                        name: testCase.name,
-                        file: testCase.file,
-                        status: 'passed',
-                        duration,
-                        message: '测试通过',
-                        details: stdout,
-                    });
-                } else {
-                    const output = stdout + '\n' + stderr;
-                    const match = output.match(/(?:Error|FAIL|失败)[:：]?\s*(.+?)(?:\n|$)/i);
-                    const errorMsg = match ? match[1].trim() : `退出码 ${code}`;
-                    const analysis = analyzeTestFailure('', stdout, stderr, code);
-                    
+            };
+            if (pathForTests) env.PATH = pathForTests;
+            // 使用 shell: false 避免 Windows 下 process.execPath 含空格（如 C:\Program Files\nodejs\）
+            // 被 cmd 错误解析为 'C:\Program'，导致“不是内部或外部命令”错误
+            const child = spawn(process.execPath, [testCase.file], {
+                cwd: skillDir,
+                env,
+                shell: false,
+            });
+
+            let stdout = '';
+            let stderr = '';
+
+            child.stdout?.on('data', (data) => {
+                stdout += data.toString();
+            });
+
+            child.stderr?.on('data', (data) => {
+                stderr += data.toString();
+            });
+
+            const timeoutId = setTimeout(() => {
+                if (!resolved) {
+                    resolved = true;
+                    child.kill();
+                    const analysis = analyzeTestFailure('', stdout, stderr, null);
                     resolve({
                         name: testCase.name,
                         file: testCase.file,
                         status: 'failed',
-                        duration,
-                        message: errorMsg,
+                        duration: timeoutMs,
+                        message: `测试超时 (${timeout}s)`,
                         error: stderr || stdout,
+                        suggestion: `原因: ${analysis.cause}\n建议: 增加测试超时时间，或优化测试代码执行效率`,
+                    });
+                }
+            }, timeoutMs);
+
+            child.on('error', (err) => {
+                if (!resolved) {
+                    resolved = true;
+                    clearTimeout(timeoutId);
+                    const analysis = analyzeTestFailure(err.message, '', '', null);
+                    resolve({
+                        name: testCase.name,
+                        file: testCase.file,
+                        status: 'error',
+                        duration: Date.now() - startTime,
+                        error: err.message,
                         suggestion: `原因: ${analysis.cause}\n建议: ${analysis.suggestion}`,
                     });
                 }
-            }
+            });
+
+            child.on('close', (code) => {
+                if (!resolved) {
+                    resolved = true;
+                    clearTimeout(timeoutId);
+
+                    const duration = Date.now() - startTime;
+
+                    if (code === 0) {
+                        resolve({
+                            name: testCase.name,
+                            file: testCase.file,
+                            status: 'passed',
+                            duration,
+                            message: '测试通过',
+                            details: stdout,
+                        });
+                    } else {
+                        const output = stdout + '\n' + stderr;
+                        const match = output.match(/(?:Error|FAIL|失败)[:：]?\s*(.+?)(?:\n|$)/i);
+                        const errorMsg = match ? match[1].trim() : `退出码 ${code}`;
+                        const analysis = analyzeTestFailure('', stdout, stderr, code);
+
+                        resolve({
+                            name: testCase.name,
+                            file: testCase.file,
+                            status: 'failed',
+                            duration,
+                            message: errorMsg,
+                            error: stderr || stdout,
+                            suggestion: `原因: ${analysis.cause}\n建议: ${analysis.suggestion}`,
+                        });
+                    }
+                }
+            });
         });
     });
 }
