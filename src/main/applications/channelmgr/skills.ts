@@ -31,12 +31,12 @@ description: 管理消息渠道插件，包括插件安装/配置、设备配对
 ##### 配置步骤
 
 1. 使用内置工具 installChannelPlugin 工具安装 \`@openclaw/feishu\` 插件
-2. 引导用户前往飞书开放平台创建机器人：https://www.volcengine.com/docs/82379/2183190?lang=zh
-3. 用户需要在飞书开放平台完成以下操作：
-   - 创建一个应用/机器人
-   - 获取 App ID 和 App Secret
-   - 将连接方式配置为 WebSocket 形式的长链接
-4. 收集用户提供的信息后，使用 setChannelConfig 工具将配置写入 settings.json
+2. 使用 getChannelConfig 工具检查 feishu 渠道是否已有 appId 配置
+3. **如果 appId 为空或不存在**：调用 createFeishuBot 工具，让用户通过手机飞书扫码一键创建机器人（工具会在界面上显示二维码，用户扫码后自动返回 App ID 和 App Secret）
+4. **如果 appId 已存在**：直接使用现有凭证，或询问用户是否需要重新创建
+5. 使用 setChannelConfig 工具将获得的凭证（appId, appSecret）写入配置
+
+**重要**：优先使用 createFeishuBot 扫码创建方式，这比手动在飞书开放平台创建应用要快得多。只有在扫码不可用时才引导用户手动创建。
 
 ##### 飞书配置项
 
@@ -62,6 +62,7 @@ description: 管理消息渠道插件，包括插件安装/配置、设备配对
 
 ### 内置消息渠道插件管理工具清单
 
+- 使用 createFeishuBot 通过手机扫码一键创建飞书机器人（推荐，最快捷的方式）
 - 使用 listChannelPlugins 查看已安装的插件
 - 使用 installChannelPlugin 安装新插件
 - 使用 uninstallChannelPlugin 卸载插件

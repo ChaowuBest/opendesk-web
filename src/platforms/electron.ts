@@ -28,6 +28,7 @@ import { SoulMgrApplication } from "../main/applications/soulmgr/app.js";
 import { BaseApplication } from "../main/applications/base";
 
 import path from 'path';
+import { ChannelMgrApplication } from '../main/applications/channelmgr/app.js';
 
 
 export class ElectronTaskUpdateSubscriber extends BaseTaskUpdateSubscriber {
@@ -107,6 +108,7 @@ export class ElectronPlatform extends AbstractPlatform {
             McpMgrApplication,
             TodoMgrApplication,
             SoulMgrApplication,
+            ChannelMgrApplication
         ];
     }
 }

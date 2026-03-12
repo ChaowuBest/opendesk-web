@@ -51,6 +51,7 @@ import {
     ToggleChannelPluginTool,
     SetChannelConfigTool,
     GetChannelConfigTool,
+    CreateFeishuBotTool,
 } from './tools.js';
 import { NotificationManager } from '../../utils/notificationmgr.js';
 
@@ -118,6 +119,7 @@ export class ChannelMgrApplication extends BaseApplication {
         pluginToolset.addTool(new ToggleChannelPluginTool());
         pluginToolset.addTool(new SetChannelConfigTool(this));
         pluginToolset.addTool(new GetChannelConfigTool(this));
+        pluginToolset.addTool(new CreateFeishuBotTool());
 
         manageSkill.toolsets = [pairingToolset, pluginToolset];
 

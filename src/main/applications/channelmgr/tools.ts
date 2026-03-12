@@ -9,7 +9,8 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { BaseTool } from '../../aikernel/tool.js';
+import { BaseTool, ToolResult } from '../../aikernel/tool.js';
+import { ToolCall } from '../../aikernel/messages.js';
 import { z } from 'zod';
 import {
     getPendingRequests,
@@ -25,6 +26,13 @@ import {
     listInstalledPlugins,
     setPluginEnabled,
 } from '../../aikernel/plugins/index.js';
+import {
+    feishuAuthInit,
+    feishuAuthBegin,
+    feishuAuthPoll,
+} from './feishu-auth.js';
+import { logger } from '../../utils/logger.js';
+import qrcodeTerminal from 'qrcode-terminal';
 
 // ── List Pairing Requests ───────────────────────────────────────────────────
 
@@ -338,5 +346,260 @@ export class GetChannelConfigTool extends BaseTool<typeof GetChannelConfigSchema
         } catch (err: any) {
             return `获取配置失败: ${err?.message || err}`;
         }
+    }
+}
+
+// ── Create Feishu Bot via QR Code Scan ──────────────────────────────────────
+
+interface FeishuBotToolState {
+    phase: 'init' | 'qr_code' | 'polling' | 'success' | 'error';
+    qr_ascii?: string;
+    verification_url?: string;
+    appId?: string;
+    appSecret?: string;
+    openId?: string;
+    error?: string;
+}
+
+const FEISHU_BOT_POLL_TIMEOUT_SEC = 180;
+
+const CreateFeishuBotSchema = z.object({});
+
+export class CreateFeishuBotTool extends BaseTool<typeof CreateFeishuBotSchema> {
+    constructor() {
+        super(
+            'createFeishuBot',
+            '通过手机扫码一键创建飞书机器人。会在界面上生成二维码供用户使用飞书 App 扫描，扫码完成后自动创建飞书应用并返回 App ID、App Secret 和用户 Open ID。',
+            CreateFeishuBotSchema,
+        );
+        this.setUniversalExecutor(this.run.bind(this));
+    }
+
+    // ── Electron 渲染 ─────────────────────────────────────────────────────
+
+    async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
+        const state = toolcall.result_object as FeishuBotToolState | undefined;
+        if (!state) return undefined;
+
+        if (state.phase === 'qr_code' || state.phase === 'polling') {
+            const escUrl = this.escHtml(state.verification_url || '');
+            // 使用在线二维码 API 生成真正的二维码图片
+            const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(state.verification_url || '')}`;
+            return `
+            <div class="mt-3 mb-3 p-5 bg-white/90 backdrop-blur-md border border-slate-200 rounded-2xl shadow-sm" style="max-width: 320px;">
+                <div class="text-sm font-semibold text-slate-700 mb-3 flex items-center gap-2">
+                    <div class="h-2 w-2 rounded-full bg-blue-500 animate-pulse ring-4 ring-blue-100/50"></div>
+                    飞书机器人扫码创建
+                </div>
+                <div class="flex justify-center p-3 bg-white rounded-xl border border-slate-100">
+                    <img src="${qrImageUrl}" alt="飞书机器人二维码" width="200" height="200" style="display: block;" />
+                </div>
+                <p class="text-xs text-slate-500 mt-3 text-center">请使用飞书 App 扫描上方二维码</p>
+                <a href="${escUrl}" target="_blank" class="block mt-2 text-xs text-blue-500 hover:text-blue-600 text-center break-all">${escUrl}</a>
+                <div class="flex items-center justify-center gap-1.5 mt-3">
+                    <div class="h-1.5 w-1.5 rounded-full bg-blue-400 animate-bounce" style="animation-delay: 0ms;"></div>
+                    <div class="h-1.5 w-1.5 rounded-full bg-blue-400 animate-bounce" style="animation-delay: 150ms;"></div>
+                    <div class="h-1.5 w-1.5 rounded-full bg-blue-400 animate-bounce" style="animation-delay: 300ms;"></div>
+                    <span class="ml-1 text-xs text-slate-400">等待扫码中</span>
+                </div>
+            </div>`;
+        }
+
+        if (state.phase === 'success') {
+            const masked = state.appSecret
+                ? state.appSecret.slice(0, 6) + '****' + state.appSecret.slice(-4)
+                : '';
+            return `
+            <div class="mt-3 mb-3 p-5 bg-white/90 backdrop-blur-md border border-emerald-200 rounded-2xl shadow-sm" style="max-width: 320px;">
+                <div class="text-sm font-semibold text-emerald-700 mb-3 flex items-center gap-2">
+                    <div class="h-2.5 w-2.5 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.6)]"></div>
+                    飞书机器人创建成功
+                </div>
+                <div class="text-xs text-slate-600 space-y-1.5 bg-slate-50 p-3 rounded-lg font-mono">
+                    <p><span class="text-slate-400">App ID:&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>${this.escHtml(state.appId || '')}</p>
+                    <p><span class="text-slate-400">App Secret:&nbsp;</span>${this.escHtml(masked)}</p>
+                    <p><span class="text-slate-400">Open ID:&nbsp;&nbsp;&nbsp;&nbsp;</span>${this.escHtml(state.openId || 'N/A')}</p>
+                </div>
+            </div>`;
+        }
+
+        if (state.phase === 'error') {
+            return `
+            <div class="mt-3 mb-3 p-4 bg-white/90 backdrop-blur-md border border-rose-200 rounded-2xl shadow-sm" style="max-width: 320px;">
+                <div class="text-sm font-semibold text-rose-600 flex items-center gap-2">
+                    <div class="h-2.5 w-2.5 rounded-full bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.5)]"></div>
+                    ${this.escHtml(state.error || '创建失败')}
+                </div>
+            </div>`;
+        }
+
+        return undefined;
+    }
+
+    // ── CLI TUI 渲染 ──────────────────────────────────────────────────────
+
+    renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
+        const state = toolcall.result_object as FeishuBotToolState | undefined;
+        if (!state) return undefined;
+
+        if (state.phase === 'init') {
+            return ['  ⏳ 正在连接飞书服务器...'];
+        }
+
+        if (state.phase === 'qr_code' || state.phase === 'polling') {
+            const lines: string[] = [];
+            lines.push('  📱 请使用飞书 App 扫描下方二维码创建机器人:');
+            lines.push('');
+            if (state.qr_ascii) {
+                for (const line of state.qr_ascii.split('\n')) {
+                    lines.push('  ' + line);
+                }
+            }
+            lines.push('');
+            if (state.verification_url) {
+                lines.push('  🔗 ' + state.verification_url);
+            }
+            lines.push('');
+            lines.push('  ⏳ 等待扫码中...');
+            return lines;
+        }
+
+        if (state.phase === 'success') {
+            return [
+                '  ✅ 飞书机器人创建成功！',
+                `     App ID:     ${state.appId}`,
+                `     App Secret: ${state.appSecret ? state.appSecret.slice(0, 6) + '****' : ''}`,
+                `     Open ID:    ${state.openId || 'N/A'}`,
+            ];
+        }
+
+        if (state.phase === 'error') {
+            return [`  ❌ ${state.error || '创建失败'}`];
+        }
+
+        return undefined;
+    }
+
+    // ── 执行逻辑 ─────────────────────────────────────────────────────────
+
+    private async run(_args: z.output<typeof CreateFeishuBotSchema>, result: ToolResult): Promise<void> {
+        // Step 1: Init
+        logger.info('[createFeishuBot] Step 1: init');
+        result.updateResultObject({ phase: 'init' } satisfies FeishuBotToolState);
+
+        const initRes = await feishuAuthInit();
+        logger.info(`[createFeishuBot] init response: ${JSON.stringify(initRes)}`);
+
+        if (!initRes.supported_auth_methods?.includes('client_secret')) {
+            const errState: FeishuBotToolState = { phase: 'error', error: '当前飞书环境不支持扫码创建机器人 (client_secret 方式不可用)' };
+            result.updateResultObject(errState);
+            throw new Error(errState.error);
+        }
+
+        // Step 2: Begin — get device_code and QR code URL
+        logger.info('[createFeishuBot] Step 2: begin');
+        const beginRes = await feishuAuthBegin();
+        logger.info(`[createFeishuBot] begin response: device_code=${beginRes.device_code}, interval=${beginRes.interval}, expire_in=${beginRes.expire_in ?? beginRes.expires_in}`);
+
+        const deviceCode = beginRes.device_code;
+        const verificationUrl = beginRes.verification_uri_complete;
+        if (!deviceCode || !verificationUrl) {
+            const errState: FeishuBotToolState = { phase: 'error', error: `飞书 begin 返回异常: device_code=${deviceCode}, uri=${verificationUrl}` };
+            result.updateResultObject(errState);
+            throw new Error(errState.error);
+        }
+
+        const pollIntervalSec = beginRes.interval || 5;
+        const expireInSec = beginRes.expire_in || beginRes.expires_in || FEISHU_BOT_POLL_TIMEOUT_SEC;
+
+        // Step 3: Generate QR code for display
+        let qrAscii = '';
+        try {
+            const qrGen = (qrcodeTerminal as any).default || qrcodeTerminal;
+            qrAscii = await new Promise<string>((resolve) => {
+                qrGen.generate(verificationUrl, { small: true }, (code: string) => {
+                    resolve(code);
+                });
+            });
+        } catch (e: any) {
+            logger.warn(`[createFeishuBot] QR code generation failed: ${e?.message}`);
+            qrAscii = `请手动打开链接: ${verificationUrl}`;
+        }
+        logger.info(`[createFeishuBot] Step 3: QR ready, url=${verificationUrl}`);
+
+        // Push QR code to UI immediately
+        const qrState: FeishuBotToolState = {
+            phase: 'qr_code',
+            qr_ascii: qrAscii,
+            verification_url: verificationUrl,
+        };
+        result.updateResultObject(qrState);
+
+        // Step 4: Poll until user scans or timeout
+        const startTime = Date.now();
+        let currentInterval = pollIntervalSec;
+        const deadlineMs = Math.min(expireInSec, FEISHU_BOT_POLL_TIMEOUT_SEC) * 1000;
+        logger.info(`[createFeishuBot] Step 4: polling, interval=${currentInterval}s, deadline=${deadlineMs}ms`);
+
+        while (Date.now() - startTime < deadlineMs) {
+            await new Promise(resolve => setTimeout(resolve, currentInterval * 1000));
+
+            let pollRes;
+            try {
+                pollRes = await feishuAuthPoll(deviceCode);
+            } catch (err: any) {
+                logger.warn(`[createFeishuBot] Poll network error: ${err?.message}`);
+                continue;
+            }
+
+            logger.info(`[createFeishuBot] poll response: ${JSON.stringify(pollRes)}`);
+
+            if (pollRes.client_id && pollRes.client_secret) {
+                const successState: FeishuBotToolState = {
+                    phase: 'success',
+                    appId: pollRes.client_id,
+                    appSecret: pollRes.client_secret,
+                    openId: pollRes.user_info?.open_id || '',
+                };
+                result.updateResultObject(successState);
+                result.updateResult(JSON.stringify({
+                    appId: successState.appId,
+                    appSecret: successState.appSecret,
+                    openId: successState.openId,
+                }));
+                logger.info(`[createFeishuBot] 机器人创建成功: ${successState.appId}`);
+                return;
+            }
+
+            if (pollRes.error) {
+                if (pollRes.error === 'authorization_pending') {
+                    result.updateResultObject({ ...qrState, phase: 'polling' });
+                } else if (pollRes.error === 'slow_down') {
+                    currentInterval += 5;
+                } else if (pollRes.error === 'access_denied') {
+                    const errState: FeishuBotToolState = { phase: 'error', error: '用户拒绝了授权，机器人未创建。' };
+                    result.updateResultObject(errState);
+                    throw new Error(errState.error);
+                } else if (pollRes.error === 'expired_token') {
+                    const errState: FeishuBotToolState = { phase: 'error', error: '二维码已过期，请重新调用此工具重试。' };
+                    result.updateResultObject(errState);
+                    throw new Error(errState.error);
+                } else {
+                    const msg = `${pollRes.error}${pollRes.error_description ? ': ' + pollRes.error_description : ''}`;
+                    const errState: FeishuBotToolState = { phase: 'error', error: msg };
+                    result.updateResultObject(errState);
+                    throw new Error(msg);
+                }
+            }
+        }
+
+        // Timeout
+        const errState: FeishuBotToolState = { phase: 'error', error: '等待超时，二维码已过期。请重新调用此工具重试。' };
+        result.updateResultObject(errState);
+        throw new Error(errState.error);
+    }
+
+    private escHtml(s: string): string {
+        return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     }
 }
