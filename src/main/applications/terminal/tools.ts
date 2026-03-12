@@ -463,7 +463,7 @@ export function findExecutable(executable: string): string | null {
         : executable;
 
     for (const dir of pathEnv.split(pathSeparator)) {
-        const fullPath = require('path').join(dir, executableName);
+        const fullPath = path.join(dir, executableName);
         if (fs.existsSync(fullPath)) {
             return fullPath;
         }

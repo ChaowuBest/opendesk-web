@@ -32,6 +32,7 @@ import format from "string-template";
 import { ToolCall } from './messages';
 import chalk from 'chalk';
 import { statusDisplay, truncText } from '../tui/components/toolcall';
+import type { TaskState } from '../states/tasks';
 
 
 const NAME_MAX_LEN = 64;
@@ -320,7 +321,20 @@ function createInnerToolCall(
 class CallSkillTool extends BaseTool<typeof CallSkillToolSchema> {
     constructor() {
         super("CallSkillTool", "调用Skill提供的内部工具", CallSkillToolSchema);
-        this.setExecutor(this.callSkillTool);
+        this.setUniversalExecutor(this.callSkillToolUniversal.bind(this));
+    }
+
+    /**
+     * 渲染 CallSkillTool 工具调用的 Electron HTML 界面
+     * 优先使用内部工具的自定义渲染
+     */
+    async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
+        const inner = this.resolveInnerTool(toolcall);
+        if (inner) {
+            const result = await inner.tool.renderToolCall(inner.toolCall);
+            if (result) return result;
+        }
+        return undefined;
     }
 
     /**
@@ -333,45 +347,42 @@ class CallSkillTool extends BaseTool<typeof CallSkillToolSchema> {
             return this.renderDefaultCard(toolcall, width, '', '', '');
         }
 
-        const { bundleName, skillName, toolName, toolArgs } = args;
+        const { bundleName, skillName, toolName } = args;
         if (!bundleName || !skillName || !toolName) {
             return this.renderDefaultCard(toolcall, width, bundleName || '', skillName || '', toolName || '');
         }
 
-        // 尝试同步获取 Skill 和内部工具
-        const registry = SkillRegistry.getInstance();
-        const cachedSkill = registry.getCachedSkill(bundleName, skillName);
-
-        if (cachedSkill) {
-            const innerTool = cachedSkill.getTool(toolName);
-            if (innerTool) {
-                // 解析 toolArgs
-                let parsedToolArgs: object;
-                try {
-                    if (typeof toolArgs === 'object') {
-                        parsedToolArgs = toolArgs;
-                    } else if (typeof toolArgs === 'string') {
-                        parsedToolArgs = JSON.parse(jsonrepair(toolArgs));
-                    } else {
-                        parsedToolArgs = {};
-                    }
-                } catch {
-                    parsedToolArgs = {};
-                }
-
-                // 创建临时 ToolCall 用于内部工具渲染
-                const innerToolCall = createInnerToolCall(toolName, parsedToolArgs, innerTool, toolcall);
-
-                // 尝试使用内部工具的自定义渲染
-                const customRender = innerTool.renderToolCallCli(innerToolCall, width);
-                if (customRender) {
-                    return customRender;
-                }
-            }
+        const inner = this.resolveInnerTool(toolcall);
+        if (inner) {
+            const customRender = inner.tool.renderToolCallCli(inner.toolCall, width);
+            if (customRender) return customRender;
         }
 
-        // 使用默认卡片渲染
         return this.renderDefaultCard(toolcall, width, bundleName, skillName, toolName);
+    }
+
+    /**
+     * 从父级 ToolCall 中解析并构建内部工具的 ToolCall，供渲染使用
+     */
+    private resolveInnerTool(toolcall: ToolCall): { tool: BaseTool<any>; toolCall: ToolCall } | undefined {
+        const args = toolcall.args_object as z.output<typeof CallSkillToolSchema> | undefined;
+        if (!args?.bundleName || !args?.skillName || !args?.toolName) return undefined;
+
+        const cachedSkill = SkillRegistry.getInstance().getCachedSkill(args.bundleName, args.skillName);
+        if (!cachedSkill) return undefined;
+
+        const innerTool = cachedSkill.getTool(args.toolName);
+        if (!innerTool) return undefined;
+
+        let parsedToolArgs: object;
+        try {
+            if (typeof args.toolArgs === 'object') parsedToolArgs = args.toolArgs;
+            else if (typeof args.toolArgs === 'string') parsedToolArgs = JSON.parse(jsonrepair(args.toolArgs));
+            else parsedToolArgs = {};
+        } catch { parsedToolArgs = {}; }
+
+        const innerToolCall = createInnerToolCall(args.toolName, parsedToolArgs, innerTool, toolcall);
+        return { tool: innerTool, toolCall: innerToolCall };
     }
 
     /**
@@ -386,16 +397,13 @@ class CallSkillTool extends BaseTool<typeof CallSkillToolSchema> {
     ): string[] {
         const { icon, text } = statusDisplay(toolcall.status);
 
-        // 构建标题
         const skillPath = bundleName && skillName ? `${bundleName}/${skillName}` : '未知技能';
         const tool = toolName || '未知工具';
 
-        // 根据状态选择颜色
         const accentColor = toolcall.status === 'error' ? chalk.red :
             toolcall.status === 'success' ? chalk.green :
                 toolcall.status === 'running' ? chalk.blue : chalk.dim;
 
-        // 构建显示行
         const header = `  ${icon} ${chalk.magenta('⚡')} ${accentColor.bold(tool)} ${chalk.dim('·')} ${chalk.dim(skillPath)}`;
 
         if (toolcall.status === 'running') {
@@ -409,18 +417,28 @@ class CallSkillTool extends BaseTool<typeof CallSkillToolSchema> {
         }
     }
 
-    private async callSkillTool(args: z.output<typeof CallSkillToolSchema>) {
+    /**
+     * 通用执行器：转发 updatedCallback 和 taskState 给内部工具，
+     * 使内部工具的流式更新（如 QR 码渲染）能够传播到 TUI/Electron 前端。
+     */
+    private async callSkillToolUniversal(
+        args: z.output<typeof CallSkillToolSchema>,
+        parentResult: ToolResult,
+        taskState?: TaskState,
+    ): Promise<void> {
         const skill = await SkillRegistry.getInstance().getSkill(
             args.bundleName,
-            args.skillName
+            args.skillName,
         );
         if (!skill) {
-            return "未找到该Skill";
+            parentResult.updateResult('未找到该Skill');
+            return;
         }
 
         const tool = skill.getTool(args.toolName);
         if (!tool) {
-            return `未找到工具 ${args.toolName}`;
+            parentResult.updateResult(`未找到工具 ${args.toolName}`);
+            return;
         }
 
         try {
@@ -430,16 +448,34 @@ class CallSkillTool extends BaseTool<typeof CallSkillToolSchema> {
             } else if (typeof args.toolArgs == 'string') {
                 toolArgs = JSON.parse(jsonrepair(args.toolArgs));
             } else {
-                return "错误: toolArgs的类型无法解析";
+                parentResult.updateResult('错误: toolArgs的类型无法解析');
+                return;
             }
 
-            logger.info(`call skill tool ${args.toolName} with ${JSON.stringify(args.toolArgs)}`)
-            const result = await tool.execute(toolArgs);
-            return result.result;
+            logger.info(`call skill tool ${args.toolName} with ${JSON.stringify(args.toolArgs)}`);
+
+            const innerResult = await tool.execute(
+                toolArgs,
+                (innerToolResult) => {
+                    parentResult.result = innerToolResult.result;
+                    parentResult.result_object = innerToolResult.result_object;
+                    if (parentResult.updatedCallback) {
+                        parentResult.updatedCallback(parentResult);
+                    }
+                },
+                taskState,
+            );
+
+            parentResult.result = innerResult.result;
+            parentResult.result_object = innerResult.result_object;
+
+            if (innerResult.status === 'error') {
+                throw new Error(innerResult.result || '工具调用失败');
+            }
         } catch (err) {
-            logger.error(`skill tool call failed: ${err}`)
+            logger.error(`skill tool call failed: ${err}`);
             const errorMessage = err instanceof Error ? err.message : String(err);
-            return `工具调用失败: ${errorMessage}`;
+            parentResult.updateResult(`工具调用失败: ${errorMessage}`);
         }
     }
 }
