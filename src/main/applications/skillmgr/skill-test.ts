@@ -562,7 +562,7 @@ async function runTestCase(testCase: TestCase, skillDir: string, timeout: number
     return new Promise((resolve) => {
         const ext = path.extname(testCase.file).toLowerCase();
         const isJs = ext === '.js' || ext === '.mjs' || ext === '.cjs';
-        
+
         if (!isJs) {
             resolve({
                 name: testCase.name,
@@ -573,7 +573,7 @@ async function runTestCase(testCase: TestCase, skillDir: string, timeout: number
             });
             return;
         }
-        
+
         const timeoutMs = timeout * 1000;
         let resolved = false;
 
@@ -585,9 +585,12 @@ async function runTestCase(testCase: TestCase, skillDir: string, timeout: number
                 NODE_ENV: 'test',
             };
             if (pathForTests) env.PATH = pathForTests;
-            // 使用 shell: false 避免 Windows 下 process.execPath 含空格（如 C:\Program Files\nodejs\）
-            // 被 cmd 错误解析为 'C:\Program'，导致“不是内部或外部命令”错误
-            const child = spawn(process.execPath, [testCase.file], {
+
+            // 统一强制按 CommonJS 方式执行 JS 测试文件：
+            // 使用 --input-type=commonjs + -e "require('<file>')"，
+            // 避免受外层 package.json 的 "type": "module" 影响。
+            const requireExpr = `require(${JSON.stringify(testCase.file)})`;
+            const child = spawn(process.execPath, ['--input-type=commonjs', '-e', requireExpr], {
                 cwd: skillDir,
                 env,
                 shell: false,
@@ -675,17 +678,9 @@ async function runTestCase(testCase: TestCase, skillDir: string, timeout: number
     });
 }
 
-export async function runSkillTests(skillId: string): Promise<TestSuiteResult | null> {
-    const skillsDir = getSkillsDirectory();
-    const skillDir = path.join(skillsDir, skillId);
-    
-    if (!fs.existsSync(skillDir) || !fs.statSync(skillDir).isDirectory()) {
-        logger.error(`Skill not found: ${skillId}`);
-        return null;
-    }
-    
+async function runSkillTestsInternal(skillDir: string, skillId: string): Promise<TestSuiteResult> {
     const testsDir = path.join(skillDir, TESTS_DIR);
-    
+
     if (!fs.existsSync(testsDir) || !fs.statSync(testsDir).isDirectory()) {
         return {
             skillId,
@@ -712,16 +707,16 @@ export async function runSkillTests(skillId: string): Promise<TestSuiteResult | 
             },
         };
     }
-    
+
     const config = loadTestConfig(testsDir);
     const testCases = discoverTestCases(testsDir);
-    
+
     const environment = await checkEnvironment(config);
-    
+
     const results: TestResult[] = [];
     const timeout = config?.timeout ?? 300;
     const startTime = Date.now();
-    
+
     for (const testCase of testCases) {
         if (!environment.compatible && testCase.type !== 'environment') {
             results.push({
@@ -733,13 +728,13 @@ export async function runSkillTests(skillId: string): Promise<TestSuiteResult | 
             });
             continue;
         }
-        
+
         const result = await runTestCase(testCase, skillDir, timeout);
         results.push(result);
     }
-    
+
     const duration = Date.now() - startTime;
-    
+
     const summary = {
         total: results.length,
         passed: results.filter(r => r.status === 'passed').length,
@@ -748,7 +743,7 @@ export async function runSkillTests(skillId: string): Promise<TestSuiteResult | 
         error: results.filter(r => r.status === 'error').length,
         duration,
     };
-    
+
     return {
         skillId,
         skillName: config?.metadata?.name ?? skillId,
@@ -757,6 +752,28 @@ export async function runSkillTests(skillId: string): Promise<TestSuiteResult | 
         tests: results,
         summary,
     };
+}
+
+export async function runSkillTests(skillId: string): Promise<TestSuiteResult | null> {
+    const skillsDir = getSkillsDirectory();
+    const skillDir = path.join(skillsDir, skillId);
+
+    if (!fs.existsSync(skillDir) || !fs.statSync(skillDir).isDirectory()) {
+        logger.error(`Skill not found: ${skillId}`);
+        return null;
+    }
+
+    return await runSkillTestsInternal(skillDir, skillId);
+}
+
+export async function runSkillTestsInDirectory(skillDir: string): Promise<TestSuiteResult | null> {
+    if (!fs.existsSync(skillDir) || !fs.statSync(skillDir).isDirectory()) {
+        logger.error(`Skill directory not found: ${skillDir}`);
+        return null;
+    }
+
+    const skillId = path.basename(skillDir);
+    return await runSkillTestsInternal(skillDir, skillId);
 }
 
 export function hasTests(skillId: string): boolean {

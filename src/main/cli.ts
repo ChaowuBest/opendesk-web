@@ -24,6 +24,7 @@ import { installPlugin, uninstallPlugin, listInstalledPlugins, setPluginEnabled,
 import { ChannelMgrApplication } from './applications/channelmgr/app.js';
 import { ChannelMessageRouter } from './applications/channelmgr/router.js';
 import { ShellAgentDecl } from './aikernel/agents/shellagent.js';
+import { runSkillTestsInDirectory } from './applications/skillmgr/skill-test.js';
 
 import process from 'process';
 import path from 'path';
@@ -149,6 +150,64 @@ function parseCommandLineArgs() {
                 }
             }
             process.exit(0);
+        });
+
+    // skill tests subcommand
+    prog
+        .command('testskill')
+        .description('对指定技能目录运行测试')
+        .argument('<skillPath>', '技能目录路径')
+        .action(async (skillPath: string) => {
+            useCliTransport();
+            useConsoleTransport();
+
+            const resolved = path.resolve(skillPath);
+            if (!fs.existsSync(resolved) || !fs.statSync(resolved).isDirectory()) {
+                console.error(`[error] skill directory ${resolved} does not exist or is not a directory`);
+                process.exit(1);
+            }
+
+            console.log(`正在对技能目录运行测试: ${resolved}`);
+
+            const result = await runSkillTestsInDirectory(resolved);
+            if (!result) {
+                console.error('[error] 无法运行技能测试，请检查技能目录结构是否正确');
+                process.exit(1);
+            }
+
+            console.log(`\n技能: ${result.skillName} (${result.skillId})`);
+
+            console.log('\n环境检查:');
+            for (const check of result.environment.checks) {
+                const status = check.passed ? '✓' : '✗';
+                console.log(`  ${status} ${check.name}: ${check.message} (实际: ${check.actual}${check.required ? `, 要求: ${Array.isArray(check.required) ? check.required.join('/') : check.required}` : ''})`);
+            }
+
+            console.log('\n测试用例结果:');
+            for (const t of result.tests) {
+                let icon = '•';
+                if (t.status === 'passed') icon = '✓';
+                else if (t.status === 'failed') icon = '✗';
+                else if (t.status === 'skipped') icon = '-';
+                else if (t.status === 'error') icon = '!';
+
+                const durationSec = (t.duration / 1000).toFixed(2);
+                console.log(`  ${icon} ${t.name} [${t.status}] (${durationSec}s) - ${t.message ?? ''}`);
+                if (t.suggestion) {
+                    console.log(`      建议: ${t.suggestion}`);
+                }
+            }
+
+            console.log('\n汇总:');
+            console.log(`  总数: ${result.summary.total}`);
+            console.log(`  通过: ${result.summary.passed}`);
+            console.log(`  失败: ${result.summary.failed}`);
+            console.log(`  跳过: ${result.summary.skipped}`);
+            console.log(`  错误: ${result.summary.error}`);
+            console.log(`  总耗时: ${(result.summary.duration / 1000).toFixed(2)}s`);
+
+            const hasFailure = result.summary.failed > 0 || result.summary.error > 0;
+            process.exit(hasFailure ? 1 : 0);
         });
 
     prog.action((workspace, kwargs) => {
