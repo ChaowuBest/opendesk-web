@@ -21,6 +21,8 @@ import { logger } from "../../utils/logger.js";
 import chalk from "chalk";
 import { z } from "zod";
 import { jsonrepair } from "jsonrepair";
+import fs from "fs";
+import nodePath from "path";
 
 
 // SelectList.selectedIndex 在类型声明中是 private，但运行时可访问且无公开 getter
@@ -388,15 +390,15 @@ const SendEmailArgsSchema = z.object({
     ]).optional().describe('密送'),
     subject: z.string().describe('邮件主题'),
     content: z.string().describe('邮件内容'),
+    attachments: z.array(z.string()).optional().describe('附件文件路径列表，每个元素是本地文件的绝对路径'),
 });
 const sendEmailTool = new BaseTool(
     'sendEmail',
-    '发送邮件。需要提供收件人(to)、主题(subject)和内容(content)，可选抄送(cc)和密送(bcc)。',
+    '发送邮件。需要提供收件人(to)、主题(subject)和内容(content)，可选抄送(cc)、密送(bcc)和附件(attachments)。附件参数为本地文件路径数组。',
     SendEmailArgsSchema,
 );
 sendEmailTool.setExecutor(async (args) => {
     try {
-        // 处理收件人格式
         let to = args.to;
         let cc = args.cc;
         let bcc = args.bcc;
@@ -412,6 +414,17 @@ sendEmailTool.setExecutor(async (args) => {
             bcc = bcc.map(item => item.address);
         }
 
+        const attachments: Array<{ filename: string; path: string }> = [];
+        if (args.attachments && args.attachments.length > 0) {
+            for (const filePath of args.attachments) {
+                const resolved = nodePath.resolve(filePath);
+                if (!fs.existsSync(resolved)) {
+                    return JSON.stringify({ success: false, error: `附件文件不存在: ${filePath}` });
+                }
+                attachments.push({ filename: nodePath.basename(resolved), path: resolved });
+            }
+        }
+
         const sendArgs = {
             to: to,
             cc: cc,
@@ -419,7 +432,7 @@ sendEmailTool.setExecutor(async (args) => {
             subject: args.subject,
             text: args.content,
             html: args.content.replace(/\n/g, '<br>'),
-            attachments: [],
+            attachments,
         };
         const result = await callMailWorker('sendEmail', sendArgs);
         return JSON.stringify({ success: true, message: '邮件发送成功', data: result });
@@ -660,7 +673,8 @@ const MAIL_ASSISTANT_SYSTEM_PROMPT =
     '- **bcc**（可选）：密送列表，格式同 to\n' +
     '- **subject**（必需）：邮件主题\n' +
     '- **content**（必需）：邮件内容\n' +
-    '**使用场景**：当需要发送新邮件给他人时使用。\n\n' +
+    '- **attachments**（可选）：附件文件路径列表，每个元素是本地文件的绝对路径，例如 ["/home/user/report.pdf"]\n' +
+    '**使用场景**：当需要发送新邮件给他人时使用。如果用户提到要发送附件，在 attachments 中传入文件路径。\n\n' +
     '### mailbox-replyEmail\n' +
     '**用途**：回复邮件。\n' +
     '**参数**：\n' +
@@ -698,6 +712,7 @@ const MAIL_ASSISTANT_SYSTEM_PROMPT =
     '  - 用户说"查看张三发来的邮件内容"→ 先调用 searchEmails 找到张三的邮件，再调用 getEmailContent 获取内容\n' +
     '- **邮件操作**：\n' +
     '  - 用户说"给张三发送邮件，主题是会议通知，内容是明天下午3点开会"→ 调用 sendEmail，设置 to、subject 和 content\n' +
+    '  - 用户说"给张三发邮件，附件是 /home/user/report.pdf"→ 调用 sendEmail，在 attachments 中传入文件路径\n' +
     '  - 用户说"回复刚才的邮件，告诉他我会参加会议"→ 先获取邮件 uid，再调用 replyEmail\n' +
     '  - 用户说"标记这封邮件为已读"→ 调用 markEmailReadStatus，设置 read: true\n' +
     '  - 用户说"收藏这封重要邮件"→ 调用 starEmail，设置 starred: true\n' +
@@ -851,6 +866,9 @@ export class MailOverlay implements Component {
     private composeToInput?: Input;
     private composeCcInput?: Input;
     private composeSubjectInput?: Input;
+    private composeAttachmentInput?: Input;
+    private composeAttachments: Array<{ filename: string; path: string }> = [];
+    private composeAttachmentSelectedIdx = -1;
     private composeEditor?: Editor;
     private composeFocusIdx = 0;
     private isAiGenerating = false;
@@ -955,6 +973,53 @@ export class MailOverlay implements Component {
             if (matchesKey(data, Key.shift('tab'))) {
                 this.cycleComposeFocus(-1);
                 return { consume: true };
+            }
+            // 附件输入框上的特殊按键处理
+            if (this.composeAttachmentInput) {
+                const fields = this.getComposeFocusFields();
+                const isAttachmentFocused = fields[this.composeFocusIdx] === this.composeAttachmentInput;
+
+                // Enter：添加附件而非跳转
+                if (matchesKey(data, Key.enter) && isAttachmentFocused) {
+                    this.addAttachmentFromInput();
+                    return { consume: true };
+                }
+
+                // 焦点在附件输入框时，上下键选择附件
+                if (isAttachmentFocused && this.composeAttachments.length > 0) {
+                    if (matchesKey(data, Key.up)) {
+                        if (this.composeAttachmentSelectedIdx <= 0) {
+                            this.composeAttachmentSelectedIdx = this.composeAttachments.length - 1;
+                        } else {
+                            this.composeAttachmentSelectedIdx--;
+                        }
+                        this.openDeskTUI.tui.requestRender();
+                        return { consume: true };
+                    }
+                    if (matchesKey(data, Key.down)) {
+                        if (this.composeAttachmentSelectedIdx >= this.composeAttachments.length - 1) {
+                            this.composeAttachmentSelectedIdx = 0;
+                        } else {
+                            this.composeAttachmentSelectedIdx++;
+                        }
+                        this.openDeskTUI.tui.requestRender();
+                        return { consume: true };
+                    }
+                }
+
+                // Ctrl+X 删除选中的附件（或最后一个）
+                if (matchesKey(data, Key.ctrl('x')) && this.composeAttachments.length > 0) {
+                    const idx = (this.composeAttachmentSelectedIdx >= 0 && this.composeAttachmentSelectedIdx < this.composeAttachments.length)
+                        ? this.composeAttachmentSelectedIdx : this.composeAttachments.length - 1;
+                    this.composeAttachments.splice(idx, 1);
+                    if (this.composeAttachments.length === 0) {
+                        this.composeAttachmentSelectedIdx = -1;
+                    } else {
+                        this.composeAttachmentSelectedIdx = Math.min(idx, this.composeAttachments.length - 1);
+                    }
+                    this.openDeskTUI.tui.requestRender();
+                    return { consume: true };
+                }
             }
             // 当焦点在 Input 字段上，Enter 跳到下一个字段
             if (matchesKey(data, Key.enter) && this.composeFocusIdx < this.getComposeFocusFields().length - 1) {
@@ -1251,6 +1316,7 @@ export class MailOverlay implements Component {
         if (this.composeToInput) fields.push(this.composeToInput);
         if (this.composeCcInput) fields.push(this.composeCcInput);
         if (this.composeSubjectInput) fields.push(this.composeSubjectInput);
+        if (this.composeAttachmentInput) fields.push(this.composeAttachmentInput);
         if (this.composeEditor) fields.push(this.composeEditor);
         return fields;
     }
@@ -1272,12 +1338,91 @@ export class MailOverlay implements Component {
         }
     }
 
+    private addAttachmentFromInput() {
+        if (!this.composeAttachmentInput) return;
+        const raw = this.composeAttachmentInput.getValue().trim();
+        if (!raw) return;
+
+        // 去掉用户可能粘贴的引号
+        const filePath = raw.replace(/^["']|["']$/g, '');
+
+        try {
+            const resolved = nodePath.resolve(filePath);
+            if (!fs.existsSync(resolved)) {
+                this.errorText = `文件不存在: ${filePath}`;
+                this.openDeskTUI.tui.requestRender();
+                setTimeout(() => {
+                    if (this.errorText === `文件不存在: ${filePath}`) {
+                        this.errorText = undefined;
+                        this.openDeskTUI.tui.requestRender();
+                    }
+                }, 3000);
+                return;
+            }
+            const stat = fs.statSync(resolved);
+            if (!stat.isFile()) {
+                this.errorText = `不是一个文件: ${filePath}`;
+                this.openDeskTUI.tui.requestRender();
+                setTimeout(() => {
+                    if (this.errorText === `不是一个文件: ${filePath}`) {
+                        this.errorText = undefined;
+                        this.openDeskTUI.tui.requestRender();
+                    }
+                }, 3000);
+                return;
+            }
+
+            // 检查是否已添加过
+            if (this.composeAttachments.some(a => a.path === resolved)) {
+                this.errorText = `附件已添加: ${nodePath.basename(resolved)}`;
+                this.openDeskTUI.tui.requestRender();
+                setTimeout(() => {
+                    if (this.errorText === `附件已添加: ${nodePath.basename(resolved)}`) {
+                        this.errorText = undefined;
+                        this.openDeskTUI.tui.requestRender();
+                    }
+                }, 3000);
+                return;
+            }
+
+            this.composeAttachments.push({
+                filename: nodePath.basename(resolved),
+                path: resolved,
+            });
+            this.composeAttachmentSelectedIdx = this.composeAttachments.length - 1;
+            this.errorText = undefined;
+            this.successText = '附件添加成功';
+            this.composeAttachmentInput.setValue('');
+            // 3 秒后自动清除成功提示
+            setTimeout(() => {
+                if (this.successText === '附件添加成功') {
+                    this.successText = undefined;
+                    this.openDeskTUI.tui.requestRender();
+                }
+            }, 3000);
+        } catch (err: any) {
+            this.errorText = `添加附件失败：${err?.message || '未知错误'}`;
+            this.openDeskTUI.tui.requestRender();
+            // 3 秒后自动清除错误提示
+            setTimeout(() => {
+                if (this.errorText === `添加附件失败：${err?.message || '未知错误'}`) {
+                    this.errorText = undefined;
+                    this.openDeskTUI.tui.requestRender();
+                }
+            }, 3000);
+        }
+        this.openDeskTUI.tui.requestRender();
+    }
+
     private async exitCompose() {
         this.stopAiSpinner();
         this.composeEditor = undefined;
         this.composeToInput = undefined;
         this.composeCcInput = undefined;
         this.composeSubjectInput = undefined;
+        this.composeAttachmentInput = undefined;
+        this.composeAttachments = [];
+        this.composeAttachmentSelectedIdx = -1;
         this.composeQuotedText = undefined;
         this.composeQuoteScrollOffset = 0;
         const wasEditingDraft = this.draftUid !== undefined;
@@ -2055,6 +2200,8 @@ export class MailOverlay implements Component {
         this.composeToInput = new Input();
         this.composeSubjectInput = new Input();
         this.composeCcInput = undefined;
+        this.composeAttachmentInput = new Input();
+        this.composeAttachments = [];
 
         if (type === 'reply' && this.selectedEmail) {
             this.composeToInput.setValue(this.selectedEmail.from?.[0]?.address || '');
@@ -2070,10 +2217,15 @@ export class MailOverlay implements Component {
             this.composeCcInput.setValue((this.selectedEmail.cc || []).map(a => a.address).join(', '));
             this.composeSubjectInput.setValue('答复全部: ' + (this.selectedEmail.subject || ''));
         } else if (type === 'forward' && this.selectedEmail) {
-            // 新增：转发逻辑
             this.composeToInput.setValue('');
             this.composeSubjectInput.setValue('转发: ' + (this.selectedEmail.subject || ''));
-        }else {
+            // 转发时自动携带原邮件的附件
+            if (this.selectedEmailContent?.attachments?.length) {
+                this.composeAttachments = this.selectedEmailContent.attachments
+                    .filter(a => a.path && fs.existsSync(a.path))
+                    .map(a => ({ filename: a.filename, path: a.path }));
+            }
+        } else {
             // 'new' — 空白邮件
             this.composeToInput.setValue('');
             this.composeSubjectInput.setValue('');
@@ -2147,7 +2299,10 @@ export class MailOverlay implements Component {
                 subject,
                 text: fullText,
                 html,
-                attachments: [],
+                attachments: this.composeAttachments.map(a => ({
+                    filename: a.filename,
+                    path: a.path,
+                })),
             });
 
             // 如果是编辑草稿后发送，删除原草稿
@@ -2197,7 +2352,10 @@ export class MailOverlay implements Component {
                 subject,
                 text: fullText,
                 html,
-                attachments: [],
+                attachments: this.composeAttachments.map(a => ({
+                    filename: a.filename,
+                    path: a.path,
+                })),
             });
 
             // 存储返回的草稿 UID，以便后续编辑时能正确更新
@@ -2235,6 +2393,11 @@ export class MailOverlay implements Component {
             this.composeToInput = new Input();
             this.composeSubjectInput = new Input();
             this.composeCcInput = undefined;
+            this.composeAttachmentInput = new Input();
+            this.composeAttachments = (content.attachments || []).map((a: any) => ({
+                filename: a.filename || nodePath.basename(a.path || ''),
+                path: a.path || '',
+            })).filter((a: any) => a.path);
 
             this.composeToInput.setValue(this.selectedEmail.to?.map(a => a.address).join(', ') || '');
             if (this.selectedEmail.cc && this.selectedEmail.cc.length > 0) {
@@ -2664,28 +2827,14 @@ export class MailOverlay implements Component {
             }
 
             case 'compose': {
-                // 撰写视图布局：
-                //   Box top padding        1
-                //   ComposeHeaderBar        3
-                //   ComposeField (收件人)   1
-                //   ComposeField (抄送)?    0|1
-                //   ComposeField (主题)     1
-                //   SeparatorLine(─)        1
-                //   error (可选)            0|1
-                //   Editor/SpinnerView      ← 弹性区域（回复时分给编辑器和引用）
-                //   QuotedTextView (回复时) ← 引用区域
-                //   SeparatorLine(━)        1
-                //   ComposeFooterBar        1
-                //   Box bottom padding      1
                 const fields = this.getComposeFocusFields();
-                const fieldLineCount = this.composeCcInput ? 3 : 2;
-                const hasError = this.errorText ? 1 : 0;
-                const hasSuccess = this.successText ? 1 : 0;
-                const hasQuote = this.composeQuotedText ? 1 : 0; // 引用分隔线
-                const composeFixed = 3 + fieldLineCount + 1 + hasError + hasSuccess + hasQuote + 1 + 1;
+                const fieldLineCount = (this.composeCcInput ? 3 : 2) + 1; // +1 for attachment input
+                const attachmentListLines = this.composeAttachments.length;
+                // 错误提示作为附件输入框的一部分显示，不单独占用空间
+                const hasQuote = this.composeQuotedText ? 1 : 0;
+                const composeFixed = 3 + fieldLineCount + attachmentListLines + 1 + 1 + 1;
                 const flexLines = Math.max(3, availableForContent - composeFixed);
 
-                // 有引用时：编辑器占 40%，引用占 60%（最少各 3 行）
                 let editorLines: number;
                 let quoteLines: number;
                 if (this.composeQuotedText) {
@@ -2710,27 +2859,28 @@ export class MailOverlay implements Component {
                 if (this.composeSubjectInput) {
                     this.box.addChild(new ComposeField('主  题', this.composeSubjectInput, fields[this.composeFocusIdx] === this.composeSubjectInput));
                 }
+                if (this.composeAttachmentInput) {
+                    const attachmentFocused = fields[this.composeFocusIdx] === this.composeAttachmentInput;
+                    // 错误提示和成功提示直接显示在附件输入框下方
+                    this.box.addChild(new ComposeField('附  件', this.composeAttachmentInput, attachmentFocused, '输入文件完整路径后按 Enter 添加', this.errorText, this.successText));
+                    if (this.composeAttachments.length > 0) {
+                        this.box.addChild(new ComposeAttachmentList(this.composeAttachments, this.composeAttachmentSelectedIdx, attachmentFocused));
+                    }
+                }
                 this.box.addChild(new SeparatorLine('─'));
-                if (this.errorText) {
-                    this.box.addChild(new Text(MC.red(`  ⚠ ${this.errorText}`)));
-                }
-                if (this.successText) {
-                    this.box.addChild(new Text(MC.neon(`  ✓ ${this.successText}`)));
-                }
                 if (this.isAiGenerating) {
                     this.box.addChild(new SpinnerView('AI 正在帮你撰写...', this.aiSpinnerFrame, editorLines));
                 } else if (this.composeEditor) {
                     this.box.addChild(new EditorWrapper(this.composeEditor, editorLines));
                 }
 
-                // 回复时在编辑器下方显示原始邮件引用
                 if (this.composeQuotedText && quoteLines > 0) {
                     this.box.addChild(new SeparatorLine('┄'));
                     this.box.addChild(new QuotedTextView(this.composeQuotedText, quoteLines, this.composeQuoteScrollOffset));
                 }
 
                 this.box.addChild(new SeparatorLine());
-                this.box.addChild(new ComposeFooterBar());
+                this.box.addChild(new ComposeFooterBar(this.composeAttachments.length));
                 break;
             }
         }
@@ -3017,20 +3167,47 @@ class ComposeHeaderBar implements Component {
     }
 }
 
-/** 撰写字段：标签 + Input 内联渲染 */
+/** 撰写字段：标签 + Input 内联渲染，支持错误提示和成功提示 */
 class ComposeField implements Component {
-    constructor(private label: string, private input: Input, private active: boolean) { }
+    constructor(
+        private label: string,
+        private input: Input,
+        private active: boolean,
+        private placeholder?: string,
+        private errorText?: string,
+        private successText?: string,
+    ) { }
     invalidate() { this.input.invalidate(); }
     render(width: number): string[] {
+        const lines: string[] = [];
         const prefix = `  ${MC.dim(this.label + '  ')}`;
         const prefixVis = visibleWidth(prefix);
         const inputW = Math.max(10, width - prefixVis);
+
         if (this.active) {
             const inputOut = this.input.render(inputW);
             const line = prefix + (inputOut[0] || '');
-            return [truncateToWidth(line, width, '…')];
+            lines.push(truncateToWidth(line, width, '…'));
+        } else {
+            const value = this.input.getValue();
+            if (!value && this.placeholder) {
+                lines.push(truncateToWidth(prefix + MC.ghost(this.placeholder), width, '…'));
+            } else {
+                lines.push(truncateToWidth(prefix + MC.text(value), width, '…'));
+            }
         }
-        return [truncateToWidth(prefix + MC.text(this.input.getValue()), width, '…')];
+
+        // 如果有错误提示，在输入框下方显示
+        if (this.errorText) {
+            lines.push(MC.red(`  ⚠ ${this.errorText}`));
+        }
+
+        // 如果有成功提示，在输入框下方显示
+        if (this.successText) {
+            lines.push(MC.neon(`  ✓ ${this.successText}`));
+        }
+
+        return lines;
     }
 }
 
@@ -3051,7 +3228,31 @@ class SpinnerView implements Component {
     }
 }
 
+/** 已添加的附件列表，支持高亮选中项 */
+class ComposeAttachmentList implements Component {
+    constructor(
+        private attachments: Array<{ filename: string; path: string }>,
+        private selectedIdx: number,
+        private isFocused: boolean,
+    ) { }
+    invalidate() { }
+    render(width: number): string[] {
+        const lines: string[] = [];
+        for (let i = 0; i < this.attachments.length; i++) {
+            const a = this.attachments[i];
+            const isSelected = this.isFocused && i === this.selectedIdx;
+            const prefix = isSelected ? MC.neon('→ ') : '  ';
+            const icon = '📎 ';
+            const name = isSelected ? MC.neonBold(a.filename) : MC.dim(a.filename);
+            const line = `  　　　${prefix}${icon}${name}`;
+            lines.push(truncateToWidth(line, width, '…'));
+        }
+        return lines;
+    }
+}
+
 class ComposeFooterBar implements Component {
+    constructor(private attachmentCount: number = 0) { }
     invalidate() { }
     render(width: number): string[] {
         const hints = [
@@ -3059,8 +3260,11 @@ class ComposeFooterBar implements Component {
             MC.neon('Ctrl+S') + MC.dim(' 发送'),
             MC.neon('Ctrl+D') + MC.dim(' 保存草稿'),
             MC.neon('Ctrl+W') + MC.dim(' 帮我写'),
-            MC.neon('ESC') + MC.dim(' 取消'),
         ];
+        if (this.attachmentCount > 0) {
+            hints.push(MC.neon('↑↓') + MC.dim(' 选附件') + '  ' + MC.neon('Ctrl+X') + MC.dim(' 删除'));
+        }
+        hints.push(MC.neon('ESC') + MC.dim(' 取消'));
         return [truncateToWidth('  ' + hints.join('   '), width, '…')];
     }
 }
