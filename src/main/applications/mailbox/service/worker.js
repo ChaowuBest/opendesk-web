@@ -2420,6 +2420,14 @@ class MailboxWorker extends BaseWorker {
 
         if (profile.outbox?.smtp) {
             const smtpAccount = profile.outbox.smtp.account ? profile.outbox.smtp.account : profile.username;
+            const attachments = Array.isArray(sendEmailSchema.attachments) ? sendEmailSchema.attachments : [];
+            let text = typeof sendEmailSchema.text === 'string' ? sendEmailSchema.text : '';
+            let html = typeof sendEmailSchema.html === 'string' ? sendEmailSchema.html : '';
+            // Avoid clients treating text attachments as body when body is empty.
+            if (attachments.length > 0 && text.trim() === '' && html.trim() === '') {
+                text = ' ';
+                html = '<p>&nbsp;</p>';
+            }
             const smtp = new SmtpEmailClient(
                 smtpAccount,
                 profile.username, profile.password, profile.name,
@@ -2436,9 +2444,9 @@ class MailboxWorker extends BaseWorker {
                 cc: Array.isArray(sendEmailSchema.cc) ? sendEmailSchema.cc.join(', ') : sendEmailSchema.cc,
                 bcc: Array.isArray(sendEmailSchema.bcc) ? sendEmailSchema.bcc.join(', ') : sendEmailSchema.bcc,
                 subject: sendEmailSchema.subject,
-                text: sendEmailSchema.text,
-                html: sendEmailSchema.html,
-                attachments: sendEmailSchema.attachments,
+                text: text,
+                html: html,
+                attachments: attachments,
                 messageId: messageId,
                 headers: sentHeaders
             };
@@ -2459,9 +2467,9 @@ class MailboxWorker extends BaseWorker {
                 };
                 emailHeader.messageId = messageId;
                 const emailContent = {
-                    htmlContent: sendEmailSchema.html,
-                    textContent: sendEmailSchema.text,
-                    attachments: sendEmailSchema.attachments || []
+                    htmlContent: html,
+                    textContent: text,
+                    attachments: attachments
                 };
                 const protocol = this.resolveInboxProtocol(profile);
                 await storage.saveSentEmail(sentUid, emailHeader, emailContent, protocol);
@@ -2497,9 +2505,9 @@ class MailboxWorker extends BaseWorker {
                 };
                 emailHeader.messageId = messageId;
                 const emailContent = {
-                    htmlContent: sendEmailSchema.html,
-                    textContent: sendEmailSchema.text,
-                    attachments: sendEmailSchema.attachments || []
+                    htmlContent: html,
+                    textContent: text,
+                    attachments: attachments
                 };
                 const protocol = this.resolveInboxProtocol(profile);
                 await storage.saveDraft(draftUid, emailHeader, emailContent, protocol);
