@@ -36,10 +36,6 @@ export interface TaskUpdateChunk {
     usage?: Usage;
 }
 
-export interface SubmitTaskOptions {
-    toolNameAllowlist?: string[];
-}
-
 export class BaseTaskUpdateSubscriber {
     subscription_id: string = crypto.randomUUID();
 
@@ -189,45 +185,10 @@ export class TaskState {
         return await compactContext(this.chat_context, this.model);
     }
 
-    private formatValueForLog(value: unknown, maxLen: number = 1200): string {
-        let text: string;
-        if (typeof value === 'string') {
-            text = value;
-        } else {
-            try {
-                text = JSON.stringify(value, null, 2);
-            } catch {
-                text = String(value);
-            }
-        }
-        return text.length <= maxLen ? text : `${text.slice(0, maxLen)}...(truncated)`;
-    }
-
-    filterToolsetsByAllowlist(toolsets: BaseToolset[], allowlist?: string[]): BaseToolset[] {
-        if (!allowlist || allowlist.length === 0) {
-            return toolsets;
-        }
-        const allowSet = new Set(allowlist);
-        const filtered: BaseToolset[] = [];
-        for (const toolset of toolsets) {
-            const subset = new BaseToolset(toolset.name);
-            for (const [toolName, tool] of toolset.tools.entries()) {
-                const fullName = `${toolset.name}-${toolName}`;
-                if (allowSet.has(fullName)) {
-                    subset.addTool(tool);
-                }
-            }
-            if (subset.tools.size > 0) {
-                filtered.push(subset);
-            }
-        }
-        return filtered;
-    }
-
     /**
      * Submit a message to the task
      */
-    async submitUserMessage(message: string, options?: SubmitTaskOptions) {
+    async submitUserMessage(message: string) {
         this.task_status = 'running';
         this.started_at = new Date();  // 记录任务开始时间
         this.stop_requested_by_user = false;
@@ -248,22 +209,20 @@ export class TaskState {
             }
         }
 
+        let user_message = new UserMessage(message);
+        let assistant_message = new AssistantMessage();
+        this.chat_context.appendMessage(user_message);
+        this.chat_context.appendMessage(assistant_message);
+
         let toolsets = await ApplicationRegistry.listAvailableToolsets();
         let skillToolset = SkillRegistry.getInstance().getToolset();
         let memoryToolset = createMemoryToolset();
         let planningToolset = this.parent_id
             ? createSubTaskPlanningToolset(this)
             : createMainPlanningToolset();
-        const allToolsets = this.filterToolsetsByAllowlist(
-            [...toolsets, skillToolset, memoryToolset, planningToolset],
-            options?.toolNameAllowlist
-        );
-        this.chat_context.attachToolsets(...allToolsets);
+        const allToolsets = [...toolsets, skillToolset, memoryToolset, planningToolset];
 
-        let user_message = new UserMessage(message);
-        let assistant_message = new AssistantMessage();
-        this.chat_context.appendMessage(user_message);
-        this.chat_context.appendMessage(assistant_message);
+        this.chat_context.attachToolsets(...allToolsets);
 
         logger.info(`messsage submitted to task ${this.task_id}`)
 
@@ -552,16 +511,12 @@ export class TaskState {
             }
         }
     }
+
     /**
-     * Process a tool call
-     * @param {import('../agents/messages').ToolCall} tool_call
-     * @returns {Promise<void>}
+     * 完成一个工具调用的实际执行过程, 并将结果直接写入 tool_call 中
+     * @param tool_call 要被执行的工具调用
      */
-    async processToolCall(tool_call: ToolCall): Promise<void>  {
-        logger.info(
-            `[tool-debug] task=${this.task_id} tool=${tool_call.tool_name} ` +
-            `raw_args=${this.formatValueForLog(tool_call.args_string ?? '', 1000)}`
-        );
+    async processToolCall(tool_call: ToolCall): Promise<void> {
         let tool = this.chat_context.getTool(tool_call.tool_name);
         if (tool === undefined) {
             logger.error(`tool ${tool_call.tool_name} not found`);
@@ -569,150 +524,42 @@ export class TaskState {
             tool_call.result = `tool ${tool_call.tool_name} not found`;
             return;
         }
+
         tool_call.setTool(tool);
         try {
-            // 参数解析
-            let args = undefined;
+            let args: any = {};
             if (tool_call.args_string) {
-                try {
-                    args = JSON.parse(tool_call.args_string);
-                } catch (err) {
-                    logger.warn(`failed to parse args string ${tool_call.args_string} for tool ${tool_call.tool_name}: ${err.message}`);
-                }
-
-                try {
-                    args = JSON.parse(jsonrepair(tool_call.args_string));
-                } catch (err) {
-                    logger.error(`failed to repair args string ${tool_call.args_string} for tool ${tool_call.tool_name}: ${err.message}`);
-                    throw err;
-                }
+                const repaired = jsonrepair(tool_call.args_string);
+                args = JSON.parse(repaired);
             }
             tool_call.args_object = args;
-            logger.info(
-                `[tool-debug] task=${this.task_id} tool=${tool_call.tool_name} ` +
-                `parsed_args=${this.formatValueForLog(args, 1200)}`
-            );
-
             tool_call.status = 'running';
+
             await this.sendSubscriptionFeedback();
+
+            /* 在执行工具前检查是否任务已经被用户手动中止 */
             if (this.task_status === 'stopped') {
                 tool_call.status = 'error';
                 tool_call.result = '任务已停止';
                 return;
             }
-            if (tool_call.tool_name !== "terminal-executePowerShell"
-                && tool_call.tool_name !== "terminal-executeBash") {
-                let result = await tool.execute(
-                    args,
-                    async (result) => {
-                        tool_call.result = result.result;
-                        tool_call.result_object = result.result_object;
-                        await this.sendSubscriptionFeedback();
-                    },
-                    this
-                );
-                tool_call.status = result.status;
-                tool_call.result = result.result;
-                tool_call.result_object = result.result_object;
-                logger.info(
-                    `[tool-debug] task=${this.task_id} tool=${tool_call.tool_name} ` +
-                    `status=${result.status} result=${this.formatValueForLog(result.result, 1000)}`
-                );
-            }else{
-                // 步骤1：执行并记录
-                let accumulatedLog = "";
-                let result = await tool.execute(args, async (intermediate_result) => {
-                    const chunkStr = typeof intermediate_result === 'string'
-                        ? intermediate_result
-                        : JSON.stringify(intermediate_result, null, 2);
-                    accumulatedLog += chunkStr + "\n";
-                },this);
-                // 获取返回值
-                const returnValueStr = typeof result.result === 'string'
-                    ? result.result
-                    : JSON.stringify(result.result, null, 2);
-                // 步骤2：备份 Artifact
-                const taskDir = getTaskDirectory();
-                const artifactsDir = path.join(taskDir, 'artifacts');
-                if (!fs.existsSync(artifactsDir)) fs.mkdirSync(artifactsDir, { recursive: true });
-                const artifactFilename = `${this.task_id}_${tool_call.tool_name}_${Date.now()}.log.txt`;
-                const artifactPath = path.join(artifactsDir, artifactFilename);
 
-                // 组合内容：优先使用返回值，如果返回值为空，使用累加的日志
-                // 这样能确保无论是哪种形式输出的技能书都能被捕获
-                const combinedContent = returnValueStr.length > 20 ? returnValueStr : (accumulatedLog + "\n" + returnValueStr);
-
-                fs.writeFileSync(artifactPath, combinedContent, 'utf8');
-                logger.info(`Output backup saved to: ${artifactPath}`);
-
-                const analysisPrompt = `
-    你是一个高级任务结果分析师 (Task Result Analyst)。
-    主任务 AI 调用了命令行工具，参数是 \`${JSON.stringify(args)}\`。
-
-    【当前上下文】
-    1. **用户意图**: 主任务希望通过此操作获取什么？(根据参数判断，如 dir 是想看文件列表，cat/read 是想看内容)。
-    2. **完整数据**: 已备份至 ${artifactPath}
-    3. **数据预览**:
-    ${combinedContent}
-
-    ## 🚨 核心铁律：防幻觉协议 (Anti-Hallucination Protocol)
-    在生成回答之前，你必须执行以下**事实核查**：
-    1. **核查证据**：请看上面的【工具输出预览】。里面**真的**包含 Excel 表格数据、文件列表或具体文本内容吗？
-    2. **禁止臆造**：**严禁** 编造任何不在【工具输出预览】中的文件名、数据行或统计结果。
-
-    ---
-    【你的决策逻辑】
-
-    请仔细阅读【数据预览】，并按优先级匹配以下情形：
-
-    ### 情形 A：信息检索与直接反馈
-    - **特征**：
-        1. 工具操作属于**查询类** (如 \`dir\`, \`ls\`, \`cat\`, \`type\`, \`head\`, \`grep\`)。
-        2. 或者用户意图是**读取文件、查看列表、搜索特定内容**。
-        3. 输出内容是具体的**文件列表、代码内容、配置文本**。
-    - **行动**：
-        1. **不要写摘要！不要写统计数据！** (例如不要只说“有84个文件”)。
-        2. **必须返回原始数据的关键部分**。主任务需要看到具体的文件名/文本内容才能进行下一步。
-        3. **智能截断策略**：
-            - 如果内容少于 2000 字：**原样返回全部内容**。
-            - 如果内容过长：保留**前 50 行** 和 **后 20 行**，如果是文件列表，确保包含用户可能感兴趣的文件扩展名（如 .pdf, .docx, .py）。
-            - 只有在内容真的极长且无明显规律时，才提示查看日志文件。
-        4. 结尾附上：“完整日志见：${artifactPath}”。
-
-    ### 情形 B：执行过程 / 纯日志
-    - **特征**：程序安装进度条、大段的调试日志、无意义的爬虫中间状态、简单的“成功/失败”确认。
-    - **行动**：
-        1. 提取关键结果（如：是否成功，生成的最终文件路径，报错的核心原因）。
-        2. 此时可以写摘要。
-        3. 结尾附上：“完整日志见：${artifactPath}”。
-
-    【最终回复格式】
-    直接输出你要返回给主任务的文本内容。
-    `;
-                let finalReport = "";
-                try {
-                    // 如果内容极短，通常不需要规划，直接透传
-                    if (combinedContent.length < 2000) {
-                        finalReport = combinedContent;
-                    } else {
-                        finalReport = await LLM.ask(new UserMessage(analysisPrompt));
-                    }
-                } catch (aiErr) {
-                    logger.warn(`AI Analysis failed: ${aiErr.message}`);
-                    finalReport = `Tool executed. Output saved to: ${artifactPath}.\nPreview:\n${combinedContent.substring(0, 500)}...`;
-                }
-                tool_call.status = result.status;
-                tool_call.result = finalReport;
-                tool_call.result_object = result.result_object;
-                logger.info(
-                    `[tool-debug] task=${this.task_id} tool=${tool_call.tool_name} ` +
-                    `status=${result.status} result=${this.formatValueForLog(finalReport, 1000)}`
-                );
-            }
+            let result = await tool.execute(
+                args,
+                async (result) => {
+                    tool_call.result = result.result;
+                    tool_call.result_object = result.result_object;
+                    await this.sendSubscriptionFeedback();
+                },
+                this
+            );
+            tool_call.status = result.status;
+            tool_call.result = result.result;
+            tool_call.result_object = result.result_object;
         } catch (err) {
             logger.error(err);
             tool_call.status = 'error';
-            tool_call.result = `Error: ${err.message}`;
+            tool_call.result = `工具运行错误: ${err}`;
         } finally {
             await tool_call.freezeRenderResult();
         }
@@ -728,7 +575,7 @@ export class TaskState {
             return false;
         }
 
-        let has_pending_tool_call = false;
+        const pendingCalls: { tool_call: ToolCall, partIndex: number }[] = [];
 
         for (let message of this.chat_context.messages) {
             if (message instanceof AssistantMessage) {
@@ -741,17 +588,23 @@ export class TaskState {
                         if (tool_call.status !== 'pending') {
                             continue;
                         }
-                        has_pending_tool_call = true;
-
-                        await this.processToolCall(tool_call);
-                        await tool_call.render();
-                        await this.sendSubscriptionFeedback(index);
+                        pendingCalls.push({ tool_call, partIndex: index });
                     }
                 }
             }
         }
 
-        return has_pending_tool_call;
+        if (pendingCalls.length === 0) {
+            return false;
+        }
+
+        await Promise.all(pendingCalls.map(async ({ tool_call, partIndex }) => {
+            await this.processToolCall(tool_call);
+            await tool_call.render();
+            await this.sendSubscriptionFeedback(partIndex);
+        }));
+
+        return true;
     }
 
     async processTask() {

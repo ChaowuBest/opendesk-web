@@ -305,7 +305,7 @@ class SideBar extends HTMLElement {
             }
 
             const subTaskBadge = depth > 0
-                ? '<span class="ml-2 text-[10px] px-2 py-0.5 rounded-full bg-gray-200 text-gray-700">Sub</span>'
+                ? '<span class="ml-2 text-[10px] px-2 py-0.5 rounded-full bg-gray-200 text-gray-700">子任务</span>'
                 : '';
 
             taskListContainer.innerHTML += `
