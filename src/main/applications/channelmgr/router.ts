@@ -18,10 +18,17 @@ import { UserMessage, AssistantMessage } from '../../aikernel/messages.js';
 import { ApplicationRegistry } from '../registry.js';
 import { SkillRegistry } from '../../aikernel/skill.js';
 import { createMemoryToolset } from '../../aikernel/memory/tools.js';
+import { BaseToolset } from '../../aikernel/tool.js';
 import { logger } from '../../utils/logger.js';
 import { LLM } from '../../aikernel/llm.js';
 import type { InboundChannelMessage } from '../../aikernel/plugins/types.js';
 import type { AgentDecl } from '../../aikernel/agent.js';
+import { SEND_FILE_TOOL_NAME } from './tools.js';
+
+export interface ChannelReply {
+    text: string;
+    mediaUrls: string[];
+}
 
 const SESSION_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
 
@@ -40,6 +47,13 @@ export class ChannelMessageRouter {
     private taskManagerState: TaskManagerState;
     private agentDecl: AgentDecl;
     private model?: string;
+    private extraToolsets: BaseToolset[] = [];
+
+    /**
+     * 当消息被路由到任务时的回调。
+     * 在 AI 处理之前触发，以便前端可以切换到对应的任务并显示实时处理过程。
+     */
+    onTaskResolved?: (task: TaskState, message: InboundChannelMessage) => void;
 
     constructor(taskManagerState: TaskManagerState, agentDecl: AgentDecl, model?: string) {
         this.taskManagerState = taskManagerState;
@@ -47,12 +61,16 @@ export class ChannelMessageRouter {
         this.model = model;
     }
 
+    addExtraToolset(toolset: BaseToolset): void {
+        this.extraToolsets.push(toolset);
+    }
+
     /**
      * Route an inbound channel message to the task system.
      * Creates or reuses a session/task for the sender, runs the AI agent,
      * and returns the assistant's reply text.
      */
-    async routeInboundMessage(message: InboundChannelMessage): Promise<string | null> {
+    async routeInboundMessage(message: InboundChannelMessage): Promise<ChannelReply | null> {
         const sessionKey = `${message.channelId}:${message.accountId}:${message.senderId}`;
 
         let task: TaskState;
@@ -60,24 +78,30 @@ export class ChannelMessageRouter {
             task = await this.resolveSessionTask(sessionKey, message);
         } catch (err: any) {
             logger.error(`创建消息会话失败: ${err?.message || err}`);
-            return `抱歉，系统在创建会话时遇到了问题：${err?.message || err}\n请联系管理员检查系统配置。`;
+            return { text: `抱歉，系统在创建会话时遇到了问题：${err?.message || err}\n请联系管理员检查系统配置。`, mediaUrls: [] };
         }
 
         if (task.task_status === 'running') {
             await task.waitUntilFinished();
         }
 
+        // 通知前端切换到该任务（在 AI 处理之前，以便实时显示处理过程）
+        try {
+            this.onTaskResolved?.(task, message);
+        } catch (err: any) {
+            logger.warn(`onTaskResolved callback error: ${err?.message || err}`);
+        }
+
         const userText = this.formatInboundMessage(message);
 
         try {
             const reply = await this.submitAndWaitForReply(task, userText);
-            // Update last message timestamp
             const entry = sessionMap.get(sessionKey);
             if (entry) entry.lastMessageAt = Date.now();
             return reply;
         } catch (err: any) {
             logger.error(`消息插件处理失败: ${err?.message || err}`);
-            return this.buildErrorReply(err);
+            return { text: this.buildErrorReply(err), mediaUrls: [] };
         }
     }
 
@@ -236,7 +260,7 @@ export class ChannelMessageRouter {
         return text;
     }
 
-    private async submitAndWaitForReply(task: TaskState, userText: string): Promise<string | null> {
+    private async submitAndWaitForReply(task: TaskState, userText: string): Promise<ChannelReply | null> {
         task.task_status = 'running';
         task.started_at = new Date();
         task.finished_at = undefined;
@@ -254,26 +278,50 @@ export class ChannelMessageRouter {
             task.chat_context.attachToolsets(...toolsets);
             task.chat_context.attachToolsets(skillToolset);
             task.chat_context.attachToolsets(memoryToolset);
+            for (const ts of this.extraToolsets) {
+                task.chat_context.attachToolsets(ts);
+            }
 
             task.processTask();
             await task.waitUntilFinished();
 
-            const lastMsg = task.chat_context.lastMessage();
-            if (lastMsg instanceof AssistantMessage) {
-                const texts: string[] = [];
-                for (const part of lastMsg.content) {
-                    if (part.type === 'text' && (part as any).text) {
-                        texts.push((part as any).text);
-                    }
-                }
-                return texts.join('\n') || null;
-            }
-            return null;
+            return this.extractReply(task);
         } catch (err) {
             task.task_status = 'stopped';
             task.finished_at = new Date();
             task.task_manager_state.publishTaskListUpdate();
             throw err;
         }
+    }
+
+    /**
+     * Extract text and file-send tool calls from the last assistant message.
+     * SendFile tool calls are translated into mediaUrls for channel delivery.
+     */
+    private extractReply(task: TaskState): ChannelReply | null {
+        const lastMsg = task.chat_context.lastMessage();
+        if (!(lastMsg instanceof AssistantMessage)) return null;
+
+        const texts: string[] = [];
+        const mediaUrls: string[] = [];
+
+        for (const part of lastMsg.content) {
+            if (part.type === 'text' && (part as any).text) {
+                texts.push((part as any).text);
+            } else if (part.type === 'tool_call') {
+                for (const tc of part.toolcalls) {
+                    if (tc.tool_name === SEND_FILE_TOOL_NAME && tc.status === 'success') {
+                        const filePath = tc.args_object?.filePath;
+                        if (filePath) {
+                            mediaUrls.push(`file://${filePath}`);
+                        }
+                    }
+                }
+            }
+        }
+
+        const text = texts.join('\n').trim();
+        if (!text && mediaUrls.length === 0) return null;
+        return { text, mediaUrls };
     }
 }

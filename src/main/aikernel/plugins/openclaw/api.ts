@@ -411,7 +411,27 @@ function buildPluginRuntime() {
                 if (buffer[0] === 0x25 && buffer[1] === 0x50) return 'application/pdf';
                 return 'application/octet-stream';
             },
-            loadWebMedia: async () => null,
+            loadWebMedia: async (mediaUrl: string, maxBytes?: number) => {
+                if (!mediaUrl) return null;
+                try {
+                    const resolvedMax = maxBytes || 50 * 1024 * 1024;
+                    if (mediaUrl.startsWith('file://')) {
+                        let fp = decodeURIComponent(mediaUrl.replace('file://', ''));
+                        if (process.platform === 'win32' && fp.startsWith('/')) fp = fp.slice(1);
+                        if (!fs.existsSync(fp)) return null;
+                        const buffer = fs.readFileSync(fp);
+                        if (buffer.length > resolvedMax) return null;
+                        const ext = path.extname(fp).slice(1);
+                        const mimeMap: Record<string, string> = {
+                            jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png',
+                            gif: 'image/gif', webp: 'image/webp', pdf: 'application/pdf',
+                        };
+                        const contentType = mimeMap[ext] || 'application/octet-stream';
+                        return { buffer, contentType, fileName: path.basename(fp) };
+                    }
+                    return null;
+                } catch { return null; }
+            },
         },
 
         // ── logging ──────────────────────────────────────────────────────

@@ -29,8 +29,11 @@ export const PAIRING_REPLY_TEMPLATE = `为了让消息收发更加安全，你�
  * Ensure the openclaw shim is available in the extensions node_modules.
  * Generates the shim inline so plugins can resolve `openclaw/plugin-sdk`.
  */
+const SHIM_VERSION = '3';
+
 export function ensureOpenClawShim(extensionsDir: string): void {
     const shimTarget = path.join(extensionsDir, 'node_modules', 'openclaw');
+    const versionFile = path.join(shimTarget, '.shim-version');
     const requiredFiles = [
         'package.json',
         'plugin-sdk/index.js',
@@ -41,11 +44,13 @@ export function ensureOpenClawShim(extensionsDir: string): void {
         'plugin-sdk/core.js',
     ];
     const allExist = requiredFiles.every(f => fs.existsSync(path.join(shimTarget, f)));
-    if (allExist) {
+    const versionMatch = fs.existsSync(versionFile) && fs.readFileSync(versionFile, 'utf-8').trim() === SHIM_VERSION;
+    if (allExist && versionMatch) {
         return;
     }
     logger.info('正在生成 openclaw 兼容层...');
     generateInlineShim(shimTarget);
+    fs.writeFileSync(versionFile, SHIM_VERSION);
 }
 
 /**
@@ -289,8 +294,18 @@ export function resolveMentionGatingWithBypass(opts) {
 export function createNormalizedOutboundDeliverer(a) { return async(c)=>a?.sendText?.(c)??a?.sendPayload?.(c)??{delivered:false}; }
 export function formatTextWithAttachmentLinks(t) { return t||''; }
 export function normalizeOutboundReplyPayload(p) { return p||{}; }
-export function resolveOutboundMediaUrls(m) { return m||[]; }
-export async function sendMediaWithLeadingCaption() { return {delivered:false}; }
+export function resolveOutboundMediaUrls(p) { const u=[]; if(p?.mediaUrl)u.push(p.mediaUrl); if(p?.mediaUrls)u.push(...p.mediaUrls); return u.filter(Boolean); }
+export async function sendMediaWithLeadingCaption(params) {
+  if (!params?.mediaUrls?.length) return false;
+  let first = true;
+  for (const mediaUrl of params.mediaUrls) {
+    const caption = first ? params.caption : undefined;
+    first = false;
+    try { await params.send({ mediaUrl, caption }); }
+    catch (error) { if (params.onError) { params.onError(error, mediaUrl); continue; } throw error; }
+  }
+  return true;
+}
 export function buildMediaPayload(p) { return {type:'media',...p}; }
 export function buildAgentMediaPayload(p) { return p||{}; }
 export function extractToolSend() { return null; }
@@ -587,6 +602,16 @@ export function resolveChannelEntryMatchWithFallback() { return null; }
 export function resolveChannelMediaMaxBytes() { return 10 * 1024 * 1024; }
 export function resolveChannelGroupRequireMention() { return false; }
 export function promptChannelAccessConfig() { return Promise.resolve({}); }
+export function createPluginRuntimeStore(errorMessage) {
+  let runtime = null;
+  return {
+    setRuntime(next) { runtime = next; },
+    clearRuntime() { runtime = null; },
+    tryGetRuntime() { return runtime; },
+    getRuntime() { if (!runtime) throw new Error(errorMessage); return runtime; },
+  };
+}
+export function createScopedChannelConfigBase() { return { get: () => ({}), set: () => {} }; }
 
 // ── Mention / Gating (extended) ──────────────────────────────────────────────
 
@@ -595,9 +620,72 @@ export function resolveMentionGating(opts) { return { allowed: true, reason: 'by
 // ── Outbound (extended) ──────────────────────────────────────────────────────
 
 export function chunkTextForOutbound(text) { return [text]; }
-export function sendPayloadWithChunkedTextAndMedia() { return Promise.resolve({ delivered: false }); }
-export function loadOutboundMediaFromUrl() { return Promise.resolve(null); }
-export function loadWebMedia() { return Promise.resolve(null); }
+
+function _detectMimeFromBuf(buf) {
+  if (!buf || buf.length < 4) return 'application/octet-stream';
+  if (buf[0]===0xFF&&buf[1]===0xD8) return 'image/jpeg';
+  if (buf[0]===0x89&&buf[1]===0x50) return 'image/png';
+  if (buf[0]===0x47&&buf[1]===0x49) return 'image/gif';
+  if (buf[0]===0x52&&buf[1]===0x49) return 'image/webp';
+  if (buf[0]===0x25&&buf[1]===0x50) return 'application/pdf';
+  if (buf[0]===0x50&&buf[1]===0x4B) return 'application/zip';
+  return 'application/octet-stream';
+}
+function _detectKind(ct) {
+  if (!ct) return undefined;
+  if (ct.startsWith('image/')) return 'image';
+  if (ct.startsWith('audio/')) return 'audio';
+  if (ct.startsWith('video/')) return 'video';
+  return undefined;
+}
+export async function loadOutboundMediaFromUrl(mediaUrl, options) {
+  if (!mediaUrl) return null;
+  options = options || {};
+  const maxBytes = options.maxBytes || 50*1024*1024;
+  if (mediaUrl.startsWith('file://')) {
+    let fp;
+    try { fp = decodeURIComponent(mediaUrl.replace('file://', '')); if (process.platform==='win32'&&fp.startsWith('/')) fp=fp.slice(1); } catch { fp = mediaUrl.slice(7); }
+    const roots = options.localRoots || options.mediaLocalRoots;
+    if (roots?.length && !roots.some(r => fp.startsWith(r))) throw new Error('File path not allowed: '+fp);
+    if (!fs.existsSync(fp)) throw new Error('File not found: '+fp);
+    const buffer = fs.readFileSync(fp);
+    if (buffer.length>maxBytes) throw new Error('File too large');
+    const ct = _detectMimeFromBuf(buffer);
+    return { buffer, contentType: ct, fileName: path.basename(fp), kind: _detectKind(ct) };
+  }
+  if (mediaUrl.startsWith('data:')) {
+    const m = mediaUrl.match(/^data:([^;]+);base64,(.*)$/);
+    if (!m) return null;
+    const buffer = Buffer.from(m[2],'base64');
+    if (buffer.length>maxBytes) throw new Error('Data URL too large');
+    return { buffer, contentType: m[1], fileName: 'data.'+(m[1].split('/')[1]||'bin'), kind: _detectKind(m[1]) };
+  }
+  if (mediaUrl.startsWith('http://') || mediaUrl.startsWith('https://')) {
+    const resp = await fetch(mediaUrl);
+    if (!resp.ok) throw new Error('HTTP '+resp.status);
+    const buffer = Buffer.from(await resp.arrayBuffer());
+    if (buffer.length>maxBytes) throw new Error('Downloaded file too large');
+    const ct = resp.headers.get('content-type')?.split(';')[0]?.trim() || _detectMimeFromBuf(buffer);
+    return { buffer, contentType: ct, fileName: path.basename(new URL(mediaUrl).pathname)||'download', kind: _detectKind(ct) };
+  }
+  return null;
+}
+export async function loadWebMedia(mediaUrl, maxBytes) { return loadOutboundMediaFromUrl(mediaUrl, { maxBytes: typeof maxBytes==='number'?maxBytes:undefined }); }
+function _resolveOutMediaUrls(p) { const u=[]; if(p?.mediaUrl)u.push(p.mediaUrl); if(p?.mediaUrls)u.push(...p.mediaUrls); return u.filter(Boolean); }
+export async function sendPayloadWithChunkedTextAndMedia(params) {
+  const payload = params.ctx?.payload || params.ctx || {};
+  const text = payload.text ?? '';
+  const urls = _resolveOutMediaUrls(payload);
+  if (!text && urls.length===0) return params.emptyResult || { delivered: false };
+  if (urls.length>0) {
+    let r; for (let i=0;i<urls.length;i++) r=await params.sendMedia({...params.ctx, text:i===0?text:'', mediaUrl:urls[i]});
+    return r;
+  }
+  const limit = params.textChunkLimit;
+  const chunks = limit&&params.chunker ? params.chunker(text,limit) : [text];
+  let r; for (const c of chunks) r=await params.sendText({...params.ctx, text:c});
+  return r;
+}
 export function detectMime() { return 'application/octet-stream'; }
 export function extensionForMime() { return ''; }
 export function getFileExtension(f) { return path.extname(f || ''); }

@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2026 The OpenDesk Team
+* Copyright (c) 2026 The OpenDesk Team
  * OpenDesk is licensed under Mulan PSL v2.
  * You can use this software according to the terms and conditions of the Mulan PSL v2.
  * You may obtain a copy of Mulan PSL v2 at: http://license.coscl.org.cn/MulanPSL2
@@ -20,11 +20,12 @@ import { FULL_CLEAR } from './tui/components/constants';
 import { OpenDeskTUI, CommandLineArgs } from './tui/entry.js';
 import { Setting } from './utils/setting';
 import { program as prog } from 'commander';
-import { installPlugin, uninstallPlugin, listInstalledPlugins, setPluginEnabled, resetOpenClawShim } from './aikernel/plugins/index.js';
+import { installPlugin, uninstallPlugin, listInstalledPlugins, setPluginEnabled, resetOpenClawShim, loadPlugins } from './aikernel/plugins/index.js';
 import { ChannelMgrApplication } from './applications/channelmgr/app.js';
 import { ChannelMessageRouter } from './applications/channelmgr/router.js';
 import { ShellAgentDecl } from './aikernel/agents/shellagent.js';
 import { runSkillTestsInDirectory } from './applications/skillmgr/skill-test.js';
+import { NotificationManager } from './utils/notificationmgr.js';
 
 import process from 'process';
 import path from 'path';
@@ -208,6 +209,38 @@ function parseCommandLineArgs() {
 
             const hasFailure = result.summary.failed > 0 || result.summary.error > 0;
             process.exit(hasFailure ? 1 : 0);
+	});
+
+    channelsCmd
+        .command('info')
+        .description('加载并检查所有已启用的消息插件')
+        .action(async () => {
+            useCliTransport();
+            useConsoleTransport();
+            const records = listInstalledPlugins();
+            const enabledRecords = records.filter(r => r.enabled);
+            if (enabledRecords.length === 0) {
+                console.log('暂无已启用的消息插件');
+                process.exit(0);
+            }
+            console.log(`正在加载 ${enabledRecords.length} 个已启用的插件...\n`);
+            const result = await loadPlugins();
+            if (result.entries.length > 0) {
+                console.log('已成功加载的插件:');
+                for (const entry of result.entries) {
+                    const cp = entry.channelPlugin;
+                    const channelInfo = cp ? ` (渠道: ${cp.meta.label})` : '';
+                    console.log(`  ✓ ${entry.id}${channelInfo}`);
+                }
+            }
+            if (result.errors.length > 0) {
+                console.log('\n加载失败的插件:');
+                for (const err of result.errors) {
+                    console.error(`  ✗ ${err.id}: ${err.error}`);
+                }
+            }
+            console.log(`\n总计: ${result.entries.length} 成功, ${result.errors.length} 失败`);
+            process.exit(result.errors.length > 0 ? 1 : 0);
         });
 
     prog.action((workspace, kwargs) => {
@@ -237,6 +270,7 @@ function parseCommandLineArgs() {
             model: kwargs.model,
         })
     });
+
     return prog.parse();
 }
 
@@ -270,6 +304,26 @@ function main(args: CommandLineArgs) {
                     agentDecl,
                     args.model,
                 );
+
+                // 收到消息时：自动切换前台任务并发送通知
+                router.onTaskResolved = (task, message) => {
+                    const senderLabel = message.senderName || message.senderId;
+                    const channelLabel = message.channelId;
+                    const preview = (message.text || '').length > 40
+                        ? (message.text || '').slice(0, 37) + '...'
+                        : (message.text || '');
+
+                    // 自动切换前台到消息关联的任务
+                    tui.switchToTask(task);
+
+                    // 发送通知
+                    NotificationManager.getInstance().info(
+                        channelLabel,
+                        `来自 ${senderLabel} 的新消息`,
+                        preview || '(无文本内容)',
+                    );
+                };
+
                 await channelMgrApp.initializeChannels(router);
 
                 // Sync channel states to the status bar via event callback
