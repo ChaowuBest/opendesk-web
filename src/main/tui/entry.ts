@@ -1120,6 +1120,28 @@ export class OpenDeskTUI {
         this.tui.requestRender();
     }
 
+    /**
+     * 获取当前激活的任务 ID
+     */
+    getActiveTaskId(): string | undefined {
+        return this.activeTaskId;
+    }
+
+    /**
+     * 清除当前活跃任务的视图状态（用于任务被外部删除时）
+     */
+    clearActiveTask() {
+        this.taskView.taskState = undefined;
+        this.taskView.clearMessages();
+        this.activeTaskId = undefined;
+        this.inputArea.clearMessageQueue();
+        this.inputArea.setStatus('idle');
+        this.inputArea.statusBar.stopTimer();
+        this.inputArea.statusBar.resetAccumulated();
+        this.inputArea.statusBar.update({ totalTokens: 0 });
+        this.tui.requestRender();
+    }
+
     private showTaskSwitcher() {
         const switcher = new TaskSwitcher(this);
         switcher.show();
@@ -1130,6 +1152,9 @@ export class OpenDeskTUI {
         // 先清屏，防止旧内容残留
         process.stdout.write(FULL_CLEAR);
 
+        // 先停止计时器并保存旧任务的累计时间（在 activeTaskId 切换之前）
+        this.inputArea.statusBar.stopTimer();
+
         // 保存当前任务的队列（如果有）
         if (this.activeTaskId) {
             const currentTask = this.taskManagerState.getTask(this.activeTaskId);
@@ -1138,12 +1163,12 @@ export class OpenDeskTUI {
             }
         }
 
+        // 切换到新任务
         this.activeTaskId = task.task_id;
         this.taskView.taskState = task;
         this.taskView.clearMessages();
         // 绑定到新任务的队列
         this.inputArea.bindToTaskQueue(task.task_id, task.message_queue);
-        this.inputArea.statusBar.stopTimer();
         this.inputArea.statusBar.setAccumulatedMs(task.total_elapsed_ms);
         this.inputArea.statusBar.update({ totalTokens: 0 });
         this.taskView.rebuildFromHistory();
@@ -1154,6 +1179,9 @@ export class OpenDeskTUI {
             this.resubscribeToRunningTask(task);
         } else {
             this.inputArea.setStatus('idle');
+            // 即使任务当前非 running，也启动监控器：消息插件场景下，
+            // 任务可能在切换后立即变为 running（由后台路由器驱动）
+            this.startRunningMonitorForTask(task);
         }
         this.tui.requestRender();
     }
@@ -1221,6 +1249,36 @@ export class OpenDeskTUI {
         };
 
         subscribeToUpdates();
+    }
+
+    /**
+     * 为当前非 running 的任务启动 monitor，检测其是否变为 running。
+     * 用于消息插件场景：切换到任务后，后台路由器随即启动任务处理。
+     */
+    private startRunningMonitorForTask(task: TaskState) {
+        const snapshotTaskId = task.task_id;
+
+        const monitorInterval = setInterval(() => {
+            if (this.activeTaskId !== snapshotTaskId) {
+                clearInterval(monitorInterval);
+                return;
+            }
+
+            if (task.task_status === 'running') {
+                clearInterval(monitorInterval);
+                this.inputArea.setStatus('running');
+                this.inputArea.statusBar.startTimer();
+
+                this.taskView.clearMessages();
+                this.taskView.rebuildFromHistory();
+                this.tui.requestRender();
+
+                this.resubscribeToRunningTask(task);
+            }
+        }, 300);
+
+        // 如果 15 秒内任务没有变为 running，停止监控以避免资源泄漏
+        setTimeout(() => clearInterval(monitorInterval), 15000);
     }
 
     // ─── Memory operation management ──────────────────────

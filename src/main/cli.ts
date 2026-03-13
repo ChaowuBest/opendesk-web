@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2026 The OpenDesk Team
+* Copyright (c) 2026 The OpenDesk Team
  * OpenDesk is licensed under Mulan PSL v2.
  * You can use this software according to the terms and conditions of the Mulan PSL v2.
  * You may obtain a copy of Mulan PSL v2 at: http://license.coscl.org.cn/MulanPSL2
@@ -25,6 +25,7 @@ import { ChannelMgrApplication } from './applications/channelmgr/app.js';
 import { ChannelMessageRouter } from './applications/channelmgr/router.js';
 import { ShellAgentDecl } from './aikernel/agents/shellagent.js';
 import { runSkillTestsInDirectory } from './applications/skillmgr/skill-test.js';
+import { NotificationManager } from './utils/notificationmgr.js';
 
 import process from 'process';
 import path from 'path';
@@ -270,6 +271,26 @@ function main(args: CommandLineArgs) {
                     agentDecl,
                     args.model,
                 );
+
+                // 收到消息时：自动切换前台任务并发送通知
+                router.onTaskResolved = (task, message) => {
+                    const senderLabel = message.senderName || message.senderId;
+                    const channelLabel = message.channelId;
+                    const preview = (message.text || '').length > 40
+                        ? (message.text || '').slice(0, 37) + '...'
+                        : (message.text || '');
+
+                    // 自动切换前台到消息关联的任务
+                    tui.switchToTask(task);
+
+                    // 发送通知
+                    NotificationManager.getInstance().info(
+                        channelLabel,
+                        `来自 ${senderLabel} 的新消息`,
+                        preview || '(无文本内容)',
+                    );
+                };
+
                 await channelMgrApp.initializeChannels(router);
 
                 // Sync channel states to the status bar via event callback

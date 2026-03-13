@@ -480,6 +480,9 @@ interface ChannelPlugin {
 │  3. ChannelMessageRouter.routeInboundMessage()                          │
 │     - 生成会话键: channelId:accountId:senderId                           │
 │     - 查找或创建任务 (Task)                                               │
+│     - 触发 onTaskResolved 回调：                                         │
+│       · 自动将用户前台切换到该任务                                        │
+│       · 发送通知告知用户收到新消息                                        │
 │     - 格式化消息                                                          │
 │     - 提交给 AI Agent 处理                                               │
 ├─────────────────────────────────────────────────────────────────────────┤
@@ -533,6 +536,10 @@ private async handleInboundMessage(cp: ChannelPlugin, accountId: string, message
 async routeInboundMessage(message: InboundChannelMessage): Promise<string | null> {
     const sessionKey = `${message.channelId}:${message.accountId}:${message.senderId}`;
     const task = this.findActiveTask(sessionKey) ?? await this.createSessionTask(sessionKey, message);
+
+    // 通知前端：自动切换到该任务并发送通知
+    this.onTaskResolved?.(task, message);
+
     const reply = await this.submitAndWaitForReply(task, message.text);
     return reply;
 }
