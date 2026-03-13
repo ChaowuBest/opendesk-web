@@ -1260,26 +1260,35 @@ class MailboxStorage {
     }
 
     async initialize() {
+        const baseDir = path.dirname(this.dbPath);
+        if (!fs.existsSync(baseDir)) {
+            fs.mkdirSync(baseDir, { recursive: true });
+        }
+
+        const dbFile = this.dbPath + '.db';
+        const rawFile = this.dbPath + '_raw.db';
+        const contentFile = this.dbPath + '_content.db';
+
         await this.db.load().catch(err => {
             logger.error(`error loading mailbox_header_storage.db: ${err}`);
-            fs.rmSync(this.dbPath);
-            this.db = new nedb({ filename: this.dbPath, autoload: true });
+            fs.rmSync(dbFile, { force: true });
+            this.db = new nedb({ filename: dbFile, autoload: true });
             NotificationManager.getInstance().error('邮箱', '收取新邮件', `邮箱数据库(db)损坏，已删除并重新创建`);
         }).finally(() => {
             this.db.ensureIndex({ fieldName: 'uid', unique: true, sparse: true });
         })
         await this.rawdb.load().catch(err => {
             logger.error(`error loading mailbox_header_storage.db.raw: ${err}`);
-            fs.rmSync(this.dbPath + '.raw');
-            this.rawdb = new nedb({ filename: this.dbPath + '.raw', autoload: true });
+            fs.rmSync(rawFile, { force: true });
+            this.rawdb = new nedb({ filename: rawFile, autoload: true });
             NotificationManager.getInstance().error('邮箱', '收取新邮件', `邮箱数据库(rawdb)损坏，已删除并重新创建`);
         }).finally(() => {
             this.rawdb.ensureIndex({ fieldName: 'uid', unique: true, sparse: true });
         })
         await this.contentdb.load().catch(err => {
             logger.error(`error loading mailbox_header_storage.db.content: ${err}`);
-            fs.rmSync(this.dbPath + '.content');
-            this.contentdb = new nedb({ filename: this.dbPath + '.content', autoload: true });
+            fs.rmSync(contentFile, { force: true });
+            this.contentdb = new nedb({ filename: contentFile, autoload: true });
             NotificationManager.getInstance().error('邮箱', '收取新邮件', `邮箱数据库(contentdb)损坏，已删除并重新创建`);
         }).finally(() => {
             this.contentdb.ensureIndex({ fieldName: 'uid', unique: true, sparse: true });
