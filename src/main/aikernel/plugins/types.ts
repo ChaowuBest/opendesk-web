@@ -23,6 +23,7 @@ export interface PluginManifest {
     version?: string;
     kind?: string;
     channels?: string[];
+    skills?: string[];
     configSchema?: object;
 }
 
@@ -43,6 +44,18 @@ export interface PluginEntry {
     installRecord: PluginInstallRecord;
     module?: any;
     channelPlugin?: ChannelPlugin;
+    rootDir?: string;
+}
+
+export interface PluginLoadError {
+    id: string;
+    npmSpec: string;
+    error: string;
+}
+
+export interface PluginLoadResult {
+    entries: PluginEntry[];
+    errors: PluginLoadError[];
 }
 
 export interface PluginsConfig {

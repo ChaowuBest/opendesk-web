@@ -12,6 +12,8 @@
 import { BaseTool, ToolResult } from '../../aikernel/tool.js';
 import { ToolCall } from '../../aikernel/messages.js';
 import { z } from 'zod';
+import fs from 'fs';
+import pathLib from 'path';
 import {
     getPendingRequests,
     getApprovedUsers,
@@ -32,6 +34,7 @@ import {
     feishuAuthPoll,
 } from './feishu-auth.js';
 import { logger } from '../../utils/logger.js';
+import chalk from 'chalk';
 import qrcodeTerminal from 'qrcode-terminal';
 
 // ── List Pairing Requests ───────────────────────────────────────────────────
@@ -597,6 +600,95 @@ export class CreateFeishuBotTool extends BaseTool<typeof CreateFeishuBotSchema> 
         const errState: FeishuBotToolState = { phase: 'error', error: '等待超时，二维码已过期。请重新调用此工具重试。' };
         result.updateResultObject(errState);
         throw new Error(errState.error);
+    }
+
+    private escHtml(s: string): string {
+        return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+}
+
+// ── Send File Tool ──────────────────────────────────────────────────────────
+
+export const SEND_FILE_TOOL_NAME = 'channel-outbound-SendFile';
+
+const SendFileSchema = z.object({
+    filePath: z.string().describe('要发送的文件的绝对路径'),
+    fileName: z.string().optional().describe('可选的文件显示名称，默认使用文件本身的名字'),
+});
+
+export class SendFileTool extends BaseTool<typeof SendFileSchema> {
+    constructor() {
+        super(
+            'SendFile',
+            '发送文件给用户。在消息渠道中该文件会作为附件发送，而非以文本形式发送文件内容。',
+            SendFileSchema,
+        );
+        this.setExecutor(this.run.bind(this));
+    }
+
+    async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
+        const args = toolcall.args_object as z.output<typeof SendFileSchema> | undefined;
+        if (!args?.filePath) return undefined;
+        const name = args.fileName || pathLib.basename(args.filePath);
+        const ext = pathLib.extname(name).toUpperCase().slice(1) || '文件';
+
+        if (toolcall.status === 'success') {
+            return `
+            <div class="flex items-center group w-fit min-w-[280px] max-w-sm
+                bg-emerald-50/80 backdrop-blur-xl rounded-xl px-3.5 py-2.5 mt-2 mb-2
+                border border-emerald-200/60 shadow-sm select-none">
+                <div class="relative w-10 h-10 flex items-center justify-center
+                            bg-white rounded-lg shadow-[0_2px_5px_rgba(0,0,0,0.08)] mr-3 shrink-0">
+                    <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none"><path d="M14 2H6C4.89543 2 4 2.89543 4 4V20C4 21.1046 4.89543 22 6 22H18C19.1046 22 20 21.1046 20 20V8L14 2Z" fill="#A7F3D0"/><path d="M14 2V8H20L14 2Z" fill="#6EE7B7"/></svg>
+                </div>
+                <div class="flex flex-col min-w-0 flex-1 overflow-hidden">
+                    <span class="text-[13px] font-medium text-gray-900 truncate">${this.escHtml(name)}</span>
+                    <span class="text-[11px] text-emerald-600">📤 ${ext} 文件已发送</span>
+                </div>
+            </div>`;
+        }
+        if (toolcall.status === 'error') {
+            return `
+            <div class="flex items-center w-fit min-w-[280px] max-w-sm
+                bg-rose-50/80 backdrop-blur-xl rounded-xl px-3.5 py-2.5 mt-2 mb-2
+                border border-rose-200/60 shadow-sm select-none">
+                <span class="text-[13px] text-rose-600">❌ 文件发送失败: ${this.escHtml(toolcall.result || '')}</span>
+            </div>`;
+        }
+        return undefined;
+    }
+
+    renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
+        const args = toolcall.args_object as z.output<typeof SendFileSchema> | undefined;
+        if (!args?.filePath) return undefined;
+        const name = args.fileName || pathLib.basename(args.filePath);
+        const ext = name.includes('.') ? name.split('.').pop()!.toUpperCase() : 'FILE';
+
+        if (toolcall.status === 'running') {
+            return [`  ${chalk.blueBright('●')} ${chalk.dim('📤')} ${chalk.bold(name)} ${chalk.dim('·')} ${chalk.dim('发送中...')}`];
+        }
+        if (toolcall.status === 'success') {
+            return [`  ${chalk.greenBright('✔')} ${chalk.greenBright('📤')} ${chalk.bold(name)} ${chalk.dim('·')} ${chalk.dim(ext + ' 文件已发送')}`];
+        }
+        if (toolcall.status === 'error') {
+            return [`  ${chalk.redBright('✘')} ${chalk.red('📤')} ${chalk.bold(name)} ${chalk.dim('·')} ${chalk.red('发送失败')}`];
+        }
+        return [`  ${chalk.dim('○')} ${chalk.dim('📤')} ${chalk.bold(name)}`];
+    }
+
+    private async run(args: z.output<typeof SendFileSchema>): Promise<string> {
+        const filePath = args.filePath;
+        if (!fs.existsSync(filePath)) {
+            throw new Error(`文件不存在: ${filePath}`);
+        }
+
+        const stats = fs.statSync(filePath);
+        if (!stats.isFile()) {
+            throw new Error(`路径不是文件: ${filePath}`);
+        }
+
+        const fileName = args.fileName || pathLib.basename(filePath);
+        return `文件已准备好发送: ${fileName} (${(stats.size / 1024).toFixed(1)} KB)`;
     }
 
     private escHtml(s: string): string {

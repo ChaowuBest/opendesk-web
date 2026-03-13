@@ -170,9 +170,19 @@ export class TaskSwitcher implements Component {
                 confirmLabel: "删除",
                 cancelLabel: "取消",
             });
-            confirm.show(() => {
-                this.deleteSelectedTask();
-            });
+            confirm.show(
+                () => {
+                    this.deleteSelectedTask();
+                    if (this.getTasks().length > 0) {
+                        this.openDeskTUI.hasOpenOverlay = true;
+                        this.openDeskTUI.tui.setFocus(this);
+                    }
+                },
+                () => {
+                    this.openDeskTUI.hasOpenOverlay = true;
+                    this.openDeskTUI.tui.setFocus(this);
+                },
+            );
             return;
         }
         // Esc -> 关闭

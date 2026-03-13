@@ -107,8 +107,13 @@ async function loadChannelPlugins(): Promise<PluginEntry[]> {
     }
     info(`已发现 ${records.length} 个已安装插件`);
 
-    const plugins = await loadPlugins();
-    const channelPlugins = plugins.filter(p => p.channelPlugin);
+    const loadResult = await loadPlugins();
+    if (loadResult.errors.length > 0) {
+        for (const e of loadResult.errors) {
+            fail(`插件 ${e.id} 加载失败: ${e.error}`);
+        }
+    }
+    const channelPlugins = loadResult.entries.filter(p => p.channelPlugin);
 
     if (channelPlugins.length === 0) {
         warn('已安装的插件中没有消息插件');

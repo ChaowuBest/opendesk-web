@@ -28,6 +28,7 @@ import {
 } from '../../aikernel/plugins/index.js';
 import type {
     PluginEntry,
+    PluginLoadError,
     ChannelPlugin,
     ChannelAccountStatus,
     ChannelGatewayContext,
@@ -35,10 +36,13 @@ import type {
     ChannelAccountSnapshot,
 } from '../../aikernel/plugins/types.js';
 import { registerChannelDispatch } from '../../aikernel/plugins/openclaw/api.js';
-import { ChannelMessageRouter } from './router.js';
+import { ChannelMessageRouter, type ChannelReply } from './router.js';
+import os from 'os';
 import { Skill } from '../../aikernel/skill.js';
 import { BaseToolset } from '../../aikernel/tool.js';
 import { MANAGE_CHANNELS_SKILL } from './skills.js';
+import path from 'path';
+import fs from 'fs';
 import {
     ListPairingRequestsTool,
     ApprovePairingTool,
@@ -52,6 +56,7 @@ import {
     SetChannelConfigTool,
     GetChannelConfigTool,
     CreateFeishuBotTool,
+    SendFileTool,
 } from './tools.js';
 import { NotificationManager } from '../../utils/notificationmgr.js';
 
@@ -68,6 +73,7 @@ export type ChannelStateChangeCallback = (states: ChannelRuntimeState[]) => void
 export class ChannelMgrApplication extends BaseApplication {
 
     private plugins: PluginEntry[] = [];
+    private pluginLoadErrors: PluginLoadError[] = [];
     private channelStates: Map<string, ChannelRuntimeState> = new Map();
     private router?: ChannelMessageRouter;
     private initPromise?: Promise<void>;
@@ -123,7 +129,55 @@ export class ChannelMgrApplication extends BaseApplication {
 
         manageSkill.toolsets = [pairingToolset, pluginToolset];
 
-        return [manageSkill];
+        const skills: Skill[] = [manageSkill];
+
+        // Load skills from installed channel plugins
+        const pluginSkills = this.loadPluginSkills();
+        skills.push(...pluginSkills);
+
+        return skills;
+    }
+
+    /**
+     * Scan all loaded plugins for SKILL.md files declared in their manifests.
+     */
+    private loadPluginSkills(): Skill[] {
+        const skills: Skill[] = [];
+        for (const plugin of this.plugins) {
+            const manifest = plugin.manifest;
+            const rootDir = plugin.rootDir;
+            if (!manifest.skills?.length || !rootDir) continue;
+
+            for (const skillPath of manifest.skills) {
+                const resolvedDir = path.resolve(rootDir, skillPath);
+                if (!fs.existsSync(resolvedDir) || !fs.statSync(resolvedDir).isDirectory()) {
+                    logger.warn(`插件 ${plugin.id} 的 skills 路径不存在: ${resolvedDir}`);
+                    continue;
+                }
+
+                try {
+                    const entries = fs.readdirSync(resolvedDir, { withFileTypes: true });
+                    for (const entry of entries) {
+                        if (!entry.isDirectory()) continue;
+                        const skillMdPath = path.join(resolvedDir, entry.name, 'SKILL.md');
+                        if (!fs.existsSync(skillMdPath)) continue;
+
+                        try {
+                            const raw = fs.readFileSync(skillMdPath, 'utf-8');
+                            const skill = Skill.parseMd(raw);
+                            skill.directory = path.join(resolvedDir, entry.name);
+                            logger.info(`已加载插件 ${plugin.id} 的 skill: ${skill.frontmatter.name}`);
+                            skills.push(skill);
+                        } catch (err: any) {
+                            logger.warn(`解析插件 ${plugin.id} 的 skill ${entry.name} 失败: ${err?.message || err}`);
+                        }
+                    }
+                } catch (err: any) {
+                    logger.warn(`读取插件 ${plugin.id} 的 skills 目录失败: ${err?.message || err}`);
+                }
+            }
+        }
+        return skills;
     }
 
     /**
@@ -132,6 +186,11 @@ export class ChannelMgrApplication extends BaseApplication {
      */
     async initializeChannels(router: ChannelMessageRouter): Promise<void> {
         this.router = router;
+
+        const outboundToolset = new BaseToolset('channel-outbound');
+        outboundToolset.addTool(new SendFileTool());
+        router.addExtraToolset(outboundToolset);
+
         if (this.initPromise) return this.initPromise;
 
         this.initPromise = this.doInitialize();
@@ -148,9 +207,16 @@ export class ChannelMgrApplication extends BaseApplication {
     private async doInitialize(): Promise<void> {
         if (this.started) return;
         try {
-            this.plugins = await loadPlugins();
+            const loadResult = await loadPlugins();
+            this.plugins = loadResult.entries;
+            this.pluginLoadErrors = loadResult.errors;
             const channelPlugins = this.plugins.filter(p => p.channelPlugin);
             logger.info(`已加载 ${this.plugins.length} 个插件，其中 ${channelPlugins.length} 个消息插件`);
+            if (this.pluginLoadErrors.length > 0) {
+                for (const e of this.pluginLoadErrors) {
+                    logger.error(`插件 ${e.id} 加载失败: ${e.error}`);
+                }
+            }
 
             for (const plugin of channelPlugins) {
                 await this.startChannelPlugin(plugin);
@@ -311,30 +377,46 @@ export class ChannelMgrApplication extends BaseApplication {
             ? message.groupId
             : message.senderId;
 
-        if (cp.outbound?.sendText) {
-            try {
-                await cp.outbound.sendText({
-                    channelId: cp.id, accountId,
-                    to: replyTo, text: reply,
-                    threadId: message.threadId,
-                    replyToMessageId: message.messageId,
-                    cfg: this.getChannelConfig(cp.id),
-                });
-            } catch (err: any) {
-                logger.error(`发送回复失败 ${cp.id}:${accountId}: ${err?.message || err}`);
-            }
-        } else if (cp.outbound?.sendPayload) {
-            try {
+        const cfg = this.getChannelConfig(cp.id);
+        const baseCtx = {
+            channelId: cp.id, accountId,
+            to: replyTo,
+            threadId: message.threadId,
+            replyToMessageId: message.messageId,
+            cfg,
+        };
+        const mediaLocalRoots = [os.tmpdir()];
+
+        const hasMedia = reply.mediaUrls.length > 0;
+
+        try {
+            if (hasMedia && cp.outbound?.sendPayload) {
                 await cp.outbound.sendPayload({
-                    channelId: cp.id, accountId,
-                    to: replyTo, payload: { text: reply },
-                    threadId: message.threadId,
-                    replyToMessageId: message.messageId,
-                    cfg: this.getChannelConfig(cp.id),
+                    ...baseCtx,
+                    payload: {
+                        text: reply.text,
+                        mediaUrl: reply.mediaUrls[0],
+                        mediaUrls: reply.mediaUrls,
+                    },
+                    mediaLocalRoots,
                 });
-            } catch (err: any) {
-                logger.error(`发送回复失败 ${cp.id}:${accountId}: ${err?.message || err}`);
+            } else if (hasMedia && cp.outbound?.sendMedia) {
+                // Send first media with text, rest without
+                for (let i = 0; i < reply.mediaUrls.length; i++) {
+                    await cp.outbound.sendMedia({
+                        ...baseCtx,
+                        text: i === 0 ? reply.text : '',
+                        mediaUrl: reply.mediaUrls[i],
+                        mediaLocalRoots,
+                    });
+                }
+            } else if (cp.outbound?.sendText) {
+                await cp.outbound.sendText({ ...baseCtx, text: reply.text });
+            } else if (cp.outbound?.sendPayload) {
+                await cp.outbound.sendPayload({ ...baseCtx, payload: { text: reply.text } });
             }
+        } catch (err: any) {
+            logger.error(`发送回复失败 ${cp.id}:${accountId}: ${err?.message || err}`);
         }
     }
 
@@ -366,6 +448,10 @@ export class ChannelMgrApplication extends BaseApplication {
                 label: p.channelPlugin!.meta.label,
                 description: p.channelPlugin!.meta.description,
             }));
+    }
+
+    getPluginLoadErrors(): PluginLoadError[] {
+        return this.pluginLoadErrors;
     }
 
     async stopAllChannels(): Promise<void> {
@@ -514,31 +600,40 @@ export class ChannelMgrApplication extends BaseApplication {
             new InfoOverlay(tui, { title, message }).show();
         };
 
+        const errorLines = this.pluginLoadErrors.map(e =>
+            `  ✗ ${e.id}: 加载失败 - ${e.error}`
+        );
+        const errorSection = errorLines.length > 0
+            ? `\n\n加载失败的插件:\n${errorLines.join('\n')}`
+            : '';
+
         switch (subCmd) {
             case 'list': {
                 const channels = this.getChannelPlugins();
-                if (channels.length === 0) {
+                if (channels.length === 0 && errorLines.length === 0) {
                     showInfo('消息插件', '暂无已注册的消息插件');
                 } else {
                     const lines = channels.map(ch =>
                         `  ${ch.id}: ${ch.label}${ch.description ? ` - ${ch.description}` : ''}`
                     );
-                    showInfo('消息插件列表', lines.join('\n'));
+                    const body = channels.length > 0 ? lines.join('\n') : '暂无已成功加载的消息插件';
+                    showInfo('消息插件列表', body + errorSection);
                 }
                 break;
             }
             case 'status': {
                 const states = this.getChannelStates();
-                if (states.length === 0) {
+                if (states.length === 0 && errorLines.length === 0) {
                     showInfo('消息插件状态', '暂无运行中的消息插件');
                 } else {
                     const lines = states.map(s => {
                         const icon = s.status.online ? '●' : '○';
                         const statusText = s.status.statusText || (s.status.online ? '在线' : '离线');
-                        const errorText = s.status.error ? ` (${s.status.error})` : '';
-                        return `  ${icon} ${s.channelId}:${s.accountId} - ${s.label} [${statusText}]${errorText}`;
+                        const errText = s.status.error ? ` (${s.status.error})` : '';
+                        return `  ${icon} ${s.channelId}:${s.accountId} - ${s.label} [${statusText}]${errText}`;
                     });
-                    showInfo('消息插件状态', lines.join('\n'));
+                    const body = states.length > 0 ? lines.join('\n') : '暂无运行中的消息插件';
+                    showInfo('消息插件状态', body + errorSection);
                 }
                 break;
             }

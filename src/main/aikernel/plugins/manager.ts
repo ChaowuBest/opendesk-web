@@ -26,6 +26,8 @@ import type {
     PluginManifest,
     PluginInstallRecord,
     PluginEntry,
+    PluginLoadResult,
+    PluginLoadError,
     ChannelPlugin,
 } from './types.js';
 
@@ -420,10 +422,11 @@ export function setPluginEnabled(pluginId: string, enabled: boolean): boolean {
  * Load all enabled plugins and return their entries.
  * Channel plugins are extracted and returned separately.
  */
-export async function loadPlugins(): Promise<PluginEntry[]> {
+export async function loadPlugins(): Promise<PluginLoadResult> {
     const records = loadInstallRecords();
     const enabledRecords = records.filter(r => r.enabled);
     const entries: PluginEntry[] = [];
+    const errors: PluginLoadError[] = [];
 
     // Make sure the shim is in place
     ensureOpenClawShim(getExtensionsDir());
@@ -433,11 +436,13 @@ export async function loadPlugins(): Promise<PluginEntry[]> {
             const entry = await loadSinglePlugin(record);
             if (entry) entries.push(entry);
         } catch (err: any) {
-            logger.error(`Failed to load plugin ${record.id}: ${err?.message || err}`);
+            const errorMsg = err?.message || String(err);
+            logger.error(`Failed to load plugin ${record.id}: ${errorMsg}`);
+            errors.push({ id: record.id, npmSpec: record.npmSpec, error: errorMsg });
         }
     }
 
-    return entries;
+    return { entries, errors };
 }
 
 // ── Internal: Plugin Loading ─────────────────────────────────────────────────
@@ -608,6 +613,7 @@ async function loadSinglePlugin(record: PluginInstallRecord): Promise<PluginEntr
         manifest,
         installRecord: record,
         module: pluginModule,
+        rootDir: pluginDir,
     };
 
     // Execute the plugin's register function with our API shim

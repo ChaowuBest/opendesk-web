@@ -20,7 +20,7 @@ import { FULL_CLEAR } from './tui/components/constants';
 import { OpenDeskTUI, CommandLineArgs } from './tui/entry.js';
 import { Setting } from './utils/setting';
 import { program as prog } from 'commander';
-import { installPlugin, uninstallPlugin, listInstalledPlugins, setPluginEnabled, resetOpenClawShim } from './aikernel/plugins/index.js';
+import { installPlugin, uninstallPlugin, listInstalledPlugins, setPluginEnabled, resetOpenClawShim, loadPlugins } from './aikernel/plugins/index.js';
 import { ChannelMgrApplication } from './applications/channelmgr/app.js';
 import { ChannelMessageRouter } from './applications/channelmgr/router.js';
 import { ShellAgentDecl } from './aikernel/agents/shellagent.js';
@@ -209,6 +209,38 @@ function parseCommandLineArgs() {
 
             const hasFailure = result.summary.failed > 0 || result.summary.error > 0;
             process.exit(hasFailure ? 1 : 0);
+	});
+
+    channelsCmd
+        .command('info')
+        .description('加载并检查所有已启用的消息插件')
+        .action(async () => {
+            useCliTransport();
+            useConsoleTransport();
+            const records = listInstalledPlugins();
+            const enabledRecords = records.filter(r => r.enabled);
+            if (enabledRecords.length === 0) {
+                console.log('暂无已启用的消息插件');
+                process.exit(0);
+            }
+            console.log(`正在加载 ${enabledRecords.length} 个已启用的插件...\n`);
+            const result = await loadPlugins();
+            if (result.entries.length > 0) {
+                console.log('已成功加载的插件:');
+                for (const entry of result.entries) {
+                    const cp = entry.channelPlugin;
+                    const channelInfo = cp ? ` (渠道: ${cp.meta.label})` : '';
+                    console.log(`  ✓ ${entry.id}${channelInfo}`);
+                }
+            }
+            if (result.errors.length > 0) {
+                console.log('\n加载失败的插件:');
+                for (const err of result.errors) {
+                    console.error(`  ✗ ${err.id}: ${err.error}`);
+                }
+            }
+            console.log(`\n总计: ${result.entries.length} 成功, ${result.errors.length} 失败`);
+            process.exit(result.errors.length > 0 ? 1 : 0);
         });
 
     prog.action((workspace, kwargs) => {
@@ -238,6 +270,7 @@ function parseCommandLineArgs() {
             model: kwargs.model,
         })
     });
+
     return prog.parse();
 }
 

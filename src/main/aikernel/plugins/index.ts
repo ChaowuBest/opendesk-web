@@ -29,6 +29,8 @@ export type {
     PluginManifest,
     PluginInstallRecord,
     PluginEntry,
+    PluginLoadError,
+    PluginLoadResult,
     PluginsConfig,
     ChannelId,
     ChannelMeta,
