@@ -227,6 +227,8 @@ export class TaskState {
         logger.info(`messsage submitted to task ${this.task_id}`)
 
         if (this.task_name === null) {
+            // 这里我们先放一个占位符，避免可能出现的重复submitUserMessage导致多次起名
+            this.task_name = '未命名任务';
             this.generateTaskName(message).then(() => {
                 this.task_manager_state.publishTaskListUpdate();
             });
@@ -309,11 +311,13 @@ export class TaskState {
         你是一个任务管理助手，请根据以下用户消息生成一个任务名称: ${user_message}
         请返回一个简洁明了的任务名称，不要超过10个字符。不要包含任何其他内容。
         `
-        const task_name = await LLM.ask(new UserMessage(prompt))
+
+        const task_name = await LLM.ask(new UserMessage(prompt.trim()))
             .catch(err => {
                 logger.error(err);
                 return null;
             })
+
         this.task_name = task_name;
     }
 

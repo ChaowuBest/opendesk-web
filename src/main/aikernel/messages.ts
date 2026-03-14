@@ -511,6 +511,14 @@ export class UserMessage {
     }
 
     toOpenAIMessage(): object {
+        // 如果 content 只有一个 text 类型的部分，直接返回字符串格式
+        // 这样可以兼容更多 LLM 提供商（特别是国产模型）
+        if (this.content.length === 1 && this.content[0].type === 'text') {
+            return {
+                role: this.role,
+                content: this.content[0].text
+            }
+        }
         return {
             role: this.role,
             content: this.content.map(part => part.toOpenAIMessagePart())
