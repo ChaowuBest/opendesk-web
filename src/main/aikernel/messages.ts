@@ -195,7 +195,12 @@ export class ToolCall {
 
     static assign(tool_call_obj: object): ToolCall {
         Object.setPrototypeOf(tool_call_obj, ToolCall.prototype);
-        return tool_call_obj as ToolCall;
+        const tc = tool_call_obj as ToolCall;
+        if ('tool' in tc) {
+            delete (tc as any).tool;
+        }
+        Object.defineProperty(tc, 'tool', { value: undefined, writable: true, enumerable: false });
+        return tc;
     }
 }
 
