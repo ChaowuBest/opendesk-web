@@ -1148,7 +1148,7 @@ export class OpenDeskTUI {
     }
 
 
-    public switchToTask(task: TaskState) {
+    public async switchToTask(task: TaskState) {
         // 先清屏，防止旧内容残留
         process.stdout.write(FULL_CLEAR);
 
@@ -1171,6 +1171,10 @@ export class OpenDeskTUI {
         this.inputArea.bindToTaskQueue(task.task_id, task.message_queue);
         this.inputArea.statusBar.setAccumulatedMs(task.total_elapsed_ms);
         this.inputArea.statusBar.update({ totalTokens: 0 });
+
+        // 为历史 ToolCall 挂载 toolsets 并解析 tool 引用，确保自定义渲染器正常工作
+        await task.ensureToolsResolved();
+
         this.taskView.rebuildFromHistory();
 
         if (task.task_status === 'running') {

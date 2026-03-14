@@ -145,7 +145,7 @@ export class ToolCallView implements Component {
             return this.cachedOutput;
         }
         this.lastWidth = width;
-        if (this.toolCall.tool) {
+        if (this.toolCall.tool && typeof this.toolCall.tool.renderToolCallCli === 'function') {
             const custom = this.toolCall.tool.renderToolCallCli(this.toolCall, width);
             if (custom) {
                 this.cachedOutput = custom;
