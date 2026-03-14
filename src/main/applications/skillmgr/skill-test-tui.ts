@@ -9,11 +9,11 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { type Component, SelectList, Box, Text, Input, TUI, Key, matchesKey, visibleWidth, truncateToWidth, wrapTextWithAnsi } from "@mariozechner/pi-tui";
+import { type Component, SelectList, Box, Text, Input, Key, matchesKey, truncateToWidth, wrapTextWithAnsi } from "@mariozechner/pi-tui";
 import chalk from "chalk";
 import { defaultSelectListTheme } from "../../tui/theme";
 import { OpenDeskTUI } from "../../tui/entry";
-import { SkillTestFramework, type TestSuiteResult, type TestResult, type EnvironmentCheck } from "./skill-test.js";
+import { SkillTestFramework, type TestSuiteResult } from "./skill-test.js";
 import { SkillRegistry } from "./skillregistry.js";
 
 type TestViewState =
@@ -43,10 +43,6 @@ export class SkillTestOverlay implements Component {
     private detailContentLines: string[] = [];
     private resultContentLines: string[] = [];
     private testStartLineIndex = 0;
-    /**  overlay 实际可用高度（由 show() 设置），用于计算可显示内容行数 */
-    private overlayMaxHeight = 20;
-    private readonly maxVisibleLines = 40;
-    private readonly maxDetailLines = 30;
 
     constructor(openDeskTUI: OpenDeskTUI) {
         this.openDeskTUI = openDeskTUI;
@@ -395,30 +391,38 @@ export class SkillTestOverlay implements Component {
         const test = this.currentResult.tests[this.selectedTestIndex];
         const terminalWidth = this.openDeskTUI.tui.terminal.columns;
         const overlayWidth = Math.min(90, terminalWidth - 4);
-        const contentWidth = Math.max(18, overlayWidth - 8); // 每行前有 "  "，换行按 contentWidth 宽
+        const innerWidth = Math.max(20, overlayWidth - 2);
+        const contentWidth = Math.max(16, innerWidth - 4);
 
         this.detailContentLines.push(`${chalk.bold('名称')}: ${test.name}`);
-        this.detailContentLines.push(`${chalk.bold('文件')}: ${truncateToWidth(test.file, overlayWidth - 10, '...', false)}`);
+        this.detailContentLines.push(`${chalk.bold('文件')}: ${truncateToWidth(test.file, innerWidth - 6, '…', false)}`);
         this.detailContentLines.push(`${chalk.bold('状态')}: ${this.formatStatus(test.status)}`);
         this.detailContentLines.push(`${chalk.bold('耗时')}: ${test.duration}ms`);
 
         if (test.message) {
-            this.detailContentLines.push(`${chalk.bold('消息')}: ${test.message}`);
+            const msgLines = wrapTextWithAnsi(`${chalk.bold('消息')}: ${test.message}`, innerWidth);
+            for (const ml of msgLines) {
+                this.detailContentLines.push(ml);
+            }
         }
 
         if (test.status === 'failed' || test.status === 'error') {
             this.detailContentLines.push('');
-            this.detailContentLines.push(chalk.bgRed.white(' 失败分析 '));
-            
+            const sep = '── 失败分析 ' + '─'.repeat(Math.max(0, innerWidth - 14));
+            this.detailContentLines.push(chalk.dim(sep));
+
             if (test.suggestion) {
                 const suggestionLines = test.suggestion.split('\n');
                 for (const line of suggestionLines) {
-                    if (line.startsWith('原因:')) {
-                        this.detailContentLines.push(chalk.yellow(line));
-                    } else if (line.startsWith('建议:')) {
-                        this.detailContentLines.push(chalk.green(line));
-                    } else {
-                        this.detailContentLines.push(chalk.dim(line));
+                    const wrapped = wrapTextWithAnsi(line, innerWidth);
+                    for (const w of wrapped) {
+                        if (line.startsWith('原因:')) {
+                            this.detailContentLines.push(chalk.yellow(w));
+                        } else if (line.startsWith('建议:')) {
+                            this.detailContentLines.push(chalk.green(w));
+                        } else {
+                            this.detailContentLines.push(chalk.dim(w));
+                        }
                     }
                 }
             } else {
@@ -429,7 +433,8 @@ export class SkillTestOverlay implements Component {
 
         if (test.error) {
             this.detailContentLines.push('');
-            this.detailContentLines.push(chalk.bold('错误输出:'));
+            const sep = '── 错误输出 ' + '─'.repeat(Math.max(0, innerWidth - 14));
+            this.detailContentLines.push(chalk.dim(sep));
             const sanitized = this.sanitizeForDisplay(test.error);
             const errorLines = sanitized.split('\n');
             for (const line of errorLines) {
@@ -442,7 +447,8 @@ export class SkillTestOverlay implements Component {
 
         if (test.details) {
             this.detailContentLines.push('');
-            this.detailContentLines.push(chalk.bold('详细输出:'));
+            const sep = '── 详细输出 ' + '─'.repeat(Math.max(0, innerWidth - 14));
+            this.detailContentLines.push(chalk.dim(sep));
             const sanitized = this.sanitizeForDisplay(test.details);
             const detailLines = sanitized.split('\n');
             for (const line of detailLines) {
@@ -462,20 +468,29 @@ export class SkillTestOverlay implements Component {
         const result = this.currentResult;
         const terminalWidth = this.openDeskTUI.tui.terminal.columns;
         const overlayWidth = Math.min(90, terminalWidth - 4);
+        const innerWidth = Math.max(20, overlayWidth - 2);
 
-        this.resultContentLines.push(chalk.cyan('环境检查'));
+        this.resultContentLines.push(chalk.cyan.bold('环境检查'));
         for (const check of result.environment.checks) {
             const icon = check.passed ? chalk.green('✓') : chalk.red('✗');
             this.resultContentLines.push(`  ${icon} ${check.name}: ${check.message}`);
         }
 
+        this.resultContentLines.push('');
+        const sep1 = '── 测试汇总 ' + '─'.repeat(Math.max(0, innerWidth - 14));
+        this.resultContentLines.push(chalk.dim(sep1));
+
         const summary = result.summary;
-        const summaryLine = `总计: ${summary.total} | ` +
-            chalk.green(`通过: ${summary.passed}`) + ' | ' +
-            chalk.red(`失败: ${summary.failed}`) + ' | ' +
-            chalk.yellow(`跳过: ${summary.skipped}`) + ' | ' +
+        const summaryLine = `总计: ${summary.total}  ` +
+            chalk.green(`通过: ${summary.passed}`) + '  ' +
+            chalk.red(`失败: ${summary.failed}`) + '  ' +
+            chalk.yellow(`跳过: ${summary.skipped}`) + '  ' +
             `耗时: ${(summary.duration / 1000).toFixed(2)}s`;
         this.resultContentLines.push(summaryLine);
+
+        this.resultContentLines.push('');
+        const sep2 = '── 测试用例 ' + '─'.repeat(Math.max(0, innerWidth - 14));
+        this.resultContentLines.push(chalk.dim(sep2));
 
         this.testStartLineIndex = this.resultContentLines.length;
 
@@ -504,8 +519,8 @@ export class SkillTestOverlay implements Component {
                     color = chalk.red;
             }
 
-            const duration = `(${test.duration}ms)`;
-            this.resultContentLines.push(`${prefix}${color(icon)} ${test.name} ${chalk.dim(duration)}`);
+            const duration = chalk.dim(`(${test.duration}ms)`);
+            this.resultContentLines.push(`${prefix}${color(icon)} ${test.name} ${duration}`);
         }
     }
 
@@ -599,6 +614,11 @@ export class SkillTestOverlay implements Component {
     }
 
     private renderBox() {
+        if ((this.state === 'results' || this.state === 'test-detail') && this.currentResult) {
+            this.openDeskTUI.tui.requestRender();
+            return;
+        }
+
         this.box.clear();
         this.box.addChild(this.header);
 
@@ -611,18 +631,6 @@ export class SkillTestOverlay implements Component {
 
         if (this.loading) {
             this.box.addChild(new Text(chalk.yellow('⏳ 测试运行中...')));
-        }
-
-        if (this.state === 'results' && this.currentResult) {
-            this.renderResultsContent();
-            this.openDeskTUI.tui.requestRender();
-            return;
-        }
-
-        if (this.state === 'test-detail' && this.currentResult) {
-            this.renderTestDetailContent();
-            this.openDeskTUI.tui.requestRender();
-            return;
         }
 
         if (this.list) {
@@ -643,56 +651,69 @@ export class SkillTestOverlay implements Component {
         this.openDeskTUI.tui.requestRender();
     }
 
-    private renderResultsContent() {
-        if (!this.currentResult || this.resultContentLines.length === 0) return;
+    private renderScrollableView(width: number): string[] {
+        const bgFn = (s: string) => chalk.bgHex('#1a1a2e').hex('#e0e0e0')(s);
+        const px = 1;
+        const py = 1;
+        const innerWidth = Math.max(10, width - px * 2);
+        const ch = this.contentHeight;
 
-        const h = this.contentHeight;
-        const maxOffset = Math.max(0, this.resultContentLines.length - h);
-        if (this.resultScrollOffset > maxOffset) {
-            this.resultScrollOffset = maxOffset;
+        const isResults = this.state === 'results';
+        const allLines = isResults ? this.resultContentLines : this.detailContentLines;
+        const offset = isResults ? this.resultScrollOffset : this.detailScrollOffset;
+
+        const maxOff = Math.max(0, allLines.length - ch);
+        const off = Math.max(0, Math.min(offset, maxOff));
+        if (isResults) this.resultScrollOffset = off;
+        else this.detailScrollOffset = off;
+
+        const visible = allLines.slice(off, off + ch);
+
+        const styledLine = (content: string): string => {
+            const raw = ' '.repeat(px) + content;
+            return bgFn(truncateToWidth(raw, width, '', true));
+        };
+        const emptyLine = bgFn(' '.repeat(width));
+
+        const out: string[] = [];
+
+        for (let i = 0; i < py; i++) out.push(emptyLine);
+
+        if (isResults) {
+            const r = this.currentResult!;
+            const icon = r.summary.failed === 0 && r.summary.error === 0
+                ? chalk.green('✓') : chalk.red('✗');
+            out.push(styledLine(chalk.bold(` 测试结果 ${icon} ${r.skillName}`)));
+        } else {
+            const test = this.currentResult!.tests[this.selectedTestIndex];
+            out.push(styledLine(chalk.bold(` 测试详情: ${test.name}`)));
         }
 
-        const visibleLines = this.resultContentLines.slice(
-            this.resultScrollOffset,
-            this.resultScrollOffset + h
-        );
+        out.push(styledLine(chalk.dim('─'.repeat(innerWidth))));
 
-        for (const line of visibleLines) {
-            this.box.addChild(new Text(line));
+        for (let i = 0; i < ch; i++) {
+            out.push(styledLine(visible[i] ?? ''));
         }
 
-        if (this.resultContentLines.length > h) {
-            const scrollInfo = `[行 ${this.resultScrollOffset + 1}-${Math.min(this.resultScrollOffset + h, this.resultContentLines.length)} / ${this.resultContentLines.length}]`;
-            this.box.addChild(new Text(chalk.dim(scrollInfo)));
+        if (allLines.length > ch) {
+            const pct = maxOff === 0 ? 100 : Math.round((off / maxOff) * 100);
+            const barLen = Math.min(20, Math.max(8, innerWidth - 35));
+            const filled = Math.max(1, Math.round((pct / 100) * barLen));
+            const bar = '━'.repeat(filled) + '░'.repeat(barLen - filled);
+            const end = Math.min(off + ch, allLines.length);
+            out.push(styledLine(chalk.dim(`行 ${off + 1}-${end}/${allLines.length} ${bar} ${pct}%`)));
+        } else {
+            out.push(emptyLine);
         }
 
-        this.box.addChild(new Text(chalk.dim('↑/↓ 选择  PgUp/PgDn 翻页  g 顶部 G 底部  Enter 详情  R 重跑  Esc 返回')));
-    }
+        const help = isResults
+            ? '↑↓ 选择 │ PgUp/PgDn 翻页 │ g/G 顶/底 │ Enter 详情 │ R 重跑 │ Esc 返回'
+            : '↑↓ 滚动 │ PgUp/PgDn 翻页 │ g/G 顶/底 │ Esc/Enter 返回';
+        out.push(styledLine(chalk.dim(help)));
 
-    private renderTestDetailContent() {
-        if (!this.currentResult || this.detailContentLines.length === 0) return;
+        for (let i = 0; i < py; i++) out.push(emptyLine);
 
-        const h = this.contentHeight;
-        const maxOffset = Math.max(0, this.detailContentLines.length - h);
-        if (this.detailScrollOffset > maxOffset) {
-            this.detailScrollOffset = maxOffset;
-        }
-
-        const visibleLines = this.detailContentLines.slice(
-            this.detailScrollOffset,
-            this.detailScrollOffset + h
-        );
-
-        for (const line of visibleLines) {
-            this.box.addChild(new Text(line));
-        }
-
-        if (this.detailContentLines.length > h) {
-            const scrollInfo = `[行 ${this.detailScrollOffset + 1}-${Math.min(this.detailScrollOffset + h, this.detailContentLines.length)} / ${this.detailContentLines.length}]`;
-            this.box.addChild(new Text(chalk.dim(scrollInfo)));
-        }
-
-        this.box.addChild(new Text(chalk.dim('↑/↓ 滚动  PgUp/PgDn 翻页  g 顶部 G 底部  Esc 返回')));
+        return out;
     }
 
     private formatStatus(status: string): string {
@@ -726,26 +747,26 @@ export class SkillTestOverlay implements Component {
     }
 
     render(width: number): string[] {
+        if ((this.state === 'results' || this.state === 'test-detail') && this.currentResult) {
+            return this.renderScrollableView(width);
+        }
         return this.box.render(width);
     }
 
-    /** 结果/详情内容区可用行数（扣除 Box 上下 padding、标题、翻页提示、帮助行） */
     private get contentHeight(): number {
-        // Box(1,1) 上下各 1 行 padding；再加 header(1) + scrollInfo(1) + help(1) = 5 行固定
-        const reserved = 5;
-        return Math.max(5, this.overlayMaxHeight - reserved);
+        const termHeight = this.openDeskTUI.tui.terminal.rows;
+        const totalHeight = Math.max(15, termHeight - 4);
+        // paddingY(1+1) + header(1) + separator(1) + scrollIndicator(1) + helpBar(1) = 6
+        return Math.max(3, totalHeight - 6);
     }
 
     show(skillId?: string) {
         const terminalWidth = this.openDeskTUI.tui.terminal.columns;
-        const terminalHeight = this.openDeskTUI.tui.terminal.rows;
         const overlayWidth = Math.min(90, terminalWidth - 4);
-        const overlayMaxHeight = Math.max(15, terminalHeight - 4);
-        this.overlayMaxHeight = overlayMaxHeight;
 
         this.overlayHandle = this.openDeskTUI.tui.showOverlay(this, {
             width: overlayWidth,
-            maxHeight: overlayMaxHeight,
+            maxHeight: "100%",
             anchor: "center",
         });
 
