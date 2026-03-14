@@ -103,6 +103,12 @@ export class ToolCall {
         };
     }
 
+    /** 序列化时显式排除 tool，避免运行时引用被持久化后反序列化为纯对象导致渲染/执行异常 */
+    toJSON(): object {
+        const { tool, ...rest } = this as ToolCall & { tool?: BaseTool<any> };
+        return rest;
+    }
+
     setTool(tool: BaseTool<any>) {
         this.tool = tool;
     }
@@ -120,8 +126,8 @@ export class ToolCall {
             return this.rendered;
         }
 
-        /* 如果工具自定义了渲染函数，则使用工具的渲染函数 */
-        if (this.tool !== undefined) {
+        /* 如果工具自定义了渲染函数，则使用工具的渲染函数（需确认为 BaseTool 实例，反序列化后可能为纯对象） */
+        if (this.tool !== undefined && typeof (this.tool as any).renderToolCall === 'function') {
             let rendered = await this.tool.renderToolCall(this);
             if (rendered !== undefined) {
                 return rendered;

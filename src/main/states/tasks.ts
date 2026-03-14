@@ -406,6 +406,48 @@ export class TaskState {
     }
 
     /**
+     * 确保 chat_context 已挂载 toolsets，并为所有历史 ToolCall 解析 tool 引用。
+     * 从硬盘加载任务后 toolsets 为空、ToolCall.tool 为 undefined，
+     * 调用此方法后 CLI 自定义渲染器即可正常工作。
+     */
+    async ensureToolsResolved() {
+        if (this.chat_context.toolsets.size === 0) {
+            const toolsets = await ApplicationRegistry.listAvailableToolsets();
+            const skillToolset = SkillRegistry.getInstance().getToolset();
+            const memoryToolset = createMemoryToolset();
+            this.chat_context.attachToolsets(...toolsets);
+            this.chat_context.attachToolsets(skillToolset);
+            this.chat_context.attachToolsets(memoryToolset);
+        }
+        this.resolveAllToolCalls();
+    }
+
+    /**
+     * 为历史消息中所有未绑定 tool 的 ToolCall 解析 tool 引用并解析 args_object。
+     * 用于从硬盘加载任务后、在 toolsets 已挂载的前提下重新绑定工具，
+     * 使 CLI 自定义渲染器能正常工作。
+     */
+    resolveAllToolCalls() {
+        for (const message of this.chat_context.messages) {
+            if (!(message instanceof AssistantMessage)) continue;
+            for (const part of message.content) {
+                if (part.type !== 'tool_call') continue;
+                for (const tc of part.toolcalls) {
+                    if (!tc.tool && tc.tool_name) {
+                        const tool = this.chat_context.getTool(tc.tool_name);
+                        if (tool) tc.setTool(tool);
+                    }
+                    if (tc.args_string && !tc.args_object) {
+                        try {
+                            tc.args_object = JSON.parse(jsonrepair(tc.args_string));
+                        } catch { /* 解析失败不影响后续逻辑 */ }
+                    }
+                }
+            }
+        }
+    }
+
+    /**
      * 在流式输出阶段提前解析 ToolCall 的 tool 引用和 args_object，
      * 使 CLI 自定义卡片能在参数生成过程中实时渲染。
      */
