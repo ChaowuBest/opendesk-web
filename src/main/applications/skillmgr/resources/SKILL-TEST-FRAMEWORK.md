@@ -52,7 +52,7 @@ minOpenDeskVersion: "0.1.0"
 timeout: 300
 requires:
   node: ">=18.0.0"
-  os: ["win32", "darwin", "linux"]
+  os: ["win32", "darwin", "linux", "openharmony"]
   tools: ["python"]
   memory: "2GB"
   disk: "500MB"
@@ -67,7 +67,7 @@ requires:
 | minOpenDeskVersion | string | 否 | - | 最低 OpenDesk 版本要求 |
 | timeout | number | 否 | 300 | 单个测试用例超时时间（秒） |
 | requires.node | string | 否 | - | Node.js 版本要求，如 `">=18.0.0"` |
-| requires.os | string[] | 否 | - | 支持的操作系统：`win32` / `darwin` / `linux` |
+| requires.os | string[] | 否 | - | 支持的操作系统：`win32` / `darwin` / `linux` / `openharmony` |
 | requires.tools | string[] | 否 | - | 需要的外部工具（如 `python`、`git`） |
 | requires.memory | string | 否 | - | 最低内存要求，如 `"2GB"` |
 | requires.disk | string | 否 | - | 最低磁盘空间要求，如 `"500MB"` |
@@ -207,6 +207,7 @@ node "%SKILL_DIR%\tests\cases\environment.test.js"
 - **测试超时**：在 **TEST.md** 中适当增大 `timeout`（单位：秒）。
 - **用例未发现**：确认文件在 **tests/cases/** 下，且文件名为 `*.test.js` 或 `*.spec.js`，扩展名为 `.js`/`.mjs`/`.cjs`。
 - **环境预检不通过**：根据 TUI 或报告中的 `requires` 检查 Node 版本、OS、`requires.tools` 中的命令是否可用。
+- **鸿蒙/OpenHarmony 兼容**：`os` 支持 `openharmony`；鸿蒙 HiShell 下外部工具检测使用 `which`；部分 Node 原生模块可能在鸿蒙上不可用，可在 `requires.os` 中排除 `openharmony` 或提供鸿蒙适配版。
 
 ---
 

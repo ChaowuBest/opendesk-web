@@ -21,7 +21,7 @@
 
 - **技能目录**：标准 Agent Skill（SKILL.md、scripts/、references/、assets/）+ 可选 **tests/**。
 - **tests 结构**：
-  - **TEST.md**：YAML frontmatter 必填 `version: "1.0"`，可选 `timeout`、`requires`（node、os、tools、memory、disk）。
+  - **TEST.md**：YAML frontmatter 必填 `version: "1.0"`，可选 `timeout`、`requires`（node、os、tools、memory、disk）；`os` 支持 `win32`、`darwin`、`linux`、`openharmony`。
   - **cases/**：仅运行 `*.test.js` 或 `*.spec.js`（.js/.mjs/.cjs）；类型由文件名推断：
     - `environment` / `env` → 环境检测
     - `integration` / `e2e` → 集成测试
@@ -67,7 +67,7 @@
 - 根据技能需求设置：
   - `timeout`：若技能有重操作（如大文件、网络），可设为 300–600。
   - `requires.node`：若用到 Node，写 `">=18.0.0"` 等。
-  - `requires.os`：通常 `["win32", "darwin", "linux"]`。
+  - `requires.os`：通常 `["win32", "darwin", "linux", "openharmony"]`；若技能依赖 Node 原生模块或部分库在鸿蒙上不可用，可排除 `openharmony` 或注明兼容性限制。
   - `requires.tools`：如 `["python"]`、`["node"]`（若脚本需命令行 python/node）。
   - `requires.memory` / `requires.disk`：若技能说明中有要求则填写。
 - frontmatter 后可用 Markdown 简要说明依赖与测试覆盖范围（供人阅读）。
@@ -126,7 +126,7 @@
   - `tests/cases/stability.test.js`
   - `tests/fixtures/<文件名>`（仅当用例需要时）
 - **命名**：用例必须带 `.test.` 或 `.spec.`，扩展名 `.js`（或 `.mjs`/`.cjs`），以便运行器发现。
-- **兼容性**：脚本应能在 Node 18+、Windows/macOS/Linux 下运行；外部命令调用注意 Windows 下 `shell: false` 与路径分隔符。
+- **兼容性**：脚本应能在 Node 18+、Windows/macOS/Linux/OpenHarmony 下运行（按 `requires.os` 声明）；外部命令调用注意 Windows 下 `shell: false` 与路径分隔符；鸿蒙 HiShell 下外部工具检测使用 `which`，部分 Node 原生模块可能不可用。
 - **可读性**：每个用例文件顶部可加简短注释说明该文件目的；用例内用 `console.log` 输出关键步骤，便于用户在 TUI 或命令行查看。
 
 ---
@@ -152,5 +152,6 @@
 - [ ] 通过时 `process.exit(0)`，失败时 `console.error` 后 `process.exit(1)`。
 - [ ] 若使用 fixtures，路径为 `path.join(process.env.SKILL_DIR, 'tests', 'fixtures', ...)`，且相应文件已在输出中提供。
 - [ ] 外部命令在 Windows 下使用 `shell: false` 时参数为数组形式，避免复杂字符串被 shell 曲解。
+- [ ] 若声明 `requires.os` 含 `openharmony`，需考虑鸿蒙环境下部分 Node 原生模块不可用的情况；可提供鸿蒙适配版或在 `os` 中排除 `openharmony`。
 
 按以上指导生成的测试套件可直接放入用户指定技能的 `tests/` 目录，并在 OpenDesk 中通过 `/skills test <skill-name>` 运行。
