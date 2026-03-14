@@ -27,7 +27,7 @@ class Splitter implements Component {
     }
 }
 
-type UpgradeState = 'select' | 'checking' | 'confirm' | 'upgrading' | 'success' | 'error' | 'uptodate';
+type UpgradeState = 'init' | 'select' | 'checking' | 'confirm' | 'upgrading' | 'success' | 'error' | 'uptodate';
 
 export class UpgradeOverlay implements Component {
     private openDeskTUI: OpenDeskTUI;
@@ -66,20 +66,23 @@ export class UpgradeOverlay implements Component {
         // 设置标题
         let title = '';
         switch (this.state) {
+            case 'init':
+                title = `📦 OpenDesk CLI 升级`;
+                break;
             case 'select':
                 title = `📦 OpenDesk CLI 升级`;
                 break;
             case 'checking':
-                title = `🔄 检查版本更新...`;
+                title = `🔍 检查版本更新...`;
                 break;
             case 'confirm':
                 title = `📦 发现新版本`;
                 break;
             case 'upgrading':
-                title = `⬇️ 正在升级...`;
+                title = `⏳ 正在升级...`;
                 break;
             case 'success':
-                title = `✅ 升级成功`;
+                title = `☑ 升级成功`;
                 break;
             case 'error':
                 title = `❌ 升级失败`;
@@ -96,6 +99,11 @@ export class UpgradeOverlay implements Component {
 
         // 状态内容
         switch (this.state) {
+            case 'init':
+                this.statusText = new Text(chalk.cyan('正在查询当前版本...'));
+                this.box.addChild(this.statusText);
+                break;
+
             case 'select':
                 this.statusText = new Text(`当前版本: ${this.currentVersion === 'unknown' ? '未通过 npm 安装' : this.currentVersion}`);
                 this.box.addChild(this.statusText);
@@ -217,6 +225,11 @@ export class UpgradeOverlay implements Component {
 
         // 标记有 overlay 打开
         this.openDeskTUI.hasOpenOverlay = true;
+
+        // 先显示加载状态
+        this.state = 'init';
+        this.updateUI();
+        this.openDeskTUI.tui.requestRender();
 
         // 获取当前版本
         const version = await getCurrentVersion();
