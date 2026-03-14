@@ -11,6 +11,8 @@
 
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import * as https from 'https';
+import fs from 'fs';
 
 const execAsync = promisify(exec);
 
@@ -27,19 +29,54 @@ export interface VersionInfo {
 }
 
 /**
+ * 内部函数：获取 npm 全局安装信息（版本和是否安装）
+ * 直接读取全局 node_modules 中的 package.json，比 npm list 快很多
+ * @returns 版本号和是否通过 npm 安装
+ */
+async function getNpmInstallInfo(): Promise<{ version: string | null; isInstalled: boolean }> {
+    try {
+        // 方法1：通过 npm root 获取全局目录，直接读取 package.json
+        const { stdout: globalRoot } = await execAsync('npm root -g', {
+            timeout: 5000,
+        });
+        const packageJsonPath = `${globalRoot.trim()}/${PACKAGE_NAME}/package.json`;
+
+        if (fs.existsSync(packageJsonPath)) {
+            const content = fs.readFileSync(packageJsonPath, 'utf-8');
+            const pkg = JSON.parse(content);
+            return {
+                version: pkg.version || null,
+                isInstalled: true,
+            };
+        }
+        return { version: null, isInstalled: false };
+    } catch {
+        // 方法2：回退到 npm list（较慢但可靠）
+        try {
+            const { stdout } = await execAsync(`npm list -g ${PACKAGE_NAME} --depth=0 --json`, {
+                timeout: 15000,
+            });
+            const result = JSON.parse(stdout);
+            if (result && result.dependencies && result.dependencies[PACKAGE_NAME]) {
+                return {
+                    version: result.dependencies[PACKAGE_NAME].version || null,
+                    isInstalled: true,
+                };
+            }
+        } catch {
+            // 忽略错误
+        }
+        return { version: null, isInstalled: false };
+    }
+}
+
+/**
  * 检查是否通过 npm 全局安装
  * @returns 如果是通过 npm 安装返回 true，否则返回 false
  */
 export async function isNpmInstalled(): Promise<boolean> {
-    try {
-        const { stdout } = await execAsync(`npm list -g ${PACKAGE_NAME} --depth=0 --json`, {
-            timeout: 10000,
-        });
-        const result = JSON.parse(stdout);
-        return result && result.dependencies && result.dependencies[PACKAGE_NAME];
-    } catch {
-        return false;
-    }
+    const info = await getNpmInstallInfo();
+    return info.isInstalled;
 }
 
 /**
@@ -48,63 +85,118 @@ export async function isNpmInstalled(): Promise<boolean> {
  * @returns 版本号，如果未通过 npm 安装则返回 null
  */
 export async function getCurrentVersion(): Promise<string | null> {
-    try {
-        // 使用 npm list 获取已安装的版本
-        const { stdout } = await execAsync(`npm list -g ${PACKAGE_NAME} --depth=0 --json`, {
-            timeout: 10000,
+    const info = await getNpmInstallInfo();
+    return info.version;
+}
+
+/**
+ * 使用 HTTPS 直接请求 npm registry
+ * @param url 完整的 registry URL
+ * @param timeout 超时时间（毫秒）
+ * @returns JSON 数据或 null
+ */
+function fetchNpmRegistry(url: string, timeout: number = 15000): Promise<Record<string, any> | null> {
+    return new Promise((resolve) => {
+        const req = https.get(url, {
+            headers: {
+                'Accept': 'application/json',
+                'User-Agent': 'OpenDesk-CLI',
+            },
+        }, (res) => {
+            let data = '';
+            res.on('data', (chunk) => { data += chunk; });
+            res.on('end', () => {
+                try {
+                    resolve(JSON.parse(data));
+                } catch {
+                    resolve(null);
+                }
+            });
         });
-        const result = JSON.parse(stdout);
-        if (result && result.dependencies && result.dependencies[PACKAGE_NAME]) {
-            return result.dependencies[PACKAGE_NAME].version || null;
-        }
-        return null;
-    } catch {
-        return null;
-    }
+
+        req.on('error', () => resolve(null));
+        req.setTimeout(timeout, () => {
+            req.destroy();
+            resolve(null);
+        });
+    });
 }
 
 /**
  * 从 npm registry 获取指定包的最新版本
+ * 使用 HTTP 请求直接访问 registry，比 npm view 命令更快
  * @param packageName 包名
  * @param tag npm tag (如 'latest' 或 'nightly')
  * @returns 版本号或 null（如果获取失败）
  */
 export async function getNpmVersion(packageName: string, tag: string = 'latest'): Promise<string | null> {
     try {
-        const { stdout } = await execAsync(`npm view ${packageName} version --tag ${tag}`, {
-            timeout: 30000,
-        });
-        return stdout.trim() || null;
-    } catch (err) {
-        // 如果指定 tag 不存在，尝试获取 dist-tags
+        // 使用 HTTPS 直接访问 npm registry，比 npm view 命令快很多
+        const registryUrl = `https://registry.npmjs.org/${encodeURIComponent(packageName)}`;
+        const data = await fetchNpmRegistry(registryUrl, 15000);
+
+        if (data) {
+            // 从 dist-tags 获取指定 tag 的版本
+            if (data['dist-tags'] && data['dist-tags'][tag]) {
+                return data['dist-tags'][tag];
+            }
+
+            // 如果没有找到指定 tag，返回 latest
+            if (data['dist-tags'] && data['dist-tags']['latest']) {
+                return data['dist-tags']['latest'];
+            }
+        }
+
+        return null;
+    } catch {
+        // 回退到 npm view 命令
         try {
-            const { stdout } = await execAsync(`npm view ${packageName} dist-tags --json`, {
+            const { stdout } = await execAsync(`npm view ${packageName} version --tag ${tag}`, {
                 timeout: 30000,
             });
-            const distTags = JSON.parse(stdout);
-            return distTags[tag] || null;
+            return stdout.trim() || null;
         } catch {
             return null;
         }
     }
 }
 
+// 缓存版本信息，避免重复查询
+let cachedVersionInfo: VersionInfo | null = null;
+let cachedVersionInfoTag: 'latest' | 'nightly' | null = null;
+let cachedVersionInfoTime: number = 0;
+const VERSION_CACHE_TTL = 5 * 60 * 1000; // 5 分钟缓存
+
 /**
  * 从 npm registry 获取指定 tag 的版本（通过 dist-tags）
  * @param tag npm tag ('latest' 或 'nightly')
+ * @param forceRefresh 是否强制刷新缓存
  * @returns 版本信息
  */
-export async function getVersionInfo(tag: 'latest' | 'nightly' = 'latest'): Promise<VersionInfo> {
-    const current = await getCurrentVersion();
-    const latest = await getNpmVersion(PACKAGE_NAME, tag);
-    const installed = await isNpmInstalled();
+export async function getVersionInfo(tag: 'latest' | 'nightly' = 'latest', forceRefresh: boolean = false): Promise<VersionInfo> {
+    const now = Date.now();
 
-    return {
-        current,
+    // 检查缓存是否有效
+    if (!forceRefresh && cachedVersionInfo && cachedVersionInfoTag === tag && (now - cachedVersionInfoTime) < VERSION_CACHE_TTL) {
+        return cachedVersionInfo;
+    }
+
+    // 并行执行所有查询，提升性能
+    const [installInfo, latest] = await Promise.all([
+        getNpmInstallInfo(),
+        getNpmVersion(PACKAGE_NAME, tag),
+    ]);
+
+    cachedVersionInfo = {
+        current: installInfo.version,
         latest,
-        needsUpdate: latest !== null && current !== null && current !== latest,
-        isNpmInstalled: installed,
+        needsUpdate: latest !== null && installInfo.version !== null && installInfo.version !== latest,
+        isNpmInstalled: installInfo.isInstalled,
     };
+    cachedVersionInfoTag = tag;
+    cachedVersionInfoTime = now;
+
+    return cachedVersionInfo;
 }
 
 /**
