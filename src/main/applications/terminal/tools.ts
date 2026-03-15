@@ -20,6 +20,9 @@ import { z } from 'zod';
 import fs from 'fs';
 import path from 'path';
 import * as diff from 'diff';
+import { fromFile as fileTypeFromFile } from 'file-type';
+import iconv from 'iconv-lite';
+import { detectEncoding, decodeBuffer, encodingDisplayName, HEAD_BYTES } from './encoding.js';
 
 
 const MAX_CLI_OUTPUT_LINES = 8;
@@ -340,11 +343,11 @@ function renderTerminalToolCall(cmdName: string, toolcall: ToolCall): string | u
             <!-- 过程记录 -->
             <div class="space-y-1 mb-4 border-l-2 border-gray-200 pl-4 ml-1">
                 ${toolcall.result === undefined
-                    ? `<div class="flex items-center gap-2 text-gray-400 animate-pulse h-7">
+            ? `<div class="flex items-center gap-2 text-gray-400 animate-pulse h-7">
                             <svg class="w-5 h-5 animate-spin text-blue-400" viewBox="0 0 24 24" fill="none"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/></svg>
                             <span>命令执行中，请稍候…</span>
                         </div>`
-                    : `<pre>${escapeHtml(toolcall.result)}</pre>`}
+            : `<pre>${escapeHtml(toolcall.result)}</pre>`}
             </div>
         </div>
     </div>
@@ -622,81 +625,382 @@ export class ExecuteZshTool extends BaseTool<typeof ExecuteZshArgsSchema> {
     }
 }
 
+/** 单文件返回内容的总字符数上限，从起始位置起最多返回这么多字符 */
+const READ_FILES_MAX_CONTENT_CHARS = 80 * 1024;
+
+/** 并发读取文件的最大数量 */
+const READ_FILES_MAX_CONCURRENCY = 5;
+
 const readFilesSchema = z.object({
-    paths: z.array(z.string()).describe('要读取的文件路径列表，支持多个文件并行读取')
+    files: z
+        .array(
+            z.object({
+                path: z.string().describe('文件路径'),
+                offset: z.number().int().min(0).default(0).describe('起始位置（字符偏移，从 0 开始），默认 0')
+            })
+        )
+        .describe('要读取的文件列表，每项可指定 path 与起始位置 offset')
 });
 
+function isBinaryMedia(mime: string): boolean {
+    return (
+        mime.startsWith('image/') ||
+        mime.startsWith('video/') ||
+        mime.startsWith('audio/') ||
+        mime === 'application/octet-stream'
+    );
+}
+
 /**
- * 读取单个文件内容
+ * 检测缓冲区是否包含二进制内容（通过检查 NULL 字节）
+ * 用于补充 file-type 库无法识别的二进制文件
  */
-function readSingleFile(path: string): Promise<{ path: string; content?: string; error?: string }> {
-    return new Promise((resolve) => {
-        fs.readFile(path, 'utf8', (err, data) => {
-            if (err) {
-                resolve({ path, error: err.message });
-            } else {
-                resolve({ path, content: data });
+function hasBinaryContent(buffer: Buffer): boolean {
+    // 检查前 8KB 内容中是否存在 NULL 字节
+    const checkLen = Math.min(buffer.length, 8192);
+    for (let i = 0; i < checkLen; i++) {
+        if (buffer[i] === 0) return true;
+    }
+    return false;
+}
+
+interface ReadFileMetadata {
+    size: number;
+    modified: string;
+    totalChars?: number;
+    encoding?: string;
+    mime?: string;
+    ext?: string;
+}
+
+interface ReadFileResult {
+    path: string;
+    requestedOffset: number;
+    error?: string;
+    metadata?: ReadFileMetadata;
+    content?: string;
+    nonText?: boolean;
+    truncated?: boolean;
+    nextOffset?: number;
+}
+
+/**
+ * 从已解码的字符串流中：先跳过 offset 个字符，再最多读取 maxChars 个字符
+ * 注意：对于 UTF-16 编码，使用代码单元而非 Unicode 字符作为偏移单位
+ */
+async function readFromOffsetWithMaxChars(
+    stream: NodeJS.ReadableStream,
+    offset: number,
+    maxChars: number,
+    rawStream: { destroy(): void }
+): Promise<{ content: string; totalChars?: number; truncated: boolean }> {
+    let skipRemaining = offset;
+    let content = '';
+    let shouldBreak = false;
+
+    try {
+        for await (const chunk of stream as AsyncIterable<string>) {
+            if (shouldBreak) break;
+
+            if (skipRemaining > 0) {
+                const toSkip = Math.min(chunk.length, skipRemaining);
+                skipRemaining -= toSkip;
+                const rest = chunk.slice(toSkip);
+                if (rest.length > 0) {
+                    const take = Math.min(maxChars, rest.length);
+                    content = rest.slice(0, take);
+                    if (take < rest.length) {
+                        shouldBreak = true;
+                    }
+                }
+                continue;
             }
-        });
-    });
+            const take = Math.min(maxChars - content.length, chunk.length);
+            content += chunk.slice(0, take);
+            if (content.length >= maxChars) {
+                shouldBreak = true;
+            }
+        }
+    } finally {
+        if (shouldBreak) {
+            rawStream.destroy();
+        }
+    }
+
+    return { content, totalChars: offset + content.length, truncated: shouldBreak };
+}
+
+/**
+ * 读取单个文件：类型检测、编码检测、按起始位置与最大字符数切片
+ */
+async function readSingleFile(filePath: string, offset: number): Promise<ReadFileResult> {
+    // 边界检查：offset 不能为负数
+    if (offset < 0) {
+        return { path: filePath, requestedOffset: offset, error: 'offset 不能为负数' };
+    }
+
+    try {
+        const stat = await fs.promises.stat(filePath);
+        const size = stat.size;
+        const modified = stat.mtime.toISOString();
+
+        let type: Awaited<ReturnType<typeof fileTypeFromFile>> = undefined;
+        try {
+            type = await fileTypeFromFile(filePath);
+        } catch {
+            // 解析不了当文本
+        }
+
+        if (type && isBinaryMedia(type.mime)) {
+            return {
+                path: filePath,
+                requestedOffset: offset,
+                metadata: { size, modified, mime: type.mime, ext: type.ext },
+                content: undefined,
+                nonText: true
+            };
+        }
+
+        if (size === 0) {
+            return {
+                path: filePath,
+                requestedOffset: offset,
+                metadata: { size, modified, totalChars: 0, encoding: 'UTF-8' },
+                content: '',
+                truncated: false
+            };
+        }
+
+        const headLen = Math.min(size, HEAD_BYTES);
+        const headBuf = Buffer.alloc(headLen);
+        const fd = await fs.promises.open(filePath, 'r');
+        try {
+            await fd.read(headBuf, 0, headLen, 0);
+        } finally {
+            await fd.close();
+        }
+
+        // 补充二进制检测：检查 NULL 字节
+        if (!type && hasBinaryContent(headBuf)) {
+            return {
+                path: filePath,
+                requestedOffset: offset,
+                metadata: { size, modified },
+                content: undefined,
+                nonText: true
+            };
+        }
+
+        const { encoding, bomOffset } = detectEncoding(headBuf);
+        const encodingLabel = encodingDisplayName(encoding);
+
+        let content: string;
+        let totalChars: number | undefined;
+        let truncated: boolean;
+        let nextOffset: number;
+
+        if (size <= headLen) {
+            const text = decodeBuffer(headBuf, encoding, bomOffset);
+            totalChars = text.length;
+            // 边界检查：offset 超过文件内容长度时返回空内容
+            if (offset >= totalChars) {
+                return {
+                    path: filePath,
+                    requestedOffset: offset,
+                    metadata: { size, modified, totalChars, encoding: encodingLabel },
+                    content: '',
+                    truncated: false
+                };
+            }
+            content = text.slice(offset, offset + READ_FILES_MAX_CONTENT_CHARS);
+            truncated = text.length > offset + content.length;
+            nextOffset = offset + content.length;
+        } else {
+            const rawStream = fs.createReadStream(filePath, { start: bomOffset });
+            // 修复：Node.js 原生不支持 utf16be，统一使用 iconv-lite 处理非 UTF-8 编码
+            const decodedStream: NodeJS.ReadableStream =
+                encoding === 'utf8'
+                    ? (rawStream.setEncoding('utf8') as NodeJS.ReadableStream)
+                    : rawStream.pipe(iconv.decodeStream(encoding));
+
+            const out = await readFromOffsetWithMaxChars(
+                decodedStream,
+                offset,
+                READ_FILES_MAX_CONTENT_CHARS,
+                rawStream
+            );
+            content = out.content;
+            totalChars = out.totalChars;
+            truncated = out.truncated;
+            nextOffset = offset + content.length;
+        }
+
+        return {
+            path: filePath,
+            requestedOffset: offset,
+            metadata: { size, modified, totalChars, encoding: encodingLabel },
+            content,
+            truncated: truncated ? true : undefined,
+            nextOffset: truncated ? nextOffset : undefined
+        };
+    } catch (err) {
+        // 细化错误处理：区分不同类型的错误
+        let message: string;
+        if (err instanceof Error) {
+            const nodeErr = err as NodeJS.ErrnoException;
+            if (nodeErr.code === 'ENOENT') {
+                message = `文件不存在: ${filePath}`;
+            } else if (nodeErr.code === 'EACCES') {
+                message = `权限不足，无法读取文件: ${filePath}`;
+            } else if (nodeErr.code === 'EISDIR') {
+                message = `路径是目录，不是文件: ${filePath}`;
+            } else if (nodeErr.code === 'EMFILE') {
+                message = `打开文件过多，请稍后重试`;
+            } else {
+                message = err.message;
+            }
+        } else {
+            message = String(err);
+        }
+        return { path: filePath, requestedOffset: offset, error: message };
+    }
+}
+
+function formatReadFileResult(result: ReadFileResult): string {
+    const parts: string[] = [`--- ${result.path} ---`];
+
+    if (result.error) {
+        parts.push(`错误: ${result.error}`);
+        return parts.join('\n');
+    }
+
+    if (result.requestedOffset > 0) {
+        parts.push(`[从位置 ${result.requestedOffset} 开始]`);
+    }
+
+    if (result.nonText) {
+        const m = result.metadata!;
+        parts.push(
+            `此文件不是纯文本（检测为 ${m.mime ?? '二进制'}），ReadFilesTool 无法打开非文本文件；以上仅为元数据。`
+        );
+    } else {
+        if (result.content !== undefined && result.content.length > 0) {
+            parts.push(result.content);
+        }
+        if (result.truncated && result.nextOffset !== undefined) {
+            const totalChars = result.metadata?.totalChars;
+            const totalStr = totalChars !== undefined ? `，文件总长度为 ${totalChars} 字符` : '';
+            parts.push(
+                `[ 后续被截断，你可指定 offset = ${result.nextOffset} 继续读${totalStr} ]`
+            );
+        }
+    }
+
+    return parts.join('\n');
 }
 
 export class ReadFilesTool extends BaseTool<typeof readFilesSchema> {
     constructor() {
         super(
             'readFiles',
-            '并行读取多个文件的原始文本内容，可用来读取文本、代码、配置文件等文本格式数据。支持同时读取多个文件，提高效率',
+            '并行读取多个文件的原始文本内容，可用来读取文本、代码、配置文件等文本格式数据。支持同时读取多个文件，支持 offset 分页；非文本文件仅返回元数据',
             readFilesSchema
         );
 
         this.setExecutor(this.executeCommand);
     }
 
+    async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
+        const files = toolcall.args_object?.['files'] as Array<{ path: string; offset?: number }> | undefined;
+        const fileItems =
+            files && Array.isArray(files)
+                ? files
+                    .slice(0, 12)
+                    .map(f => {
+                        const p = typeof f === 'object' && f && 'path' in f ? f.path : String(f);
+                        const off = typeof f === 'object' && f && 'offset' in f ? (f as { offset?: number }).offset : 0;
+                        const label = (off ?? 0) > 0 ? `${escapeHtml(p)} <span class="text-amber-600">(从位置 ${off} 开始)</span>` : escapeHtml(p);
+                        return `<li class="mt-0.5">${label}</li>`;
+                    })
+                    .join('')
+                : '';
+        const listHtml =
+            fileItems.length > 0
+                ? `<ul class="list-disc list-inside text-slate-600 text-sm mt-1 space-y-0.5">${fileItems}</ul>`
+                : '<p class="text-slate-500 text-sm mt-1">未指定文件</p>';
+        const resultHtml =
+            toolcall.status === 'success' && toolcall.result
+                ? `<div class="mt-3 rounded-lg border border-slate-200 bg-slate-50/80 p-3 text-sm overflow-x-auto"><pre class="whitespace-pre-wrap break-words font-mono text-slate-800">${escapeHtml(toolcall.result)}</pre></div>`
+                : toolcall.status === 'running'
+                    ? '<p class="mt-2 text-slate-400 text-sm animate-pulse">读取中…</p>'
+                    : toolcall.status === 'error' && toolcall.result
+                        ? `<p class="mt-2 text-rose-600 text-sm">${escapeHtml(toolcall.result)}</p>`
+                        : '';
+        return `
+    <div class="rounded-xl border border-slate-200 bg-white/90 shadow-sm overflow-hidden my-2">
+        <div class="px-4 py-3 border-b border-slate-200 flex items-center gap-2">
+            <span class="text-lg">📖</span>
+            <span class="font-medium text-slate-700">读取文件</span>
+            <span class="text-slate-400 text-sm">${files?.length ?? 0} 个文件</span>
+        </div>
+        <div class="px-4 py-3 text-slate-700">
+            ${listHtml}
+            ${resultHtml}
+        </div>
+    </div>`;
+    }
+
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
-        const paths = toolcall.args_object?.['paths'] as string[] | undefined;
+        const files = toolcall.args_object?.['files'] as Array<{ path: string; offset?: number }> | undefined;
         const body: string[] = [];
 
-        if (paths && Array.isArray(paths)) {
-            body.push(chalk.yellow(`${paths.length} 个文件`));
-            for (const p of paths.slice(0, 5)) {
-                body.push(chalk.dim('  • ') + truncText(p, width - 12));
+        if (files && Array.isArray(files)) {
+            body.push(chalk.yellow(`${files.length} 个文件`));
+            for (const f of files.slice(0, 5)) {
+                const p = typeof f === 'object' && f && 'path' in f ? f.path : String(f);
+                const off = typeof f === 'object' && f && 'offset' in f ? (f as { offset?: number }).offset : 0;
+                const suffix = (off ?? 0) > 0 ? chalk.dim(` (从位置 ${off} 开始)`) : '';
+                body.push(chalk.dim('  • ') + truncText(p, width - 16) + suffix);
             }
-            if (paths.length > 5) {
-                body.push(chalk.dim(`  … 共 ${paths.length} 个文件`));
+            if (files.length > 5) {
+                body.push(chalk.dim(`  … 共 ${files.length} 个文件`));
             }
         }
 
         if (toolcall.status === 'running') {
             body.push(chalk.dim('  ⏳ 读取中…'));
         } else if (toolcall.status === 'success' && toolcall.result) {
-            const lineCount = toolcall.result.split('\n').length;
-            const charCount = toolcall.result.length;
-            body.push(chalk.dim(`  ${lineCount} 行, ${charCount.toLocaleString()} 字符`));
+            const truncatedMatch = toolcall.result.match(/\[ 后续被截断[^]]*offset = (\d+)[^]]* ]/);
+            if (truncatedMatch) {
+                body.push(chalk.dim(`  已截断，可指定 offset = ${truncatedMatch[1]} 继续读`));
+            } else {
+                body.push(chalk.dim('  见下方结果'));
+            }
         }
 
         return new Card({ icon: '📖', title: '读取文件', status: statusDisplay(toolcall.status), body }).render(width);
     }
 
     async executeCommand(args: z.output<typeof readFilesSchema>): Promise<string> {
-        if (!args.paths || args.paths.length === 0) {
-            return '请提供要读取的文件路径列表';
+        if (!args.files || args.files.length === 0) {
+            return '请提供要读取的文件列表（files 数组，每项含 path 与可选的 offset）';
         }
 
-        // 并行读取所有文件
-        const results = await Promise.all(args.paths.map(path => readSingleFile(path)));
+        // 添加并发限制，避免同时打开过多文件
+        const results: ReadFileResult[] = [];
+        for (let i = 0; i < args.files.length; i += READ_FILES_MAX_CONCURRENCY) {
+            const batch = args.files.slice(i, i + READ_FILES_MAX_CONCURRENCY);
+            const batchResults = await Promise.all(
+                batch.map(f => readSingleFile(f.path, f.offset ?? 0))
+            );
+            results.push(...batchResults);
+        }
 
-        // 格式化输出
         const output: string[] = [];
         for (const result of results) {
-            output.push(`\n--- ${result.path} ---`);
-            if (result.error) {
-                output.push(`错误: ${result.error}`);
-            } else {
-                output.push(result.content || '');
-            }
+            output.push(formatReadFileResult(result));
         }
-
-        return output.join('\n');
+        return output.join('\n\n');
     }
 }
 
