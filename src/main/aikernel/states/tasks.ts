@@ -162,7 +162,7 @@ export class TaskState {
         }
     }
 
-    async setSystemPrompt(prompt: string) {
+    setSystemPrompt(prompt: string) {
         logger.info(`setting system prompt ${prompt} to task ${this.task_id}`);
         this.chat_context.system_prompt = new SystemMessage(prompt);
     }
@@ -231,10 +231,10 @@ export class TaskState {
         let skillToolset = SkillRegistry.getInstance().getToolset();
         let memoryToolset = createMemoryToolset();
         let planningToolset = this.parent_id
-            ? createSubTaskPlanningToolset(this)
+            ? createSubTaskPlanningToolset()
             : createMainPlanningToolset();
-        const allToolsets = [...toolsets, skillToolset, memoryToolset, planningToolset];
 
+        const allToolsets = [...toolsets, skillToolset, memoryToolset, planningToolset];
         this.chat_context.attachToolsets(...allToolsets);
 
         logger.info(`messsage submitted to task ${this.task_id}`)
@@ -495,6 +495,11 @@ export class TaskState {
             this.chat_context.attachToolsets(...toolsets);
             this.chat_context.attachToolsets(skillToolset);
             this.chat_context.attachToolsets(memoryToolset);
+            this.chat_context.attachToolsets(
+                this.parent_id === null ?
+                    createMainPlanningToolset() :
+                    createSubTaskPlanningToolset()
+            )
         }
         this.resolveAllToolCalls();
     }

@@ -10,19 +10,337 @@
  */
 
 import { z } from 'zod';
-import chalk from 'chalk';
 import { BaseTool, BaseToolset, ToolResult } from '../tool.js';
 import { Card } from '../../tui/components/card.js';
 import { statusDisplay, truncText } from '../../tui/components/toolcall.js';
-import type { TaskState, TaskUpdateChunk } from '../../states/tasks.js';
-import { SystemMessage, type ToolCall } from '../messages.js';
-import type { SubTaskConfig, SubTaskResult, SubTaskProgressInfo } from './common.js';
+import { Markdown, truncateToWidth } from '@mariozechner/pi-tui';
+import type { TaskState, TaskUpdateChunk } from '../states/tasks.js';
+import type { ToolCall, ToolCallMessagePart, TextMessagePart } from '../messages.js';
+import type { SubTaskConfig, SubTaskResult, SubTaskProgressInfo, PendingSubTask } from './common.js';
+import { AssistantMessage, marked } from '../messages.js';
+import { SUBTASK_SYSTEM_PROMPT } from './prompt.js';
 import { logger } from '../../utils/logger.js';
+import { defaultMarkdownTheme } from '../../tui/theme.js';
+import chalk from 'chalk';
+import format from 'string-template';
 
 
-function safeSlice(input: string, maxLen: number): string {
-    return input.length <= maxLen ? input : `${input.slice(0, maxLen)}...`;
+const SUBTASK_USER_MESSAGE_TEMPLATE = `
+请按照下面的要求执行任务，完成后通过 attemptCompletion 工具提交结果。你的所有待提交的结果都要通过
+attemptCompletion 工具的参数传递，避免通过写文件的形式传递任务结果交付件。
+
+## 任务标题
+{title}
+
+## 任务目标
+{objective}
+
+## 输出结果要求
+{criteria}
+`.trim();
+
+const ATTEMPT_COMPLETION_REMINDER = `你还没有调用 attemptCompletion 工具来返回结果。
+请立即调用 planning-attemptCompletion 工具提交你的任务结果。`;
+
+// ─── Pending SubTasks Registry ─────────────────────────────────────────────────
+
+const pendingSubTasks = new Map<string, PendingSubTask>();
+
+// ─── Progress Extraction ───────────────────────────────────────────────────────
+
+const PROGRESS_THROTTLE_MS = 300;
+
+export function extractSubTaskProgress(
+    chunk: TaskUpdateChunk,
+    progress: SubTaskProgressInfo
+): void {
+    const part = chunk.last_part;
+    if (part.type === 'tool_call') {
+        for (const tc of (part as ToolCallMessagePart).toolcalls) {
+            const existing = progress.tools.find(t => t.name === tc.tool_name);
+            if (existing) {
+                existing.status = tc.status;
+            } else {
+                progress.tools.push({ name: tc.tool_name, status: tc.status });
+            }
+        }
+        if (progress.tools.length > 4) {
+            progress.tools = progress.tools.slice(-4);
+        }
+    } else if (part.type === 'text') {
+        const text = (part as TextMessagePart).text;
+        progress.lastText = text.length > 80 ? '…' + text.slice(-77) : text;
+    }
 }
+
+// ─── Extract attemptCompletion Result ──────────────────────────────────────────
+
+const ATTEMPT_COMPLETION_TOOL_NAME = 'planning-attemptCompletion';
+
+/**
+ * 从任务的消息历史中提取 attemptCompletion 的结果
+ */
+function extractAttemptCompletionResult(task: TaskState): { success: boolean; result: string } | null {
+    for (const message of task.chat_context.messages) {
+        if (!(message instanceof AssistantMessage)) continue;
+        for (const part of message.content) {
+            if (part.type !== 'tool_call') continue;
+            for (const tc of part.toolcalls) {
+                if (tc.tool_name === ATTEMPT_COMPLETION_TOOL_NAME && tc.status === 'success' && tc.args_object) {
+                    return {
+                        success: tc.args_object.success === true,
+                        result: tc.args_object.result || '',
+                    };
+                }
+            }
+        }
+    }
+    return null;
+}
+
+/**
+ * 检查任务是否已调用 attemptCompletion
+ */
+function hasAttemptCompletion(task: TaskState): boolean {
+    for (const message of task.chat_context.messages) {
+        if (!(message instanceof AssistantMessage)) continue;
+        for (const part of message.content) {
+            if (part.type !== 'tool_call') continue;
+            for (const tc of part.toolcalls) {
+                if (tc.tool_name === ATTEMPT_COMPLETION_TOOL_NAME) {
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
+}
+
+// ─── SubTask Hooks ─────────────────────────────────────────────────────────────
+
+/**
+ * 为子任务注册 attemptCompletion 检查钩子
+ * 在 turn 结束前检查是否已调用 attemptCompletion，如果没有则拒绝结束并提示
+ */
+function registerAttemptCompletionHook(subTask: TaskState): void {
+    subTask.hooks.beforeFinishTurn(async (task) => {
+        // 如果已经调用了 attemptCompletion，允许结束
+        if (hasAttemptCompletion(task)) {
+            return { operation: 'finish' };
+        }
+        // 如果用户手动停止，允许结束
+        if (task.stop_requested_by_user) {
+            return { operation: 'finish' };
+        }
+        // 否则拒绝结束，要求调用 attemptCompletion
+        return {
+            operation: 'reject',
+            message: ATTEMPT_COMPLETION_REMINDER
+        };
+    });
+}
+
+// ─── startSubTask: 核心子任务启动函数 ───────────────────────────────────────────
+
+export interface StartSubTaskOptions {
+    /** 父任务 */
+    parentTask: TaskState;
+    /** 子任务配置 */
+    config: SubTaskConfig;
+    /** 进度回调 */
+    onProgress?: (progress: SubTaskProgressInfo) => void;
+    /** 子任务创建后的回调 */
+    onCreated?: (subTask: TaskState) => void;
+}
+
+/**
+ * 启动一个子任务
+ * - 使用 SUBTASK_SYSTEM_PROMPT 作为系统提示词
+ * - 通过 UserMessage 传入任务目标、结果要求等信息
+ * - 使用 TaskHooks 自动处理 attemptCompletion 检查
+ */
+export async function startSubTask(options: StartSubTaskOptions): Promise<SubTaskResult> {
+    const { parentTask, config, onProgress, onCreated } = options;
+
+    // 检查父任务状态
+    if (parentTask.task_status === 'stopped' || !parentTask.task_manager_state.getTask(parentTask.task_id)) {
+        return {
+            success: false,
+            result: '父任务已停止或已被移除，子任务跳过执行。',
+            subtask_id: 'n/a',
+        };
+    }
+
+    // 创建子任务
+    const subTask = parentTask.task_manager_state.createSubTask(parentTask.task_id);
+    subTask.model = parentTask.model;
+    subTask.task_name = config.title || '未命名子任务';
+
+    // 设置系统提示词
+    subTask.setSystemPrompt(SUBTASK_SYSTEM_PROMPT);
+
+    // 注册 attemptCompletion 检查钩子
+    registerAttemptCompletionHook(subTask);
+
+    logger.info(`[subtask] created subtask=${subTask.task_id} parent=${parentTask.task_id} title="${config.title}" async=${config.isAsync}`);
+
+    // 通知子任务已创建
+    onCreated?.(subTask);
+
+    // 进度跟踪
+    const progress: SubTaskProgressInfo = { tools: [], lastText: null };
+    let lastProgressTime = 0;
+    const progressCallback = (chunk: TaskUpdateChunk) => {
+        if (chunk.type !== 'assistant') return;
+        extractSubTaskProgress(chunk, progress);
+        const now = Date.now();
+        if (onProgress && (now - lastProgressTime >= PROGRESS_THROTTLE_MS)) {
+            lastProgressTime = now;
+            onProgress({ tools: [...progress.tools], lastText: progress.lastText });
+        }
+    };
+
+    try {
+        // 通过 UserMessage 传入任务目标
+        const userMessage = format(SUBTASK_USER_MESSAGE_TEMPLATE, {
+            title: config.title,
+            objective: config.objective,
+            criteria: config.criteria
+        });
+        await subTask.submitUserMessage(userMessage);
+        await subTask.waitUntilFinished(progressCallback);
+
+        // 处理结果
+        if (subTask.stop_requested_by_user) {
+            return {
+                success: false,
+                result: '子任务被用户手动停止。',
+                subtask_id: subTask.task_id
+            };
+        }
+
+        // 从消息历史中提取 attemptCompletion 结果
+        const completionResult = extractAttemptCompletionResult(subTask);
+        if (completionResult) {
+            return {
+                ...completionResult,
+                subtask_id: subTask.task_id
+            };
+        }
+
+        // 理论上不应该到达这里，因为 hooks 会强制要求 attemptCompletion
+        return {
+            success: false,
+            result: '子任务已结束但未返回结果。',
+            subtask_id: subTask.task_id
+        };
+    } catch (err: any) {
+        subTask.stop('system');
+        logger.warn(`[subtask] subtask failed subtask=${subTask.task_id} error=${err?.message ?? String(err)}`);
+        return {
+            success: false,
+            result: `子任务执行失败: ${err?.message ?? String(err)}`,
+            subtask_id: subTask.task_id
+        };
+    }
+}
+
+// ─── waitSubTaskResult: 等待子任务结果 ─────────────────────────────────────────
+
+export interface WaitSubTaskOptions {
+    /** 子任务ID */
+    subtaskId: string;
+    /** 父任务（用于查找子任务） */
+    parentTask: TaskState;
+    /** 进度回调 */
+    onProgress?: (progress: SubTaskProgressInfo) => void;
+}
+
+/**
+ * 等待子任务完成并返回结果
+ * 复用于 createSubTask 异步模式和 waitSubTask 工具
+ */
+export async function waitSubTaskResult(options: WaitSubTaskOptions): Promise<SubTaskResult> {
+    const { subtaskId, parentTask, onProgress } = options;
+
+    // 先检查 pending 列表
+    const pending = pendingSubTasks.get(subtaskId);
+    if (pending) {
+        const subTask = pending.taskState;
+
+        // 如果子任务还在运行，等待并报告进度
+        if (subTask && (subTask.task_status === 'running' || subTask.task_status === 'waiting')) {
+            await waitForTaskWithProgress(subTask, onProgress);
+        }
+
+        const result = await pending.promise;
+        pendingSubTasks.delete(subtaskId);
+        return result;
+    }
+
+    // 从任务管理器中查找
+    const subTask = parentTask.task_manager_state.getTask(subtaskId);
+    if (!subTask) {
+        return {
+            success: false,
+            result: `未找到子任务: ${subtaskId}`,
+            subtask_id: subtaskId,
+        };
+    }
+
+    // 如果已经有结果，直接返回
+    const existingResult = extractAttemptCompletionResult(subTask);
+    if (existingResult) {
+        return {
+            ...existingResult,
+            subtask_id: subtaskId
+        };
+    }
+
+    // 等待子任务完成
+    await waitForTaskWithProgress(subTask, onProgress);
+
+    const completionResult = extractAttemptCompletionResult(subTask);
+    if (completionResult) {
+        return {
+            ...completionResult,
+            subtask_id: subtaskId
+        };
+    }
+
+    return {
+        success: false,
+        result: '子任务已结束但未调用 attemptCompletion 返回结果。',
+        subtask_id: subtaskId
+    };
+}
+
+/**
+ * 等待任务完成并报告进度（内部复用函数）
+ */
+async function waitForTaskWithProgress(
+    task: TaskState,
+    onProgress?: (progress: SubTaskProgressInfo) => void
+): Promise<void> {
+    if (!onProgress) {
+        await task.waitUntilFinished();
+        return;
+    }
+
+    const progress: SubTaskProgressInfo = { tools: [], lastText: null };
+    let lastProgressTime = 0;
+
+    await task.waitUntilFinished((chunk) => {
+        extractSubTaskProgress(chunk, progress);
+        const now = Date.now();
+        if (now - lastProgressTime >= PROGRESS_THROTTLE_MS) {
+            lastProgressTime = now;
+            onProgress({ tools: [...progress.tools], lastText: progress.lastText });
+        }
+    });
+}
+
+// ─── Tool Classes ──────────────────────────────────────────────────────────────
 
 const CreateSubTaskArgsSchema = z.object({
     title: z.string().describe('子任务标题，一句话解释任务目标'),
@@ -45,9 +363,9 @@ export class CreateSubTaskTool extends BaseTool<typeof CreateSubTaskArgsSchema> 
         lines.push(chalk.dim('─'.repeat(Math.min(width - 8, 30))));
         for (const t of progress.tools) {
             const icon = t.status === 'success' ? chalk.greenBright('✔') :
-                         t.status === 'error' ? chalk.redBright('✘') :
-                         t.status === 'running' ? chalk.blueBright('●') :
-                         chalk.dim('○');
+                t.status === 'error' ? chalk.redBright('✘') :
+                    t.status === 'running' ? chalk.blueBright('●') :
+                        chalk.dim('○');
             const shortName = t.name.includes('-') ? t.name.split('-').slice(1).join('-') : t.name;
             lines.push(`  ${icon} ${chalk.dim(shortName)}`);
         }
@@ -62,9 +380,9 @@ export class CreateSubTaskTool extends BaseTool<typeof CreateSubTaskArgsSchema> 
 
         const toolItems = progress.tools.map(t => {
             const dotColor = t.status === 'success' ? 'bg-emerald-500' :
-                             t.status === 'error' ? 'bg-rose-500' :
-                             t.status === 'running' ? 'bg-blue-500 animate-pulse' :
-                             'bg-slate-300';
+                t.status === 'error' ? 'bg-rose-500' :
+                    t.status === 'running' ? 'bg-blue-500 animate-pulse' :
+                        'bg-slate-300';
             const shortName = t.name.includes('-') ? t.name.split('-').slice(1).join('-') : t.name;
             return `<div class="flex items-center space-x-2">
                 <div class="h-1.5 w-1.5 rounded-full ${dotColor}"></div>
@@ -94,6 +412,9 @@ export class CreateSubTaskTool extends BaseTool<typeof CreateSubTaskArgsSchema> 
 
         if (args?.title) {
             body.push(chalk.dim('标题: ') + truncText(args.title, width - 12));
+        }
+        if (args?.objective) {
+            body.push(chalk.dim('目标: ') + truncText(args.objective, width - 12));
         }
         if (args?.isAsync) {
             body.push(chalk.dim('模式: ') + chalk.cyan('异步'));
@@ -133,6 +454,7 @@ export class CreateSubTaskTool extends BaseTool<typeof CreateSubTaskArgsSchema> 
     async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
         const args = toolcall.args_object as z.output<typeof CreateSubTaskArgsSchema> | undefined;
         const title = args?.title || '子任务';
+        const objective = args?.objective || '';
         const asyncTag = args?.isAsync ? ' <span class="text-blue-500 text-xs">[异步]</span>' : '';
 
         if (toolcall.status === 'running') {
@@ -145,6 +467,7 @@ export class CreateSubTaskTool extends BaseTool<typeof CreateSubTaskArgsSchema> 
                     <div class="h-2 w-2 rounded-full bg-blue-500 animate-pulse ring-4 ring-blue-100/50"></div>
                     <span class="text-slate-500 truncate max-w-xs">${title}</span>
                 </div>
+                ${objective ? `<div class="mt-1 text-xs text-slate-400 truncate max-w-full">目标: ${objective.length > 60 ? objective.slice(0, 60) + '…' : objective}</div>` : ''}
                 ${activitiesHtml}
             </div>`;
         }
@@ -167,11 +490,14 @@ export class CreateSubTaskTool extends BaseTool<typeof CreateSubTaskArgsSchema> 
         }
 
         return `
-        <div class="flex mt-3 mb-3 text-sm items-center space-x-4 bg-white/80 backdrop-blur-md border border-slate-200 py-2 px-4 rounded-full shadow-sm w-fit">
-            <span class="text-base">📋</span>
-            <span class="font-semibold text-slate-600">子任务${asyncTag}</span>
-            <span class="text-slate-500 truncate max-w-xs">${title}</span>
-            ${statusHtml}
+        <div class="flex flex-col mt-3 mb-3 text-sm bg-white/80 backdrop-blur-md border border-slate-200 py-2 px-4 rounded-full shadow-sm w-fit">
+            <div class="flex items-center space-x-4">
+                <span class="text-base">📋</span>
+                <span class="font-semibold text-slate-600">子任务${asyncTag}</span>
+                <span class="text-slate-500 truncate max-w-xs">${title}</span>
+                ${statusHtml}
+            </div>
+            ${objective ? `<div class="text-xs text-slate-400 truncate max-w-full ml-6">目标: ${objective.length > 50 ? objective.slice(0, 50) + '…' : objective}</div>` : ''}
         </div>`;
     }
 
@@ -188,10 +514,14 @@ export class CreateSubTaskTool extends BaseTool<typeof CreateSubTaskArgsSchema> 
         };
 
         if (config.isAsync) {
+            // 异步模式：启动子任务并立即返回 ID
             let asyncSubTaskState: TaskState | undefined;
-            const promise = executeSubTask(taskState, config, undefined, (st) => {
-                asyncSubTaskState = st;
+            const promise = startSubTask({
+                parentTask: taskState,
+                config,
+                onCreated: (st) => { asyncSubTaskState = st; }
             });
+
             const tempId = crypto.randomUUID();
             pendingSubTasks.set(tempId, { promise, taskState: asyncSubTaskState });
 
@@ -202,6 +532,7 @@ export class CreateSubTaskTool extends BaseTool<typeof CreateSubTaskArgsSchema> 
                 pendingSubTasks.delete(tempId);
             });
 
+            // 等待一小段时间，看任务是否能快速完成
             const earlyResult = await new Promise<SubTaskResult | string>((resolve) => {
                 const timeout = setTimeout(() => resolve(tempId), 200);
                 promise.then(result => {
@@ -221,9 +552,15 @@ export class CreateSubTaskTool extends BaseTool<typeof CreateSubTaskArgsSchema> 
             return;
         }
 
-        const result = await executeSubTask(taskState, config, (progress) => {
-            toolResult.updateResultObject({ subtask_progress: progress });
+        // 同步模式：等待子任务完成
+        const result = await startSubTask({
+            parentTask: taskState,
+            config,
+            onProgress: (progress) => {
+                toolResult.updateResultObject({ subtask_progress: progress });
+            }
         });
+
         toolResult.result = JSON.stringify(result);
     }
 }
@@ -246,13 +583,24 @@ export class WaitSubTaskTool extends BaseTool<typeof WaitSubTaskArgsSchema> {
         return (toolcall.result_object as any)?.subtask_progress as SubTaskProgressInfo | undefined;
     }
 
+    private static getSubTaskTitle(toolcall: ToolCall): string {
+        // 从 pendingSubTasks 中查找子任务标题
+        const subtaskId = (toolcall.args_object as any)?.subtask_id as string | undefined;
+        if (subtaskId) {
+            const pending = pendingSubTasks.get(subtaskId);
+            if (pending?.taskState) {
+                return pending.taskState.task_name || '子任务';
+            }
+        }
+        return '子任务';
+    }
+
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
         const args = toolcall.args_object as z.output<typeof WaitSubTaskArgsSchema> | undefined;
         const body: string[] = [];
+        const title = WaitSubTaskTool.getSubTaskTitle(toolcall);
 
-        if (args?.subtask_id) {
-            body.push(chalk.dim('子任务ID: ') + chalk.cyan(truncText(args.subtask_id, width - 18)));
-        }
+        body.push(chalk.dim('标题: ') + chalk.cyan(truncText(title, width - 12)));
 
         if (toolcall.status === 'running') {
             body.push(...CreateSubTaskTool.renderProgressCli(
@@ -284,8 +632,7 @@ export class WaitSubTaskTool extends BaseTool<typeof WaitSubTaskArgsSchema> {
     }
 
     async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
-        const args = toolcall.args_object as z.output<typeof WaitSubTaskArgsSchema> | undefined;
-        const idPreview = args?.subtask_id ? args.subtask_id.slice(0, 8) + '...' : '?';
+        const title = WaitSubTaskTool.getSubTaskTitle(toolcall);
 
         if (toolcall.status === 'running') {
             const activitiesHtml = CreateSubTaskTool.renderProgressHtml(
@@ -297,7 +644,7 @@ export class WaitSubTaskTool extends BaseTool<typeof WaitSubTaskArgsSchema> {
                     <span class="text-base">⏳</span>
                     <span class="font-semibold text-slate-600">等待子任务</span>
                     <div class="h-2 w-2 rounded-full bg-blue-500 animate-pulse ring-4 ring-blue-100/50"></div>
-                    <span class="text-slate-500">${idPreview}</span>
+                    <span class="text-slate-500 truncate max-w-xs">${title}</span>
                 </div>
                 ${activitiesHtml}
             </div>`;
@@ -320,7 +667,7 @@ export class WaitSubTaskTool extends BaseTool<typeof WaitSubTaskArgsSchema> {
         <div class="flex mt-3 mb-3 text-sm items-center space-x-4 bg-white/80 backdrop-blur-md border border-slate-200 py-2 px-4 rounded-full shadow-sm w-fit">
             <span class="text-base">⏳</span>
             <span class="font-semibold text-slate-600">等待子任务</span>
-            <span class="text-slate-500">${idPreview}</span>
+            <span class="text-slate-500 truncate max-w-xs">${title}</span>
             ${statusHtml}
         </div>`;
     }
@@ -330,99 +677,27 @@ export class WaitSubTaskTool extends BaseTool<typeof WaitSubTaskArgsSchema> {
             throw new Error('waitSubTask requires task state');
         }
 
-        const subtaskId = args.subtask_id;
-
-        const pending = pendingSubTasks.get(subtaskId);
-        if (pending) {
-            const subTask = pending.taskState;
-
-            if (subTask && (subTask.task_status === 'running' || subTask.task_status === 'waiting')) {
-                const progress: SubTaskProgressInfo = { tools: [], lastText: null };
-                let lastProgressTime = 0;
-                await subTask.waitUntilFinished((chunk) => {
-                    extractSubTaskProgress(chunk, progress);
-                    const now = Date.now();
-                    if (now - lastProgressTime >= 300) {
-                        lastProgressTime = now;
-                        toolResult.updateResultObject({
-                            subtask_progress: { tools: [...progress.tools], lastText: progress.lastText }
-                        });
-                    }
-                });
-            }
-
-            const result = await pending.promise;
-            pendingSubTasks.delete(subtaskId);
-            toolResult.result = JSON.stringify(result);
-            return;
-        }
-
-        const subTask = taskState.task_manager_state.getTask(subtaskId);
-        if (!subTask) {
-            toolResult.result = JSON.stringify({
-                success: false,
-                result: `未找到子任务: ${subtaskId}`,
-                subtask_id: subtaskId,
-            } satisfies SubTaskResult);
-            return;
-        }
-
-        if (subTask.completion_result) {
-            toolResult.result = JSON.stringify({
-                ...subTask.completion_result,
-                subtask_id: subtaskId,
-            } satisfies SubTaskResult);
-            return;
-        }
-
-        const progress: SubTaskProgressInfo = { tools: [], lastText: null };
-        let lastProgressTime = 0;
-
-        await subTask.waitUntilFinished((chunk) => {
-            extractSubTaskProgress(chunk, progress);
-            const now = Date.now();
-            if (now - lastProgressTime >= 300) {
-                lastProgressTime = now;
-                toolResult.updateResultObject({
-                    subtask_progress: { tools: [...progress.tools], lastText: progress.lastText }
-                });
+        const result = await waitSubTaskResult({
+            subtaskId: args.subtask_id,
+            parentTask: taskState,
+            onProgress: (progress) => {
+                toolResult.updateResultObject({ subtask_progress: progress });
             }
         });
 
-        const cr = subTask.completion_result as { success: boolean; result: string } | undefined;
-        if (cr) {
-            toolResult.result = JSON.stringify({
-                success: cr.success,
-                result: cr.result,
-                subtask_id: subtaskId,
-            } satisfies SubTaskResult);
-            return;
-        }
-
-        toolResult.result = JSON.stringify({
-            success: false,
-            result: '子任务已结束但未调用 attemptCompletion 返回结果。',
-            subtask_id: subtaskId,
-        } satisfies SubTaskResult);
+        toolResult.result = JSON.stringify(result);
     }
 }
 
 const AttemptCompletionArgsSchema = z.object({
-    success: z.boolean().describe('Whether the subtask completed successfully.'),
-    result: z.string().describe('If success=true, the task result. If success=false, the failure reason.'),
+    success: z.boolean().describe('子任务是否成功完成'),
+    result: z.string().describe('如果成功完成则该参数为任务的返回结果，若为成功完成则为失败原因'),
 });
 
 export class AttemptCompletionTool extends BaseTool<typeof AttemptCompletionArgsSchema> {
-    private subTaskState: TaskState;
-
-    constructor(subTaskState: TaskState) {
-        super(
-            'attemptCompletion',
-            '完成子任务并返回结果。子任务必须通过此工具提交最终结果，success=true 时 result 为任务结果，success=false 时 result 为失败原因。',
-            AttemptCompletionArgsSchema
-        );
-        this.subTaskState = subTaskState;
-        this.setExecutor(this.handleExecute.bind(this));
+    constructor() {
+        super('attemptCompletion', '完成子任务并返回结果', AttemptCompletionArgsSchema);
+        this.setUniversalExecutor(this.handleExecute.bind(this));
     }
 
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
@@ -433,7 +708,8 @@ export class AttemptCompletionTool extends BaseTool<typeof AttemptCompletionArgs
             const icon = args.success ? chalk.greenBright('✔') : chalk.redBright('✘');
             body.push(`${icon} ${args.success ? '成功' : '失败'}`);
             if (args.result) {
-                body.push(chalk.dim('结果: ') + truncText(args.result, width - 12));
+                const markdown = new Markdown(args.result, 0, 0, defaultMarkdownTheme);
+                body.push(...markdown.render(width - 10));
             }
         }
 
@@ -449,163 +725,27 @@ export class AttemptCompletionTool extends BaseTool<typeof AttemptCompletionArgs
         const args = toolcall.args_object as z.output<typeof AttemptCompletionArgsSchema> | undefined;
         const successIcon = args?.success ? '✅' : '❌';
         const statusText = args?.success ? '成功' : '失败';
-        const resultPreview = args?.result ? safeSlice(args.result, 120) : '';
+        const resultHtml = args?.result ? await marked.parse(args.result) : '';
 
         return `
-        <div class="flex mt-3 mb-3 text-sm items-center space-x-4 bg-white/80 backdrop-blur-md border border-slate-200 py-2 px-4 rounded-full shadow-sm w-fit">
-            <span class="text-base">${successIcon}</span>
-            <span class="font-semibold text-slate-600">子任务${statusText}</span>
-            ${resultPreview ? `<span class="text-slate-500 truncate max-w-xs">${resultPreview}</span>` : ''}
+        <div class="flex flex-col mt-3 mb-3 text-sm bg-white/80 backdrop-blur-md border border-slate-200 py-3 px-4 rounded-2xl shadow-sm w-fit max-w-2xl">
+            <div class="flex items-center space-x-3 mb-2">
+                <span class="text-base">${successIcon}</span>
+                <span class="font-semibold text-slate-600">子任务${statusText}</span>
+            </div>
+            ${resultHtml ? `<div class="prose prose-slate prose-sm max-w-none">${resultHtml}</div>` : ''}
         </div>
         `;
     }
 
-    private async handleExecute(args: z.output<typeof AttemptCompletionArgsSchema>): Promise<string> {
-        this.subTaskState.completion_result = {
-            success: args.success,
-            result: args.result,
-        };
-        this.subTaskState.stop('system');
-        return JSON.stringify({ accepted: true });
+    private async handleExecute(args: z.output<typeof AttemptCompletionArgsSchema>, toolResult: ToolResult, taskState?: TaskState): Promise<void> {
+        // 停止子任务，结果已经通过 tool call args 记录在消息历史中
+        taskState?.stop('system');
+        toolResult.attachResult(JSON.stringify({ accepted: true }));
     }
 }
 
-// ─── Subtask system prompt builder ───────────────────────────────────────────
-
-export function buildSubTaskSystemPrompt(config: SubTaskConfig): string {
-    return [
-        '你是一个子任务执行器。请专注于完成分配给你的任务。',
-        '',
-        `## 任务标题`,
-        config.title,
-        '',
-        `## 任务要求`,
-        config.objective,
-        '',
-        `## 输出要求`,
-        config.criteria,
-        '',
-        '## 完成规则',
-        '完成任务后，你**必须**调用 attemptCompletion 工具来返回结果：',
-        '- 如果任务成功完成，调用 attemptCompletion(success=true, result="你的结果")',
-        '- 如果任务无法完成，调用 attemptCompletion(success=false, result="失败原因")',
-        '- 你**不能**在没有调用 attemptCompletion 的情况下结束任务',
-        '- result 参数的内容应当严格按照上面的输出要求来组织',
-        '- 对于简单的任务，你应当将任务结果直接放在 attemptCompletion 工具中，对于复杂的任务，你可以将任务结果写入文件然后在结果中将文件路径告知主任务'
-    ].join('\n');
-}
-
-// ─── Subtask progress extraction ─────────────────────────────────────────────
-
-export function extractSubTaskProgress(
-    chunk: TaskUpdateChunk,
-    progress: SubTaskProgressInfo
-): void {
-    const part = chunk.last_part;
-    if (part.type === 'tool_call') {
-        for (const tc of (part as ToolCallMessagePart).toolcalls) {
-            const existing = progress.tools.find(t => t.name === tc.tool_name);
-            if (existing) {
-                existing.status = tc.status;
-            } else {
-                progress.tools.push({ name: tc.tool_name, status: tc.status });
-            }
-        }
-        if (progress.tools.length > 4) {
-            progress.tools = progress.tools.slice(-4);
-        }
-    } else if (part.type === 'text') {
-        const text = (part as TextMessagePart).text;
-        progress.lastText = text.length > 80 ? '…' + text.slice(-77) : text;
-    }
-}
-
-// ─── Subtask executor ────────────────────────────────────────────────────────
-
-const MAX_COMPLETION_RETRIES = 3;
-const PROGRESS_THROTTLE_MS = 300;
-
-export async function executeSubTask(
-    parentTask: TaskState,
-    config: SubTaskConfig,
-    onProgress?: (progress: SubTaskProgressInfo) => void,
-    onCreated?: (subTask: TaskState) => void
-): Promise<SubTaskResult> {
-    if (parentTask.task_status === 'stopped' || !parentTask.task_manager_state.getTask(parentTask.task_id)) {
-        return {
-            success: false,
-            result: '父任务已停止或已被移除，子任务跳过执行。',
-            subtask_id: 'n/a',
-        };
-    }
-
-    const subTask = parentTask.task_manager_state.createSubTask(parentTask.task_id);
-    subTask.model = parentTask.model;
-    subTask.task_name = toShortTitle(config.title) || '子任务';
-
-    const subTaskPrompt = buildSubTaskSystemPrompt(config);
-    subTask.chat_context.system_prompt = new SystemMessage(subTaskPrompt);
-
-    logger.info(`[subtask] created subtask=${subTask.task_id} parent=${parentTask.task_id} title="${config.title}" async=${config.isAsync}`);
-
-    onCreated?.(subTask);
-
-    const progress: SubTaskProgressInfo = { tools: [], lastText: null };
-    let lastProgressTime = 0;
-    const progressCallback = (chunk: TaskUpdateChunk) => {
-        if (chunk.type !== 'assistant') return;
-        extractSubTaskProgress(chunk, progress);
-        const now = Date.now();
-        if (onProgress && (now - lastProgressTime >= PROGRESS_THROTTLE_MS)) {
-            lastProgressTime = now;
-            onProgress({ tools: [...progress.tools], lastText: progress.lastText });
-        }
-    };
-
-    try {
-        await subTask.submitUserMessage(config.objective);
-        await subTask.waitUntilFinished(progressCallback);
-
-        let retries = 0;
-        while (!subTask.completion_result && !subTask.stop_requested_by_user && retries < MAX_COMPLETION_RETRIES) {
-            retries++;
-            logger.info(`[subtask] retry attemptCompletion subtask=${subTask.task_id} attempt=${retries}`);
-            await subTask.submitUserMessage(
-                '你还没有调用 attemptCompletion 工具来返回结果。请立即调用 planning-attemptCompletion 工具提交你的任务结果。'
-            );
-            await subTask.waitUntilFinished(progressCallback);
-        }
-
-        if (subTask.stop_requested_by_user) {
-            return {
-                success: false,
-                result: '子任务被用户手动停止。',
-                subtask_id: subTask.task_id,
-            };
-        }
-
-        if (subTask.completion_result) {
-            return {
-                ...subTask.completion_result,
-                subtask_id: subTask.task_id,
-            };
-        }
-
-        return {
-            success: false,
-            result: `子任务在 ${MAX_COMPLETION_RETRIES} 次重试后仍未调用 attemptCompletion。`,
-            subtask_id: subTask.task_id,
-        };
-    } catch (err: any) {
-        subTask.stop('system');
-        logger.warn(`[subtask] subtask failed subtask=${subTask.task_id} error=${err?.message ?? String(err)}`);
-        return {
-            success: false,
-            result: `子任务执行失败: ${err?.message ?? String(err)}`,
-            subtask_id: subTask.task_id,
-        };
-    }
-}
+// ─── Toolset Factory Functions ────────────────────────────────────────────────
 
 export function createMainPlanningToolset(): BaseToolset {
     const toolset = new BaseToolset('planning');
@@ -614,8 +754,8 @@ export function createMainPlanningToolset(): BaseToolset {
     return toolset;
 }
 
-export function createSubTaskPlanningToolset(subTask: TaskState): BaseToolset {
+export function createSubTaskPlanningToolset(): BaseToolset {
     const toolset = new BaseToolset('planning');
-    toolset.addTool(new AttemptCompletionTool(subTask));
+    toolset.addTool(new AttemptCompletionTool());
     return toolset;
 }
