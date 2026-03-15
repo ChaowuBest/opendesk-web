@@ -9,25 +9,41 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { ChatContext, UserMessage, AssistantMessage, FileMessagePart, SystemMessage, AssistantResponse, AssistantMessagePart, Usage, ToolCall, CompactSeparatorMessage } from '../aikernel/messages.js';
-import { shouldCompact, compactContext } from '../aikernel/compact.js';
-import { BaseToolset } from '../aikernel/tool.js';
-import { LLM } from '../aikernel/llm.js';
-import { getTaskDirectory } from '../utils/setting.js';
-import { logger } from '../utils/logger.js';
-import { ApplicationRegistry } from '../applications/registry.js';
+import {
+    ChatContext, UserMessage, UserMessagePart,
+    AssistantMessage, AssistantMessagePart, FileMessagePart,
+    SystemMessage, Usage, ToolCall
+} from '../messages.js';
+import { shouldCompact, compactContext } from '../compact.js';
+import { BaseToolset } from '../tool.js';
+import { LLM } from '../llm.js';
+import { getTaskDirectory } from '../../utils/setting.js';
+import { logger } from '../../utils/logger.js';
+import { ApplicationRegistry } from '../../applications/registry.js';
 import { jsonrepair } from 'jsonrepair';
 import officeParser from 'officeparser';
 import path from 'path';
 import fs from 'fs';
-import { SkillRegistry } from '../aikernel/skill.js';
-import { createMemoryToolset } from '../aikernel/memory/tools.js';
-import { MemoryRegistry } from '../aikernel/memory/registry.js';
+import { SkillRegistry } from '../skill.js';
+import { createMemoryToolset } from '../memory/tools.js';
+import { createMainPlanningToolset, createSubTaskPlanningToolset } from '../planning/tools.js';
+import { TaskHooks } from '../hooks.js';
 
 
 type TaskStatus = 'waiting' | 'running' | 'stopped';
 
-export interface TaskUpdateChunk {
+export interface TaskUpdateUserChunk {
+    type: 'user';
+    task_id: string;
+    task_status: TaskStatus;
+    message_id: string;
+    last_part_index: number;
+    last_part: UserMessagePart;
+    usage?: Usage;
+}
+
+export interface TaskUpdateAssistantChunk {
+    type: 'assistant';
     task_id: string;
     task_status: TaskStatus;
     message_id: string;
@@ -35,6 +51,8 @@ export interface TaskUpdateChunk {
     last_part: AssistantMessagePart;
     usage?: Usage;
 }
+
+export type TaskUpdateChunk = TaskUpdateUserChunk | TaskUpdateAssistantChunk;
 
 export class BaseTaskUpdateSubscriber {
     subscription_id: string = crypto.randomUUID();
@@ -62,34 +80,41 @@ class CallbackTaskUpdateSubscriber extends BaseTaskUpdateSubscriber {
 }
 
 export class TaskState {
+
     task_id: string = crypto.randomUUID();
+    parent_id: string | null = null;
     task_name: string | null = null;
     task_status: TaskStatus = 'waiting';
     chat_context: ChatContext = new ChatContext();
-    subscribers: BaseTaskUpdateSubscriber[] = [];
-    task_manager_state: TaskManagerState;
+
     model?: string;
     message_queue: string[] = [];
-    started_at?: Date;   // 任务开始时间
-    finished_at?: Date;  // 任务完成时间
-    total_elapsed_ms: number = 0;  // agent 累计执行时间（毫秒）
-    bookmark_path?: string;  // 书签路径，"/" 表示根目录
-    soul_uid?: string;  // 该任务关联的人设 UID
-    soul_name?: string; // 创建时的人设昵称快照（即使 soul 被删也能展示）
 
-    constructor(task_manager_state: TaskManagerState) {
+    stop_requested_by_user: boolean = false;
+    started_at?: Date;
+    finished_at?: Date;
+    total_elapsed_ms: number = 0;
+    bookmark_path?: string;
+
+    /** 任务钩子，用于在一系列任务控制点中执行回调函数 */
+    hooks: TaskHooks = new TaskHooks();
+    /** 订阅者，主要用于在 TUI/GUI 中获取任务状态更新等 */
+    subscribers: BaseTaskUpdateSubscriber[] = [];
+    /** 全局任务管理器的状态 */
+    task_manager_state: TaskManagerState;
+
+    constructor(task_manager_state: TaskManagerState, parent_id: string | null = null) {
         this.task_manager_state = task_manager_state;
+        this.parent_id = parent_id;
     }
 
     static load(task_json_path: string, task_manager_state: TaskManagerState): TaskState {
         const task_json = JSON.parse(fs.readFileSync(task_json_path, 'utf8'));
-        const task = new TaskState(task_manager_state);
+        const task = new TaskState(task_manager_state, task_json.parent_id || null);
         task.task_id = task_json.task_id;
         task.task_name = task_json.task_name;
-        // 从硬盘加载的任务如果是running状态，则说明其在运行时被异常中断关闭了
         task.task_status = task_json.task_status === 'running' ? 'failed' : task_json.task_status;
         task.chat_context = ChatContext.assign(task_json.chat_context);
-        // 加载时间字段
         if (task_json.started_at) {
             task.started_at = new Date(task_json.started_at);
         }
@@ -102,11 +127,8 @@ export class TaskState {
         if (task_json.bookmark_path) {
             task.bookmark_path = task_json.bookmark_path;
         }
-        if (task_json.soul_uid) {
-            task.soul_uid = task_json.soul_uid;
-        }
-        if (task_json.soul_name) {
-            task.soul_name = task_json.soul_name;
+        if (typeof task_json.stop_requested_by_user === 'boolean') {
+            task.stop_requested_by_user = task_json.stop_requested_by_user;
         }
         return task;
     }
@@ -114,20 +136,21 @@ export class TaskState {
     toSimplifiedJSON() {
         return {
             task_id: this.task_id,
+            parent_id: this.parent_id,
             task_name: this.task_name,
             task_status: this.task_status,
             started_at: this.started_at?.toISOString(),
             finished_at: this.finished_at?.toISOString(),
             total_elapsed_ms: this.total_elapsed_ms,
             bookmark_path: this.bookmark_path,
-            soul_uid: this.soul_uid,
-            soul_name: this.soul_name,
+            stop_requested_by_user: this.stop_requested_by_user,
         }
     }
 
     toJSON() {
         return {
             task_id: this.task_id,
+            parent_id: this.parent_id,
             task_name: this.task_name,
             task_status: this.task_status,
             chat_context: this.chat_context.toJSON(),
@@ -135,12 +158,11 @@ export class TaskState {
             finished_at: this.finished_at?.toISOString(),
             total_elapsed_ms: this.total_elapsed_ms,
             bookmark_path: this.bookmark_path,
-            soul_uid: this.soul_uid,
-            soul_name: this.soul_name,
+            stop_requested_by_user: this.stop_requested_by_user,
         }
     }
 
-    async setSystemPrompt(prompt: string) {
+    setSystemPrompt(prompt: string) {
         logger.info(`setting system prompt ${prompt} to task ${this.task_id}`);
         this.chat_context.system_prompt = new SystemMessage(prompt);
     }
@@ -172,9 +194,6 @@ export class TaskState {
     /** 标记外部已经完成一次压缩，submitUserMessage 应跳过自动压缩 */
     markCompacted() { this._compactedBeforeSubmit = true; }
 
-    /**
-     * 手动触发上下文压缩（供 /compact 命令调用）
-     */
     async manualCompact(): Promise<boolean> {
         return await compactContext(this.chat_context, this.model);
     }
@@ -185,6 +204,7 @@ export class TaskState {
     async submitUserMessage(message: string) {
         this.task_status = 'running';
         this.started_at = new Date();  // 记录任务开始时间
+        this.stop_requested_by_user = false;
         this.finished_at = undefined;  // 清除之前的完成时间
         this.task_manager_state.publishTaskListUpdate();
 
@@ -210,31 +230,71 @@ export class TaskState {
         let toolsets = await ApplicationRegistry.listAvailableToolsets();
         let skillToolset = SkillRegistry.getInstance().getToolset();
         let memoryToolset = createMemoryToolset();
-        this.chat_context.attachToolsets(...toolsets);
-        this.chat_context.attachToolsets(skillToolset);
-        this.chat_context.attachToolsets(memoryToolset);
+        let planningToolset = this.parent_id
+            ? createSubTaskPlanningToolset()
+            : createMainPlanningToolset();
+
+        const allToolsets = [...toolsets, skillToolset, memoryToolset, planningToolset];
+        this.chat_context.attachToolsets(...allToolsets);
 
         logger.info(`messsage submitted to task ${this.task_id}`)
 
         if (this.task_name === null) {
+            // 这里我们先放一个占位符，避免可能出现的重复submitUserMessage导致多次起名
+            this.task_name = '未命名任务';
             this.generateTaskName(message).then(() => {
                 this.task_manager_state.publishTaskListUpdate();
             });
         }
 
-        this.processTask();
+        this.processTaskTurn();
     }
+    /**
+     * Clean up the task resources (delete JSON file and artifacts)
+     * Imported from tasks.js
+     * [修改: 增加 cleanup 方法，支持清理物理文件和 Artifacts 记录]
+     */
+    cleanup() {
+        const taskDirectory = getTaskDirectory();
 
+        // 1. Delete task JSON configuration
+        const taskJsonPath = path.join(taskDirectory, `${this.task_id}.json`);
+        if (fs.existsSync(taskJsonPath)) {
+            try {
+                fs.unlinkSync(taskJsonPath);
+            } catch (err) {
+                logger.error(`Failed to delete task file ${taskJsonPath}: ${(err as Error).message}`);
+            }
+        }
+
+        // 2. Delete associated Artifacts (logs)
+        const artifactsDir = path.join(taskDirectory, 'artifacts');
+        if (fs.existsSync(artifactsDir)) {
+            try {
+                const files = fs.readdirSync(artifactsDir);
+                for (const file of files) {
+                    // If filename starts with task_id, it belongs to this task
+                    if (file.startsWith(`${this.task_id}_`)) {
+                        const filePath = path.join(artifactsDir, file);
+                        fs.unlinkSync(filePath);
+                    }
+                }
+            } catch (err) {
+                logger.error(`Failed to cleanup artifacts for task ${this.task_id}: ${(err as Error).message}`);
+            }
+        }
+    }
     /**
      * Stop the task execution
      */
-    stop() {
+    stop(reason: 'user' | 'system' = 'user') {
         if (this.task_status === 'stopped') {
             return;
         }
         this.task_status = 'stopped';
-        this.finished_at = new Date();  // 记录任务完成时间
-        logger.info(`task ${this.task_id} stopped by user`);
+        this.stop_requested_by_user = reason === 'user';
+        this.finished_at = new Date();
+        logger.info(`task ${this.task_id} stopped (reason=${reason})`);
         this.task_manager_state.publishTaskListUpdate();
     }
 
@@ -264,11 +324,13 @@ export class TaskState {
         你是一个任务管理助手，请根据以下用户消息生成一个任务名称: ${user_message}
         请返回一个简洁明了的任务名称，不要超过10个字符。不要包含任何其他内容。
         `
-        const task_name = await LLM.ask(new UserMessage(prompt))
+
+        const task_name = await LLM.ask(new UserMessage(prompt.trim()))
             .catch(err => {
                 logger.error(err);
                 return null;
             })
+
         this.task_name = task_name;
     }
 
@@ -289,7 +351,7 @@ export class TaskState {
      * @returns the forked task
      */
     fork(): TaskState {
-        const forkedTask = new TaskState(this.task_manager_state);
+        const forkedTask = new TaskState(this.task_manager_state, null);
 
         // Copy chat context via serialization
         forkedTask.chat_context = ChatContext.assign(this.chat_context.toJSON());
@@ -303,13 +365,9 @@ export class TaskState {
         // Copy task status (forked task should have the same status as the original)
         forkedTask.task_status = this.task_status;
 
-        // Copy time fields
         forkedTask.started_at = this.started_at;
         forkedTask.finished_at = this.finished_at;
         forkedTask.total_elapsed_ms = this.total_elapsed_ms;
-
-        forkedTask.soul_uid = this.soul_uid;
-        forkedTask.soul_name = this.soul_name;
 
         // Add to task manager
         this.task_manager_state.tasks.push(forkedTask);
@@ -344,35 +402,54 @@ export class TaskState {
 
     /**
      * 向前端的订阅者发布任务状态更新，如果指定了part_index，则只更新该part
-     * 否则更新最后一个part
+     * 否则更新最后一个 part。根据最后一条消息类型发送 UserChunk 或 AssistantChunk。
      */
     async sendSubscriptionFeedback(part_index: number | undefined = undefined) {
-        let last_message = this.chat_context.lastMessage();
-        if (last_message === undefined || !(last_message instanceof AssistantMessage) || last_message.content.length === 0) {
+        const last_message = this.chat_context.lastMessage();
+        if (last_message === undefined) {
             return;
         }
 
-        let updated_part_index = part_index !== undefined ? part_index : last_message.content.length - 1;
-        let last_part = last_message.content[updated_part_index];
-        /* render the last part before sending the update to the subscribers */
+        this.subscribers = this.subscribers.filter(subscriber => subscriber.isAvailable());
+        if (this.subscribers.length === 0) return;
 
         try {
-            await last_part.render();
-            var chunkUpdate: TaskUpdateChunk = {
-                task_id: this.task_id,
-                task_status: this.task_status,
-                message_id: last_message.message_id,
-                last_part_index: updated_part_index,
-                last_part: last_part,
-                usage: last_message.usage
-            };
+            let chunkUpdate: TaskUpdateChunk
+            if (last_message instanceof UserMessage) {
+                if (last_message.content.length === 0) return;
+                const updated_part_index = part_index !== undefined ? part_index : last_message.content.length - 1;
+                const last_part = last_message.content[updated_part_index];
+                await last_message.render();
+                chunkUpdate = {
+                    type: 'user',
+                    task_id: this.task_id,
+                    task_status: this.task_status,
+                    message_id: last_message.message_id,
+                    last_part_index: updated_part_index,
+                    last_part,
+                };
+            } else if (last_message instanceof AssistantMessage && last_message.content.length > 0) {
+                const updated_part_index = part_index !== undefined ? part_index : last_message.content.length - 1;
+                const last_part = last_message.content[updated_part_index];
+                await last_part.render();
+                chunkUpdate = {
+                    type: 'assistant',
+                    task_id: this.task_id,
+                    task_status: this.task_status,
+                    message_id: last_message.message_id,
+                    last_part_index: updated_part_index,
+                    last_part,
+                    usage: last_message.usage
+                };
+            } else {
+                throw new Error('last message is not a user message or assistant message');
+            }
 
-            this.subscribers = this.subscribers.filter(subscriber => subscriber.isAvailable());
-            for (let subscriber of this.subscribers) {
+            for (const subscriber of this.subscribers) {
                 subscriber.send(chunkUpdate);
             }
         } catch (err) {
-            logger.error(`error sending subscription feedback for task ${this.task_id}: ${err.message}`);
+            logger.error(`error sending subscription feedback for task ${this.task_id}: ${(err as Error).message}`);
         }
     }
 
@@ -418,6 +495,11 @@ export class TaskState {
             this.chat_context.attachToolsets(...toolsets);
             this.chat_context.attachToolsets(skillToolset);
             this.chat_context.attachToolsets(memoryToolset);
+            this.chat_context.attachToolsets(
+                this.parent_id === null ?
+                    createMainPlanningToolset() :
+                    createSubTaskPlanningToolset()
+            )
         }
         this.resolveAllToolCalls();
     }
@@ -469,7 +551,8 @@ export class TaskState {
     }
 
     /**
-     * Process a tool call
+     * 完成一个工具调用的实际执行过程, 并将结果直接写入 tool_call 中
+     * @param tool_call 要被执行的工具调用
      */
     async processToolCall(tool_call: ToolCall): Promise<void> {
         let tool = this.chat_context.getTool(tool_call.tool_name);
@@ -481,28 +564,18 @@ export class TaskState {
         }
 
         tool_call.setTool(tool);
-
         try {
-            let args = undefined;
+            let args: any = {};
             if (tool_call.args_string) {
-                try {
-                    args = JSON.parse(tool_call.args_string);
-                } catch (err) {
-                    logger.warn(`failed to parse args string ${tool_call.args_string} for tool ${tool_call.tool_name}: ${err.message}`);
-                }
-
-                try {
-                    args = JSON.parse(jsonrepair(tool_call.args_string));
-                } catch (err) {
-                    logger.error(`failed to repair args string ${tool_call.args_string} for tool ${tool_call.tool_name}: ${err.message}`);
-                    throw err;
-                }
+                const repaired = jsonrepair(tool_call.args_string);
+                args = JSON.parse(repaired);
             }
             tool_call.args_object = args;
             tool_call.status = 'running';
+
             await this.sendSubscriptionFeedback();
 
-            /* 在执行工具前检查是否任务已经被中止 */
+            /* 在执行工具前检查是否任务已经被用户手动中止 */
             if (this.task_status === 'stopped') {
                 tool_call.status = 'error';
                 tool_call.result = '任务已停止';
@@ -524,7 +597,7 @@ export class TaskState {
         } catch (err) {
             logger.error(err);
             tool_call.status = 'error';
-            tool_call.result = err.message;
+            tool_call.result = `工具运行错误: ${err}`;
         } finally {
             await tool_call.freezeRenderResult();
         }
@@ -540,7 +613,7 @@ export class TaskState {
             return false;
         }
 
-        let has_pending_tool_call = false;
+        const pendingCalls: { tool_call: ToolCall, partIndex: number }[] = [];
 
         for (let message of this.chat_context.messages) {
             if (message instanceof AssistantMessage) {
@@ -553,20 +626,32 @@ export class TaskState {
                         if (tool_call.status !== 'pending') {
                             continue;
                         }
-                        has_pending_tool_call = true;
-
-                        await this.processToolCall(tool_call);
-                        await tool_call.render();
-                        await this.sendSubscriptionFeedback(index);
+                        pendingCalls.push({ tool_call, partIndex: index });
                     }
                 }
             }
         }
 
-        return has_pending_tool_call;
+        if (pendingCalls.length === 0) {
+            return false;
+        }
+
+        await Promise.all(pendingCalls.map(async ({ tool_call, partIndex }) => {
+            await this.processToolCall(tool_call);
+            await tool_call.render();
+            await this.sendSubscriptionFeedback(partIndex);
+        }));
+
+        return true;
     }
 
-    async processTask() {
+    /**
+     * 执行任务的一个轮次
+     *
+     * 从收到消息，到反复执行工具获取结果，直到没有新的工具要执行为止，这样的过程我们
+     * 称为一个轮次 (turn)。processTaskTurn 负责这个执行过程以及相关的钩子判断。
+     */
+    async processTaskTurn() {
         while (this.task_status !== 'stopped') {
             await this.processCompletion();
             // @ts-ignore 这里的task_status可能通过前端的请求被随时中止
@@ -574,8 +659,24 @@ export class TaskState {
                 break;
             }
 
-            if (!await this.processToolCalls()) {
-                break;  /* no more tool calls to process, break */
+            const hasToolCalls = await this.processToolCalls();
+            if (hasToolCalls) {
+                continue;
+            }
+
+            // 如果当前任务没有更多工具调用需要处理，那么可以结束这一个轮次(turn)了
+            // 但在此之前首先要看下有没有注册的钩子函数会要求这一轮继续执行
+            const checkHooks = await this.hooks.checkBeforeFinishTurn(this)
+            if (checkHooks.operation === 'finish') {
+                break;
+            } else {
+                // 如果某个钩子要求继续执行，则发送一个用户消息给 agent，并继续补全
+                const user_message = new UserMessage(checkHooks.message);
+                const assistant_message = new AssistantMessage();
+                this.chat_context.appendMessage(user_message);
+                await this.sendSubscriptionFeedback();
+                this.chat_context.appendMessage(assistant_message);
+                continue;
             }
         }
 
@@ -698,11 +799,13 @@ export class TaskManagerState {
     }
 
     /**
-     * Get a simplified list of tasks
-     * @returns the list of tasks
+     * Get a simplified list of tasks (已修改：过滤掉子任务)
+     * @returns {object[]} the list of tasks
      */
-    getTaskList(): object[] {
-        return this.tasks.map(task => task.toSimplifiedJSON());
+    getTaskList() {
+        // 关键改动：只返回 parent_id 为 null 或 undefined 的任务
+        return this.tasks
+            .map(task => task.toSimplifiedJSON());
     }
 
     /**
@@ -719,21 +822,49 @@ export class TaskManagerState {
         this.publishTaskListUpdate();
         return task;
     }
-
     /**
-     * Remove a task by its id
+     * Create a sub-task for tool isolation (新增方法)
+     * @param {string} parentId
+     * @returns {TaskState}
      */
-    removeTask(taskId: string): void {
-        this.tasks = this.tasks.filter(task => task.task_id !== taskId);
-        this.publishTaskListUpdate();
+    createSubTask(parentId: string) {
+        const subTask = new TaskState(this, parentId);
+        this.tasks.push(subTask);
+        this.save();
+        return subTask;
+    }
+    /**
+     * Remove a task by its id (Recursive deletion)
+     * @param {string} taskId
+     */
+    removeTask(taskId: string) {
+        // 1. 找到要删除的任务对象
+        const taskToRemove = this.getTask(taskId);
 
-        // Delete just the specific task's file
-        const taskDirectory = getTaskDirectory();
-        const taskFile = path.join(taskDirectory, `${taskId}.json`);
-        if (fs.existsSync(taskFile)) {
-            fs.unlinkSync(taskFile);
+        if (!taskToRemove) {
+            logger.warn(`Task ${taskId} not found for deletion.`);
+            return;
         }
 
+        // Stop execution first so parent task cannot continue creating more subtasks.
+        taskToRemove.stop('system');
+
+        // 2. [递归步骤] 查找所有 parent_id 为当前 taskId 的子任务
+        const children = this.tasks.filter(t => t.parent_id === taskId);
+
+        for (const child of children) {
+            // 递归调用，这样子任务的子任务也会被删除
+            this.removeTask(child.task_id);
+        }
+
+        // 3. [清理步骤] 调用 TaskState 的 cleanup 方法删除物理文件 (JSON + Logs)
+        taskToRemove.cleanup();
+
+        // 4. [内存清理] 从内存列表中移除
+        this.tasks = this.tasks.filter(task => task.task_id !== taskId);
+
+        // 5. 更新前端和保存列表
+        this.publishTaskListUpdate();
         this.save();
     }
 
@@ -741,6 +872,11 @@ export class TaskManagerState {
      * Remove all tasks from the task manager
      */
     clearAllTasks(): void {
+        // [新增] 清空前，先遍历调用每个 task 的 cleanup，确保物理日志被销毁
+        for (const task of this.tasks) {
+            task.stop('system');
+            task.cleanup();
+        }
         this.tasks = [];
         this.publishTaskListUpdate();
         this.cleanupOldTaskFiles();

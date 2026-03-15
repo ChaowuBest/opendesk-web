@@ -441,9 +441,12 @@ export class SystemMessage {
     }
 }
 
+export type UserMessagePart = TextMessagePart | ImageMessagePart | FileMessagePart;
+
 export class UserMessage {
     role: 'user' = 'user';
-    content: Array<TextMessagePart | ImageMessagePart | FileMessagePart> = [];
+    message_id: string = crypto.randomUUID();
+    content: Array<UserMessagePart> = [];
 
     constructor (content?: string) {
         if (content) {
@@ -466,7 +469,7 @@ export class UserMessage {
         return this;
     }
 
-    appendPart(part: TextMessagePart | ImageMessagePart | FileMessagePart): UserMessage {
+    appendPart(part: UserMessagePart): UserMessage {
         if (part.type === 'text') {
             this.appendText(part.text);
         } else if (part.type === 'file') {
@@ -489,7 +492,10 @@ export class UserMessage {
 
     static assign(raw_obj: object): UserMessage {
         Object.setPrototypeOf(raw_obj, UserMessage.prototype);
-        let user_message = raw_obj as UserMessage;
+        const user_message = raw_obj as UserMessage;
+        if (!user_message.message_id) {
+            user_message.message_id = crypto.randomUUID();
+        }
         if (user_message.content !== undefined) {
             for (let part of user_message.content) {
                 if (part.type === 'text') {
@@ -511,6 +517,14 @@ export class UserMessage {
     }
 
     toOpenAIMessage(): object {
+        // 如果 content 只有一个 text 类型的部分，直接返回字符串格式
+        // 这样可以兼容更多 LLM 提供商（特别是国产模型）
+        if (this.content.length === 1 && this.content[0].type === 'text') {
+            return {
+                role: this.role,
+                content: this.content[0].text
+            }
+        }
         return {
             role: this.role,
             content: this.content.map(part => part.toOpenAIMessagePart())

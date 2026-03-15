@@ -11,7 +11,7 @@
 
 import { z } from 'zod';
 import { ToolCall } from './messages';
-import type { TaskState } from '../states/tasks';
+import type { TaskState } from './states/tasks';
 
 
 export class ToolResult {

@@ -11,7 +11,7 @@
 
 import { app, BrowserWindow, Tray, globalShortcut, nativeImage, ipcMain, shell, Menu, dialog, protocol } from 'electron'
 import { Setting, getAppDirectory } from './utils/setting.js'
-import { GlobalState } from './states/global.js'
+import { GlobalState } from './aikernel/states/global.js'
 import { BaseToolset } from './aikernel/tool';
 import { is } from '@electron-toolkit/utils';
 import { z } from 'zod';

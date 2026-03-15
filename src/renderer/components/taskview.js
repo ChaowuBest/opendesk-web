@@ -130,6 +130,18 @@ class TaskView extends HTMLElement {
         return html
     }
 
+    createEmptyAssistantContainer(message_id) {
+        return `
+        <div class="flex items-start space-x-3">
+            <div id='message-container-${message_id}' class="p-3 bg-transparent w-full">
+                <div id='message-content-${message_id}'>
+                </div>
+                <span class="message-usage text-xs text-gray-500 mt-2 block">已输出 0 词, 总计 0 词</span>
+            </div>
+        </div>
+        `;
+    }
+
     tryScrollToEnd() {
         if (!this.auto_scrolling_to_bottom) { return; }
         const domElement = this.getHistoryContainer();
@@ -246,19 +258,30 @@ class TaskView extends HTMLElement {
         this.setUpEventListeners();
         this.reload().then(async () => {
             this.subscription_id = await window.taskManagerAPI.subscribeTaskUpdate(this.task_id, progress => {
-                const message_container = this.querySelector(`#message-container-${progress.message_id}`);
-                const message_content = message_container.querySelector(`#message-content-${progress.message_id}`);
-                if (message_content.children.length <= progress.last_part_index) {
-                    message_content.innerHTML += `<div class='${TaskView.ASSISTANT_PART_CLASS_MAP[progress.last_part.type]}'></div>`
-                }
-                const last_part_element = message_content.children[progress.last_part_index];
-                last_part_element.innerHTML = progress.last_part.rendered;
-                if (progress.usage) {
-                    message_container.querySelector('.message-usage').title = `输入: ${progress.usage.prompt_tokens}, 输出: ${progress.usage.completion_tokens}, 总计: ${progress.usage.total_tokens}`;
-                    message_container.querySelector('.message-usage').innerHTML = `
-                    已输出 ${progress.usage.completion_tokens} 词,
-                    总计 ${progress.usage.total_tokens} 词
-                    `;
+                const history_container = this.getHistoryContainer();
+
+                if (progress.type === 'user') {
+                    const userMsg = { content: [{ type: progress.last_part.type, rendered: progress.last_part.rendered || '' }] };
+                    history_container.insertAdjacentHTML('beforeend', this.renderUserMessage(userMsg));
+                } else {
+                    let message_container = this.querySelector(`#message-container-${progress.message_id}`);
+                    if (!message_container) {
+                        history_container.insertAdjacentHTML('beforeend', this.createEmptyAssistantContainer(progress.message_id));
+                        message_container = this.querySelector(`#message-container-${progress.message_id}`);
+                    }
+                    const message_content = message_container.querySelector(`#message-content-${progress.message_id}`);
+                    if (message_content.children.length <= progress.last_part_index) {
+                        message_content.insertAdjacentHTML('beforeend', `<div class='${TaskView.ASSISTANT_PART_CLASS_MAP[progress.last_part.type]}'></div>`);
+                    }
+                    const last_part_element = message_content.children[progress.last_part_index];
+                    last_part_element.innerHTML = progress.last_part.rendered || '';
+                    if (progress.usage) {
+                        const usageEl = message_container.querySelector('.message-usage');
+                        if (usageEl) {
+                            usageEl.title = `输入: ${progress.usage.prompt_tokens}, 输出: ${progress.usage.completion_tokens}, 总计: ${progress.usage.total_tokens}`;
+                            usageEl.innerHTML = `已输出 ${progress.usage.completion_tokens} 词, 总计 ${progress.usage.total_tokens} 词`;
+                        }
+                    }
                 }
 
                 if (progress.task_status !== this.task_status) {
@@ -433,6 +456,17 @@ class EmbeddedTaskView extends HTMLElement {
         return html
     }
 
+    createEmptyAssistantContainer(message_id) {
+        return `
+        <div class="flex items-start space-x-3">
+            <div class="p-3 bg-transparent w-full">
+                <div id='message-${message_id}'>
+                </div>
+            </div>
+        </div>
+        `;
+    }
+
     tryScrollToEnd() {
         const domElement = this.getHistoryContainer();
         setTimeout(() => {
@@ -515,15 +549,27 @@ class EmbeddedTaskView extends HTMLElement {
             this.emitTaskStatusChanged(this.task_status);
 
             this.subscription_id = await window.taskManagerAPI.subscribeTaskUpdate(this.task_id, progress => {
-                const message_element = this.querySelector(`#message-${progress.message_id}`);
-                if (message_element.children.length <= progress.last_part_index) {
-                    message_element.innerHTML += `<div class='${EmbeddedTaskView.ASSISTANT_PART_CLASS_MAP[progress.last_part.type]}'></div>`
+                const history_container = this.getHistoryContainer();
+
+                if (progress.type === 'user') {
+                    const userMsg = { content: [{ type: progress.last_part.type, rendered: progress.last_part.rendered || '' }] };
+                    history_container.insertAdjacentHTML('beforeend', this.renderUserMessage(userMsg));
+                } else {
+                    let message_element = this.querySelector(`#message-${progress.message_id}`);
+                    if (!message_element) {
+                        history_container.insertAdjacentHTML('beforeend', this.createEmptyAssistantContainer(progress.message_id));
+                        message_element = this.querySelector(`#message-${progress.message_id}`);
+                    }
+                    if (message_element && message_element.children.length <= progress.last_part_index) {
+                        message_element.insertAdjacentHTML('beforeend', `<div class='${EmbeddedTaskView.ASSISTANT_PART_CLASS_MAP[progress.last_part.type]}'></div>`);
+                    }
+                    if (message_element) {
+                        const last_part_element = message_element.children[progress.last_part_index];
+                        if (last_part_element) last_part_element.innerHTML = progress.last_part.rendered || '';
+                    }
                 }
-                const last_part_element = message_element.children[progress.last_part_index];
-                last_part_element.innerHTML = progress.last_part.rendered;
                 this.tryScrollToEnd();
 
-                // 检测任务状态变化并发送事件
                 if (progress.task_status && progress.task_status !== this.task_status) {
                     this.task_status = progress.task_status;
                     this.emitTaskStatusChanged(this.task_status);

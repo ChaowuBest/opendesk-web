@@ -73,6 +73,51 @@ export class TaskSwitcher implements Component {
     }
 
     /**
+     * 按父子关系排列任务列表，子任务紧跟在其父任务后面
+     */
+    private buildOrderedTasks(): { task: TaskState; depth: number }[] {
+        const tasks = this.getTasks();
+        const childrenByParent = new Map<string, TaskState[]>();
+        const rootTasks: TaskState[] = [];
+
+        for (const task of tasks) {
+            if (task.parent_id) {
+                if (!childrenByParent.has(task.parent_id)) {
+                    childrenByParent.set(task.parent_id, []);
+                }
+                childrenByParent.get(task.parent_id)!.push(task);
+            } else {
+                rootTasks.push(task);
+            }
+        }
+
+        const result: { task: TaskState; depth: number }[] = [];
+        const visited = new Set<string>();
+
+        const appendTask = (task: TaskState, depth: number) => {
+            if (visited.has(task.task_id)) return;
+            visited.add(task.task_id);
+            result.push({ task, depth });
+            const children = childrenByParent.get(task.task_id) || [];
+            for (const child of [...children].reverse()) {
+                appendTask(child, depth + 1);
+            }
+        };
+
+        for (const root of [...rootTasks].reverse()) {
+            appendTask(root, 0);
+        }
+
+        for (const task of [...tasks].reverse()) {
+            if (!visited.has(task.task_id)) {
+                appendTask(task, 0);
+            }
+        }
+
+        return result;
+    }
+
+    /**
      * 构建表格行数据
      */
     private buildRows(): SelectRow[] {
@@ -83,10 +128,11 @@ export class TaskSwitcher implements Component {
             failed: '🔴 已中断',
         };
 
-        return this.getTasks().reverse().map(t => {
-            const name = t.task_name || '未命名任务';
+        return this.buildOrderedTasks().map(({ task: t, depth }) => {
+            const indent = depth > 0 ? '  '.repeat(depth) + '└ ' : '';
+            const badge = depth > 0 ? '[子任务] ' : '';
+            const name = indent + badge + (t.task_name || '未命名任务');
             const status = statusIcons[t.task_status] ?? t.task_status;
-            // 对于已完成/停止的任务使用 finished_at，对于运行中的任务使用 started_at
             const timeStr = this.formatLastMessageTime(t.finished_at || t.started_at);
 
             return {

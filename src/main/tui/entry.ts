@@ -4,8 +4,8 @@ import { OpenDeskBanner } from './banner';
 import { VerticalLayout } from './components/layout';
 import { OpenDeskTerminal } from './terminal';
 import { TaskView, AssistantMessageView } from "./components/taskview";
-import { TaskManagerState, TaskState, TaskUpdateChunk } from "../states/tasks";
-import { GlobalState } from "../states/global";
+import { TaskManagerState, TaskState, TaskUpdateChunk } from "../aikernel/states/tasks";
+import { GlobalState } from "../aikernel/states/global";
 import { AgentInputArea } from "./components/input";
 import { ApplicationRegistry } from "../applications/registry";
 import { KeyboardShortcutManager } from "./shortcuts";
@@ -1200,29 +1200,22 @@ export class OpenDeskTUI {
         const snapshotTaskId = task.task_id;
 
         const subscribeToUpdates = () => {
-            const lastView = this.taskView.getLastAssistantView();
-            if (!lastView) return;
-
             task.waitUntilFinished(async (chunkUpdate: TaskUpdateChunk) => {
-                // 只有当前任务仍然是活跃任务时才更新视图
                 if (this.activeTaskId !== snapshotTaskId) return;
-                lastView.update(chunkUpdate);
-                this.taskView.invalidate();  // 标记 TaskView 需要重新渲染
-                if (chunkUpdate.usage) {
-                    this.taskView.onStatusBarUpdate?.({ totalTokens: chunkUpdate.usage.total_tokens });
-                }
+                await this.taskView.handleChunkUpdate(chunkUpdate);
+                this.taskView.invalidate();
                 this.tui.requestRender();
             }).then(() => {
                 if (this.activeTaskId !== snapshotTaskId) return;
 
-                lastView.setStreamingComplete();
+                const lastView = this.taskView.getLastAssistantView();
+                if (lastView) lastView.setStreamingComplete();
                 this.taskView.invalidate();
                 this.inputArea.statusBar.stopTimer();
                 this.inputArea.setStatus('idle');
                 this.tui.requestRender();
                 this.processQueue();
 
-                // 任务完成后，启动监控器检查任务是否重新变为 running
                 startRunningMonitor();
             });
         };

@@ -32,7 +32,7 @@ import format from "string-template";
 import { ToolCall } from './messages';
 import chalk from 'chalk';
 import { statusDisplay, truncText } from '../tui/components/toolcall';
-import type { TaskState } from '../states/tasks';
+import type { TaskState } from './states/tasks';
 
 
 const NAME_MAX_LEN = 64;
