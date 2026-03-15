@@ -582,6 +582,8 @@ export class TaskState {
                 return;
             }
 
+            await this.hooks.checkBeforeToolCall(this, tool_call);
+
             let result = await tool.execute(
                 args,
                 async (result) => {
@@ -599,6 +601,7 @@ export class TaskState {
             tool_call.status = 'error';
             tool_call.result = `工具运行错误: ${err}`;
         } finally {
+            await this.hooks.noticeAfterToolCall(this, tool_call);
             await tool_call.freezeRenderResult();
         }
     }
@@ -665,8 +668,8 @@ export class TaskState {
             }
 
             // 如果当前任务没有更多工具调用需要处理，那么可以结束这一个轮次(turn)了
-            // 但在此之前首先要看下有没有注册的钩子函数会要求这一轮继续执行
-            const checkHooks = await this.hooks.checkBeforeFinishTurn(this)
+            // 但在此之前首先要看下有没有注册的钩子函数会要求这一轮继续执行（任务级 → 全局，在 TaskHooks 内部统一执行）
+            const checkHooks = await this.hooks.checkBeforeFinishTurn(this);
             if (checkHooks.operation === 'finish') {
                 break;
             } else {
@@ -683,6 +686,7 @@ export class TaskState {
         if (this.task_status !== 'stopped') {
             this.task_status = 'stopped';
         }
+        this.hooks.noticeAfterFinishTurn(this);
         this.finished_at = new Date();  // 记录任务完成时间
         this.sendSubscriptionFeedback();
         this.task_manager_state.publishTaskListUpdate();
