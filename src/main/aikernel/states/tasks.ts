@@ -9,20 +9,21 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { ChatContext, UserMessage, AssistantMessage, FileMessagePart, SystemMessage, AssistantMessagePart, Usage, ToolCall } from '../aikernel/messages.js';
-import { shouldCompact, compactContext } from '../aikernel/compact.js';
-import { BaseToolset } from '../aikernel/tool.js';
-import { LLM } from '../aikernel/llm.js';
-import { getTaskDirectory } from '../utils/setting.js';
-import { logger } from '../utils/logger.js';
-import { ApplicationRegistry } from '../applications/registry.js';
+import { ChatContext, UserMessage, AssistantMessage, FileMessagePart, SystemMessage, AssistantMessagePart, Usage, ToolCall } from '../messages.js';
+import { shouldCompact, compactContext } from '../compact.js';
+import { BaseToolset } from '../tool.js';
+import { LLM } from '../llm.js';
+import { getTaskDirectory } from '../../utils/setting.js';
+import { logger } from '../../utils/logger.js';
+import { ApplicationRegistry } from '../../applications/registry.js';
 import { jsonrepair } from 'jsonrepair';
 import officeParser from 'officeparser';
 import path from 'path';
 import fs from 'fs';
-import { SkillRegistry } from '../aikernel/skill.js';
-import { createMemoryToolset } from '../aikernel/memory/tools.js';
-import { createMainPlanningToolset, createSubTaskPlanningToolset } from '../aikernel/planning/tools.js';
+import { SkillRegistry } from '../skill.js';
+import { createMemoryToolset } from '../memory/tools.js';
+import { createMainPlanningToolset, createSubTaskPlanningToolset } from '../planning/tools.js';
+import { TaskHooks } from '../hooks.js';
 
 
 type TaskStatus = 'waiting' | 'running' | 'stopped';
@@ -62,23 +63,28 @@ class CallbackTaskUpdateSubscriber extends BaseTaskUpdateSubscriber {
 }
 
 export class TaskState {
+
     task_id: string = crypto.randomUUID();
     parent_id: string | null = null;
     task_name: string | null = null;
     task_status: TaskStatus = 'waiting';
     chat_context: ChatContext = new ChatContext();
-    subscribers: BaseTaskUpdateSubscriber[] = [];
-    task_manager_state: TaskManagerState;
+
     model?: string;
     message_queue: string[] = [];
-    completion_result?: { success: boolean; result: string };
+
     stop_requested_by_user: boolean = false;
     started_at?: Date;
     finished_at?: Date;
     total_elapsed_ms: number = 0;
     bookmark_path?: string;
-    soul_uid?: string;
-    soul_name?: string;
+
+    /** 任务钩子，用于在一系列任务控制点中执行回调函数 */
+    hooks: TaskHooks = new TaskHooks();
+    /** 订阅者，主要用于在 TUI/GUI 中获取任务状态更新等 */
+    subscribers: BaseTaskUpdateSubscriber[] = [];
+    /** 全局任务管理器的状态 */
+    task_manager_state: TaskManagerState;
 
     constructor(task_manager_state: TaskManagerState, parent_id: string | null = null) {
         this.task_manager_state = task_manager_state;
@@ -104,12 +110,6 @@ export class TaskState {
         if (task_json.bookmark_path) {
             task.bookmark_path = task_json.bookmark_path;
         }
-        if (task_json.soul_uid) {
-            task.soul_uid = task_json.soul_uid;
-        }
-        if (task_json.soul_name) {
-            task.soul_name = task_json.soul_name;
-        }
         if (typeof task_json.stop_requested_by_user === 'boolean') {
             task.stop_requested_by_user = task_json.stop_requested_by_user;
         }
@@ -126,8 +126,6 @@ export class TaskState {
             finished_at: this.finished_at?.toISOString(),
             total_elapsed_ms: this.total_elapsed_ms,
             bookmark_path: this.bookmark_path,
-            soul_uid: this.soul_uid,
-            soul_name: this.soul_name,
             stop_requested_by_user: this.stop_requested_by_user,
         }
     }
@@ -143,8 +141,6 @@ export class TaskState {
             finished_at: this.finished_at?.toISOString(),
             total_elapsed_ms: this.total_elapsed_ms,
             bookmark_path: this.bookmark_path,
-            soul_uid: this.soul_uid,
-            soul_name: this.soul_name,
             stop_requested_by_user: this.stop_requested_by_user,
         }
     }
@@ -234,7 +230,7 @@ export class TaskState {
             });
         }
 
-        this.processTask();
+        this.processTaskTurn();
     }
     /**
      * Clean up the task resources (delete JSON file and artifacts)
@@ -250,7 +246,7 @@ export class TaskState {
             try {
                 fs.unlinkSync(taskJsonPath);
             } catch (err) {
-                logger.error(`Failed to delete task file ${taskJsonPath}: ${err.message}`);
+                logger.error(`Failed to delete task file ${taskJsonPath}: ${(err as Error).message}`);
             }
         }
 
@@ -267,7 +263,7 @@ export class TaskState {
                     }
                 }
             } catch (err) {
-                logger.error(`Failed to cleanup artifacts for task ${this.task_id}: ${err.message}`);
+                logger.error(`Failed to cleanup artifacts for task ${this.task_id}: ${(err as Error).message}`);
             }
         }
     }
@@ -356,9 +352,6 @@ export class TaskState {
         forkedTask.finished_at = this.finished_at;
         forkedTask.total_elapsed_ms = this.total_elapsed_ms;
 
-        forkedTask.soul_uid = this.soul_uid;
-        forkedTask.soul_name = this.soul_name;
-
         // Add to task manager
         this.task_manager_state.tasks.push(forkedTask);
         this.task_manager_state.save();
@@ -420,7 +413,7 @@ export class TaskState {
                 subscriber.send(chunkUpdate);
             }
         } catch (err) {
-            logger.error(`error sending subscription feedback for task ${this.task_id}: ${err.message}`);
+            logger.error(`error sending subscription feedback for task ${this.task_id}: ${(err as Error).message}`);
         }
     }
 
@@ -611,7 +604,13 @@ export class TaskState {
         return true;
     }
 
-    async processTask() {
+    /**
+     * 执行任务的一个轮次
+     *
+     * 从收到消息，到反复执行工具获取结果，直到没有新的工具要执行为止，这样的过程我们
+     * 称为一个轮次 (turn)。processTaskTurn 负责这个执行过程以及相关的钩子判断。
+     */
+    async processTaskTurn() {
         while (this.task_status !== 'stopped') {
             await this.processCompletion();
             // @ts-ignore 这里的task_status可能通过前端的请求被随时中止
@@ -619,8 +618,22 @@ export class TaskState {
                 break;
             }
 
-            if (!await this.processToolCalls()) {
-                break;  /* no more tool calls to process, break */
+            const hasToolCalls = await this.processToolCalls();
+            if (hasToolCalls) {
+                continue;
+            }
+
+            // 如果当前任务没有更多工具调用需要处理，那么可以结束这一个轮次(turn)了
+            // 但在此之前首先要看下有没有注册的钩子函数会要求这一轮继续执行
+            const checkHooks = await this.hooks.checkBeforeFinishTurn(this)
+            if (checkHooks.operation === 'finish') {
+                break;
+            } else {
+                let user_message = new UserMessage("继续任务: " + checkHooks.message);
+                let assistant_message = new AssistantMessage();
+                this.chat_context.appendMessage(user_message);
+                this.chat_context.appendMessage(assistant_message);
+                continue;
             }
         }
 

@@ -15,7 +15,7 @@ import { isMainThread } from 'worker_threads';
 import { useCliTransport, useConsoleTransport, interceptConsole } from './utils/logger.js';
 import { initializeRegistry, initializeRegistryWorker, ApplicationRegistry } from './applications/registry';
 import { initializeAppWorkers } from './applications/worker';
-import { GlobalState } from './states/global.js';
+import { GlobalState } from './aikernel/states/global.js';
 import { FULL_CLEAR } from './tui/components/constants';
 import { OpenDeskTUI, CommandLineArgs } from './tui/entry.js';
 import { Setting } from './utils/setting';
