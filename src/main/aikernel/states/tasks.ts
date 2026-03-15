@@ -9,7 +9,11 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { ChatContext, UserMessage, AssistantMessage, FileMessagePart, SystemMessage, AssistantMessagePart, Usage, ToolCall } from '../messages.js';
+import {
+    ChatContext, UserMessage, UserMessagePart,
+    AssistantMessage, AssistantMessagePart, FileMessagePart,
+    SystemMessage, Usage, ToolCall
+} from '../messages.js';
 import { shouldCompact, compactContext } from '../compact.js';
 import { BaseToolset } from '../tool.js';
 import { LLM } from '../llm.js';
@@ -28,7 +32,18 @@ import { TaskHooks } from '../hooks.js';
 
 type TaskStatus = 'waiting' | 'running' | 'stopped';
 
-export interface TaskUpdateChunk {
+export interface TaskUpdateUserChunk {
+    type: 'user';
+    task_id: string;
+    task_status: TaskStatus;
+    message_id: string;
+    last_part_index: number;
+    last_part: UserMessagePart;
+    usage?: Usage;
+}
+
+export interface TaskUpdateAssistantChunk {
+    type: 'assistant';
     task_id: string;
     task_status: TaskStatus;
     message_id: string;
@@ -36,6 +51,8 @@ export interface TaskUpdateChunk {
     last_part: AssistantMessagePart;
     usage?: Usage;
 }
+
+export type TaskUpdateChunk = TaskUpdateUserChunk | TaskUpdateAssistantChunk;
 
 export class BaseTaskUpdateSubscriber {
     subscription_id: string = crypto.randomUUID();
@@ -385,31 +402,50 @@ export class TaskState {
 
     /**
      * 向前端的订阅者发布任务状态更新，如果指定了part_index，则只更新该part
-     * 否则更新最后一个part
+     * 否则更新最后一个 part。根据最后一条消息类型发送 UserChunk 或 AssistantChunk。
      */
     async sendSubscriptionFeedback(part_index: number | undefined = undefined) {
-        let last_message = this.chat_context.lastMessage();
-        if (last_message === undefined || !(last_message instanceof AssistantMessage) || last_message.content.length === 0) {
+        const last_message = this.chat_context.lastMessage();
+        if (last_message === undefined) {
             return;
         }
 
-        let updated_part_index = part_index !== undefined ? part_index : last_message.content.length - 1;
-        let last_part = last_message.content[updated_part_index];
-        /* render the last part before sending the update to the subscribers */
+        this.subscribers = this.subscribers.filter(subscriber => subscriber.isAvailable());
+        if (this.subscribers.length === 0) return;
 
         try {
-            await last_part.render();
-            var chunkUpdate: TaskUpdateChunk = {
-                task_id: this.task_id,
-                task_status: this.task_status,
-                message_id: last_message.message_id,
-                last_part_index: updated_part_index,
-                last_part: last_part,
-                usage: last_message.usage
-            };
+            let chunkUpdate: TaskUpdateChunk
+            if (last_message instanceof UserMessage) {
+                if (last_message.content.length === 0) return;
+                const updated_part_index = part_index !== undefined ? part_index : last_message.content.length - 1;
+                const last_part = last_message.content[updated_part_index];
+                await last_message.render();
+                chunkUpdate = {
+                    type: 'user',
+                    task_id: this.task_id,
+                    task_status: this.task_status,
+                    message_id: last_message.message_id,
+                    last_part_index: updated_part_index,
+                    last_part,
+                };
+            } else if (last_message instanceof AssistantMessage && last_message.content.length > 0) {
+                const updated_part_index = part_index !== undefined ? part_index : last_message.content.length - 1;
+                const last_part = last_message.content[updated_part_index];
+                await last_part.render();
+                chunkUpdate = {
+                    type: 'assistant',
+                    task_id: this.task_id,
+                    task_status: this.task_status,
+                    message_id: last_message.message_id,
+                    last_part_index: updated_part_index,
+                    last_part,
+                    usage: last_message.usage
+                };
+            } else {
+                throw new Error('last message is not a user message or assistant message');
+            }
 
-            this.subscribers = this.subscribers.filter(subscriber => subscriber.isAvailable());
-            for (let subscriber of this.subscribers) {
+            for (const subscriber of this.subscribers) {
                 subscriber.send(chunkUpdate);
             }
         } catch (err) {
@@ -629,9 +665,11 @@ export class TaskState {
             if (checkHooks.operation === 'finish') {
                 break;
             } else {
-                let user_message = new UserMessage("继续任务: " + checkHooks.message);
-                let assistant_message = new AssistantMessage();
+                // 如果某个钩子要求继续执行，则发送一个用户消息给 agent，并继续补全
+                const user_message = new UserMessage(checkHooks.message);
+                const assistant_message = new AssistantMessage();
                 this.chat_context.appendMessage(user_message);
+                await this.sendSubscriptionFeedback();
                 this.chat_context.appendMessage(assistant_message);
                 continue;
             }

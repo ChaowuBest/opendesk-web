@@ -6,7 +6,7 @@ import {
     ToolCallMessagePart, UserMessage, ToolCall, CompactSeparatorMessage
 } from "../../aikernel/messages";
 import { shouldCompact, compactContext } from "../../aikernel/compact";
-import { TaskUpdateChunk } from "../../states/tasks";
+import { TaskUpdateChunk, TaskUpdateUserChunk, TaskUpdateAssistantChunk } from "../../states/tasks";
 import { logger } from "../../utils/logger.js";
 import { defaultMarkdownTheme } from "../theme";
 import { DefaultToolCallView } from "./toolcall";
@@ -258,6 +258,14 @@ export class UserMessageView implements Component {
         return new UserMessageView(new UserMessage(text));
     }
 
+    /** 从 TaskUpdateUserChunk 创建用户消息视图（用于“继续任务”等追加的用户消息） */
+    static fromChunk(chunk: TaskUpdateUserChunk): UserMessageView {
+        const msg = new UserMessage();
+        msg.message_id = chunk.message_id;
+        msg.content = [chunk.last_part];
+        return new UserMessageView(msg);
+    }
+
     invalidate() {
         this.box.invalidate();
         this.invalidated = true;
@@ -344,13 +352,19 @@ export class AssistantMessageView implements Component {
     }
 
     /**
-     * 根据任务发回的更新块来更新消息视图，由于用户消息视图是静态的，所以不需要更新
-     * @param chunkUpdate
+     * 设置当前视图对应的 message_id（用于 rebuildFromHistory 时与 messageIdToAssistantView 一致）。
      */
-    async update(chunkUpdate: TaskUpdateChunk) {
-        if (this.currentMessageId && this.currentMessageId !== chunkUpdate.message_id) {
-            this.parts = [];
-            this.box.clear();
+    setMessageId(message_id: string) {
+        this.currentMessageId = message_id;
+    }
+
+    /**
+     * 根据任务发回的 assistant 更新块来更新消息视图。
+     * 若 chunk 的 message_id 与当前视图不一致且当前已有关联 message_id，则不再抹除当前内容（由调用方创建新容器）。
+     */
+    async update(chunkUpdate: TaskUpdateAssistantChunk) {
+        if (this.currentMessageId !== undefined && this.currentMessageId !== chunkUpdate.message_id) {
+            return;
         }
         this.currentMessageId = chunkUpdate.message_id;
 
@@ -398,6 +412,8 @@ export class TaskView implements Component {
     private currentTaskId?: string;
     /** 防止 performCompactWithAnimation 重入 */
     private _compacting = false;
+    /** message_id -> AssistantMessageView，用于按 message_id 追加而非覆盖 */
+    private messageIdToAssistantView: Map<string, AssistantMessageView> = new Map();
 
     private tui: TUI;
     private messageLayout: Box = new Box(0, 0);
@@ -469,34 +485,26 @@ export class TaskView implements Component {
         const snapshotTaskId = this.taskState.task_id;
         this.currentTaskId = snapshotTaskId;
 
-        const responseView = new AssistantMessageView();
         this.messageLayout.addChild(UserMessageView.text(text));
-        this.messageLayout.addChild(responseView);
         this.invalidated = true;
 
         await this.taskState.submitUserMessage(text);
         const renderInterval = setInterval(() => {
-            // 只有当前任务仍然是活跃任务时才渲染
             if (this.currentTaskId === snapshotTaskId) {
                 this.tui.requestRender();
             }
         }, REASONING_SPINNER_MS);
         try {
             await this.taskState.waitUntilFinished(async (chunkUpdate: TaskUpdateChunk) => {
-                // 只有当前任务仍然是活跃任务时才更新视图
                 if (this.currentTaskId !== snapshotTaskId) return;
-                responseView.update(chunkUpdate);
-                this.invalidated = true;
-                if (chunkUpdate.usage) {
-                    this.onStatusBarUpdate?.({ totalTokens: chunkUpdate.usage.total_tokens });
-                }
+                await this.handleChunkUpdate(chunkUpdate);
                 this.tui.requestRender();
             });
         } finally {
             clearInterval(renderInterval);
-            // 只有当前任务仍然是活跃任务时才更新视图
             if (this.currentTaskId === snapshotTaskId) {
-                responseView.setStreamingComplete();
+                const lastView = this.getLastAssistantView();
+                if (lastView) lastView.setStreamingComplete();
                 this.invalidated = true;
                 this.tui.requestRender();
             }
@@ -507,8 +515,35 @@ export class TaskView implements Component {
     clearMessages() {
         this.messageLayout.clear();
         this.messages = [];
+        this.messageIdToAssistantView.clear();
         this.currentTaskId = undefined;
         this.invalidated = true;
+    }
+
+    /**
+     * 处理单条 TaskUpdateChunk：按 type 追加用户消息或按 message_id 获取/创建助手消息视图并更新。
+     * 当 message_id 与当前已有助手消息不一致时创建新容器追加，不抹除已有内容。
+     */
+    async handleChunkUpdate(chunkUpdate: TaskUpdateChunk) {
+        if (chunkUpdate.type === 'user') {
+            const view = UserMessageView.fromChunk(chunkUpdate);
+            this.messages.push(view);
+            this.messageLayout.addChild(view);
+        } else {
+            let view = this.messageIdToAssistantView.get(chunkUpdate.message_id);
+            if (!view) {
+                view = new AssistantMessageView();
+                view.setMessageId(chunkUpdate.message_id);
+                this.messageIdToAssistantView.set(chunkUpdate.message_id, view);
+                this.messages.push(view);
+                this.messageLayout.addChild(view);
+            }
+            await view.update(chunkUpdate);
+        }
+        this.invalidated = true;
+        if (chunkUpdate.type === 'assistant' && chunkUpdate.usage) {
+            this.onStatusBarUpdate?.({ totalTokens: chunkUpdate.usage.total_tokens });
+        }
     }
 
     /**
@@ -518,8 +553,8 @@ export class TaskView implements Component {
     rebuildFromHistory() {
         if (!this.taskState) return;
 
-        // 更新当前任务ID
         this.currentTaskId = this.taskState.task_id;
+        this.messageIdToAssistantView.clear();
 
         for (const msg of this.taskState.chat_context.messages) {
             if ((msg as any).role === 'compact_separator') {
@@ -532,6 +567,8 @@ export class TaskView implements Component {
                 this.messageLayout.addChild(view);
             } else if (msg instanceof AssistantMessage) {
                 const view = new AssistantMessageView();
+                view.setMessageId(msg.message_id);
+                this.messageIdToAssistantView.set(msg.message_id, view);
                 for (let i = 0; i < msg.content.length; i++) {
                     const part = msg.content[i];
                     switch (part.type) {

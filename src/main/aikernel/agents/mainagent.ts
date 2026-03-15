@@ -12,7 +12,7 @@
 import { AgentDecl } from "../agent";
 import { SkillRegistry } from "../skill";
 import { SoulRegistry } from "../../applications/soulmgr/soulregistry";
-import { SUBTASK_MANAGEMENT_PROMPT } from "../planning/subtask";
+import { SUBTASK_MANAGEMENT_PROMPT } from "../planning/prompt";
 import format from "string-template";
 
 

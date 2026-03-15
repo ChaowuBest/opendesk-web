@@ -553,6 +553,7 @@ export async function executeSubTask(
     const progress: SubTaskProgressInfo = { tools: [], lastText: null };
     let lastProgressTime = 0;
     const progressCallback = (chunk: TaskUpdateChunk) => {
+        if (chunk.type !== 'assistant') return;
         extractSubTaskProgress(chunk, progress);
         const now = Date.now();
         if (onProgress && (now - lastProgressTime >= PROGRESS_THROTTLE_MS)) {

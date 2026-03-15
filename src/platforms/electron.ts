@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { BaseTaskManagerUpdateSubscriber, BaseTaskUpdateSubscriber, TaskUpdateChunk } from '../main/states/tasks.js';
+import { BaseTaskManagerUpdateSubscriber, BaseTaskUpdateSubscriber, TaskUpdateChunk } from '../main/aikernel/states/tasks.js';
 import { AbstractPlatform } from './base.js';
 import { MailboxApplication } from "../main/applications/mailbox/app.js";
 import { FileMgrApplication } from "../main/applications/filemgr/app.js";
