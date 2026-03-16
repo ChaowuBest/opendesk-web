@@ -9,7 +9,7 @@ import { GlobalState } from "../aikernel/states/global";
 import { AgentInputArea } from "./components/input";
 import { ApplicationRegistry } from "../applications/registry";
 import { KeyboardShortcutManager } from "./shortcuts";
-import { SlashCommandRegistry } from "./commands";
+import { SlashCommandRegistry, registerAllCommands } from "./commands/index.js";
 import { Setting } from "../utils/setting.js";
 import { logger, setDebugMode, getDebugMode } from "../utils/logger.js";
 import { lookupKnownContextSize, fetchContextSizeFromAPI } from "../utils/model-context";
@@ -77,15 +77,15 @@ export class OpenDeskTUI {
         spacing: 1,
         padding: { left: 1, right: 1 }
     });
-    private taskView: TaskView;
-    private logPanel: LogPanel;
+    public taskView: TaskView;
+    public logPanel: LogPanel;
     private todoList: TodoList;
     public inputArea: AgentInputArea;
 
     private shortcutManager: KeyboardShortcutManager;
     public commandRegistry: SlashCommandRegistry;
 
-    private activeTaskId?: string;
+    public activeTaskId?: string;
 
     /** 跟踪是否有 overlay 打开 */
     hasOpenOverlay = false;
@@ -93,9 +93,9 @@ export class OpenDeskTUI {
     /** 当前激活的配置页面组件（非 null 时表示处于配置模式） */
     private configComponent?: Component;
 
-    private workspace: string;
+    public workspace: string;
     private agentDecl: AgentDecl;
-    private model?: string;
+    public model?: string;
 
     /**
      * 如果在命令行中给了-c参数，就用singleShot模式执行，第一轮补全后就自动退出.
@@ -292,650 +292,8 @@ export class OpenDeskTUI {
     }
 
     private setupCommands() {
-        this.commandRegistry.register({
-            name: "new",
-            description: "启动新任务并发送消息",
-            shortcut: Key.ctrl("n"),
-            execute: async (args: string) => {
-                await this.createNewTask();
-                if (args.trim()) {
-                    await this.onRequestSubmit(args.trim());
-                }
-            },
-        });
+        registerAllCommands(this);
 
-        this.commandRegistry.register({
-            name: "switch",
-            description: "切换到其他任务",
-            shortcut: Key.ctrl("l"),
-            execute: async () => { this.showTaskSwitcher(); },
-        });
-
-        this.commandRegistry.register({
-            name: "help",
-            description: "显示快捷键与指令帮助",
-            execute: async () => {
-                new HelpOverlay(this).show();
-            },
-        });
-
-        this.commandRegistry.register({
-            name: "exit",
-            description: "退出 OpenDesk",
-            execute: async () => {
-                const confirm = new ConfirmOverlay(this, {
-                    title: "确认退出",
-                    message: "确定要退出 OpenDesk 吗？",
-                    confirmLabel: "退出",
-                    cancelLabel: "取消"
-                });
-                confirm.show(async () => {
-                    await this.exit();
-                });
-            },
-        });
-
-        this.commandRegistry.register({
-            name: "quit",
-            description: "退出 OpenDesk",
-            execute: async () => {
-                const confirm = new ConfirmOverlay(this, {
-                    title: "确认退出",
-                    message: "确定要退出 OpenDesk 吗？",
-                    confirmLabel: "退出",
-                    cancelLabel: "取消"
-                });
-                confirm.show(async () => {
-                    await this.exit();
-                });
-            },
-        });
-
-        this.commandRegistry.register({
-            name: "manual",
-            description: "打开使用手册",
-            execute: async () => {
-                // 获取 manual.html 的路径
-                // 开发环境: 项目根目录/docs/manual.html
-                // 生产环境: 与 opendesk 可执行文件同目录的 manual.html
-                const __filename = fileURLToPath(import.meta.url);
-                const __dirname = path.dirname(__filename);
-
-                // 尝试多个可能的路径
-                const possiblePaths = [
-                    // 生产环境: 与可执行文件同目录
-                    path.join(__dirname, 'manual.html'),
-                    // 开发环境: 从 dist/cli/opendesk-debug 向上找到项目根目录
-                    path.join(__dirname, '..', '..', '..', 'docs', 'manual.html'),
-                    // 开发环境: 从 dist/main/main.js 向上找到项目根目录
-                    path.join(__dirname, '..', '..', 'docs', 'manual.html'),
-                ];
-
-                let manualPath: string | null = null;
-                for (const p of possiblePaths) {
-                    if (fs.existsSync(p)) {
-                        manualPath = p;
-                        break;
-                    }
-                }
-
-                if (manualPath) {
-                    try {
-                        await open(manualPath);
-                    } catch (err: any) {
-                        const info = new InfoOverlay(this, {
-                            title: "打开失败",
-                            message: `无法打开手册: ${err?.message ?? err}`,
-                            closeLabel: "确定"
-                        });
-                        info.show();
-                    }
-                } else {
-                    const info = new InfoOverlay(this, {
-                        title: "文件未找到",
-                        message: "未找到 manual.html 文件",
-                        closeLabel: "确定"
-                    });
-                    info.show();
-                }
-            },
-        });
-
-        this.commandRegistry.register({
-            name: "cancel",
-            description: "撤销消息队列中的所有待发送消息",
-            execute: async () => {
-                this.inputArea.clearMessageQueue();
-                // 同时更新当前任务的队列
-                if (this.activeTaskId) {
-                    const currentTask = this.taskManagerState.getTask(this.activeTaskId);
-                    if (currentTask) {
-                        currentTask.message_queue = this.inputArea.getQueueSnapshot();
-                    }
-                }
-            },
-        });
-
-        this.commandRegistry.register({
-            name: "clear",
-            description: "删除所有任务历史",
-            execute: async () => {
-                const confirm = new ConfirmOverlay(this, {
-                    title: "确认删除",
-                    message: "确定要删除所有任务历史吗？此操作不可恢复。",
-                    confirmLabel: "删除所有",
-                    cancelLabel: "取消"
-                });
-                confirm.show(() => {
-                    // On confirm
-                    this.taskManagerState.clearAllTasks();
-                    // Reset the current task view
-                    this.taskView.taskState = undefined;
-                    this.taskView.clearMessages();
-                    this.activeTaskId = undefined;
-                    this.inputArea.clearMessageQueue();
-                    this.inputArea.setStatus('idle');
-                    this.inputArea.statusBar.stopTimer();
-                    this.inputArea.statusBar.resetAccumulated();
-                    this.inputArea.statusBar.update({ totalTokens: 0 });
-                    this.tui.requestRender();
-                });
-            },
-        });
-
-        this.commandRegistry.register({
-            name: "export",
-            description: "导出当前会话为 HTML 文件，用法：/export filename.html",
-            execute: async (args: string) => {
-                if (!this.activeTaskId) {
-                    logger.warn('No active task to export');
-                    return;
-                }
-
-                const task = this.taskManagerState.getTask(this.activeTaskId);
-                if (!task) {
-                    logger.warn('Task not found');
-                    return;
-                }
-
-                let filePath = args.trim();
-                if (!filePath) {
-                    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-                    filePath = `opendesk-session-${timestamp}.html`;
-                    logger.info(`未指定文件名，将使用自动生成的文件名：${filePath}`);
-                }
-
-                if (!filePath.endsWith('.html')) {
-                    filePath += '.html';
-                }
-
-                const absolutePath = path.resolve(this.workspace, filePath);
-
-                // 检查文件是否存在
-                if (fs.existsSync(absolutePath)) {
-                    const confirm = new ConfirmOverlay(this, {
-                        title: "文件已存在",
-                        message: `文件 ${absolutePath} 已存在。是否覆盖？`,
-                        confirmLabel: "覆盖",
-                        cancelLabel: "取消"
-                    });
-                    confirm.show(async () => {
-                        // 用户确认覆盖
-                        await this.doExport(task, absolutePath);
-                    });
-                } else {
-                    // 文件不存在，直接导出
-                    await this.doExport(task, absolutePath);
-                }
-            },
-        });
-
-        this.commandRegistry.register({
-            name: "dashboard",
-            description: "查看系统仪表盘（任务、待办、状态）",
-            execute: async () => {
-                await this.showDashboard();
-            },
-        });
-
-        this.commandRegistry.register({
-            name: "config",
-            description: "打开系统设置",
-            execute: async () => {
-                this.enterConfigMode();
-            },
-        });
-
-        this.commandRegistry.register({
-            name: "log",
-            description: "显示日志面板，用法: /log [off|last|all]",
-            getArgumentCompletions: (argPrefix: string) => {
-                const options = ['off', 'last', 'all'];
-                return options
-                    .filter(opt => opt.startsWith(argPrefix.toLowerCase()))
-                    .map(opt => ({ value: opt, label: opt, description: opt === 'off' ? '不显示' : (opt === 'last' ? '最后10条' : '全部') }));
-            },
-            execute: async (args: string) => {
-                const modeArg = args.trim().toLowerCase();
-                if (modeArg === 'off' || modeArg === 'last' || modeArg === 'all') {
-                    this.logPanel.setMode(modeArg);
-                } else {
-                    // 默认不显示
-                    this.logPanel.setMode('off');
-                }
-            },
-        });
-
-        this.commandRegistry.register({
-            name: "debug",
-            description: "调试模式开关，用法: /debug [on|off]",
-            getArgumentCompletions: (argPrefix: string) => {
-                const options = ['on', 'off'];
-                return options
-                    .filter(opt => opt.startsWith(argPrefix.toLowerCase()))
-                    .map(opt => ({ value: opt, label: opt, description: opt === 'on' ? '开启调试模式' : '关闭调试模式' }));
-            },
-            execute: async (args: string) => {
-                const modeArg = args.trim().toLowerCase();
-                if (modeArg === 'on') {
-                    setDebugMode(true);
-                    logger.info('调试模式已开启');
-                } else if (modeArg === 'off') {
-                    setDebugMode(false);
-                    logger.info('调试模式已关闭');
-                } else {
-                    // 显示当前状态
-                    const currentMode = getDebugMode();
-                    logger.info(`当前调试模式: ${currentMode ? 'on' : 'off'}`);
-                }
-            },
-        });
-
-        this.commandRegistry.register({
-            name: "stop",
-            description: "停止当前正在执行的任务",
-            execute: async () => {
-                if (!this.activeTaskId) {
-                    logger.warn('没有活跃的任务');
-                    return;
-                }
-
-                const currentTask = this.taskManagerState.getTask(this.activeTaskId);
-                if (!currentTask) {
-                    logger.warn('未找到当前任务');
-                    return;
-                }
-
-                if (currentTask.task_status !== 'running') {
-                    logger.warn('当前任务不在运行中');
-                    return;
-                }
-
-                currentTask.stop();
-                this.inputArea.statusBar.stopTimer();
-                this.inputArea.setStatus('idle');
-                this.inputArea.clearMessageQueue();
-                logger.info('任务已停止');
-                this.tui.requestRender();
-            },
-        });
-
-        this.commandRegistry.register({
-            name: "upgrade",
-            description: "升级 OpenDesk CLI 到最新版本",
-            execute: async () => {
-                // 显示升级 overlay 界面，让用户选择 stable 或 nightly
-                const upgradeOverlay = new UpgradeOverlay(this);
-                upgradeOverlay.show();
-            },
-        });
-
-        this.commandRegistry.register({
-            name: "rename",
-            description: "重命名当前任务，用法：/rename <新名称>",
-            execute: async (args: string) => {
-                if (!this.activeTaskId) {
-                    logger.warn('没有活跃的任务');
-                    return;
-                }
-
-                const currentTask = this.taskManagerState.getTask(this.activeTaskId);
-                if (!currentTask) {
-                    logger.warn('未找到当前任务');
-                    return;
-                }
-
-                const newName = args.trim();
-                if (!newName) {
-                    logger.warn('请提供新的任务名称，用法：/rename <新名称>');
-                    return;
-                }
-
-                currentTask.rename(newName);
-                logger.info(`任务已重命名为: ${newName}`);
-                this.tui.requestRender();
-            },
-        });
-
-        this.commandRegistry.register({
-            name: "fork",
-            description: "复制当前会话并切换到新会话",
-            execute: async () => {
-                if (!this.activeTaskId) {
-                    const info = new InfoOverlay(this, {
-                        title: "Fork 失败",
-                        message: "没有活跃的任务",
-                        closeLabel: "确定"
-                    });
-                    info.show();
-                    return;
-                }
-
-                const currentTask = this.taskManagerState.getTask(this.activeTaskId);
-                if (!currentTask) {
-                    const info = new InfoOverlay(this, {
-                        title: "Fork 失败",
-                        message: "未找到当前任务",
-                        closeLabel: "确定"
-                    });
-                    info.show();
-                    return;
-                }
-
-                // Fork the current task
-                const forkedTask = currentTask.fork();
-
-                // Switch to the forked task
-                this.switchToTask(forkedTask);
-
-                // Show info notification
-                const info = new InfoOverlay(this, {
-                    title: "Fork 成功",
-                    message: `已切换到新的会话副本`,
-                    closeLabel: "确定"
-                });
-                info.show();
-            },
-        });
-
-        this.commandRegistry.register({
-            name: "compact",
-            description: "手动压缩当前任务的上下文",
-            execute: async () => {
-                if (this.taskView.isCompacting) {
-                    return;
-                }
-
-                if (!this.activeTaskId) {
-                    logger.warn('没有活跃的任务');
-                    return;
-                }
-
-                const currentTask = this.taskManagerState.getTask(this.activeTaskId);
-                if (!currentTask) {
-                    logger.warn('未找到当前任务');
-                    return;
-                }
-
-                try {
-                    await this.taskView.performCompactWithAnimation();
-                    this.taskManagerState.save();
-
-                    // 重建视图，让分隔线正确显示
-                    this.taskView.clearMessages();
-                    this.taskView.rebuildFromHistory();
-                    this.tui.requestRender();
-
-                    const info = new InfoOverlay(this, {
-                        title: "上下文压缩",
-                        message: "上下文已成功压缩。压缩效果将在下次对话时体现。",
-                        closeLabel: "确定"
-                    });
-                    info.show();
-                } catch (err: any) {
-                    logger.error(`上下文压缩失败: ${err?.message ?? err}`);
-                    const info = new InfoOverlay(this, {
-                        title: "压缩失败",
-                        message: `上下文压缩过程中发生错误：${err?.message ?? err}`,
-                        closeLabel: "确定"
-                    });
-                    info.show();
-                }
-            },
-        });
-
-        this.commandRegistry.register({
-            name: "memory",
-            description: "记忆管理：/memory add [提示]、/memory search <查询>、/memory forget <描述>、/memory list",
-            getArgumentCompletions: (argPrefix: string) => {
-                const options = ['add', 'search', 'forget', 'list'];
-                const parts = argPrefix.split(/\s+/);
-                if (parts.length <= 1) {
-                    return options
-                        .filter(opt => opt.startsWith((parts[0] || '').toLowerCase()))
-                        .map(opt => ({
-                            value: opt,
-                            label: opt,
-                            description: opt === 'add' ? '添加记忆' :
-                                        opt === 'search' ? '搜索记忆' :
-                                        opt === 'forget' ? '删除记忆' :
-                                        '列出所有记忆',
-                        }));
-                }
-                return null;
-            },
-            execute: async (args: string) => {
-                const parts = args.trim().split(/\s+/);
-                const subCommand = (parts[0] || '').toLowerCase();
-                const restArgs = parts.slice(1).join(' ').trim();
-
-                if (subCommand === 'add') {
-                    await this.handleMemoryAdd(restArgs);
-                } else if (subCommand === 'search') {
-                    if (!restArgs) {
-                        logger.warn('用法：/memory search <查询关键词>');
-                        return;
-                    }
-                    await this.handleMemorySearch(restArgs);
-                } else if (subCommand === 'forget') {
-                    if (!restArgs) {
-                        logger.warn('用法：/memory forget <描述要删除的记忆>');
-                        return;
-                    }
-                    await this.handleMemoryForget(restArgs);
-                } else if (subCommand === 'list') {
-                    this.handleMemoryList();
-                } else {
-                    logger.warn('用法：/memory add [提示] | /memory search <查询> | /memory forget <描述> | /memory list');
-                }
-            },
-        });
-
-        this.commandRegistry.register({
-            name: "bookmark",
-            description: "管理任务书签，用法：/bookmark add|list|remove",
-            getArgumentCompletions: (argPrefix: string) => {
-                const options = ['add', 'list', 'remove'];
-                return options
-                    .filter(opt => opt.startsWith(argPrefix.toLowerCase()))
-                    .map(opt => ({
-                        value: opt,
-                        label: opt,
-                        description: opt === 'add' ? '将当前任务添加到书签' :
-                                    opt === 'list' ? '列出所有书签任务' :
-                                    '移除当前任务的书签'
-                    }));
-            },
-            execute: async (args: string) => {
-                const subCommand = args.trim().toLowerCase();
-
-                if (subCommand === 'list') {
-                    // 显示书签列表
-                    const bookmarkList = new BookmarkList(this);
-                    bookmarkList.show();
-                    return;
-                }
-
-                if (subCommand === 'add') {
-                    // 添加当前任务到书签
-                    if (!this.activeTaskId) {
-                        const info = new InfoOverlay(this, {
-                            title: "添加书签失败",
-                            message: "没有活跃的任务",
-                            closeLabel: "确定"
-                        });
-                        info.show();
-                        return;
-                    }
-
-                    const currentTask = this.taskManagerState.getTask(this.activeTaskId);
-                    if (!currentTask) {
-                        const info = new InfoOverlay(this, {
-                            title: "添加书签失败",
-                            message: "未找到当前任务",
-                            closeLabel: "确定"
-                        });
-                        info.show();
-                        return;
-                    }
-
-                    if (currentTask.bookmark_path) {
-                        const info = new InfoOverlay(this, {
-                            title: "添加书签失败",
-                            message: "当前任务已在书签中",
-                            closeLabel: "确定"
-                        });
-                        info.show();
-                        return;
-                    }
-
-                    currentTask.setBookmark('/');
-                    const info = new InfoOverlay(this, {
-                        title: "添加书签成功",
-                        message: `任务"${currentTask.task_name || '未命名任务'}"已添加到书签`,
-                        closeLabel: "确定"
-                    });
-                    info.show();
-                    return;
-                }
-
-                if (subCommand === 'remove') {
-                    // 移除当前任务的书签
-                    if (!this.activeTaskId) {
-                        const info = new InfoOverlay(this, {
-                            title: "移除书签失败",
-                            message: "没有活跃的任务",
-                            closeLabel: "确定"
-                        });
-                        info.show();
-                        return;
-                    }
-
-                    const currentTask = this.taskManagerState.getTask(this.activeTaskId);
-                    if (!currentTask) {
-                        const info = new InfoOverlay(this, {
-                            title: "移除书签失败",
-                            message: "未找到当前任务",
-                            closeLabel: "确定"
-                        });
-                        info.show();
-                        return;
-                    }
-
-                    if (!currentTask.bookmark_path) {
-                        const info = new InfoOverlay(this, {
-                            title: "移除书签失败",
-                            message: "当前任务不在书签中",
-                            closeLabel: "确定"
-                        });
-                        info.show();
-                        return;
-                    }
-
-                    const taskName = currentTask.task_name || '未命名任务';
-                    currentTask.removeBookmark();
-                    const info = new InfoOverlay(this, {
-                        title: "移除书签成功",
-                        message: `任务"${taskName}"已从书签中移除`,
-                        closeLabel: "确定"
-                    });
-                    info.show();
-                    return;
-                }
-
-                // 未提供子命令或子命令无效
-                logger.warn('用法：/bookmark add|list|remove');
-            },
-        });
-
-        this.commandRegistry.register({
-            name: "quickpass",
-            description: "导出快捷口令，用法：/quickpass config base|all",
-            getArgumentCompletions: (argPrefix: string) => {
-                const options = [
-                    { value: 'config base', label: 'config base', description: '导出基础设置口令（不含应用配置）' },
-                    { value: 'config all', label: 'config all', description: '导出全部设置口令' },
-                ];
-                const prefix = argPrefix.trimEnd().toLowerCase();
-                return options.filter(opt => opt.value.startsWith(prefix));
-            },
-            execute: async (args: string) => {
-                const parts = args.trim().split(/\s+/);
-                const subCommand = (parts[0] || '').toLowerCase();
-                const subArg = (parts[1] || '').toLowerCase();
-
-                if (subCommand === 'config') {
-                    if (subArg === 'base') {
-                        try {
-                            const quickpass = QuickPassHelper.exportBaseConfig();
-                            const info = new InfoOverlay(this, {
-                                title: "基础设置口令",
-                                message: `请复制以下口令并发送给对方：\n\n${quickpass}`,
-                                closeLabel: "确定",
-                                fullWidth: true,
-                            });
-                            info.show();
-                        } catch (err: any) {
-                            const info = new InfoOverlay(this, {
-                                title: "导出失败",
-                                message: `导出基础设置口令失败：${err?.message ?? err}`,
-                            });
-                            info.show();
-                        }
-                    } else if (subArg === 'all') {
-                        try {
-                            const quickpass = QuickPassHelper.exportAllConfig();
-                            const info = new InfoOverlay(this, {
-                                title: "全部设置口令",
-                                message: `请复制以下口令并发送给对方：\n\n${quickpass}`,
-                                closeLabel: "确定",
-                                fullWidth: true,
-                            });
-                            info.show();
-                        } catch (err: any) {
-                            const info = new InfoOverlay(this, {
-                                title: "导出失败",
-                                message: `导出全部设置口令失败：${err?.message ?? err}`,
-                            });
-                            info.show();
-                        }
-                    } else {
-                        logger.warn('用法：/quickpass config base|all');
-                    }
-                } else {
-                    logger.warn('用法：/quickpass config base|all');
-                }
-            },
-        });
-
-        this.commandRegistry.register({
-            name: "notification",
-            description: "打开通知中心，查看所有通知",
-            execute: async () => {
-                this.showNotificationCenter();
-        }});
-
-        // 使用 onReady 回调确保应用注册表初始化完成后再注册命令
         ApplicationRegistry.onReady(() => {
             this.registerApplicationCommands();
         });
@@ -962,34 +320,14 @@ export class OpenDeskTUI {
         this.inputArea.refreshAutocomplete();
     }
 
-    private showNotificationCenter() {
+    showNotificationCenter() {
         // 打开通知中心时，先清除所有残留的 toast 弹窗
         this.toastManager.dismissAll();
         const overlay = new NotificationCenterOverlay(this);
         overlay.show();
     }
 
-    private async showDashboard() {
-        try {
-            // 从 worker 获取全局待办数据
-            const todosResult = await ApplicationRegistry.callWorker('todomgr', 'listGlobalTodos', 'all');
-            const todos = todosResult?.data || [];
-            const tasks = this.taskManagerState.tasks;
-
-            // 直接获取当前已有的消息插件状态，不阻塞等待初始化完成
-            let channelStates: any[] = [];
-            const channelsApp = ApplicationRegistry.getApplication('channelmgr');
-            if (channelsApp && 'getChannelStates' in channelsApp) {
-                channelStates = (channelsApp as any).getChannelStates();
-            }
-
-            new DashboardOverlay(this, { globalTodos: todos, tasks, channelStates }).show();
-        } catch (err) {
-            logger.error(`打开仪表盘失败: ${err}`);
-        }
-    }
-
-    private async doExport(task: any, absolutePath: string) {
+    async doExport(task: any, absolutePath: string) {
         await exportTaskToHtml(task, absolutePath);
         logger.info(`Session exported to: ${absolutePath}`);
 
@@ -1030,7 +368,7 @@ export class OpenDeskTUI {
         this.tui.requestRender();
     }
 
-    private enterConfigMode() {
+    enterConfigMode() {
         this.configComponent = new ConfigMainPage(this.tui, () => this.exitConfigMode(), () => {
             this.resolveModelInfo();
         });
@@ -1043,7 +381,7 @@ export class OpenDeskTUI {
         this.tui.requestRender();
     }
 
-    private exitConfigMode() {
+    exitConfigMode() {
         this.configComponent = undefined;
 
         this.shortcutManager.attach(this.tui);
@@ -1093,7 +431,7 @@ export class OpenDeskTUI {
         }, 10);
     }
 
-    private async createNewTask() {
+    async createNewTask() {
         // 先清屏，防止旧内容残留
         process.stdout.write(FULL_CLEAR);
 
@@ -1141,12 +479,6 @@ export class OpenDeskTUI {
         this.inputArea.statusBar.update({ totalTokens: 0 });
         this.tui.requestRender();
     }
-
-    private showTaskSwitcher() {
-        const switcher = new TaskSwitcher(this);
-        switcher.show();
-    }
-
 
     public async switchToTask(task: TaskState) {
         // 先清屏，防止旧内容残留
@@ -1278,14 +610,14 @@ export class OpenDeskTUI {
         setTimeout(() => clearInterval(monitorInterval), 15000);
     }
 
-    // ─── Memory operation management ──────────────────────
+    // ─── Memory operation management (used by commands/memory.ts) ──────────────────────
 
-    private memoryAddStart = 0;
+    public memoryAddStart = 0;
 
     /**
      * 尝试获取全局记忆操作锁。失败时弹出 InfoOverlay 提示。
      */
-    private acquireMemoryLock(op: 'add' | 'search' | 'forget'): boolean {
+    public acquireMemoryLock(op: 'add' | 'search' | 'forget'): boolean {
         const registry = MemoryRegistry.getInstance();
         if (!registry.acquireLock(op)) {
             const labels = { add: '添加', search: '搜索', forget: '删除' };
@@ -1299,14 +631,14 @@ export class OpenDeskTUI {
         return true;
     }
 
-    private releaseMemoryLock() {
+    public releaseMemoryLock() {
         MemoryRegistry.getInstance().releaseLock();
     }
 
     /**
      * 启动普通记忆操作 spinner（search/forget 用，静态文字 + 旋转图标）
      */
-    private startMemorySpinner(message: string) {
+    public startMemorySpinner(message: string) {
         this.memoryOpBusy = true;
         let frame = 0;
         const frames = OpenDeskTUI.SPINNER_FRAMES;
@@ -1321,7 +653,7 @@ export class OpenDeskTUI {
     /**
      * 启动 /memory add 专用 spinner（动态更新耗时和条数）
      */
-    private startMemoryAddSpinner() {
+    public startMemoryAddSpinner() {
         this.memoryOpBusy = true;
         let frame = 0;
         const frames = OpenDeskTUI.SPINNER_FRAMES;
@@ -1336,7 +668,7 @@ export class OpenDeskTUI {
         }, 200);
     }
 
-    private stopMemorySpinner() {
+    public stopMemorySpinner() {
         if (this.memorySpinnerInterval) {
             clearInterval(this.memorySpinnerInterval);
             this.memorySpinnerInterval = undefined;
@@ -1345,12 +677,10 @@ export class OpenDeskTUI {
         this.inputArea.clearExternalHint();
     }
 
-    private showMemoryResult(title: string, message: string, onClose?: () => void) {
+    public showMemoryResult(title: string, message: string, onClose?: () => void) {
         const info = new InfoOverlay(this, { title, message });
         info.show(onClose);
     }
-
-    // ─── Memory command handlers ────────────────────────
 
     private static readonly MAX_MSG_CHARS = 2000;
 
@@ -1358,7 +688,7 @@ export class OpenDeskTUI {
      * 从当前对话构建一个精简的上下文摘要字符串，供后台记忆提取使用。
      * 丢弃工具输出，截断过长的单条消息。
      */
-    private buildConversationSnapshot(): string {
+    public buildConversationSnapshot(): string {
         const task = this.taskView.taskState;
         if (!task) return '';
 
@@ -1400,138 +730,7 @@ export class OpenDeskTUI {
         return parts.join('\n\n');
     }
 
-    private async handleMemoryAdd(prompt: string) {
-        if (!this.acquireMemoryLock('add')) return;
-
-        const registry = MemoryRegistry.getInstance();
-        registry.resetOpCounter();
-        this.memoryAddStart = Date.now();
-        this.startMemoryAddSpinner();
-
-        const conversationSnapshot = this.buildConversationSnapshot();
-
-        const addPrompt = prompt
-            ? `请根据以下指示，从对话中提取并保存相关记忆：\n\n${prompt}\n\n请使用 addMemory 工具保存。注意判断每条记忆应保存到全局(global)还是工作区(workspace)。`
-            : '请回顾以下对话，提取所有值得长期保存的信息（用户偏好、重要事实、关键决策、有用上下文等），并使用 addMemory 工具逐条保存。注意判断每条记忆应保存到全局(global)还是工作区(workspace)。';
-
-        const fullPrompt = `${addPrompt}\n\n---\n\n以下是对话记录：\n\n${conversationSnapshot}`;
-
-        try {
-            const bgContext = new ChatContext();
-            bgContext.system_prompt = new SystemMessage(
-                '你是一个记忆提取助手。你的唯一任务是从给定的对话历史中提取有价值的信息，并使用 addMemory 工具保存为长期记忆。' +
-                '你只需要调用 addMemory 工具，不要输出其他内容。'
-            );
-
-            const memoryToolset = createMemoryToolset();
-            bgContext.attachToolsets(memoryToolset);
-            bgContext.appendMessage(new UserMessage(fullPrompt));
-            bgContext.appendMessage(new AssistantMessage());
-
-            const bgTask = new TaskState(this.taskManagerState);
-            bgTask.chat_context = bgContext;
-            bgTask.model = this.model;
-
-            await bgTask.processTask();
-
-            this.stopMemorySpinner();
-            this.releaseMemoryLock();
-
-            const elapsed = Math.floor((Date.now() - this.memoryAddStart) / 1000);
-            const count = registry.opCounter;
-            if (count > 0) {
-                this.showMemoryResult(
-                    '记忆提取完成',
-                    `耗时 ${elapsed} 秒，共提取 ${count} 条记忆。`,
-                );
-            } else {
-                this.showMemoryResult(
-                    '记忆提取完成',
-                    `耗时 ${elapsed} 秒，未发现需要保存的新记忆。`,
-                );
-            }
-        } catch (err: any) {
-            this.stopMemorySpinner();
-            this.releaseMemoryLock();
-            this.showMemoryResult('记忆提取失败', `操作出错：${err?.message ?? err}`);
-        }
-    }
-
-    private async handleMemorySearch(query: string) {
-        if (!this.acquireMemoryLock('search')) return;
-        this.startMemorySpinner('正在搜索相关记忆...');
-
-        const registry = MemoryRegistry.getInstance();
-        try {
-            const results = await registry.smartSearch(query);
-            this.stopMemorySpinner();
-            this.releaseMemoryLock();
-
-            if (results.length === 0) {
-                this.showMemoryResult('记忆搜索', `未找到与「${query}」相关的记忆`);
-                return;
-            }
-
-            const topResults = results.slice(0, 5);
-            const memoriesForContext = topResults.map(r => ({ scope: r.scope, meta: r.meta }));
-            const formattedContent = registry.formatMemoriesForContext(memoriesForContext);
-
-            const resultLines = topResults.map(r =>
-                `  • ${r.meta.name}（相关度: ${r.relevance}/10）`
-            ).join('\n');
-
-            this.showMemoryResult(
-                '记忆搜索完成',
-                `找到 ${results.length} 条相关记忆，将前 ${topResults.length} 条注入对话上下文：\n\n${resultLines}`,
-                async () => {
-                    const searchPrompt = `以下是根据查询"${query}"检索到的相关记忆，请参考这些信息：\n\n${formattedContent}`;
-                    await this.onRequestSubmit(searchPrompt);
-                },
-            );
-        } catch (err: any) {
-            this.stopMemorySpinner();
-            this.releaseMemoryLock();
-            this.showMemoryResult('记忆搜索失败', `操作出错：${err?.message ?? err}`);
-        }
-    }
-
-    private async handleMemoryForget(description: string) {
-        if (!this.acquireMemoryLock('forget')) return;
-        this.startMemorySpinner('正在搜索并删除匹配的记忆...');
-
-        const registry = MemoryRegistry.getInstance();
-        try {
-            const result = await registry.smartForget(description);
-            this.stopMemorySpinner();
-            this.releaseMemoryLock();
-
-            if (result.deleted.length > 0) {
-                const lines = result.deleted.map(d => `  • ${d.name}`).join('\n');
-                this.showMemoryResult(
-                    '记忆删除完成',
-                    `已删除 ${result.deleted.length} 条记忆：\n\n${lines}`,
-                );
-            } else {
-                this.showMemoryResult(
-                    '记忆删除',
-                    `未找到与「${description}」匹配的记忆`,
-                );
-            }
-        } catch (err: any) {
-            this.stopMemorySpinner();
-            this.releaseMemoryLock();
-            this.showMemoryResult('记忆删除失败', `操作出错：${err?.message ?? err}`);
-        }
-    }
-
-    private handleMemoryList() {
-        const overlay = new MemoryListOverlay(this);
-        overlay.show();
-    }
-
-    // ─── Exit & Submit ────────────────────────────────────
-
-    private async exit() {
+    async exit() {
         try {
             this.toastManager.stop();
             this.inputArea.statusBar.stopTimer();

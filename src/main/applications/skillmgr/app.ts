@@ -26,7 +26,7 @@ import {
     RefreshSkillsTool,
     GetSkillsDirectoryTool
 } from './tools.js';
-import type { SlashCommandHandler } from '../../tui/commands.js';
+import type { SlashCommandHandler } from '../../tui/commands/index.js';
 
 
 export class SkillMgrApplication extends BaseApplication {

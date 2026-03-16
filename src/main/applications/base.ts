@@ -15,7 +15,7 @@ import { logger } from '../utils/logger.js';
 import { Setting, getAppDirectory } from '../utils/setting.js';
 import { BaseToolset } from '../aikernel/tool.js';
 import { Skill } from '../aikernel/skill.js';
-import type { SlashCommandHandler } from '../tui/commands.js';
+import type { SlashCommandHandler } from '../tui/commands/index.js';
 import type { ApplicationRegistry } from './registry.js';
 import path from 'path';
 import fs from 'fs';
