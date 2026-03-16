@@ -20,7 +20,7 @@ import { z } from 'zod';
 import fs from 'fs';
 import path from 'path';
 import * as diff from 'diff';
-import { fromFile as fileTypeFromFile } from 'file-type';
+import fileType from 'file-type';
 import iconv from 'iconv-lite';
 import { detectEncoding, decodeBuffer, encodingDisplayName, HEAD_BYTES } from './encoding.js';
 
@@ -744,9 +744,9 @@ async function readSingleFile(filePath: string, offset: number): Promise<ReadFil
         const size = stat.size;
         const modified = stat.mtime.toISOString();
 
-        let type: Awaited<ReturnType<typeof fileTypeFromFile>> = undefined;
+        let type: Awaited<ReturnType<typeof fileType.fromFile>> = undefined;
         try {
-            type = await fileTypeFromFile(filePath);
+            type = await fileType.fromFile(filePath);
         } catch {
             // 解析不了当文本
         }
