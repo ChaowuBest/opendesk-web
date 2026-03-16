@@ -9,28 +9,31 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import z from 'zod';
+import { z } from 'zod';
 import path from 'path';
 import fs from 'fs';
 import { workerData, isMainThread } from 'worker_threads';
-
+import type { BaseApplication } from '../applications/base.js';
 
 const ProviderSchema = z.object({
     name: z.string().default('openrouter').describe('模型提供商名称'),
     base_url: z.string().default('https://openrouter.ai/api/v1').describe('模型提供商的 API 地址'),
     api_key: z.string().default('').describe('模型提供商的 API 密钥'),
     no_proxy: z.boolean().default(false).describe('是否禁用代理')
-})
+});
 
 const ModelSchema = z.object({
     alias: z.string().default('model_alias').describe('模型别名(在本地配置中使用的名称)'),
     provider_name: z.string().default('openrouter').describe('模型提供商'),
-    model_name: z.string().default('google/gemini-2.5-flash').describe('模型名称(在提供商一侧的名称)'),
-})
+    model_name: z.string().default('google/gemini-2.5-flash').describe('模型名称(在提供商一侧的名称)')
+});
 
-var ApplicationConfigSchema = z.object({});
+type Provider = z.infer<typeof ProviderSchema>;
+type Model = z.infer<typeof ModelSchema>;
 
-function getSettingSchema() {
+let ApplicationConfigSchema: z.ZodObject<z.ZodRawShape> = z.object({});
+
+function getSettingSchema(): z.ZodObject<z.ZodRawShape> {
     return z.object({
         default_model: z.string()
             .describe('在对话等场景中使用的默认模型')
@@ -44,59 +47,59 @@ function getSettingSchema() {
             .describe('可用AI模型')
             .default([]),
         applications: ApplicationConfigSchema.describe('OpenDesk应用相关配置').default({})
-    })
+    });
 }
 
-class ModelInstance {
+export type SettingData = z.infer<ReturnType<typeof getSettingSchema>>;
+
+export class ModelInstance {
+    model_name: string;
+    base_url: string;
+    api_key: string;
+    no_proxy: boolean;
+
     /**
-     * @param {string} model_name
-     * @param {string} base_url
-     * @param {string} api_key
-     * @param {boolean} no_proxy
+     * @param model_name 模型名称
+     * @param base_url API 地址
+     * @param api_key API 密钥
+     * @param no_proxy 是否禁用代理
      */
-    constructor(model_name, base_url, api_key, no_proxy) {
-        /** @type {string} */
+    constructor(model_name: string, base_url: string, api_key: string, no_proxy: boolean) {
         this.model_name = model_name;
-        /** @type {string} */
         this.base_url = base_url;
-        /** @type {string} */
         this.api_key = api_key;
-        /** @type {boolean} */
         this.no_proxy = no_proxy;
     }
 }
 
-class Setting {
+export class Setting {
 
-    /** @type {Setting | null} */
-    static instance = null;
-    /** @type {Map<string, function>} */
-    static applicationConfigChangedCallbacks = new Map();
+    static instance: Setting | null = null;
+    static applicationConfigChangedCallbacks = new Map<string, () => void>();
+
+    data: SettingData;
 
     constructor() {
-        /** @type {any} */
-        this.data = getSettingSchema().parse({});
+        this.data = getSettingSchema().parse({}) as SettingData;
     }
 
-    getData() {
+    getData(): SettingData {
         return this.data;
     }
 
-    getApplicationConfig(applicationName) {
-        return this.data.applications[applicationName];
+    getApplicationConfig(applicationName: string): unknown {
+        return this.data.applications[applicationName as keyof typeof this.data.applications];
     }
 
-    setData(data) {
-        const newSettingData = getSettingSchema().parse(data);
-        let settingChangedApplications = [];
+    setData(data: unknown): void {
+        const newSettingData = getSettingSchema().parse(data) as SettingData;
+        const settingChangedApplications: string[] = [];
 
-        // Print all field names in the ApplicationConfigSchema (must be an object schema)
-        if (ApplicationConfigSchema && ApplicationConfigSchema.shape) {
-            let applicationNames = Object.keys(ApplicationConfigSchema.shape);
+        if (ApplicationConfigSchema && 'shape' in ApplicationConfigSchema && ApplicationConfigSchema.shape) {
+            const applicationNames = Object.keys(ApplicationConfigSchema.shape);
             for (const applicationName of applicationNames) {
-                const newConfig = newSettingData.applications[applicationName];
-                const oldConfig = this.data.applications[applicationName];
-                // 深度比较对象内容
+                const newConfig = (newSettingData.applications as Record<string, unknown>)[applicationName];
+                const oldConfig = (this.data.applications as Record<string, unknown>)[applicationName];
                 const isEqual = JSON.stringify(newConfig) === JSON.stringify(oldConfig);
                 if (!isEqual) {
                     settingChangedApplications.push(applicationName);
@@ -104,11 +107,9 @@ class Setting {
             }
         }
 
-        // update and save settings
         this.data = newSettingData;
         this.save();
 
-        // 如果配置发生变化，则通知应用程序
         if (settingChangedApplications.length > 0) {
             for (const applicationName of settingChangedApplications) {
                 const callback = Setting.applicationConfigChangedCallbacks.get(applicationName);
@@ -121,9 +122,8 @@ class Setting {
 
     /**
      * Get the unique setting instance
-     * @returns {Setting}
      */
-    static getInstance() {
+    static getInstance(): Setting {
         if (Setting.instance === null) {
             Setting.instance = Setting.load();
             if (Setting.instance === null) {
@@ -133,52 +133,49 @@ class Setting {
         return Setting.instance;
     }
 
-    static clearCache() {
+    static clearCache(): void {
         Setting.instance = null;
     }
 
     /**
      * Update the setting data directly (used by worker thread to sync settings from main thread)
-     * @param {object} data - The new setting data
+     * @param data - The new setting data
      */
-    static updateInstanceData(data) {
+    static updateInstanceData(data: unknown): void {
         if (Setting.instance === null) {
             Setting.instance = new Setting();
         }
-        Setting.instance.data = getSettingSchema().parse(data);
+        Setting.instance.data = getSettingSchema().parse(data) as SettingData;
     }
 
     /**
      * Register the application settings so that they can be managed and
      * edited from the system setting editor.
-     * @param {BaseApplication} application
-     * @param {() => void} configChangedCallback
+     * @param application - 应用实例
+     * @param configChangedCallback - 配置变更时的回调
      */
-    static registerApplicationSettings(application, configChangedCallback) {
-        /**
-         * 这里有一点绕，需要从一个application中获取其静态原型，然后再调用静态方法查找其Schema
-         */
-        const applicationConfigSchema = Object.getPrototypeOf(application).constructor.getConfigSchema();
+    static registerApplicationSettings(application: BaseApplication, configChangedCallback: () => void): void {
+        const applicationConfigSchema = (Object.getPrototypeOf(application).constructor as typeof BaseApplication).getConfigSchema();
         ApplicationConfigSchema = ApplicationConfigSchema.extend({
             [application.bundleName]: applicationConfigSchema.optional()
-        });
+        }) as z.ZodObject<z.ZodRawShape>;
         Setting.applicationConfigChangedCallbacks.set(application.bundleName, configChangedCallback);
     }
 
     /**
      * Load the setting from the file system
-     * @returns {Setting | null}
+     * @returns Setting 实例，若文件不存在或解析失败则返回 null
      */
-    static load() {
+    static load(): Setting | null {
         const settingDirectory = getAppDirectory();
-        let settingFile = path.join(settingDirectory, 'setting.json');
+        const settingFile = path.join(settingDirectory, 'setting.json');
         if (!fs.existsSync(settingFile)) {
             return null;
         }
         const settingRawObject = JSON.parse(fs.readFileSync(settingFile, 'utf8'));
-        let setting = new Setting();
+        const setting = new Setting();
         try {
-            setting.data = getSettingSchema().parse(settingRawObject);
+            setting.data = getSettingSchema().parse(settingRawObject) as SettingData;
             return setting;
         } catch (error) {
             console.error('error loading setting', error);
@@ -189,7 +186,7 @@ class Setting {
     /**
      * Save the setting to the file system
      */
-    save() {
+    save(): void {
         const settingDirectory = getAppDirectory();
         const settingFile = path.join(settingDirectory, 'setting.json');
         fs.writeFileSync(settingFile, JSON.stringify(this.data, null, 4), { encoding: 'utf8' });
@@ -197,15 +194,15 @@ class Setting {
 
     /**
      * Get the model instance by the model alias
-     * @param {string} model_alias
-     * @returns {ModelInstance | null}
+     * @param model_alias - 模型别名
+     * @returns ModelInstance 或 null
      */
-    getModelInstance(model_alias) {
-        let modelRef = this.data.models.find(model => model.alias === model_alias);
+    getModelInstance(model_alias: string): ModelInstance | null {
+        const modelRef = this.data.models.find((model: Model) => model.alias === model_alias);
         if (modelRef === undefined) {
             return null;
         }
-        let provider = this.data.providers.find(provider => provider.name === modelRef.provider_name);
+        const provider = this.data.providers.find((p: Provider) => p.name === modelRef.provider_name);
         if (provider === undefined) {
             return null;
         }
@@ -214,26 +211,25 @@ class Setting {
 
     /**
      * Get the default model instance
-     * @returns {ModelInstance}
      */
-    getDefaultModelInstance() {
-        let model = this.getModelInstance(this.data.default_model);
+    getDefaultModelInstance(): ModelInstance {
+        const model = this.getModelInstance(this.data.default_model);
         if (model === null) {
             throw new Error(`default model ${this.data.default_model} not found`);
         }
         return model;
     }
 
-    getDefaultEmbeddingModelInstance() {
-        let model = this.getModelInstance(this.data.default_embedding_model);
+    getDefaultEmbeddingModelInstance(): ModelInstance {
+        const model = this.getModelInstance(this.data.default_embedding_model);
         if (model === null) {
             throw new Error(`default embedding model ${this.data.default_embedding_model} not found`);
         }
         return model;
     }
 
-    getDefaultRerankerModelInstance() {
-        let model = this.getModelInstance(this.data.default_reranker_model);
+    getDefaultRerankerModelInstance(): ModelInstance {
+        const model = this.getModelInstance(this.data.default_reranker_model);
         if (model === null) {
             throw new Error(`default reranker model ${this.data.default_reranker_model} not found`);
         }
@@ -242,22 +238,21 @@ class Setting {
 
     /**
      * Get the default intent parsing model instance
-     * @returns {ModelInstance}
      */
-    getDefaultIntentParsingModelInstance() {
-        let model = this.getModelInstance(this.data.default_intent_parsing_model);
+    getDefaultIntentParsingModelInstance(): ModelInstance {
+        const model = this.getModelInstance(this.data.default_intent_parsing_model);
         if (model === null) {
             throw new Error(`default intent parsing model ${this.data.default_intent_parsing_model} not found`);
         }
         return model;
     }
 
-    static getSettingSchema() {
+    static getSettingSchema(): ReturnType<typeof getSettingSchema> {
         return getSettingSchema();
     }
 
-    getDefaultVisionModelInstance() {
-        let model = this.getModelInstance(this.data.default_vision_model);
+    getDefaultVisionModelInstance(): ModelInstance {
+        const model = this.getModelInstance(this.data.default_vision_model);
         if (model === null) {
             throw new Error(`default vision model ${this.data.default_vision_model} not found`);
         }
@@ -267,14 +262,13 @@ class Setting {
 
 /**
  * 获取应用数据目录
- * @returns {string}
  */
-function getAppDirectory() {
+function getAppDirectory(): string {
     if (!isMainThread) {
-        return workerData.paths.appDirectory;
+        return (workerData as { paths: { appDirectory: string } }).paths.appDirectory;
     }
 
-    var userDataPath = '';
+    let userDataPath = '';
     if (process.env.APPDATA) {
         userDataPath = path.join(process.env.APPDATA, 'opendesk');
     } else if (process.env.HOME) {
@@ -293,9 +287,8 @@ function getAppDirectory() {
 
 /**
  * 获取应用日志目录
- * @returns {string}
  */
-function getLogDirectory() {
+function getLogDirectory(): string {
     const appDirectory = getAppDirectory();
     const logDirectory = path.join(appDirectory, 'logs');
     if (!fs.existsSync(logDirectory)) {
@@ -306,9 +299,8 @@ function getLogDirectory() {
 
 /**
  * 获取应用任务目录
- * @returns {string}
  */
-function getTaskDirectory() {
+function getTaskDirectory(): string {
     const appDirectory = getAppDirectory();
     const taskDirectory = path.join(appDirectory, 'tasks');
     if (!fs.existsSync(taskDirectory)) {
@@ -317,7 +309,22 @@ function getTaskDirectory() {
     return taskDirectory;
 }
 
+/**
+ * 获取应用产物目录
+ */
+function getArtifactDirectory(): string {
+    const appDirectory = getAppDirectory();
+    const artifactDirectory = path.join(appDirectory, 'artifacts');
+    if (!fs.existsSync(artifactDirectory)) {
+        fs.mkdirSync(artifactDirectory, { recursive: true });
+    }
+    return artifactDirectory;
+}
+
 export {
-    getAppDirectory, getLogDirectory, getTaskDirectory,
-    Setting, ModelInstance, getSettingSchema
+    getAppDirectory,
+    getLogDirectory,
+    getTaskDirectory,
+    getArtifactDirectory,
+    getSettingSchema
 };

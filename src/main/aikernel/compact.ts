@@ -14,9 +14,13 @@ import {
     UserMessage, ToolCall, type ChatMessage
 } from './messages.js';
 import { LLM } from './llm.js';
-import { Setting, ModelInstance } from '../utils/setting.js';
+import { Setting, ModelInstance, getArtifactDirectory } from '../utils/setting.js';
 import { lookupKnownContextSize, fetchContextSizeFromAPI } from '../utils/model-context.js';
 import { logger } from '../utils/logger.js';
+import { HookRegistry } from './hooks.js';
+import type { TaskState } from './states/tasks.js';
+import path from 'path';
+import fs from 'fs';
 
 
 /**
@@ -359,3 +363,50 @@ export async function shouldCompact(chatContext: ChatContext, model?: string): P
     }
     return needed;
 }
+
+// ─── 全局 afterToolCall：超长工具结果落盘并替换为摘要 ─────────────────────────────
+
+const LARGE_TOOL_RESULT_LINES = 2000;
+const ARTIFACT_HEAD_LINES = 100;
+const ARTIFACT_TAIL_LINES = 200;
+
+/** 不压缩这些工具的结果，保留完整输出供 agent 使用（如读文件工具） */
+const TOOLS_EXCLUDED_FROM_RESULT_COMPRESSION = new Set(['readFiles']);
+
+function isExcludedFromCompression(tool_name: string): boolean {
+    return TOOLS_EXCLUDED_FROM_RESULT_COMPRESSION.has(tool_name)
+        || tool_name.endsWith('-readFiles');
+}
+
+function afterToolCallLargeResultToArtifact(task: TaskState, tool_call: ToolCall): void {
+    if (isExcludedFromCompression(tool_call.tool_name)) {
+        return;
+    }
+    const result = tool_call.result;
+    if (result === undefined || typeof result !== 'string') {
+        return;
+    }
+    const lines = result.split('\n');
+    if (lines.length <= LARGE_TOOL_RESULT_LINES) {
+        return;
+    }
+    const artifactDir = getArtifactDirectory();
+    const filename = `artifact_${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}.txt`;
+    const fullPath = path.join(artifactDir, filename);
+    try {
+        fs.writeFileSync(fullPath, result, 'utf8');
+    } catch (err) {
+        logger.error(`[Compact] 写入 artifact 失败: ${(err as Error)?.message ?? err}`);
+        return;
+    }
+    const head = lines.slice(0, ARTIFACT_HEAD_LINES).join('\n');
+    const tail = lines.slice(-ARTIFACT_TAIL_LINES).join('\n');
+    const omitted = lines.length - ARTIFACT_HEAD_LINES - ARTIFACT_TAIL_LINES;
+    const replacement =
+        `${head}\n\n... [中间省略 ${omitted} 行] ...\n\n${tail}\n\n` +
+        `完整输出已保存至: ${fullPath}\n若需完整内容请通过读文件方式获取。`;
+    tool_call.result = replacement;
+    logger.info(`[Compact] 工具结果超过 ${LARGE_TOOL_RESULT_LINES} 行，已落盘: ${fullPath}`);
+}
+
+HookRegistry.afterToolCall(afterToolCallLargeResultToArtifact);

@@ -79,6 +79,7 @@
     "crypto-js": "^4.2.0",
     "dhash": "^0.0.4",
     "diff": "^8.0.3",
+    "file-type": "^19.0.0",
     "fast-glob": "^3.3.3",
     "highlight.js": "^11.11.1",
     "iconv-lite": "^0.7.2",
