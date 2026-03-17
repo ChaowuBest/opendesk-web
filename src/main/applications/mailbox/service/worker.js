@@ -2141,7 +2141,9 @@ class MailboxWorker extends BaseWorker {
     }
 
     async initialize() {
-        await this.reloadProfilesFromConfig();
+        await this.runSequentially(async () => {
+            await this.reloadProfilesFromConfig();
+        });
         setTimeout(async () => {
             await this.trySync();
             setInterval(async () => {
@@ -2152,8 +2154,10 @@ class MailboxWorker extends BaseWorker {
 
     async applicationConfigChanged(config) {
         super.applicationConfigChanged(config);
-        await this.reloadProfilesFromConfig();
-        await this.trySync();
+        await this.runSequentially(async () => {
+            await this.reloadProfilesFromConfig();
+        });
+        this.trySync();
     }
 
     async getEmailHeaderList(offset = 0, pageSize = 20) {
