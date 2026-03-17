@@ -145,14 +145,20 @@ export class ToolCallView implements Component {
         }
         this.lastWidth = width;
 
-        if (this.toolCall.tool && typeof this.toolCall.tool.renderToolCallCli === 'function') {
-            const custom = this.toolCall.tool.renderToolCallCli(this.toolCall, width);
-            if (custom) {
-                this.cachedOutput = custom;
-                this.invalidated = false;
-                return custom;
+        try {
+            if (this.toolCall.tool && typeof this.toolCall.tool.renderToolCallCli === 'function') {
+                const custom = this.toolCall.tool.renderToolCallCli(this.toolCall, width);
+                if (custom) {
+                    this.cachedOutput = custom;
+                    this.invalidated = false;
+                    return custom;
+                }
             }
+        } catch (error) {
+            logger.error(`Error rendering tool call ${this.toolCall.tool_name}: ${error}`);
+            // 不做处理 继续执行并使用默认渲染 不中断渲染流程
         }
+
         this.cachedOutput = this.defaultView.render(width);
         this.invalidated = false;
         return this.cachedOutput;
