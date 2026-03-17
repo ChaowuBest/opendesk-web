@@ -12,7 +12,7 @@
 import { AgentDecl } from "../agent";
 import { SkillRegistry } from "../skill";
 import { SoulRegistry } from "../../applications/soulmgr/soulregistry";
-import { SUBTASK_MANAGEMENT_PROMPT } from "../planning/prompt";
+import { TASK_MANAGEMENT_PROMPT } from "../planning/prompt";
 import format from "string-template";
 
 
@@ -27,7 +27,7 @@ const SHELL_AGENT_SYSTEM_PROMPT = `
 </environment>
 
 <soul>
-用户当前指定你使用名为'{soulName}', uid为{soulUid}的人设，你应该在扮演好这个人设的同时，完成用户指定的任务。
+用户当前指定你使用名为 '{soulName}', uid为 {soulUid} 的人设，你应该在扮演好这个人设的同时，完成用户指定的任务。
 如果用户希望改变你的性格，说话语气等设定内容，你应当使用manage-souls技能来修改或者添加新的人设。
 
 当前人设内容如下：
@@ -89,7 +89,7 @@ export class ShellAgentDecl extends AgentDecl {
             soulContent: soulContent,
             soulUid: soulUid,
             soulName: soulName,
-            taskManagementPrompt: SUBTASK_MANAGEMENT_PROMPT,
+            taskManagementPrompt: TASK_MANAGEMENT_PROMPT,
         });
     }
 }
