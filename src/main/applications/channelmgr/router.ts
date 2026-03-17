@@ -282,7 +282,7 @@ export class ChannelMessageRouter {
                 task.chat_context.attachToolsets(ts);
             }
 
-            task.processTask();
+            task.processTaskTurn();
             await task.waitUntilFinished();
 
             return this.extractReply(task);

@@ -602,7 +602,7 @@ private async submitAndWaitForReply(task: TaskState, userText: string): Promise<
     task.chat_context.attachToolsets(...toolsets, skillToolset, memoryToolset);
 
     // 3. 执行任务
-    task.processTask();
+    task.processTaskTurn();
     await task.waitUntilFinished();
 
     // 4. 提取回复
