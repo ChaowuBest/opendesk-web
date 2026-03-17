@@ -1,12 +1,11 @@
 
-import { Component, Text, Markdown, Box, type TUI, visibleWidth, truncateToWidth } from "@mariozechner/pi-tui";
-import { TaskState } from "../../states/tasks";
+import { Component, Markdown, Box, type TUI, visibleWidth, truncateToWidth } from "@mariozechner/pi-tui";
+import type { TaskState, TaskUpdateChunk, TaskUpdateUserChunk, TaskUpdateAssistantChunk } from "../../aikernel/states/tasks";
 import {
     AssistantMessage, ReasoningMessagePart, TextMessagePart,
-    ToolCallMessagePart, UserMessage, ToolCall, CompactSeparatorMessage
+    ToolCallMessagePart, UserMessage, ToolCall
 } from "../../aikernel/messages";
 import { shouldCompact, compactContext } from "../../aikernel/compact";
-import { TaskUpdateChunk, TaskUpdateUserChunk, TaskUpdateAssistantChunk } from "../../states/tasks";
 import { logger } from "../../utils/logger.js";
 import { defaultMarkdownTheme } from "../theme";
 import { DefaultToolCallView } from "./toolcall";
@@ -145,14 +144,21 @@ export class ToolCallView implements Component {
             return this.cachedOutput;
         }
         this.lastWidth = width;
-        if (this.toolCall.tool && typeof this.toolCall.tool.renderToolCallCli === 'function') {
-            const custom = this.toolCall.tool.renderToolCallCli(this.toolCall, width);
-            if (custom) {
-                this.cachedOutput = custom;
-                this.invalidated = false;
-                return custom;
+
+        try {
+            if (this.toolCall.tool && typeof this.toolCall.tool.renderToolCallCli === 'function') {
+                const custom = this.toolCall.tool.renderToolCallCli(this.toolCall, width);
+                if (custom) {
+                    this.cachedOutput = custom;
+                    this.invalidated = false;
+                    return custom;
+                }
             }
+        } catch (error) {
+            logger.error(`Error rendering tool call ${this.toolCall.tool_name}: ${error}`);
+            // 不做处理 继续执行并使用默认渲染 不中断渲染流程
         }
+
         this.cachedOutput = this.defaultView.render(width);
         this.invalidated = false;
         return this.cachedOutput;
@@ -618,6 +624,7 @@ export class TaskView implements Component {
         if (!this.invalidated && this.lastWidth === width && this.cachedOutput) {
             return this.cachedOutput;
         }
+
         this.lastWidth = width;
         this.cachedOutput = this.mainLayout.render(width);
         this.invalidated = false;

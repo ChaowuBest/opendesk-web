@@ -16,7 +16,7 @@
 
 import { z } from 'zod';
 import { BaseApplication, EventDecl } from '../base.js';
-import type { SlashCommandHandler } from '../../tui/commands.js';
+import type { SlashCommandHandler } from '../../tui/commands/index.js';
 import { logger } from '../../utils/logger.js';
 import { InfoOverlay, ProgressOverlay } from '../../tui/components/notice.js';
 import { PluginsListOverlay } from './plugins-tui.js';

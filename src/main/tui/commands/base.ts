@@ -1,5 +1,6 @@
 import type { SlashCommand as PiTuiSlashCommand, AutocompleteItem, KeyId } from "@mariozechner/pi-tui";
 
+
 export interface SlashCommandHandler {
     name: string;
     description: string;
