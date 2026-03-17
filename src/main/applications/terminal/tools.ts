@@ -864,12 +864,24 @@ export class ReadFilesTool extends BaseTool<typeof readFilesSchema> {
 
         if (toolcall.status === 'running') {
             body.push(chalk.dim('  ⏳ 读取中…'));
+        } else if (toolcall.status === 'error' && toolcall.result != null) {
+            const errStr = typeof toolcall.result === 'string' ? toolcall.result : String(toolcall.result);
+            body.push(chalk.red(`  ✗ ${truncText(errStr, width - 16)}`));
         } else if (toolcall.status === 'success' && toolcall.result != null) {
             const resultStr = typeof toolcall.result === 'string' ? toolcall.result : String(toolcall.result);
+            const errorLines = resultStr.match(/^错误: .+$/gm);
+            if (errorLines) {
+                for (const line of errorLines.slice(0, 5)) {
+                    body.push(chalk.red(`  ✗ ${truncText(line, width - 16)}`));
+                }
+                if (errorLines.length > 5) {
+                    body.push(chalk.red(`  … 共 ${errorLines.length} 个错误`));
+                }
+            }
             const truncatedMatch = resultStr.match(/\[ 后续被截断[^]]*offsetKB = (\d+)[^]]* ]/);
             if (truncatedMatch) {
                 body.push(chalk.dim(`  已截断，可指定 offsetKB = ${truncatedMatch[1]} 继续读`));
-            } else {
+            } else if (!errorLines) {
                 body.push(chalk.dim('  见下方结果'));
             }
         }
