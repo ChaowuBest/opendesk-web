@@ -57,7 +57,7 @@
     "@a2ui/lit": "^0.8.0",
     "@electron-toolkit/utils": "^4.0.0",
     "@fortawesome/fontawesome-free": "^7.1.0",
-    "@mariozechner/pi-tui": "^0.52.12",
+    "@mariozechner/pi-tui": "^0.58.4",
     "@modelcontextprotocol/sdk": "^1.26.0",
     "@mozilla/readability": "^0.6.0",
     "@node-rs/jieba": "^2.0.1",

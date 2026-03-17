@@ -11,7 +11,6 @@ const outfileDebug = 'dist/cli/opendesk-debug';
  */
 const BANNER = `#!/bin/sh
 // 2>/dev/null; exec "$(command -v node || command -v nodejs)" "$0" "$@"
-import { createRequire } from 'node:module';
 const __createRequire = createRequire(import.meta.url);
 `;
 
