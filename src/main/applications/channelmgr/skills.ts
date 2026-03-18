@@ -26,7 +26,7 @@ description: 管理消息渠道插件，包括插件安装/配置、设备配对
 
 #### 飞书 (Feishu / Lark)
 
-插件包名: \`@openclaw/feishu\`
+插件包名: \`@openclaw/feishu@3.12\` (当前仅针对该特定版本测试)
 
 ##### 配置步骤
 
