@@ -28,8 +28,8 @@ import format from 'string-template';
 
 
 const SUBTASK_USER_MESSAGE_TEMPLATE = `
-请按照下面的要求执行任务，完成后通过 attemptCompletion 工具提交结果。你的所有待提交的结果都要通过
-attemptCompletion 工具的参数传递，避免通过写文件的形式传递任务结果交付件。
+请按照下面的要求执行任务，完成后通过 planning-attemptCompletion 工具提交结果。你的所有待提交的结果都要通过
+planning-attemptCompletion 工具的参数传递，避免通过写文件的形式传递任务结果交付件。
 
 ## 任务标题
 {title}
@@ -41,10 +41,10 @@ attemptCompletion 工具的参数传递，避免通过写文件的形式传递�
 {criteria}
 `.trim();
 
-const SUBTASK_ATTEMPT_COMPLETION_REMINDER = `你还没有调用 attemptCompletion 工具来返回结果。
+const SUBTASK_ATTEMPT_COMPLETION_REMINDER = `你还没有调用 planning-attemptCompletion 工具来返回结果。
 请立即调用 planning-attemptCompletion 工具提交你的任务结果。`;
 
-const MAIN_TASK_ATTEMPT_COMPLETION_REMINDER = `你还没有调用 attemptCompletion 工具来结束任务。
+const MAIN_TASK_ATTEMPT_COMPLETION_REMINDER = `你还没有调用 planning-attemptCompletion 工具来结束任务。
 请在完成所有工作后调用 planning-attemptCompletion 工具来结束当前任务。`;
 
 const MAIN_TASK_INCOMPLETE_TODOS_REMINDER = `你的待办列表中还有未完成的事项，请先完成所有待办事项（或将不再需要的待办标记为 completed），然后再调用 attemptCompletion 工具结束任务。`;

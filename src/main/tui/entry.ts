@@ -1,5 +1,5 @@
 import { TUI, Box, Text, Key, matchesKey, type Component } from "@mariozechner/pi-tui";
-import { FULL_CLEAR } from './components/constants';
+// FULL_CLEAR removed: use tui.requestRender(true) instead to avoid blank-frame flicker
 import { OpenDeskBanner } from './banner';
 import { VerticalLayout } from './components/layout';
 import { OpenDeskTerminal } from './terminal';
@@ -126,6 +126,7 @@ export class OpenDeskTUI {
         });
 
         this.tui = new TUI(terminal);
+        this.tui.setClearOnShrink(false);
         this.taskView = new TaskView(this.tui);
         this.logPanel = new LogPanel(this.tui);
         this.todoList = new TodoList();
@@ -480,9 +481,6 @@ export class OpenDeskTUI {
     }
 
     async createNewTask() {
-        // 先清屏，防止旧内容残留
-        process.stdout.write(FULL_CLEAR);
-
         // 保存当前任务的队列（如果有）
         if (this.activeTaskId) {
             const currentTask = this.taskManagerState.getTask(this.activeTaskId);
@@ -503,7 +501,7 @@ export class OpenDeskTUI {
         this.inputArea.statusBar.stopTimer();
         this.inputArea.statusBar.resetAccumulated();
         this.inputArea.statusBar.update({ totalTokens: 0 });
-        this.tui.requestRender();
+        this.tui.requestRender(true);
     }
 
     /**
@@ -529,9 +527,6 @@ export class OpenDeskTUI {
     }
 
     public async switchToTask(task: TaskState) {
-        // 先清屏，防止旧内容残留
-        process.stdout.write(FULL_CLEAR);
-
         // 先停止计时器并保存旧任务的累计时间（在 activeTaskId 切换之前）
         this.inputArea.statusBar.stopTimer();
 
@@ -567,7 +562,7 @@ export class OpenDeskTUI {
             // 任务可能在切换后立即变为 running（由后台路由器驱动）
             this.startRunningMonitorForTask(task);
         }
-        this.tui.requestRender();
+        this.tui.requestRender(true);
     }
 
     /**
@@ -583,14 +578,13 @@ export class OpenDeskTUI {
             task.waitUntilFinished(async (chunkUpdate: TaskUpdateChunk) => {
                 if (this.activeTaskId !== snapshotTaskId) return;
                 await this.taskView.handleChunkUpdate(chunkUpdate);
-                this.taskView.invalidate();
-                this.tui.requestRender();
+                this.taskView.requestStreamRender();
             }).then(() => {
                 if (this.activeTaskId !== snapshotTaskId) return;
 
+                this.taskView.clearStreamThrottle();
                 const lastView = this.taskView.getLastAssistantView();
                 if (lastView) lastView.setStreamingComplete();
-                this.taskView.invalidate();
                 this.inputArea.statusBar.stopTimer();
                 this.inputArea.setStatus('idle');
                 this.tui.requestRender();
@@ -1002,7 +996,6 @@ export class OpenDeskTUI {
      * This allows the TodoList to be updated whenever TodoWrite is called.
      */
     private bindTodoUpdates() {
-        // Poll for todo changes and update the TodoList component
         const checkTodoChanges = () => {
             if (!this.activeTaskId) {
                 setTimeout(checkTodoChanges, 500);
@@ -1010,8 +1003,10 @@ export class OpenDeskTUI {
             }
 
             const todos = getTaskTodosForDisplay(this.activeTaskId);
-            this.todoList.setTodos(todos);
-            this.tui.requestRender();
+            const changed = this.todoList.setTodos(todos);
+            if (changed) {
+                this.tui.requestRender();
+            }
             setTimeout(checkTodoChanges, 300);
         };
         checkTodoChanges();

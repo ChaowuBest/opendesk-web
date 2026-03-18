@@ -428,11 +428,49 @@ export class TaskView implements Component {
     private lastWidth?: number;
     private cachedOutput?: string[];
 
+    /** 流式渲染节流：限制渲染频率，避免高频 chunk 导致渲染风暴 */
+    private _streamRenderTimer?: ReturnType<typeof setTimeout>;
+    private _lastStreamRenderMs = 0;
+    private static readonly STREAM_RENDER_INTERVAL_MS = 100;
+
     get isCompacting() { return this._compacting; }
 
     constructor(tui: TUI) {
         this.tui = tui;
         this.mainLayout.addChild(this.messageLayout);
+    }
+
+    /**
+     * 节流渲染：在流式输出期间限制渲染频率（最高 ~20fps），
+     * 避免每个 LLM chunk 都触发完整渲染周期。
+     * 保证最后一次请求不会被丢弃（trailing edge）。
+     */
+    requestStreamRender() {
+        const now = Date.now();
+        const elapsed = now - this._lastStreamRenderMs;
+
+        if (elapsed >= TaskView.STREAM_RENDER_INTERVAL_MS) {
+            if (this._streamRenderTimer) {
+                clearTimeout(this._streamRenderTimer);
+                this._streamRenderTimer = undefined;
+            }
+            this._lastStreamRenderMs = now;
+            this.tui.requestRender();
+        } else if (!this._streamRenderTimer) {
+            this._streamRenderTimer = setTimeout(() => {
+                this._streamRenderTimer = undefined;
+                this._lastStreamRenderMs = Date.now();
+                this.tui.requestRender();
+            }, TaskView.STREAM_RENDER_INTERVAL_MS - elapsed);
+        }
+    }
+
+    clearStreamThrottle() {
+        if (this._streamRenderTimer) {
+            clearTimeout(this._streamRenderTimer);
+            this._streamRenderTimer = undefined;
+        }
+        this._lastStreamRenderMs = 0;
     }
 
     /**
@@ -476,38 +514,43 @@ export class TaskView implements Component {
             return;
         }
 
+        const snapshotTaskId = this.taskState.task_id;
+        this.currentTaskId = snapshotTaskId;
+
+        // 立即将用户消息加入布局，确保第一次渲染时就能看到，
+        // 避免输入框清空后、消息出现前的空白帧闪烁
+        const userView = UserMessageView.text(text);
+        this.messageLayout.addChild(userView);
+        this.invalidated = true;
+
         // 在提交新消息前检查是否需要压缩上下文（TUI 层负责展示动画）
         try {
             if (await shouldCompact(this.taskState.chat_context, this.taskState.model)) {
                 logger.info(`Auto-compacting context for task ${this.taskState.task_id}`);
                 await this.performCompactWithAnimation();
-                // 压缩可能插入了 CompactSeparatorMessage，需要重建视图
+                // 压缩重建后重新添加用户消息视图（此时尚未入 chat_context）
                 this.clearMessages();
                 this.rebuildFromHistory();
+                this.messageLayout.addChild(userView);
+                this.invalidated = true;
             }
         } catch { /* shouldCompact 失败不影响正常流程 */ }
-
-        // 记录当前任务的ID
-        const snapshotTaskId = this.taskState.task_id;
-        this.currentTaskId = snapshotTaskId;
-
-        this.messageLayout.addChild(UserMessageView.text(text));
-        this.invalidated = true;
 
         await this.taskState.submitUserMessage(text);
         const renderInterval = setInterval(() => {
             if (this.currentTaskId === snapshotTaskId) {
-                this.tui.requestRender();
+                this.requestStreamRender();
             }
         }, REASONING_SPINNER_MS);
         try {
             await this.taskState.waitUntilFinished(async (chunkUpdate: TaskUpdateChunk) => {
                 if (this.currentTaskId !== snapshotTaskId) return;
                 await this.handleChunkUpdate(chunkUpdate);
-                this.tui.requestRender();
+                this.requestStreamRender();
             });
         } finally {
             clearInterval(renderInterval);
+            this.clearStreamThrottle();
             if (this.currentTaskId === snapshotTaskId) {
                 const lastView = this.getLastAssistantView();
                 if (lastView) lastView.setStreamingComplete();
