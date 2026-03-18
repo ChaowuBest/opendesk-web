@@ -36,7 +36,7 @@ export class TodoList implements Component {
      * Set the todos to display
      * @param todos - Array of task todos
      */
-    setTodos(todos: TaskTodo[]): void {
+    setTodos(todos: TaskTodo[]): boolean {
         const hasChanged =
             this.todos.length !== todos.length ||
             this.todos.some((todo, i) =>
@@ -50,6 +50,7 @@ export class TodoList implements Component {
             this.visible = todos.length > 0;
             this.invalidated = true;
         }
+        return hasChanged;
     }
 
     /**

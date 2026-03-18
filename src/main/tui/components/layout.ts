@@ -112,23 +112,30 @@ export class VerticalLayout implements Component {
         // 上 padding
         for (let i = 0; i < padT; i++) contentLines.push(emptyLine);
 
+        const isLeftAligned = this.alignHorizontal === "left";
+        const leftPrefix = padL > 0 ? " ".repeat(padL) : "";
+
         for (let c = 0; c < this.children.length; c++) {
             if (c > 0 && this.spacing > 0) {
                 for (let i = 0; i < this.spacing; i++) contentLines.push(emptyLine);
             }
             const childLines = this.children[c].render(contentWidth);
-            for (const line of childLines) {
-                const vis = visibleWidth(line);
-                let leftPad: number;
-                if (this.alignHorizontal === "left") {
-                    leftPad = padL;
-                } else if (this.alignHorizontal === "center") {
-                    leftPad = padL + Math.max(0, Math.floor((contentWidth - vis) / 2));
-                } else {
-                    leftPad = width - padR - vis;
+            if (isLeftAligned) {
+                for (const line of childLines) {
+                    contentLines.push(leftPrefix + line);
                 }
-                const rightPad = Math.max(0, width - leftPad - vis);
-                contentLines.push(" ".repeat(leftPad) + line + " ".repeat(rightPad));
+            } else {
+                for (const line of childLines) {
+                    const vis = visibleWidth(line);
+                    let leftPad: number;
+                    if (this.alignHorizontal === "center") {
+                        leftPad = padL + Math.max(0, Math.floor((contentWidth - vis) / 2));
+                    } else {
+                        leftPad = width - padR - vis;
+                    }
+                    const rightPad = Math.max(0, width - leftPad - vis);
+                    contentLines.push(" ".repeat(leftPad) + line + " ".repeat(rightPad));
+                }
             }
         }
 

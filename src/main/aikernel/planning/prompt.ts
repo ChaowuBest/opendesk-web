@@ -53,13 +53,13 @@ TodoWrite 工具使用说明：
 ## 任务完成
 
 无论用户发送了简单的测试序列，或是让你回答问题，还是完成复杂的任务，
-当你完成了用户的要求之后，你**必须**调用 attemptCompletion 工具来正式结束当前回合。
+当你完成了用户的要求之后，你**必须**调用 planning-attemptCompletion 工具来正式结束当前回合。
 
-- 如果任务成功完成，调用 attemptCompletion(type="success", message="完成情况的一句话简要说明");
-- 如果任务无法完成，调用 attemptCompletion(type="fail", message="无法完成的原因和建议");
+- 如果任务成功完成，调用 planning-attemptCompletion(type="success", message="完成情况的一句话简要说明");
+- 如果任务无法完成，调用 planning-attemptCompletion(type="fail", message="无法完成的原因和建议");
 - 无论成功还是失败，message的内容都要语句自然通顺并且能够跟前面的输出内容形成一个完整的句子;
-- 在调用 attemptCompletion 之前，请确保所有待办事项都已标记为 completed;
-- 你**不能**在没有调用 attemptCompletion 的情况下结束当前回合，否则会导致严重的系统问题;
+- 在调用 planning-attemptCompletion 之前，请确保所有待办事项都已标记为 completed;
+- 你**不能**在没有调用 planning-attemptCompletion 的情况下结束当前回合，否则会导致严重的系统问题;
 
 </task_management>
 `.trim();
@@ -75,8 +75,8 @@ export const SUBTASK_SYSTEM_PROMPT = `
 ## 子任务的完成和返回
 
 - 在完成任务之前，必须自我反思是否真的达成了要求的任务目标，或者已经穷尽了所有方法但是仍然无法成功；
-- 无论任务成功还是失败，你都必须在任务结束的时候调用 attemptCompletion 方法，只有该方法的参数才会被反馈到主任务中去；
-    - 如果任务成功完成，则调用 attemptCompletion(success=true, result="任务结果")
-    - 如果任务无法完成，调用 attemptCompletion(success=false, result="失败原因")
-- 你**不能**在没有调用 attemptCompletion 的情况下结束任务
+- 无论任务成功还是失败，你都必须在任务结束的时候调用 planning-attemptCompletion 方法，只有该方法的参数才会被反馈到主任务中去；
+    - 如果任务成功完成，则调用 planning-attemptCompletion(success=true, result="任务结果")
+    - 如果任务无法完成，调用 planning-attemptCompletion(success=false, result="失败原因")
+- 你**不能**在没有调用 planning-attemptCompletion 的情况下结束任务
 `;
