@@ -66,6 +66,8 @@ export interface CommandLineArgs {
     workspace: string;
     command?: string;
     model?: string;
+    exportHtml?: string;
+    exportJson?: string;
 }
 
 export class OpenDeskTUI {
@@ -103,6 +105,9 @@ export class OpenDeskTUI {
      */
     private singleShot?: boolean;
 
+    /** -c 模式下任务结束、退出前执行的钩子（如导出），按注册顺序执行 */
+    private beforeExitHooks: Array<(taskId: string) => void | Promise<void>> = [];
+
     private memoryOpBusy = false;
     private memorySpinnerInterval?: ReturnType<typeof setInterval>;
     private static readonly SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
@@ -128,6 +133,36 @@ export class OpenDeskTUI {
         this.workspace = args.workspace;
         this.model = args.model;
         this.singleShot = !!args.command;
+        if (args.command) {
+            if (args.exportHtml) {
+                const htmlPath = path.resolve(args.workspace, args.exportHtml);
+                this.onBeforeExit(async (taskId) => {
+                    const task = this.taskManagerState.getTask(taskId);
+                    if (!task) return;
+                    try {
+                        await exportTaskToHtml(task, htmlPath);
+                        logger.info(`Session exported to HTML: ${htmlPath}`);
+                    } catch (err) {
+                        logger.error(`Failed to export HTML: ${err}`);
+                    }
+                });
+            }
+            if (args.exportJson) {
+                const jsonPath = path.resolve(args.workspace, args.exportJson);
+                this.onBeforeExit(async (taskId) => {
+                    const task = this.taskManagerState.getTask(taskId);
+                    if (!task) return;
+                    try {
+                        const dir = path.dirname(jsonPath);
+                        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+                        fs.writeFileSync(jsonPath, JSON.stringify(task.toJSON(), null, 4), { encoding: 'utf8' });
+                        logger.info(`Task exported to JSON: ${jsonPath}`);
+                    } catch (err) {
+                        logger.error(`Failed to export JSON: ${err}`);
+                    }
+                });
+            }
+        }
 
         MemoryRegistry.getInstance(args.workspace);
 
@@ -337,6 +372,19 @@ export class OpenDeskTUI {
             closeLabel: "确定"
         });
         info.show();
+    }
+
+    /**
+     * 注册在 -c 模式任务结束、退出前执行的钩子。仅在有 -c 时注册的导出等逻辑会在此执行。
+     */
+    onBeforeExit(fn: (taskId: string) => void | Promise<void>): void {
+        this.beforeExitHooks.push(fn);
+    }
+
+    private async runBeforeExitHooks(taskId: string): Promise<void> {
+        for (const fn of this.beforeExitHooks) {
+            await fn(taskId);
+        }
     }
 
     /**
@@ -766,8 +814,9 @@ export class OpenDeskTUI {
                 this.inputArea.setStatus('idle');
                 this.processQueue();
 
-                // 如果使用了 -c 参数，在任务完成后退出
+                // 如果使用了 -c 参数，执行 beforeExit 钩子后退出
                 if (this.singleShot) {
+                    await this.runBeforeExitHooks(taskId);
                     await this.exit();
                 }
             }

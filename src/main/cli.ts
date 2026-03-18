@@ -36,6 +36,8 @@ function parseCommandLineArgs() {
     prog.argument('[workspace]', 'the workspace to open', v => v, ".");
     prog.option('--model <alias>', 'model alias to use', v => v);
     prog.option('-c, --command <command>', 'the command to execute', v => v);
+    prog.option('--export-html <path>', 'export session as HTML when -c task completes', v => v);
+    prog.option('--export-json <path>', 'export session as JSON when -c task completes', v => v);
     prog.option('-v, --version', 'print the version');
 
     // plugins subcommand - compatible with openclaw CLI style
@@ -250,6 +252,11 @@ function parseCommandLineArgs() {
             process.exit(1);
         }
 
+        if ((kwargs.exportHtml || kwargs.exportJson) && !kwargs.command) {
+            console.error('[error] --export-html and --export-json can only be used with -c/--command');
+            process.exit(1);
+        }
+
         if (kwargs.model) {
             try {
                 const setting = Setting.getInstance();
@@ -268,6 +275,8 @@ function parseCommandLineArgs() {
             workspace: workspacePath,
             command: kwargs.command,
             model: kwargs.model,
+            exportHtml: kwargs.exportHtml,
+            exportJson: kwargs.exportJson,
         })
     });
 
