@@ -43,6 +43,7 @@ const SKILL_FRONTMATTER_XML = `
 <skill>
     <bundleName>{bundleName}</bundleName>
     <name>{skillName}</name>
+    <directory>{skillDirectory}</directory>
     <description>{description}</description>
 </skill>
 `;
@@ -572,6 +573,7 @@ export class SkillRegistry {
                 result += format(SKILL_FRONTMATTER_XML, {
                     bundleName: bundleName,
                     skillName: skill.frontmatter.name,
+                    skillDirectory: skill.directory || "该Skill不存在文件系统中",
                     description: skill.frontmatter.description
                 })
             }

@@ -12,7 +12,7 @@
 import { AgentDecl } from "../agent";
 import { SkillRegistry } from "../skill";
 import { SoulRegistry } from "../../applications/soulmgr/soulregistry";
-import { SUBTASK_MANAGEMENT_PROMPT } from "../planning/prompt";
+import { TASK_MANAGEMENT_PROMPT } from "../planning/prompt";
 import format from "string-template";
 
 
@@ -55,7 +55,7 @@ export class MainAgentDecl extends AgentDecl {
             soulContent: soulContent,
             soulUid: soulUid,
             soulName: soulName,
-            taskManagementPrompt: SUBTASK_MANAGEMENT_PROMPT,
+            taskManagementPrompt: TASK_MANAGEMENT_PROMPT,
         });
     }
 }

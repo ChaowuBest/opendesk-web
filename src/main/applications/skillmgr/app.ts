@@ -57,23 +57,22 @@ export class SkillMgrApplication extends BaseApplication {
                 description: String(skill.description),
             },
             SkillRegistry.getSkillBody(skill.id)?.body || '',
+            this.getSkillsDirectory() + "/" + skill.name
         )));
 
-        if (this.getConfig()?.enabled === true) {
-            const manageSkillsSkill = Skill.parseMd(MANAGE_SKILLS_SKILL);
-            const manageSkillsToolset = new BaseToolset('manage-skills');
+        const manageSkillsSkill = Skill.parseMd(MANAGE_SKILLS_SKILL);
+        const manageSkillsToolset = new BaseToolset('manage-skills');
 
-            manageSkillsToolset.addTool(new AddSkillFromPathTool(this));
-            manageSkillsToolset.addTool(new AddSkillFromUrlTool(this));
-            manageSkillsToolset.addTool(new AddSkillFromGitHubUrlTool(this));
-            manageSkillsToolset.addTool(new ListSkillsTool(this));
-            manageSkillsToolset.addTool(new DeleteSkillTool(this));
-            manageSkillsToolset.addTool(new RefreshSkillsTool(this));
-            manageSkillsToolset.addTool(new GetSkillsDirectoryTool(this));
+        manageSkillsToolset.addTool(new AddSkillFromPathTool(this));
+        manageSkillsToolset.addTool(new AddSkillFromUrlTool(this));
+        manageSkillsToolset.addTool(new AddSkillFromGitHubUrlTool(this));
+        manageSkillsToolset.addTool(new ListSkillsTool(this));
+        manageSkillsToolset.addTool(new DeleteSkillTool(this));
+        manageSkillsToolset.addTool(new RefreshSkillsTool(this));
+        manageSkillsToolset.addTool(new GetSkillsDirectoryTool(this));
 
-            manageSkillsSkill.toolsets = [manageSkillsToolset];
-            skills.push(manageSkillsSkill);
-        }
+        manageSkillsSkill.toolsets = [manageSkillsToolset];
+        skills.push(manageSkillsSkill);
 
         return skills;
     }

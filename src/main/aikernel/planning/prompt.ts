@@ -10,7 +10,7 @@
  */
 
 
-export const SUBTASK_MANAGEMENT_PROMPT = `
+export const TASK_MANAGEMENT_PROMPT = `
 <task_management>
 ## 待办事项管理 (规划)
 
@@ -49,6 +49,17 @@ TodoWrite 工具使用说明：
     * 适用原因：任务执行过程中需要将大量文件信息放进上下文，其中绝大多数造成上下文污染；
 - 场景示例3：大文件分析，如在上千行的日志信息里面寻找有价值的错误根因或标志信息等
     * 适用原因：大文件分析过程中，需要将大量文件信息放进上下文，其中绝大多数是无意义的；
+
+## 任务完成
+
+无论用户发送了简单的测试序列，或是让你回答问题，还是完成复杂的任务，
+当你完成了用户的要求之后，你**必须**调用 attemptCompletion 工具来正式结束当前回合。
+
+- 如果任务成功完成，调用 attemptCompletion(type="success", message="完成情况的一句话简要说明");
+- 如果任务无法完成，调用 attemptCompletion(type="fail", message="无法完成的原因和建议");
+- 无论成功还是失败，message的内容都要语句自然通顺并且能够跟前面的输出内容形成一个完整的句子;
+- 在调用 attemptCompletion 之前，请确保所有待办事项都已标记为 completed;
+- 你**不能**在没有调用 attemptCompletion 的情况下结束当前回合，否则会导致严重的系统问题;
 
 </task_management>
 `.trim();

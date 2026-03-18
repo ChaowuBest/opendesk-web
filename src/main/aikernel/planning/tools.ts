@@ -13,12 +13,14 @@ import { z } from 'zod';
 import { BaseTool, BaseToolset, ToolResult } from '../tool.js';
 import { Card } from '../../tui/components/card.js';
 import { statusDisplay, truncText } from '../../tui/components/toolcall.js';
-import { Markdown, truncateToWidth } from '@mariozechner/pi-tui';
+import { Markdown, Text, truncateToWidth } from '@mariozechner/pi-tui';
 import type { TaskState, TaskUpdateChunk } from '../states/tasks.js';
 import type { ToolCall, ToolCallMessagePart, TextMessagePart } from '../messages.js';
 import type { SubTaskConfig, SubTaskResult, SubTaskProgressInfo, PendingSubTask } from './common.js';
 import { AssistantMessage, marked } from '../messages.js';
 import { SUBTASK_SYSTEM_PROMPT } from './prompt.js';
+import { HookRegistry } from '../hooks.js';
+import { getTaskTodosForDisplay } from '../../applications/todomgr/tools.js';
 import { logger } from '../../utils/logger.js';
 import { defaultMarkdownTheme } from '../../tui/theme.js';
 import chalk from 'chalk';
@@ -39,8 +41,13 @@ attemptCompletion 工具的参数传递，避免通过写文件的形式传递�
 {criteria}
 `.trim();
 
-const ATTEMPT_COMPLETION_REMINDER = `你还没有调用 attemptCompletion 工具来返回结果。
+const SUBTASK_ATTEMPT_COMPLETION_REMINDER = `你还没有调用 attemptCompletion 工具来返回结果。
 请立即调用 planning-attemptCompletion 工具提交你的任务结果。`;
+
+const MAIN_TASK_ATTEMPT_COMPLETION_REMINDER = `你还没有调用 attemptCompletion 工具来结束任务。
+请在完成所有工作后调用 planning-attemptCompletion 工具来结束当前任务。`;
+
+const MAIN_TASK_INCOMPLETE_TODOS_REMINDER = `你的待办列表中还有未完成的事项，请先完成所有待办事项（或将不再需要的待办标记为 completed），然后再调用 attemptCompletion 工具结束任务。`;
 
 // ─── Pending SubTasks Registry ─────────────────────────────────────────────────
 
@@ -78,7 +85,7 @@ export function extractSubTaskProgress(
 const ATTEMPT_COMPLETION_TOOL_NAME = 'planning-attemptCompletion';
 
 /**
- * 从任务的消息历史中提取 attemptCompletion 的结果
+ * 从任务的消息历史中提取 attemptCompletion 的结果（子任务专用）
  */
 function extractAttemptCompletionResult(task: TaskState): { success: boolean; result: string } | null {
     for (const message of task.chat_context.messages) {
@@ -99,7 +106,28 @@ function extractAttemptCompletionResult(task: TaskState): { success: boolean; re
 }
 
 /**
- * 检查任务是否已调用 attemptCompletion
+ * 检查任务最后一条 AssistantMessage 中是否调用了 attemptCompletion
+ */
+function hasAttemptCompletionInLastMessage(task: TaskState): boolean {
+    const messages = task.chat_context.messages;
+    for (let i = messages.length - 1; i >= 0; i--) {
+        const message = messages[i];
+        if (!(message instanceof AssistantMessage)) continue;
+        for (const part of message.content) {
+            if (part.type !== 'tool_call') continue;
+            for (const tc of part.toolcalls) {
+                if (tc.tool_name === ATTEMPT_COMPLETION_TOOL_NAME) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+    return false;
+}
+
+/**
+ * 检查任务的所有消息中是否调用过 attemptCompletion
  */
 function hasAttemptCompletion(task: TaskState): boolean {
     for (const message of task.chat_context.messages) {
@@ -116,27 +144,71 @@ function hasAttemptCompletion(task: TaskState): boolean {
     return false;
 }
 
-// ─── SubTask Hooks ─────────────────────────────────────────────────────────────
+/**
+ * 检查任务的待办事项是否都已完成
+ * 返回 null 表示没有待办事项或全部完成，否则返回未完成数量
+ */
+function getIncompleteTodoCount(task: TaskState): number | null {
+    const todos = getTaskTodosForDisplay(task.task_id);
+    if (todos.length === 0) return null;
+    const incomplete = todos.filter(t => t.status !== 'completed').length;
+    return incomplete > 0 ? incomplete : null;
+}
+
+// ─── AttemptCompletion Hooks ───────────────────────────────────────────────────
 
 /**
- * 为子任务注册 attemptCompletion 检查钩子
+ * 为子任务注册 attemptCompletion 检查钩子（任务级钩子）
  * 在 turn 结束前检查是否已调用 attemptCompletion，如果没有则拒绝结束并提示
  */
-function registerAttemptCompletionHook(subTask: TaskState): void {
+function registerSubTaskAttemptCompletionHook(subTask: TaskState): void {
     subTask.hooks.beforeFinishTurn(async (task) => {
-        // 如果已经调用了 attemptCompletion，允许结束
         if (hasAttemptCompletion(task)) {
             return { operation: 'finish' };
         }
-        // 如果用户手动停止，允许结束
         if (task.stop_requested_by_user) {
             return { operation: 'finish' };
         }
-        // 否则拒绝结束，要求调用 attemptCompletion
         return {
             operation: 'reject',
-            message: ATTEMPT_COMPLETION_REMINDER
+            message: SUBTASK_ATTEMPT_COMPLETION_REMINDER
         };
+    });
+}
+
+/**
+ * 注册主任务的 beforeFinishTurn 全局钩子
+ * - 检查最后一条 AssistantMessage 是否调用了 attemptCompletion
+ * - 检查待办事项是否都已完成
+ */
+export function registerMainTaskAttemptCompletionHook(): void {
+    HookRegistry.beforeFinishTurn(async (task) => {
+        // 只处理主任务（没有 parent_id）
+        if (task.parent_id !== null) {
+            return { operation: 'finish' };
+        }
+        if (task.stop_requested_by_user) {
+            return { operation: 'finish' };
+        }
+
+        // 检查待办事项是否都已完成
+        const incompleteTodos = getIncompleteTodoCount(task);
+        if (incompleteTodos !== null) {
+            return {
+                operation: 'reject',
+                message: MAIN_TASK_INCOMPLETE_TODOS_REMINDER
+            };
+        }
+
+        // 检查最后一条 AssistantMessage 是否调用了 attemptCompletion
+        if (!hasAttemptCompletionInLastMessage(task)) {
+            return {
+                operation: 'reject',
+                message: MAIN_TASK_ATTEMPT_COMPLETION_REMINDER
+            };
+        }
+
+        return { operation: 'finish' };
     });
 }
 
@@ -180,7 +252,7 @@ export async function startSubTask(options: StartSubTaskOptions): Promise<SubTas
     subTask.setSystemPrompt(SUBTASK_SYSTEM_PROMPT);
 
     // 注册 attemptCompletion 检查钩子
-    registerAttemptCompletionHook(subTask);
+    registerSubTaskAttemptCompletionHook(subTask);
 
     logger.info(`[subtask] created subtask=${subTask.task_id} parent=${parentTask.task_id} title="${config.title}" async=${config.isAsync}`);
 
@@ -689,19 +761,21 @@ export class WaitSubTaskTool extends BaseTool<typeof WaitSubTaskArgsSchema> {
     }
 }
 
-const AttemptCompletionArgsSchema = z.object({
+// ─── AttemptCompletion for SubTask ─────────────────────────────────────────────
+
+const AttemptCompletionSubTaskArgsSchema = z.object({
     success: z.boolean().describe('子任务是否成功完成'),
     result: z.string().describe('如果成功完成则该参数为任务的返回结果，若为成功完成则为失败原因'),
 });
 
-export class AttemptCompletionTool extends BaseTool<typeof AttemptCompletionArgsSchema> {
+export class AttemptCompletionSubTaskTool extends BaseTool<typeof AttemptCompletionSubTaskArgsSchema> {
     constructor() {
-        super('attemptCompletion', '完成子任务并返回结果', AttemptCompletionArgsSchema);
+        super('attemptCompletion', '完成子任务并返回结果', AttemptCompletionSubTaskArgsSchema);
         this.setUniversalExecutor(this.handleExecute.bind(this));
     }
 
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
-        const args = toolcall.args_object as z.output<typeof AttemptCompletionArgsSchema> | undefined;
+        const args = toolcall.args_object as z.output<typeof AttemptCompletionSubTaskArgsSchema> | undefined;
         const body: string[] = [];
 
         if (args) {
@@ -722,7 +796,7 @@ export class AttemptCompletionTool extends BaseTool<typeof AttemptCompletionArgs
     }
 
     async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
-        const args = toolcall.args_object as z.output<typeof AttemptCompletionArgsSchema> | undefined;
+        const args = toolcall.args_object as z.output<typeof AttemptCompletionSubTaskArgsSchema> | undefined;
         const successIcon = args?.success ? '✅' : '❌';
         const statusText = args?.success ? '成功' : '失败';
         const resultHtml = args?.result ? await marked.parse(args.result) : '';
@@ -738,10 +812,75 @@ export class AttemptCompletionTool extends BaseTool<typeof AttemptCompletionArgs
         `;
     }
 
-    private async handleExecute(args: z.output<typeof AttemptCompletionArgsSchema>, toolResult: ToolResult, taskState?: TaskState): Promise<void> {
-        // 停止子任务，结果已经通过 tool call args 记录在消息历史中
+    private async handleExecute(args: z.output<typeof AttemptCompletionSubTaskArgsSchema>, toolResult: ToolResult, taskState?: TaskState): Promise<void> {
         taskState?.stop('system');
         toolResult.attachResult(JSON.stringify({ accepted: true }));
+    }
+}
+
+// ─── AttemptCompletion for MainTask ───────────────────────────────────────────
+
+const AttemptCompletionMainTaskArgsSchema = z.object({
+    type: z.enum(['success', 'fail'])
+        .describe('任务完成类型: success 表示任务成功完成, fail 表示任务无法完成'),
+    message: z.string()
+        .describe('success 时为任务成功完成情况的一句话概述, fail 时为任务无法完成的原因和给用户的提示'),
+});
+
+export class AttemptCompletionMainTaskTool extends BaseTool<typeof AttemptCompletionMainTaskArgsSchema> {
+    constructor() {
+        super('attemptCompletion', '完成当前回合', AttemptCompletionMainTaskArgsSchema);
+        this.setUniversalExecutor(this.handleExecute.bind(this));
+    }
+
+    renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
+        const args = toolcall.args_object as z.output<typeof AttemptCompletionMainTaskArgsSchema> | undefined;
+        if (!args) return undefined;
+
+        if (args.type === 'fail') {
+            const body: string[] = [];
+            body.push(chalk.redBright('任务未能完成：'));
+            if (args.message) {
+                const markdown = new Markdown(args.message, 0, 0, defaultMarkdownTheme);
+                body.push(...markdown.render(width - 10));
+            }
+            return new Card({
+                icon: '❌',
+                title: '任务失败',
+                status: statusDisplay(toolcall.status),
+                body,
+            }).render(width);
+        }
+
+        // success: 不渲染任何装饰，消息已在 agent 的文本回复中体现
+        const text = new Text();
+        text.setText(chalk.underline.greenBright(args.message.trim()));
+        return text.render(width);
+    }
+
+    async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
+        const args = toolcall.args_object as z.output<typeof AttemptCompletionMainTaskArgsSchema> | undefined;
+        if (!args) return undefined;
+
+        if (args.type === 'fail') {
+            const messageHtml = args.message ? await marked.parse(args.message) : '';
+            return `
+            <div class="flex flex-col mt-3 mb-3 text-sm bg-rose-50/80 backdrop-blur-md border border-rose-200 py-3 px-4 rounded-2xl shadow-sm w-fit max-w-2xl">
+                <div class="flex items-center space-x-3 mb-2">
+                    <span class="text-base">❌</span>
+                    <span class="font-semibold text-rose-600">任务未能完成</span>
+                </div>
+                ${messageHtml ? `<div class="prose prose-slate prose-sm max-w-none">${messageHtml}</div>` : ''}
+            </div>`;
+        }
+
+        // success: 不渲染任何装饰，消息融入 agent 正常回复
+        return undefined;
+    }
+
+    private async handleExecute(args: z.output<typeof AttemptCompletionMainTaskArgsSchema>, toolResult: ToolResult, taskState?: TaskState): Promise<void> {
+        taskState?.stop('system');
+        toolResult.attachResult(JSON.stringify({ accepted: true, type: args.type }));
     }
 }
 
@@ -751,11 +890,16 @@ export function createMainPlanningToolset(): BaseToolset {
     const toolset = new BaseToolset('planning');
     toolset.addTool(new CreateSubTaskTool());
     toolset.addTool(new WaitSubTaskTool());
+    toolset.addTool(new AttemptCompletionMainTaskTool());
     return toolset;
 }
 
 export function createSubTaskPlanningToolset(): BaseToolset {
     const toolset = new BaseToolset('planning');
-    toolset.addTool(new AttemptCompletionTool());
+    toolset.addTool(new AttemptCompletionSubTaskTool());
     return toolset;
 }
+
+// ─── 注册全局钩子 ─────────────────────────────────────────────────────────────
+
+registerMainTaskAttemptCompletionHook();
