@@ -44,7 +44,7 @@ type FinishTurnFeedback =
 
 type BeforeFinishTurnCallback = ((task: TaskState) => Promise<FinishTurnFeedback>);
 
-type AfterFinishTurnCallback = ((task: TaskState) => void);
+type AfterFinishTurnCallback = ((task: TaskState) => void | Promise<void>);
 
 type BeforeToolCallCallback = (task: TaskState, tool_call: ToolCall) => void | Promise<void>;
 
@@ -83,9 +83,9 @@ export class HookRegistry {
         return { operation: 'finish' };
     }
 
-    static noticeAfterFinishTurn(task: TaskState): void {
+    static async noticeAfterFinishTurn(task: TaskState): Promise<void> {
         for (const callback of this.afterFinishTurnCallbacks) {
-            callback(task);
+            await callback(task);
         }
     }
 
@@ -141,11 +141,11 @@ export class TaskHooks {
         return HookRegistry.checkBeforeFinishTurn(task);
     }
 
-    noticeAfterFinishTurn(task: TaskState): void {
+    async noticeAfterFinishTurn(task: TaskState): Promise<void> {
         for (const callback of this.afterFinishTurnCallbacks) {
-            callback(task);
+            await callback(task);
         }
-        HookRegistry.noticeAfterFinishTurn(task);
+        await HookRegistry.noticeAfterFinishTurn(task);
     }
 
     async checkBeforeToolCall(task: TaskState, tool_call: ToolCall): Promise<void> {

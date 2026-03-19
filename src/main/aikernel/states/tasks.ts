@@ -12,7 +12,7 @@
 import {
     ChatContext, UserMessage, UserMessagePart,
     AssistantMessage, AssistantMessagePart, FileMessagePart,
-    SystemMessage, Usage, ToolCall, CompactSeparatorMessage
+    SystemMessage, Usage, ToolCall, ToolCallMessagePart, CompactSeparatorMessage
 } from '../messages.js';
 import { shouldCompact, compactContext } from '../compact.js';
 import { BaseToolset } from '../tool.js';
@@ -102,6 +102,10 @@ export class TaskState {
     subscribers: BaseTaskUpdateSubscriber[] = [];
     /** 全局任务管理器的状态 */
     task_manager_state: TaskManagerState;
+    /** stop() 被调用时直接 resolve 所有 waitUntilFinished 的等待者 */
+    private _stopResolvers: (() => void)[] = [];
+    /** 标记 processTaskTurn 是否正在运行，stop() 据此决定是否立即发送 feedback */
+    private _turnRunning: boolean = false;
 
     constructor(task_manager_state: TaskManagerState, parent_id: string | null = null) {
         this.task_manager_state = task_manager_state;
@@ -295,24 +299,56 @@ export class TaskState {
         this.stop_requested_by_user = reason === 'user';
         this.finished_at = new Date();
         logger.info(`task ${this.task_id} stopped (reason=${reason})`);
+
+        for (const task of this.task_manager_state.tasks) {
+            if (task.parent_id === this.task_id && task.task_status !== 'stopped') {
+                task.stop(reason);
+            }
+        }
+
+        for (const resolver of this._stopResolvers) {
+            resolver();
+        }
+        this._stopResolvers = [];
+
+        if (!this._turnRunning) {
+            this.sendSubscriptionFeedback();
+        }
         this.task_manager_state.publishTaskListUpdate();
     }
 
     /**
      * Wait until task_status is no longer 'running' or 'waiting'.
+     *
+     * @param callback  每次收到更新 chunk 时的回调
+     * @param resolveOnStop  如果为 true，当 stop() 被调用时立即 resolve（用于父任务等待子任务完成的场景）；
+     *                       默认 false，则等待 processTaskTurn 正常结束后通过 sendSubscriptionFeedback 触发 resolve。
      */
-    async waitUntilFinished(callback?: (updateChunk: TaskUpdateChunk) => void): Promise<void> {
+    async waitUntilFinished(
+        callback?: (updateChunk: TaskUpdateChunk) => void,
+        resolveOnStop: boolean = false
+    ): Promise<void> {
         const activeStatuses: TaskStatus[] = ['running', 'waiting'];
         if (!activeStatuses.includes(this.task_status)) {
             return;
         }
         return new Promise<void>((resolve) => {
+            let settled = false;
+            const settle = () => {
+                if (settled) return;
+                settled = true;
+                this.removeSubscriber(subscriber.subscription_id);
+                resolve();
+            };
+
+            if (resolveOnStop) {
+                this._stopResolvers.push(settle);
+            }
+
             const subscriber = new CallbackTaskUpdateSubscriber((chunkUpdate: TaskUpdateChunk) => {
                 callback?.(chunkUpdate);
-
                 if (!activeStatuses.includes(chunkUpdate.task_status)) {
-                    this.removeSubscriber(subscriber.subscription_id);
-                    resolve();
+                    settle();
                 }
             });
             this.addSubscriber(subscriber);
@@ -660,41 +696,83 @@ export class TaskState {
      * 称为一个轮次 (turn)。processTaskTurn 负责这个执行过程以及相关的钩子判断。
      */
     async processTaskTurn() {
-        while (this.task_status !== 'stopped') {
-            await this.processCompletion();
-            // @ts-ignore 这里的task_status可能通过前端的请求被随时中止
-            if (this.task_status === 'stopped') {
-                break;
+        this._turnRunning = true;
+        let hookRejectCount = 0;
+
+        try {
+            while (this.task_status !== 'stopped') {
+                await this.processCompletion();
+                // @ts-ignore 这里的task_status可能通过前端的请求被随时中止
+                if (this.task_status === 'stopped') {
+                    break;
+                }
+
+                const hasToolCalls = await this.processToolCalls();
+                if (hasToolCalls) {
+                    // 如果本轮有工具调用，说明任务还没有结束，应该重置 hookRejectCount 计数器
+                    // 因为该计数器是用来判断无法提供 attempCompletion 等异常情况的
+                    hookRejectCount = 0;
+                    continue;
+                }
+
+                const checkHooks = await this.hooks.checkBeforeFinishTurn(this);
+                if (checkHooks.operation === 'finish') {
+                    break;
+                } else {
+                    hookRejectCount++;
+                    if (hookRejectCount >= 5) {
+                        logger.warn(`task ${this.task_id}: beforeFinishTurn hook rejected ${hookRejectCount} times consecutively, force-ending turn`);
+                        await this.appendSyntheticFailedAttemptCompletion();
+                        break;
+                    }
+                    const user_message = new UserMessage(checkHooks.message);
+                    const assistant_message = new AssistantMessage();
+                    this.chat_context.appendMessage(user_message);
+                    await this.sendSubscriptionFeedback();
+                    this.chat_context.appendMessage(assistant_message);
+                    continue;
+                }
             }
 
-            const hasToolCalls = await this.processToolCalls();
-            if (hasToolCalls) {
-                continue;
+            if (this.task_status !== 'stopped') {
+                this.task_status = 'stopped';
             }
+            await this.hooks.noticeAfterFinishTurn(this);
+            this.finished_at = new Date();
+            this.sendSubscriptionFeedback();
+            this.task_manager_state.publishTaskListUpdate();
+        } finally {
+            this._turnRunning = false;
+        }
+    }
 
-            // 如果当前任务没有更多工具调用需要处理，那么可以结束这一个轮次(turn)了
-            // 但在此之前首先要看下有没有注册的钩子函数会要求这一轮继续执行（任务级 → 全局，在 TaskHooks 内部统一执行）
-            const checkHooks = await this.hooks.checkBeforeFinishTurn(this);
-            if (checkHooks.operation === 'finish') {
-                break;
-            } else {
-                // 如果某个钩子要求继续执行，则发送一个用户消息给 agent，并继续补全
-                const user_message = new UserMessage(checkHooks.message);
-                const assistant_message = new AssistantMessage();
-                this.chat_context.appendMessage(user_message);
-                await this.sendSubscriptionFeedback();
-                this.chat_context.appendMessage(assistant_message);
-                continue;
-            }
+    private async appendSyntheticFailedAttemptCompletion() {
+        let lastMessage = this.chat_context.lastMessage();
+        if (!(lastMessage instanceof AssistantMessage)) {
+            lastMessage = new AssistantMessage();
+            this.chat_context.appendMessage(lastMessage);
         }
 
-        if (this.task_status !== 'stopped') {
-            this.task_status = 'stopped';
-        }
-        this.hooks.noticeAfterFinishTurn(this);
-        this.finished_at = new Date();  // 记录任务完成时间
-        this.sendSubscriptionFeedback();
-        this.task_manager_state.publishTaskListUpdate();
+        const errorMessage = '模型未能正确使用 attemptCompletion 进行参数传递';
+        const toolCall = new ToolCall(
+            0,
+            `synth_${crypto.randomUUID()}`,
+            'planning-attemptCompletion',
+            JSON.stringify({ success: false, result: errorMessage })
+        );
+        toolCall.args_object = { success: false, result: errorMessage };
+        toolCall.status = 'error';
+        toolCall.result = errorMessage;
+
+        const tool = this.chat_context.getTool('planning-attemptCompletion');
+        if (tool) toolCall.setTool(tool);
+        await toolCall.freezeRenderResult();
+
+        const toolCallPart = new ToolCallMessagePart();
+        toolCallPart.push(toolCall);
+        (lastMessage as AssistantMessage).content.push(toolCallPart);
+
+        logger.warn(`task ${this.task_id}: appended synthetic failed attemptCompletion`);
     }
 
     async render() {

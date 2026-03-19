@@ -15,9 +15,9 @@ import { Card } from '../../tui/components/card.js';
 import { statusDisplay, truncText } from '../../tui/components/toolcall.js';
 import { Markdown, Text, truncateToWidth } from '@mariozechner/pi-tui';
 import type { TaskState, TaskUpdateChunk } from '../states/tasks.js';
-import type { ToolCall, ToolCallMessagePart, TextMessagePart } from '../messages.js';
+import type { TextMessagePart } from '../messages.js';
 import type { SubTaskConfig, SubTaskResult, SubTaskProgressInfo, PendingSubTask } from './common.js';
-import { AssistantMessage, marked } from '../messages.js';
+import { AssistantMessage, UserMessage, ToolCall, ToolCallMessagePart, marked } from '../messages.js';
 import { SUBTASK_SYSTEM_PROMPT } from './prompt.js';
 import { HookRegistry } from '../hooks.js';
 import { getTaskTodosForDisplay } from '../../applications/todomgr/tools.js';
@@ -78,6 +78,76 @@ export function extractSubTaskProgress(
         const text = (part as TextMessagePart).text;
         progress.lastText = text.length > 80 ? '…' + text.slice(-77) : text;
     }
+}
+
+// ─── Extract Last Messages ─────────────────────────────────────────────────────
+
+/**
+ * 从任务的消息历史中提取最后 N 条内容项（文本/工具调用摘要），
+ * 用于在子任务被用户手动停止时向父任务提供上下文。
+ */
+function extractLastMessages(task: TaskState, count: number): string {
+    const items: string[] = [];
+    const messages = task.chat_context.messages;
+
+    for (const msg of messages) {
+        if (msg instanceof UserMessage) {
+            for (const part of msg.content) {
+                if (part.type === 'text') {
+                    const text = (part as TextMessagePart).text;
+                    items.push(`[用户] ${text.length > 200 ? text.slice(0, 200) + '...' : text}`);
+                }
+            }
+        } else if (msg instanceof AssistantMessage) {
+            for (const part of msg.content) {
+                if (part.type === 'text') {
+                    const text = (part as TextMessagePart).text;
+                    items.push(`[助手] ${text.length > 200 ? text.slice(0, 200) + '...' : text}`);
+                } else if (part.type === 'tool_call') {
+                    for (const tc of (part as ToolCallMessagePart).toolcalls) {
+                        const resultSnippet = tc.result ? `: ${tc.result.substring(0, 100)}` : '';
+                        items.push(`[工具] ${tc.tool_name}(${tc.status})${resultSnippet}`);
+                    }
+                }
+            }
+        }
+    }
+    return items.slice(-count).join('\n');
+}
+
+/**
+ * 为被用户手动停止的子任务追加一条合成的 attemptCompletion 工具调用，
+ * 使子任务的结束方式在架构上与正常完成保持一致——始终通过 extractAttemptCompletionResult 提取结果。
+ */
+async function appendSubTaskStopCompletion(subTask: TaskState): Promise<void> {
+    const lastMessages = extractLastMessages(subTask, 5);
+    const errorResult = `子任务被用户手动停止。\n\n子任务最后的消息记录:\n${lastMessages}`;
+
+    let lastMessage = subTask.chat_context.lastMessage();
+    if (!(lastMessage instanceof AssistantMessage)) {
+        lastMessage = new AssistantMessage();
+        subTask.chat_context.appendMessage(lastMessage);
+    }
+
+    const toolCall = new ToolCall(
+        0,
+        `stop_${crypto.randomUUID()}`,
+        ATTEMPT_COMPLETION_TOOL_NAME,
+        JSON.stringify({ success: false, result: errorResult })
+    );
+    toolCall.args_object = { success: false, result: errorResult };
+    toolCall.status = 'success';
+    toolCall.result = JSON.stringify({ accepted: true });
+
+    const tool = subTask.chat_context.getTool(ATTEMPT_COMPLETION_TOOL_NAME);
+    if (tool) toolCall.setTool(tool);
+    await toolCall.freezeRenderResult();
+
+    const toolCallPart = new ToolCallMessagePart();
+    toolCallPart.push(toolCall);
+    (lastMessage as AssistantMessage).content.push(toolCallPart);
+
+    logger.info(`[subtask] appended synthetic stop attemptCompletion for subtask=${subTask.task_id}`);
 }
 
 // ─── Extract attemptCompletion Result ──────────────────────────────────────────
@@ -173,6 +243,12 @@ function registerSubTaskAttemptCompletionHook(subTask: TaskState): void {
             operation: 'reject',
             message: SUBTASK_ATTEMPT_COMPLETION_REMINDER
         };
+    });
+
+    subTask.hooks.afterFinishTurn(async (task) => {
+        if (task.stop_requested_by_user && !hasAttemptCompletion(task)) {
+            await appendSubTaskStopCompletion(task);
+        }
     });
 }
 
@@ -280,18 +356,14 @@ export async function startSubTask(options: StartSubTaskOptions): Promise<SubTas
             criteria: config.criteria
         });
         await subTask.submitUserMessage(userMessage);
-        await subTask.waitUntilFinished(progressCallback);
+        await subTask.waitUntilFinished(progressCallback, true);
 
-        // 处理结果
-        if (subTask.stop_requested_by_user) {
-            return {
-                success: false,
-                result: '子任务被用户手动停止。',
-                subtask_id: subTask.task_id
-            };
+        // 兜底：afterFinishTurn 钩子通常已追加，此处防御钩子未触发的极端情况
+        if (subTask.stop_requested_by_user && !hasAttemptCompletion(subTask)) {
+            await appendSubTaskStopCompletion(subTask);
         }
 
-        // 从消息历史中提取 attemptCompletion 结果
+        // 统一通过 extractAttemptCompletionResult 提取结果
         const completionResult = extractAttemptCompletionResult(subTask);
         if (completionResult) {
             return {
@@ -372,6 +444,10 @@ export async function waitSubTaskResult(options: WaitSubTaskOptions): Promise<Su
     // 等待子任务完成
     await waitForTaskWithProgress(subTask, onProgress);
 
+    if (subTask.stop_requested_by_user && !hasAttemptCompletion(subTask)) {
+        await appendSubTaskStopCompletion(subTask);
+    }
+
     const completionResult = extractAttemptCompletionResult(subTask);
     if (completionResult) {
         return {
@@ -395,7 +471,7 @@ async function waitForTaskWithProgress(
     onProgress?: (progress: SubTaskProgressInfo) => void
 ): Promise<void> {
     if (!onProgress) {
-        await task.waitUntilFinished();
+        await task.waitUntilFinished(undefined, true);
         return;
     }
 
@@ -409,7 +485,7 @@ async function waitForTaskWithProgress(
             lastProgressTime = now;
             onProgress({ tools: [...progress.tools], lastText: progress.lastText });
         }
-    });
+    }, true);
 }
 
 // ─── Tool Classes ──────────────────────────────────────────────────────────────
