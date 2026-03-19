@@ -12,7 +12,7 @@
 import {
     ChatContext, UserMessage, UserMessagePart,
     AssistantMessage, AssistantMessagePart, FileMessagePart,
-    SystemMessage, Usage, ToolCall
+    SystemMessage, Usage, ToolCall, CompactSeparatorMessage
 } from '../messages.js';
 import { shouldCompact, compactContext } from '../compact.js';
 import { BaseToolset } from '../tool.js';
@@ -428,7 +428,8 @@ export class TaskState {
                     last_part_index: updated_part_index,
                     last_part,
                 };
-            } else if (last_message instanceof AssistantMessage && last_message.content.length > 0) {
+            } else if (last_message instanceof AssistantMessage) {
+                if (last_message.content.length === 0) return;  // 空的助手消息，跳过
                 const updated_part_index = part_index !== undefined ? part_index : last_message.content.length - 1;
                 const last_part = last_message.content[updated_part_index];
                 await last_part.render();
@@ -441,8 +442,12 @@ export class TaskState {
                     last_part,
                     usage: last_message.usage
                 };
+            } else if (last_message instanceof CompactSeparatorMessage) {
+                // 压缩分隔消息不需要发送订阅更新，直接返回
+                return;
             } else {
-                throw new Error('last message is not a user message or assistant message');
+                logger.warn(`unexpected last message type in sendSubscriptionFeedback: ${(last_message as any).role}`);
+                return;
             }
 
             for (const subscriber of this.subscribers) {
