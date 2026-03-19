@@ -41,12 +41,6 @@ planning-attemptCompletion 工具的参数传递，避免通过写文件的形�
 {criteria}
 `.trim();
 
-const SUBTASK_ATTEMPT_COMPLETION_REMINDER = `你还没有调用 planning-attemptCompletion 工具来返回结果。
-请立即调用 planning-attemptCompletion 工具提交你的任务结果。`;
-
-const MAIN_TASK_ATTEMPT_COMPLETION_REMINDER = `你还没有调用 planning-attemptCompletion 工具来结束任务。
-请在完成所有工作后调用 planning-attemptCompletion 工具来结束当前任务。`;
-
 const MAIN_TASK_INCOMPLETE_TODOS_REMINDER = `你的待办列表中还有未完成的事项，请先完成所有待办事项（或将不再需要的待办标记为 completed），然后再调用 attemptCompletion 工具结束任务。`;
 
 // ─── Pending SubTasks Registry ─────────────────────────────────────────────────
@@ -239,10 +233,7 @@ function registerSubTaskAttemptCompletionHook(subTask: TaskState): void {
         if (task.stop_requested_by_user) {
             return { operation: 'finish' };
         }
-        return {
-            operation: 'reject',
-            message: SUBTASK_ATTEMPT_COMPLETION_REMINDER
-        };
+        return { operation: 'reject', message: '请继续' };
     });
 
     subTask.hooks.afterFinishTurn(async (task) => {
@@ -278,10 +269,7 @@ export function registerMainTaskAttemptCompletionHook(): void {
 
         // 检查最后一条 AssistantMessage 是否调用了 attemptCompletion
         if (!hasAttemptCompletionInLastMessage(task)) {
-            return {
-                operation: 'reject',
-                message: MAIN_TASK_ATTEMPT_COMPLETION_REMINDER
-            };
+            return { operation: 'reject', message: '请继续' };
         }
 
         return { operation: 'finish' };
@@ -905,7 +893,7 @@ const AttemptCompletionMainTaskArgsSchema = z.object({
 
 export class AttemptCompletionMainTaskTool extends BaseTool<typeof AttemptCompletionMainTaskArgsSchema> {
     constructor() {
-        super('attemptCompletion', '完成当前回合', AttemptCompletionMainTaskArgsSchema);
+        super('attemptCompletion', '完成当前轮次对话', AttemptCompletionMainTaskArgsSchema);
         this.setUniversalExecutor(this.handleExecute.bind(this));
     }
 
