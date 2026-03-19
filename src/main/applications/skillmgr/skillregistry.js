@@ -497,13 +497,21 @@ function copyDirRecursive(src, dest) {
     }
 }
 
-/** 递归删除目录或文件 */
+/** 递归删除目录或文件；优先使用 fs.rmSync 以兼容鸿蒙 HarmonyOS */
 function rmRecursive(p) {
     if (!fs.existsSync(p)) return;
+    try {
+        if (typeof fs.rmSync === 'function') {
+            fs.rmSync(p, { recursive: true, force: true });
+            return;
+        }
+    } catch (_) { }
     if (fs.statSync(p).isDirectory()) {
         for (const name of fs.readdirSync(p)) rmRecursive(path.join(p, name));
         fs.rmdirSync(p);
-    } else fs.unlinkSync(p);
+    } else {
+        fs.unlinkSync(p);
+    }
 }
 
 /**
@@ -805,6 +813,7 @@ async function addSkillFromClawHubSlug(slug, version) {
 
 /**
  * 删除指定技能（按 id，即目录名）
+ * 使用 fs.rmSync 替代手动 rmRecursive，以兼容鸿蒙 HarmonyOS（unlinkSync 后文件句柄缓存等问题）
  * @param {string} skillId - 技能 id（目录名）
  * @returns {{ success: boolean, error?: string }}
  */
@@ -814,13 +823,21 @@ function deleteSkill(skillId) {
     }
     const safeName = path.basename(skillId).replace(/[/\\]/g, '');
     if (!safeName) return { success: false, error: '无效的技能 id' };
-    const skillsDir = getSkillsDirectory();
-    const targetDir = path.join(skillsDir, safeName);
+    const skillsDir = path.resolve(getSkillsDirectory());
+    const targetDir = path.resolve(skillsDir, safeName);
+    const relative = path.relative(skillsDir, targetDir);
+    if (relative.startsWith('..') || path.isAbsolute(relative)) {
+        return { success: false, error: '无效的技能路径' };
+    }
     if (!fs.existsSync(targetDir)) {
         return { success: false, error: `技能 "${safeName}" 不存在` };
     }
     try {
-        rmRecursive(targetDir);
+        if (typeof fs.rmSync === 'function') {
+            fs.rmSync(targetDir, { recursive: true, force: true });
+        } else {
+            rmRecursive(targetDir);
+        }
         loadAll(); // loadAll 会重新加载并处理 aikernel 注册
         return { success: true };
     } catch (e) {

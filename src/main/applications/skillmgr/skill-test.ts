@@ -67,7 +67,7 @@ minOpenDeskVersion: "0.1.0"
 timeout: 300
 requires:
   node: ">=18.0.0"
-  os: ["win32", "darwin", "linux"]
+  os: ["win32", "darwin", "linux", "openharmony"]
 ---
 
 # Skill 测试配置
@@ -81,7 +81,7 @@ requires:
 - timeout: 单个测试用例超时时间（秒）
 - requires: 环境依赖要求
   - node: Node.js 版本要求
-  - os: 支持的操作系统列表
+  - os: 支持的操作系统列表（win32/darwin/linux/openharmony）
   - tools: 需要的外部工具
 `;
 
@@ -290,6 +290,7 @@ function checkOS(required?: string[]): EnvironmentCheck {
     };
 }
 
+/** Windows 用 where，其余平台（含 openharmony）用 which；鸿蒙 HiShell 为 Unix 兼容 */
 async function checkTool(name: string): Promise<boolean> {
     return new Promise((resolve) => {
         const cmd = process.platform === 'win32' ? 'where' : 'which';
@@ -419,9 +420,16 @@ function checkDisk(required?: string): EnvironmentCheck {
 }
 
 function getSkillsDirectory(): string {
-    const appDir = process.env.APPDATA
-        ? path.join(process.env.APPDATA, 'opendesk')
-        : path.join(process.env.HOME || '', '.opendesk');
+    let appDir: string;
+    if (process.env.APPDATA) {
+        appDir = path.join(process.env.APPDATA, 'opendesk');
+    } else if (process.env.HOME) {
+        appDir = path.join(process.env.HOME, '.opendesk');
+    } else if ((process.platform as string) === 'openharmony' && process.env.USER_DATA_PATH) {
+        appDir = process.env.USER_DATA_PATH;
+    } else {
+        appDir = path.join(process.env.USERPROFILE || process.cwd(), '.opendesk');
+    }
     return path.join(appDir, 'apps', 'skills', 'resources');
 }
 
@@ -503,6 +511,11 @@ function analyzeTestFailure(error: string, stdout: string, stderr: string, exitC
             pattern: /async\s+callback\s+was\s+not\s+invoked|callback\s+timeout/i,
             cause: '异步回调未执行',
             suggestion: '确保异步操作正确完成，检查 Promise 或回调函数'
+        },
+        {
+            pattern: /dlopen|DLOpen|Error loading native addon|\.node\s+invalid|ELF.*format/i,
+            cause: '原生模块加载失败（常见于 OpenHarmony）',
+            suggestion: '鸿蒙平台部分 Node 原生模块可能不兼容，检查是否使用鸿蒙适配版本或考虑跳过该依赖'
         }
     ];
     
