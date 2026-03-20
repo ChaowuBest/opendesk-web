@@ -37,6 +37,7 @@ import { NotificationStore, NotificationCenterOverlay, ToastManager, getNotifica
 import { NotificationManager } from "../utils/notificationmgr.js";
 import { SkillMgrApplication } from "../applications/skillmgr/app.js";
 import { getFilemgrStatusNotice } from "./filemgrStatusNotice";
+import { DashboardBar } from "./components/dashboard";
 
 import format from "string-template";
 import path from "path";
@@ -88,6 +89,7 @@ export class OpenDeskTUI {
     public logPanel: LogPanel;
     private todoList: TodoList;
     public inputArea: AgentInputArea;
+    public dashboardBar: DashboardBar;
 
     private shortcutManager: KeyboardShortcutManager;
     public commandRegistry: SlashCommandRegistry;
@@ -143,6 +145,7 @@ export class OpenDeskTUI {
         this.logPanel = new LogPanel(this.tui);
         this.todoList = new TodoList();
         this.inputArea = new AgentInputArea(this);
+        this.dashboardBar = new DashboardBar(() => this.tui.requestRender());
         this.workspace = args.workspace;
         this.model = args.model;
         this.singleShot = !!args.command;
@@ -183,7 +186,8 @@ export class OpenDeskTUI {
         this.container.addChild(new OpenDeskBanner(this.workspace));
         this.container.addChild(this.taskView);
         this.container.addChild(this.todoList);
-        this.container.addChild(this.inputArea)
+        this.container.addChild(this.inputArea);
+        this.container.addChild(this.dashboardBar);
         this.container.setMinLines(this.tui.terminal.rows);
         this.container.setVerticalAlign("center");
 
@@ -412,6 +416,7 @@ export class OpenDeskTUI {
         ApplicationRegistry.onReady(() => {
             this.registerApplicationCommands();
             this.refreshStatusNotice();
+            this.dashboardBar.start(60_000);
         });
     }
 
@@ -477,26 +482,23 @@ export class OpenDeskTUI {
      * 根据日志面板模式更新 VerticalLayout 的子组件排列
      */
     private updateLayoutForLogMode(mode: LogPanelMode) {
-        // 先清空容器，然后按照所需顺序重新添加
         this.container.clear();
 
         this.container.addChild(new OpenDeskBanner(this.workspace));
 
         if (mode === 'all') {
-            // 全部模式：只显示日志面板，隐藏 TaskView 和 TodoList
             this.container.addChild(this.logPanel);
         } else if (mode === 'last') {
-            // 最后 10 条模式：在 TaskView 和 Input 中间显示日志面板
             this.container.addChild(this.taskView);
             this.container.addChild(this.todoList);
             this.container.addChild(this.logPanel);
         } else {
-            // off 模式：不显示日志面板，恢复默认布局
             this.container.addChild(this.taskView);
             this.container.addChild(this.todoList);
         }
 
         this.container.addChild(this.inputArea);
+        this.container.addChild(this.dashboardBar);
         this.container.setMinLines(this.tui.terminal.rows);
 
         this.tui.requestRender();
@@ -579,14 +581,13 @@ export class OpenDeskTUI {
             const setting = Setting.getInstance();
             const data = setting.getData() as any;
             if (!data.default_model || data.default_model.trim() === '') {
-                // 模型仍未配置，重新显示提示
                 this.container.clear();
                 this.container.addChild(new OpenDeskBanner(this.workspace));
                 this.container.addChild(this.modelNotConfiguredNotice!);
                 this.container.addChild(this.inputArea);
+                this.container.addChild(this.dashboardBar);
                 this.container.setMinLines(this.tui.terminal.rows);
                 this.tui.requestRender();
-                // 延迟设置焦点
                 setTimeout(() => {
                     this.tui.setFocus(this.inputArea.input);
                     this.tui.requestRender();
@@ -610,9 +611,9 @@ export class OpenDeskTUI {
         }
 
         this.container.addChild(this.inputArea);
+        this.container.addChild(this.dashboardBar);
         this.container.setMinLines(this.tui.terminal.rows);
         this.tui.requestRender();
-        // 延迟设置焦点
         setTimeout(() => {
             this.tui.setFocus(this.inputArea.input);
             this.tui.requestRender();
@@ -915,6 +916,7 @@ export class OpenDeskTUI {
 
     async exit() {
         try {
+            this.dashboardBar.stop();
             this.toastManager.stop();
             this.inputArea.statusBar.stopTimer();
             this.shortcutManager.detach();
@@ -1064,15 +1066,14 @@ export class OpenDeskTUI {
             return;
         }
 
-        // 隐藏 taskview 和 todoList，显示提示
         this.container.clear();
         this.container.addChild(new OpenDeskBanner(this.workspace));
         this.container.addChild(this.modelNotConfiguredNotice);
         this.container.addChild(this.inputArea);
+        this.container.addChild(this.dashboardBar);
         this.container.setMinLines(this.tui.terminal.rows);
 
         this.tui.requestRender();
-        // 重建布局后，重新将焦点设置回输入框
         setTimeout(() => {
             this.tui.setFocus(this.inputArea.input);
             this.tui.requestRender();
@@ -1084,10 +1085,9 @@ export class OpenDeskTUI {
      */
     private hideModelNotConfiguredNotice() {
         if (!this.modelNotConfiguredNotice) {
-            return; // 本来就没有显示提示
+            return;
         }
 
-        // 移除提示组件
         this.modelNotConfiguredNotice = undefined;
         this.modelNotConfiguredMode = false;
 
@@ -1106,10 +1106,10 @@ export class OpenDeskTUI {
             this.container.addChild(this.logPanel);
         }
         this.container.addChild(this.inputArea);
+        this.container.addChild(this.dashboardBar);
         this.container.setMinLines(this.tui.terminal.rows);
 
         this.tui.requestRender();
-        // 重建布局后，重新将焦点设置回输入框
         setTimeout(() => {
             this.tui.setFocus(this.inputArea.input);
             this.tui.requestRender();
