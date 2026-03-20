@@ -27,6 +27,7 @@ import fs from 'fs';
 import { SkillRegistry } from '../skill.js';
 import { createMemoryToolset } from '../memory/tools.js';
 import { createMainPlanningToolset, createSubTaskPlanningToolset } from '../planning/tools.js';
+import { createTaskInfoToolset } from './tools.js';
 import { TaskHooks } from '../hooks.js';
 
 
@@ -79,9 +80,25 @@ class CallbackTaskUpdateSubscriber extends BaseTaskUpdateSubscriber {
     }
 }
 
+/**
+ * 生成短任务ID
+ * 格式: task_时间戳8位_随机4字符
+ * 示例: task_a1b2c3d4_x7yz
+ *
+ * 碰撞概率分析：
+ * - 时间戳部分（8位36进制）：可覆盖约282年，不同毫秒必不同
+ * - 随机部分（4位36进制）：约168万种可能
+ * - 同一毫秒内创建任务的碰撞概率约1/168万
+ */
+function generateShortTaskId(): string {
+    const timestamp = Date.now().toString(36).slice(-8);
+    const random = Math.random().toString(36).slice(2, 6);
+    return `task_${timestamp}_${random}`;
+}
+
 export class TaskState {
 
-    task_id: string = crypto.randomUUID();
+    task_id: string = generateShortTaskId();
     parent_id: string | null = null;
     task_name: string | null = null;
     task_status: TaskStatus = 'waiting';
@@ -231,14 +248,7 @@ export class TaskState {
         this.chat_context.appendMessage(user_message);
         this.chat_context.appendMessage(assistant_message);
 
-        let toolsets = await ApplicationRegistry.listAvailableToolsets();
-        let skillToolset = SkillRegistry.getInstance().getToolset();
-        let memoryToolset = createMemoryToolset();
-        let planningToolset = this.parent_id
-            ? createSubTaskPlanningToolset()
-            : createMainPlanningToolset();
-
-        const allToolsets = [...toolsets, skillToolset, memoryToolset, planningToolset];
+        const allToolsets = await this.buildToolsets();
         this.chat_context.attachToolsets(...allToolsets);
 
         logger.info(`messsage submitted to task ${this.task_id}`)
@@ -524,23 +534,34 @@ export class TaskState {
     }
 
     /**
+     * 构建当前任务所需的全部 toolsets。
+     * 主任务和子任务共享应用工具集与 skill 工具集，
+     * 但 planning 工具集和 task-info 工具集仅主任务拥有。
+     */
+    async buildToolsets(): Promise<BaseToolset[]> {
+        const appToolsets = await ApplicationRegistry.listAvailableToolsets();
+        const skillToolset = SkillRegistry.getInstance().getToolset();
+        const memoryToolset = createMemoryToolset();
+        const planningToolset = this.parent_id
+            ? createSubTaskPlanningToolset()
+            : createMainPlanningToolset();
+
+        const all = [...appToolsets, skillToolset, memoryToolset, planningToolset];
+        if (this.parent_id === null) {
+            all.push(createTaskInfoToolset(this.task_manager_state));
+        }
+        return all;
+    }
+
+    /**
      * 确保 chat_context 已挂载 toolsets，并为所有历史 ToolCall 解析 tool 引用。
      * 从硬盘加载任务后 toolsets 为空、ToolCall.tool 为 undefined，
      * 调用此方法后 CLI 自定义渲染器即可正常工作。
      */
     async ensureToolsResolved() {
         if (this.chat_context.toolsets.size === 0) {
-            const toolsets = await ApplicationRegistry.listAvailableToolsets();
-            const skillToolset = SkillRegistry.getInstance().getToolset();
-            const memoryToolset = createMemoryToolset();
-            this.chat_context.attachToolsets(...toolsets);
-            this.chat_context.attachToolsets(skillToolset);
-            this.chat_context.attachToolsets(memoryToolset);
-            this.chat_context.attachToolsets(
-                this.parent_id === null ?
-                    createMainPlanningToolset() :
-                    createSubTaskPlanningToolset()
-            )
+            const allToolsets = await this.buildToolsets();
+            this.chat_context.attachToolsets(...allToolsets);
         }
         this.resolveAllToolCalls();
     }

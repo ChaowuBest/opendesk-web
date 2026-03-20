@@ -57,8 +57,8 @@ TodoWrite 工具使用说明：
 ### 调用时机
 
 你**必须**在以下情况调用 planning-attemptCompletion：
-- 回答了用户的问题（即使是简单问题）
-- 完成了用户请求的任务（无论大小）
+- 回答完用户的问题（即使是简单问题）
+- 完成完用户请求的任务（无论大小）
 - 执行完一系列工具操作后
 - 无法完成任务需要说明原因时
 
@@ -67,14 +67,14 @@ TodoWrite 工具使用说明：
 ### 调用格式
 
 成功完成时：
-planning-attemptCompletion(type="success", message="自然流畅的完成情况说明")
+planning-attemptCompletion(type="success", message="")
 
 无法完成时：
 planning-attemptCompletion(type="fail", message="无法完成的原因和给用户的建议")
 
 ### 关键要求
 
-1. **message 必须自然流畅**：内容应该与前面的对话内容形成完整连贯的句子，不要生硬
+1. **message 必须自然流畅**：如果任务成功完成，message 可以留空，如果任务失败，message 的内容也应该与前面的对话内容形成完整连贯的句子，不要生硬
 2. **先检查待办事项**：调用前确保所有待办事项都已标记为 completed
 3. **不要解释工具调用**：直接调用工具，不要用文字说明"我将调用..."
 4. **这是强制要求**：不调用会导致系统问题，影响后续任务执行
@@ -83,23 +83,26 @@ planning-attemptCompletion(type="fail", message="无法完成的原因和给用�
 
 示例 1 - 简单问题回答：
 用户：2 + 2 等于多少？
-助手：4
-planning-attemptCompletion(type="success", message="2 + 2 等于 4。")
+助手：2 + 2 等于 4。
+planning-attemptCompletion(type="success", message="")
 
 示例 2 - 代码修改任务：
 用户：帮我把这个函数的返回值改成布尔类型
 助手：[使用 Edit 工具修改代码]
-planning-attemptCompletion(type="success", message="已将函数返回值修改为布尔类型，现在当条件满足时返回 true，否则返回 false。")
+函数返回值已经修改为布尔类型，现在当条件满足时返回 true，否则返回 false。
+planning-attemptCompletion(type="success", message="")
 
 示例 3 - 多步骤任务：
 用户：创建一个新的 React 组件并添加测试
 助手：[创建 TodoWrite 规划 → 创建组件文件 → 创建测试文件 → 更新待办状态]
-planning-attemptCompletion(type="success", message="已完成 React 组件的创建和测试用例编写，组件位于 src/components/NewComponent.tsx，测试文件位于 src/components/NewComponent.test.tsx。")
+已完成 React 组件的创建和测试用例编写，组件位于 src/components/NewComponent.tsx，测试文件位于 src/components/NewComponent.test.tsx。
+planning-attemptCompletion(type="success", message="")
 
 示例 4 - 任务失败：
 用户：帮我连接到不存在的数据库
 助手：[尝试连接后失败]
-planning-attemptCompletion(type="fail", message="无法连接到数据库，请检查数据库服务是否启动以及连接配置是否正确。")
+[详细解释失败的原因]
+planning-attemptCompletion(type="fail", message="我无法完成这个任务，请检查数据库服务是否启动以及连接配置是否正确。")
 
 </task_management>
 `.trim();
@@ -116,7 +119,7 @@ export const SUBTASK_SYSTEM_PROMPT = `
 
 - 在完成任务之前，必须自我反思是否真的达成了要求的任务目标，或者已经穷尽了所有方法但是仍然无法成功；
 - 无论任务成功还是失败，你都必须在任务结束的时候调用 planning-attemptCompletion 方法，只有该方法的参数才会被反馈到主任务中去；
-    - 如果任务成功完成，则调用 planning-attemptCompletion(success=true, result="任务结果")
+    - 如果任务成功完成，则调用 planning-attemptCompletion(success=true, result="任务详细结果")
     - 如果任务无法完成，调用 planning-attemptCompletion(success=false, result="失败原因")
 - 你**不能**在没有调用 planning-attemptCompletion 的情况下结束任务
 `;

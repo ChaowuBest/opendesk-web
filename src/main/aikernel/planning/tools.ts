@@ -233,7 +233,10 @@ function registerSubTaskAttemptCompletionHook(subTask: TaskState): void {
         if (task.stop_requested_by_user) {
             return { operation: 'finish' };
         }
-        return { operation: 'reject', message: '请继续' };
+        return {
+            operation: 'reject',
+            message: '如果任务尚未完成，请继续任务；如果完成了或者出错了，请使用 planning-attemptCompletion 工具来结束对话'
+        };
     });
 
     subTask.hooks.afterFinishTurn(async (task) => {
@@ -269,7 +272,10 @@ export function registerMainTaskAttemptCompletionHook(): void {
 
         // 检查最后一条 AssistantMessage 是否调用了 attemptCompletion
         if (!hasAttemptCompletionInLastMessage(task)) {
-            return { operation: 'reject', message: '请继续' };
+            return {
+                operation: 'reject',
+                message: '如果任务尚未完成，请继续任务；如果完成了或者出错了，请使用 planning-attemptCompletion 工具来结束对话'
+            };
         }
 
         return { operation: 'finish' };
@@ -847,7 +853,7 @@ export class AttemptCompletionSubTaskTool extends BaseTool<typeof AttemptComplet
             body.push(`${icon} ${args.success ? '成功' : '失败'}`);
             if (args.result) {
                 const markdown = new Markdown(args.result, 0, 0, defaultMarkdownTheme);
-                body.push(...markdown.render(width - 10));
+                body.push(...markdown.render(width - 4)); // 减去 Card 边框占用的宽度
             }
         }
 
@@ -906,7 +912,7 @@ export class AttemptCompletionMainTaskTool extends BaseTool<typeof AttemptComple
             body.push(chalk.redBright('任务未能完成：'));
             if (args.message) {
                 const markdown = new Markdown(args.message, 0, 0, defaultMarkdownTheme);
-                body.push(...markdown.render(width - 10));
+                body.push(...markdown.render(width - 4)); // 减去 Card 边框占用的宽度
             }
             return new Card({
                 icon: '❌',
@@ -916,10 +922,7 @@ export class AttemptCompletionMainTaskTool extends BaseTool<typeof AttemptComple
             }).render(width);
         }
 
-        // success: 不渲染任何装饰，消息已在 agent 的文本回复中体现
-        const text = new Text();
-        text.setText(chalk.underline.greenBright(args.message.trim()));
-        return text.render(width);
+        return [chalk.green("⌯⌲ 回复完成")];
     }
 
     async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
@@ -938,8 +941,16 @@ export class AttemptCompletionMainTaskTool extends BaseTool<typeof AttemptComple
             </div>`;
         }
 
-        // success: 不渲染任何装饰，消息融入 agent 正常回复
-        return undefined;
+        // success: 渲染 markdown 内容
+        const messageHtml = args.message ? await marked.parse(args.message) : '';
+        return `
+        <div class="flex flex-col mt-3 mb-3 text-sm bg-emerald-50/80 backdrop-blur-md border border-emerald-200 py-3 px-4 rounded-2xl shadow-sm w-fit max-w-2xl">
+            <div class="flex items-center space-x-3 mb-2">
+                <span class="text-base">✅</span>
+                <span class="font-semibold text-emerald-600">任务完成</span>
+            </div>
+            ${messageHtml ? `<div class="prose prose-slate prose-sm max-w-none">${messageHtml}</div>` : ''}
+        </div>`;
     }
 
     private async handleExecute(args: z.output<typeof AttemptCompletionMainTaskArgsSchema>, toolResult: ToolResult, taskState?: TaskState): Promise<void> {
