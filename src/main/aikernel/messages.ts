@@ -42,11 +42,14 @@ marked.use(markedKatex({
 export class ReasoningMessagePart {
     type: 'reasoning' = 'reasoning';
     content: string;
+    /** 来源：'reasoning_content' 表示来自 API 的 reasoning_content 字段，'think_tag' 表示从 <think> 标签解析 */
+    source: 'reasoning_content' | 'think_tag';
     /** cached render result of the reasoning */
     rendered?: string;
 
-    constructor (content: string) {
+    constructor (content: string, source: 'reasoning_content' | 'think_tag') {
         this.content = content;
+        this.source = source;
     }
 
     async render() {
@@ -539,9 +542,11 @@ export class AssistantMessage {
     message_id: string = crypto.randomUUID();
     content: Array<AssistantMessagePart> = [];
     usage?: Usage;
+    private _insideThinkTag: boolean = false;
 
     constructor (content: Array<AssistantMessagePart> = []) {
         this.content = content;
+        Object.defineProperty(this, '_insideThinkTag', { value: false, writable: true, enumerable: false });
     }
 
     /**
@@ -550,6 +555,7 @@ export class AssistantMessage {
     static assign(raw_obj: object): AssistantMessage {
         Object.setPrototypeOf(raw_obj, AssistantMessage.prototype);
         let assistant_message = raw_obj as AssistantMessage;
+        Object.defineProperty(assistant_message, '_insideThinkTag', { value: false, writable: true, enumerable: false });
         if (assistant_message.content !== undefined) {
             for (let part of assistant_message.content) {
                 if (part.type === 'text') {
@@ -584,35 +590,107 @@ export class AssistantMessage {
         if (part.type === 'text') {
             this.appendText(part.text);
         } else if (part.type === 'reasoning') {
-            this.appendReasoningContent(part.content);
+            this.appendReasoningContent(part.content, part.source);
         } else if (part.type === 'tool_call') {
             this.appendToolCallPart(part);
         }
         return this;
     }
 
-    appendReasoningContent(content: string): AssistantMessage {
+    appendReasoningContent(content: string, source: 'reasoning_content' | 'think_tag' = 'reasoning_content'): AssistantMessage {
         const last_part = this.content[this.content.length - 1];
-        if (last_part && last_part.type === 'reasoning') {
+        if (last_part && last_part.type === 'reasoning' && last_part.source === source) {
             last_part.content += content;
         } else {
-            this.content.push(new ReasoningMessagePart(content));
+            this.content.push(new ReasoningMessagePart(content, source));
         }
         return this;
     }
 
     /**
-     * Append a text part to the message
-     * @param {string} text
+     * Append a text part to the message.
+     * Detects `<think>...</think>` tags in the text content and automatically
+     * splits them into ReasoningMessagePart, handling streaming scenarios where
+     * tags may be split across multiple chunks.
      */
     appendText(text: string): AssistantMessage {
+        if (this._insideThinkTag) {
+            this._appendToReasoningRaw(text);
+            this._checkAndSplitReasoningClose();
+        } else {
+            this._appendRawText(text);
+            this._checkAndSplitTextOpen();
+        }
+        return this;
+    }
+
+    private _appendRawText(text: string): void {
         const last_part = this.content[this.content.length - 1];
         if (last_part && last_part.type === 'text') {
             last_part.text += text;
         } else {
             this.content.push(new TextMessagePart(text));
         }
-        return this;
+    }
+
+    private _appendToReasoningRaw(text: string): void {
+        const last_part = this.content[this.content.length - 1];
+        if (last_part && last_part.type === 'reasoning') {
+            last_part.content += text;
+        } else {
+            this.content.push(new ReasoningMessagePart(text, 'think_tag'));
+        }
+    }
+
+    /**
+     * Check if the last TextMessagePart contains `<think>` and split it into
+     * a TextMessagePart (before) and ReasoningMessagePart (after).
+     */
+    private _checkAndSplitTextOpen(): void {
+        const last_part = this.content[this.content.length - 1];
+        if (!last_part || last_part.type !== 'text') return;
+
+        const openIdx = last_part.text.indexOf('<think>');
+        if (openIdx === -1) return;
+
+        const beforeThink = last_part.text.substring(0, openIdx);
+        const afterOpen = last_part.text.substring(openIdx + '<think>'.length);
+
+        if (beforeThink.trim().length > 0) {
+            last_part.text = beforeThink;
+        } else {
+            this.content.pop();
+        }
+
+        this._insideThinkTag = true;
+
+        if (afterOpen.length > 0) {
+            this.content.push(new ReasoningMessagePart(afterOpen, 'think_tag'));
+            this._checkAndSplitReasoningClose();
+        }
+    }
+
+    /**
+     * Check if the last ReasoningMessagePart contains `</think>` and split it into
+     * a ReasoningMessagePart (before) and TextMessagePart (after).
+     */
+    private _checkAndSplitReasoningClose(): void {
+        const last_part = this.content[this.content.length - 1];
+        if (!last_part || last_part.type !== 'reasoning') return;
+
+        const closeIdx = last_part.content.indexOf('</think>');
+        if (closeIdx === -1) return;
+
+        const reasoningText = last_part.content.substring(0, closeIdx);
+        const afterClose = last_part.content.substring(closeIdx + '</think>'.length);
+
+        last_part.content = reasoningText;
+        this._insideThinkTag = false;
+
+        if (afterClose.trim().length > 0) {
+            this.content.push(new TextMessagePart(afterClose));
+            this._checkAndSplitTextOpen();
+        }
     }
 
     /**
@@ -642,7 +720,6 @@ export class AssistantMessage {
     toOpenAIMessages(): object[] {
         const messages: object[] = [];
 
-        // 拆分 AssistantMessage：处理交错出现的 reasoning、tool_call、text
         let currentReasoning = '';
         let currentText = '';
 
@@ -670,7 +747,11 @@ export class AssistantMessage {
         for (const part of this.content) {
             switch (part.type) {
                 case 'reasoning': {
-                    currentReasoning += part.content;
+                    if (part.source === 'think_tag') {
+                        currentText += `<think>${part.content}</think>`;
+                    } else {
+                        currentReasoning += part.content;
+                    }
                     break;
                 }
                 case 'tool_call': {
@@ -755,7 +836,7 @@ export class AssistantMessage {
 
         const reasoning_content = openai_message['reasoning_content'];
         if (reasoning_content) {
-            message.content.push(new ReasoningMessagePart(reasoning_content));
+            message.content.push(new ReasoningMessagePart(reasoning_content, 'reasoning_content'));
         }
 
         const tool_calls = openai_message['tool_calls'];

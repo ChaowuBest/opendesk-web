@@ -517,6 +517,7 @@ export class TaskState {
                 break;
             }
 
+            const prevPartCount = assistant_message.content.length;
             assistant_message.mergeChunk(chunk_resp.content);
             assistant_message.usage = chunk_resp.usage;
 
@@ -527,7 +528,15 @@ export class TaskState {
                 continue;
             }
 
-            await this.sendSubscriptionFeedback();
+            if (assistant_message.content.length > prevPartCount) {
+                // content 数组增长了（如 <think> 标签拆分产生新 part），
+                // 需要同时更新被修改的旧 part 和新增的 part
+                for (let i = Math.max(0, prevPartCount - 1); i < assistant_message.content.length; i++) {
+                    await this.sendSubscriptionFeedback(i);
+                }
+            } else {
+                await this.sendSubscriptionFeedback();
+            }
         }
 
         this.task_manager_state.save();
