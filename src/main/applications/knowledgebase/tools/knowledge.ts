@@ -63,6 +63,72 @@ export class ListKnowledgeBasesTool extends BaseTool<typeof ListKnowledgeBasesAr
         return new Card({ icon: '📚', title: '知识库列表', status: statusDisplay(toolcall.status), body }).render(width);
     }
 
+    async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
+        if (toolcall.status === 'running') {
+            return `
+            <div class="flex items-center gap-2 mt-1 mb-1 text-xs text-slate-500">
+                <span class="animate-pulse">📚</span>
+                <span>加载知识库列表...</span>
+            </div>`;
+        }
+
+        if (toolcall.status === 'error') {
+            return `
+            <div class="flex items-center gap-2 mt-1 mb-1 text-xs text-rose-600 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2">
+                <span>❌</span>
+                <span>${toolcall.result || '加载失败'}</span>
+            </div>`;
+        }
+
+        if (toolcall.status === 'success' && toolcall.result) {
+            try {
+                const result = JSON.parse(toolcall.result);
+                const groups = result.knowledge_bases || [];
+                let total = 0;
+                for (const group of groups) {
+                    total += (group.items || []).length;
+                }
+
+                if (total === 0) {
+                    return `
+                    <div class="flex items-center gap-2 mt-1 mb-1 text-xs text-slate-400">
+                        <span>📚</span>
+                        <span>暂无知识库</span>
+                    </div>`;
+                }
+
+                let html = `<div class="mt-1 mb-1 text-xs">`;
+                for (const group of groups) {
+                    const kbs = group.items || [];
+                    if (kbs.length === 0) continue;
+                    html += `
+                    <div class="mb-2">
+                        <div class="text-[10px] text-violet-600 font-medium mb-1 px-1">${group.provider_name || group.provider_id} (${kbs.length})</div>
+                        <div class="flex flex-wrap gap-1">`;
+                    for (const kb of kbs) {
+                        if (kb.error) {
+                            html += `<span class="inline-flex items-center gap-1 px-2 py-1 bg-rose-50 border border-rose-200 rounded-md text-rose-600">${kb.error}</span>`;
+                        } else {
+                            const docCount = kb.document_count ?? kb.doc_count ?? '-';
+                            html += `<span class="inline-flex items-center gap-1 px-2 py-1 bg-slate-50 border border-slate-200 rounded-md text-slate-700" title="ID: ${kb.id}">📄 ${kb.name} <span class="text-slate-400">(${docCount})</span></span>`;
+                        }
+                    }
+                    html += `</div></div>`;
+                }
+                html += `</div>`;
+                return html;
+            } catch {
+                return `
+                <div class="flex items-center gap-2 mt-1 mb-1 text-xs text-slate-500">
+                    <span>📚</span>
+                    <span>已获取知识库列表</span>
+                </div>`;
+            }
+        }
+
+        return undefined;
+    }
+
     private async list(args: z.output<typeof ListKnowledgeBasesArgsSchema>): Promise<string> {
         const results: { provider_id: string; provider_name: string; items: any[] }[] = [];
 

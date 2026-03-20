@@ -872,12 +872,12 @@ export class AttemptCompletionSubTaskTool extends BaseTool<typeof AttemptComplet
         const resultHtml = args?.result ? await marked.parse(args.result) : '';
 
         return `
-        <div class="flex flex-col mt-3 mb-3 text-sm bg-white/80 backdrop-blur-md border border-slate-200 py-3 px-4 rounded-2xl shadow-sm w-fit max-w-2xl">
-            <div class="flex items-center space-x-3 mb-2">
-                <span class="text-base">${successIcon}</span>
-                <span class="font-semibold text-slate-600">子任务${statusText}</span>
+        <div class="flex flex-col mt-1 mb-1 text-xs bg-white/80 backdrop-blur-md border border-slate-200 py-2 px-3 rounded-xl shadow-sm w-fit max-w-2xl">
+            <div class="flex items-center space-x-2 mb-1">
+                <span class="text-sm">${successIcon}</span>
+                <span class="font-medium text-slate-600">子任务${statusText}</span>
             </div>
-            ${resultHtml ? `<div class="prose prose-slate prose-sm max-w-none">${resultHtml}</div>` : ''}
+            ${resultHtml ? `<div class="prose prose-slate prose-xs max-w-none">${resultHtml}</div>` : ''}
         </div>
         `;
     }
@@ -932,24 +932,24 @@ export class AttemptCompletionMainTaskTool extends BaseTool<typeof AttemptComple
         if (args.type === 'fail') {
             const messageHtml = args.message ? await marked.parse(args.message) : '';
             return `
-            <div class="flex flex-col mt-3 mb-3 text-sm bg-rose-50/80 backdrop-blur-md border border-rose-200 py-3 px-4 rounded-2xl shadow-sm w-fit max-w-2xl">
-                <div class="flex items-center space-x-3 mb-2">
-                    <span class="text-base">❌</span>
-                    <span class="font-semibold text-rose-600">任务未能完成</span>
+            <div class="flex flex-col mt-1 mb-1 text-xs bg-rose-50/80 backdrop-blur-md border border-rose-200 py-2 px-3 rounded-xl shadow-sm w-fit max-w-2xl">
+                <div class="flex items-center space-x-2 mb-1">
+                    <span class="text-sm">❌</span>
+                    <span class="font-medium text-rose-600">任务未能完成</span>
                 </div>
-                ${messageHtml ? `<div class="prose prose-slate prose-sm max-w-none">${messageHtml}</div>` : ''}
+                ${messageHtml ? `<div class="prose prose-slate prose-xs max-w-none">${messageHtml}</div>` : ''}
             </div>`;
         }
 
         // success: 渲染 markdown 内容
         const messageHtml = args.message ? await marked.parse(args.message) : '';
         return `
-        <div class="flex flex-col mt-3 mb-3 text-sm bg-emerald-50/80 backdrop-blur-md border border-emerald-200 py-3 px-4 rounded-2xl shadow-sm w-fit max-w-2xl">
-            <div class="flex items-center space-x-3 mb-2">
-                <span class="text-base">✅</span>
-                <span class="font-semibold text-emerald-600">任务完成</span>
+        <div class="flex flex-col mt-1 mb-1 text-xs bg-emerald-50/80 backdrop-blur-md border border-emerald-200 py-2 px-3 rounded-xl shadow-sm w-fit max-w-2xl">
+            <div class="flex items-center space-x-2 mb-1">
+                <span class="text-sm">✅</span>
+                <span class="font-medium text-emerald-600">任务完成</span>
             </div>
-            ${messageHtml ? `<div class="prose prose-slate prose-sm max-w-none">${messageHtml}</div>` : ''}
+            ${messageHtml ? `<div class="prose prose-slate prose-xs max-w-none">${messageHtml}</div>` : ''}
         </div>`;
     }
 
