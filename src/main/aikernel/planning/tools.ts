@@ -15,9 +15,9 @@ import { Card } from '../../tui/components/card.js';
 import { statusDisplay, truncText } from '../../tui/components/toolcall.js';
 import { Markdown, Text, truncateToWidth } from '@mariozechner/pi-tui';
 import type { TaskState, TaskUpdateChunk } from '../states/tasks.js';
-import type { ToolCall, ToolCallMessagePart, TextMessagePart } from '../messages.js';
+import type { TextMessagePart } from '../messages.js';
 import type { SubTaskConfig, SubTaskResult, SubTaskProgressInfo, PendingSubTask } from './common.js';
-import { AssistantMessage, marked } from '../messages.js';
+import { AssistantMessage, UserMessage, ToolCall, ToolCallMessagePart, marked } from '../messages.js';
 import { SUBTASK_SYSTEM_PROMPT } from './prompt.js';
 import { HookRegistry } from '../hooks.js';
 import { getTaskTodosForDisplay } from '../../applications/todomgr/tools.js';
@@ -40,12 +40,6 @@ planning-attemptCompletion 工具的参数传递，避免通过写文件的形�
 ## 输出结果要求
 {criteria}
 `.trim();
-
-const SUBTASK_ATTEMPT_COMPLETION_REMINDER = `你还没有调用 planning-attemptCompletion 工具来返回结果。
-请立即调用 planning-attemptCompletion 工具提交你的任务结果。`;
-
-const MAIN_TASK_ATTEMPT_COMPLETION_REMINDER = `你还没有调用 planning-attemptCompletion 工具来结束任务。
-请在完成所有工作后调用 planning-attemptCompletion 工具来结束当前任务。`;
 
 const MAIN_TASK_INCOMPLETE_TODOS_REMINDER = `你的待办列表中还有未完成的事项，请先完成所有待办事项（或将不再需要的待办标记为 completed），然后再调用 attemptCompletion 工具结束任务。`;
 
@@ -78,6 +72,76 @@ export function extractSubTaskProgress(
         const text = (part as TextMessagePart).text;
         progress.lastText = text.length > 80 ? '…' + text.slice(-77) : text;
     }
+}
+
+// ─── Extract Last Messages ─────────────────────────────────────────────────────
+
+/**
+ * 从任务的消息历史中提取最后 N 条内容项（文本/工具调用摘要），
+ * 用于在子任务被用户手动停止时向父任务提供上下文。
+ */
+function extractLastMessages(task: TaskState, count: number): string {
+    const items: string[] = [];
+    const messages = task.chat_context.messages;
+
+    for (const msg of messages) {
+        if (msg instanceof UserMessage) {
+            for (const part of msg.content) {
+                if (part.type === 'text') {
+                    const text = (part as TextMessagePart).text;
+                    items.push(`[用户] ${text.length > 200 ? text.slice(0, 200) + '...' : text}`);
+                }
+            }
+        } else if (msg instanceof AssistantMessage) {
+            for (const part of msg.content) {
+                if (part.type === 'text') {
+                    const text = (part as TextMessagePart).text;
+                    items.push(`[助手] ${text.length > 200 ? text.slice(0, 200) + '...' : text}`);
+                } else if (part.type === 'tool_call') {
+                    for (const tc of (part as ToolCallMessagePart).toolcalls) {
+                        const resultSnippet = tc.result ? `: ${tc.result.substring(0, 100)}` : '';
+                        items.push(`[工具] ${tc.tool_name}(${tc.status})${resultSnippet}`);
+                    }
+                }
+            }
+        }
+    }
+    return items.slice(-count).join('\n');
+}
+
+/**
+ * 为被用户手动停止的子任务追加一条合成的 attemptCompletion 工具调用，
+ * 使子任务的结束方式在架构上与正常完成保持一致——始终通过 extractAttemptCompletionResult 提取结果。
+ */
+async function appendSubTaskStopCompletion(subTask: TaskState): Promise<void> {
+    const lastMessages = extractLastMessages(subTask, 5);
+    const errorResult = `子任务被用户手动停止。\n\n子任务最后的消息记录:\n${lastMessages}`;
+
+    let lastMessage = subTask.chat_context.lastMessage();
+    if (!(lastMessage instanceof AssistantMessage)) {
+        lastMessage = new AssistantMessage();
+        subTask.chat_context.appendMessage(lastMessage);
+    }
+
+    const toolCall = new ToolCall(
+        0,
+        `stop_${crypto.randomUUID()}`,
+        ATTEMPT_COMPLETION_TOOL_NAME,
+        JSON.stringify({ success: false, result: errorResult })
+    );
+    toolCall.args_object = { success: false, result: errorResult };
+    toolCall.status = 'success';
+    toolCall.result = JSON.stringify({ accepted: true });
+
+    const tool = subTask.chat_context.getTool(ATTEMPT_COMPLETION_TOOL_NAME);
+    if (tool) toolCall.setTool(tool);
+    await toolCall.freezeRenderResult();
+
+    const toolCallPart = new ToolCallMessagePart();
+    toolCallPart.push(toolCall);
+    (lastMessage as AssistantMessage).content.push(toolCallPart);
+
+    logger.info(`[subtask] appended synthetic stop attemptCompletion for subtask=${subTask.task_id}`);
 }
 
 // ─── Extract attemptCompletion Result ──────────────────────────────────────────
@@ -171,8 +235,14 @@ function registerSubTaskAttemptCompletionHook(subTask: TaskState): void {
         }
         return {
             operation: 'reject',
-            message: SUBTASK_ATTEMPT_COMPLETION_REMINDER
+            message: '如果任务尚未完成，请继续任务；如果完成了或者出错了，请使用 planning-attemptCompletion 工具来结束对话'
         };
+    });
+
+    subTask.hooks.afterFinishTurn(async (task) => {
+        if (task.stop_requested_by_user && !hasAttemptCompletion(task)) {
+            await appendSubTaskStopCompletion(task);
+        }
     });
 }
 
@@ -204,7 +274,7 @@ export function registerMainTaskAttemptCompletionHook(): void {
         if (!hasAttemptCompletionInLastMessage(task)) {
             return {
                 operation: 'reject',
-                message: MAIN_TASK_ATTEMPT_COMPLETION_REMINDER
+                message: '如果任务尚未完成，请继续任务；如果完成了或者出错了，请使用 planning-attemptCompletion 工具来结束对话'
             };
         }
 
@@ -280,18 +350,14 @@ export async function startSubTask(options: StartSubTaskOptions): Promise<SubTas
             criteria: config.criteria
         });
         await subTask.submitUserMessage(userMessage);
-        await subTask.waitUntilFinished(progressCallback);
+        await subTask.waitUntilFinished(progressCallback, true);
 
-        // 处理结果
-        if (subTask.stop_requested_by_user) {
-            return {
-                success: false,
-                result: '子任务被用户手动停止。',
-                subtask_id: subTask.task_id
-            };
+        // 兜底：afterFinishTurn 钩子通常已追加，此处防御钩子未触发的极端情况
+        if (subTask.stop_requested_by_user && !hasAttemptCompletion(subTask)) {
+            await appendSubTaskStopCompletion(subTask);
         }
 
-        // 从消息历史中提取 attemptCompletion 结果
+        // 统一通过 extractAttemptCompletionResult 提取结果
         const completionResult = extractAttemptCompletionResult(subTask);
         if (completionResult) {
             return {
@@ -372,6 +438,10 @@ export async function waitSubTaskResult(options: WaitSubTaskOptions): Promise<Su
     // 等待子任务完成
     await waitForTaskWithProgress(subTask, onProgress);
 
+    if (subTask.stop_requested_by_user && !hasAttemptCompletion(subTask)) {
+        await appendSubTaskStopCompletion(subTask);
+    }
+
     const completionResult = extractAttemptCompletionResult(subTask);
     if (completionResult) {
         return {
@@ -395,7 +465,7 @@ async function waitForTaskWithProgress(
     onProgress?: (progress: SubTaskProgressInfo) => void
 ): Promise<void> {
     if (!onProgress) {
-        await task.waitUntilFinished();
+        await task.waitUntilFinished(undefined, true);
         return;
     }
 
@@ -409,7 +479,7 @@ async function waitForTaskWithProgress(
             lastProgressTime = now;
             onProgress({ tools: [...progress.tools], lastText: progress.lastText });
         }
-    });
+    }, true);
 }
 
 // ─── Tool Classes ──────────────────────────────────────────────────────────────
@@ -783,7 +853,7 @@ export class AttemptCompletionSubTaskTool extends BaseTool<typeof AttemptComplet
             body.push(`${icon} ${args.success ? '成功' : '失败'}`);
             if (args.result) {
                 const markdown = new Markdown(args.result, 0, 0, defaultMarkdownTheme);
-                body.push(...markdown.render(width - 10));
+                body.push(...markdown.render(width - 4)); // 减去 Card 边框占用的宽度
             }
         }
 
@@ -829,7 +899,7 @@ const AttemptCompletionMainTaskArgsSchema = z.object({
 
 export class AttemptCompletionMainTaskTool extends BaseTool<typeof AttemptCompletionMainTaskArgsSchema> {
     constructor() {
-        super('attemptCompletion', '完成当前回合', AttemptCompletionMainTaskArgsSchema);
+        super('attemptCompletion', '完成当前轮次对话', AttemptCompletionMainTaskArgsSchema);
         this.setUniversalExecutor(this.handleExecute.bind(this));
     }
 
@@ -842,7 +912,7 @@ export class AttemptCompletionMainTaskTool extends BaseTool<typeof AttemptComple
             body.push(chalk.redBright('任务未能完成：'));
             if (args.message) {
                 const markdown = new Markdown(args.message, 0, 0, defaultMarkdownTheme);
-                body.push(...markdown.render(width - 10));
+                body.push(...markdown.render(width - 4)); // 减去 Card 边框占用的宽度
             }
             return new Card({
                 icon: '❌',
@@ -852,10 +922,7 @@ export class AttemptCompletionMainTaskTool extends BaseTool<typeof AttemptComple
             }).render(width);
         }
 
-        // success: 不渲染任何装饰，消息已在 agent 的文本回复中体现
-        const text = new Text();
-        text.setText(chalk.underline.greenBright(args.message.trim()));
-        return text.render(width);
+        return [chalk.green("⌯⌲ 回复完成")];
     }
 
     async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
@@ -874,8 +941,16 @@ export class AttemptCompletionMainTaskTool extends BaseTool<typeof AttemptComple
             </div>`;
         }
 
-        // success: 不渲染任何装饰，消息融入 agent 正常回复
-        return undefined;
+        // success: 渲染 markdown 内容
+        const messageHtml = args.message ? await marked.parse(args.message) : '';
+        return `
+        <div class="flex flex-col mt-3 mb-3 text-sm bg-emerald-50/80 backdrop-blur-md border border-emerald-200 py-3 px-4 rounded-2xl shadow-sm w-fit max-w-2xl">
+            <div class="flex items-center space-x-3 mb-2">
+                <span class="text-base">✅</span>
+                <span class="font-semibold text-emerald-600">任务完成</span>
+            </div>
+            ${messageHtml ? `<div class="prose prose-slate prose-sm max-w-none">${messageHtml}</div>` : ''}
+        </div>`;
     }
 
     private async handleExecute(args: z.output<typeof AttemptCompletionMainTaskArgsSchema>, toolResult: ToolResult, taskState?: TaskState): Promise<void> {

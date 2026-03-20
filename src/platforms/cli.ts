@@ -23,6 +23,7 @@ import { TodoMgrApplication } from "../main/applications/todomgr/app.js";
 import { SkillMgrApplication } from '../main/applications/skillmgr/app.js';
 import { ChannelMgrApplication } from '../main/applications/channelmgr/app.js';
 import { SoulMgrApplication } from '../main/applications/soulmgr/app.js';
+import { KnowledgeBaseApplication } from '../main/applications/knowledgebase/app.js';
 
 
 export class CliPlatform extends AbstractPlatform {
@@ -43,6 +44,7 @@ export class CliPlatform extends AbstractPlatform {
             SkillMgrApplication,
             ChannelMgrApplication,
             SoulMgrApplication,
+            KnowledgeBaseApplication,
         ];
     }
 }
