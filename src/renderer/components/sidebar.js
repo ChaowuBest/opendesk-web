@@ -333,11 +333,11 @@ class SideBar extends HTMLElement {
                 data-depth="${depth}"
             >
                 <div class="flex items-center justify-between min-w-0 gap-2">
-                    <div class="flex items-center min-w-0 flex-shrink-0 overflow-hidden">
+                    <div class="flex items-center flex-1 min-w-0 overflow-hidden gap-1">
                         ${connectorHtml}
-                        <p class="${taskNameClass} flex-shrink">${task.task_name || '未命名任务'}</p>
+                        <p class="${taskNameClass} flex-shrink-0">${task.task_name || '未命名任务'}</p>
                         ${subTaskBadge}
-                        ${task.task_status === 'running' ? '<task-status-tag class="flex-shrink-0"></task-status-tag>' : ''}
+                        ${task.task_status === 'running' ? '<task-status-tag class="flex-shrink-0 ml-1"></task-status-tag>' : ''}
                     </div>
                     <button
                         class="delete-task-btn flex-shrink-0 ${isSubTask ? 'w-4 h-4' : 'w-5 h-5'} flex items-center justify-center rounded-full bg-white hover:bg-[#FFF8E7] transition-colors duration-200"

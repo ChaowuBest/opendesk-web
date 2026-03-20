@@ -855,6 +855,10 @@ export class AssistantMessage {
         }
         const content = openai_message['content'];
         if (content) {
+            // 不在临时消息上调用 appendText（它会在临时消息内解析 <think> 标签并消费状态，
+            // 但 _insideThinkTag 状态不会传递到主消息）。
+            // 直接创建 TextMessagePart，让 mergeChunk -> appendPart -> appendText
+            // 在主消息上完成 <think> 标签的解析，确保状态一致性。
             message.content.push(new TextMessagePart(content));
         }
         return message;

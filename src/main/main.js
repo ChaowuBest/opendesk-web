@@ -149,6 +149,25 @@ const createWindow = () => {
         return true;
     }
 
+    mainWindow.webContents.on('context-menu', (_event, params) => {
+        const menuItems = [];
+        if (params.editFlags.canCut) {
+            menuItems.push({ label: '剪切', role: 'cut' });
+        }
+        if (params.editFlags.canCopy || params.selectionText) {
+            menuItems.push({ label: '复制', role: 'copy' });
+        }
+        if (params.editFlags.canPaste) {
+            menuItems.push({ label: '粘贴', role: 'paste' });
+        }
+        if (params.editFlags.canSelectAll) {
+            menuItems.push({ label: '全选', role: 'selectAll' });
+        }
+        if (menuItems.length > 0) {
+            Menu.buildFromTemplate(menuItems).popup({ window: mainWindow });
+        }
+    });
+
     mainWindow.webContents.on('will-navigate', (event) => {
         if (openLink(event.url)) {
             event.preventDefault();
