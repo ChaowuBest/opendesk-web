@@ -788,9 +788,9 @@ export class TaskState {
             0,
             `synth_${crypto.randomUUID()}`,
             'planning-attemptCompletion',
-            JSON.stringify({ success: false, result: errorMessage })
+            JSON.stringify({ type: 'fail', message: errorMessage })
         );
-        toolCall.args_object = { success: false, result: errorMessage };
+        toolCall.args_object = { type: 'fail', message: errorMessage };
         toolCall.status = 'error';
         toolCall.result = errorMessage;
 

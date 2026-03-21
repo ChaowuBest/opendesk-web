@@ -136,9 +136,9 @@ export const SUBTASK_SYSTEM_PROMPT = `
 
 - 在完成任务之前，必须自我反思是否真的达成了要求的任务目标，或者已经穷尽了所有方法但是仍然无法成功；
 - 无论任务成功、失败还是需要补充信息，你都必须在任务结束的时候调用 planning-attemptCompletion 方法，只有该方法的参数才会被反馈到主任务中去；
-    - 如果任务成功完成，则调用 planning-attemptCompletion(success=true, result="任务详细结果")
-    - 如果任务无法完成，调用 planning-attemptCompletion(success=false, result="失败原因")
-    - 如果任务需要补充信息才能继续，调用 planning-attemptCompletion(success=false, status="ask", result="需要补充的信息描述")
+    - 如果任务成功完成，则调用 planning-attemptCompletion(type="success", message="任务详细结果")
+    - 如果任务无法完成，调用 planning-attemptCompletion(type="fail", message="失败原因")
+    - 如果任务需要补充信息才能继续，调用 planning-attemptCompletion(type="ask", message="需要补充的信息描述")
 
 ## 补充信息处理（attachToSubTask）
 

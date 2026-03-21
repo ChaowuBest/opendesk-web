@@ -380,6 +380,39 @@ export class TextMessagePart {
     }
 }
 
+export class ErrorMessagePart {
+    type: 'error' = 'error';
+    title: string;
+    message: string;
+    rendered?: string;
+
+    constructor(title: string, message: string) {
+        this.title = title;
+        this.message = message;
+    }
+
+    toOpenAIMessagePart(): object {
+        return { type: 'text', text: `[错误] ${this.title}: ${this.message}` };
+    }
+
+    async render(): Promise<string> {
+        this.rendered = `
+        <div class="flex flex-col mt-3 mb-3 text-sm bg-rose-50/80 backdrop-blur-md border border-rose-200 py-3 px-4 rounded-2xl shadow-sm w-fit min-w-[280px] max-w-2xl">
+            <div class="flex items-center space-x-2 mb-2">
+                <span class="text-base">🔴</span>
+                <span class="font-semibold text-rose-600">${this.title}</span>
+            </div>
+            <div class="text-xs text-slate-600 whitespace-pre-wrap">${this.message}</div>
+        </div>`;
+        return this.rendered;
+    }
+
+    static assign(obj: object): ErrorMessagePart {
+        Object.setPrototypeOf(obj, ErrorMessagePart.prototype);
+        return obj as ErrorMessagePart;
+    }
+}
+
 export class ImageMessagePart {
     type: 'image_url' = 'image_url';
     image_url: { url: string };
@@ -535,7 +568,7 @@ export class UserMessage {
     }
 }
 
-export type AssistantMessagePart = TextMessagePart | ReasoningMessagePart | ToolCallMessagePart;
+export type AssistantMessagePart = TextMessagePart | ReasoningMessagePart | ToolCallMessagePart | ErrorMessagePart;
 
 export class AssistantMessage {
     role: 'assistant' = 'assistant';
@@ -564,6 +597,8 @@ export class AssistantMessage {
                     ReasoningMessagePart.assign(part);
                 } else if (part.type === 'tool_call') {
                     ToolCallMessagePart.assign(part);
+                } else if (part.type === 'error') {
+                    ErrorMessagePart.assign(part);
                 }
             }
         }
@@ -586,14 +621,21 @@ export class AssistantMessage {
         return this;
     }
 
-    appendPart(part: TextMessagePart | ReasoningMessagePart | ToolCallMessagePart): AssistantMessage {
+    appendPart(part: TextMessagePart | ReasoningMessagePart | ToolCallMessagePart | ErrorMessagePart): AssistantMessage {
         if (part.type === 'text') {
             this.appendText(part.text);
         } else if (part.type === 'reasoning') {
             this.appendReasoningContent(part.content, part.source);
         } else if (part.type === 'tool_call') {
             this.appendToolCallPart(part);
+        } else if (part.type === 'error') {
+            this.content.push(part);
         }
+        return this;
+    }
+
+    appendError(title: string, message: string): AssistantMessage {
+        this.content.push(new ErrorMessagePart(title, message));
         return this;
     }
 
@@ -793,6 +835,11 @@ export class AssistantMessage {
                     currentText += part.text;
                     break;
                 }
+                case 'error': {
+                    const errPart = part as ErrorMessagePart;
+                    currentText += `[错误] ${errPart.title}: ${errPart.message}`;
+                    break;
+                }
             }
         }
 
@@ -877,24 +924,19 @@ export class AssistantResponse {
 
     static richError(title: string, reason: string, ...attachments: string[]) {
         var response = new AssistantResponse(new AssistantMessage(), 'error');
-        var content = `🔴 ${title}\n`;
-        content += `---\n`
-        content += `${reason}\n`
+        let message = reason;
         if (getDebugMode()) {
-            // 仅在调试模式下才打印复杂的附件信息
             for (const attachment of attachments) {
-                content += "```\n";
-                content += attachment + "\n";
-                content += "```\n";
+                message += "\n```\n" + attachment + "\n```\n";
             }
         }
-        response.content.appendText(content);
+        response.content.appendError(title, message);
         return response;
     }
 
     static error(reason: string): AssistantResponse {
         var response = new AssistantResponse(new AssistantMessage(), 'error');
-        response.content.appendText(reason);
+        response.content.appendError('Error', reason);
         return response;
     }
 

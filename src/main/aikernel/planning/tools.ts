@@ -17,7 +17,7 @@ import { Markdown, Text, truncateToWidth } from '@mariozechner/pi-tui';
 import type { TaskState, TaskUpdateChunk } from '../states/tasks.js';
 import type { TextMessagePart } from '../messages.js';
 import type { SubTaskConfig, SubTaskResult, SubTaskProgressInfo, PendingSubTask } from './common.js';
-import { AssistantMessage, UserMessage, ToolCall, ToolCallMessagePart, marked } from '../messages.js';
+import { AssistantMessage, UserMessage, ToolCall, ToolCallMessagePart, ErrorMessagePart, marked } from '../messages.js';
 import { SUBTASK_SYSTEM_PROMPT } from './prompt.js';
 import { HookRegistry } from '../hooks.js';
 import { getTaskTodosForDisplay } from '../../applications/todomgr/tools.js';
@@ -127,11 +127,11 @@ async function appendSubTaskStopCompletion(subTask: TaskState): Promise<void> {
         0,
         `stop_${crypto.randomUUID()}`,
         ATTEMPT_COMPLETION_TOOL_NAME,
-        JSON.stringify({ success: false, result: errorResult })
+        JSON.stringify({ type: 'fail', message: errorResult })
     );
-    toolCall.args_object = { success: false, result: errorResult };
+    toolCall.args_object = { type: 'fail', message: errorResult };
     toolCall.status = 'success';
-    toolCall.result = JSON.stringify({ accepted: true });
+    toolCall.result = JSON.stringify({ accepted: true, type: 'fail' });
 
     const tool = subTask.chat_context.getTool(ATTEMPT_COMPLETION_TOOL_NAME);
     if (tool) toolCall.setTool(tool);
@@ -150,14 +150,22 @@ const ATTEMPT_COMPLETION_TOOL_NAME = 'planning-attemptCompletion';
 
 /**
  * 从任务的消息历史中提取 attemptCompletion 的结果（子任务专用）
+ * 兼容新格式 (type/message) 和旧格式 (success/result)
  */
-function extractAttemptCompletionResult(task: TaskState): { success: boolean; result: string } | null {
+function extractAttemptCompletionResult(task: TaskState): { success: boolean; result: string; status?: 'success' | 'fail' | 'ask' } | null {
     for (const message of task.chat_context.messages) {
         if (!(message instanceof AssistantMessage)) continue;
         for (const part of message.content) {
             if (part.type !== 'tool_call') continue;
             for (const tc of part.toolcalls) {
                 if (tc.tool_name === ATTEMPT_COMPLETION_TOOL_NAME && tc.status === 'success' && tc.args_object) {
+                    if ('type' in tc.args_object) {
+                        return {
+                            success: tc.args_object.type === 'success',
+                            result: tc.args_object.message || '',
+                            status: tc.args_object.type,
+                        };
+                    }
                     return {
                         success: tc.args_object.success === true,
                         result: tc.args_object.result || '',
@@ -219,6 +227,57 @@ function getIncompleteTodoCount(task: TaskState): number | null {
     return incomplete > 0 ? incomplete : null;
 }
 
+// ─── Error Part Detection & Synthetic Completion ──────────────────────────────
+
+/**
+ * 检查任务最后一条 AssistantMessage 中是否包含 ErrorMessagePart
+ */
+function getLastMessageErrorPart(task: TaskState): ErrorMessagePart | null {
+    const messages = task.chat_context.messages;
+    for (let i = messages.length - 1; i >= 0; i--) {
+        const message = messages[i];
+        if (!(message instanceof AssistantMessage)) continue;
+        for (const part of message.content) {
+            if (part.type === 'error') return part as ErrorMessagePart;
+        }
+        return null;
+    }
+    return null;
+}
+
+/**
+ * 当检测到错误 part 时，自动追加一个合成的 fail 类型 attemptCompletion 工具调用，
+ * 避免钩子反复要求 LLM 输出 attemptCompletion 导致死循环。
+ */
+async function appendSyntheticErrorAttemptCompletion(task: TaskState, errorPart: ErrorMessagePart): Promise<void> {
+    let lastMessage = task.chat_context.lastMessage();
+    if (!(lastMessage instanceof AssistantMessage)) {
+        lastMessage = new AssistantMessage();
+        task.chat_context.appendMessage(lastMessage);
+    }
+
+    const errorMessage = `${errorPart.title}: ${errorPart.message}`;
+    const toolCall = new ToolCall(
+        0,
+        `err_${crypto.randomUUID()}`,
+        ATTEMPT_COMPLETION_TOOL_NAME,
+        JSON.stringify({ type: 'fail', message: errorMessage })
+    );
+    toolCall.args_object = { type: 'fail', message: errorMessage };
+    toolCall.status = 'success';
+    toolCall.result = JSON.stringify({ accepted: true, type: 'fail' });
+
+    const tool = task.chat_context.getTool(ATTEMPT_COMPLETION_TOOL_NAME);
+    if (tool) toolCall.setTool(tool);
+    await toolCall.freezeRenderResult();
+
+    const toolCallPart = new ToolCallMessagePart();
+    toolCallPart.push(toolCall);
+    (lastMessage as AssistantMessage).content.push(toolCallPart);
+
+    logger.warn(`task ${task.task_id}: appended synthetic error attemptCompletion for error "${errorPart.title}"`);
+}
+
 // ─── AttemptCompletion Hooks ───────────────────────────────────────────────────
 
 /**
@@ -231,6 +290,11 @@ function registerSubTaskAttemptCompletionHook(subTask: TaskState): void {
             return { operation: 'finish' };
         }
         if (task.stop_requested_by_user) {
+            return { operation: 'finish' };
+        }
+        const errorPart = getLastMessageErrorPart(task);
+        if (errorPart) {
+            await appendSyntheticErrorAttemptCompletion(task, errorPart);
             return { operation: 'finish' };
         }
         return {
@@ -258,6 +322,13 @@ export function registerMainTaskAttemptCompletionHook(): void {
             return { operation: 'finish' };
         }
         if (task.stop_requested_by_user) {
+            return { operation: 'finish' };
+        }
+
+        // 检查最后一条消息是否包含错误 part，如果有则直接生成错误完成并结束
+        const errorPart = getLastMessageErrorPart(task);
+        if (errorPart) {
+            await appendSyntheticErrorAttemptCompletion(task, errorPart);
             return { operation: 'finish' };
         }
 
@@ -672,8 +743,13 @@ export class CreateSubTaskTool extends BaseTool<typeof CreateSubTaskArgsSchema> 
             try {
                 const parsed = JSON.parse(toolcall.result);
                 if (parsed.success !== undefined) {
-                    const icon = parsed.success ? chalk.greenBright('✔') : chalk.redBright('✘');
-                    body.push(`${icon} ${parsed.success ? '成功' : '失败'}`);
+                    const icon = parsed.success
+                        ? chalk.greenBright('✔')
+                        : parsed.status === 'ask' ? chalk.yellowBright('❓') : chalk.redBright('✘');
+                    const label = parsed.success
+                        ? '成功'
+                        : parsed.status === 'ask' ? '需要补充信息' : '失败';
+                    body.push(`${icon} ${label}`);
                     if (parsed.result) {
                         body.push(chalk.dim('  结果: ') + truncText(parsed.result, width - 14));
                     }
@@ -855,8 +931,13 @@ export class WaitSubTaskTool extends BaseTool<typeof WaitSubTaskArgsSchema> {
         if (toolcall.status === 'success' && toolcall.result) {
             try {
                 const parsed = JSON.parse(toolcall.result);
-                const icon = parsed.success ? chalk.greenBright('✔') : chalk.redBright('✘');
-                body.push(`${icon} ${parsed.success ? '成功' : '失败'}`);
+                const icon = parsed.success
+                    ? chalk.greenBright('✔')
+                    : parsed.status === 'ask' ? chalk.yellowBright('❓') : chalk.redBright('✘');
+                const label = parsed.success
+                    ? '成功'
+                    : parsed.status === 'ask' ? '需要补充信息' : '失败';
+                body.push(`${icon} ${label}`);
                 if (parsed.result) {
                     body.push(chalk.dim('  结果: ') + truncText(parsed.result, width - 14));
                 }
@@ -1013,8 +1094,10 @@ export class AttachToSubTaskTool extends BaseTool<typeof AttachToSubTaskArgsSche
 // ─── AttemptCompletion for SubTask ─────────────────────────────────────────────
 
 const AttemptCompletionSubTaskArgsSchema = z.object({
-    success: z.boolean().describe('子任务是否成功完成'),
-    result: z.string().describe('如果成功完成则该参数为任务的返回结果，若为成功完成则为失败原因'),
+    type: z.enum(['success', 'fail', 'ask'])
+        .describe('任务完成类型: success 表示任务成功完成, fail 表示任务无法完成, ask 表示需要补充信息'),
+    message: z.string()
+        .describe('success 时为任务结果的详细描述, fail 时为失败原因, ask 时为需要补充的信息描述'),
 });
 
 export class AttemptCompletionSubTaskTool extends BaseTool<typeof AttemptCompletionSubTaskArgsSchema> {
@@ -1025,20 +1108,47 @@ export class AttemptCompletionSubTaskTool extends BaseTool<typeof AttemptComplet
 
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
         const args = toolcall.args_object as z.output<typeof AttemptCompletionSubTaskArgsSchema> | undefined;
-        const body: string[] = [];
+        if (!args) return undefined;
 
-        if (args) {
-            const icon = args.success ? chalk.greenBright('✔') : chalk.redBright('✘');
-            body.push(`${icon} ${args.success ? '成功' : '失败'}`);
-            if (args.result) {
-                const markdown = new Markdown(args.result, 0, 0, defaultMarkdownTheme);
-                body.push(...markdown.render(width - 4)); // 减去 Card 边框占用的宽度
+        if (args.type === 'fail') {
+            const body: string[] = [];
+            body.push(chalk.redBright('子任务未能完成：'));
+            if (args.message) {
+                const markdown = new Markdown(args.message, 0, 0, defaultMarkdownTheme);
+                body.push(...markdown.render(width - 4));
             }
+            return new Card({
+                icon: '❌',
+                title: '子任务失败',
+                status: statusDisplay(toolcall.status),
+                body,
+            }).render(width);
         }
 
+        if (args.type === 'ask') {
+            const body: string[] = [];
+            body.push(chalk.yellowBright('需要补充信息：'));
+            if (args.message) {
+                const markdown = new Markdown(args.message, 0, 0, defaultMarkdownTheme);
+                body.push(...markdown.render(width - 4));
+            }
+            return new Card({
+                icon: '❓',
+                title: '子任务需要补充信息',
+                status: { icon: chalk.yellowBright('❙'), text: chalk.yellowBright('等待输入') },
+                body,
+            }).render(width);
+        }
+
+        // success
+        const body: string[] = [];
+        if (args.message) {
+            const markdown = new Markdown(args.message, 0, 0, defaultMarkdownTheme);
+            body.push(...markdown.render(width - 4));
+        }
         return new Card({
             icon: '🏁',
-            title: '提交子任务结果',
+            title: '子任务完成',
             status: statusDisplay(toolcall.status),
             body,
         }).render(width);
@@ -1046,24 +1156,47 @@ export class AttemptCompletionSubTaskTool extends BaseTool<typeof AttemptComplet
 
     async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
         const args = toolcall.args_object as z.output<typeof AttemptCompletionSubTaskArgsSchema> | undefined;
-        const successIcon = args?.success ? '✅' : '❌';
-        const statusText = args?.success ? '成功' : '失败';
-        const resultHtml = args?.result ? await marked.parse(args.result) : '';
+        if (!args) return undefined;
 
+        if (args.type === 'fail') {
+            const messageHtml = args.message ? await marked.parse(args.message) : '';
+            return `
+            <div class="flex flex-col mt-1 mb-1 text-xs bg-rose-50/80 backdrop-blur-md border border-rose-200 py-2 px-3 rounded-xl shadow-sm w-fit max-w-2xl">
+                <div class="flex items-center space-x-2 mb-1">
+                    <span class="text-sm">❌</span>
+                    <span class="font-medium text-rose-600">子任务未能完成</span>
+                </div>
+                ${messageHtml ? `<div class="prose prose-slate prose-xs max-w-none">${messageHtml}</div>` : ''}
+            </div>`;
+        }
+
+        if (args.type === 'ask') {
+            const messageHtml = args.message ? await marked.parse(args.message) : '';
+            return `
+            <div class="flex flex-col mt-1 mb-1 text-xs bg-amber-50/80 backdrop-blur-md border border-amber-200 py-2 px-3 rounded-xl shadow-sm w-fit max-w-2xl">
+                <div class="flex items-center space-x-2 mb-1">
+                    <span class="text-sm">❓</span>
+                    <span class="font-medium text-amber-600">子任务需要补充信息</span>
+                </div>
+                ${messageHtml ? `<div class="prose prose-slate prose-xs max-w-none">${messageHtml}</div>` : ''}
+            </div>`;
+        }
+
+        // success
+        const messageHtml = args.message ? await marked.parse(args.message) : '';
         return `
-        <div class="flex flex-col mt-1 mb-1 text-xs bg-white/80 backdrop-blur-md border border-slate-200 py-2 px-3 rounded-xl shadow-sm w-fit max-w-2xl">
+        <div class="flex flex-col mt-1 mb-1 text-xs bg-emerald-50/80 backdrop-blur-md border border-emerald-200 py-2 px-3 rounded-xl shadow-sm w-fit max-w-2xl">
             <div class="flex items-center space-x-2 mb-1">
-                <span class="text-sm">${successIcon}</span>
-                <span class="font-medium text-slate-600">子任务${statusText}</span>
+                <span class="text-sm">✅</span>
+                <span class="font-medium text-emerald-600">子任务完成</span>
             </div>
-            ${resultHtml ? `<div class="prose prose-slate prose-xs max-w-none">${resultHtml}</div>` : ''}
-        </div>
-        `;
+            ${messageHtml ? `<div class="prose prose-slate prose-xs max-w-none">${messageHtml}</div>` : ''}
+        </div>`;
     }
 
     private async handleExecute(args: z.output<typeof AttemptCompletionSubTaskArgsSchema>, toolResult: ToolResult, taskState?: TaskState): Promise<void> {
         taskState?.stop('system');
-        toolResult.attachResult(JSON.stringify({ accepted: true }));
+        toolResult.attachResult(JSON.stringify({ accepted: true, type: args.type }));
     }
 }
 

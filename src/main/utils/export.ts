@@ -12,7 +12,7 @@
 import fs from 'fs';
 import path from 'path';
 import type { TaskState } from '../states/tasks';
-import { UserMessage, AssistantMessage, TextMessagePart, ToolCallMessagePart, FileMessagePart, ReasoningMessagePart } from '../aikernel/messages';
+import { UserMessage, AssistantMessage, TextMessagePart, ToolCallMessagePart, FileMessagePart, ReasoningMessagePart, ErrorMessagePart } from '../aikernel/messages';
 import { escapeHtml } from './escape';
 
 const HIGHLIGHT_JS_CSS_LIGHT = `
@@ -216,6 +216,16 @@ async function renderAssistantMessage(message: AssistantMessage): Promise<string
                     推理过程
                 </div>
                 <div class="reasoning-content text-amber-900 text-sm font-mono whitespace-pre-wrap">${escapeHtml(part.content)}</div>
+            </div>
+            `;
+        } else if (part instanceof ErrorMessagePart) {
+            contentHtml += `
+            <div class="bg-rose-50 border border-rose-200 rounded-xl p-4 mb-4">
+                <div class="flex items-center gap-2 text-rose-700 font-medium mb-2">
+                    <span>🔴</span>
+                    ${escapeHtml(part.title)}
+                </div>
+                <div class="text-rose-600 text-sm whitespace-pre-wrap">${escapeHtml(part.message)}</div>
             </div>
             `;
         }
