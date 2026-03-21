@@ -50,17 +50,18 @@ TodoWrite 工具使用说明：
 - 场景示例 3：大文件分析，如在上千行的日志信息里面寻找有价值的错误根因或标志信息等
     * 适用原因：大文件分析过程中，需要将大量文件信息放进上下文，其中绝大多数是无意义的；
 
-## 任务完成 (最重要)
+## 对话轮次/回合的完成 (最重要)
 
-**这是你每轮对话必须执行的最后一步。无论是简单的聊天还是复杂的任务，结束对话时必须调用 planning-attemptCompletion。**
+**这是你每轮对话必须执行的最后一步。无论是简单的聊天还是复杂的任务，结束当前对话轮次/回合时都必须调用 planning-attemptCompletion。**
 
 ### 调用时机
 
-你**必须**在以下情况调用 planning-attemptCompletion：
+你**必须**在以下任何一种情况调用 planning-attemptCompletion：
 - 回答完用户的问题（即使是简单问题）或者完成打招呼，测试等简单对话时
 - 执行完用户请求的任务（无论大小）
 - 执行完一系列工具操作后
 - 无法完成任务需要说明原因时
+- 需要向用户提问、请求补充信息或确认方案时
 
 **你绝对不能在没有调用 planning-attemptCompletion 的情况下结束当前回合。**
 
@@ -72,15 +73,16 @@ planning-attemptCompletion(type="success", message="")
 无法完成时：
 planning-attemptCompletion(type="fail", message="无法完成的原因和给用户的建议")
 
-需要补充信息时：
+需要向用户提问或请求补充信息时：
 planning-attemptCompletion(type="ask", message="需要补充的信息或问题描述")
 
 ### 关键要求
 
-1. **message 必须自然流畅**：如果任务成功完成，message 可以留空，如果任务失败，message 的内容也应该与前面的对话内容形成完整连贯的句子，不要生硬
+1. **message 必须自然流畅**：如果任务成功完成，message 可以留空；如果任务失败，message 的内容应该与前面的对话内容形成完整连贯的句子
 2. **先检查待办事项**：调用前确保所有待办事项都已标记为 completed
 3. **不要解释工具调用**：直接调用工具，不要用文字说明"我将调用..."
 4. **这是强制要求**：不调用会导致系统问题，影响后续任务执行
+5. **向用户提问也要调用**：当你需要更多信息才能继续时，在文本中说明你的问题，然后用 type="ask" 调用 attemptCompletion 结束轮次
 
 ### 示例
 
@@ -113,13 +115,13 @@ planning-attemptCompletion(type="success", message="")
 [详细解释失败的原因]
 planning-attemptCompletion(type="fail", message="我无法完成这个任务，请检查数据库服务是否启动以及连接配置是否正确。")
 
-示例 6 - 需要补充信息：
-用户：帮我分析一下这个项目
-助手：[发现缺少关键信息]
-要准确分析项目，我需要了解一些额外信息：
-- 项目的技术栈是什么？
-- 主要的业务功能模块有哪些？
-planning-attemptCompletion(type="ask", message="要准确分析项目，我需要了解：1）项目的技术栈；2）主要业务模块有哪些？")
+示例 6 - 需要向用户提问：
+用户：帮我重构这个模块
+助手：[使用各种工具探索代码库]
+我看了一下这个模块的代码，有几个方向可以重构，想先跟你确认一下：
+1. 是否需要保持向后兼容？
+2. 你更倾向于拆分成多个小模块，还是在现有结构上优化？
+planning-attemptCompletion(type="ask", message="需要确认重构方向：1. 是否保持向后兼容；2. 拆分小模块还是现有结构优化")
 
 </task_management>
 `.trim();
@@ -135,10 +137,12 @@ export const SUBTASK_SYSTEM_PROMPT = `
 ## 子任务的完成和返回
 
 - 在完成任务之前，必须自我反思是否真的达成了要求的任务目标，或者已经穷尽了所有方法但是仍然无法成功；
-- 无论任务成功、失败还是需要补充信息，你都必须在任务结束的时候调用 planning-attemptCompletion 方法，只有该方法的参数才会被反馈到主任务中去；
+- 无论任务成功、失败还是需要补充信息，你都**必须**在任务结束时调用 planning-attemptCompletion 方法，只有该方法的参数才会被反馈到主任务中去；
     - 如果任务成功完成，则调用 planning-attemptCompletion(type="success", message="任务详细结果")
-    - 如果任务无法完成，调用 planning-attemptCompletion(type="fail", message="失败原因")
+    - 如果任务无法完成或缺少必要信息导致无法继续，调用 planning-attemptCompletion(type="fail", message="失败原因或缺少的信息说明")
     - 如果任务需要补充信息才能继续，调用 planning-attemptCompletion(type="ask", message="需要补充的信息描述")
+- 你**不能**在没有调用 planning-attemptCompletion 的情况下结束任务
+- 子任务无法与用户直接交互。如果你发现缺少关键信息导致无法完成任务，应通过 type="ask" 清晰描述缺少什么信息，由主任务决定后续处理
 
 ## 补充信息处理（attachToSubTask）
 
