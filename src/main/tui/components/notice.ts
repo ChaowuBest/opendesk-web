@@ -24,12 +24,16 @@ export interface ConfirmOptions {
     cancelLabel?: string;
 }
 
+export type InfoType = 'info' | 'warning' | 'error';
+
 export interface InfoOptions {
     title: string;
     message: string;
     closeLabel?: string;
     /** 是否让 Overlay 宽度拉满终端（用于口令等需要完整复制的场景） */
     fullWidth?: boolean;
+    /** info 类型：info/warning/error */
+    type?: InfoType;
 }
 
 export class ConfirmOverlay implements Component {
@@ -187,18 +191,21 @@ export class InfoOverlay implements Component {
     private box: Box;
     private onClose?: () => void;
     private fullWidth: boolean;
+    private type: InfoType;
 
     constructor(openDeskTUI: OpenDeskTUI, options: InfoOptions) {
         this.openDeskTUI = openDeskTUI;
         this.fullWidth = options.fullWidth ?? false;
+        this.type = options.type ?? 'info';
 
         const closeLabel = options.closeLabel || "确定";
+        const icon = this.type === 'error' ? '❌' : this.type === 'warning' ? '⚠️' : 'ℹ️';
 
         const items = [
             { value: "close", label: chalk.cyan(closeLabel) }
         ];
 
-        this.header = new Text(chalk.bold(`ℹ️ ${options.title}`));
+        this.header = new Text(chalk.bold(`${icon} ${options.title}`));
         this.messageText = new Text(options.message);
         this.list = new SelectList(items, items.length, defaultSelectListTheme);
         this.box = new Box(1, 1);

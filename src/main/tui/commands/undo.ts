@@ -3,10 +3,10 @@ import { InfoOverlay } from "../components/notice.js";
 import { logger } from "../../utils/logger.js";
 
 
-export function registerRevertCommand(tui: OpenDeskTUI): void {
+export function registerUndoCommand(tui: OpenDeskTUI): void {
     tui.commandRegistry.register({
-        name: "revert",
-        description: "回退当前会话中的最近 N 条消息，默认 1 条",
+        name: "undo",
+        description: "回退当前会话中的最近 N 条消息，默认 1 条（可用 /redo 恢复）",
         getArgumentCompletions: (argPrefix: string) => {
             const prefix = argPrefix.trim();
             if (!prefix) {
@@ -25,7 +25,7 @@ export function registerRevertCommand(tui: OpenDeskTUI): void {
             if (isNaN(count) || !Number.isInteger(count)) {
                 const info = new InfoOverlay(tui, {
                     title: "回退失败",
-                    message: `参数必须是一个整数，例如：/revert 2`,
+                    message: `参数必须是一个整数，例如：/undo 2`,
                 });
                 info.show();
                 return;
@@ -69,31 +69,37 @@ export function registerRevertCommand(tui: OpenDeskTUI): void {
                 return;
             }
 
-            if (count > messages.length) {
-                const info = new InfoOverlay(tui, {
-                    title: "回退失败",
-                    message: `当前会话只有 ${messages.length} 条消息，无法回退 ${count} 条。`,
-                });
-                info.show();
-                return;
-            }
+            // 如果请求的回退数量超过可用消息数，则只回退可用的消息数
+            const actualCount = Math.min(count, messages.length);
+            const requestedCount = count;
 
-            const removed = messages.splice(messages.length - count, count);
+            // 执行回退操作
+            const removed = messages.splice(messages.length - actualCount, actualCount);
             tui.taskManagerState.save();
+
+            // 将被移除的消息推入当前任务的 undo stack，以便 /redo 恢复
+            const taskId = tui.activeTaskId;
+            if (!tui.undoStacks.has(taskId)) {
+                tui.undoStacks.set(taskId, []);
+            }
+            tui.undoStacks.get(taskId)!.push(removed);
 
             tui.taskView.clearMessages();
             tui.taskView.rebuildFromHistory();
             tui.tui.requestRender();
 
             const roles = removed.map(m => (m as any).role === "user" ? "用户" : "助手");
-            logger.info(`/revert: 已回退 ${count} 条消息 (${roles.join(", ")})`);
+            logger.info(`/undo: 已回退 ${removed.length} 条消息 (${roles.join(", ")})`);
 
-            const info = new InfoOverlay(tui, {
-                title: "回退成功",
-                message: `已回退最近 ${count} 条消息。`,
-                closeLabel: "确定",
-            });
-            info.show();
+            // 如果请求的数量超过可用，显示警告
+            if (requestedCount > actualCount) {
+                const info = new InfoOverlay(tui, {
+                    title: "回退数量不足",
+                    message: `请求回退 ${requestedCount} 条，但实际只有 ${actualCount} 条消息可供回退。已回退 ${actualCount} 条。`,
+                    type: "warning",
+                });
+                info.show();
+            }
         },
     });
 }
