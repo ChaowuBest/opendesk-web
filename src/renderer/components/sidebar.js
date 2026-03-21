@@ -296,36 +296,55 @@ class SideBar extends HTMLElement {
             const indentPx = 12 + Math.min(depth, 5) * 14;
 
             let taskStyle = '';
-            if (task.task_id === this.currentTaskId) {
+            let connectorHtml = '';
+            const isCurrentTask = task.task_id === this.currentTaskId;
+            const isSubTask = depth > 0;
+
+            if (isSubTask) {
+                // 子任务样式
+                const connectorColor = isCurrentTask ? 'bg-[#C94C40]' : 'bg-gray-300';
+                const connectorLineColor = isCurrentTask ? 'bg-[#C94C40]' : 'bg-gray-300';
+                connectorHtml = `<span class="inline-block w-4 h-full mr-1 relative flex-shrink-0">
+                    <span class="absolute left-0 top-0 bottom-0 ${connectorLineColor}" style="height:calc(100% - 0.5rem);top:0.5rem;width:2px;"></span>
+                    <span class="absolute left-0 top-1/2 -translate-y-1/2 ${connectorColor}" style="width:8px;height:8px;border-radius:50%;left:0;"></span>
+                </span>`;
+                if (isCurrentTask) {
+                    taskStyle = 'text-[#C94C40] font-semibold border border-[#C94C40]';
+                } else {
+                    taskStyle = 'bg-gray-50 text-gray-700 hover:bg-gray-100 border border-gray-200';
+                }
+            } else if (isCurrentTask) {
                 taskStyle = 'bg-[#C94C40] text-white font-semibold';
-            } else if (depth > 0) {
-                taskStyle = 'bg-gray-50 text-gray-700 hover:bg-gray-100 border-l-2 border-l-gray-200';
             } else {
                 taskStyle = 'bg-white text-gray-700 hover:shadow-sm hover:border-l-2 hover:border-l-[#C94C40]';
             }
 
-            const subTaskBadge = depth > 0
-                ? '<span class="ml-2 text-[10px] px-2 py-0.5 rounded-full bg-gray-200 text-gray-700">子任务</span>'
+            const taskNameClass = isSubTask ? 'text-xs truncate' : 'text-sm truncate';
+            const subTaskBadge = isSubTask
+                ? '<span class="ml-1.5 text-[9px] px-1.5 py-0.5 rounded-full bg-gray-200 text-gray-600 font-medium">子</span>'
                 : '';
 
             taskListContainer.innerHTML += `
             <div
-                class="task-item ${taskStyle} ${standardClass}"
+                class="task-item ${taskStyle} ${standardClass} ${isSubTask ? 'py-1.5' : ''}"
                 style="padding-left:${indentPx}px"
                 data-task_id="${task.task_id}"
                 data-parent_id="${task.parent_id || ''}"
                 data-depth="${depth}"
             >
-                <div class="flex items-center justify-between">
-                    <p class="text-sm truncate">${task.task_name || '未命名任务'}</p>
-                    ${subTaskBadge}
-                    ${task.task_status === 'running' ? '<task-status-tag class="ml-2"></task-status-tag>' : ''}
+                <div class="flex items-center justify-between min-w-0 gap-2">
+                    <div class="flex items-center flex-1 min-w-0 overflow-hidden gap-1">
+                        ${connectorHtml}
+                        <p class="${taskNameClass} flex-shrink-0">${task.task_name || '未命名任务'}</p>
+                        ${subTaskBadge}
+                        ${task.task_status === 'running' ? '<task-status-tag class="flex-shrink-0 ml-1"></task-status-tag>' : ''}
+                    </div>
                     <button
-                        class="delete-task-btn ml-auto w-5 h-5 flex items-center justify-center rounded-full bg-white hover:bg-[#FFF8E7] transition-colors duration-200"
+                        class="delete-task-btn flex-shrink-0 ${isSubTask ? 'w-4 h-4' : 'w-5 h-5'} flex items-center justify-center rounded-full bg-white hover:bg-[#FFF8E7] transition-colors duration-200"
                         data-task_id="${task.task_id}"
                         title="删除"
                     >
-                        <span class="text-sm text-gray-600 pointer-events-none hover:text-white transition-colors duration-200" style="line-height:1;">×</span>
+                        <span class="${isSubTask ? 'text-xs' : 'text-sm'} text-gray-600 pointer-events-none hover:text-white transition-colors duration-200" style="line-height:1;">×</span>
                     </button>
                 </div>
             </div>

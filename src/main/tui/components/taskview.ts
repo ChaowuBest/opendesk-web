@@ -3,7 +3,7 @@ import { Component, Markdown, Box, type TUI, visibleWidth, truncateToWidth } fro
 import type { TaskState, TaskUpdateChunk, TaskUpdateUserChunk, TaskUpdateAssistantChunk } from "../../aikernel/states/tasks";
 import {
     AssistantMessage, ReasoningMessagePart, TextMessagePart,
-    ToolCallMessagePart, UserMessage, ToolCall
+    ToolCallMessagePart, ErrorMessagePart, UserMessage, ToolCall
 } from "../../aikernel/messages";
 import { shouldCompact, compactContext } from "../../aikernel/compact";
 import { logger } from "../../utils/logger.js";
@@ -196,6 +196,49 @@ export class ToolCallMessagePartView implements Component {
     }
 }
 
+export class ErrorMessagePartView implements Component {
+    private title: string;
+    private message: string;
+    private invalidated = true;
+    private lastWidth?: number;
+    private cachedOutput?: string[];
+
+    constructor(title: string, message: string) {
+        this.title = title;
+        this.message = message;
+    }
+
+    setContent(title: string, message: string) {
+        this.title = title;
+        this.message = message;
+        this.invalidated = true;
+    }
+
+    invalidate() { this.invalidated = true; }
+
+    render(width: number): string[] {
+        if (!this.invalidated && this.lastWidth === width && this.cachedOutput) {
+            return this.cachedOutput;
+        }
+        this.lastWidth = width;
+
+        const body: string[] = [];
+        if (this.message) {
+            const markdown = new Markdown(this.message, 0, 0, defaultMarkdownTheme);
+            body.push(...markdown.render(width - 4));
+        }
+
+        this.cachedOutput = new Card({
+            icon: chalk.redBright('⚠'),
+            title: chalk.redBright(this.title),
+            body,
+        }).render(width);
+
+        this.invalidated = false;
+        return this.cachedOutput;
+    }
+}
+
 const COMPACT_SPINNER_FRAMES = ['◐', '◓', '◑', '◒'];
 const COMPACT_SPINNER_MS = 120;
 
@@ -291,7 +334,7 @@ export class UserMessageView implements Component {
 export class AssistantMessageView implements Component {
 
     box: Box = new Box(0, 1);
-    parts: Array<ReasoningMessagePartView | TextMessagePartView | ToolCallMessagePartView> = [];
+    parts: Array<ReasoningMessagePartView | TextMessagePartView | ToolCallMessagePartView | ErrorMessagePartView> = [];
     private invalidated = true;
     private lastWidth?: number;
     private cachedOutput?: string[];
@@ -357,6 +400,22 @@ export class AssistantMessageView implements Component {
         this.invalidated = true;
     }
 
+    async updateErrorPart(index: number, errorPart: ErrorMessagePart) {
+        while (index >= this.parts.length) {
+            const newPartView = new ErrorMessagePartView('', '');
+            this.parts.push(newPartView);
+            this.box.addChild(newPartView);
+        }
+
+        const existingPartView = this.parts[index];
+        if (!(existingPartView instanceof ErrorMessagePartView)) {
+            throw new Error(`part type mismatch`);
+        }
+
+        existingPartView.setContent(errorPart.title, errorPart.message);
+        this.invalidated = true;
+    }
+
     /**
      * 设置当前视图对应的 message_id（用于 rebuildFromHistory 时与 messageIdToAssistantView 一致）。
      */
@@ -383,6 +442,9 @@ export class AssistantMessageView implements Component {
             case 'tool_call':
                 this.setStreamingComplete();
                 return await this.updateToolCallPart(chunkUpdate.last_part_index, chunkUpdate.last_part);
+            case 'error':
+                this.setStreamingComplete();
+                return await this.updateErrorPart(chunkUpdate.last_part_index, chunkUpdate.last_part);
         }
     }
 
@@ -629,6 +691,9 @@ export class TaskView implements Component {
                             break;
                         case 'tool_call':
                             view.updateToolCallPart(i, part);
+                            break;
+                        case 'error':
+                            view.updateErrorPart(i, part);
                             break;
                     }
                 }

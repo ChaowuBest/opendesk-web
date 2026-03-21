@@ -1,6 +1,7 @@
 import type { OpenDeskTUI } from "../entry.js";
 import { InfoOverlay } from "../components/notice.js";
 import { TaskState } from "../../aikernel/states/tasks.js";
+import { getFileCompletions } from "../components/file-completions.js";
 import path from "path";
 import fs from "fs";
 
@@ -12,7 +13,17 @@ export function registerImportCommand(tui: OpenDeskTUI): void {
         getArgumentCompletions: (argPrefix: string) => {
             const parts = argPrefix.split(/\s+/);
             if (parts.length <= 1 && !argPrefix.includes(" ")) {
-                return [{ value: "task", label: "task", description: "导入任务 JSON 文件" }];
+                const prefix = (parts[0] ?? "").toLowerCase();
+                const options = [{ value: "task", label: "task", description: "导入任务 JSON 文件" }];
+                if (!prefix) return options;
+                return options.filter(o => o.value.startsWith(prefix));
+            }
+            if (parts[0] === "task" && argPrefix.includes(" ")) {
+                const pathQuery = argPrefix.slice(argPrefix.indexOf(" ") + 1);
+                return getFileCompletions(tui.workspace, pathQuery, {
+                    valuePrefix: "task ",
+                    extensions: [".json"],
+                });
             }
             return null;
         },

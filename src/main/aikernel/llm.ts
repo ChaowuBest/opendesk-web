@@ -211,7 +211,8 @@ class LLM {
                 throw new Error('unsupported openai response type');
             }
 
-            const content = response.choices[0].message.content ?? '';
+            let content = response.choices[0].message.content ?? '';
+            content = LLM.__stripThinkTags(content);
             messages.push({ role: 'assistant', content });
 
             if (options.validator === undefined) {
@@ -233,6 +234,14 @@ class LLM {
         }
 
         return finalResponse;
+    }
+
+    /**
+     * 剥离非流式返回中的 `<think>...</think>` 标签，只保留实际回答内容。
+     * 同时处理 reasoning_content 与 content 混合的情况。
+     */
+    private static __stripThinkTags(content: string): string {
+        return content.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
     }
 
     static async ask(question: UserMessage, model: ModelParam = undefined): Promise<string> {

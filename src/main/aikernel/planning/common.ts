@@ -26,6 +26,8 @@ export interface SubTaskConfig {
 export interface SubTaskResult {
     subtask_id: string;
     success: boolean;
+    /** 结果状态: success=成功, fail=失败, ask=需要补充信息 */
+    status?: 'success' | 'fail' | 'ask';
     result: string;
 }
 

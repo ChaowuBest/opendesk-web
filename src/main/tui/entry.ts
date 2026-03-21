@@ -30,7 +30,7 @@ import { QuickPassHelper } from "../utils/quickpass";
 import { describeCron } from "../utils/cron";
 import { MemoryRegistry } from "../aikernel/memory/registry";
 import { MemoryListOverlay } from "./components/memorylist";
-import { ChatContext, UserMessage, SystemMessage, AssistantMessage } from "../aikernel/messages";
+import { ChatContext, UserMessage, SystemMessage, AssistantMessage, type ChatMessage } from "../aikernel/messages";
 import { createMemoryToolset } from "../aikernel/memory/tools";
 import { NotificationStore, NotificationCenterOverlay, ToastManager, getNotificationBadge } from "./components/notification";
 import { NotificationManager } from "../utils/notificationmgr.js";
@@ -114,6 +114,13 @@ export class OpenDeskTUI {
 
     /** Toast 弹窗管理器 */
     private toastManager: ToastManager;
+
+    /**
+     * Per-task undo/redo stack，仅存在于内存中，不落盘。
+     * key = taskId，value = 每次 undo 操作移除的消息数组（栈结构，后进先出）。
+     * switch 任务不会清空其他任务的栈，退出 CLI 后全部丢失。
+     */
+    public undoStacks: Map<string, ChatMessage[][]> = new Map();
 
     constructor(args: CommandLineArgs) {
         this.taskManagerState = GlobalState.getInstance().taskManagerState;
