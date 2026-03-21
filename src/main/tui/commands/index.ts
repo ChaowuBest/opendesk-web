@@ -23,6 +23,7 @@ import { registerMemoryCommand } from "./memory.js";
 import { registerBookmarkCommand } from "./bookmark.js";
 import { registerQuickpassCommand } from "./quickpass.js";
 import { registerNotificationCommand } from "./notification.js";
+import { registerRevertCommand } from "./revert.js";
 
 /**
  * 注册所有内置斜杠命令到 TUI
@@ -51,4 +52,5 @@ export function registerAllCommands(tui: OpenDeskTUI): void {
     registerBookmarkCommand(tui);
     registerQuickpassCommand(tui);
     registerNotificationCommand(tui);
+    registerRevertCommand(tui);
 }

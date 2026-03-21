@@ -1,11 +1,13 @@
 
-import { Box, Component, Text, Editor, TUI, CombinedAutocompleteProvider } from "@mariozechner/pi-tui";
+import { Box, Component, Text, Editor, TUI, CombinedAutocompleteProvider, type AutocompleteProvider, type AutocompleteItem } from "@mariozechner/pi-tui";
 import { defaultEditorTheme } from "../theme";
 import { SlashCommandRegistry } from "../commands";
 import type { OpenDeskTUI } from "../entry";
 import chalk from "chalk";
 import { visibleWidth, truncateToWidth } from "@mariozechner/pi-tui";
 import { getNotificationBadge } from "./notification";
+import { getFileCompletions, extractAtQuery, FILE_COMPLETION_MAX_RESULTS } from "./file-completions";
+import { spawnSync } from "child_process";
 
 type AgentInputStatus = 'idle' | 'running';
 
@@ -176,6 +178,65 @@ export class StatusBar implements Component {
     }
 }
 
+// ── fd 检测 & @ 文件补全回退 ──────────────────────────────────────────────
+
+let _cachedFdPath: string | null | undefined;
+
+function detectFd(): string | null {
+    if (_cachedFdPath !== undefined) return _cachedFdPath;
+    for (const bin of ["fd", "fdfind"]) {
+        try {
+            const cmd = process.platform === "win32" ? "where" : "which";
+            const r = spawnSync(cmd, [bin], { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] });
+            if (r.status === 0 && r.stdout.trim()) {
+                _cachedFdPath = r.stdout.trim().split(/\r?\n/)[0]!;
+                return _cachedFdPath;
+            }
+        } catch { /* ignore */ }
+    }
+    _cachedFdPath = null;
+    return null;
+}
+
+/**
+ * 包装 CombinedAutocompleteProvider，当 fd 不可用时为 @ 前缀提供
+ * 基于 readdirSync 的本地文件补全回退。
+ */
+class FileAwareAutocompleteProvider implements AutocompleteProvider {
+    constructor(
+        private inner: CombinedAutocompleteProvider,
+        private basePath: string,
+    ) {}
+
+    getSuggestions(lines: string[], cursorLine: number, cursorCol: number) {
+        const result = this.inner.getSuggestions(lines, cursorLine, cursorCol);
+        if (result && result.items.length > 0) return result;
+
+        const currentLine = lines[cursorLine] || "";
+        const textBeforeCursor = currentLine.slice(0, cursorCol);
+
+        const atMatch = extractAtQuery(textBeforeCursor);
+        if (atMatch) {
+            const items = getFileCompletions(this.basePath, atMatch.query, {
+                atPrefix: true,
+                maxResults: FILE_COMPLETION_MAX_RESULTS,
+            });
+            if (items.length > 0) {
+                return { items, prefix: atMatch.fullPrefix };
+            }
+        }
+
+        return result;
+    }
+
+    applyCompletion(
+        lines: string[], cursorLine: number, cursorCol: number,
+        item: AutocompleteItem, prefix: string,
+    ) {
+        return this.inner.applyCompletion(lines, cursorLine, cursorCol, item, prefix);
+    }
+}
+
 /**
  * AgentInputArea: 输入区域 + 斜杠指令 + 消息队列 + 状态栏
  *
@@ -234,9 +295,14 @@ export class AgentInputArea implements Component {
      */
     refreshAutocomplete() {
         if (!this.commandRegistry) return;
-        const provider = new CombinedAutocompleteProvider(
-            this.commandRegistry.toPiTuiSlashCommands()
+        const basePath = this.openDeskTUI.workspace;
+        const fdPath = detectFd();
+        const inner = new CombinedAutocompleteProvider(
+            this.commandRegistry.toPiTuiSlashCommands(),
+            basePath,
+            fdPath,
         );
+        const provider = new FileAwareAutocompleteProvider(inner, basePath);
         this.input.setAutocompleteProvider(provider);
     }
 
