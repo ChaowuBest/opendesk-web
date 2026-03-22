@@ -9,11 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-/**
- * Routes inbound channel messages to the task system and collects assistant replies.
- */
-
-import { TaskManagerState, TaskState } from '../../states/tasks.js';
+import type { TaskManagerState, TaskState } from '../../aikernel/states/tasks.js';
 import { UserMessage, AssistantMessage } from '../../aikernel/messages.js';
 import { ApplicationRegistry } from '../registry.js';
 import { SkillRegistry } from '../../aikernel/skill.js';
@@ -21,9 +17,10 @@ import { createMemoryToolset } from '../../aikernel/memory/tools.js';
 import { BaseToolset } from '../../aikernel/tool.js';
 import { logger } from '../../utils/logger.js';
 import { LLM } from '../../aikernel/llm.js';
-import type { InboundChannelMessage } from '../../aikernel/plugins/types.js';
+import type { InboundChannelMessage, Participant } from '../../aikernel/plugins/types.js';
 import type { AgentDecl } from '../../aikernel/agent.js';
 import { SEND_FILE_TOOL_NAME } from './tools.js';
+
 
 export interface ChannelReply {
     text: string;
@@ -32,15 +29,15 @@ export interface ChannelReply {
 
 const SESSION_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
 
-interface SessionEntry {
+interface TaskEntry {
     taskId: string;
     lastMessageAt: number;
 }
 
 /**
- * Maps session keys (channelId:accountId:senderId) to active session entries.
+ * Maps task keys (channelId:accountId:senderId for DM, channelId:accountId:groupId for group) to active task entries.
  */
-const sessionMap = new Map<string, SessionEntry>();
+const taskMap = new Map<string, TaskEntry>();
 
 export class ChannelMessageRouter {
 
@@ -66,16 +63,38 @@ export class ChannelMessageRouter {
     }
 
     /**
+     * Register a task in the task map so that subsequent messages from the same
+     * participant will be routed to this task.
+     * This is called after a cron/scheduled trigger sends a message to ensure
+     * that user replies are routed to the correct task.
+     *
+     * @param taskId - The ID of the task to register
+     * @param participant - The participant (channel/account/recipient) to register under
+     * @param taskName - Optional name for the task (defaults to the recipient)
+     */
+    registerTaskForParticipant(taskId: string, participant: Participant, taskName?: string): void {
+        // For channel tasks, the recipientId is the target (user ID for DM, group ID for group)
+        // Use recipientId as the third part of the key to match how routeInboundMessage computes it
+        const taskKey = `${participant.channel}:${participant.accountId}:${participant.recipientId}`;
+        taskMap.set(taskKey, { taskId, lastMessageAt: Date.now() });
+        logger.info(`[router] registered task ${taskId} for participant ${taskKey}${taskName ? ` (${taskName})` : ''}`);
+    }
+
+    /**
      * Route an inbound channel message to the task system.
      * Creates or reuses a session/task for the sender, runs the AI agent,
      * and returns the assistant's reply text.
      */
-    async routeInboundMessage(message: InboundChannelMessage, beforeTurnCallback?: (task: TaskState) => void): Promise<ChannelReply | null> {
-        const sessionKey = `${message.channelId}:${message.accountId}:${message.senderId}`;
+    async routeInboundMessage(message: InboundChannelMessage): Promise<ChannelReply | null> {
+        // For group messages, use groupId as the conversation key so all members share the same task.
+        // For direct messages, use senderId.
+        const taskKey = message.chatType === 'group' && message.groupId
+            ? `${message.channelId}:${message.accountId}:${message.groupId}`
+            : `${message.channelId}:${message.accountId}:${message.senderId}`;
 
         let task: TaskState;
         try {
-            task = await this.resolveSessionTask(sessionKey, message);
+            task = await this.resolveSessionTask(taskKey, message);
         } catch (err: any) {
             logger.error(`创建消息会话失败: ${err?.message || err}`);
             return { text: `抱歉，系统在创建会话时遇到了问题：${err?.message || err}\n请联系管理员检查系统配置。`, mediaUrls: [] };
@@ -95,8 +114,8 @@ export class ChannelMessageRouter {
         const userText = this.formatInboundMessage(message);
 
         try {
-            const reply = await this.submitAndWaitForReply(task, userText, beforeTurnCallback);
-            const entry = sessionMap.get(sessionKey);
+            const reply = await this.submitAndWaitForReply(task, userText);
+            const entry = taskMap.get(taskKey);
             if (entry) entry.lastMessageAt = Date.now();
             return reply;
         } catch (err: any) {
@@ -136,16 +155,16 @@ export class ChannelMessageRouter {
      *    b. If LLM check fails, fall back to 15-minute timeout.
      *    c. If expired, create a new task; otherwise reuse.
      */
-    private async resolveSessionTask(sessionKey: string, message: InboundChannelMessage): Promise<TaskState> {
-        const entry = sessionMap.get(sessionKey);
+    private async resolveSessionTask(taskKey: string, message: InboundChannelMessage): Promise<TaskState> {
+        const entry = taskMap.get(taskKey);
         if (!entry) {
-            return this.createSessionTask(sessionKey, message);
+            return this.createSessionTask(taskKey, message);
         }
 
         const task = this.taskManagerState.getTask(entry.taskId);
         if (!task) {
-            sessionMap.delete(sessionKey);
-            return this.createSessionTask(sessionKey, message);
+            taskMap.delete(taskKey);
+            return this.createSessionTask(taskKey, message);
         }
 
         const timeSinceLastMsg = Date.now() - entry.lastMessageAt;
@@ -155,9 +174,12 @@ export class ChannelMessageRouter {
         try {
             const shouldContinue = await this.checkSessionRelevance(task, newText);
             if (!shouldContinue) {
-                logger.info(`[router] 会话 ${sessionKey} 被 LLM 判定为不相关，创建新任务`);
-                return this.createSessionTask(sessionKey, message);
+                logger.info(`[router] 会话 ${taskKey} 被 LLM 判定为不相关，创建新任务`);
+                return this.createSessionTask(taskKey, message);
             }
+            // LLM check passed - update lastMessageAt before returning so that
+            // if submitAndWaitForReply fails later, the timestamp is still correct.
+            entry.lastMessageAt = Date.now();
             return task;
         } catch (err: any) {
             logger.warn(`[router] LLM 关联性检查失败，回退到超时判断: ${err?.message || err}`);
@@ -165,10 +187,12 @@ export class ChannelMessageRouter {
 
         // Fallback: 15-minute timeout
         if (timeSinceLastMsg > SESSION_TIMEOUT_MS) {
-            logger.info(`[router] 会话 ${sessionKey} 超时 (${Math.floor(timeSinceLastMsg / 60000)}分钟)，创建新任务`);
-            return this.createSessionTask(sessionKey, message);
+            logger.info(`[router] 会话 ${taskKey} 超时 (${Math.floor(timeSinceLastMsg / 60000)}分钟)，创建新任务`);
+            return this.createSessionTask(taskKey, message);
         }
 
+        // Fallback path also reuses the task - update lastMessageAt
+        entry.lastMessageAt = Date.now();
         return task;
     }
 
@@ -230,9 +254,14 @@ export class ChannelMessageRouter {
         return parts.length > 0 ? parts.join('\n') : null;
     }
 
-    private async createSessionTask(sessionKey: string, message: InboundChannelMessage): Promise<TaskState> {
+    private async createSessionTask(taskKey: string, message: InboundChannelMessage): Promise<TaskState> {
         const task = this.taskManagerState.createTask(this.model);
         const systemPrompt = await this.agentDecl.createSystemPrompt();
+
+        // Determine reply target: group ID for group chats, sender ID for direct messages
+        const replyTarget = (message.chatType === 'group' && message.groupId)
+            ? message.groupId
+            : message.senderId;
 
         const channelContext = [
             systemPrompt,
@@ -247,7 +276,13 @@ export class ChannelMessageRouter {
         await task.setSystemPrompt(channelContext);
 
         task.task_name = `消息: ${message.senderName || message.senderId}`;
-        sessionMap.set(sessionKey, { taskId: task.task_id, lastMessageAt: Date.now() });
+        task.origin = {
+            type: 'channel',
+            channel: message.channelId,
+            accountId: message.accountId,
+            recipientId: replyTarget,
+        };
+        taskMap.set(taskKey, { taskId: task.task_id, lastMessageAt: Date.now() });
 
         return task;
     }
@@ -260,7 +295,7 @@ export class ChannelMessageRouter {
         return text;
     }
 
-    private async submitAndWaitForReply(task: TaskState, userText: string, beforeTurnCallback?: (task: TaskState) => void): Promise<ChannelReply | null> {
+    private async submitAndWaitForReply(task: TaskState, userText: string): Promise<ChannelReply | null> {
         task.task_status = 'running';
         task.started_at = new Date();
         task.finished_at = undefined;
@@ -282,9 +317,6 @@ export class ChannelMessageRouter {
                 task.chat_context.attachToolsets(ts);
             }
 
-            // Defer callback to ensure it runs after all synchronous setup in this function completes
-            Promise.resolve().then(() => beforeTurnCallback?.(task));
-
             task.processTaskTurn();
             await task.waitUntilFinished();
 
@@ -298,35 +330,81 @@ export class ChannelMessageRouter {
     }
 
     /**
-     * Extract text and file-send tool calls from the last assistant message.
-     * SendFile tool calls are translated into mediaUrls for channel delivery.
-     * If onTextPartComplete callback is set (channel streaming enabled), text is returned
-     * incrementally via the callback, so this returns empty text.
+     * Extract reply text and media files from relevant AssistantMessages.
+     *
+     * "Relevant" AssistantMessages are those that come after the last non-internal
+     * UserMessage (i.e., the last real user message, excluding internal messages
+     * generated by hooks like reject messages).
+     *
+     * The return value consists of:
+     * 1. All SendFile tool calls from relevant AssistantMessages (in order)
+     * 2. The last TextMessagePart from the relevant AssistantMessages as reply text
      */
     private extractReply(task: TaskState): ChannelReply | null {
-        const lastMsg = task.chat_context.lastMessage();
-        if (!(lastMsg instanceof AssistantMessage)) return null;
-
-        const texts: string[] = [];
         const mediaUrls: string[] = [];
 
-        for (const part of lastMsg.content) {
-            if (part.type === 'text' && (part as any).text) {
-                texts.push((part as any).text);
-            } else if (part.type === 'tool_call') {
-                for (const tc of part.toolcalls) {
-                    if (tc.tool_name === SEND_FILE_TOOL_NAME && tc.status === 'success') {
-                        const filePath = tc.args_object?.filePath;
-                        if (filePath) {
-                            mediaUrls.push(`file://${filePath}`);
+        logger.info(`[router] extractReply: total messages=${task.chat_context.messages.length}`);
+
+        // Find the last non-internal UserMessage
+        let lastUserMsgIdx = -1;
+        for (let i = task.chat_context.messages.length - 1; i >= 0; i--) {
+            const msg = task.chat_context.messages[i];
+            if (msg instanceof UserMessage && !msg.internal) {
+                lastUserMsgIdx = i;
+                break;
+            }
+        }
+
+        if (lastUserMsgIdx === -1) {
+            logger.info(`[router] extractReply: no non-internal UserMessage found`);
+            return null;
+        }
+
+        // Collect all AssistantMessages after the last UserMessage
+        const relevantAssistantMessages: AssistantMessage[] = [];
+        for (let i = lastUserMsgIdx + 1; i < task.chat_context.messages.length; i++) {
+            const msg = task.chat_context.messages[i];
+            if (msg instanceof AssistantMessage) {
+                relevantAssistantMessages.push(msg);
+            }
+        }
+
+        if (relevantAssistantMessages.length === 0) {
+            logger.info(`[router] extractReply: no relevant AssistantMessages`);
+            return null;
+        }
+
+        logger.info(`[router] extractReply: found ${relevantAssistantMessages.length} relevant AssistantMessages`);
+
+        // Collect all SendFile tool calls from relevant AssistantMessages (in order)
+        let lastTextPart: TextMessagePart | null = null;
+        for (const msg of relevantAssistantMessages) {
+            for (const part of msg.content) {
+                if (part.type === 'tool_call') {
+                    for (const tc of part.toolcalls) {
+                        if (tc.tool_name === SEND_FILE_TOOL_NAME && tc.status === 'success') {
+                            const filePath = tc.args_object?.filePath;
+                            logger.info(`[router] SendFile success, filePath=${filePath}`);
+                            if (filePath) {
+                                mediaUrls.push(`file://${filePath}`);
+                            }
                         }
                     }
                 }
             }
+            // Track the last text part (we scan in order, so later messages overwrite)
+            for (let partIdx = msg.content.length - 1; partIdx >= 0; partIdx--) {
+                const part = msg.content[partIdx];
+                if (part.type === 'text' && (part as any).text) {
+                    lastTextPart = part as TextMessagePart;
+                    break;
+                }
+            }
         }
 
-        // If onTextPartComplete is set, text was sent incrementally - return empty text
-        const text = task.onTextPartComplete ? '' : texts.join('\n').trim();
+        const text = lastTextPart ? lastTextPart.text.trim() : '';
+        logger.info(`[router] extractReply result: text_len=${text.length}, mediaUrls=${mediaUrls.length}`);
+
         if (!text && mediaUrls.length === 0) return null;
         return { text, mediaUrls };
     }

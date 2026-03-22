@@ -381,6 +381,7 @@ export default class TodoMgrWorker extends BaseWorker {
             todoTitle: todo.title,
             todoContent: todo.content,
             trigger: todo.trigger,
+            deliver: todo.trigger?.deliver,
         });
     }
 
@@ -399,6 +400,7 @@ export default class TodoMgrWorker extends BaseWorker {
             todoTitle: todo.title,
             todoContent: todo.content,
             trigger: todo.trigger,
+            deliver: todo.trigger?.deliver,
         });
     }
 }

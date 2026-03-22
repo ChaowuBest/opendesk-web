@@ -284,6 +284,12 @@ export class OpenDeskTUI {
                 const systemPrompt = await this.agentDecl.createSystemPrompt();
                 await task.setSystemPrompt(systemPrompt);
 
+                // 如果触发器有 deliver 配置，设置任务的 origin
+                if (trigger?.deliver) {
+                    task.origin = trigger.deliver;
+                    logger.info(`触发器 deliver 已设置: channel=${trigger.deliver.channel}, accountId=${trigger.deliver.accountId}, recipientId=${trigger.deliver.recipientId}`);
+                }
+
                 let triggerInfo = '';
                 if (trigger?.type === 'event') {
                     triggerInfo = `[event] 事件驱动任务，由事件 ${trigger.bundleName}:${trigger.eventName} 自动触发 `;
@@ -300,6 +306,67 @@ export class OpenDeskTUI {
                     todoContent: todoContent,
                     todoTrigger: triggerInfo
                 }));
+
+                // 如果有 origin，等待任务完成并发送最终回复
+                if (task.origin) {
+                    const { ApplicationRegistry } = await import('../applications/registry.js');
+                    const channelMgr = ApplicationRegistry.getApplication('channelmgr') as any;
+
+                    logger.info(`触发器任务等待完成: origin=${task.origin.channel}:${task.origin.accountId}`);
+
+                    // 等待任务完成
+                    await task.waitUntilFinished();
+                    logger.info(`触发器任务已完成`);
+
+                    // 提取最终回复并发送
+                    // Search backwards through all messages to find the last text part
+                    // (handles cases where hook rejection causes multiple internal turns)
+                    const texts: string[] = [];
+                    let completionMessage: string | null = null;
+                    for (let msgIdx = task.chat_context.messages.length - 1; msgIdx >= 0; msgIdx--) {
+                        const msg = task.chat_context.messages[msgIdx];
+                        if (!(msg instanceof AssistantMessage)) continue;
+
+                        for (let partIdx = msg.content.length - 1; partIdx >= 0; partIdx--) {
+                            const part = msg.content[partIdx];
+                            if (part.type === 'text' && (part as any).text) {
+                                texts.unshift((part as any).text);
+                                break;
+                            } else if (part.type === 'tool_call') {
+                                for (const tc of part.toolcalls) {
+                                    if (tc.tool_name === 'planning-attemptCompletion' && tc.args_object?.type) {
+                                        if (tc.args_object.type === 'ask' || tc.args_object.type === 'fail') {
+                                            completionMessage = tc.args_object.message || '';
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        if (texts.length > 0) break;
+                    }
+
+                    let finalText = texts.join('\n').trim();
+                    // If attemptCompletion returned ask or fail, prepend that message
+                    if (completionMessage) {
+                        finalText = finalText ? `${completionMessage}\n\n${finalText}` : completionMessage;
+                    }
+
+                    logger.info(`触发器任务最终回复: text_len=${finalText.length}`);
+                    if (finalText && channelMgr?.sendTextToParticipant) {
+                        await channelMgr.sendTextToParticipant(task.origin, finalText);
+                        logger.info(`触发器任务最终回复已发送`);
+
+                        // Register the task in the router's taskMap so user replies are routed to this task
+                        const router = channelMgr.getRouter?.();
+                        if (router) {
+                            router.registerTaskForParticipant(task.task_id, task.origin, task.task_name);
+                        } else {
+                            logger.warn(`触发器任务: 无法获取 router，用户的回复将创建新任务`);
+                        }
+                    } else if (!finalText) {
+                        logger.warn(`触发器任务: 没有找到可发送的文本回复`);
+                    }
+                }
             } catch (err) {
                 logger.error(`触发器任务创建失败: ${err}`);
             }

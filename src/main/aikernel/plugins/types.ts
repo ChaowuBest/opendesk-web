@@ -63,6 +63,18 @@ export interface PluginsConfig {
     installs: PluginInstallRecord[];
 }
 
+// ── Participant (for task origin/deliver) ─────────────────────────────────────
+
+export interface Participant {
+    type: 'channel';
+    /** Channel identifier, e.g. 'feishu', 'slack' */
+    channel: string;
+    /** Bot's account within the channel (used as accountId in sendText) */
+    accountId: string;
+    /** Message recipient - senderId for direct messages, groupId for group chats */
+    recipientId: string;
+}
+
 // ── Channel Plugin Types ──────────────────────────────────────────────────────
 
 export type ChannelId = string;

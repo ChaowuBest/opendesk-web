@@ -29,6 +29,7 @@ import { createMemoryToolset } from '../memory/tools.js';
 import { createMainPlanningToolset, createSubTaskPlanningToolset } from '../planning/tools.js';
 import { createTaskInfoToolset } from './tools.js';
 import { TaskHooks } from '../hooks.js';
+import type { Participant } from '../plugins/types.js';
 
 
 type TaskStatus = 'waiting' | 'running' | 'stopped';
@@ -113,6 +114,8 @@ export class TaskState {
     finished_at?: Date;
     total_elapsed_ms: number = 0;
     bookmark_path?: string;
+    /** Task origin - set for channel-initiated tasks to identify the source channel */
+    origin?: Participant;
 
     /** 任务钩子，用于在一系列任务控制点中执行回调函数 */
     hooks: TaskHooks = new TaskHooks();
@@ -154,6 +157,9 @@ export class TaskState {
         if (typeof task_json.stop_requested_by_user === 'boolean') {
             task.stop_requested_by_user = task_json.stop_requested_by_user;
         }
+        if (task_json.origin) {
+            task.origin = task_json.origin;
+        }
         return task;
     }
 
@@ -167,6 +173,7 @@ export class TaskState {
             finished_at: this.finished_at?.toISOString(),
             total_elapsed_ms: this.total_elapsed_ms,
             bookmark_path: this.bookmark_path,
+            origin: this.origin,
             stop_requested_by_user: this.stop_requested_by_user,
         }
     }
@@ -182,6 +189,7 @@ export class TaskState {
             finished_at: this.finished_at?.toISOString(),
             total_elapsed_ms: this.total_elapsed_ms,
             bookmark_path: this.bookmark_path,
+            origin: this.origin,
             stop_requested_by_user: this.stop_requested_by_user,
         }
     }

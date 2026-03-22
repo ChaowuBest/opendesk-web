@@ -15,12 +15,16 @@ export type TodoStatus = 'pending' | 'in_progress' | 'completed';
 // 优先级类型
 export type TodoPriority = 'low' | 'medium' | 'high';
 
+import type { Participant } from '../../aikernel/plugins/types.js';
+
 // ========== 触发器类型定义 ==========
 
 export interface EventTriggerConfig {
     type: 'event';
     bundleName: string;       // 触发事件的应用标识
     eventName: string;        // 事件名称
+    /** 可选的回复投递目标，如果设置则任务结果会发送到这个 channel */
+    deliver?: Participant;
 }
 
 export interface ScheduledTriggerConfig {
@@ -30,11 +34,15 @@ export interface ScheduledTriggerConfig {
      * 例如：当地时间 2026-03-01 09:00 (UTC+8) 应存储为 "2026-03-01T01:00:00Z"
      */
     triggerAt: string;
+    /** 可选的回复投递目标，如果设置则任务结果会发送到这个 channel */
+    deliver?: Participant;
 }
 
 export interface CronTriggerConfig {
     type: 'cron';
     cronExpression: string;   // crontab 表达式: "分 时 日 月 周"
+    /** 可选的回复投递目标，如果设置则任务结果会发送到这个 channel */
+    deliver?: Participant;
 }
 
 export type TodoTrigger = EventTriggerConfig | ScheduledTriggerConfig | CronTriggerConfig;

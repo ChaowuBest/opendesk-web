@@ -547,20 +547,23 @@ async routeInboundMessage(message: InboundChannelMessage): Promise<string | null
 
 ### 会话管理
 
-系统使用会话键（sessionKey）来关联同一发送者的多条消息，实现上下文连续对话：
+系统使用任务键（taskKey）来关联同一发送者的多条消息，实现上下文连续对话：
 
 ```
-会话键格式: {channelId}:{accountId}:{senderId}
+任务键格式:
+  - 群组消息: {channelId}:{accountId}:{groupId}
+  - 私信: {channelId}:{accountId}:{senderId}
 
-示例: xiaoyi:default:user123
+示例: xiaoyi:default:user123 (私信)
+示例: xiaoyi:default:group456 (群组)
 
-sessionMap: Map<sessionKey, taskId>
+taskMap: Map<taskKey, TaskEntry>
 ```
 
-**会话创建流程：**
+**任务创建流程：**
 
 ```typescript
-private async createSessionTask(sessionKey: string, message: InboundChannelMessage): Promise<TaskState> {
+private async createSessionTask(taskKey: string, message: InboundChannelMessage): Promise<TaskState> {
     // 1. 创建新任务
     const task = this.taskManagerState.createTask(this.model);
 
@@ -577,9 +580,9 @@ private async createSessionTask(sessionKey: string, message: InboundChannelMessa
 
     await task.setSystemPrompt(channelContext);
 
-    // 3. 记录会话映射
+    // 3. 记录任务映射
     task.task_name = `消息: ${message.senderName || message.senderId}`;
-    sessionMap.set(sessionKey, task.task_id);
+    taskMap.set(taskKey, { taskId: task.task_id, lastMessageAt: Date.now() });
 
     return task;
 }

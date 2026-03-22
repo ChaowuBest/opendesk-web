@@ -15,11 +15,19 @@ import { Card, type BorderConfig } from '../../tui/components/card';
 import { statusDisplay, truncText } from '../../tui/components/toolcall';
 import { z } from 'zod';
 import type { TaskTodo } from './common';
-import type { TaskState } from '../../states/tasks';
+import type { TaskState } from '../../aikernel/states/tasks';
+import type { Participant } from '../../aikernel/plugins/types';
 import { escapeHtml } from '../../utils/escape';
 import { type TodoMgrApplication } from './app';
 import { describeCron } from '../../utils/cron';
 import chalk from 'chalk';
+
+const ParticipantSchema: z.ZodType<Participant> = z.object({
+    type: z.literal('channel'),
+    channel: z.string().describe('Channel identifier, e.g. "feishu", "slack"'),
+    accountId: z.string().describe('Bot account ID within the channel'),
+    recipientId: z.string().describe('Message recipient - senderId for direct messages, groupId for group chats'),
+});
 
 
 const GetCurrentTimeArgsSchema = z.object({});
@@ -60,17 +68,20 @@ const EventTriggerSchema = z.object({
     type: z.literal('event'),
     bundleName: z.string().describe('触发事件的应用标识，如 "mailbox", "mcpmgr"'),
     eventName: z.string().describe('事件名称，如 "newEmailCountsUpdated"'),
+    deliver: ParticipantSchema.optional().describe('可选的回复投递目标，如果设置则任务结果会发送到这个 channel'),
 });
 
 const ScheduledTriggerSchema = z.object({
     type: z.literal('scheduled'),
     triggerAt: z.string()
         .describe('任务触发时间，必须使用UTC时间（ISO8601格式，以Z结尾），请先调用getCurrentTime工具获取当前UTC时间为基准进行计算'),
+    deliver: ParticipantSchema.optional().describe('可选的回复投递目标，如果设置则任务结果会发送到这个 channel'),
 });
 
 const CronTriggerSchema = z.object({
     type: z.literal('cron'),
     cronExpression: z.string().describe('crontab 表达式: "分 时 日 月 周"，如 "0 9 * * 1-5" 表示工作日每天9点, "*/30 * * * *" 表示每30分钟'),
+    deliver: ParticipantSchema.optional().describe('可选的回复投递目标，如果设置则任务结果会发送到这个 channel'),
 });
 
 const TriggerSchema = z.discriminatedUnion('type', [
