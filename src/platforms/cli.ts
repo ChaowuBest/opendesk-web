@@ -24,6 +24,7 @@ import { SkillMgrApplication } from '../main/applications/skillmgr/app.js';
 import { ChannelMgrApplication } from '../main/applications/channelmgr/app.js';
 import { SoulMgrApplication } from '../main/applications/soulmgr/app.js';
 import { KnowledgeBaseApplication } from '../main/applications/knowledgebase/app.js';
+import { DeviceMgrApplication } from '../main/applications/devicemgr/app.js';
 
 
 export class CliPlatform extends AbstractPlatform {
@@ -45,6 +46,7 @@ export class CliPlatform extends AbstractPlatform {
             ChannelMgrApplication,
             SoulMgrApplication,
             KnowledgeBaseApplication,
+            DeviceMgrApplication,
         ];
     }
 }
