@@ -10,8 +10,10 @@
  */
 
 import { BaseApplication } from "../base";
-import { BaseTool, BaseToolset } from "../../aikernel/tool";
+import { BaseTool } from "../../aikernel/tool";
 import { FSEntrySchema } from './setting.js';
+import { createFileManagerToolset } from './tools.js';
+import { Setting } from '../../utils/setting.js';
 import open from 'open';
 import { z } from 'zod';
 import FileManagerWorker from "./worker";
@@ -34,20 +36,30 @@ class FileMgrApplication extends BaseApplication {
     }
 
     async getToolsets() {
-        const toolset = new BaseToolset('filemgr');
-        const searchFileTool = new BaseTool(
-            'searchFile',
-            '根据给定的查询内容对文件进行模糊搜索',
-            z.object({
-                query: z.string().describe('查询内容'),
-            })
-        );
-        searchFileTool.setExecutor(async (args) => {
-            const result = await this.callWorker('searchFilesByNameSimilarity', args.query);
-            console.info(result);
-            return JSON.stringify(result);
-        });
-        toolset.addTool(searchFileTool);
+        const toolset = createFileManagerToolset();
+
+        // 仅在配置了嵌入模型时才注册 searchFile 工具
+        try {
+            const setting = Setting.getInstance();
+            const embeddingModel = setting.getModelInstance(setting.data.default_embedding_model);
+            if (embeddingModel) {
+                const searchFileTool = new BaseTool(
+                    'searchFile',
+                    '根据给定的查询内容对文件进行模糊搜索',
+                    z.object({
+                        query: z.string().describe('查询内容'),
+                    })
+                );
+                searchFileTool.setExecutor(async (args) => {
+                    const result = await this.callWorker('searchFilesByNameSimilarity', args.query);
+                    return JSON.stringify(result);
+                });
+                toolset.addTool(searchFileTool);
+            }
+        } catch {
+            // 嵌入模型未配置，跳过 searchFile 工具注册
+        }
+
         return [toolset];
     }
 
