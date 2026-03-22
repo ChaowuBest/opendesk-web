@@ -19,7 +19,8 @@ import { getPlatform } from "../../platforms/base.js";
 import { Worker } from "worker_threads";
 import { SkillRegistry } from "../aikernel/skill.js";
 import { type Privileges, type ProtocolRequest } from 'electron';
-import { TodoTrigger } from "./todomgr/common.js";
+import type { TodoTrigger } from "./todomgr/common.js";
+import type { Participant } from "../aikernel/plugins/types.js";
 
 
 export type ProtocolHandlerEntry = {
@@ -48,7 +49,7 @@ export class ApplicationRegistry {
     /**
      * 当触发器触发待办任务时的回调（由 TUI 或 Electron 主进程设置）
      */
-    static onTriggerTask?: (todoId: string, todoTitle: string, todoContent: string, trigger: TodoTrigger) => void;
+    static onTriggerTask?: (todoId: string, todoTitle: string, todoContent: string, trigger: TodoTrigger, deliver?: Participant) => void;
 
     /**
      * 注册就绪回调。如果应用注册表已就绪，则立即执行；否则加入队列等待。
@@ -338,9 +339,9 @@ export function initializeRegistryWorker() {
                 break;
             }
             case 'triggerTodoTask': {
-                const { todoId, todoTitle, todoContent, trigger } = event;
+                const { todoId, todoTitle, todoContent, trigger, deliver } = event;
                 logger.info(`收到触发器任务请求: todo=${todoId}`);
-                ApplicationRegistry.onTriggerTask?.(todoId, todoTitle, todoContent, trigger);
+                ApplicationRegistry.onTriggerTask?.(todoId, todoTitle, todoContent, trigger, deliver);
                 break;
             }
             case 'emailListUpdated': {

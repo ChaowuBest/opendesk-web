@@ -289,7 +289,7 @@ function truncateContent(content: string): { text: string; truncated: boolean } 
 /**
  * 获取系统临时目录
  */
-function getTempDirectory(): string {
+export function getTempDirectory(): string {
     // @ts-ignore 主线 nodeJS 当前还没支持openharmony，所以这里需要手动处理
     if (process.platform === 'openharmony') {
         const tmpdir = path.join(os.tmpdir(), '.tmp');

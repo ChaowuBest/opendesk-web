@@ -29,7 +29,7 @@ export const PAIRING_REPLY_TEMPLATE = `为了让消息收发更加安全，你�
  * Ensure the openclaw shim is available in the extensions node_modules.
  * Generates the shim inline so plugins can resolve `openclaw/plugin-sdk`.
  */
-const SHIM_VERSION = '3';
+const SHIM_VERSION = '4';
 
 export function ensureOpenClawShim(extensionsDir: string): void {
     const shimTarget = path.join(extensionsDir, 'node_modules', 'openclaw');
@@ -992,7 +992,7 @@ function generateFeishuShim(): string {
   formatDocsLink, hasConfiguredSecretInput, installRequestBodyLimitGuard,
   issuePairingChallenge, logTypingFailure, mergeAllowFromEntries, normalizeAgentId,
   normalizeResolvedSecretInputString, normalizeSecretInputString,
-  promptSingleChannelSecretInput, readJsonFileWithFallback,
+  promptSingleChannelSecretInput, readJsonBodyWithLimit, readJsonFileWithFallback,
   recordPendingHistoryEntryIfEnabled, resolveAllowlistProviderRuntimeGroupPolicy,
   resolveDefaultGroupPolicy, resolveOpenProviderRuntimeGroupPolicy,
   setTopLevelChannelAllowFrom, setTopLevelChannelDmPolicyWithAllowFrom,

@@ -6,7 +6,7 @@ import {
     ToolCallMessagePart, ErrorMessagePart, UserMessage, ToolCall
 } from "../../aikernel/messages";
 import { shouldCompact, compactContext } from "../../aikernel/compact";
-import { logger } from "../../utils/logger.js";
+import { logger, getDebugMode } from "../../utils/logger.js";
 import { defaultMarkdownTheme } from "../theme";
 import { DefaultToolCallView } from "./toolcall";
 import { Card } from "./card";
@@ -14,11 +14,21 @@ import chalk from "chalk";
 import type { StatusBarData } from "./input";
 
 
+/**
+ * 流式输出时 Markdown 渲染的最小间隔（毫秒）。
+ * 当模型吐字速度很快时，过于频繁的 Markdown 解析会导致 UI 卡顿。
+ * 调整此值可在渲染实时性和 UI 流畅度之间取得平衡。
+ */
+export const MD_RENDER_THROTTLE_MS = 150;
+
+
 export class TextMessagePartView implements Component {
     text: Markdown = new Markdown('', 0, 0, defaultMarkdownTheme);
     private invalidated = true;
     private lastWidth?: number;
     private cachedOutput?: string[];
+    private _lastRenderMs = 0;
+    private _dirty = false;
 
     constructor(text?: string) {
         if (text) {
@@ -29,8 +39,9 @@ export class TextMessagePartView implements Component {
     setMarkdown(markdown: string) {
         try {
             this.text.setText(markdown);
+            this._dirty = true;
             this.invalidated = true;
-        } catch (error) {
+        } catch {
             // ignore error
         }
     }
@@ -43,8 +54,18 @@ export class TextMessagePartView implements Component {
         if (!this.invalidated && this.lastWidth === width && this.cachedOutput) {
             return this.cachedOutput;
         }
+
+        if (this._dirty && this.cachedOutput) {
+            const now = Date.now();
+            if (now - this._lastRenderMs < MD_RENDER_THROTTLE_MS) {
+                return this.cachedOutput;
+            }
+        }
+
         this.lastWidth = width;
         this.cachedOutput = this.text.render(width);
+        this._lastRenderMs = Date.now();
+        this._dirty = false;
         this.invalidated = false;
         return this.cachedOutput;
     }
@@ -62,6 +83,9 @@ export class ReasoningMessagePartView implements Component {
     private invalidated = true;
     private lastWidth?: number;
     private cachedOutput?: string[];
+    private _lastRenderMs = 0;
+    private _dirty = false;
+    private _cachedBodyLines?: string[];
 
     constructor(text?: string) {
         if (text) {
@@ -70,8 +94,13 @@ export class ReasoningMessagePartView implements Component {
     }
 
     setMarkdown(markdown: string) {
-        this.text.setText(markdown);
-        this.invalidated = true;
+        try {
+            this.text.setText(markdown);
+            this._dirty = true;
+            this.invalidated = true;
+        } catch {
+            // ignore
+        }
     }
 
     setStreaming(streaming: boolean) {
@@ -93,9 +122,23 @@ export class ReasoningMessagePartView implements Component {
 
     render(width: number): string[] {
         if (this._streaming) {
-            // When streaming, always re-render to update spinner
             const contentWidth = Math.max(1, width - 4);
-            const bodyLines = this.text.render(contentWidth);
+
+            const now = Date.now();
+            const skipMdRender = this._dirty
+                && this.cachedOutput
+                && (now - this._lastRenderMs < MD_RENDER_THROTTLE_MS);
+
+            let bodyLines: string[];
+            if (skipMdRender) {
+                bodyLines = this._cachedBodyLines ?? this.text.render(contentWidth);
+            } else {
+                bodyLines = this.text.render(contentWidth);
+                this._cachedBodyLines = bodyLines;
+                this._lastRenderMs = Date.now();
+                this._dirty = false;
+            }
+
             const card = new Card({
                 icon: this.getIcon(),
                 title: '思考',
@@ -171,11 +214,18 @@ export class ToolCallMessagePartView implements Component {
     private invalidated = true;
     private lastWidth?: number;
     private cachedOutput?: string[];
+    private viewMap: Map<ToolCall, ToolCallView> = new Map();
 
     setToolcalls(toolcalls: ToolCall[]) {
-        this.box.clear();
         for (const toolcall of toolcalls) {
-            this.box.addChild(new ToolCallView(toolcall));
+            const existing = this.viewMap.get(toolcall);
+            if (existing) {
+                existing.invalidate();
+            } else {
+                const view = new ToolCallView(toolcall);
+                this.viewMap.set(toolcall, view);
+                this.box.addChild(view);
+            }
         }
         this.invalidated = true;
     }
@@ -312,6 +362,7 @@ export class UserMessageView implements Component {
         const msg = new UserMessage();
         msg.message_id = chunk.message_id;
         msg.content = [chunk.last_part];
+        msg.internal = chunk.internal;
         return new UserMessageView(msg);
     }
 
@@ -321,6 +372,14 @@ export class UserMessageView implements Component {
     }
 
     render(width: number): string[] {
+        if (this.message.internal && !getDebugMode()) {
+            return [];
+        }
+        if (this.message.internal) {
+            const label = chalk.dim.italic('  [内部消息]');
+            const body = this.box.render(width);
+            return [label, ...body];
+        }
         if (!this.invalidated && this.lastWidth === width && this.cachedOutput) {
             return this.cachedOutput;
         }
@@ -374,7 +433,7 @@ export class AssistantMessageView implements Component {
         this.invalidated = true;
     }
 
-    /** 思考/流式结束，停止所有 reasoning 部分的动画 */
+    /** 思考/流式结束，停止所有 reasoning 部分的动画，强制执行最终一次完整 md 渲染 */
     setStreamingComplete() {
         for (const part of this.parts) {
             if (part instanceof ReasoningMessagePartView) {

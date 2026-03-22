@@ -333,7 +333,7 @@ function main(args: CommandLineArgs) {
                     );
                 };
 
-                await channelMgrApp.initializeChannels(router);
+                await channelMgrApp.initializeChannels(router, args.workspace);
 
                 // Sync channel states to the status bar via event callback
                 const syncChannelStates = (states: { label: string; status: { online: boolean } }[]) => {

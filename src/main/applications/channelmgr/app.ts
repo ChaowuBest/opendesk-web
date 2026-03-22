@@ -34,9 +34,11 @@ import type {
     ChannelGatewayContext,
     InboundChannelMessage,
     ChannelAccountSnapshot,
+    Participant,
 } from '../../aikernel/plugins/types.js';
 import { registerChannelDispatch } from '../../aikernel/plugins/openclaw/api.js';
 import { ChannelMessageRouter, type ChannelReply } from './router.js';
+import { getTempDirectory } from '../filemgr/tools.js';
 import os from 'os';
 import { Skill } from '../../aikernel/skill.js';
 import { BaseToolset } from '../../aikernel/tool.js';
@@ -72,6 +74,7 @@ export type ChannelStateChangeCallback = (states: ChannelRuntimeState[]) => void
 
 export class ChannelMgrApplication extends BaseApplication {
 
+    private workspace?: string;
     private plugins: PluginEntry[] = [];
     private pluginLoadErrors: PluginLoadError[] = [];
     private channelStates: Map<string, ChannelRuntimeState> = new Map();
@@ -86,6 +89,11 @@ export class ChannelMgrApplication extends BaseApplication {
 
     onChannelStateChange(callback: ChannelStateChangeCallback): void {
         this.stateChangeCallbacks.push(callback);
+    }
+
+    /** Returns the channel message router, if initialized. */
+    getRouter(): ChannelMessageRouter | undefined {
+        return this.router;
     }
 
     private notifyStateChange(): void {
@@ -183,8 +191,11 @@ export class ChannelMgrApplication extends BaseApplication {
     /**
      * 初始化消息插件——加载插件并启动各 channel account。
      * 返回 Promise 以便外部能等待初始化完成。
+     * @param router - 消息路由器
+     * @param workspace - 工作目录路径，用于文件发送时验证文件路径
      */
-    async initializeChannels(router: ChannelMessageRouter): Promise<void> {
+    async initializeChannels(router: ChannelMessageRouter, workspace?: string): Promise<void> {
+        this.workspace = workspace;
         this.router = router;
 
         const outboundToolset = new BaseToolset('channel-outbound');
@@ -370,13 +381,9 @@ export class ChannelMgrApplication extends BaseApplication {
             return;
         }
 
-        const reply = await this.router.routeInboundMessage(message);
-        if (!reply) return;
-
         const replyTo = (message.chatType === 'group' && message.groupId)
             ? message.groupId
             : message.senderId;
-
         const cfg = this.getChannelConfig(cp.id);
         const baseCtx = {
             channelId: cp.id, accountId,
@@ -385,12 +392,21 @@ export class ChannelMgrApplication extends BaseApplication {
             replyToMessageId: message.messageId,
             cfg,
         };
-        const mediaLocalRoots = [os.tmpdir()];
 
+        const reply = await this.router.routeInboundMessage(message);
+        if (!reply) return;
+
+        logger.info(`[channelmgr] routeInboundMessage returned: "${reply?.text?.substring(0, 50)}..."`);
+        const mediaLocalRoots = [getTempDirectory()];
+        if (this.workspace) {
+            mediaLocalRoots.push(this.workspace);
+        }
         const hasMedia = reply.mediaUrls.length > 0;
+        logger.info(`[channelmgr] hasMedia=${hasMedia}, mediaUrls=${JSON.stringify(reply.mediaUrls)}`);
 
         try {
             if (hasMedia && cp.outbound?.sendPayload) {
+                logger.info(`[channelmgr] using sendPayload with text="${reply.text?.substring(0, 50)}...", media=${reply.mediaUrls[0]}`);
                 await cp.outbound.sendPayload({
                     ...baseCtx,
                     payload: {
@@ -401,6 +417,7 @@ export class ChannelMgrApplication extends BaseApplication {
                     mediaLocalRoots,
                 });
             } else if (hasMedia && cp.outbound?.sendMedia) {
+                logger.info(`[channelmgr] using sendMedia, ${reply.mediaUrls.length} files`);
                 // Send first media with text, rest without
                 for (let i = 0; i < reply.mediaUrls.length; i++) {
                     await cp.outbound.sendMedia({
@@ -410,10 +427,14 @@ export class ChannelMgrApplication extends BaseApplication {
                         mediaLocalRoots,
                     });
                 }
-            } else if (cp.outbound?.sendText) {
+            } else if (reply.text && cp.outbound?.sendText) {
+                logger.info(`[channelmgr] using sendText, text="${reply.text?.substring(0, 50)}..."`);
                 await cp.outbound.sendText({ ...baseCtx, text: reply.text });
-            } else if (cp.outbound?.sendPayload) {
+            } else if (reply.text && cp.outbound?.sendPayload) {
+                logger.info(`[channelmgr] using sendPayload (text only), text="${reply.text?.substring(0, 50)}..."`);
                 await cp.outbound.sendPayload({ ...baseCtx, payload: { text: reply.text } });
+            } else {
+                logger.warn(`[channelmgr] no suitable send method: hasMedia=${hasMedia}, hasText=${!!reply.text}, sendPayload=${!!cp.outbound?.sendPayload}, sendMedia=${!!cp.outbound?.sendMedia}, sendText=${!!cp.outbound?.sendText}`);
             }
         } catch (err: any) {
             logger.error(`发送回复失败 ${cp.id}:${accountId}: ${err?.message || err}`);
@@ -452,6 +473,65 @@ export class ChannelMgrApplication extends BaseApplication {
 
     getPluginLoadErrors(): PluginLoadError[] {
         return this.pluginLoadErrors;
+    }
+
+    /**
+     * 向指定的 Participant 发送文本消息。
+     * 用于定时任务等场景下根据 task.origin 发送回复。
+     */
+    async sendTextToParticipant(participant: Participant, text: string): Promise<void> {
+        const { channel, accountId, recipientId } = participant;
+
+        logger.info(`[channelmgr] sendTextToParticipant: channel=${channel}, accountId=${accountId}, recipientId=${recipientId}, text_len=${text.length}`);
+
+        // Find the channel plugin
+        const entry = this.plugins.find(p => p.channelPlugin?.id === channel);
+        if (!entry?.channelPlugin) {
+            logger.error(`[channelmgr] 找不到 channel plugin: ${channel}`);
+            return;
+        }
+
+        const cp = entry.channelPlugin;
+        const config = this.getChannelConfig(channel);
+
+        const baseCtx = {
+            channelId: cp.id,
+            accountId: accountId,
+            to: recipientId,
+            cfg: config,
+        };
+
+        logger.info(`[channelmgr] sending via ${cp.id}, to=${recipientId}`);
+
+        try {
+            if (cp.outbound?.sendText) {
+                await cp.outbound.sendText({ ...baseCtx, text });
+                logger.info(`[channelmgr] sendText completed`);
+            } else if (cp.outbound?.sendPayload) {
+                await cp.outbound.sendPayload({ ...baseCtx, payload: { text } });
+                logger.info(`[channelmgr] sendPayload completed`);
+            } else {
+                logger.warn(`[channelmgr] channel ${channel} 没有可用的发送方法`);
+            }
+        } catch (err: any) {
+            logger.error(`[channelmgr] 发送消息失败: ${err?.message || err}`);
+        }
+    }
+
+    /**
+     * 根据 Participant 获取 channel 和 account 信息。
+     */
+    getParticipantInfo(participant: Participant): { channelId: string; accountId: string; recipientId: string; label: string } | null {
+        const entry = this.plugins.find(p => p.channelPlugin?.id === participant.channel);
+        if (!entry?.channelPlugin) {
+            return null;
+        }
+        return {
+            channelId: participant.channel,
+            accountId: participant.accountId,
+            recipientId: participant.recipientId,
+            label: entry.channelPlugin.meta.label,
+        };
     }
 
     async stopAllChannels(): Promise<void> {

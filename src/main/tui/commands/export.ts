@@ -1,5 +1,6 @@
 import type { OpenDeskTUI } from "../entry.js";
 import { ConfirmOverlay, InfoOverlay } from "../components/notice.js";
+import { getFileCompletions } from "../components/file-completions.js";
 import path from "path";
 import fs from "fs";
 import { logger } from "../../utils/logger.js";
@@ -19,6 +20,14 @@ export function registerExportCommand(tui: OpenDeskTUI): void {
                 ];
                 if (!prefix) return options;
                 return options.filter((o) => o.value.startsWith(prefix));
+            }
+            const format = (parts[0] ?? "").toLowerCase();
+            if ((format === "html" || format === "json") && argPrefix.includes(" ")) {
+                const pathQuery = argPrefix.slice(argPrefix.indexOf(" ") + 1);
+                return getFileCompletions(tui.workspace, pathQuery, {
+                    valuePrefix: format + " ",
+                    extensions: format === "json" ? [".json"] : [".html", ".htm"],
+                });
             }
             return null;
         },

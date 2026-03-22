@@ -29,6 +29,7 @@ import { createMemoryToolset } from '../memory/tools.js';
 import { createMainPlanningToolset, createSubTaskPlanningToolset } from '../planning/tools.js';
 import { createTaskInfoToolset } from './tools.js';
 import { TaskHooks } from '../hooks.js';
+import type { Participant } from '../plugins/types.js';
 
 
 type TaskStatus = 'waiting' | 'running' | 'stopped';
@@ -41,6 +42,7 @@ export interface TaskUpdateUserChunk {
     last_part_index: number;
     last_part: UserMessagePart;
     usage?: Usage;
+    internal?: boolean;
 }
 
 export interface TaskUpdateAssistantChunk {
@@ -112,11 +114,15 @@ export class TaskState {
     finished_at?: Date;
     total_elapsed_ms: number = 0;
     bookmark_path?: string;
+    /** Task origin - set for channel-initiated tasks to identify the source channel */
+    origin?: Participant;
 
     /** 任务钩子，用于在一系列任务控制点中执行回调函数 */
     hooks: TaskHooks = new TaskHooks();
     /** 订阅者，主要用于在 TUI/GUI 中获取任务状态更新等 */
     subscribers: BaseTaskUpdateSubscriber[] = [];
+    /** 文本片段完成回调，用于 channel 增量发送 - 当一个文本片段生成结束时调用（下一个片段创建时） */
+    onTextPartComplete?: (text: string) => void;
     /** 全局任务管理器的状态 */
     task_manager_state: TaskManagerState;
     /** stop() 被调用时直接 resolve 所有 waitUntilFinished 的等待者 */
@@ -151,6 +157,9 @@ export class TaskState {
         if (typeof task_json.stop_requested_by_user === 'boolean') {
             task.stop_requested_by_user = task_json.stop_requested_by_user;
         }
+        if (task_json.origin) {
+            task.origin = task_json.origin;
+        }
         return task;
     }
 
@@ -164,6 +173,7 @@ export class TaskState {
             finished_at: this.finished_at?.toISOString(),
             total_elapsed_ms: this.total_elapsed_ms,
             bookmark_path: this.bookmark_path,
+            origin: this.origin,
             stop_requested_by_user: this.stop_requested_by_user,
         }
     }
@@ -179,6 +189,7 @@ export class TaskState {
             finished_at: this.finished_at?.toISOString(),
             total_elapsed_ms: this.total_elapsed_ms,
             bookmark_path: this.bookmark_path,
+            origin: this.origin,
             stop_requested_by_user: this.stop_requested_by_user,
         }
     }
@@ -473,6 +484,7 @@ export class TaskState {
                     message_id: last_message.message_id,
                     last_part_index: updated_part_index,
                     last_part,
+                    internal: last_message.internal,
                 };
             } else if (last_message instanceof AssistantMessage) {
                 if (last_message.content.length === 0) return;  // 空的助手消息，跳过
@@ -510,6 +522,9 @@ export class TaskState {
             return;
         }
 
+        // Track the last sent text part index to avoid duplicate sends
+        let lastSentTextPartIndex = -1;
+
         for await (const chunk_resp of LLM.streamComplete(this.chat_context, this.model)) {
             // 检查是否已停止
             if (this.task_status === 'stopped') {
@@ -522,6 +537,18 @@ export class TaskState {
             assistant_message.usage = chunk_resp.usage;
 
             this.resolveStreamingToolCalls(assistant_message);
+
+            // When content length increases, a new part was created - the previous part is now complete
+            if (assistant_message.content.length > prevPartCount) {
+                const prevPartIndex = prevPartCount - 1;
+                const prevPart = assistant_message.content[prevPartIndex];
+
+                // Check if the previous part is a text part that hasn't been sent yet
+                if (prevPart?.type === 'text' && lastSentTextPartIndex < prevPartIndex) {
+                    this.onTextPartComplete?.(prevPart.text);
+                    lastSentTextPartIndex = prevPartIndex;
+                }
+            }
 
             if (this.subscribers.length == 0) {
                 // no subscribers, skip
@@ -537,6 +564,12 @@ export class TaskState {
             } else {
                 await this.sendSubscriptionFeedback();
             }
+        }
+
+        // After streaming ends, send any remaining text part if it hasn't been sent
+        const lastPart = assistant_message.content[assistant_message.content.length - 1];
+        if (lastPart?.type === 'text' && lastSentTextPartIndex < assistant_message.content.length - 1) {
+            this.onTextPartComplete?.(lastPart.text);
         }
 
         this.task_manager_state.save();
@@ -756,6 +789,7 @@ export class TaskState {
                         break;
                     }
                     const user_message = new UserMessage(checkHooks.message);
+                    user_message.internal = true;
                     const assistant_message = new AssistantMessage();
                     this.chat_context.appendMessage(user_message);
                     await this.sendSubscriptionFeedback();

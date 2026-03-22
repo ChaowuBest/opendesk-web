@@ -16,6 +16,7 @@ import { parentPort } from 'worker_threads';
 import path from 'path';
 import fs from 'fs';
 import type { GlobalTodo, GlobalTodoStorage, TodoTrigger } from './common';
+import type { Participant } from '../../aikernel/plugins/types';
 import type { Cron as CronerJob } from 'croner';
 
 
@@ -103,7 +104,8 @@ export default class TodoMgrWorker extends BaseWorker {
         content: string,
         priority: 'low' | 'medium' | 'high' = 'medium',
         category?: string,
-        trigger?: TodoTrigger
+        trigger?: TodoTrigger,
+        deliver?: Participant
     ): Promise<GlobalTodo> {
         const todo: GlobalTodo = {
             id: `todo_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
@@ -113,6 +115,7 @@ export default class TodoMgrWorker extends BaseWorker {
             priority,
             category,
             trigger,
+            deliver,
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
         };
@@ -372,8 +375,6 @@ export default class TodoMgrWorker extends BaseWorker {
         todo.updated_at = new Date().toISOString();
         await this.saveGlobalTodos();
 
-        // 请求主进程创建并执行任务
-        // 发送 title 和 content，让 Agent 知道任务的标题和详细内容
         parentPort?.postMessage({
             type: 'triggerTodoTask',
             bundleName: this.bundleName,
@@ -381,6 +382,7 @@ export default class TodoMgrWorker extends BaseWorker {
             todoTitle: todo.title,
             todoContent: todo.content,
             trigger: todo.trigger,
+            deliver: todo.deliver,
         });
     }
 
@@ -390,8 +392,6 @@ export default class TodoMgrWorker extends BaseWorker {
     private async fireTriggerWithoutSave(todo: GlobalTodo): Promise<void> {
         logger.info(`[todomgr] 触发待办: ${todo.id} - ${todo.title}`);
 
-        // 请求主进程创建并执行任务
-        // 发送 title 和 content，让 Agent 知道任务的标题和详细内容
         parentPort?.postMessage({
             type: 'triggerTodoTask',
             bundleName: this.bundleName,
@@ -399,6 +399,7 @@ export default class TodoMgrWorker extends BaseWorker {
             todoTitle: todo.title,
             todoContent: todo.content,
             trigger: todo.trigger,
+            deliver: todo.deliver,
         });
     }
 }

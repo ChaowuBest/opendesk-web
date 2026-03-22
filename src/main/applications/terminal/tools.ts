@@ -144,7 +144,8 @@ function renderTerminalToolCall(cmdName: string, toolcall: ToolCall): string | u
 
 const ExecutePowerShellArgsSchema = z.object({
     command: z.string().describe('要执行的PowerShell命令'),
-    workingDirectory: z.string().optional().describe('执行命令的工作目录，如果不指定则使用系统默认目录')
+    workingDirectory: z.string().optional().describe('执行命令的工作目录，如果不指定则使用系统默认目录'),
+    timeout: z.number().optional().describe('命令执行超时时间（毫秒），默认 30000ms（30秒）').default(30000)
 });
 
 /**
@@ -186,6 +187,7 @@ export class ExecutePowerShellTool extends BaseTool<typeof ExecutePowerShellArgs
     async executeCommand(args: z.output<typeof ExecutePowerShellArgsSchema>): Promise<string> {
         let command: string = args.command;
         let workingDirectory: string | undefined = args.workingDirectory;
+        const timeout: number = args.timeout ?? 30000;
 
         const parsed = parseCdAndCommand(command);
         if (parsed.cwd) {
@@ -208,6 +210,15 @@ export class ExecutePowerShellTool extends BaseTool<typeof ExecutePowerShellArgs
 
             let stdout = '';
             let stderr = '';
+            let timedOut = false;
+            let timeoutId: NodeJS.Timeout | undefined;
+
+            if (timeout > 0) {
+                timeoutId = setTimeout(() => {
+                    timedOut = true;
+                    powershell.kill('SIGTERM');
+                }, timeout);
+            }
 
             powershell.stdout.on('data', (data: Buffer) => {
                 stdout += data.toString('utf8');
@@ -218,15 +229,20 @@ export class ExecutePowerShellTool extends BaseTool<typeof ExecutePowerShellArgs
             });
 
             powershell.on('close', (code: number) => {
+                if (timeoutId) clearTimeout(timeoutId);
                 let result = '';
+                if (timedOut) {
+                    result = `命令执行超时（${timeout}ms），已被强制终止。\n`;
+                }
                 if (stdout) { result += `标准输出流：\n${stdout}\n`; }
                 if (stderr) { result += `标准错误流：\n${stderr}\n`; }
-                if (!stdout && !stderr) { result = `进程退出，代码 ${code}`; }
+                if (!stdout && !stderr && !timedOut) { result = `进程退出，代码 ${code}`; }
                 const output = result.trim() || '命令执行完成。';
                 resolve(output);
             });
 
             powershell.on('error', (err: Error) => {
+                if (timeoutId) clearTimeout(timeoutId);
                 resolve(`执行命令时出错: ${err.message}`);
             });
         });
@@ -235,7 +251,8 @@ export class ExecutePowerShellTool extends BaseTool<typeof ExecutePowerShellArgs
 
 const ExecuteBashArgsSchema = z.object({
     command: z.string().describe('要执行的BASH命令'),
-    workingDirectory: z.string().optional().describe('执行命令的工作目录，如果不指定则使用系统默认目录')
+    workingDirectory: z.string().optional().describe('执行命令的工作目录，如果不指定则使用系统默认目录'),
+    timeout: z.number().optional().describe('命令执行超时时间（毫秒），默认 30000ms（30秒）').default(30000)
 });
 
 
@@ -261,8 +278,9 @@ export class ExecuteBashTool extends BaseTool<typeof ExecuteBashArgsSchema> {
     executeCommand(args: z.output<typeof ExecuteBashArgsSchema>): Promise<string> {
         let command: string = args.command;
         let workingDirectory: string | undefined = args.workingDirectory;
+        const timeout: number = args.timeout ?? 30000;
 
-        return new Promise((resolve, reject) => {
+        return new Promise((resolve) => {
             if (!command || typeof command !== 'string') {
                 return resolve('请输入要执行的 bash 命令。');
             }
@@ -276,6 +294,15 @@ export class ExecuteBashTool extends BaseTool<typeof ExecuteBashArgsSchema> {
 
             let stdout = '';
             let stderr = '';
+            let timedOut = false;
+            let timeoutId: NodeJS.Timeout | undefined;
+
+            if (timeout > 0) {
+                timeoutId = setTimeout(() => {
+                    timedOut = true;
+                    bash.kill('SIGTERM');
+                }, timeout);
+            }
 
             bash.stdout.on('data', (data: Buffer) => {
                 stdout += data.toString();
@@ -286,15 +313,20 @@ export class ExecuteBashTool extends BaseTool<typeof ExecuteBashArgsSchema> {
             });
 
             bash.on('close', (code: number) => {
+                if (timeoutId) clearTimeout(timeoutId);
                 let result = ``;
+                if (timedOut) {
+                    result = `命令执行超时（${timeout}ms），已被强制终止。\n`;
+                }
                 if (stdout) { result += `标准输出流：\n${stdout}\n`; }
                 if (stderr) { result += `标准错误流：\n${stderr}\n`; }
-                if (!stdout && !stderr) { result = `进程退出，代码 ${code}`; }
+                if (!stdout && !stderr && !timedOut) { result = `进程退出，代码 ${code}`; }
                 const output = result.trim() || '命令执行完成。';
                 resolve(output);
             });
 
             bash.on('error', (err: Error) => {
+                if (timeoutId) clearTimeout(timeoutId);
                 resolve(`执行命令时出错: ${err.message}`);
             });
         });
@@ -311,7 +343,8 @@ export class ExecuteBashTool extends BaseTool<typeof ExecuteBashArgsSchema> {
 
 const ExecuteZshArgsSchema = z.object({
     command: z.string().describe('要执行的ZSH命令'),
-    workingDirectory: z.string().optional().describe('执行命令的工作目录，如果不指定则使用当前目录')
+    workingDirectory: z.string().optional().describe('执行命令的工作目录，如果不指定则使用当前目录'),
+    timeout: z.number().optional().describe('命令执行超时时间（毫秒），默认 30000ms（30秒）').default(30000)
 });
 
 export class ExecuteZshTool extends BaseTool<typeof ExecuteZshArgsSchema> {
@@ -325,11 +358,12 @@ export class ExecuteZshTool extends BaseTool<typeof ExecuteZshArgsSchema> {
         this.setExecutor(this.executeCommand);
     }
 
-    executeCommand(args: z.output<typeof ExecuteBashArgsSchema>): Promise<string> {
+    executeCommand(args: z.output<typeof ExecuteZshArgsSchema>): Promise<string> {
         let command: string = args.command;
         let workingDirectory: string | undefined = args.workingDirectory;
+        const timeout: number = args.timeout ?? 30000;
 
-        return new Promise((resolve, reject) => {
+        return new Promise((resolve) => {
             if (!command || typeof command !== 'string') {
                 return resolve('请输入要执行的 zsh 命令。');
             }
@@ -348,6 +382,15 @@ export class ExecuteZshTool extends BaseTool<typeof ExecuteZshArgsSchema> {
 
             let stdout = '';
             let stderr = '';
+            let timedOut = false;
+            let timeoutId: NodeJS.Timeout | undefined;
+
+            if (timeout > 0) {
+                timeoutId = setTimeout(() => {
+                    timedOut = true;
+                    zsh.kill('SIGTERM');
+                }, timeout);
+            }
 
             zsh.stdout.on('data', (data: Buffer) => {
                 stdout += data.toString();
@@ -358,15 +401,20 @@ export class ExecuteZshTool extends BaseTool<typeof ExecuteZshArgsSchema> {
             });
 
             zsh.on('close', (code: number) => {
-                let result = `> ${args.command} 的执行结果为:`;
+                if (timeoutId) clearTimeout(timeoutId);
+                let result = '';
+                if (timedOut) {
+                    result = `命令执行超时（${timeout}ms），已被强制终止。\n`;
+                }
                 if (stdout) { result += `标准输出流：\n${stdout}\n`; }
                 if (stderr) { result += `标准错误流：\n${stderr}\n`; }
-                if (!stdout && !stderr) { result = `进程退出，代码 ${code}`; }
+                if (!stdout && !stderr && !timedOut) { result = `进程退出，代码 ${code}`; }
                 const output = result.trim() || '命令执行完成。';
                 resolve(output);
             });
 
             zsh.on('error', (err: Error) => {
+                if (timeoutId) clearTimeout(timeoutId);
                 resolve(`执行命令时出错: ${err.message}`);
             });
         });
