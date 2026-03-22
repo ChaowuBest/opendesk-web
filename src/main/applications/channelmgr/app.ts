@@ -37,6 +37,7 @@ import type {
 } from '../../aikernel/plugins/types.js';
 import { registerChannelDispatch } from '../../aikernel/plugins/openclaw/api.js';
 import { ChannelMessageRouter, type ChannelReply } from './router.js';
+import { getTempDirectory } from '../filemgr/tools.js';
 import os from 'os';
 import { Skill } from '../../aikernel/skill.js';
 import { BaseToolset } from '../../aikernel/tool.js';
@@ -370,13 +371,11 @@ export class ChannelMgrApplication extends BaseApplication {
             return;
         }
 
-        const reply = await this.router.routeInboundMessage(message);
-        if (!reply) return;
-
+        // Track pending incremental sends for this message
+        const pendingSends: Promise<void>[] = [];
         const replyTo = (message.chatType === 'group' && message.groupId)
             ? message.groupId
             : message.senderId;
-
         const cfg = this.getChannelConfig(cp.id);
         const baseCtx = {
             channelId: cp.id, accountId,
@@ -385,8 +384,26 @@ export class ChannelMgrApplication extends BaseApplication {
             replyToMessageId: message.messageId,
             cfg,
         };
-        const mediaLocalRoots = [os.tmpdir()];
 
+        const reply = await this.router.routeInboundMessage(message, (task) => {
+            // Set up incremental text sending callback
+            task.onTextPartComplete = (text: string) => {
+                if (!cp.outbound?.sendText) return;
+                const sendPromise = cp.outbound.sendText({ ...baseCtx, text }).then(() => {}).catch((err: any) => {
+                    logger.error(`增量发送文本失败 ${cp.id}:${accountId}: ${err?.message || err}`);
+                });
+                pendingSends.push(sendPromise);
+            };
+        });
+
+        // Wait for all incremental sends to complete
+        if (pendingSends.length > 0) {
+            await Promise.all(pendingSends);
+        }
+
+        if (!reply) return;
+
+        const mediaLocalRoots = [getTempDirectory()];
         const hasMedia = reply.mediaUrls.length > 0;
 
         try {
@@ -410,9 +427,9 @@ export class ChannelMgrApplication extends BaseApplication {
                         mediaLocalRoots,
                     });
                 }
-            } else if (cp.outbound?.sendText) {
+            } else if (reply.text && cp.outbound?.sendText) {
                 await cp.outbound.sendText({ ...baseCtx, text: reply.text });
-            } else if (cp.outbound?.sendPayload) {
+            } else if (reply.text && cp.outbound?.sendPayload) {
                 await cp.outbound.sendPayload({ ...baseCtx, payload: { text: reply.text } });
             }
         } catch (err: any) {

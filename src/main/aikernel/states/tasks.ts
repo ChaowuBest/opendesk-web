@@ -118,6 +118,8 @@ export class TaskState {
     hooks: TaskHooks = new TaskHooks();
     /** 订阅者，主要用于在 TUI/GUI 中获取任务状态更新等 */
     subscribers: BaseTaskUpdateSubscriber[] = [];
+    /** 文本片段完成回调，用于 channel 增量发送 - 当一个文本片段生成结束时调用（下一个片段创建时） */
+    onTextPartComplete?: (text: string) => void;
     /** 全局任务管理器的状态 */
     task_manager_state: TaskManagerState;
     /** stop() 被调用时直接 resolve 所有 waitUntilFinished 的等待者 */
@@ -512,6 +514,9 @@ export class TaskState {
             return;
         }
 
+        // Track the last sent text part index to avoid duplicate sends
+        let lastSentTextPartIndex = -1;
+
         for await (const chunk_resp of LLM.streamComplete(this.chat_context, this.model)) {
             // 检查是否已停止
             if (this.task_status === 'stopped') {
@@ -524,6 +529,18 @@ export class TaskState {
             assistant_message.usage = chunk_resp.usage;
 
             this.resolveStreamingToolCalls(assistant_message);
+
+            // When content length increases, a new part was created - the previous part is now complete
+            if (assistant_message.content.length > prevPartCount) {
+                const prevPartIndex = prevPartCount - 1;
+                const prevPart = assistant_message.content[prevPartIndex];
+
+                // Check if the previous part is a text part that hasn't been sent yet
+                if (prevPart?.type === 'text' && lastSentTextPartIndex < prevPartIndex) {
+                    this.onTextPartComplete?.(prevPart.text);
+                    lastSentTextPartIndex = prevPartIndex;
+                }
+            }
 
             if (this.subscribers.length == 0) {
                 // no subscribers, skip
@@ -539,6 +556,12 @@ export class TaskState {
             } else {
                 await this.sendSubscriptionFeedback();
             }
+        }
+
+        // After streaming ends, send any remaining text part if it hasn't been sent
+        const lastPart = assistant_message.content[assistant_message.content.length - 1];
+        if (lastPart?.type === 'text' && lastSentTextPartIndex < assistant_message.content.length - 1) {
+            this.onTextPartComplete?.(lastPart.text);
         }
 
         this.task_manager_state.save();

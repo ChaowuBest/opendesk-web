@@ -70,7 +70,7 @@ export class ChannelMessageRouter {
      * Creates or reuses a session/task for the sender, runs the AI agent,
      * and returns the assistant's reply text.
      */
-    async routeInboundMessage(message: InboundChannelMessage): Promise<ChannelReply | null> {
+    async routeInboundMessage(message: InboundChannelMessage, beforeTurnCallback?: (task: TaskState) => void): Promise<ChannelReply | null> {
         const sessionKey = `${message.channelId}:${message.accountId}:${message.senderId}`;
 
         let task: TaskState;
@@ -95,7 +95,7 @@ export class ChannelMessageRouter {
         const userText = this.formatInboundMessage(message);
 
         try {
-            const reply = await this.submitAndWaitForReply(task, userText);
+            const reply = await this.submitAndWaitForReply(task, userText, beforeTurnCallback);
             const entry = sessionMap.get(sessionKey);
             if (entry) entry.lastMessageAt = Date.now();
             return reply;
@@ -260,7 +260,7 @@ export class ChannelMessageRouter {
         return text;
     }
 
-    private async submitAndWaitForReply(task: TaskState, userText: string): Promise<ChannelReply | null> {
+    private async submitAndWaitForReply(task: TaskState, userText: string, beforeTurnCallback?: (task: TaskState) => void): Promise<ChannelReply | null> {
         task.task_status = 'running';
         task.started_at = new Date();
         task.finished_at = undefined;
@@ -282,6 +282,9 @@ export class ChannelMessageRouter {
                 task.chat_context.attachToolsets(ts);
             }
 
+            // Defer callback to ensure it runs after all synchronous setup in this function completes
+            Promise.resolve().then(() => beforeTurnCallback?.(task));
+
             task.processTaskTurn();
             await task.waitUntilFinished();
 
@@ -297,6 +300,8 @@ export class ChannelMessageRouter {
     /**
      * Extract text and file-send tool calls from the last assistant message.
      * SendFile tool calls are translated into mediaUrls for channel delivery.
+     * If onTextPartComplete callback is set (channel streaming enabled), text is returned
+     * incrementally via the callback, so this returns empty text.
      */
     private extractReply(task: TaskState): ChannelReply | null {
         const lastMsg = task.chat_context.lastMessage();
@@ -320,7 +325,8 @@ export class ChannelMessageRouter {
             }
         }
 
-        const text = texts.join('\n').trim();
+        // If onTextPartComplete is set, text was sent incrementally - return empty text
+        const text = task.onTextPartComplete ? '' : texts.join('\n').trim();
         if (!text && mediaUrls.length === 0) return null;
         return { text, mediaUrls };
     }
