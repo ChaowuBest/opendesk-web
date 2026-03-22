@@ -18,6 +18,7 @@ import { z } from 'zod';
 import { detectEncoding, decodeBuffer, encodingDisplayName, HEAD_BYTES } from '../terminal/encoding.js';
 import fs from 'fs';
 import path from 'path';
+import os from 'os';
 import * as diff from 'diff';
 import fileType from 'file-type';
 import chalk from 'chalk';
@@ -25,6 +26,8 @@ import fastGlob from 'fast-glob';
 
 
 const MAX_DIFF_LINES = 50;
+const RENDER_CONTENT_MAX_CHARS = 4000;
+const RENDER_CONTENT_MAX_LINES = 80;
 const DIFF_CONTEXT_LINES = 3;
 
 // ==================== 路径处理 ====================
@@ -224,6 +227,78 @@ function detectLineEnding(content: string): '\r\n' | '\n' {
     const crlfCount = (content.match(/\r\n/g) || []).length;
     const lfCount = (content.match(/(?<!\r)\n/g) || []).length;
     return crlfCount > lfCount ? '\r\n' : '\n';
+}
+
+// ==================== Electron 渲染辅助 ====================
+
+function openFileButton(filePath: string): string {
+    const escaped = escapeHtml(filePath);
+    return `<button onclick="window.fsAPI.openPath('${escaped.replace(/'/g, "\\'")}')" class="inline-flex items-center justify-center w-6 h-6 rounded hover:bg-slate-200 transition-colors" title="打开文件"><svg class="w-3.5 h-3.5 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></button>`;
+}
+
+function statusDot(status: string): string {
+    if (status === 'running') {
+        return '<div class="h-2 w-2 rounded-full bg-blue-500 animate-pulse ring-4 ring-blue-100/50"></div>';
+    } else if (status === 'success') {
+        return '<div class="h-2 w-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.6)]"></div>';
+    } else if (status === 'error') {
+        return '<div class="h-2.5 w-2.5 rounded-full bg-rose-500 shadow-[0_0_10px_rgba(244,63,94,0.6)]"></div>';
+    }
+    return '<div class="h-2 w-2 rounded-full bg-slate-400"></div>';
+}
+
+function renderToolCard(opts: {
+    icon: string;
+    title: string;
+    status: string;
+    headerExtra?: string;
+    body: string;
+}): string {
+    return `
+    <div class="rounded-xl border border-slate-200 bg-white/90 shadow-sm overflow-hidden my-2">
+        <div class="px-4 py-3 border-b border-slate-200 flex items-center gap-2">
+            <span class="text-lg">${opts.icon}</span>
+            <span class="font-medium text-slate-700">${escapeHtml(opts.title)}</span>
+            ${statusDot(opts.status)}
+            ${opts.headerExtra || ''}
+        </div>
+        <div class="px-4 py-3 text-slate-700">
+            ${opts.body}
+        </div>
+    </div>`;
+}
+
+function truncateContent(content: string): { text: string; truncated: boolean } {
+    const lines = content.split('\n');
+    if (content.length <= RENDER_CONTENT_MAX_CHARS && lines.length <= RENDER_CONTENT_MAX_LINES) {
+        return { text: content, truncated: false };
+    }
+    let result = '';
+    let lineCount = 0;
+    for (const line of lines) {
+        if (result.length + line.length + 1 > RENDER_CONTENT_MAX_CHARS || lineCount >= RENDER_CONTENT_MAX_LINES) {
+            break;
+        }
+        if (lineCount > 0) result += '\n';
+        result += line;
+        lineCount++;
+    }
+    return { text: result, truncated: true };
+}
+
+/**
+ * 获取系统临时目录
+ */
+function getTempDirectory(): string {
+    // @ts-ignore 主线 nodeJS 当前还没支持openharmony，所以这里需要手动处理
+    if (process.platform === 'openharmony') {
+        const tmpdir = path.join(os.tmpdir(), '.tmp');
+        if (!fs.existsSync(tmpdir)) {
+            fs.mkdirSync(tmpdir, { recursive: true });
+        }
+        return tmpdir;
+    }
+    return os.tmpdir();
 }
 
 // ==================== ReadFiles 工具 ====================
@@ -443,34 +518,33 @@ export class ReadFilesTool extends BaseTool<typeof readFilesSchema> {
                         const p = typeof pRaw === 'string' ? pRaw : String(pRaw ?? '');
                         const off = typeof f === 'object' && f && 'offsetKB' in f ? (f as { offsetKB?: number }).offsetKB : 0;
                         const label = (off ?? 0) > 0 ? `${escapeHtml(p)} <span class="text-amber-600">(从 ${off} KB 开始)</span>` : escapeHtml(p);
-                        return `<li class="mt-0.5">${label}</li>`;
+                        return `<li class="mt-0.5 flex items-center gap-1">${openFileButton(p)} <span>${label}</span></li>`;
                     })
                     .join('')
                 : '';
         const listHtml =
             fileItems.length > 0
-                ? `<ul class="list-disc list-inside text-slate-600 text-sm mt-1 space-y-0.5">${fileItems}</ul>`
+                ? `<ul class="list-none text-slate-600 text-sm mt-1 space-y-0.5">${fileItems}</ul>`
                 : '<p class="text-slate-500 text-sm mt-1">未指定文件</p>';
-        const resultHtml =
-            toolcall.status === 'success' && toolcall.result
-                ? `<div class="mt-3 rounded-lg border border-slate-200 bg-slate-50/80 p-3 text-sm overflow-x-auto"><pre class="whitespace-pre-wrap break-words font-mono text-slate-800">${escapeHtml(toolcall.result)}</pre></div>`
-                : toolcall.status === 'running'
-                    ? '<p class="mt-2 text-slate-400 text-sm animate-pulse">读取中…</p>'
-                    : toolcall.status === 'error' && toolcall.result
-                        ? `<p class="mt-2 text-rose-600 text-sm">${escapeHtml(toolcall.result)}</p>`
-                        : '';
-        return `
-    <div class="rounded-xl border border-slate-200 bg-white/90 shadow-sm overflow-hidden my-2">
-        <div class="px-4 py-3 border-b border-slate-200 flex items-center gap-2">
-            <span class="text-lg">📖</span>
-            <span class="font-medium text-slate-700">读取文件</span>
-            <span class="text-slate-400 text-sm">${files?.length ?? 0} 个文件</span>
-        </div>
-        <div class="px-4 py-3 text-slate-700">
-            ${listHtml}
-            ${resultHtml}
-        </div>
-    </div>`;
+
+        let resultHtml = '';
+        if (toolcall.status === 'success' && toolcall.result) {
+            const { text, truncated } = truncateContent(toolcall.result);
+            const truncNote = truncated ? '<p class="mt-1 text-xs text-amber-600">… 内容已截断，完整内容请点击文件打开查看</p>' : '';
+            resultHtml = `<div class="mt-3 rounded-lg border border-slate-200 bg-slate-50/80 p-3 text-sm overflow-x-auto"><pre class="whitespace-pre-wrap break-words font-mono text-slate-800">${escapeHtml(text)}</pre>${truncNote}</div>`;
+        } else if (toolcall.status === 'running') {
+            resultHtml = '<p class="mt-2 text-slate-400 text-sm animate-pulse">读取中…</p>';
+        } else if (toolcall.status === 'error' && toolcall.result) {
+            resultHtml = `<p class="mt-2 text-rose-600 text-sm">${escapeHtml(toolcall.result)}</p>`;
+        }
+
+        return renderToolCard({
+            icon: '📖',
+            title: '读取文件',
+            status: toolcall.status,
+            headerExtra: `<span class="text-slate-400 text-sm">${files?.length ?? 0} 个文件</span>`,
+            body: `${listHtml}${resultHtml}`
+        });
     }
 
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
@@ -642,6 +716,36 @@ export class WriteFileTool extends BaseTool<typeof writeFileSchema> {
         this.setExecutor(this.executeCommand);
     }
 
+    async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
+        const filePath = toolcall.args_object?.['path'] as string | undefined;
+        const content = toolcall.args_object?.['content'] as string | undefined;
+        const mode = toolcall.args_object?.['mode'] as string | undefined;
+        const title = '写入文件' + (mode === 'append' ? ' (追加)' : '');
+
+        let bodyHtml = '';
+        if (filePath) {
+            bodyHtml += `<div class="flex items-center gap-1 text-sm text-slate-600">${openFileButton(filePath)} <span class="font-mono">${escapeHtml(filePath)}</span></div>`;
+        }
+
+        if (toolcall.status === 'running') {
+            if (content && content.length > 0) {
+                const info = getWriteFileInfo(toolcall, content);
+                bodyHtml += `<p class="mt-1 text-sm text-slate-400 animate-pulse">✍ 正在写入… ${info.lineCount} 行, ${info.contentLen.toLocaleString()} 字符</p>`;
+            } else {
+                bodyHtml += '<p class="mt-1 text-sm text-slate-400 animate-pulse">⏳ 等待内容…</p>';
+            }
+        } else if (toolcall.status === 'success') {
+            if (content && content.length > 0) {
+                const info = getWriteFileInfo(toolcall, content);
+                bodyHtml += `<p class="mt-1 text-sm text-slate-500">✅ ${info.lineCount} 行, ${info.contentLen.toLocaleString()} 字符</p>`;
+            }
+        } else if (toolcall.status === 'error' && toolcall.result) {
+            bodyHtml += `<p class="mt-1 text-sm text-rose-600">${escapeHtml(toolcall.result)}</p>`;
+        }
+
+        return renderToolCard({ icon: '✏️', title, status: toolcall.status, body: bodyHtml });
+    }
+
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
         const filePath = toolcall.args_object?.['path'];
         const content = toolcall.args_object?.['content'];
@@ -681,26 +785,35 @@ export class WriteFileTool extends BaseTool<typeof writeFileSchema> {
         return new Card({ icon: '✏️', title: title, status: statusDisplay(toolcall.status), body }).render(width);
     }
 
-    executeCommand(args: z.output<typeof writeFileSchema>): Promise<string> {
+    async executeCommand(args: z.output<typeof writeFileSchema>): Promise<string> {
         const filePath = sanitizePath(args.path);
-        return new Promise((resolve, reject) => {
+        try {
             const dir = path.dirname(filePath);
             if (!fs.existsSync(dir)) {
                 fs.mkdirSync(dir, { recursive: true });
             }
 
             if (args.mode === 'append') {
-                fs.appendFile(filePath, args.content, 'utf8', (err) => {
-                    if (err) return reject(err);
-                    resolve('文件内容追加成功');
-                });
+                await fs.promises.appendFile(filePath, args.content, 'utf8');
+                return '文件内容追加成功';
             } else {
-                fs.writeFile(filePath, args.content, 'utf8', (err) => {
-                    if (err) return reject(err);
-                    resolve('文件内容写入成功');
-                });
+                await fs.promises.writeFile(filePath, args.content, 'utf8');
+                return '文件内容写入成功';
             }
-        });
+        } catch (err: any) {
+            const tempDir = getTempDirectory();
+            const ext = path.extname(filePath) || '.txt';
+            const baseName = path.basename(filePath, ext);
+            const tempFileName = `opendesk_${baseName}_${Date.now()}${ext}`;
+            const tempFilePath = path.join(tempDir, tempFileName);
+
+            try {
+                await fs.promises.writeFile(tempFilePath, args.content, 'utf8');
+                return `错误: 无法写入目标文件 ${filePath} (${err.message})。文件内容已临时保存至 ${tempFilePath}，请勿再次输出完整内容`;
+            } catch {
+                return `错误: 无法写入目标文件 ${filePath} (${err.message})，且临时文件写入也失败`;
+            }
+        }
     }
 }
 
@@ -722,6 +835,38 @@ export class EditFileTool extends BaseTool<typeof editFileSchema> {
         );
 
         this.setExecutor(this.executeCommand);
+    }
+
+    async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
+        const filePath = toolcall.args_object?.['filePath'] as string | undefined;
+        const oldString = toolcall.args_object?.['oldString'] as string | undefined;
+        const newString = toolcall.args_object?.['newString'] as string | undefined;
+        const isNewFile = oldString === '' || oldString === undefined;
+        const title = isNewFile ? '创建文件' : '编辑文件';
+        const icon = isNewFile ? '📄' : '✂️';
+
+        let bodyHtml = '';
+        if (filePath) {
+            bodyHtml += `<div class="flex items-center gap-1 text-sm text-slate-600">${openFileButton(filePath)} <span class="font-mono">${escapeHtml(filePath)}</span></div>`;
+        }
+
+        if (toolcall.status === 'running') {
+            bodyHtml += '<p class="mt-1 text-sm text-slate-400 animate-pulse">⏳ 编辑中…</p>';
+        } else if (toolcall.status === 'success') {
+            if (isNewFile) {
+                const charCount = newString?.length ?? 0;
+                bodyHtml += `<p class="mt-1 text-sm text-slate-500">✅ 新文件已创建 (${charCount.toLocaleString()} 字符)</p>`;
+            } else {
+                const expectedReplacements = toolcall.args_object?.['expectedReplacements'] || 1;
+                const removedLines = oldString ? oldString.split('\n').length : 0;
+                const addedLines = newString !== undefined ? newString.split('\n').length : 0;
+                bodyHtml += `<p class="mt-1 text-sm text-slate-500">✅ 已完成 ${expectedReplacements} 处替换 (<span class="text-rose-500">-${removedLines}</span> / <span class="text-emerald-600">+${addedLines}</span> 行)</p>`;
+            }
+        } else if (toolcall.status === 'error' && toolcall.result) {
+            bodyHtml += `<p class="mt-1 text-sm text-rose-600">${escapeHtml(toolcall.result)}</p>`;
+        }
+
+        return renderToolCard({ icon, title, status: toolcall.status, body: bodyHtml });
     }
 
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
@@ -877,6 +1022,30 @@ export class SearchReplaceTool extends BaseTool<typeof searchReplaceSchema> {
         );
 
         this.setExecutor(this.executeCommand);
+    }
+
+    async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
+        const filePath = toolcall.args_object?.['filePath'] as string | undefined;
+        const oldString = toolcall.args_object?.['oldString'] as string | undefined;
+
+        let bodyHtml = '';
+        if (filePath) {
+            bodyHtml += `<div class="flex items-center gap-1 text-sm text-slate-600">${openFileButton(filePath)} <span class="font-mono">${escapeHtml(filePath)}</span></div>`;
+        }
+        if (oldString) {
+            const preview = oldString.length > 60 ? oldString.slice(0, 60) + '…' : oldString;
+            bodyHtml += `<p class="mt-1 text-xs text-slate-400">搜索: <code class="bg-slate-100 px-1 py-0.5 rounded">${escapeHtml(preview)}</code></p>`;
+        }
+
+        if (toolcall.status === 'running') {
+            bodyHtml += '<p class="mt-1 text-sm text-slate-400 animate-pulse">⏳ 执行中…</p>';
+        } else if (toolcall.status === 'success') {
+            bodyHtml += '<p class="mt-1 text-sm text-slate-500">✅ 替换完成</p>';
+        } else if (toolcall.status === 'error' && toolcall.result) {
+            bodyHtml += `<p class="mt-1 text-sm text-rose-600">${escapeHtml(toolcall.result)}</p>`;
+        }
+
+        return renderToolCard({ icon: '🔍', title: '搜索替换', status: toolcall.status, body: bodyHtml });
     }
 
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
@@ -1101,6 +1270,40 @@ export class ApplyPatchTool extends BaseTool<typeof applyPatchSchema> {
         this.setExecutor(this.executeCommand);
     }
 
+    async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
+        const patch = toolcall.args_object?.['patch'] as string | undefined;
+        let bodyHtml = '';
+
+        if (patch) {
+            const fileCount = (patch.match(/^--- /gm) || []).length;
+            const addedLines = (patch.match(/^\+[^+]/gm) || []).length;
+            const removedLines = (patch.match(/^-[^-]/gm) || []).length;
+
+            const fileMatches = patch.match(/^\+\+\+ .+$/gm) || [];
+            const fileList = fileMatches.slice(0, 10).map(l => {
+                const fp = l.slice(4).trim().replace(/^[ab]\//, '');
+                return `<li class="mt-0.5 flex items-center gap-1">${openFileButton(fp)} <span class="font-mono text-sm">${escapeHtml(fp)}</span></li>`;
+            }).join('');
+            if (fileList) {
+                bodyHtml += `<ul class="list-none text-slate-600 mt-1 space-y-0.5">${fileList}</ul>`;
+            }
+            bodyHtml += `<p class="mt-1 text-xs text-slate-400">${fileCount} 个文件, <span class="text-rose-500">-${removedLines}</span> / <span class="text-emerald-600">+${addedLines}</span> 行</p>`;
+        }
+
+        if (toolcall.status === 'running') {
+            bodyHtml += '<p class="mt-1 text-sm text-slate-400 animate-pulse">⏳ 应用补丁中…</p>';
+        } else if (toolcall.status === 'success') {
+            bodyHtml += `<p class="mt-1 text-sm text-slate-500">✅ 补丁已应用</p>`;
+            if (toolcall.result) {
+                bodyHtml += `<pre class="mt-1 text-xs text-slate-500 whitespace-pre-wrap">${escapeHtml(toolcall.result)}</pre>`;
+            }
+        } else if (toolcall.status === 'error' && toolcall.result) {
+            bodyHtml += `<p class="mt-1 text-sm text-rose-600">${escapeHtml(toolcall.result)}</p>`;
+        }
+
+        return renderToolCard({ icon: '🩹', title: '应用补丁', status: toolcall.status, body: bodyHtml });
+    }
+
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
         const patch = toolcall.args_object?.['patch'] as string | undefined;
         const body: string[] = [];
@@ -1259,30 +1462,27 @@ export class GlobFilesTool extends BaseTool<typeof globSchema> {
         const pattern = toolcall.args_object?.['pattern'];
         const searchPath = toolcall.args_object?.['path'];
 
-        if (toolcall.status === 'running') {
-            return `
-            <div class="flex mt-3 mb-3 text-sm items-center space-x-4 bg-white/80 backdrop-blur-md border border-slate-200 py-2 px-4 rounded-full shadow-sm w-fit">
-                <span class="text-base">🔍</span>
-                <span class="font-semibold text-slate-600">模式匹配 | Glob</span>
-                <div class="h-2 w-2 rounded-full bg-blue-500 animate-pulse ring-4 ring-blue-100/50"></div>
-                <span class="text-slate-500">${escapeHtml(String(pattern || ''))}</span>
-            </div>`;
+        let bodyHtml = '';
+        if (pattern) {
+            bodyHtml += `<p class="text-sm text-slate-600">模式: <code class="bg-slate-100 px-2 py-0.5 rounded font-mono">${escapeHtml(String(pattern))}</code></p>`;
+        }
+        if (searchPath) {
+            bodyHtml += `<p class="mt-1 text-xs text-slate-400">目录: ${escapeHtml(String(searchPath))}</p>`;
         }
 
-        const resultHtml = toolcall.result
-            ? `<pre class="whitespace-pre-wrap break-words font-mono text-slate-800">${escapeHtml(toolcall.result)}</pre>`
-            : '';
+        if (toolcall.status === 'running') {
+            bodyHtml += '<p class="mt-2 text-sm text-slate-400 animate-pulse">🔍 搜索中…</p>';
+        } else if (toolcall.status === 'success' && toolcall.result) {
+            const { text, truncated } = truncateContent(toolcall.result);
+            bodyHtml += `<div class="mt-2 rounded-lg border border-slate-200 bg-slate-50/80 p-3 text-sm overflow-x-auto max-h-64 overflow-y-auto"><pre class="whitespace-pre-wrap break-words font-mono text-slate-800 text-xs">${escapeHtml(text)}</pre></div>`;
+            if (truncated) {
+                bodyHtml += '<p class="mt-1 text-xs text-amber-600">… 结果已截断</p>';
+            }
+        } else if (toolcall.status === 'error' && toolcall.result) {
+            bodyHtml += `<p class="mt-2 text-sm text-rose-600">${escapeHtml(toolcall.result)}</p>`;
+        }
 
-        return `
-        <div class="flex flex-col mt-3 mb-3 text-sm bg-white/80 backdrop-blur-md border border-slate-200 py-3 px-4 rounded-2xl shadow-sm w-fit max-w-2xl">
-            <div class="flex items-center space-x-3">
-                <span class="text-base">🔍</span>
-                <span class="font-semibold text-slate-600">模式匹配 | Glob</span>
-                <span class="text-slate-500">${escapeHtml(String(pattern || ''))}</span>
-            </div>
-            ${searchPath ? `<div class="text-xs text-slate-400 mt-1">目录: ${escapeHtml(String(searchPath))}</div>` : ''}
-            ${resultHtml ? `<div class="mt-2 text-xs">${resultHtml}</div>` : ''}
-        </div>`;
+        return renderToolCard({ icon: '🔍', title: '模式匹配 | Glob', status: toolcall.status, body: bodyHtml });
     }
 
     async executeCommand(args: z.output<typeof globSchema>): Promise<string> {
@@ -1441,31 +1641,32 @@ export class GrepFilesTool extends BaseTool<typeof grepSchema> {
     async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
         const pattern = toolcall.args_object?.['pattern'];
         const searchPath = toolcall.args_object?.['path'];
+        const filePattern = toolcall.args_object?.['filePattern'];
 
-        if (toolcall.status === 'running') {
-            return `
-            <div class="flex mt-3 mb-3 text-sm items-center space-x-4 bg-white/80 backdrop-blur-md border border-slate-200 py-2 px-4 rounded-full shadow-sm w-fit">
-                <span class="text-base">🔎</span>
-                <span class="font-semibold text-slate-600">内容搜索 | Grep</span>
-                <div class="h-2 w-2 rounded-full bg-blue-500 animate-pulse ring-4 ring-blue-100/50"></div>
-                <span class="text-slate-500 font-mono">${escapeHtml(String(pattern || ''))}</span>
-            </div>`;
+        let bodyHtml = '';
+        if (pattern) {
+            bodyHtml += `<p class="text-sm text-slate-600">模式: <code class="bg-slate-100 px-2 py-0.5 rounded font-mono">${escapeHtml(String(pattern))}</code></p>`;
+        }
+        if (searchPath) {
+            bodyHtml += `<p class="mt-1 text-xs text-slate-400">路径: ${escapeHtml(String(searchPath))}</p>`;
+        }
+        if (filePattern) {
+            bodyHtml += `<p class="mt-1 text-xs text-slate-400">文件: ${escapeHtml(String(filePattern))}</p>`;
         }
 
-        const resultHtml = toolcall.result
-            ? `<pre class="whitespace-pre-wrap break-words font-mono text-slate-800 text-xs">${escapeHtml(toolcall.result)}</pre>`
-            : '';
+        if (toolcall.status === 'running') {
+            bodyHtml += '<p class="mt-2 text-sm text-slate-400 animate-pulse">🔎 搜索中…</p>';
+        } else if (toolcall.status === 'success' && toolcall.result) {
+            const { text, truncated } = truncateContent(toolcall.result);
+            bodyHtml += `<div class="mt-2 rounded-lg border border-slate-200 bg-slate-50/80 p-3 text-sm overflow-x-auto max-h-64 overflow-y-auto"><pre class="whitespace-pre-wrap break-words font-mono text-slate-800 text-xs">${escapeHtml(text)}</pre></div>`;
+            if (truncated) {
+                bodyHtml += '<p class="mt-1 text-xs text-amber-600">… 结果已截断</p>';
+            }
+        } else if (toolcall.status === 'error' && toolcall.result) {
+            bodyHtml += `<p class="mt-2 text-sm text-rose-600">${escapeHtml(toolcall.result)}</p>`;
+        }
 
-        return `
-        <div class="flex flex-col mt-3 mb-3 text-sm bg-white/80 backdrop-blur-md border border-slate-200 py-3 px-4 rounded-2xl shadow-sm w-fit max-w-2xl">
-            <div class="flex items-center space-x-3">
-                <span class="text-base">🔎</span>
-                <span class="font-semibold text-slate-600">内容搜索 | Grep</span>
-                <code class="text-slate-500 bg-slate-100 px-2 py-0.5 rounded">${escapeHtml(String(pattern || ''))}</code>
-            </div>
-            ${searchPath ? `<div class="text-xs text-slate-400 mt-1">路径: ${escapeHtml(String(searchPath))}</div>` : ''}
-            ${resultHtml ? `<div class="mt-2 max-h-64 overflow-y-auto">${resultHtml}</div>` : ''}
-        </div>`;
+        return renderToolCard({ icon: '🔎', title: '内容搜索 | Grep', status: toolcall.status, body: bodyHtml });
     }
 
     async executeCommand(args: z.output<typeof grepSchema>): Promise<string> {
