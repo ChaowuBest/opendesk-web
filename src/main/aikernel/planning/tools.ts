@@ -839,7 +839,7 @@ export class CreateSubTaskTool extends BaseTool<typeof CreateSubTaskArgsSchema> 
         };
 
         if (config.isAsync) {
-            // 异步模式：启动子任务并立即返回 ID
+            // 异步模式：启动子任务并立即返回真实的 task_id
             let asyncSubTaskState: TaskState | undefined;
             const promise = startSubTask({
                 parentTask: taskState,
@@ -847,29 +847,41 @@ export class CreateSubTaskTool extends BaseTool<typeof CreateSubTaskArgsSchema> 
                 onCreated: (st) => { asyncSubTaskState = st; }
             });
 
-            const tempId = crypto.randomUUID();
-            pendingSubTasks.set(tempId, { promise, taskState: asyncSubTaskState });
-
-            promise.then(result => {
-                pendingSubTasks.delete(tempId);
-                pendingSubTasks.set(result.subtask_id, { promise: Promise.resolve(result) });
-            }).catch(() => {
-                pendingSubTasks.delete(tempId);
-            });
+            // 注册到 pending 列表，使用真实的 task_id 作为 key
+            if (asyncSubTaskState) {
+                pendingSubTasks.set(asyncSubTaskState.task_id, { promise, taskState: asyncSubTaskState });
+                promise.then(result => {
+                    pendingSubTasks.delete(asyncSubTaskState!.task_id);
+                }).catch(() => {
+                    pendingSubTasks.delete(asyncSubTaskState!.task_id);
+                });
+            }
 
             // 等待一小段时间，看任务是否能快速完成
             const earlyResult = await new Promise<SubTaskResult | string>((resolve) => {
-                const timeout = setTimeout(() => resolve(tempId), 200);
+                const timeout = setTimeout(() => {
+                    // 200ms 内没完成，返回真实的 task_id（如果有的话）
+                    if (asyncSubTaskState) {
+                        resolve(asyncSubTaskState.task_id);
+                    } else {
+                        resolve('pending');
+                    }
+                }, 200);
                 promise.then(result => {
                     clearTimeout(timeout);
                     resolve(result);
                 }).catch(() => {
                     clearTimeout(timeout);
-                    resolve(tempId);
+                    if (asyncSubTaskState) {
+                        resolve(asyncSubTaskState.task_id);
+                    } else {
+                        resolve('pending');
+                    }
                 });
             });
 
             if (typeof earlyResult === 'string') {
+                // 返回真实的 task_id 给 AI，而不是无意义的 tempId
                 toolResult.result = JSON.stringify({ subtask_id: earlyResult, async: true });
             } else {
                 toolResult.result = JSON.stringify(earlyResult);
