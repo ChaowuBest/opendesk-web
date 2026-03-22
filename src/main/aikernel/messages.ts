@@ -483,6 +483,12 @@ export class UserMessage {
     role: 'user' = 'user';
     message_id: string = crypto.randomUUID();
     content: Array<UserMessagePart> = [];
+    /**
+     * 标记此消息为内部消息（如钩子系统自动生成的 reject 消息）。
+     * internal = true 时，仅在 debug 模式下在 TUI 中显示；
+     * 持久化 JSON 和导出 HTML 中始终保留。
+     */
+    internal?: boolean;
 
     constructor (content?: string) {
         if (content) {

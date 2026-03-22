@@ -41,6 +41,7 @@ export interface TaskUpdateUserChunk {
     last_part_index: number;
     last_part: UserMessagePart;
     usage?: Usage;
+    internal?: boolean;
 }
 
 export interface TaskUpdateAssistantChunk {
@@ -473,6 +474,7 @@ export class TaskState {
                     message_id: last_message.message_id,
                     last_part_index: updated_part_index,
                     last_part,
+                    internal: last_message.internal,
                 };
             } else if (last_message instanceof AssistantMessage) {
                 if (last_message.content.length === 0) return;  // 空的助手消息，跳过
@@ -756,6 +758,7 @@ export class TaskState {
                         break;
                     }
                     const user_message = new UserMessage(checkHooks.message);
+                    user_message.internal = true;
                     const assistant_message = new AssistantMessage();
                     this.chat_context.appendMessage(user_message);
                     await this.sendSubscriptionFeedback();

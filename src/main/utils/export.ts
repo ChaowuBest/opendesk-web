@@ -173,7 +173,18 @@ async function renderMessages(task: TaskState): Promise<string> {
 }
 
 async function renderUserMessage(message: UserMessage): Promise<string> {
+    const isInternal = message.internal === true;
     let contentHtml = '';
+
+    if (isInternal) {
+        contentHtml += `<div class="inline-flex items-center gap-1 px-2.5 py-1 bg-amber-100 text-amber-700 text-xs font-medium rounded-full mb-3">
+            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+            </svg>
+            内部消息 (Internal Message)
+        </div>`;
+    }
+
     for (const part of message.content) {
         if (part instanceof TextMessagePart) {
             contentHtml += `<div class="prose prose-slate max-w-none">${await part.render()}</div>`;
@@ -182,16 +193,20 @@ async function renderUserMessage(message: UserMessage): Promise<string> {
         }
     }
 
+    const bubbleClass = isInternal
+        ? 'user-message-bubble bg-amber-50/60 rounded-2xl px-6 py-4 shadow-sm border border-amber-200/60'
+        : 'user-message-bubble bg-slate-50 rounded-2xl px-6 py-4 shadow-sm';
+
     return `
     <div class="message-container flex gap-4 p-6">
         <div class="flex-shrink-0">
             <div class="w-10 h-10 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-full flex items-center justify-center text-white font-semibold shadow-lg">
-                U
+                ${isInternal ? '⚙' : 'U'}
             </div>
         </div>
         <div class="flex-1 min-w-0">
-            <div class="message-author text-sm font-medium text-slate-700 mb-2">用户</div>
-            <div class="user-message-bubble bg-slate-50 rounded-2xl px-6 py-4 shadow-sm">
+            <div class="message-author text-sm font-medium text-slate-700 mb-2">${isInternal ? '系统 (内部)' : '用户'}</div>
+            <div class="${bubbleClass}">
                 ${contentHtml}
             </div>
         </div>
