@@ -30,6 +30,7 @@ import format from 'string-template';
 const SUBTASK_USER_MESSAGE_TEMPLATE = `
 请按照下面的要求执行任务，完成后通过 planning-attemptCompletion 工具提交结果。你的所有待提交的结果都要通过
 planning-attemptCompletion 工具的参数传递，避免通过写文件的形式传递任务结果交付件。
+无论任务成功、失败还是因缺少信息无法继续，都必须调用 planning-attemptCompletion 结束任务。
 
 ## 任务标题
 {title}
@@ -42,6 +43,12 @@ planning-attemptCompletion 工具的参数传递，避免通过写文件的形�
 `.trim();
 
 const MAIN_TASK_INCOMPLETE_TODOS_REMINDER = `你的待办列表中还有未完成的事项，请先完成所有待办事项（或将不再需要的待办标记为 completed），然后再调用 attemptCompletion 工具结束任务。`;
+
+const ENFORCE_ATTEMPT_COMPLETION_MESSAGE = `
+请使用 planning-attemptCompletion 工具来结束当前对话回合。
+无论你是已经完成了任务、遇到了无法解决的问题、还是需要补充信息或者向用户进行进一步的提问，都必须调用该工具。
+如果是之前的对话异常中断了，请你继续。
+`.trim();
 
 // ─── Pending SubTasks Registry ─────────────────────────────────────────────────
 
@@ -151,14 +158,21 @@ const ATTEMPT_COMPLETION_TOOL_NAME = 'planning-attemptCompletion';
 /**
  * 从任务的消息历史中提取 attemptCompletion 的结果（子任务专用）
  * 兼容新格式 (type/message) 和旧格式 (success/result)
+ *
+ * 注意：不检查 tc.status === 'success'，因为 stop() 在 handleExecute 内部被调用，
+ * 会通过 _stopResolvers 立即唤醒父任务的 waitUntilFinished，而此时 processToolCall
+ * 尚未将 tool_call.status 从 'running' 更新为 'success'（微任务排队顺序决定）。
+ * args_object 在 tool.execute 之前就已被解析设置，因此可以安全使用。
  */
 function extractAttemptCompletionResult(task: TaskState): { success: boolean; result: string; status?: 'success' | 'fail' | 'ask' } | null {
-    for (const message of task.chat_context.messages) {
+    const messages = task.chat_context.messages;
+    for (let i = messages.length - 1; i >= 0; i--) {
+        const message = messages[i];
         if (!(message instanceof AssistantMessage)) continue;
         for (const part of message.content) {
             if (part.type !== 'tool_call') continue;
             for (const tc of part.toolcalls) {
-                if (tc.tool_name === ATTEMPT_COMPLETION_TOOL_NAME && tc.status === 'success' && tc.args_object) {
+                if (tc.tool_name === ATTEMPT_COMPLETION_TOOL_NAME && tc.args_object) {
                     if ('type' in tc.args_object) {
                         return {
                             success: tc.args_object.type === 'success',
@@ -297,10 +311,7 @@ function registerSubTaskAttemptCompletionHook(subTask: TaskState): void {
             await appendSyntheticErrorAttemptCompletion(task, errorPart);
             return { operation: 'finish' };
         }
-        return {
-            operation: 'reject',
-            message: '如果任务尚未完成，请继续任务；如果完成了或者出错了，请使用 planning-attemptCompletion 工具来结束对话'
-        };
+        return { operation: 'reject', message: ENFORCE_ATTEMPT_COMPLETION_MESSAGE };
     });
 
     subTask.hooks.afterFinishTurn(async (task) => {
@@ -335,18 +346,12 @@ export function registerMainTaskAttemptCompletionHook(): void {
         // 检查待办事项是否都已完成
         const incompleteTodos = getIncompleteTodoCount(task);
         if (incompleteTodos !== null) {
-            return {
-                operation: 'reject',
-                message: MAIN_TASK_INCOMPLETE_TODOS_REMINDER
-            };
+            return { operation: 'reject', message: MAIN_TASK_INCOMPLETE_TODOS_REMINDER };
         }
 
         // 检查最后一条 AssistantMessage 是否调用了 attemptCompletion
         if (!hasAttemptCompletionInLastMessage(task)) {
-            return {
-                operation: 'reject',
-                message: '如果任务尚未完成，请继续任务；如果完成了或者出错了，请使用 planning-attemptCompletion 工具来结束对话'
-            };
+            return { operation: 'reject', message: ENFORCE_ATTEMPT_COMPLETION_MESSAGE };
         }
 
         return { operation: 'finish' };
@@ -748,7 +753,7 @@ export class CreateSubTaskTool extends BaseTool<typeof CreateSubTaskArgsSchema> 
                         : parsed.status === 'ask' ? chalk.yellowBright('❓') : chalk.redBright('✘');
                     const label = parsed.success
                         ? '成功'
-                        : parsed.status === 'ask' ? '需要补充信息' : '失败';
+                        : parsed.status === 'ask' ? '询问' : '失败';
                     body.push(`${icon} ${label}`);
                     if (parsed.result) {
                         body.push(chalk.dim('  结果: ') + truncText(parsed.result, width - 14));
@@ -936,7 +941,7 @@ export class WaitSubTaskTool extends BaseTool<typeof WaitSubTaskArgsSchema> {
                     : parsed.status === 'ask' ? chalk.yellowBright('❓') : chalk.redBright('✘');
                 const label = parsed.success
                     ? '成功'
-                    : parsed.status === 'ask' ? '需要补充信息' : '失败';
+                    : parsed.status === 'ask' ? '询问' : '失败';
                 body.push(`${icon} ${label}`);
                 if (parsed.result) {
                     body.push(chalk.dim('  结果: ') + truncText(parsed.result, width - 14));
@@ -1127,7 +1132,6 @@ export class AttemptCompletionSubTaskTool extends BaseTool<typeof AttemptComplet
 
         if (args.type === 'ask') {
             const body: string[] = [];
-            body.push(chalk.yellowBright('需要补充信息：'));
             if (args.message) {
                 const markdown = new Markdown(args.message, 0, 0, defaultMarkdownTheme);
                 body.push(...markdown.render(width - 4));
@@ -1211,7 +1215,7 @@ const AttemptCompletionMainTaskArgsSchema = z.object({
 
 export class AttemptCompletionMainTaskTool extends BaseTool<typeof AttemptCompletionMainTaskArgsSchema> {
     constructor() {
-        super('attemptCompletion', '完成当前轮次对话', AttemptCompletionMainTaskArgsSchema);
+        super('attemptCompletion', '结束当前对话轮次', AttemptCompletionMainTaskArgsSchema);
         this.setUniversalExecutor(this.handleExecute.bind(this));
     }
 
@@ -1236,14 +1240,13 @@ export class AttemptCompletionMainTaskTool extends BaseTool<typeof AttemptComple
 
         if (args.type === 'ask') {
             const body: string[] = [];
-            body.push(chalk.yellowBright('需要补充信息：'));
             if (args.message) {
                 const markdown = new Markdown(args.message, 0, 0, defaultMarkdownTheme);
                 body.push(...markdown.render(width - 4));
             }
             return new Card({
                 icon: '❓',
-                title: '需要补充信息',
+                title: '询问',
                 status: { icon: chalk.yellowBright('❙'), text: chalk.yellowBright('等待输入') },
                 body,
             }).render(width);
@@ -1274,7 +1277,7 @@ export class AttemptCompletionMainTaskTool extends BaseTool<typeof AttemptComple
             <div class="flex flex-col mt-1 mb-1 text-xs bg-amber-50/80 backdrop-blur-md border border-amber-200 py-2 px-3 rounded-xl shadow-sm w-fit max-w-2xl">
                 <div class="flex items-center space-x-2 mb-1">
                     <span class="text-sm">❓</span>
-                    <span class="font-medium text-amber-600">需要补充信息</span>
+                    <span class="font-medium text-amber-600">询问</span>
                 </div>
                 ${messageHtml ? `<div class="prose prose-slate prose-xs max-w-none">${messageHtml}</div>` : ''}
             </div>`;
