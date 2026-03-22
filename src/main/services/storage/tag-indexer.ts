@@ -180,7 +180,7 @@ export class TagIndexer extends Indexer {
     private itemToRecord(item: Item, tag: string): TagIndexRecord {
         return {
             item_id: item.item_id,
-            item_type: item.item_type,
+            item_type: this.columnName ?? '',
             tag: tag
         };
     }

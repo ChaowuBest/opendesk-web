@@ -266,7 +266,7 @@ export class BaseStorage {
     /**
      * 搜索方法 - 返回 SearchItem[]
      */
-    async search(_query: string[], filterConditions: FilterCondition[]): Promise<SearchItem[]> {
+    async search(filterConditions: FilterCondition[]): Promise<SearchItem[]> {
         let results: SearchItem[] = [];
         let hasInitialData = false;
 
