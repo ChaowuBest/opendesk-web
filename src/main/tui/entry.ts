@@ -278,16 +278,16 @@ export class OpenDeskTUI {
      * 设置全局待办触发器的任务创建回调
      */
     private setupTriggerTaskHandler(): void {
-        ApplicationRegistry.onTriggerTask = async (todoId: string, todoTitle: string, todoContent: string, trigger: any) => {
+        ApplicationRegistry.onTriggerTask = async (todoId: string, todoTitle: string, todoContent: string, trigger: any, deliver?: any) => {
             try {
                 const task = this.taskManagerState.createTask(this.model);
                 const systemPrompt = await this.agentDecl.createSystemPrompt();
                 await task.setSystemPrompt(systemPrompt);
 
-                // 如果触发器有 deliver 配置，设置任务的 origin
-                if (trigger?.deliver) {
-                    task.origin = trigger.deliver;
-                    logger.info(`触发器 deliver 已设置: channel=${trigger.deliver.channel}, accountId=${trigger.deliver.accountId}, recipientId=${trigger.deliver.recipientId}`);
+                // 如果待办有 deliver 配置，设置任务的 origin，使其结果投递到对应 channel
+                if (deliver) {
+                    task.origin = deliver;
+                    logger.info(`触发器 deliver 已设置: channel=${deliver.channel}, accountId=${deliver.accountId}, recipientId=${deliver.recipientId}`);
                 }
 
                 let triggerInfo = '';

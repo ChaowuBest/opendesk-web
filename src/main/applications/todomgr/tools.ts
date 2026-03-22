@@ -16,18 +16,10 @@ import { statusDisplay, truncText } from '../../tui/components/toolcall';
 import { z } from 'zod';
 import type { TaskTodo } from './common';
 import type { TaskState } from '../../aikernel/states/tasks';
-import type { Participant } from '../../aikernel/plugins/types';
 import { escapeHtml } from '../../utils/escape';
 import { type TodoMgrApplication } from './app';
 import { describeCron } from '../../utils/cron';
 import chalk from 'chalk';
-
-const ParticipantSchema: z.ZodType<Participant> = z.object({
-    type: z.literal('channel'),
-    channel: z.string().describe('Channel identifier, e.g. "feishu", "slack"'),
-    accountId: z.string().describe('Bot account ID within the channel'),
-    recipientId: z.string().describe('Message recipient - senderId for direct messages, groupId for group chats'),
-});
 
 
 const GetCurrentTimeArgsSchema = z.object({});
@@ -68,20 +60,17 @@ const EventTriggerSchema = z.object({
     type: z.literal('event'),
     bundleName: z.string().describe('触发事件的应用标识，如 "mailbox", "mcpmgr"'),
     eventName: z.string().describe('事件名称，如 "newEmailCountsUpdated"'),
-    deliver: ParticipantSchema.optional().describe('可选的回复投递目标，如果设置则任务结果会发送到这个 channel'),
 });
 
 const ScheduledTriggerSchema = z.object({
     type: z.literal('scheduled'),
     triggerAt: z.string()
         .describe('任务触发时间，必须使用UTC时间（ISO8601格式，以Z结尾），请先调用getCurrentTime工具获取当前UTC时间为基准进行计算'),
-    deliver: ParticipantSchema.optional().describe('可选的回复投递目标，如果设置则任务结果会发送到这个 channel'),
 });
 
 const CronTriggerSchema = z.object({
     type: z.literal('cron'),
     cronExpression: z.string().describe('crontab 表达式: "分 时 日 月 周"，如 "0 9 * * 1-5" 表示工作日每天9点, "*/30 * * * *" 表示每30分钟'),
-    deliver: ParticipantSchema.optional().describe('可选的回复投递目标，如果设置则任务结果会发送到这个 channel'),
 });
 
 const TriggerSchema = z.discriminatedUnion('type', [
@@ -162,6 +151,11 @@ function formatTriggerDisplay(trigger: any): string {
         default:
             return '';
     }
+}
+
+function formatDeliverDisplay(deliver: any): string {
+    if (!deliver) return '';
+    return `${deliver.channel}:${deliver.accountId} → ${deliver.recipientId}`;
 }
 
 // ========== TodoWrite 工具 ==========
@@ -387,6 +381,41 @@ export class AddGlobalTodoTool extends BaseTool<typeof AddGlobalTodoArgsSchema> 
         this.setExecutor(this.handleExecute.bind(this));
     }
 
+    renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
+        const args = toolcall.args_object as any;
+        const title = args?.['title'];
+        const content = args?.['content'];
+        const priority = args?.['priority'] || 'medium';
+        const category = args?.['category'];
+        const trigger = args?.['trigger'];
+
+        let html = '<div style="padding: 12px;">';
+        html += '<div style="font-weight: 600; margin-bottom: 8px;">🌍 添加全局待办</div>';
+
+        if (title) html += `<div style="margin-bottom: 4px;"><span style="color: #6b7280;">标题:</span> ${escapeHtml(String(title))}</div>`;
+        if (content) html += `<div style="margin-bottom: 4px;"><span style="color: #6b7280;">内容:</span> ${escapeHtml(String(content))}</div>`;
+        html += `<div style="margin-bottom: 4px;"><span style="color: #6b7280;">优先级:</span> ${escapeHtml(String(priority).toUpperCase())}</div>`;
+        if (category) html += `<div style="margin-bottom: 4px;"><span style="color: #6b7280;">分类:</span> ${escapeHtml(String(category))}</div>`;
+        if (trigger) html += `<div style="margin-bottom: 4px;"><span style="color: #6b7280;">触发器:</span> ${escapeHtml(formatTriggerDisplay(trigger))}</div>`;
+
+        if (toolcall.status === 'success' && toolcall.result) {
+            try {
+                const result = JSON.parse(toolcall.result);
+                html += `<div style="color: #16a34a; margin-top: 8px;">✓ 待办已添加，ID: ${escapeHtml(String(result.id))}</div>`;
+                if (result.todo?.deliver) {
+                    html += `<div style="color: #2563eb; margin-top: 4px;">📨 投递到: ${escapeHtml(formatDeliverDisplay(result.todo.deliver))}</div>`;
+                }
+            } catch {
+                html += '<div style="color: #16a34a; margin-top: 8px;">✓ 待办已添加!</div>';
+            }
+        } else if (toolcall.status === 'error' && toolcall.result) {
+            html += `<div style="color: #dc2626; margin-top: 8px;">${escapeHtml(String(toolcall.result))}</div>`;
+        }
+
+        html += '</div>';
+        return Promise.resolve(html);
+    }
+
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
         const args = toolcall.args_object as any;
         const title = args?.['title'];
@@ -417,6 +446,9 @@ export class AddGlobalTodoTool extends BaseTool<typeof AddGlobalTodoArgsSchema> 
             try {
                 const result = JSON.parse(toolcall.result);
                 body.push(chalk.dim('  ✓ 待办已添加，ID: ') + chalk.green(String(result.id)));
+                if (result.todo?.deliver) {
+                    body.push(chalk.dim('  📨 投递到: ') + chalk.blueBright(formatDeliverDisplay(result.todo.deliver)));
+                }
             } catch {
                 body.push(chalk.dim('  ✓ 待办已添加!'));
             }
@@ -436,14 +468,17 @@ export class AddGlobalTodoTool extends BaseTool<typeof AddGlobalTodoArgsSchema> 
         return map[priority] || chalk.yellow;
     }
 
-    private async handleExecute(args: z.output<typeof AddGlobalTodoArgsSchema>): Promise<string> {
+    private async handleExecute(args: z.output<typeof AddGlobalTodoArgsSchema>, taskState?: TaskState): Promise<string> {
         // 解析并验证 trigger 字段（处理大模型可能传入字符串形式的情况）
         const normalizedTrigger = validateAndNormalizeTrigger(args.trigger);
 
         // 验证 scheduled trigger 的时间格式
         validateScheduledTrigger(normalizedTrigger);
 
-        const result = await this.todoMgrApp.callWorker('addGlobalTodo', args.title, args.content, args.priority, args.category, normalizedTrigger);
+        // 从当前任务的 origin 继承 deliver（如飞书发起的会话，待办也投递到飞书）
+        const deliver = taskState?.origin;
+
+        const result = await this.todoMgrApp.callWorker('addGlobalTodo', args.title, args.content, args.priority, args.category, normalizedTrigger, deliver);
         const todo = result?.data ?? result;
         return JSON.stringify({ success: true, id: todo.id, todo });
     }
@@ -482,7 +517,7 @@ export class UpdateGlobalTodoTool extends BaseTool<typeof UpdateGlobalTodoArgsSc
 
         if (id) {
             body.push(chalk.dim('ID: ') + chalk.cyan(String(id)));
-            const updates = [];
+            const updates: string[] = [];
             if (args.title) updates.push('标题');
             if (args.content) updates.push('内容');
             if (args.status) updates.push('状态');
@@ -504,17 +539,21 @@ export class UpdateGlobalTodoTool extends BaseTool<typeof UpdateGlobalTodoArgsSc
         return new Card({ icon: '🔄', title: '更新全局待办', status: statusDisplay(toolcall.status), body }).render(width);
     }
 
-    private async handleExecute(args: z.output<typeof UpdateGlobalTodoArgsSchema>): Promise<string> {
+    private async handleExecute(args: z.output<typeof UpdateGlobalTodoArgsSchema>, taskState?: TaskState): Promise<string> {
         // 解析并验证 trigger 字段（处理大模型可能传入字符串形式的情况）
         const normalizedTrigger = validateAndNormalizeTrigger(args.trigger);
 
         // 验证 scheduled trigger 的时间格式
         validateScheduledTrigger(normalizedTrigger);
 
+        // 从当前任务的 origin 继承 deliver
+        const deliver = taskState?.origin;
+
         // 构建更新参数，使用规范化后的 trigger
         const updateArgs = {
             ...args,
             trigger: normalizedTrigger,
+            deliver,
         };
 
         const result = await this.todoMgrApp.callWorker('updateGlobalTodo', args.id, updateArgs);
@@ -564,8 +603,9 @@ export class ListGlobalTodosTool extends BaseTool<typeof ListGlobalTodosArgsSche
                         const priority = String(todo.priority || 'medium');
                         const priorityColor = this.getPriorityColor(priority);
                         const triggerInfo = todo.trigger ? ' ' + chalk.dim(formatTriggerDisplay(todo.trigger)) : '';
+                        const deliverInfo = todo.deliver ? ' ' + chalk.dim('📨 ' + formatDeliverDisplay(todo.deliver)) : '';
                         const displayText = todo.title || todo.content;
-                        body.push(`    ${statusColor(statusIcon)} ${priorityColor('[' + priority.toUpperCase() + ']')} ${truncText(String(displayText), width - 40)}${triggerInfo}`);
+                        body.push(`    ${statusColor(statusIcon)} ${priorityColor('[' + priority.toUpperCase() + ']')} ${truncText(String(displayText), width - 40)}${triggerInfo}${deliverInfo}`);
                     }
                     if (todos.length > 5) {
                         body.push(chalk.dim(`    ... 还有 ${todos.length - 5} 个`));
