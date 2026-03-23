@@ -13,14 +13,30 @@ export const MANAGE_CHANNELS_SKILL = `
 ---
 name: manage-channels
 description: 管理消息渠道插件，包括插件安装/配置、设备配对、查看连接状态等功能。
-    消息渠道插件主要用来支持用户通过第三方软件(飞书/小艺/)接入OpenDesk并与Agent对话。
+    消息渠道插件主要用来支持用户通过第三方软件（微信/飞书/Zalo/WhatsApp/小艺）接入OpenDesk并与Agent对话。
+    当用户说"登录微信"、"登录飞书"、"连接 WhatsApp"等时，使用 loginChannel 工具处理。
 ---
 
 # 消息渠道管理
 
-本技能提供对消息渠道插件（如飞书、小艺等）的完整管理功能，包括插件安装配置、设备配对和连接状态监控。
+本技能提供对消息渠道插件（微信/飞书/Zalo/WhatsApp/小艺等）的完整管理功能，包括插件安装配置、设备配对和连接状态监控。
 
 ## 插件安装与配置
+
+### 登录消息渠道（重要）
+
+当用户说"登录微信"、"登录飞书"、"连接 WhatsApp"、"登录 Zalo"等时，**必须使用 loginChannel 工具**，传入对应的 channelId：
+
+| 渠道 | channelId（传入 loginChannel） |
+|------|-------------------------------|
+| 微信 | \`openclaw-weixin\` |
+| 飞书 | \`feishu\` |
+| Zalo | \`zalouser\` |
+| WhatsApp | \`whatsapp\` |
+
+**注意**：微信的 channelId 是 \`openclaw-weixin\`，不是"weixin"也不是"tencent-weixin"。
+
+示例：当用户说"登录微信"时，立即调用 \`loginChannel(channelId="openclaw-weixin")\`，不要尝试其他 ID。
 
 ### 消息渠道1：飞书
 
@@ -62,6 +78,7 @@ description: 管理消息渠道插件，包括插件安装/配置、设备配对
 
 ### 内置消息渠道插件管理工具清单
 
+- 使用 **loginChannel** 登录消息渠道（微信/飞书/Zalo/WhatsApp），传入对应 channelId
 - 使用 createFeishuBot 通过手机扫码一键创建飞书机器人（推荐，最快捷的方式）
 - 使用 listChannelPlugins 查看已安装的插件
 - 使用 installChannelPlugin 安装新插件

@@ -29,7 +29,7 @@ export const PAIRING_REPLY_TEMPLATE = `为了让消息收发更加安全，你�
  * Ensure the openclaw shim is available in the extensions node_modules.
  * Generates the shim inline so plugins can resolve `openclaw/plugin-sdk`.
  */
-const SHIM_VERSION = '4';
+const SHIM_VERSION = '6';
 
 export function ensureOpenClawShim(extensionsDir: string): void {
     const shimTarget = path.join(extensionsDir, 'node_modules', 'openclaw');
@@ -165,6 +165,7 @@ export function isNormalizedSenderAllowed(s, l) { return !l||!l.length||l.includ
 
 export function evaluateSenderGroupAccess() { return { allowed: true, reason: 'open' }; }
 export function resolveSenderCommandAuthorization() { return { authorized: true }; }
+export async function resolveSenderCommandAuthorizationWithRuntime() { return { senderAllowedForCommands: true, commandAuthorized: true }; }
 export function resolveDefaultGroupPolicy() { return 'open'; }
 export function resolveRuntimeGroupPolicy(p) { return p?.policy||'open'; }
 export function resolveOpenProviderRuntimeGroupPolicy() { return { groupPolicy: 'open' }; }
@@ -528,7 +529,7 @@ export function buildInboundReplyDispatchBase(p) { return p || {}; }
 export function createInboundEnvelopeBuilder() { return (p) => p; }
 export function dispatchInboundReplyWithBase() { return Promise.resolve({ delivered: false }); }
 export function dispatchReplyFromConfigWithSettledDispatcher() { return Promise.resolve({ delivered: false }); }
-export function recordInboundSession() {}
+export function recordInboundSession(params) { return Promise.resolve(); }
 export function recordInboundSessionAndDispatchReply() { return Promise.resolve({ delivered: false }); }
 export function resolveInboundRouteEnvelopeBuilder() { return (p) => p; }
 export function resolveInboundRouteEnvelopeBuilderWithRuntime() { return (p) => p; }

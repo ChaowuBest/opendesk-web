@@ -59,8 +59,17 @@ import {
     GetChannelConfigTool,
     CreateFeishuBotTool,
     SendFileTool,
+    LoginChannelTool,
+    type LoginChannelState,
 } from './tools.js';
+import {
+    feishuAuthInit,
+    feishuAuthBegin,
+    feishuAuthPoll,
+} from './feishu-auth.js';
 import { NotificationManager } from '../../utils/notificationmgr.js';
+import { ToolResult } from '../../aikernel/tool.js';
+import qrcodeTerminal from 'qrcode-terminal';
 
 export interface ChannelRuntimeState {
     channelId: string;
@@ -71,6 +80,14 @@ export interface ChannelRuntimeState {
 }
 
 export type ChannelStateChangeCallback = (states: ChannelRuntimeState[]) => void;
+
+export interface LoginResult {
+    phase: 'success' | 'error';
+    message?: string;
+    appId?: string;
+    appSecret?: string;
+    error?: string;
+}
 
 export class ChannelMgrApplication extends BaseApplication {
 
@@ -134,6 +151,7 @@ export class ChannelMgrApplication extends BaseApplication {
         pluginToolset.addTool(new SetChannelConfigTool(this));
         pluginToolset.addTool(new GetChannelConfigTool(this));
         pluginToolset.addTool(new CreateFeishuBotTool());
+        pluginToolset.addTool(new LoginChannelTool(this));
 
         manageSkill.toolsets = [pairingToolset, pluginToolset];
 
@@ -349,6 +367,38 @@ export class ChannelMgrApplication extends BaseApplication {
                 warn: (...args: any[]) => logger.warn(`${tag} ${fmt(...args)}`),
                 platform: 'opendesk',
             },
+            // ── OpenClaw session / store ─────────────────────────────────────
+            session: {
+                resolveStorePath: (sessionCfg: any, opts: any) => {
+                    const sessionKey = `${cp.id}:${accountId}:${opts?.to || ''}`;
+                    return sessionKey;
+                },
+                recordInboundSession: async (params: any) => {
+                    logger.debug(`recordInboundSession: storePath=${params?.storePath}, sessionKey=${params?.sessionKey}`);
+                },
+            },
+            // ── OpenClaw reply / inbound ─────────────────────────────────────
+            reply: {
+                finalizeInboundContext: (ctx: any) => ctx || {},
+                resolveHumanDelayConfig: (cfg: any, agentId: any) => ({ delayMs: 0 }),
+            },
+            // ── OpenClaw routing ───────────────────────────────────────────────
+            routing: {
+                resolveAgentRoute: (params: any) => {
+                    const sessionKey = `${cp.id}:${accountId}:${params?.peer?.id || ''}`;
+                    return {
+                        agentId: params?.agentId || null,
+                        sessionKey,
+                        mainSessionKey: sessionKey,
+                    };
+                },
+            },
+            // ── OpenClaw commands runtime ──────────────────────────────────────
+            commands: {
+                resolveSenderCommandAuthorizationWithRuntime: async (params: any) => {
+                    return { senderAllowedForCommands: true, commandAuthorized: true };
+                },
+            },
             abortSignal: abortController.signal,
             dispatch: async (message: InboundChannelMessage) => {
                 logger.info(`[${cp.id}:${accountId}] 收到消息: ${message.senderName || message.senderId}`);
@@ -364,7 +414,11 @@ export class ChannelMgrApplication extends BaseApplication {
             setStatus: (status: ChannelAccountStatus) => {
                 const state = this.channelStates.get(stateKey);
                 if (state) {
-                    state.status = status;
+                    state.status = {
+                        ...state.status,
+                        ...status,
+                        online: status.online ?? state.status.online,
+                    };
                     this.notifyStateChange();
                 }
             },
@@ -532,6 +586,257 @@ export class ChannelMgrApplication extends BaseApplication {
             recipientId: participant.recipientId,
             label: entry.channelPlugin.meta.label,
         };
+    }
+
+    // ── Channel Login ──────────────────────────────────────────────────────────
+
+    /**
+     * 执行渠道登录流程。
+     * 优先使用 gateway.loginWithQrStart + loginWithQrWait（返回 QR URL，可在 UI 显示）。
+     * 若无 gateway QR 方法：对 Feishu 注入设备授权流程；对其他插件调用 auth.login（QR 输出到控制台）。
+     */
+    async loginChannel(channelId: string, accountId = 'default', result?: ToolResult): Promise<LoginResult> {
+        // 先在已加载的插件中查找
+        let entry = this.plugins.find(p => p.channelPlugin?.id === channelId);
+
+        // 如果未找到，尝试（重新）加载插件——可能是安装后未重启，或首次调用
+        if (!entry?.channelPlugin) {
+            logger.info(`[loginChannel] channel ${channelId} not found in ${this.plugins.length} loaded plugins, reloading...`);
+            const loadResult = await loadPlugins();
+            this.plugins = loadResult.entries;
+            this.pluginLoadErrors = loadResult.errors;
+            logger.info(`[loginChannel] reloaded ${this.plugins.length} plugins`);
+            entry = this.plugins.find(p => p.channelPlugin?.id === channelId);
+        }
+
+        if (!entry?.channelPlugin) {
+            return { phase: 'error', error: `未找到渠道: ${channelId}` };
+        }
+
+        const cp = entry.channelPlugin;
+        const config = this.getChannelConfig(channelId);
+
+        // 路径 1：gateway.loginWithQrStart + loginWithQrWait（返回 QR URL，推荐）
+        if (cp.gateway?.loginWithQrStart && cp.gateway?.loginWithQrWait) {
+            logger.info(`[loginChannel] using gateway loginWithQr for ${channelId}`);
+            return await this.loginWithQrGateway(cp, channelId, accountId, result);
+        }
+
+        // 路径 2：Feishu 特殊路径
+        if (channelId === 'feishu') {
+            return await this.loginFeishuDeviceAuth(accountId, result);
+        }
+
+        // 路径 3：plugin 有自己的 auth.login（Zalo/WhatsApp 等，QR 输出到控制台）
+        if (cp.auth?.login) {
+            logger.info(`[loginChannel] using plugin auth.login for ${channelId}`);
+            const runtime = this.buildRuntimeEnv(channelId);
+            await cp.auth.login({
+                cfg: config,
+                accountId,
+                runtime,
+                verbose: false,
+                channelInput: channelId,
+            });
+            return { phase: 'success', message: `${channelId} 登录完成` };
+        }
+
+        return { phase: 'error', error: `渠道 ${channelId} 不支持 login` };
+    }
+
+    /**
+     * 通过 gateway.loginWithQrStart / loginWithQrWait 执行扫码登录（WeChat 等）。
+     * 启动后立即推送 QR 状态，轮询等待扫码完成。
+     */
+    private async loginWithQrGateway(
+        cp: ChannelPlugin,
+        channelId: string,
+        accountId: string,
+        result?: ToolResult,
+    ): Promise<LoginResult> {
+        const updateState = (state: Partial<LoginChannelState>) => {
+            if (result) {
+                result.updateResultObject({ phase: 'polling', channelId, accountId, ...state } as LoginChannelState);
+            }
+        };
+
+        // Step 1: 启动，获取 QR 码
+        logger.info(`[loginChannel:${channelId}] Step 1: loginWithQrStart`);
+        const startResult = await cp.gateway!.loginWithQrStart!({
+            accountId,
+            force: false,
+            timeoutMs: 60_000,
+            verbose: false,
+        });
+
+        const qrUrl = (startResult as any).qrDataUrl || (startResult as any).qrcodeUrl;
+        if (!qrUrl) {
+            return { phase: 'error', error: `渠道 ${channelId} 未能生成二维码: ${startResult.message || '未知错误'}` };
+        }
+
+        // 推送 QR 码状态
+        let qrAscii = '';
+        try {
+            const qrGen = (qrcodeTerminal as any).default || qrcodeTerminal;
+            qrAscii = await new Promise<string>((resolve) => {
+                qrGen.generate(qrUrl, { small: true }, (code: string) => resolve(code));
+            });
+        } catch (e: any) {
+            qrAscii = `请打开链接扫码: ${qrUrl}`;
+        }
+        // CLI 渲染器仅在 polling 阶段打印二维码 ASCII。
+        updateState({ qr_ascii: qrAscii, verification_url: qrUrl, phase: 'polling' });
+
+        // 主动让出事件循环，让 TUI 完成一次渲染再进入阻塞等待。
+        // 否则 requestStreamRender 的 100ms  throttle 导致渲染被延迟到 loginWithQrWait 返回之后，
+        // 此时 phase 已变为 success，QR 码永远不会显示。
+        await new Promise(resolve => setImmediate(resolve));
+
+        // Step 2: 轮询等待扫码完成
+        const waitResult = await cp.gateway!.loginWithQrWait!({
+            accountId,
+            sessionKey: (startResult as any).sessionKey,
+            timeoutMs: 480_000,
+        });
+
+        if (waitResult.connected) {
+            updateState({
+                phase: 'success',
+                message: `${channelId} 登录成功！`,
+            });
+            return { phase: 'success', message: `${channelId} 登录成功` };
+        }
+
+        return { phase: 'error', error: waitResult.message || `${channelId} 登录失败` };
+    }
+
+    /**
+     * 为指定渠道构建 runtime 环境。
+     */
+    private buildRuntimeEnv(channelId: string) {
+        return {
+            log: (...args: any[]) => logger.info(`[${channelId}] ${args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ')}`),
+            error: (...args: any[]) => logger.error(`[${channelId}] ${args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ')}`),
+            warn: (...args: any[]) => logger.warn(`[${channelId}] ${args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ')}`),
+            platform: 'opendesk',
+        };
+    }
+
+    /**
+     * Feishu 设备授权登录流程。
+     * 通过飞书设备授权扫码，一键创建机器人并配置凭证。
+     */
+    private async loginFeishuDeviceAuth(accountId: string, result?: ToolResult): Promise<LoginResult> {
+        const FEISHU_BOT_POLL_TIMEOUT_SEC = 180;
+
+        const updateState = (state: Partial<LoginChannelState>) => {
+            if (result) {
+                result.updateResultObject({ phase: 'polling', channelId: 'feishu', accountId, ...state } as LoginChannelState);
+            }
+        };
+
+        // Step 1: Init
+        logger.info('[loginChannel:feishu] Step 1: init');
+        const initRes = await feishuAuthInit();
+        if (!initRes.supported_auth_methods?.includes('client_secret')) {
+            return { phase: 'error', error: '当前飞书环境不支持扫码创建机器人' };
+        }
+
+        // Step 2: Begin — 获取 device_code 和 QR URL
+        const beginRes = await feishuAuthBegin();
+        const { device_code, verification_uri_complete } = beginRes;
+        if (!device_code || !verification_uri_complete) {
+            return { phase: 'error', error: `飞书 begin 返回异常` };
+        }
+
+        // Step 3: 生成 QR 码 ASCII
+        let qrAscii = '';
+        try {
+            const qrGen = (qrcodeTerminal as any).default || qrcodeTerminal;
+            qrAscii = await new Promise<string>((resolve) => {
+                qrGen.generate(verification_uri_complete, { small: true }, (code: string) => resolve(code));
+            });
+        } catch (e: any) {
+            logger.warn(`[loginChannel:feishu] QR 生成失败: ${e?.message}`);
+            qrAscii = `请手动打开链接: ${verification_uri_complete}`;
+        }
+
+        updateState({ qr_ascii: qrAscii, verification_url: verification_uri_complete, phase: 'generating_qr' });
+
+        // 让出事件循环，确保 TUI 在进入轮询前先渲染一次（显示 QR 或初始提示）
+        await new Promise(resolve => setImmediate(resolve));
+
+        // Step 4: 轮询等待扫码
+        const startTime = Date.now();
+        const pollIntervalSec = beginRes.interval || 5;
+        const expireInSec = beginRes.expire_in || beginRes.expires_in || FEISHU_BOT_POLL_TIMEOUT_SEC;
+        const deadlineMs = Math.min(expireInSec, FEISHU_BOT_POLL_TIMEOUT_SEC) * 1000;
+
+        while (Date.now() - startTime < deadlineMs) {
+            await new Promise(resolve => setTimeout(resolve, pollIntervalSec * 1000));
+
+            let pollRes;
+            try {
+                pollRes = await feishuAuthPoll(device_code);
+            } catch (err: any) {
+                logger.warn(`[loginChannel:feishu] Poll 网络错误: ${err?.message}`);
+                continue;
+            }
+
+            if (pollRes.client_id && pollRes.client_secret) {
+                const appId = pollRes.client_id;
+                const appSecret = pollRes.client_secret;
+                const openId = pollRes.user_info?.open_id || '';
+
+                // 保存凭证到配置
+                const currentConfig = this.getConfig() || {};
+                const feishuConfig = currentConfig['feishu'] || {};
+                const accounts = feishuConfig['accounts'] || {};
+                accounts[accountId] = { appId, appSecret, enabled: true };
+
+                this.setConfig({
+                    ...currentConfig,
+                    'feishu': {
+                        ...feishuConfig,
+                        enabled: true,
+                        accounts,
+                    },
+                });
+
+                logger.info(`[loginChannel:feishu] 登录成功: ${appId}`);
+
+                updateState({
+                    phase: 'success',
+                    appId,
+                    appSecret,
+                    message: `飞书机器人创建成功，App ID: ${appId}`,
+                });
+
+                return {
+                    phase: 'success',
+                    message: `飞书机器人创建成功（App ID: ${appId}，Open ID: ${openId}）`,
+                    appId,
+                    appSecret,
+                };
+            }
+
+            if (pollRes.error) {
+                if (pollRes.error === 'authorization_pending' || pollRes.error === 'slow_down') {
+                    updateState({ phase: 'polling' });
+                    if (pollRes.error === 'slow_down') {
+                        // 飞书要求降低轮询频率
+                    }
+                } else if (pollRes.error === 'access_denied') {
+                    return { phase: 'error', error: '用户拒绝了授权' };
+                } else if (pollRes.error === 'expired_token') {
+                    return { phase: 'error', error: '二维码已过期，请重新调用' };
+                } else {
+                    return { phase: 'error', error: `${pollRes.error}${pollRes.error_description ? ': ' + pollRes.error_description : ''}` };
+                }
+            }
+        }
+
+        return { phase: 'error', error: '等待超时，二维码已过期' };
     }
 
     async stopAllChannels(): Promise<void> {
