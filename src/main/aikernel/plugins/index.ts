@@ -22,6 +22,8 @@ export {
     setPluginEnabled,
     loadPlugins,
     resetOpenClawShim,
+    getExtensionsDir,
+    invalidatePluginRequireCache,
 } from './manager.js';
 
 // Types

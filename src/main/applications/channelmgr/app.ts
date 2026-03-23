@@ -25,6 +25,7 @@ import {
     installPlugin,
     uninstallPlugin,
     setPluginEnabled,
+    invalidatePluginRequireCache,
 } from '../../aikernel/plugins/index.js';
 import type {
     PluginEntry,
@@ -36,7 +37,7 @@ import type {
     ChannelAccountSnapshot,
     Participant,
 } from '../../aikernel/plugins/types.js';
-import { registerChannelDispatch } from '../../aikernel/plugins/openclaw/api.js';
+import { registerChannelDispatch, unregisterChannelDispatch } from '../../aikernel/plugins/openclaw/api.js';
 import { ChannelMessageRouter, type ChannelReply } from './router.js';
 import { getTempDirectory } from '../filemgr/tools.js';
 import os from 'os';
@@ -144,10 +145,10 @@ export class ChannelMgrApplication extends BaseApplication {
         pairingToolset.addTool(new ListChannelStatusTool(this));
 
         const pluginToolset = new BaseToolset('channel-plugin-management');
-        pluginToolset.addTool(new InstallChannelPluginTool());
-        pluginToolset.addTool(new UninstallChannelPluginTool());
+        pluginToolset.addTool(new InstallChannelPluginTool(this));
+        pluginToolset.addTool(new UninstallChannelPluginTool(this));
         pluginToolset.addTool(new ListChannelPluginsTool());
-        pluginToolset.addTool(new ToggleChannelPluginTool());
+        pluginToolset.addTool(new ToggleChannelPluginTool(this));
         pluginToolset.addTool(new SetChannelConfigTool(this));
         pluginToolset.addTool(new GetChannelConfigTool(this));
         pluginToolset.addTool(new CreateFeishuBotTool());
@@ -616,19 +617,19 @@ export class ChannelMgrApplication extends BaseApplication {
         const cp = entry.channelPlugin;
         const config = this.getChannelConfig(channelId);
 
+        let loginResult: LoginResult;
+
         // 路径 1：gateway.loginWithQrStart + loginWithQrWait（返回 QR URL，推荐）
         if (cp.gateway?.loginWithQrStart && cp.gateway?.loginWithQrWait) {
             logger.info(`[loginChannel] using gateway loginWithQr for ${channelId}`);
-            return await this.loginWithQrGateway(cp, channelId, accountId, result);
+            loginResult = await this.loginWithQrGateway(cp, channelId, accountId, result);
         }
-
         // 路径 2：Feishu 特殊路径
-        if (channelId === 'feishu') {
-            return await this.loginFeishuDeviceAuth(accountId, result);
+        else if (channelId === 'feishu') {
+            loginResult = await this.loginFeishuDeviceAuth(accountId, result);
         }
-
         // 路径 3：plugin 有自己的 auth.login（Zalo/WhatsApp 等，QR 输出到控制台）
-        if (cp.auth?.login) {
+        else if (cp.auth?.login) {
             logger.info(`[loginChannel] using plugin auth.login for ${channelId}`);
             const runtime = this.buildRuntimeEnv(channelId);
             await cp.auth.login({
@@ -638,10 +639,22 @@ export class ChannelMgrApplication extends BaseApplication {
                 verbose: false,
                 channelInput: channelId,
             });
-            return { phase: 'success', message: `${channelId} 登录完成` };
+            loginResult = { phase: 'success', message: `${channelId} 登录完成` };
+        }
+        else {
+            return { phase: 'error', error: `渠道 ${channelId} 不支持 login` };
         }
 
-        return { phase: 'error', error: `渠道 ${channelId} 不支持 login` };
+        // 登录成功后自动重启该渠道的 gateway 连接，使消息收发立即生效
+        if (loginResult.phase === 'success') {
+            try {
+                await this.restartChannelPlugin(channelId);
+            } catch (err: any) {
+                logger.error(`[loginChannel] 登录成功但重启渠道失败: ${err?.message || err}`);
+            }
+        }
+
+        return loginResult;
     }
 
     /**
@@ -839,34 +852,148 @@ export class ChannelMgrApplication extends BaseApplication {
         return { phase: 'error', error: '等待超时，二维码已过期' };
     }
 
-    async stopAllChannels(): Promise<void> {
-        for (const plugin of this.plugins) {
-            const cp = plugin.channelPlugin;
-            if (!cp?.gateway?.stopAccount) continue;
-            const config = this.getChannelConfig(cp.id);
-            let accountIds: string[];
-            try { accountIds = cp.config.listAccountIds(config); } catch { accountIds = ['default']; }
+    /**
+     * 停止单个插件的指定 account（或全部 account）的 gateway 连接。
+     * 会清理 abortController、dispatch 注册、channelStates。
+     */
+    private async stopChannelPluginAccounts(cp: ChannelPlugin, accountIds: string[]): Promise<void> {
+        const config = this.getChannelConfig(cp.id);
+        for (const accountId of accountIds) {
+            const stateKey = `${cp.id}:${accountId}`;
+            try {
+                const ac = this.abortControllers.get(stateKey);
+                if (ac) {
+                    ac.abort();
+                    this.abortControllers.delete(stateKey);
+                }
 
-            for (const accountId of accountIds) {
-                try {
+                if (cp.gateway?.stopAccount) {
                     const account = cp.config.resolveAccount(config, accountId);
                     await cp.gateway.stopAccount({
                         accountId, account, cfg: config,
                         logger: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} },
                         dispatch: async () => {}, setStatus: () => {},
                     });
-                    const state = this.channelStates.get(`${cp.id}:${accountId}`);
-                    if (state) {
-                        state.status = { online: false, statusText: '已停止' };
-                        this.notifyStateChange();
-                    }
-                    this.emitEvent('channel:disconnected', { channelId: cp.id, accountId });
-                } catch (err: any) {
-                    logger.error(`停止消息插件 ${cp.id}:${accountId} 失败: ${err?.message || err}`);
                 }
+
+                unregisterChannelDispatch(cp.id, accountId);
+                this.channelStates.delete(stateKey);
+                this.emitEvent('channel:disconnected', { channelId: cp.id, accountId });
+            } catch (err: any) {
+                logger.error(`停止消息插件 ${cp.id}:${accountId} 失败: ${err?.message || err}`);
+                this.abortControllers.delete(stateKey);
+                unregisterChannelDispatch(cp.id, accountId);
+                this.channelStates.delete(stateKey);
             }
         }
+    }
+
+    async stopAllChannels(): Promise<void> {
+        for (const plugin of this.plugins) {
+            const cp = plugin.channelPlugin;
+            if (!cp) continue;
+            const config = this.getChannelConfig(cp.id);
+            let accountIds: string[];
+            try { accountIds = cp.config.listAccountIds(config); } catch { accountIds = ['default']; }
+            await this.stopChannelPluginAccounts(cp, accountIds);
+        }
         this.started = false;
+        this.notifyStateChange();
+    }
+
+    /**
+     * 重启指定渠道插件的 gateway 连接（先停止该插件的所有 account，再重新启动）。
+     * 用于 loginChannel 成功后立即建立消息收发通道。
+     */
+    async restartChannelPlugin(channelId: string): Promise<void> {
+        const entry = this.plugins.find(p => p.channelPlugin?.id === channelId);
+        if (!entry?.channelPlugin) {
+            logger.warn(`[channelmgr] restartChannelPlugin: 未找到渠道 ${channelId}`);
+            return;
+        }
+
+        const cp = entry.channelPlugin;
+
+        // Collect ALL running account IDs for this channel from the state map,
+        // plus any that the config says should exist, to ensure full cleanup.
+        const runningAccountIds = new Set<string>();
+        for (const [key] of this.channelStates) {
+            if (key.startsWith(channelId + ':')) {
+                runningAccountIds.add(key.slice(channelId.length + 1));
+            }
+        }
+        const config = this.getChannelConfig(channelId);
+        try {
+            for (const id of cp.config.listAccountIds(config)) {
+                runningAccountIds.add(id);
+            }
+        } catch { /* best effort */ }
+
+        const allAccountIds = Array.from(runningAccountIds);
+        if (allAccountIds.length === 0) allAccountIds.push('default');
+
+        logger.info(`[channelmgr] 正在重启渠道 ${channelId} 的连接 (accounts: ${allAccountIds.join(', ')})...`);
+
+        await this.stopChannelPluginAccounts(cp, allAccountIds);
+        await this.startChannelPlugin(entry);
+
+        this.notifyStateChange();
+        logger.info(`[channelmgr] 渠道 ${channelId} 重启完成`);
+    }
+
+    // ── 热重载 ───────────────────────────────────────────────────────────────
+
+    private reloadPromise?: Promise<void>;
+
+    /**
+     * 热重载所有消息渠道插件：停止旧插件 → 清除模块缓存 → 重新加载 → 启动新插件。
+     * 安装、卸载、启停、修改配置后自动调用，无需重启 OpenDesk。
+     * 内部有互斥保护，并发调用会等待前一次完成后再执行。
+     */
+    async reloadChannels(): Promise<void> {
+        if (this.reloadPromise) {
+            await this.reloadPromise;
+        }
+        this.reloadPromise = this.doReloadChannels();
+        try {
+            await this.reloadPromise;
+        } finally {
+            this.reloadPromise = undefined;
+        }
+    }
+
+    private async doReloadChannels(): Promise<void> {
+        logger.info('[channelmgr] 开始热重载消息渠道插件...');
+
+        // 1. Stop all running channel plugins
+        await this.stopAllChannels();
+
+        // 2. Invalidate CJS module cache so plugins are re-evaluated
+        invalidatePluginRequireCache();
+
+        // 3. Reload plugin list from disk
+        const loadResult = await loadPlugins();
+        this.plugins = loadResult.entries;
+        this.pluginLoadErrors = loadResult.errors;
+
+        const channelPlugins = this.plugins.filter(p => p.channelPlugin);
+        logger.info(`[channelmgr] 重新加载完成: ${this.plugins.length} 个插件, ${channelPlugins.length} 个消息插件`);
+
+        if (this.pluginLoadErrors.length > 0) {
+            for (const e of this.pluginLoadErrors) {
+                logger.error(`插件 ${e.id} 加载失败: ${e.error}`);
+            }
+        }
+
+        // 4. Start all channel plugins
+        for (const plugin of channelPlugins) {
+            await this.startChannelPlugin(plugin);
+        }
+
+        this.started = true;
+        this.notifyStateChange();
+
+        logger.info('[channelmgr] 热重载完成');
     }
 
     // ── CLI 斜杠命令 ─────────────────────────────────────────────────────────
@@ -927,10 +1054,12 @@ export class ChannelMgrApplication extends BaseApplication {
                 progress.show();
                 try {
                     const result = await installPlugin(rest);
-                    progress.hide();
                     if (result.success) {
-                        showInfo('安装成功', `插件安装成功: ${result.id}\n\n请重启 OpenDesk 以加载新插件`);
+                        await this.reloadChannels();
+                        progress.hide();
+                        showInfo('安装成功', `插件安装成功: ${result.id}\n\n消息渠道已自动重新加载。`);
                     } else {
+                        progress.hide();
                         showInfo('安装失败', `插件安装失败: ${result.error}`);
                     }
                 } catch (err: any) {
@@ -948,9 +1077,14 @@ export class ChannelMgrApplication extends BaseApplication {
                 progress.show();
                 try {
                     const result = await uninstallPlugin(rest);
-                    progress.hide();
-                    if (result.success) showInfo('卸载成功', `插件已卸载: ${rest}`);
-                    else showInfo('卸载失败', `插件卸载失败: ${result.error}`);
+                    if (result.success) {
+                        await this.reloadChannels();
+                        progress.hide();
+                        showInfo('卸载成功', `插件已卸载: ${rest}\n\n消息渠道已自动重新加载。`);
+                    } else {
+                        progress.hide();
+                        showInfo('卸载失败', `插件卸载失败: ${result.error}`);
+                    }
                 } catch (err: any) {
                     progress.hide();
                     showInfo('卸载失败', `插件卸载出错: ${err?.message ?? err}`);
@@ -958,19 +1092,27 @@ export class ChannelMgrApplication extends BaseApplication {
                 break;
             }
             case 'list': {
-                new PluginsListOverlay(tui).show();
+                new PluginsListOverlay(tui, () => this.reloadChannels()).show();
                 break;
             }
             case 'enable': {
                 if (!rest) { showInfo('用法提示', '/plugins enable <plugin-id>'); return; }
-                if (setPluginEnabled(rest, true)) showInfo('启用成功', `插件已启用: ${rest}\n\n请重启 OpenDesk 以生效`);
-                else showInfo('启用失败', `未找到插件: ${rest}`);
+                if (setPluginEnabled(rest, true)) {
+                    await this.reloadChannels();
+                    showInfo('启用成功', `插件已启用: ${rest}\n\n消息渠道已自动重新加载。`);
+                } else {
+                    showInfo('启用失败', `未找到插件: ${rest}`);
+                }
                 break;
             }
             case 'disable': {
                 if (!rest) { showInfo('用法提示', '/plugins disable <plugin-id>'); return; }
-                if (setPluginEnabled(rest, false)) showInfo('禁用成功', `插件已禁用: ${rest}\n\n请重启 OpenDesk 以生效`);
-                else showInfo('禁用失败', `未找到插件: ${rest}`);
+                if (setPluginEnabled(rest, false)) {
+                    await this.reloadChannels();
+                    showInfo('禁用成功', `插件已禁用: ${rest}\n\n消息渠道已自动重新加载。`);
+                } else {
+                    showInfo('禁用失败', `未找到插件: ${rest}`);
+                }
                 break;
             }
             default:

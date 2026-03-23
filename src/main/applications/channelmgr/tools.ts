@@ -197,19 +197,23 @@ const InstallChannelPluginSchema = z.object({
 });
 
 export class InstallChannelPluginTool extends BaseTool<typeof InstallChannelPluginSchema> {
-    constructor() {
+    private app: ChannelMgrApplication;
+
+    constructor(app: ChannelMgrApplication) {
         super(
             'installChannelPlugin',
             'Install a channel plugin by npm package name or .tgz URL. Example: "@openclaw/feishu"',
             InstallChannelPluginSchema,
         );
+        this.app = app;
         this.setExecutor(this.run.bind(this));
     }
 
     private async run(args: z.infer<typeof InstallChannelPluginSchema>): Promise<string> {
         const result = await installPlugin(args.spec);
         if (result.success) {
-            return `插件安装成功: ${result.id}\n\n请注意：需要重启 OpenDesk 才能加载新安装的插件。`;
+            await this.app.reloadChannels();
+            return `插件安装成功: ${result.id}\n\n消息渠道已自动重新加载。`;
         }
         return `插件安装失败: ${result.error}`;
     }
@@ -220,19 +224,23 @@ const UninstallChannelPluginSchema = z.object({
 });
 
 export class UninstallChannelPluginTool extends BaseTool<typeof UninstallChannelPluginSchema> {
-    constructor() {
+    private app: ChannelMgrApplication;
+
+    constructor(app: ChannelMgrApplication) {
         super(
             'uninstallChannelPlugin',
             'Uninstall a previously installed channel plugin by its ID.',
             UninstallChannelPluginSchema,
         );
+        this.app = app;
         this.setExecutor(this.run.bind(this));
     }
 
     private async run(args: z.infer<typeof UninstallChannelPluginSchema>): Promise<string> {
         const result = await uninstallPlugin(args.id);
         if (result.success) {
-            return `插件已卸载: ${args.id}`;
+            await this.app.reloadChannels();
+            return `插件已卸载: ${args.id}\n\n消息渠道已自动重新加载。`;
         }
         return `插件卸载失败: ${result.error}`;
     }
@@ -269,12 +277,15 @@ const ToggleChannelPluginSchema = z.object({
 });
 
 export class ToggleChannelPluginTool extends BaseTool<typeof ToggleChannelPluginSchema> {
-    constructor() {
+    private app: ChannelMgrApplication;
+
+    constructor(app: ChannelMgrApplication) {
         super(
             'toggleChannelPlugin',
-            'Enable or disable a channel plugin. Requires restart to take effect.',
+            'Enable or disable a channel plugin. Takes effect immediately.',
             ToggleChannelPluginSchema,
         );
+        this.app = app;
         this.setExecutor(this.run.bind(this));
     }
 
@@ -282,7 +293,8 @@ export class ToggleChannelPluginTool extends BaseTool<typeof ToggleChannelPlugin
         const ok = setPluginEnabled(args.id, args.enabled);
         if (ok) {
             const action = args.enabled ? '启用' : '禁用';
-            return `插件已${action}: ${args.id}\n\n请重启 OpenDesk 以使更改生效。`;
+            await this.app.reloadChannels();
+            return `插件已${action}: ${args.id}\n\n消息渠道已自动重新加载。`;
         }
         return `未找到插件: ${args.id}`;
     }
@@ -314,7 +326,8 @@ export class SetChannelConfigTool extends BaseTool<typeof SetChannelConfigSchema
                 [args.channelId]: args.config,
             };
             this.app.setConfig(updatedConfig);
-            return `渠道 ${args.channelId} 的配置已保存到 settings.json。\n\n请重启 OpenDesk 以使配置生效。\n\n已保存的配置:\n${JSON.stringify(args.config, null, 2)}`;
+            await this.app.reloadChannels();
+            return `渠道 ${args.channelId} 的配置已保存并自动重新加载。\n\n已保存的配置:\n${JSON.stringify(args.config, null, 2)}`;
         } catch (err: any) {
             return `保存配置失败: ${err?.message || err}`;
         }

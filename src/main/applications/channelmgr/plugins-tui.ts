@@ -34,9 +34,11 @@ export class PluginsListOverlay implements Component {
     private pendingPlugin?: PluginInstallRecord;
     private removeInputListener?: () => void;
     private overlayHandle?: any;
+    private onReload?: () => Promise<void>;
 
-    constructor(openDeskTUI: OpenDeskTUI) {
+    constructor(openDeskTUI: OpenDeskTUI, onReload?: () => Promise<void>) {
         this.openDeskTUI = openDeskTUI;
+        this.onReload = onReload;
         this.header = new Text(chalk.bold(' 插件管理'));
         this.box = new Box(1, 1);
         this.box.setBgFn((text: string) => chalk.bgHex('#2d2d2d').hex('#e0e0e0')(text));
@@ -140,12 +142,15 @@ export class PluginsListOverlay implements Component {
         this.openDeskTUI.tui.setFocus(this.list);
     }
 
-    private performToggle(plugin: PluginInstallRecord) {
+    private async performToggle(plugin: PluginInstallRecord) {
         const action = plugin.enabled ? '禁用' : '启用';
         const ok = setPluginEnabled(plugin.id, !plugin.enabled);
         if (ok) {
+            if (this.onReload) {
+                try { await this.onReload(); } catch { /* best effort */ }
+            }
             this.showList();
-            this.showResultMessage(`插件已${action}: ${plugin.id}\n\n请重启 OpenDesk 以生效`);
+            this.showResultMessage(`插件已${action}: ${plugin.id}\n\n消息渠道已自动重新加载。`);
         } else {
             this.showList();
             this.showResultMessage(`未找到插件: ${plugin.id}`);
@@ -200,10 +205,13 @@ export class PluginsListOverlay implements Component {
 
         try {
             const result = await uninstallPlugin(plugin.id);
+            if (result.success && this.onReload) {
+                try { await this.onReload(); } catch { /* best effort */ }
+            }
             this.cleanup();
             this.showList();
             if (result.success) {
-                this.showResultMessage(`插件已卸载: ${plugin.id}`);
+                this.showResultMessage(`插件已卸载: ${plugin.id}\n\n消息渠道已自动重新加载。`);
             } else {
                 this.showResultMessage(`插件卸载失败: ${result.error}`);
             }

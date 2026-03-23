@@ -34,10 +34,6 @@ description: 管理消息渠道插件，包括插件安装/配置、设备配对
 | Zalo | \`zalouser\` |
 | WhatsApp | \`whatsapp\` |
 
-**注意**：微信的 channelId 是 \`openclaw-weixin\`，不是"weixin"也不是"tencent-weixin"。
-
-示例：当用户说"登录微信"时，立即调用 \`loginChannel(channelId="openclaw-weixin")\`，不要尝试其他 ID。
-
 ### 消息渠道1：飞书
 
 #### 飞书 (Feishu / Lark)
@@ -76,9 +72,13 @@ description: 管理消息渠道插件，包括插件安装/配置、设备配对
 
 使用 setChannelConfig 工具时，channelId 填 "feishu"，config 填上述 JSON 对象。
 
+### 消息渠道2：微信
+
+插件包名: \`@tencent-weixin/openclaw-weixin\`
+
 ### 内置消息渠道插件管理工具清单
 
-- 使用 **loginChannel** 登录消息渠道（微信/飞书/Zalo/WhatsApp），传入对应 channelId
+- 使用 loginChannel 登录消息渠道（微信/飞书/Zalo/WhatsApp），传入对应 channelId
 - 使用 createFeishuBot 通过手机扫码一键创建飞书机器人（推荐，最快捷的方式）
 - 使用 listChannelPlugins 查看已安装的插件
 - 使用 installChannelPlugin 安装新插件
@@ -89,7 +89,7 @@ description: 管理消息渠道插件，包括插件安装/配置、设备配对
 
 ### 注意事项
 
-- 安装或配置插件后需要重启 OpenDesk 才能生效
+- 安装、卸载、启停或配置插件后会自动重新加载消息渠道，无需重启 OpenDesk
 - 配置信息会保存在 settings.json 的 applications.channelmgr 下
 
 ## 设备配对
