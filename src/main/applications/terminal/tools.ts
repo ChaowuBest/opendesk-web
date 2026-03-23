@@ -9,8 +9,8 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { spawn } from "child_process";
-import { BaseTool } from "../../aikernel/tool";
+import { spawn, execSync, type ChildProcess } from "child_process";
+import { BaseTool, ToolResult } from "../../aikernel/tool";
 import { ToolCall } from "../../aikernel/messages";
 import { escapeHtml } from "../../utils/escape";
 import { Card } from "../../tui/components/card";
@@ -21,7 +21,28 @@ import path from 'path';
 import chalk from "chalk";
 
 
-const MAX_CLI_OUTPUT_LINES = 8;
+const MAX_CLI_OUTPUT_LINES = 10;
+const LIVE_UPDATE_INTERVAL_MS = 200;
+
+/**
+ * 杀死进程及其整个子进程树。
+ * Windows: 使用 taskkill /F /T 强制终止进程树
+ * Unix:    向进程组发送 SIGTERM，若无进程组则直接 kill
+ */
+function killProcessTree(proc: ChildProcess): void {
+    if (!proc.pid) return;
+    try {
+        if (process.platform === 'win32') {
+            execSync(`taskkill /F /T /PID ${proc.pid}`, { stdio: 'ignore' });
+        } else {
+            try {
+                process.kill(-proc.pid, 'SIGTERM');
+            } catch {
+                proc.kill('SIGTERM');
+            }
+        }
+    } catch { /* process already dead */ }
+}
 
 /**
  * 通过 PATH 环境变量及平台备选路径查找可执行文件
@@ -81,24 +102,26 @@ function renderTerminalToolCallCli(shellLabel: string, toolcall: ToolCall, width
         body.push(chalk.blueBright('❯ ') + chalk.white(truncText(String(command), width - 10)));
     }
 
-    if (toolcall.status === 'running' && !toolcall.result) {
-        body.push(chalk.dim('  ⏳ 命令执行中…'));
-    } else if (toolcall.result) {
+    if (toolcall.result) {
         body.push(chalk.dim('─'.repeat(Math.min(40, Math.max(4, width - 8)))));
         const rawLines = toolcall.result.replace(/\r/g, '').split('\n');
-        const displayLines = rawLines.slice(0, MAX_CLI_OUTPUT_LINES);
+        if (rawLines.length > MAX_CLI_OUTPUT_LINES) {
+            body.push(chalk.dim.italic(`  … 共 ${rawLines.length} 行，显示最后 ${MAX_CLI_OUTPUT_LINES} 行`));
+        }
+        const displayLines = rawLines.slice(-MAX_CLI_OUTPUT_LINES);
         for (const line of displayLines) {
             body.push('  ' + chalk.dim(truncText(line, width - 10)));
         }
-        if (rawLines.length > MAX_CLI_OUTPUT_LINES) {
-            body.push(chalk.dim.italic(`  … 共 ${rawLines.length} 行输出`));
-        }
+    } else if (toolcall.status === 'running') {
+        body.push(chalk.dim('  ⏳ 命令执行中…'));
     }
 
+    const isInterrupted = toolcall.status !== 'running' &&
+        (toolcall.result?.startsWith('[超时]') || toolcall.result?.startsWith('[中断]'));
     return new Card({
         icon: '🖥',
         title: shellLabel,
-        status: statusDisplay(toolcall.status),
+        status: isInterrupted ? statusDisplay('interrupted') : statusDisplay(toolcall.status),
         body,
     }).render(width);
 }
@@ -166,6 +189,10 @@ function parseCdAndCommand(command: string): { cwd?: string; command: string } {
 }
 
 export class ExecutePowerShellTool extends BaseTool<typeof ExecutePowerShellArgsSchema> {
+    private runningProcesses: Set<ChildProcess> = new Set();
+    private _killedByStop = false;
+    private _stopPromises: Map<ChildProcess, Promise<void>> = new Map();
+
     constructor() {
         super(
             'executePowerShell',
@@ -173,7 +200,17 @@ export class ExecutePowerShellTool extends BaseTool<typeof ExecutePowerShellArgs
             ExecutePowerShellArgsSchema
         );
 
-        this.setExecutor(this.executeCommand);
+        this.setUniversalExecutor(this.executeCommand.bind(this));
+    }
+
+    async stop(): Promise<void> {
+        this._killedByStop = true;
+        const processes = Array.from(this.runningProcesses);
+        for (const proc of processes) {
+            killProcessTree(proc);
+        }
+        await Promise.all(Array.from(this._stopPromises.values()));
+        this._killedByStop = false;
     }
 
     async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
@@ -184,7 +221,7 @@ export class ExecutePowerShellTool extends BaseTool<typeof ExecutePowerShellArgs
         return renderTerminalToolCallCli('PowerShell', toolcall, width);
     }
 
-    async executeCommand(args: z.output<typeof ExecutePowerShellArgsSchema>): Promise<string> {
+    async executeCommand(args: z.output<typeof ExecutePowerShellArgsSchema>, result: ToolResult): Promise<void> {
         let command: string = args.command;
         let workingDirectory: string | undefined = args.workingDirectory;
         const timeout: number = args.timeout ?? 30000;
@@ -195,55 +232,66 @@ export class ExecutePowerShellTool extends BaseTool<typeof ExecutePowerShellArgs
             command = parsed.command;
         }
 
-        return new Promise((resolve) => {
-            if (!command || typeof command !== 'string') {
-                return resolve('请输入要执行的 PowerShell 命令。');
-            }
+        if (!command || typeof command !== 'string') {
+            result.updateResult('请输入要执行的 PowerShell 命令。');
+            return;
+        }
 
-            let cwd: string | undefined = undefined;
-            if (workingDirectory && typeof workingDirectory === 'string' && fs.existsSync(workingDirectory)) {
-                cwd = workingDirectory;
-            }
+        let cwd: string | undefined = undefined;
+        if (workingDirectory && typeof workingDirectory === 'string' && fs.existsSync(workingDirectory)) {
+            cwd = workingDirectory;
+        }
 
-            const utf8Command = `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ${command}`;
-            const powershell = spawn('powershell.exe', ['-NoProfile', '-Command', utf8Command], { cwd });
+        const utf8Command = `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ${command}`;
+        const proc = spawn('powershell.exe', ['-NoProfile', '-Command', utf8Command], { cwd });
+        this.runningProcesses.add(proc);
 
-            let stdout = '';
-            let stderr = '';
-            let timedOut = false;
-            let timeoutId: NodeJS.Timeout | undefined;
+        let output = '';
+        let timedOut = false;
+        let stopped = false;
+        let timeoutId: NodeJS.Timeout | undefined;
 
-            if (timeout > 0) {
-                timeoutId = setTimeout(() => {
-                    timedOut = true;
-                    powershell.kill('SIGTERM');
-                }, timeout);
-            }
+        if (timeout > 0) {
+            timeoutId = setTimeout(() => {
+                timedOut = true;
+                killProcessTree(proc);
+            }, timeout);
+        }
 
-            powershell.stdout.on('data', (data: Buffer) => {
-                stdout += data.toString('utf8');
-            });
+        proc.stdout.on('data', (data: Buffer) => { output += data.toString('utf8'); });
+        proc.stderr.on('data', (data: Buffer) => { output += data.toString('utf8'); });
 
-            powershell.stderr.on('data', (data: Buffer) => {
-                stderr += data.toString('utf8');
-            });
+        const updateTimer = setInterval(() => {
+            if (output) result.updateResult(output);
+        }, LIVE_UPDATE_INTERVAL_MS);
 
-            powershell.on('close', (code: number) => {
+        let resolveStopPromise: (() => void) | undefined;
+        this._stopPromises.set(proc, new Promise<void>(r => { resolveStopPromise = r; }));
+
+        return new Promise<void>((resolve) => {
+            const finish = (): boolean => {
+                if (stopped) return false;
+                stopped = true;
+                clearInterval(updateTimer);
                 if (timeoutId) clearTimeout(timeoutId);
-                let result = '';
-                if (timedOut) {
-                    result = `命令执行超时（${timeout}ms），已被强制终止。\n`;
-                }
-                if (stdout) { result += `标准输出流：\n${stdout}\n`; }
-                if (stderr) { result += `标准错误流：\n${stderr}\n`; }
-                if (!stdout && !stderr && !timedOut) { result = `进程退出，代码 ${code}`; }
-                const output = result.trim() || '命令执行完成。';
-                resolve(output);
+                this.runningProcesses.delete(proc);
+                this._stopPromises.delete(proc);
+                resolveStopPromise?.();
+                return true;
+            };
+
+            proc.on('close', (code: number | null) => {
+                if (!finish()) return;
+                if (timedOut) output = `[超时] 命令执行超时（${timeout}ms），已被强制终止。\n` + output;
+                else if (this._killedByStop) output = `[中断] 命令被用户终止。\n` + output;
+                result.updateResult(output.trim() || `进程退出，代码 ${code ?? 'killed'}`);
+                resolve();
             });
 
-            powershell.on('error', (err: Error) => {
-                if (timeoutId) clearTimeout(timeoutId);
-                resolve(`执行命令时出错: ${err.message}`);
+            proc.on('error', (err: Error) => {
+                if (!finish()) return;
+                result.updateResult(`执行命令时出错: ${err.message}`);
+                resolve();
             });
         });
     }
@@ -258,6 +306,9 @@ const ExecuteBashArgsSchema = z.object({
 
 export class ExecuteBashTool extends BaseTool<typeof ExecuteBashArgsSchema> {
     private bashPath: string;
+    private runningProcesses: Set<ChildProcess> = new Set();
+    private _killedByStop = false;
+    private _stopPromises: Map<ChildProcess, Promise<void>> = new Map();
 
     /**
      * @param bashPath bash 可执行文件路径，默认为 '/bin/bash'
@@ -272,62 +323,83 @@ export class ExecuteBashTool extends BaseTool<typeof ExecuteBashArgsSchema> {
         );
 
         this.bashPath = bashPath;
-        this.setExecutor(this.executeCommand);
+        this.setUniversalExecutor(this.executeCommand.bind(this));
     }
 
-    executeCommand(args: z.output<typeof ExecuteBashArgsSchema>): Promise<string> {
+    async stop(): Promise<void> {
+        this._killedByStop = true;
+        const processes = Array.from(this.runningProcesses);
+        for (const proc of processes) {
+            killProcessTree(proc);
+        }
+        await Promise.all(Array.from(this._stopPromises.values()));
+        this._killedByStop = false;
+    }
+
+    async executeCommand(args: z.output<typeof ExecuteBashArgsSchema>, result: ToolResult): Promise<void> {
         let command: string = args.command;
         let workingDirectory: string | undefined = args.workingDirectory;
         const timeout: number = args.timeout ?? 30000;
 
-        return new Promise((resolve) => {
-            if (!command || typeof command !== 'string') {
-                return resolve('请输入要执行的 bash 命令。');
-            }
+        if (!command || typeof command !== 'string') {
+            result.updateResult('请输入要执行的 bash 命令。');
+            return;
+        }
 
-            let cwd: string | undefined = undefined;
-            if (workingDirectory && typeof workingDirectory === 'string' && fs.existsSync(workingDirectory)) {
-                cwd = workingDirectory;
-            }
+        let cwd: string | undefined = undefined;
+        if (workingDirectory && typeof workingDirectory === 'string' && fs.existsSync(workingDirectory)) {
+            cwd = workingDirectory;
+        }
 
-            const bash = spawn(this.bashPath, ['-c', command], { cwd });
+        const proc = spawn(this.bashPath, ['-c', command], { cwd });
+        this.runningProcesses.add(proc);
 
-            let stdout = '';
-            let stderr = '';
-            let timedOut = false;
-            let timeoutId: NodeJS.Timeout | undefined;
+        let output = '';
+        let timedOut = false;
+        let stopped = false;
+        let timeoutId: NodeJS.Timeout | undefined;
 
-            if (timeout > 0) {
-                timeoutId = setTimeout(() => {
-                    timedOut = true;
-                    bash.kill('SIGTERM');
-                }, timeout);
-            }
+        if (timeout > 0) {
+            timeoutId = setTimeout(() => {
+                timedOut = true;
+                killProcessTree(proc);
+            }, timeout);
+        }
 
-            bash.stdout.on('data', (data: Buffer) => {
-                stdout += data.toString();
-            });
+        proc.stdout.on('data', (data: Buffer) => { output += data.toString(); });
+        proc.stderr.on('data', (data: Buffer) => { output += data.toString(); });
 
-            bash.stderr.on('data', (data: Buffer) => {
-                stderr += data.toString();
-            });
+        const updateTimer = setInterval(() => {
+            if (output) result.updateResult(output);
+        }, LIVE_UPDATE_INTERVAL_MS);
 
-            bash.on('close', (code: number) => {
+        let resolveStopPromise: (() => void) | undefined;
+        this._stopPromises.set(proc, new Promise<void>(r => { resolveStopPromise = r; }));
+
+        return new Promise<void>((resolve) => {
+            const finish = (): boolean => {
+                if (stopped) return false;
+                stopped = true;
+                clearInterval(updateTimer);
                 if (timeoutId) clearTimeout(timeoutId);
-                let result = ``;
-                if (timedOut) {
-                    result = `命令执行超时（${timeout}ms），已被强制终止。\n`;
-                }
-                if (stdout) { result += `标准输出流：\n${stdout}\n`; }
-                if (stderr) { result += `标准错误流：\n${stderr}\n`; }
-                if (!stdout && !stderr && !timedOut) { result = `进程退出，代码 ${code}`; }
-                const output = result.trim() || '命令执行完成。';
-                resolve(output);
+                this.runningProcesses.delete(proc);
+                this._stopPromises.delete(proc);
+                resolveStopPromise?.();
+                return true;
+            };
+
+            proc.on('close', (code: number | null) => {
+                if (!finish()) return;
+                if (timedOut) output = `[超时] 命令执行超时（${timeout}ms），已被强制终止。\n` + output;
+                else if (this._killedByStop) output = `[中断] 命令被用户终止。\n` + output;
+                result.updateResult(output.trim() || `进程退出，代码 ${code ?? 'killed'}`);
+                resolve();
             });
 
-            bash.on('error', (err: Error) => {
-                if (timeoutId) clearTimeout(timeoutId);
-                resolve(`执行命令时出错: ${err.message}`);
+            proc.on('error', (err: Error) => {
+                if (!finish()) return;
+                result.updateResult(`执行命令时出错: ${err.message}`);
+                resolve();
             });
         });
     }
@@ -348,6 +420,10 @@ const ExecuteZshArgsSchema = z.object({
 });
 
 export class ExecuteZshTool extends BaseTool<typeof ExecuteZshArgsSchema> {
+    private runningProcesses: Set<ChildProcess> = new Set();
+    private _killedByStop = false;
+    private _stopPromises: Map<ChildProcess, Promise<void>> = new Map();
+
     constructor() {
         super(
             'executeZsh',
@@ -355,67 +431,89 @@ export class ExecuteZshTool extends BaseTool<typeof ExecuteZshArgsSchema> {
             ExecuteZshArgsSchema
         );
 
-        this.setExecutor(this.executeCommand);
+        this.setUniversalExecutor(this.executeCommand.bind(this));
     }
 
-    executeCommand(args: z.output<typeof ExecuteZshArgsSchema>): Promise<string> {
+    async stop(): Promise<void> {
+        this._killedByStop = true;
+        const processes = Array.from(this.runningProcesses);
+        for (const proc of processes) {
+            killProcessTree(proc);
+        }
+        await Promise.all(Array.from(this._stopPromises.values()));
+        this._killedByStop = false;
+    }
+
+    async executeCommand(args: z.output<typeof ExecuteZshArgsSchema>, result: ToolResult): Promise<void> {
         let command: string = args.command;
         let workingDirectory: string | undefined = args.workingDirectory;
         const timeout: number = args.timeout ?? 30000;
 
-        return new Promise((resolve) => {
-            if (!command || typeof command !== 'string') {
-                return resolve('请输入要执行的 zsh 命令。');
-            }
+        if (!command || typeof command !== 'string') {
+            result.updateResult('请输入要执行的 zsh 命令。');
+            return;
+        }
 
-            const zshPath = getZshPath();
-            if (!zshPath) {
-                return resolve('错误：未找到 zsh 可执行文件。请确保 zsh 已安装并位于 PATH 环境变量中。');
-            }
+        const zshPath = getZshPath();
+        if (!zshPath) {
+            result.updateResult('错误：未找到 zsh 可执行文件。请确保 zsh 已安装并位于 PATH 环境变量中。');
+            return;
+        }
 
-            let cwd: string | undefined = undefined;
-            if (workingDirectory && typeof workingDirectory === 'string' && fs.existsSync(workingDirectory)) {
-                cwd = workingDirectory;
-            }
+        let cwd: string | undefined = undefined;
+        if (workingDirectory && typeof workingDirectory === 'string' && fs.existsSync(workingDirectory)) {
+            cwd = workingDirectory;
+        }
 
-            const zsh = spawn(zshPath, ['-c', command], { cwd });
+        const proc = spawn(zshPath, ['-c', command], { cwd });
+        this.runningProcesses.add(proc);
 
-            let stdout = '';
-            let stderr = '';
-            let timedOut = false;
-            let timeoutId: NodeJS.Timeout | undefined;
+        let output = '';
+        let timedOut = false;
+        let stopped = false;
+        let timeoutId: NodeJS.Timeout | undefined;
 
-            if (timeout > 0) {
-                timeoutId = setTimeout(() => {
-                    timedOut = true;
-                    zsh.kill('SIGTERM');
-                }, timeout);
-            }
+        if (timeout > 0) {
+            timeoutId = setTimeout(() => {
+                timedOut = true;
+                killProcessTree(proc);
+            }, timeout);
+        }
 
-            zsh.stdout.on('data', (data: Buffer) => {
-                stdout += data.toString();
-            });
+        proc.stdout.on('data', (data: Buffer) => { output += data.toString(); });
+        proc.stderr.on('data', (data: Buffer) => { output += data.toString(); });
 
-            zsh.stderr.on('data', (data: Buffer) => {
-                stderr += data.toString();
-            });
+        const updateTimer = setInterval(() => {
+            if (output) result.updateResult(output);
+        }, LIVE_UPDATE_INTERVAL_MS);
 
-            zsh.on('close', (code: number) => {
+        let resolveStopPromise: (() => void) | undefined;
+        this._stopPromises.set(proc, new Promise<void>(r => { resolveStopPromise = r; }));
+
+        return new Promise<void>((resolve) => {
+            const finish = (): boolean => {
+                if (stopped) return false;
+                stopped = true;
+                clearInterval(updateTimer);
                 if (timeoutId) clearTimeout(timeoutId);
-                let result = '';
-                if (timedOut) {
-                    result = `命令执行超时（${timeout}ms），已被强制终止。\n`;
-                }
-                if (stdout) { result += `标准输出流：\n${stdout}\n`; }
-                if (stderr) { result += `标准错误流：\n${stderr}\n`; }
-                if (!stdout && !stderr && !timedOut) { result = `进程退出，代码 ${code}`; }
-                const output = result.trim() || '命令执行完成。';
-                resolve(output);
+                this.runningProcesses.delete(proc);
+                this._stopPromises.delete(proc);
+                resolveStopPromise?.();
+                return true;
+            };
+
+            proc.on('close', (code: number | null) => {
+                if (!finish()) return;
+                if (timedOut) output = `[超时] 命令执行超时（${timeout}ms），已被强制终止。\n` + output;
+                else if (this._killedByStop) output = `[中断] 命令被用户终止。\n` + output;
+                result.updateResult(output.trim() || `进程退出，代码 ${code ?? 'killed'}`);
+                resolve();
             });
 
-            zsh.on('error', (err: Error) => {
-                if (timeoutId) clearTimeout(timeoutId);
-                resolve(`执行命令时出错: ${err.message}`);
+            proc.on('error', (err: Error) => {
+                if (!finish()) return;
+                result.updateResult(`执行命令时出错: ${err.message}`);
+                resolve();
             });
         });
     }

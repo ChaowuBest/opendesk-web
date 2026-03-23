@@ -17,8 +17,9 @@ export function statusDisplay(status: string): CardStatus {
     switch (status) {
         case 'pending': return { icon: chalk.dim('○'), text: chalk.dim('等待中') };
         case 'running': return { icon: chalk.blueBright('●'), text: chalk.blueBright('执行中…') };
-        case 'success': return { icon: chalk.greenBright('✔'), text: chalk.greenBright('完成') };
-        case 'error':   return { icon: chalk.redBright('✘'), text: chalk.redBright('失败') };
+        case 'success':     return { icon: chalk.greenBright('✔'), text: chalk.greenBright('完成') };
+        case 'interrupted': return { icon: chalk.yellowBright('⊘'), text: chalk.yellowBright('中断') };
+        case 'error':       return { icon: chalk.redBright('✘'), text: chalk.redBright('失败') };
         default:        return { icon: chalk.dim('○'), text: chalk.dim(status) };
     }
 }
