@@ -42,9 +42,15 @@ export class GetCurrentTimeTool extends BaseTool<typeof GetCurrentTimeArgsSchema
         const now = new Date();
         const iso = now.toISOString();
         const locale = now.toLocaleString();
-        const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
-        // 以 Markdown bullet 格式返回，便于阅读和复用
+        // 使用 getTimezoneOffset() 获取更可靠的时区偏移量
+        const offsetMin = -now.getTimezoneOffset(); // e.g. +480 for UTC+8
+        const offsetHours = Math.floor(Math.abs(offsetMin) / 60);
+        const offsetRemainingMin = Math.abs(offsetMin) % 60;
+        const offsetSign = offsetMin >= 0 ? '+' : '-';
+        const offsetStr = `${offsetSign}${String(offsetHours).padStart(2, '0')}:${String(offsetRemainingMin).padStart(2, '0')}`;
+        const timezone = `UTC${offsetStr}`;
+
         return [
             `- **UTC 时间**: ${iso}`,
             `- **当地时间**: ${locale}`,

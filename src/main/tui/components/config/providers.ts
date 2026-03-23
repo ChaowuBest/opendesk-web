@@ -18,6 +18,7 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     { name: 'siliconflow', displayName: '硅基流动', base_url: 'https://api.siliconflow.cn/v1' },
     { name: 'deepseek', displayName: '深度求索', base_url: 'https://api.deepseek.com' },
     { name: 'z-ai', displayName: '智谱开放平台', base_url: 'https://open.bigmodel.cn/api/paas/v4' },
+    { name: 'z-ai-code', displayName: '智谱开放平台(CodingPlan)', base_url: 'https://open.bigmodel.cn/api/coding/paas/v4' },
     { name: 'minimaxi', displayName: 'MiniMax', base_url: 'https://api.minimaxi.com/v1' },
     { name: 'local', displayName: 'Ollama', base_url: 'http://127.0.0.1:11434/v1' },
     { name: 'lmstudio', displayName: 'LM Studio', base_url: 'http://127.0.0.1:1234/v1' },
