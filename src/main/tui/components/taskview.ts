@@ -172,6 +172,7 @@ export class ToolCallView implements Component {
     private invalidated = true;
     private lastWidth?: number;
     private cachedOutput?: string[];
+    private lastRenderedStatus?: string;
 
     constructor(toolCall: ToolCall) {
         this.toolCall = toolCall;
@@ -183,9 +184,11 @@ export class ToolCallView implements Component {
     }
 
     render(width: number): string[] {
-        if (!this.invalidated && this.lastWidth === width && this.cachedOutput) {
+        const statusChanged = this.toolCall.status !== this.lastRenderedStatus;
+        if (!statusChanged && !this.invalidated && this.lastWidth === width && this.cachedOutput) {
             return this.cachedOutput;
         }
+        this.lastRenderedStatus = this.toolCall.status;
         this.lastWidth = width;
 
         try {
@@ -199,7 +202,6 @@ export class ToolCallView implements Component {
             }
         } catch (error) {
             logger.error(`Error rendering tool call ${this.toolCall.tool_name}: ${error}`);
-            // 不做处理 继续执行并使用默认渲染 不中断渲染流程
         }
 
         this.cachedOutput = this.defaultView.render(width);
@@ -215,6 +217,7 @@ export class ToolCallMessagePartView implements Component {
     private lastWidth?: number;
     private cachedOutput?: string[];
     private viewMap: Map<ToolCall, ToolCallView> = new Map();
+    private lastRenderedStatuses: Map<ToolCall, string> = new Map();
 
     setToolcalls(toolcalls: ToolCall[]) {
         for (const toolcall of toolcalls) {
@@ -230,18 +233,31 @@ export class ToolCallMessagePartView implements Component {
         this.invalidated = true;
     }
 
+    needsFreshRender(): boolean {
+        for (const tc of this.viewMap.keys()) {
+            if (tc.status === 'running') return true;
+            if (this.lastRenderedStatuses.get(tc) !== tc.status) return true;
+        }
+        return false;
+    }
+
     invalidate() {
         this.box.invalidate();
         this.invalidated = true;
     }
 
     render(width: number): string[] {
-        if (!this.invalidated && this.lastWidth === width && this.cachedOutput) {
+        const fresh = this.needsFreshRender();
+        if (!fresh && !this.invalidated && this.lastWidth === width && this.cachedOutput) {
             return this.cachedOutput;
         }
+        if (fresh) this.box.invalidate();
         this.lastWidth = width;
         this.cachedOutput = this.box.render(width);
         this.invalidated = false;
+        for (const tc of this.viewMap.keys()) {
+            this.lastRenderedStatuses.set(tc, tc.status);
+        }
         return this.cachedOutput;
     }
 }
@@ -512,10 +528,21 @@ export class AssistantMessageView implements Component {
         this.invalidated = true;
     }
 
+    private hasToolCallUpdates(): boolean {
+        for (const part of this.parts) {
+            if (part instanceof ToolCallMessagePartView && part.needsFreshRender()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     render(width: number): string[] {
-        if (!this.invalidated && this.lastWidth === width && this.cachedOutput) {
+        const fresh = this.hasToolCallUpdates();
+        if (!fresh && !this.invalidated && this.lastWidth === width && this.cachedOutput) {
             return this.cachedOutput;
         }
+        if (fresh) this.box.invalidate();
         this.lastWidth = width;
         this.cachedOutput = this.box.render(width);
         this.invalidated = false;

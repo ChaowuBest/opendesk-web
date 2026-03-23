@@ -382,6 +382,14 @@ function buildPluginRuntime() {
                 },
             },
 
+            // ── session ────────────────────────────────────────────────────
+            session: {
+                resolveStorePath: (sessionCfg: any, opts: any) => {
+                    return `${opts?.agentId || 'default'}`;
+                },
+                recordInboundSession: async (_params: any) => {},
+            },
+
             // ── media ────────────────────────────────────────────────────
             media: {
                 saveMediaBuffer: async (

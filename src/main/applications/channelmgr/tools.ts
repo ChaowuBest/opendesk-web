@@ -197,19 +197,23 @@ const InstallChannelPluginSchema = z.object({
 });
 
 export class InstallChannelPluginTool extends BaseTool<typeof InstallChannelPluginSchema> {
-    constructor() {
+    private app: ChannelMgrApplication;
+
+    constructor(app: ChannelMgrApplication) {
         super(
             'installChannelPlugin',
             'Install a channel plugin by npm package name or .tgz URL. Example: "@openclaw/feishu"',
             InstallChannelPluginSchema,
         );
+        this.app = app;
         this.setExecutor(this.run.bind(this));
     }
 
     private async run(args: z.infer<typeof InstallChannelPluginSchema>): Promise<string> {
         const result = await installPlugin(args.spec);
         if (result.success) {
-            return `插件安装成功: ${result.id}\n\n请注意：需要重启 OpenDesk 才能加载新安装的插件。`;
+            await this.app.reloadChannels();
+            return `插件安装成功: ${result.id}\n\n消息渠道已自动重新加载。`;
         }
         return `插件安装失败: ${result.error}`;
     }
@@ -220,19 +224,23 @@ const UninstallChannelPluginSchema = z.object({
 });
 
 export class UninstallChannelPluginTool extends BaseTool<typeof UninstallChannelPluginSchema> {
-    constructor() {
+    private app: ChannelMgrApplication;
+
+    constructor(app: ChannelMgrApplication) {
         super(
             'uninstallChannelPlugin',
             'Uninstall a previously installed channel plugin by its ID.',
             UninstallChannelPluginSchema,
         );
+        this.app = app;
         this.setExecutor(this.run.bind(this));
     }
 
     private async run(args: z.infer<typeof UninstallChannelPluginSchema>): Promise<string> {
         const result = await uninstallPlugin(args.id);
         if (result.success) {
-            return `插件已卸载: ${args.id}`;
+            await this.app.reloadChannels();
+            return `插件已卸载: ${args.id}\n\n消息渠道已自动重新加载。`;
         }
         return `插件卸载失败: ${result.error}`;
     }
@@ -269,12 +277,15 @@ const ToggleChannelPluginSchema = z.object({
 });
 
 export class ToggleChannelPluginTool extends BaseTool<typeof ToggleChannelPluginSchema> {
-    constructor() {
+    private app: ChannelMgrApplication;
+
+    constructor(app: ChannelMgrApplication) {
         super(
             'toggleChannelPlugin',
-            'Enable or disable a channel plugin. Requires restart to take effect.',
+            'Enable or disable a channel plugin. Takes effect immediately.',
             ToggleChannelPluginSchema,
         );
+        this.app = app;
         this.setExecutor(this.run.bind(this));
     }
 
@@ -282,7 +293,8 @@ export class ToggleChannelPluginTool extends BaseTool<typeof ToggleChannelPlugin
         const ok = setPluginEnabled(args.id, args.enabled);
         if (ok) {
             const action = args.enabled ? '启用' : '禁用';
-            return `插件已${action}: ${args.id}\n\n请重启 OpenDesk 以使更改生效。`;
+            await this.app.reloadChannels();
+            return `插件已${action}: ${args.id}\n\n消息渠道已自动重新加载。`;
         }
         return `未找到插件: ${args.id}`;
     }
@@ -314,7 +326,8 @@ export class SetChannelConfigTool extends BaseTool<typeof SetChannelConfigSchema
                 [args.channelId]: args.config,
             };
             this.app.setConfig(updatedConfig);
-            return `渠道 ${args.channelId} 的配置已保存到 settings.json。\n\n请重启 OpenDesk 以使配置生效。\n\n已保存的配置:\n${JSON.stringify(args.config, null, 2)}`;
+            await this.app.reloadChannels();
+            return `渠道 ${args.channelId} 的配置已保存并自动重新加载。\n\n已保存的配置:\n${JSON.stringify(args.config, null, 2)}`;
         } catch (err: any) {
             return `保存配置失败: ${err?.message || err}`;
         }
@@ -349,6 +362,182 @@ export class GetChannelConfigTool extends BaseTool<typeof GetChannelConfigSchema
         } catch (err: any) {
             return `获取配置失败: ${err?.message || err}`;
         }
+    }
+}
+
+// ── Login Channel Tool ───────────────────────────────────────────────────────
+
+export interface LoginChannelState {
+    phase: 'init' | 'generating_qr' | 'polling' | 'success' | 'error';
+    channelId?: string;
+    accountId?: string;
+    qr_ascii?: string;
+    verification_url?: string;
+    appId?: string;
+    appSecret?: string;
+    message?: string;
+    error?: string;
+}
+
+const LoginChannelSchema = z.object({
+    channelId: z.string().describe('消息渠道的 ID。有效值：\n  - "openclaw-weixin"（微信）\n  - "feishu"（飞书）\n  - "zalouser"（Zalo）\n  - "whatsapp"（WhatsApp）\n注意：微信的 ID 是 "openclaw-weixin"，不是 "weixin" 或 "tencent-weixin"'),
+    accountId: z.string().default('default').describe('账户 ID，默认为 "default"'),
+});
+
+export class LoginChannelTool extends BaseTool<typeof LoginChannelSchema> {
+    private app: ChannelMgrApplication;
+
+    constructor(app: ChannelMgrApplication) {
+        super(
+            'loginChannel',
+            '触发消息渠道的登录流程。支持的 channelId：\n  - "openclaw-weixin"：微信登录（扫码）\n  - "feishu"：飞书登录（扫码创建机器人）\n  - "zalouser"：Zalo 登录（扫码）\n  - "whatsapp"：WhatsApp 登录（扫码）\n登录成功后会返回结果。注意：微信 channelId 必须使用 "openclaw-weixin"。',
+            LoginChannelSchema,
+        );
+        this.app = app;
+        this.setUniversalExecutor(this.run.bind(this));
+    }
+
+    async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
+        const state = toolcall.result_object as LoginChannelState | undefined;
+        if (!state) return undefined;
+
+        if (state.phase === 'generating_qr' || state.phase === 'polling') {
+            const channelLabel = state.channelId || '未知渠道';
+            const escUrl = this.escHtml(state.verification_url || '');
+            const qrImageUrl = state.verification_url
+                ? `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(state.verification_url)}`
+                : '';
+
+            return `
+            <div class="mt-3 mb-3 p-5 bg-white/90 backdrop-blur-md border border-slate-200 rounded-2xl shadow-sm" style="max-width: 320px;">
+                <div class="text-sm font-semibold text-slate-700 mb-3 flex items-center gap-2">
+                    <div class="h-2 w-2 rounded-full bg-blue-500 animate-pulse ring-4 ring-blue-100/50"></div>
+                    ${channelLabel} 扫码登录
+                </div>
+                ${qrImageUrl ? `<div class="flex justify-center p-3 bg-white rounded-xl border border-slate-100">
+                    <img src="${qrImageUrl}" alt="${channelLabel} 二维码" width="200" height="200" style="display: block;" />
+                </div>` : ''}
+                <p class="text-xs text-slate-500 mt-3 text-center">请使用对应 App 扫描上方二维码</p>
+                ${escUrl ? `<a href="${escUrl}" target="_blank" class="block mt-2 text-xs text-blue-500 hover:text-blue-600 text-center break-all">${escUrl}</a>` : ''}
+                <div class="flex items-center justify-center gap-1.5 mt-3">
+                    <div class="h-1.5 w-1.5 rounded-full bg-blue-400 animate-bounce" style="animation-delay: 0ms;"></div>
+                    <div class="h-1.5 w-1.5 rounded-full bg-blue-400 animate-bounce" style="animation-delay: 150ms;"></div>
+                    <div class="h-1.5 w-1.5 rounded-full bg-blue-400 animate-bounce" style="animation-delay: 300ms;"></div>
+                    <span class="ml-1 text-xs text-slate-400">等待扫码中...</span>
+                </div>
+            </div>`;
+        }
+
+        if (state.phase === 'success') {
+            const lines: string[] = [];
+            lines.push(`渠道 ${state.channelId} 登录成功！`);
+            if (state.message) lines.push(state.message);
+            if (state.appId) lines.push(`App ID: ${state.appId}`);
+            if (state.appSecret) lines.push(`App Secret: ${state.appSecret.slice(0, 6)}****`);
+            return `
+            <div class="mt-3 mb-3 p-5 bg-white/90 backdrop-blur-md border border-emerald-200 rounded-2xl shadow-sm" style="max-width: 320px;">
+                <div class="text-sm font-semibold text-emerald-700 mb-3 flex items-center gap-2">
+                    <div class="h-2.5 w-2.5 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.6)]"></div>
+                    登录成功
+                </div>
+                <div class="text-xs text-slate-600 space-y-1">${lines.map(l => `<p>${this.escHtml(l)}</p>`).join('')}</div>
+            </div>`;
+        }
+
+        if (state.phase === 'error') {
+            return `
+            <div class="mt-3 mb-3 p-4 bg-white/90 backdrop-blur-md border border-rose-200 rounded-2xl shadow-sm" style="max-width: 320px;">
+                <div class="text-sm font-semibold text-rose-600 flex items-center gap-2">
+                    <div class="h-2.5 w-2.5 rounded-full bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.5)]"></div>
+                    登录失败
+                </div>
+                <p class="text-xs text-rose-500 mt-2">${this.escHtml(state.error || '未知错误')}</p>
+            </div>`;
+        }
+
+        return undefined;
+    }
+
+    renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
+        const state = toolcall.result_object as LoginChannelState | undefined;
+        if (!state) return undefined;
+
+        if (state.phase === 'init' || state.phase === 'generating_qr') {
+            return [`  ⏳ 正在启动 ${state.channelId} 登录流程...`];
+        }
+
+        if (state.phase === 'polling') {
+            const lines: string[] = [];
+            lines.push(`  📱 请使用 ${state.channelId} App 扫描下方二维码登录:`);
+            lines.push('');
+            if (state.qr_ascii) {
+                for (const line of state.qr_ascii.split('\n')) {
+                    lines.push('  ' + line);
+                }
+            }
+            lines.push('');
+            if (state.verification_url) lines.push('  🔗 ' + state.verification_url);
+            lines.push('  ⏳ 等待扫码中...');
+            return lines;
+        }
+
+        if (state.phase === 'success') {
+            const lines: string[] = [`  ✅ ${state.channelId} 登录成功！`];
+            if (state.message) lines.push(`     ${state.message}`);
+            if (state.appId) lines.push(`     App ID: ${state.appId}`);
+            return lines;
+        }
+
+        if (state.phase === 'error') {
+            return [`  ❌ 登录失败: ${state.error || '未知错误'}`];
+        }
+
+        return undefined;
+    }
+
+    private async run(args: z.output<typeof LoginChannelSchema>, result: ToolResult): Promise<void> {
+        const { channelId, accountId } = args;
+
+        logger.info(`[loginChannel] channel=${channelId}, account=${accountId}`);
+
+        result.updateResultObject({ phase: 'init', channelId, accountId } satisfies LoginChannelState);
+
+        try {
+            // 尝试通过 ChannelMgrApplication 执行登录
+            const loginResult = await this.app.loginChannel(channelId, accountId, result);
+
+            if (loginResult.phase === 'success') {
+                result.updateResultObject({
+                    phase: 'success',
+                    channelId,
+                    accountId,
+                    message: loginResult.message,
+                    appId: loginResult.appId,
+                    appSecret: loginResult.appSecret,
+                } satisfies LoginChannelState);
+                result.updateResult(loginResult.message || `${channelId} 登录成功`);
+            } else if (loginResult.phase === 'error') {
+                result.updateResultObject({
+                    phase: 'error',
+                    channelId,
+                    accountId,
+                    error: loginResult.error,
+                } satisfies LoginChannelState);
+                throw new Error(loginResult.error);
+            }
+        } catch (err: any) {
+            result.updateResultObject({
+                phase: 'error',
+                channelId,
+                accountId,
+                error: err?.message || String(err),
+            } satisfies LoginChannelState);
+            throw err;
+        }
+    }
+
+    private escHtml(s: string): string {
+        return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     }
 }
 

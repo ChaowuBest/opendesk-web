@@ -1,4 +1,5 @@
 import type { OpenDeskTUI } from "../entry.js";
+import { AssistantMessage } from "../../aikernel/messages.js";
 import { logger } from "../../utils/logger.js";
 
 
@@ -21,6 +22,21 @@ export function registerStopCommand(tui: OpenDeskTUI): void {
             if (currentTask.task_status !== 'running') {
                 logger.warn('当前任务不在运行中');
                 return;
+            }
+
+            const lastMessage = currentTask.chat_context.lastMessage();
+            if (lastMessage instanceof AssistantMessage) {
+                for (const part of lastMessage.content) {
+                    if (part.type === 'tool_call') {
+                        for (const tc of part.toolcalls) {
+                            if (tc.tool && tc.status === 'running') {
+                                try { await tc.tool.stop(); } catch (e) {
+                                    logger.warn(`停止工具 ${tc.tool_name} 失败: ${e}`);
+                                }
+                            }
+                        }
+                    }
+                }
             }
 
             currentTask.stop();

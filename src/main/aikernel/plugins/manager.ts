@@ -39,7 +39,7 @@ const INSTALLS_FILE = 'plugins.json';
 
 // ── Path Helpers ─────────────────────────────────────────────────────────────
 
-function getExtensionsDir(): string {
+export function getExtensionsDir(): string {
     const dir = path.join(getAppDirectory(), EXTENSIONS_DIR_NAME);
     if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });
@@ -584,7 +584,7 @@ async function loadSinglePlugin(record: PluginInstallRecord): Promise<PluginEntr
         const importTarget = compiledPath || entryPoint;
 
         try {
-            const fileUrl = 'file://' + importTarget;
+            const fileUrl = 'file://' + importTarget + '?t=' + Date.now();
             pluginModule = await import(fileUrl);
             if (pluginModule && pluginModule.default) {
                 pluginModule = pluginModule.default;
@@ -662,6 +662,27 @@ export function resetOpenClawShim(): { success: boolean; error?: string } {
         const message = err?.message || String(err);
         logger.error(`重置 openclaw shim 失败: ${message}`);
         return { success: false, error: message };
+    }
+}
+
+/**
+ * Invalidate the CJS require cache for all modules under the extensions
+ * node_modules directory, so that a subsequent loadPlugins() picks up
+ * fresh code (e.g. after install / uninstall / update).
+ */
+export function invalidatePluginRequireCache(): void {
+    const extensionsDir = getExtensionsDir();
+    const nodeModulesDir = path.join(extensionsDir, 'node_modules');
+    const req = module.createRequire(path.join(extensionsDir, 'package.json'));
+    let count = 0;
+    for (const key of Object.keys(req.cache ?? {})) {
+        if (key.startsWith(nodeModulesDir)) {
+            delete req.cache![key];
+            count++;
+        }
+    }
+    if (count > 0) {
+        logger.info(`已清除 ${count} 个插件模块缓存`);
     }
 }
 

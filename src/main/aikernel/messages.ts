@@ -93,7 +93,7 @@ export class ToolCall {
         this.tool_name = tool_name;
         this.args_string = args_string;
 
-        Object.defineProperty(this, 'tool', { value: undefined, writable: true, enumerable: false });
+        Object.defineProperty(this, 'tool', { value: undefined, writable: true, enumerable: false, configurable: true });
     }
 
     toOpenAIMessagePart(): object {
@@ -208,7 +208,7 @@ export class ToolCall {
         if ('tool' in tc) {
             delete (tc as any).tool;
         }
-        Object.defineProperty(tc, 'tool', { value: undefined, writable: true, enumerable: false });
+        Object.defineProperty(tc, 'tool', { value: undefined, writable: true, enumerable: false, configurable: true });
         return tc;
     }
 }
