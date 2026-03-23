@@ -73,6 +73,36 @@ type MailViewState = 'loading' | 'list' | 'detail' | 'compose' | 'assistant' | '
 type FilterType = 'all' | 'unread' | 'starred' | 'draft' | 'sent';
 type ComposeType = 'reply' | 'replyall' | 'new' | 'forward';
 
+interface AssistantPendingDraft {
+    mode: 'new' | 'reply' | 'replyall';
+    sendArgs: {
+        to: string | string[];
+        cc?: string | string[];
+        bcc?: string | string[];
+        subject: string;
+        text: string;
+        html: string;
+        attachments: Array<{ filename: string; path: string }>;
+    };
+    summary: {
+        to: string;
+        cc?: string;
+        subject: string;
+        preview: string;
+        attachments: string[];
+    };
+}
+
+let assistantDraftHandler: ((draft: AssistantPendingDraft) => string) | undefined;
+let assistantDraftSender: (() => Promise<string>) | undefined;
+
+function formatRecipientsInput(value?: string | string[]): string {
+    if (!value) return '';
+    if (Array.isArray(value)) return value.join(', ');
+    return String(value);
+}
+
+
 interface FilterDef {
     key: string;
     value: FilterType;
@@ -395,7 +425,7 @@ const SendEmailArgsSchema = z.object({
 });
 const sendEmailTool = new BaseTool(
     'sendEmail',
-    '发送邮件。需要提供收件人(to)、主题(subject)和内容(content)，可选抄送(cc)、密送(bcc)和附件(attachments)。附件参数为本地文件路径数组。',
+    '生成待发送邮件草稿（不会直接发送）。需要提供收件人(to)、主题(subject)和内容(content)，可选抄送(cc)、密送(bcc)和附件(attachments)。附件参数为本地文件路径数组。用户确认后再发送。',
     SendEmailArgsSchema,
 );
 sendEmailTool.setExecutor(async (args) => {
@@ -435,10 +465,23 @@ sendEmailTool.setExecutor(async (args) => {
             html: args.content.replace(/\n/g, '<br>'),
             attachments,
         };
-        const result = await callMailWorker('sendEmail', sendArgs);
-        return JSON.stringify({ success: true, message: '邮件发送成功', data: result });
+        if (!assistantDraftHandler) {
+            return JSON.stringify({ success: false, error: '邮箱界面未初始化，无法生成草稿' });
+        }
+        const summary = {
+            to: formatRecipientsInput(sendArgs.to as any),
+            cc: formatRecipientsInput(sendArgs.cc as any) || undefined,
+            subject: sendArgs.subject || '(无主题)',
+            preview: (sendArgs.text || '').slice(0, 400),
+            attachments: sendArgs.attachments.map(a => a.filename),
+        };
+        return assistantDraftHandler({
+            mode: 'new',
+            sendArgs: sendArgs as any,
+            summary,
+        });
     } catch (error: any) {
-        return JSON.stringify({ success: false, error: error.message || '邮件发送失败' });
+        return JSON.stringify({ success: false, error: error.message || '邮件生成失败' });
     }
 });
 
@@ -449,7 +492,7 @@ const ReplyEmailArgsSchema = z.object({
 });
 const replyEmailTool = new BaseTool(
     'replyEmail',
-    '回复邮件。需要提供邮件 uid 和回复内容，可选是否回复所有人。',
+    '生成回复草稿（不会直接发送）。需要提供邮件 uid 和回复内容，可选是否回复所有人。用户确认后再发送。',
     ReplyEmailArgsSchema,
 );
 replyEmailTool.setExecutor(async (args) => {
@@ -462,21 +505,17 @@ replyEmailTool.setExecutor(async (args) => {
 
         // 获取原邮件内容
         const emailContent = await callMailWorker('getEmailContent', args.uid);
-
         // 构建回复对象
         let replyTo = emailMeta.from || [];
         let to = replyTo;
         let cc = emailMeta.cc || [];
 
-        // 确保 replyTo 是正确的格式
         if (replyTo && !Array.isArray(replyTo)) {
-            // 如果是字符串，转换为对象格式
             if (typeof replyTo === 'string') {
                 replyTo = [{ name: '', address: replyTo }];
                 to = replyTo;
             }
         } else if (Array.isArray(replyTo) && replyTo.length > 0) {
-            // 确保每个元素都有 address 字段
             replyTo = replyTo.map(item => {
                 if (typeof item === 'string') {
                     return { name: '', address: item };
@@ -486,7 +525,6 @@ replyEmailTool.setExecutor(async (args) => {
             to = replyTo;
         }
 
-        // 确保 cc 是正确的格式
         if (cc && !Array.isArray(cc)) {
             if (typeof cc === 'string') {
                 cc = [{ name: '', address: cc }];
@@ -500,12 +538,8 @@ replyEmailTool.setExecutor(async (args) => {
             });
         }
 
-        // 如果是回复所有人，需要将原邮件的收件人和抄送人都加入
         if (args.replyAll) {
-            // 确保不重复添加发件人
             const senderAddresses = new Set(replyTo.map(s => s.address));
-
-            // 添加原邮件的收件人（排除发件人自己）
             if (emailMeta.to) {
                 emailMeta.to.forEach(recipient => {
                     if (!senderAddresses.has(recipient.address)) {
@@ -514,8 +548,6 @@ replyEmailTool.setExecutor(async (args) => {
                     }
                 });
             }
-
-            // 添加原邮件的抄送人（排除发件人自己）
             if (emailMeta.cc) {
                 emailMeta.cc.forEach(recipient => {
                     if (!senderAddresses.has(recipient.address)) {
@@ -526,11 +558,9 @@ replyEmailTool.setExecutor(async (args) => {
             }
         }
 
-        // 构建回复主题
         const originalSubject = emailMeta.subject || '';
         const subject = originalSubject.startsWith('Re:') ? originalSubject : `Re: ${originalSubject}`;
 
-        // 构建回复内容，包含原始邮件引用
         const fromStr = formatAddresses(emailMeta.from);
         const toStr = formatAddresses(emailMeta.to);
         const dateStr = new Date(emailMeta.date).toISOString();
@@ -540,7 +570,6 @@ replyEmailTool.setExecutor(async (args) => {
 
         const replyContent = args.content + quotedContent;
 
-        // 转换收件人格式
         let toAddresses = to;
         let ccAddresses = cc;
 
@@ -551,7 +580,6 @@ replyEmailTool.setExecutor(async (args) => {
             ccAddresses = cc.map(item => item.address);
         }
 
-        // 调用发送邮件
         const sendArgs = {
             to: toAddresses,
             cc: ccAddresses.length > 0 ? ccAddresses : undefined,
@@ -561,11 +589,39 @@ replyEmailTool.setExecutor(async (args) => {
             attachments: [],
         };
 
-        const result = await callMailWorker('sendEmail', sendArgs);
-        return JSON.stringify({ success: true, message: '邮件回复成功', data: result });
+        if (!assistantDraftHandler) {
+            return JSON.stringify({ success: false, error: '邮箱界面未初始化，无法生成草稿' });
+        }
+
+        const summary = {
+            to: formatRecipientsInput(sendArgs.to as any),
+            cc: formatRecipientsInput(sendArgs.cc as any) || undefined,
+            subject: sendArgs.subject || '(无主题)',
+            preview: (args.content || '').slice(0, 400),
+            attachments: [],
+        };
+
+        return assistantDraftHandler({
+            mode: args.replyAll ? 'replyall' : 'reply',
+            sendArgs: sendArgs as any,
+            summary,
+        });
     } catch (error: any) {
-        return JSON.stringify({ success: false, error: error.message || '邮件回复失败' });
+        return JSON.stringify({ success: false, error: error.message || '邮件生成失败' });
     }
+});
+
+const ConfirmSendEmailArgsSchema = z.object({});
+const confirmSendEmailTool = new BaseTool(
+    'confirmSendEmail',
+    '在用户明确确认后，发送刚才生成的草稿邮件。',
+    ConfirmSendEmailArgsSchema,
+);
+confirmSendEmailTool.setExecutor(async () => {
+    if (!assistantDraftSender) {
+        return JSON.stringify({ success: false, error: '邮箱界面未初始化，无法发送草稿' });
+    }
+    return await assistantDraftSender();
 });
 
 const MarkEmailReadArgsSchema = z.object({
@@ -626,7 +682,17 @@ deleteEmailTool.setExecutor(async (args) => {
 });
 
 const mailAssistantToolset = new BaseToolset('mailbox');
-mailAssistantToolset.addTools(getEmailListTool, getEmailContentTool, searchEmailsTool, sendEmailTool, replyEmailTool, markEmailReadTool, starEmailTool, deleteEmailTool);
+mailAssistantToolset.addTools(
+    getEmailListTool,
+    getEmailContentTool,
+    searchEmailsTool,
+    sendEmailTool,
+    replyEmailTool,
+    confirmSendEmailTool,
+    markEmailReadTool,
+    starEmailTool,
+    deleteEmailTool,
+);
 
 const crossAppToolset = new BaseToolset('cross-app');
 crossAppToolset.addTools(
@@ -667,7 +733,7 @@ const MAIL_ASSISTANT_SYSTEM_PROMPT =
     '- **offset**（可选）：跳过前 N 条\n' +
     '**使用场景**：当需要根据特定条件查找邮件时使用，如按发件人、主题、日期等筛选。\n\n' +
     '### mailbox-sendEmail\n' +
-    '**用途**：发送新邮件。\n' +
+    '**用途**：生成待发送草稿（不会直接发送）。\n' +
     '**参数**：\n' +
     '- **to**（必需）：收件人列表，每个收件人包含 name（可选）和 address（必需）\n' +
     '- **cc**（可选）：抄送列表，格式同 to\n' +
@@ -675,14 +741,18 @@ const MAIL_ASSISTANT_SYSTEM_PROMPT =
     '- **subject**（必需）：邮件主题\n' +
     '- **content**（必需）：邮件内容\n' +
     '- **attachments**（可选）：附件文件路径列表，每个元素是本地文件的绝对路径，例如 ["/home/user/report.pdf"]\n' +
-    '**使用场景**：当需要发送新邮件给他人时使用。如果用户提到要发送附件，在 attachments 中传入文件路径。\n\n' +
+    '**使用场景**：当需要发送新邮件给他人时使用。如果用户提到要发送附件，在 attachments 中传入文件路径。生成草稿后需用户确认再发送。\n\n' +
     '### mailbox-replyEmail\n' +
-    '**用途**：回复邮件。\n' +
+    '**用途**：生成回复草稿（不会直接发送）。\n' +
     '**参数**：\n' +
     '- **uid**（必需）：要回复的邮件唯一标识 uid\n' +
     '- **content**（必需）：回复内容\n' +
     '- **replyAll**（可选）：是否回复所有人，默认 false\n' +
-    '**使用场景**：当需要回复收到的邮件时使用。\n\n' +
+    '**使用场景**：当需要回复收到的邮件时使用。生成草稿后需用户确认再发送。\n\n' +
+    '### mailbox-confirmSendEmail\n' +
+    '**用途**：在用户明确确认后，发送刚才生成的草稿邮件（确认需来自草稿生成后的新一轮用户输入）。\n' +
+    '**参数**：无\n' +
+    '**使用场景**：用户在草稿生成后新一轮输入中明确表示“确认发送/发送吧/发出去/就这样发”等时使用。\n\n' +
     '### mailbox-markEmailReadStatus\n' +
     '**用途**：标记邮件已读/未读状态。\n' +
     '**参数**：\n' +
@@ -712,9 +782,10 @@ const MAIL_ASSISTANT_SYSTEM_PROMPT =
     '  - 用户说"查看最新的邮件内容"→ 先调用 getEmailList 获取邮件列表，再调用 getEmailContent 获取最新邮件的内容\n' +
     '  - 用户说"查看张三发来的邮件内容"→ 先调用 searchEmails 找到张三的邮件，再调用 getEmailContent 获取内容\n' +
     '- **邮件操作**：\n' +
-    '  - 用户说"给张三发送邮件，主题是会议通知，内容是明天下午3点开会"→ 调用 sendEmail，设置 to、subject 和 content\n' +
+    '  - 用户说"给张三发送邮件，主题是会议通知，内容是明天下午3点开会"→ 调用 sendEmail 生成草稿，然后提示用户确认\n' +
     '  - 用户说"给张三发邮件，附件是 /home/user/report.pdf"→ 调用 sendEmail，在 attachments 中传入文件路径\n' +
-    '  - 用户说"回复刚才的邮件，告诉他我会参加会议"→ 先获取邮件 uid，再调用 replyEmail\n' +
+    '  - 用户说"回复刚才的邮件，告诉他我会参加会议"→ 先获取邮件 uid，再调用 replyEmail 生成草稿，然后提示用户确认\n' +
+    '  - 用户说"确认发送/发出去"（在草稿生成后的新一轮输入）→ 调用 confirmSendEmail\n' +
     '  - 用户说"标记这封邮件为已读"→ 调用 markEmailReadStatus，设置 read: true\n' +
     '  - 用户说"收藏这封重要邮件"→ 调用 starEmail，设置 starred: true\n' +
     '  - 用户说"删除这封垃圾邮件"→ 调用 deleteEmail\n' +
@@ -736,12 +807,13 @@ const MAIL_ASSISTANT_SYSTEM_PROMPT =
     '- cross-app-deleteCalendarItem: 删除指定日程（需提供 uid，可通过 getCalendarItems 获取）\n' +
     '## 使用策略\n' +
     '1. 邮件操作：根据用户意图先调用相应工具获取数据，再给出简洁清晰的中文回答。\n' +
-    '2. 邮件转日程：当用户要求将邮件中的会议/活动添加到日历时，先用 getEmailContent 获取邮件内容，提取日期、时间、地点等信息，然后调用 addCalendarItem 创建日程。工具内置了去重检查，如果返回 skipped=true 表示已存在相同日程，请告知用户无需重复添加。\n' +
-    '3. 日程查询：用户想查看某天安排时，先调用 getCurrentTime 获取当前日期，再调用 getCalendarItems。\n' +
-    '4. 删除操作：删除日程前，先调用 getCalendarItems 获取日程的 uid，再执行删除。\n' +
-    '5. 综合分析：用户可能要求"查看今天的邮件和日程"，此时需同时调用邮件和日历工具。\n' +
-    '6. 去重原则：添加日程时，工具会自动检查是否已存在相同或相似的日程（按主题和时间匹配）。若已存在则跳过添加并返回已有项信息，请据此给出友好提示。\n' +
-    '7. 回答始终使用简洁清晰的中文。';
+    '2. 发送必须确认：任何发送/回复邮件都必须先生成草稿，再让用户在新一轮输入中确认。未得到确认时不要调用 confirmSendEmail。若用户要求修改，请重新调用 sendEmail/replyEmail 覆盖草稿。\n' +
+    '3. 邮件转日程：当用户要求将邮件中的会议/活动添加到日历时，先用 getEmailContent 获取邮件内容，提取日期、时间、地点等信息，然后调用 addCalendarItem 创建日程。工具内置了去重检查，如果返回 skipped=true 表示已存在相同日程，请告知用户无需重复添加。\n' +
+    '4. 日程查询：用户想查看某天安排时，先调用 getCurrentTime 获取当前日期，再调用 getCalendarItems。\n' +
+    '5. 删除操作：删除日程前，先调用 getCalendarItems 获取日程的 uid，再执行删除。\n' +
+    '6. 综合分析：用户可能要求"查看今天的邮件和日程"，此时需同时调用邮件和日历工具。\n' +
+    '7. 去重原则：添加日程时，工具会自动检查是否已存在相同或相似的日程（按主题和时间匹配）。若已存在则跳过添加并返回已有项信息，请据此给出友好提示。\n' +
+    '8. 回答始终使用简洁清晰的中文。';
     `;
 
 // ━━━ Worker 通信助手 ━━━
@@ -891,6 +963,8 @@ export class MailOverlay implements Component {
     private assistantResultTotalLines = 0;
     private assistantResultVisibleLines = 0;
     private assistantToolCalls: any[] = [];
+    private assistantPendingDraft?: AssistantPendingDraft;
+    private assistantUserRepliedAfterDraft = false;
     private chatContext?: ChatContext;
     private conversationHistory: string = '';
     /** 标记助手是否从详情页唤起（ESC 时返回详情而非列表） */
@@ -931,6 +1005,8 @@ export class MailOverlay implements Component {
             anchor: "center",
         });
         this.openDeskTUI.hasOpenOverlay = true;
+        assistantDraftHandler = this.setAssistantDraft.bind(this);
+        assistantDraftSender = this.confirmAssistantDraft.bind(this);
 
         this.inputListenerRemove = this.openDeskTUI.tui.addInputListener((data: string) => {
             return this.handleInput(data);
@@ -948,6 +1024,10 @@ export class MailOverlay implements Component {
         this.handle?.hide();
         this.openDeskTUI.hasOpenOverlay = false;
         this.openDeskTUI.tui.setFocus(this.openDeskTUI.inputArea.input);
+        assistantDraftHandler = undefined;
+        assistantDraftSender = undefined;
+        this.assistantPendingDraft = undefined;
+        this.assistantUserRepliedAfterDraft = false;
 
         callMailWorker('notifyMailboxClosed').catch(() => { });
     }
@@ -984,9 +1064,9 @@ export class MailOverlay implements Component {
                 this.cycleComposeFocus(-1);
                 return { consume: true };
             }
+            const fields = this.getComposeFocusFields();
             // 附件输入框上的特殊按键处理
             if (this.composeAttachmentInput) {
-                const fields = this.getComposeFocusFields();
                 const isAttachmentFocused = fields[this.composeFocusIdx] === this.composeAttachmentInput;
 
                 // Enter：添加附件而非跳转
@@ -2268,6 +2348,8 @@ export class MailOverlay implements Component {
         this.assistantResult = '';
         this.assistantBusy = false;
         this.assistantToolCalls = [];
+        this.assistantPendingDraft = undefined;
+        this.assistantUserRepliedAfterDraft = false;
         this.chatContext = undefined; // 清理对话上下文
         this.conversationHistory = ''; // 清理对话历史
 
@@ -2287,6 +2369,7 @@ export class MailOverlay implements Component {
         this.assistantBusy = true;
         this.assistantResult = '';
         this.assistantToolCalls = [];
+        this.assistantUserRepliedAfterDraft = Boolean(this.assistantPendingDraft);
         this.openDeskTUI.tui.setFocus(null);
 
         // 更新对话历史，添加用户输入
@@ -2444,6 +2527,41 @@ export class MailOverlay implements Component {
 
     // ──────────────────── 撰写/回复邮件 ────────────────────
 
+    private setAssistantDraft(draft: AssistantPendingDraft): string {
+        this.assistantPendingDraft = draft;
+        this.assistantUserRepliedAfterDraft = false;
+        return JSON.stringify({
+            success: true,
+            pending: true,
+            message: '已生成草稿，请确认发送或提出修改。',
+            summary: draft.summary,
+            draft: {
+                to: draft.summary.to,
+                cc: draft.summary.cc || '',
+                subject: draft.summary.subject,
+                content: draft.sendArgs.text,
+                attachments: draft.summary.attachments,
+            },
+        });
+    }
+
+    private async confirmAssistantDraft(): Promise<string> {
+        if (!this.assistantPendingDraft) {
+            return JSON.stringify({ success: false, error: '没有待发送的草稿，请先让助手生成邮件内容' });
+        }
+        if (!this.assistantUserRepliedAfterDraft) {
+            return JSON.stringify({ success: false, error: '需要用户在草稿生成后再输入一轮确认，才能发送' });
+        }
+        try {
+            const result = await callMailWorker('sendEmail', this.assistantPendingDraft.sendArgs);
+            this.assistantPendingDraft = undefined;
+            this.assistantUserRepliedAfterDraft = false;
+            return JSON.stringify({ success: true, message: '邮件已发送', data: result });
+        } catch (err: any) {
+            return JSON.stringify({ success: false, error: err?.message || '发送失败' });
+        }
+    }
+
     private startCompose(type: ComposeType) {
         if (type !== 'new' && !this.selectedEmail) return;
 
@@ -2457,7 +2575,7 @@ export class MailOverlay implements Component {
         // 创建 Input 字段
         this.composeToInput = new Input();
         this.composeSubjectInput = new Input();
-        this.composeCcInput = undefined;
+        this.composeCcInput = new Input();
         this.composeAttachmentInput = new Input();
         this.composeAttachments = [];
 
@@ -2471,7 +2589,6 @@ export class MailOverlay implements Component {
                 ...(this.selectedEmail.to || []).filter(a => a.address !== currentEmail).map(a => a.address),
             ].filter(Boolean);
             this.composeToInput.setValue(toAddresses.join(', '));
-            this.composeCcInput = new Input();
             this.composeCcInput.setValue((this.selectedEmail.cc || []).map(a => a.address).join(', '));
             this.composeSubjectInput.setValue('答复全部: ' + (this.selectedEmail.subject || ''));
         } else if (type === 'forward' && this.selectedEmail) {
@@ -2650,7 +2767,7 @@ export class MailOverlay implements Component {
 
             this.composeToInput = new Input();
             this.composeSubjectInput = new Input();
-            this.composeCcInput = undefined;
+            this.composeCcInput = new Input();
             this.composeAttachmentInput = new Input();
             this.composeAttachments = (content.attachments || []).map((a: any) => ({
                 filename: a.filename || nodePath.basename(a.path || ''),
@@ -2658,10 +2775,7 @@ export class MailOverlay implements Component {
             })).filter((a: any) => a.path);
 
             this.composeToInput.setValue(this.selectedEmail.to?.map(a => a.address).join(', ') || '');
-            if (this.selectedEmail.cc && this.selectedEmail.cc.length > 0) {
-                this.composeCcInput = new Input();
-                this.composeCcInput.setValue(this.selectedEmail.cc.map(a => a.address).join(', '));
-            }
+            this.composeCcInput.setValue((this.selectedEmail.cc || []).map(a => a.address).join(', '));
             this.composeSubjectInput.setValue(this.selectedEmail.subject || '');
 
             this.composeEditor = new Editor(this.openDeskTUI.tui, {
@@ -3127,7 +3241,7 @@ export class MailOverlay implements Component {
 
             case 'compose': {
                 const fields = this.getComposeFocusFields();
-                const fieldLineCount = (this.composeCcInput ? 3 : 2) + 1; // +1 for attachment input
+                const fieldLineCount = 3 + 1; // 收件人 + 抄送 + 主题 + 附件
                 const attachmentListLines = this.composeAttachments.length;
                 // 错误提示作为附件输入框的一部分显示，不单独占用空间
                 const hasQuote = this.composeQuotedText ? 1 : 0;
