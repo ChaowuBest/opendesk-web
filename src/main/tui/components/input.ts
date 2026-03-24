@@ -7,7 +7,8 @@ import chalk from "chalk";
 import { visibleWidth, truncateToWidth } from "@mariozechner/pi-tui";
 import { getNotificationBadge } from "./notification";
 import { getFileCompletions, extractAtQuery, FILE_COMPLETION_MAX_RESULTS } from "./file-completions";
-import { spawnSync } from "child_process";
+import { spawnSync, spawn, type ChildProcess } from "child_process";
+import process from "process";
 
 type AgentInputStatus = 'idle' | 'running';
 
@@ -22,6 +23,7 @@ export interface StatusBarData {
     contextSize: number;
     modelName: string;
     channelStates?: ChannelStatusEntry[];
+    shellMode?: boolean;
 }
 
 /**
@@ -121,26 +123,29 @@ export class StatusBar implements Component {
             return this.cachedOutput;
         }
         this.lastWidth = width;
-        const { elapsedMs, totalTokens, contextSize, modelName, channelStates } = this.data;
+        const { elapsedMs, totalTokens, contextSize, modelName, channelStates, shellMode } = this.data;
 
         const parts: string[] = [];
-        if (this.timerStarted) {
-            const icon = StatusBar.SPINNER[this.spinnerFrame];
-            parts.push(chalk.greenBright(`${icon} ${this.formatElapsed(elapsedMs)}`));
-        } else if (elapsedMs > 0) {
-            parts.push(chalk.hex('#d4d4d4')(`⏱ ${this.formatElapsed(elapsedMs)}`));
-        }
-        if (totalTokens > 0) {
-            const pct = contextSize > 0 ? ((totalTokens / contextSize) * 100).toFixed(1) : '—';
-            parts.push(`Tokens: ${totalTokens}/${contextSize} (${pct}%)`);
-        }
-        if (modelName) {
-            parts.push(`模型: ${modelName}`);
+        if (shellMode) {
+            parts.push(chalk.cyan('📟 Shell 命令模式'));
+        } else {
+            if (this.timerStarted) {
+                const icon = StatusBar.SPINNER[this.spinnerFrame];
+                parts.push(chalk.greenBright(`${icon} ${this.formatElapsed(elapsedMs)}`));
+            } else if (elapsedMs > 0) {
+                parts.push(chalk.hex('#d4d4d4')(`⏱ ${this.formatElapsed(elapsedMs)}`));
+            }
+            if (totalTokens > 0) {
+                const pct = contextSize > 0 ? ((totalTokens / contextSize) * 100).toFixed(1) : '—';
+                parts.push(`Tokens: ${totalTokens}/${contextSize} (${pct}%)`);
+            }
+            if (modelName) {
+                parts.push(modelName);
+            }
         }
 
         const leftContent = parts.length > 0 ? ` ${parts.join('  │  ')}` : '';
 
-        // Build right-side content: channel states + /help
         const rightParts: string[] = [];
         if (channelStates && channelStates.length > 0) {
             const channelLabels = channelStates.map(ch =>
@@ -237,6 +242,122 @@ class FileAwareAutocompleteProvider implements AutocompleteProvider {
     }
 }
 
+// ── Shell 检测 ──────────────────────────────────────────────────────────
+
+function detectShell(): { shell: string; args: string[] } {
+    const isOpenHarmony = process.env.OPENHARMONY === '1' || process.env.OHOS_SDK_HOME != null;
+    if (isOpenHarmony) {
+        return { shell: 'zsh', args: ['-c'] };
+    }
+    if (process.platform === 'win32') {
+        for (const bin of ['bash']) {
+            try {
+                const r = spawnSync('where', [bin], { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] });
+                if (r.status === 0 && r.stdout.trim()) {
+                    return { shell: r.stdout.trim().split(/\r?\n/)[0]!, args: ['-c'] };
+                }
+            } catch { /* ignore */ }
+        }
+        return { shell: 'powershell.exe', args: ['-Command'] };
+    }
+    for (const bin of ['bash', 'sh']) {
+        try {
+            const r = spawnSync('which', [bin], { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] });
+            if (r.status === 0 && r.stdout.trim()) {
+                return { shell: r.stdout.trim().split(/\r?\n/)[0]!, args: ['-c'] };
+            }
+        } catch { /* ignore */ }
+    }
+    return { shell: '/bin/sh', args: ['-c'] };
+}
+
+let _cachedShell: { shell: string; args: string[] } | undefined;
+function getShell() {
+    if (!_cachedShell) _cachedShell = detectShell();
+    return _cachedShell;
+}
+
+// ── ShellResultPanel：命令执行结果面板 ──────────────────────────────────
+
+export class ShellResultPanel implements Component {
+    private lines: string[] = [];
+    private scrollOffset = 0;
+    private maxVisibleLines = 15;
+    private visible = false;
+    private command = '';
+    private exitCode: number | null = null;
+
+    show(command: string, output: string, exitCode: number | null) {
+        this.command = command;
+        this.exitCode = exitCode;
+        this.lines = output.split('\n');
+        if (this.lines.length > 0 && this.lines[this.lines.length - 1] === '') {
+            this.lines.pop();
+        }
+        this.scrollOffset = 0;
+        this.visible = true;
+    }
+
+    hide() {
+        this.visible = false;
+        this.lines = [];
+    }
+
+    isVisible() {
+        return this.visible;
+    }
+
+    scrollUp(n = 3) {
+        this.scrollOffset = Math.max(0, this.scrollOffset - n);
+    }
+
+    scrollDown(n = 3) {
+        const max = Math.max(0, this.lines.length - this.maxVisibleLines);
+        this.scrollOffset = Math.min(max, this.scrollOffset + n);
+    }
+
+    invalidate(): void { }
+
+    render(width: number): string[] {
+        if (!this.visible || this.lines.length === 0) return [];
+
+        const innerW = Math.max(1, width - 4);
+        const result: string[] = [];
+
+        const exitLabel = this.exitCode === 0
+            ? chalk.green(`exit: ${this.exitCode}`)
+            : chalk.red(`exit: ${this.exitCode ?? '?'}`);
+        const header = ` ${chalk.cyan('$')} ${chalk.bold(truncateToWidth(this.command, Math.max(1, innerW - 20)))}  ${exitLabel} `;
+        const headerW = visibleWidth(header);
+        const topBar = chalk.cyan('┌') + chalk.cyan(header) + chalk.cyan('─'.repeat(Math.max(0, width - headerW - 2))) + chalk.cyan('┐');
+        result.push(topBar);
+
+        const visibleLines = this.lines.slice(this.scrollOffset, this.scrollOffset + this.maxVisibleLines);
+        for (const line of visibleLines) {
+            const truncated = truncateToWidth(line, innerW);
+            const lineW = visibleWidth(truncated);
+            const padR = Math.max(0, innerW - lineW);
+            result.push(chalk.cyan('│') + ' ' + truncated + ' '.repeat(padR) + ' ' + chalk.cyan('│'));
+        }
+
+        const scrollHints: string[] = [];
+        if (this.lines.length > this.maxVisibleLines) {
+            const total = this.lines.length;
+            const pos = this.scrollOffset + 1;
+            const end = Math.min(this.scrollOffset + this.maxVisibleLines, total);
+            scrollHints.push(chalk.dim(`${pos}-${end}/${total}`));
+            scrollHints.push(chalk.dim('Ctrl+↑/↓ 翻页'));
+        }
+        scrollHints.push(chalk.dim('Esc 关闭'));
+        const bottomInfo = ' ' + scrollHints.join('  ') + ' ';
+        const bottomInfoW = visibleWidth(bottomInfo);
+        const bottomBar = chalk.cyan('└') + chalk.cyan(bottomInfo) + chalk.cyan('─'.repeat(Math.max(0, width - bottomInfoW - 2))) + chalk.cyan('┘');
+        result.push(bottomBar);
+
+        return result;
+    }
+}
+
 /**
  * AgentInputArea: 输入区域 + 斜杠指令 + 消息队列 + 状态栏
  *
@@ -246,6 +367,7 @@ export class AgentInputArea implements Component {
 
     input: Editor;
     statusBar: StatusBar = new StatusBar();
+    shellResultPanel: ShellResultPanel = new ShellResultPanel();
 
     private openDeskTUI: OpenDeskTUI;
     private layout: Box;
@@ -258,21 +380,108 @@ export class AgentInputArea implements Component {
     private onQueueChange?: (queue: string[]) => void;
     private externalHint: string | null = null;
     private quickPassHandler?: (text: string) => boolean;
+    private shellCommandMode = false;
+    private defaultBorderColor: (str: string) => string;
+    private runningShellProcess?: ChildProcess;
 
     constructor(openDeskTUI: OpenDeskTUI) {
         this.openDeskTUI = openDeskTUI;
         this.layout = new Box(0, 0);
         this.input = new Editor(this.openDeskTUI.tui, defaultEditorTheme);
+        this.defaultBorderColor = this.input.borderColor;
         this.layout.addChild(this.hintText);
+        this.layout.addChild(this.shellResultPanel);
         this.layout.addChild(this.input);
         this.layout.addChild(this.statusBar);
         this.statusBar.setTUI(this.openDeskTUI.tui);
+
+        this.input.onChange = (text: string) => {
+            this.updateShellCommandMode(text);
+        };
 
         this.input.onSubmit = (text: string) => {
             if (text.trim() === '') return;
             this.input.addToHistory(text);
             this.handleSubmit(text);
         };
+    }
+
+    private updateShellCommandMode(text: string) {
+        const trimmed = text.trimStart();
+        const isCmd = trimmed.startsWith('!') && trimmed.length >= 1;
+        if (isCmd !== this.shellCommandMode) {
+            this.shellCommandMode = isCmd;
+            if (isCmd) {
+                this.input.borderColor = (str: string) => chalk.cyan(str);
+            } else {
+                this.input.borderColor = this.defaultBorderColor;
+            }
+            this.statusBar.update({ shellMode: isCmd });
+            this.openDeskTUI.tui.requestRender();
+        }
+    }
+
+    private isShellCommand(text: string): string | null {
+        const trimmed = text.trimStart();
+        if (trimmed.startsWith('!')) {
+            const cmd = trimmed.slice(1).trim();
+            return cmd.length > 0 ? cmd : null;
+        }
+        return null;
+    }
+
+    private executeShellCommand(cmd: string) {
+        if (this.runningShellProcess) {
+            try { this.runningShellProcess.kill(); } catch { /* ignore */ }
+            this.runningShellProcess = undefined;
+        }
+
+        const { shell, args } = getShell();
+        this.hintText.setText(chalk.cyan(`⏳ 正在执行: ${cmd}`));
+        this.openDeskTUI.tui.requestRender();
+
+        const cwd = this.openDeskTUI.workspace;
+        const child = spawn(shell, [...args, cmd], {
+            cwd,
+            env: { ...process.env },
+            stdio: ['pipe', 'pipe', 'pipe'],
+        });
+        this.runningShellProcess = child;
+
+        child.stdin?.end();
+
+        let stdout = '';
+        let stderr = '';
+        child.stdout?.on('data', (data: Buffer) => { stdout += data.toString(); });
+        child.stderr?.on('data', (data: Buffer) => { stderr += data.toString(); });
+
+        child.on('close', (code) => {
+            if (this.runningShellProcess === child) {
+                this.runningShellProcess = undefined;
+            }
+            const output = (stdout + (stderr ? chalk.red(stderr) : '')).trimEnd();
+            this.shellResultPanel.show(cmd, output || chalk.dim('(无输出)'), code);
+            this.hintText.setText('');
+            this.refreshHint();
+            this.openDeskTUI.tui.requestRender();
+        });
+
+        child.on('error', (err) => {
+            if (this.runningShellProcess === child) {
+                this.runningShellProcess = undefined;
+            }
+            this.shellResultPanel.show(cmd, chalk.red(`执行失败: ${err.message}`), 1);
+            this.hintText.setText('');
+            this.refreshHint();
+            this.openDeskTUI.tui.requestRender();
+        });
+    }
+
+    dismissShellResult() {
+        if (this.shellResultPanel.isVisible()) {
+            this.shellResultPanel.hide();
+            this.openDeskTUI.tui.requestRender();
+        }
     }
 
     /**
@@ -307,9 +516,19 @@ export class AgentInputArea implements Component {
     }
 
     private async handleSubmit(text: string) {
+        // Shell 命令拦截：优先级最高
+        const shellCmd = this.isShellCommand(text);
+        if (shellCmd) {
+            this.input.setText('');
+            this.shellCommandMode = false;
+            this.input.borderColor = this.defaultBorderColor;
+            this.statusBar.update({ shellMode: false });
+            this.executeShellCommand(shellCmd);
+            return;
+        }
+
         // 检查是否处于模型未配置模式
         if (this.openDeskTUI.isModelNotConfiguredMode()) {
-            // 模型未配置，只尝试执行斜杠命令和口令导入，不进行任何任务操作
             if (this.commandRegistry) {
                 const handled = await this.commandRegistry.execute(text);
                 if (handled) {
@@ -321,7 +540,6 @@ export class AgentInputArea implements Component {
                 this.input.setText('');
                 return;
             }
-            // 不是斜杠命令/口令或未处理，只清空输入框
             this.input.setText('');
             return;
         }

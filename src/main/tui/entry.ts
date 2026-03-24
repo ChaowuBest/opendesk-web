@@ -68,6 +68,7 @@ export interface CommandLineArgs {
     model?: string;
     exportHtml?: string;
     exportJson?: string;
+    dumpLog?: string;
 }
 
 export class OpenDeskTUI {
@@ -923,7 +924,7 @@ export class OpenDeskTUI {
             const modelCfg = data.models?.find((m: any) => m.alias === aliasToUse);
             const modelName = modelCfg?.model_name ?? aliasToUse;
 
-            this.inputArea.statusBar.update({ modelName });
+            this.inputArea.statusBar.update({ modelName: aliasToUse });
 
             // 如果没有通过命令行指定模型，则更新当前活跃任务的模型为新的默认模型
             // 这样用户在 /config 中修改模型后，继续对话时会使用新模型
@@ -1105,6 +1106,24 @@ export class OpenDeskTUI {
 
         // Attach a direct input listener to TUI FIRST, to hijack Ctrl+C before Editor gets it!
         this.tui.addInputListener((data) => {
+            // Shell 结果面板交互：Esc 关闭，Ctrl+Up/Down 滚动
+            if (this.inputArea.shellResultPanel.isVisible()) {
+                if (matchesKey(data, Key.escape)) {
+                    this.inputArea.dismissShellResult();
+                    return { consume: true };
+                }
+                if (matchesKey(data, Key.ctrl("up"))) {
+                    this.inputArea.shellResultPanel.scrollUp();
+                    this.tui.requestRender();
+                    return { consume: true };
+                }
+                if (matchesKey(data, Key.ctrl("down"))) {
+                    this.inputArea.shellResultPanel.scrollDown();
+                    this.tui.requestRender();
+                    return { consume: true };
+                }
+            }
+
             if (matchesKey(data, Key.ctrl("c"))) {
                 // 有 overlay 打开时不处理
                 if (this.hasOpenOverlay) {
