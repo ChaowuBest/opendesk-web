@@ -1,6 +1,6 @@
 
-import { Box, Component, Text, Editor, TUI, CombinedAutocompleteProvider, type AutocompleteProvider, type AutocompleteItem } from "@mariozechner/pi-tui";
-import { defaultEditorTheme } from "../theme";
+import { Box, Component, Text, Editor, TUI, CombinedAutocompleteProvider, Markdown, type AutocompleteProvider, type AutocompleteItem } from "@mariozechner/pi-tui";
+import { defaultEditorTheme, defaultMarkdownTheme } from "../theme";
 import { SlashCommandRegistry } from "../commands";
 import type { OpenDeskTUI } from "../entry";
 import chalk from "chalk";
@@ -298,6 +298,16 @@ export class InlineResultPanel implements Component {
             this.lines.pop();
         }
         this.scrollOffset = 0;
+        this.maxVisibleLines = 15;
+        this.visible = true;
+    }
+
+    showMarkdown(header: string, markdown: string, width = 80) {
+        this.headerText = header;
+        const md = new Markdown(markdown, 0, 0, defaultMarkdownTheme);
+        this.lines = md.render(width);
+        this.scrollOffset = 0;
+        this.maxVisibleLines = this.lines.length; // no limit - show all
         this.visible = true;
     }
 

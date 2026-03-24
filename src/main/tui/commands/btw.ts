@@ -27,9 +27,9 @@ export function registerBtwCommand(tui: OpenDeskTUI): void {
 
             try {
                 const answer = await LLM.ask(new UserMessage(question));
-                tui.inputArea.btwResultPanel.show(
+                tui.inputArea.btwResultPanel.showMarkdown(
                     `${chalk.magenta('btw')} ${chalk.bold(question)}`,
-                    answer.trim() || chalk.dim('(无回复)'),
+                    answer.trim() || '(无回复)',
                 );
             } catch (err: any) {
                 logger.error(`/btw failed: ${err}`);
