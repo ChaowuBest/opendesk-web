@@ -1105,10 +1105,14 @@ export class OpenDeskTUI {
      * 更新工作空间目录，同步刷新 Banner、process.cwd、自动补全 basePath。
      */
     updateWorkspace(newWorkspace: string) {
-        this.workspace = newWorkspace;
-        try { process.chdir(newWorkspace); } catch { /* ignore */ }
-        this.rebuildBanner();
-        this.inputArea.refreshAutocomplete();
+        try {
+            logger.info(`changing workspace to ${newWorkspace}`);
+            this.workspace = newWorkspace;
+            this.rebuildBanner();
+            this.inputArea.refreshAutocomplete();
+        } catch {
+            logger.error(`failed to change workspace to ${newWorkspace}`);
+        }
     }
 
     /**
