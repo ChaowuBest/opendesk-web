@@ -29,7 +29,7 @@ export const PAIRING_REPLY_TEMPLATE = `为了让消息收发更加安全，你�
  * Ensure the openclaw shim is available in the extensions node_modules.
  * Generates the shim inline so plugins can resolve `openclaw/plugin-sdk`.
  */
-const SHIM_VERSION = '6';
+const SHIM_VERSION = '8';
 
 export function ensureOpenClawShim(extensionsDir: string): void {
     const shimTarget = path.join(extensionsDir, 'node_modules', 'openclaw');
@@ -59,20 +59,69 @@ export function ensureOpenClawShim(extensionsDir: string): void {
 function generateInlineShim(shimTarget: string): void {
     fs.mkdirSync(path.join(shimTarget, 'plugin-sdk'), { recursive: true });
 
-    // Generate package.json with exports
+    // Generate package.json with exports.
+    // All plugin-sdk sub-paths that don't have a dedicated shim file
+    // fall back to the main plugin-sdk/index.js which re-exports stubs
+    // for every symbol plugins might reference.
+    const dedicatedShims: Record<string, string> = {
+        './plugin-sdk/account-id': './plugin-sdk/account-id.js',
+        './plugin-sdk/keyed-async-queue': './plugin-sdk/keyed-async-queue.js',
+        './plugin-sdk/feishu': './plugin-sdk/feishu.js',
+        './plugin-sdk/compat': './plugin-sdk/compat.js',
+        './plugin-sdk/core': './plugin-sdk/core.js',
+    };
+    const allPluginSdkSubpaths = [
+        'account-helpers', 'account-id', 'account-resolution', 'acp-runtime',
+        'agent-runtime', 'allow-from', 'allowlist-config-edit', 'bluebubbles',
+        'boolean-param', 'channel-actions', 'channel-config-helpers',
+        'channel-config-schema', 'channel-contract', 'channel-feedback',
+        'channel-inbound', 'channel-lifecycle', 'channel-pairing',
+        'channel-policy', 'channel-reply-pipeline', 'channel-runtime',
+        'channel-send-result', 'channel-setup', 'channel-targets',
+        'cli-runtime', 'command-auth', 'config-runtime',
+        'conversation-runtime', 'core', 'device-bootstrap',
+        'diagnostics-otel', 'diffs', 'directory-runtime', 'discord',
+        'discord-core', 'extension-shared', 'feishu', 'gateway-runtime',
+        'googlechat', 'group-access', 'hook-runtime', 'image-generation',
+        'imessage', 'imessage-core', 'infra-runtime', 'interactive-runtime',
+        'irc', 'json-store', 'keyed-async-queue', 'lazy-runtime', 'line',
+        'line-core', 'llm-task', 'matrix', 'matrix-runtime-heavy',
+        'matrix-runtime-shared', 'mattermost', 'media-runtime',
+        'media-understanding', 'media-understanding-runtime', 'memory-core',
+        'memory-lancedb', 'msteams', 'nextcloud-talk', 'nostr',
+        'ollama-setup', 'plugin-entry', 'plugin-runtime', 'process-runtime',
+        'provider-auth', 'provider-auth-api-key', 'provider-auth-login',
+        'provider-catalog', 'provider-env-vars', 'provider-google',
+        'provider-models', 'provider-onboard', 'provider-setup',
+        'provider-stream', 'provider-usage', 'provider-web-search',
+        'provider-zai-endpoint', 'reply-history', 'reply-payload',
+        'reply-runtime', 'request-url', 'routing', 'runtime', 'runtime-env',
+        'runtime-store', 'sandbox', 'secret-input', 'security-runtime',
+        'self-hosted-provider-setup', 'setup', 'setup-adapter-runtime',
+        'setup-runtime', 'setup-tools', 'signal', 'slack', 'slack-core',
+        'speech', 'speech-runtime', 'ssrf-runtime', 'state-paths',
+        'status-helpers', 'telegram', 'telegram-core', 'testing',
+        'text-runtime', 'thread-bindings-runtime', 'thread-ownership',
+        'tlon', 'tool-send', 'twitch', 'voice-call', 'web-media',
+        'webhook-ingress', 'webhook-path', 'whatsapp-core',
+        'whatsapp-shared', 'windows-spawn', 'zalo', 'zalouser',
+    ];
+    const exports: Record<string, string> = {
+        '.': './index.js',
+        './plugin-sdk': './plugin-sdk/index.js',
+        ...dedicatedShims,
+    };
+    for (const sub of allPluginSdkSubpaths) {
+        const key = `./plugin-sdk/${sub}`;
+        if (!exports[key]) {
+            exports[key] = './plugin-sdk/index.js';
+        }
+    }
     fs.writeFileSync(path.join(shimTarget, 'package.json'), JSON.stringify({
         name: 'openclaw',
         version: '2026.3.0',
         type: 'module',
-        exports: {
-            '.': './index.js',
-            './plugin-sdk': './plugin-sdk/index.js',
-            './plugin-sdk/account-id': './plugin-sdk/account-id.js',
-            './plugin-sdk/keyed-async-queue': './plugin-sdk/keyed-async-queue.js',
-            './plugin-sdk/feishu': './plugin-sdk/feishu.js',
-            './plugin-sdk/compat': './plugin-sdk/compat.js',
-            './plugin-sdk/core': './plugin-sdk/core.js',
-        },
+        exports,
     }, null, 2));
 
     // Generate main index.js
@@ -136,6 +185,14 @@ export const WEBHOOK_RATE_LIMIT_DEFAULTS = { windowMs: 1000, maxRequests: 50 };
 
 export const DmPolicySchema = z.enum(['open', 'allowlist']).default('open');
 export const GroupPolicySchema = z.enum(['open', 'allowlist', 'blocked']).default('blocked');
+export const AllowFromEntrySchema = z.union([z.string(), z.number()]);
+export const AllowFromListSchema = z.array(AllowFromEntrySchema).optional();
+export function buildNestedDmConfigSchema() {
+  return z.object({ enabled: z.boolean().optional(), policy: DmPolicySchema.optional(), allowFrom: AllowFromListSchema }).optional();
+}
+export function buildCatchallMultiAccountChannelSchema(accountSchema) {
+  return accountSchema.extend({ accounts: z.object({}).catchall(accountSchema).optional(), defaultAccount: z.string().optional() });
+}
 export const DmConfigSchema = z.object({ enabled: z.boolean().default(true), policy: DmPolicySchema, allowFrom: z.array(z.string()).default([]) }).default({});
 export const BlockStreamingCoalesceSchema = z.object({ enabled: z.boolean().default(false), intervalMs: z.number().default(1500) }).default({});
 export const MarkdownTableModeSchema = z.enum(['native', 'code', 'none']).default('native');
