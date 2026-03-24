@@ -1101,6 +1101,27 @@ export class OpenDeskTUI {
         return this.modelNotConfiguredMode;
     }
 
+    /**
+     * 更新工作空间目录，同步刷新 Banner、process.cwd、自动补全 basePath。
+     */
+    updateWorkspace(newWorkspace: string) {
+        this.workspace = newWorkspace;
+        try { process.chdir(newWorkspace); } catch { /* ignore */ }
+        this.rebuildBanner();
+        this.inputArea.refreshAutocomplete();
+    }
+
+    /**
+     * 重建 Banner（工作空间路径变化后刷新顶部显示）
+     */
+    private rebuildBanner() {
+        const children = this.container.children;
+        if (children.length > 0 && children[0] instanceof OpenDeskBanner) {
+            children[0] = new OpenDeskBanner(this.workspace);
+        }
+        this.tui.requestRender(true);
+    }
+
     start() {
         this.tui.start();
 
