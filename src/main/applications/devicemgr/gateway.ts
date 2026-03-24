@@ -48,7 +48,7 @@ import {
 
 const TAG = '[devicemgr:gateway]';
 
-type ConnectionState = {
+export type ConnectionState = {
     connId: string;
     socket: WebSocket;
     remoteIp?: string;
@@ -62,6 +62,17 @@ type ConnectionState = {
 
 export type GatewayEventCallback = (event: string, payload: unknown) => void;
 
+/**
+ * Handler signature for gateway RPC methods.
+ * Receives the connection, frame, and a `respond` helper.
+ */
+export type GatewayMethodHandler = (
+    conn: ConnectionState,
+    frame: RequestFrame,
+    params: any,
+    respond: (ok: boolean, payload?: unknown, error?: { code: string; message: string; details?: unknown }) => void,
+) => void | Promise<void>;
+
 export class DeviceGateway {
 
     private wss: WebSocketServer | null = null;
@@ -72,6 +83,7 @@ export class DeviceGateway {
     private config: DeviceMgrConfig;
     private dataDir: string;
     private eventCallback?: GatewayEventCallback;
+    private methodHandlers = new Map<string, GatewayMethodHandler>();
 
     constructor(dataDir: string, config: DeviceMgrConfig) {
         this.dataDir = dataDir;
@@ -95,6 +107,22 @@ export class DeviceGateway {
 
     getIdentity(): GatewayIdentity {
         return this.identity;
+    }
+
+    /**
+     * 注册一个 RPC 方法处理器。客户端调用 `method` 时将路由到 handler。
+     */
+    registerMethod(method: string, handler: GatewayMethodHandler): void {
+        this.methodHandlers.set(method, handler);
+    }
+
+    /**
+     * 批量注册方法处理器。
+     */
+    registerMethods(handlers: Record<string, GatewayMethodHandler>): void {
+        for (const [method, handler] of Object.entries(handlers)) {
+            this.methodHandlers.set(method, handler);
+        }
     }
 
     isRunning(): boolean {
@@ -255,7 +283,33 @@ export class DeviceGateway {
     private routeMethod(conn: ConnectionState, frame: RequestFrame): void {
         const method = frame.method;
         const params = frame.params as any;
+        const respond = (ok: boolean, payload?: unknown, error?: { code: string; message: string; details?: unknown }) => {
+            this.sendResponse(conn.socket, frame.id, ok, payload, error);
+        };
 
+        // Check external registered handlers first
+        const externalHandler = this.methodHandlers.get(method);
+        if (externalHandler) {
+            try {
+                const result = externalHandler(conn, frame, params, respond);
+                if (result instanceof Promise) {
+                    result.catch((err: any) => {
+                        respond(false, undefined, {
+                            code: 'INTERNAL_ERROR',
+                            message: err?.message || 'handler error',
+                        });
+                    });
+                }
+            } catch (err: any) {
+                respond(false, undefined, {
+                    code: 'INTERNAL_ERROR',
+                    message: err?.message || 'handler error',
+                });
+            }
+            return;
+        }
+
+        // Built-in node methods
         switch (method) {
             case 'node.pair.request':
                 this.handlePairRequest(conn, frame, params);
@@ -291,13 +345,13 @@ export class DeviceGateway {
                 this.handleNodeEvent(conn, frame, params);
                 break;
             case 'node.pending.pull':
-                this.sendResponse(conn.socket, frame.id, true, { items: [], hasMore: false });
+                respond(true, { items: [], hasMore: false });
                 break;
             case 'node.pending.ack':
-                this.sendResponse(conn.socket, frame.id, true, {});
+                respond(true, {});
                 break;
             default:
-                this.sendResponse(conn.socket, frame.id, false, undefined, {
+                respond(false, undefined, {
                     code: 'METHOD_NOT_FOUND',
                     message: `unknown method: ${method}`,
                 });
@@ -793,12 +847,27 @@ export class DeviceGateway {
         }
     }
 
-    private sendEvent(socket: WebSocket, event: string, payload?: unknown): void {
+    /**
+     * 向指定 WebSocket 发送事件帧。
+     * 也可通过 sendEventToConnection(connId, ...) 按连接ID发送。
+     */
+    sendEvent(socket: WebSocket, event: string, payload?: unknown): void {
         const frame: EventFrame = { type: 'event', event, payload };
         try {
             socket.send(JSON.stringify(frame));
         } catch {
             // connection may already be closed
+        }
+    }
+
+    /**
+     * 按连接ID向客户端推送事件。
+     * 如果连接不存在或已断开则静默忽略。
+     */
+    sendEventToConnection(connId: string, event: string, payload?: unknown): void {
+        const conn = this.connections.get(connId);
+        if (conn && conn.socket.readyState === conn.socket.OPEN) {
+            this.sendEvent(conn.socket, event, payload);
         }
     }
 

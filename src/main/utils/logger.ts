@@ -162,6 +162,15 @@ export function useConsoleTransport() {
     }
 }
 
+export function useDumpLogTransport(filePath: string) {
+    if (loggerInstance) {
+        loggerInstance.add(new winston.transports.File({
+            filename: filePath,
+            options: { flags: 'w' },
+        }));
+    }
+}
+
 function createLogger() {
     var transports: Transport[] = [];
     transports.push(new winston.transports.File({ filename: path.join(getLogDirectory(), 'app.log') }));

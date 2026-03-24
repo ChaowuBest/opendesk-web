@@ -23,7 +23,10 @@ import { logger } from '../../utils/logger.js';
 import type { ApplicationRegistry } from '../registry.js';
 import type { SlashCommandHandler } from '../../tui/commands/index.js';
 import { DeviceGateway } from './gateway.js';
+import { registerOpenClawMethods } from './gateway-methods.js';
 import { DeviceMgrConfigSchema, type DeviceMgrConfig } from './common.js';
+import { GlobalState } from '../../aikernel/states/global.js';
+import { Setting } from '../../utils/setting.js';
 import {
     GetGatewayStatusTool,
     ListConnectedDevicesTool,
@@ -87,6 +90,14 @@ export class DeviceMgrApplication extends BaseApplication {
 
             this.gateway.onEvent((event, payload) => {
                 this.emitEvent(event, payload);
+            });
+
+            const globalState = GlobalState.getInstance();
+            const settingData = Setting.getInstance().getData() as any;
+            registerOpenClawMethods(this.gateway, {
+                taskManagerState: globalState.taskManagerState,
+                model: settingData?.default_model || undefined,
+                workspace: process.cwd(),
             });
 
             await this.gateway.start();

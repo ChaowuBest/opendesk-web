@@ -12,7 +12,7 @@
 import { setPlatform } from '../platforms/base';
 import { CliPlatform } from '../platforms/cli.js';
 import { isMainThread } from 'worker_threads';
-import { useCliTransport, useConsoleTransport, interceptConsole } from './utils/logger.js';
+import { useCliTransport, useConsoleTransport, useDumpLogTransport, interceptConsole } from './utils/logger.js';
 import { initializeRegistry, initializeRegistryWorker, ApplicationRegistry } from './applications/registry';
 import { initializeAppWorkers } from './applications/worker';
 import { GlobalState } from './aikernel/states/global.js';
@@ -38,6 +38,7 @@ function parseCommandLineArgs() {
     prog.option('-c, --command <command>', 'the command to execute', v => v);
     prog.option('--export-html <path>', 'export session as HTML when -c task completes', v => v);
     prog.option('--export-json <path>', 'export session as JSON when -c task completes', v => v);
+    prog.option('--dump-log <path>', 'dump all log output to specified file', v => v);
     prog.option('-v, --version', 'print the version');
 
     // plugins subcommand - compatible with openclaw CLI style
@@ -277,6 +278,7 @@ function parseCommandLineArgs() {
             model: kwargs.model,
             exportHtml: kwargs.exportHtml,
             exportJson: kwargs.exportJson,
+            dumpLog: kwargs.dumpLog,
         })
     });
 
@@ -286,6 +288,9 @@ function parseCommandLineArgs() {
 function main(args: CommandLineArgs) {
     setPlatform(new CliPlatform());
     useCliTransport();
+    if (args.dumpLog) {
+        useDumpLogTransport(path.resolve(args.dumpLog));
+    }
     interceptConsole();
 
     if (!isMainThread) {

@@ -15,7 +15,7 @@ import { Card } from '../../../tui/components/card';
 import { statusDisplay, truncText } from '../../../tui/components/toolcall';
 import chalk from 'chalk';
 import { z } from 'zod';
-import { fetch } from 'undici';
+import { fetch, ProxyAgent } from 'undici';
 import { Readability } from '@mozilla/readability';
 import { parseHTML } from 'linkedom';
 import TurndownService from 'turndown';
@@ -374,6 +374,11 @@ export class WebFetchTool extends BaseTool<typeof WebFetchArgsSchema> {
     private async doFetch(url: string, headers: Record<string, string>, maxRetries = 2): Promise<Awaited<ReturnType<typeof fetch>>> {
         let lastError: Error | undefined;
 
+        // 支持系统代理
+        const proxyUrl = process.env.HTTPS_PROXY || process.env.https_proxy ||
+                         process.env.HTTP_PROXY || process.env.http_proxy;
+        const dispatcher = proxyUrl ? new ProxyAgent(proxyUrl) : undefined;
+
         for (let attempt = 0; attempt <= maxRetries; attempt++) {
             if (attempt > 0) {
                 await new Promise(r => setTimeout(r, 1000 * attempt));
@@ -388,6 +393,7 @@ export class WebFetchTool extends BaseTool<typeof WebFetchArgsSchema> {
                     redirect: 'follow',
                     headers,
                     signal: controller.signal,
+                    dispatcher,
                 });
             } catch (err: any) {
                 clearTimeout(timer);

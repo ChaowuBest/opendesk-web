@@ -68,6 +68,7 @@ export interface CommandLineArgs {
     model?: string;
     exportHtml?: string;
     exportJson?: string;
+    dumpLog?: string;
 }
 
 export class OpenDeskTUI {
@@ -923,7 +924,7 @@ export class OpenDeskTUI {
             const modelCfg = data.models?.find((m: any) => m.alias === aliasToUse);
             const modelName = modelCfg?.model_name ?? aliasToUse;
 
-            this.inputArea.statusBar.update({ modelName });
+            this.inputArea.statusBar.update({ modelName: aliasToUse });
 
             // 如果没有通过命令行指定模型，则更新当前活跃任务的模型为新的默认模型
             // 这样用户在 /config 中修改模型后，继续对话时会使用新模型
@@ -1100,11 +1101,55 @@ export class OpenDeskTUI {
         return this.modelNotConfiguredMode;
     }
 
+    /**
+     * 更新工作空间目录，同步刷新 Banner、process.cwd、自动补全 basePath。
+     */
+    updateWorkspace(newWorkspace: string) {
+        this.workspace = newWorkspace;
+        try { process.chdir(newWorkspace); } catch { /* ignore */ }
+        this.rebuildBanner();
+        this.inputArea.refreshAutocomplete();
+    }
+
+    /**
+     * 重建 Banner（工作空间路径变化后刷新顶部显示）
+     */
+    private rebuildBanner() {
+        const children = this.container.children;
+        if (children.length > 0 && children[0] instanceof OpenDeskBanner) {
+            children[0] = new OpenDeskBanner(this.workspace);
+        }
+        this.tui.requestRender(true);
+    }
+
     start() {
         this.tui.start();
 
         // Attach a direct input listener to TUI FIRST, to hijack Ctrl+C before Editor gets it!
         this.tui.addInputListener((data) => {
+            // 内联结果面板交互：Esc 关闭，Ctrl+Up/Down 滚动
+            const activePanel = this.inputArea.shellResultPanel.isVisible()
+                ? this.inputArea.shellResultPanel
+                : this.inputArea.btwResultPanel.isVisible()
+                    ? this.inputArea.btwResultPanel
+                    : null;
+            if (activePanel) {
+                if (matchesKey(data, Key.escape)) {
+                    this.inputArea.dismissAllInlinePanels();
+                    return { consume: true };
+                }
+                if (matchesKey(data, Key.ctrl("up"))) {
+                    activePanel.scrollUp();
+                    this.tui.requestRender();
+                    return { consume: true };
+                }
+                if (matchesKey(data, Key.ctrl("down"))) {
+                    activePanel.scrollDown();
+                    this.tui.requestRender();
+                    return { consume: true };
+                }
+            }
+
             if (matchesKey(data, Key.ctrl("c"))) {
                 // 有 overlay 打开时不处理
                 if (this.hasOpenOverlay) {
