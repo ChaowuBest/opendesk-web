@@ -277,19 +277,22 @@ function getShell() {
     return _cachedShell;
 }
 
-// ── ShellResultPanel：命令执行结果面板 ──────────────────────────────────
+// ── InlineResultPanel：通用内联结果面板 ──────────────────────────────────
 
-export class ShellResultPanel implements Component {
+export class InlineResultPanel implements Component {
     private lines: string[] = [];
     private scrollOffset = 0;
     private maxVisibleLines = 15;
     private visible = false;
-    private command = '';
-    private exitCode: number | null = null;
+    private headerText = '';
+    private colorFn: (s: string) => string;
 
-    show(command: string, output: string, exitCode: number | null) {
-        this.command = command;
-        this.exitCode = exitCode;
+    constructor(colorFn?: (s: string) => string) {
+        this.colorFn = colorFn ?? ((s: string) => chalk.cyan(s));
+    }
+
+    show(header: string, output: string) {
+        this.headerText = header;
         this.lines = output.split('\n');
         if (this.lines.length > 0 && this.lines[this.lines.length - 1] === '') {
             this.lines.pop();
@@ -321,15 +324,13 @@ export class ShellResultPanel implements Component {
     render(width: number): string[] {
         if (!this.visible || this.lines.length === 0) return [];
 
+        const c = this.colorFn;
         const innerW = Math.max(1, width - 4);
         const result: string[] = [];
 
-        const exitLabel = this.exitCode === 0
-            ? chalk.green(`exit: ${this.exitCode}`)
-            : chalk.red(`exit: ${this.exitCode ?? '?'}`);
-        const header = ` ${chalk.cyan('$')} ${chalk.bold(truncateToWidth(this.command, Math.max(1, innerW - 20)))}  ${exitLabel} `;
+        const header = ` ${truncateToWidth(this.headerText, Math.max(1, innerW))} `;
         const headerW = visibleWidth(header);
-        const topBar = chalk.cyan('┌') + chalk.cyan(header) + chalk.cyan('─'.repeat(Math.max(0, width - headerW - 2))) + chalk.cyan('┐');
+        const topBar = c('┌') + c(header) + c('─'.repeat(Math.max(0, width - headerW - 2))) + c('┐');
         result.push(topBar);
 
         const visibleLines = this.lines.slice(this.scrollOffset, this.scrollOffset + this.maxVisibleLines);
@@ -337,7 +338,7 @@ export class ShellResultPanel implements Component {
             const truncated = truncateToWidth(line, innerW);
             const lineW = visibleWidth(truncated);
             const padR = Math.max(0, innerW - lineW);
-            result.push(chalk.cyan('│') + ' ' + truncated + ' '.repeat(padR) + ' ' + chalk.cyan('│'));
+            result.push(c('│') + ' ' + truncated + ' '.repeat(padR) + ' ' + c('│'));
         }
 
         const scrollHints: string[] = [];
@@ -351,12 +352,14 @@ export class ShellResultPanel implements Component {
         scrollHints.push(chalk.dim('Esc 关闭'));
         const bottomInfo = ' ' + scrollHints.join('  ') + ' ';
         const bottomInfoW = visibleWidth(bottomInfo);
-        const bottomBar = chalk.cyan('└') + chalk.cyan(bottomInfo) + chalk.cyan('─'.repeat(Math.max(0, width - bottomInfoW - 2))) + chalk.cyan('┘');
+        const bottomBar = c('└') + c(bottomInfo) + c('─'.repeat(Math.max(0, width - bottomInfoW - 2))) + c('┘');
         result.push(bottomBar);
 
         return result;
     }
 }
+
+export type ShellResultPanel = InlineResultPanel;
 
 /**
  * AgentInputArea: 输入区域 + 斜杠指令 + 消息队列 + 状态栏
@@ -367,7 +370,8 @@ export class AgentInputArea implements Component {
 
     input: Editor;
     statusBar: StatusBar = new StatusBar();
-    shellResultPanel: ShellResultPanel = new ShellResultPanel();
+    shellResultPanel: InlineResultPanel = new InlineResultPanel((s) => chalk.cyan(s));
+    btwResultPanel: InlineResultPanel = new InlineResultPanel((s) => chalk.magenta(s));
 
     private openDeskTUI: OpenDeskTUI;
     private layout: Box;
@@ -390,6 +394,7 @@ export class AgentInputArea implements Component {
         this.input = new Editor(this.openDeskTUI.tui, defaultEditorTheme);
         this.defaultBorderColor = this.input.borderColor;
         this.layout.addChild(this.hintText);
+        this.layout.addChild(this.btwResultPanel);
         this.layout.addChild(this.shellResultPanel);
         this.layout.addChild(this.input);
         this.layout.addChild(this.statusBar);
@@ -459,8 +464,12 @@ export class AgentInputArea implements Component {
             if (this.runningShellProcess === child) {
                 this.runningShellProcess = undefined;
             }
+            const exitLabel = code === 0
+                ? chalk.green(`exit: ${code}`)
+                : chalk.red(`exit: ${code ?? '?'}`);
+            const header = `${chalk.cyan('$')} ${chalk.bold(cmd)}  ${exitLabel}`;
             const output = (stdout + (stderr ? chalk.red(stderr) : '')).trimEnd();
-            this.shellResultPanel.show(cmd, output || chalk.dim('(无输出)'), code);
+            this.shellResultPanel.show(header, output || chalk.dim('(无输出)'));
             this.hintText.setText('');
             this.refreshHint();
             this.openDeskTUI.tui.requestRender();
@@ -470,7 +479,8 @@ export class AgentInputArea implements Component {
             if (this.runningShellProcess === child) {
                 this.runningShellProcess = undefined;
             }
-            this.shellResultPanel.show(cmd, chalk.red(`执行失败: ${err.message}`), 1);
+            const header = `${chalk.cyan('$')} ${chalk.bold(cmd)}  ${chalk.red('error')}`;
+            this.shellResultPanel.show(header, chalk.red(`执行失败: ${err.message}`));
             this.hintText.setText('');
             this.refreshHint();
             this.openDeskTUI.tui.requestRender();
@@ -482,6 +492,20 @@ export class AgentInputArea implements Component {
             this.shellResultPanel.hide();
             this.openDeskTUI.tui.requestRender();
         }
+    }
+
+    dismissBtwResult() {
+        if (this.btwResultPanel.isVisible()) {
+            this.btwResultPanel.hide();
+            this.openDeskTUI.tui.requestRender();
+        }
+    }
+
+    dismissAllInlinePanels() {
+        let changed = false;
+        if (this.shellResultPanel.isVisible()) { this.shellResultPanel.hide(); changed = true; }
+        if (this.btwResultPanel.isVisible()) { this.btwResultPanel.hide(); changed = true; }
+        if (changed) this.openDeskTUI.tui.requestRender();
     }
 
     /**

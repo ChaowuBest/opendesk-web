@@ -1106,19 +1106,24 @@ export class OpenDeskTUI {
 
         // Attach a direct input listener to TUI FIRST, to hijack Ctrl+C before Editor gets it!
         this.tui.addInputListener((data) => {
-            // Shell 结果面板交互：Esc 关闭，Ctrl+Up/Down 滚动
-            if (this.inputArea.shellResultPanel.isVisible()) {
+            // 内联结果面板交互：Esc 关闭，Ctrl+Up/Down 滚动
+            const activePanel = this.inputArea.shellResultPanel.isVisible()
+                ? this.inputArea.shellResultPanel
+                : this.inputArea.btwResultPanel.isVisible()
+                    ? this.inputArea.btwResultPanel
+                    : null;
+            if (activePanel) {
                 if (matchesKey(data, Key.escape)) {
-                    this.inputArea.dismissShellResult();
+                    this.inputArea.dismissAllInlinePanels();
                     return { consume: true };
                 }
                 if (matchesKey(data, Key.ctrl("up"))) {
-                    this.inputArea.shellResultPanel.scrollUp();
+                    activePanel.scrollUp();
                     this.tui.requestRender();
                     return { consume: true };
                 }
                 if (matchesKey(data, Key.ctrl("down"))) {
-                    this.inputArea.shellResultPanel.scrollDown();
+                    activePanel.scrollDown();
                     this.tui.requestRender();
                     return { consume: true };
                 }

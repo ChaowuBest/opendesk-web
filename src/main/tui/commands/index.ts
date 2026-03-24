@@ -25,6 +25,7 @@ import { registerQuickpassCommand } from "./quickpass.js";
 import { registerNotificationCommand } from "./notification.js";
 import { registerUndoCommand } from "./undo.js";
 import { registerRedoCommand } from "./redo.js";
+import { registerBtwCommand } from "./btw.js";
 
 /**
  * 注册所有内置斜杠命令到 TUI
@@ -55,4 +56,5 @@ export function registerAllCommands(tui: OpenDeskTUI): void {
     registerNotificationCommand(tui);
     registerUndoCommand(tui);
     registerRedoCommand(tui);
+    registerBtwCommand(tui);
 }
