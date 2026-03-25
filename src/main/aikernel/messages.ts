@@ -19,6 +19,20 @@ import hljs from 'highlight.js';
 import path from 'path';
 
 
+/**
+ * 检查工具调用的 args_string 是否为合法 JSON。
+ * 空字符串视为合法（部分模型对无参数工具返回空串）。
+ */
+function isValidToolCallArgs(args_string: string): boolean {
+    if (!args_string || args_string.trim().length === 0) return true;
+    try {
+        JSON.parse(args_string);
+        return true;
+    } catch {
+        return false;
+    }
+}
+
 export const marked = new Marked(
     markedHighlight({
         emptyLangClass: 'hljs',
@@ -252,16 +266,25 @@ export class ToolCallMessagePart {
      * 用来生成OpenAI工具调用的Assistant消息中的tool_calls
      */
     toOpenAIToolCalls(): object[] {
-        return this.toolcalls.map(toolcall => {
-            return {
+        return this.toolcalls
+            .filter(toolcall => {
+                if (!isValidToolCallArgs(toolcall.args_string)) {
+                    logger.warn(
+                        `Dropping tool call "${toolcall.tool_name}" (id=${toolcall.id}) from OpenAI tool_calls: ` +
+                        `args_string is not valid JSON. Raw args: ${toolcall.args_string?.substring(0, 200)}`
+                    );
+                    return false;
+                }
+                return true;
+            })
+            .map(toolcall => ({
                 id: toolcall.id,
                 type: 'function',
                 function: {
                     name: toolcall.tool_name,
                     arguments: toolcall.args_string
                 }
-            }
-        });
+            }));
     }
 
     /**
@@ -804,24 +827,38 @@ export class AssistantMessage {
                 }
                 case 'tool_call': {
                     processCurrentMessage();
-                    const toolCallObjects = part.toolcalls.map(tc => {
-                        const shouldCompressArgs = tc.compress_id
-                            && tc.args_string
-                            && tc.args_string.length > LARGE_ARGS_THRESHOLD;
-                        return {
-                            id: tc.id,
-                            type: 'function',
-                            function: {
-                                name: tc.tool_name,
-                                arguments: shouldCompressArgs
-                                    ? `{"compressed":"工具参数已被压缩，数据ID为 ${tc.compress_id}"}`
-                                    : (tc.args_string || "")
-                            }
-                        };
-                    });
-                    if (toolCallObjects.length > 0) {
+                    const validToolcalls: ToolCall[] = [];
+                    for (const tc of part.toolcalls) {
+                        const argsToCheck = (tc.compress_id && tc.args_string && tc.args_string.length > LARGE_ARGS_THRESHOLD)
+                            ? `{"compressed":"placeholder"}`
+                            : (tc.args_string || "");
+                        if (!isValidToolCallArgs(argsToCheck)) {
+                            logger.warn(
+                                `Dropping tool call "${tc.tool_name}" (id=${tc.id}) from OpenAI context: ` +
+                                `args_string is not valid JSON. Raw args: ${tc.args_string?.substring(0, 200)}`
+                            );
+                            continue;
+                        }
+                        validToolcalls.push(tc);
+                    }
+                    if (validToolcalls.length > 0) {
+                        const toolCallObjects = validToolcalls.map(tc => {
+                            const shouldCompressArgs = tc.compress_id
+                                && tc.args_string
+                                && tc.args_string.length > LARGE_ARGS_THRESHOLD;
+                            return {
+                                id: tc.id,
+                                type: 'function',
+                                function: {
+                                    name: tc.tool_name,
+                                    arguments: shouldCompressArgs
+                                        ? `{"compressed":"工具参数已被压缩，数据ID为 ${tc.compress_id}"}`
+                                        : (tc.args_string || "")
+                                }
+                            };
+                        });
                         messages.push({ role: 'assistant', tool_calls: toolCallObjects });
-                        for (const toolcall of part.toolcalls) {
+                        for (const toolcall of validToolcalls) {
                             let toolCallMsg: any = { 'role': 'tool', tool_call_id: toolcall.id };
                             if (toolcall.compress_id) {
                                 toolCallMsg.content = `工具返回结果已被压缩，数据ID为 ${toolcall.compress_id}`;
@@ -858,6 +895,13 @@ export class AssistantMessage {
         var tool_call_parts = this.content.filter(part => part.type === 'tool_call');
         for (let part of tool_call_parts) {
             for (let toolcall of part.toolcalls) {
+                if (!isValidToolCallArgs(toolcall.args_string)) {
+                    logger.warn(
+                        `Skipping tool response for "${toolcall.tool_name}" (id=${toolcall.id}): ` +
+                        `original tool call had invalid JSON args`
+                    );
+                    continue;
+                }
                 if (toolcall.compress_id) {
                     messages.push({
                         role: 'tool',
