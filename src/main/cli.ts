@@ -20,12 +20,14 @@ import { FULL_CLEAR } from './tui/components/constants';
 import { OpenDeskTUI, CommandLineArgs } from './tui/entry.js';
 import { Setting } from './utils/setting';
 import { program as prog } from 'commander';
-import { installPlugin, uninstallPlugin, listInstalledPlugins, setPluginEnabled, resetOpenClawShim, loadPlugins } from './aikernel/plugins/index.js';
+import { listInstalledPlugins, loadPlugins } from './aikernel/plugins/index.js';
 import { ChannelMgrApplication } from './applications/channelmgr/app.js';
 import { ChannelMessageRouter } from './applications/channelmgr/router.js';
 import { ShellAgentDecl } from './aikernel/agents/shellagent.js';
 import { runSkillTestsInDirectory } from './applications/skillmgr/skill-test.js';
 import { NotificationManager } from './utils/notificationmgr.js';
+import { registerPluginsCommand } from './tui/subcommands/plugins.js';
+import { registerToolsCommand } from './tui/subcommands/tools.js';
 
 import process from 'process';
 import path from 'path';
@@ -41,100 +43,8 @@ function parseCommandLineArgs() {
     prog.option('--dump-log <path>', 'dump all log output to specified file', v => v);
     prog.option('-v, --version', 'print the version');
 
-    // plugins subcommand - compatible with openclaw CLI style
-    const pluginsCmd = prog.command('plugins').description('插件管理');
-
-    pluginsCmd
-        .command('install <spec>')
-        .description('安装插件 (npm 包名、路径或 .tgz 文件 URL)')
-        .action(async (spec: string) => {
-            useCliTransport();
-            useConsoleTransport();  // Also output logs to console
-            console.log(`正在安装插件: ${spec} ...`);
-            const result = await installPlugin(spec);
-            if (result.success) {
-                console.log(`✓ 插件安装成功: ${result.id}`);
-            } else {
-                console.error(`✗ 插件安装失败: ${result.error}`);
-                process.exit(1);
-            }
-            process.exit(0);
-        });
-
-    pluginsCmd
-        .command('uninstall <id>')
-        .description('卸载插件')
-        .action(async (id: string) => {
-            useCliTransport();
-            const result = await uninstallPlugin(id);
-            if (result.success) {
-                console.log(`✓ 插件已卸载: ${id}`);
-            } else {
-                console.error(`✗ 插件卸载失败: ${result.error}`);
-                process.exit(1);
-            }
-            process.exit(0);
-        });
-
-    pluginsCmd
-        .command('list')
-        .description('列出已安装的插件')
-        .action(() => {
-            const records = listInstalledPlugins();
-            if (records.length === 0) {
-                console.log('暂无已安装的插件');
-            } else {
-                console.log('已安装的插件:');
-                for (const r of records) {
-                    const status = r.enabled ? '✓ enabled' : '✗ disabled';
-                    console.log(`  ${r.id} (${r.npmSpec}) [${status}] installed: ${r.installedAt}`);
-                }
-            }
-            process.exit(0);
-        });
-
-    pluginsCmd
-        .command('enable <id>')
-        .description('启用插件')
-        .action((id: string) => {
-            if (setPluginEnabled(id, true)) {
-                console.log(`✓ 插件已启用: ${id}`);
-            } else {
-                console.error(`✗ 未找到插件: ${id}`);
-                process.exit(1);
-            }
-            process.exit(0);
-        });
-
-    pluginsCmd
-        .command('disable <id>')
-        .description('禁用插件')
-        .action((id: string) => {
-            if (setPluginEnabled(id, false)) {
-                console.log(`✓ 插件已禁用: ${id}`);
-            } else {
-                console.error(`✗ 未找到插件: ${id}`);
-                process.exit(1);
-            }
-            process.exit(0);
-        });
-
-    pluginsCmd
-        .command('reset-openclaw-shim')
-        .description('删除并重新生成 openclaw 兼容层 (用于调试)')
-        .action(() => {
-            useCliTransport();
-            useConsoleTransport();
-            console.log('正在重置 openclaw shim...');
-            const result = resetOpenClawShim();
-            if (result.success) {
-                console.log('✓ openclaw shim 已重新生成');
-            } else {
-                console.error(`✗ 重置失败: ${result.error}`);
-                process.exit(1);
-            }
-            process.exit(0);
-        });
+    registerPluginsCommand(prog);
+    registerToolsCommand(prog);
 
     // channels subcommand
     const channelsCmd = prog.command('channels').description('消息插件管理');
@@ -212,7 +122,7 @@ function parseCommandLineArgs() {
 
             const hasFailure = result.summary.failed > 0 || result.summary.error > 0;
             process.exit(hasFailure ? 1 : 0);
-	});
+        });
 
     channelsCmd
         .command('info')
@@ -246,7 +156,7 @@ function parseCommandLineArgs() {
             process.exit(result.errors.length > 0 ? 1 : 0);
         });
 
-    prog.action((workspace, kwargs) => {
+    prog.action((workspace: string, kwargs: Record<string, string | undefined>) => {
         const workspacePath = path.resolve(workspace);
         if (!fs.existsSync(workspacePath)) {
             console.error(`[error] workspace ${workspacePath} does not exist`);
@@ -266,8 +176,9 @@ function parseCommandLineArgs() {
                     console.error(`[error] model alias '${kwargs.model}' not found`);
                     process.exit(1);
                 }
-            } catch (err) {
-                console.error(`[error] invalid model alias '${kwargs.model}': ${err.message}`);
+            } catch (err: unknown) {
+                const message = err instanceof Error ? err.message : String(err);
+                console.error(`[error] invalid model alias '${kwargs.model}': ${message}`);
                 process.exit(1);
             }
         }
@@ -319,7 +230,6 @@ function main(args: CommandLineArgs) {
                     args.model,
                 );
 
-                // 收到消息时：自动切换前台任务并发送通知
                 router.onTaskResolved = (task, message) => {
                     const senderLabel = message.senderName || message.senderId;
                     const channelLabel = message.channelId;
@@ -327,10 +237,8 @@ function main(args: CommandLineArgs) {
                         ? (message.text || '').slice(0, 37) + '...'
                         : (message.text || '');
 
-                    // 自动切换前台到消息关联的任务
                     tui.switchToTask(task);
 
-                    // 发送通知
                     NotificationManager.getInstance().info(
                         channelLabel,
                         `来自 ${senderLabel} 的新消息`,
@@ -340,7 +248,6 @@ function main(args: CommandLineArgs) {
 
                 await channelMgrApp.initializeChannels(router, args.workspace);
 
-                // Sync channel states to the status bar via event callback
                 const syncChannelStates = (states: { label: string; status: { online: boolean } }[]) => {
                     tui.inputArea.statusBar.update({
                         channelStates: states.map(s => ({
@@ -350,7 +257,6 @@ function main(args: CommandLineArgs) {
                     });
                 };
                 channelMgrApp.onChannelStateChange(syncChannelStates);
-                // Initial sync
                 syncChannelStates(channelMgrApp.getChannelStates());
             }
         });
