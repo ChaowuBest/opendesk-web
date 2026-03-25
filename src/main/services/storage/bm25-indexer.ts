@@ -16,7 +16,6 @@
 import { Indexer, IndexerSearchOptions, IndexerSearchResult } from './indexer.js';
 import { Item, FilterCondition, QueryOperator, BM25Query, ItemType, ColumnSchema } from './abstract-storage.js';
 import { createBM25IndexDB } from './bm25-index-db.js';
-import { randomUUID } from 'crypto';
 
 export interface BM25Record {
     bm25_id: string;
@@ -46,6 +45,7 @@ export interface IBM25IndexDB {
     flush(): Promise<void>;
     close(): void;
     deleteAll(): Promise<void>;
+    count(): Promise<number>;
 }
 
 export class BM25Indexer extends Indexer {
@@ -80,7 +80,7 @@ export class BM25Indexer extends Indexer {
 
     private validateField(field: string): void {
         const indexers = this.schema.needIndexers?.[field];
-        if (!indexers || !indexers.includes(this.name)) {
+        if (!indexers || !indexers.some((b) => b.indexer === this.name)) {
             throw new Error(
                 `BM25Indexer does not support field: ${field}. ` +
                     `Field must be listed in schema.needIndexers with BM25Indexer`
@@ -192,7 +192,6 @@ export class BM25Indexer extends Indexer {
         for (const item of items) {
             const columns = item.indexer_columns?.[this.name] as Array<{ column: string; content: string }> | undefined;
             if (!columns || columns.length === 0) {
-                console.error(`[BM25Indexer] Item ${item.item_id} does not contain indexer_columns for ${this.name}`);
                 continue;
             }
 
@@ -200,13 +199,10 @@ export class BM25Indexer extends Indexer {
                 const columnName = col.column;
                 const text = col.content;
                 if (typeof text !== 'string') {
-                    console.error(
-                        `[BM25Indexer] Item ${item.item_id} does not contain a valid text for indexer ${this.name} (${columnName})`
-                    );
-                    continue;
+                    throw new Error(`[BM25Indexer] Item ${item.item_id} column ${columnName}: text must be string`);
                 }
 
-                records.push(this.itemToRecord(item, columnName, randomUUID()));
+                records.push(this.itemToRecord(item, columnName, `${item.item_id}_${columnName}`));
             }
         }
 
@@ -225,7 +221,6 @@ export class BM25Indexer extends Indexer {
         for (const item of items) {
             const columns = item.indexer_columns?.[this.name] as Array<{ column: string; content: string }> | undefined;
             if (!columns || columns.length === 0) {
-                console.error(`[BM25Indexer] Item ${item.item_id} does not contain indexer_columns for ${this.name}`);
                 continue;
             }
 
@@ -233,13 +228,10 @@ export class BM25Indexer extends Indexer {
                 const columnName = col.column;
                 const text = col.content;
                 if (typeof text !== 'string') {
-                    console.error(
-                        `[BM25Indexer] Item ${item.item_id} does not contain a valid text for indexer ${this.name} (${columnName})`
-                    );
-                    continue;
+                    throw new Error(`[BM25Indexer] Item ${item.item_id} column ${columnName}: text must be string`);
                 }
 
-                records.push(this.itemToRecord(item, columnName, randomUUID()));
+                records.push(this.itemToRecord(item, columnName, `${item.item_id}_${columnName}`));
             }
         }
 
@@ -262,6 +254,15 @@ export class BM25Indexer extends Indexer {
 
     async deleteAll(): Promise<void> {
         await this.ensureDB().deleteAll();
+    }
+
+    async clear(): Promise<void> {
+        await this.ensureDB().deleteAll();
+    }
+
+    async getInfo(): Promise<Record<string, any>> {
+        const size = await this.ensureDB().count();
+        return { size };
     }
 }
 

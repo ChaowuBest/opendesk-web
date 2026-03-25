@@ -238,16 +238,11 @@ export class BaseIndexDBHm implements IBaseIndexDB {
         const columns = this.validFields.filter((col) => record[col] !== undefined);
         const placeholders = columns.map(() => '?').join(', ');
         const values = columns.map((col) => record[col]);
-        const sql = `INSERT INTO ${this.tableName} (${columns.join(', ')}) VALUES (${placeholders})`;
-        try {
-            await this.runSql(sql, values);
-            return true;
-        } catch (error: any) {
-            const message = error?.message || String(error);
-            if (message.includes('UNIQUE constraint failed') || message.includes('PRIMARYKEY'))
-                throw new Error(`Record with item_id '${record.item_id}' already exists`);
-            throw error;
-        }
+        const updateColumns = columns.filter((c) => c !== 'item_id');
+        const updateClause = updateColumns.map((col) => `${col} = excluded.${col}`).join(', ');
+        const sql = `INSERT INTO ${this.tableName} (${columns.join(', ')}) VALUES (${placeholders}) ON CONFLICT(item_id) DO UPDATE SET ${updateClause}`;
+        await this.runSql(sql, values);
+        return true;
     }
 
     async insertMany(records: Record<string, any>[]): Promise<number> {
@@ -256,13 +251,16 @@ export class BaseIndexDBHm implements IBaseIndexDB {
         return this.runTransaction(async () => {
             let count = 0;
             for (const record of records) {
-                try {
-                    const inserted = await this.insert(record);
-                    if (inserted) count++;
-                } catch (error: any) {
-                    const message = error?.message || String(error);
-                    if (!message.includes('already exists')) throw error;
-                }
+                const columns = this.validFields.filter((col) => record[col] !== undefined);
+                const placeholders = columns.map(() => '?').join(', ');
+                const values = columns.map((col) => record[col]);
+                const updateColumns = columns.filter((c) => c !== 'item_id');
+                const updateClause = updateColumns.map((col) => `${col} = excluded.${col}`).join(', ');
+                await this.runSql(
+                    `INSERT INTO ${this.tableName} (${columns.join(', ')}) VALUES (${placeholders}) ON CONFLICT(item_id) DO UPDATE SET ${updateClause}`,
+                    values
+                );
+                count++;
             }
             return count;
         });
@@ -425,10 +423,7 @@ export class BaseIndexDBHm implements IBaseIndexDB {
         return { totalRecords, dbSize: 0 };
     }
 
-    private buildWhereClause(conditions: BaseQueryCondition[]): {
-        whereClause: string;
-        params: any[];
-    } {
+    private buildWhereClause(conditions: BaseQueryCondition[]): { whereClause: string; params: any[] } {
         const clauses: string[] = [];
         const params: any[] = [];
         for (const condition of conditions) {

@@ -162,24 +162,18 @@ export class VectorIndexDBHm implements IVectorIndexDB {
         await this.ensureInitialized();
         this.validateDimension(record.repr);
         const hexRepr = float32ToHexLiteral(record.repr);
-        try {
-            await this.runTransaction(async () => {
-                await this.runSql(
-                    `INSERT INTO ${this.metaTableName} (vector_id, item_id, item_type) VALUES (?, ?, ?)`,
-                    [record.vector_id, record.item_id, record.item_type]
-                );
-                await this.execSql(`
-                    INSERT INTO ${this.vecTableName} (vector_id, repr)
-                    VALUES ('${escapeStr(record.vector_id)}', ${hexRepr})
-                `);
-            });
-            return true;
-        } catch (error: any) {
-            const msg = error?.message || String(error);
-            if (msg.includes('UNIQUE constraint failed') || msg.includes('PRIMARYKEY'))
-                throw new Error(`Record with item_id '${record.item_id}' already exists`);
-            throw error;
-        }
+        await this.runTransaction(async () => {
+            await this.runSql(
+                `INSERT OR REPLACE INTO ${this.metaTableName} (vector_id, item_id, item_type) VALUES (?, ?, ?)`,
+                [record.vector_id, record.item_id, record.item_type]
+            );
+            await this.execSql(`DELETE FROM ${this.vecTableName} WHERE vector_id = '${escapeStr(record.vector_id)}'`);
+            await this.execSql(`
+                INSERT INTO ${this.vecTableName} (vector_id, repr)
+                VALUES ('${escapeStr(record.vector_id)}', ${hexRepr})
+            `);
+        });
+        return true;
     }
 
     async insertMany(records: VectorIndexRecord[]): Promise<number> {
@@ -188,27 +182,20 @@ export class VectorIndexDBHm implements IVectorIndexDB {
         return this.runTransaction(async () => {
             let count = 0;
             for (const record of records) {
-                try {
-                    this.validateDimension(record.repr);
-                    const hexRepr = float32ToHexLiteral(record.repr);
-                    await this.runSql(
-                        `INSERT INTO ${this.metaTableName} (vector_id, item_id, item_type) VALUES (?, ?, ?)`,
-                        [record.vector_id, record.item_id, record.item_type]
-                    );
-                    await this.execSql(`
-                        INSERT INTO ${this.vecTableName} (vector_id, repr)
-                        VALUES ('${escapeStr(record.vector_id)}', ${hexRepr})
-                    `);
-                    count++;
-                } catch (error: any) {
-                    const msg = error?.message || String(error);
-                    if (
-                        !msg.includes('UNIQUE constraint failed') &&
-                        !msg.includes('PRIMARYKEY') &&
-                        !msg.includes('already exists')
-                    )
-                        throw error;
-                }
+                this.validateDimension(record.repr);
+                const hexRepr = float32ToHexLiteral(record.repr);
+                await this.runSql(
+                    `INSERT OR REPLACE INTO ${this.metaTableName} (vector_id, item_id, item_type) VALUES (?, ?, ?)`,
+                    [record.vector_id, record.item_id, record.item_type]
+                );
+                await this.execSql(
+                    `DELETE FROM ${this.vecTableName} WHERE vector_id = '${escapeStr(record.vector_id)}'`
+                );
+                await this.execSql(`
+                    INSERT INTO ${this.vecTableName} (vector_id, repr)
+                    VALUES ('${escapeStr(record.vector_id)}', ${hexRepr})
+                `);
+                count++;
             }
             return count;
         });
@@ -401,6 +388,14 @@ export class VectorIndexDBHm implements IVectorIndexDB {
 
     getDimension(): number {
         return this.dimension;
+    }
+
+    async getStoredDim(): Promise<number | null> {
+        await this.ensureInitialized();
+        const rows = (await this.execSql(`SELECT vec_length(repr) as dim FROM ${this.vecTableName} LIMIT 1`)) as Array<{
+            dim: number;
+        }>;
+        return rows[0]?.dim ?? null;
     }
 
     async getStats(): Promise<{ totalRecords: number; dimension: number; dbSize: number }> {

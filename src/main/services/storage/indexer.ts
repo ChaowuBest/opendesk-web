@@ -113,6 +113,16 @@ export abstract class Indexer {
     abstract close(): void;
 
     /**
+     * 清空该索引的所有数据
+     */
+    abstract clear(): Promise<void>;
+
+    /**
+     * 返回索引状态信息（至少包含 { size: number }）
+     */
+    abstract getInfo(): Promise<Record<string, any>>;
+
+    /**
      * 检查是否支持指定操作符
      *
      * @param operator - 要检查的操作符

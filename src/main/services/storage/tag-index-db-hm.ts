@@ -237,11 +237,11 @@ export class TagIndexDBHm implements ITagIndexDB {
         return this.runTransaction(async () => {
             let count = 0;
             for (const record of records) {
-                try {
-                    if (await this.insert(record)) count++;
-                } catch (e: any) {
-                    if (!(e?.message || '').includes('already exists')) throw e;
-                }
+                await this.runSql(
+                    `INSERT OR REPLACE INTO ${this.tableName} (item_id, item_type, tag) VALUES (?, ?, ?)`,
+                    [record.item_id, record.item_type, record.tag]
+                );
+                count++;
             }
             return count;
         });

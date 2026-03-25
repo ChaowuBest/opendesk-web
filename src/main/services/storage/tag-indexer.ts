@@ -94,7 +94,9 @@ export class TagIndexer extends Indexer {
 
     constructor(schema: ColumnSchema, dbPath: string) {
         super();
-        this.columnName = Object.keys(schema.needIndexers).find((key) => schema.needIndexers[key].includes(this.name));
+        this.columnName = Object.keys(schema.needIndexers).find((key) =>
+            schema.needIndexers[key].some((b) => b.indexer === this.name)
+        );
         this._dbPath = dbPath;
     }
 
@@ -233,7 +235,11 @@ export class TagIndexer extends Indexer {
 
         for (const item of items) {
             const col = item.indexer_columns?.[this.name]?.find((c) => c.column === this.columnName);
-            const record = this.itemToRecord(item, col?.content as string);
+            if (!col) continue;
+            if (typeof col.content !== 'string') {
+                throw new Error(`[TagIndexer] Item ${item.item_id} tag content must be string`);
+            }
+            const record = this.itemToRecord(item, col.content);
             if (record) {
                 records.push(record);
             }
@@ -255,7 +261,11 @@ export class TagIndexer extends Indexer {
     async update(items: Item[]): Promise<void> {
         for (const item of items) {
             const col = item.indexer_columns?.[this.name]?.find((c) => c.column === this.columnName);
-            const record = this.itemToRecord(item, col?.content as string);
+            if (!col) continue;
+            if (typeof col.content !== 'string') {
+                throw new Error(`[TagIndexer] Item ${item.item_id} tag content must be string`);
+            }
+            const record = this.itemToRecord(item, col.content);
             await this.ensureDB().upsert(record);
         }
     }
@@ -265,6 +275,15 @@ export class TagIndexer extends Indexer {
      */
     close(): void {
         this.db?.close();
+    }
+
+    async clear(): Promise<void> {
+        await this.ensureDB().clear();
+    }
+
+    async getInfo(): Promise<Record<string, any>> {
+        const size = await this.ensureDB().count();
+        return { size };
     }
 
     /**

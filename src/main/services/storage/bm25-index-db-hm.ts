@@ -293,6 +293,10 @@ export class BM25IndexDBHm implements IBM25IndexDB {
 
         await this.runTransaction(async () => {
             for (const record of records) {
+                await this.runSql(
+                    `DELETE FROM ${this.tableName} WHERE item_id = ? AND item_type = ?`,
+                    [record.item_id, record.item_type]
+                );
                 const tokenized = this.tokenize(record.text).join(' ');
                 await this.runSql(
                     `INSERT INTO ${this.tableName}(bm25_id, item_id, item_type, text) VALUES (?, ?, ?, ?)`,
@@ -339,6 +343,14 @@ export class BM25IndexDBHm implements IBM25IndexDB {
     async deleteAll(): Promise<void> {
         await this.ensureInitialized();
         await this.runSql(`DELETE FROM ${this.tableName}`);
+    }
+
+    async count(): Promise<number> {
+        await this.ensureInitialized();
+        const rows = await this.execSql(
+            `SELECT COUNT(*) as count FROM ${this.tableName}`
+        );
+        return (rows[0] as { count?: number })?.count ?? 0;
     }
 
     close(): void {

@@ -175,8 +175,8 @@ async function demoBaseStorage(): Promise<void> {
             updated_at: { type: 'INTEGER', nullable: true }
         },
         needIndexers: {
-            tag: ['TagIndexer'],
-            text: ['BM25Indexer', 'VectorIndexer']
+            tag: [{ indexer: 'TagIndexer' }],
+            text: [{ indexer: 'BM25Indexer' }, { indexer: 'VectorIndexer', options: { dim: 1024 } }]
         }
     };
 

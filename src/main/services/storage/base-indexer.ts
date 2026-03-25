@@ -281,6 +281,15 @@ export class BaseIndexer extends Indexer {
         this.db?.close();
     }
 
+    async clear(): Promise<void> {
+        await this.ensureDB().clear();
+    }
+
+    async getInfo(): Promise<Record<string, any>> {
+        const size = await this.ensureDB().count();
+        return { size };
+    }
+
     /**
      * 获取记录数
      */

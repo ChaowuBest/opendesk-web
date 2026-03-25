@@ -68,7 +68,7 @@ export class BM25IndexDB implements IBM25IndexDB {
         this.si = {};
 
         for (const [columnName, indexers] of Object.entries(this.schema.needIndexers)) {
-            if (!indexers.includes('BM25Indexer')) continue;
+            if (!indexers.some((b) => b.indexer === 'BM25Indexer')) continue;
             this.si[columnName] = await new SearchIndexCtor({
                 name: `${this.dbPath}-${columnName}`
             });
@@ -98,33 +98,25 @@ export class BM25IndexDB implements IBM25IndexDB {
             const topK = options?.topK ?? 10;
             const queryTokens = tokens.map((token) => `text:${token}`);
 
-            try {
-                const index = this.si![options.columnName]!;
-                const results = await index.SEARCH(queryTokens, {
-                    SCORE: { TYPE: 'TFIDF' },
-                    PAGE: { SIZE: topK * 2 }
+            const index = this.si![options.columnName]!;
+            const results = await index.SEARCH(queryTokens, {
+                SCORE: { TYPE: 'TFIDF' },
+                PAGE: { SIZE: topK * 2 },
+                DOCUMENTS: true
+            });
+
+            const searchResults: BM25SearchResult[] = [];
+            for (const result of results.RESULT) {
+                const doc = result._doc;
+                if (!doc) continue;
+                searchResults.push({
+                    item_id: doc.item_id,
+                    item_type: doc.item_type ?? 'file',
+                    text: Array.isArray(doc.text) ? doc.text.join(' ') : doc.text,
+                    score: result._score ?? 0
                 });
-
-                const allDocs = await index.ALL_DOCUMENTS();
-                const docsMap = new Map<string, any>(allDocs.map((d: any) => [d._id, d._doc]));
-
-                const searchResults: BM25SearchResult[] = [];
-                for (const result of results.RESULT) {
-                    const doc = docsMap.get(result._id);
-                    if (!doc) continue;
-
-                    searchResults.push({
-                        item_id: doc.item_id,
-                        item_type: doc.item_type ?? 'file',
-                        text: Array.isArray(doc.text) ? doc.text.join(' ') : doc.text,
-                        score: result._score ?? 0
-                    });
-                }
-
-                return searchResults;
-            } catch {
-                return [];
             }
+            return searchResults;
         });
     }
 
@@ -160,16 +152,10 @@ export class BM25IndexDB implements IBM25IndexDB {
         await this.mutex.runExclusive(async () => {
             for (const index of Object.values(this.si!)) {
                 for (const itemId of itemIds) {
-                    try {
-                        const results = await index.SEARCH([`item_id:${itemId}`], {
-                            PAGE: { SIZE: 100 }
-                        });
-                        if (results.RESULT && results.RESULT.length > 0) {
-                            const docIds = results.RESULT.map((r: any) => r._id);
-                            await index.DELETE(...docIds);
-                        }
-                    } catch {
-                        // ignore delete errors
+                    const results = await index.SEARCH([`item_id:${itemId}`], { PAGE: { SIZE: 100 } });
+                    if (results.RESULT && results.RESULT.length > 0) {
+                        const docIds = results.RESULT.map((r: any) => r._id);
+                        await index.DELETE(...docIds);
                     }
                 }
             }
@@ -216,7 +202,7 @@ export class BM25IndexDB implements IBM25IndexDB {
         const si = this.si;
         this.si = null;
         for (const index of Object.values(si)) {
-            index.FLUSH().catch(() => {});
+            index.FLUSH().catch((e: any) => console.warn('[BM25IndexDB] FLUSH failed on close:', e?.message));
         }
     }
 
@@ -226,6 +212,15 @@ export class BM25IndexDB implements IBM25IndexDB {
         for (const index of Object.values(this.si)) {
             await index.DELETE_ALL();
         }
+    }
+
+    async count(): Promise<number> {
+        if (!this.si) return 0;
+        let total = 0;
+        for (const index of Object.values(this.si)) {
+            total += await (index as any).DOCUMENT_COUNT();
+        }
+        return total;
     }
 }
 

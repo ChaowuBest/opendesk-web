@@ -128,22 +128,15 @@ export class TagIndexDB implements ITagIndexDB {
      */
     async insertMany(records: TagIndexRecord[]): Promise<number> {
         const stmt = this.db.prepare(`
-            INSERT INTO ${this.tableName} (item_id, item_type, tag)
+            INSERT OR REPLACE INTO ${this.tableName} (item_id, item_type, tag)
             VALUES (@item_id, @item_type, @tag)
         `);
 
         const insertAll = this.db.transaction((records: TagIndexRecord[]) => {
             let count = 0;
             for (const record of records) {
-                try {
-                    const result = stmt.run(record);
-                    if (result.changes > 0) count++;
-                } catch (error: any) {
-                    // 跳过重复记录，继续插入其他记录
-                    if (error.code !== 'SQLITE_CONSTRAINT_PRIMARYKEY') {
-                        throw error;
-                    }
-                }
+                const result = stmt.run(record);
+                if (result.changes > 0) count++;
             }
             return count;
         });

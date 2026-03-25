@@ -117,7 +117,6 @@ export class BaseIndexDB implements IBaseIndexDB {
             )
         `;
 
-        console.info(`[base-index-db] create table SQL:\n${createTableSQL}`);
         this.db.exec(createTableSQL);
 
         // 为常用查询字段创建索引
@@ -167,31 +166,28 @@ export class BaseIndexDB implements IBaseIndexDB {
     }
 
     /**
-     * 插入单条记录
+     * 插入单条记录（upsert 语义：已存在则更新 provided 字段，不清除 unprovided 字段）
      */
     async insert(record: Record<string, any>): Promise<boolean> {
         const columns = this.validFields.filter((col) => record[col] !== undefined);
         const placeholders = columns.map(() => '?').join(', ');
         const values = columns.map((col) => record[col]);
 
+        const updateColumns = columns.filter((c) => c !== 'item_id');
+        const updateClause = updateColumns.map((col) => `${col} = excluded.${col}`).join(', ');
+
         const stmt = this.db.prepare(`
             INSERT INTO ${this.tableName} (${columns.join(', ')})
             VALUES (${placeholders})
+            ON CONFLICT(item_id) DO UPDATE SET ${updateClause}
         `);
 
-        try {
-            const result = stmt.run(...values);
-            return result.changes > 0;
-        } catch (error: any) {
-            if (error.code === 'SQLITE_CONSTRAINT_PRIMARYKEY') {
-                throw new Error(`Record with item_id '${record.item_id}' already exists`);
-            }
-            throw error;
-        }
+        const result = stmt.run(...values);
+        return result.changes > 0;
     }
 
     /**
-     * 批量插入记录（使用事务确保原子性）
+     * 批量插入记录（upsert 语义：已存在则更新 provided 字段，不清除 unprovided 字段）
      */
     async insertMany(records: Record<string, any>[]): Promise<number> {
         if (records.length === 0) return 0;
@@ -199,23 +195,20 @@ export class BaseIndexDB implements IBaseIndexDB {
         const insertAll = this.db.transaction((records: Record<string, any>[]) => {
             let count = 0;
             for (const record of records) {
-                try {
-                    const columns = this.validFields.filter((col) => record[col] !== undefined);
-                    const placeholders = columns.map(() => '?').join(', ');
-                    const values = columns.map((col) => record[col]);
+                const columns = this.validFields.filter((col) => record[col] !== undefined);
+                const placeholders = columns.map(() => '?').join(', ');
+                const values = columns.map((col) => record[col]);
 
-                    const insertStmt = this.db.prepare(`
-                        INSERT INTO ${this.tableName} (${columns.join(', ')})
-                        VALUES (${placeholders})
-                    `);
-                    const result = insertStmt.run(...values);
-                    if (result.changes > 0) count++;
-                } catch (error: any) {
-                    // 跳过重复记录，继续插入其他记录
-                    if (error.code !== 'SQLITE_CONSTRAINT_PRIMARYKEY') {
-                        throw error;
-                    }
-                }
+                const updateColumns = columns.filter((c) => c !== 'item_id');
+                const updateClause = updateColumns.map((col) => `${col} = excluded.${col}`).join(', ');
+
+                const insertStmt = this.db.prepare(`
+                    INSERT INTO ${this.tableName} (${columns.join(', ')})
+                    VALUES (${placeholders})
+                    ON CONFLICT(item_id) DO UPDATE SET ${updateClause}
+                `);
+                const result = insertStmt.run(...values);
+                if (result.changes > 0) count++;
             }
             return count;
         });
@@ -413,10 +406,7 @@ export class BaseIndexDB implements IBaseIndexDB {
     /**
      * 构建 WHERE 子句
      */
-    private buildWhereClause(conditions: BaseQueryCondition[]): {
-        whereClause: string;
-        params: any[];
-    } {
+    private buildWhereClause(conditions: BaseQueryCondition[]): { whereClause: string; params: any[] } {
         const clauses: string[] = [];
         const params: any[] = [];
 
