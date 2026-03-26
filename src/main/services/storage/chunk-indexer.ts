@@ -20,7 +20,7 @@
  */
 
 import { Indexer, IndexerSearchOptions, IndexerSearchResult } from './indexer.js';
-import { Item, FilterCondition, QueryOperator, ColumnSchema, SimilarityMetric } from './abstract-storage.js';
+import { Item, FilterCondition, QueryOperator, ColumnSchema, SimilarityMetric, DimMismatchError } from './abstract-storage.js';
 import { randomUUID } from 'crypto';
 
 // ── Chunk 存储记录 ─────────────────────────────────────────────────
@@ -76,6 +76,8 @@ export interface IChunkIndexDB {
     count(): Promise<number>;
     close(): void;
     getDimension(): number;
+    getStoredDim(): Promise<number | null>;
+    existingItemIds(ids: string[]): Promise<Set<string>>;
 }
 
 // ============================================================================
@@ -116,6 +118,30 @@ export class ChunkIndexer extends Indexer {
         if (!this.db) {
             this.db = await createChunkIndexDB(this._dbPath, this.dimension);
         }
+        const storedDim = await this.db.getStoredDim();
+        if (storedDim !== null && storedDim !== this.dimension) {
+            throw new DimMismatchError(storedDim, this.dimension);
+        }
+    }
+
+    private buildRecordsForItem(item: Item): ChunkIndexRecord[] {
+        const entries = item.indexer_columns?.['ChunkIndexer'];
+        if (!entries || entries.length === 0) return [];
+        for (const entry of entries) {
+            if (!entry.id) throw new Error(`[ChunkIndexer] Item ${item.item_id}: entry missing 'id' (chunk_id).`);
+            if (entry.text === undefined || entry.text === null) throw new Error(`[ChunkIndexer] Item ${item.item_id}: entry missing 'text' (chunk_text).`);
+            if (!entry.content || !Array.isArray(entry.content) || entry.content.length === 0) throw new Error(`[ChunkIndexer] Item ${item.item_id}: entry missing or invalid 'content' (embedding vector).`);
+            if (entry.content.length !== this.dimension || !entry.content.every(v => typeof v === 'number')) {
+                throw new Error(`[ChunkIndexer] Item ${item.item_id}: invalid embedding dimension, expected ${this.dimension}.`);
+            }
+        }
+        return entries.map(entry => ({
+            chunk_pk: randomUUID(),
+            item_id: item.item_id,
+            chunk_id: entry.id!,
+            chunk_text: entry.text!,
+            repr: entry.content as number[],
+        }));
     }
 
     private ensureDB(): IChunkIndexDB {
@@ -124,59 +150,23 @@ export class ChunkIndexer extends Indexer {
     }
 
     /**
-     * insert — upsert 语义（已存在则先删除再写入）
+     * insert — first-write-only 语义
      *
      * 规则：
      * 1. 跳过没有 indexer_columns.ChunkIndexer 的 item（合法：文件无 chunk）
      * 2. 对有 ChunkIndexer entries 的 item：校验 id/text/content 均存在，缺一报错
-     * 3. 无条件调用 deleteByItemId 删除旧记录（与 update() 保持相同模式）
-     * 4. 调用 insertMany 批量写入
+     * 3. 通过 existingItemIds() 做 item 级过滤；已存在 item 整体跳过
+     * 4. 仅对新的 item 调用 insertMany 批量写入
      */
     async insert(items: Item[]): Promise<void> {
+        if (items.length === 0) return;
         const db = this.ensureDB();
-        for (const item of items) {
-            const entries = item.indexer_columns?.['ChunkIndexer'];
-            if (!entries || entries.length === 0) {
-                // 合法：文件无 chunk，跳过
-                continue;
-            }
-
-            // 校验每条 entry 的必填字段
-            for (const entry of entries) {
-                if (!entry.id) {
-                    throw new Error(
-                        `[ChunkIndexer] Item ${item.item_id}: entry missing 'id' (chunk_id). ` +
-                        `ChunkIndexer requires id, text, and content for each entry.`
-                    );
-                }
-                if (entry.text === undefined || entry.text === null) {
-                    throw new Error(
-                        `[ChunkIndexer] Item ${item.item_id}: entry missing 'text' (chunk_text). ` +
-                        `ChunkIndexer requires id, text, and content for each entry.`
-                    );
-                }
-                if (!entry.content || !Array.isArray(entry.content) || entry.content.length === 0) {
-                    throw new Error(
-                        `[ChunkIndexer] Item ${item.item_id}: entry missing or invalid 'content' (embedding vector). ` +
-                        `ChunkIndexer requires id, text, and content for each entry.`
-                    );
-                }
-            }
-
-            // 无条件删除旧记录（upsert 语义，与 update() 保持相同模式）
-            await db.deleteByItemId(item.item_id);
-
-            // 构建 ChunkIndexRecord[]
-            const records: ChunkIndexRecord[] = entries.map(entry => ({
-                chunk_pk: randomUUID(),
-                item_id: item.item_id,
-                chunk_id: entry.id!,
-                chunk_text: entry.text!,
-                repr: entry.content as number[],
-            }));
-
-            await db.insertMany(records);
-        }
+        const candidateItems = items.filter(item => (item.indexer_columns?.['ChunkIndexer']?.length ?? 0) > 0);
+        const existingIds = await db.existingItemIds(candidateItems.map(item => item.item_id));
+        const allRecords = candidateItems
+            .filter(item => !existingIds.has(item.item_id))
+            .flatMap(item => this.buildRecordsForItem(item));
+        if (allRecords.length > 0) await db.insertMany(allRecords);
     }
 
     /**
@@ -197,45 +187,41 @@ export class ChunkIndexer extends Indexer {
      *    c. insertMany 写入新 chunk 集
      */
     async update(items: Item[]): Promise<void> {
+        if (items.length === 0) return;
         const db = this.ensureDB();
-        for (const item of items) {
-            const entries = item.indexer_columns?.['ChunkIndexer'];
-            if (!entries || entries.length === 0) {
-                continue;
-            }
+        const candidateItems = items.filter(item => (item.indexer_columns?.['ChunkIndexer']?.length ?? 0) > 0);
+        const existingIds = await db.existingItemIds(candidateItems.map(item => item.item_id));
+        const updateItems = candidateItems.filter(item => existingIds.has(item.item_id));
+        const updateIds = updateItems.map(item => item.item_id);
+        const allRecords = updateItems.flatMap(item => this.buildRecordsForItem(item));
+        if (updateIds.length === 0 || allRecords.length === 0) return;
+        await db.deleteManyByItemId(updateIds);
+        await db.insertMany(allRecords);
+    }
 
-            // 校验必填字段
-            for (const entry of entries) {
-                if (!entry.id) {
-                    throw new Error(
-                        `[ChunkIndexer] Item ${item.item_id}: update entry missing 'id'.`
-                    );
-                }
-                if (entry.text === undefined || entry.text === null) {
-                    throw new Error(
-                        `[ChunkIndexer] Item ${item.item_id}: update entry missing 'text'.`
-                    );
-                }
-                if (!entry.content || !Array.isArray(entry.content) || entry.content.length === 0) {
-                    throw new Error(
-                        `[ChunkIndexer] Item ${item.item_id}: update entry missing or invalid 'content'.`
-                    );
-                }
-            }
+    /**
+     * upsert — 覆盖写语义
+     *
+     * 对已有 item：先删除旧 chunk，再写入新 chunk 集。
+     * 对新 item：直接写入 chunk。
+     */
+    async upsert(items: Item[]): Promise<void> {
+        if (items.length === 0) return;
+        const db = this.ensureDB();
+        const candidateItems = items.filter(item => (item.indexer_columns?.['ChunkIndexer']?.length ?? 0) > 0);
+        if (candidateItems.length === 0) return;
 
-            // 全量替换：先删除所有旧 chunk
-            await db.deleteByItemId(item.item_id);
+        const existingIds = await db.existingItemIds(candidateItems.map(item => item.item_id));
+        const existingItemIds = candidateItems
+            .filter(item => existingIds.has(item.item_id))
+            .map(item => item.item_id);
+        const allRecords = candidateItems.flatMap(item => this.buildRecordsForItem(item));
 
-            // 再插入新 chunk 集
-            const records: ChunkIndexRecord[] = entries.map(entry => ({
-                chunk_pk: randomUUID(),
-                item_id: item.item_id,
-                chunk_id: entry.id!,
-                chunk_text: entry.text!,
-                repr: entry.content as number[],
-            }));
-
-            await db.insertMany(records);
+        if (existingItemIds.length > 0) {
+            await db.deleteManyByItemId(existingItemIds);
+        }
+        if (allRecords.length > 0) {
+            await db.insertMany(allRecords);
         }
     }
 
@@ -271,13 +257,13 @@ export class ChunkIndexer extends Indexer {
      * 直接调用此方法说明存在代码路径错误。
      */
     async search(
-        conditions: FilterCondition[],
-        options?: IndexerSearchOptions
+        _conditions: FilterCondition[],
+        _options?: IndexerSearchOptions
     ): Promise<IndexerSearchResult> {
-        throw new Error(
-            '[ChunkIndexer] search() should not be called directly. ' +
-            'ChunkIndexer conditions are handled by BaseStorage.searchWithChunkIndexer().'
-        );
+        // ChunkIndexer 不支持标准 search() 协议。
+        // 向量搜索必须通过 BaseStorage 的私有路径 searchWithChunkIndexer() 调用 searchChunks()。
+        // 直接调用此方法是编程错误。
+        throw new Error('ChunkIndexer does not support search(). Use BaseStorage.search() with chunk conditions.');
     }
 
     close(): void {

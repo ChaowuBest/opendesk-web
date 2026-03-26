@@ -108,6 +108,13 @@ export abstract class Indexer {
     abstract update(items: Item[]): Promise<void>;
 
     /**
+     * 覆盖写入 Item（存在则覆盖，不存在则新建）
+     *
+     * @param items - 要写入的 Item 数组
+     */
+    abstract upsert(items: Item[]): Promise<void>;
+
+    /**
      * 关闭/清理索引器
      */
     abstract close(): void;

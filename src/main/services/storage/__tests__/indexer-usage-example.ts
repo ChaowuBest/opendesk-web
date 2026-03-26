@@ -192,14 +192,14 @@ async function demoBaseStorage(): Promise<void> {
     const r1 = await storage.search([{ indexer: 'BaseIndexer', field: 'item_type', operator: '=', value: 'file' }]);
     logResult(
         'BaseIndexer: item_type=file',
-        r1.map((i) => i.item.item_id)
+        r1.items.map((i) => i.item.item_id)
     );
 
     // 查询示例 2: TagIndexer 查询
     const r2 = await storage.search([{ indexer: 'TagIndexer', field: 'tag', operator: '=', value: 'tech' }]);
     logResult(
         'TagIndexer: tag=tech',
-        r2.map((i) => i.item.item_id)
+        r2.items.map((i) => i.item.item_id)
     );
 
     // 查询示例 3: BM25 全文搜索
@@ -213,7 +213,7 @@ async function demoBaseStorage(): Promise<void> {
     ]);
     logResult(
         'BM25Indexer: 搜索 "财务 预算"',
-        r3.map((i) => ({ id: i.item.item_id, score: i.BM25Score }))
+        r3.items.map((i) => ({ id: i.item.item_id, score: i.BM25Score }))
     );
 
     // 查询示例 4: 向量相似度搜索
@@ -228,7 +228,7 @@ async function demoBaseStorage(): Promise<void> {
     ]);
     logResult(
         'VectorIndexer: 向量相似度 TopK=3',
-        r4.map((i) => ({ id: i.item.item_id, score: i.VecScore }))
+        r4.items.map((i) => ({ id: i.item.item_id, score: i.VecScore }))
     );
 
     // 查询示例 5: 多 Indexer 组合 (Tag + Base)
@@ -238,7 +238,7 @@ async function demoBaseStorage(): Promise<void> {
     ]);
     logResult(
         '组合查询: tag=finance AND type=file',
-        r5.map((i) => i.item.item_id)
+        r5.items.map((i) => i.item.item_id)
     );
 
     // 查询示例 6: Tag + BM25 组合
@@ -248,7 +248,7 @@ async function demoBaseStorage(): Promise<void> {
     ]);
     logResult(
         '组合查询: tag=tech AND BM25搜索API',
-        r6.map((i) => ({ id: i.item.item_id, score: i.BM25Score }))
+        r6.items.map((i) => ({ id: i.item.item_id, score: i.BM25Score }))
     );
 
     // 更新

@@ -61,14 +61,16 @@ export interface ITagIndexDB {
     insert(record: TagIndexRecord): Promise<boolean>;
     insertMany(records: TagIndexRecord[]): Promise<number>;
     upsert(record: TagIndexRecord): Promise<boolean>;
+    upsertMany(records: TagIndexRecord[]): Promise<number>;
     delete(itemId: string): Promise<boolean>;
     deleteByConditions(conditions: QueryCondition[]): Promise<number>;
     deleteMany(itemIds: string[]): Promise<number>;
     update(itemId: string, data: UpdateData): Promise<boolean>;
+    updateMany(records: TagIndexRecord[]): Promise<number>;
     updateByConditions(conditions: QueryCondition[], data: UpdateData): Promise<number>;
     findById(itemId: string): Promise<TagIndexRecord | undefined>;
     findAll(options?: QueryOptions): Promise<TagIndexRecord[]>;
-    query(conditions: QueryCondition[], options?: Omit<QueryOptions, 'conditions'>): Promise<TagIndexRecord[]>;
+    search(conditions: QueryCondition[], options?: Omit<QueryOptions, 'conditions'>): Promise<TagIndexRecord[]>;
     count(conditions?: QueryCondition[]): Promise<number>;
     exists(itemId: string): Promise<boolean>;
     clear(): Promise<number>;
@@ -160,11 +162,10 @@ export class TagIndexer extends Indexer {
      * 如果有 existingResults，从中获取完整元数据
      */
     private recordToItem(record: TagIndexRecord, metadata?: Partial<Item>): Item {
-        const item: Item = {
+        const item = {
             item_id: record.item_id,
-            item_type: record.item_type as ItemType,
             tag: record.tag
-        };
+        } as Item;
         // 从 metadata 复制额外字段
         if (metadata) {
             for (const [key, value] of Object.entries(metadata)) {
@@ -172,8 +173,24 @@ export class TagIndexer extends Indexer {
                     item[key] = value;
                 }
             }
+            if (metadata.item_type !== undefined) {
+                item.item_type = metadata.item_type;
+            }
         }
         return item;
+    }
+
+    private buildRecords(items: Item[]): TagIndexRecord[] {
+        const records: TagIndexRecord[] = [];
+        for (const item of items) {
+            const col = item.indexer_columns?.[this.name]?.find((c) => c.column === this.columnName);
+            if (!col) continue;
+            if (typeof col.content !== 'string') {
+                throw new Error(`[TagIndexer] Item ${item.item_id} tag content must be string`);
+            }
+            records.push(this.itemToRecord(item, col.content));
+        }
+        return records;
     }
 
     /**
@@ -204,7 +221,7 @@ export class TagIndexer extends Indexer {
         }
 
         // 执行查询
-        const records = await this.ensureDB().query(queryConditions, {
+        const records = await this.ensureDB().search(queryConditions, {
             limit: options?.limit,
             offset: options?.offset,
             orderBy: options?.orderBy
@@ -231,21 +248,8 @@ export class TagIndexer extends Indexer {
      * 向索引中插入 Item
      */
     async insert(items: Item[]): Promise<void> {
-        const records: TagIndexRecord[] = [];
-
-        for (const item of items) {
-            const col = item.indexer_columns?.[this.name]?.find((c) => c.column === this.columnName);
-            if (!col) continue;
-            if (typeof col.content !== 'string') {
-                throw new Error(`[TagIndexer] Item ${item.item_id} tag content must be string`);
-            }
-            const record = this.itemToRecord(item, col.content);
-            if (record) {
-                records.push(record);
-            }
-        }
-
-        await this.ensureDB().insertMany(records);
+        const records = this.buildRecords(items);
+        if (records.length > 0) await this.ensureDB().insertMany(records);
     }
 
     /**
@@ -259,15 +263,13 @@ export class TagIndexer extends Indexer {
      * 更新索引中的 Item
      */
     async update(items: Item[]): Promise<void> {
-        for (const item of items) {
-            const col = item.indexer_columns?.[this.name]?.find((c) => c.column === this.columnName);
-            if (!col) continue;
-            if (typeof col.content !== 'string') {
-                throw new Error(`[TagIndexer] Item ${item.item_id} tag content must be string`);
-            }
-            const record = this.itemToRecord(item, col.content);
-            await this.ensureDB().upsert(record);
-        }
+        const records = this.buildRecords(items);
+        if (records.length > 0) await this.ensureDB().updateMany(records);
+    }
+
+    async upsert(items: Item[]): Promise<void> {
+        const records = this.buildRecords(items);
+        if (records.length > 0) await this.ensureDB().upsertMany(records);
     }
 
     /**
@@ -284,13 +286,6 @@ export class TagIndexer extends Indexer {
     async getInfo(): Promise<Record<string, any>> {
         const size = await this.ensureDB().count();
         return { size };
-    }
-
-    /**
-     * 获取底层 TagIndexDB 实例（用于高级操作）
-     */
-    getDB(): ITagIndexDB {
-        return this.ensureDB();
     }
 }
 

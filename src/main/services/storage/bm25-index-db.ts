@@ -49,6 +49,11 @@ export class BM25IndexDB implements IBM25IndexDB {
     private readonly dbPath: string;
     private readonly schema: ColumnSchema;
     private readonly mutex = new Mutex();
+    private readonly knownItemIds = new Set<string>();
+    private readonly documents = new Map<
+        string,
+        Map<string, { item_id: string; item_type: string; text: string; tokens: string[] }>
+    >();
 
     constructor(schema: ColumnSchema, dbPath: string) {
         this.dbPath = dbPath;
@@ -72,6 +77,7 @@ export class BM25IndexDB implements IBM25IndexDB {
             this.si[columnName] = await new SearchIndexCtor({
                 name: `${this.dbPath}-${columnName}`
             });
+            this.documents.set(columnName, new Map());
             console.info(
                 `[BM25IndexDB] Initializing BM25 index for column: ${columnName}, dbPath: ${this.dbPath}-${columnName}`
             );
@@ -96,26 +102,22 @@ export class BM25IndexDB implements IBM25IndexDB {
             if (tokens.length === 0) return [];
 
             const topK = options?.topK ?? 10;
-            const queryTokens = tokens.map((token) => `text:${token}`);
+            const queryTokens = tokens;
 
-            const index = this.si![options.columnName]!;
-            const results = await index.SEARCH(queryTokens, {
-                SCORE: { TYPE: 'TFIDF' },
-                PAGE: { SIZE: topK * 2 },
-                DOCUMENTS: true
-            });
-
-            const searchResults: BM25SearchResult[] = [];
-            for (const result of results.RESULT) {
-                const doc = result._doc;
-                if (!doc) continue;
-                searchResults.push({
-                    item_id: doc.item_id,
-                    item_type: doc.item_type ?? 'file',
-                    text: Array.isArray(doc.text) ? doc.text.join(' ') : doc.text,
-                    score: result._score ?? 0
-                });
-            }
+            const docs = [...(this.documents.get(options.columnName)?.values() ?? [])];
+            const searchResults = docs
+                .map((doc) => {
+                    const hitCount = queryTokens.filter((token) => doc.tokens.includes(token)).length;
+                    return {
+                        item_id: doc.item_id,
+                        item_type: doc.item_type,
+                        text: doc.text,
+                        score: hitCount
+                    };
+                })
+                .filter((doc) => doc.score > 0)
+                .sort((a, b) => b.score - a.score)
+                .slice(0, topK);
             return searchResults;
         });
     }
@@ -142,8 +144,18 @@ export class BM25IndexDB implements IBM25IndexDB {
                     text: this.tokenize(record.text).join(' ')
                 }));
                 await index.PUT(docs);
+                for (const record of list) {
+                    this.knownItemIds.add(record.item_id);
+                    this.documents.get(itemType)?.set(record.bm25_id, {
+                        item_id: record.item_id,
+                        item_type: record.item_type,
+                        text: record.text,
+                        tokens: this.tokenize(record.text)
+                    });
+                }
             }
         });
+        await this.flush();
     }
 
     async delete(itemIds: string[]): Promise<void> {
@@ -159,7 +171,16 @@ export class BM25IndexDB implements IBM25IndexDB {
                     }
                 }
             }
+            for (const itemId of itemIds) {
+                this.knownItemIds.delete(itemId);
+                for (const docs of this.documents.values()) {
+                    for (const [docId, doc] of docs.entries()) {
+                        if (doc.item_id === itemId) docs.delete(docId);
+                    }
+                }
+            }
         });
+        await this.flush();
     }
 
     async update(records: BM25Record[]): Promise<void> {
@@ -184,16 +205,43 @@ export class BM25IndexDB implements IBM25IndexDB {
                     text: this.tokenize(record.text).join(' ')
                 }));
                 await index.PUT(docs);
+                for (const record of list) {
+                    this.knownItemIds.add(record.item_id);
+                    this.documents.get(itemType)?.set(record.bm25_id, {
+                        item_id: record.item_id,
+                        item_type: record.item_type,
+                        text: record.text,
+                        tokens: this.tokenize(record.text)
+                    });
+                }
             }
         });
+        await this.flush();
     }
 
-    async flush(): Promise<void> {
+    private async flush(): Promise<void> {
         if (!this.si) return;
 
         for (const index of Object.values(this.si)) {
             await index.FLUSH();
         }
+    }
+
+    async existingItemIds(ids: string[]): Promise<Set<string>> {
+        return new Set(ids.filter((id) => this.knownItemIds.has(id)));
+    }
+
+    async deleteByKeys(keys: Array<{ item_id: string; item_type: string }>): Promise<void> {
+        if (keys.length === 0 || !this.si) return;
+        await this.mutex.runExclusive(async () => {
+            for (const key of keys) {
+                const index = this.si![key.item_type];
+                if (!index) continue;
+                await index.DELETE(`${key.item_id}_${key.item_type}`);
+                this.documents.get(key.item_type)?.delete(`${key.item_id}_${key.item_type}`);
+            }
+        });
+        await this.flush();
     }
 
     close(): void {
@@ -206,12 +254,14 @@ export class BM25IndexDB implements IBM25IndexDB {
         }
     }
 
-    async deleteAll(): Promise<void> {
+    async clear(): Promise<void> {
         if (!this.si) return;
 
         for (const index of Object.values(this.si)) {
             await index.DELETE_ALL();
         }
+        this.knownItemIds.clear();
+        for (const docs of this.documents.values()) docs.clear();
     }
 
     async count(): Promise<number> {

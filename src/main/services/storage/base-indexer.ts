@@ -50,14 +50,16 @@ export interface IBaseIndexDB {
     insert(record: Record<string, any>): Promise<boolean>;
     insertMany(records: Record<string, any>[]): Promise<number>;
     upsert(record: Record<string, any>): Promise<boolean>;
+    upsertMany(records: Record<string, any>[]): Promise<number>;
     delete(itemId: string): Promise<boolean>;
     deleteMany(itemIds: string[]): Promise<number>;
     deleteByConditions(conditions: BaseQueryCondition[]): Promise<number>;
     update(itemId: string, data: Record<string, any>): Promise<boolean>;
+    updateMany(records: Record<string, any>[]): Promise<number>;
     findById(itemId: string): Promise<Record<string, any> | undefined>;
     findByIds(itemIds: string[]): Promise<Record<string, any>[]>;
     findAll(options?: BaseQueryOptions): Promise<Record<string, any>[]>;
-    query(
+    search(
         conditions: BaseQueryCondition[],
         options?: Omit<BaseQueryOptions, 'conditions'>
     ): Promise<Record<string, any>[]>;
@@ -132,6 +134,18 @@ export class BaseIndexer extends Indexer {
         return this.db;
     }
 
+    private buildRecords(items: Item[]): Record<string, any>[] {
+        return items.map((item) => {
+            const record: Record<string, any> = {};
+            for (const field of this._supportedFields) {
+                if (item[field] !== undefined) {
+                    record[field] = item[field];
+                }
+            }
+            return record;
+        });
+    }
+
     /**
      * 验证字段是否支持
      */
@@ -189,7 +203,7 @@ export class BaseIndexer extends Indexer {
         }
 
         // 执行查询
-        const records = await this.ensureDB().query(queryConditions, {
+        const records = await this.ensureDB().search(queryConditions, {
             limit: options?.limit,
             offset: options?.offset,
             orderBy: options?.orderBy
@@ -234,18 +248,7 @@ export class BaseIndexer extends Indexer {
      */
     async insert(items: Item[]): Promise<void> {
         if (items.length === 0) return;
-
-        const records = items.map((item) => {
-            const record: Record<string, any> = {};
-            for (const field of this._supportedFields) {
-                if (item[field] !== undefined) {
-                    record[field] = item[field];
-                }
-            }
-            return record;
-        });
-
-        await this.ensureDB().insertMany(records);
+        await this.ensureDB().insertMany(this.buildRecords(items));
     }
 
     /**
@@ -262,16 +265,12 @@ export class BaseIndexer extends Indexer {
      */
     async update(items: Item[]): Promise<void> {
         if (items.length === 0) return;
+        await this.ensureDB().updateMany(this.buildRecords(items));
+    }
 
-        for (const item of items) {
-            const record: Record<string, any> = {};
-            for (const field of this._supportedFields) {
-                if (item[field] !== undefined) {
-                    record[field] = item[field];
-                }
-            }
-            await this.ensureDB().upsert(record);
-        }
+    async upsert(items: Item[]): Promise<void> {
+        if (items.length === 0) return;
+        await this.ensureDB().upsertMany(this.buildRecords(items));
     }
 
     /**
@@ -302,12 +301,5 @@ export class BaseIndexer extends Indexer {
      */
     getSchema(): ColumnSchema {
         return this.schema;
-    }
-
-    /**
-     * 获取底层数据库实例
-     */
-    getDB(): IBaseIndexDB {
-        return this.ensureDB();
     }
 }

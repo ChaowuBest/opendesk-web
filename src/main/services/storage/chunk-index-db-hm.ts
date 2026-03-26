@@ -155,16 +155,41 @@ export class ChunkIndexDBHm implements IChunkIndexDB {
         }
     }
 
+    async getStoredDim(): Promise<number | null> {
+        await this.ensureInitialized();
+        const rows = await this.execSql(
+            `SELECT vec_length(repr) as dim FROM ${this.vecTableName} LIMIT 1`
+        ) as Array<{ dim: number }>;
+        return rows[0]?.dim ?? null;
+    }
+
+    async existingItemIds(ids: string[]): Promise<Set<string>> {
+        if (ids.length === 0) return new Set();
+        await this.ensureInitialized();
+        const idList = ids.map(id => `'${id.replace(/'/g, "''")}'`).join(', ');
+        const rows = await this.execSql(
+            `SELECT DISTINCT item_id FROM ${this.metaTableName} WHERE item_id IN (${idList})`
+        ) as { item_id: string }[];
+        return new Set(rows.map(row => row.item_id));
+    }
+
     async insertMany(records: ChunkIndexRecord[]): Promise<number> {
         await this.ensureInitialized();
         if (records.length === 0) return 0;
+        const pkList = records.map(record => `'${record.chunk_pk.replace(/'/g, "''")}'`).join(', ');
+        const existingRows = await this.execSql(
+            `SELECT chunk_pk FROM ${this.metaTableName} WHERE chunk_pk IN (${pkList})`
+        ) as { chunk_pk: string }[];
+        const existingSet = new Set(existingRows.map(row => row.chunk_pk));
+        const toInsert = records.filter(record => !existingSet.has(record.chunk_pk));
+        if (toInsert.length === 0) return 0;
         return this.runTransaction(async () => {
             let count = 0;
-            for (const record of records) {
+            for (const record of toInsert) {
                 this.validateDimension(record.repr);
                 const hexRepr = float32ToHexLiteral(record.repr);
                 await this.runSql(
-                    `INSERT OR REPLACE INTO ${this.metaTableName} (chunk_pk, item_id, chunk_id, chunk_text) VALUES (?, ?, ?, ?)`,
+                    `INSERT OR IGNORE INTO ${this.metaTableName} (chunk_pk, item_id, chunk_id, chunk_text) VALUES (?, ?, ?, ?)`,
                     [record.chunk_pk, record.item_id, record.chunk_id, record.chunk_text]
                 );
                 await this.execSql(`DELETE FROM ${this.vecTableName} WHERE chunk_pk = '${escapeStr(record.chunk_pk)}'`);

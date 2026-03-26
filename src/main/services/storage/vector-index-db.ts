@@ -193,7 +193,7 @@ export class VectorIndexDB implements IVectorIndexDB {
         if (records.length === 0) return 0;
 
         const insertMeta = this.db.prepare(`
-            INSERT OR REPLACE INTO ${this.metaTableName} (vector_id, item_id, item_type)
+            INSERT OR IGNORE INTO ${this.metaTableName} (vector_id, item_id, item_type)
             VALUES (?, ?, ?)
         `);
 
@@ -211,10 +211,12 @@ export class VectorIndexDB implements IVectorIndexDB {
             for (const record of records) {
                 this.validateDimension(record.repr);
                 const vecData = this.toFloat32Array(record.repr);
-                insertMeta.run(record.vector_id, record.item_id, record.item_type);
-                deleteVec.run(record.vector_id);
-                insertVec.run(record.vector_id, vecData);
-                count++;
+                const metaResult = insertMeta.run(record.vector_id, record.item_id, record.item_type);
+                if (metaResult.changes > 0) {
+                    deleteVec.run(record.vector_id);
+                    insertVec.run(record.vector_id, vecData);
+                    count++;
+                }
             }
             return count;
         });
@@ -228,32 +230,33 @@ export class VectorIndexDB implements IVectorIndexDB {
      * @returns 是否操作成功
      */
     async upsert(record: VectorIndexRecord): Promise<boolean> {
-        this.validateDimension(record.repr);
-        const vecData = this.toFloat32Array(record.repr);
+        return (await this.upsertMany([record])) > 0;
+    }
 
-        const upsertMeta = this.db.prepare(`
-            INSERT INTO ${this.metaTableName} (vector_id, item_id, item_type)
-            VALUES (?, ?, ?)
-            ON CONFLICT(vector_id) DO UPDATE SET item_type = excluded.item_type
-        `);
+    async upsertMany(records: VectorIndexRecord[]): Promise<number> {
+        if (records.length === 0) return 0;
+        const vectorIds = records.map(record => record.vector_id);
+        const placeholders = vectorIds.map(() => '?').join(', ');
+        this.db.prepare(`DELETE FROM ${this.metaTableName} WHERE vector_id IN (${placeholders})`).run(vectorIds);
+        this.db.prepare(`DELETE FROM ${this.vecTableName} WHERE vector_id IN (${placeholders})`).run(vectorIds);
+        return this.insertMany(records);
+    }
 
-        const deleteVec = this.db.prepare(`
-            DELETE FROM ${this.vecTableName} WHERE vector_id = ?
-        `);
-
-        const insertVec = this.db.prepare(`
-            INSERT INTO ${this.vecTableName} (vector_id, repr)
-            VALUES (?, ?)
-        `);
-
-        const transaction = this.db.transaction(() => {
-            upsertMeta.run(record.vector_id, record.item_id, record.item_type);
-            deleteVec.run(record.vector_id);
-            insertVec.run(record.vector_id, vecData);
-            return true;
-        });
-
-        return transaction();
+    async updateMany(records: VectorIndexRecord[]): Promise<number> {
+        if (records.length === 0) return 0;
+        const vectorIds = records.map(record => record.vector_id);
+        const placeholders = vectorIds.map(() => '?').join(', ');
+        const existingRows = this.db.prepare(
+            `SELECT vector_id FROM ${this.metaTableName} WHERE vector_id IN (${placeholders})`
+        ).all(vectorIds) as { vector_id: string }[];
+        const existingSet = new Set(existingRows.map(row => row.vector_id));
+        const toUpdate = records.filter(record => existingSet.has(record.vector_id));
+        if (toUpdate.length === 0) return 0;
+        const updateIds = toUpdate.map(record => record.vector_id);
+        const updatePlaceholders = updateIds.map(() => '?').join(', ');
+        this.db.prepare(`DELETE FROM ${this.metaTableName} WHERE vector_id IN (${updatePlaceholders})`).run(updateIds);
+        this.db.prepare(`DELETE FROM ${this.vecTableName} WHERE vector_id IN (${updatePlaceholders})`).run(updateIds);
+        return this.insertMany(toUpdate);
     }
 
     /**

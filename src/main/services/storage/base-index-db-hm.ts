@@ -233,31 +233,47 @@ export class BaseIndexDBHm implements IBaseIndexDB {
             throw new Error(`Invalid field name: ${field}. Valid fields: ${this.validFields.join(', ')}`);
     }
 
+    private getRecordColumns(record: Record<string, any>): string[] {
+        return this.validFields.filter((col) => record[col] !== undefined);
+    }
+
+    private async loadExistingRows(itemIds: string[]): Promise<Map<string, Record<string, any>>> {
+        const uniqueIds = [...new Set(itemIds)];
+        if (uniqueIds.length === 0) return new Map();
+        const placeholders = uniqueIds.map(() => '?').join(', ');
+        const rows = (await this.queryAllSql(
+            `SELECT * FROM ${this.tableName} WHERE item_id IN (${placeholders})`,
+            uniqueIds
+        )) as Record<string, any>[];
+        return new Map(rows.filter((row) => row.item_id !== undefined).map((row) => [row.item_id, row]));
+    }
+
     async insert(record: Record<string, any>): Promise<boolean> {
         await this.ensureInitialized();
-        const columns = this.validFields.filter((col) => record[col] !== undefined);
-        const placeholders = columns.map(() => '?').join(', ');
-        const values = columns.map((col) => record[col]);
-        const updateColumns = columns.filter((c) => c !== 'item_id');
-        const updateClause = updateColumns.map((col) => `${col} = excluded.${col}`).join(', ');
-        const sql = `INSERT INTO ${this.tableName} (${columns.join(', ')}) VALUES (${placeholders}) ON CONFLICT(item_id) DO UPDATE SET ${updateClause}`;
-        await this.runSql(sql, values);
-        return true;
+        return (await this.insertMany([record])) > 0;
     }
 
     async insertMany(records: Record<string, any>[]): Promise<number> {
         await this.ensureInitialized();
         if (records.length === 0) return 0;
+        const normalizedRecords = records.filter(
+            (record) => record.item_id !== undefined && this.getRecordColumns(record).length > 0
+        );
+        if (normalizedRecords.length === 0) return 0;
+        const existingRows = await this.loadExistingRows(normalizedRecords.map((record) => record.item_id));
         return this.runTransaction(async () => {
             let count = 0;
-            for (const record of records) {
-                const columns = this.validFields.filter((col) => record[col] !== undefined);
+            const seenItemIds = new Set(existingRows.keys());
+            for (const record of normalizedRecords) {
+                const itemId = record.item_id;
+                if (seenItemIds.has(itemId)) continue;
+                seenItemIds.add(itemId);
+                const columns = this.getRecordColumns(record);
+                if (columns.length === 0) continue;
                 const placeholders = columns.map(() => '?').join(', ');
                 const values = columns.map((col) => record[col]);
-                const updateColumns = columns.filter((c) => c !== 'item_id');
-                const updateClause = updateColumns.map((col) => `${col} = excluded.${col}`).join(', ');
                 await this.runSql(
-                    `INSERT INTO ${this.tableName} (${columns.join(', ')}) VALUES (${placeholders}) ON CONFLICT(item_id) DO UPDATE SET ${updateClause}`,
+                    `INSERT INTO ${this.tableName} (${columns.join(', ')}) VALUES (${placeholders}) ON CONFLICT(item_id) DO NOTHING`,
                     values
                 );
                 count++;
@@ -268,16 +284,48 @@ export class BaseIndexDBHm implements IBaseIndexDB {
 
     async upsert(record: Record<string, any>): Promise<boolean> {
         await this.ensureInitialized();
-        const columns = this.validFields.filter((col) => record[col] !== undefined);
-        const placeholders = columns.map(() => '?').join(', ');
-        const values = columns.map((col) => record[col]);
-        const updateColumns = columns.filter((c) => c !== 'item_id');
-        const updateClause = updateColumns.map((col) => `${col} = excluded.${col}`).join(', ');
-        await this.runSql(
-            `INSERT INTO ${this.tableName} (${columns.join(', ')}) VALUES (${placeholders}) ON CONFLICT(item_id) DO UPDATE SET ${updateClause}`,
-            values
+        return (await this.upsertMany([record])) > 0;
+    }
+
+    async upsertMany(records: Record<string, any>[]): Promise<number> {
+        await this.ensureInitialized();
+        if (records.length === 0) return 0;
+        const normalizedRecords = records.filter(
+            (record) => record.item_id !== undefined && this.getRecordColumns(record).length > 0
         );
-        return true;
+        if (normalizedRecords.length === 0) return 0;
+        const existingRows = await this.loadExistingRows(normalizedRecords.map((record) => record.item_id));
+        return this.runTransaction(async () => {
+            let count = 0;
+            const currentRows = new Map(existingRows);
+            for (const record of normalizedRecords) {
+                const itemId = record.item_id;
+                const columns = this.getRecordColumns(record);
+                if (columns.length === 0) continue;
+                const updateColumns = columns.filter((col) => col !== 'item_id');
+                const existing = currentRows.get(itemId);
+                if (!existing) {
+                    const placeholders = columns.map(() => '?').join(', ');
+                    const values = columns.map((col) => record[col]);
+                    await this.runSql(
+                        `INSERT INTO ${this.tableName} (${columns.join(', ')}) VALUES (${placeholders}) ON CONFLICT(item_id) DO NOTHING`,
+                        values
+                    );
+                    count++;
+                    currentRows.set(itemId, { ...record });
+                    continue;
+                }
+                if (updateColumns.length === 0) continue;
+                const hasChanges = updateColumns.some((col) => !Object.is(existing[col], record[col]));
+                if (!hasChanges) continue;
+                const setClause = updateColumns.map((col) => `${col} = ?`).join(', ');
+                const values = [...updateColumns.map((col) => record[col]), itemId];
+                await this.runSql(`UPDATE ${this.tableName} SET ${setClause} WHERE item_id = ?`, values);
+                count++;
+                currentRows.set(itemId, { ...existing, ...record });
+            }
+            return count;
+        });
     }
 
     async delete(itemId: string): Promise<boolean> {
@@ -312,12 +360,37 @@ export class BaseIndexDBHm implements IBaseIndexDB {
             (key) => this.validFields.includes(key) && key !== 'item_id' && data[key] !== undefined
         );
         if (fields.length === 0) throw new Error('No valid fields to update');
-        const setClause = fields.map((field) => `${field} = ?`).join(', ');
-        const params = [...fields.map((field) => data[field]), itemId];
-        const existsBefore = await this.exists(itemId);
-        if (!existsBefore) return false;
-        await this.runSql(`UPDATE ${this.tableName} SET ${setClause} WHERE item_id = ?`, params);
-        return true;
+        const updated = await this.updateMany([{ ...data, item_id: itemId }]);
+        return updated > 0;
+    }
+
+    async updateMany(records: Record<string, any>[]): Promise<number> {
+        await this.ensureInitialized();
+        if (records.length === 0) return 0;
+        const normalizedRecords = records.filter(
+            (record) => record.item_id !== undefined && this.getRecordColumns(record).some((col) => col !== 'item_id')
+        );
+        if (normalizedRecords.length === 0) return 0;
+        const existingRows = await this.loadExistingRows(normalizedRecords.map((record) => record.item_id));
+        return this.runTransaction(async () => {
+            let count = 0;
+            const currentRows = new Map(existingRows);
+            for (const record of normalizedRecords) {
+                const itemId = record.item_id;
+                const columns = this.getRecordColumns(record).filter((col) => col !== 'item_id');
+                if (columns.length === 0) continue;
+                const existing = currentRows.get(itemId);
+                if (!existing) continue;
+                const hasChanges = columns.some((col) => !Object.is(existing[col], record[col]));
+                if (!hasChanges) continue;
+                const setClause = columns.map((field) => `${field} = ?`).join(', ');
+                const values = [...columns.map((field) => record[field]), itemId];
+                await this.runSql(`UPDATE ${this.tableName} SET ${setClause} WHERE item_id = ?`, values);
+                count++;
+                currentRows.set(itemId, { ...existing, ...record });
+            }
+            return count;
+        });
     }
 
     async findById(itemId: string): Promise<Record<string, any> | undefined> {
@@ -361,7 +434,7 @@ export class BaseIndexDBHm implements IBaseIndexDB {
         return this.queryAllSql(sql, params) as Promise<Record<string, any>[]>;
     }
 
-    async query(
+    async search(
         conditions: BaseQueryCondition[],
         options?: Omit<BaseQueryOptions, 'conditions'>
     ): Promise<Record<string, any>[]> {

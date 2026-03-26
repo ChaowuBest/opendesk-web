@@ -128,7 +128,7 @@ export class TagIndexDB implements ITagIndexDB {
      */
     async insertMany(records: TagIndexRecord[]): Promise<number> {
         const stmt = this.db.prepare(`
-            INSERT OR REPLACE INTO ${this.tableName} (item_id, item_type, tag)
+            INSERT OR IGNORE INTO ${this.tableName} (item_id, item_type, tag)
             VALUES (@item_id, @item_type, @tag)
         `);
 
@@ -136,7 +136,7 @@ export class TagIndexDB implements ITagIndexDB {
             let count = 0;
             for (const record of records) {
                 const result = stmt.run(record);
-                if (result.changes > 0) count++;
+                count += result.changes;
             }
             return count;
         });
@@ -160,6 +160,34 @@ export class TagIndexDB implements ITagIndexDB {
 
         const result = stmt.run(record);
         return result.changes > 0;
+    }
+
+    /**
+     * 批量插入或更新记录
+     * @param records 要插入或更新的记录数组
+     * @returns 成功处理的记录数
+     */
+    async upsertMany(records: TagIndexRecord[]): Promise<number> {
+        if (records.length === 0) return 0;
+
+        const stmt = this.db.prepare(`
+            INSERT INTO ${this.tableName} (item_id, item_type, tag)
+            VALUES (@item_id, @item_type, @tag)
+            ON CONFLICT(item_id) DO UPDATE SET
+                item_type = excluded.item_type,
+                tag = excluded.tag
+        `);
+
+        const upsertAll = this.db.transaction((batch: TagIndexRecord[]) => {
+            let count = 0;
+            for (const record of batch) {
+                const result = stmt.run(record);
+                count += result.changes;
+            }
+            return count;
+        });
+
+        return upsertAll(records);
     }
 
     /**
@@ -220,6 +248,38 @@ export class TagIndexDB implements ITagIndexDB {
 
         const result = stmt.run({ ...data, item_id: itemId });
         return result.changes > 0;
+    }
+
+    /**
+     * 批量更新记录
+     * @param records 要更新的记录数组
+     * @returns 实际发生变化的记录数
+     */
+    async updateMany(records: TagIndexRecord[]): Promise<number> {
+        if (records.length === 0) return 0;
+
+        const stmt = this.db.prepare(`
+            UPDATE ${this.tableName}
+            SET item_type = ?, tag = ?
+            WHERE item_id = ? AND (item_type <> ? OR tag <> ?)
+        `);
+
+        const updateAll = this.db.transaction((batch: TagIndexRecord[]) => {
+            let count = 0;
+            for (const record of batch) {
+                const result = stmt.run(
+                    record.item_type,
+                    record.tag,
+                    record.item_id,
+                    record.item_type,
+                    record.tag
+                );
+                count += result.changes;
+            }
+            return count;
+        });
+
+        return updateAll(records);
     }
 
     /**
@@ -296,7 +356,7 @@ export class TagIndexDB implements ITagIndexDB {
      * @param options 额外的查询选项
      * @returns 查询到的记录数组
      */
-    async query(conditions: QueryCondition[], options?: Omit<QueryOptions, 'conditions'>): Promise<TagIndexRecord[]> {
+    async search(conditions: QueryCondition[], options?: Omit<QueryOptions, 'conditions'>): Promise<TagIndexRecord[]> {
         return this.findAll({ ...options, conditions });
     }
 

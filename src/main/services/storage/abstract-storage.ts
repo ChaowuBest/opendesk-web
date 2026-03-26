@@ -329,10 +329,23 @@ export class BaseStorage {
         if (this.chunkIndexer) await this.chunkIndexer.initialize();
     }
 
+    private async getExistingItemIds(itemIds: string[]): Promise<Set<string>> {
+        if (itemIds.length === 0) return new Set();
+        const result = await this.baseIndexer.search([
+            {
+                indexer: 'BaseIndexer',
+                field: 'item_id',
+                operator: 'in',
+                value: itemIds
+            }
+        ]);
+        return new Set(result.items.map((item) => item.item_id));
+    }
+
     /**
-     * 搜索方法 - 返回 SearchItem[]
+     * 搜索方法 - 返回 { items, totalCount }
      */
-    async search(filterConditions: FilterCondition[]): Promise<SearchItem[]> {
+    async search(filterConditions: FilterCondition[]): Promise<{ items: SearchItem[]; totalCount: number }> {
         // 检测是否包含 ChunkIndexer 条件，走专用路径
         const hasChunkCondition = filterConditions.some((c) => c.indexer === 'ChunkIndexer');
         if (hasChunkCondition) {
@@ -379,11 +392,14 @@ export class BaseStorage {
 
             // 提前退出：如果结果为空
             if (results.length === 0) {
-                return [];
+                return { items: [], totalCount: 0 };
             }
         }
 
-        return results;
+        return {
+            items: results,
+            totalCount: results.length
+        };
     }
 
     /**
@@ -391,23 +407,26 @@ export class BaseStorage {
      */
     async insert(items: Item[]): Promise<void> {
         if (items.length === 0) return;
+        const existingIds = await this.getExistingItemIds(items.map((item) => item.item_id));
+        const newItems = items.filter((item) => !existingIds.has(item.item_id));
+        if (newItems.length === 0) return;
 
         await Promise.all([
-            this.baseIndexer.insert(items),
-            this.bm25Indexer ? this.bm25Indexer.insert(items) : Promise.resolve(),
-            this.vectorIndexer ? this.vectorIndexer.insert(items) : Promise.resolve(),
-            this.tagIndexer ? this.tagIndexer.insert(items) : Promise.resolve(),
-            this.chunkIndexer ? this.chunkIndexer.insert(items) : Promise.resolve()
+            this.baseIndexer.insert(newItems),
+            this.bm25Indexer ? this.bm25Indexer.insert(newItems) : Promise.resolve(),
+            this.vectorIndexer ? this.vectorIndexer.insert(newItems) : Promise.resolve(),
+            this.tagIndexer ? this.tagIndexer.insert(newItems) : Promise.resolve(),
+            this.chunkIndexer ? this.chunkIndexer.insert(newItems) : Promise.resolve()
         ]);
     }
 
     /**
      * 删除数据
      */
-    async delete(items: Item[]): Promise<void> {
-        if (items.length === 0) return;
-
-        const itemIds = items.map((i) => i.item_id);
+    async delete(itemsOrIds: Item[] | string[]): Promise<void> {
+        if (itemsOrIds.length === 0) return;
+        const itemIds =
+            typeof itemsOrIds[0] === 'string' ? (itemsOrIds as string[]) : (itemsOrIds as Item[]).map((i) => i.item_id);
 
         await Promise.all([
             this.baseIndexer.delete(itemIds),
@@ -438,38 +457,46 @@ export class BaseStorage {
      */
     async upsert(items: Item[]): Promise<void> {
         if (items.length === 0) return;
-
-        const existFlags = await Promise.all(items.map((i) => this.baseIndexer.getDB().exists(i.item_id)));
-
-        const newItems = items.filter((_, idx) => !existFlags[idx]);
-        const existingItems = items.filter((_, idx) => existFlags[idx]);
-
-        if (newItems.length > 0) await this.insert(newItems);
-        if (existingItems.length > 0) await this.update(existingItems);
+        await Promise.all([
+            this.baseIndexer.upsert(items),
+            this.bm25Indexer ? this.bm25Indexer.upsert(items) : Promise.resolve(),
+            this.vectorIndexer ? this.vectorIndexer.upsert(items) : Promise.resolve(),
+            this.tagIndexer ? this.tagIndexer.upsert(items) : Promise.resolve(),
+            this.chunkIndexer ? this.chunkIndexer.upsert(items) : Promise.resolve()
+        ]);
     }
 
     /**
      * 清空所有 indexer 数据
      */
     async clear(): Promise<void> {
-        await this.baseIndexer.clear();
-        if (this.bm25Indexer) await this.bm25Indexer.clear();
-        if (this.vectorIndexer) await this.vectorIndexer.clear();
-        if (this.tagIndexer) await this.tagIndexer.clear();
-        if (this.chunkIndexer) await this.chunkIndexer.clear();
+        await Promise.all([
+            this.baseIndexer.clear(),
+            this.bm25Indexer ? this.bm25Indexer.clear() : Promise.resolve(),
+            this.vectorIndexer ? this.vectorIndexer.clear() : Promise.resolve(),
+            this.tagIndexer ? this.tagIndexer.clear() : Promise.resolve(),
+            this.chunkIndexer ? this.chunkIndexer.clear() : Promise.resolve()
+        ]);
     }
 
     /**
      * 获取所有 indexer 状态信息
      */
     async getStatus(): Promise<Record<string, Record<string, any>>> {
-        const status: Record<string, Record<string, any>> = {};
-        status['BaseIndexer'] = await this.baseIndexer.getInfo();
-        if (this.bm25Indexer) status['BM25Indexer'] = await this.bm25Indexer.getInfo();
-        if (this.vectorIndexer) status['VectorIndexer'] = await this.vectorIndexer.getInfo();
-        if (this.tagIndexer) status['TagIndexer'] = await this.tagIndexer.getInfo();
-        if (this.chunkIndexer) status['ChunkIndexer'] = await this.chunkIndexer.getInfo();
-        return status;
+        const [baseInfo, bm25Info, vectorInfo, tagInfo, chunkInfo] = await Promise.all([
+            this.baseIndexer.getInfo(),
+            this.bm25Indexer ? this.bm25Indexer.getInfo() : Promise.resolve({}),
+            this.vectorIndexer ? this.vectorIndexer.getInfo() : Promise.resolve({}),
+            this.tagIndexer ? this.tagIndexer.getInfo() : Promise.resolve({}),
+            this.chunkIndexer ? this.chunkIndexer.getInfo() : Promise.resolve({})
+        ]);
+        return {
+            BaseIndexer: baseInfo,
+            ...(this.bm25Indexer && { BM25Indexer: bm25Info }),
+            ...(this.vectorIndexer && { VectorIndexer: vectorInfo }),
+            ...(this.tagIndexer && { TagIndexer: tagInfo }),
+            ...(this.chunkIndexer && { ChunkIndexer: chunkInfo })
+        };
     }
 
     /**
@@ -481,13 +508,6 @@ export class BaseStorage {
         this.vectorIndexer?.close();
         this.tagIndexer?.close();
         this.chunkIndexer?.close();
-    }
-
-    /**
-     * 获取 BaseIndexer 实例
-     */
-    getBaseIndexer(): BaseIndexer {
-        return this.baseIndexer;
     }
 
     /**
@@ -525,7 +545,9 @@ export class BaseStorage {
      * 3. 再用 BaseIndexer 在命中的 item_id 子集上做元数据过滤
      * 4. 按 chunk 命中展开结果，不去重 item_id
      */
-    private async searchWithChunkIndexer(filterConditions: FilterCondition[]): Promise<SearchItem[]> {
+    private async searchWithChunkIndexer(
+        filterConditions: FilterCondition[]
+    ): Promise<{ items: SearchItem[]; totalCount: number }> {
         if (!this.chunkIndexer) {
             throw new Error('ChunkIndexer not initialized for this schema');
         }
@@ -556,7 +578,7 @@ export class BaseStorage {
         );
 
         if (chunkResults.length === 0) {
-            return [];
+            return { items: [], totalCount: 0 };
         }
 
         const existingItems: Item[] = chunkResults.map((result) => ({
@@ -582,7 +604,10 @@ export class BaseStorage {
             });
         }
 
-        return expandedResults;
+        return {
+            items: expandedResults,
+            totalCount: expandedResults.length
+        };
     }
 
     /**

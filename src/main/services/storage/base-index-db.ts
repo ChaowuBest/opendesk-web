@@ -165,29 +165,19 @@ export class BaseIndexDB implements IBaseIndexDB {
         }
     }
 
-    /**
-     * 插入单条记录（upsert 语义：已存在则更新 provided 字段，不清除 unprovided 字段）
-     */
-    async insert(record: Record<string, any>): Promise<boolean> {
-        const columns = this.validFields.filter((col) => record[col] !== undefined);
-        const placeholders = columns.map(() => '?').join(', ');
-        const values = columns.map((col) => record[col]);
-
-        const updateColumns = columns.filter((c) => c !== 'item_id');
-        const updateClause = updateColumns.map((col) => `${col} = excluded.${col}`).join(', ');
-
-        const stmt = this.db.prepare(`
-            INSERT INTO ${this.tableName} (${columns.join(', ')})
-            VALUES (${placeholders})
-            ON CONFLICT(item_id) DO UPDATE SET ${updateClause}
-        `);
-
-        const result = stmt.run(...values);
-        return result.changes > 0;
+    private getRecordColumns(record: Record<string, any>): string[] {
+        return this.validFields.filter((col) => record[col] !== undefined);
     }
 
     /**
-     * 批量插入记录（upsert 语义：已存在则更新 provided 字段，不清除 unprovided 字段）
+     * 插入单条记录（first-write-only）
+     */
+    async insert(record: Record<string, any>): Promise<boolean> {
+        return (await this.insertMany([record])) > 0;
+    }
+
+    /**
+     * 批量插入记录（first-write-only）
      */
     async insertMany(records: Record<string, any>[]): Promise<number> {
         if (records.length === 0) return 0;
@@ -195,20 +185,17 @@ export class BaseIndexDB implements IBaseIndexDB {
         const insertAll = this.db.transaction((records: Record<string, any>[]) => {
             let count = 0;
             for (const record of records) {
-                const columns = this.validFields.filter((col) => record[col] !== undefined);
+                const columns = this.getRecordColumns(record);
+                if (columns.length === 0) continue;
                 const placeholders = columns.map(() => '?').join(', ');
                 const values = columns.map((col) => record[col]);
-
-                const updateColumns = columns.filter((c) => c !== 'item_id');
-                const updateClause = updateColumns.map((col) => `${col} = excluded.${col}`).join(', ');
-
                 const insertStmt = this.db.prepare(`
                     INSERT INTO ${this.tableName} (${columns.join(', ')})
                     VALUES (${placeholders})
-                    ON CONFLICT(item_id) DO UPDATE SET ${updateClause}
+                    ON CONFLICT(item_id) DO NOTHING
                 `);
                 const result = insertStmt.run(...values);
-                if (result.changes > 0) count++;
+                count += result.changes;
             }
             return count;
         });
@@ -217,24 +204,87 @@ export class BaseIndexDB implements IBaseIndexDB {
     }
 
     /**
-     * 插入或更新记录（upsert）
+     * 插入或更新记录（sparse upsert）
      */
     async upsert(record: Record<string, any>): Promise<boolean> {
-        const columns = this.validFields.filter((col) => record[col] !== undefined);
-        const placeholders = columns.map(() => '?').join(', ');
-        const values = columns.map((col) => record[col]);
+        return (await this.upsertMany([record])) > 0;
+    }
 
-        const updateColumns = columns.filter((c) => c !== 'item_id');
-        const updateClause = updateColumns.map((col) => `${col} = excluded.${col}`).join(', ');
+    async upsertMany(records: Record<string, any>[]): Promise<number> {
+        if (records.length === 0) return 0;
 
-        const stmt = this.db.prepare(`
-            INSERT INTO ${this.tableName} (${columns.join(', ')})
-            VALUES (${placeholders})
-            ON CONFLICT(item_id) DO UPDATE SET ${updateClause}
-        `);
+        const upsertAll = this.db.transaction((records: Record<string, any>[]) => {
+            let count = 0;
+            for (const record of records) {
+                const columns = this.getRecordColumns(record);
+                if (columns.length === 0) continue;
 
-        const result = stmt.run(...values);
-        return result.changes > 0;
+                const placeholders = columns.map(() => '?').join(', ');
+                const values = columns.map((col) => record[col]);
+                const updateColumns = columns.filter((c) => c !== 'item_id');
+                const sql =
+                    updateColumns.length === 0
+                        ? `
+                        INSERT INTO ${this.tableName} (${columns.join(', ')})
+                        VALUES (${placeholders})
+                        ON CONFLICT(item_id) DO NOTHING
+                    `
+                        : `
+                        INSERT INTO ${this.tableName} (${columns.join(', ')})
+                        VALUES (${placeholders})
+                        ON CONFLICT(item_id) DO UPDATE SET ${updateColumns.map((col) => `${col} = excluded.${col}`).join(', ')}
+                    `;
+
+                const stmt = this.db.prepare(sql);
+                const result = stmt.run(...values);
+                count += result.changes;
+            }
+            return count;
+        });
+
+        return upsertAll(records);
+    }
+
+    async update(itemId: string, data: Record<string, any>): Promise<boolean> {
+        const fields = Object.keys(data).filter(
+            (key) => this.validFields.includes(key) && key !== 'item_id' && data[key] !== undefined
+        );
+        if (fields.length === 0) {
+            throw new Error('No valid fields to update');
+        }
+
+        const updated = await this.updateMany([{ ...data, item_id: itemId }]);
+        return updated > 0;
+    }
+
+    async updateMany(records: Record<string, any>[]): Promise<number> {
+        if (records.length === 0) return 0;
+
+        const updateAll = this.db.transaction((records: Record<string, any>[]) => {
+            let count = 0;
+            for (const record of records) {
+                const itemId = record.item_id;
+                if (itemId === undefined) continue;
+
+                const columns = this.getRecordColumns(record).filter((col) => col !== 'item_id');
+                if (columns.length === 0) continue;
+
+                const setClause = columns.map((field) => `${field} = @${field}`).join(', ');
+                const diffClause = columns.map((field) => `${field} IS NOT @${field}`).join(' OR ');
+                const stmt = this.db.prepare(`
+                    UPDATE ${this.tableName}
+                    SET ${setClause}
+                    WHERE item_id = @item_id
+                      AND (${diffClause})
+                `);
+
+                const result = stmt.run({ ...record, item_id: itemId });
+                count += result.changes;
+            }
+            return count;
+        });
+
+        return updateAll(records);
     }
 
     /**
@@ -270,24 +320,6 @@ export class BaseIndexDB implements IBaseIndexDB {
         const stmt = this.db.prepare(`DELETE FROM ${this.tableName} WHERE ${whereClause}`);
         const result = stmt.run(...params);
         return result.changes;
-    }
-
-    /**
-     * 更新记录
-     */
-    async update(itemId: string, data: Record<string, any>): Promise<boolean> {
-        const fields = Object.keys(data).filter(
-            (key) => this.validFields.includes(key) && key !== 'item_id' && data[key] !== undefined
-        );
-        if (fields.length === 0) {
-            throw new Error('No valid fields to update');
-        }
-
-        const setClause = fields.map((field) => `${field} = @${field}`).join(', ');
-        const stmt = this.db.prepare(`UPDATE ${this.tableName} SET ${setClause} WHERE item_id = @item_id`);
-
-        const result = stmt.run({ ...data, item_id: itemId });
-        return result.changes > 0;
     }
 
     /**
@@ -344,7 +376,7 @@ export class BaseIndexDB implements IBaseIndexDB {
     /**
      * 根据条件查询记录
      */
-    async query(
+    async search(
         conditions: BaseQueryCondition[],
         options?: Omit<BaseQueryOptions, 'conditions'>
     ): Promise<Record<string, any>[]> {

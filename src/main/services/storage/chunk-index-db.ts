@@ -114,6 +114,23 @@ export class ChunkIndexDB implements IChunkIndexDB {
         }
     }
 
+    async getStoredDim(): Promise<number | null> {
+        const stmt = this.db.prepare(
+            `SELECT vec_length(repr) as dim FROM ${this.vecTableName} LIMIT 1`
+        );
+        const row = stmt.get() as { dim: number } | undefined;
+        return row?.dim ?? null;
+    }
+
+    existingItemIds(ids: string[]): Promise<Set<string>> {
+        if (ids.length === 0) return Promise.resolve(new Set());
+        const placeholders = ids.map(() => '?').join(', ');
+        const rows = this.db.prepare(
+            `SELECT DISTINCT item_id FROM ${this.metaTableName} WHERE item_id IN (${placeholders})`
+        ).all(ids) as { item_id: string }[];
+        return Promise.resolve(new Set(rows.map(row => row.item_id)));
+    }
+
     /**
      * 批量插入 chunk 记录（事务保证原子性）
      */
@@ -121,7 +138,7 @@ export class ChunkIndexDB implements IChunkIndexDB {
         if (records.length === 0) return 0;
 
         const insertMeta = this.db.prepare(`
-            INSERT OR REPLACE INTO ${this.metaTableName} (chunk_pk, item_id, chunk_id, chunk_text)
+            INSERT OR IGNORE INTO ${this.metaTableName} (chunk_pk, item_id, chunk_id, chunk_text)
             VALUES (?, ?, ?, ?)
         `);
         const deleteVec = this.db.prepare(`
@@ -137,10 +154,12 @@ export class ChunkIndexDB implements IChunkIndexDB {
             for (const record of records) {
                 this.validateDimension(record.repr);
                 const vecData = this.toFloat32Array(record.repr);
-                insertMeta.run(record.chunk_pk, record.item_id, record.chunk_id, record.chunk_text);
-                deleteVec.run(record.chunk_pk);
-                insertVec.run(record.chunk_pk, vecData);
-                count++;
+                const metaResult = insertMeta.run(record.chunk_pk, record.item_id, record.chunk_id, record.chunk_text);
+                if (metaResult.changes > 0) {
+                    deleteVec.run(record.chunk_pk);
+                    insertVec.run(record.chunk_pk, vecData);
+                    count++;
+                }
             }
             return count;
         });

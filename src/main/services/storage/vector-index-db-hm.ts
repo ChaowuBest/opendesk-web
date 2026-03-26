@@ -158,6 +158,15 @@ export class VectorIndexDBHm implements IVectorIndexDB {
         }
     }
 
+    private async existingVectorIds(vectorIds: string[]): Promise<Set<string>> {
+        if (vectorIds.length === 0) return new Set();
+        const idList = vectorIds.map((id) => `'${escapeStr(id)}'`).join(', ');
+        const rows = (await this.execSql(
+            `SELECT vector_id FROM ${this.metaTableName} WHERE vector_id IN (${idList})`
+        )) as { vector_id: string }[];
+        return new Set(rows.map((row) => row.vector_id));
+    }
+
     async insert(record: VectorIndexRecord): Promise<boolean> {
         await this.ensureInitialized();
         this.validateDimension(record.repr);
@@ -179,13 +188,16 @@ export class VectorIndexDBHm implements IVectorIndexDB {
     async insertMany(records: VectorIndexRecord[]): Promise<number> {
         await this.ensureInitialized();
         if (records.length === 0) return 0;
+        const existingSet = await this.existingVectorIds(records.map((record) => record.vector_id));
+        const toInsert = records.filter((record) => !existingSet.has(record.vector_id));
+        if (toInsert.length === 0) return 0;
         return this.runTransaction(async () => {
             let count = 0;
-            for (const record of records) {
+            for (const record of toInsert) {
                 this.validateDimension(record.repr);
                 const hexRepr = float32ToHexLiteral(record.repr);
                 await this.runSql(
-                    `INSERT OR REPLACE INTO ${this.metaTableName} (vector_id, item_id, item_type) VALUES (?, ?, ?)`,
+                    `INSERT OR IGNORE INTO ${this.metaTableName} (vector_id, item_id, item_type) VALUES (?, ?, ?)`,
                     [record.vector_id, record.item_id, record.item_type]
                 );
                 await this.execSql(
@@ -202,36 +214,28 @@ export class VectorIndexDBHm implements IVectorIndexDB {
     }
 
     async upsert(record: VectorIndexRecord): Promise<boolean> {
+        return (await this.upsertMany([record])) > 0;
+    }
+
+    async upsertMany(records: VectorIndexRecord[]): Promise<number> {
         await this.ensureInitialized();
-        this.validateDimension(record.repr);
-        const hexRepr = float32ToHexLiteral(record.repr);
-        await this.runTransaction(async () => {
-            // 查询 item_id + item_type 对应的旧 vector_id（只替换同列向量）
-            const oldRows = (await this.execSql(
-                `SELECT vector_id FROM ${this.metaTableName} WHERE item_id = '${escapeStr(record.item_id)}' AND item_type = '${escapeStr(record.item_type)}'`
-            )) as Array<{ vector_id: string }>;
-            // 删除旧 vec 条目
-            for (const row of oldRows) {
-                await this.execSql(`DELETE FROM ${this.vecTableName} WHERE vector_id = '${escapeStr(row.vector_id)}'`);
-            }
-            // 删除旧 meta 条目
-            await this.runSql(`DELETE FROM ${this.metaTableName} WHERE item_id = ? AND item_type = ?`, [
-                record.item_id,
-                record.item_type
-            ]);
-            // 插入新 meta 条目
-            await this.runSql(`INSERT INTO ${this.metaTableName} (vector_id, item_id, item_type) VALUES (?, ?, ?)`, [
-                record.vector_id,
-                record.item_id,
-                record.item_type
-            ]);
-            // 插入新 vec 条目（repr 字段用 X'hex' 字面量，vec0 不支持参数化写入）
-            await this.execSql(`
-                INSERT INTO ${this.vecTableName} (vector_id, repr)
-                VALUES ('${escapeStr(record.vector_id)}', ${hexRepr})
-            `);
-        });
-        return true;
+        if (records.length === 0) return 0;
+        const idList = records.map((record) => `'${escapeStr(record.vector_id)}'`).join(', ');
+        await this.execSql(`DELETE FROM ${this.metaTableName} WHERE vector_id IN (${idList})`);
+        await this.execSql(`DELETE FROM ${this.vecTableName} WHERE vector_id IN (${idList})`);
+        return this.insertMany(records);
+    }
+
+    async updateMany(records: VectorIndexRecord[]): Promise<number> {
+        await this.ensureInitialized();
+        if (records.length === 0) return 0;
+        const existingSet = await this.existingVectorIds(records.map((record) => record.vector_id));
+        const toUpdate = records.filter((record) => existingSet.has(record.vector_id));
+        if (toUpdate.length === 0) return 0;
+        const idList = toUpdate.map((record) => `'${escapeStr(record.vector_id)}'`).join(', ');
+        await this.execSql(`DELETE FROM ${this.metaTableName} WHERE vector_id IN (${idList})`);
+        await this.execSql(`DELETE FROM ${this.vecTableName} WHERE vector_id IN (${idList})`);
+        return this.insertMany(toUpdate);
     }
 
     async delete(itemId: string): Promise<boolean> {

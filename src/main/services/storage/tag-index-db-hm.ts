@@ -149,6 +149,17 @@ export class TagIndexDBHm implements ITagIndexDB {
         return this.execSql(bindSqlLiterals(sql, params));
     }
 
+    private async fetchExistingRecords(itemIds: string[]): Promise<Map<string, TagIndexRecord>> {
+        const uniqueIds = Array.from(new Set(itemIds));
+        if (uniqueIds.length === 0) return new Map();
+        const placeholders = uniqueIds.map(() => '?').join(', ');
+        const rows = await this.querySql(
+            `SELECT item_id, item_type, tag FROM ${this.tableName} WHERE item_id IN (${placeholders})`,
+            uniqueIds
+        );
+        return new Map((rows as TagIndexRecord[]).map((row) => [row.item_id, row]));
+    }
+
     private async runTransaction<T>(fn: () => Promise<T>): Promise<T> {
         const db = this.ensureOpen();
         await this.addon.beginTransaction(db);
@@ -234,13 +245,17 @@ export class TagIndexDBHm implements ITagIndexDB {
     async insertMany(records: TagIndexRecord[]): Promise<number> {
         await this.ensureInitialized();
         if (records.length === 0) return 0;
+        const existingRecords = await this.fetchExistingRecords(records.map((record) => record.item_id));
         return this.runTransaction(async () => {
             let count = 0;
+            const seen = new Set(existingRecords.keys());
             for (const record of records) {
+                if (seen.has(record.item_id)) continue;
                 await this.runSql(
-                    `INSERT OR REPLACE INTO ${this.tableName} (item_id, item_type, tag) VALUES (?, ?, ?)`,
+                    `INSERT INTO ${this.tableName} (item_id, item_type, tag) VALUES (?, ?, ?)`,
                     [record.item_id, record.item_type, record.tag]
                 );
+                seen.add(record.item_id);
                 count++;
             }
             return count;
@@ -255,6 +270,23 @@ export class TagIndexDBHm implements ITagIndexDB {
             [record.item_id, record.item_type, record.tag]
         );
         return true;
+    }
+
+    async upsertMany(records: TagIndexRecord[]): Promise<number> {
+        await this.ensureInitialized();
+        if (records.length === 0) return 0;
+        return this.runTransaction(async () => {
+            let count = 0;
+            for (const record of records) {
+                await this.runSql(
+                    `INSERT INTO ${this.tableName} (item_id, item_type, tag) VALUES (?, ?, ?)
+                     ON CONFLICT(item_id) DO UPDATE SET item_type = excluded.item_type, tag = excluded.tag`,
+                    [record.item_id, record.item_type, record.tag]
+                );
+                count++;
+            }
+            return count;
+        });
     }
 
     async delete(itemId: string): Promise<boolean> {
@@ -291,6 +323,28 @@ export class TagIndexDBHm implements ITagIndexDB {
         const params = [...fields.map((f) => data[f]), itemId];
         await this.runSql(`UPDATE ${this.tableName} SET ${setClause} WHERE item_id = ?`, params);
         return true;
+    }
+
+    async updateMany(records: TagIndexRecord[]): Promise<number> {
+        await this.ensureInitialized();
+        if (records.length === 0) return 0;
+        const existingRecords = await this.fetchExistingRecords(records.map((record) => record.item_id));
+        return this.runTransaction(async () => {
+            let count = 0;
+            const currentRecords = new Map(existingRecords);
+            for (const record of records) {
+                const existing = currentRecords.get(record.item_id);
+                if (!existing) continue;
+                if (existing.item_type === record.item_type && existing.tag === record.tag) continue;
+                await this.runSql(
+                    `UPDATE ${this.tableName} SET item_type = ?, tag = ? WHERE item_id = ?`,
+                    [record.item_type, record.tag, record.item_id]
+                );
+                currentRecords.set(record.item_id, record);
+                count++;
+            }
+            return count;
+        });
     }
 
     async updateByConditions(conditions: QueryCondition[], data: UpdateData): Promise<number> {
@@ -334,7 +388,7 @@ export class TagIndexDBHm implements ITagIndexDB {
         return this.querySql(sql, params) as Promise<TagIndexRecord[]>;
     }
 
-    async query(conditions: QueryCondition[], options?: Omit<QueryOptions, 'conditions'>): Promise<TagIndexRecord[]> {
+    async search(conditions: QueryCondition[], options?: Omit<QueryOptions, 'conditions'>): Promise<TagIndexRecord[]> {
         return this.findAll({ ...options, conditions });
     }
 

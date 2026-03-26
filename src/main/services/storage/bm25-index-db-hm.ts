@@ -304,6 +304,7 @@ export class BM25IndexDBHm implements IBM25IndexDB {
                 );
             }
         });
+        await this.flush();
     }
 
     async delete(itemIds: string[]): Promise<void> {
@@ -315,6 +316,7 @@ export class BM25IndexDBHm implements IBM25IndexDB {
                 await this.runSql(`DELETE FROM ${this.tableName} WHERE item_id = ?`, [itemId]);
             }
         });
+        await this.flush();
     }
 
     async update(records: BM25Record[]): Promise<void> {
@@ -334,15 +336,40 @@ export class BM25IndexDBHm implements IBM25IndexDB {
                 );
             }
         });
+        await this.flush();
     }
 
-    async flush(): Promise<void> {
+    private async flush(): Promise<void> {
         await this.ensureInitialized();
     }
 
-    async deleteAll(): Promise<void> {
+    async clear(): Promise<void> {
         await this.ensureInitialized();
         await this.runSql(`DELETE FROM ${this.tableName}`);
+    }
+
+    async existingItemIds(ids: string[]): Promise<Set<string>> {
+        await this.ensureInitialized();
+        if (ids.length === 0) return new Set();
+        const rows = await this.querySql(
+            `SELECT DISTINCT item_id FROM ${this.tableName} WHERE item_id IN (${ids.map(() => '?').join(', ')})`,
+            ids
+        ) as { item_id: string }[];
+        return new Set(rows.map(r => r.item_id));
+    }
+
+    async deleteByKeys(keys: Array<{ item_id: string; item_type: string }>): Promise<void> {
+        await this.ensureInitialized();
+        if (keys.length === 0) return;
+        await this.runTransaction(async () => {
+            for (const key of keys) {
+                await this.runSql(
+                    `DELETE FROM ${this.tableName} WHERE item_id = ? AND item_type = ?`,
+                    [key.item_id, key.item_type]
+                );
+            }
+        });
+        await this.flush();
     }
 
     async count(): Promise<number> {

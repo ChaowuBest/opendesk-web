@@ -64,6 +64,8 @@ export interface IVectorIndexDB {
     insert(record: VectorIndexRecord): Promise<boolean>;
     insertMany(records: VectorIndexRecord[]): Promise<number>;
     upsert(record: VectorIndexRecord): Promise<boolean>;
+    upsertMany(records: VectorIndexRecord[]): Promise<number>;
+    updateMany(records: VectorIndexRecord[]): Promise<number>;
     delete(itemId: string): Promise<boolean>;
     deleteMany(itemIds: string[]): Promise<number>;
     search(
@@ -179,10 +181,9 @@ export class VectorIndexer extends Indexer {
      * 如果有 existingResults，从中获取完整元数据
      */
     private resultToItem(result: { item_id: string; item_type: string }, metadata?: Partial<Item>): Item {
-        const item: Item = {
-            item_id: result.item_id,
-            item_type: result.item_type as ItemType
-        };
+        const item = {
+            item_id: result.item_id
+        } as Item;
         // 从 metadata 复制所有额外字段
         if (metadata) {
             for (const [key, value] of Object.entries(metadata)) {
@@ -190,8 +191,35 @@ export class VectorIndexer extends Indexer {
                     item[key] = value;
                 }
             }
+            if (metadata.item_type !== undefined) {
+                item.item_type = metadata.item_type;
+            }
         }
         return item;
+    }
+
+    private buildRecords(items: Item[]): VectorIndexRecord[] {
+        const records: VectorIndexRecord[] = [];
+        for (const item of items) {
+            const columns = item.indexer_columns?.[this.name] as
+                | Array<{ column: string; content: string | number[] }>
+                | undefined;
+            if (!columns || columns.length === 0) continue;
+            for (const col of columns) {
+                const repr = col.content;
+                const validRepr =
+                    Array.isArray(repr) && repr.length === this.dimension && repr.every((v) => typeof v === 'number');
+                if (!validRepr) {
+                    throw new Error(
+                        `[VectorIndexer] Item ${item.item_id} has invalid repr for column ${col.column}: expected number[] of length ${this.dimension}`
+                    );
+                }
+                const stableId = `${item.item_id}_${col.column}`;
+                const record = this.itemToRecord(item, col.column, repr as number[], stableId);
+                if (record) records.push(record);
+            }
+        }
+        return records;
     }
 
     /**
@@ -315,34 +343,7 @@ export class VectorIndexer extends Indexer {
      * 向索引中插入 Item
      */
     async insert(items: Item[]): Promise<void> {
-        const records: VectorIndexRecord[] = [];
-        for (const item of items) {
-            const columns = item.indexer_columns?.[this.name] as
-                | Array<{ column: string; content: string | number[] }>
-                | undefined;
-            if (!columns || columns.length === 0) {
-                continue;
-            }
-
-            for (const col of columns) {
-                const columnName = col.column;
-                const repr = col.content;
-                const validRepr =
-                    Array.isArray(repr) && repr.length === this.dimension && repr.every((v) => typeof v === 'number');
-                if (!validRepr) {
-                    throw new Error(
-                        `[VectorIndexer] Item ${item.item_id} has invalid repr for column ${columnName}: ` +
-                            `expected number[] of length ${this.dimension}`
-                    );
-                }
-
-                const stableId = `${item.item_id}_${columnName}`;
-                const record = this.itemToRecord(item, columnName, repr as number[], stableId);
-                if (record) {
-                    records.push(record);
-                }
-            }
-        }
+        const records = this.buildRecords(items);
         if (records.length > 0) {
             await this.ensureDB().insertMany(records);
         }
@@ -359,33 +360,13 @@ export class VectorIndexer extends Indexer {
      * 更新索引中的 Item
      */
     async update(items: Item[]): Promise<void> {
-        for (const item of items) {
-            const columns = item.indexer_columns?.[this.name] as
-                | Array<{ column: string; content: string | number[] }>
-                | undefined;
-            if (!columns || columns.length === 0) {
-                continue;
-            }
+        const records = this.buildRecords(items);
+        if (records.length > 0) await this.ensureDB().updateMany(records);
+    }
 
-            for (const col of columns) {
-                const columnName = col.column;
-                const repr = col.content;
-                const validRepr =
-                    Array.isArray(repr) && repr.length === this.dimension && repr.every((v) => typeof v === 'number');
-                if (!validRepr) {
-                    throw new Error(
-                        `[VectorIndexer] Item ${item.item_id} has invalid repr for column ${columnName}: ` +
-                            `expected number[] of length ${this.dimension}`
-                    );
-                }
-
-                const stableId = `${item.item_id}_${columnName}`;
-                const record = this.itemToRecord(item, columnName, repr as number[], stableId);
-                if (record) {
-                    await this.ensureDB().upsert(record);
-                }
-            }
-        }
+    async upsert(items: Item[]): Promise<void> {
+        const records = this.buildRecords(items);
+        if (records.length > 0) await this.ensureDB().upsertMany(records);
     }
 
     /**
@@ -393,13 +374,6 @@ export class VectorIndexer extends Indexer {
      */
     close(): void {
         this.db?.close();
-    }
-
-    /**
-     * 获取底层 VectorIndexDB 实例（用于高级操作）
-     */
-    getDB(): IVectorIndexDB {
-        return this.ensureDB();
     }
 
     /**
