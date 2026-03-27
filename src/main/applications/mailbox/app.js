@@ -15,8 +15,12 @@ import { Skill } from "../../aikernel/skill.js";
 import { MailboxConfigSchema } from "./common.js"; // 引入新的 Schema
 import { logger } from "../../utils/logger.js";
 import MailboxWorker from "./service/worker";
-import { MANAGE_MAILBOX_SKILL } from "./skills";
-import { AddMailAccountTool, ListMailAccountsTool, RemoveMailAccountTool, SwitchMailAccountTool } from "./tools";
+import { MANAGE_MAILBOX_SKILL, OPERATE_MAILBOX_SKILL } from "./skills";
+import {
+    AddMailAccountTool, ListMailAccountsTool, RemoveMailAccountTool, SwitchMailAccountTool,
+    GetEmailListTool, GetEmailContentTool, SearchEmailsTool,
+    SendEmailTool, ReplyEmailTool, MarkEmailReadTool, StarEmailTool, DeleteEmailTool,
+} from "./tools";
 import { MailOverlay } from "./tui.js";
 
 
@@ -40,16 +44,27 @@ class MailboxApplication extends BaseApplication {
     }
 
     async getSkills() {
-        const skill = Skill.parseMd(MANAGE_MAILBOX_SKILL);
-        const toolset = new BaseToolset('mailbox-manage');
+        const manageSkill = Skill.parseMd(MANAGE_MAILBOX_SKILL);
+        const manageToolset = new BaseToolset('mailbox-manage');
+        manageToolset.addTool(new AddMailAccountTool(this));
+        manageToolset.addTool(new ListMailAccountsTool(this));
+        manageToolset.addTool(new RemoveMailAccountTool(this));
+        manageToolset.addTool(new SwitchMailAccountTool(this));
+        manageSkill.toolsets = [manageToolset];
 
-        toolset.addTool(new AddMailAccountTool(this));
-        toolset.addTool(new ListMailAccountsTool(this));
-        toolset.addTool(new RemoveMailAccountTool(this));
-        toolset.addTool(new SwitchMailAccountTool(this));
-        skill.toolsets = [toolset];
+        const operateSkill = Skill.parseMd(OPERATE_MAILBOX_SKILL);
+        const operateToolset = new BaseToolset('mailbox-operate');
+        operateToolset.addTool(new GetEmailListTool());
+        operateToolset.addTool(new GetEmailContentTool());
+        operateToolset.addTool(new SearchEmailsTool());
+        operateToolset.addTool(new SendEmailTool());
+        operateToolset.addTool(new ReplyEmailTool());
+        operateToolset.addTool(new MarkEmailReadTool());
+        operateToolset.addTool(new StarEmailTool());
+        operateToolset.addTool(new DeleteEmailTool());
+        operateSkill.toolsets = [operateToolset];
 
-        return [skill];
+        return [manageSkill, operateSkill];
     }
 
     async getSupportedEvents() {
