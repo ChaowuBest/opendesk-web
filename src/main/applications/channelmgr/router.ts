@@ -386,7 +386,7 @@ export class ChannelMessageRouter {
                             const filePath = tc.args_object?.filePath;
                             logger.info(`[router] SendFile success, filePath=${filePath}`);
                             if (filePath) {
-                                mediaUrls.push(`file://${filePath}`);
+                                mediaUrls.push(filePath);
                             }
                         }
                     }

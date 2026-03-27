@@ -419,26 +419,75 @@ function buildPluginRuntime() {
                 if (buffer[0] === 0x25 && buffer[1] === 0x50) return 'application/pdf';
                 return 'application/octet-stream';
             },
-            loadWebMedia: async (mediaUrl: string, maxBytes?: number) => {
+            loadWebMedia: async (mediaUrl: string, maxBytesOrOpts?: number | Record<string, any>) => {
                 if (!mediaUrl) return null;
+                const resolvedMax = typeof maxBytesOrOpts === 'number'
+                    ? maxBytesOrOpts
+                    : (maxBytesOrOpts?.maxBytes ?? 50 * 1024 * 1024);
+                const localRoots: string[] | undefined = typeof maxBytesOrOpts === 'object'
+                    ? maxBytesOrOpts?.localRoots
+                    : undefined;
+
+                const mimeFromExt = (fp: string) => {
+                    const ext = path.extname(fp).slice(1).toLowerCase();
+                    const mimeMap: Record<string, string> = {
+                        jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png',
+                        gif: 'image/gif', webp: 'image/webp', bmp: 'image/bmp',
+                        pdf: 'application/pdf', mp4: 'video/mp4', mp3: 'audio/mpeg',
+                        wav: 'audio/wav', doc: 'application/msword',
+                        docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                        xls: 'application/vnd.ms-excel',
+                        xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                        pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+                        zip: 'application/zip', txt: 'text/plain', csv: 'text/csv',
+                    };
+                    return mimeMap[ext] || 'application/octet-stream';
+                };
+
+                const kindFromMime = (ct: string) => {
+                    if (ct.startsWith('image/')) return 'image';
+                    if (ct.startsWith('audio/')) return 'audio';
+                    if (ct.startsWith('video/')) return 'video';
+                    return 'document';
+                };
+
+                const readLocal = (fp: string) => {
+                    if (localRoots?.length) {
+                        const resolved = path.resolve(fp);
+                        const allowed = localRoots.some(root => resolved.startsWith(path.resolve(root) + path.sep) || resolved === path.resolve(root));
+                        if (!allowed) throw new Error(`File path not under allowed roots: ${fp}`);
+                    }
+                    if (!fs.existsSync(fp)) throw new Error(`File not found: ${fp}`);
+                    const buffer = fs.readFileSync(fp);
+                    if (buffer.length > resolvedMax) throw new Error(`File too large: ${buffer.length} > ${resolvedMax}`);
+                    const contentType = mimeFromExt(fp);
+                    return { buffer, contentType, fileName: path.basename(fp), kind: kindFromMime(contentType) };
+                };
+
                 try {
-                    const resolvedMax = maxBytes || 50 * 1024 * 1024;
                     if (mediaUrl.startsWith('file://')) {
                         let fp = decodeURIComponent(mediaUrl.replace('file://', ''));
                         if (process.platform === 'win32' && fp.startsWith('/')) fp = fp.slice(1);
-                        if (!fs.existsSync(fp)) return null;
-                        const buffer = fs.readFileSync(fp);
-                        if (buffer.length > resolvedMax) return null;
-                        const ext = path.extname(fp).slice(1);
-                        const mimeMap: Record<string, string> = {
-                            jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png',
-                            gif: 'image/gif', webp: 'image/webp', pdf: 'application/pdf',
-                        };
-                        const contentType = mimeMap[ext] || 'application/octet-stream';
-                        return { buffer, contentType, fileName: path.basename(fp) };
+                        return readLocal(fp);
+                    }
+                    if (mediaUrl.startsWith('http://') || mediaUrl.startsWith('https://')) {
+                        const resp = await fetch(mediaUrl);
+                        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                        const buffer = Buffer.from(await resp.arrayBuffer());
+                        if (buffer.length > resolvedMax) throw new Error(`Downloaded file too large: ${buffer.length}`);
+                        const ct = resp.headers.get('content-type')?.split(';')[0]?.trim() || mimeFromExt(mediaUrl);
+                        const urlPath = new URL(mediaUrl).pathname;
+                        const fileName = path.basename(urlPath) || 'download';
+                        return { buffer, contentType: ct, fileName, kind: kindFromMime(ct) };
+                    }
+                    if (path.isAbsolute(mediaUrl) || mediaUrl.startsWith('.')) {
+                        return readLocal(path.resolve(mediaUrl));
                     }
                     return null;
-                } catch { return null; }
+                } catch (err: any) {
+                    logger.error(`[openclaw-api] loadWebMedia failed for ${mediaUrl}: ${err?.message || err}`);
+                    throw err;
+                }
             },
         },
 
