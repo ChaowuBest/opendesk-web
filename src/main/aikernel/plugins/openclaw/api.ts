@@ -40,6 +40,17 @@ import os from 'os';
 import format from 'string-template';
 import { PAIRING_REPLY_TEMPLATE } from './shim.js';
 
+function detectMimeFromBuffer(buf: Buffer): string {
+    if (!buf || buf.length < 4) return 'application/octet-stream';
+    if (buf[0] === 0xFF && buf[1] === 0xD8) return 'image/jpeg';
+    if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47) return 'image/png';
+    if (buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46) return 'image/gif';
+    if (buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46 && buf.length > 11 && buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50) return 'image/webp';
+    if (buf[0] === 0x42 && buf[1] === 0x4D) return 'image/bmp';
+    if (buf[0] === 0x25 && buf[1] === 0x50 && buf[2] === 0x44 && buf[3] === 0x46) return 'application/pdf';
+    return 'application/octet-stream';
+}
+
 // Winston only uses the first argument as info.message; extra args are dropped.
 // Stringify all args into a single string so nothing is lost.
 function fmtArgs(...args: any[]): string {
@@ -346,6 +357,7 @@ function buildPluginRuntime() {
                     const channelId = ctx.Provider || ctx.OriginatingChannel || 'unknown';
                     const accountId = ctx.AccountId || 'default';
                     const key = `${channelId}:${accountId}`;
+
                     const dispatch = channelDispatchers.get(key);
 
                     if (!dispatch) {
@@ -364,6 +376,35 @@ function buildPluginRuntime() {
                     }
 
                     const isGroup = ctx.ChatType === 'group';
+
+                    // Extract media attachments from OpenClaw context
+                    // Supports both batch (MediaPaths/MediaUrls/MediaTypes) and single (MediaPath/MediaUrl/MediaType)
+                    const mediaPaths: string[] = ctx.MediaPaths || ctx.MediaUrls || [];
+                    if (mediaPaths.length === 0 && (ctx.MediaPath || ctx.MediaUrl)) {
+                        mediaPaths.push(ctx.MediaPath || ctx.MediaUrl);
+                    }
+                    const mediaTypes: string[] = ctx.MediaTypes || [];
+                    if (mediaTypes.length === 0 && ctx.MediaType) {
+                        mediaTypes.push(ctx.MediaType);
+                    }
+                    const media = mediaPaths.map((p: string, i: number) => ({
+                        path: p,
+                        contentType: mediaTypes[i] || undefined,
+                    }));
+
+                    if (media.length > 0) {
+                        logger.info(`[runtime] dispatch media: ${JSON.stringify(media.map(m => ({ path: m.path, contentType: m.contentType })))}`);
+                    }
+
+                    // If the body is just a raw media JSON payload (e.g. {"image_key":"..."}),
+                    // replace with a human-readable placeholder when media was resolved
+                    if (media.length > 0) {
+                        const stripped = body.replace(/\[message_id:[^\]]*\]\n?/g, '').replace(/^[^:]*:\s*/, '').trim();
+                        if (/^\{[^}]*"(?:image_key|file_key)":/i.test(stripped)) {
+                            body = body.replace(stripped, '[图片]');
+                        }
+                    }
+
                     const message: InboundChannelMessage = {
                         channelId,
                         accountId,
@@ -375,6 +416,7 @@ function buildPluginRuntime() {
                         threadId: ctx.RootMessageId,
                         messageId: ctx.MessageSid,
                         replyToMessageId: ctx.ReplyToId,
+                        media: media.length > 0 ? media : undefined,
                         raw: ctx,
                     };
 
@@ -396,13 +438,17 @@ function buildPluginRuntime() {
                     buffer: Buffer, contentType: string,
                     _dir?: string, _maxBytes?: number, fileName?: string,
                 ) => {
-                    const ext = contentType?.split('/')[1]?.split(';')[0] || 'bin';
+                    let resolvedType = contentType;
+                    if (!resolvedType || resolvedType === 'application/octet-stream') {
+                        resolvedType = detectMimeFromBuffer(buffer);
+                    }
+                    const ext = resolvedType?.split('/')[1]?.split(';')[0] || 'bin';
                     const name = fileName || `media-${Date.now()}.${ext}`;
                     const mediaDir = path.join(os.tmpdir(), 'opendesk-media');
                     if (!fs.existsSync(mediaDir)) fs.mkdirSync(mediaDir, { recursive: true });
                     const filePath = path.join(mediaDir, name);
                     fs.writeFileSync(filePath, buffer);
-                    return { path: filePath, contentType: contentType || 'application/octet-stream' };
+                    return { path: filePath, contentType: resolvedType || 'application/octet-stream' };
                 },
             },
         },
@@ -419,26 +465,75 @@ function buildPluginRuntime() {
                 if (buffer[0] === 0x25 && buffer[1] === 0x50) return 'application/pdf';
                 return 'application/octet-stream';
             },
-            loadWebMedia: async (mediaUrl: string, maxBytes?: number) => {
+            loadWebMedia: async (mediaUrl: string, maxBytesOrOpts?: number | Record<string, any>) => {
                 if (!mediaUrl) return null;
+                const resolvedMax = typeof maxBytesOrOpts === 'number'
+                    ? maxBytesOrOpts
+                    : (maxBytesOrOpts?.maxBytes ?? 50 * 1024 * 1024);
+                const localRoots: string[] | undefined = typeof maxBytesOrOpts === 'object'
+                    ? maxBytesOrOpts?.localRoots
+                    : undefined;
+
+                const mimeFromExt = (fp: string) => {
+                    const ext = path.extname(fp).slice(1).toLowerCase();
+                    const mimeMap: Record<string, string> = {
+                        jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png',
+                        gif: 'image/gif', webp: 'image/webp', bmp: 'image/bmp',
+                        pdf: 'application/pdf', mp4: 'video/mp4', mp3: 'audio/mpeg',
+                        wav: 'audio/wav', doc: 'application/msword',
+                        docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                        xls: 'application/vnd.ms-excel',
+                        xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                        pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+                        zip: 'application/zip', txt: 'text/plain', csv: 'text/csv',
+                    };
+                    return mimeMap[ext] || 'application/octet-stream';
+                };
+
+                const kindFromMime = (ct: string) => {
+                    if (ct.startsWith('image/')) return 'image';
+                    if (ct.startsWith('audio/')) return 'audio';
+                    if (ct.startsWith('video/')) return 'video';
+                    return 'document';
+                };
+
+                const readLocal = (fp: string) => {
+                    if (localRoots?.length) {
+                        const resolved = path.resolve(fp);
+                        const allowed = localRoots.some(root => resolved.startsWith(path.resolve(root) + path.sep) || resolved === path.resolve(root));
+                        if (!allowed) throw new Error(`File path not under allowed roots: ${fp}`);
+                    }
+                    if (!fs.existsSync(fp)) throw new Error(`File not found: ${fp}`);
+                    const buffer = fs.readFileSync(fp);
+                    if (buffer.length > resolvedMax) throw new Error(`File too large: ${buffer.length} > ${resolvedMax}`);
+                    const contentType = mimeFromExt(fp);
+                    return { buffer, contentType, fileName: path.basename(fp), kind: kindFromMime(contentType) };
+                };
+
                 try {
-                    const resolvedMax = maxBytes || 50 * 1024 * 1024;
                     if (mediaUrl.startsWith('file://')) {
                         let fp = decodeURIComponent(mediaUrl.replace('file://', ''));
                         if (process.platform === 'win32' && fp.startsWith('/')) fp = fp.slice(1);
-                        if (!fs.existsSync(fp)) return null;
-                        const buffer = fs.readFileSync(fp);
-                        if (buffer.length > resolvedMax) return null;
-                        const ext = path.extname(fp).slice(1);
-                        const mimeMap: Record<string, string> = {
-                            jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png',
-                            gif: 'image/gif', webp: 'image/webp', pdf: 'application/pdf',
-                        };
-                        const contentType = mimeMap[ext] || 'application/octet-stream';
-                        return { buffer, contentType, fileName: path.basename(fp) };
+                        return readLocal(fp);
+                    }
+                    if (mediaUrl.startsWith('http://') || mediaUrl.startsWith('https://')) {
+                        const resp = await fetch(mediaUrl);
+                        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                        const buffer = Buffer.from(await resp.arrayBuffer());
+                        if (buffer.length > resolvedMax) throw new Error(`Downloaded file too large: ${buffer.length}`);
+                        const ct = resp.headers.get('content-type')?.split(';')[0]?.trim() || mimeFromExt(mediaUrl);
+                        const urlPath = new URL(mediaUrl).pathname;
+                        const fileName = path.basename(urlPath) || 'download';
+                        return { buffer, contentType: ct, fileName, kind: kindFromMime(ct) };
+                    }
+                    if (path.isAbsolute(mediaUrl) || mediaUrl.startsWith('.')) {
+                        return readLocal(path.resolve(mediaUrl));
                     }
                     return null;
-                } catch { return null; }
+                } catch (err: any) {
+                    logger.error(`[openclaw-api] loadWebMedia failed for ${mediaUrl}: ${err?.message || err}`);
+                    throw err;
+                }
             },
         },
 

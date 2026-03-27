@@ -80,6 +80,21 @@ export interface ChannelRuntimeState {
     label: string;
 }
 
+const CHANNEL_DISPLAY_NAMES: Record<string, string> = {
+    'feishu': '飞书',
+    'openclaw-weixin': '微信',
+    'whatsapp': 'WhatsApp',
+    'zalouser': 'Zalo',
+    'telegram': 'Telegram',
+    'discord': 'Discord',
+    'slack': 'Slack',
+    'signal': 'Signal',
+};
+
+function resolveChannelDisplayName(channelId: string, fallbackLabel: string): string {
+    return CHANNEL_DISPLAY_NAMES[channelId] ?? fallbackLabel;
+}
+
 export type ChannelStateChangeCallback = (states: ChannelRuntimeState[]) => void;
 
 export interface LoginResult {
@@ -278,7 +293,7 @@ export class ChannelMgrApplication extends BaseApplication {
                 pluginId: entry.id,
                 accountId,
                 status: { online: false, statusText: '启动中' },
-                label: cp.meta.label,
+                label: resolveChannelDisplayName(channelId, cp.meta.label),
             };
             this.channelStates.set(stateKey, state);
 
@@ -459,6 +474,15 @@ export class ChannelMgrApplication extends BaseApplication {
         const hasMedia = reply.mediaUrls.length > 0;
         logger.info(`[channelmgr] hasMedia=${hasMedia}, mediaUrls=${JSON.stringify(reply.mediaUrls)}`);
 
+        const sendTextOnly = async () => {
+            if (!reply.text) return;
+            if (cp.outbound?.sendText) {
+                await cp.outbound.sendText({ ...baseCtx, text: reply.text });
+            } else if (cp.outbound?.sendPayload) {
+                await cp.outbound.sendPayload({ ...baseCtx, payload: { text: reply.text } });
+            }
+        };
+
         try {
             if (hasMedia && cp.outbound?.sendPayload) {
                 logger.info(`[channelmgr] using sendPayload with text="${reply.text?.substring(0, 50)}...", media=${reply.mediaUrls[0]}`);
@@ -473,14 +497,36 @@ export class ChannelMgrApplication extends BaseApplication {
                 });
             } else if (hasMedia && cp.outbound?.sendMedia) {
                 logger.info(`[channelmgr] using sendMedia, ${reply.mediaUrls.length} files`);
-                // Send first media with text, rest without
+                let textSent = false;
+                const failedFiles: string[] = [];
                 for (let i = 0; i < reply.mediaUrls.length; i++) {
-                    await cp.outbound.sendMedia({
-                        ...baseCtx,
-                        text: i === 0 ? reply.text : '',
-                        mediaUrl: reply.mediaUrls[i],
-                        mediaLocalRoots,
-                    });
+                    try {
+                        await cp.outbound.sendMedia({
+                            ...baseCtx,
+                            text: i === 0 ? reply.text : '',
+                            mediaUrl: reply.mediaUrls[i],
+                            mediaLocalRoots,
+                        });
+                        if (i === 0) textSent = true;
+                    } catch (mediaErr: any) {
+                        const fileName = path.basename(reply.mediaUrls[i].replace(/^file:\/\//, ''));
+                        failedFiles.push(fileName);
+                        logger.error(`[channelmgr] 发送媒体文件失败 ${cp.id}:${accountId} media=${reply.mediaUrls[i]}: ${mediaErr?.message || mediaErr}`);
+                    }
+                }
+                if (failedFiles.length > 0) {
+                    if (!textSent && reply.text) {
+                        logger.info(`[channelmgr] 媒体发送失败，回退为纯文本发送`);
+                        await sendTextOnly();
+                    }
+                    const warning = `⚠️ 以下文件发送失败：${failedFiles.join('、')}`;
+                    try {
+                        if (cp.outbound?.sendText) {
+                            await cp.outbound.sendText({ ...baseCtx, text: warning });
+                        } else if (cp.outbound?.sendPayload) {
+                            await cp.outbound.sendPayload({ ...baseCtx, payload: { text: warning } });
+                        }
+                    } catch { /* 警告发送失败不阻塞流程 */ }
                 }
             } else if (reply.text && cp.outbound?.sendText) {
                 logger.info(`[channelmgr] using sendText, text="${reply.text?.substring(0, 50)}..."`);
@@ -521,7 +567,7 @@ export class ChannelMgrApplication extends BaseApplication {
             .filter(p => p.channelPlugin)
             .map(p => ({
                 id: p.channelPlugin!.id,
-                label: p.channelPlugin!.meta.label,
+                label: resolveChannelDisplayName(p.channelPlugin!.id, p.channelPlugin!.meta.label),
                 description: p.channelPlugin!.meta.description,
             }));
     }
@@ -585,7 +631,7 @@ export class ChannelMgrApplication extends BaseApplication {
             channelId: participant.channel,
             accountId: participant.accountId,
             recipientId: participant.recipientId,
-            label: entry.channelPlugin.meta.label,
+            label: resolveChannelDisplayName(participant.channel, entry.channelPlugin.meta.label),
         };
     }
 
