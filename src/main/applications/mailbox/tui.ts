@@ -22,7 +22,8 @@ import chalk from "chalk";
 import { z } from "zod";
 import { jsonrepair } from "jsonrepair";
 import fs from "fs";
-import nodePath from "path";
+import path from "path";
+import nodePath from "path"
 
 
 // SelectList.selectedIndex 在类型声明中是 private，但运行时可访问且无公开 getter
@@ -902,6 +903,15 @@ export class MailOverlay implements Component {
     private originalEmails: EmailHeader[] = [];
     private searchInput?: Input;
 
+    // 附件面板相关（内嵌在详情视图中）
+    private showAttachmentPanel = false;
+    private attachmentList?: SelectList;
+    private attachmentItems: Array<{ filename: string; path: string }> = [];
+    private attachmentSelectedIdx = 0;
+    private attachmentSaveInput?: Input;
+    private attachmentSaveIdx = -1;
+    private attachmentSaving = false;
+
     constructor(openDeskTUI: OpenDeskTUI) {
         this.openDeskTUI = openDeskTUI;
         this.box = new Box(1, 1);
@@ -1043,6 +1053,37 @@ export class MailOverlay implements Component {
             if (isKeyRelease(data)) {
                 return { consume: true };
             }
+
+            // ── 附件面板内嵌在详情中 ──
+            if (this.showAttachmentPanel) {
+                // 正在输入另存为路径
+                if (this.attachmentSaveInput) {
+                    if (matchesKey(data, Key.escape)) {
+                        this.attachmentSaveInput = undefined;
+                        this.attachmentSaveIdx = -1;
+                        this.openDeskTUI.tui.setFocus(this.attachmentList ?? null);
+                        this.openDeskTUI.tui.requestRender();
+                        return { consume: true };
+                    }
+                    if (matchesKey(data, Key.enter)) {
+                        this.saveAttachmentAs();
+                        return { consume: true };
+                    }
+                    return undefined; // 让 Input 组件处理其他输入
+                }
+                // s 另存为
+                if (data === 's' || data === 'S') {
+                    this.startSaveAttachmentAs();
+                    return { consume: true };
+                }
+                // ESC / q 关闭附件面板，回到正文
+                if (matchesKey(data, Key.escape) || data === 'q') {
+                    this.closeAttachmentPanel();
+                    return { consume: true };
+                }
+                return undefined; // 让 SelectList 处理导航和 Enter
+            }
+
             if (matchesKey(data, Key.down)) {
                 this.scrollDetailBody(1);
                 return { consume: true };
@@ -1126,8 +1167,20 @@ export class MailOverlay implements Component {
                 this.enterAssistantModeFromDetail();
                 return { consume: true };
             }
+            // o 切换附件面板（打开/关闭）
+            if (data === 'o' || data === 'O') {
+                if (this.showAttachmentPanel) {
+                    this.closeAttachmentPanel();
+                } else {
+                    this.openAttachmentPanel();
+                }
+                return { consume: true };
+            }
             // ESC / q 返回列表
             if (matchesKey(data, Key.escape) || data === 'q') {
+                this.showAttachmentPanel = false;
+                this.attachmentList = undefined;
+                this.attachmentItems = [];
                 this.selectedEmail = undefined;
                 this.selectedEmailContent = undefined;
                 this.buildEmailList(this.isInSearchMode);
@@ -1864,6 +1917,211 @@ export class MailOverlay implements Component {
                 this.selectedEmailContent = undefined;
                 this.buildEmailList(this.isInSearchMode);
                 break;
+        }
+    }
+
+    // ──────────────────── 附件面板 ────────────────────
+
+    private openAttachmentPanel() {
+        const attachments = this.selectedEmailContent?.attachments;
+        if (!attachments || attachments.length === 0) {
+            // 没有附件，不做任何事
+            return;
+        }
+
+        this.attachmentItems = attachments;
+        this.attachmentSelectedIdx = 0;
+        this.attachmentSaveInput = undefined;
+        this.attachmentSaveIdx = -1;
+        this.attachmentSaving = false;
+
+        const items = this.attachmentItems.map((att, idx) => {
+            const ext = path.extname(att.filename).toLowerCase();
+            const icon = this.getFileIcon(ext);
+            const sizeInfo = this.getFileSizeInfo(att.path);
+            return { value: String(idx), label: `${icon} ${att.filename}${sizeInfo}` };
+        });
+
+        this.attachmentList = new SelectList(items, Math.min(items.length, 15), mailSelectListTheme);
+        this.showAttachmentPanel = true;
+
+        this.attachmentList.onSelect = (item: any) => {
+            this.attachmentSelectedIdx = parseInt(item.value, 10);
+            this.startSaveAttachmentAs();
+        };
+        this.attachmentList.onSelectionChange = (item: any) => {
+            this.attachmentSelectedIdx = parseInt(item.value, 10);
+            this.openDeskTUI.tui.requestRender(true);
+        };
+        this.attachmentList.onCancel = () => {
+            this.closeAttachmentPanel();
+        };
+
+        this.openDeskTUI.tui.setFocus(this.attachmentList);
+        this.openDeskTUI.tui.requestRender();
+    }
+
+    private closeAttachmentPanel() {
+        this.showAttachmentPanel = false;
+        this.attachmentList = undefined;
+        this.attachmentItems = [];
+        this.attachmentSaveInput = undefined;
+        this.attachmentSaveIdx = -1;
+        this.attachmentSaving = false;
+        this.openDeskTUI.tui.setFocus(null);
+        this.openDeskTUI.tui.requestRender();
+    }
+
+    private getFileIcon(ext: string): string {
+        const imageExts = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.svg', '.ico'];
+        const docExts = ['.doc', '.docx', '.pdf', '.txt', '.rtf', '.odt'];
+        const sheetExts = ['.xls', '.xlsx', '.csv', '.ods'];
+        const slideExts = ['.ppt', '.pptx', '.odp'];
+        const archiveExts = ['.zip', '.rar', '.7z', '.tar', '.gz', '.bz2'];
+        const codeExts = ['.js', '.ts', '.py', '.java', '.c', '.cpp', '.h', '.html', '.css', '.json', '.xml'];
+        const audioExts = ['.mp3', '.wav', '.flac', '.aac', '.ogg', '.wma'];
+        const videoExts = ['.mp4', '.avi', '.mkv', '.mov', '.wmv', '.flv'];
+
+        if (imageExts.includes(ext)) return '🖼';
+        if (docExts.includes(ext)) return '📄';
+        if (sheetExts.includes(ext)) return '📊';
+        if (slideExts.includes(ext)) return '📽';
+        if (archiveExts.includes(ext)) return '📦';
+        if (codeExts.includes(ext)) return '📝';
+        if (audioExts.includes(ext)) return '🎵';
+        if (videoExts.includes(ext)) return '🎬';
+        if (ext === '.eml') return '✉';
+        return '📎';
+    }
+
+    private getFileSizeInfo(filePath: string): string {
+        try {
+            if (!filePath || !fs.existsSync(filePath)) return '';
+            const stats = fs.statSync(filePath);
+            const bytes = stats.size;
+            if (bytes < 1024) return MC.dim(` (${bytes} B)`);
+            if (bytes < 1024 * 1024) return MC.dim(` (${(bytes / 1024).toFixed(1)} KB)`);
+            return MC.dim(` (${(bytes / (1024 * 1024)).toFixed(1)} MB)`);
+        } catch {
+            return '';
+        }
+    }
+
+    private startSaveAttachmentAs() {
+        const att = this.attachmentItems[this.attachmentSelectedIdx];
+        if (!att || !att.path) return;
+
+        this.attachmentSaveIdx = this.attachmentSelectedIdx;
+
+        // 默认保存路径：优先桌面，桌面不存在则用户主目录/Downloads，都不存在则用户主目录
+        const homeDir = process.env.USERPROFILE || process.env.HOME || '.';
+        const candidates = [
+            path.join(homeDir, 'Desktop'),
+            path.join(homeDir, 'Downloads'),
+            homeDir,
+        ];
+        const saveDir = candidates.find(d => { try { return fs.existsSync(d) && fs.statSync(d).isDirectory(); } catch { return false; } }) || homeDir;
+        const defaultPath = path.join(saveDir, att.filename);
+
+        this.attachmentSaveInput = new Input();
+        this.attachmentSaveInput.setValue(defaultPath);
+        this.openDeskTUI.tui.setFocus(this.attachmentSaveInput);
+        this.openDeskTUI.tui.requestRender();
+    }
+
+    /**
+     * 规范化用户输入的保存路径，兼容 Windows / macOS / Linux / HarmonyOS：
+     *  - Windows: "D:test.pdf" → "D:\test.pdf"，"D:" → "D:\"
+     *  - 波浪线: "~/Downloads/a.pdf" → "/home/user/Downloads/a.pdf"
+     *  - 如果用户只输入目录（以 / 或 \ 结尾），自动追加原文件名
+     *  - 最终通过 path.resolve 转为绝对路径
+     */
+    private normalizeSavePath(rawPath: string, defaultFilename: string): string {
+        let p = rawPath.trim();
+        if (!p) return '';
+
+        // 展开 ~ 为用户主目录
+        if (p === '~' || p.startsWith('~/') || p.startsWith('~\\')) {
+            const home = process.env.HOME || process.env.USERPROFILE || '';
+            p = path.join(home, p.slice(1));
+        }
+
+        // Windows: "D:filename" → "D:\filename"（盘符后无分隔符的情况）
+        // 匹配 "X:非斜杠字符" 的模式（X 是字母）
+        if (/^[a-zA-Z]:[^/\\]/.test(p)) {
+            p = p[0] + ':\\' + p.slice(2);
+        }
+        // Windows: 单独 "D:" → "D:\"
+        if (/^[a-zA-Z]:$/.test(p)) {
+            p = p + '\\';
+        }
+
+        // 如果路径以分隔符结尾，说明用户输入的是目录，追加原文件名
+        if (p.endsWith(path.sep) || p.endsWith('/') || p.endsWith('\\')) {
+            p = path.join(p, defaultFilename);
+        }
+
+        // 如果路径没有扩展名且不像文件名，可能用户输入的是目录
+        // 例如 "D:\Downloads" 且该路径是已存在的目录
+        try {
+            if (fs.existsSync(p) && fs.statSync(p).isDirectory()) {
+                p = path.join(p, defaultFilename);
+            }
+        } catch { /* ignore */ }
+
+        // 解析为绝对路径
+        return path.resolve(p);
+    }
+
+    private saveAttachmentAs() {
+        if (this.attachmentSaveIdx < 0 || !this.attachmentSaveInput) return;
+        const att = this.attachmentItems[this.attachmentSaveIdx];
+        if (!att || !att.path) return;
+
+        const rawInput = this.attachmentSaveInput.getValue().trim();
+        if (!rawInput) {
+            this.errorText = '保存路径不能为空';
+            this.openDeskTUI.tui.requestRender();
+            setTimeout(() => { this.errorText = undefined; this.openDeskTUI.tui.requestRender(); }, 3000);
+            return;
+        }
+
+        const destPath = this.normalizeSavePath(rawInput, att.filename);
+
+        if (!fs.existsSync(att.path)) {
+            this.errorText = `源文件不存在: ${att.filename}`;
+            this.openDeskTUI.tui.requestRender();
+            setTimeout(() => { this.errorText = undefined; this.openDeskTUI.tui.requestRender(); }, 3000);
+            return;
+        }
+
+        try {
+            this.attachmentSaving = true;
+            this.openDeskTUI.tui.requestRender();
+
+            // 确保目标目录存在
+            const destDir = path.dirname(destPath);
+            if (!fs.existsSync(destDir)) {
+                fs.mkdirSync(destDir, { recursive: true });
+            }
+
+            fs.copyFileSync(att.path, destPath);
+
+            this.attachmentSaving = false;
+            this.attachmentSaveInput = undefined;
+            this.attachmentSaveIdx = -1;
+            this.errorText = undefined;
+
+            // 显示成功提示
+            this.errorText = `✅ 已保存到: ${destPath}`;
+            this.openDeskTUI.tui.setFocus(this.attachmentList ?? null);
+            this.openDeskTUI.tui.requestRender();
+            setTimeout(() => { this.errorText = undefined; this.openDeskTUI.tui.requestRender(); }, 3000);
+        } catch (err: any) {
+            this.attachmentSaving = false;
+            this.errorText = `保存失败: ${err?.message || '未知错误'}`;
+            this.openDeskTUI.tui.requestRender();
+            setTimeout(() => { this.errorText = undefined; this.openDeskTUI.tui.requestRender(); }, 3000);
         }
     }
 
@@ -2796,33 +3054,74 @@ export class MailOverlay implements Component {
 
             case 'detail': {
                 const metaH = this.computeMetadataLineCount();
-                // fixed = header(3) + blank(1) + meta(metaH) + blank(1) + sep(1) + sep(1) + footer(1)
-                const fixedDetailLines = 3 + 1 + metaH + 1 + 1 + 1 + 1;
-                const bodyLines = Math.max(3, availableForContent - fixedDetailLines);
+                const hasAtt = (this.selectedEmailContent?.attachments?.length ?? 0) > 0;
 
-                this.box.addChild(new DetailHeaderBar());                                   // 3
-                this.box.addChild(new Text(''));                                             // 1
-                if (this.selectedEmail && this.selectedEmailContent) {
-                    this.box.addChild(new EmailMetadata(this.selectedEmail, this.selectedEmailContent));
-                    this.box.addChild(new Text(''));                                         // 1
-                    this.box.addChild(new SeparatorLine('─'));                               // 1
+                if (this.showAttachmentPanel) {
+                    // ── 附件面板内嵌模式 ──
+                    // 正文高度与正常详情一致，附件列表占用底部 footer 区域
+                    const saveH = this.attachmentSaveInput ? 1 : 0;
+                    const errH = this.errorText ? 1 : 0;
+                    const attFixedH = 1 + saveH + errH + 1 + 1; // sep + 附件标题 + [另存为] + [错误] + sep + footer
+                    const fixedDetailLines = 3 + 1 + metaH + 1 + 1 + attFixedH;
+                    const flexArea = Math.max(4, availableForContent - fixedDetailLines);
+                    const attListH = Math.min(this.attachmentItems.length, Math.max(2, Math.floor(flexArea * 0.3)));
+                    const bodyLines = Math.max(2, flexArea - attListH);
 
-                    const bodyView = new ScrollableEmailBody(
-                        this.selectedEmailContent, bodyLines, this.detailScrollOffset
-                    );
-                    this.box.addChild(bodyView);
+                    this.box.addChild(new DetailHeaderBar());
+                    this.box.addChild(new Text(''));
+                    if (this.selectedEmail && this.selectedEmailContent) {
+                        this.box.addChild(new EmailMetadata(this.selectedEmail, this.selectedEmailContent));
+                        this.box.addChild(new SeparatorLine('─'));
 
-                    // 更新总行数供滚动逻辑使用
-                    this.detailBodyTotalLines = bodyView.getTotalLines();
-                    this.detailBodyVisibleLines = bodyLines;
+                        const bodyView = new ScrollableEmailBody(
+                            this.selectedEmailContent, bodyLines, this.detailScrollOffset
+                        );
+                        this.box.addChild(bodyView);
+                        this.detailBodyTotalLines = bodyView.getTotalLines();
+                        this.detailBodyVisibleLines = bodyLines;
+                    }
+                    this.box.addChild(new SeparatorLine());
+                    this.box.addChild(new AttachmentInlineHeader(this.attachmentItems.length));
+                    if (this.attachmentList) {
+                        this.box.addChild(this.attachmentList);
+                    }
+                    if (this.attachmentSaveInput) {
+                        this.box.addChild(new SaveAsField(this.attachmentSaveInput, this.attachmentSaving));
+                    }
+                    if (this.errorText) {
+                        const isSuccess = this.errorText.startsWith('✅');
+                        this.box.addChild(new Text(isSuccess ? MC.green(`  ${this.errorText}`) : MC.red(`  ⚠ ${this.errorText}`)));
+                    }
+                    this.box.addChild(new SeparatorLine());
+                    this.box.addChild(new AttachmentFooterBar(!!this.attachmentSaveInput));
+                } else {
+                    // ── 正常详情模式 ──
+                    const fixedDetailLines = 3 + 1 + metaH + 1 + 1 + 1 + 1;
+                    const bodyLines = Math.max(3, availableForContent - fixedDetailLines);
+
+                    this.box.addChild(new DetailHeaderBar());
+                    this.box.addChild(new Text(''));
+                    if (this.selectedEmail && this.selectedEmailContent) {
+                        this.box.addChild(new EmailMetadata(this.selectedEmail, this.selectedEmailContent));
+                        this.box.addChild(new Text(''));
+                        this.box.addChild(new SeparatorLine('─'));
+
+                        const bodyView = new ScrollableEmailBody(
+                            this.selectedEmailContent, bodyLines, this.detailScrollOffset
+                        );
+                        this.box.addChild(bodyView);
+                        this.detailBodyTotalLines = bodyView.getTotalLines();
+                        this.detailBodyVisibleLines = bodyLines;
+                    }
+                    this.box.addChild(new SeparatorLine());
+                    this.box.addChild(new DetailFooter(
+                        this.detailScrollOffset,
+                        this.detailBodyTotalLines,
+                        this.detailBodyVisibleLines,
+                        this.selectedEmail,
+                        hasAtt,
+                    ));
                 }
-                this.box.addChild(new SeparatorLine());                                     // 1
-                this.box.addChild(new DetailFooter(
-                    this.detailScrollOffset,
-                    this.detailBodyTotalLines,
-                    this.detailBodyVisibleLines,
-                    this.selectedEmail,
-                ));                                                                          // 1
                 break;
             }
 
@@ -2883,6 +3182,7 @@ export class MailOverlay implements Component {
                 this.box.addChild(new ComposeFooterBar(this.composeAttachments.length));
                 break;
             }
+
         }
 
         // 安全截断：清洗控制字符（TAB→空格）后再截断，防止 visibleWidth 与实际渲染宽度不一致
@@ -3476,6 +3776,7 @@ class DetailFooter implements Component {
         private totalLines: number,
         private visibleLines: number,
         private email?: EmailHeader,
+        private hasAttachments = false,
     ) { }
     invalidate() { }
     render(width: number): string[] {
@@ -3496,6 +3797,9 @@ class DetailFooter implements Component {
             hints.push(MC.neon('r') + MC.dim(' 回复'));
             hints.push(MC.neon('R') + MC.dim(' 全部回复'));
             hints.push(MC.neon('w') + MC.dim(' 转发'));
+            if (this.hasAttachments) {
+                hints.push(MC.neon('o') + MC.dim(' 附件'));
+            }
             if (this.email) {
                 hints.push(MC.neon('f') + MC.dim(this.email.starred ? ' 取消收藏' : ' 收藏'));
             }
@@ -3505,5 +3809,47 @@ class DetailFooter implements Component {
         hints.push(MC.neon('q/ESC') + MC.dim(' 返回'));
 
         return [truncateToWidth('  ' + hints.join('   '), width, '…')];
+    }
+}
+
+/** 内嵌附件标题行（单行，紧凑） */
+class AttachmentInlineHeader implements Component {
+    constructor(private count: number) { }
+    invalidate() { }
+    render(width: number): string[] {
+        const icon = MC.neonBold('📎');
+        const title = MC.neonBold(` 附件 (${this.count})`);
+        return [truncateToWidth(`  ${icon}${title}`, width, '…')];
+    }
+}
+
+/** 附件面板底部操作提示 */
+class AttachmentFooterBar implements Component {
+    constructor(private isSaving: boolean) { }
+    invalidate() { }
+    render(width: number): string[] {
+        const hints: string[] = [];
+        if (this.isSaving) {
+            hints.push(MC.neon('Enter') + MC.dim(' 确认保存'));
+            hints.push(MC.neon('ESC') + MC.dim(' 取消'));
+        } else {
+            hints.push(MC.neon('s') + MC.dim(' 另存为'));
+            hints.push(MC.neon('↑↓') + MC.dim(' 选择'));
+            hints.push(MC.neon('q/ESC') + MC.dim(' 返回'));
+        }
+        return [truncateToWidth('  ' + hints.join('   '), width, '…')];
+    }
+}
+
+/** 另存为路径输入字段 */
+class SaveAsField implements Component {
+    constructor(private input: Input, private saving: boolean) { }
+    invalidate() { this.input.invalidate(); }
+    render(width: number): string[] {
+        const label = this.saving ? MC.amber('  保存中... ') : MC.neon('  另存为: ');
+        const labelVis = visibleWidth(label);
+        const inputW = Math.max(10, width - labelVis - 2);
+        const inputLines = this.input.render(inputW);
+        return [label + (inputLines[0] || '')];
     }
 }

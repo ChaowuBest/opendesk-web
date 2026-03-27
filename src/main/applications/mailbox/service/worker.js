@@ -1226,7 +1226,7 @@ class SmtpEmailClient {
             port: this.port,
             secure: this.secure,
             auth: {
-                user: this.user,
+                user: this.account,
                 pass: this.pass
             },
             tls: {
