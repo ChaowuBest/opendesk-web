@@ -29,7 +29,7 @@ export const PAIRING_REPLY_TEMPLATE = `为了让消息收发更加安全，你�
  * Ensure the openclaw shim is available in the extensions node_modules.
  * Generates the shim inline so plugins can resolve `openclaw/plugin-sdk`.
  */
-const SHIM_VERSION = '8';
+const SHIM_VERSION = '9';
 
 export function ensureOpenClawShim(extensionsDir: string): void {
     const shimTarget = path.join(extensionsDir, 'node_modules', 'openclaw');
@@ -365,7 +365,20 @@ export async function sendMediaWithLeadingCaption(params) {
   return true;
 }
 export function buildMediaPayload(p) { return {type:'media',...p}; }
-export function buildAgentMediaPayload(p) { return p||{}; }
+export function buildAgentMediaPayload(mediaList) {
+  if (!Array.isArray(mediaList) || mediaList.length === 0) return {};
+  const first = mediaList[0];
+  const mediaPaths = mediaList.map((m) => m.path);
+  const mediaTypes = mediaList.map((m) => m.contentType).filter(Boolean);
+  return {
+    MediaPath: first?.path,
+    MediaType: first?.contentType ?? undefined,
+    MediaUrl: first?.path,
+    MediaPaths: mediaPaths.length > 0 ? mediaPaths : undefined,
+    MediaUrls: mediaPaths.length > 0 ? mediaPaths : undefined,
+    MediaTypes: mediaTypes.length > 0 ? mediaTypes : undefined,
+  };
+}
 export function extractToolSend() { return null; }
 
 // ── Channel Status ───────────────────────────────────────────────────────────

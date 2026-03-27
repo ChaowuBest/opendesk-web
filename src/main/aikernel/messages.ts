@@ -17,6 +17,7 @@ import { BaseTool, BaseToolset } from './tool.js';
 import markedKatex from 'marked-katex-extension';
 import hljs from 'highlight.js';
 import path from 'path';
+import fs from 'fs';
 
 
 /**
@@ -461,6 +462,89 @@ export class ImageMessagePart {
 }
 
 
+const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp']);
+
+/**
+ * 从文本中提取可能的文件路径并过滤出合法存在的图片文件。
+ * 支持 Windows 绝对路径 (C:\xxx.png)、Unix 绝对路径 (/c/Projects/test.png)、
+ * 相对路径 (./abc.jpg) 等形式。
+ * 返回去重后的绝对路径列表。
+ */
+export function extractImagePaths(text: string): string[] {
+    const imageExtRegex = /\.(png|jpe?g|gif|webp|bmp)$/i;
+    const foundPaths = new Set<string>();
+
+    const tryAdd = (rawPath: string) => {
+        if (!imageExtRegex.test(rawPath)) return;
+        try {
+            const resolved = path.resolve(rawPath);
+            if (fs.existsSync(resolved)) {
+                foundPaths.add(resolved);
+            }
+        } catch { /* 无效路径，跳过 */ }
+    };
+
+    // Phase 1: extract paths wrapped in quotes (e.g. "C:\xxx.png" or 'C:\xxx.png')
+    const quotedPattern = /["']([^"']+\.\w{2,5})["']/g;
+    let qm: RegExpExecArray | null;
+    while ((qm = quotedPattern.exec(text)) !== null) {
+        tryAdd(qm[1].trim());
+    }
+
+    // Phase 2: unquoted path patterns
+    const patterns = [
+        /(?<![<"'\w])([A-Za-z]:[\\\/][^\s<>"'|*?]+\.\w{2,5})(?!["\w])/g,
+        /(?<![<"'\w])(\/(?:[^\s<>"'|*?]+)\/[^\s<>"'|*?]+\.\w{2,5})(?!["\w])/g,
+        /(?<![<"'\w])(\.\.?[\\\/][^\s<>"'|*?]+\.\w{2,5})(?!["\w])/g,
+        /(?<![<"'\w])(~[\\\/][^\s<>"'|*?]+\.\w{2,5})(?!["\w])/g,
+        /(?<![<"'\\\/\w])(\w[^\s<>"'|*?]*[\\\/][^\s<>"'|*?]+\.\w{2,5})(?!["\w])/g,
+    ];
+    for (const pattern of patterns) {
+        let match: RegExpExecArray | null;
+        while ((match = pattern.exec(text)) !== null) {
+            tryAdd(match[1].trim());
+        }
+    }
+
+    // Phase 3: bare filenames (e.g. "test.png")
+    const bareFilenamePattern = /(?<![<"'\\\/\w])([A-Za-z0-9_\-][A-Za-z0-9_\-. ]*\.(png|jpe?g|gif|webp|bmp))(?!["\w])/gi;
+    let match: RegExpExecArray | null;
+    while ((match = bareFilenamePattern.exec(text)) !== null) {
+        tryAdd(match[1].trim());
+    }
+
+    return Array.from(foundPaths);
+}
+
+function detectImageMimeFromBuffer(buf: Buffer): string | null {
+    if (!buf || buf.length < 4) return null;
+    if (buf[0] === 0xFF && buf[1] === 0xD8) return 'image/jpeg';
+    if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47) return 'image/png';
+    if (buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46) return 'image/gif';
+    if (buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46
+        && buf.length > 11 && buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50) return 'image/webp';
+    if (buf[0] === 0x42 && buf[1] === 0x4D) return 'image/bmp';
+    return null;
+}
+
+/**
+ * 将图片文件转换为 data URI（base64 编码）。
+ */
+export function imageToDataUri(imagePath: string): string {
+    const ext = path.extname(imagePath).toLowerCase();
+    const mimeMap: Record<string, string> = {
+        '.png': 'image/png',
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.gif': 'image/gif',
+        '.webp': 'image/webp',
+        '.bmp': 'image/bmp',
+    };
+    const data = fs.readFileSync(imagePath);
+    const mime = mimeMap[ext] || detectImageMimeFromBuffer(data) || 'image/png';
+    return `data:${mime};base64,${data.toString('base64')}`;
+}
+
 /**
  * @class Usage
  */
@@ -539,8 +623,10 @@ export class UserMessage {
             this.appendText(part.text);
         } else if (part.type === 'file') {
             this.content.push(part);
+        } else if (part.type === 'image_url') {
+            this.content.push(part);
         } else {
-            throw new Error(`unsupported part type ${part.type}`);
+            throw new Error(`unsupported part type ${(part as any).type}`);
         }
         return this;
     }
@@ -567,8 +653,10 @@ export class UserMessage {
                     TextMessagePart.assign(part);
                 } else if (part.type === 'file') {
                     FileMessagePart.assign(part);
+                } else if (part.type === 'image_url') {
+                    ImageMessagePart.assign(part);
                 } else {
-                    throw new Error(`unsupported part type ${part.constructor.name}`);
+                    throw new Error(`unsupported part type ${(part as any).type}`);
                 }
             }
         }
@@ -581,18 +669,20 @@ export class UserMessage {
         }
     }
 
-    toOpenAIMessage(): object {
-        // 如果 content 只有一个 text 类型的部分，直接返回字符串格式
-        // 这样可以兼容更多 LLM 提供商（特别是国产模型）
-        if (this.content.length === 1 && this.content[0].type === 'text') {
+    toOpenAIMessage(supportsVision: boolean = true): object {
+        const parts = supportsVision
+            ? this.content
+            : this.content.filter(part => part.type !== 'image_url');
+
+        if (parts.length === 1 && parts[0].type === 'text') {
             return {
                 role: this.role,
-                content: this.content[0].text
+                content: parts[0].text
             }
         }
         return {
             role: this.role,
-            content: this.content.map(part => part.toOpenAIMessagePart())
+            content: parts.map(part => part.toOpenAIMessagePart())
         }
     }
 }

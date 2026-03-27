@@ -13,6 +13,7 @@ import { SlashCommandRegistry, registerAllCommands } from "./commands/index.js";
 import { Setting } from "../utils/setting.js";
 import { logger, setDebugMode, getDebugMode } from "../utils/logger.js";
 import { lookupKnownContextSize, fetchContextSizeFromAPI } from "../utils/model-context";
+import { LLM } from "../aikernel/llm.js";
 import { UpgradeOverlay } from "./components/upgrade";
 import { AgentDecl } from "../aikernel/agent.js";
 import { ShellAgentDecl } from "../aikernel/agents/shellagent.js";
@@ -949,6 +950,11 @@ export class OpenDeskTUI {
                 } else if (knownSize > 0) {
                     logger.info(`model context size from builtin table: ${knownSize}`);
                 }
+            }).catch(() => { });
+
+            LLM.supportsVision(this.model).then((vision) => {
+                const suffix = vision ? '📷' : '';
+                this.inputArea.statusBar.update({ modelName: `${aliasToUse} ${suffix}` });
             }).catch(() => { });
         } catch { /* 配置读取失败不影响主流程 */ }
         this.tui.requestRender();

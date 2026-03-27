@@ -11,8 +11,9 @@
 
 import {
     ChatContext, UserMessage, UserMessagePart,
-    AssistantMessage, AssistantMessagePart, FileMessagePart,
-    SystemMessage, Usage, ToolCall, ToolCallMessagePart, CompactSeparatorMessage
+    AssistantMessage, AssistantMessagePart, FileMessagePart, ImageMessagePart,
+    SystemMessage, Usage, ToolCall, ToolCallMessagePart, CompactSeparatorMessage,
+    extractImagePaths, imageToDataUri
 } from '../messages.js';
 import { shouldCompact, compactContext } from '../compact.js';
 import { BaseToolset } from '../tool.js';
@@ -195,7 +196,7 @@ export class TaskState {
     }
 
     setSystemPrompt(prompt: string) {
-        logger.info(`setting system prompt ${prompt} to task ${this.task_id}`);
+        // logger.info(`setting system prompt ${prompt} to task ${this.task_id}`);
         this.chat_context.system_prompt = new SystemMessage(prompt);
     }
 
@@ -255,6 +256,18 @@ export class TaskState {
         }
 
         let user_message = new UserMessage(message);
+
+        const imagePaths = extractImagePaths(message);
+        for (const imgPath of imagePaths) {
+            try {
+                const dataUri = imageToDataUri(imgPath);
+                user_message.content.push(new ImageMessagePart(dataUri));
+                logger.info(`attached image from message text: ${imgPath}`);
+            } catch (err) {
+                logger.warn(`failed to read image ${imgPath}: ${err}`);
+            }
+        }
+
         let assistant_message = new AssistantMessage();
         this.chat_context.appendMessage(user_message);
         this.chat_context.appendMessage(assistant_message);

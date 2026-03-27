@@ -10,7 +10,7 @@
  */
 
 import type { TaskManagerState, TaskState } from '../../aikernel/states/tasks.js';
-import { UserMessage, AssistantMessage } from '../../aikernel/messages.js';
+import { UserMessage, AssistantMessage, ImageMessagePart, imageToDataUri } from '../../aikernel/messages.js';
 import { ApplicationRegistry } from '../registry.js';
 import { SkillRegistry } from '../../aikernel/skill.js';
 import { createMemoryToolset } from '../../aikernel/memory/tools.js';
@@ -114,7 +114,7 @@ export class ChannelMessageRouter {
         const userText = this.formatInboundMessage(message);
 
         try {
-            const reply = await this.submitAndWaitForReply(task, userText);
+            const reply = await this.submitAndWaitForReply(task, userText, message.media);
             const entry = taskMap.get(taskKey);
             if (entry) entry.lastMessageAt = Date.now();
             return reply;
@@ -295,7 +295,11 @@ export class ChannelMessageRouter {
         return text;
     }
 
-    private async submitAndWaitForReply(task: TaskState, userText: string): Promise<ChannelReply | null> {
+    private async submitAndWaitForReply(
+        task: TaskState,
+        userText: string,
+        media?: Array<{ path: string; contentType?: string }>,
+    ): Promise<ChannelReply | null> {
         task.task_status = 'running';
         task.started_at = new Date();
         task.finished_at = undefined;
@@ -303,6 +307,27 @@ export class ChannelMessageRouter {
 
         try {
             const userMessage = new UserMessage(userText);
+
+            if (media && media.length > 0) {
+                const IMAGE_EXTS = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp'];
+                for (const item of media) {
+                    const ct = item.contentType?.toLowerCase() || '';
+                    const isImage = ct.startsWith('image/')
+                        || IMAGE_EXTS.some(ext => item.path.toLowerCase().endsWith(ext));
+                    if (!isImage) {
+                        logger.info(`[router] skipping non-image media: ${item.path} (${ct})`);
+                        continue;
+                    }
+                    try {
+                        const dataUri = imageToDataUri(item.path);
+                        userMessage.content.push(new ImageMessagePart(dataUri));
+                        logger.info(`[router] attached inbound image: ${item.path} (${ct})`);
+                    } catch (err: any) {
+                        logger.warn(`[router] failed to read inbound image ${item.path}: ${err?.message || err}`);
+                    }
+                }
+            }
+
             const assistantMessage = new AssistantMessage();
             task.chat_context.appendMessage(userMessage);
             task.chat_context.appendMessage(assistantMessage);

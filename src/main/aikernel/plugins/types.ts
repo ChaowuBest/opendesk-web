@@ -156,7 +156,7 @@ export interface InboundChannelMessage {
     threadId?: string;
     messageId?: string;
     replyToMessageId?: string;
-    media?: any[];
+    media?: Array<{ path: string; contentType?: string }>;
     raw?: any;
 }
 

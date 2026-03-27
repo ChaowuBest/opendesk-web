@@ -1,4 +1,28 @@
 /**
+ * 从模型对象中提取是否支持视觉/图像输入的能力。
+ * 兼容多种 API 格式：
+ * - OpenRouter: architecture.modality 包含 "image" 或 "multimodal"
+ * - 通用: capabilities.vision, supports_vision
+ */
+function extractVisionSupport(model: any): boolean | undefined {
+    if (!model) return undefined;
+
+    const modality = model.architecture?.modality ?? model.modality ?? '';
+    if (typeof modality === 'string') {
+        const lower = modality.toLowerCase();
+        if (lower.includes('image') || lower.includes('multimodal') || lower.includes('vision')) {
+            return true;
+        }
+    }
+
+    if (model.capabilities?.vision === true) return true;
+    if (model.supports_vision === true) return true;
+    if (model.model_info?.supports_vision === true) return true;
+
+    return undefined;
+}
+
+/**
  * 从模型对象中提取上下文窗口大小，兼容多种 API 格式：
  * - 火山引擎 Ark: token_limits.context_window
  * - OpenRouter: context_length
@@ -80,6 +104,155 @@ export async function fetchContextSizeFromAPI(modelInstance: { base_url: string;
     } catch { /* 忽略列表端点错误 */ }
 
     return 0;
+}
+
+/**
+ * 尝试通过 OpenAI 兼容 API 的 /models 端点获取模型是否支持视觉输入。
+ * 返回 true/false，如果无法判断则返回 undefined。
+ */
+export async function fetchVisionSupportFromAPI(modelInstance: { base_url: string; api_key: string; model_name: string }): Promise<boolean | undefined> {
+    const { base_url: baseUrl, api_key: apiKey, model_name: modelName } = modelInstance;
+    const headers: Record<string, string> = {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+    };
+
+    try {
+        const resp = await fetch(`${baseUrl}/models/${encodeURIComponent(modelName)}`, { headers, signal: AbortSignal.timeout(5000) });
+        if (resp.ok) {
+            const result = extractVisionSupport(await resp.json());
+            if (result !== undefined) return result;
+        }
+    } catch { /* 忽略单模型端点错误 */ }
+
+    try {
+        const resp = await fetch(`${baseUrl}/models`, { headers, signal: AbortSignal.timeout(8000) });
+        if (resp.ok) {
+            const body = await resp.json();
+            const models: any[] = body.data ?? body;
+            const match = findModelInList(models, modelName);
+            if (match) {
+                const result = extractVisionSupport(match);
+                if (result !== undefined) return result;
+            }
+        }
+    } catch { /* 忽略列表端点错误 */ }
+
+    return undefined;
+}
+
+/**
+ * 已知支持视觉/图像输入的模型查找表。
+ * 值为 true 表示支持视觉，false 表示明确不支持。
+ */
+const KNOWN_VISION_MODELS: Record<string, boolean> = {
+    // ── OpenAI ──
+    'gpt-5-2': true,
+    'gpt-5-3-codex': true,
+    'gpt-5': true,
+    'gpt-4o': true,
+    'gpt-4o-mini': true,
+    'gpt-4-turbo': true,
+    'gpt-4': false,
+    'o1': true,
+    'o1-mini': true,
+    'o3': true,
+    'o3-mini': true,
+    'o4-mini': true,
+
+    // ── Claude / Anthropic ──
+    'claude-4-6-opus': true,
+    'claude-4-6-sonnet': true,
+    'claude-4-opus': true,
+    'claude-4-sonnet': true,
+    'claude-3-7-sonnet': true,
+    'claude-3-5-sonnet': true,
+    'claude-3-5-haiku': true,
+    'claude-3-opus': true,
+    'claude-3-sonnet': true,
+    'claude-3-haiku': true,
+
+    // ── Gemini / Google ──
+    'gemini-3-pro': true,
+    'gemini-3-flash': true,
+    'gemini-2-5-flash': true,
+    'gemini-2-5-pro': true,
+    'gemini-2-0-flash': true,
+    'gemini-1-5-pro': true,
+    'gemini-1-5-flash': true,
+
+    // ── DeepSeek ──
+    'deepseek-v3': false,
+    'deepseek-v3-1': false,
+    'deepseek-v3-2': false,
+    'deepseek-r1': false,
+
+    // ── Qwen / Alibaba ──
+    'qwen-vl-max': true,
+    'qwen-vl-plus': true,
+    'qwen2-5-vl-7b': true,
+    'qwen2-5-vl-72b': true,
+    'qwen3-5-max': true,
+
+    // ── GLM / Zhipu ──
+    'glm-4v': true,
+    'glm-4v-plus': true,
+    'glm-4': false,
+    'glm-4-5': false,
+    'glm-4-5-air': false,
+    'glm-5': true,
+    'glm-5-turbo': true,
+
+    // ── Kimi / Moonshot ──
+    'kimi-k2': true,
+    'kimi-k2-5': true,
+
+    // ── Doubao / ByteDance ──
+    'doubao-1-5-pro-32k': true,
+    'doubao-seed-1-6': true,
+    'doubao-seed-1-8': true,
+    'doubao-seed-2-0-pro': true,
+
+    // ── Llama / Meta ──
+    'llama-4-scout': true,
+    'llama-4-maverick': true
+};
+
+/**
+ * 在查找表中查找模型是否支持视觉输入。
+ * 使用与 lookupKnownContextSize 相同的匹配策略。
+ */
+export function lookupKnownVisionSupport(rawModelName: string): boolean | undefined {
+    const base = normalize(stripProviderPrefix(rawModelName));
+    const candidates = stripSuffixes(base);
+
+    for (const c of candidates) {
+        if (KNOWN_VISION_MODELS[c] !== undefined) return KNOWN_VISION_MODELS[c];
+    }
+
+    let bestLen = 0;
+    let bestResult: boolean | undefined = undefined;
+    for (const [key, support] of Object.entries(KNOWN_VISION_MODELS)) {
+        if (base.startsWith(key) && key.length > bestLen) {
+            bestLen = key.length;
+            bestResult = support;
+        }
+    }
+    if (bestResult !== undefined) return bestResult;
+
+    for (const c of candidates) {
+        let rBestLen = 0;
+        let rBestResult: boolean | undefined = undefined;
+        for (const [key, support] of Object.entries(KNOWN_VISION_MODELS)) {
+            if (key.startsWith(c) && c.length > rBestLen) {
+                rBestLen = c.length;
+                rBestResult = support;
+            }
+        }
+        if (rBestResult !== undefined) return rBestResult;
+    }
+
+    return undefined;
 }
 
 /**
