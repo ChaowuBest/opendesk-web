@@ -35,6 +35,7 @@ import { ChatContext, UserMessage, SystemMessage, AssistantMessage, type ChatMes
 import { createMemoryToolset } from "../aikernel/memory/tools";
 import { NotificationStore, NotificationCenterOverlay, ToastManager, getNotificationBadge } from "./components/notification";
 import { NotificationManager } from "../utils/notificationmgr.js";
+import { SkillMgrApplication } from "../applications/skillmgr/app.js";
 
 import format from "string-template";
 import path from "path";
@@ -431,6 +432,11 @@ export class OpenDeskTUI {
         }
         // 刷新自动补全，确保新注册的命令能被提示
         this.inputArea.refreshAutocomplete();
+
+        // 订阅 Skill 刷新事件，让 /skillName 自动补全的名称和描述跟着更新
+        SkillMgrApplication.onSkillsRefreshed(() => {
+            this.inputArea.refreshAutocomplete();
+        });
     }
 
     showNotificationCenter() {

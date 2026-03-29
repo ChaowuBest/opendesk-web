@@ -13,7 +13,7 @@ import { BaseApplication, BaseWorker } from '../base.js';
 import { z } from 'zod';
 import { logger } from '../../utils/logger.js';
 import { SkillRegistry } from './skillregistry.js';
-import { Skill } from '../../aikernel/skill.js';
+import { Skill, SkillRegistry as AISkillRegistry } from '../../aikernel/skill.js';
 import { BaseToolset } from '../../aikernel/tool.js';
 import SkillsWorker from './service/worker.js';
 import { MANAGE_SKILLS_SKILL } from './skills.js';
@@ -30,6 +30,19 @@ import type { SlashCommandHandler } from '../../tui/commands/index.js';
 
 
 export class SkillMgrApplication extends BaseApplication {
+    /** 静态回调列表：refresh 后通知订阅方（如 TUI 自动补全）*/
+    private static refreshListeners: Array<() => void> = [];
+
+    static onSkillsRefreshed(listener: () => void): void {
+        SkillMgrApplication.refreshListeners.push(listener);
+    }
+
+    private static notifyRefreshListeners(): void {
+        for (const listener of SkillMgrApplication.refreshListeners) {
+            try { listener(); } catch { /* 静默忽略 */ }
+        }
+    }
+
     constructor() {
         super('skillmgr', 'Skills');
     }
@@ -88,6 +101,7 @@ export class SkillMgrApplication extends BaseApplication {
         logger.info('[skillmgr] config changed, refreshing skills...');
         if (this.getConfig()?.enabled === true) {
             SkillRegistry.refresh();
+            SkillMgrApplication.notifyRefreshListeners();
         }
     }
 
@@ -146,6 +160,9 @@ export class SkillMgrApplication extends BaseApplication {
 
     refresh() {
         const { toolsets, errors } = SkillRegistry.refresh();
+        // 清除 AI SkillRegistry 的缓存，确保后续读取拿到最新数据
+        AISkillRegistry.getInstance().clearCache(this.bundleName);
+        SkillMgrApplication.notifyRefreshListeners();
         return { count: toolsets.length, errors };
     }
 
