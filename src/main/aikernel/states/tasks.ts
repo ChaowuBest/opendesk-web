@@ -275,6 +275,9 @@ export class TaskState {
         const allToolsets = await this.buildToolsets();
         this.chat_context.attachToolsets(...allToolsets);
 
+        // 检测用户消息中的 /skillname 引用并预加载
+        await this.preloadSlashSkills(message, assistant_message);
+
         logger.info(`messsage submitted to task ${this.task_id}`)
 
         if (this.task_name === null) {
@@ -387,6 +390,61 @@ export class TaskState {
             });
             this.addSubscriber(subscriber);
         });
+    }
+
+    /**
+     * 从用户消息中提取 /skillname 引用，逐一查找并预加载到 assistant message 中。
+     * 未找到的 skill name 静默忽略（不报错）。
+     */
+    private async preloadSlashSkills(message: string, assistantMessage: AssistantMessage) {
+        // 提取消息中所有 /skillname 模式（skill name 规则: 小写字母、数字、连字符）
+        const skillNamePattern = /(?:^|\s)\/([a-z0-9](?:[a-z0-9-]*[a-z0-9])?)(?=\s|$)/g;
+        const matchedNames = new Set<string>();
+        let match: RegExpExecArray | null;
+        while ((match = skillNamePattern.exec(message)) !== null) {
+            matchedNames.add(match[1]);
+        }
+        if (matchedNames.size === 0) return;
+
+        const registry = SkillRegistry.getInstance();
+        const allSkills = await registry.getAllSkillsFlat();
+
+        for (const name of matchedNames) {
+            // 查找 user-invocable 的 skill
+            const entry = allSkills.find(
+                e => e.skill.frontmatter.name === name && e.skill.isUserInvocable
+            );
+            if (!entry) continue;
+
+            const { bundleName, skill } = entry;
+            try {
+                const loadedSkill = await registry.getSkill(bundleName, name);
+                if (!loadedSkill) continue;
+
+                const fullContent = loadedSkill.getFullContent();
+
+                const toolCall = new ToolCall(
+                    0,
+                    `preload_${crypto.randomUUID()}`,
+                    'LoadSkill',
+                    JSON.stringify({ bundleName, skillName: name })
+                );
+                toolCall.args_object = { bundleName, skillName: name };
+                toolCall.status = 'success';
+                toolCall.result = fullContent;
+
+                const loadSkillTool = this.chat_context.getTool('LoadSkill');
+                if (loadSkillTool) toolCall.setTool(loadSkillTool);
+
+                const toolCallPart = new ToolCallMessagePart();
+                toolCallPart.push(toolCall);
+                assistantMessage.content.push(toolCallPart);
+
+                logger.info(`preloaded skill via /skillname: ${bundleName}/${name}`);
+            } catch (err) {
+                logger.warn(`failed to preload skill ${name}: ${err}`);
+            }
+        }
     }
 
     async generateTaskName(user_message: string) {

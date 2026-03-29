@@ -51,14 +51,20 @@ export class SkillMgrApplication extends BaseApplication {
         const skills: Skill[] = [];
 
         // 已安装的技能始终对 Agent 可见，便于 LoadSkill/CallSkill 能正确解析并调用（与「Skills 应用是否启用」无关）
-        skills.push(...SkillRegistry.listSkills().map(skill => new Skill(
-            {
-                name: String(skill.name),
-                description: String(skill.description),
-            },
-            SkillRegistry.getSkillBody(skill.id)?.body || '',
-            this.getSkillsDirectory() + "/" + skill.name
-        )));
+        // 传递完整 frontmatter 以保留 user-invocable / disable-model-invocation 等扩展字段
+        skills.push(...SkillRegistry.listSkills().map(skill => {
+            const skillBody = SkillRegistry.getSkillBody(skill.id);
+            const fullFrontmatter = skillBody?.frontmatter ?? {};
+            return new Skill(
+                {
+                    name: String(skill.name),
+                    description: String(skill.description),
+                    ...fullFrontmatter,
+                },
+                skillBody?.body || '',
+                this.getSkillsDirectory() + "/" + skill.name
+            );
+        }));
 
         const manageSkillsSkill = Skill.parseMd(MANAGE_SKILLS_SKILL);
         const manageSkillsToolset = new BaseToolset('manage-skills');
