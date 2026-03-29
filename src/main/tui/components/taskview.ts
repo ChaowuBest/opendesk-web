@@ -50,6 +50,16 @@ export class TextMessagePartView implements Component {
         this.invalidated = true;
     }
 
+    /**
+     * 清除内部 MD 渲染节流状态，使下一次 render() 一定执行完整的 Markdown 解析。
+     * 在流式输出结束时调用，确保最后一批文本不会因节流而显示旧缓存。
+     */
+    clearThrottle() {
+        this._dirty = false;
+        this._lastRenderMs = 0;
+        this.invalidated = true;
+    }
+
     render(width: number): string[] {
         if (!this.invalidated && this.lastWidth === width && this.cachedOutput) {
             return this.cachedOutput;
@@ -105,6 +115,17 @@ export class ReasoningMessagePartView implements Component {
 
     setStreaming(streaming: boolean) {
         this._streaming = streaming;
+        this.invalidated = true;
+    }
+
+    /**
+     * 清除内部 MD 渲染节流状态，使下一次 render() 一定执行完整的 Markdown 解析。
+     * 在流式输出结束时调用，确保最后一批思考内容不会因节流而显示旧缓存。
+     */
+    clearThrottle() {
+        this._dirty = false;
+        this._lastRenderMs = 0;
+        this._cachedBodyLines = undefined;
         this.invalidated = true;
     }
 
@@ -449,11 +470,14 @@ export class AssistantMessageView implements Component {
         this.invalidated = true;
     }
 
-    /** 思考/流式结束，停止所有 reasoning 部分的动画，强制执行最终一次完整 md 渲染 */
+    /** 流式结束：停止 reasoning 动画并清除所有子视图的 MD 渲染节流，确保最终渲染拿到最新内容 */
     setStreamingComplete() {
         for (const part of this.parts) {
             if (part instanceof ReasoningMessagePartView) {
                 part.setStreaming(false);
+                part.clearThrottle();
+            } else if (part instanceof TextMessagePartView) {
+                part.clearThrottle();
             }
         }
         this.invalidated = true;
