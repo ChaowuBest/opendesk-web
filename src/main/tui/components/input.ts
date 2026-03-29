@@ -10,6 +10,7 @@ import { getFileCompletions, extractAtQuery, FILE_COMPLETION_MAX_RESULTS } from 
 import { getShellCompletions, executeShellCommand } from "./shell";
 import { spawnSync } from "child_process";
 import process from "process";
+import { SkillRegistry as AISkillRegistry } from "../../aikernel/skill";
 
 type AgentInputStatus = 'idle' | 'running';
 
@@ -205,18 +206,85 @@ function detectFd(): string | null {
 }
 
 
+/** 缓存的 user-invocable skill 列表（name -> description），用于同步的自动补全 */
+interface CachedSkillInfo {
+    name: string;
+    description: string;
+    bundleName: string;
+    argumentHint?: string;
+}
+
+let _cachedUserInvocableSkills: CachedSkillInfo[] = [];
+
+/**
+ * 异步刷新 user-invocable skill 缓存
+ */
+async function refreshSkillCache() {
+    try {
+        const registry = AISkillRegistry.getInstance();
+        const skills = await registry.getUserInvocableSkills();
+        _cachedUserInvocableSkills = skills.map(({ bundleName, skill }) => ({
+            name: skill.frontmatter.name,
+            description: skill.frontmatter.description || '',
+            bundleName,
+            argumentHint: skill.frontmatter['argument-hint'],
+        }));
+    } catch {
+        // 初始阶段 registry 可能还没就绪，静默忽略
+    }
+}
+
+export function getCachedUserInvocableSkills(): CachedSkillInfo[] {
+    return _cachedUserInvocableSkills;
+}
+
 /**
  * 包装 CombinedAutocompleteProvider，当 fd 不可用时为 @ 前缀提供
  * 基于 readdirSync 的本地文件补全回退；当以 ! 开头时提供 shell 命令补全。
+ * 同时提供 /skillname 的自动补全支持。
  */
 class FileAwareAutocompleteProvider implements AutocompleteProvider {
+    private commandNames: Set<string>;
+
     constructor(
         private inner: CombinedAutocompleteProvider,
         private basePath: string,
-    ) {}
+        commandNames: string[],
+    ) {
+        this.commandNames = new Set(commandNames);
+    }
 
     updateBasePath(newBasePath: string) {
         this.basePath = newBasePath;
+    }
+
+    /**
+     * 获取行内（非行首） /skillname 的补全建议
+     * 当用户在非行首位置输入 / 或 /xxx 时触发
+     */
+    private getInlineSkillSuggestions(textBeforeCursor: string): { items: AutocompleteItem[]; prefix: string } | null {
+        // 匹配行内的 / 或 /xxx 模式：前面必须有空格
+        const match = textBeforeCursor.match(/(?:\s)(\/[a-z0-9][-a-z0-9]*)$|(?:\s)(\/)$/);
+        if (!match) return null;
+
+        const slashPrefix = match[1] || match[2]; // e.g. "/exp" or "/"
+        const namePrefix = slashPrefix.slice(1); // e.g. "exp" or ""
+
+        const skills = _cachedUserInvocableSkills;
+        if (skills.length === 0) return null;
+
+        const items: AutocompleteItem[] = [];
+        for (const skill of skills) {
+            if (namePrefix === '' || skill.name.startsWith(namePrefix) || skill.name.includes(namePrefix)) {
+                items.push({
+                    value: skill.name,
+                    label: skill.name,
+                    description: `[skill] ${skill.description.slice(0, 60)}`,
+                });
+            }
+        }
+        if (items.length === 0) return null;
+        return { items, prefix: slashPrefix };
     }
 
     getSuggestions(lines: string[], cursorLine: number, cursorCol: number) {
@@ -237,6 +305,45 @@ class FileAwareAutocompleteProvider implements AutocompleteProvider {
             }
             return null;
         }
+
+        // 判断是否行首（trimmed 后以 / 开头且不含空格）
+        const trimmedBefore = textBeforeCursor.trimStart();
+        const isLineStart = trimmedBefore.startsWith('/') && !trimmedBefore.includes(' ');
+
+        if (isLineStart) {
+            // 行首：由 CombinedAutocompleteProvider 补全 command，我们再追加 skill
+            const result = this.inner.getSuggestions(lines, cursorLine, cursorCol);
+            const namePrefix = trimmedBefore.slice(1);
+
+            // 过滤不与 command 重名的 user-invocable skill
+            const skillItems: AutocompleteItem[] = [];
+            for (const skill of _cachedUserInvocableSkills) {
+                if (this.commandNames.has(skill.name)) continue; // command 优先
+                if (skill.name.startsWith(namePrefix) || skill.name.includes(namePrefix)) {
+                    skillItems.push({
+                        value: skill.name,
+                        label: skill.name,
+                        description: `[skill] ${skill.description.slice(0, 60)}`,
+                    });
+                }
+            }
+
+            if (result && result.items.length > 0) {
+                if (skillItems.length > 0) {
+                    result.items.push(...skillItems);
+                }
+                return result;
+            }
+
+            if (skillItems.length > 0) {
+                return { items: skillItems, prefix: textBeforeCursor };
+            }
+            return result;
+        }
+
+        // 非行首：检查是否有行内 /skillname 需要补全
+        const inlineSkill = this.getInlineSkillSuggestions(textBeforeCursor);
+        if (inlineSkill) return inlineSkill;
 
         const result = this.inner.getSuggestions(lines, cursorLine, cursorCol);
         if (result && result.items.length > 0) return result;
@@ -270,6 +377,18 @@ class FileAwareAutocompleteProvider implements AutocompleteProvider {
             const newLines = [...lines];
             newLines[cursorLine] = newLine;
             const newCol = prefixStart + item.value.length;
+            return { lines: newLines, cursorLine, cursorCol: newCol };
+        }
+
+        // 行内 /skillname 补全：替换 /prefix 为 /skillname + 空格
+        if (prefix.startsWith('/') && item.description?.startsWith('[skill]')) {
+            const before = currentLine.slice(0, cursorCol);
+            const after = currentLine.slice(cursorCol);
+            const prefixStart = cursorCol - prefix.length;
+            const newLine = before.slice(0, prefixStart) + '/' + item.value + ' ' + after;
+            const newLines = [...lines];
+            newLines[cursorLine] = newLine;
+            const newCol = prefixStart + item.value.length + 2; // +2 for "/" and space
             return { lines: newLines, cursorLine, cursorCol: newCol };
         }
 
@@ -411,6 +530,7 @@ export class AgentInputArea implements Component {
 
         this.input.onChange = (text: string) => {
             this.updateShellCommandMode(text);
+            this.tryTriggerInlineSkillAutocomplete();
         };
 
         this.input.onSubmit = (text: string) => {
@@ -432,6 +552,35 @@ export class AgentInputArea implements Component {
             }
             this.statusBar.update({ shellMode: isCmd });
             this.openDeskTUI.tui.requestRender();
+        }
+    }
+
+    /**
+     * 检测行内 /skillname 上下文并手动触发自动补全。
+     * pi-tui 的 Editor 仅在行首输入 / 时自动触发补全，
+     * 行内的 / 不会触发。此方法弥补这一缺口。
+     */
+    private tryTriggerInlineSkillAutocomplete() {
+        const editor = this.input as any;
+        // 如果已经在显示自动补全，不重复触发
+        if (editor.autocompleteState) return;
+        if (!editor.autocompleteProvider) return;
+
+        const lines: string[] = editor.state.lines;
+        const cursorLine: number = editor.state.cursorLine;
+        const cursorCol: number = editor.state.cursorCol;
+        const currentLine = lines[cursorLine] || '';
+        const textBeforeCursor = currentLine.slice(0, cursorCol);
+
+        // 行首的 / 由 Editor 原生处理，这里只处理行内
+        const trimmedBefore = textBeforeCursor.trimStart();
+        if (trimmedBefore.startsWith('/') && !trimmedBefore.includes(' ')) return;
+
+        // 检测行内 / 或 /xxx 模式（前面有空格）
+        if (/\s\/[a-z0-9]?[-a-z0-9]*$/.test(textBeforeCursor)) {
+            if (_cachedUserInvocableSkills.length > 0) {
+                editor.tryTriggerAutocomplete();
+            }
         }
     }
 
@@ -516,13 +665,17 @@ export class AgentInputArea implements Component {
         if (!this.commandRegistry) return;
         const basePath = this.openDeskTUI.workspace;
         const fdPath = detectFd();
+        const commands = this.commandRegistry.toPiTuiSlashCommands();
+        const commandNames = this.commandRegistry.getAll().map(c => c.name);
         const inner = new CombinedAutocompleteProvider(
-            this.commandRegistry.toPiTuiSlashCommands(),
+            commands,
             basePath,
             fdPath,
         );
-        const provider = new FileAwareAutocompleteProvider(inner, basePath);
+        const provider = new FileAwareAutocompleteProvider(inner, basePath, commandNames);
         this.input.setAutocompleteProvider(provider);
+        // 异步刷新 skill 缓存
+        refreshSkillCache();
     }
 
     private async handleSubmit(text: string) {

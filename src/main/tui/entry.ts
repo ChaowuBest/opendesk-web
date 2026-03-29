@@ -70,6 +70,7 @@ export interface CommandLineArgs {
     exportHtml?: string;
     exportJson?: string;
     dumpLog?: string;
+    headless?: boolean;
 }
 
 export class OpenDeskTUI {

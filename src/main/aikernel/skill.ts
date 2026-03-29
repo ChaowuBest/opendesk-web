@@ -73,6 +73,15 @@ export interface SkillFrontmatter {
     metadata?: Record<string, any>;
     /** 预先被允许使用的工具（即调用这些工具无需用户手动确认）列表 -- 实验性特性 */
     'allowed-tools'?: string[];
+
+    // Claude Code 扩展字段
+    /** 控制是否在 / 菜单中显示（默认 true） */
+    'user-invocable'?: boolean;
+    /** 阻止 LLM 自动激活此 Skill（默认 false）；为 true 时 Skill 描述不会加载到 LLM 上下文 */
+    'disable-model-invocation'?: boolean;
+    /** 自动补全时显示的参数提示 */
+    'argument-hint'?: string;
+
     /** 允许扩展字段 */
     [key: string]: any;
 }
@@ -91,6 +100,16 @@ export class Skill {
         this.body = body;
         this.directory = directory;
         this.toolsets = toolsets;
+    }
+
+    /** 用户是否可以通过 /skillname 调用此 Skill（默认 true） */
+    get isUserInvocable(): boolean {
+        return this.frontmatter['user-invocable'] !== false;
+    }
+
+    /** LLM 是否可以自动激活此 Skill（默认 true；disable-model-invocation=true 时为 false） */
+    get isModelInvocable(): boolean {
+        return this.frontmatter['disable-model-invocation'] !== true;
     }
 
     getFullContent() {
@@ -570,6 +589,8 @@ export class SkillRegistry {
         for (const [bundleName, provider] of this.providers) {
             const skills = await provider.getSkills();
             for (const skill of skills) {
+                // disable-model-invocation=true 的 Skill 不向 LLM 暴露描述
+                if (!skill.isModelInvocable) continue;
                 result += format(SKILL_FRONTMATTER_XML, {
                     bundleName: bundleName,
                     skillName: skill.frontmatter.name,
@@ -579,6 +600,44 @@ export class SkillRegistry {
             }
         }
         result += "</available_skills>"
+        return result;
+    }
+
+    /**
+     * 获取所有 user-invocable 的 Skill 列表（供 / 菜单和自动补全使用）
+     */
+    async getUserInvocableSkills(): Promise<{ bundleName: string; skill: Skill }[]> {
+        const result: { bundleName: string; skill: Skill }[] = [];
+        for (const [bundleName, provider] of this.providers) {
+            try {
+                const skills = await provider.getSkills();
+                for (const skill of skills) {
+                    if (skill.isUserInvocable) {
+                        result.push({ bundleName, skill });
+                    }
+                }
+            } catch (err) {
+                logger.error(`获取 user-invocable 技能失败: ${err}`);
+            }
+        }
+        return result;
+    }
+
+    /**
+     * 获取所有 Skill（含 bundleName），平坦列表
+     */
+    async getAllSkillsFlat(): Promise<{ bundleName: string; skill: Skill }[]> {
+        const result: { bundleName: string; skill: Skill }[] = [];
+        for (const [bundleName, provider] of this.providers) {
+            try {
+                const skills = await provider.getSkills();
+                for (const skill of skills) {
+                    result.push({ bundleName, skill });
+                }
+            } catch (err) {
+                logger.error(`获取技能失败: ${err}`);
+            }
+        }
         return result;
     }
 

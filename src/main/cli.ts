@@ -18,6 +18,7 @@ import { initializeAppWorkers } from './applications/worker';
 import { GlobalState } from './aikernel/states/global.js';
 import { FULL_CLEAR } from './tui/components/constants';
 import { OpenDeskTUI, CommandLineArgs } from './tui/entry.js';
+import { HeadlessRunner } from './tui/headless.js';
 import { Setting } from './utils/setting';
 import { program as prog } from 'commander';
 import { listInstalledPlugins, loadPlugins } from './aikernel/plugins/index.js';
@@ -41,6 +42,7 @@ function parseCommandLineArgs() {
     prog.option('--export-html <path>', 'export session as HTML when -c task completes', v => v);
     prog.option('--export-json <path>', 'export session as JSON when -c task completes', v => v);
     prog.option('--dump-log <path>', 'dump all log output to specified file', v => v);
+    prog.option('--headless', 'run in headless mode (no TUI, requires -c)');
     prog.option('-v, --version', 'print the version');
 
     registerPluginsCommand(prog);
@@ -168,6 +170,11 @@ function parseCommandLineArgs() {
             process.exit(1);
         }
 
+        if (kwargs.headless && !kwargs.command) {
+            console.error('[error] --headless requires -c/--command');
+            process.exit(1);
+        }
+
         if (kwargs.model) {
             try {
                 const setting = Setting.getInstance();
@@ -190,6 +197,7 @@ function parseCommandLineArgs() {
             exportHtml: kwargs.exportHtml,
             exportJson: kwargs.exportJson,
             dumpLog: kwargs.dumpLog,
+            headless: !!kwargs.headless,
         })
     });
 
@@ -207,6 +215,16 @@ function main(args: CommandLineArgs) {
     if (!isMainThread) {
         initializeAppWorkers();
         return;
+    } else if (args.headless && args.command) {
+        GlobalState.initialize();
+
+        initializeRegistry();
+        initializeRegistryWorker();
+
+        const runner = new HeadlessRunner(args);
+        ApplicationRegistry.onReady(() => {
+            runner.execute(args.command!);
+        });
     } else {
         GlobalState.initialize();
         if (process.stdout.isTTY) {
