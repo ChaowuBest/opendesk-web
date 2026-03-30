@@ -12,18 +12,22 @@
 import { type Component, SelectList, Box, Text, Editor, Input, Key, matchesKey, isKeyRelease, visibleWidth, truncateToWidth } from "@mariozechner/pi-tui";
 import { defaultSelectListTheme, defaultEditorTheme } from "../../tui/theme";
 import type { OpenDeskTUI } from "../../tui/entry";
-import { ApplicationRegistry } from "../../applications/registry";
 import { LLM } from "../../aikernel/llm.js";
 import { UserMessage, ChatContext, AssistantMessage, AssistantResponse, SystemMessage, ToolCall } from "../../aikernel/messages.js";
-import { BaseTool, BaseToolset } from "../../aikernel/tool.js";
+import { BaseToolset } from "../../aikernel/tool.js";
 import { ToolCallView, ToolCallMessagePartView } from "../../tui/components/taskview.js";
 import { logger } from "../../utils/logger.js";
 import chalk from "chalk";
-import { z } from "zod";
 import { jsonrepair } from "jsonrepair";
 import fs from "fs";
 import path from "path";
-import nodePath from "path"
+import nodePath from "path";
+import {
+    callMailWorker, formatSender, formatAddresses, stripHtml, buildQuotedText, buildReplyHtml,
+    GetEmailListTool, GetEmailContentTool, SearchEmailsTool,
+    SendEmailTool, ReplyEmailTool, MarkEmailReadTool, StarEmailTool, DeleteEmailTool,
+    GetCalendarItemsTool, AddCalendarItemTool, DeleteCalendarItemTool, GetCurrentTimeTool,
+} from "./tools";
 
 
 // SelectList.selectedIndex 在类型声明中是 private，但运行时可访问且无公开 getter
@@ -73,6 +77,36 @@ type MailViewState = 'loading' | 'list' | 'detail' | 'compose' | 'assistant' | '
 type FilterType = 'all' | 'unread' | 'starred' | 'draft' | 'sent';
 type ComposeType = 'reply' | 'replyall' | 'new' | 'forward';
 
+interface AssistantPendingDraft {
+    mode: 'new' | 'reply' | 'replyall';
+    sendArgs: {
+        to: string | string[];
+        cc?: string | string[];
+        bcc?: string | string[];
+        subject: string;
+        text: string;
+        html: string;
+        attachments: Array<{ filename: string; path: string }>;
+    };
+    summary: {
+        to: string;
+        cc?: string;
+        subject: string;
+        preview: string;
+        attachments: string[];
+    };
+}
+
+let assistantDraftHandler: ((draft: AssistantPendingDraft) => string) | undefined;
+let assistantDraftSender: (() => Promise<string>) | undefined;
+
+function formatRecipientsInput(value?: string | string[]): string {
+    if (!value) return '';
+    if (Array.isArray(value)) return value.join(', ');
+    return String(value);
+}
+
+
 interface FilterDef {
     key: string;
     value: FilterType;
@@ -87,132 +121,23 @@ const FILTERS: FilterDef[] = [
     { key: '5', value: 'sent', label: '已发送' },
 ];
 
-// ━━━ 邮件助手工具（供模型调用） ━━━
+// ━━━ 邮件助手工具（直接复用 tools.ts 的工具类） ━━━
 
-const GetEmailListArgsSchema = z.object({
-    offset: z.number().optional().describe('从第几条开始，默认 0'),
-    limit: z.number().optional().describe('最多返回条数，默认 20'),
-});
-const getEmailListTool = new BaseTool(
-    'getEmailList',
-    '获取当前邮箱的邮件列表。返回每封邮件的 uid、主题、发件人、日期、是否未读等，用于列举或查找邮件。',
-    GetEmailListArgsSchema,
-);
-getEmailListTool.setExecutor(async (args) => {
-    const offset = args.offset ?? 0;
-    const limit = args.limit ?? 20;
-    const data = await callMailWorker('getEmailHeaderList', offset, limit);
-    const emails: EmailHeader[] = Array.isArray(data) ? data : [];
-    if (emails.length === 0) {
-        return JSON.stringify({ total: 0, emails: [], message: '暂无邮件' });
-    }
-    const items = emails.map((e: EmailHeader) => ({
-        uid: e.uid,
-        subject: e.subject || '(无主题)',
-        from: formatSender(e.from),
-        date: new Date(e.date).toISOString(),
-        unread: e.unread,
-        starred: e.starred,
-        type: e.type,
-    }));
-    return JSON.stringify({ total: items.length, emails: items });
-});
+const getEmailListTool = new GetEmailListTool();
+const getEmailContentTool = new GetEmailContentTool();
+const searchEmailsTool = new SearchEmailsTool();
+const sendEmailTool = new SendEmailTool();
+const replyEmailTool = new ReplyEmailTool();
+const markEmailReadTool = new MarkEmailReadTool();
+const starEmailTool = new StarEmailTool();
+const deleteEmailTool = new DeleteEmailTool();
 
-const GetEmailContentArgsSchema = z.object({
-    uid: z.string().describe('邮件唯一标识 uid，从 getEmailList 或 searchEmails 结果中获取'),
-});
-const getEmailContentTool = new BaseTool(
-    'getEmailContent',
-    '获取指定 uid 的邮件完整内容（主题、发件人、收件人、日期、正文纯文本）。用于查看邮件详情或做摘要。',
-    GetEmailContentArgsSchema,
-);
-getEmailContentTool.setExecutor(async (args) => {
-    const content = await callMailWorker('getEmailContent', args.uid);
-    if (!content) {
-        return JSON.stringify({ error: '未找到该邮件' });
-    }
-    const text = (content.textContent && content.textContent.trim()) || stripHtml(content.htmlContent || '');
-    return JSON.stringify({
-        uid: args.uid,
-        textContent: text.slice(0, 5000),
-        fullLength: text.length,
-    });
-});
+const mailAssistantToolset = new BaseToolset('mailbox');
+mailAssistantToolset.addTools(getEmailListTool, getEmailContentTool, searchEmailsTool, sendEmailTool, replyEmailTool, markEmailReadTool, starEmailTool, deleteEmailTool);
 
-const SearchEmailsArgsSchema = z.object({
-    subject: z.string().optional().describe('按主题关键词搜索（模糊匹配）'),
-    from: z.string().optional().describe('按发件人搜索（支持姓名或邮箱地址，模糊匹配）'),
-    to: z.string().optional().describe('按收件人搜索（支持姓名或邮箱地址，模糊匹配）'),
-    body: z.string().optional().describe('按正文内容搜索（模糊匹配）'),
-    general: z.string().optional().describe('在主题、发件人、正文中同时搜索的通用关键词（与 subject/from/body 互斥，用于简单搜索场景）'),
-    dateFrom: z.string().optional().describe('搜索起始日期（含），格式 YYYY-MM-DD，例如 "2026-01-01"'),
-    dateTo: z.string().optional().describe('搜索结束日期（含），格式 YYYY-MM-DD，例如 "2026-03-05"'),
-    unread: z.boolean().optional().describe('筛选已读/未读状态：true=仅未读，false=仅已读，不传=不限'),
-    starred: z.boolean().optional().describe('筛选收藏状态：true=仅收藏，false=仅非收藏，不传=不限'),
-    attachmentName: z.string().optional().describe('按附件文件名搜索（模糊匹配），例如 "报告.pdf"'),
-    limit: z.number().optional().describe('最多返回条数，默认 50'),
-    offset: z.number().optional().describe('跳过前 N 条'),
-});
-const searchEmailsTool = new BaseTool(
-    'searchEmails',
-    '按条件搜索邮件（支持多条件组合）。可按主题(subject)、发件人(from)、收件人(to)、正文(body)、日期范围(dateFrom/dateTo)、已读/未读(unread)、收藏状态(starred)、附件文件名(attachmentName) 搜索，也可用通用关键词(general)在主题/发件人/正文中统一搜索。返回与 getEmailList 相同结构的列表。',
-    SearchEmailsArgsSchema,
-);
-searchEmailsTool.setExecutor(async (args) => {
-    const query: any = { limit: args.limit ?? 50, offset: args.offset ?? 0 };
-    if (args.subject) query.subject = args.subject;
-    if (args.from) query.from = args.from;
-    if (args.to) query.to = args.to;
-    if (args.body) query.body = args.body;
-    if (args.general) query.general = args.general;
-    if (args.dateFrom) query.startDate = args.dateFrom;
-    if (args.dateTo) query.endDate = args.dateTo;
-    if (args.unread !== undefined) query.unread = args.unread;
-    if (args.starred !== undefined) query.starred = args.starred;
-    if (args.attachmentName) query.attachmentName = args.attachmentName;
+// ━━━ 跨应用联动工具：日历（复用 tools.ts 的工具类，挂载 TUI 渲染回调） ━━━
 
-    const data = await callMailWorker('searchEmails', query);
-    const emails: EmailHeader[] = Array.isArray(data) ? data : [];
-    const items = emails.map((e: EmailHeader) => ({
-        uid: e.uid,
-        subject: e.subject || '(无主题)',
-        from: formatSender(e.from),
-        date: new Date(e.date).toISOString(),
-        unread: e.unread,
-        starred: e.starred,
-        type: e.type,
-    }));
-    return JSON.stringify({ total: items.length, emails: items });
-});
-
-// ━━━ 跨应用联动工具：日历 ━━━
-
-const GetCalendarItemsArgsSchema = z.object({
-    dateString: z.string().describe('日期字符串，格式为 YYYY-MM-DD。例如 "2026-03-05"'),
-});
-const getCalendarItemsTool = new BaseTool(
-    'getCalendarItems',
-    '获取指定日期的日程/会议列表。当用户想查看某天的安排、检查时间冲突，或需要将邮件中的会议信息与日历比对时使用。',
-    GetCalendarItemsArgsSchema,
-);
-getCalendarItemsTool.setExecutor(async (args) => {
-    const result = await ApplicationRegistry.callWorker('calendar', 'getCalendarItems', args.dateString);
-    if (result?.status !== 'ok') {
-        return JSON.stringify({ error: `无法获取日程: ${result?.message || '未知错误'}` });
-    }
-    const items = result.data || [];
-    if (items.length === 0) {
-        return JSON.stringify({ total: 0, items: [], message: `${args.dateString} 暂无日程安排` });
-    }
-    const mapped = items.map((item: any) => ({
-        uid: item.uid,
-        subject: item.subject,
-        startTime: new Date(item.startTime).toLocaleString(),
-        endTime: new Date(item.endTime).toLocaleString(),
-        location: item.location || '',
-    }));
-    return JSON.stringify({ total: mapped.length, items: mapped });
-});
+const getCalendarItemsTool = new GetCalendarItemsTool();
 getCalendarItemsTool.renderToolCallCli = function (toolcall: ToolCall, width: number): string[] | undefined {
     const args = toolcall.args_object as any;
     const lines: string[] = [];
@@ -227,78 +152,7 @@ getCalendarItemsTool.renderToolCallCli = function (toolcall: ToolCall, width: nu
     return lines.length > 0 ? lines : undefined;
 };
 
-const AddCalendarItemArgsSchema = z.object({
-    subject: z.string().describe('日程标题'),
-    dateString: z.string().describe('日期，格式为 YYYY-MM-DD'),
-    startTime: z.string().describe('开始时间，格式为 HH:MM（24小时制）'),
-    endTime: z.string().describe('结束时间，格式为 HH:MM（24小时制）'),
-    location: z.string().optional().describe('地点（可选）'),
-    isAllDay: z.boolean().optional().default(false).describe('是否为全天事件'),
-});
-const addCalendarItemTool = new BaseTool(
-    'addCalendarItem',
-    '添加新日程/会议。当用户要求根据邮件内容创建日程、安排会议、或设置提醒时使用。',
-    AddCalendarItemArgsSchema,
-);
-addCalendarItemTool.setExecutor(async (args) => {
-    const { subject, dateString, startTime, endTime, location, isAllDay } = args;
-    const dateParts = dateString.replace(/-/g, '/');
-    let startTimestamp: number;
-    let endTimestamp: number;
-    if (isAllDay) {
-        startTimestamp = new Date(dateParts).getTime();
-        endTimestamp = startTimestamp + 86400000;
-    } else {
-        startTimestamp = new Date(`${dateParts} ${startTime}`).getTime();
-        endTimestamp = new Date(`${dateParts} ${endTime}`).getTime();
-    }
-    if (isNaN(startTimestamp) || isNaN(endTimestamp)) {
-        return JSON.stringify({ error: '日期或时间格式无效，请使用 YYYY-MM-DD 和 HH:MM' });
-    }
-    if (endTimestamp <= startTimestamp) {
-        return JSON.stringify({ error: '结束时间必须晚于开始时间' });
-    }
-
-    // ── 去重检查：查询同一天的日程，按主题和时间匹配 ──
-    try {
-        const existingResult = await ApplicationRegistry.callWorker('calendar', 'getCalendarItems', dateString);
-        if (existingResult?.status === 'ok' && Array.isArray(existingResult.data)) {
-            const subjectLower = subject.trim().toLowerCase();
-            const duplicate = existingResult.data.find((item: any) => {
-                const itemSubject = (item.subject || '').trim().toLowerCase();
-                const itemStart = new Date(item.startTime).getTime();
-                // 主题相似 且 开始时间相同 => 视为重复
-                if (itemSubject === subjectLower && itemStart === startTimestamp) return true;
-                // 主题包含关系 且 时间重叠 => 视为重复
-                const itemEnd = new Date(item.endTime).getTime();
-                const subjectMatch = itemSubject.includes(subjectLower) || subjectLower.includes(itemSubject);
-                const timeOverlap = startTimestamp < itemEnd && endTimestamp > itemStart;
-                return subjectMatch && timeOverlap;
-            });
-            if (duplicate) {
-                return JSON.stringify({
-                    skipped: true,
-                    reason: '已存在相同或相似的日程，无需重复添加',
-                    existing: {
-                        uid: duplicate.uid,
-                        subject: duplicate.subject,
-                        startTime: new Date(duplicate.startTime).toLocaleString(),
-                        endTime: new Date(duplicate.endTime).toLocaleString(),
-                    },
-                });
-            }
-        }
-    } catch { /* 去重检查失败不阻塞添加流程 */ }
-
-    const result = await ApplicationRegistry.callWorker('calendar', 'addCalendarItem', {
-        subject, startTime: startTimestamp, endTime: endTimestamp, location: location || '', isAllDay,
-    });
-    if (result?.status !== 'ok') {
-        return JSON.stringify({ error: `添加日程失败: ${result?.message || '未知错误'}` });
-    }
-    const item = result.data ?? result;
-    return JSON.stringify({ success: true, uid: item.uid, subject, dateString, startTime, endTime });
-});
+const addCalendarItemTool = new AddCalendarItemTool();
 addCalendarItemTool.renderToolCallCli = function (toolcall: ToolCall, width: number): string[] | undefined {
     const args = toolcall.args_object as any;
     const lines: string[] = [];
@@ -318,41 +172,7 @@ addCalendarItemTool.renderToolCallCli = function (toolcall: ToolCall, width: num
     return lines.length > 0 ? lines : undefined;
 };
 
-
-const GetCurrentTimeArgsSchema = z.object({});
-const getCurrentTimeTool = new BaseTool(
-    'getCurrentTime',
-    '获取当前精确的日期和时间，包含日期字符串。在需要知道"今天"、"明天"等相对日期时使用。',
-    GetCurrentTimeArgsSchema,
-);
-getCurrentTimeTool.setExecutor(async () => {
-    const now = new Date();
-    const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-    const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-    return JSON.stringify({
-        date: dateStr,
-        time: timeStr,
-        datetime: now.toLocaleString(),
-        dayOfWeek: ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][now.getDay()],
-    });
-});
-
-const DeleteCalendarItemArgsSchema = z.object({
-    uid: z.string().describe('要删除的日程项的唯一标识符（uid），可通过 getCalendarItems 获取'),
-});
-const deleteCalendarItemTool = new BaseTool(
-    'deleteCalendarItem',
-    '删除指定的日程项。当用户要求取消某个日程、会议时使用，需要先通过 getCalendarItems 获取日程的 uid。',
-    DeleteCalendarItemArgsSchema,
-);
-deleteCalendarItemTool.setExecutor(async (args) => {
-    const result = await ApplicationRegistry.callWorker('calendar', 'deleteCalendarItem', args.uid);
-    if (result?.status !== 'ok') {
-        return JSON.stringify({ error: `删除日程失败: ${result?.message || '未知错误'}` });
-    }
-    const data = result.data ?? result;
-    return JSON.stringify({ success: true, uid: args.uid, ...data });
-});
+const deleteCalendarItemTool = new DeleteCalendarItemTool();
 deleteCalendarItemTool.renderToolCallCli = function (toolcall: ToolCall, width: number): string[] | undefined {
     const args = toolcall.args_object as any;
     const lines: string[] = [];
@@ -363,278 +183,10 @@ deleteCalendarItemTool.renderToolCallCli = function (toolcall: ToolCall, width: 
     return lines.length > 0 ? lines : undefined;
 };
 
-
-const SendEmailArgsSchema = z.object({
-    to: z.union([
-        z.string().describe('收件人邮箱地址'),
-        z.array(z.string()).describe('多个收件人邮箱地址数组'),
-        z.array(z.object({
-            name: z.string().optional().describe('收件人姓名'),
-            address: z.string().describe('收件人邮箱地址'),
-        })).describe('收件人对象列表')
-    ]).describe('收件人'),
-    cc: z.union([
-        z.string().describe('抄送邮箱地址'),
-        z.array(z.string()).describe('多个抄送邮箱地址数组'),
-        z.array(z.object({
-            name: z.string().optional().describe('抄送收件人姓名'),
-            address: z.string().describe('抄送收件人邮箱地址'),
-        })).describe('抄送对象列表')
-    ]).optional().describe('抄送'),
-    bcc: z.union([
-        z.string().describe('密送邮箱地址'),
-        z.array(z.string()).describe('多个密送邮箱地址数组'),
-        z.array(z.object({
-            name: z.string().optional().describe('密送收件人姓名'),
-            address: z.string().describe('密送收件人邮箱地址'),
-        })).describe('密送对象列表')
-    ]).optional().describe('密送'),
-    subject: z.string().describe('邮件主题'),
-    content: z.string().describe('邮件内容'),
-    attachments: z.array(z.string()).optional().describe('附件文件路径列表，每个元素是本地文件的绝对路径'),
-});
-const sendEmailTool = new BaseTool(
-    'sendEmail',
-    '发送邮件。需要提供收件人(to)、主题(subject)和内容(content)，可选抄送(cc)、密送(bcc)和附件(attachments)。附件参数为本地文件路径数组。',
-    SendEmailArgsSchema,
-);
-sendEmailTool.setExecutor(async (args) => {
-    try {
-        let to = args.to;
-        let cc = args.cc;
-        let bcc = args.bcc;
-
-        // 转换对象列表为地址字符串或数组
-        if (Array.isArray(to) && to.length > 0 && typeof to[0] === 'object') {
-            to = to.map(item => item.address);
-        }
-        if (Array.isArray(cc) && cc.length > 0 && typeof cc[0] === 'object') {
-            cc = cc.map(item => item.address);
-        }
-        if (Array.isArray(bcc) && bcc.length > 0 && typeof bcc[0] === 'object') {
-            bcc = bcc.map(item => item.address);
-        }
-
-        const attachments: Array<{ filename: string; path: string }> = [];
-        if (args.attachments && args.attachments.length > 0) {
-            for (const filePath of args.attachments) {
-                const resolved = nodePath.resolve(filePath);
-                if (!fs.existsSync(resolved)) {
-                    return JSON.stringify({ success: false, error: `附件文件不存在: ${filePath}` });
-                }
-                attachments.push({ filename: nodePath.basename(resolved), path: resolved });
-            }
-        }
-
-        const sendArgs = {
-            to: to,
-            cc: cc,
-            bcc: bcc,
-            subject: args.subject,
-            text: args.content,
-            html: args.content.replace(/\n/g, '<br>'),
-            attachments,
-        };
-        const result = await callMailWorker('sendEmail', sendArgs);
-        return JSON.stringify({ success: true, message: '邮件发送成功', data: result });
-    } catch (error: any) {
-        return JSON.stringify({ success: false, error: error.message || '邮件发送失败' });
-    }
-});
-
-const ReplyEmailArgsSchema = z.object({
-    uid: z.string().describe('要回复的邮件唯一标识 uid'),
-    content: z.string().describe('回复内容'),
-    replyAll: z.boolean().optional().describe('是否回复所有人，默认 false'),
-});
-const replyEmailTool = new BaseTool(
-    'replyEmail',
-    '回复邮件。需要提供邮件 uid 和回复内容，可选是否回复所有人。',
-    ReplyEmailArgsSchema,
-);
-replyEmailTool.setExecutor(async (args) => {
-    try {
-        // 获取原邮件元数据
-        const emailMeta = await callMailWorker('getEmailMeta', args.uid);
-        if (!emailMeta) {
-            return JSON.stringify({ success: false, error: '未找到该邮件' });
-        }
-
-        // 获取原邮件内容
-        const emailContent = await callMailWorker('getEmailContent', args.uid);
-
-        // 构建回复对象
-        let replyTo = emailMeta.from || [];
-        let to = replyTo;
-        let cc = emailMeta.cc || [];
-
-        // 确保 replyTo 是正确的格式
-        if (replyTo && !Array.isArray(replyTo)) {
-            // 如果是字符串，转换为对象格式
-            if (typeof replyTo === 'string') {
-                replyTo = [{ name: '', address: replyTo }];
-                to = replyTo;
-            }
-        } else if (Array.isArray(replyTo) && replyTo.length > 0) {
-            // 确保每个元素都有 address 字段
-            replyTo = replyTo.map(item => {
-                if (typeof item === 'string') {
-                    return { name: '', address: item };
-                }
-                return item;
-            });
-            to = replyTo;
-        }
-
-        // 确保 cc 是正确的格式
-        if (cc && !Array.isArray(cc)) {
-            if (typeof cc === 'string') {
-                cc = [{ name: '', address: cc }];
-            }
-        } else if (Array.isArray(cc) && cc.length > 0) {
-            cc = cc.map(item => {
-                if (typeof item === 'string') {
-                    return { name: '', address: item };
-                }
-                return item;
-            });
-        }
-
-        // 如果是回复所有人，需要将原邮件的收件人和抄送人都加入
-        if (args.replyAll) {
-            // 确保不重复添加发件人
-            const senderAddresses = new Set(replyTo.map(s => s.address));
-
-            // 添加原邮件的收件人（排除发件人自己）
-            if (emailMeta.to) {
-                emailMeta.to.forEach(recipient => {
-                    if (!senderAddresses.has(recipient.address)) {
-                        to.push(recipient);
-                        senderAddresses.add(recipient.address);
-                    }
-                });
-            }
-
-            // 添加原邮件的抄送人（排除发件人自己）
-            if (emailMeta.cc) {
-                emailMeta.cc.forEach(recipient => {
-                    if (!senderAddresses.has(recipient.address)) {
-                        cc.push(recipient);
-                        senderAddresses.add(recipient.address);
-                    }
-                });
-            }
-        }
-
-        // 构建回复主题
-        const originalSubject = emailMeta.subject || '';
-        const subject = originalSubject.startsWith('Re:') ? originalSubject : `Re: ${originalSubject}`;
-
-        // 构建回复内容，包含原始邮件引用
-        const fromStr = formatAddresses(emailMeta.from);
-        const toStr = formatAddresses(emailMeta.to);
-        const dateStr = new Date(emailMeta.date).toISOString();
-        const originalContent = (emailContent?.textContent && emailContent.textContent.trim()) || stripHtml(emailContent?.htmlContent || '');
-
-        const quotedContent = `\n\n--- 原始邮件 ---\n发件人: ${fromStr}\n收件人: ${toStr}\n${emailMeta.cc ? `抄送: ${formatAddresses(emailMeta.cc)}\n` : ''}日期: ${dateStr}\n主题: ${originalSubject}\n\n${originalContent}`;
-
-        const replyContent = args.content + quotedContent;
-
-        // 转换收件人格式
-        let toAddresses = to;
-        let ccAddresses = cc;
-
-        if (Array.isArray(to) && to.length > 0 && typeof to[0] === 'object') {
-            toAddresses = to.map(item => item.address);
-        }
-        if (Array.isArray(cc) && cc.length > 0 && typeof cc[0] === 'object') {
-            ccAddresses = cc.map(item => item.address);
-        }
-
-        // 调用发送邮件
-        const sendArgs = {
-            to: toAddresses,
-            cc: ccAddresses.length > 0 ? ccAddresses : undefined,
-            subject,
-            text: replyContent,
-            html: replyContent.replace(/\n/g, '<br>'),
-            attachments: [],
-        };
-
-        const result = await callMailWorker('sendEmail', sendArgs);
-        return JSON.stringify({ success: true, message: '邮件回复成功', data: result });
-    } catch (error: any) {
-        return JSON.stringify({ success: false, error: error.message || '邮件回复失败' });
-    }
-});
-
-const MarkEmailReadArgsSchema = z.object({
-    uid: z.string().describe('邮件唯一标识 uid，从 getEmailList 或 searchEmails 结果中获取'),
-    read: z.boolean().describe('是否标记为已读：true=标记为已读，false=标记为未读'),
-});
-const markEmailReadTool = new BaseTool(
-    'markEmailReadStatus',
-    '标记邮件已读/未读状态。需要提供邮件 uid 和是否标记为已读的布尔值。',
-    MarkEmailReadArgsSchema,
-);
-markEmailReadTool.setExecutor(async (args) => {
-    try {
-        if (args.read) {
-            await callMailWorker('markEmailAsRead', args.uid);
-        } else {
-            await callMailWorker('markEmailAsUnread', args.uid);
-        }
-        return JSON.stringify({ success: true, message: `邮件已${args.read ? '标记为已读' : '标记为未读'}` });
-    } catch (error: any) {
-        return JSON.stringify({ success: false, error: error.message || '标记邮件状态失败' });
-    }
-});
-
-const StarEmailArgsSchema = z.object({
-    uid: z.string().describe('邮件唯一标识 uid，从 getEmailList 或 searchEmails 结果中获取'),
-    starred: z.boolean().describe('是否收藏：true=收藏，false=取消收藏'),
-});
-const starEmailTool = new BaseTool(
-    'starEmail',
-    '收藏/取消收藏邮件。需要提供邮件 uid 和是否收藏的布尔值。',
-    StarEmailArgsSchema,
-);
-starEmailTool.setExecutor(async (args) => {
-    try {
-        await callMailWorker('starEmail', { uid: args.uid, starred: args.starred });
-        return JSON.stringify({ success: true, message: `邮件已${args.starred ? '收藏' : '取消收藏'}` });
-    } catch (error: any) {
-        return JSON.stringify({ success: false, error: error.message || '操作邮件收藏状态失败' });
-    }
-});
-
-const DeleteEmailArgsSchema = z.object({
-    uid: z.string().describe('邮件唯一标识 uid，从 getEmailList 或 searchEmails 结果中获取'),
-});
-const deleteEmailTool = new BaseTool(
-    'deleteEmail',
-    '删除邮件。需要提供邮件唯一标识 uid。',
-    DeleteEmailArgsSchema,
-);
-deleteEmailTool.setExecutor(async (args) => {
-    try {
-        await callMailWorker('deleteEmail', args.uid);
-        return JSON.stringify({ success: true, message: '邮件删除成功' });
-    } catch (error: any) {
-        return JSON.stringify({ success: false, error: error.message || '删除邮件失败' });
-    }
-});
-
-const mailAssistantToolset = new BaseToolset('mailbox');
-mailAssistantToolset.addTools(getEmailListTool, getEmailContentTool, searchEmailsTool, sendEmailTool, replyEmailTool, markEmailReadTool, starEmailTool, deleteEmailTool);
+const getCurrentTimeTool = new GetCurrentTimeTool();
 
 const crossAppToolset = new BaseToolset('cross-app');
-crossAppToolset.addTools(
-    getCalendarItemsTool,
-    addCalendarItemTool,
-    deleteCalendarItemTool,
-    getCurrentTimeTool,
-);
+crossAppToolset.addTools(getCalendarItemsTool, addCalendarItemTool, deleteCalendarItemTool, getCurrentTimeTool);
 
 const MAIL_ASSISTANT_SYSTEM_PROMPT =
     '你是邮件助手。用户会用自然语言描述需求，你需要理解用户意图并调用合适的工具来完成任务。\n\n' +
@@ -667,7 +219,7 @@ const MAIL_ASSISTANT_SYSTEM_PROMPT =
     '- **offset**（可选）：跳过前 N 条\n' +
     '**使用场景**：当需要根据特定条件查找邮件时使用，如按发件人、主题、日期等筛选。\n\n' +
     '### mailbox-sendEmail\n' +
-    '**用途**：发送新邮件。\n' +
+    '**用途**：发送新邮件（调用后会立即发送）。\n' +
     '**参数**：\n' +
     '- **to**（必需）：收件人列表，每个收件人包含 name（可选）和 address（必需）\n' +
     '- **cc**（可选）：抄送列表，格式同 to\n' +
@@ -675,14 +227,19 @@ const MAIL_ASSISTANT_SYSTEM_PROMPT =
     '- **subject**（必需）：邮件主题\n' +
     '- **content**（必需）：邮件内容\n' +
     '- **attachments**（可选）：附件文件路径列表，每个元素是本地文件的绝对路径，例如 ["/home/user/report.pdf"]\n' +
-    '**使用场景**：当需要发送新邮件给他人时使用。如果用户提到要发送附件，在 attachments 中传入文件路径。\n\n' +
+    '**使用场景**：\n' +
+    '- 当用户已明确给出收件人、主题、正文时，可直接调用发送。\n' +
+    '- 若缺少必要信息，先补齐信息再发送。\n' +
+    '- 若正文由你生成/改写，先展示完整正文并确认，确认后再发送。\n\n' +
     '### mailbox-replyEmail\n' +
-    '**用途**：回复邮件。\n' +
+    '**用途**：回复邮件（调用后会立即发送）。\n' +
     '**参数**：\n' +
     '- **uid**（必需）：要回复的邮件唯一标识 uid\n' +
     '- **content**（必需）：回复内容\n' +
     '- **replyAll**（可选）：是否回复所有人，默认 false\n' +
-    '**使用场景**：当需要回复收到的邮件时使用。\n\n' +
+    '**使用场景**：\n' +
+    '- 当回复对象与正文明确时可直接发送。\n' +
+    '- 若正文需你生成/改写，先展示完整正文并确认，确认后再发送。\n\n' +
     '### mailbox-markEmailReadStatus\n' +
     '**用途**：标记邮件已读/未读状态。\n' +
     '**参数**：\n' +
@@ -712,9 +269,10 @@ const MAIL_ASSISTANT_SYSTEM_PROMPT =
     '  - 用户说"查看最新的邮件内容"→ 先调用 getEmailList 获取邮件列表，再调用 getEmailContent 获取最新邮件的内容\n' +
     '  - 用户说"查看张三发来的邮件内容"→ 先调用 searchEmails 找到张三的邮件，再调用 getEmailContent 获取内容\n' +
     '- **邮件操作**：\n' +
-    '  - 用户说"给张三发送邮件，主题是会议通知，内容是明天下午3点开会"→ 调用 sendEmail，设置 to、subject 和 content\n' +
-    '  - 用户说"给张三发邮件，附件是 /home/user/report.pdf"→ 调用 sendEmail，在 attachments 中传入文件路径\n' +
-    '  - 用户说"回复刚才的邮件，告诉他我会参加会议"→ 先获取邮件 uid，再调用 replyEmail\n' +
+    '  - 用户说"给张三发送邮件，主题是会议通知，内容是明天下午3点开会"→ 信息齐全，直接调用 sendEmail\n' +
+    '  - 用户说"给张三发邮件，附件是 /home/user/report.pdf"（但未给主题或正文）→ 先补齐缺失信息，再调用 sendEmail\n' +
+    '  - 用户说"回复刚才的邮件，你帮我组织一下措辞再发"→ 先生成完整回复正文并展示给用户确认；用户明确确认后再调用 replyEmail\n' +
+    '  - 用户说"把这段回复润色后发出去"→ 先给出润色后的完整正文并确认；确认后调用 replyEmail\n' +
     '  - 用户说"标记这封邮件为已读"→ 调用 markEmailReadStatus，设置 read: true\n' +
     '  - 用户说"收藏这封重要邮件"→ 调用 starEmail，设置 starred: true\n' +
     '  - 用户说"删除这封垃圾邮件"→ 调用 deleteEmail\n' +
@@ -736,23 +294,14 @@ const MAIL_ASSISTANT_SYSTEM_PROMPT =
     '- cross-app-deleteCalendarItem: 删除指定日程（需提供 uid，可通过 getCalendarItems 获取）\n' +
     '## 使用策略\n' +
     '1. 邮件操作：根据用户意图先调用相应工具获取数据，再给出简洁清晰的中文回答。\n' +
-    '2. 邮件转日程：当用户要求将邮件中的会议/活动添加到日历时，先用 getEmailContent 获取邮件内容，提取日期、时间、地点等信息，然后调用 addCalendarItem 创建日程。工具内置了去重检查，如果返回 skipped=true 表示已存在相同日程，请告知用户无需重复添加。\n' +
-    '3. 日程查询：用户想查看某天安排时，先调用 getCurrentTime 获取当前日期，再调用 getCalendarItems。\n' +
-    '4. 删除操作：删除日程前，先调用 getCalendarItems 获取日程的 uid，再执行删除。\n' +
-    '5. 综合分析：用户可能要求"查看今天的邮件和日程"，此时需同时调用邮件和日历工具。\n' +
-    '6. 去重原则：添加日程时，工具会自动检查是否已存在相同或相似的日程（按主题和时间匹配）。若已存在则跳过添加并返回已有项信息，请据此给出友好提示。\n' +
-    '7. 回答始终使用简洁清晰的中文。';
+    '2. 发送/回复策略：信息齐全（收件人、主题、正文明确且无歧义）可直接调用 sendEmail/replyEmail；信息不全先补齐。若正文由你生成或改写，必须先向用户展示完整正文并等待明确确认，再调用发送工具。\n' +
+    '3. 邮件转日程：当用户要求将邮件中的会议/活动添加到日历时，先用 getEmailContent 获取邮件内容，提取日期、时间、地点等信息，然后调用 addCalendarItem 创建日程。工具内置了去重检查，如果返回 skipped=true 表示已存在相同日程，请告知用户无需重复添加。\n' +
+    '4. 日程查询：用户想查看某天安排时，先调用 getCurrentTime 获取当前日期，再调用 getCalendarItems。\n' +
+    '5. 删除操作：删除日程前，先调用 getCalendarItems 获取日程的 uid，再执行删除。\n' +
+    '6. 综合分析：用户可能要求"查看今天的邮件和日程"，此时需同时调用邮件和日历工具。\n' +
+    '7. 去重原则：添加日程时，工具会自动检查是否已存在相同或相似的日程（按主题和时间匹配）。若已存在则跳过添加并返回已有项信息，请据此给出友好提示。\n' +
+    '8. 回答始终使用简洁清晰的中文。';
     `;
-
-// ━━━ Worker 通信助手 ━━━
-
-async function callMailWorker(method: string, ...args: any[]): Promise<any> {
-    const result = await ApplicationRegistry.callWorker('mailbox', method, ...args);
-    if (result?.status === 'error') {
-        throw new Error(result.message || `mailbox.${method} failed`);
-    }
-    return result?.data;
-}
 
 // ━━━ 工具函数 ━━━
 
@@ -767,27 +316,6 @@ function sanitizeLine(line: string): string {
     return line.replace(/[\x00-\x06\x08\x0b\x0c\x0e-\x1a\x1c-\x1f\r]/g, '').replace(/\t/g, '   ');
 }
 
-function stripHtml(html: string): string {
-    return html
-        .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
-        .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
-        .replace(/<br\s*\/?>/gi, '\n')
-        .replace(/<\/p>/gi, '\n\n')
-        .replace(/<\/div>/gi, '\n')
-        .replace(/<\/li>/gi, '\n')
-        .replace(/<\/tr>/gi, '\n')
-        .replace(/<\/h[1-6]>/gi, '\n\n')
-        .replace(/<[^>]+>/g, '')
-        .replace(/&nbsp;/gi, ' ')
-        .replace(/&lt;/gi, '<')
-        .replace(/&gt;/gi, '>')
-        .replace(/&amp;/gi, '&')
-        .replace(/&quot;/gi, '"')
-        .replace(/&#39;/gi, "'")
-        .replace(/\n{3,}/g, '\n\n')
-        .trim();
-}
-
 function formatDate(dateStr: string | Date): string {
     const date = new Date(dateStr);
     const now = new Date();
@@ -800,17 +328,6 @@ function formatDate(dateStr: string | Date): string {
         ' ' +
         date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
     );
-}
-
-function formatSender(from: Array<{ name: string; address: string }> | undefined): string {
-    if (!from || from.length === 0) return '未知';
-    const sender = from[0];
-    return sender.name || sender.address || '未知';
-}
-
-function formatAddresses(addrs: Array<{ name: string; address: string }> | undefined): string {
-    if (!addrs || addrs.length === 0) return '未知';
-    return addrs.map(a => (a.name ? `${a.name} <${a.address}>` : a.address)).join(', ');
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -891,6 +408,8 @@ export class MailOverlay implements Component {
     private assistantResultTotalLines = 0;
     private assistantResultVisibleLines = 0;
     private assistantToolCalls: any[] = [];
+    private assistantPendingDraft?: AssistantPendingDraft;
+    private assistantUserRepliedAfterDraft = false;
     private chatContext?: ChatContext;
     private conversationHistory: string = '';
     /** 标记助手是否从详情页唤起（ESC 时返回详情而非列表） */
@@ -931,6 +450,8 @@ export class MailOverlay implements Component {
             anchor: "center",
         });
         this.openDeskTUI.hasOpenOverlay = true;
+        assistantDraftHandler = this.setAssistantDraft.bind(this);
+        assistantDraftSender = this.confirmAssistantDraft.bind(this);
 
         this.inputListenerRemove = this.openDeskTUI.tui.addInputListener((data: string) => {
             return this.handleInput(data);
@@ -948,6 +469,10 @@ export class MailOverlay implements Component {
         this.handle?.hide();
         this.openDeskTUI.hasOpenOverlay = false;
         this.openDeskTUI.tui.setFocus(this.openDeskTUI.inputArea.input);
+        assistantDraftHandler = undefined;
+        assistantDraftSender = undefined;
+        this.assistantPendingDraft = undefined;
+        this.assistantUserRepliedAfterDraft = false;
 
         callMailWorker('notifyMailboxClosed').catch(() => { });
     }
@@ -984,9 +509,9 @@ export class MailOverlay implements Component {
                 this.cycleComposeFocus(-1);
                 return { consume: true };
             }
+            const fields = this.getComposeFocusFields();
             // 附件输入框上的特殊按键处理
             if (this.composeAttachmentInput) {
-                const fields = this.getComposeFocusFields();
                 const isAttachmentFocused = fields[this.composeFocusIdx] === this.composeAttachmentInput;
 
                 // Enter：添加附件而非跳转
@@ -2268,6 +1793,8 @@ export class MailOverlay implements Component {
         this.assistantResult = '';
         this.assistantBusy = false;
         this.assistantToolCalls = [];
+        this.assistantPendingDraft = undefined;
+        this.assistantUserRepliedAfterDraft = false;
         this.chatContext = undefined; // 清理对话上下文
         this.conversationHistory = ''; // 清理对话历史
 
@@ -2287,6 +1814,7 @@ export class MailOverlay implements Component {
         this.assistantBusy = true;
         this.assistantResult = '';
         this.assistantToolCalls = [];
+        this.assistantUserRepliedAfterDraft = Boolean(this.assistantPendingDraft);
         this.openDeskTUI.tui.setFocus(null);
 
         // 更新对话历史，添加用户输入
@@ -2444,6 +1972,41 @@ export class MailOverlay implements Component {
 
     // ──────────────────── 撰写/回复邮件 ────────────────────
 
+    private setAssistantDraft(draft: AssistantPendingDraft): string {
+        this.assistantPendingDraft = draft;
+        this.assistantUserRepliedAfterDraft = false;
+        return JSON.stringify({
+            success: true,
+            pending: true,
+            message: '已生成草稿，请确认发送或提出修改。',
+            summary: draft.summary,
+            draft: {
+                to: draft.summary.to,
+                cc: draft.summary.cc || '',
+                subject: draft.summary.subject,
+                content: draft.sendArgs.text,
+                attachments: draft.summary.attachments,
+            },
+        });
+    }
+
+    private async confirmAssistantDraft(): Promise<string> {
+        if (!this.assistantPendingDraft) {
+            return JSON.stringify({ success: false, error: '没有待发送的草稿，请先让助手生成邮件内容' });
+        }
+        if (!this.assistantUserRepliedAfterDraft) {
+            return JSON.stringify({ success: false, error: '需要用户在草稿生成后再输入一轮确认，才能发送' });
+        }
+        try {
+            const result = await callMailWorker('sendEmail', this.assistantPendingDraft.sendArgs);
+            this.assistantPendingDraft = undefined;
+            this.assistantUserRepliedAfterDraft = false;
+            return JSON.stringify({ success: true, message: '邮件已发送', data: result });
+        } catch (err: any) {
+            return JSON.stringify({ success: false, error: err?.message || '发送失败' });
+        }
+    }
+
     private startCompose(type: ComposeType) {
         if (type !== 'new' && !this.selectedEmail) return;
 
@@ -2457,7 +2020,7 @@ export class MailOverlay implements Component {
         // 创建 Input 字段
         this.composeToInput = new Input();
         this.composeSubjectInput = new Input();
-        this.composeCcInput = undefined;
+        this.composeCcInput = new Input();
         this.composeAttachmentInput = new Input();
         this.composeAttachments = [];
 
@@ -2471,7 +2034,6 @@ export class MailOverlay implements Component {
                 ...(this.selectedEmail.to || []).filter(a => a.address !== currentEmail).map(a => a.address),
             ].filter(Boolean);
             this.composeToInput.setValue(toAddresses.join(', '));
-            this.composeCcInput = new Input();
             this.composeCcInput.setValue((this.selectedEmail.cc || []).map(a => a.address).join(', '));
             this.composeSubjectInput.setValue('答复全部: ' + (this.selectedEmail.subject || ''));
         } else if (type === 'forward' && this.selectedEmail) {
@@ -2499,7 +2061,7 @@ export class MailOverlay implements Component {
 
         // 回复/回复全部时，构建原始邮件引用（不放入编辑器，单独渲染在编辑器下方）
         if ((type === 'reply' || type === 'replyall'|| type === 'forward') && this.selectedEmail && this.selectedEmailContent) {
-            this.composeQuotedText = this.buildQuotedText(this.selectedEmail, this.selectedEmailContent);
+            this.composeQuotedText = buildQuotedText(this.selectedEmail, this.selectedEmailContent);
             this.composeQuoteScrollOffset = 0;
         } else {
             this.composeQuotedText = undefined;
@@ -2544,7 +2106,7 @@ export class MailOverlay implements Component {
             let html = '';
             if ((this.composeType === 'reply' || this.composeType === 'replyall' || this.composeType === 'forward')
                 && this.selectedEmail && this.selectedEmailContent) {
-                html = this.buildReplyHtml(replyBody, this.selectedEmail, this.selectedEmailContent);
+                html = buildReplyHtml(replyBody, this.selectedEmail, this.selectedEmailContent);
             } else {
                 // 新邮件：纯文本转简单 HTML
                 html = replyBody.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>');
@@ -2593,7 +2155,7 @@ export class MailOverlay implements Component {
             let html = '';
             if ((this.composeType === 'reply' || this.composeType === 'replyall' || this.composeType === 'forward')
                 && this.selectedEmail && this.selectedEmailContent) {
-                html = this.buildReplyHtml(replyBody, this.selectedEmail, this.selectedEmailContent);
+                html = buildReplyHtml(replyBody, this.selectedEmail, this.selectedEmailContent);
             } else {
                 // 新邮件：纯文本转简单 HTML
                 html = replyBody.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>');
@@ -2650,7 +2212,7 @@ export class MailOverlay implements Component {
 
             this.composeToInput = new Input();
             this.composeSubjectInput = new Input();
-            this.composeCcInput = undefined;
+            this.composeCcInput = new Input();
             this.composeAttachmentInput = new Input();
             this.composeAttachments = (content.attachments || []).map((a: any) => ({
                 filename: a.filename || nodePath.basename(a.path || ''),
@@ -2658,10 +2220,7 @@ export class MailOverlay implements Component {
             })).filter((a: any) => a.path);
 
             this.composeToInput.setValue(this.selectedEmail.to?.map(a => a.address).join(', ') || '');
-            if (this.selectedEmail.cc && this.selectedEmail.cc.length > 0) {
-                this.composeCcInput = new Input();
-                this.composeCcInput.setValue(this.selectedEmail.cc.map(a => a.address).join(', '));
-            }
+            this.composeCcInput.setValue((this.selectedEmail.cc || []).map(a => a.address).join(', '));
             this.composeSubjectInput.setValue(this.selectedEmail.subject || '');
 
             this.composeEditor = new Editor(this.openDeskTUI.tui, {
@@ -2690,83 +2249,7 @@ export class MailOverlay implements Component {
         }
     }
 
-    /**
-     * 构建回复邮件时的原始邮件引用文本（纯文本格式）。
-     * 参考 Electron 前端的 composeContent 方法，在 CLI 下以文本方式呈现。
-     */
-    private buildQuotedText(email: EmailHeader, content: EmailContent): string {
-        const sender = formatAddresses(email.from);
-        const sendTime = new Date(email.date).toLocaleString();
-        const receivers = formatAddresses(email.to);
-        const cc = email.cc && email.cc.length > 0 ? formatAddresses(email.cc) : '';
-        const subject = email.subject || '(无主题)';
-
-        let originalBody = '';
-        if (content.textContent) {
-            originalBody = content.textContent;
-        } else if (content.htmlContent) {
-            originalBody = stripHtml(content.htmlContent);
-        }
-
-        // 每行加 > 前缀
-        const quotedBody = originalBody
-            .split('\n')
-            .map(line => `> ${line}`)
-            .join('\n');
-
-        const lines = [
-            '---------- 原始邮件 ----------',
-            `发件人: ${sender}`,
-            `发送时间: ${sendTime}`,
-            `收件人: ${receivers}`,
-        ];
-        if (cc) {
-            lines.push(`抄送: ${cc}`);
-        }
-        lines.push(`主题: ${subject}`);
-        lines.push('');
-        lines.push(quotedBody);
-
-        return lines.join('\n');
-    }
-
-    /**
-     * 构建回复邮件的 HTML 内容（用户正文 + 原始邮件引用）。
-     * 参考 Electron 前端 MailEditorWidget.composeContent 的样式。
-     */
-    /**
-     * 构建回复邮件的 HTML 内容（用户正文 + 原始邮件引用）。
-     * replyBody 仅为用户输入的回复正文（不含引用）。
-     */
-    private buildReplyHtml(replyBody: string, email: EmailHeader, content: EmailContent): string {
-        const escHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-        const userHtml = escHtml(replyBody).replace(/\n/g, '<br>');
-
-        const sender = formatAddresses(email.from);
-        const sendTime = new Date(email.date).toLocaleString();
-        const receivers = formatAddresses(email.to);
-        const cc = email.cc && email.cc.length > 0 ? formatAddresses(email.cc) : '';
-        const subject = email.subject || '(无主题)';
-
-        const originContent = content.htmlContent
-            ? content.htmlContent
-            : escHtml(content.textContent || '').replace(/\n/g, '<br>');
-
-        return `<div>${userHtml}</div>
-<br><br>
-<hr style="border: 0; border-top: 1px solid #e5e7eb; margin: 20px 0;">
-<div style="background-color: #f3f4f6; padding: 16px; border-radius: 8px; font-size: 13px; color: #374151; margin-bottom: 20px;">
-  <div style="font-weight: bold; font-size: 14px; margin-bottom: 12px; color: #111827; border-bottom: 1px solid #e5e7eb; padding-bottom: 8px;">
-    ----- 原始邮件 -----
-  </div>
-  <div style="margin-bottom: 6px;"><span style="color: #6b7280; font-weight: bold;">发件人:</span> ${escHtml(sender)}</div>
-  <div style="margin-bottom: 6px;"><span style="color: #6b7280; font-weight: bold;">发送时间:</span> ${escHtml(sendTime)}</div>
-  <div style="margin-bottom: 6px;"><span style="color: #6b7280; font-weight: bold;">收件人:</span> ${escHtml(receivers)}</div>
-  ${cc ? `<div style="margin-bottom: 6px;"><span style="color: #6b7280; font-weight: bold;">抄送:</span> ${escHtml(cc)}</div>` : ''}
-  <div><span style="color: #6b7280; font-weight: bold;">主题:</span> ${escHtml(subject)}</div>
-</div>
-<div style="font-size: 14px; line-height: 1.6;">${originContent}</div>`;
-    }
+    // buildQuotedText / buildReplyHtml 已提取到 tools.ts 共享模块
 
     private startAiSpinner() {
         this.aiSpinnerFrame = 0;
@@ -3127,7 +2610,7 @@ export class MailOverlay implements Component {
 
             case 'compose': {
                 const fields = this.getComposeFocusFields();
-                const fieldLineCount = (this.composeCcInput ? 3 : 2) + 1; // +1 for attachment input
+                const fieldLineCount = 3 + 1; // 收件人 + 抄送 + 主题 + 附件
                 const attachmentListLines = this.composeAttachments.length;
                 // 错误提示作为附件输入框的一部分显示，不单独占用空间
                 const hasQuote = this.composeQuotedText ? 1 : 0;

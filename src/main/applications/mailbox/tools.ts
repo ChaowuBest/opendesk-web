@@ -13,9 +13,12 @@ import { BaseTool } from '../../aikernel/tool';
 import { ToolCall } from '../../aikernel/messages';
 import { Card } from '../../tui/components/card';
 import { statusDisplay, truncText } from '../../tui/components/toolcall';
+import { ApplicationRegistry } from '../registry';
 import { logger } from '../../utils/logger.js';
 import chalk from 'chalk';
 import { z } from 'zod';
+import fs from 'fs';
+import nodePath from 'path';
 import type { MailboxApplication } from './app';
 
 
@@ -670,6 +673,466 @@ export class SwitchMailAccountTool extends BaseTool<typeof SwitchMailAccountArgs
         const config = this.mailApp.getConfig();
         this.mailApp.callWorker('applicationConfigChanged', config).catch((err: any) => {
             logger.warn(`failed to notify mailbox worker of config change: ${err?.message ?? err}`);
+        });
+    }
+}
+
+// ============================================================
+// 邮件操作：辅助函数 + Schema + Executor + 工具类
+// 供 operate-mailbox Skill 对外暴露，也供 tui.ts 直接实例化
+// ============================================================
+
+export async function callMailWorker(method: string, ...args: any[]): Promise<any> {
+    const result = await ApplicationRegistry.callWorker('mailbox', method, ...args);
+    if (result?.status === 'error') throw new Error(result.message || `mailbox.${method} failed`);
+    return result?.data;
+}
+
+export function formatSender(from: Array<{ name: string; address: string }> | undefined): string {
+    if (!from || from.length === 0) return '未知';
+    return from[0].name || from[0].address || '未知';
+}
+
+export function formatAddresses(addrs: Array<{ name: string; address: string }> | undefined): string {
+    if (!addrs || addrs.length === 0) return '未知';
+    return addrs.map(a => (a.name ? `${a.name} <${a.address}>` : a.address)).join(', ');
+}
+
+export function stripHtml(html: string): string {
+    return html
+        .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+        .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+        .replace(/<br\s*\/?>/gi, '\n')
+        .replace(/<\/p>/gi, '\n\n')
+        .replace(/<\/div>/gi, '\n')
+        .replace(/<\/li>/gi, '\n')
+        .replace(/<\/tr>/gi, '\n')
+        .replace(/<\/h[1-6]>/gi, '\n\n')
+        .replace(/<[^>]+>/g, '')
+        .replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&')
+        .replace(/&lt;/gi, '<').replace(/&gt;/gi, '>')
+        .replace(/&quot;/gi, '"').replace(/&#39;/gi, "'")
+        .replace(/\n{3,}/g, '\n\n').trim();
+}
+
+function normalizeRecipients(raw: any): string[] {
+    if (!raw) return [];
+    if (typeof raw === 'string') return [raw];
+    if (Array.isArray(raw)) {
+        return raw.map((item: any) => typeof item === 'string' ? item : item.address).filter(Boolean);
+    }
+    return [];
+}
+
+function mapEmailHeaders(emails: any[]) {
+    return emails.map(e => ({
+        uid: e.uid,
+        subject: e.subject || '(无主题)',
+        from: formatSender(e.from),
+        date: new Date(e.date).toISOString(),
+        unread: e.unread,
+        starred: e.starred,
+        type: e.type,
+    }));
+}
+
+// ── Schema ──
+
+const GetEmailListSchema = z.object({
+    offset: z.number().optional().describe('从第几条开始，默认 0'),
+    limit: z.number().optional().describe('最多返回条数，默认 20'),
+});
+
+const GetEmailContentSchema = z.object({
+    uid: z.string().describe('邮件唯一标识 uid，从 getEmailList 或 searchEmails 结果中获取'),
+});
+
+const SearchEmailsSchema = z.object({
+    subject: z.string().optional().describe('按主题关键词搜索（模糊匹配）'),
+    from: z.string().optional().describe('按发件人搜索（支持姓名或邮箱地址，模糊匹配）'),
+    to: z.string().optional().describe('按收件人搜索（支持姓名或邮箱地址，模糊匹配）'),
+    body: z.string().optional().describe('按正文内容搜索（模糊匹配）'),
+    general: z.string().optional().describe('在主题、发件人、正文中同时搜索的通用关键词（与 subject/from/body 互斥，用于简单搜索场景）'),
+    dateFrom: z.string().optional().describe('搜索起始日期（含），格式 YYYY-MM-DD'),
+    dateTo: z.string().optional().describe('搜索结束日期（含），格式 YYYY-MM-DD'),
+    unread: z.boolean().optional().describe('筛选已读/未读状态：true=仅未读，false=仅已读，不传=不限'),
+    starred: z.boolean().optional().describe('筛选收藏状态：true=仅收藏，false=仅非收藏，不传=不限'),
+    attachmentName: z.string().optional().describe('按附件文件名搜索（模糊匹配）'),
+    limit: z.number().optional().describe('最多返回条数，默认 50'),
+    offset: z.number().optional().describe('跳过前 N 条'),
+});
+
+const SendEmailSchema = z.object({
+    to: z.union([
+        z.string().describe('收件人邮箱地址'),
+        z.array(z.string()).describe('多个收件人邮箱地址数组'),
+        z.array(z.object({
+            name: z.string().optional().describe('收件人姓名'),
+            address: z.string().describe('收件人邮箱地址'),
+        })).describe('收件人对象列表'),
+    ]).describe('收件人'),
+    cc: z.union([
+        z.string().describe('抄送邮箱地址'),
+        z.array(z.string()).describe('多个抄送邮箱地址数组'),
+        z.array(z.object({
+            name: z.string().optional().describe('抄送收件人姓名'),
+            address: z.string().describe('抄送收件人邮箱地址'),
+        })).describe('抄送对象列表'),
+    ]).optional().describe('抄送'),
+    bcc: z.union([
+        z.string().describe('密送邮箱地址'),
+        z.array(z.string()).describe('多个密送邮箱地址数组'),
+        z.array(z.object({
+            name: z.string().optional().describe('密送收件人姓名'),
+            address: z.string().describe('密送收件人邮箱地址'),
+        })).describe('密送对象列表'),
+    ]).optional().describe('密送'),
+    subject: z.string().describe('邮件主题'),
+    content: z.string().describe('邮件内容'),
+    attachments: z.array(z.string()).optional().describe('附件文件路径列表，每个元素是本地文件的绝对路径'),
+});
+
+const ReplyEmailSchema = z.object({
+    uid: z.string().describe('要回复的邮件唯一标识 uid'),
+    content: z.string().describe('回复内容'),
+    replyAll: z.boolean().optional().describe('是否回复所有人，默认 false'),
+});
+
+const MarkEmailReadSchema = z.object({
+    uid: z.string().describe('邮件唯一标识 uid'),
+    read: z.boolean().describe('是否标记为已读：true=标记为已读，false=标记为未读'),
+});
+
+const StarEmailSchema = z.object({
+    uid: z.string().describe('邮件 uid'),
+    starred: z.boolean().describe('是否收藏：true=收藏，false=取消收藏'),
+});
+
+const DeleteEmailSchema = z.object({
+    uid: z.string().describe('邮件唯一标识 uid'),
+});
+
+// ── 回复邮件引用格式（与 Electron 前端一致） ──
+
+export function buildQuotedText(
+    email: { from?: any; to?: any; cc?: any; date?: any; subject?: string },
+    content: { textContent?: string; htmlContent?: string },
+): string {
+    const sender = formatAddresses(email.from);
+    const sendTime = new Date(email.date).toLocaleString();
+    const receivers = formatAddresses(email.to);
+    const ccText = email.cc?.length > 0 ? formatAddresses(email.cc) : '';
+    const subject = email.subject || '(无主题)';
+
+    let originalBody = '';
+    if (content.textContent?.trim()) originalBody = content.textContent.trim();
+    else if (content.htmlContent) originalBody = stripHtml(content.htmlContent);
+
+    const quotedBody = originalBody.split('\n').map(line => `> ${line}`).join('\n');
+
+    const lines = [
+        '---------- 原始邮件 ----------',
+        `发件人: ${sender}`,
+        `发送时间: ${sendTime}`,
+        `收件人: ${receivers}`,
+    ];
+    if (ccText) lines.push(`抄送: ${ccText}`);
+    lines.push(`主题: ${subject}`);
+    lines.push('');
+    lines.push(quotedBody);
+    return lines.join('\n');
+}
+
+export function buildReplyHtml(
+    replyBody: string,
+    email: { from?: any; to?: any; cc?: any; date?: any; subject?: string },
+    content: { textContent?: string; htmlContent?: string },
+): string {
+    const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const userHtml = esc(replyBody).replace(/\n/g, '<br>');
+
+    const sender = formatAddresses(email.from);
+    const sendTime = new Date(email.date).toLocaleString();
+    const receivers = formatAddresses(email.to);
+    const ccText = email.cc?.length > 0 ? formatAddresses(email.cc) : '';
+    const subject = email.subject || '(无主题)';
+
+    const originContent = content.htmlContent
+        ? content.htmlContent
+        : esc(content.textContent || '').replace(/\n/g, '<br>');
+
+    return `<div>${userHtml}</div>
+<br><br>
+<hr style="border: 0; border-top: 1px solid #e5e7eb; margin: 20px 0;">
+<div style="background-color: #f3f4f6; padding: 16px; border-radius: 8px; font-size: 13px; color: #374151; margin-bottom: 20px;">
+  <div style="font-weight: bold; font-size: 14px; margin-bottom: 12px; color: #111827; border-bottom: 1px solid #e5e7eb; padding-bottom: 8px;">
+    ----- 原始邮件 -----
+  </div>
+  <div style="margin-bottom: 6px;"><span style="color: #6b7280; font-weight: bold;">发件人:</span> ${esc(sender)}</div>
+  <div style="margin-bottom: 6px;"><span style="color: #6b7280; font-weight: bold;">发送时间:</span> ${esc(sendTime)}</div>
+  <div style="margin-bottom: 6px;"><span style="color: #6b7280; font-weight: bold;">收件人:</span> ${esc(receivers)}</div>
+  ${ccText ? `<div style="margin-bottom: 6px;"><span style="color: #6b7280; font-weight: bold;">抄送:</span> ${esc(ccText)}</div>` : ''}
+  <div><span style="color: #6b7280; font-weight: bold;">主题:</span> ${esc(subject)}</div>
+</div>
+<div style="font-size: 14px; line-height: 1.6;">${originContent}</div>`;
+}
+
+// ── 工具类 ──
+
+export class GetEmailListTool extends BaseTool<typeof GetEmailListSchema> {
+    constructor() {
+        super('getEmailList', '获取当前邮箱的邮件列表，返回 uid、主题、发件人、日期、已读状态等。', GetEmailListSchema);
+        this.setExecutor(async (args) => {
+            const data = await callMailWorker('getEmailHeaderList', args.offset ?? 0, args.limit ?? 20);
+            const emails: any[] = Array.isArray(data) ? data : [];
+            if (emails.length === 0) return JSON.stringify({ total: 0, emails: [], message: '暂无邮件' });
+            return JSON.stringify({ total: emails.length, emails: mapEmailHeaders(emails) });
+        });
+    }
+}
+
+export class GetEmailContentTool extends BaseTool<typeof GetEmailContentSchema> {
+    constructor() {
+        super('getEmailContent', '获取指定 uid 邮件的完整正文（纯文本），用于查看详情或摘要。', GetEmailContentSchema);
+        this.setExecutor(async (args) => {
+            const content = await callMailWorker('getEmailContent', args.uid);
+            if (!content) return JSON.stringify({ error: '未找到该邮件' });
+            const text = (content.textContent?.trim()) || stripHtml(content.htmlContent || '');
+            return JSON.stringify({ uid: args.uid, textContent: text.slice(0, 5000), fullLength: text.length });
+        });
+    }
+}
+
+export class SearchEmailsTool extends BaseTool<typeof SearchEmailsSchema> {
+    constructor() {
+        super('searchEmails', '按条件搜索邮件，支持主题/发件人/收件人/正文/日期/已读/收藏/附件名等组合搜索。', SearchEmailsSchema);
+        this.setExecutor(async (args) => {
+            const q: any = { limit: args.limit ?? 50, offset: args.offset ?? 0 };
+            if (args.subject) q.subject = args.subject;
+            if (args.from) q.from = args.from;
+            if (args.to) q.to = args.to;
+            if (args.body) q.body = args.body;
+            if (args.general) q.general = args.general;
+            if (args.dateFrom) q.startDate = args.dateFrom;
+            if (args.dateTo) q.endDate = args.dateTo;
+            if (args.unread !== undefined) q.unread = args.unread;
+            if (args.starred !== undefined) q.starred = args.starred;
+            if (args.attachmentName) q.attachmentName = args.attachmentName;
+            const data = await callMailWorker('searchEmails', q);
+            const emails: any[] = Array.isArray(data) ? data : [];
+            return JSON.stringify({ total: emails.length, emails: mapEmailHeaders(emails) });
+        });
+    }
+}
+
+export class SendEmailTool extends BaseTool<typeof SendEmailSchema> {
+    constructor() {
+        super('sendEmail', '发送邮件，需提供收件人、主题和内容，可选抄送、密送和附件。', SendEmailSchema);
+        this.setExecutor(async (args) => {
+            try {
+                const to = normalizeRecipients(args.to);
+                const cc = normalizeRecipients(args.cc);
+                const bcc = normalizeRecipients(args.bcc);
+                const attachments: Array<{ filename: string; path: string }> = [];
+                if (args.attachments?.length) {
+                    for (const fp of args.attachments) {
+                        const resolved = nodePath.resolve(fp);
+                        if (!fs.existsSync(resolved)) return JSON.stringify({ success: false, error: `附件文件不存在: ${fp}` });
+                        attachments.push({ filename: nodePath.basename(resolved), path: resolved });
+                    }
+                }
+                const result = await callMailWorker('sendEmail', {
+                    to, cc: cc.length > 0 ? cc : undefined, bcc: bcc.length > 0 ? bcc : undefined,
+                    subject: args.subject, text: args.content,
+                    html: args.content.replace(/\n/g, '<br>'), attachments,
+                });
+                return JSON.stringify({ success: true, message: '邮件发送成功', data: result });
+            } catch (error: any) {
+                return JSON.stringify({ success: false, error: error.message || '邮件发送失败' });
+            }
+        });
+    }
+}
+
+export class ReplyEmailTool extends BaseTool<typeof ReplyEmailSchema> {
+    constructor() {
+        super('replyEmail', '回复邮件，需提供原邮件 uid 和回复内容。', ReplyEmailSchema);
+        this.setExecutor(async (args) => {
+            try {
+                const emailMeta = await callMailWorker('getEmailMeta', args.uid);
+                if (!emailMeta) return JSON.stringify({ success: false, error: '未找到该邮件' });
+                const emailContent = await callMailWorker('getEmailContent', args.uid);
+
+                let to = [...normalizeRecipients(emailMeta.from)];
+                let cc: string[] = [];
+                if (args.replyAll) {
+                    const seen = new Set(to);
+                    for (const addr of normalizeRecipients(emailMeta.to)) { if (!seen.has(addr)) { to.push(addr); seen.add(addr); } }
+                    for (const addr of normalizeRecipients(emailMeta.cc)) { if (!seen.has(addr)) { cc.push(addr); seen.add(addr); } }
+                }
+
+                const originalSubject = emailMeta.subject || '';
+                const subject = originalSubject.startsWith('Re:') ? originalSubject : `Re: ${originalSubject}`;
+                const quotedText = buildQuotedText(emailMeta, emailContent || {});
+                const fullText = args.content + '\n\n' + quotedText;
+                const html = buildReplyHtml(args.content, emailMeta, emailContent || {});
+
+                const result = await callMailWorker('sendEmail', {
+                    to, cc: cc.length > 0 ? cc : undefined, subject,
+                    text: fullText, html, attachments: [],
+                });
+                return JSON.stringify({ success: true, message: '邮件回复成功', data: result });
+            } catch (error: any) {
+                return JSON.stringify({ success: false, error: error.message || '邮件回复失败' });
+            }
+        });
+    }
+}
+
+export class MarkEmailReadTool extends BaseTool<typeof MarkEmailReadSchema> {
+    constructor() {
+        super('markEmailReadStatus', '标记邮件已读/未读。', MarkEmailReadSchema);
+        this.setExecutor(async (args) => {
+            try {
+                if (args.read) await callMailWorker('markEmailAsRead', args.uid);
+                else await callMailWorker('markEmailAsUnread', args.uid);
+                return JSON.stringify({ success: true, message: `邮件已${args.read ? '标记为已读' : '标记为未读'}` });
+            } catch (error: any) {
+                return JSON.stringify({ success: false, error: error.message || '标记邮件状态失败' });
+            }
+        });
+    }
+}
+
+export class StarEmailTool extends BaseTool<typeof StarEmailSchema> {
+    constructor() {
+        super('starEmail', '收藏或取消收藏邮件。', StarEmailSchema);
+        this.setExecutor(async (args) => {
+            try {
+                await callMailWorker('starEmail', { uid: args.uid, starred: args.starred });
+                return JSON.stringify({ success: true, message: `邮件已${args.starred ? '收藏' : '取消收藏'}` });
+            } catch (error: any) {
+                return JSON.stringify({ success: false, error: error.message || '操作邮件收藏状态失败' });
+            }
+        });
+    }
+}
+
+export class DeleteEmailTool extends BaseTool<typeof DeleteEmailSchema> {
+    constructor() {
+        super('deleteEmail', '删除指定邮件。', DeleteEmailSchema);
+        this.setExecutor(async (args) => {
+            try {
+                await callMailWorker('deleteEmail', args.uid);
+                return JSON.stringify({ success: true, message: '邮件删除成功' });
+            } catch (error: any) {
+                return JSON.stringify({ success: false, error: error.message || '删除邮件失败' });
+            }
+        });
+    }
+}
+
+// ============================================================
+// 跨应用联动工具：日历 & 时间
+// ============================================================
+
+const GetCalendarItemsSchema = z.object({
+    dateString: z.string().describe('日期字符串，格式为 YYYY-MM-DD。例如 "2026-03-05"'),
+});
+export class GetCalendarItemsTool extends BaseTool<typeof GetCalendarItemsSchema> {
+    constructor() {
+        super('getCalendarItems', '获取指定日期的日程/会议列表。当用户想查看某天的安排、检查时间冲突，或需要将邮件中的会议信息与日历比对时使用。', GetCalendarItemsSchema);
+        this.setExecutor(async (args) => {
+            const result = await ApplicationRegistry.callWorker('calendar', 'getCalendarItems', args.dateString);
+            if (result?.status !== 'ok') return JSON.stringify({ error: `无法获取日程: ${result?.message || '未知错误'}` });
+            const items = result.data || [];
+            if (items.length === 0) return JSON.stringify({ total: 0, items: [], message: `${args.dateString} 暂无日程安排` });
+            const mapped = items.map((item: any) => ({
+                uid: item.uid, subject: item.subject,
+                startTime: new Date(item.startTime).toLocaleString(),
+                endTime: new Date(item.endTime).toLocaleString(),
+                location: item.location || '',
+            }));
+            return JSON.stringify({ total: mapped.length, items: mapped });
+        });
+    }
+}
+
+const AddCalendarItemSchema = z.object({
+    subject: z.string().describe('日程标题'),
+    dateString: z.string().describe('日期，格式为 YYYY-MM-DD'),
+    startTime: z.string().describe('开始时间，格式为 HH:MM（24小时制）'),
+    endTime: z.string().describe('结束时间，格式为 HH:MM（24小时制）'),
+    location: z.string().optional().describe('地点（可选）'),
+    isAllDay: z.boolean().optional().default(false).describe('是否为全天事件'),
+});
+export class AddCalendarItemTool extends BaseTool<typeof AddCalendarItemSchema> {
+    constructor() {
+        super('addCalendarItem', '添加新日程/会议。当用户要求根据邮件内容创建日程、安排会议、或设置提醒时使用。', AddCalendarItemSchema);
+        this.setExecutor(async (args) => {
+            const { subject, dateString, startTime, endTime, location, isAllDay } = args;
+            const dateParts = dateString.replace(/-/g, '/');
+            let startTs: number, endTs: number;
+            if (isAllDay) { startTs = new Date(dateParts).getTime(); endTs = startTs + 86400000; }
+            else { startTs = new Date(`${dateParts} ${startTime}`).getTime(); endTs = new Date(`${dateParts} ${endTime}`).getTime(); }
+            if (isNaN(startTs) || isNaN(endTs)) return JSON.stringify({ error: '日期或时间格式无效，请使用 YYYY-MM-DD 和 HH:MM' });
+            if (endTs <= startTs) return JSON.stringify({ error: '结束时间必须晚于开始时间' });
+
+            try {
+                const existing = await ApplicationRegistry.callWorker('calendar', 'getCalendarItems', dateString);
+                if (existing?.status === 'ok' && Array.isArray(existing.data)) {
+                    const subjectLower = subject.trim().toLowerCase();
+                    const dup = existing.data.find((item: any) => {
+                        const iSubj = (item.subject || '').trim().toLowerCase();
+                        const iStart = new Date(item.startTime).getTime();
+                        if (iSubj === subjectLower && iStart === startTs) return true;
+                        const iEnd = new Date(item.endTime).getTime();
+                        return (iSubj.includes(subjectLower) || subjectLower.includes(iSubj)) && startTs < iEnd && endTs > iStart;
+                    });
+                    if (dup) return JSON.stringify({
+                        skipped: true, reason: '已存在相同或相似的日程，无需重复添加',
+                        existing: { uid: dup.uid, subject: dup.subject, startTime: new Date(dup.startTime).toLocaleString(), endTime: new Date(dup.endTime).toLocaleString() },
+                    });
+                }
+            } catch { /* 去重检查失败不阻塞 */ }
+
+            const result = await ApplicationRegistry.callWorker('calendar', 'addCalendarItem', {
+                subject, startTime: startTs, endTime: endTs, location: location || '', isAllDay,
+            });
+            if (result?.status !== 'ok') return JSON.stringify({ error: `添加日程失败: ${result?.message || '未知错误'}` });
+            const item = result.data ?? result;
+            return JSON.stringify({ success: true, uid: item.uid, subject, dateString, startTime, endTime });
+        });
+    }
+}
+
+const DeleteCalendarItemSchema = z.object({
+    uid: z.string().describe('要删除的日程项的唯一标识符（uid），可通过 getCalendarItems 获取'),
+});
+export class DeleteCalendarItemTool extends BaseTool<typeof DeleteCalendarItemSchema> {
+    constructor() {
+        super('deleteCalendarItem', '删除指定的日程项。当用户要求取消某个日程、会议时使用。', DeleteCalendarItemSchema);
+        this.setExecutor(async (args) => {
+            const result = await ApplicationRegistry.callWorker('calendar', 'deleteCalendarItem', args.uid);
+            if (result?.status !== 'ok') return JSON.stringify({ error: `删除日程失败: ${result?.message || '未知错误'}` });
+            const data = result.data ?? result;
+            return JSON.stringify({ success: true, uid: args.uid, ...data });
+        });
+    }
+}
+
+const GetCurrentTimeSchema = z.object({});
+export class GetCurrentTimeTool extends BaseTool<typeof GetCurrentTimeSchema> {
+    constructor() {
+        super('getCurrentTime', '获取当前精确的日期和时间。在需要知道"今天"、"明天"等相对日期时使用。', GetCurrentTimeSchema);
+        this.setExecutor(async () => {
+            const now = new Date();
+            const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+            const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+            return JSON.stringify({
+                date: dateStr, time: timeStr, datetime: now.toLocaleString(),
+                dayOfWeek: ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][now.getDay()],
+            });
         });
     }
 }
