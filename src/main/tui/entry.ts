@@ -18,7 +18,7 @@ import { UpgradeOverlay } from "./components/upgrade";
 import { AgentDecl } from "../aikernel/agent.js";
 import { ShellAgentDecl } from "../aikernel/agents/shellagent.js";
 import { HelpOverlay } from "./components/help";
-import { ConfirmOverlay, InfoOverlay } from "./components/notice";
+import { ConfirmOverlay, InfoOverlay, InfoPage } from "./components/notice";
 import { DashboardOverlay } from "./components/dashboard";
 import { LogPanel, LogPanelMode } from "./components/logpanel";
 import { TodoList } from "./components/todolist";
@@ -36,6 +36,7 @@ import { createMemoryToolset } from "../aikernel/memory/tools";
 import { NotificationStore, NotificationCenterOverlay, ToastManager, getNotificationBadge } from "./components/notification";
 import { NotificationManager } from "../utils/notificationmgr.js";
 import { SkillMgrApplication } from "../applications/skillmgr/app.js";
+import { getFilemgrStatusNotice } from "./filemgrStatusNotice";
 
 import format from "string-template";
 import path from "path";
@@ -410,6 +411,7 @@ export class OpenDeskTUI {
 
         ApplicationRegistry.onReady(() => {
             this.registerApplicationCommands();
+            this.refreshStatusNotice();
         });
     }
 
@@ -513,7 +515,60 @@ export class OpenDeskTUI {
         this.tui.requestRender();
     }
 
-    exitConfigMode() {
+    /**
+     * 以内联页面方式展示标题和内容（非浮层），用户按 Enter/Esc 后恢复正常布局。
+     * 供应用层 slash command 调用，替代 InfoOverlay 浮层。
+     */
+    public showTextPage(title: string, message: string): void {
+        const page = new InfoPage(this, title, message, () => {
+            this.shortcutManager.attach(this.tui);
+            if (this.modelNotConfiguredMode) {
+                const setting = Setting.getInstance();
+                const data = setting.getData() as any;
+                if (!data.default_model || data.default_model.trim() === '') {
+                    this.container.clear();
+                    this.container.addChild(new OpenDeskBanner(this.workspace));
+                    if (this.modelNotConfiguredNotice) {
+                        this.container.addChild(this.modelNotConfiguredNotice);
+                    }
+                    this.container.addChild(this.inputArea);
+                    this.container.setMinLines(this.tui.terminal.rows);
+                    this.tui.requestRender();
+                    setTimeout(() => {
+                        this.tui.setFocus(this.inputArea.input);
+                        this.tui.requestRender();
+                    }, 10);
+                    return;
+                } else {
+                    this.modelNotConfiguredNotice = undefined;
+                    this.modelNotConfiguredMode = false;
+                }
+            }
+
+            this.container.clear();
+            this.container.addChild(new OpenDeskBanner(this.workspace));
+            this.container.addChild(this.taskView);
+            this.container.addChild(this.todoList);
+            if (this.logPanel.mode !== 'off') {
+                this.container.addChild(this.logPanel);
+            }
+            this.container.addChild(this.inputArea);
+            this.container.setMinLines(this.tui.terminal.rows);
+            this.tui.requestRender();
+            setTimeout(() => {
+                this.tui.setFocus(this.inputArea.input);
+                this.tui.requestRender();
+            }, 10);
+        });
+        this.shortcutManager.detach();
+        this.container.clear();
+        this.container.addChild(new OpenDeskBanner(this.workspace));
+        this.container.addChild(page);
+        this.container.setMinLines(this.tui.terminal.rows);
+        this.tui.requestRender();
+    }
+
+    private exitConfigMode() {
         this.configComponent = undefined;
 
         this.shortcutManager.attach(this.tui);
@@ -536,6 +591,7 @@ export class OpenDeskTUI {
                     this.tui.setFocus(this.inputArea.input);
                     this.tui.requestRender();
                 }, 10);
+                this.refreshStatusNotice();
                 return;
             } else {
                 // 模型已配置，清除提示状态
@@ -561,6 +617,7 @@ export class OpenDeskTUI {
             this.tui.setFocus(this.inputArea.input);
             this.tui.requestRender();
         }, 10);
+        this.refreshStatusNotice();
     }
 
     async createNewTask() {
@@ -922,12 +979,14 @@ export class OpenDeskTUI {
             // 检查是否没有配置模型
             if (!aliasToUse || aliasToUse.trim() === '') {
                 // 没有配置模型，隐藏 taskview 并显示提示信息
+                this.setStatusNotice('');
                 this.showModelNotConfiguredNotice();
                 return;
             }
 
             // 模型已配置，恢复正常的 taskview 显示
             this.hideModelNotConfiguredNotice();
+            this.refreshStatusNotice();
 
             const modelCfg = data.models?.find((m: any) => m.alias === aliasToUse);
             const modelName = modelCfg?.model_name ?? aliasToUse;
@@ -987,6 +1046,7 @@ export class OpenDeskTUI {
             chalk.white('  2. 选择"模型服务商配置"并添加一个模型模型服务商'),
             chalk.white('  3. 选择"模型配置"并添加一个模型'),
             chalk.white('  4. 选择 "默认模型配置", 并选择你要使用的模型'),
+            chalk.white('  5. (可选) 选择 "文件扫描配置", 添加文件搜索目录'),
             '',
             chalk.dim('然后? 你可以休息了，让我开始工作吧!'),
         ].join('\n');
@@ -1028,6 +1088,12 @@ export class OpenDeskTUI {
         // 移除提示组件
         this.modelNotConfiguredNotice = undefined;
         this.modelNotConfiguredMode = false;
+
+        // 如果当前处于配置模式，不破坏配置页面布局；
+        // exitConfigMode() 退出时会根据最新状态恢复主界面。
+        if (this.configComponent) {
+            return;
+        }
 
         // 恢复原始布局
         this.container.clear();
@@ -1137,6 +1203,19 @@ export class OpenDeskTUI {
             children[0] = new OpenDeskBanner(this.workspace);
         }
         this.tui.requestRender(true);
+    }
+
+    private setStatusNotice(notice: string): void {
+        this.inputArea.statusBar.update({ statusNotice: notice });
+        this.tui.requestRender();
+    }
+
+    /**
+     * 刷新底部状态栏提示：
+     * 目录未配置 > embedding 未配置 > 无提示。
+     */
+    private refreshStatusNotice(): void {
+        this.setStatusNotice(getFilemgrStatusNotice(this.modelNotConfiguredMode));
     }
 
     start() {

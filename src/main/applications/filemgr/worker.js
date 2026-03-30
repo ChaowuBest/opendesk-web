@@ -108,6 +108,12 @@ class FSScanner {
      * @returns {number | undefined} 扫描深度，undefined表示全量扫描
      */
     _getScanDepth() {
+        // 在首次成功的全量扫描写入 metadata 之前，持续执行全量扫描。
+        // 这样用户先配置扫描路径、后配置 embedding 时，补齐配置后下一轮即可恢复 metadata。
+        if (this.metadata.last_full_scan === 0) {
+            return undefined;
+        }
+
         const counter = this._counter;
         // 每32次进行一次全量扫描
         if (counter % 32 === 0) {
@@ -139,7 +145,7 @@ class FSScanner {
             path: file.path,
             filename: file.name,
             size: file.stats.size,
-            modified: file.stats.ctimeMs,
+            modified: Math.max(file.stats.ctimeMs, file.stats.mtimeMs),
             created: file.stats.birthtimeMs,
             accessed: file.stats.atimeMs,
             type: file.stats.isDirectory() ? 'directory' : 'file'
@@ -153,7 +159,7 @@ class FSScanner {
      * @returns {boolean}
      */
     _isFileUpdated(file, lastScanningTime) {
-        return file.stats.ctimeMs > lastScanningTime || file.stats.birthtimeMs > lastScanningTime;
+        return Math.max(file.stats.ctimeMs, file.stats.mtimeMs) > lastScanningTime;
     }
 
     async scan() {
@@ -191,6 +197,7 @@ class FSScanner {
         const BATCH_SIZE = 500; // 减小批次大小，更频繁地释放内存
         let updatedCount = 0;
         let savedCount = 0;
+        let indexingSucceeded = true;
         const debugFiles = []; // 只收集前20个用于日志
 
         const filterStartTime = Date.now();
@@ -219,8 +226,11 @@ class FSScanner {
             // 立即保存批次，释放内存
             if (fileEntries.length > 0) {
                 try {
-                    await this.storage.saveFiles(fileEntries);
-                    savedCount += fileEntries.length;
+                    const savedThisBatch = await this.storage.saveFiles(fileEntries);
+                    savedCount += savedThisBatch;
+                    if (savedThisBatch < fileEntries.length) {
+                        indexingSucceeded = false;
+                    }
                 } catch (error) {
                     logger.error(`failed to save batch (${i}-${i + batch.length}) to storage: ${error.message}`, error);
                     throw error;
@@ -242,7 +252,7 @@ class FSScanner {
         // 记录前20个更新文件的详细信息
         if (debugFiles.length > 0) {
             for (const file of debugFiles) {
-                logger.debug(`-> updated file: ${file.path} ctime:${file.stats.ctimeMs} birthtime:${file.stats.birthtimeMs} atime:${file.stats.atimeMs}`);
+                logger.debug(`-> updated file: ${file.path} ctime:${file.stats.ctimeMs} mtime:${file.stats.mtimeMs} atime:${file.stats.atimeMs}`);
             }
             if (updatedCount > 20) {
                 logger.debug(`... and ${updatedCount - 20} more updated files`);
@@ -251,6 +261,11 @@ class FSScanner {
 
         // 如果是全量扫描，更新元数据
         if (deep === undefined) {
+            if (!indexingSucceeded) {
+                logger.warn(`full scan for ${this.root} did not finish indexing successfully, skipping metadata checkpoint update`);
+                return;
+            }
+
             const now = Date.now();
             logger.info(`finished full scan for ${this.root}, setting metadata timestamp to ${now}`);
             this.metadata.last_full_scan = now;
@@ -285,15 +300,13 @@ class FileManagerWorker extends BaseWorker {
         }
         return {
             status: this.status,
-            scanners: [
-                ...this.scanners.values().map(instance => {
-                    return {
-                        entry: instance.entry,
-                        lastFullScan: instance.metadata.last_full_scan,
-                        totalFiles: instance.metadata.total_files
-                    }
-                })
-            ],
+            scanners: [...this.scanners.values()].map(instance => {
+                return {
+                    entry: instance.entry,
+                    lastFullScan: instance.metadata.last_full_scan,
+                    totalFiles: instance.metadata.total_files
+                }
+            }),
             storage: await this.storage.getStatus(),
         };
     }
@@ -312,7 +325,8 @@ class FileManagerWorker extends BaseWorker {
                 for (const fsEntry of filesystems) {
                     let instance = new FSScanner(fsEntry, this.storage, this.taskQueue);
                     this.scanners.set(fsEntry.root, instance);
-                    instance.start();
+                    // Wait for scanner metadata to be loaded from DB before exposing status.
+                    await instance.start();
                 }
                 this.status = "running";
             } finally {
@@ -421,7 +435,8 @@ class FileManagerWorker extends BaseWorker {
                 try {
                     const instance = new FSScanner(fsEntry, this.storage, this.taskQueue);
                     this.scanners.set(fsEntry.root, instance);
-                    instance.start();
+                    // Wait for scanner metadata to be loaded from DB before exposing status.
+                    await instance.start();
                     logger.info(`started scanner for ${fsEntry.root}`);
                 } catch (error) {
                     logger.error(`failed to start scanner for ${fsEntry.root}: ${error.message}`, error);
@@ -451,9 +466,8 @@ class FileManagerWorker extends BaseWorker {
             return;
         }
 
-        // 如果已经初始化且状态是running，则重启scanners
-        // 使用 runSequentially 确保顺序执行
-        if (this.storage && this.status === "running") {
+        // storage 已初始化就重启 scanners（包括 idle 状态 —— 首次空 entries 启动后添加目录的情况）
+        if (this.storage && this.status !== "error") {
             await this.runSequentially(async () => {
                 await this._restartScanners();
             });
