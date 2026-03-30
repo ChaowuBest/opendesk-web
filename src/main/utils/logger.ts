@@ -123,9 +123,51 @@ export function useCliTransport() {
     }
 }
 
+/**
+ * 拦截 console.log / console.warn / console.error / console.debug，
+ * 将它们全部重定向到 winston logger。
+ * 用于 CLI TUI 模式下防止外部插件直接向 stdout 输出破坏界面。
+ */
+type ConsoleInterceptHook = (level: string, message: string) => void;
+const consoleInterceptHooks: ConsoleInterceptHook[] = [];
+
+export function addConsoleInterceptHook(hook: ConsoleInterceptHook) {
+    consoleInterceptHooks.push(hook);
+}
+
+export function interceptConsole() {
+    const stringify = (...args: any[]) =>
+        args.map(a => {
+            if (typeof a === 'string') return a;
+            try { return JSON.stringify(a, null, 2) ?? String(a); }
+            catch { return String(a); }
+        }).join(' ');
+
+    const notifyHooks = (level: string, msg: string) => {
+        for (const hook of consoleInterceptHooks) {
+            try { hook(level, msg); } catch { /* ignore hook errors */ }
+        }
+    };
+
+    console.log = (...args: any[]) => { const m = stringify(...args); logger.info(m); notifyHooks('info', m); };
+    console.warn = (...args: any[]) => { const m = stringify(...args); logger.warn(m); notifyHooks('warn', m); };
+    console.error = (...args: any[]) => { const m = stringify(...args); logger.error(m); notifyHooks('error', m); };
+    console.debug = (...args: any[]) => { const m = `[debug] ${stringify(...args)}`; logger.info(m); notifyHooks('debug', m); };
+    console.info = (...args: any[]) => { const m = stringify(...args); logger.info(m); notifyHooks('info', m); };
+}
+
 export function useConsoleTransport() {
     if (loggerInstance) {
         loggerInstance.add(new winston.transports.Console());
+    }
+}
+
+export function useDumpLogTransport(filePath: string) {
+    if (loggerInstance) {
+        loggerInstance.add(new winston.transports.File({
+            filename: filePath,
+            options: { flags: 'w' },
+        }));
     }
 }
 

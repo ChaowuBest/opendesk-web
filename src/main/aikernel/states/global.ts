@@ -9,33 +9,32 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { TaskManagerState, TaskState } from './tasks.js';
+import { TaskManagerState } from './tasks.js';
 
 
-/**
- * @property {TaskManagerState} taskManagerState
- */
 class GlobalState {
+    private static instance: GlobalState | null = null;
+    taskManagerState: TaskManagerState;
 
-    constructor () {
+    constructor() {
         this.taskManagerState = new TaskManagerState();
     }
 
-    static initialize() {
-        this.getInstance();
+    static initialize(): void {
+        GlobalState.getInstance();
     }
 
     /**
      * Get the unique global state instance
-     * @returns {GlobalState}
+     * @returns the GlobalState instance
      */
-    static getInstance () {
+    static getInstance(): GlobalState {
         if (!GlobalState.instance) {
-            let existingGlobalState = GlobalState.load();
+            const existingGlobalState = GlobalState.load();
             if (existingGlobalState !== null) {
                 GlobalState.instance = existingGlobalState;
             } else {
-                console.info('creating new global state instance')
+                console.info('creating new global state instance');
                 GlobalState.instance = new GlobalState();
             }
         }
@@ -43,13 +42,13 @@ class GlobalState {
         return GlobalState.instance;
     }
 
-    static load() {
-        let taskManagerState = TaskManagerState.load();
+    static load(): GlobalState | null {
+        const taskManagerState = TaskManagerState.load();
         if (taskManagerState === null) {
             return null;
         }
 
-        var globalState = new GlobalState();
+        const globalState = new GlobalState();
         globalState.taskManagerState = taskManagerState;
         return globalState;
     }

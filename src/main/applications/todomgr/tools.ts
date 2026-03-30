@@ -15,7 +15,7 @@ import { Card, type BorderConfig } from '../../tui/components/card';
 import { statusDisplay, truncText } from '../../tui/components/toolcall';
 import { z } from 'zod';
 import type { TaskTodo } from './common';
-import type { TaskState } from '../../states/tasks';
+import type { TaskState } from '../../aikernel/states/tasks';
 import { escapeHtml } from '../../utils/escape';
 import { type TodoMgrApplication } from './app';
 import { describeCron } from '../../utils/cron';
@@ -42,9 +42,15 @@ export class GetCurrentTimeTool extends BaseTool<typeof GetCurrentTimeArgsSchema
         const now = new Date();
         const iso = now.toISOString();
         const locale = now.toLocaleString();
-        const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
-        // 以 Markdown bullet 格式返回，便于阅读和复用
+        // 使用 getTimezoneOffset() 获取更可靠的时区偏移量
+        const offsetMin = -now.getTimezoneOffset(); // e.g. +480 for UTC+8
+        const offsetHours = Math.floor(Math.abs(offsetMin) / 60);
+        const offsetRemainingMin = Math.abs(offsetMin) % 60;
+        const offsetSign = offsetMin >= 0 ? '+' : '-';
+        const offsetStr = `${offsetSign}${String(offsetHours).padStart(2, '0')}:${String(offsetRemainingMin).padStart(2, '0')}`;
+        const timezone = `UTC${offsetStr}`;
+
         return [
             `- **UTC 时间**: ${iso}`,
             `- **当地时间**: ${locale}`,
@@ -151,6 +157,11 @@ function formatTriggerDisplay(trigger: any): string {
         default:
             return '';
     }
+}
+
+function formatDeliverDisplay(deliver: any): string {
+    if (!deliver) return '';
+    return `${deliver.channel}:${deliver.accountId} → ${deliver.recipientId}`;
 }
 
 // ========== TodoWrite 工具 ==========
@@ -376,6 +387,41 @@ export class AddGlobalTodoTool extends BaseTool<typeof AddGlobalTodoArgsSchema> 
         this.setExecutor(this.handleExecute.bind(this));
     }
 
+    renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
+        const args = toolcall.args_object as any;
+        const title = args?.['title'];
+        const content = args?.['content'];
+        const priority = args?.['priority'] || 'medium';
+        const category = args?.['category'];
+        const trigger = args?.['trigger'];
+
+        let html = '<div style="padding: 12px;">';
+        html += '<div style="font-weight: 600; margin-bottom: 8px;">🌍 添加全局待办</div>';
+
+        if (title) html += `<div style="margin-bottom: 4px;"><span style="color: #6b7280;">标题:</span> ${escapeHtml(String(title))}</div>`;
+        if (content) html += `<div style="margin-bottom: 4px;"><span style="color: #6b7280;">内容:</span> ${escapeHtml(String(content))}</div>`;
+        html += `<div style="margin-bottom: 4px;"><span style="color: #6b7280;">优先级:</span> ${escapeHtml(String(priority).toUpperCase())}</div>`;
+        if (category) html += `<div style="margin-bottom: 4px;"><span style="color: #6b7280;">分类:</span> ${escapeHtml(String(category))}</div>`;
+        if (trigger) html += `<div style="margin-bottom: 4px;"><span style="color: #6b7280;">触发器:</span> ${escapeHtml(formatTriggerDisplay(trigger))}</div>`;
+
+        if (toolcall.status === 'success' && toolcall.result) {
+            try {
+                const result = JSON.parse(toolcall.result);
+                html += `<div style="color: #16a34a; margin-top: 8px;">✓ 待办已添加，ID: ${escapeHtml(String(result.id))}</div>`;
+                if (result.todo?.deliver) {
+                    html += `<div style="color: #2563eb; margin-top: 4px;">📨 投递到: ${escapeHtml(formatDeliverDisplay(result.todo.deliver))}</div>`;
+                }
+            } catch {
+                html += '<div style="color: #16a34a; margin-top: 8px;">✓ 待办已添加!</div>';
+            }
+        } else if (toolcall.status === 'error' && toolcall.result) {
+            html += `<div style="color: #dc2626; margin-top: 8px;">${escapeHtml(String(toolcall.result))}</div>`;
+        }
+
+        html += '</div>';
+        return Promise.resolve(html);
+    }
+
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
         const args = toolcall.args_object as any;
         const title = args?.['title'];
@@ -406,6 +452,9 @@ export class AddGlobalTodoTool extends BaseTool<typeof AddGlobalTodoArgsSchema> 
             try {
                 const result = JSON.parse(toolcall.result);
                 body.push(chalk.dim('  ✓ 待办已添加，ID: ') + chalk.green(String(result.id)));
+                if (result.todo?.deliver) {
+                    body.push(chalk.dim('  📨 投递到: ') + chalk.blueBright(formatDeliverDisplay(result.todo.deliver)));
+                }
             } catch {
                 body.push(chalk.dim('  ✓ 待办已添加!'));
             }
@@ -425,14 +474,17 @@ export class AddGlobalTodoTool extends BaseTool<typeof AddGlobalTodoArgsSchema> 
         return map[priority] || chalk.yellow;
     }
 
-    private async handleExecute(args: z.output<typeof AddGlobalTodoArgsSchema>): Promise<string> {
+    private async handleExecute(args: z.output<typeof AddGlobalTodoArgsSchema>, taskState?: TaskState): Promise<string> {
         // 解析并验证 trigger 字段（处理大模型可能传入字符串形式的情况）
         const normalizedTrigger = validateAndNormalizeTrigger(args.trigger);
 
         // 验证 scheduled trigger 的时间格式
         validateScheduledTrigger(normalizedTrigger);
 
-        const result = await this.todoMgrApp.callWorker('addGlobalTodo', args.title, args.content, args.priority, args.category, normalizedTrigger);
+        // 从当前任务的 origin 继承 deliver（如飞书发起的会话，待办也投递到飞书）
+        const deliver = taskState?.origin;
+
+        const result = await this.todoMgrApp.callWorker('addGlobalTodo', args.title, args.content, args.priority, args.category, normalizedTrigger, deliver);
         const todo = result?.data ?? result;
         return JSON.stringify({ success: true, id: todo.id, todo });
     }
@@ -471,7 +523,7 @@ export class UpdateGlobalTodoTool extends BaseTool<typeof UpdateGlobalTodoArgsSc
 
         if (id) {
             body.push(chalk.dim('ID: ') + chalk.cyan(String(id)));
-            const updates = [];
+            const updates: string[] = [];
             if (args.title) updates.push('标题');
             if (args.content) updates.push('内容');
             if (args.status) updates.push('状态');
@@ -493,17 +545,21 @@ export class UpdateGlobalTodoTool extends BaseTool<typeof UpdateGlobalTodoArgsSc
         return new Card({ icon: '🔄', title: '更新全局待办', status: statusDisplay(toolcall.status), body }).render(width);
     }
 
-    private async handleExecute(args: z.output<typeof UpdateGlobalTodoArgsSchema>): Promise<string> {
+    private async handleExecute(args: z.output<typeof UpdateGlobalTodoArgsSchema>, taskState?: TaskState): Promise<string> {
         // 解析并验证 trigger 字段（处理大模型可能传入字符串形式的情况）
         const normalizedTrigger = validateAndNormalizeTrigger(args.trigger);
 
         // 验证 scheduled trigger 的时间格式
         validateScheduledTrigger(normalizedTrigger);
 
+        // 从当前任务的 origin 继承 deliver
+        const deliver = taskState?.origin;
+
         // 构建更新参数，使用规范化后的 trigger
         const updateArgs = {
             ...args,
             trigger: normalizedTrigger,
+            deliver,
         };
 
         const result = await this.todoMgrApp.callWorker('updateGlobalTodo', args.id, updateArgs);
@@ -553,8 +609,9 @@ export class ListGlobalTodosTool extends BaseTool<typeof ListGlobalTodosArgsSche
                         const priority = String(todo.priority || 'medium');
                         const priorityColor = this.getPriorityColor(priority);
                         const triggerInfo = todo.trigger ? ' ' + chalk.dim(formatTriggerDisplay(todo.trigger)) : '';
+                        const deliverInfo = todo.deliver ? ' ' + chalk.dim('📨 ' + formatDeliverDisplay(todo.deliver)) : '';
                         const displayText = todo.title || todo.content;
-                        body.push(`    ${statusColor(statusIcon)} ${priorityColor('[' + priority.toUpperCase() + ']')} ${truncText(String(displayText), width - 40)}${triggerInfo}`);
+                        body.push(`    ${statusColor(statusIcon)} ${priorityColor('[' + priority.toUpperCase() + ']')} ${truncText(String(displayText), width - 40)}${triggerInfo}${deliverInfo}`);
                     }
                     if (todos.length > 5) {
                         body.push(chalk.dim(`    ... 还有 ${todos.length - 5} 个`));

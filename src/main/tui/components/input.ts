@@ -1,18 +1,31 @@
 
-import { Box, Component, Text, Editor, TUI, CombinedAutocompleteProvider } from "@mariozechner/pi-tui";
-import { defaultEditorTheme } from "../theme";
+import { Box, Component, Text, Editor, TUI, CombinedAutocompleteProvider, Markdown, type AutocompleteProvider, type AutocompleteItem } from "@mariozechner/pi-tui";
+import { defaultEditorTheme, defaultMarkdownTheme } from "../theme";
 import { SlashCommandRegistry } from "../commands";
 import type { OpenDeskTUI } from "../entry";
 import chalk from "chalk";
-import { visibleWidth } from "@mariozechner/pi-tui";
+import { visibleWidth, truncateToWidth } from "@mariozechner/pi-tui";
+import { getNotificationBadge } from "./notification";
+import { getFileCompletions, extractAtQuery, FILE_COMPLETION_MAX_RESULTS } from "./file-completions";
+import { getShellCompletions, executeShellCommand } from "./shell";
+import { spawnSync } from "child_process";
+import process from "process";
+import { SkillRegistry as AISkillRegistry } from "../../aikernel/skill";
 
 type AgentInputStatus = 'idle' | 'running';
+
+export interface ChannelStatusEntry {
+    label: string;
+    online: boolean;
+}
 
 export interface StatusBarData {
     elapsedMs: number;
     totalTokens: number;
     contextSize: number;
     modelName: string;
+    channelStates?: ChannelStatusEntry[];
+    shellMode?: boolean;
 }
 
 /**
@@ -93,6 +106,7 @@ export class StatusBar implements Component {
         if (this.timerStarted) {
             this.data.elapsedMs = this.accumulatedMs + (Date.now() - this.timerStart);
         }
+        this.tui?.requestRender();
     }
 
     private formatElapsed(ms: number): string {
@@ -111,36 +125,370 @@ export class StatusBar implements Component {
             return this.cachedOutput;
         }
         this.lastWidth = width;
-        const { elapsedMs, totalTokens, contextSize, modelName } = this.data;
+        const { elapsedMs, totalTokens, contextSize, modelName, channelStates, shellMode } = this.data;
 
         const parts: string[] = [];
-        if (this.timerStarted) {
-            const icon = StatusBar.SPINNER[this.spinnerFrame];
-            parts.push(chalk.greenBright(`${icon} ${this.formatElapsed(elapsedMs)}`));
-        } else if (elapsedMs > 0) {
-            parts.push(chalk.hex('#d4d4d4')(`⏱ ${this.formatElapsed(elapsedMs)}`));
-        }
-        if (totalTokens > 0) {
-            const pct = contextSize > 0 ? ((totalTokens / contextSize) * 100).toFixed(1) : '—';
-            parts.push(`Tokens: ${totalTokens}/${contextSize} (${pct}%)`);
-        }
-        if (modelName) {
-            parts.push(`模型: ${modelName}`);
+        if (shellMode) {
+            parts.push(chalk.cyan('📟 Shell 命令模式'));
+        } else {
+            if (this.timerStarted) {
+                const icon = StatusBar.SPINNER[this.spinnerFrame];
+                parts.push(chalk.greenBright(`${icon} ${this.formatElapsed(elapsedMs)}`));
+            } else if (elapsedMs > 0) {
+                parts.push(chalk.hex('#d4d4d4')(`⏱ ${this.formatElapsed(elapsedMs)}`));
+            }
+            if (totalTokens > 0) {
+                const pct = contextSize > 0 ? ((totalTokens / contextSize) * 100).toFixed(1) : '—';
+                parts.push(`Tokens: ${totalTokens}/${contextSize} (${pct}%)`);
+            }
+            if (modelName) {
+                parts.push(modelName);
+            }
         }
 
         const leftContent = parts.length > 0 ? ` ${parts.join('  │  ')}` : '';
-        const rightHint = '/help 帮助 ';
-        const leftW = visibleWidth(leftContent);
+
+        const rightParts: string[] = [];
+        if (channelStates && channelStates.length > 0) {
+            const channelLabels = channelStates.map(ch =>
+                ch.online
+                    ? chalk.greenBright(`● ${ch.label}`)
+                    : chalk.hex('#666666')(`○ ${ch.label}`)
+            );
+            rightParts.push(channelLabels.join('  '));
+        }
+        const badge = getNotificationBadge();
+        if (badge) {
+            rightParts.push(badge);
+        }
+        rightParts.push(chalk.hex('#d4d4d4')('/help 帮助'));
+        const rightHint = rightParts.join(chalk.hex('#d4d4d4')('  │  ')) + ' ';
+
+        let leftW = visibleWidth(leftContent);
         const rightW = visibleWidth(rightHint);
+        const totalNeeded = leftW + 1 + rightW;
+
+        let finalLeft = leftContent;
+        if (totalNeeded > width) {
+            const maxLeftW = Math.max(0, width - rightW - 2);
+            finalLeft = truncateToWidth(leftContent, maxLeftW);
+            leftW = visibleWidth(finalLeft);
+        }
+
         const gap = Math.max(1, width - leftW - rightW);
         const line = chalk.bgHex('#3a3a3a')(
-            chalk.hex('#d4d4d4')(leftContent) + ' '.repeat(gap) + chalk.hex('#d4d4d4')(rightHint)
+            chalk.hex('#d4d4d4')(finalLeft) + ' '.repeat(gap) + rightHint
         );
         this.cachedOutput = [line];
         this.invalidated = false;
         return this.cachedOutput;
     }
 }
+
+// ── fd 检测 & @ 文件补全回退 ──────────────────────────────────────────────
+
+let _cachedFdPath: string | null | undefined;
+
+function detectFd(): string | null {
+    if (_cachedFdPath !== undefined) return _cachedFdPath;
+    for (const bin of ["fd", "fdfind"]) {
+        try {
+            const cmd = process.platform === "win32" ? "where" : "which";
+            const r = spawnSync(cmd, [bin], { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] });
+            if (r.status === 0 && r.stdout.trim()) {
+                _cachedFdPath = r.stdout.trim().split(/\r?\n/)[0]!;
+                return _cachedFdPath;
+            }
+        } catch { /* ignore */ }
+    }
+    _cachedFdPath = null;
+    return null;
+}
+
+
+/** 缓存的 user-invocable skill 列表（name -> description），用于同步的自动补全 */
+interface CachedSkillInfo {
+    name: string;
+    description: string;
+    bundleName: string;
+    argumentHint?: string;
+}
+
+let _cachedUserInvocableSkills: CachedSkillInfo[] = [];
+
+/**
+ * 异步刷新 user-invocable skill 缓存
+ */
+async function refreshSkillCache() {
+    try {
+        const registry = AISkillRegistry.getInstance();
+        const skills = await registry.getUserInvocableSkills();
+        _cachedUserInvocableSkills = skills.map(({ bundleName, skill }) => ({
+            name: skill.frontmatter.name,
+            description: skill.frontmatter.description || '',
+            bundleName,
+            argumentHint: skill.frontmatter['argument-hint'],
+        }));
+    } catch {
+        // 初始阶段 registry 可能还没就绪，静默忽略
+    }
+}
+
+export function getCachedUserInvocableSkills(): CachedSkillInfo[] {
+    return _cachedUserInvocableSkills;
+}
+
+/**
+ * 包装 CombinedAutocompleteProvider，当 fd 不可用时为 @ 前缀提供
+ * 基于 readdirSync 的本地文件补全回退；当以 ! 开头时提供 shell 命令补全。
+ * 同时提供 /skillname 的自动补全支持。
+ */
+class FileAwareAutocompleteProvider implements AutocompleteProvider {
+    private commandNames: Set<string>;
+
+    constructor(
+        private inner: CombinedAutocompleteProvider,
+        private basePath: string,
+        commandNames: string[],
+    ) {
+        this.commandNames = new Set(commandNames);
+    }
+
+    updateBasePath(newBasePath: string) {
+        this.basePath = newBasePath;
+    }
+
+    /**
+     * 获取行内（非行首） /skillname 的补全建议
+     * 当用户在非行首位置输入 / 或 /xxx 时触发
+     */
+    private getInlineSkillSuggestions(textBeforeCursor: string): { items: AutocompleteItem[]; prefix: string } | null {
+        // 匹配行内的 / 或 /xxx 模式：前面必须有空格
+        const match = textBeforeCursor.match(/(?:\s)(\/[a-z0-9][-a-z0-9]*)$|(?:\s)(\/)$/);
+        if (!match) return null;
+
+        const slashPrefix = match[1] || match[2]; // e.g. "/exp" or "/"
+        const namePrefix = slashPrefix.slice(1); // e.g. "exp" or ""
+
+        const skills = _cachedUserInvocableSkills;
+        if (skills.length === 0) return null;
+
+        const items: AutocompleteItem[] = [];
+        for (const skill of skills) {
+            if (namePrefix === '' || skill.name.startsWith(namePrefix) || skill.name.includes(namePrefix)) {
+                items.push({
+                    value: skill.name,
+                    label: skill.name,
+                    description: `[skill] ${skill.description.slice(0, 60)}`,
+                });
+            }
+        }
+        if (items.length === 0) return null;
+        return { items, prefix: slashPrefix };
+    }
+
+    getSuggestions(lines: string[], cursorLine: number, cursorCol: number) {
+        const currentLine = lines[cursorLine] || "";
+        const textBeforeCursor = currentLine.slice(0, cursorCol);
+        const trimmedFull = currentLine.trimStart();
+
+        // Shell command mode: input starts with !
+        if (trimmedFull.startsWith('!')) {
+            const bangIdx = currentLine.indexOf('!');
+            const cmdText = textBeforeCursor.slice(bangIdx + 1);
+            const tokens = cmdText.trimStart().split(/\s+/);
+            const lastToken = tokens[tokens.length - 1] || '';
+
+            const items = getShellCompletions(cmdText, this.basePath);
+            if (items.length > 0) {
+                return { items, prefix: lastToken };
+            }
+            return null;
+        }
+
+        // 判断是否行首（trimmed 后以 / 开头且不含空格）
+        const trimmedBefore = textBeforeCursor.trimStart();
+        const isLineStart = trimmedBefore.startsWith('/') && !trimmedBefore.includes(' ');
+
+        if (isLineStart) {
+            // 行首：由 CombinedAutocompleteProvider 补全 command，我们再追加 skill
+            const result = this.inner.getSuggestions(lines, cursorLine, cursorCol);
+            const namePrefix = trimmedBefore.slice(1);
+
+            // 过滤不与 command 重名的 user-invocable skill
+            const skillItems: AutocompleteItem[] = [];
+            for (const skill of _cachedUserInvocableSkills) {
+                if (this.commandNames.has(skill.name)) continue; // command 优先
+                if (skill.name.startsWith(namePrefix) || skill.name.includes(namePrefix)) {
+                    skillItems.push({
+                        value: skill.name,
+                        label: skill.name,
+                        description: `[skill] ${skill.description.slice(0, 60)}`,
+                    });
+                }
+            }
+
+            if (result && result.items.length > 0) {
+                if (skillItems.length > 0) {
+                    result.items.push(...skillItems);
+                }
+                return result;
+            }
+
+            if (skillItems.length > 0) {
+                return { items: skillItems, prefix: textBeforeCursor };
+            }
+            return result;
+        }
+
+        // 非行首：检查是否有行内 /skillname 需要补全
+        const inlineSkill = this.getInlineSkillSuggestions(textBeforeCursor);
+        if (inlineSkill) return inlineSkill;
+
+        const result = this.inner.getSuggestions(lines, cursorLine, cursorCol);
+        if (result && result.items.length > 0) return result;
+
+        const atMatch = extractAtQuery(textBeforeCursor);
+        if (atMatch) {
+            const items = getFileCompletions(this.basePath, atMatch.query, {
+                atPrefix: true,
+                maxResults: FILE_COMPLETION_MAX_RESULTS,
+            });
+            if (items.length > 0) {
+                return { items, prefix: atMatch.fullPrefix };
+            }
+        }
+
+        return result;
+    }
+
+    applyCompletion(
+        lines: string[], cursorLine: number, cursorCol: number,
+        item: AutocompleteItem, prefix: string,
+    ) {
+        // For shell mode completions, handle insertion manually
+        const currentLine = lines[cursorLine] || "";
+        const trimmedFull = currentLine.trimStart();
+        if (trimmedFull.startsWith('!')) {
+            const before = currentLine.slice(0, cursorCol);
+            const after = currentLine.slice(cursorCol);
+            const prefixStart = cursorCol - prefix.length;
+            const newLine = before.slice(0, prefixStart) + item.value + after;
+            const newLines = [...lines];
+            newLines[cursorLine] = newLine;
+            const newCol = prefixStart + item.value.length;
+            return { lines: newLines, cursorLine, cursorCol: newCol };
+        }
+
+        // 行内 /skillname 补全：替换 /prefix 为 /skillname + 空格
+        if (prefix.startsWith('/') && item.description?.startsWith('[skill]')) {
+            const before = currentLine.slice(0, cursorCol);
+            const after = currentLine.slice(cursorCol);
+            const prefixStart = cursorCol - prefix.length;
+            const newLine = before.slice(0, prefixStart) + '/' + item.value + ' ' + after;
+            const newLines = [...lines];
+            newLines[cursorLine] = newLine;
+            const newCol = prefixStart + item.value.length + 2; // +2 for "/" and space
+            return { lines: newLines, cursorLine, cursorCol: newCol };
+        }
+
+        return this.inner.applyCompletion(lines, cursorLine, cursorCol, item, prefix);
+    }
+}
+
+// ── InlineResultPanel：通用内联结果面板 ──────────────────────────────────
+
+export class InlineResultPanel implements Component {
+    private lines: string[] = [];
+    private scrollOffset = 0;
+    private maxVisibleLines = 15;
+    private visible = false;
+    private headerText = '';
+    private colorFn: (s: string) => string;
+
+    constructor(colorFn?: (s: string) => string) {
+        this.colorFn = colorFn ?? ((s: string) => chalk.cyan(s));
+    }
+
+    show(header: string, output: string) {
+        this.headerText = header;
+        this.lines = output.split('\n');
+        if (this.lines.length > 0 && this.lines[this.lines.length - 1] === '') {
+            this.lines.pop();
+        }
+        this.scrollOffset = 0;
+        this.maxVisibleLines = this.lines.length;
+        this.visible = true;
+    }
+
+    showMarkdown(header: string, markdown: string, width = 80) {
+        this.headerText = header;
+        const md = new Markdown(markdown, 0, 0, defaultMarkdownTheme);
+        this.lines = md.render(width);
+        this.scrollOffset = 0;
+        this.maxVisibleLines = this.lines.length; // no limit - show all
+        this.visible = true;
+    }
+
+    hide() {
+        this.visible = false;
+        this.lines = [];
+    }
+
+    isVisible() {
+        return this.visible;
+    }
+
+    scrollUp(n = 3) {
+        this.scrollOffset = Math.max(0, this.scrollOffset - n);
+    }
+
+    scrollDown(n = 3) {
+        const max = Math.max(0, this.lines.length - this.maxVisibleLines);
+        this.scrollOffset = Math.min(max, this.scrollOffset + n);
+    }
+
+    invalidate(): void { }
+
+    render(width: number): string[] {
+        if (!this.visible || this.lines.length === 0) return [];
+
+        const c = this.colorFn;
+        const innerW = Math.max(1, width - 4);
+        const result: string[] = [];
+
+        const header = ` ${truncateToWidth(this.headerText, Math.max(1, innerW))} `;
+        const headerW = visibleWidth(header);
+        const topBar = c('┌') + c(header) + c('─'.repeat(Math.max(0, width - headerW - 2))) + c('┐');
+        result.push(topBar);
+
+        const visibleLines = this.lines.slice(this.scrollOffset, this.scrollOffset + this.maxVisibleLines);
+        for (const line of visibleLines) {
+            const truncated = truncateToWidth(line, innerW);
+            const lineW = visibleWidth(truncated);
+            const padR = Math.max(0, innerW - lineW);
+            result.push(c('│') + ' ' + truncated + ' '.repeat(padR) + ' ' + c('│'));
+        }
+
+        const scrollHints: string[] = [];
+        if (this.lines.length > this.maxVisibleLines) {
+            const total = this.lines.length;
+            const pos = this.scrollOffset + 1;
+            const end = Math.min(this.scrollOffset + this.maxVisibleLines, total);
+            scrollHints.push(chalk.dim(`${pos}-${end}/${total}`));
+            scrollHints.push(chalk.dim('Ctrl+↑/↓ 翻页'));
+        }
+        scrollHints.push(chalk.dim('Esc 关闭'));
+        const bottomInfo = ' ' + scrollHints.join('  ') + ' ';
+        const bottomInfoW = visibleWidth(bottomInfo);
+        const bottomBar = c('└') + c(bottomInfo) + c('─'.repeat(Math.max(0, width - bottomInfoW - 2))) + c('┘');
+        result.push(bottomBar);
+
+        return result;
+    }
+}
+
+export type ShellResultPanel = InlineResultPanel;
 
 /**
  * AgentInputArea: 输入区域 + 斜杠指令 + 消息队列 + 状态栏
@@ -151,6 +499,8 @@ export class AgentInputArea implements Component {
 
     input: Editor;
     statusBar: StatusBar = new StatusBar();
+    shellResultPanel: InlineResultPanel = new InlineResultPanel((s) => chalk.cyan(s));
+    btwResultPanel: InlineResultPanel = new InlineResultPanel((s) => chalk.magenta(s));
 
     private openDeskTUI: OpenDeskTUI;
     private layout: Box;
@@ -163,21 +513,134 @@ export class AgentInputArea implements Component {
     private onQueueChange?: (queue: string[]) => void;
     private externalHint: string | null = null;
     private quickPassHandler?: (text: string) => boolean;
+    private shellCommandMode = false;
+    private defaultBorderColor: (str: string) => string;
 
     constructor(openDeskTUI: OpenDeskTUI) {
         this.openDeskTUI = openDeskTUI;
         this.layout = new Box(0, 0);
         this.input = new Editor(this.openDeskTUI.tui, defaultEditorTheme);
+        this.defaultBorderColor = this.input.borderColor;
         this.layout.addChild(this.hintText);
+        this.layout.addChild(this.btwResultPanel);
+        this.layout.addChild(this.shellResultPanel);
         this.layout.addChild(this.input);
         this.layout.addChild(this.statusBar);
         this.statusBar.setTUI(this.openDeskTUI.tui);
+
+        this.input.onChange = (text: string) => {
+            this.updateShellCommandMode(text);
+            this.tryTriggerInlineSkillAutocomplete();
+        };
 
         this.input.onSubmit = (text: string) => {
             if (text.trim() === '') return;
             this.input.addToHistory(text);
             this.handleSubmit(text);
         };
+    }
+
+    private updateShellCommandMode(text: string) {
+        const trimmed = text.trimStart();
+        const isCmd = trimmed.startsWith('!') && trimmed.length >= 1;
+        if (isCmd !== this.shellCommandMode) {
+            this.shellCommandMode = isCmd;
+            if (isCmd) {
+                this.input.borderColor = (str: string) => chalk.cyan(str);
+            } else {
+                this.input.borderColor = this.defaultBorderColor;
+            }
+            this.statusBar.update({ shellMode: isCmd });
+            this.openDeskTUI.tui.requestRender();
+        }
+    }
+
+    /**
+     * 检测行内 /skillname 上下文并手动触发自动补全。
+     * pi-tui 的 Editor 仅在行首输入 / 时自动触发补全，
+     * 行内的 / 不会触发。此方法弥补这一缺口。
+     */
+    private tryTriggerInlineSkillAutocomplete() {
+        const editor = this.input as any;
+        // 如果已经在显示自动补全，不重复触发
+        if (editor.autocompleteState) return;
+        if (!editor.autocompleteProvider) return;
+
+        const lines: string[] = editor.state.lines;
+        const cursorLine: number = editor.state.cursorLine;
+        const cursorCol: number = editor.state.cursorCol;
+        const currentLine = lines[cursorLine] || '';
+        const textBeforeCursor = currentLine.slice(0, cursorCol);
+
+        // 行首的 / 由 Editor 原生处理，这里只处理行内
+        const trimmedBefore = textBeforeCursor.trimStart();
+        if (trimmedBefore.startsWith('/') && !trimmedBefore.includes(' ')) return;
+
+        // 检测行内 / 或 /xxx 模式（前面有空格）
+        if (/\s\/[a-z0-9]?[-a-z0-9]*$/.test(textBeforeCursor)) {
+            if (_cachedUserInvocableSkills.length > 0) {
+                editor.tryTriggerAutocomplete();
+            }
+        }
+    }
+
+    private isShellCommand(text: string): string | null {
+        const trimmed = text.trimStart();
+        if (trimmed.startsWith('!')) {
+            const cmd = trimmed.slice(1).trim();
+            return cmd.length > 0 ? cmd : null;
+        }
+        return null;
+    }
+
+    private executeShellCommand(cmd: string) {
+        this.hintText.setText(chalk.cyan(`⏳ 正在执行: ${cmd}`));
+        this.openDeskTUI.tui.requestRender();
+
+        const cwd = this.openDeskTUI.workspace;
+
+        executeShellCommand(cmd, cwd, {
+            onHint: (text) => {
+                this.hintText.setText(text);
+            },
+            onResult: (header, output) => {
+                this.shellResultPanel.show(header, output);
+                this.hintText.setText('');
+                this.refreshHint();
+            },
+            onError: (header, output) => {
+                this.shellResultPanel.show(header, output);
+                this.hintText.setText('');
+                this.refreshHint();
+            },
+            onCwdChanged: (newCwd) => {
+                this.openDeskTUI.updateWorkspace(newCwd);
+            },
+            requestRender: () => {
+                this.openDeskTUI.tui.requestRender();
+            },
+        });
+    }
+
+    dismissShellResult() {
+        if (this.shellResultPanel.isVisible()) {
+            this.shellResultPanel.hide();
+            this.openDeskTUI.tui.requestRender();
+        }
+    }
+
+    dismissBtwResult() {
+        if (this.btwResultPanel.isVisible()) {
+            this.btwResultPanel.hide();
+            this.openDeskTUI.tui.requestRender();
+        }
+    }
+
+    dismissAllInlinePanels() {
+        let changed = false;
+        if (this.shellResultPanel.isVisible()) { this.shellResultPanel.hide(); changed = true; }
+        if (this.btwResultPanel.isVisible()) { this.btwResultPanel.hide(); changed = true; }
+        if (changed) this.openDeskTUI.tui.requestRender();
     }
 
     /**
@@ -200,16 +663,32 @@ export class AgentInputArea implements Component {
      */
     refreshAutocomplete() {
         if (!this.commandRegistry) return;
-        const provider = new CombinedAutocompleteProvider(
-            this.commandRegistry.toPiTuiSlashCommands()
+        const basePath = this.openDeskTUI.workspace;
+        const fdPath = detectFd();
+        const commands = this.commandRegistry.toPiTuiSlashCommands();
+        const commandNames = this.commandRegistry.getAll().map(c => c.name);
+        const inner = new CombinedAutocompleteProvider(
+            commands,
+            basePath,
+            fdPath,
         );
+        const provider = new FileAwareAutocompleteProvider(inner, basePath, commandNames);
         this.input.setAutocompleteProvider(provider);
+        // 异步刷新 skill 缓存
+        refreshSkillCache();
     }
 
     private async handleSubmit(text: string) {
+        // Shell 命令拦截：优先级最高
+        const shellCmd = this.isShellCommand(text);
+        if (shellCmd) {
+            this.input.setText('!');
+            this.executeShellCommand(shellCmd);
+            return;
+        }
+
         // 检查是否处于模型未配置模式
         if (this.openDeskTUI.isModelNotConfiguredMode()) {
-            // 模型未配置，只尝试执行斜杠命令和口令导入，不进行任何任务操作
             if (this.commandRegistry) {
                 const handled = await this.commandRegistry.execute(text);
                 if (handled) {
@@ -221,7 +700,6 @@ export class AgentInputArea implements Component {
                 this.input.setText('');
                 return;
             }
-            // 不是斜杠命令/口令或未处理，只清空输入框
             this.input.setText('');
             return;
         }

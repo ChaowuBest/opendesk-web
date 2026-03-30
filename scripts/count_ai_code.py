@@ -13,6 +13,31 @@ from collections import defaultdict
 from pathlib import Path
 from datetime import datetime, timedelta
 
+# 只统计以下扩展名的代码文件
+CODE_FILE_EXTS = {
+    '.py', '.js', '.jsx', '.ts', '.tsx', '.vue', '.svelte',
+    '.java', '.kt', '.kts', '.scala', '.groovy',
+    '.c', '.cpp', '.cc', '.cxx', '.h', '.hpp', '.m', '.mm',
+    '.go', '.rs', '.rb', '.php', '.swift',
+    '.cs', '.fs', '.fsx',
+    '.html', '.css', '.scss', '.sass', '.less', '.styl',
+    '.json', '.yaml', '.yml', '.toml', '.xml', '.ini', '.cfg', '.conf',
+    '.sh', '.bash', '.zsh', '.fish', '.ps1', '.bat', '.cmd',
+    '.sql', '.graphql', '.gql',
+    '.md', '.txt', '.rst', '.adoc',
+    '.r', '.R', '.lua', '.pl', '.pm', '.t', '.pro',
+    '.dockerfile', '.makefile', '.mk',
+    '.tf', '.tfvars', '.hcl', '.cue',
+}
+
+# 明确排除的文件/目录
+EXCLUDE_PATTERNS = {
+    'node_modules', '.git', 'dist', 'build', 'target', 'out',
+    '__pycache__', '.cache', '.venv', 'venv', '.env',
+    'package-lock.json', 'yarn.lock', 'pnpm-lock.yaml',
+    '.min.js', '.min.css', '.bundle.js', '.bundle.css',
+}
+
 # 缓存文件路径
 COMMIT_CACHE_FILE = ".ai_code_commit_cache.json"
 
@@ -83,6 +108,43 @@ def get_all_tracked_files():
     if not output:
         return []
     return [f.strip() for f in output.strip().split('\n') if f.strip()]
+
+def is_code_file(file_path):
+    """判断文件是否为代码文件（排除二进制文件和无关文件）"""
+    # 检查路径是否在排除目录中
+    path_parts = file_path.replace('\\', '/').split('/')
+    for part in path_parts:
+        if part in EXCLUDE_PATTERNS:
+            return False
+
+    # 检查扩展名
+    _, ext = os.path.splitext(file_path)
+    if ext.lower() in CODE_FILE_EXTS:
+        return True
+
+    # 特殊文件名（如 Makefile, Dockerfile 等）
+    basename = os.path.basename(file_path)
+    if basename in {'Makefile', 'Dockerfile', 'Vagrantfile', 'Gemfile', 'Rakefile', 'CMakeLists.txt'}:
+        return True
+
+    return False
+
+def is_binary_file(file_path):
+    """检测文件是否为二进制文件"""
+    try:
+        with open(file_path, 'rb') as f:
+            # 读取前 8KB 来检测
+            chunk = f.read(8192)
+            if b'\x00' in chunk:
+                return True
+            # 检查是否有大量不可打印字符
+            text_chars = bytearray({7, 8, 9, 10, 12, 13, 27} | set(range(0x20, 0x100)) - {0x7f})
+            non_text = sum(1 for byte in chunk if byte not in text_chars)
+            if len(chunk) > 0 and non_text / len(chunk) > 0.3:
+                return True
+        return False
+    except:
+        return True  # 无法读取的文件视为二进制
 
 def get_file_blame_info(file_path):
     """一次性获取整个文件的blame信息，返回行号->commit_hash的映射"""
@@ -186,6 +248,14 @@ def main():
 
     for file_path in files:
         if not os.path.exists(file_path):
+            continue
+
+        # 只统计代码文件
+        if not is_code_file(file_path):
+            continue
+
+        # 跳过二进制文件
+        if is_binary_file(file_path):
             continue
 
         # 获取文件中的所有非空行号

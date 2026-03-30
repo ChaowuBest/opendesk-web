@@ -11,7 +11,7 @@
 
 import { z } from 'zod';
 import { ToolCall } from './messages';
-import type { TaskState } from '../states/tasks';
+import type { TaskState } from './states/tasks';
 
 
 export class ToolResult {
@@ -80,6 +80,12 @@ export class BaseTool<T extends z.ZodType> {
         );
         return tool;
     }
+
+    /**
+     * 停止工具的执行。子类可重写此方法以实现清理逻辑（如终止子进程）。
+     * 默认空实现，调用方无需检查是否重写。
+     */
+    async stop(): Promise<void> {}
 
     /**
      * 自定义的工具调用结果渲染函数，如果返回 undefined，则不渲染工具调用

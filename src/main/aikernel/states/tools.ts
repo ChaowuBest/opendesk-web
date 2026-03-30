@@ -1,0 +1,525 @@
+/**
+ * Copyright (c) 2026 The OpenDesk Team
+ * OpenDesk is licensed under Mulan PSL v2.
+ * You can use this software according to the terms and conditions of the Mulan PSL v2.
+ * You may obtain a copy of Mulan PSL v2 at: http://license.coscl.org.cn/MulanPSL2
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
+ * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+ * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+ * See the Mulan PSL v2 for more details.
+ */
+
+import { z } from 'zod';
+import chalk from 'chalk';
+import { BaseTool, BaseToolset } from '../tool.js';
+import { UserMessage, AssistantMessage, ToolCall, marked } from '../messages.js';
+import { LLM } from '../llm.js';
+import { logger } from '../../utils/logger.js';
+import { Card } from '../../tui/components/card.js';
+import { statusDisplay, truncText } from '../../tui/components/toolcall.js';
+import type { TaskManagerState, TaskState } from './tasks.js';
+
+
+// ═══════════════════ Helpers ═══════════════════
+
+/** 当工具参数中这些字段的值过大时，将其替换为占位符以避免信息过载 */
+const LARGE_CONTENT_FIELDS = ['content', 'file_content', 'new_content', 'new_string', 'contents'];
+const CONTENT_TRUNCATE_THRESHOLD = 200;
+
+function sanitizeToolArgs(args: any): any {
+    if (!args || typeof args !== 'object') return args;
+    const sanitized = { ...args };
+    for (const field of LARGE_CONTENT_FIELDS) {
+        if (
+            field in sanitized
+            && typeof sanitized[field] === 'string'
+            && sanitized[field].length > CONTENT_TRUNCATE_THRESHOLD
+        ) {
+            sanitized[field] = `[内容已省略，共 ${sanitized[field].length} 字符]`;
+        }
+    }
+    return sanitized;
+}
+
+function formatToolCallBrief(toolName: string, argsObj: any): string {
+    const args = sanitizeToolArgs(argsObj ?? {});
+    return `[工具调用] ${toolName}(${JSON.stringify(args)})`;
+}
+
+function formatMessageBrief(message: UserMessage | AssistantMessage): string {
+    if (message instanceof UserMessage) {
+        const textParts = message.content.filter(p => p.type === 'text');
+        const text = textParts.map(p => (p as { text: string }).text).join(' ');
+        const truncated = text.slice(0, 200);
+        return `> **用户**: ${truncated}${text.length > 200 ? '...' : ''}`;
+    } else {
+        let result = '> **助手**: ';
+        for (const part of message.content) {
+            if (part.type === 'text') {
+                const truncated = part.text.slice(0, 200);
+                result += truncated + (part.text.length > 200 ? '...' : '');
+            } else if (part.type === 'tool_call') {
+                for (const tc of part.toolcalls) {
+                    result += '\n>   ' + formatToolCallBrief(tc.tool_name, tc.args_object);
+                }
+            }
+        }
+        return result;
+    }
+}
+
+
+// ═══════════════════ listRecentTasks ═══════════════════
+
+const ListRecentTasksSchema = z.object({
+    startDate: z.string().describe('起始日期，格式为 YYYY-MM-DD'),
+    endDate: z.string().describe('结束日期，格式为 YYYY-MM-DD'),
+});
+
+class ListRecentTasksTool extends BaseTool<typeof ListRecentTasksSchema> {
+    private taskManagerState: TaskManagerState;
+
+    constructor(taskManagerState: TaskManagerState) {
+        super(
+            'listRecentTasks',
+            '按照指定的起止日期列出日期范围内所有任务的信息摘要，包含任务ID、名称、时间和消息摘要',
+            ListRecentTasksSchema,
+        );
+        this.taskManagerState = taskManagerState;
+        this.setExecutor(this.handleExecute.bind(this));
+    }
+
+    renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
+        const args = toolcall.args_object as z.output<typeof ListRecentTasksSchema> | undefined;
+        const body: string[] = [];
+
+        if (args?.startDate && args?.endDate) {
+            body.push(chalk.dim('日期范围: ') + `${args.startDate} ~ ${args.endDate}`);
+        }
+
+        if (toolcall.status === 'success' && toolcall.result) {
+            const taskCount = (toolcall.result.match(/^## /gm) ?? []).length;
+            body.push(chalk.greenBright(`  ✓ 找到 ${taskCount} 个任务`));
+        } else if (toolcall.status === 'error' && toolcall.result) {
+            body.push(chalk.redBright('  ' + truncText(String(toolcall.result), width - 10)));
+        }
+
+        return new Card({
+            icon: '📋',
+            title: '列出任务',
+            status: statusDisplay(toolcall.status),
+            body,
+        }).render(width);
+    }
+
+    async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
+        const args = toolcall.args_object as z.output<typeof ListRecentTasksSchema> | undefined;
+        const dateRange = (args?.startDate && args?.endDate) ? `${args.startDate} ~ ${args.endDate}` : '';
+
+        if (toolcall.status === 'running') {
+            return `
+            <div class="flex flex-col mt-3 mb-3 text-sm bg-white/80 backdrop-blur-md border border-slate-200 py-3 px-4 rounded-2xl shadow-sm w-fit min-w-[280px] max-w-md">
+                <div class="flex items-center space-x-3">
+                    <span class="text-base">📋</span>
+                    <span class="font-semibold text-slate-600">列出任务</span>
+                    <div class="h-2 w-2 rounded-full bg-blue-500 animate-pulse ring-4 ring-blue-100/50"></div>
+                    <span class="text-slate-400 text-xs">${dateRange}</span>
+                </div>
+            </div>`;
+        }
+
+        let statusHtml = '';
+        if (toolcall.status === 'success' && toolcall.result) {
+            const taskCount = (toolcall.result.match(/^## /gm) ?? []).length;
+            statusHtml = `<span class="text-emerald-500">✅ ${taskCount} 个任务</span>`;
+        } else if (toolcall.status === 'error') {
+            statusHtml = `<span class="text-rose-500">❌ 失败</span>`;
+        }
+
+        return `
+        <div class="flex flex-col mt-3 mb-3 text-sm bg-white/80 backdrop-blur-md border border-slate-200 py-2 px-4 rounded-full shadow-sm w-fit">
+            <div class="flex items-center space-x-4">
+                <span class="text-base">📋</span>
+                <span class="font-semibold text-slate-600">列出任务</span>
+                <span class="text-slate-400 text-xs">${dateRange}</span>
+                ${statusHtml}
+            </div>
+        </div>`;
+    }
+
+    private async handleExecute(args: z.output<typeof ListRecentTasksSchema>): Promise<string> {
+        const start = new Date(args.startDate);
+        const end = new Date(args.endDate);
+        end.setHours(23, 59, 59, 999);
+
+        if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+            throw new Error('日期格式无效，请使用 YYYY-MM-DD 格式');
+        }
+
+        const filteredTasks = this.taskManagerState.tasks.filter(task => {
+            if (task.parent_id !== null) return false;
+            if (!task.started_at) return false;
+            return task.started_at >= start && task.started_at <= end;
+        });
+
+        if (filteredTasks.length === 0) {
+            return `在 ${args.startDate} 至 ${args.endDate} 期间没有找到任何任务。`;
+        }
+
+        let md = `# 任务列表 (${args.startDate} ~ ${args.endDate})\n\n`;
+        md += `共 ${filteredTasks.length} 个任务\n\n`;
+
+        for (const task of filteredTasks) {
+            md += this.formatTaskEntry(task);
+            md += '\n---\n\n';
+        }
+
+        return md;
+    }
+
+    private formatTaskEntry(task: TaskState): string {
+        const messages = task.chat_context.messages;
+        const contentMessages = messages.filter(
+            (m): m is UserMessage | AssistantMessage =>
+                m instanceof UserMessage || m instanceof AssistantMessage
+        );
+
+        const firstMsgTime = task.started_at?.toISOString() ?? '未知';
+        const lastMsgTime = task.finished_at?.toISOString()
+            ?? task.started_at?.toISOString()
+            ?? '未知';
+
+        let md = `## ${task.task_name ?? '未命名任务'}\n\n`;
+        md += `- **任务ID**: \`${task.task_id}\`\n`;
+        md += `- **状态**: ${task.task_status}\n`;
+        md += `- **首条消息时间**: ${firstMsgTime}\n`;
+        md += `- **末条消息时间**: ${lastMsgTime}\n`;
+        md += `- **消息总数**: ${contentMessages.length}\n\n`;
+
+        if (contentMessages.length === 0) return md;
+
+        md += `### 摘要\n\n`;
+
+        if (contentMessages.length <= 10) {
+            for (const msg of contentMessages) {
+                md += formatMessageBrief(msg) + '\n';
+            }
+        } else {
+            const first5 = contentMessages.slice(0, 5);
+            const last5 = contentMessages.slice(-5);
+
+            for (const msg of first5) {
+                md += formatMessageBrief(msg) + '\n';
+            }
+            md += `\n*... 省略 ${contentMessages.length - 10} 条消息 ...*\n\n`;
+            for (const msg of last5) {
+                md += formatMessageBrief(msg) + '\n';
+            }
+        }
+
+        return md;
+    }
+}
+
+
+// ═══════════════════ askFromTask ═══════════════════
+
+const AskFromTaskSchema = z.object({
+    taskId: z.string().describe('要查询的任务ID'),
+    question: z.string().describe('要对该任务内容提出的问题'),
+});
+
+class AskFromTaskTool extends BaseTool<typeof AskFromTaskSchema> {
+    private taskManagerState: TaskManagerState;
+
+    constructor(taskManagerState: TaskManagerState) {
+        super(
+            'askFromTask',
+            '给定任务ID和一个问题，由大模型根据该任务的完整对话记录回答问题',
+            AskFromTaskSchema,
+        );
+        this.taskManagerState = taskManagerState;
+        this.setExecutor(this.handleExecute.bind(this));
+    }
+
+    renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
+        const args = toolcall.args_object as z.output<typeof AskFromTaskSchema> | undefined;
+        const body: string[] = [];
+
+        if (args?.taskId) {
+            body.push(chalk.dim('任务ID: ') + truncText(args.taskId, width - 16));
+        }
+        if (args?.question) {
+            body.push(chalk.dim('问题: ') + truncText(args.question, width - 12));
+        }
+
+        if (toolcall.status === 'success' && toolcall.result) {
+            body.push(chalk.greenBright('  ✓ ') + truncText(toolcall.result, width - 10));
+        } else if (toolcall.status === 'error' && toolcall.result) {
+            body.push(chalk.redBright('  ' + truncText(String(toolcall.result), width - 10)));
+        }
+
+        return new Card({
+            icon: '💬',
+            title: '询问任务',
+            status: statusDisplay(toolcall.status),
+            body,
+            maxLines: 8,
+            truncateStrategy: 'tail',
+        }).render(width);
+    }
+
+    async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
+        const args = toolcall.args_object as z.output<typeof AskFromTaskSchema> | undefined;
+        const question = args?.question ?? '';
+        const taskIdShort = args?.taskId ? args.taskId.slice(0, 8) + '…' : '';
+
+        if (toolcall.status === 'running') {
+            return `
+            <div class="flex flex-col mt-3 mb-3 text-sm bg-white/80 backdrop-blur-md border border-slate-200 py-3 px-4 rounded-2xl shadow-sm w-fit min-w-[280px] max-w-md">
+                <div class="flex items-center space-x-3">
+                    <span class="text-base">💬</span>
+                    <span class="font-semibold text-slate-600">询问任务</span>
+                    <div class="h-2 w-2 rounded-full bg-blue-500 animate-pulse ring-4 ring-blue-100/50"></div>
+                    <span class="text-slate-500 truncate max-w-xs text-xs">${taskIdShort}</span>
+                </div>
+                ${question ? `<div class="mt-1 text-xs text-slate-400 truncate max-w-full">问题: ${question.length > 60 ? question.slice(0, 60) + '…' : question}</div>` : ''}
+            </div>`;
+        }
+
+        let resultHtml = '';
+        if (toolcall.status === 'success' && toolcall.result) {
+            const rendered = marked.parse(toolcall.result);
+            resultHtml = `<div class="mt-2 text-xs text-slate-600 max-h-40 overflow-y-auto prose prose-xs">${rendered}</div>`;
+        } else if (toolcall.status === 'error') {
+            resultHtml = `<div class="mt-1 text-xs text-rose-500">❌ ${toolcall.result ?? '失败'}</div>`;
+        }
+
+        return `
+        <div class="flex flex-col mt-3 mb-3 text-sm bg-white/80 backdrop-blur-md border border-slate-200 py-3 px-4 rounded-2xl shadow-sm w-fit min-w-[280px] max-w-lg">
+            <div class="flex items-center space-x-3">
+                <span class="text-base">💬</span>
+                <span class="font-semibold text-slate-600">询问任务</span>
+                <span class="text-slate-500 text-xs">${taskIdShort}</span>
+                ${toolcall.status === 'success' ? '<span class="text-emerald-500">✅</span>' : ''}
+            </div>
+            ${question ? `<div class="mt-1 text-xs text-slate-400">问题: ${question.length > 80 ? question.slice(0, 80) + '…' : question}</div>` : ''}
+            ${resultHtml}
+        </div>`;
+    }
+
+    private async handleExecute(args: z.output<typeof AskFromTaskSchema>): Promise<string> {
+        const task = this.taskManagerState.getTask(args.taskId);
+        if (!task) {
+            throw new Error(`未找到ID为 "${args.taskId}" 的任务`);
+        }
+
+        let conversationRecord = '';
+        for (const msg of task.chat_context.messages) {
+            if (msg instanceof UserMessage) {
+                const textParts = msg.content.filter(p => p.type === 'text');
+                const text = textParts.map(p => (p as { text: string }).text).join('\n');
+                if (text.trim()) {
+                    const truncated = text.length > 2000
+                        ? text.slice(0, 2000) + '...[截断]'
+                        : text;
+                    conversationRecord += `用户: ${truncated}\n\n`;
+                }
+            } else if (msg instanceof AssistantMessage) {
+                const textParts = msg.content.filter(p => p.type === 'text');
+                const text = textParts.map(p => (p as { text: string }).text).join('\n');
+                if (text.trim()) {
+                    const truncated = text.length > 2000
+                        ? text.slice(0, 2000) + '...[截断]'
+                        : text;
+                    conversationRecord += `助手: ${truncated}\n\n`;
+                }
+            }
+        }
+
+        if (!conversationRecord.trim()) {
+            return '该任务没有可供分析的对话记录。';
+        }
+
+        const prompt =
+            `以下是一段任务对话记录，请根据对话内容回答问题。\n\n` +
+            `<conversation>\n${conversationRecord}</conversation>\n\n` +
+            `问题: ${args.question}\n\n` +
+            `请根据上述对话内容给出准确、简洁的回答。`;
+
+        try {
+            return await LLM.ask(new UserMessage(prompt));
+        } catch (err) {
+            logger.error(`askFromTask LLM call failed: ${err}`);
+            throw new Error(`大模型调用失败: ${err instanceof Error ? err.message : String(err)}`);
+        }
+    }
+}
+
+
+// ═══════════════════ getTaskHistory ═══════════════════
+
+const GetTaskHistorySchema = z.object({
+    taskId: z.string().describe('要查询的任务ID'),
+    limit: z.number().default(10).describe('获取的消息条数限制，默认为10'),
+    includeFullToolContent: z.boolean().default(false)
+        .describe('是否包含完整的工具调用内容（参数和返回值），默认为false'),
+});
+
+class GetTaskHistoryTool extends BaseTool<typeof GetTaskHistorySchema> {
+    private taskManagerState: TaskManagerState;
+
+    constructor(taskManagerState: TaskManagerState) {
+        super(
+            'getTaskHistory',
+            '获取指定任务的最近N条消息历史，可选择是否包含完整的工具调用细节',
+            GetTaskHistorySchema,
+        );
+        this.taskManagerState = taskManagerState;
+        this.setExecutor(this.handleExecute.bind(this));
+    }
+
+    renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
+        const args = toolcall.args_object as z.output<typeof GetTaskHistorySchema> | undefined;
+        const body: string[] = [];
+
+        if (args?.taskId) {
+            body.push(chalk.dim('任务ID: ') + truncText(args.taskId, width - 16));
+            body.push(chalk.dim('条数: ') + String(args.limit ?? 10));
+            if (args.includeFullToolContent) {
+                body.push(chalk.dim('完整工具内容: ') + chalk.cyan('是'));
+            }
+        }
+
+        if (toolcall.status === 'success' && toolcall.result) {
+            const msgCount = (toolcall.result.match(/^### /gm) ?? []).length;
+            body.push(chalk.greenBright(`  ✓ 返回 ${msgCount} 条消息`));
+        } else if (toolcall.status === 'error' && toolcall.result) {
+            body.push(chalk.redBright('  ' + truncText(String(toolcall.result), width - 10)));
+        }
+
+        return new Card({
+            icon: '📜',
+            title: '获取历史',
+            status: statusDisplay(toolcall.status),
+            body,
+        }).render(width);
+    }
+
+    async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
+        const args = toolcall.args_object as z.output<typeof GetTaskHistorySchema> | undefined;
+        const taskIdShort = args?.taskId ? args.taskId.slice(0, 8) + '…' : '';
+        const limit = args?.limit ?? 10;
+
+        if (toolcall.status === 'running') {
+            return `
+            <div class="flex flex-col mt-3 mb-3 text-sm bg-white/80 backdrop-blur-md border border-slate-200 py-3 px-4 rounded-2xl shadow-sm w-fit min-w-[280px] max-w-md">
+                <div class="flex items-center space-x-3">
+                    <span class="text-base">📜</span>
+                    <span class="font-semibold text-slate-600">获取历史</span>
+                    <div class="h-2 w-2 rounded-full bg-blue-500 animate-pulse ring-4 ring-blue-100/50"></div>
+                    <span class="text-slate-400 text-xs">${taskIdShort} · ${limit}条</span>
+                </div>
+            </div>`;
+        }
+
+        let statusHtml = '';
+        if (toolcall.status === 'success' && toolcall.result) {
+            const msgCount = (toolcall.result.match(/^### /gm) ?? []).length;
+            statusHtml = `<span class="text-emerald-500">✅ ${msgCount} 条消息</span>`;
+        } else if (toolcall.status === 'error') {
+            statusHtml = `<span class="text-rose-500">❌ 失败</span>`;
+        }
+
+        return `
+        <div class="flex flex-col mt-3 mb-3 text-sm bg-white/80 backdrop-blur-md border border-slate-200 py-2 px-4 rounded-full shadow-sm w-fit">
+            <div class="flex items-center space-x-4">
+                <span class="text-base">📜</span>
+                <span class="font-semibold text-slate-600">获取历史</span>
+                <span class="text-slate-400 text-xs">${taskIdShort} · ${limit}条</span>
+                ${statusHtml}
+            </div>
+        </div>`;
+    }
+
+    private async handleExecute(args: z.output<typeof GetTaskHistorySchema>): Promise<string> {
+        const task = this.taskManagerState.getTask(args.taskId);
+        if (!task) {
+            throw new Error(`未找到ID为 "${args.taskId}" 的任务`);
+        }
+
+        const messages = task.chat_context.messages;
+        const contentMessages = messages.filter(
+            (m): m is UserMessage | AssistantMessage =>
+                m instanceof UserMessage || m instanceof AssistantMessage
+        );
+
+        const lastN = contentMessages.slice(-args.limit);
+
+        if (lastN.length === 0) {
+            return '该任务没有消息历史。';
+        }
+
+        let result = `# 任务 "${task.task_name ?? '未命名'}" 的最近 ${lastN.length} 条消息\n\n`;
+
+        for (const msg of lastN) {
+            result += this.formatMessage(msg, args.includeFullToolContent);
+            result += '\n---\n\n';
+        }
+
+        return result;
+    }
+
+    private formatMessage(
+        message: UserMessage | AssistantMessage,
+        includeFullToolContent: boolean,
+    ): string {
+        if (message instanceof UserMessage) {
+            let result = '### 👤 用户\n\n';
+            for (const part of message.content) {
+                if (part.type === 'text') {
+                    result += (part as { text: string }).text + '\n';
+                } else if (part.type === 'file') {
+                    result += `[文件附件: ${(part as { path: string }).path}]\n`;
+                }
+            }
+            return result;
+        } else {
+            let result = '### 🤖 助手\n\n';
+            for (const part of message.content) {
+                if (part.type === 'text') {
+                    result += part.text + '\n';
+                } else if (part.type === 'tool_call') {
+                    for (const tc of part.toolcalls) {
+                        if (includeFullToolContent) {
+                            result += `**工具调用**: ${tc.tool_name}\n`;
+                            result += `- 参数:\n\`\`\`json\n${tc.args_string ?? '{}'}\n\`\`\`\n`;
+                            result += `- 状态: ${tc.status}\n`;
+                            if (tc.result) {
+                                result += `- 结果:\n\`\`\`\n${tc.result}\n\`\`\`\n`;
+                            }
+                            result += '\n';
+                        } else {
+                            result += formatToolCallBrief(tc.tool_name, tc.args_object) + '\n';
+                        }
+                    }
+                }
+                // reasoning 部分不输出
+            }
+            return result;
+        }
+    }
+}
+
+
+// ═══════════════════ Toolset Factory ═══════════════════
+
+export function createTaskInfoToolset(taskManagerState: TaskManagerState): BaseToolset {
+    const toolset = new BaseToolset('task-info');
+    toolset.addTools(
+        new ListRecentTasksTool(taskManagerState),
+        new AskFromTaskTool(taskManagerState),
+        new GetTaskHistoryTool(taskManagerState),
+    );
+    return toolset;
+}

@@ -15,6 +15,8 @@ export type TodoStatus = 'pending' | 'in_progress' | 'completed';
 // 优先级类型
 export type TodoPriority = 'low' | 'medium' | 'high';
 
+import type { Participant } from '../../aikernel/plugins/types.js';
+
 // ========== 触发器类型定义 ==========
 
 export interface EventTriggerConfig {
@@ -61,6 +63,8 @@ export interface GlobalTodo {
     category?: string;        // 分类标签，如 "bug", "feature", "idea"
     source_task_id?: string;  // 来源任务ID（可选）
     trigger?: TodoTrigger;    // 触发器配置
+    /** 回复投递目标，继承自创建该待办的任务 origin（如飞书发起的会话） */
+    deliver?: Participant;
     last_triggered_at?: string; // 上次触发时间
     created_at: string;
     updated_at: string;

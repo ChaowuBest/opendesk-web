@@ -1,13 +1,12 @@
 
-import { Component, Text, Markdown, Box, type TUI, visibleWidth, truncateToWidth } from "@mariozechner/pi-tui";
-import { TaskState } from "../../states/tasks";
+import { Component, Markdown, Box, type TUI, visibleWidth, truncateToWidth } from "@mariozechner/pi-tui";
+import type { TaskState, TaskUpdateChunk, TaskUpdateUserChunk, TaskUpdateAssistantChunk } from "../../aikernel/states/tasks";
 import {
     AssistantMessage, ReasoningMessagePart, TextMessagePart,
-    ToolCallMessagePart, UserMessage, ToolCall, CompactSeparatorMessage
+    ToolCallMessagePart, ErrorMessagePart, UserMessage, ToolCall
 } from "../../aikernel/messages";
 import { shouldCompact, compactContext } from "../../aikernel/compact";
-import { TaskUpdateChunk } from "../../states/tasks";
-import { logger } from "../../utils/logger.js";
+import { logger, getDebugMode } from "../../utils/logger.js";
 import { defaultMarkdownTheme } from "../theme";
 import { DefaultToolCallView } from "./toolcall";
 import { Card } from "./card";
@@ -15,11 +14,21 @@ import chalk from "chalk";
 import type { StatusBarData } from "./input";
 
 
+/**
+ * 流式输出时 Markdown 渲染的最小间隔（毫秒）。
+ * 当模型吐字速度很快时，过于频繁的 Markdown 解析会导致 UI 卡顿。
+ * 调整此值可在渲染实时性和 UI 流畅度之间取得平衡。
+ */
+export const MD_RENDER_THROTTLE_MS = 150;
+
+
 export class TextMessagePartView implements Component {
     text: Markdown = new Markdown('', 0, 0, defaultMarkdownTheme);
     private invalidated = true;
     private lastWidth?: number;
     private cachedOutput?: string[];
+    private _lastRenderMs = 0;
+    private _dirty = false;
 
     constructor(text?: string) {
         if (text) {
@@ -30,8 +39,9 @@ export class TextMessagePartView implements Component {
     setMarkdown(markdown: string) {
         try {
             this.text.setText(markdown);
+            this._dirty = true;
             this.invalidated = true;
-        } catch (error) {
+        } catch {
             // ignore error
         }
     }
@@ -40,12 +50,32 @@ export class TextMessagePartView implements Component {
         this.invalidated = true;
     }
 
+    /**
+     * 清除内部 MD 渲染节流状态，使下一次 render() 一定执行完整的 Markdown 解析。
+     * 在流式输出结束时调用，确保最后一批文本不会因节流而显示旧缓存。
+     */
+    clearThrottle() {
+        this._dirty = false;
+        this._lastRenderMs = 0;
+        this.invalidated = true;
+    }
+
     render(width: number): string[] {
         if (!this.invalidated && this.lastWidth === width && this.cachedOutput) {
             return this.cachedOutput;
         }
+
+        if (this._dirty && this.cachedOutput) {
+            const now = Date.now();
+            if (now - this._lastRenderMs < MD_RENDER_THROTTLE_MS) {
+                return this.cachedOutput;
+            }
+        }
+
         this.lastWidth = width;
         this.cachedOutput = this.text.render(width);
+        this._lastRenderMs = Date.now();
+        this._dirty = false;
         this.invalidated = false;
         return this.cachedOutput;
     }
@@ -63,6 +93,9 @@ export class ReasoningMessagePartView implements Component {
     private invalidated = true;
     private lastWidth?: number;
     private cachedOutput?: string[];
+    private _lastRenderMs = 0;
+    private _dirty = false;
+    private _cachedBodyLines?: string[];
 
     constructor(text?: string) {
         if (text) {
@@ -71,12 +104,28 @@ export class ReasoningMessagePartView implements Component {
     }
 
     setMarkdown(markdown: string) {
-        this.text.setText(markdown);
-        this.invalidated = true;
+        try {
+            this.text.setText(markdown);
+            this._dirty = true;
+            this.invalidated = true;
+        } catch {
+            // ignore
+        }
     }
 
     setStreaming(streaming: boolean) {
         this._streaming = streaming;
+        this.invalidated = true;
+    }
+
+    /**
+     * 清除内部 MD 渲染节流状态，使下一次 render() 一定执行完整的 Markdown 解析。
+     * 在流式输出结束时调用，确保最后一批思考内容不会因节流而显示旧缓存。
+     */
+    clearThrottle() {
+        this._dirty = false;
+        this._lastRenderMs = 0;
+        this._cachedBodyLines = undefined;
         this.invalidated = true;
     }
 
@@ -94,9 +143,23 @@ export class ReasoningMessagePartView implements Component {
 
     render(width: number): string[] {
         if (this._streaming) {
-            // When streaming, always re-render to update spinner
             const contentWidth = Math.max(1, width - 4);
-            const bodyLines = this.text.render(contentWidth);
+
+            const now = Date.now();
+            const skipMdRender = this._dirty
+                && this.cachedOutput
+                && (now - this._lastRenderMs < MD_RENDER_THROTTLE_MS);
+
+            let bodyLines: string[];
+            if (skipMdRender) {
+                bodyLines = this._cachedBodyLines ?? this.text.render(contentWidth);
+            } else {
+                bodyLines = this.text.render(contentWidth);
+                this._cachedBodyLines = bodyLines;
+                this._lastRenderMs = Date.now();
+                this._dirty = false;
+            }
+
             const card = new Card({
                 icon: this.getIcon(),
                 title: '思考',
@@ -130,6 +193,7 @@ export class ToolCallView implements Component {
     private invalidated = true;
     private lastWidth?: number;
     private cachedOutput?: string[];
+    private lastRenderedStatus?: string;
 
     constructor(toolCall: ToolCall) {
         this.toolCall = toolCall;
@@ -141,18 +205,26 @@ export class ToolCallView implements Component {
     }
 
     render(width: number): string[] {
-        if (!this.invalidated && this.lastWidth === width && this.cachedOutput) {
+        const statusChanged = this.toolCall.status !== this.lastRenderedStatus;
+        if (!statusChanged && !this.invalidated && this.lastWidth === width && this.cachedOutput) {
             return this.cachedOutput;
         }
+        this.lastRenderedStatus = this.toolCall.status;
         this.lastWidth = width;
-        if (this.toolCall.tool) {
-            const custom = this.toolCall.tool.renderToolCallCli(this.toolCall, width);
-            if (custom) {
-                this.cachedOutput = custom;
-                this.invalidated = false;
-                return custom;
+
+        try {
+            if (this.toolCall.tool && typeof this.toolCall.tool.renderToolCallCli === 'function') {
+                const custom = this.toolCall.tool.renderToolCallCli(this.toolCall, width);
+                if (custom) {
+                    this.cachedOutput = custom;
+                    this.invalidated = false;
+                    return custom;
+                }
             }
+        } catch (error) {
+            logger.error(`Error rendering tool call ${this.toolCall.tool_name}: ${error}`);
         }
+
         this.cachedOutput = this.defaultView.render(width);
         this.invalidated = false;
         return this.cachedOutput;
@@ -165,13 +237,29 @@ export class ToolCallMessagePartView implements Component {
     private invalidated = true;
     private lastWidth?: number;
     private cachedOutput?: string[];
+    private viewMap: Map<ToolCall, ToolCallView> = new Map();
+    private lastRenderedStatuses: Map<ToolCall, string> = new Map();
 
     setToolcalls(toolcalls: ToolCall[]) {
-        this.box.clear();
         for (const toolcall of toolcalls) {
-            this.box.addChild(new ToolCallView(toolcall));
+            const existing = this.viewMap.get(toolcall);
+            if (existing) {
+                existing.invalidate();
+            } else {
+                const view = new ToolCallView(toolcall);
+                this.viewMap.set(toolcall, view);
+                this.box.addChild(view);
+            }
         }
         this.invalidated = true;
+    }
+
+    needsFreshRender(): boolean {
+        for (const tc of this.viewMap.keys()) {
+            if (tc.status === 'running') return true;
+            if (this.lastRenderedStatuses.get(tc) !== tc.status) return true;
+        }
+        return false;
     }
 
     invalidate() {
@@ -180,11 +268,59 @@ export class ToolCallMessagePartView implements Component {
     }
 
     render(width: number): string[] {
+        const fresh = this.needsFreshRender();
+        if (!fresh && !this.invalidated && this.lastWidth === width && this.cachedOutput) {
+            return this.cachedOutput;
+        }
+        if (fresh) this.box.invalidate();
+        this.lastWidth = width;
+        this.cachedOutput = this.box.render(width);
+        this.invalidated = false;
+        for (const tc of this.viewMap.keys()) {
+            this.lastRenderedStatuses.set(tc, tc.status);
+        }
+        return this.cachedOutput;
+    }
+}
+
+export class ErrorMessagePartView implements Component {
+    private title: string;
+    private message: string;
+    private invalidated = true;
+    private lastWidth?: number;
+    private cachedOutput?: string[];
+
+    constructor(title: string, message: string) {
+        this.title = title;
+        this.message = message;
+    }
+
+    setContent(title: string, message: string) {
+        this.title = title;
+        this.message = message;
+        this.invalidated = true;
+    }
+
+    invalidate() { this.invalidated = true; }
+
+    render(width: number): string[] {
         if (!this.invalidated && this.lastWidth === width && this.cachedOutput) {
             return this.cachedOutput;
         }
         this.lastWidth = width;
-        this.cachedOutput = this.box.render(width);
+
+        const body: string[] = [];
+        if (this.message) {
+            const markdown = new Markdown(this.message, 0, 0, defaultMarkdownTheme);
+            body.push(...markdown.render(width - 4));
+        }
+
+        this.cachedOutput = new Card({
+            icon: chalk.redBright('⚠'),
+            title: chalk.redBright(this.title),
+            body,
+        }).render(width);
+
         this.invalidated = false;
         return this.cachedOutput;
     }
@@ -258,12 +394,29 @@ export class UserMessageView implements Component {
         return new UserMessageView(new UserMessage(text));
     }
 
+    /** 从 TaskUpdateUserChunk 创建用户消息视图（用于“继续任务”等追加的用户消息） */
+    static fromChunk(chunk: TaskUpdateUserChunk): UserMessageView {
+        const msg = new UserMessage();
+        msg.message_id = chunk.message_id;
+        msg.content = [chunk.last_part];
+        msg.internal = chunk.internal;
+        return new UserMessageView(msg);
+    }
+
     invalidate() {
         this.box.invalidate();
         this.invalidated = true;
     }
 
     render(width: number): string[] {
+        if (this.message.internal && !getDebugMode()) {
+            return [];
+        }
+        if (this.message.internal) {
+            const label = chalk.dim.italic('  [内部消息]');
+            const body = this.box.render(width);
+            return [label, ...body];
+        }
         if (!this.invalidated && this.lastWidth === width && this.cachedOutput) {
             return this.cachedOutput;
         }
@@ -277,7 +430,7 @@ export class UserMessageView implements Component {
 export class AssistantMessageView implements Component {
 
     box: Box = new Box(0, 1);
-    parts: Array<ReasoningMessagePartView | TextMessagePartView | ToolCallMessagePartView> = [];
+    parts: Array<ReasoningMessagePartView | TextMessagePartView | ToolCallMessagePartView | ErrorMessagePartView> = [];
     private invalidated = true;
     private lastWidth?: number;
     private cachedOutput?: string[];
@@ -317,11 +470,14 @@ export class AssistantMessageView implements Component {
         this.invalidated = true;
     }
 
-    /** 思考/流式结束，停止所有 reasoning 部分的动画 */
+    /** 流式结束：停止 reasoning 动画并清除所有子视图的 MD 渲染节流，确保最终渲染拿到最新内容 */
     setStreamingComplete() {
         for (const part of this.parts) {
             if (part instanceof ReasoningMessagePartView) {
                 part.setStreaming(false);
+                part.clearThrottle();
+            } else if (part instanceof TextMessagePartView) {
+                part.clearThrottle();
             }
         }
         this.invalidated = true;
@@ -343,14 +499,36 @@ export class AssistantMessageView implements Component {
         this.invalidated = true;
     }
 
+    async updateErrorPart(index: number, errorPart: ErrorMessagePart) {
+        while (index >= this.parts.length) {
+            const newPartView = new ErrorMessagePartView('', '');
+            this.parts.push(newPartView);
+            this.box.addChild(newPartView);
+        }
+
+        const existingPartView = this.parts[index];
+        if (!(existingPartView instanceof ErrorMessagePartView)) {
+            throw new Error(`part type mismatch`);
+        }
+
+        existingPartView.setContent(errorPart.title, errorPart.message);
+        this.invalidated = true;
+    }
+
     /**
-     * 根据任务发回的更新块来更新消息视图，由于用户消息视图是静态的，所以不需要更新
-     * @param chunkUpdate
+     * 设置当前视图对应的 message_id（用于 rebuildFromHistory 时与 messageIdToAssistantView 一致）。
      */
-    async update(chunkUpdate: TaskUpdateChunk) {
-        if (this.currentMessageId && this.currentMessageId !== chunkUpdate.message_id) {
-            this.parts = [];
-            this.box.clear();
+    setMessageId(message_id: string) {
+        this.currentMessageId = message_id;
+    }
+
+    /**
+     * 根据任务发回的 assistant 更新块来更新消息视图。
+     * 若 chunk 的 message_id 与当前视图不一致且当前已有关联 message_id，则不再抹除当前内容（由调用方创建新容器）。
+     */
+    async update(chunkUpdate: TaskUpdateAssistantChunk) {
+        if (this.currentMessageId !== undefined && this.currentMessageId !== chunkUpdate.message_id) {
+            return;
         }
         this.currentMessageId = chunkUpdate.message_id;
 
@@ -363,6 +541,9 @@ export class AssistantMessageView implements Component {
             case 'tool_call':
                 this.setStreamingComplete();
                 return await this.updateToolCallPart(chunkUpdate.last_part_index, chunkUpdate.last_part);
+            case 'error':
+                this.setStreamingComplete();
+                return await this.updateErrorPart(chunkUpdate.last_part_index, chunkUpdate.last_part);
         }
     }
 
@@ -371,10 +552,21 @@ export class AssistantMessageView implements Component {
         this.invalidated = true;
     }
 
+    private hasToolCallUpdates(): boolean {
+        for (const part of this.parts) {
+            if (part instanceof ToolCallMessagePartView && part.needsFreshRender()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     render(width: number): string[] {
-        if (!this.invalidated && this.lastWidth === width && this.cachedOutput) {
+        const fresh = this.hasToolCallUpdates();
+        if (!fresh && !this.invalidated && this.lastWidth === width && this.cachedOutput) {
             return this.cachedOutput;
         }
+        if (fresh) this.box.invalidate();
         this.lastWidth = width;
         this.cachedOutput = this.box.render(width);
         this.invalidated = false;
@@ -398,6 +590,8 @@ export class TaskView implements Component {
     private currentTaskId?: string;
     /** 防止 performCompactWithAnimation 重入 */
     private _compacting = false;
+    /** message_id -> AssistantMessageView，用于按 message_id 追加而非覆盖 */
+    private messageIdToAssistantView: Map<string, AssistantMessageView> = new Map();
 
     private tui: TUI;
     private messageLayout: Box = new Box(0, 0);
@@ -406,11 +600,49 @@ export class TaskView implements Component {
     private lastWidth?: number;
     private cachedOutput?: string[];
 
+    /** 流式渲染节流：限制渲染频率，避免高频 chunk 导致渲染风暴 */
+    private _streamRenderTimer?: ReturnType<typeof setTimeout>;
+    private _lastStreamRenderMs = 0;
+    private static readonly STREAM_RENDER_INTERVAL_MS = 100;
+
     get isCompacting() { return this._compacting; }
 
     constructor(tui: TUI) {
         this.tui = tui;
         this.mainLayout.addChild(this.messageLayout);
+    }
+
+    /**
+     * 节流渲染：在流式输出期间限制渲染频率（最高 ~20fps），
+     * 避免每个 LLM chunk 都触发完整渲染周期。
+     * 保证最后一次请求不会被丢弃（trailing edge）。
+     */
+    requestStreamRender() {
+        const now = Date.now();
+        const elapsed = now - this._lastStreamRenderMs;
+
+        if (elapsed >= TaskView.STREAM_RENDER_INTERVAL_MS) {
+            if (this._streamRenderTimer) {
+                clearTimeout(this._streamRenderTimer);
+                this._streamRenderTimer = undefined;
+            }
+            this._lastStreamRenderMs = now;
+            this.tui.requestRender();
+        } else if (!this._streamRenderTimer) {
+            this._streamRenderTimer = setTimeout(() => {
+                this._streamRenderTimer = undefined;
+                this._lastStreamRenderMs = Date.now();
+                this.tui.requestRender();
+            }, TaskView.STREAM_RENDER_INTERVAL_MS - elapsed);
+        }
+    }
+
+    clearStreamThrottle() {
+        if (this._streamRenderTimer) {
+            clearTimeout(this._streamRenderTimer);
+            this._streamRenderTimer = undefined;
+        }
+        this._lastStreamRenderMs = 0;
     }
 
     /**
@@ -454,49 +686,46 @@ export class TaskView implements Component {
             return;
         }
 
+        const snapshotTaskId = this.taskState.task_id;
+        this.currentTaskId = snapshotTaskId;
+
+        // 立即将用户消息加入布局，确保第一次渲染时就能看到，
+        // 避免输入框清空后、消息出现前的空白帧闪烁
+        const userView = UserMessageView.text(text);
+        this.messageLayout.addChild(userView);
+        this.invalidated = true;
+
         // 在提交新消息前检查是否需要压缩上下文（TUI 层负责展示动画）
         try {
             if (await shouldCompact(this.taskState.chat_context, this.taskState.model)) {
                 logger.info(`Auto-compacting context for task ${this.taskState.task_id}`);
                 await this.performCompactWithAnimation();
-                // 压缩可能插入了 CompactSeparatorMessage，需要重建视图
+                // 压缩重建后重新添加用户消息视图（此时尚未入 chat_context）
                 this.clearMessages();
                 this.rebuildFromHistory();
+                this.messageLayout.addChild(userView);
+                this.invalidated = true;
             }
         } catch { /* shouldCompact 失败不影响正常流程 */ }
 
-        // 记录当前任务的ID
-        const snapshotTaskId = this.taskState.task_id;
-        this.currentTaskId = snapshotTaskId;
-
-        const responseView = new AssistantMessageView();
-        this.messageLayout.addChild(UserMessageView.text(text));
-        this.messageLayout.addChild(responseView);
-        this.invalidated = true;
-
         await this.taskState.submitUserMessage(text);
         const renderInterval = setInterval(() => {
-            // 只有当前任务仍然是活跃任务时才渲染
             if (this.currentTaskId === snapshotTaskId) {
-                this.tui.requestRender();
+                this.requestStreamRender();
             }
         }, REASONING_SPINNER_MS);
         try {
             await this.taskState.waitUntilFinished(async (chunkUpdate: TaskUpdateChunk) => {
-                // 只有当前任务仍然是活跃任务时才更新视图
                 if (this.currentTaskId !== snapshotTaskId) return;
-                responseView.update(chunkUpdate);
-                this.invalidated = true;
-                if (chunkUpdate.usage) {
-                    this.onStatusBarUpdate?.({ totalTokens: chunkUpdate.usage.total_tokens });
-                }
-                this.tui.requestRender();
+                await this.handleChunkUpdate(chunkUpdate);
+                this.requestStreamRender();
             });
         } finally {
             clearInterval(renderInterval);
-            // 只有当前任务仍然是活跃任务时才更新视图
+            this.clearStreamThrottle();
             if (this.currentTaskId === snapshotTaskId) {
-                responseView.setStreamingComplete();
+                const lastView = this.getLastAssistantView();
+                if (lastView) lastView.setStreamingComplete();
                 this.invalidated = true;
                 this.tui.requestRender();
             }
@@ -507,8 +736,35 @@ export class TaskView implements Component {
     clearMessages() {
         this.messageLayout.clear();
         this.messages = [];
+        this.messageIdToAssistantView.clear();
         this.currentTaskId = undefined;
         this.invalidated = true;
+    }
+
+    /**
+     * 处理单条 TaskUpdateChunk：按 type 追加用户消息或按 message_id 获取/创建助手消息视图并更新。
+     * 当 message_id 与当前已有助手消息不一致时创建新容器追加，不抹除已有内容。
+     */
+    async handleChunkUpdate(chunkUpdate: TaskUpdateChunk) {
+        if (chunkUpdate.type === 'user') {
+            const view = UserMessageView.fromChunk(chunkUpdate);
+            this.messages.push(view);
+            this.messageLayout.addChild(view);
+        } else {
+            let view = this.messageIdToAssistantView.get(chunkUpdate.message_id);
+            if (!view) {
+                view = new AssistantMessageView();
+                view.setMessageId(chunkUpdate.message_id);
+                this.messageIdToAssistantView.set(chunkUpdate.message_id, view);
+                this.messages.push(view);
+                this.messageLayout.addChild(view);
+            }
+            await view.update(chunkUpdate);
+        }
+        this.invalidated = true;
+        if (chunkUpdate.type === 'assistant' && chunkUpdate.usage) {
+            this.onStatusBarUpdate?.({ totalTokens: chunkUpdate.usage.total_tokens });
+        }
     }
 
     /**
@@ -518,8 +774,8 @@ export class TaskView implements Component {
     rebuildFromHistory() {
         if (!this.taskState) return;
 
-        // 更新当前任务ID
         this.currentTaskId = this.taskState.task_id;
+        this.messageIdToAssistantView.clear();
 
         for (const msg of this.taskState.chat_context.messages) {
             if ((msg as any).role === 'compact_separator') {
@@ -532,6 +788,8 @@ export class TaskView implements Component {
                 this.messageLayout.addChild(view);
             } else if (msg instanceof AssistantMessage) {
                 const view = new AssistantMessageView();
+                view.setMessageId(msg.message_id);
+                this.messageIdToAssistantView.set(msg.message_id, view);
                 for (let i = 0; i < msg.content.length; i++) {
                     const part = msg.content[i];
                     switch (part.type) {
@@ -543,6 +801,9 @@ export class TaskView implements Component {
                             break;
                         case 'tool_call':
                             view.updateToolCallPart(i, part);
+                            break;
+                        case 'error':
+                            view.updateErrorPart(i, part);
                             break;
                     }
                 }
@@ -581,6 +842,7 @@ export class TaskView implements Component {
         if (!this.invalidated && this.lastWidth === width && this.cachedOutput) {
             return this.cachedOutput;
         }
+
         this.lastWidth = width;
         this.cachedOutput = this.mainLayout.render(width);
         this.invalidated = false;

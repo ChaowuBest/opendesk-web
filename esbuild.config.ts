@@ -6,12 +6,13 @@ const outfileDebug = 'dist/cli/opendesk-debug';
 
 /**
  * 注入 shebang 和 require shim 作为 banner
- * 为了保持对 OpenHarmony HiShell 的兼容性，这里使用 #!/bin/env node 而不是 #!/usr/bin/env node
+ * 使用 #!/bin/sh polyglot 技巧，兼容 OpenHarmony HiShell（其 env 在 /bin/env 而非 /usr/bin/env）
+ * npm 发布包会由打包脚本将 shebang 替换为 #!/usr/bin/env node 以兼容 Windows
  */
 const BANNER = `#!/bin/sh
 // 2>/dev/null; exec "$(command -v node || command -v nodejs)" "$0" "$@"
-import { createRequire } from 'node:module';
-const __createRequire = createRequire(import.meta.url);
+import { createRequire as __banner_createRequire } from 'node:module';
+const __createRequire = __banner_createRequire(import.meta.url);
 `;
 
 /**
@@ -60,7 +61,7 @@ const prodConfig: esbuild.BuildOptions = {
     treeShaking: true,
     sourcemap: false,
     banner: { js: BANNER },
-    external: ['node-screenshots', 'vectra', 'number-to-alphabet'],
+    external: ['node-screenshots', 'vectra', 'number-to-alphabet', 'esbuild'],
     plugins: [createRequireShimPlugin(outfile)],
 };
 
@@ -76,7 +77,7 @@ const debugConfig: esbuild.BuildOptions = {
     sourcemap: 'inline',
     sourcesContent: true,
     banner: { js: BANNER },
-    external: ['node-screenshots', 'vectra', 'number-to-alphabet'],
+    external: ['node-screenshots', 'vectra', 'number-to-alphabet', 'esbuild'],
     plugins: [createRequireShimPlugin(outfileDebug)],
 };
 

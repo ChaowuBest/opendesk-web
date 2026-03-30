@@ -14,6 +14,7 @@ import { ChatContext, AssistantResponse, UserMessage, AssistantMessage, CompactS
 import { Setting, ModelInstance } from '../utils/setting.js';
 import { z } from 'zod';
 import { logger } from '../utils/logger.js';
+import { lookupKnownVisionSupport, fetchVisionSupportFromAPI } from '../utils/model-context.js';
 import type { BaseTool } from './tool';
 
 /** Model 参数支持传入 ModelInstance 对象、模型别名字符串、或 undefined（使用默认模型） */
@@ -62,6 +63,42 @@ interface RerankApiResponse {
 }
 
 class LLM {
+
+    private static __visionCache = new Map<string, boolean>();
+
+    /**
+     * 检测模型是否支持视觉/图像输入。
+     * 优先使用内置查找表，其次尝试 API 查询，结果缓存。
+     * 如果无法确定，默认返回 true（乐观策略：大多数现代模型支持视觉）。
+     */
+    static async supportsVision(model: ModelParam = undefined): Promise<boolean> {
+        const modelInstance = this.__getModelInstance(model);
+        const cacheKey = `${modelInstance.base_url}::${modelInstance.model_name}`;
+
+        if (this.__visionCache.has(cacheKey)) {
+            return this.__visionCache.get(cacheKey)!;
+        }
+
+        const knownResult = lookupKnownVisionSupport(modelInstance.model_name);
+        if (knownResult !== undefined) {
+            this.__visionCache.set(cacheKey, knownResult);
+            logger.info(`vision support for ${modelInstance.model_name}: ${knownResult} (from builtin table)`);
+            return knownResult;
+        }
+
+        try {
+            const apiResult = await fetchVisionSupportFromAPI(modelInstance);
+            if (apiResult !== undefined) {
+                this.__visionCache.set(cacheKey, apiResult);
+                logger.info(`vision support for ${modelInstance.model_name}: ${apiResult} (from API)`);
+                return apiResult;
+            }
+        } catch { /* API 查询失败 */ }
+
+        this.__visionCache.set(cacheKey, true);
+        logger.info(`vision support for ${modelInstance.model_name}: true (default optimistic)`);
+        return true;
+    }
 
     /**
      * 将 ModelInstance 中的 base_url 域名加入 NO_PROXY 环境变量，
@@ -211,7 +248,8 @@ class LLM {
                 throw new Error('unsupported openai response type');
             }
 
-            const content = response.choices[0].message.content ?? '';
+            let content = response.choices[0].message.content ?? '';
+            content = LLM.__stripThinkTags(content);
             messages.push({ role: 'assistant', content });
 
             if (options.validator === undefined) {
@@ -233,6 +271,14 @@ class LLM {
         }
 
         return finalResponse;
+    }
+
+    /**
+     * 剥离非流式返回中的 `<think>...</think>` 标签，只保留实际回答内容。
+     * 同时处理 reasoning_content 与 content 混合的情况。
+     */
+    private static __stripThinkTags(content: string): string {
+        return content.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
     }
 
     static async ask(question: UserMessage, model: ModelParam = undefined): Promise<string> {
@@ -304,8 +350,9 @@ class LLM {
      *   并将 separator 本身作为一条 UserMessage（含结构化总结）插入上下文。
      * - 对于 AssistantMessage，会调用其 toOpenAIMessages() 方法进行拆分，
      *   以保持 reasoning、tool_call、text 的正确顺序。
+     * @param supportsVision 当前模型是否支持视觉输入，false 时 UserMessage 中的图像部分会被过滤
      */
-    static buildMessages(chatContext: ChatContext): object[] {
+    static buildMessages(chatContext: ChatContext, supportsVision: boolean = true): object[] {
         const messages: object[] = [];
 
         // system prompt 始终保留
@@ -327,8 +374,10 @@ class LLM {
                     continue;
                 }
                 messages.push(...message.toOpenAIMessages());
+            } else if (message instanceof UserMessage) {
+                messages.push(message.toOpenAIMessage(supportsVision));
             } else {
-                messages.push(message.toOpenAIMessage());
+                messages.push((message as any).toOpenAIMessage());
             }
         }
 
@@ -363,7 +412,8 @@ class LLM {
             apiKey: modelInstance.api_key,
             baseURL: modelInstance.base_url,
         });
-        const messages = this.buildMessages(chatContext);
+        const visionSupported = await this.supportsVision(model);
+        const messages = this.buildMessages(chatContext, visionSupported);
         const toolOptions = this.buildToolOptions(chatContext);
 
         const response = await client.chat.completions.create({
@@ -386,11 +436,24 @@ class LLM {
             apiKey: modelInstance.api_key,
             baseURL: modelInstance.base_url,
         });
-        const messages = this.buildMessages(chatContext);
+        const visionSupported = await this.supportsVision(model);
+        const messages = this.buildMessages(chatContext, visionSupported);
         const toolOptions = this.buildToolOptions(chatContext);
 
+        if (logger) {
+            const hasImages = messages.some((m: any) =>
+                Array.isArray(m.content) && m.content.some((p: any) => p.type === 'image_url')
+            );
+            if (hasImages) {
+                logger.info(`streamComplete: sending ${messages.length} messages with inline images (visionSupported=${visionSupported})`);
+            }
+        }
+
         try {
-            const stream = client.chat.completions.stream({
+            // 使用原始流式 API 而非 .stream() 方法
+            // 某些模型提供商的流式响应不包含 role 字段，会导致 SDK 的 finalizeChatCompletion 报错
+            // 使用 .create() with stream: true 可以绕过 SDK 的严格验证
+            const stream = await client.chat.completions.create({
                 model: modelInstance.model_name,
                 messages: messages as OpenAI.ChatCompletionMessageParam[],
                 max_completion_tokens: 16384,

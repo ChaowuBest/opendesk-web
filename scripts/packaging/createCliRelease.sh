@@ -100,58 +100,21 @@ mkdir -p "$RELEASE_DIR"
 echo "Copying built CLI files..."
 cp dist/cli/opendesk "$RELEASE_DIR/opendesk"
 
-echo "Creating Windows launch scripts..."
-
-# Create .cmd file for Windows Command Prompt
-cat > "$RELEASE_DIR/opendesk.cmd" << 'EOF'
-@echo off
-setlocal
-set "SCRIPT_DIR=%~dp0"
-set "OPENDESK_FILE=%SCRIPT_DIR%opendesk"
-
-REM Try to find node in PATH
-where node >nul 2>nul
-if %ERRORLEVEL% EQU 0 (
-    node "%OPENDESK_FILE%" %*
-    exit /b %ERRORLEVEL%
-)
-
-REM Try common node installation paths
-if exist "C:\Program Files\nodejs\node.exe" (
-    "C:\Program Files\nodejs\node.exe" "%OPENDESK_FILE%" %*
-    exit /b %ERRORLEVEL%
-)
-
-if exist "C:\Program Files (x86)\nodejs\node.exe" (
-    "C:\Program Files (x86)\nodejs\node.exe" "%OPENDESK_FILE%" %*
-    exit /b %ERRORLEVEL%
-)
-
-if exist "%LOCALAPPDATA%\Programs\nodejs\node.exe" (
-    "%LOCALAPPDATA%\Programs\nodejs\node.exe" "%OPENDESK_FILE%" %*
-    exit /b %ERRORLEVEL%
-)
-
-echo ERROR: node.exe not found in PATH or common installation locations
-echo Please install Node.js from https://nodejs.org/
-exit /b 1
-EOF
-
-# Create .ps1 file for PowerShell
-cat > "$RELEASE_DIR/opendesk.ps1" << 'EOF'
-$ErrorActionPreference = "Stop"
-
-$scriptPath = Split-Path -Parent $MyInvocation.MyCommand.Path
-$cmdScript = Join-Path $scriptPath "opendesk.cmd"
-
-# Delegate to the .cmd script to avoid duplicate logic
-& cmd.exe /c "`"$cmdScript`" $args"
-exit $LASTEXITCODE
-EOF
-
-# Make scripts executable (for Git)
-chmod +x "$RELEASE_DIR/opendesk.cmd"
-chmod +x "$RELEASE_DIR/opendesk.ps1"
+echo "Creating preinstall script for Windows shebang patching..."
+# 构建产物使用 #!/bin/sh polyglot 以兼容鸿蒙 HiShell（env 在 /bin/env 而非 /usr/bin/env），
+# npm 在 Windows 上创建 bin link 前会先运行 preinstall，此时将 shebang 改为 #!/usr/bin/env node，
+# 使 cmd-shim 正确生成使用 node.exe 的 .cmd/.ps1 wrapper
+cat > "$RELEASE_DIR/preinstall.cjs" << 'PREINSTALL_EOF'
+const fs = require('fs');
+const path = require('path');
+if (process.platform === 'win32') {
+    const target = path.join(__dirname, 'opendesk');
+    const content = fs.readFileSync(target, 'utf8');
+    if (content.startsWith('#!/bin/sh\n')) {
+        fs.writeFileSync(target, '#!/usr/bin/env node\n' + content.slice('#!/bin/sh\n'.length));
+    }
+}
+PREINSTALL_EOF
 
 # Step 4: Create package.json with version from root package.json
 if [ "$RELEASE_TYPE" = "nightly" ]; then
@@ -171,16 +134,18 @@ cat > "$RELEASE_DIR/package.json" << EOF
   "type": "module",
   "main": "./opendesk",
   "bin": {
-    "opendesk": "./opendesk",
-    "opendesk.cmd": "./opendesk.cmd",
-    "opendesk.ps1": "./opendesk.ps1"
+    "opendesk": "./opendesk"
+  },
+  "scripts": {
+    "preinstall": "node preinstall.cjs"
   },
   "engines": {
     "node": ">=20.0.0"
   },
   "dependencies": {
     "number-to-alphabet": "^1.0.0",
-    "vectra": "^0.11.1"
+    "vectra": "^0.11.1",
+    "esbuild": "^0.27.3"
   }
 }
 EOF

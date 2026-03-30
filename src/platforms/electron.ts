@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { BaseTaskManagerUpdateSubscriber, BaseTaskUpdateSubscriber, TaskUpdateChunk } from '../main/states/tasks.js';
+import { BaseTaskManagerUpdateSubscriber, BaseTaskUpdateSubscriber, TaskUpdateChunk } from '../main/aikernel/states/tasks.js';
 import { AbstractPlatform } from './base.js';
 import { MailboxApplication } from "../main/applications/mailbox/app.js";
 import { FileMgrApplication } from "../main/applications/filemgr/app.js";
@@ -24,9 +24,13 @@ import { DesignerApplication } from "../main/applications/designer/app.js";
 import { SkillMgrApplication } from "../main/applications/skillmgr/app.js";
 import { McpMgrApplication } from "../main/applications/mcpmgr/app.js";
 import { TodoMgrApplication } from "../main/applications/todomgr/app.js";
+import { SoulMgrApplication } from "../main/applications/soulmgr/app.js";
 import { BaseApplication } from "../main/applications/base";
 
 import path from 'path';
+import { ChannelMgrApplication } from '../main/applications/channelmgr/app.js';
+import { KnowledgeBaseApplication } from '../main/applications/knowledgebase/app.js';
+import { DeviceMgrApplication } from '../main/applications/devicemgr/app.js';
 
 
 export class ElectronTaskUpdateSubscriber extends BaseTaskUpdateSubscriber {
@@ -105,6 +109,10 @@ export class ElectronPlatform extends AbstractPlatform {
             SkillMgrApplication,
             McpMgrApplication,
             TodoMgrApplication,
+            SoulMgrApplication,
+            ChannelMgrApplication,
+            KnowledgeBaseApplication,
+            DeviceMgrApplication,
         ];
     }
 }

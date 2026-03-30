@@ -1226,12 +1226,15 @@ class SmtpEmailClient {
             port: this.port,
             secure: this.secure,
             auth: {
-                user: this.user,
+                user: this.account,
                 pass: this.pass
             },
             tls: {
                 rejectUnauthorized: false
-            }
+            },
+            // 增加连接和发送超时设置
+            connectionTimeout: 5 * 60 * 1000, // 5分钟
+            socketTimeout: 5 * 60 * 1000, // 5分钟
         })
 
         try {
@@ -1239,6 +1242,7 @@ class SmtpEmailClient {
             NotificationManager.getInstance().info('邮箱', '发送成功', '邮件发送成功')
             return true;
         } catch (error) {
+            logger.error(`SMTP send error: ${error.message}`);
             NotificationManager.getInstance().error(error, '邮箱', '发送失败', '邮件发送失败')
             return false;
         }
@@ -1256,26 +1260,35 @@ class MailboxStorage {
     }
 
     async initialize() {
+        const baseDir = path.dirname(this.dbPath);
+        if (!fs.existsSync(baseDir)) {
+            fs.mkdirSync(baseDir, { recursive: true });
+        }
+
+        const dbFile = this.dbPath + '.db';
+        const rawFile = this.dbPath + '_raw.db';
+        const contentFile = this.dbPath + '_content.db';
+
         await this.db.load().catch(err => {
             logger.error(`error loading mailbox_header_storage.db: ${err}`);
-            fs.rmSync(this.dbPath);
-            this.db = new nedb({ filename: this.dbPath, autoload: true });
+            fs.rmSync(dbFile, { force: true });
+            this.db = new nedb({ filename: dbFile, autoload: true });
             NotificationManager.getInstance().error('邮箱', '收取新邮件', `邮箱数据库(db)损坏，已删除并重新创建`);
         }).finally(() => {
             this.db.ensureIndex({ fieldName: 'uid', unique: true, sparse: true });
         })
         await this.rawdb.load().catch(err => {
             logger.error(`error loading mailbox_header_storage.db.raw: ${err}`);
-            fs.rmSync(this.dbPath + '.raw');
-            this.rawdb = new nedb({ filename: this.dbPath + '.raw', autoload: true });
+            fs.rmSync(rawFile, { force: true });
+            this.rawdb = new nedb({ filename: rawFile, autoload: true });
             NotificationManager.getInstance().error('邮箱', '收取新邮件', `邮箱数据库(rawdb)损坏，已删除并重新创建`);
         }).finally(() => {
             this.rawdb.ensureIndex({ fieldName: 'uid', unique: true, sparse: true });
         })
         await this.contentdb.load().catch(err => {
             logger.error(`error loading mailbox_header_storage.db.content: ${err}`);
-            fs.rmSync(this.dbPath + '.content');
-            this.contentdb = new nedb({ filename: this.dbPath + '.content', autoload: true });
+            fs.rmSync(contentFile, { force: true });
+            this.contentdb = new nedb({ filename: contentFile, autoload: true });
             NotificationManager.getInstance().error('邮箱', '收取新邮件', `邮箱数据库(contentdb)损坏，已删除并重新创建`);
         }).finally(() => {
             this.contentdb.ensureIndex({ fieldName: 'uid', unique: true, sparse: true });
@@ -2128,7 +2141,9 @@ class MailboxWorker extends BaseWorker {
     }
 
     async initialize() {
-        await this.reloadProfilesFromConfig();
+        await this.runSequentially(async () => {
+            await this.reloadProfilesFromConfig();
+        });
         setTimeout(async () => {
             await this.trySync();
             setInterval(async () => {
@@ -2139,8 +2154,10 @@ class MailboxWorker extends BaseWorker {
 
     async applicationConfigChanged(config) {
         super.applicationConfigChanged(config);
-        await this.reloadProfilesFromConfig();
-        await this.trySync();
+        await this.runSequentially(async () => {
+            await this.reloadProfilesFromConfig();
+        });
+        this.trySync();
     }
 
     async getEmailHeaderList(offset = 0, pageSize = 20) {
@@ -2416,6 +2433,14 @@ class MailboxWorker extends BaseWorker {
 
         if (profile.outbox?.smtp) {
             const smtpAccount = profile.outbox.smtp.account ? profile.outbox.smtp.account : profile.username;
+            const attachments = Array.isArray(sendEmailSchema.attachments) ? sendEmailSchema.attachments : [];
+            let text = typeof sendEmailSchema.text === 'string' ? sendEmailSchema.text : '';
+            let html = typeof sendEmailSchema.html === 'string' ? sendEmailSchema.html : '';
+            // Avoid clients treating text attachments as body when body is empty.
+            if (attachments.length > 0 && text.trim() === '' && html.trim() === '') {
+                text = ' ';
+                html = '<p>&nbsp;</p>';
+            }
             const smtp = new SmtpEmailClient(
                 smtpAccount,
                 profile.username, profile.password, profile.name,
@@ -2432,14 +2457,17 @@ class MailboxWorker extends BaseWorker {
                 cc: Array.isArray(sendEmailSchema.cc) ? sendEmailSchema.cc.join(', ') : sendEmailSchema.cc,
                 bcc: Array.isArray(sendEmailSchema.bcc) ? sendEmailSchema.bcc.join(', ') : sendEmailSchema.bcc,
                 subject: sendEmailSchema.subject,
-                text: sendEmailSchema.text,
-                html: sendEmailSchema.html,
-                attachments: sendEmailSchema.attachments,
+                text: text,
+                html: html,
+                attachments: attachments,
                 messageId: messageId,
                 headers: sentHeaders
             };
 
-            const result = await smtp.sendMailWithOptions(sentMailOptions);
+            // 增加发送邮件的超时时间到 5 分钟
+            const sendTimeout = 5 * 60 * 1000; // 5分钟
+            const result = await withTimeout(smtp.sendMailWithOptions(sentMailOptions), sendTimeout, 'SMTP send email');
+            logger.info(`Email sent successfully to ${sendEmailSchema.to}`);
 
             if (result && storage) {
                 // 发送成功后保存到已发送
@@ -2452,9 +2480,9 @@ class MailboxWorker extends BaseWorker {
                 };
                 emailHeader.messageId = messageId;
                 const emailContent = {
-                    htmlContent: sendEmailSchema.html,
-                    textContent: sendEmailSchema.text,
-                    attachments: sendEmailSchema.attachments || []
+                    htmlContent: html,
+                    textContent: text,
+                    attachments: attachments
                 };
                 const protocol = this.resolveInboxProtocol(profile);
                 await storage.saveSentEmail(sentUid, emailHeader, emailContent, protocol);
@@ -2490,9 +2518,9 @@ class MailboxWorker extends BaseWorker {
                 };
                 emailHeader.messageId = messageId;
                 const emailContent = {
-                    htmlContent: sendEmailSchema.html,
-                    textContent: sendEmailSchema.text,
-                    attachments: sendEmailSchema.attachments || []
+                    htmlContent: html,
+                    textContent: text,
+                    attachments: attachments
                 };
                 const protocol = this.resolveInboxProtocol(profile);
                 await storage.saveDraft(draftUid, emailHeader, emailContent, protocol);
@@ -2610,6 +2638,12 @@ class MailboxWorker extends BaseWorker {
         const storage = this.getCurrentStorage();
         if (!storage) throw new Error('No active profile');
         await storage.deleteDraft(uid);
+    }
+
+    async getEmailMeta(uid) {
+        const storage = this.getCurrentStorage();
+        if (!storage) throw new Error('No active profile');
+        return await storage.getEmailMeta(uid);
     }
 }
 

@@ -13,7 +13,7 @@ import { BaseApplication, BaseWorker } from '../base.js';
 import { z } from 'zod';
 import { logger } from '../../utils/logger.js';
 import { SkillRegistry } from './skillregistry.js';
-import { Skill } from '../../aikernel/skill.js';
+import { Skill, SkillRegistry as AISkillRegistry } from '../../aikernel/skill.js';
 import { BaseToolset } from '../../aikernel/tool.js';
 import SkillsWorker from './service/worker.js';
 import { MANAGE_SKILLS_SKILL } from './skills.js';
@@ -26,10 +26,23 @@ import {
     RefreshSkillsTool,
     GetSkillsDirectoryTool
 } from './tools.js';
-import type { SlashCommandHandler } from '../../tui/commands.js';
+import type { SlashCommandHandler } from '../../tui/commands/index.js';
 
 
 export class SkillMgrApplication extends BaseApplication {
+    /** 静态回调列表：refresh 后通知订阅方（如 TUI 自动补全）*/
+    private static refreshListeners: Array<() => void> = [];
+
+    static onSkillsRefreshed(listener: () => void): void {
+        SkillMgrApplication.refreshListeners.push(listener);
+    }
+
+    private static notifyRefreshListeners(): void {
+        for (const listener of SkillMgrApplication.refreshListeners) {
+            try { listener(); } catch { /* 静默忽略 */ }
+        }
+    }
+
     constructor() {
         super('skillmgr', 'Skills');
     }
@@ -50,15 +63,21 @@ export class SkillMgrApplication extends BaseApplication {
     async getSkills(): Promise<Skill[]> {
         const skills: Skill[] = [];
 
-        if (this.getConfig()?.enabled === true) {
-            skills.push(...SkillRegistry.listSkills().map(skill => new Skill(
+        // 已安装的技能始终对 Agent 可见，便于 LoadSkill/CallSkill 能正确解析并调用（与「Skills 应用是否启用」无关）
+        // 传递完整 frontmatter 以保留 user-invocable / disable-model-invocation 等扩展字段
+        skills.push(...SkillRegistry.listSkills().map(skill => {
+            const skillBody = SkillRegistry.getSkillBody(skill.id);
+            const fullFrontmatter = skillBody?.frontmatter ?? {};
+            return new Skill(
                 {
                     name: String(skill.name),
                     description: String(skill.description),
+                    ...fullFrontmatter,
                 },
-                SkillRegistry.getSkillBody(skill.id)?.body || '',
-            )));
-        }
+                skillBody?.body || '',
+                this.getSkillsDirectory() + "/" + skill.name
+            );
+        }));
 
         const manageSkillsSkill = Skill.parseMd(MANAGE_SKILLS_SKILL);
         const manageSkillsToolset = new BaseToolset('manage-skills');
@@ -82,6 +101,7 @@ export class SkillMgrApplication extends BaseApplication {
         logger.info('[skillmgr] config changed, refreshing skills...');
         if (this.getConfig()?.enabled === true) {
             SkillRegistry.refresh();
+            SkillMgrApplication.notifyRefreshListeners();
         }
     }
 
@@ -140,6 +160,9 @@ export class SkillMgrApplication extends BaseApplication {
 
     refresh() {
         const { toolsets, errors } = SkillRegistry.refresh();
+        // 清除 AI SkillRegistry 的缓存，确保后续读取拿到最新数据
+        AISkillRegistry.getInstance().clearCache(this.bundleName);
+        SkillMgrApplication.notifyRefreshListeners();
         return { count: toolsets.length, errors };
     }
 
@@ -147,14 +170,30 @@ export class SkillMgrApplication extends BaseApplication {
         return [
             {
                 name: 'skills',
-                description: '打开技能管理界面',
-                execute: async () => {
-                    try {
-                        const { SkillsOverlay } = await import('./skills-tui.js');
-                        const skillsOverlay = new SkillsOverlay(tui);
-                        skillsOverlay.show();
-                    } catch (err) {
-                        logger.error(`打开技能管理失败: ${err}`);
+                description: '技能管理 (子命令: test <技能名> - 测试技能)',
+                execute: async (args: string) => {
+                    const trimmedArgs = args.trim();
+                    const parts = trimmedArgs.split(/\s+/);
+                    const subCommand = parts[0]?.toLowerCase();
+                    const subArgs = parts.slice(1).join(' ').trim();
+
+                    if (subCommand === 'test') {
+                        try {
+                            const { SkillTestOverlay } = await import('./skill-test-tui.js');
+                            const skillId = subArgs || undefined;
+                            const testOverlay = new SkillTestOverlay(tui);
+                            testOverlay.show(skillId);
+                        } catch (err) {
+                            logger.error(`打开技能测试失败: ${err}`);
+                        }
+                    } else {
+                        try {
+                            const { SkillsOverlay } = await import('./skills-tui.js');
+                            const skillsOverlay = new SkillsOverlay(tui);
+                            skillsOverlay.show();
+                        } catch (err) {
+                            logger.error(`打开技能管理失败: ${err}`);
+                        }
                     }
                 },
             },

@@ -17,7 +17,22 @@ import { BaseTool, BaseToolset } from './tool.js';
 import markedKatex from 'marked-katex-extension';
 import hljs from 'highlight.js';
 import path from 'path';
+import fs from 'fs';
 
+
+/**
+ * 检查工具调用的 args_string 是否为合法 JSON。
+ * 空字符串视为合法（部分模型对无参数工具返回空串）。
+ */
+function isValidToolCallArgs(args_string: string): boolean {
+    if (!args_string || args_string.trim().length === 0) return true;
+    try {
+        JSON.parse(args_string);
+        return true;
+    } catch {
+        return false;
+    }
+}
 
 export const marked = new Marked(
     markedHighlight({
@@ -42,11 +57,14 @@ marked.use(markedKatex({
 export class ReasoningMessagePart {
     type: 'reasoning' = 'reasoning';
     content: string;
+    /** 来源：'reasoning_content' 表示来自 API 的 reasoning_content 字段，'think_tag' 表示从 <think> 标签解析 */
+    source: 'reasoning_content' | 'think_tag';
     /** cached render result of the reasoning */
     rendered?: string;
 
-    constructor (content: string) {
+    constructor (content: string, source: 'reasoning_content' | 'think_tag') {
         this.content = content;
+        this.source = source;
     }
 
     async render() {
@@ -90,7 +108,7 @@ export class ToolCall {
         this.tool_name = tool_name;
         this.args_string = args_string;
 
-        Object.defineProperty(this, 'tool', { value: undefined, writable: true, enumerable: false });
+        Object.defineProperty(this, 'tool', { value: undefined, writable: true, enumerable: false, configurable: true });
     }
 
     toOpenAIMessagePart(): object {
@@ -101,6 +119,12 @@ export class ToolCall {
             tool_name: this.tool_name,
             args_string: this.args_string || "",
         };
+    }
+
+    /** 序列化时显式排除 tool，避免运行时引用被持久化后反序列化为纯对象导致渲染/执行异常 */
+    toJSON(): object {
+        const { tool, ...rest } = this as ToolCall & { tool?: BaseTool<any> };
+        return rest;
     }
 
     setTool(tool: BaseTool<any>) {
@@ -120,8 +144,8 @@ export class ToolCall {
             return this.rendered;
         }
 
-        /* 如果工具自定义了渲染函数，则使用工具的渲染函数 */
-        if (this.tool !== undefined) {
+        /* 如果工具自定义了渲染函数，则使用工具的渲染函数（需确认为 BaseTool 实例，反序列化后可能为纯对象） */
+        if (this.tool !== undefined && typeof (this.tool as any).renderToolCall === 'function') {
             let rendered = await this.tool.renderToolCall(this);
             if (rendered !== undefined) {
                 return rendered;
@@ -195,7 +219,12 @@ export class ToolCall {
 
     static assign(tool_call_obj: object): ToolCall {
         Object.setPrototypeOf(tool_call_obj, ToolCall.prototype);
-        return tool_call_obj as ToolCall;
+        const tc = tool_call_obj as ToolCall;
+        if ('tool' in tc) {
+            delete (tc as any).tool;
+        }
+        Object.defineProperty(tc, 'tool', { value: undefined, writable: true, enumerable: false, configurable: true });
+        return tc;
     }
 }
 
@@ -220,7 +249,7 @@ export class ToolCallMessagePart {
             if (target === undefined) {
                 this.toolcalls.push(toolcall);
             } else {
-                target.args_string += toolcall.args_string;
+                target.args_string += toolcall.args_string ?? '';
                 if (toolcall.tool_name && toolcall.tool_name !== 'unknown') {
                     target.tool_name = toolcall.tool_name;
                 }
@@ -238,16 +267,25 @@ export class ToolCallMessagePart {
      * 用来生成OpenAI工具调用的Assistant消息中的tool_calls
      */
     toOpenAIToolCalls(): object[] {
-        return this.toolcalls.map(toolcall => {
-            return {
+        return this.toolcalls
+            .filter(toolcall => {
+                if (!isValidToolCallArgs(toolcall.args_string)) {
+                    logger.warn(
+                        `Dropping tool call "${toolcall.tool_name}" (id=${toolcall.id}) from OpenAI tool_calls: ` +
+                        `args_string is not valid JSON. Raw args: ${toolcall.args_string?.substring(0, 200)}`
+                    );
+                    return false;
+                }
+                return true;
+            })
+            .map(toolcall => ({
                 id: toolcall.id,
                 type: 'function',
                 function: {
                     name: toolcall.tool_name,
                     arguments: toolcall.args_string
                 }
-            }
-        });
+            }));
     }
 
     /**
@@ -366,6 +404,39 @@ export class TextMessagePart {
     }
 }
 
+export class ErrorMessagePart {
+    type: 'error' = 'error';
+    title: string;
+    message: string;
+    rendered?: string;
+
+    constructor(title: string, message: string) {
+        this.title = title;
+        this.message = message;
+    }
+
+    toOpenAIMessagePart(): object {
+        return { type: 'text', text: `[错误] ${this.title}: ${this.message}` };
+    }
+
+    async render(): Promise<string> {
+        this.rendered = `
+        <div class="flex flex-col mt-3 mb-3 text-sm bg-rose-50/80 backdrop-blur-md border border-rose-200 py-3 px-4 rounded-2xl shadow-sm w-fit min-w-[280px] max-w-2xl">
+            <div class="flex items-center space-x-2 mb-2">
+                <span class="text-base">🔴</span>
+                <span class="font-semibold text-rose-600">${this.title}</span>
+            </div>
+            <div class="text-xs text-slate-600 whitespace-pre-wrap">${this.message}</div>
+        </div>`;
+        return this.rendered;
+    }
+
+    static assign(obj: object): ErrorMessagePart {
+        Object.setPrototypeOf(obj, ErrorMessagePart.prototype);
+        return obj as ErrorMessagePart;
+    }
+}
+
 export class ImageMessagePart {
     type: 'image_url' = 'image_url';
     image_url: { url: string };
@@ -390,6 +461,89 @@ export class ImageMessagePart {
     }
 }
 
+
+const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp']);
+
+/**
+ * 从文本中提取可能的文件路径并过滤出合法存在的图片文件。
+ * 支持 Windows 绝对路径 (C:\xxx.png)、Unix 绝对路径 (/c/Projects/test.png)、
+ * 相对路径 (./abc.jpg) 等形式。
+ * 返回去重后的绝对路径列表。
+ */
+export function extractImagePaths(text: string): string[] {
+    const imageExtRegex = /\.(png|jpe?g|gif|webp|bmp)$/i;
+    const foundPaths = new Set<string>();
+
+    const tryAdd = (rawPath: string) => {
+        if (!imageExtRegex.test(rawPath)) return;
+        try {
+            const resolved = path.resolve(rawPath);
+            if (fs.existsSync(resolved)) {
+                foundPaths.add(resolved);
+            }
+        } catch { /* 无效路径，跳过 */ }
+    };
+
+    // Phase 1: extract paths wrapped in quotes (e.g. "C:\xxx.png" or 'C:\xxx.png')
+    const quotedPattern = /["']([^"']+\.\w{2,5})["']/g;
+    let qm: RegExpExecArray | null;
+    while ((qm = quotedPattern.exec(text)) !== null) {
+        tryAdd(qm[1].trim());
+    }
+
+    // Phase 2: unquoted path patterns
+    const patterns = [
+        /(?<![<"'\w])([A-Za-z]:[\\\/][^\s<>"'|*?]+\.\w{2,5})(?!["\w])/g,
+        /(?<![<"'\w])(\/(?:[^\s<>"'|*?]+)\/[^\s<>"'|*?]+\.\w{2,5})(?!["\w])/g,
+        /(?<![<"'\w])(\.\.?[\\\/][^\s<>"'|*?]+\.\w{2,5})(?!["\w])/g,
+        /(?<![<"'\w])(~[\\\/][^\s<>"'|*?]+\.\w{2,5})(?!["\w])/g,
+        /(?<![<"'\\\/\w])(\w[^\s<>"'|*?]*[\\\/][^\s<>"'|*?]+\.\w{2,5})(?!["\w])/g,
+    ];
+    for (const pattern of patterns) {
+        let match: RegExpExecArray | null;
+        while ((match = pattern.exec(text)) !== null) {
+            tryAdd(match[1].trim());
+        }
+    }
+
+    // Phase 3: bare filenames (e.g. "test.png")
+    const bareFilenamePattern = /(?<![<"'\\\/\w])([A-Za-z0-9_\-][A-Za-z0-9_\-. ]*\.(png|jpe?g|gif|webp|bmp))(?!["\w])/gi;
+    let match: RegExpExecArray | null;
+    while ((match = bareFilenamePattern.exec(text)) !== null) {
+        tryAdd(match[1].trim());
+    }
+
+    return Array.from(foundPaths);
+}
+
+function detectImageMimeFromBuffer(buf: Buffer): string | null {
+    if (!buf || buf.length < 4) return null;
+    if (buf[0] === 0xFF && buf[1] === 0xD8) return 'image/jpeg';
+    if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47) return 'image/png';
+    if (buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46) return 'image/gif';
+    if (buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46
+        && buf.length > 11 && buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50) return 'image/webp';
+    if (buf[0] === 0x42 && buf[1] === 0x4D) return 'image/bmp';
+    return null;
+}
+
+/**
+ * 将图片文件转换为 data URI（base64 编码）。
+ */
+export function imageToDataUri(imagePath: string): string {
+    const ext = path.extname(imagePath).toLowerCase();
+    const mimeMap: Record<string, string> = {
+        '.png': 'image/png',
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.gif': 'image/gif',
+        '.webp': 'image/webp',
+        '.bmp': 'image/bmp',
+    };
+    const data = fs.readFileSync(imagePath);
+    const mime = mimeMap[ext] || detectImageMimeFromBuffer(data) || 'image/png';
+    return `data:${mime};base64,${data.toString('base64')}`;
+}
 
 /**
  * @class Usage
@@ -430,9 +584,18 @@ export class SystemMessage {
     }
 }
 
+export type UserMessagePart = TextMessagePart | ImageMessagePart | FileMessagePart;
+
 export class UserMessage {
     role: 'user' = 'user';
-    content: Array<TextMessagePart | ImageMessagePart | FileMessagePart> = [];
+    message_id: string = crypto.randomUUID();
+    content: Array<UserMessagePart> = [];
+    /**
+     * 标记此消息为内部消息（如钩子系统自动生成的 reject 消息）。
+     * internal = true 时，仅在 debug 模式下在 TUI 中显示；
+     * 持久化 JSON 和导出 HTML 中始终保留。
+     */
+    internal?: boolean;
 
     constructor (content?: string) {
         if (content) {
@@ -455,13 +618,15 @@ export class UserMessage {
         return this;
     }
 
-    appendPart(part: TextMessagePart | ImageMessagePart | FileMessagePart): UserMessage {
+    appendPart(part: UserMessagePart): UserMessage {
         if (part.type === 'text') {
             this.appendText(part.text);
         } else if (part.type === 'file') {
             this.content.push(part);
+        } else if (part.type === 'image_url') {
+            this.content.push(part);
         } else {
-            throw new Error(`unsupported part type ${part.type}`);
+            throw new Error(`unsupported part type ${(part as any).type}`);
         }
         return this;
     }
@@ -478,15 +643,20 @@ export class UserMessage {
 
     static assign(raw_obj: object): UserMessage {
         Object.setPrototypeOf(raw_obj, UserMessage.prototype);
-        let user_message = raw_obj as UserMessage;
+        const user_message = raw_obj as UserMessage;
+        if (!user_message.message_id) {
+            user_message.message_id = crypto.randomUUID();
+        }
         if (user_message.content !== undefined) {
             for (let part of user_message.content) {
                 if (part.type === 'text') {
                     TextMessagePart.assign(part);
                 } else if (part.type === 'file') {
                     FileMessagePart.assign(part);
+                } else if (part.type === 'image_url') {
+                    ImageMessagePart.assign(part);
                 } else {
-                    throw new Error(`unsupported part type ${part.constructor.name}`);
+                    throw new Error(`unsupported part type ${(part as any).type}`);
                 }
             }
         }
@@ -499,24 +669,36 @@ export class UserMessage {
         }
     }
 
-    toOpenAIMessage(): object {
+    toOpenAIMessage(supportsVision: boolean = true): object {
+        const parts = supportsVision
+            ? this.content
+            : this.content.filter(part => part.type !== 'image_url');
+
+        if (parts.length === 1 && parts[0].type === 'text') {
+            return {
+                role: this.role,
+                content: parts[0].text
+            }
+        }
         return {
             role: this.role,
-            content: this.content.map(part => part.toOpenAIMessagePart())
+            content: parts.map(part => part.toOpenAIMessagePart())
         }
     }
 }
 
-export type AssistantMessagePart = TextMessagePart | ReasoningMessagePart | ToolCallMessagePart;
+export type AssistantMessagePart = TextMessagePart | ReasoningMessagePart | ToolCallMessagePart | ErrorMessagePart;
 
 export class AssistantMessage {
     role: 'assistant' = 'assistant';
     message_id: string = crypto.randomUUID();
     content: Array<AssistantMessagePart> = [];
     usage?: Usage;
+    private _insideThinkTag: boolean = false;
 
     constructor (content: Array<AssistantMessagePart> = []) {
         this.content = content;
+        Object.defineProperty(this, '_insideThinkTag', { value: false, writable: true, enumerable: false });
     }
 
     /**
@@ -525,6 +707,7 @@ export class AssistantMessage {
     static assign(raw_obj: object): AssistantMessage {
         Object.setPrototypeOf(raw_obj, AssistantMessage.prototype);
         let assistant_message = raw_obj as AssistantMessage;
+        Object.defineProperty(assistant_message, '_insideThinkTag', { value: false, writable: true, enumerable: false });
         if (assistant_message.content !== undefined) {
             for (let part of assistant_message.content) {
                 if (part.type === 'text') {
@@ -533,6 +716,8 @@ export class AssistantMessage {
                     ReasoningMessagePart.assign(part);
                 } else if (part.type === 'tool_call') {
                     ToolCallMessagePart.assign(part);
+                } else if (part.type === 'error') {
+                    ErrorMessagePart.assign(part);
                 }
             }
         }
@@ -555,39 +740,118 @@ export class AssistantMessage {
         return this;
     }
 
-    appendPart(part: TextMessagePart | ReasoningMessagePart | ToolCallMessagePart): AssistantMessage {
+    appendPart(part: TextMessagePart | ReasoningMessagePart | ToolCallMessagePart | ErrorMessagePart): AssistantMessage {
         if (part.type === 'text') {
             this.appendText(part.text);
         } else if (part.type === 'reasoning') {
-            this.appendReasoningContent(part.content);
+            this.appendReasoningContent(part.content, part.source);
         } else if (part.type === 'tool_call') {
             this.appendToolCallPart(part);
+        } else if (part.type === 'error') {
+            this.content.push(part);
         }
         return this;
     }
 
-    appendReasoningContent(content: string): AssistantMessage {
+    appendError(title: string, message: string): AssistantMessage {
+        this.content.push(new ErrorMessagePart(title, message));
+        return this;
+    }
+
+    appendReasoningContent(content: string, source: 'reasoning_content' | 'think_tag' = 'reasoning_content'): AssistantMessage {
         const last_part = this.content[this.content.length - 1];
-        if (last_part && last_part.type === 'reasoning') {
+        if (last_part && last_part.type === 'reasoning' && last_part.source === source) {
             last_part.content += content;
         } else {
-            this.content.push(new ReasoningMessagePart(content));
+            this.content.push(new ReasoningMessagePart(content, source));
         }
         return this;
     }
 
     /**
-     * Append a text part to the message
-     * @param {string} text
+     * Append a text part to the message.
+     * Detects `<think>...</think>` tags in the text content and automatically
+     * splits them into ReasoningMessagePart, handling streaming scenarios where
+     * tags may be split across multiple chunks.
      */
     appendText(text: string): AssistantMessage {
+        if (this._insideThinkTag) {
+            this._appendToReasoningRaw(text);
+            this._checkAndSplitReasoningClose();
+        } else {
+            this._appendRawText(text);
+            this._checkAndSplitTextOpen();
+        }
+        return this;
+    }
+
+    private _appendRawText(text: string): void {
         const last_part = this.content[this.content.length - 1];
         if (last_part && last_part.type === 'text') {
             last_part.text += text;
         } else {
             this.content.push(new TextMessagePart(text));
         }
-        return this;
+    }
+
+    private _appendToReasoningRaw(text: string): void {
+        const last_part = this.content[this.content.length - 1];
+        if (last_part && last_part.type === 'reasoning') {
+            last_part.content += text;
+        } else {
+            this.content.push(new ReasoningMessagePart(text, 'think_tag'));
+        }
+    }
+
+    /**
+     * Check if the last TextMessagePart contains `<think>` and split it into
+     * a TextMessagePart (before) and ReasoningMessagePart (after).
+     */
+    private _checkAndSplitTextOpen(): void {
+        const last_part = this.content[this.content.length - 1];
+        if (!last_part || last_part.type !== 'text') return;
+
+        const openIdx = last_part.text.indexOf('<think>');
+        if (openIdx === -1) return;
+
+        const beforeThink = last_part.text.substring(0, openIdx);
+        const afterOpen = last_part.text.substring(openIdx + '<think>'.length);
+
+        if (beforeThink.trim().length > 0) {
+            last_part.text = beforeThink;
+        } else {
+            this.content.pop();
+        }
+
+        this._insideThinkTag = true;
+
+        if (afterOpen.length > 0) {
+            this.content.push(new ReasoningMessagePart(afterOpen, 'think_tag'));
+            this._checkAndSplitReasoningClose();
+        }
+    }
+
+    /**
+     * Check if the last ReasoningMessagePart contains `</think>` and split it into
+     * a ReasoningMessagePart (before) and TextMessagePart (after).
+     */
+    private _checkAndSplitReasoningClose(): void {
+        const last_part = this.content[this.content.length - 1];
+        if (!last_part || last_part.type !== 'reasoning') return;
+
+        const closeIdx = last_part.content.indexOf('</think>');
+        if (closeIdx === -1) return;
+
+        const reasoningText = last_part.content.substring(0, closeIdx);
+        const afterClose = last_part.content.substring(closeIdx + '</think>'.length);
+
+        last_part.content = reasoningText;
+        this._insideThinkTag = false;
+
+        if (afterClose.trim().length > 0) {
+            this.content.push(new TextMessagePart(afterClose));
+            this._checkAndSplitTextOpen();
+        }
     }
 
     /**
@@ -617,7 +881,6 @@ export class AssistantMessage {
     toOpenAIMessages(): object[] {
         const messages: object[] = [];
 
-        // 拆分 AssistantMessage：处理交错出现的 reasoning、tool_call、text
         let currentReasoning = '';
         let currentText = '';
 
@@ -645,29 +908,47 @@ export class AssistantMessage {
         for (const part of this.content) {
             switch (part.type) {
                 case 'reasoning': {
-                    currentReasoning += part.content;
+                    if (part.source === 'think_tag') {
+                        currentText += `<think>${part.content}</think>`;
+                    } else {
+                        currentReasoning += part.content;
+                    }
                     break;
                 }
                 case 'tool_call': {
                     processCurrentMessage();
-                    const toolCallObjects = part.toolcalls.map(tc => {
-                        const shouldCompressArgs = tc.compress_id
-                            && tc.args_string
-                            && tc.args_string.length > LARGE_ARGS_THRESHOLD;
-                        return {
-                            id: tc.id,
-                            type: 'function',
-                            function: {
-                                name: tc.tool_name,
-                                arguments: shouldCompressArgs
-                                    ? `{"compressed":"工具参数已被压缩，数据ID为 ${tc.compress_id}"}`
-                                    : (tc.args_string || "")
-                            }
-                        };
-                    });
-                    if (toolCallObjects.length > 0) {
+                    const validToolcalls: ToolCall[] = [];
+                    for (const tc of part.toolcalls) {
+                        const argsToCheck = (tc.compress_id && tc.args_string && tc.args_string.length > LARGE_ARGS_THRESHOLD)
+                            ? `{"compressed":"placeholder"}`
+                            : (tc.args_string || "");
+                        if (!isValidToolCallArgs(argsToCheck)) {
+                            logger.warn(
+                                `Dropping tool call "${tc.tool_name}" (id=${tc.id}) from OpenAI context: ` +
+                                `args_string is not valid JSON. Raw args: ${tc.args_string?.substring(0, 200)}`
+                            );
+                            continue;
+                        }
+                        validToolcalls.push(tc);
+                    }
+                    if (validToolcalls.length > 0) {
+                        const toolCallObjects = validToolcalls.map(tc => {
+                            const shouldCompressArgs = tc.compress_id
+                                && tc.args_string
+                                && tc.args_string.length > LARGE_ARGS_THRESHOLD;
+                            return {
+                                id: tc.id,
+                                type: 'function',
+                                function: {
+                                    name: tc.tool_name,
+                                    arguments: shouldCompressArgs
+                                        ? `{"compressed":"工具参数已被压缩，数据ID为 ${tc.compress_id}"}`
+                                        : (tc.args_string || "")
+                                }
+                            };
+                        });
                         messages.push({ role: 'assistant', tool_calls: toolCallObjects });
-                        for (const toolcall of part.toolcalls) {
+                        for (const toolcall of validToolcalls) {
                             let toolCallMsg: any = { 'role': 'tool', tool_call_id: toolcall.id };
                             if (toolcall.compress_id) {
                                 toolCallMsg.content = `工具返回结果已被压缩，数据ID为 ${toolcall.compress_id}`;
@@ -687,6 +968,11 @@ export class AssistantMessage {
                     currentText += part.text;
                     break;
                 }
+                case 'error': {
+                    const errPart = part as ErrorMessagePart;
+                    currentText += `[错误] ${errPart.title}: ${errPart.message}`;
+                    break;
+                }
             }
         }
 
@@ -699,6 +985,13 @@ export class AssistantMessage {
         var tool_call_parts = this.content.filter(part => part.type === 'tool_call');
         for (let part of tool_call_parts) {
             for (let toolcall of part.toolcalls) {
+                if (!isValidToolCallArgs(toolcall.args_string)) {
+                    logger.warn(
+                        `Skipping tool response for "${toolcall.tool_name}" (id=${toolcall.id}): ` +
+                        `original tool call had invalid JSON args`
+                    );
+                    continue;
+                }
                 if (toolcall.compress_id) {
                     messages.push({
                         role: 'tool',
@@ -730,7 +1023,7 @@ export class AssistantMessage {
 
         const reasoning_content = openai_message['reasoning_content'];
         if (reasoning_content) {
-            message.content.push(new ReasoningMessagePart(reasoning_content));
+            message.content.push(new ReasoningMessagePart(reasoning_content, 'reasoning_content'));
         }
 
         const tool_calls = openai_message['tool_calls'];
@@ -741,7 +1034,7 @@ export class AssistantMessage {
                     tool_call['index'],
                     tool_call['id'],
                     tool_call['function']['name'],
-                    tool_call['function']['arguments']
+                    tool_call['function']['arguments'] ?? ''
                 );
                 part.push(tc);
             }
@@ -749,6 +1042,10 @@ export class AssistantMessage {
         }
         const content = openai_message['content'];
         if (content) {
+            // 不在临时消息上调用 appendText（它会在临时消息内解析 <think> 标签并消费状态，
+            // 但 _insideThinkTag 状态不会传递到主消息）。
+            // 直接创建 TextMessagePart，让 mergeChunk -> appendPart -> appendText
+            // 在主消息上完成 <think> 标签的解析，确保状态一致性。
             message.content.push(new TextMessagePart(content));
         }
         return message;
@@ -767,24 +1064,19 @@ export class AssistantResponse {
 
     static richError(title: string, reason: string, ...attachments: string[]) {
         var response = new AssistantResponse(new AssistantMessage(), 'error');
-        var content = `🔴 ${title}\n`;
-        content += `---\n`
-        content += `${reason}\n`
+        let message = reason;
         if (getDebugMode()) {
-            // 仅在调试模式下才打印复杂的附件信息
             for (const attachment of attachments) {
-                content += "```\n";
-                content += attachment + "\n";
-                content += "```\n";
+                message += "\n```\n" + attachment + "\n```\n";
             }
         }
-        response.content.appendText(content);
+        response.content.appendError(title, message);
         return response;
     }
 
     static error(reason: string): AssistantResponse {
         var response = new AssistantResponse(new AssistantMessage(), 'error');
-        response.content.appendText(reason);
+        response.content.appendError('Error', reason);
         return response;
     }
 

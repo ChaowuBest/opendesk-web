@@ -1,37 +1,153 @@
-import { type Component, SelectList, Box, Text } from "@mariozechner/pi-tui";
+import { type Component, Box, Text, Key, matchesKey } from "@mariozechner/pi-tui";
 import chalk from "chalk";
 import { SlashCommandRegistry } from "../commands";
 import { defaultSelectListTheme } from "../theme";
 import { OpenDeskTUI } from "../entry";
+import { SelectTable, type SelectRow } from "./selecttable";
+import { SkillRegistry } from "../../aikernel/skill";
 
+
+type HelpTab = 'commands' | 'skills';
 
 export class HelpOverlay implements Component {
     private openDeskTUI: OpenDeskTUI;
-    private list: SelectList;
-    private header: Text;
     private box: Box;
+    private headerText: Text;
+
+    private commandTable: SelectTable;
+    private skillTable: SelectTable;
+
+    private activeTab: HelpTab = 'commands';
+    private overlayHandle?: { hide: () => void };
+    private removeInputListener?: () => void;
 
     constructor(openDeskTUI: OpenDeskTUI) {
         this.openDeskTUI = openDeskTUI;
+
+        // ── 构建 Commands 表格 ──
         const commands = this.openDeskTUI.commandRegistry.getAll();
+        const commandRows: SelectRow[] = commands.map(cmd => ({
+            labels: [
+                chalk.bold('/' + cmd.name),
+                cmd.shortcut
+                    ? chalk.cyan(SlashCommandRegistry.formatKeyLabel(cmd.shortcut))
+                    : '',
+                cmd.description,
+            ],
+            value: cmd.name,
+        }));
+        if (commandRows.length === 0) {
+            commandRows.push({ labels: ['', '', chalk.dim('暂无命令')], value: '_empty' });
+        }
 
-        const items = commands.map(cmd => {
-            const cmdName = ('/' + cmd.name).padEnd(10);
-            const shortcut = cmd.shortcut
-                ? chalk.cyan(SlashCommandRegistry.formatKeyLabel(cmd.shortcut).padEnd(10))
-                : ' '.repeat(10);
-            return {
-                value: cmd.name,
-                label: `${chalk.bold(cmdName)}${shortcut}${cmd.description}`,
-            };
-        });
+        this.commandTable = new SelectTable(commandRows, commandRows.length, defaultSelectListTheme);
+        this.commandTable.setColumnStrechFactors([0, 0, 1]);
 
-        this.header = new Text(chalk.bold(' 指令列表'));
-        this.list = new SelectList(items, items.length, defaultSelectListTheme);
+        // ── 构建 Skills 表格（初始为空，异步填充） ──
+        const placeholderRows: SelectRow[] = [
+            { labels: [chalk.dim('加载中...')], value: '_loading' },
+        ];
+        this.skillTable = new SelectTable(placeholderRows, 1, defaultSelectListTheme);
+        this.skillTable.setColumnStrechFactors([0, 1]);
+
+        // 异步加载 skill 列表
+        this.loadSkills();
+
+        this.headerText = new Text(this.buildHeader());
+
         this.box = new Box(1, 1);
         this.box.setBgFn((text: string) => chalk.bgHex('#2d2d2d').hex('#e0e0e0')(text));
-        this.box.addChild(this.header);
-        this.box.addChild(this.list);
+        this.box.addChild(this.headerText);
+        this.box.addChild(this.commandTable);
+
+        // 代理 SelectTable 事件
+        this.setupTableCallbacks(this.commandTable);
+        this.setupTableCallbacks(this.skillTable);
+    }
+
+    private setupTableCallbacks(table: SelectTable) {
+        table.onSelect = () => {
+            this.close();
+        };
+        table.onCancel = () => {
+            this.close();
+        };
+    }
+
+    private close() {
+        this.removeInputListener?.();
+        this.removeInputListener = undefined;
+        this.overlayHandle?.hide();
+        this.openDeskTUI.hasOpenOverlay = false;
+        this.openDeskTUI.tui.setFocus(this.openDeskTUI.inputArea.input);
+    }
+
+    private buildHeader(): string {
+        const cmdLabel = this.activeTab === 'commands'
+            ? chalk.bold.underline(' 指令 ')
+            : chalk.dim(' 指令 ');
+        const skillLabel = this.activeTab === 'skills'
+            ? chalk.bold.underline(' 技能 ')
+            : chalk.dim(' 技能 ');
+        return ` ${cmdLabel}  ${skillLabel}  ${chalk.dim('← → 切换')}`;
+    }
+
+    private async loadSkills() {
+        try {
+            const registry = SkillRegistry.getInstance();
+            const userInvocable = await registry.getUserInvocableSkills();
+
+            const rows: SelectRow[] = userInvocable.map(({ bundleName, skill }) => {
+                const invocableTag = skill.isModelInvocable
+                    ? chalk.green('auto')
+                    : chalk.yellow('manual');
+                return {
+                    labels: [
+                        chalk.bold('/' + skill.frontmatter.name),
+                        invocableTag,
+                        skill.frontmatter.description || '',
+                    ],
+                    value: skill.frontmatter.name,
+                };
+            });
+
+            if (rows.length === 0) {
+                rows.push({
+                    labels: [chalk.dim('暂无可用技能'), '', chalk.dim('使用 /skills 管理技能')],
+                    value: '_empty',
+                });
+            }
+
+            this.skillTable = new SelectTable(rows, rows.length, defaultSelectListTheme);
+            this.skillTable.setColumnStrechFactors([0, 0, 1]);
+            this.setupTableCallbacks(this.skillTable);
+
+            if (this.activeTab === 'skills') {
+                this.rebuildBox();
+                this.openDeskTUI.tui.setFocus(this.skillTable.innerList);
+            }
+            this.openDeskTUI.tui.requestRender();
+        } catch {
+            // 加载失败不影响主流程
+        }
+    }
+
+    private switchTab(tab: HelpTab) {
+        if (this.activeTab === tab) return;
+        this.activeTab = tab;
+        this.headerText.setText(this.buildHeader());
+        this.rebuildBox();
+
+        const activeTable = this.activeTab === 'commands' ? this.commandTable : this.skillTable;
+        this.openDeskTUI.tui.setFocus(activeTable.innerList);
+        this.openDeskTUI.tui.requestRender();
+    }
+
+    private rebuildBox() {
+        this.box = new Box(1, 1);
+        this.box.setBgFn((text: string) => chalk.bgHex('#2d2d2d').hex('#e0e0e0')(text));
+        this.box.addChild(this.headerText);
+        this.box.addChild(this.activeTab === 'commands' ? this.commandTable : this.skillTable);
     }
 
     invalidate(): void {
@@ -45,32 +161,30 @@ export class HelpOverlay implements Component {
     show() {
         const terminalWidth = this.openDeskTUI.tui.terminal.columns;
         const terminalHeight = this.openDeskTUI.tui.terminal.rows;
-        const overlayWidth = Math.min(70, terminalWidth - 4);
+        const overlayWidth = Math.min(90, terminalWidth - 4);
         const overlayMaxHeight = Math.max(5, terminalHeight - 4);
 
-        const handle = this.openDeskTUI.tui.showOverlay(this, {
+        this.overlayHandle = this.openDeskTUI.tui.showOverlay(this, {
             width: overlayWidth,
             maxHeight: overlayMaxHeight,
             anchor: "center",
         });
 
-        // 标记有 overlay 打开
         this.openDeskTUI.hasOpenOverlay = true;
+        this.openDeskTUI.tui.setFocus(this.commandTable.innerList);
 
-        this.openDeskTUI.tui.setFocus(this.list);
+        // 拦截左右键输入来切换 tab
+        this.removeInputListener = this.openDeskTUI.tui.addInputListener((data) => {
+            if (!this.openDeskTUI.hasOpenOverlay) {
+                return undefined;
+            }
 
-        this.list.onSelect = () => {
-            handle.hide();
-            // 标记 overlay 关闭
-            this.openDeskTUI.hasOpenOverlay = false;
-            this.openDeskTUI.tui.setFocus(this.openDeskTUI.inputArea.input);
-        };
-
-        this.list.onCancel = () => {
-            handle.hide();
-            // 标记 overlay 关闭
-            this.openDeskTUI.hasOpenOverlay = false;
-            this.openDeskTUI.tui.setFocus(this.openDeskTUI.inputArea.input);
-        };
+            if (matchesKey(data, Key.left) || matchesKey(data, Key.right)) {
+                const newTab: HelpTab = this.activeTab === 'commands' ? 'skills' : 'commands';
+                this.switchTab(newTab);
+                return { consume: true };
+            }
+            return undefined;
+        });
     }
 }

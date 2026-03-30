@@ -13,6 +13,7 @@ import { BaseWorker } from "../../base";
 import { logger } from "../../../utils/logger.js";
 import { OutlookUtils } from "../../../utils/outlook.js";
 import { CalendarItemSchema } from "../common.js";
+import { NotificationManager } from "../../../utils/notificationmgr.js";
 import nedb from 'nedb-promises';
 import path from 'path';
 import fs from 'fs';
@@ -22,6 +23,11 @@ import PQueue from 'p-queue';
 /** @type {PQueue} */
 const task_queue = new PQueue({ concurrency: 1 });
 
+/** 提醒阈值（毫秒） */
+const REMINDER_15_MIN = 15 * 60 * 1000;
+/** 提醒检查间隔：每5分钟检查一次 */
+const REMINDER_CHECK_INTERVAL = 5 * 60 * 1000;
+
 class CalendarWorker extends BaseWorker {
 
     constructor(bundleName, appDataDirectory) {
@@ -29,6 +35,13 @@ class CalendarWorker extends BaseWorker {
         this.db = new nedb({ filename: path.join(this.appDataDirectory, 'calendar.db') });
         /** @type {NodeJS.Timeout | null} */
         this._interval = null;
+        /** @type {NodeJS.Timeout | null} */
+        this._reminderInterval = null;
+        /**
+         * 已发送提醒的记录，key 为 `${uid}_${threshold}`，避免重复提醒
+         * @type {Set<string>}
+         */
+        this._notifiedSet = new Set();
     }
 
     async loadDatabase() {
@@ -121,6 +134,135 @@ class CalendarWorker extends BaseWorker {
         return { deleted: true, uid };
     }
 
+    // ──────────────────── 日程提醒 ────────────────────
+
+    /**
+     * 查询即将到来的日程（未来 20 分钟内开始、尚未取消的日程）
+     * @returns {Promise<Array>}
+     */
+    async getUpcomingItems() {
+        const now = Date.now();
+        const windowEnd = now + 16 * 60 * 1000; // 16 分钟窗口（覆盖 15 分钟提醒）
+
+        const items = await this.db.find({
+            startTime: { $gte: now, $lte: windowEnd },
+            isCancelled: { $ne: true },
+            isAllDay: { $ne: true },  // 全天日程不需要精确提醒
+        }).sort({ startTime: 1 });
+
+        return items.map(item => CalendarItemSchema.parse(item));
+    }
+
+    /**
+     * 检查即将到来的日程并发送提醒通知。
+     * - 提前 15 分钟：发送 warning 级别的预提醒
+     * 使用 _notifiedSet 避免重复发送同一日程的同一阈值提醒。
+     */
+    async checkAndNotifyUpcoming() {
+        try {
+            const items = await this.getUpcomingItems();
+            const now = Date.now();
+            const notifier = NotificationManager.getInstance();
+
+            for (const item of items) {
+                const diff = item.startTime - now; // 距离开始还有多少毫秒
+
+                // 15 分钟提醒（warning）
+                if (diff <= REMINDER_15_MIN && diff > 0) {
+                    const key = `${item.uid}_15min`;
+                    if (!this._notifiedSet.has(key)) {
+                        this._notifiedSet.add(key);
+                        const minutesLeft = Math.ceil(diff / 60000);
+                        const timeStr = this._formatTime(item.startTime);
+                        notifier.sendNotification(
+                            'warning',
+                            '日历',
+                            `📅 ${item.subject}`,
+                            `日程将在 ${minutesLeft} 分钟后开始（${timeStr}）${item.location ? ' 📍' + item.location : ''}`
+                        );
+                        logger.info(`[calendar-reminder] sent 15-min warning reminder: ${item.uid} - ${item.subject}`);
+                    }
+                }
+            }
+
+            // 定期清理过期的提醒记录（已经开始超过 30 分钟的日程）
+            this._cleanupNotifiedSet();
+        } catch (err) {
+            logger.error(`[calendar-reminder] check failed: ${err}`);
+        }
+    }
+
+    /**
+     * 格式化时间戳为 HH:mm 格式
+     * @param {number} timestamp
+     * @returns {string}
+     */
+    _formatTime(timestamp) {
+        const d = new Date(timestamp);
+        return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+    }
+
+    /**
+     * 清理过期的提醒记录，避免 _notifiedSet 无限增长。
+     * 查询数据库中已过期的 uid，从 set 中移除对应记录。
+     */
+    async _cleanupNotifiedSet() {
+        if (this._notifiedSet.size === 0) return;
+
+        const now = Date.now();
+        const cutoff = now - 30 * 60 * 1000; // 开始时间超过 30 分钟前的算过期
+
+        // 提取 set 中所有 uid
+        const uidSet = new Set();
+        for (const key of this._notifiedSet) {
+            const uid = key.replace(/_15min$/, '');
+            uidSet.add(uid);
+        }
+
+        // 查询这些 uid 中已过期的
+        const uids = [...uidSet];
+        for (const uid of uids) {
+            try {
+                const doc = await this.db.findOne({ uid });
+                if (!doc || doc.startTime < cutoff) {
+                    // 日程已过期或已删除，清理提醒记录
+                    this._notifiedSet.delete(`${uid}_15min`);
+                }
+            } catch {
+                // ignore
+            }
+        }
+    }
+
+    /**
+     * 启动日程提醒定时检查器
+     */
+    _startReminderChecker() {
+        // 首次延迟 5 秒执行，等数据库加载完毕
+        setTimeout(() => {
+            this.checkAndNotifyUpcoming();
+        }, 5000);
+
+        this._reminderInterval = setInterval(() => {
+            this.checkAndNotifyUpcoming();
+        }, REMINDER_CHECK_INTERVAL);
+
+        logger.info('[calendar-reminder] reminder checker started, interval: 30s');
+    }
+
+    /**
+     * 停止日程提醒定时检查器
+     */
+    _stopReminderChecker() {
+        if (this._reminderInterval) {
+            clearInterval(this._reminderInterval);
+            this._reminderInterval = null;
+            logger.info('[calendar-reminder] reminder checker stopped');
+        }
+    }
+
+    // ──────────────────── 生命周期 ────────────────────
+
     async initialize() {
         await this.loadDatabase();
         const syncImmediately = async () => {
@@ -135,6 +277,19 @@ class CalendarWorker extends BaseWorker {
 
         await syncImmediately();
         this._interval = setInterval(syncImmediately, 1000 * 60 * 2);
+
+        // 启动日程提醒检查器
+        this._startReminderChecker();
+    }
+
+    async finalize() {
+        // 停止同步定时器
+        if (this._interval) {
+            clearInterval(this._interval);
+            this._interval = null;
+        }
+        // 停止提醒检查器
+        this._stopReminderChecker();
     }
 
 }

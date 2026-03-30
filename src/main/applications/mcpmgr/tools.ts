@@ -180,7 +180,8 @@ export class ListMcpServersTool extends BaseTool<typeof ListMcpServersArgsSchema
 
     private async list(): Promise<string> {
         const result = await this.mcpApp.callWorker('getServers');
-        return JSON.stringify({ servers: result });
+        const servers = result.status === 'ok' ? result.data : [];
+        return JSON.stringify({ servers });
     }
 }
 

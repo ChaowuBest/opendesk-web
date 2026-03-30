@@ -19,41 +19,7 @@
 import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
-import { ScalarOperator } from './abstract-storage.js';
-
-// TagIndexDB 支持的操作符（从 object.ts 导入，保持类型别名以兼容）
-export type TagQueryOperator = ScalarOperator;
-
-// Tag 索引记录接口 - 保持语义最小化
-export interface TagIndexRecord {
-    item_id: string;
-    item_type: string;
-    tag: string;
-}
-
-// 查询条件接口
-export interface QueryCondition {
-    field: keyof TagIndexRecord;
-    operator: ScalarOperator;
-    value: string | string[] | number;
-}
-
-// 查询选项接口
-export interface QueryOptions {
-    conditions?: QueryCondition[];
-    orderBy?: {
-        field: keyof TagIndexRecord;
-        direction: 'ASC' | 'DESC';
-    };
-    limit?: number;
-    offset?: number;
-}
-
-// 更新数据接口
-export interface UpdateData {
-    item_type?: string;
-    tag?: string;
-}
+import type { TagQueryOperator, TagIndexRecord, QueryCondition, QueryOptions, UpdateData, ITagIndexDB } from './tag-indexer.js';
 
 // 支持的操作符列表
 const SUPPORTED_OPERATORS: TagQueryOperator[] = ['=', '!=', '>', '<', '>=', '<=', 'like', 'in'];
@@ -64,7 +30,7 @@ const SUPPORTED_OPERATORS: TagQueryOperator[] = ['=', '!=', '>', '<', '>=', '<='
  * 使用 better-sqlite3 实现同步 API，天然支持并发安全
  * better-sqlite3 使用 SQLite 的 WAL 模式，支持多读单写
  */
-export class TagIndexDB {
+export class TagIndexDB implements ITagIndexDB {
     private db: Database.Database;
     private readonly tableName = 'tag_index';
     private isInitialized = false;
@@ -131,7 +97,7 @@ export class TagIndexDB {
      * @param record 要插入的记录
      * @returns 是否插入成功
      */
-    insert(record: TagIndexRecord): boolean {
+    async insert(record: TagIndexRecord): Promise<boolean> {
         const stmt = this.db.prepare(`
             INSERT INTO ${this.tableName} (item_id, item_type, tag)
             VALUES (@item_id, @item_type, @tag)
@@ -153,7 +119,7 @@ export class TagIndexDB {
      * @param records 要插入的记录数组
      * @returns 成功插入的记录数
      */
-    insertMany(records: TagIndexRecord[]): number {
+    async insertMany(records: TagIndexRecord[]): Promise<number> {
         const stmt = this.db.prepare(`
             INSERT INTO ${this.tableName} (item_id, item_type, tag)
             VALUES (@item_id, @item_type, @tag)
@@ -183,7 +149,7 @@ export class TagIndexDB {
      * @param record 要插入或更新的记录
      * @returns 是否操作成功
      */
-    upsert(record: TagIndexRecord): boolean {
+    async upsert(record: TagIndexRecord): Promise<boolean> {
         const stmt = this.db.prepare(`
             INSERT INTO ${this.tableName} (item_id, item_type, tag)
             VALUES (@item_id, @item_type, @tag)
@@ -201,7 +167,7 @@ export class TagIndexDB {
      * @param itemId 要删除的记录 ID
      * @returns 是否删除成功
      */
-    delete(itemId: string): boolean {
+    async delete(itemId: string): Promise<boolean> {
         const stmt = this.db.prepare(`DELETE FROM ${this.tableName} WHERE item_id = ?`);
         const result = stmt.run(itemId);
         return result.changes > 0;
@@ -212,7 +178,7 @@ export class TagIndexDB {
      * @param conditions 删除条件
      * @returns 删除的记录数
      */
-    deleteByConditions(conditions: QueryCondition[]): number {
+    async deleteByConditions(conditions: QueryCondition[]): Promise<number> {
         if (conditions.length === 0) {
             throw new Error('At least one condition is required for deleteByConditions');
         }
@@ -228,7 +194,7 @@ export class TagIndexDB {
      * @param itemIds 要删除的记录 ID 数组
      * @returns 删除的记录数
      */
-    deleteMany(itemIds: string[]): number {
+    async deleteMany(itemIds: string[]): Promise<number> {
         if (itemIds.length === 0) return 0;
 
         const placeholders = itemIds.map(() => '?').join(', ');
@@ -243,7 +209,7 @@ export class TagIndexDB {
      * @param data 要更新的数据
      * @returns 是否更新成功
      */
-    update(itemId: string, data: UpdateData): boolean {
+    async update(itemId: string, data: UpdateData): Promise<boolean> {
         const fields = Object.keys(data).filter(key => data[key as keyof UpdateData] !== undefined);
         if (fields.length === 0) {
             throw new Error('No fields to update');
@@ -262,7 +228,7 @@ export class TagIndexDB {
      * @param data 要更新的数据
      * @returns 更新的记录数
      */
-    updateByConditions(conditions: QueryCondition[], data: UpdateData): number {
+    async updateByConditions(conditions: QueryCondition[], data: UpdateData): Promise<number> {
         if (conditions.length === 0) {
             throw new Error('At least one condition is required for updateByConditions');
         }
@@ -286,7 +252,7 @@ export class TagIndexDB {
      * @param itemId 记录 ID
      * @returns 查询到的记录或 undefined
      */
-    findById(itemId: string): TagIndexRecord | undefined {
+    async findById(itemId: string): Promise<TagIndexRecord | undefined> {
         const stmt = this.db.prepare(`SELECT * FROM ${this.tableName} WHERE item_id = ?`);
         return stmt.get(itemId) as TagIndexRecord | undefined;
     }
@@ -296,7 +262,7 @@ export class TagIndexDB {
      * @param options 查询选项
      * @returns 查询到的记录数组
      */
-    findAll(options?: QueryOptions): TagIndexRecord[] {
+    async findAll(options?: QueryOptions): Promise<TagIndexRecord[]> {
         let sql = `SELECT * FROM ${this.tableName}`;
         const params: any[] = [];
 
@@ -330,7 +296,7 @@ export class TagIndexDB {
      * @param options 额外的查询选项
      * @returns 查询到的记录数组
      */
-    query(conditions: QueryCondition[], options?: Omit<QueryOptions, 'conditions'>): TagIndexRecord[] {
+    async query(conditions: QueryCondition[], options?: Omit<QueryOptions, 'conditions'>): Promise<TagIndexRecord[]> {
         return this.findAll({ ...options, conditions });
     }
 
@@ -339,7 +305,7 @@ export class TagIndexDB {
      * @param conditions 可选的查询条件
      * @returns 记录数
      */
-    count(conditions?: QueryCondition[]): number {
+    async count(conditions?: QueryCondition[]): Promise<number> {
         let sql = `SELECT COUNT(*) as count FROM ${this.tableName}`;
         const params: any[] = [];
 
@@ -359,7 +325,7 @@ export class TagIndexDB {
      * @param itemId 记录 ID
      * @returns 是否存在
      */
-    exists(itemId: string): boolean {
+    async exists(itemId: string): Promise<boolean> {
         const stmt = this.db.prepare(`SELECT 1 FROM ${this.tableName} WHERE item_id = ? LIMIT 1`);
         return stmt.get(itemId) !== undefined;
     }
@@ -368,8 +334,8 @@ export class TagIndexDB {
      * 清空所有记录
      * @returns 删除的记录数
      */
-    clear(): number {
-        const countBefore = this.count();
+    async clear(): Promise<number> {
+        const countBefore = await this.count();
         this.db.exec(`DELETE FROM ${this.tableName}`);
         return countBefore;
     }
@@ -379,9 +345,9 @@ export class TagIndexDB {
      * @param fn 要在事务中执行的函数
      * @returns 函数的返回值
      */
-    transaction<T>(fn: () => T): T {
-        const transaction = this.db.transaction(fn);
-        return transaction();
+    async transaction<T>(fn: () => Promise<T>): Promise<T> {
+        const transact = this.db.transaction(() => fn());
+        return transact() as Promise<T>;
     }
 
     /**
@@ -443,8 +409,8 @@ export class TagIndexDB {
     /**
      * 获取数据库统计信息
      */
-    getStats(): { totalRecords: number; dbSize: number } {
-        const totalRecords = this.count();
+    async getStats(): Promise<{ totalRecords: number; dbSize: number }> {
+        const totalRecords = await this.count();
         const pageCount = (this.db.pragma('page_count') as { page_count: number }[])[0].page_count;
         const pageSize = (this.db.pragma('page_size') as { page_size: number }[])[0].page_size;
         const dbSize = pageCount * pageSize;
@@ -454,12 +420,16 @@ export class TagIndexDB {
 }
 
 /**
- * 创建 TagIndexDB 实例的工厂函数
- * @param dbPath 数据库文件路径
- * @returns TagIndexDB 实例
+export default TagIndexDB;
+
+/**
+ * 工厂函数：根据当前平台自动选择 TagIndexDB 实现
+ * 平台判断逻辑内聚在数据层， indexer 不感知平台
  */
-export function createTagIndexDB(dbPath: string): TagIndexDB {
+export async function createTagIndexDB(dbPath: string): Promise<ITagIndexDB> {
+    if ((process.platform as string) === 'openharmony') {
+        const { TagIndexDBHm } = await import('./tag-index-db-hm.js');
+        return new TagIndexDBHm(dbPath);
+    }
     return new TagIndexDB(dbPath);
 }
-
-export default TagIndexDB;
