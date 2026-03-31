@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { getAppDirectory } from '../../utils/setting.js';
+import { getAppDirectory, Setting } from '../../utils/setting.js';
 import { z } from 'zod';
 import { logger } from '../../utils/logger.js';
 import { LocalIndex } from 'vectra';
@@ -58,6 +58,11 @@ class FSStorage {
         /** @type {Map<string, number[]>} */
         this.vec_cache = new Map();
         this.vecdb = new LocalIndex(path.join(getAppDirectory(), 'vec_storage.db'));
+    }
+
+    refreshLatestSetting() {
+        Setting.clearCache();
+        return Setting.getInstance();
     }
 
     async loaddb() {
@@ -143,7 +148,7 @@ class FSStorage {
 
     async saveFilenameEmbeddings(filenames) {
         if (!filenames || filenames.length === 0) {
-            return;
+            return true;
         }
 
         // 去重并过滤已存在的文件名
@@ -151,7 +156,7 @@ class FSStorage {
         const unexistFilenames = uniqueFilenames.filter(filename => !this.vec_cache.has(filename));
 
         if (unexistFilenames.length === 0) {
-            return;
+            return true;
         }
 
         const embedStartTime = Date.now();
@@ -159,6 +164,7 @@ class FSStorage {
 
         let embeddings;
         try {
+            this.refreshLatestSetting();
             embeddings = await LLM.batchEmbed(unexistFilenames);
             const embedTime = Date.now() - embedStartTime;
             logger.info(`created embeddings for ${unexistFilenames.length} filenames: ${embedTime}ms`);
@@ -207,6 +213,8 @@ class FSStorage {
                 throw error;
             }
         });
+
+        return true;
     }
 
     /**
@@ -221,67 +229,64 @@ class FSStorage {
 
     /**
      * 批量保存文件到数据库
-     * @param {z.core.output<FileEntrySchema>} files
+     * @param {z.core.output<FileEntrySchema>[]} files
      */
     async saveFiles(files) {
         if (files.length === 0) {
-            return;
+            return 0;
         }
 
-        const startTime = Date.now();
-        const extensionCount = {};
-        const filenames = [];
+        // 1. 批量查询 base_db 中已有记录（按 path 索引，性能可接受）
+        const paths = files.map(f => f.path);
+        const existingRecords = await this.db.find({ path: { $in: paths }, type: { $ne: 'metadata' } });
+        const existingMap = new Map(existingRecords.map(r => [r.path, r]));
 
-        // 并行处理数据库更新（控制并发数避免过载）
-        const CONCURRENT_UPDATES = 10; // 同时进行的数据库更新数量
+        // 2. Per-file checkpoint：跳过 modified 未变化的文件
+        const filesToProcess = files.filter(file => {
+            const existing = existingMap.get(file.path);
+            if (!existing) return true;               // 新文件，需处理
+            return file.modified !== existing.modified; // modified 变化，需处理
+        });
+
+        const skippedCount = files.length - filesToProcess.length;
+        if (filesToProcess.length === 0) {
+            logger.debug(`saveFiles: all ${files.length} files already indexed (modified unchanged), skipping`);
+            return 0;
+        }
+        if (skippedCount > 0) {
+            logger.debug(`saveFiles: ${filesToProcess.length} to process, ${skippedCount} skipped (modified unchanged)`);
+        }
+
+        // 3. Embedding 先于 base_db 更新。
+        //    所有 embedding 阶段错误统一在这里收口：本批不写 base_db，不推进 checkpoint。
+        const filenames = filesToProcess.map(f => f.filename);
+        try {
+            await this.saveFilenameEmbeddings(filenames);
+        } catch (error) {
+            logger.warn(`saveFiles: embedding failed, skipping base_db update: ${error.message}`, error);
+            return 0;
+        }
+
+        // 4. Embedding 成功后再更新 base_db
+        const startTime = Date.now();
+        const CONCURRENT_UPDATES = 10;
         const updatePromises = [];
 
-        for (let i = 0; i < files.length; i++) {
-            const file = files[i];
-
-            // 在遍历时同时统计扩展名和收集文件名，避免重复遍历
-            const ext = this._getFileExtension(file.filename);
-            extensionCount[ext] = (extensionCount[ext] || 0) + 1;
-            filenames.push(file.filename);
-
-            // 创建更新任务
-            const updatePromise = this.db.update(
-                { path: file.path },
-                { $set: file },
-                { upsert: true }
+        for (let i = 0; i < filesToProcess.length; i++) {
+            const file = filesToProcess[i];
+            updatePromises.push(
+                this.db.update({ path: file.path }, { $set: file }, { upsert: true })
             );
 
-            updatePromises.push(updatePromise);
-
-            // 当达到并发数或处理完所有文件时，等待当前批次完成
-            if (updatePromises.length >= CONCURRENT_UPDATES || i === files.length - 1) {
+            if (updatePromises.length >= CONCURRENT_UPDATES || i === filesToProcess.length - 1) {
                 await Promise.all(updatePromises);
-                updatePromises.length = 0; // 清空数组
+                updatePromises.length = 0;
             }
         }
 
         const dbTime = Date.now() - startTime;
-        const avgTime = (dbTime / files.length).toFixed(2);
-        logger.info(`saved ${files.length} files to nedb database: ${dbTime}ms (avg: ${avgTime}ms/file)`);
-
-        // 只在有多个扩展名类型时记录详细统计
-        const extTypes = Object.keys(extensionCount).length;
-        if (extTypes > 1) {
-            logger.debug(`Extension Distribution: ${JSON.stringify(extensionCount)}`);
-        }
-
-        // 处理文件名嵌入（保持 await 以确保数据一致性）
-        const embedStartTime = Date.now();
-        try {
-            await this.saveFilenameEmbeddings(filenames);
-            const embedTime = Date.now() - embedStartTime;
-            if (embedTime > 100) { // 只在耗时较长时记录
-                logger.debug(`filename embeddings processed in ${embedTime}ms`);
-            }
-        } catch (error) {
-            logger.error(`failed to save filename embeddings: ${error.message}`, error);
-            // 不抛出错误，避免影响文件保存的主流程
-        }
+        logger.info(`saveFiles: processed ${filesToProcess.length} files (${skippedCount} skipped), db update: ${dbTime}ms`);
+        return filesToProcess.length;
     }
 
     async searchFilesByKeyword(keyword) {
@@ -303,7 +308,14 @@ class FSStorage {
         const startTime = Date.now();
         logger.info(`[vector] start name similarity search: query="${query}" topK=${topK} threshold=${threshold}`);
         const embedStart = Date.now();
-        const embedding = await LLM.embed(query);
+        let embedding;
+        try {
+            this.refreshLatestSetting();
+            embedding = await LLM.embed(query);
+        } catch (error) {
+            logger.warn(`[vector] failed to create embedding for query="${query}", skipping similarity search: ${error.message}`, error);
+            return [];
+        }
         const embedTime = Date.now() - embedStart;
         logger.info(`[vector] embedding ok: ${embedTime}ms`);
         const queryStart = Date.now();

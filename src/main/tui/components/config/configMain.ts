@@ -3,6 +3,7 @@ import { defaultSelectListTheme } from "../../theme.js";
 import { ProviderConfigPage } from "./providers";
 import { ModelConfigPage } from "./models";
 import { DefaultModelConfigPage } from "./defaultModels";
+import { FileMgrConfigPage } from "./filemgrConfig.js";
 import chalk from "chalk";
 
 interface ConfigSection {
@@ -26,6 +27,11 @@ const CONFIG_SECTIONS: ConfigSection[] = [
         value: 'default-model',
         label: `🎯  默认模型配置     ${chalk.dim('选择各场景默认模型')}`,
         create: (tui, onBack, onConfigChange) => new DefaultModelConfigPage(tui, onBack, onConfigChange),
+    },
+    {
+        value: 'filemgr',
+        label: `📁  文件扫描配置       ${chalk.dim('管理文件扫描目录')}`,
+        create: (tui: any, onBack: () => void) => new FileMgrConfigPage(tui, onBack),
     },
 ];
 

@@ -26,6 +26,7 @@ export interface StatusBarData {
     modelName: string;
     channelStates?: ChannelStatusEntry[];
     shellMode?: boolean;
+    statusNotice?: string;
 }
 
 /**
@@ -35,7 +36,7 @@ export interface StatusBarData {
 export class StatusBar implements Component {
     private static readonly SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
-    private data: StatusBarData = { elapsedMs: 0, totalTokens: 0, contextSize: 0, modelName: '' };
+    private data: StatusBarData = { elapsedMs: 0, totalTokens: 0, contextSize: 0, modelName: '', statusNotice: '' };
     private timerStarted = false;
     private timerStart: number = 0;
     private accumulatedMs: number = 0;
@@ -125,7 +126,7 @@ export class StatusBar implements Component {
             return this.cachedOutput;
         }
         this.lastWidth = width;
-        const { elapsedMs, totalTokens, contextSize, modelName, channelStates, shellMode } = this.data;
+        const { elapsedMs, totalTokens, contextSize, modelName, channelStates, shellMode, statusNotice } = this.data;
 
         const parts: string[] = [];
         if (shellMode) {
@@ -163,9 +164,11 @@ export class StatusBar implements Component {
         }
         rightParts.push(chalk.hex('#d4d4d4')('/help 帮助'));
         const rightHint = rightParts.join(chalk.hex('#d4d4d4')('  │  ')) + ' ';
+        const notice = statusNotice?.trim() ? `${statusNotice.trim()}  ` : '';
 
         let leftW = visibleWidth(leftContent);
-        const rightW = visibleWidth(rightHint);
+        const noticeW = visibleWidth(notice);
+        const rightW = visibleWidth(rightHint) + noticeW;
         const totalNeeded = leftW + 1 + rightW;
 
         let finalLeft = leftContent;
@@ -177,7 +180,10 @@ export class StatusBar implements Component {
 
         const gap = Math.max(1, width - leftW - rightW);
         const line = chalk.bgHex('#3a3a3a')(
-            chalk.hex('#d4d4d4')(finalLeft) + ' '.repeat(gap) + rightHint
+            chalk.hex('#d4d4d4')(finalLeft) +
+            ' '.repeat(gap) +
+            chalk.hex('#f0c36d')(notice) +
+            chalk.hex('#d4d4d4')(rightHint)
         );
         this.cachedOutput = [line];
         this.invalidated = false;

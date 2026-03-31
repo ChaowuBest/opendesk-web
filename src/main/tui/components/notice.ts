@@ -264,3 +264,43 @@ export class InfoOverlay implements Component {
         };
     }
 }
+
+/**
+ * 内联信息页面（非浮层），类似 /config 风格：替换主容器内容展示，按 Enter/Esc 退出。
+ */
+export class InfoPage implements Component {
+    private openDeskTUI: OpenDeskTUI;
+    private list: SelectList;
+    private box: Box;
+
+    constructor(openDeskTUI: OpenDeskTUI, title: string, message: string, onClose: () => void) {
+        this.openDeskTUI = openDeskTUI;
+
+        const items = [{ value: "close", label: chalk.cyan("确定") }];
+        this.list = new SelectList(items, items.length, defaultSelectListTheme);
+
+        this.box = new Box(1, 1);
+        this.box.addChild(new Text(chalk.bold(title)));
+        this.box.addChild(new Splitter());
+        this.box.addChild(new Text(""));
+        this.box.addChild(new Text(message));
+        this.box.addChild(new Text(""));
+        this.box.addChild(this.list);
+
+        this.list.onSelect = () => onClose();
+        this.list.onCancel = () => onClose();
+
+        setTimeout(() => {
+            this.openDeskTUI.tui.setFocus(this.list);
+            this.openDeskTUI.tui.requestRender();
+        }, 10);
+    }
+
+    invalidate(): void {
+        this.box.invalidate();
+    }
+
+    render(width: number): string[] {
+        return this.box.render(width);
+    }
+}
