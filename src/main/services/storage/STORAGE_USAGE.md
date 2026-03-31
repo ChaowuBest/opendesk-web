@@ -1,6 +1,6 @@
 # Storage 使用指南
 
-> 文档日期：2026-03-26
+> 文档日期：2026-03-31
 > 对应代码：`src/main/services/storage/`
 > 运行示例：`npx tsx src/main/services/storage/__tests__/indexer-usage-example.ts`
 
@@ -11,6 +11,30 @@
 **只使用 `BaseStorage`，不直接使用 `TagIndexer` / `BM25Indexer` / `VectorIndexer` / `ChunkIndexer` / `BaseIndexer`。**
 
 `BaseStorage` 是唯一对外接口，内部自动管理各 Indexer 的初始化、数据分发和查询串联。
+
+### HarmonyOS 说明
+
+在 `process.platform === 'openharmony'` 时，storage 工厂现在会自动切到新的 WASM 路径：
+
+- `BaseIndexDBWasm` / `TagIndexDBWasm`
+- `BM25IndexDBWasm`（`node-sqlite3-wasm + FTS5 + jieba-wasm`）
+- `VectorIndexDBWasm` / `ChunkIndexDBWasm`（SQLite BLOB 真源 + `hnsw` ANN 缓存）
+
+旧的 `*-hm.ts/js` 文件仍然保留，但分发入口不再优先走 native addon 实现。
+
+HarmonyOS / WASM 路径的当前约定：
+
+- `VectorIndexDBWasm` / `ChunkIndexDBWasm` 使用 SQLite 作为真源，`hnsw` 仅作为可重建缓存
+- 元数据使用 `hnsw_metadata` 表保存脏标记与快照状态
+- 写入会先将缓存标记为 dirty，再在成功后刷新快照
+- 向量 compact 在 stale/total 比例超过 `0.2` 时触发
+- 向量/Chunk 在首次真正使用 `hnsw` 前会等待初始化完成；初始化本身不要求阻塞应用启动
+- `filterItemIds` 走双路径：
+  - 小子集：直接暴力精确计算
+  - 大子集：ANN 召回后再做 `item_id` 过滤
+- `VectorIndexDBWasm` / `ChunkIndexDBWasm` 在检测到已存储向量维度与配置 `dim` 不一致时，会抛出 `DimMismatchError`
+- `BM25IndexDBWasm` 使用 `jieba-wasm` 切词；原始 `text` 仅用于回传，FTS5 实际索引的是空格拼接后的 `tokens`
+- HarmonyOS 当前 BM25 评分语义与 Node 主路径保持一致，都是“分词命中数”式的确定性评分，而不是直接使用 SQLite `bm25()` 内置排序
 
 ### 统一写语义
 
@@ -64,7 +88,7 @@ const schema: ColumnSchema = {
 | Indexer        | 存储内容                        | 用途           | 支持的 options |
 | -------------- | ------------------------------- | -------------- | -------------- |
 | `TagIndexer`   | 列的原始值（字符串）            | 精确 tag 过滤  | 无             |
-| `BM25Indexer`  | 列的原始文本（分词后存储）      | 全文模糊搜索   | 无             |
+| `BM25Indexer`  | 列的原始文本（并额外建立分词索引） | 全文模糊搜索   | 无             |
 | `VectorIndexer`| 列对应的 embedding 向量         | 语义相似度搜索 | `dim`（默认 1024） |
 | `ChunkIndexer` | 一个 item 的多条 chunk 向量     | Chunk 级 RAG 搜索 | `dim`（默认 1024） |
 
@@ -409,6 +433,6 @@ try {
 | 无跨 Indexer 事务            | 多个 Indexer 的写入不是单事务提交；某个 Indexer 失败时会直接传播底层错误，调用方需自行决定重试或补偿 |
 | 每个 item 只有一个 tag       | TagIndexer 以 `item_id` 为主键，多 tag 需在业务层拼接或使用 BaseIndexer 的 `like` 查询     |
 | indexer_columns 需调用方维护 | `columns` 中的字段值与 `indexer_columns` 中传入的内容是否一致，由调用方负责，框架不校验    |
-| BM25 分词依赖 jieba          | 查询词需能被 jieba 正确切分；英文词和明确的中文词效果更稳定                                |
-| BM25 评分在 Node/HM 不完全一致 | 非 HM 平台当前实现是基于分词命中数的简化评分；HM 平台使用 SQLite FTS5 内置 `bm25()` 排名，因此不同平台分数数值不可直接横向比较 |
+| BM25 分词依赖 jieba / jieba-wasm | 查询词需能被 jieba 正确切分；HarmonyOS WASM 路径会把切词结果写入 FTS tokens 列，再做候选召回与命中数排序 |
+| BM25 分数为命中数语义        | 当前 Node / HarmonyOS WASM 路径都使用分词命中数作为确定性评分，分数可用于排序，但不应被解释为标准 BM25 数值 |
 | Chunk 搜索不走普通 item 去重 | `ChunkIndexer` 返回的是 chunk 命中展开结果，同一 `item_id` 允许重复出现                      |

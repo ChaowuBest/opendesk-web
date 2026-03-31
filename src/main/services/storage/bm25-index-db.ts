@@ -279,8 +279,8 @@ export class BM25IndexDB implements IBM25IndexDB {
  */
 export async function createBM25IndexDB(schema: ColumnSchema, dbPath: string): Promise<IBM25IndexDB> {
     if ((process.platform as string) === 'openharmony') {
-        const { BM25IndexDBHm } = await import('./bm25-index-db-hm.js');
-        return new BM25IndexDBHm(schema, dbPath);
+        const { BM25IndexDBWasm } = await import('./bm25-index-db-wasm.js');
+        return new BM25IndexDBWasm(schema, dbPath);
     }
     return new BM25IndexDB(schema, dbPath);
 }

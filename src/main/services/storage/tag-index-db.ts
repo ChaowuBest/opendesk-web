@@ -490,8 +490,8 @@ export default TagIndexDB;
  */
 export async function createTagIndexDB(dbPath: string): Promise<ITagIndexDB> {
     if ((process.platform as string) === 'openharmony') {
-        const { TagIndexDBHm } = await import('./tag-index-db-hm.js');
-        return new TagIndexDBHm(dbPath);
+        const { TagIndexDBWasm } = await import('./tag-index-db-wasm.js');
+        return new TagIndexDBWasm(dbPath);
     }
     return new TagIndexDB(dbPath);
 }

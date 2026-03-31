@@ -293,8 +293,8 @@ export class ChunkIndexer extends Indexer {
  */
 export async function createChunkIndexDB(dbPath: string, dimension: number = 1024): Promise<IChunkIndexDB> {
     if ((process.platform as string) === 'openharmony') {
-        const { ChunkIndexDBHm } = await import('./chunk-index-db-hm.js');
-        return new ChunkIndexDBHm(dbPath, dimension);
+        const { ChunkIndexDBWasm } = await import('./chunk-index-db-wasm.js');
+        return new ChunkIndexDBWasm(dbPath, dimension);
     }
     const { ChunkIndexDB } = await import('./chunk-index-db.js');
     return new ChunkIndexDB(dbPath, dimension);

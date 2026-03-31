@@ -488,8 +488,8 @@ export default VectorIndexDB;
  */
 export async function createVectorIndexDB(dbPath: string, dimension: number = 1024): Promise<IVectorIndexDB> {
     if ((process.platform as string) === 'openharmony') {
-        const { VectorIndexDBHm } = await import('./vector-index-db-hm.js');
-        return new VectorIndexDBHm(dbPath, dimension);
+        const { VectorIndexDBWasm } = await import('./vector-index-db-wasm.js');
+        return new VectorIndexDBWasm(dbPath, dimension);
     }
     return new VectorIndexDB(dbPath, dimension);
 }

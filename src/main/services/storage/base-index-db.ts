@@ -532,8 +532,8 @@ export default BaseIndexDB;
  */
 export async function createBaseIndexDB(dbPath: string, schema: ColumnSchema): Promise<IBaseIndexDB> {
     if ((process.platform as string) === 'openharmony') {
-        const { BaseIndexDBHm } = await import('./base-index-db-hm.js');
-        return new BaseIndexDBHm(dbPath, schema);
+        const { BaseIndexDBWasm } = await import('./base-index-db-wasm.js');
+        return new BaseIndexDBWasm(dbPath, schema);
     }
     return new BaseIndexDB(dbPath, schema);
 }
