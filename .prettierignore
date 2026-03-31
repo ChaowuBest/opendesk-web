@@ -1,0 +1,7 @@
+dist/
+out/
+node_modules/
+native/
+*.node
+package-lock.json
+src/renderer/scripts/libs/
