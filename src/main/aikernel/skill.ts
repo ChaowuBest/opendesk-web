@@ -23,10 +23,13 @@
  * 参考：https://agentskills.io/specification
  */
 
+import path from 'path';
+import fs from 'fs';
 import { parse as parseYaml } from 'yaml';
 import { BaseToolset, BaseTool, ToolResult } from './tool';
 import { z } from 'zod';
 import { logger } from '../utils/logger';
+import dotenv from 'dotenv';
 import { jsonrepair } from 'jsonrepair';
 import format from "string-template";
 import { ToolCall } from './messages';
@@ -94,12 +97,22 @@ export class Skill {
     body: string;
     directory?: string;
     toolsets?: BaseToolset[];
+    /** skill 自带的 .env 文件中的环境变量，加载 skill 时从 directory/.env 解析 */
+    env: Record<string, string> = {};
 
     constructor(frontmatter: SkillFrontmatter, body: string, directory?: string, toolsets?: BaseToolset[]) {
         this.frontmatter = frontmatter;
         this.body = body;
         this.directory = directory;
         this.toolsets = toolsets;
+        if (directory) {
+            const envPath = path.join(directory, '.env');
+            if (fs.existsSync(envPath)) {
+                try {
+                    this.env = dotenv.parse(fs.readFileSync(envPath, 'utf-8'));
+                } catch { /* .env 解析失败不影响 skill 加载 */ }
+            }
+        }
     }
 
     /** 用户是否可以通过 /skillname 调用此 Skill（默认 true） */
@@ -254,7 +267,7 @@ const LoadSkillSchema = z.object({
 class LoadSkillTool extends BaseTool<typeof LoadSkillSchema> {
     constructor() {
         super("LoadSkill", "读取指定技能(Skill)的内容", LoadSkillSchema);
-        this.setExecutor(this.loadSkill)
+        this.setExecutor(this.loadSkill.bind(this))
     }
 
     /**
@@ -293,7 +306,7 @@ class LoadSkillTool extends BaseTool<typeof LoadSkillSchema> {
         }
     }
 
-    private async loadSkill(args: z.output<typeof LoadSkillSchema>): Promise<string> {
+    private async loadSkill(args: z.output<typeof LoadSkillSchema>, taskState?: TaskState): Promise<string> {
         const skill = await SkillRegistry.getInstance().getSkill(
             args.bundleName,
             args.skillName
@@ -301,6 +314,12 @@ class LoadSkillTool extends BaseTool<typeof LoadSkillSchema> {
         if (!skill) {
             return "未找到该Skill"
         } else {
+            // 将 skill 的 .env 环境变量合并到当前 task 的 envContext
+            if (taskState && skill.env && Object.keys(skill.env).length > 0) {
+                Object.assign(taskState.envContext, skill.env);
+                logger.info(`skill ${args.skillName} env merged to task envContext: ${Object.keys(skill.env).join(', ')}`);
+            }
+
             const fullContent = skill.getFullContent();
             logger.info(`skill ${args.bundleName} ${args.skillName} 的完整内容是:\n` + fullContent);
             return fullContent;

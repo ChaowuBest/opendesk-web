@@ -110,6 +110,12 @@ export class TaskState {
     model?: string;
     message_queue: string[] = [];
 
+    /**
+     * 环境变量上下文：skill 的 .env 会合并到此处，终端类工具执行时注入到子进程
+     * 按优先级合并：系统 env < skill .env（后加载的覆盖先加载的）
+     */
+    envContext: Record<string, string> = {};
+
     stop_requested_by_user: boolean = false;
     started_at?: Date;
     finished_at?: Date;
@@ -420,6 +426,12 @@ export class TaskState {
             try {
                 const loadedSkill = await registry.getSkill(bundleName, name);
                 if (!loadedSkill) continue;
+
+                // 将 skill 的 .env 环境变量合并到当前 task 的 envContext
+                if (loadedSkill.env && Object.keys(loadedSkill.env).length > 0) {
+                    Object.assign(this.envContext, loadedSkill.env);
+                    logger.info(`preloaded skill ${name} env merged to task envContext: ${Object.keys(loadedSkill.env).join(', ')}`);
+                }
 
                 const fullContent = loadedSkill.getFullContent();
 

@@ -19,10 +19,21 @@ import { z } from 'zod';
 import fs from 'fs';
 import path from 'path';
 import chalk from "chalk";
+import type { TaskState } from "../../aikernel/states/tasks";
 
 
 const MAX_CLI_OUTPUT_LINES = 10;
 const LIVE_UPDATE_INTERVAL_MS = 200;
+
+/**
+ * 构建子进程的环境变量：系统 env + task 的 envContext（skill .env 合并而来）
+ */
+function buildSpawnEnv(taskState?: TaskState): NodeJS.ProcessEnv | undefined {
+    if (!taskState || Object.keys(taskState.envContext).length === 0) {
+        return undefined;
+    }
+    return { ...process.env, ...taskState.envContext };
+}
 
 /**
  * 杀死进程及其整个子进程树。
@@ -221,7 +232,7 @@ export class ExecutePowerShellTool extends BaseTool<typeof ExecutePowerShellArgs
         return renderTerminalToolCallCli('PowerShell', toolcall, width);
     }
 
-    async executeCommand(args: z.output<typeof ExecutePowerShellArgsSchema>, result: ToolResult): Promise<void> {
+    async executeCommand(args: z.output<typeof ExecutePowerShellArgsSchema>, result: ToolResult, taskState?: TaskState): Promise<void> {
         let command: string = args.command;
         let workingDirectory: string | undefined = args.workingDirectory;
         const timeout: number = args.timeout ?? 30000;
@@ -243,7 +254,8 @@ export class ExecutePowerShellTool extends BaseTool<typeof ExecutePowerShellArgs
         }
 
         const utf8Command = `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ${command}`;
-        const proc = spawn('powershell.exe', ['-NoProfile', '-Command', utf8Command], { cwd });
+        const env = buildSpawnEnv(taskState);
+        const proc = spawn('powershell.exe', ['-NoProfile', '-Command', utf8Command], { cwd, env });
         this.runningProcesses.add(proc);
 
         let output = '';
@@ -336,7 +348,7 @@ export class ExecuteBashTool extends BaseTool<typeof ExecuteBashArgsSchema> {
         this._killedByStop = false;
     }
 
-    async executeCommand(args: z.output<typeof ExecuteBashArgsSchema>, result: ToolResult): Promise<void> {
+    async executeCommand(args: z.output<typeof ExecuteBashArgsSchema>, result: ToolResult, taskState?: TaskState): Promise<void> {
         let command: string = args.command;
         let workingDirectory: string | undefined = args.workingDirectory;
         const timeout: number = args.timeout ?? 30000;
@@ -351,7 +363,8 @@ export class ExecuteBashTool extends BaseTool<typeof ExecuteBashArgsSchema> {
             cwd = workingDirectory;
         }
 
-        const proc = spawn(this.bashPath, ['-c', command], { cwd });
+        const env = buildSpawnEnv(taskState);
+        const proc = spawn(this.bashPath, ['-c', command], { cwd, env });
         this.runningProcesses.add(proc);
 
         let output = '';
@@ -444,7 +457,7 @@ export class ExecuteZshTool extends BaseTool<typeof ExecuteZshArgsSchema> {
         this._killedByStop = false;
     }
 
-    async executeCommand(args: z.output<typeof ExecuteZshArgsSchema>, result: ToolResult): Promise<void> {
+    async executeCommand(args: z.output<typeof ExecuteZshArgsSchema>, result: ToolResult, taskState?: TaskState): Promise<void> {
         let command: string = args.command;
         let workingDirectory: string | undefined = args.workingDirectory;
         const timeout: number = args.timeout ?? 30000;
@@ -465,7 +478,8 @@ export class ExecuteZshTool extends BaseTool<typeof ExecuteZshArgsSchema> {
             cwd = workingDirectory;
         }
 
-        const proc = spawn(zshPath, ['-c', command], { cwd });
+        const env = buildSpawnEnv(taskState);
+        const proc = spawn(zshPath, ['-c', command], { cwd, env });
         this.runningProcesses.add(proc);
 
         let output = '';

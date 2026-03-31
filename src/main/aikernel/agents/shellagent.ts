@@ -30,7 +30,7 @@ const SHELL_AGENT_SYSTEM_PROMPT = `
 </soul>
 
 <tool_use>
-你被赋予了丰富的工具来协助用户完成任务，在每次请求中，你需要 **至少** 调用一次工具。
+你被赋予了丰富的工具来协助用户完成任务，在每次请求中，你需要 **至少** 调用一次工具 (可以是 planning-attemptCompletion)。
 </tool_use>
 
 {taskManagementPrompt}
