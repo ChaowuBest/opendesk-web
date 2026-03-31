@@ -30,6 +30,8 @@ import { NotificationManager } from './utils/notificationmgr.js';
 import { registerPluginsCommand } from './tui/subcommands/plugins.js';
 import { registerToolsCommand } from './tui/subcommands/tools.js';
 
+import { getCurrentVersion } from './utils/upgrade.js';
+
 import process from 'process';
 import path from 'path';
 import fs from 'fs';
@@ -158,7 +160,13 @@ function parseCommandLineArgs() {
             process.exit(result.errors.length > 0 ? 1 : 0);
         });
 
-    prog.action((workspace: string, kwargs: Record<string, string | undefined>) => {
+    prog.action(async (workspace: string, kwargs: Record<string, string | undefined>) => {
+        if (kwargs.version) {
+            const version = await getCurrentVersion();
+            console.log(version ?? 'unknown');
+            process.exit(0);
+        }
+
         const workspacePath = path.resolve(workspace);
         if (!fs.existsSync(workspacePath)) {
             console.error(`[error] workspace ${workspacePath} does not exist`);
