@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { AgentDecl } from "../agent";
+import { AgentDecl } from "./common";
 import { SkillRegistry } from "../skill";
 import { SoulRegistry } from "../../applications/soulmgr/soulregistry";
 import { TASK_MANAGEMENT_PROMPT } from "../planning/prompt";
