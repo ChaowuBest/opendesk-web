@@ -22,7 +22,21 @@
     "updater:publish": "tsx src/updater/publish-update.ts",
     "build-cli": "tsx esbuild.config.ts",
     "cli": "npm run build-cli && node --no-warnings --enable-source-maps dist/cli/opendesk-debug",
-    "test-cli": "tsx src/tests/cli.ts"
+    "test-cli": "tsx src/tests/cli.ts",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "prepare": "husky"
+  },
+  "lint-staged": {
+    "*.{js,ts,mjs,cjs,jsx,tsx}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "*.{json,md,css,scss,yaml,yml,html}": [
+      "prettier --write"
+    ]
   },
   "devDependencies": {
     "@electron-forge/cli": "^7.10.2",
@@ -46,11 +60,15 @@
     "esbuild": "^0.27.3",
     "eslint": "^9.39.2",
     "globals": "^16.5.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^16.4.0",
     "node-gyp": "^12.2.0",
+    "prettier": "^3.8.1",
     "react-devtools-core": "^6.1.5",
     "run-script-os": "^1.1.6",
     "source-map": "^0.7.6",
     "tsx": "^4.21.0",
+    "typescript-eslint": "^8.57.2",
     "vite": "^7.3.1"
   },
   "dependencies": {
