@@ -11,7 +11,7 @@
 
 import { BaseToolset } from "../../aikernel/tool";
 import { BaseApplication } from "../base";
-import { ExecutePowerShellTool, ExecuteBashTool, ExecuteZshTool, findExecutableInPath } from "./tools.js";
+import { ExecutePowerShellTool, ExecuteBashTool, ExecuteZshTool, CheckShellStatusTool, findExecutableInPath } from "./tools.js";
 
 
 export class TerminalApplication extends BaseApplication {
@@ -39,6 +39,8 @@ export class TerminalApplication extends BaseApplication {
                 toolset.addTool(new ExecuteBashTool('/bin/bash'));
                 break;
         }
+
+        toolset.addTool(new CheckShellStatusTool());
 
         return [toolset];
     }

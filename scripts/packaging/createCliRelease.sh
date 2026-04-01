@@ -15,6 +15,7 @@ trap restore_package_json EXIT
 
 # Parse command line arguments
 RELEASE_TYPE=""
+USE_YESTERDAY=false
 while [[ $# -gt 0 ]]; do
   case $1 in
     --stable)
@@ -25,9 +26,13 @@ while [[ $# -gt 0 ]]; do
       RELEASE_TYPE="nightly"
       shift
       ;;
+    --yesterday)
+      USE_YESTERDAY=true
+      shift
+      ;;
     *)
       echo "ERROR: Unknown option $1"
-      echo "Usage: $0 --stable|--nightly"
+      echo "Usage: $0 --stable|--nightly [--yesterday]"
       exit 1
       ;;
   esac
@@ -36,7 +41,13 @@ done
 # Validate that either --stable or --nightly is provided
 if [ -z "$RELEASE_TYPE" ]; then
   echo "ERROR: You must specify either --stable or --nightly"
-  echo "Usage: $0 --stable|--nightly"
+  echo "Usage: $0 --stable|--nightly [--yesterday]"
+  exit 1
+fi
+
+# --yesterday is only valid with --nightly
+if [ "$USE_YESTERDAY" = true ] && [ "$RELEASE_TYPE" != "nightly" ]; then
+  echo "ERROR: --yesterday can only be used with --nightly"
   exit 1
 fi
 
@@ -73,7 +84,11 @@ if [ "$RELEASE_TYPE" = "nightly" ]; then
   # Remove any existing nightly suffix (e.g., -nightly-20260227)
   CLEAN_VERSION=$(echo "$CURRENT_VERSION" | sed 's/-nightly-.*$//')
   # Generate date in YYYYMMDD format
-  DATE=$(date +%Y%m%d)
+  if [ "$USE_YESTERDAY" = true ]; then
+    DATE=$(date -d "yesterday" +%Y%m%d 2>/dev/null || date -v-1d +%Y%m%d)
+  else
+    DATE=$(date +%Y%m%d)
+  fi
   NIGHTLY_VERSION="${CLEAN_VERSION}-nightly-${DATE}"
   echo "Setting nightly version: $NIGHTLY_VERSION"
   # Directly modify package.json instead of using npm version
