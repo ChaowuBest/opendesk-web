@@ -21,6 +21,7 @@
     "updater:server": "tsx src/updater/server.ts",
     "updater:publish": "tsx src/updater/publish-update.ts",
     "build-cli": "tsx esbuild.config.ts",
+    "build-cli-bun": "bun build --compile --minify-whitespace --sourcemap src/main/cli.ts --outfile dist/cli/opendesk-bun --external node-screenshots --external esbuild",
     "cli": "npm run build-cli && node --no-warnings --enable-source-maps dist/cli/opendesk-debug",
     "test-cli": "tsx src/tests/cli.ts",
     "lint": "eslint .",
