@@ -15,6 +15,7 @@ OpenDesk 二进制（Linux 交叉编译版）和配置文件通过 volume mount
 import json
 import os
 import shlex
+import sys
 from pathlib import Path
 
 from harbor.agents.installed.base import BaseInstalledAgent, with_prompt_template
@@ -24,7 +25,12 @@ from harbor.models.agent.context import AgentContext
 
 def _load_opendesk_setting() -> dict:
     """从宿主机读取 OpenDesk 的 setting.json。"""
-    setting_path = Path("~/.opendesk/setting.json").expanduser()
+
+    if sys.platform == "win32":
+        setting_path = Path(os.environ["APPDATA"]) / "opendesk" / "setting.json"
+    else:
+        setting_path = Path("~/.opendesk/setting.json").expanduser()
+
     if not setting_path.exists():
         raise FileNotFoundError(
             f"OpenDesk 配置文件不存在: {setting_path}\n"
@@ -106,7 +112,25 @@ class OpenDeskAgent(BaseInstalledAgent):
     def version(self) -> str | None:
         return self._version or "0.1.4"
 
+    # 国内镜像源替换脚本（apt/apk/yum 通用，兼容 DEB822 和传统格式）
+    _MIRROR_CMD = (
+        "if command -v apt-get &> /dev/null; then "
+        "find /etc/apt -name '*.list' -o -name '*.sources' -o -name 'sources.list' 2>/dev/null"
+        " | xargs -r sed -i"
+        " -e 's|deb.debian.org|mirrors.aliyun.com|g'"
+        " -e 's|security.debian.org/debian-security|mirrors.aliyun.com/debian-security|g'"
+        " -e 's|security.debian.org|mirrors.aliyun.com|g'"
+        " -e 's|archive.ubuntu.com|mirrors.aliyun.com|g'"
+        " -e 's|security.ubuntu.com|mirrors.aliyun.com|g';"
+        " elif command -v apk &> /dev/null; then "
+        "sed -i 's|dl-cdn.alpinelinux.org|mirrors.aliyun.com|g' /etc/apk/repositories 2>/dev/null;"
+        " fi"
+    )
+
     async def install(self, environment: BaseEnvironment) -> None:
+        # 替换为国内镜像源（加速 apt/apk 下载）
+        await self.exec_as_root(environment, command=self._MIRROR_CMD)
+
         # 安装系统依赖（bun 编译的二进制需要的基本库）
         await self.exec_as_root(
             environment,

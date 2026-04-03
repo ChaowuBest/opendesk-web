@@ -30,14 +30,20 @@ PROJECT_ROOT = SCRIPT_DIR.parent.parent
 
 def get_setting() -> dict | None:
     """从 ~/.opendesk/setting.json 读取完整配置。"""
-    setting_path = Path("~/.opendesk/setting.json").expanduser()
+    if sys.platform == "win32":
+        setting_path = Path(os.environ["APPDATA"]) / "opendesk" / "setting.json"
+    else:
+        setting_path = Path("~/.opendesk/setting.json").expanduser()
+
+    print(f"setting_path: {setting_path}")
     if not setting_path.exists():
-        return None
-    try:
-        with open(setting_path, "r") as f:
-            return json.load(f)
-    except Exception:
-        return None
+        raise FileNotFoundError(
+            f"OpenDesk 配置文件不存在: {setting_path}\n"
+            "请先在宿主机上配置 OpenDesk"
+        )
+
+    with open(setting_path, "r") as f:
+        return json.load(f)
 
 
 def get_setting_models() -> list[str]:
@@ -118,13 +124,13 @@ def prepare_mount_dir(model_alias: str) -> Path:
             "  bun build --compile --minify-whitespace --sourcemap "
             "--target=bun-linux-x64 src/main/cli.ts "
             "--outfile dist/cli/opendesk-linux-x64 "
-            "--external node-screenshots --external esbuild"
+            "--external node-screenshots --external esbuild --external vectra"
         )
         print(
             "  bun build --compile --minify-whitespace --sourcemap "
             "--target=bun-linux-arm64 src/main/cli.ts "
             "--outfile dist/cli/opendesk-linux-arm64 "
-            "--external node-screenshots --external esbuild"
+            "--external node-screenshots --external esbuild --external vectra"
         )
         sys.exit(1)
 
@@ -274,8 +280,9 @@ def run_evaluation(args):
     env = os.environ.copy()
     python_path = env.get("PYTHONPATH", "")
     if agent_dir not in python_path:
+        sep = ";" if sys.platform == "win32" else ":"
         env["PYTHONPATH"] = (
-            f"{agent_dir}:{python_path}" if python_path else agent_dir
+            f"{agent_dir}{sep}{python_path}" if python_path else agent_dir
         )
 
     # harbor 的 supabase 客户端不支持 SOCKS 代理，需要清除
