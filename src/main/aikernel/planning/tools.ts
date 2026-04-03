@@ -20,7 +20,7 @@ import type { SubTaskConfig, SubTaskResult, SubTaskProgressInfo, PendingSubTask 
 import { AssistantMessage, UserMessage, ToolCall, ToolCallMessagePart, ErrorMessagePart, marked } from '../messages.js';
 import { SUBTASK_SYSTEM_PROMPT } from './prompt.js';
 import { HookRegistry } from '../hooks.js';
-import { getTaskTodosForDisplay } from '../../applications/todomgr/tools.js';
+import { getTaskTodosForDisplay } from '../todos/task-todos.js';
 import { logger } from '../../utils/logger.js';
 import { defaultMarkdownTheme } from '../../tui/theme.js';
 import chalk from 'chalk';
