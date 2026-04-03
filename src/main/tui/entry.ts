@@ -287,7 +287,7 @@ export class OpenDeskTUI {
             try {
                 const task = this.taskManagerState.createTask(this.model);
                 const systemPrompt = await this.agentDecl.createSystemPrompt();
-                await task.setSystemPrompt(systemPrompt);
+                task.setSystemPrompt(systemPrompt);
 
                 // 如果待办有 deliver 配置，设置任务的 origin，使其结果投递到对应 channel
                 if (deliver) {
@@ -631,7 +631,8 @@ export class OpenDeskTUI {
 
         const task = this.taskManagerState.createTask(this.model);
         const systemPrompt = await this.agentDecl.createSystemPrompt();
-        await task.setSystemPrompt(systemPrompt);
+        task.setSystemPrompt(systemPrompt);
+
         this.activeTaskId = task.task_id;
         this.taskView.taskState = task;
         this.taskView.clearMessages();
@@ -931,7 +932,8 @@ export class OpenDeskTUI {
         if (this.taskView.taskState === undefined) {
             this.taskView.taskState = this.taskManagerState.createTask(this.model);
             const systemPrompt = await this.agentDecl.createSystemPrompt();
-            await this.taskView.taskState.setSystemPrompt(systemPrompt);
+            this.taskView.taskState.setSystemPrompt(systemPrompt);
+
             // 绑定到新任务的队列
             this.inputArea.bindToTaskQueue(this.taskView.taskState.task_id, this.taskView.taskState.message_queue);
         }

@@ -11,11 +11,13 @@
 
 import { BaseApplication } from "../base";
 import { BaseToolset } from "../../aikernel/tool";
+import { Skill } from "../../aikernel/skill.js";
 import { z } from 'zod';
 import { logger } from "../../utils/logger.js";
 import CalendarWorker from "./service/worker";
 import { CalendarOverlay } from "./tui";
 import { GetCalendarItemsTool, AddCalendarItemTool, DeleteCalendarItemTool } from "./tools";
+import { CALENDAR_SKILL } from "./skills";
 
 
 class CalendarApplication extends BaseApplication {
@@ -55,18 +57,14 @@ class CalendarApplication extends BaseApplication {
         ];
     }
 
-    /**
-     * Get the toolsets for the calendar application
-     * @returns {Promise<BaseToolset[]>}
-     */
-    async getToolsets() {
-        const calendarToolset = new BaseToolset('calendar');
-
-        calendarToolset.addTool(new GetCalendarItemsTool(this));
-        calendarToolset.addTool(new AddCalendarItemTool(this));
-        calendarToolset.addTool(new DeleteCalendarItemTool(this));
-
-        return [calendarToolset];
+    async getSkills() {
+        const skill = Skill.parseMd(CALENDAR_SKILL);
+        const toolset = new BaseToolset('calendar');
+        toolset.addTool(new GetCalendarItemsTool(this));
+        toolset.addTool(new AddCalendarItemTool(this));
+        toolset.addTool(new DeleteCalendarItemTool(this));
+        skill.toolsets = [toolset];
+        return [skill];
     }
 
 }
