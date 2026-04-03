@@ -74,7 +74,7 @@ export class GetCalendarItemsTool extends BaseTool<typeof GetCalendarItemsArgsSc
 
         let result = `在${args.dateString}的日程安排列表为: \n`;
         for (const item of items.data) {
-            result += `- ${item.subject}\n`;
+            result += `- ${item.subject} (uid: ${item.uid})\n`;
             result += `  - 开始时间: ${new Date(item.startTime).toLocaleString()}\n`;
             result += `  - 结束时间: ${new Date(item.endTime).toLocaleString()}\n`;
             if (item.location) {

@@ -1,4 +1,4 @@
-import { TUI, Box, Text, Key, matchesKey, type Component } from "@mariozechner/pi-tui";
+import { TUI, Box, Text, Key, matchesKey, type Component, EditorKeybindingsManager, setEditorKeybindings } from "@mariozechner/pi-tui";
 // FULL_CLEAR removed: use tui.requestRender(true) instead to avoid blank-frame flicker
 import { OpenDeskBanner } from './banner';
 import { VerticalLayout } from './components/layout';
@@ -287,7 +287,7 @@ export class OpenDeskTUI {
             try {
                 const task = this.taskManagerState.createTask(this.model);
                 const systemPrompt = await this.agentDecl.createSystemPrompt();
-                await task.setSystemPrompt(systemPrompt);
+                task.setSystemPrompt(systemPrompt);
 
                 // 如果待办有 deliver 配置，设置任务的 origin，使其结果投递到对应 channel
                 if (deliver) {
@@ -631,7 +631,8 @@ export class OpenDeskTUI {
 
         const task = this.taskManagerState.createTask(this.model);
         const systemPrompt = await this.agentDecl.createSystemPrompt();
-        await task.setSystemPrompt(systemPrompt);
+        task.setSystemPrompt(systemPrompt);
+
         this.activeTaskId = task.task_id;
         this.taskView.taskState = task;
         this.taskView.clearMessages();
@@ -931,7 +932,8 @@ export class OpenDeskTUI {
         if (this.taskView.taskState === undefined) {
             this.taskView.taskState = this.taskManagerState.createTask(this.model);
             const systemPrompt = await this.agentDecl.createSystemPrompt();
-            await this.taskView.taskState.setSystemPrompt(systemPrompt);
+            this.taskView.taskState.setSystemPrompt(systemPrompt);
+
             // 绑定到新任务的队列
             this.inputArea.bindToTaskQueue(this.taskView.taskState.task_id, this.taskView.taskState.message_queue);
         }
@@ -1219,6 +1221,13 @@ export class OpenDeskTUI {
     }
 
     start() {
+        // Ctrl+Backspace 默认未绑定到任何删除操作，导致按下后无反应。
+        // 某些终端（尤其 Windows）的普通 Backspace 也发送 0x08（与 Ctrl+Backspace 相同字节），
+        // 同样会导致删除失效。将 ctrl+backspace 加入 deleteCharBackward 使其与普通 Backspace 行为一致。
+        setEditorKeybindings(new EditorKeybindingsManager({
+            deleteCharBackward: ["backspace", "ctrl+backspace"],
+        }));
+
         this.tui.start();
 
         // Attach a direct input listener to TUI FIRST, to hijack Ctrl+C before Editor gets it!
