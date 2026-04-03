@@ -19,6 +19,8 @@ import type { TextMessagePart } from '../messages.js';
 import type { SubTaskConfig, SubTaskResult, SubTaskProgressInfo, PendingSubTask } from './common.js';
 import { AssistantMessage, UserMessage, ToolCall, ToolCallMessagePart, ErrorMessagePart, marked } from '../messages.js';
 import { SUBTASK_SYSTEM_PROMPT } from './prompt.js';
+import { SkillRegistry } from '../skill.js';
+import { getSkillsSection } from '../agents/shellagent.js';
 import { HookRegistry } from '../hooks.js';
 import { getTaskTodosForDisplay } from '../../applications/todomgr/tools.js';
 import { logger } from '../../utils/logger.js';
@@ -373,7 +375,7 @@ export interface StartSubTaskOptions {
 
 /**
  * 启动一个子任务
- * - 使用 SUBTASK_SYSTEM_PROMPT 作为系统提示词
+ * - 使用 SUBTASK_SYSTEM_PROMPT，并拼接与主任务一致的技能列表（SkillRegistry frontmatter XML）
  * - 通过 UserMessage 传入任务目标、结果要求等信息
  * - 使用 TaskHooks 自动处理 attemptCompletion 检查
  */
@@ -394,8 +396,9 @@ export async function startSubTask(options: StartSubTaskOptions): Promise<SubTas
     subTask.model = parentTask.model;
     subTask.task_name = config.title || '未命名子任务';
 
-    // 设置系统提示词
-    subTask.setSystemPrompt(SUBTASK_SYSTEM_PROMPT);
+    const skillFrontmatters = await SkillRegistry.getInstance().getSkillFrontmatterXml();
+    const subtaskSystemPrompt = [SUBTASK_SYSTEM_PROMPT.trim(), getSkillsSection(skillFrontmatters)].join('\n\n');
+    subTask.setSystemPrompt(subtaskSystemPrompt);
 
     // 注册 attemptCompletion 检查钩子
     registerSubTaskAttemptCompletionHook(subTask);

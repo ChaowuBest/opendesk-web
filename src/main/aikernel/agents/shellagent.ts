@@ -132,7 +132,8 @@ function getEnvironmentSection(workspace: string): string {
 }
 
 // ─── Section 11: Skills ───────────────────────────────────────────
-function getSkillsSection(skillFrontmatters: string): string {
+/** 与主任务 system prompt 一致的技能列表块；子任务 system prompt 也会拼接此段。 */
+export function getSkillsSection(skillFrontmatters: string): string {
     return `# 技能 (Skills)
 
 你拥有技能管理能力，如果用户给出的任务与下面给出的已知技能相匹配，你应当首先载入技能，
