@@ -25,7 +25,7 @@ import { TodoList } from "./components/todolist";
 import { TaskSwitcher } from "./components/taskswitcher";
 import { BookmarkList } from "./components/bookmarklist";
 import { ConfigMainPage } from "./components/config/configMain";
-import { getTaskTodosForDisplay } from "../applications/todomgr/tools";
+import { getTaskTodosForDisplay } from "../aikernel/todos/task-todos";
 import { exportTaskToHtml } from "../utils/export";
 import { QuickPassHelper } from "../utils/quickpass";
 import { describeCron } from "../utils/cron";

@@ -9,8 +9,8 @@
  * See the Mulan PSL v2 for more details.
  */
 
-// 待办状态类型
-export type TodoStatus = 'pending' | 'in_progress' | 'completed';
+import type { TodoStatus, TaskTodo } from '../../aikernel/todos/task-todos.js';
+export type { TodoStatus, TaskTodo };
 
 // 优先级类型
 export type TodoPriority = 'low' | 'medium' | 'high';
@@ -40,18 +40,6 @@ export interface CronTriggerConfig {
 }
 
 export type TodoTrigger = EventTriggerConfig | ScheduledTriggerConfig | CronTriggerConfig;
-
-// 任务级待办项（会话级，任务结束后不保留）
-export interface TaskTodo {
-    id: string;
-    task_id: string;        // 关联的任务ID
-    title: string;            // 待办标题（简短描述）
-    content: string;          // 待办内容（详细描述，发送给 Agent 执行）
-    status: TodoStatus;
-    created_at: string;
-    updated_at: string;
-    completed_at?: string;
-}
 
 // 全局待办项（持久化，跨任务共享）
 export interface GlobalTodo {

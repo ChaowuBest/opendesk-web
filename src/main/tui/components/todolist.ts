@@ -10,7 +10,7 @@
  */
 
 import { Component } from "@mariozechner/pi-tui";
-import type { TaskTodo } from "../../applications/todomgr/common";
+import type { TaskTodo } from "../../aikernel/todos/task-todos";
 import chalk from "chalk";
 import { Card, type BorderConfig } from "./card";
 

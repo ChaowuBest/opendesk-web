@@ -14,7 +14,12 @@ import { ToolCall } from '../../aikernel/messages';
 import { Card, type BorderConfig } from '../../tui/components/card';
 import { statusDisplay, truncText } from '../../tui/components/toolcall';
 import { z } from 'zod';
-import type { TaskTodo } from './common';
+import {
+    type TaskTodo,
+    getOrInitTaskTodos,
+    setTaskTodos,
+    deleteTaskTodos,
+} from '../../aikernel/todos/task-todos';
 import type { TaskState } from '../../aikernel/states/tasks';
 import { escapeHtml } from '../../utils/escape';
 import { type TodoMgrApplication } from './app';
@@ -177,20 +182,6 @@ const TodoWriteArgsSchema = z.object({
     todos: z.array(TodoWriteTodoSchema).describe('完整的待办事项列表（替换当前所有待办）'),
 });
 
-const taskTodosMap = new Map<string, TaskTodo[]>();
-
-/**
- * Get todos for a specific task (for display purposes)
- * @param taskId - The task ID to get todos for
- * @returns Array of todos for the task
- */
-export function getTaskTodosForDisplay(taskId: string): TaskTodo[] {
-    if (!taskTodosMap.has(taskId)) {
-        return [];
-    }
-    return taskTodosMap.get(taskId)!;
-}
-
 export class TodoWriteTool extends BaseTool<typeof TodoWriteArgsSchema> {
     private todoMgrApp: TodoMgrApplication;
 
@@ -205,14 +196,11 @@ export class TodoWriteTool extends BaseTool<typeof TodoWriteArgsSchema> {
     }
 
     private getTaskTodos(taskId: string): TaskTodo[] {
-        if (!taskTodosMap.has(taskId)) {
-            taskTodosMap.set(taskId, []);
-        }
-        return taskTodosMap.get(taskId)!;
+        return getOrInitTaskTodos(taskId);
     }
 
     private setTaskTodos(taskId: string, todos: TaskTodo[]): void {
-        taskTodosMap.set(taskId, todos);
+        setTaskTodos(taskId, todos);
     }
 
     renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
@@ -331,7 +319,7 @@ export class TodoWriteTool extends BaseTool<typeof TodoWriteArgsSchema> {
         // 如果所有任务都已完成，清空待办列表（不再保留）
         const allCompleted = currentTodos.length > 0 && currentTodos.every(t => t.status === 'completed');
         if (allCompleted) {
-            taskTodosMap.delete(taskId);
+            deleteTaskTodos(taskId);
         } else {
             this.setTaskTodos(taskId, currentTodos);
         }
