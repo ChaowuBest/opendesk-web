@@ -1,4 +1,4 @@
-import { TUI, Box, Text, Key, matchesKey, type Component } from "@mariozechner/pi-tui";
+import { TUI, Box, Text, Key, matchesKey, type Component, EditorKeybindingsManager, setEditorKeybindings } from "@mariozechner/pi-tui";
 // FULL_CLEAR removed: use tui.requestRender(true) instead to avoid blank-frame flicker
 import { OpenDeskBanner } from './banner';
 import { VerticalLayout } from './components/layout';
@@ -1221,6 +1221,13 @@ export class OpenDeskTUI {
     }
 
     start() {
+        // Ctrl+Backspace 默认未绑定到任何删除操作，导致按下后无反应。
+        // 某些终端（尤其 Windows）的普通 Backspace 也发送 0x08（与 Ctrl+Backspace 相同字节），
+        // 同样会导致删除失效。将 ctrl+backspace 加入 deleteCharBackward 使其与普通 Backspace 行为一致。
+        setEditorKeybindings(new EditorKeybindingsManager({
+            deleteCharBackward: ["backspace", "ctrl+backspace"],
+        }));
+
         this.tui.start();
 
         // Attach a direct input listener to TUI FIRST, to hijack Ctrl+C before Editor gets it!
