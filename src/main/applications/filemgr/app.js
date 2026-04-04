@@ -26,6 +26,25 @@ class FileMgrApplication extends BaseApplication {
         super('filemgr', '文件');
     }
 
+    async getTUIStatusBlock() {
+        try {
+            const setting = Setting.getInstance();
+            const filemgrConfig = setting.getData().applications?.filemgr;
+            const entries = filemgrConfig?.entries ?? [];
+            if (entries.length === 0) {
+                return '⚠ 文件扫描目录未配置';
+            }
+            try {
+                setting.getDefaultEmbeddingModelInstance();
+            } catch {
+                return '⚠ 向量嵌入模型未配置';
+            }
+            return null;
+        } catch {
+            return null;
+        }
+    }
+
     static getWorkerClass() {
         return FileManagerWorker;
     }

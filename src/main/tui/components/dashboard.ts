@@ -13,6 +13,9 @@ import { type Component, SelectList, Box, Text, truncateToWidth, visibleWidth } 
 import { defaultSelectListTheme } from "../theme";
 import { OpenDeskTUI } from "../entry";
 import { Card, type CardStatus, type BorderConfig } from "./card";
+import { ApplicationRegistry } from "../../applications/registry";
+import { renderResponsiveCells, type ResponsiveCell } from "./responsive-bar";
+import { getNotificationBadge } from "./notification";
 import chalk from "chalk";
 import type { GlobalTodo } from "../../applications/todomgr/common";
 import type { TaskState } from "../../states/tasks";
@@ -42,10 +45,18 @@ function progressBar(ratio: number, barWidth: number): string {
     return C.neon('█'.repeat(filled)) + C.ghost('░'.repeat(empty));
 }
 
+export interface MailAccountInfo {
+    email: string;
+    name: string;
+    active: boolean;
+    newCount: number;
+}
+
 export interface DashboardData {
     globalTodos: GlobalTodo[];
     tasks: TaskState[];
     channelStates?: ChannelRuntimeState[];
+    mailAccounts?: MailAccountInfo[];
 }
 
 export class DashboardOverlay implements Component {
@@ -124,24 +135,23 @@ class DashboardRenderer implements Component {
     render(width: number): string[] {
         const W = width;
 
-        // 先渲染所有固定高度的面板
         const header = this.renderHeader(W);
         const statusBar = this.renderStatusBar(W);
+        const mailPanel = this.renderMailPanel(W);
         const channelsPanel = this.renderChannelsPanel(W);
         const todosPanel = this.renderTodosPanel(W);
         const activePanel = this.renderActivePanel(W);
         const telemetryPanel = this.renderTelemetryPanel(W);
 
-        // 计算固定部分占据的行数（含面板间空行）
         const fixedLines = header.length + 1
             + statusBar.length + 1
+            + mailPanel.length + 1
             + channelsPanel.length + 1
             + todosPanel.length + 1
             + activePanel.length + 1
-            + 1  // history 与 telemetry 之间的空行
+            + 1
             + telemetryPanel.length;
 
-        // 剩余空间全部给 TASK ARCHIVE
         const historyAvailable = Math.max(3, this.targetHeight - fixedLines);
         const historyPanel = this.renderHistoryPanel(W, historyAvailable);
 
@@ -149,6 +159,8 @@ class DashboardRenderer implements Component {
         lines.push(...header);
         lines.push('');
         lines.push(...statusBar);
+        lines.push('');
+        lines.push(...mailPanel);
         lines.push('');
         lines.push(...channelsPanel);
         lines.push('');
@@ -205,7 +217,11 @@ class DashboardRenderer implements Component {
         const onlineChannels = channelStates.filter(c => c.status.online).length;
         const totalChannels = channelStates.length;
 
+        const mailAccounts = this.data.mailAccounts || [];
+        const totalUnread = mailAccounts.reduce((sum, a) => sum + a.newCount, 0);
+
         const cells = [
+            (totalUnread > 0 ? C.amber('📬') : C.ghost('📭')) + C.dim(' MAIL ') + C.bright(String(totalUnread)),
             C.neon('▣') + C.dim(' TODOS ') + C.bright(String(activeTodos)),
             C.neon('⟳') + C.dim(' CRON ') + C.bright(String(cronTodos)),
             C.neon('⚡') + C.dim(' EVENT ') + C.bright(String(eventTodos)),
@@ -216,6 +232,47 @@ class DashboardRenderer implements Component {
         const sep = C.ghost('  │  ');
         const statusLine = '  ' + cells.join(sep);
         return [statusLine];
+    }
+
+    // ──────────────────── 邮箱账号面板 ────────────────────
+
+    private renderMailPanel(W: number): string[] {
+        const accounts = this.data.mailAccounts || [];
+        const totalUnread = accounts.reduce((sum, a) => sum + a.newCount, 0);
+
+        const body: string[] = [];
+        if (accounts.length === 0) {
+            body.push(C.dim('  ∅ 暂未配置邮箱账号'));
+        } else {
+            for (const acc of accounts) {
+                const activeIcon = acc.active ? C.glow('●') : C.ghost('○');
+                const nameLabel = C.text(acc.name || acc.email);
+                const emailDim = acc.name ? C.dim(` <${acc.email}>`) : '';
+
+                const leftPart = `  ${activeIcon} ${nameLabel}${emailDim}`;
+                const leftVis = visibleWidth(leftPart);
+
+                let rightPart: string;
+                if (acc.newCount > 0) {
+                    rightPart = C.amber(`${acc.newCount} 封新邮件`);
+                } else {
+                    rightPart = C.dim('无新邮件');
+                }
+                const rightVis = visibleWidth(rightPart);
+                const inner = W - 6;
+                const gap = Math.max(1, inner - leftVis - rightVis);
+                body.push(leftPart + C.ghost(' ' + '·'.repeat(Math.max(0, gap - 2)) + ' ') + rightPart);
+            }
+        }
+
+        const card = new Card({
+            title: '邮箱账号',
+            status: { icon: totalUnread > 0 ? C.amber('📬') : C.neon('📭'), text: C.dim(`${totalUnread} UNREAD / ${accounts.length} ACCOUNTS`) },
+            body: body,
+            border: { style: 'single', colorFn: C.ghost },
+        });
+
+        return card.render(W);
     }
 
     // ──────────────────── 消息插件状态面板 ────────────────────
@@ -445,5 +502,160 @@ class DashboardRenderer implements Component {
         });
 
         return card.render(W);
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// DashboardBar — compact 模式底栏
+// 通过遍历所有应用的 getTUIStatusBlock() 动态拉取状态，
+// 使用 ResponsiveBar 在宽度不足时从右到左逐个隐藏。
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+export class DashboardBar implements Component {
+    /** 每个元素是一段已含 ANSI 着色的单行字符串 */
+    private cells: string[] = [];
+    private refreshTimer?: ReturnType<typeof setTimeout> | ReturnType<typeof setInterval>;
+    private invalidated = true;
+    private cachedOutput?: string[];
+    private lastWidth?: number;
+    private visible = true;
+    private requestRender: () => void;
+    private initialFetchDone = false;
+    private steadyIntervalMs = 60_000;
+    private callbacksBound = false;
+
+    constructor(requestRender: () => void) {
+        this.requestRender = requestRender;
+    }
+
+    start(steadyIntervalMs = 60_000): void {
+        this.steadyIntervalMs = steadyIntervalMs;
+
+        // 向所有应用注入 noticeTUIStatusUpdate 回调（只注入一次）
+        if (!this.callbacksBound) {
+            this.callbacksBound = true;
+            for (const [, app] of ApplicationRegistry.applications) {
+                app.setTUIStatusUpdateCallback(() => this.refresh());
+            }
+        }
+
+        // 立即执行首次刷新（时钟等同步数据即时可用，异步数据陆续到达）
+        this.refresh();
+
+        // warmup 阶段频繁轮询，应用 worker 可能还在初始化
+        const warmupSchedule = [3_000, 8_000, 15_000];
+        let step = 0;
+
+        const tick = () => {
+            this.refresh();
+            step++;
+            if (step < warmupSchedule.length) {
+                this.refreshTimer = setTimeout(tick, warmupSchedule[step]);
+            } else {
+                this.refreshTimer = setInterval(() => this.refresh(), this.steadyIntervalMs);
+            }
+        };
+
+        this.refreshTimer = setTimeout(tick, warmupSchedule[0]);
+    }
+
+    stop(): void {
+        if (this.refreshTimer) {
+            clearInterval(this.refreshTimer as any);
+            clearTimeout(this.refreshTimer as any);
+            this.refreshTimer = undefined;
+        }
+    }
+
+    isVisible(): boolean { return this.visible; }
+
+    setVisible(v: boolean): void {
+        if (this.visible !== v) {
+            this.visible = v;
+            this.invalidated = true;
+            this.requestRender();
+        }
+    }
+
+    toggleVisible(): void { this.setVisible(!this.visible); }
+
+    private async refresh(): Promise<void> {
+        const cells: string[] = [];
+
+        // 时钟（始终显示，放在最左侧，最后被隐藏）
+        const now = new Date();
+        const hh = String(now.getHours()).padStart(2, '0');
+        const mm = String(now.getMinutes()).padStart(2, '0');
+        const weekdays = ['日', '一', '二', '三', '四', '五', '六'];
+        cells.push(`🕐 ${hh}:${mm} 周${weekdays[now.getDay()]} ${now.getMonth() + 1}/${now.getDate()}`);
+
+        // 通知角标
+        const badge = getNotificationBadge();
+        if (badge) {
+            cells.push(badge);
+        }
+
+        // 从所有应用拉取状态
+        const apps = Array.from(ApplicationRegistry.applications.values());
+        const results = await Promise.allSettled(
+            apps.map(app => app.getTUIStatusBlock())
+        );
+        for (const result of results) {
+            if (result.status === 'fulfilled' && result.value) {
+                cells.push(result.value);
+            }
+        }
+
+        this.cells = cells;
+        this.initialFetchDone = true;
+        this.invalidated = true;
+        this.requestRender();
+    }
+
+    invalidate(): void { this.invalidated = true; }
+
+    render(width: number): string[] {
+        if (!this.visible) return [];
+
+        if (!this.invalidated && this.lastWidth === width && this.cachedOutput) {
+            return this.cachedOutput;
+        }
+        this.lastWidth = width;
+
+        if (!this.initialFetchDone) {
+            const loadingText = C.dim('⠋ 加载中...');
+            const loadingVis = visibleWidth(loadingText);
+            const leftPad = Math.max(0, Math.floor((width - loadingVis) / 2));
+            this.cachedOutput = [C.ghost('┄'.repeat(width)), ' '.repeat(leftPad) + loadingText];
+            return this.cachedOutput;
+        }
+
+        const responsiveCells: ResponsiveCell[] = this.cells.map(text => ({ text }));
+
+        if (responsiveCells.length === 0) {
+            this.cachedOutput = [];
+            this.invalidated = false;
+            return [];
+        }
+
+        const sep = C.ghost(' │ ');
+        const line = renderResponsiveCells(responsiveCells, width, {
+            separator: sep,
+            horizontalPadding: 1,
+        });
+
+        if (!line) {
+            this.cachedOutput = [];
+            this.invalidated = false;
+            return [];
+        }
+
+        this.cachedOutput = [
+            C.ghost('┄'.repeat(width)),
+            line,
+        ];
+
+        this.invalidated = false;
+        return this.cachedOutput;
     }
 }

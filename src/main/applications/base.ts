@@ -298,6 +298,30 @@ export abstract class BaseApplication {
         return [];
     }
 
+    /**
+     * 返回在 TUI DashboardBar 上显示的单行状态字符串（可含 ANSI 着色）。
+     * 返回 null 表示该应用当前无需在底栏展示信息（例如未配置、无新消息等）。
+     * 子类按需重写。
+     */
+    async getTUIStatusBlock(): Promise<string | null> {
+        return null;
+    }
+
+    /** DashboardBar 刷新回调，由 DashboardBar 注入 */
+    private _tuiStatusUpdateCallback?: () => void;
+
+    /** 由 DashboardBar 调用，注入刷新回调 */
+    setTUIStatusUpdateCallback(cb: () => void): void {
+        this._tuiStatusUpdateCallback = cb;
+    }
+
+    /**
+     * 应用内部状态发生变化时调用，通知 DashboardBar 重新拉取状态并刷新。
+     */
+    noticeTUIStatusUpdate(): void {
+        this._tuiStatusUpdateCallback?.();
+    }
+
     getDataDirectory(): string {
         let data_directory = path.join(getAppDirectory(), 'apps', this.bundleName);
         if (!fs.existsSync(data_directory)) {
