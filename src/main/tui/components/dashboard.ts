@@ -15,6 +15,7 @@ import { OpenDeskTUI } from "../entry";
 import { Card, type CardStatus, type BorderConfig } from "./card";
 import { ApplicationRegistry } from "../../applications/registry";
 import { renderResponsiveCells, type ResponsiveCell } from "./responsive-bar";
+import { getNotificationBadge } from "./notification";
 import chalk from "chalk";
 import type { GlobalTodo } from "../../applications/todomgr/common";
 import type { TaskState } from "../../states/tasks";
@@ -510,15 +511,9 @@ class DashboardRenderer implements Component {
 // 使用 ResponsiveBar 在宽度不足时从右到左逐个隐藏。
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-interface BarSnapshot {
-    icon: string;
-    label: string;
-    value: string;
-    accentFn?: (text: string) => string;
-}
-
 export class DashboardBar implements Component {
-    private snapshots: BarSnapshot[] = [];
+    /** 每个元素是一段已含 ANSI 着色的单行字符串 */
+    private cells: string[] = [];
     private refreshTimer?: ReturnType<typeof setTimeout> | ReturnType<typeof setInterval>;
     private invalidated = true;
     private cachedOutput?: string[];
@@ -544,7 +539,11 @@ export class DashboardBar implements Component {
             }
         }
 
-        const warmupSchedule = [5_000, 10_000, 15_000, 30_000];
+        // 立即执行首次刷新（时钟等同步数据即时可用，异步数据陆续到达）
+        this.refresh();
+
+        // warmup 阶段频繁轮询，应用 worker 可能还在初始化
+        const warmupSchedule = [3_000, 8_000, 15_000];
         let step = 0;
 
         const tick = () => {
@@ -581,17 +580,20 @@ export class DashboardBar implements Component {
     toggleVisible(): void { this.setVisible(!this.visible); }
 
     private async refresh(): Promise<void> {
-        const cells: BarSnapshot[] = [];
+        const cells: string[] = [];
 
-        // 时钟（始终显示，放在最左侧）
+        // 时钟（始终显示，放在最左侧，最后被隐藏）
         const now = new Date();
         const hh = String(now.getHours()).padStart(2, '0');
         const mm = String(now.getMinutes()).padStart(2, '0');
         const weekdays = ['日', '一', '二', '三', '四', '五', '六'];
-        cells.push({
-            icon: '🕐', label: '时间',
-            value: `${hh}:${mm} 周${weekdays[now.getDay()]} ${now.getMonth() + 1}/${now.getDate()}`,
-        });
+        cells.push(`🕐 ${hh}:${mm} 周${weekdays[now.getDay()]} ${now.getMonth() + 1}/${now.getDate()}`);
+
+        // 通知角标
+        const badge = getNotificationBadge();
+        if (badge) {
+            cells.push(badge);
+        }
 
         // 从所有应用拉取状态
         const apps = Array.from(ApplicationRegistry.applications.values());
@@ -604,7 +606,7 @@ export class DashboardBar implements Component {
             }
         }
 
-        this.snapshots = cells;
+        this.cells = cells;
         this.initialFetchDone = true;
         this.invalidated = true;
         this.requestRender();
@@ -621,15 +623,14 @@ export class DashboardBar implements Component {
         this.lastWidth = width;
 
         if (!this.initialFetchDone) {
-            this.cachedOutput = [C.ghost('┄'.repeat(width)), C.dim('  ⠋ 加载中...')];
+            const loadingText = C.dim('⠋ 加载中...');
+            const loadingVis = visibleWidth(loadingText);
+            const leftPad = Math.max(0, Math.floor((width - loadingVis) / 2));
+            this.cachedOutput = [C.ghost('┄'.repeat(width)), ' '.repeat(leftPad) + loadingText];
             return this.cachedOutput;
         }
 
-        // 构造 ResponsiveCell 列表
-        const responsiveCells: ResponsiveCell[] = this.snapshots.map(s => {
-            const valFn = s.accentFn || C.text;
-            return { text: `${s.icon} ${C.dim(s.label)} ${valFn(s.value)}` };
-        });
+        const responsiveCells: ResponsiveCell[] = this.cells.map(text => ({ text }));
 
         if (responsiveCells.length === 0) {
             this.cachedOutput = [];

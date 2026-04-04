@@ -32,12 +32,12 @@ class FileMgrApplication extends BaseApplication {
             const filemgrConfig = setting.getData().applications?.filemgr;
             const entries = filemgrConfig?.entries ?? [];
             if (entries.length === 0) {
-                return { icon: '⚠', label: '文件', value: '扫描目录未配置' };
+                return '⚠ 文件扫描目录未配置';
             }
             try {
                 setting.getDefaultEmbeddingModelInstance();
             } catch {
-                return { icon: '⚠', label: '文件', value: '向量嵌入模型未配置' };
+                return '⚠ 向量嵌入模型未配置';
             }
             return null;
         } catch {

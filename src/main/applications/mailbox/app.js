@@ -45,9 +45,9 @@ class MailboxApplication extends BaseApplication {
 
             if (accounts.length === 0) return null;
             if (totalUnread > 0) {
-                return { icon: '📬', label: '邮件', value: `${totalUnread} 封新邮件`, accentFn: (t) => chalk.hex('#FFAB00')(t) };
+                return `📬 ${chalk.hex('#FFAB00')(`${totalUnread} 封新邮件`)}`;
             }
-            return { icon: '📭', label: '邮件', value: '无新邮件' };
+            return null;
         } catch {
             return null;
         }
@@ -64,6 +64,10 @@ class MailboxApplication extends BaseApplication {
 
     onConfigChanged() {
         logger.info(`mailbox application config changed`);
+    }
+
+    onEmailListUpdated() {
+        this.noticeTUIStatusUpdate();
     }
 
     async getSkills() {

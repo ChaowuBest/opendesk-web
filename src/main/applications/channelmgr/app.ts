@@ -135,6 +135,7 @@ export class ChannelMgrApplication extends BaseApplication {
         for (const cb of this.stateChangeCallbacks) {
             try { cb(states); } catch { /* ignore callback errors */ }
         }
+        this.noticeTUIStatusUpdate();
     }
 
     static getConfigSchema() {
@@ -557,26 +558,16 @@ export class ChannelMgrApplication extends BaseApplication {
         };
     }
 
-    async getTUIStatusBlock(): Promise<{ icon: string; label: string; value: string; accentFn?: (text: string) => string } | null> {
+    async getTUIStatusBlock(): Promise<string | null> {
         const states = this.getChannelStates();
         if (states.length === 0) return null;
 
         const parts = states.map(s => {
-            const icon = s.status.online ? chalk.hex('#39FF14')('●') : chalk.hex('#FF1744')('○');
-            const name = s.label || s.channelId;
-            return `${icon}${name}`;
+            const dot = s.status.online ? chalk.hex('#39FF14')('●') : chalk.hex('#FF1744')('○');
+            const name = s.status.online ? chalk.hex('#39FF14')(s.label || s.channelId) : chalk.hex('#FF1744')(s.label || s.channelId);
+            return `${dot}${name}`;
         });
-        const allOnline = states.every(s => s.status.online);
-        const allOffline = states.every(s => !s.status.online);
-        return {
-            icon: '💬', label: '消息插件',
-            value: parts.join(' '),
-            accentFn: allOnline
-                ? (t: string) => chalk.hex('#39FF14')(t)
-                : allOffline
-                    ? (t: string) => chalk.hex('#FF1744')(t)
-                    : (t: string) => chalk.hex('#FFAB00')(t),
-        };
+        return `💬 ${parts.join(' ')}`;
     }
 
     // ── 查询方法 ─────────────────────────────────────────────────────────────

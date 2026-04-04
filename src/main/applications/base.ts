@@ -299,11 +299,11 @@ export abstract class BaseApplication {
     }
 
     /**
-     * 返回在 TUI DashboardBar 上显示的状态片段（icon + label + value）。
+     * 返回在 TUI DashboardBar 上显示的单行状态字符串（可含 ANSI 着色）。
      * 返回 null 表示该应用当前无需在底栏展示信息（例如未配置、无新消息等）。
-     * 子类按需重写；允许异步操作（如查询 Worker）。
+     * 子类按需重写。
      */
-    async getTUIStatusBlock(): Promise<{ icon: string; label: string; value: string; accentFn?: (text: string) => string } | null> {
+    async getTUIStatusBlock(): Promise<string | null> {
         return null;
     }
 

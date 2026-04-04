@@ -5,7 +5,6 @@ import { SlashCommandRegistry } from "../commands";
 import type { OpenDeskTUI } from "../entry";
 import chalk from "chalk";
 import { visibleWidth, truncateToWidth } from "@mariozechner/pi-tui";
-import { getNotificationBadge } from "./notification";
 import { getFileCompletions, extractAtQuery, FILE_COMPLETION_MAX_RESULTS } from "./file-completions";
 import { getShellCompletions, executeShellCommand } from "./shell";
 import { spawnSync } from "child_process";
@@ -145,14 +144,8 @@ export class TaskStatusBar implements Component {
 
         const leftContent = leftCells.length > 0 ? ` ${leftCells.map(c => c.text).join('  │  ')}` : '';
 
-        // 右侧固定区域：通知角标 + 帮助提示
-        const rightParts: string[] = [];
-        const badge = getNotificationBadge();
-        if (badge) {
-            rightParts.push(badge);
-        }
-        rightParts.push(chalk.hex('#d4d4d4')('/help 帮助'));
-        const rightHint = rightParts.join(chalk.hex('#d4d4d4')('  │  ')) + ' ';
+        // 右侧固定区域：帮助提示
+        const rightHint = chalk.hex('#d4d4d4')('/help 帮助') + ' ';
 
         let leftW = visibleWidth(leftContent);
         const rightW = visibleWidth(rightHint);

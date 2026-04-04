@@ -33,10 +33,9 @@ import { MemoryRegistry } from "../aikernel/memory/registry";
 import { MemoryListOverlay } from "./components/memorylist";
 import { ChatContext, UserMessage, SystemMessage, AssistantMessage, type ChatMessage } from "../aikernel/messages";
 import { createMemoryToolset } from "../aikernel/memory/tools";
-import { NotificationStore, NotificationCenterOverlay, ToastManager, getNotificationBadge } from "./components/notification";
+import { NotificationStore, NotificationCenterOverlay, ToastManager } from "./components/notification";
 import { NotificationManager } from "../utils/notificationmgr.js";
 import { SkillMgrApplication } from "../applications/skillmgr/app.js";
-// getFilemgrStatusNotice 已迁移到 filemgr app 的 getTUIStatusBlock()，由 DashboardBar 统一拉取
 import { DashboardBar } from "./components/dashboard";
 
 import format from "string-template";
@@ -403,9 +402,9 @@ export class OpenDeskTUI {
             });
         });
 
-        // 通知数据变更时刷新 TaskStatusBar 角标
+        // 通知数据变更时刷新 DashboardBar（通知角标已移至 DashboardBar）
         store.onChange(() => {
-            this.inputArea.statusBar.invalidate();
+            this.dashboardBar.invalidate();
             this.tui.requestRender();
         });
     }
@@ -1201,8 +1200,6 @@ export class OpenDeskTUI {
         }
         this.tui.requestRender(true);
     }
-
-    // refreshStatusNotice 已移除：全局状态提示已迁移到 DashboardBar 由各应用 getTUIStatusBlock() 提供
 
     start() {
         // Ctrl+Backspace 默认未绑定到任何删除操作，导致按下后无反应。

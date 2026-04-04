@@ -24,7 +24,7 @@ export class TodoMgrApplication extends BaseApplication {
         super('todomgr', '待办事项', false);
     }
 
-    async getTUIStatusBlock(): Promise<{ icon: string; label: string; value: string; accentFn?: (text: string) => string } | null> {
+    async getTUIStatusBlock(): Promise<string | null> {
         try {
             const res = await this.callWorker('listGlobalTodos', 'all');
             if (res?.status === 'ok' && Array.isArray(res.data)) {
@@ -35,11 +35,7 @@ export class TodoMgrApplication extends BaseApplication {
                 if (total === 0) return null;
                 const filled = Math.round((completed / total) * 8);
                 const bar = chalk.hex('#39FF14')('█'.repeat(filled)) + chalk.hex('#4a4a4a')('░'.repeat(8 - filled));
-                return {
-                    icon: '📋', label: '待办',
-                    value: `${bar} ${completed}/${total}`,
-                    accentFn: pending === 0 ? (t: string) => chalk.hex('#39FF14')(t) : (t: string) => chalk.hex('#FFAB00')(t),
-                };
+                return `📋 ${bar} ${completed}/${total}`;
             }
             return null;
         } catch {

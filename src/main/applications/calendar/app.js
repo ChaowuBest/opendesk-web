@@ -43,13 +43,10 @@ class CalendarApplication extends BaseApplication {
                         ? `${diffMin}分钟后`
                         : `${Math.floor(diffMin / 60)}h${diffMin % 60}m后`;
                     const subject = (next.subject || '').slice(0, 16) || '(无标题)';
-                    return {
-                        icon: '📅', label: '日程',
-                        value: `${timeStr}: ${subject}`,
-                        accentFn: diffMin <= 15 ? (t) => chalk.hex('#FF1744')(t) : (t) => chalk.hex('#448AFF')(t),
-                    };
+                    const colorFn = diffMin <= 15 ? chalk.hex('#FF1744') : chalk.hex('#448AFF');
+                    return `📅 ${colorFn(`${timeStr}: ${subject}`)}`;
                 }
-                return { icon: '📅', label: '日程', value: `今日 ${res.data.length} 项` };
+                return `📅 今日 ${res.data.length} 项`;
             }
             return null;
         } catch {
