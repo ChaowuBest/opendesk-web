@@ -48,7 +48,7 @@ export class DefaultModelConfigPage implements Component {
         });
 
         const actions: ActionDef[] = [
-            { key: 'save', label: '✅ 保存', style: 'primary' },
+            { key: 'save', label: '🆗 保存', style: 'primary' },
             { key: 'cancel', label: '↩  返回' }
         ];
 
