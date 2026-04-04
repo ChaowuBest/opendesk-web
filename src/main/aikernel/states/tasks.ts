@@ -10,17 +10,27 @@
  */
 
 import {
-    ChatContext, UserMessage, UserMessagePart,
-    AssistantMessage, AssistantMessagePart, FileMessagePart, ImageMessagePart,
-    SystemMessage, Usage, ToolCall, ToolCallMessagePart, CompactSeparatorMessage,
-    extractImagePaths, imageToDataUri
+    ChatContext,
+    UserMessage,
+    UserMessagePart,
+    AssistantMessage,
+    AssistantMessagePart,
+    FileMessagePart,
+    ImageMessagePart,
+    SystemMessage,
+    Usage,
+    ToolCall,
+    ToolCallMessagePart,
+    CompactSeparatorMessage,
+    extractImagePaths,
+    imageToDataUri,
 } from '../messages.js';
 import { shouldCompact, compactContext } from '../compact.js';
 import { BaseToolset } from '../tool.js';
 import { LLM } from '../llm.js';
 import { getTaskDirectory } from '../../utils/setting.js';
 import { logger } from '../../utils/logger.js';
-import { ApplicationRegistry } from '../../applications/registry.js';
+import { type ToolsetProvider, EmptyToolsetProvider } from './toolset-provider.js';
 import { jsonrepair } from 'jsonrepair';
 import officeParser from 'officeparser';
 import path from 'path';
@@ -31,7 +41,6 @@ import { createMainPlanningToolset, createSubTaskPlanningToolset } from '../plan
 import { createTaskInfoToolset } from './tools.js';
 import { TaskHooks } from '../hooks.js';
 import type { Participant } from '../plugins/types.js';
-
 
 type TaskStatus = 'waiting' | 'running' | 'stopped';
 
@@ -100,7 +109,6 @@ function generateShortTaskId(): string {
 }
 
 export class TaskState {
-
     task_id: string = generateShortTaskId();
     parent_id: string | null = null;
     task_name: string | null = null;
@@ -182,7 +190,7 @@ export class TaskState {
             bookmark_path: this.bookmark_path,
             origin: this.origin,
             stop_requested_by_user: this.stop_requested_by_user,
-        }
+        };
     }
 
     toJSON() {
@@ -198,7 +206,7 @@ export class TaskState {
             bookmark_path: this.bookmark_path,
             origin: this.origin,
             stop_requested_by_user: this.stop_requested_by_user,
-        }
+        };
     }
 
     setSystemPrompt(prompt: string) {
@@ -216,11 +224,13 @@ export class TaskState {
             return;
         }
 
-        let user_message = new UserMessage();
-        for (let filePath of filePaths) {
-            let extname = path.extname(filePath);
-            let content = await officeParser.parseOfficeAsync(filePath);
-            logger.info(`attach file ${filePath} to task ${this.task_id} with extension ${extname}`);
+        const user_message = new UserMessage();
+        for (const filePath of filePaths) {
+            const extname = path.extname(filePath);
+            const content = await officeParser.parseOfficeAsync(filePath);
+            logger.info(
+                `attach file ${filePath} to task ${this.task_id} with extension ${extname}`
+            );
             user_message.content.push(new FileMessagePart(filePath, content));
         }
 
@@ -231,7 +241,9 @@ export class TaskState {
     private _compactedBeforeSubmit = false;
 
     /** 标记外部已经完成一次压缩，submitUserMessage 应跳过自动压缩 */
-    markCompacted() { this._compactedBeforeSubmit = true; }
+    markCompacted() {
+        this._compactedBeforeSubmit = true;
+    }
 
     async manualCompact(): Promise<boolean> {
         return await compactContext(this.chat_context, this.model);
@@ -242,9 +254,9 @@ export class TaskState {
      */
     async submitUserMessage(message: string) {
         this.task_status = 'running';
-        this.started_at = new Date();  // 记录任务开始时间
+        this.started_at = new Date(); // 记录任务开始时间
         this.stop_requested_by_user = false;
-        this.finished_at = undefined;  // 清除之前的完成时间
+        this.finished_at = undefined; // 清除之前的完成时间
         this.task_manager_state.publishTaskListUpdate();
 
         // 在追加新消息前检查是否需要自动压缩上下文（TUI 层可能已经做过，此处为 GUI 等场景的兜底）
@@ -256,12 +268,14 @@ export class TaskState {
                     logger.info(`Auto-compacting context for task ${this.task_id}`);
                     await compactContext(this.chat_context, this.model);
                 }
-            } catch (err: any) {
-                logger.warn(`Auto-compact check failed: ${err?.message ?? err}`);
+            } catch (err: unknown) {
+                logger.warn(
+                    `Auto-compact check failed: ${err instanceof Error ? err.message : err}`
+                );
             }
         }
 
-        let user_message = new UserMessage(message);
+        const user_message = new UserMessage(message);
 
         const imagePaths = extractImagePaths(message);
         for (const imgPath of imagePaths) {
@@ -274,7 +288,7 @@ export class TaskState {
             }
         }
 
-        let assistant_message = new AssistantMessage();
+        const assistant_message = new AssistantMessage();
         this.chat_context.appendMessage(user_message);
         this.chat_context.appendMessage(assistant_message);
 
@@ -284,7 +298,7 @@ export class TaskState {
         // 检测用户消息中的 /skillname 引用并预加载
         await this.preloadSlashSkills(message, assistant_message);
 
-        logger.info(`messsage submitted to task ${this.task_id}`)
+        logger.info(`messsage submitted to task ${this.task_id}`);
 
         if (this.task_name === null) {
             // 这里我们先放一个占位符，避免可能出现的重复submitUserMessage导致多次起名
@@ -310,7 +324,9 @@ export class TaskState {
             try {
                 fs.unlinkSync(taskJsonPath);
             } catch (err) {
-                logger.error(`Failed to delete task file ${taskJsonPath}: ${(err as Error).message}`);
+                logger.error(
+                    `Failed to delete task file ${taskJsonPath}: ${(err as Error).message}`
+                );
             }
         }
 
@@ -327,7 +343,9 @@ export class TaskState {
                     }
                 }
             } catch (err) {
-                logger.error(`Failed to cleanup artifacts for task ${this.task_id}: ${(err as Error).message}`);
+                logger.error(
+                    `Failed to cleanup artifacts for task ${this.task_id}: ${(err as Error).message}`
+                );
             }
         }
     }
@@ -418,7 +436,7 @@ export class TaskState {
         for (const name of matchedNames) {
             // 查找 user-invocable 的 skill
             const entry = allSkills.find(
-                e => e.skill.frontmatter.name === name && e.skill.isUserInvocable
+                (e) => e.skill.frontmatter.name === name && e.skill.isUserInvocable
             );
             if (!entry) continue;
 
@@ -430,7 +448,9 @@ export class TaskState {
                 // 将 skill 的 .env 环境变量合并到当前 task 的 envContext
                 if (loadedSkill.env && Object.keys(loadedSkill.env).length > 0) {
                     Object.assign(this.envContext, loadedSkill.env);
-                    logger.info(`preloaded skill ${name} env merged to task envContext: ${Object.keys(loadedSkill.env).join(', ')}`);
+                    logger.info(
+                        `preloaded skill ${name} env merged to task envContext: ${Object.keys(loadedSkill.env).join(', ')}`
+                    );
                 }
 
                 const fullContent = loadedSkill.getFullContent();
@@ -463,13 +483,12 @@ export class TaskState {
         const prompt = `
         你是一个任务管理助手，请根据以下用户消息生成一个任务名称: ${user_message}
         请返回一个简洁明了的任务名称，不要超过10个字符。不要包含任何其他内容。
-        `
+        `;
 
-        const task_name = await LLM.ask(new UserMessage(prompt.trim()))
-            .catch(err => {
-                logger.error(err);
-                return null;
-            })
+        const task_name = await LLM.ask(new UserMessage(prompt.trim())).catch((err) => {
+            logger.error(err);
+            return null;
+        });
 
         this.task_name = task_name;
     }
@@ -550,14 +569,15 @@ export class TaskState {
             return;
         }
 
-        this.subscribers = this.subscribers.filter(subscriber => subscriber.isAvailable());
+        this.subscribers = this.subscribers.filter((subscriber) => subscriber.isAvailable());
         if (this.subscribers.length === 0) return;
 
         try {
-            let chunkUpdate: TaskUpdateChunk
+            let chunkUpdate: TaskUpdateChunk;
             if (last_message instanceof UserMessage) {
                 if (last_message.content.length === 0) return;
-                const updated_part_index = part_index !== undefined ? part_index : last_message.content.length - 1;
+                const updated_part_index =
+                    part_index !== undefined ? part_index : last_message.content.length - 1;
                 const last_part = last_message.content[updated_part_index];
                 await last_message.render();
                 chunkUpdate = {
@@ -570,8 +590,9 @@ export class TaskState {
                     internal: last_message.internal,
                 };
             } else if (last_message instanceof AssistantMessage) {
-                if (last_message.content.length === 0) return;  // 空的助手消息，跳过
-                const updated_part_index = part_index !== undefined ? part_index : last_message.content.length - 1;
+                if (last_message.content.length === 0) return; // 空的助手消息，跳过
+                const updated_part_index =
+                    part_index !== undefined ? part_index : last_message.content.length - 1;
                 const last_part = last_message.content[updated_part_index];
                 await last_part.render();
                 chunkUpdate = {
@@ -581,13 +602,15 @@ export class TaskState {
                     message_id: last_message.message_id,
                     last_part_index: updated_part_index,
                     last_part,
-                    usage: last_message.usage
+                    usage: last_message.usage,
                 };
             } else if (last_message instanceof CompactSeparatorMessage) {
                 // 压缩分隔消息不需要发送订阅更新，直接返回
                 return;
             } else {
-                logger.warn(`unexpected last message type in sendSubscriptionFeedback: ${(last_message as any).role}`);
+                logger.warn(
+                    `unexpected last message type in sendSubscriptionFeedback: ${(last_message as { role?: string }).role}`
+                );
                 return;
             }
 
@@ -595,12 +618,14 @@ export class TaskState {
                 subscriber.send(chunkUpdate);
             }
         } catch (err) {
-            logger.error(`error sending subscription feedback for task ${this.task_id}: ${(err as Error).message}`);
+            logger.error(
+                `error sending subscription feedback for task ${this.task_id}: ${(err as Error).message}`
+            );
         }
     }
 
     async processCompletion() {
-        let assistant_message = this.chat_context.lastMessage()
+        const assistant_message = this.chat_context.lastMessage();
         if (assistant_message === undefined || !(assistant_message instanceof AssistantMessage)) {
             return;
         }
@@ -641,7 +666,11 @@ export class TaskState {
             if (assistant_message.content.length > prevPartCount) {
                 // content 数组增长了（如 <think> 标签拆分产生新 part），
                 // 需要同时更新被修改的旧 part 和新增的 part
-                for (let i = Math.max(0, prevPartCount - 1); i < assistant_message.content.length; i++) {
+                for (
+                    let i = Math.max(0, prevPartCount - 1);
+                    i < assistant_message.content.length;
+                    i++
+                ) {
                     await this.sendSubscriptionFeedback(i);
                 }
             } else {
@@ -651,7 +680,10 @@ export class TaskState {
 
         // After streaming ends, send any remaining text part if it hasn't been sent
         const lastPart = assistant_message.content[assistant_message.content.length - 1];
-        if (lastPart?.type === 'text' && lastSentTextPartIndex < assistant_message.content.length - 1) {
+        if (
+            lastPart?.type === 'text' &&
+            lastSentTextPartIndex < assistant_message.content.length - 1
+        ) {
             this.onTextPartComplete?.(lastPart.text);
         }
 
@@ -664,7 +696,7 @@ export class TaskState {
      * 但 planning 工具集和 task-info 工具集仅主任务拥有。
      */
     async buildToolsets(): Promise<BaseToolset[]> {
-        const appToolsets = await ApplicationRegistry.listAvailableToolsets();
+        const appToolsets = await this.task_manager_state.toolsetProvider.listAvailableToolsets();
         const skillToolset = SkillRegistry.getInstance().getToolset();
         const memoryToolset = createMemoryToolset();
         const planningToolset = this.parent_id
@@ -709,7 +741,9 @@ export class TaskState {
                     if (tc.args_string && !tc.args_object) {
                         try {
                             tc.args_object = JSON.parse(jsonrepair(tc.args_string));
-                        } catch { /* 解析失败不影响后续逻辑 */ }
+                        } catch {
+                            /* 解析失败不影响后续逻辑 */
+                        }
                     }
                 }
             }
@@ -731,7 +765,9 @@ export class TaskState {
                 if (tc.args_string) {
                     try {
                         tc.args_object = JSON.parse(jsonrepair(tc.args_string));
-                    } catch { /* streaming 阶段 JSON 不完整属正常现象 */ }
+                    } catch {
+                        /* streaming 阶段 JSON 不完整属正常现象 */
+                    }
                 }
             }
         }
@@ -742,7 +778,7 @@ export class TaskState {
      * @param tool_call 要被执行的工具调用
      */
     async processToolCall(tool_call: ToolCall): Promise<void> {
-        let tool = this.chat_context.getTool(tool_call.tool_name);
+        const tool = this.chat_context.getTool(tool_call.tool_name);
         if (tool === undefined) {
             logger.error(`tool ${tool_call.tool_name} not found`);
             tool_call.status = 'error';
@@ -752,7 +788,7 @@ export class TaskState {
 
         tool_call.setTool(tool);
         try {
-            let args: any = {};
+            let args: Record<string, unknown> = {};
             if (tool_call.args_string) {
                 const repaired = jsonrepair(tool_call.args_string);
                 args = JSON.parse(repaired);
@@ -771,7 +807,7 @@ export class TaskState {
 
             await this.hooks.checkBeforeToolCall(this, tool_call);
 
-            let result = await tool.execute(
+            const result = await tool.execute(
                 args,
                 async (result) => {
                     tool_call.result = result.result;
@@ -798,21 +834,21 @@ export class TaskState {
      * @returns true if there are tool calls to process, false otherwise
      */
     async processToolCalls(): Promise<boolean> {
-        let lastMessage = this.chat_context.lastMessage();
+        const lastMessage = this.chat_context.lastMessage();
         if (!(lastMessage instanceof AssistantMessage)) {
             return false;
         }
 
-        const pendingCalls: { tool_call: ToolCall, partIndex: number }[] = [];
+        const pendingCalls: { tool_call: ToolCall; partIndex: number }[] = [];
 
-        for (let message of this.chat_context.messages) {
+        for (const message of this.chat_context.messages) {
             if (message instanceof AssistantMessage) {
                 for (let index = 0; index < message.content.length; index++) {
-                    let part = message.content[index];
+                    const part = message.content[index];
                     if (part.type !== 'tool_call') {
                         continue;
                     }
-                    for (let tool_call of part.toolcalls) {
+                    for (const tool_call of part.toolcalls) {
                         if (tool_call.status !== 'pending') {
                             continue;
                         }
@@ -826,11 +862,13 @@ export class TaskState {
             return false;
         }
 
-        await Promise.all(pendingCalls.map(async ({ tool_call, partIndex }) => {
-            await this.processToolCall(tool_call);
-            await tool_call.render();
-            await this.sendSubscriptionFeedback(partIndex);
-        }));
+        await Promise.all(
+            pendingCalls.map(async ({ tool_call, partIndex }) => {
+                await this.processToolCall(tool_call);
+                await tool_call.render();
+                await this.sendSubscriptionFeedback(partIndex);
+            })
+        );
 
         return true;
     }
@@ -867,7 +905,9 @@ export class TaskState {
                 } else {
                     hookRejectCount++;
                     if (hookRejectCount >= 5) {
-                        logger.warn(`task ${this.task_id}: beforeFinishTurn hook rejected ${hookRejectCount} times consecutively, force-ending turn`);
+                        logger.warn(
+                            `task ${this.task_id}: beforeFinishTurn hook rejected ${hookRejectCount} times consecutively, force-ending turn`
+                        );
                         await this.appendSyntheticFailedAttemptCompletion();
                         break;
                     }
@@ -923,7 +963,7 @@ export class TaskState {
     }
 
     async render() {
-        for (let message of this.chat_context.messages) {
+        for (const message of this.chat_context.messages) {
             await message.render();
         }
     }
@@ -939,14 +979,14 @@ export class TaskState {
      * @returns true if the subscriber was removed, false otherwise
      */
     removeSubscriber(subscription_id: string) {
-        let subscriber = this.subscribers.find(s => s.subscription_id === subscription_id);
+        const subscriber = this.subscribers.find((s) => s.subscription_id === subscription_id);
         if (subscriber === undefined) {
-            logger.error('subscriber not found for task', this.task_id)
+            logger.error('subscriber not found for task', this.task_id);
             return false;
         }
 
-        this.subscribers = this.subscribers.filter(s => s.subscription_id !== subscription_id);
-        logger.info('task update subscriber removed for task', this.task_id)
+        this.subscribers = this.subscribers.filter((s) => s.subscription_id !== subscription_id);
+        logger.info('task update subscriber removed for task', this.task_id);
         return true;
     }
 }
@@ -962,6 +1002,7 @@ export class BaseTaskManagerUpdateSubscriber {
 export class TaskManagerState {
     tasks: TaskState[] = [];
     subscribers: BaseTaskManagerUpdateSubscriber[] = [];
+    toolsetProvider: ToolsetProvider = new EmptyToolsetProvider();
 
     /**
      * Load the task manager state from the file system
@@ -974,17 +1015,22 @@ export class TaskManagerState {
             return null;
         }
 
-        let taskManagerState = new TaskManagerState();
-        let taskList: any[];
+        const taskManagerState = new TaskManagerState();
+        let taskList: { task_id: string }[];
         try {
             taskList = JSON.parse(fs.readFileSync(taskListFile, 'utf8'));
         } catch (err) {
-            logger.error(`failed to load task list: ${err}`)
+            logger.error(`failed to load task list: ${err}`);
             return new TaskManagerState();
         }
-        for (let task of taskList) {
+        for (const task of taskList) {
             try {
-                taskManagerState.tasks.push(TaskState.load(path.join(taskDirectory, `${task.task_id}.json`), taskManagerState));
+                taskManagerState.tasks.push(
+                    TaskState.load(
+                        path.join(taskDirectory, `${task.task_id}.json`),
+                        taskManagerState
+                    )
+                );
             } catch (err) {
                 logger.warn(`error loading task ${task.task_id}: ${err}`);
                 continue;
@@ -1000,18 +1046,20 @@ export class TaskManagerState {
         // Write task list
         fs.writeFileSync(
             taskListFile,
-            JSON.stringify(this.tasks.map(task => task.toSimplifiedJSON()), null, 4),
+            JSON.stringify(
+                this.tasks.map((task) => task.toSimplifiedJSON()),
+                null,
+                4
+            ),
             { encoding: 'utf8' }
         );
 
         // Write individual task files
-        for (let task of this.tasks) {
+        for (const task of this.tasks) {
             const taskFile = path.join(taskDirectory, `${task.task_id}.json`);
-            fs.writeFileSync(
-                taskFile,
-                JSON.stringify(task.toJSON(), null, 4),
-                { encoding: 'utf8' }
-            );
+            fs.writeFileSync(taskFile, JSON.stringify(task.toJSON(), null, 4), {
+                encoding: 'utf8',
+            });
         }
     }
 
@@ -1020,9 +1068,9 @@ export class TaskManagerState {
      */
     private cleanupOldTaskFiles(): void {
         const taskDirectory = getTaskDirectory();
-        const existingTaskIds = new Set(this.tasks.map(task => task.task_id));
+        const existingTaskIds = new Set(this.tasks.map((task) => task.task_id));
 
-        fs.readdirSync(taskDirectory).forEach(file => {
+        fs.readdirSync(taskDirectory).forEach((file) => {
             if (file.endsWith('.json') && file !== 'task_list.json') {
                 const taskIdFromFile = path.basename(file, '.json');
                 if (!existingTaskIds.has(taskIdFromFile)) {
@@ -1038,8 +1086,7 @@ export class TaskManagerState {
      */
     getTaskList() {
         // 关键改动：只返回 parent_id 为 null 或 undefined 的任务
-        return this.tasks
-            .map(task => task.toSimplifiedJSON());
+        return this.tasks.map((task) => task.toSimplifiedJSON());
     }
 
     /**
@@ -1051,7 +1098,7 @@ export class TaskManagerState {
         if (model) {
             task.model = model;
         }
-        logger.info('task created', task.task_id)
+        logger.info('task created', task.task_id);
         this.tasks.push(task);
         this.publishTaskListUpdate();
         return task;
@@ -1084,7 +1131,7 @@ export class TaskManagerState {
         taskToRemove.stop('system');
 
         // 2. [递归步骤] 查找所有 parent_id 为当前 taskId 的子任务
-        const children = this.tasks.filter(t => t.parent_id === taskId);
+        const children = this.tasks.filter((t) => t.parent_id === taskId);
 
         for (const child of children) {
             // 递归调用，这样子任务的子任务也会被删除
@@ -1095,7 +1142,7 @@ export class TaskManagerState {
         taskToRemove.cleanup();
 
         // 4. [内存清理] 从内存列表中移除
-        this.tasks = this.tasks.filter(task => task.task_id !== taskId);
+        this.tasks = this.tasks.filter((task) => task.task_id !== taskId);
 
         // 5. 更新前端和保存列表
         this.publishTaskListUpdate();
@@ -1122,11 +1169,11 @@ export class TaskManagerState {
      * @returns the task, or undefined if the task is not found
      */
     getTask(taskId: string): TaskState | undefined {
-        return this.tasks.find(task => task.task_id === taskId);
+        return this.tasks.find((task) => task.task_id === taskId);
     }
 
     publishTaskListUpdate() {
-        for (let subscriber of this.subscribers) {
+        for (const subscriber of this.subscribers) {
             subscriber.send(this.getTaskList());
         }
     }
@@ -1145,9 +1192,9 @@ export class TaskManagerState {
      * @param {Electron.WebContents} webContents
      */
     removeSubscriber(subscription_id: string) {
-        let subscriber = this.subscribers.find(s => s.subscription_id === subscription_id);
+        const subscriber = this.subscribers.find((s) => s.subscription_id === subscription_id);
         if (subscriber === undefined) {
-            logger.warn('subscriber not found for task list update')
+            logger.warn('subscriber not found for task list update');
             return false;
         }
     }

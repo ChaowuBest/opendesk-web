@@ -1,5 +1,5 @@
 /**
-* Copyright (c) 2026 The OpenDesk Team
+ * Copyright (c) 2026 The OpenDesk Team
  * OpenDesk is licensed under Mulan PSL v2.
  * You can use this software according to the terms and conditions of the Mulan PSL v2.
  * You may obtain a copy of Mulan PSL v2 at: http://license.coscl.org.cn/MulanPSL2
@@ -12,8 +12,17 @@
 import { setPlatform } from '../platforms/base';
 import { CliPlatform } from '../platforms/cli.js';
 import { isMainThread } from 'worker_threads';
-import { useCliTransport, useConsoleTransport, useDumpLogTransport, interceptConsole } from './utils/logger.js';
-import { initializeRegistry, initializeRegistryWorker, ApplicationRegistry } from './applications/registry';
+import {
+    useCliTransport,
+    useConsoleTransport,
+    useDumpLogTransport,
+    interceptConsole,
+} from './utils/logger.js';
+import {
+    initializeRegistry,
+    initializeRegistryWorker,
+    ApplicationRegistry,
+} from './applications/registry';
 import { initializeAppWorkers } from './applications/worker';
 import { GlobalState } from './aikernel/states/global.js';
 import { FULL_CLEAR } from './tui/components/constants';
@@ -38,12 +47,12 @@ import fs from 'fs';
 
 function parseCommandLineArgs() {
     prog.name('opendesk');
-    prog.argument('[workspace]', 'the workspace to open', v => v, ".");
-    prog.option('--model <alias>', 'model alias to use', v => v);
-    prog.option('-c, --command <command>', 'the command to execute', v => v);
-    prog.option('--export-html <path>', 'export session as HTML when -c task completes', v => v);
-    prog.option('--export-json <path>', 'export session as JSON when -c task completes', v => v);
-    prog.option('--dump-log <path>', 'dump all log output to specified file', v => v);
+    prog.argument('[workspace]', 'the workspace to open', (v) => v, '.');
+    prog.option('--model <alias>', 'model alias to use', (v) => v);
+    prog.option('-c, --command <command>', 'the command to execute', (v) => v);
+    prog.option('--export-html <path>', 'export session as HTML when -c task completes', (v) => v);
+    prog.option('--export-json <path>', 'export session as JSON when -c task completes', (v) => v);
+    prog.option('--dump-log <path>', 'dump all log output to specified file', (v) => v);
     prog.option('--headless', 'run in headless mode (no TUI, requires -c)');
     prog.option('-v, --version', 'print the version');
 
@@ -71,8 +80,7 @@ function parseCommandLineArgs() {
         });
 
     // skill tests subcommand
-    prog
-        .command('testskill')
+    prog.command('testskill')
         .description('对指定技能目录运行测试')
         .argument('<skillPath>', '技能目录路径')
         .action(async (skillPath: string) => {
@@ -81,7 +89,9 @@ function parseCommandLineArgs() {
 
             const resolved = path.resolve(skillPath);
             if (!fs.existsSync(resolved) || !fs.statSync(resolved).isDirectory()) {
-                console.error(`[error] skill directory ${resolved} does not exist or is not a directory`);
+                console.error(
+                    `[error] skill directory ${resolved} does not exist or is not a directory`
+                );
                 process.exit(1);
             }
 
@@ -98,7 +108,9 @@ function parseCommandLineArgs() {
             console.log('\n环境检查:');
             for (const check of result.environment.checks) {
                 const status = check.passed ? '✓' : '✗';
-                console.log(`  ${status} ${check.name}: ${check.message} (实际: ${check.actual}${check.required ? `, 要求: ${Array.isArray(check.required) ? check.required.join('/') : check.required}` : ''})`);
+                console.log(
+                    `  ${status} ${check.name}: ${check.message} (实际: ${check.actual}${check.required ? `, 要求: ${Array.isArray(check.required) ? check.required.join('/') : check.required}` : ''})`
+                );
             }
 
             console.log('\n测试用例结果:');
@@ -110,7 +122,9 @@ function parseCommandLineArgs() {
                 else if (t.status === 'error') icon = '!';
 
                 const durationSec = (t.duration / 1000).toFixed(2);
-                console.log(`  ${icon} ${t.name} [${t.status}] (${durationSec}s) - ${t.message ?? ''}`);
+                console.log(
+                    `  ${icon} ${t.name} [${t.status}] (${durationSec}s) - ${t.message ?? ''}`
+                );
                 if (t.suggestion) {
                     console.log(`      建议: ${t.suggestion}`);
                 }
@@ -135,7 +149,7 @@ function parseCommandLineArgs() {
             useCliTransport();
             useConsoleTransport();
             const records = listInstalledPlugins();
-            const enabledRecords = records.filter(r => r.enabled);
+            const enabledRecords = records.filter((r) => r.enabled);
             if (enabledRecords.length === 0) {
                 console.log('暂无已启用的消息插件');
                 process.exit(0);
@@ -174,7 +188,9 @@ function parseCommandLineArgs() {
         }
 
         if ((kwargs.exportHtml || kwargs.exportJson) && !kwargs.command) {
-            console.error('[error] --export-html and --export-json can only be used with -c/--command');
+            console.error(
+                '[error] --export-html and --export-json can only be used with -c/--command'
+            );
             process.exit(1);
         }
 
@@ -206,7 +222,7 @@ function parseCommandLineArgs() {
             exportJson: kwargs.exportJson,
             dumpLog: kwargs.dumpLog,
             headless: !!kwargs.headless,
-        })
+        });
     });
 
     return prog.parse();
@@ -228,6 +244,9 @@ function main(args: CommandLineArgs) {
 
         initializeRegistry();
         initializeRegistryWorker();
+        GlobalState.getInstance().taskManagerState.toolsetProvider = {
+            listAvailableToolsets: () => ApplicationRegistry.listAvailableToolsets(),
+        };
 
         const runner = new HeadlessRunner(args);
         ApplicationRegistry.onReady(() => {
@@ -244,39 +263,47 @@ function main(args: CommandLineArgs) {
 
         initializeRegistry();
         initializeRegistryWorker();
+        GlobalState.getInstance().taskManagerState.toolsetProvider = {
+            listAvailableToolsets: () => ApplicationRegistry.listAvailableToolsets(),
+        };
 
         // Initialize channelmgr after registry is ready
         ApplicationRegistry.onReady(async () => {
-            const channelMgrApp = ApplicationRegistry.getApplication('channelmgr') as ChannelMgrApplication | undefined;
+            const channelMgrApp = ApplicationRegistry.getApplication('channelmgr') as
+                | ChannelMgrApplication
+                | undefined;
             if (channelMgrApp) {
                 const agentDecl = new ShellAgentDecl({ workspace: args.workspace });
                 const router = new ChannelMessageRouter(
                     tui.taskManagerState,
                     agentDecl,
-                    args.model,
+                    args.model
                 );
 
                 router.onTaskResolved = (task, message) => {
                     const senderLabel = message.senderName || message.senderId;
                     const channelLabel = message.channelId;
-                    const preview = (message.text || '').length > 40
-                        ? (message.text || '').slice(0, 37) + '...'
-                        : (message.text || '');
+                    const preview =
+                        (message.text || '').length > 40
+                            ? (message.text || '').slice(0, 37) + '...'
+                            : message.text || '';
 
                     tui.switchToTask(task);
 
                     NotificationManager.getInstance().info(
                         channelLabel,
                         `来自 ${senderLabel} 的新消息`,
-                        preview || '(无文本内容)',
+                        preview || '(无文本内容)'
                     );
                 };
 
                 await channelMgrApp.initializeChannels(router, args.workspace);
 
-                const syncChannelStates = (states: { label: string; status: { online: boolean } }[]) => {
+                const syncChannelStates = (
+                    states: { label: string; status: { online: boolean } }[]
+                ) => {
                     tui.inputArea.statusBar.update({
-                        channelStates: states.map(s => ({
+                        channelStates: states.map((s) => ({
                             label: s.label,
                             online: s.status.online,
                         })),
