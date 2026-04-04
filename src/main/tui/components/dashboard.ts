@@ -10,7 +10,7 @@
  */
 
 import { type Component, SelectList, Box, Text, truncateToWidth, visibleWidth } from '@mariozechner/pi-tui';
-import { defaultSelectListTheme } from '../theme';
+import { defaultSelectListTheme, getAdaptiveGreen } from '../theme';
 import { OpenDeskTUI } from '../entry';
 import { Card, type CardStatus, type BorderConfig } from './card';
 import { ApplicationRegistry } from '../../applications/registry';
@@ -23,10 +23,13 @@ import { describeCron } from '../../utils/cron';
 import type { ChannelRuntimeState } from '../../applications/channelmgr/app.js';
 
 // ━━━ 科幻配色 ━━━
+// glow 使用 getter，每次访问时根据终端配色方案动态选择颜色
 const C = {
     neon: chalk.hex('#00E5FF'), // 主色 - 霓虹青
     neonBold: chalk.hex('#00E5FF').bold,
-    glow: chalk.hex('#39FF14'), // 亮绿 - 在线/成功
+    get glow() {
+        return chalk.hex(getAdaptiveGreen());
+    }, // 亮绿 - 在线/成功（自适应主题）
     amber: chalk.hex('#FFAB00'), // 琥珀 - 警告/中优先级
     red: chalk.hex('#FF1744'), // 红 - 错误/高优先级
     blue: chalk.hex('#448AFF'), // 蓝 - 低优先级

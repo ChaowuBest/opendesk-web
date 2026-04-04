@@ -84,7 +84,7 @@ export class ProviderConfigPage implements Component {
         const providers: ProviderData[] = data.providers ?? [];
 
         const items = [
-            { value: '__add__', label: chalk.green('➕ 添加模型服务商') },
+            { value: '__add__', label: chalk.green('+ 添加模型服务商') },
             ...providers.map((p: ProviderData, i: number) => ({
                 value: String(i),
                 label: `${p.name}  ${chalk.dim(p.base_url)}`
@@ -149,7 +149,7 @@ export class ProviderConfigPage implements Component {
             { type: 'boolean', key: 'no_proxy', label: '禁用代理', value: provider.no_proxy }
         ];
 
-        const actions: ActionDef[] = [{ key: 'save', label: '✅ 保存', style: 'primary' }];
+        const actions: ActionDef[] = [{ key: 'save', label: '🆗 保存', style: 'primary' }];
         if (this.editingIndex >= 0) {
             actions.push({ key: 'delete', label: '🗑️  删除', style: 'danger' });
         }

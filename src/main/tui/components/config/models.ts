@@ -38,7 +38,7 @@ export class ModelConfigPage implements Component {
         const models: ModelData[] = data.models ?? [];
 
         const items = [
-            { value: '__add__', label: chalk.green('➕ 添加模型') },
+            { value: '__add__', label: chalk.green('+ 添加模型') },
             ...models.map((m: ModelData, i: number) => ({
                 value: String(i),
                 label: `${m.alias}  ${chalk.dim(`${m.provider_name} / ${m.model_name}`)}`
@@ -98,7 +98,7 @@ export class ModelConfigPage implements Component {
             value: model.model_name
         });
 
-        const actions: ActionDef[] = [{ key: 'save', label: '✅ 保存', style: 'primary' }];
+        const actions: ActionDef[] = [{ key: 'save', label: '🆗 保存', style: 'primary' }];
         if (this.editingIndex >= 0) {
             actions.push({ key: 'delete', label: '🗑️  删除', style: 'danger' });
         }

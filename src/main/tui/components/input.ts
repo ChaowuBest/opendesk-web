@@ -9,7 +9,7 @@ import {
     type AutocompleteProvider,
     type AutocompleteItem
 } from '@mariozechner/pi-tui';
-import { defaultEditorTheme, defaultMarkdownTheme } from '../theme';
+import { defaultEditorTheme, defaultMarkdownTheme, getStatusBarColors } from '../theme';
 import { SlashCommandRegistry } from '../commands';
 import type { OpenDeskTUI } from '../entry';
 import chalk from 'chalk';
@@ -135,6 +135,7 @@ export class TaskStatusBar implements Component {
         }
         this.lastWidth = width;
         const { elapsedMs, totalTokens, contextSize, modelName, shellMode } = this.data;
+        const colors = getStatusBarColors();
 
         // 构建左侧 cells（任务级信息）
         const leftCells: { text: string }[] = [];
@@ -143,13 +144,9 @@ export class TaskStatusBar implements Component {
         } else {
             if (this.timerStarted) {
                 const icon = TaskStatusBar.SPINNER[this.spinnerFrame];
-                leftCells.push({
-                    text: chalk.greenBright(`${icon} ${this.formatElapsed(elapsedMs)}`)
-                });
+                leftCells.push({ text: chalk.hex(colors.fgAccent)(`${icon} ${this.formatElapsed(elapsedMs)}`) });
             } else if (elapsedMs > 0) {
-                leftCells.push({
-                    text: chalk.hex('#d4d4d4')(`⏱ ${this.formatElapsed(elapsedMs)}`)
-                });
+                leftCells.push({ text: chalk.hex(colors.fgDim)(`⏱ ${this.formatElapsed(elapsedMs)}`) });
             }
             if (totalTokens > 0) {
                 const pct = contextSize > 0 ? ((totalTokens / contextSize) * 100).toFixed(1) : '—';
@@ -163,7 +160,7 @@ export class TaskStatusBar implements Component {
         const leftContent = leftCells.length > 0 ? ` ${leftCells.map((c) => c.text).join('  │  ')}` : '';
 
         // 右侧固定区域：帮助提示
-        const rightHint = chalk.hex('#d4d4d4')('/help 帮助') + ' ';
+        const rightHint = chalk.hex(colors.fgDim)('/help 帮助') + ' ';
 
         let leftW = visibleWidth(leftContent);
         const rightW = visibleWidth(rightHint);
@@ -177,8 +174,8 @@ export class TaskStatusBar implements Component {
         }
 
         const gap = Math.max(1, width - leftW - rightW);
-        const line = chalk.bgHex('#3a3a3a')(
-            chalk.hex('#d4d4d4')(finalLeft) + ' '.repeat(gap) + chalk.hex('#d4d4d4')(rightHint)
+        const line = chalk.bgHex(colors.bg)(
+            chalk.hex(colors.fg)(finalLeft) + ' '.repeat(gap) + chalk.hex(colors.fg)(rightHint)
         );
         this.cachedOutput = [line];
         this.invalidated = false;

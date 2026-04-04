@@ -15,22 +15,22 @@ interface ConfigSection {
 const CONFIG_SECTIONS: ConfigSection[] = [
     {
         value: 'providers',
-        label: `📡  模型服务商配置       ${chalk.dim('管理 API 模型服务商')}`,
+        label: `💳  模型服务商配置       ${chalk.dim('管理 API 模型服务商')}`,
         create: (tui, onBack) => new ProviderConfigPage(tui, onBack)
     },
     {
         value: 'models',
-        label: `🤖  模型配置         ${chalk.dim('管理模型别名')}`,
+        label: `💰  模型配置         ${chalk.dim('管理模型别名')}`,
         create: (tui, onBack) => new ModelConfigPage(tui, onBack)
     },
     {
         value: 'default-model',
-        label: `🎯  默认模型配置     ${chalk.dim('选择各场景默认模型')}`,
+        label: `🏆  默认模型配置     ${chalk.dim('选择各场景默认模型')}`,
         create: (tui, onBack, onConfigChange) => new DefaultModelConfigPage(tui, onBack, onConfigChange)
     },
     {
         value: 'filemgr',
-        label: `📁  文件扫描配置       ${chalk.dim('管理文件扫描目录')}`,
+        label: `📦  文件扫描配置       ${chalk.dim('管理文件扫描目录')}`,
         create: (tui: any, onBack: () => void) => new FileMgrConfigPage(tui, onBack)
     }
 ];
