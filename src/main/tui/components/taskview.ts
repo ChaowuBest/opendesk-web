@@ -11,7 +11,7 @@ import { defaultMarkdownTheme } from "../theme";
 import { DefaultToolCallView } from "./toolcall";
 import { Card } from "./card";
 import chalk from "chalk";
-import type { StatusBarData } from "./input";
+import type { TaskStatusBarData } from "./input";
 
 
 /**
@@ -583,8 +583,8 @@ export class TaskView implements Component {
     taskState?: TaskState;
     messages: Array<UserMessageView | AssistantMessageView | CompactSeparatorView> = [];
 
-    /** 用于向外部回传 StatusBar 数据 */
-    onStatusBarUpdate?: (data: Partial<StatusBarData>) => void;
+    /** 用于向外部回传 TaskStatusBar 数据 */
+    onStatusBarUpdate?: (data: Partial<TaskStatusBarData>) => void;
 
     /** 当前任务的ID，用于判断是否仍为活跃任务 */
     private currentTaskId?: string;

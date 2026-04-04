@@ -14,6 +14,7 @@ import { defaultSelectListTheme } from "../theme";
 import { OpenDeskTUI } from "../entry";
 import { Card, type CardStatus, type BorderConfig } from "./card";
 import { ApplicationRegistry } from "../../applications/registry";
+import { renderResponsiveCells, type ResponsiveCell } from "./responsive-bar";
 import chalk from "chalk";
 import type { GlobalTodo } from "../../applications/todomgr/common";
 import type { TaskState } from "../../states/tasks";
@@ -505,6 +506,8 @@ class DashboardRenderer implements Component {
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // DashboardBar — compact 模式底栏
+// 通过遍历所有应用的 getTUIStatusBlock() 动态拉取状态，
+// 使用 ResponsiveBar 在宽度不足时从右到左逐个隐藏。
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 interface BarSnapshot {
@@ -524,6 +527,7 @@ export class DashboardBar implements Component {
     private requestRender: () => void;
     private initialFetchDone = false;
     private steadyIntervalMs = 60_000;
+    private callbacksBound = false;
 
     constructor(requestRender: () => void) {
         this.requestRender = requestRender;
@@ -531,6 +535,15 @@ export class DashboardBar implements Component {
 
     start(steadyIntervalMs = 60_000): void {
         this.steadyIntervalMs = steadyIntervalMs;
+
+        // 向所有应用注入 noticeTUIStatusUpdate 回调（只注入一次）
+        if (!this.callbacksBound) {
+            this.callbacksBound = true;
+            for (const [, app] of ApplicationRegistry.applications) {
+                app.setTUIStatusUpdateCallback(() => this.refresh());
+            }
+        }
+
         const warmupSchedule = [5_000, 10_000, 15_000, 30_000];
         let step = 0;
 
@@ -570,7 +583,7 @@ export class DashboardBar implements Component {
     private async refresh(): Promise<void> {
         const cells: BarSnapshot[] = [];
 
-        // 时钟
+        // 时钟（始终显示，放在最左侧）
         const now = new Date();
         const hh = String(now.getHours()).padStart(2, '0');
         const mm = String(now.getMinutes()).padStart(2, '0');
@@ -580,101 +593,16 @@ export class DashboardBar implements Component {
             value: `${hh}:${mm} 周${weekdays[now.getDay()]} ${now.getMonth() + 1}/${now.getDate()}`,
         });
 
-        // 邮件
-        try {
-            const [accountsRes, countsRes] = await Promise.allSettled([
-                ApplicationRegistry.callWorker('mailbox', 'getAccountList'),
-                ApplicationRegistry.callWorker('mailbox', 'getAllNewEmailCounts'),
-            ]);
-            const accounts: any[] = accountsRes.status === 'fulfilled' && accountsRes.value?.status === 'ok'
-                ? (accountsRes.value.data || []) : [];
-            const counts: Record<string, number> = countsRes.status === 'fulfilled' && countsRes.value?.status === 'ok'
-                ? (countsRes.value.data || {}) : {};
-            const totalUnread = Object.values(counts).reduce((s, n) => s + n, 0);
-            if (totalUnread > 0) {
-                cells.push({ icon: '📬', label: '邮件', value: `${totalUnread} 封新邮件`, accentFn: C.amber });
-            } else {
-                cells.push({ icon: '📭', label: '邮件', value: accounts.length > 0 ? '无新邮件' : '未配置' });
+        // 从所有应用拉取状态
+        const apps = Array.from(ApplicationRegistry.applications.values());
+        const results = await Promise.allSettled(
+            apps.map(app => app.getTUIStatusBlock())
+        );
+        for (const result of results) {
+            if (result.status === 'fulfilled' && result.value) {
+                cells.push(result.value);
             }
-        } catch {
-            cells.push({ icon: '📭', label: '邮件', value: '—' });
         }
-
-        // 日历
-        try {
-            const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-            const res = await ApplicationRegistry.callWorker('calendar', 'getCalendarItems', dateStr);
-            if (res?.status === 'ok' && Array.isArray(res.data) && res.data.length > 0) {
-                const upcoming = res.data
-                    .filter((e: any) => e.startTime > now.getTime())
-                    .sort((a: any, b: any) => a.startTime - b.startTime);
-                if (upcoming.length > 0) {
-                    const next = upcoming[0];
-                    const diffMin = Math.round((next.startTime - now.getTime()) / 60000);
-                    const timeStr = diffMin <= 60
-                        ? `${diffMin}分钟后`
-                        : `${Math.floor(diffMin / 60)}h${diffMin % 60}m后`;
-                    const subject = (next.subject || '').slice(0, 16) || '(无标题)';
-                    cells.push({
-                        icon: '📅', label: '日程',
-                        value: `${timeStr}: ${subject}`,
-                        accentFn: diffMin <= 15 ? C.red : C.blue,
-                    });
-                } else {
-                    cells.push({ icon: '📅', label: '日程', value: `今日 ${res.data.length} 项` });
-                }
-            } else {
-                cells.push({ icon: '📅', label: '日程', value: '今日无日程' });
-            }
-        } catch {
-            cells.push({ icon: '📅', label: '日程', value: '—' });
-        }
-
-        // 全局待办
-        try {
-            const res = await ApplicationRegistry.callWorker('todomgr', 'listGlobalTodos', 'all');
-            if (res?.status === 'ok' && Array.isArray(res.data)) {
-                const todos = res.data;
-                const pending = todos.filter((t: any) => t.status === 'pending' || t.status === 'in_progress').length;
-                const completed = todos.filter((t: any) => t.status === 'completed').length;
-                const total = pending + completed;
-                if (total === 0) {
-                    cells.push({ icon: '✅', label: '待办', value: '暂无待办' });
-                } else {
-                    const filled = Math.round((completed / total) * 8);
-                    const bar = C.glow('█'.repeat(filled)) + C.ghost('░'.repeat(8 - filled));
-                    cells.push({ icon: '📋', label: '待办', value: `${bar} ${completed}/${total}`, accentFn: pending === 0 ? C.glow : C.amber });
-                }
-            } else {
-                cells.push({ icon: '📋', label: '待办', value: '—' });
-            }
-        } catch {
-            cells.push({ icon: '📋', label: '待办', value: '—' });
-        }
-
-        // 消息插件
-        try {
-            const channelsApp = ApplicationRegistry.getApplication('channelmgr');
-            if (channelsApp && 'getChannelStates' in channelsApp) {
-                const states: ChannelRuntimeState[] = (channelsApp as any).getChannelStates();
-                if (states.length === 0) {
-                    cells.push({ icon: '💬', label: '消息插件', value: '无插件' });
-                } else {
-                    const parts = states.map(s => {
-                        const icon = s.status.online ? C.glow('●') : C.red('○');
-                        const name = s.label || s.channelId;
-                        return `${icon}${name}`;
-                    });
-                    const allOnline = states.every(s => s.status.online);
-                    const allOffline = states.every(s => !s.status.online);
-                    cells.push({
-                        icon: '💬', label: '消息插件',
-                        value: parts.join(' '),
-                        accentFn: allOnline ? C.glow : allOffline ? C.red : C.amber,
-                    });
-                }
-            }
-        } catch { /* ignore */ }
 
         this.snapshots = cells;
         this.initialFetchDone = true;
@@ -697,36 +625,33 @@ export class DashboardBar implements Component {
             return this.cachedOutput;
         }
 
-        const cells = this.snapshots.map(s => {
+        // 构造 ResponsiveCell 列表
+        const responsiveCells: ResponsiveCell[] = this.snapshots.map(s => {
             const valFn = s.accentFn || C.text;
-            return `${s.icon} ${C.dim(s.label)} ${valFn(s.value)}`;
-        }).filter(Boolean);
+            return { text: `${s.icon} ${C.dim(s.label)} ${valFn(s.value)}` };
+        });
 
-        if (cells.length === 0) {
+        if (responsiveCells.length === 0) {
             this.cachedOutput = [];
             this.invalidated = false;
             return [];
         }
 
         const sep = C.ghost(' │ ');
-        const sepW = visibleWidth(sep);
-        const innerWidth = width - 2;
+        const line = renderResponsiveCells(responsiveCells, width, {
+            separator: sep,
+            horizontalPadding: 1,
+        });
 
-        let shown = cells;
-        let totalW = cells.reduce((s, c, i) => s + visibleWidth(c) + (i > 0 ? sepW : 0), 0);
-        while (totalW > innerWidth && shown.length > 1) {
-            shown = shown.slice(0, -1);
-            totalW = shown.reduce((s, c, i) => s + visibleWidth(c) + (i > 0 ? sepW : 0), 0);
+        if (!line) {
+            this.cachedOutput = [];
+            this.invalidated = false;
+            return [];
         }
-
-        const joined = shown.join(sep);
-        const joinedVis = visibleWidth(joined);
-        const pad = Math.max(0, innerWidth - joinedVis);
-        const left = Math.floor(pad / 2);
 
         this.cachedOutput = [
             C.ghost('┄'.repeat(width)),
-            ' '.repeat(left + 1) + joined,
+            line,
         ];
 
         this.invalidated = false;

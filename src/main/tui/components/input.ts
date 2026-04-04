@@ -14,29 +14,24 @@ import { SkillRegistry as AISkillRegistry } from "../../aikernel/skill";
 
 type AgentInputStatus = 'idle' | 'running';
 
-export interface ChannelStatusEntry {
-    label: string;
-    online: boolean;
-}
-
-export interface StatusBarData {
+export interface TaskStatusBarData {
     elapsedMs: number;
     totalTokens: number;
     contextSize: number;
     modelName: string;
-    channelStates?: ChannelStatusEntry[];
     shellMode?: boolean;
-    statusNotice?: string;
 }
 
 /**
- * 底部状态栏：灰色背景，显示任务执行时间、token 用量及上下文占比。
- * 计时器跟踪的是任务内所有 agent 执行时间的累计总和。
+ * 任务级状态栏（TaskStatusBar）：灰色背景，仅显示当前任务相关的信息——
+ * 执行计时、token 用量、上下文占比、当前模型。
+ * 所有不涉及任务的全局状态（文件扫描配置、消息插件连接等）请放到 DashboardBar 中。
+ * 宽度不足时使用 ResponsiveBar 从右到左逐个隐藏。
  */
-export class StatusBar implements Component {
+export class TaskStatusBar implements Component {
     private static readonly SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
-    private data: StatusBarData = { elapsedMs: 0, totalTokens: 0, contextSize: 0, modelName: '', statusNotice: '' };
+    private data: TaskStatusBarData = { elapsedMs: 0, totalTokens: 0, contextSize: 0, modelName: '' };
     private timerStarted = false;
     private timerStart: number = 0;
     private accumulatedMs: number = 0;
@@ -60,7 +55,7 @@ export class StatusBar implements Component {
         this.spinnerFrame = 0;
         this.timerInterval = setInterval(() => {
             this.data.elapsedMs = this.accumulatedMs + (Date.now() - this.timerStart);
-            this.spinnerFrame = (this.spinnerFrame + 1) % StatusBar.SPINNER.length;
+            this.spinnerFrame = (this.spinnerFrame + 1) % TaskStatusBar.SPINNER.length;
             this.invalidated = true;
             this.tui?.requestRender();
         }, 200);
@@ -101,7 +96,7 @@ export class StatusBar implements Component {
         return this.accumulatedMs;
     }
 
-    update(partial: Partial<StatusBarData>) {
+    update(partial: Partial<TaskStatusBarData>) {
         Object.assign(this.data, partial);
         this.invalidated = true;
         if (this.timerStarted) {
@@ -126,49 +121,41 @@ export class StatusBar implements Component {
             return this.cachedOutput;
         }
         this.lastWidth = width;
-        const { elapsedMs, totalTokens, contextSize, modelName, channelStates, shellMode, statusNotice } = this.data;
+        const { elapsedMs, totalTokens, contextSize, modelName, shellMode } = this.data;
 
-        const parts: string[] = [];
+        // 构建左侧 cells（任务级信息）
+        const leftCells: { text: string }[] = [];
         if (shellMode) {
-            parts.push(chalk.cyan('📟 Shell 命令模式'));
+            leftCells.push({ text: chalk.cyan('📟 Shell 命令模式') });
         } else {
             if (this.timerStarted) {
-                const icon = StatusBar.SPINNER[this.spinnerFrame];
-                parts.push(chalk.greenBright(`${icon} ${this.formatElapsed(elapsedMs)}`));
+                const icon = TaskStatusBar.SPINNER[this.spinnerFrame];
+                leftCells.push({ text: chalk.greenBright(`${icon} ${this.formatElapsed(elapsedMs)}`) });
             } else if (elapsedMs > 0) {
-                parts.push(chalk.hex('#d4d4d4')(`⏱ ${this.formatElapsed(elapsedMs)}`));
+                leftCells.push({ text: chalk.hex('#d4d4d4')(`⏱ ${this.formatElapsed(elapsedMs)}`) });
             }
             if (totalTokens > 0) {
                 const pct = contextSize > 0 ? ((totalTokens / contextSize) * 100).toFixed(1) : '—';
-                parts.push(`Tokens: ${totalTokens}/${contextSize} (${pct}%)`);
+                leftCells.push({ text: `Tokens: ${totalTokens}/${contextSize} (${pct}%)` });
             }
             if (modelName) {
-                parts.push(modelName);
+                leftCells.push({ text: modelName });
             }
         }
 
-        const leftContent = parts.length > 0 ? ` ${parts.join('  │  ')}` : '';
+        const leftContent = leftCells.length > 0 ? ` ${leftCells.map(c => c.text).join('  │  ')}` : '';
 
+        // 右侧固定区域：通知角标 + 帮助提示
         const rightParts: string[] = [];
-        if (channelStates && channelStates.length > 0) {
-            const channelLabels = channelStates.map(ch =>
-                ch.online
-                    ? chalk.greenBright(`● ${ch.label}`)
-                    : chalk.hex('#666666')(`○ ${ch.label}`)
-            );
-            rightParts.push(channelLabels.join('  '));
-        }
         const badge = getNotificationBadge();
         if (badge) {
             rightParts.push(badge);
         }
         rightParts.push(chalk.hex('#d4d4d4')('/help 帮助'));
         const rightHint = rightParts.join(chalk.hex('#d4d4d4')('  │  ')) + ' ';
-        const notice = statusNotice?.trim() ? `${statusNotice.trim()}  ` : '';
 
         let leftW = visibleWidth(leftContent);
-        const noticeW = visibleWidth(notice);
-        const rightW = visibleWidth(rightHint) + noticeW;
+        const rightW = visibleWidth(rightHint);
         const totalNeeded = leftW + 1 + rightW;
 
         let finalLeft = leftContent;
@@ -182,7 +169,6 @@ export class StatusBar implements Component {
         const line = chalk.bgHex('#3a3a3a')(
             chalk.hex('#d4d4d4')(finalLeft) +
             ' '.repeat(gap) +
-            chalk.hex('#f0c36d')(notice) +
             chalk.hex('#d4d4d4')(rightHint)
         );
         this.cachedOutput = [line];
@@ -504,7 +490,8 @@ export type ShellResultPanel = InlineResultPanel;
 export class AgentInputArea implements Component {
 
     input: Editor;
-    statusBar: StatusBar = new StatusBar();
+    /** 任务级状态栏，仅展示当前任务相关信息（计时、token、模型）。 */
+    statusBar: TaskStatusBar = new TaskStatusBar();
     shellResultPanel: InlineResultPanel = new InlineResultPanel((s) => chalk.cyan(s));
     btwResultPanel: InlineResultPanel = new InlineResultPanel((s) => chalk.magenta(s));
 

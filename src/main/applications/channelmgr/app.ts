@@ -71,6 +71,7 @@ import {
 import { NotificationManager } from '../../utils/notificationmgr.js';
 import { ToolResult } from '../../aikernel/tool.js';
 import qrcodeTerminal from 'qrcode-terminal';
+import chalk from 'chalk';
 
 export interface ChannelRuntimeState {
     channelId: string;
@@ -553,6 +554,28 @@ export class ChannelMgrApplication extends BaseApplication {
                 [channelId]: config[channelId] || {},
             },
             ...config,
+        };
+    }
+
+    async getTUIStatusBlock(): Promise<{ icon: string; label: string; value: string; accentFn?: (text: string) => string } | null> {
+        const states = this.getChannelStates();
+        if (states.length === 0) return null;
+
+        const parts = states.map(s => {
+            const icon = s.status.online ? chalk.hex('#39FF14')('●') : chalk.hex('#FF1744')('○');
+            const name = s.label || s.channelId;
+            return `${icon}${name}`;
+        });
+        const allOnline = states.every(s => s.status.online);
+        const allOffline = states.every(s => !s.status.online);
+        return {
+            icon: '💬', label: '消息插件',
+            value: parts.join(' '),
+            accentFn: allOnline
+                ? (t: string) => chalk.hex('#39FF14')(t)
+                : allOffline
+                    ? (t: string) => chalk.hex('#FF1744')(t)
+                    : (t: string) => chalk.hex('#FFAB00')(t),
         };
     }
 

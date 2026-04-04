@@ -22,12 +22,35 @@ import {
     SendEmailTool, ReplyEmailTool, MarkEmailReadTool, StarEmailTool, DeleteEmailTool,
 } from "./tools";
 import { MailOverlay } from "./tui.js";
+import chalk from "chalk";
 
 
 class MailboxApplication extends BaseApplication {
 
     constructor() {
         super('mailbox', '邮箱');
+    }
+
+    async getTUIStatusBlock() {
+        try {
+            const [accountsRes, countsRes] = await Promise.allSettled([
+                this.callWorker('getAccountList'),
+                this.callWorker('getAllNewEmailCounts'),
+            ]);
+            const accounts = accountsRes.status === 'fulfilled' && accountsRes.value?.status === 'ok'
+                ? (accountsRes.value.data || []) : [];
+            const counts = countsRes.status === 'fulfilled' && countsRes.value?.status === 'ok'
+                ? (countsRes.value.data || {}) : {};
+            const totalUnread = Object.values(counts).reduce((s, n) => s + n, 0);
+
+            if (accounts.length === 0) return null;
+            if (totalUnread > 0) {
+                return { icon: '📬', label: '邮件', value: `${totalUnread} 封新邮件`, accentFn: (t) => chalk.hex('#FFAB00')(t) };
+            }
+            return { icon: '📭', label: '邮件', value: '无新邮件' };
+        } catch {
+            return null;
+        }
     }
 
     static getWorkerClass() {

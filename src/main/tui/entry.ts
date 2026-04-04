@@ -36,7 +36,7 @@ import { createMemoryToolset } from "../aikernel/memory/tools";
 import { NotificationStore, NotificationCenterOverlay, ToastManager, getNotificationBadge } from "./components/notification";
 import { NotificationManager } from "../utils/notificationmgr.js";
 import { SkillMgrApplication } from "../applications/skillmgr/app.js";
-import { getFilemgrStatusNotice } from "./filemgrStatusNotice";
+// getFilemgrStatusNotice 已迁移到 filemgr app 的 getTUIStatusBlock()，由 DashboardBar 统一拉取
 import { DashboardBar } from "./components/dashboard";
 
 import format from "string-template";
@@ -82,7 +82,7 @@ export class OpenDeskTUI {
 
     public tui: TUI;
     private container: VerticalLayout = new VerticalLayout({
-        spacing: 1,
+        spacing: 0,
         padding: { left: 1, right: 1 }
     });
     public taskView: TaskView;
@@ -244,7 +244,7 @@ export class OpenDeskTUI {
             }
         };
 
-        // StatusBar: 只接受当前活跃任务的 token 数据
+        // TaskStatusBar: 只接受当前活跃任务的 token 数据
         this.taskView.onStatusBarUpdate = (data) => {
             if (this.taskView.taskState &&
                 this.activeTaskId === this.taskView.taskState.task_id) {
@@ -403,7 +403,7 @@ export class OpenDeskTUI {
             });
         });
 
-        // 通知数据变更时刷新 StatusBar 角标
+        // 通知数据变更时刷新 TaskStatusBar 角标
         store.onChange(() => {
             this.inputArea.statusBar.invalidate();
             this.tui.requestRender();
@@ -415,7 +415,6 @@ export class OpenDeskTUI {
 
         ApplicationRegistry.onReady(() => {
             this.registerApplicationCommands();
-            this.refreshStatusNotice();
             this.dashboardBar.start(60_000);
         });
     }
@@ -592,7 +591,6 @@ export class OpenDeskTUI {
                     this.tui.setFocus(this.inputArea.input);
                     this.tui.requestRender();
                 }, 10);
-                this.refreshStatusNotice();
                 return;
             } else {
                 // 模型已配置，清除提示状态
@@ -618,7 +616,6 @@ export class OpenDeskTUI {
             this.tui.setFocus(this.inputArea.input);
             this.tui.requestRender();
         }, 10);
-        this.refreshStatusNotice();
     }
 
     async createNewTask() {
@@ -983,14 +980,12 @@ export class OpenDeskTUI {
             // 检查是否没有配置模型
             if (!aliasToUse || aliasToUse.trim() === '') {
                 // 没有配置模型，隐藏 taskview 并显示提示信息
-                this.setStatusNotice('');
                 this.showModelNotConfiguredNotice();
                 return;
             }
 
             // 模型已配置，恢复正常的 taskview 显示
             this.hideModelNotConfiguredNotice();
-            this.refreshStatusNotice();
 
             const modelCfg = data.models?.find((m: any) => m.alias === aliasToUse);
             const modelName = modelCfg?.model_name ?? aliasToUse;
@@ -1207,18 +1202,7 @@ export class OpenDeskTUI {
         this.tui.requestRender(true);
     }
 
-    private setStatusNotice(notice: string): void {
-        this.inputArea.statusBar.update({ statusNotice: notice });
-        this.tui.requestRender();
-    }
-
-    /**
-     * 刷新底部状态栏提示：
-     * 目录未配置 > embedding 未配置 > 无提示。
-     */
-    private refreshStatusNotice(): void {
-        this.setStatusNotice(getFilemgrStatusNotice(this.modelNotConfiguredMode));
-    }
+    // refreshStatusNotice 已移除：全局状态提示已迁移到 DashboardBar 由各应用 getTUIStatusBlock() 提供
 
     start() {
         // Ctrl+Backspace 默认未绑定到任何删除操作，导致按下后无反应。
