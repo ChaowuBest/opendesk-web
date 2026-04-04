@@ -1,5 +1,5 @@
 import { type Component, SelectList, Box, Text, Loader } from '@mariozechner/pi-tui';
-import { defaultSelectListTheme } from '../theme';
+import { defaultSelectListTheme, getOverlayColors } from '../theme';
 import { OpenDeskTUI } from '../entry';
 import chalk from 'chalk';
 
@@ -9,8 +9,9 @@ class Splitter implements Component {
     }
 
     render(width: number): string[] {
+        const { border } = getOverlayColors();
         const separator = '━'.repeat(width);
-        return [chalk.hex('#b6b6b6')(separator)];
+        return [chalk.hex(border)(separator)];
     }
 }
 
@@ -57,7 +58,8 @@ export class ConfirmOverlay implements Component {
         this.messageText = new Text(options.message);
         this.list = new SelectList(items, items.length, defaultSelectListTheme);
         this.box = new Box(1, 1);
-        this.box.setBgFn((text: string) => chalk.bgHex('#2d2d2d').hex('#e0e0e0')(text));
+        const oc = getOverlayColors();
+        this.box.setBgFn((text: string) => chalk.bgHex(oc.bg).hex(oc.fg)(text));
         this.box.addChild(this.header);
         this.box.addChild(new Splitter());
         this.box.addChild(new Text('')); // Empty line for spacing
@@ -131,15 +133,16 @@ export class ProgressOverlay implements Component {
     constructor(openDeskTUI: OpenDeskTUI, options: ProgressOptions) {
         this.openDeskTUI = openDeskTUI;
 
+        const oc = getOverlayColors();
         this.header = new Text(chalk.bold(`ℹ️ ${options.title}`));
         this.loader = new Loader(
             openDeskTUI.tui,
             (s: string) => chalk.cyan(s),
-            (s: string) => chalk.hex('#e0e0e0')(s),
+            (s: string) => chalk.hex(oc.fg)(s),
             options.message
         );
         this.box = new Box(1, 1);
-        this.box.setBgFn((text: string) => chalk.bgHex('#2d2d2d').hex('#e0e0e0')(text));
+        this.box.setBgFn((text: string) => chalk.bgHex(oc.bg).hex(oc.fg)(text));
         this.box.addChild(this.header);
         this.box.addChild(new Splitter());
         this.box.addChild(this.loader);
@@ -204,7 +207,8 @@ export class InfoOverlay implements Component {
         this.messageText = new Text(options.message);
         this.list = new SelectList(items, items.length, defaultSelectListTheme);
         this.box = new Box(1, 1);
-        this.box.setBgFn((text: string) => chalk.bgHex('#2d2d2d').hex('#e0e0e0')(text));
+        const oc = getOverlayColors();
+        this.box.setBgFn((text: string) => chalk.bgHex(oc.bg).hex(oc.fg)(text));
         this.box.addChild(this.header);
         this.box.addChild(new Splitter());
         this.box.addChild(new Text('')); // Empty line for spacing

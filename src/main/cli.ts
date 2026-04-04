@@ -213,7 +213,7 @@ function parseCommandLineArgs() {
     return prog.parse();
 }
 
-function main(args: CommandLineArgs) {
+async function main(args: CommandLineArgs) {
     setPlatform(new CliPlatform());
     useCliTransport();
     if (args.dumpLog) {
@@ -239,6 +239,11 @@ function main(args: CommandLineArgs) {
         });
     } else {
         GlobalState.initialize();
+
+        // 在 TUI 接管 stdin 之前检测终端配色方案（OSC 11 查询需要直接读写 stdin/stdout）
+        const { detectTerminalColorScheme } = await import('./tui/theme.js');
+        await detectTerminalColorScheme();
+
         if (process.stdout.isTTY) {
             process.stdout.write(FULL_CLEAR);
         }

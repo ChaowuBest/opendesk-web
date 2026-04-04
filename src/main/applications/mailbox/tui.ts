@@ -35,6 +35,7 @@ import {
 } from '../../aikernel/messages.js';
 import { BaseToolset } from '../../aikernel/tool.js';
 import { ToolCallView, ToolCallMessagePartView } from '../../tui/components/taskview.js';
+import { getAdaptiveGreen } from '../../tui/theme.js';
 import { logger } from '../../utils/logger.js';
 import chalk from 'chalk';
 import { jsonrepair } from 'jsonrepair';
@@ -73,7 +74,9 @@ const MC = {
     accentBold: chalk.hex('#4A90D9').bold,
     neon: chalk.hex('#00E5FF'),
     neonBold: chalk.hex('#00E5FF').bold,
-    green: chalk.hex('#39FF14'),
+    get green() {
+        return chalk.hex(getAdaptiveGreen());
+    },
     amber: chalk.hex('#FFAB00'),
     red: chalk.hex('#FF1744'),
     ghost: chalk.hex('#4a4a4a'),

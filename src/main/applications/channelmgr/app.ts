@@ -68,6 +68,7 @@ import { NotificationManager } from '../../utils/notificationmgr.js';
 import { ToolResult } from '../../aikernel/tool.js';
 import qrcodeTerminal from 'qrcode-terminal';
 import chalk from 'chalk';
+import { getAdaptiveGreen } from '../../tui/theme.js';
 
 export interface ChannelRuntimeState {
     channelId: string;
@@ -581,9 +582,10 @@ export class ChannelMgrApplication extends BaseApplication {
         if (states.length === 0) return null;
 
         const parts = states.map((s) => {
-            const dot = s.status.online ? chalk.hex('#39FF14')('●') : chalk.hex('#FF1744')('○');
+            const green = getAdaptiveGreen();
+            const dot = s.status.online ? chalk.hex(green)('●') : chalk.hex('#FF1744')('○');
             const name = s.status.online
-                ? chalk.hex('#39FF14')(s.label || s.channelId)
+                ? chalk.hex(green)(s.label || s.channelId)
                 : chalk.hex('#FF1744')(s.label || s.channelId);
             return `${dot}${name}`;
         });

@@ -22,6 +22,7 @@ import {
     GetCurrentTimeTool,
     GetSupportedEventsTool
 } from './tools';
+import { getAdaptiveGreen } from '../../tui/theme.js';
 import TodoMgrWorker from './worker';
 import { MANAGE_GLOBAL_TODOS_SKILL } from './skills.js';
 import chalk from 'chalk';
@@ -41,7 +42,8 @@ export class TodoMgrApplication extends BaseApplication {
                 const total = pending + completed;
                 if (total === 0) return null;
                 const filled = Math.round((completed / total) * 8);
-                const bar = chalk.hex('#39FF14')('█'.repeat(filled)) + chalk.hex('#4a4a4a')('░'.repeat(8 - filled));
+                const bar =
+                    chalk.hex(getAdaptiveGreen())('█'.repeat(filled)) + chalk.hex('#4a4a4a')('░'.repeat(8 - filled));
                 return `📋 ${bar} ${completed}/${total}`;
             }
             return null;
