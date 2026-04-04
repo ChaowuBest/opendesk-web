@@ -91,7 +91,10 @@ console.log('\nTest 4: Skill constructor auto-loads .env from directory');
     assert(Object.keys(skill.env).length === 0, 'parseMd without directory: env is empty');
 
     const skillWithDir = new Skill(skill.frontmatter, skill.body, skillDir);
-    assert(skillWithDir.env['TEST_SKILL_API_KEY'] === 'sk-test-12345-env-injection', 'Skill with directory: env loaded');
+    assert(
+        skillWithDir.env['TEST_SKILL_API_KEY'] === 'sk-test-12345-env-injection',
+        'Skill with directory: env loaded'
+    );
     assert(skillWithDir.env['TEST_SKILL_REGION'] === 'cn-north-1', 'Skill with directory: region loaded');
 }
 
@@ -117,7 +120,10 @@ console.log('\nTest 6: Simulate env merging into task envContext');
     assert(envContext['TEST_SKILL_REGION'] === 'cn-north-1', 'first skill region merged');
 
     // 第二个 skill 覆盖部分 key
-    Object.assign(envContext, { 'TEST_SKILL_REGION': 'ap-southeast-1', 'ANOTHER_KEY': 'another_value' });
+    Object.assign(envContext, {
+        TEST_SKILL_REGION: 'ap-southeast-1',
+        ANOTHER_KEY: 'another_value'
+    });
     assert(envContext['TEST_SKILL_REGION'] === 'ap-southeast-1', 'second skill overrides region');
     assert(envContext['ANOTHER_KEY'] === 'another_value', 'second skill adds new key');
     assert(envContext['TEST_SKILL_API_KEY'] === 'sk-test-12345-env-injection', 'first skill key still present');
@@ -134,9 +140,7 @@ console.log('\nTest 7: Full chain simulation');
         Object.assign(envContext, skill.env);
     }
 
-    const spawnEnv = Object.keys(envContext).length > 0
-        ? { ...process.env, ...envContext }
-        : process.env;
+    const spawnEnv = Object.keys(envContext).length > 0 ? { ...process.env, ...envContext } : process.env;
 
     assert(spawnEnv['TEST_SKILL_API_KEY'] === 'sk-test-12345-env-injection', 'spawn env has skill API key');
     assert(spawnEnv['TEST_SKILL_REGION'] === 'cn-north-1', 'spawn env has skill region');

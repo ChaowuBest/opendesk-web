@@ -16,12 +16,7 @@
 
 import { randomUUID } from 'node:crypto';
 import type WebSocket from 'ws';
-import type {
-    ConnectParams,
-    NodeSession,
-    NodeInvokeResult,
-    NodeInvokeRequestEvent,
-} from './common.js';
+import type { ConnectParams, NodeSession, NodeInvokeResult, NodeInvokeRequestEvent } from './common.js';
 import { DEFAULT_INVOKE_TIMEOUT_MS } from './common.js';
 
 type PendingInvoke = {
@@ -33,7 +28,6 @@ type PendingInvoke = {
 };
 
 export class NodeRegistry {
-
     private nodesById = new Map<string, NodeSession>();
     private nodesByConn = new Map<string, string>();
     private pendingInvokes = new Map<string, PendingInvoke>();
@@ -61,7 +55,7 @@ export class NodeRegistry {
             caps,
             commands,
             permissions,
-            connectedAtMs: Date.now(),
+            connectedAtMs: Date.now()
         };
 
         this.nodesById.set(nodeId, session);
@@ -116,7 +110,7 @@ export class NodeRegistry {
         if (!node) {
             return {
                 ok: false,
-                error: { code: 'NOT_CONNECTED', message: 'node not connected' },
+                error: { code: 'NOT_CONNECTED', message: 'node not connected' }
             };
         }
 
@@ -127,14 +121,14 @@ export class NodeRegistry {
             command: params.command,
             paramsJSON: params.params !== undefined ? JSON.stringify(params.params) : null,
             timeoutMs: params.timeoutMs,
-            idempotencyKey: params.idempotencyKey ?? randomUUID(),
+            idempotencyKey: params.idempotencyKey ?? randomUUID()
         };
 
         const sent = this.sendEvent(node, 'node.invoke.request', eventPayload);
         if (!sent) {
             return {
                 ok: false,
-                error: { code: 'UNAVAILABLE', message: 'failed to send invoke to node' },
+                error: { code: 'UNAVAILABLE', message: 'failed to send invoke to node' }
             };
         }
 
@@ -144,7 +138,7 @@ export class NodeRegistry {
                 this.pendingInvokes.delete(requestId);
                 resolve({
                     ok: false,
-                    error: { code: 'TIMEOUT', message: 'node invoke timed out' },
+                    error: { code: 'TIMEOUT', message: 'node invoke timed out' }
                 });
             }, timeoutMs);
 
@@ -153,7 +147,7 @@ export class NodeRegistry {
                 command: params.command,
                 resolve,
                 reject,
-                timer,
+                timer
             });
         });
     }
@@ -179,7 +173,7 @@ export class NodeRegistry {
             ok: params.ok,
             payload: params.payload,
             payloadJSON: params.payloadJSON ?? null,
-            error: params.error ?? null,
+            error: params.error ?? null
         });
         return true;
     }
@@ -195,11 +189,13 @@ export class NodeRegistry {
 
     private sendEvent(node: NodeSession, event: string, payload: unknown): boolean {
         try {
-            node.socket.send(JSON.stringify({
-                type: 'event',
-                event,
-                payload,
-            }));
+            node.socket.send(
+                JSON.stringify({
+                    type: 'event',
+                    event,
+                    payload
+                })
+            );
             return true;
         } catch {
             return false;

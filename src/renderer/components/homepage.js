@@ -9,7 +9,6 @@
  * See the Mulan PSL v2 for more details.
  */
 
-
 class HomePage extends HTMLElement {
     constructor() {
         super();
@@ -69,7 +68,8 @@ class HomePage extends HTMLElement {
         // 如果有未读邮件，添加标记
         if (this.unreadCount > 0) {
             const badge = document.createElement('span');
-            badge.className = 'unread-badge absolute -top-1 -right-1 bg-red-500 text-white text-xs font-bold rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1';
+            badge.className =
+                'unread-badge absolute -top-1 -right-1 bg-red-500 text-white text-xs font-bold rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1';
             badge.textContent = this.unreadCount > 99 ? '99+' : this.unreadCount.toString();
             inboxButton.style.position = 'relative';
             inboxButton.appendChild(badge);

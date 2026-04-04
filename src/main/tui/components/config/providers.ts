@@ -1,9 +1,8 @@
-import { type Component, SelectList, type TUI } from "@mariozechner/pi-tui";
-import { defaultSelectListTheme } from "../../theme.js";
-import { Setting } from "../../../utils/setting.js";
-import { ConfigForm, type FieldDef, type ActionDef } from "./form";
-import chalk from "chalk";
-
+import { type Component, SelectList, type TUI } from '@mariozechner/pi-tui';
+import { defaultSelectListTheme } from '../../theme.js';
+import { Setting } from '../../../utils/setting.js';
+import { ConfigForm, type FieldDef, type ActionDef } from './form';
+import chalk from 'chalk';
 
 export interface ProviderTemplate {
     name: string;
@@ -18,14 +17,34 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     { name: 'siliconflow', displayName: '硅基流动', base_url: 'https://api.siliconflow.cn/v1' },
     { name: 'deepseek', displayName: '深度求索', base_url: 'https://api.deepseek.com' },
     { name: 'z-ai', displayName: '智谱开放平台', base_url: 'https://open.bigmodel.cn/api/paas/v4' },
-    { name: 'z-ai-code', displayName: '智谱开放平台(CodingPlan)', base_url: 'https://open.bigmodel.cn/api/coding/paas/v4' },
+    {
+        name: 'z-ai-code',
+        displayName: '智谱开放平台(CodingPlan)',
+        base_url: 'https://open.bigmodel.cn/api/coding/paas/v4'
+    },
     { name: 'minimaxi', displayName: 'MiniMax', base_url: 'https://api.minimaxi.com/v1' },
     { name: 'local', displayName: 'Ollama', base_url: 'http://127.0.0.1:11434/v1' },
     { name: 'lmstudio', displayName: 'LM Studio', base_url: 'http://127.0.0.1:1234/v1' },
-    { name: 'aliyun-cn', displayName: '阿里云百炼', base_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1' },
-    { name: 'aliyun-code-cn', displayName: '阿里云百炼(CodingPlan)', base_url: 'https://coding.dashscope.aliyuncs.com/v1' },
-    { name: 'volcengine', displayName: '火山引擎', base_url: 'https://ark.cn-beijing.volces.com/api/v3' },
-    { name: 'volcengine-code', displayName: '火山引擎(CodingPlan)', base_url: 'https://ark.cn-beijing.volces.com/api/coding/v3' },
+    {
+        name: 'aliyun-cn',
+        displayName: '阿里云百炼',
+        base_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1'
+    },
+    {
+        name: 'aliyun-code-cn',
+        displayName: '阿里云百炼(CodingPlan)',
+        base_url: 'https://coding.dashscope.aliyuncs.com/v1'
+    },
+    {
+        name: 'volcengine',
+        displayName: '火山引擎',
+        base_url: 'https://ark.cn-beijing.volces.com/api/v3'
+    },
+    {
+        name: 'volcengine-code',
+        displayName: '火山引擎(CodingPlan)',
+        base_url: 'https://ark.cn-beijing.volces.com/api/coding/v3'
+    }
 ];
 
 interface ProviderData {
@@ -68,8 +87,8 @@ export class ProviderConfigPage implements Component {
             { value: '__add__', label: chalk.green('➕ 添加模型服务商') },
             ...providers.map((p: ProviderData, i: number) => ({
                 value: String(i),
-                label: `${p.name}  ${chalk.dim(p.base_url)}`,
-            })),
+                label: `${p.name}  ${chalk.dim(p.base_url)}`
+            }))
         ];
 
         this.list = new SelectList(items, Math.min(items.length, 15), defaultSelectListTheme);
@@ -93,24 +112,24 @@ export class ProviderConfigPage implements Component {
         this.list = undefined;
 
         const items = [
-            ...PROVIDER_TEMPLATES.map(t => ({
+            ...PROVIDER_TEMPLATES.map((t) => ({
                 value: t.name,
-                label: `${t.displayName}  ${chalk.dim(t.base_url)}`,
+                label: `${t.displayName}  ${chalk.dim(t.base_url)}`
             })),
-            { value: '__custom__', label: chalk.dim('✏️  自定义…') },
+            { value: '__custom__', label: chalk.dim('✏️  自定义…') }
         ];
 
         this.templateList = new SelectList(items, Math.min(items.length, 15), defaultSelectListTheme);
         this.tui.setFocus(this.templateList);
 
         this.templateList.onSelect = (item) => {
-            const template = PROVIDER_TEMPLATES.find(t => t.name === item.value);
+            const template = PROVIDER_TEMPLATES.find((t) => t.name === item.value);
             this.editingIndex = -1;
             this.showEditForm({
                 name: template?.name ?? '',
                 base_url: template?.base_url ?? '',
                 api_key: '',
-                no_proxy: false,
+                no_proxy: false
             });
         };
         this.templateList.onCancel = () => this.showList();
@@ -127,12 +146,10 @@ export class ProviderConfigPage implements Component {
             { type: 'text', key: 'name', label: '名称', value: provider.name },
             { type: 'text', key: 'base_url', label: 'API 地址', value: provider.base_url },
             { type: 'text', key: 'api_key', label: 'API 密钥', value: provider.api_key },
-            { type: 'boolean', key: 'no_proxy', label: '禁用代理', value: provider.no_proxy },
+            { type: 'boolean', key: 'no_proxy', label: '禁用代理', value: provider.no_proxy }
         ];
 
-        const actions: ActionDef[] = [
-            { key: 'save', label: '✅ 保存', style: 'primary' },
-        ];
+        const actions: ActionDef[] = [{ key: 'save', label: '✅ 保存', style: 'primary' }];
         if (this.editingIndex >= 0) {
             actions.push({ key: 'delete', label: '🗑️  删除', style: 'danger' });
         }
@@ -140,9 +157,12 @@ export class ProviderConfigPage implements Component {
 
         const title = this.editingIndex >= 0 ? '编辑模型服务商' : '添加模型服务商';
         this.form = new ConfigForm(
-            this.tui, title, fields, actions,
+            this.tui,
+            title,
+            fields,
+            actions,
             (actionKey, values) => this.handleAction(actionKey, values),
-            () => this.showList(),
+            () => this.showList()
         );
         this.form.activate();
         this.tui.requestRender();
@@ -167,7 +187,7 @@ export class ProviderConfigPage implements Component {
             name: values.name ?? '',
             base_url: values.base_url ?? '',
             api_key: values.api_key ?? '',
-            no_proxy: !!values.no_proxy,
+            no_proxy: !!values.no_proxy
         };
 
         if (this.editingIndex >= 0) {
@@ -191,7 +211,7 @@ export class ProviderConfigPage implements Component {
         this.showList();
     }
 
-    invalidate() { }
+    invalidate() {}
 
     render(width: number): string[] {
         const lines: string[] = [];

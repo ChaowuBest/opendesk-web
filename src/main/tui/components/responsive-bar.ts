@@ -6,7 +6,7 @@
  * 直到剩余内容能够放下为止。
  */
 
-import { visibleWidth } from "@mariozechner/pi-tui";
+import { visibleWidth } from '@mariozechner/pi-tui';
 
 export interface ResponsiveCell {
     /** 已经包含 ANSI 着色的完整显示字符串 */
@@ -27,7 +27,7 @@ export interface ResponsiveBarOptions {
 export function renderResponsiveCells(
     cells: ResponsiveCell[],
     availableWidth: number,
-    options: ResponsiveBarOptions = {},
+    options: ResponsiveBarOptions = {}
 ): string {
     if (cells.length === 0) return '';
 
@@ -36,7 +36,7 @@ export function renderResponsiveCells(
     const pad = options.horizontalPadding ?? 1;
     const innerWidth = availableWidth - pad * 2;
 
-    const widths = cells.map(c => c.width ?? visibleWidth(c.text));
+    const widths = cells.map((c) => c.width ?? visibleWidth(c.text));
 
     let shown = cells.length;
     while (shown > 0) {

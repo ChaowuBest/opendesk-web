@@ -23,7 +23,7 @@ import {
     ToolCallMessagePart,
     CompactSeparatorMessage,
     extractImagePaths,
-    imageToDataUri,
+    imageToDataUri
 } from '../messages.js';
 import { shouldCompact, compactContext } from '../compact.js';
 import { BaseToolset } from '../tool.js';
@@ -189,7 +189,7 @@ export class TaskState {
             total_elapsed_ms: this.total_elapsed_ms,
             bookmark_path: this.bookmark_path,
             origin: this.origin,
-            stop_requested_by_user: this.stop_requested_by_user,
+            stop_requested_by_user: this.stop_requested_by_user
         };
     }
 
@@ -205,7 +205,7 @@ export class TaskState {
             total_elapsed_ms: this.total_elapsed_ms,
             bookmark_path: this.bookmark_path,
             origin: this.origin,
-            stop_requested_by_user: this.stop_requested_by_user,
+            stop_requested_by_user: this.stop_requested_by_user
         };
     }
 
@@ -228,9 +228,7 @@ export class TaskState {
         for (const filePath of filePaths) {
             const extname = path.extname(filePath);
             const content = await officeParser.parseOfficeAsync(filePath);
-            logger.info(
-                `attach file ${filePath} to task ${this.task_id} with extension ${extname}`
-            );
+            logger.info(`attach file ${filePath} to task ${this.task_id} with extension ${extname}`);
             user_message.content.push(new FileMessagePart(filePath, content));
         }
 
@@ -269,9 +267,7 @@ export class TaskState {
                     await compactContext(this.chat_context, this.model);
                 }
             } catch (err: unknown) {
-                logger.warn(
-                    `Auto-compact check failed: ${err instanceof Error ? err.message : err}`
-                );
+                logger.warn(`Auto-compact check failed: ${err instanceof Error ? err.message : err}`);
             }
         }
 
@@ -324,9 +320,7 @@ export class TaskState {
             try {
                 fs.unlinkSync(taskJsonPath);
             } catch (err) {
-                logger.error(
-                    `Failed to delete task file ${taskJsonPath}: ${(err as Error).message}`
-                );
+                logger.error(`Failed to delete task file ${taskJsonPath}: ${(err as Error).message}`);
             }
         }
 
@@ -343,9 +337,7 @@ export class TaskState {
                     }
                 }
             } catch (err) {
-                logger.error(
-                    `Failed to cleanup artifacts for task ${this.task_id}: ${(err as Error).message}`
-                );
+                logger.error(`Failed to cleanup artifacts for task ${this.task_id}: ${(err as Error).message}`);
             }
         }
     }
@@ -435,9 +427,7 @@ export class TaskState {
 
         for (const name of matchedNames) {
             // 查找 user-invocable 的 skill
-            const entry = allSkills.find(
-                (e) => e.skill.frontmatter.name === name && e.skill.isUserInvocable
-            );
+            const entry = allSkills.find((e) => e.skill.frontmatter.name === name && e.skill.isUserInvocable);
             if (!entry) continue;
 
             const { bundleName, skill } = entry;
@@ -576,8 +566,7 @@ export class TaskState {
             let chunkUpdate: TaskUpdateChunk;
             if (last_message instanceof UserMessage) {
                 if (last_message.content.length === 0) return;
-                const updated_part_index =
-                    part_index !== undefined ? part_index : last_message.content.length - 1;
+                const updated_part_index = part_index !== undefined ? part_index : last_message.content.length - 1;
                 const last_part = last_message.content[updated_part_index];
                 await last_message.render();
                 chunkUpdate = {
@@ -587,12 +576,11 @@ export class TaskState {
                     message_id: last_message.message_id,
                     last_part_index: updated_part_index,
                     last_part,
-                    internal: last_message.internal,
+                    internal: last_message.internal
                 };
             } else if (last_message instanceof AssistantMessage) {
                 if (last_message.content.length === 0) return; // 空的助手消息，跳过
-                const updated_part_index =
-                    part_index !== undefined ? part_index : last_message.content.length - 1;
+                const updated_part_index = part_index !== undefined ? part_index : last_message.content.length - 1;
                 const last_part = last_message.content[updated_part_index];
                 await last_part.render();
                 chunkUpdate = {
@@ -602,7 +590,7 @@ export class TaskState {
                     message_id: last_message.message_id,
                     last_part_index: updated_part_index,
                     last_part,
-                    usage: last_message.usage,
+                    usage: last_message.usage
                 };
             } else if (last_message instanceof CompactSeparatorMessage) {
                 // 压缩分隔消息不需要发送订阅更新，直接返回
@@ -618,9 +606,7 @@ export class TaskState {
                 subscriber.send(chunkUpdate);
             }
         } catch (err) {
-            logger.error(
-                `error sending subscription feedback for task ${this.task_id}: ${(err as Error).message}`
-            );
+            logger.error(`error sending subscription feedback for task ${this.task_id}: ${(err as Error).message}`);
         }
     }
 
@@ -666,11 +652,7 @@ export class TaskState {
             if (assistant_message.content.length > prevPartCount) {
                 // content 数组增长了（如 <think> 标签拆分产生新 part），
                 // 需要同时更新被修改的旧 part 和新增的 part
-                for (
-                    let i = Math.max(0, prevPartCount - 1);
-                    i < assistant_message.content.length;
-                    i++
-                ) {
+                for (let i = Math.max(0, prevPartCount - 1); i < assistant_message.content.length; i++) {
                     await this.sendSubscriptionFeedback(i);
                 }
             } else {
@@ -680,10 +662,7 @@ export class TaskState {
 
         // After streaming ends, send any remaining text part if it hasn't been sent
         const lastPart = assistant_message.content[assistant_message.content.length - 1];
-        if (
-            lastPart?.type === 'text' &&
-            lastSentTextPartIndex < assistant_message.content.length - 1
-        ) {
+        if (lastPart?.type === 'text' && lastSentTextPartIndex < assistant_message.content.length - 1) {
             this.onTextPartComplete?.(lastPart.text);
         }
 
@@ -699,9 +678,7 @@ export class TaskState {
         const appToolsets = await this.task_manager_state.toolsetProvider.listAvailableToolsets();
         const skillToolset = SkillRegistry.getInstance().getToolset();
         const memoryToolset = createMemoryToolset();
-        const planningToolset = this.parent_id
-            ? createSubTaskPlanningToolset()
-            : createMainPlanningToolset();
+        const planningToolset = this.parent_id ? createSubTaskPlanningToolset() : createMainPlanningToolset();
 
         const all = [...appToolsets, skillToolset, memoryToolset, planningToolset];
         if (this.parent_id === null) {
@@ -1026,10 +1003,7 @@ export class TaskManagerState {
         for (const task of taskList) {
             try {
                 taskManagerState.tasks.push(
-                    TaskState.load(
-                        path.join(taskDirectory, `${task.task_id}.json`),
-                        taskManagerState
-                    )
+                    TaskState.load(path.join(taskDirectory, `${task.task_id}.json`), taskManagerState)
                 );
             } catch (err) {
                 logger.warn(`error loading task ${task.task_id}: ${err}`);
@@ -1058,7 +1032,7 @@ export class TaskManagerState {
         for (const task of this.tasks) {
             const taskFile = path.join(taskDirectory, `${task.task_id}.json`);
             fs.writeFileSync(taskFile, JSON.stringify(task.toJSON(), null, 4), {
-                encoding: 'utf8',
+                encoding: 'utf8'
             });
         }
     }

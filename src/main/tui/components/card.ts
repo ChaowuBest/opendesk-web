@@ -12,7 +12,6 @@ function sanitizeLine(line: string): string {
     return line.replace(/[\x00-\x08\x0b\x0c\x0e-\x1a\x1c-\x1f\r]/g, '').replace(/\t/g, '   ');
 }
 
-
 export interface CardStatus {
     icon: string;
     text: string;
@@ -72,7 +71,6 @@ export interface CardOptions {
  * ```
  */
 export class Card implements Component {
-
     private _icon: string;
     private _title: string;
     private _status?: CardStatus;
@@ -93,29 +91,80 @@ export class Card implements Component {
         this._border = options.border ?? { style: 'rounded', colorFn: chalk.dim };
     }
 
-    setIcon(icon: string) { this._icon = icon; }
-    setTitle(title: string) { this._title = title; }
-    setStatus(status?: CardStatus) { this._status = status; }
-    setBody(lines: string[]) { this._body = lines; }
-    setCollapsed(collapsed: boolean) { this._collapsed = collapsed; }
-    setMaxLines(maxLines?: number) { this._maxLines = maxLines; }
-    setTruncateStrategy(strategy: TruncateStrategy) { this._truncateStrategy = strategy; }
-    setBorder(border: BorderConfig) { this._border = border; }
+    setIcon(icon: string) {
+        this._icon = icon;
+    }
+    setTitle(title: string) {
+        this._title = title;
+    }
+    setStatus(status?: CardStatus) {
+        this._status = status;
+    }
+    setBody(lines: string[]) {
+        this._body = lines;
+    }
+    setCollapsed(collapsed: boolean) {
+        this._collapsed = collapsed;
+    }
+    setMaxLines(maxLines?: number) {
+        this._maxLines = maxLines;
+    }
+    setTruncateStrategy(strategy: TruncateStrategy) {
+        this._truncateStrategy = strategy;
+    }
+    setBorder(border: BorderConfig) {
+        this._border = border;
+    }
 
     invalidate() {}
 
-    private getBorderChars(): { topLeft: string; topRight: string; bottomLeft: string; bottomRight: string; horizontal: string; vertical: string } {
+    private getBorderChars(): {
+        topLeft: string;
+        topRight: string;
+        bottomLeft: string;
+        bottomRight: string;
+        horizontal: string;
+        vertical: string;
+    } {
         const style = this._border.style ?? 'rounded';
         switch (style) {
             case 'square':
-                return { topLeft: '┌', topRight: '┐', bottomLeft: '└', bottomRight: '┘', horizontal: '─', vertical: '│' };
+                return {
+                    topLeft: '┌',
+                    topRight: '┐',
+                    bottomLeft: '└',
+                    bottomRight: '┘',
+                    horizontal: '─',
+                    vertical: '│'
+                };
             case 'double':
-                return { topLeft: '╔', topRight: '╗', bottomLeft: '╚', bottomRight: '╝', horizontal: '═', vertical: '║' };
+                return {
+                    topLeft: '╔',
+                    topRight: '╗',
+                    bottomLeft: '╚',
+                    bottomRight: '╝',
+                    horizontal: '═',
+                    vertical: '║'
+                };
             case 'single':
-                return { topLeft: '┌', topRight: '┐', bottomLeft: '└', bottomRight: '┘', horizontal: '─', vertical: '│' };
+                return {
+                    topLeft: '┌',
+                    topRight: '┐',
+                    bottomLeft: '└',
+                    bottomRight: '┘',
+                    horizontal: '─',
+                    vertical: '│'
+                };
             case 'rounded':
             default:
-                return { topLeft: '╭', topRight: '╮', bottomLeft: '╰', bottomRight: '╯', horizontal: '─', vertical: '│' };
+                return {
+                    topLeft: '╭',
+                    topRight: '╮',
+                    bottomLeft: '╰',
+                    bottomRight: '╯',
+                    horizontal: '─',
+                    vertical: '│'
+                };
         }
     }
 
@@ -128,7 +177,7 @@ export class Card implements Component {
         result.push(this.renderHeader(width));
 
         if (!this._collapsed) {
-            const flatBody = this._body.filter(l => l != null).flatMap(l => String(l).split('\n'));
+            const flatBody = this._body.filter((l) => l != null).flatMap((l) => String(l).split('\n'));
             const displayLines = this.applyTruncation(flatBody);
             for (const raw of displayLines) {
                 const line = sanitizeLine(String(raw));
@@ -139,7 +188,7 @@ export class Card implements Component {
 
         result.push(colorFn(border.bottomLeft + border.horizontal.repeat(Math.max(0, width - 2)) + border.bottomRight));
 
-        return result.map(l => truncateToWidth(l, width, '…', true));
+        return result.map((l) => truncateToWidth(l, width, '…', true));
     }
 
     // ───────────────────── Header ─────────────────────
@@ -147,9 +196,7 @@ export class Card implements Component {
     private renderHeader(width: number): string {
         const border = this.getBorderChars();
         const colorFn = this._border.colorFn ?? chalk.dim;
-        const titleContent = this._icon
-            ? `${this._icon} ${chalk.bold(this._title)}`
-            : chalk.bold(this._title);
+        const titleContent = this._icon ? `${this._icon} ${chalk.bold(this._title)}` : chalk.bold(this._title);
 
         const prefix = colorFn(border.topLeft + '─ ');
         const suffix = colorFn(' ─' + border.topRight);
@@ -168,11 +215,7 @@ export class Card implements Component {
             }
 
             const fillLen = width - fixedParts;
-            return (
-                prefix + titleContent + ' ' +
-                colorFn(border.horizontal.repeat(fillLen)) +
-                statusContent + suffix
-            );
+            return prefix + titleContent + ' ' + colorFn(border.horizontal.repeat(fillLen)) + statusContent + suffix;
         }
 
         // 无状态指示器

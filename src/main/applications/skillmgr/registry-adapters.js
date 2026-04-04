@@ -38,116 +38,130 @@ const CLAWHUB_INSTALL_PREFIX = 'clawhub:';
  * @returns {Promise<{ skills: RegistrySkill[], total?: number, hasMore?: boolean }>}
  */
 async function searchSkill0(opts = {}) {
-  const { query = '', page = 1, limit = 20 } = opts;
-  const params = new URLSearchParams({ page: String(page), limit: String(limit) });
-  if (query.trim()) params.set('search', query.trim());
-  const url = `${SKILL0_BASE}/api/skills?${params}`;
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`skill0 请求失败: ${res.status}`);
-  const data = await res.json();
-  const skills = (data.skills || []).map((s) => {
-    const githubUrl = s.githubUrl || '';
-    const canInstall = githubUrl.startsWith('https://github.com/');
+    const { query = '', page = 1, limit = 20 } = opts;
+    const params = new URLSearchParams({ page: String(page), limit: String(limit) });
+    if (query.trim()) params.set('search', query.trim());
+    const url = `${SKILL0_BASE}/api/skills?${params}`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`skill0 请求失败: ${res.status}`);
+    const data = await res.json();
+    const skills = (data.skills || []).map((s) => {
+        const githubUrl = s.githubUrl || '';
+        const canInstall = githubUrl.startsWith('https://github.com/');
+        return {
+            id: s.id || s.name,
+            name: s.name || s.id || '',
+            description: s.description || '',
+            author: s.author || '',
+            source: 'skill0',
+            installUrl: canInstall ? githubUrl : '',
+            stars: s.stars ?? 0,
+            canInstall
+        };
+    });
+    const pagination = data.pagination || {};
     return {
-      id: s.id || s.name,
-      name: s.name || s.id || '',
-      description: s.description || '',
-      author: s.author || '',
-      source: 'skill0',
-      installUrl: canInstall ? githubUrl : '',
-      stars: s.stars ?? 0,
-      canInstall
+        skills,
+        total: pagination.total,
+        hasMore: !!pagination.hasNext
     };
-  });
-  const pagination = data.pagination || {};
-  return {
-    skills,
-    total: pagination.total,
-    hasMore: !!pagination.hasNext
-  };
 }
 
 const SKILLSMP_FALLBACK_THRESHOLD = 0;
 
 function mapSkillsMPSkill(s) {
-  const repo = s.repository || s.repo || s.github?.url || s.githubUrl || '';
-  let installUrl = '';
-  if (typeof repo === 'string' && repo.includes('github.com')) {
-    installUrl = repo.replace('/blob/', '/tree/');
-    if (!installUrl.includes('/tree/')) {
-      installUrl = repo + (repo.endsWith('/') ? '' : '/') + 'tree/main';
+    const repo = s.repository || s.repo || s.github?.url || s.githubUrl || '';
+    let installUrl = '';
+    if (typeof repo === 'string' && repo.includes('github.com')) {
+        installUrl = repo.replace('/blob/', '/tree/');
+        if (!installUrl.includes('/tree/')) {
+            installUrl = repo + (repo.endsWith('/') ? '' : '/') + 'tree/main';
+        }
+    } else if (s.downloadUrl || s.zipUrl) {
+        installUrl = s.downloadUrl || s.zipUrl;
     }
-  } else if (s.downloadUrl || s.zipUrl) {
-    installUrl = s.downloadUrl || s.zipUrl;
-  }
-  return {
-    id: s.id || s.slug || s.name || '',
-    name: s.name || s.title || s.id || '',
-    description: s.description || '',
-    author: s.author?.login ?? s.author ?? s.owner ?? '',
-    source: 'skillsmp',
-    installUrl,
-    stars: s.stars ?? s.stargazers_count ?? 0,
-    canInstall: !!installUrl
-  };
+    return {
+        id: s.id || s.slug || s.name || '',
+        name: s.name || s.title || s.id || '',
+        description: s.description || '',
+        author: s.author?.login ?? s.author ?? s.owner ?? '',
+        source: 'skillsmp',
+        installUrl,
+        stars: s.stars ?? s.stargazers_count ?? 0,
+        canInstall: !!installUrl
+    };
 }
 
 async function fetchSkillsMP(endpoint, opts = {}) {
-  const { query = '', page = 1, limit = 20, apiKey, timeout = 15000 } = opts;
-  if (!apiKey || !apiKey.trim()) {
-    throw new Error('SkillsMP 需配置 API Key。请在 FillipDesk「设置」→ 应用配置 → Skills 中填写并保存后重试。获取 Key：https://skillsmp.com/auth/login');
-  }
-  const params = new URLSearchParams({ q: query.trim() || 'skill', limit: String(Math.min(limit, 100)) });
-  if (endpoint === 'search') params.set('page', String(page));
-  const url = `${SKILLSMP_BASE}/api/v1/skills/${endpoint}?${params}`;
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeout);
-  try {
-    const res = await fetch(url, {
-      headers: { Authorization: `Bearer ${apiKey.trim()}` },
-      signal: controller.signal
+    const { query = '', page = 1, limit = 20, apiKey, timeout = 15000 } = opts;
+    if (!apiKey || !apiKey.trim()) {
+        throw new Error(
+            'SkillsMP 需配置 API Key。请在 FillipDesk「设置」→ 应用配置 → Skills 中填写并保存后重试。获取 Key：https://skillsmp.com/auth/login'
+        );
+    }
+    const params = new URLSearchParams({
+        q: query.trim() || 'skill',
+        limit: String(Math.min(limit, 100))
     });
-    clearTimeout(timeoutId);
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      if (res.status === 401) throw new Error(err?.error?.message || 'API Key 无效或已过期');
-      throw new Error(err?.error?.message || `SkillsMP 请求失败: ${res.status}`);
+    if (endpoint === 'search') params.set('page', String(page));
+    const url = `${SKILLSMP_BASE}/api/v1/skills/${endpoint}?${params}`;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeout);
+    try {
+        const res = await fetch(url, {
+            headers: { Authorization: `Bearer ${apiKey.trim()}` },
+            signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            if (res.status === 401) throw new Error(err?.error?.message || 'API Key 无效或已过期');
+            throw new Error(err?.error?.message || `SkillsMP 请求失败: ${res.status}`);
+        }
+        const data = await res.json();
+        let items = [];
+        if (endpoint === 'ai-search' && Array.isArray(data.data?.data)) {
+            items = data.data.data.map((item) => item.skill).filter(Boolean);
+        } else if (Array.isArray(data.data?.skills)) {
+            items = data.data.skills;
+        } else if (Array.isArray(data.data)) {
+            items = data.data;
+        } else if (Array.isArray(data)) {
+            items = data;
+        } else {
+            items = data.items ?? data.results ?? [];
+        }
+        const list = Array.isArray(items) ? items : [];
+        const total = data.data?.pagination?.total ?? data.data?.total ?? data.total ?? list.length;
+        return { skills: list.map(mapSkillsMPSkill), total, hasMore: page * limit < (total ?? 0) };
+    } catch (e) {
+        clearTimeout(timeoutId);
+        if (e.name === 'AbortError') throw new Error('SkillsMP 请求超时，请检查网络或稍后重试');
+        throw e;
     }
-    const data = await res.json();
-    let items = [];
-    if (endpoint === 'ai-search' && Array.isArray(data.data?.data)) {
-      items = data.data.data.map(item => item.skill).filter(Boolean);
-    } else if (Array.isArray(data.data?.skills)) {
-      items = data.data.skills;
-    } else if (Array.isArray(data.data)) {
-      items = data.data;
-    } else if (Array.isArray(data)) {
-      items = data;
-    } else {
-      items = data.items ?? data.results ?? [];
-    }
-    const list = Array.isArray(items) ? items : [];
-    const total = data.data?.pagination?.total ?? data.data?.total ?? data.total ?? list.length;
-    return { skills: list.map(mapSkillsMPSkill), total, hasMore: (page * limit) < (total ?? 0) };
-  } catch (e) {
-    clearTimeout(timeoutId);
-    if (e.name === 'AbortError') throw new Error('SkillsMP 请求超时，请检查网络或稍后重试');
-    throw e;
-  }
 }
 
 async function searchSkillsMP(opts = {}) {
-  const { query, page, limit, apiKey } = opts;
-  const result = await fetchSkillsMP('search', { query, page, limit, apiKey });
-  if (result.skills.length <= SKILLSMP_FALLBACK_THRESHOLD) {
-    try {
-      const aiResult = await fetchSkillsMP('ai-search', { query, limit, apiKey, timeout: 30000 });
-      if (aiResult.skills.length > 0) {
-        return { ...aiResult, hasMore: false, message: '普通搜索无结果，已使用 AI 语义搜索补充' };
-      }
-    } catch (_) {}
-  }
-  return result;
+    const { query, page, limit, apiKey } = opts;
+    const result = await fetchSkillsMP('search', { query, page, limit, apiKey });
+    if (result.skills.length <= SKILLSMP_FALLBACK_THRESHOLD) {
+        try {
+            const aiResult = await fetchSkillsMP('ai-search', {
+                query,
+                limit,
+                apiKey,
+                timeout: 30000
+            });
+            if (aiResult.skills.length > 0) {
+                return {
+                    ...aiResult,
+                    hasMore: false,
+                    message: '普通搜索无结果，已使用 AI 语义搜索补充'
+                };
+            }
+        } catch (_) {}
+    }
+    return result;
 }
 
 /**
@@ -156,50 +170,55 @@ async function searchSkillsMP(opts = {}) {
  * @returns {Promise<{ skills: RegistrySkill[], total?: number, hasMore?: boolean, message?: string }>}
  */
 async function searchClawHub(opts = {}) {
-  const { query = '', page = 1, limit = 20 } = opts;
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 12000);
-  try {
-    const params = new URLSearchParams();
-    if (query.trim()) params.set('q', query.trim());
-    params.set('limit', String(limit));
-    params.set('offset', String((page - 1) * limit));
-    const url = `${CLAWHUB_BASE}/api/skills?${params}`;
-    const res = await fetch(url, { signal: controller.signal });
-    clearTimeout(timeoutId);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
-    const rawList = Array.isArray(data) ? data : (data.skills ?? data.data ?? data.items ?? []);
-    const skills = rawList.map((s) => {
-      const slug = s.slug ?? s.id ?? s.name ?? '';
-      const version = s.version ?? s.latestVersion;
-      const installUrl = slug ? (version ? `${CLAWHUB_INSTALL_PREFIX}${slug}@${version}` : `${CLAWHUB_INSTALL_PREFIX}${slug}`) : '';
-      return {
-        id: slug || s.id || s.name,
-        name: s.name ?? s.title ?? slug ?? '',
-        description: s.description ?? s.summary ?? '',
-        author: s.author?.name ?? s.author ?? s.owner ?? '',
-        source: 'clawhub',
-        installUrl,
-        stars: s.stars ?? s.stargazersCount ?? 0,
-        canInstall: !!slug
-      };
-    });
-    const total = data.total ?? data.pagination?.total ?? skills.length;
+    const { query = '', page = 1, limit = 20 } = opts;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 12000);
+    try {
+        const params = new URLSearchParams();
+        if (query.trim()) params.set('q', query.trim());
+        params.set('limit', String(limit));
+        params.set('offset', String((page - 1) * limit));
+        const url = `${CLAWHUB_BASE}/api/skills?${params}`;
+        const res = await fetch(url, { signal: controller.signal });
+        clearTimeout(timeoutId);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        const rawList = Array.isArray(data) ? data : (data.skills ?? data.data ?? data.items ?? []);
+        const skills = rawList.map((s) => {
+            const slug = s.slug ?? s.id ?? s.name ?? '';
+            const version = s.version ?? s.latestVersion;
+            const installUrl = slug
+                ? version
+                    ? `${CLAWHUB_INSTALL_PREFIX}${slug}@${version}`
+                    : `${CLAWHUB_INSTALL_PREFIX}${slug}`
+                : '';
+            return {
+                id: slug || s.id || s.name,
+                name: s.name ?? s.title ?? slug ?? '',
+                description: s.description ?? s.summary ?? '',
+                author: s.author?.name ?? s.author ?? s.owner ?? '',
+                source: 'clawhub',
+                installUrl,
+                stars: s.stars ?? s.stargazersCount ?? 0,
+                canInstall: !!slug
+            };
+        });
+        const total = data.total ?? data.pagination?.total ?? skills.length;
+        return {
+            skills,
+            total,
+            hasMore: page * limit < (total ?? 0)
+        };
+    } catch (_) {
+        clearTimeout(timeoutId);
+    }
     return {
-      skills,
-      total,
-      hasMore: (page * limit) < (total ?? 0)
+        skills: [],
+        total: 0,
+        hasMore: false,
+        message:
+            'ClawHub 暂未提供公开搜索 API。请在上方输入框中输入技能 slug（如 my-skill）或 my-skill@1.2.3，点击「按 slug 安装」。需已安装 clawhub CLI：npm i -g clawhub'
     };
-  } catch (_) {
-    clearTimeout(timeoutId);
-  }
-  return {
-    skills: [],
-    total: 0,
-    hasMore: false,
-    message: 'ClawHub 暂未提供公开搜索 API。请在上方输入框中输入技能 slug（如 my-skill）或 my-skill@1.2.3，点击「按 slug 安装」。需已安装 clawhub CLI：npm i -g clawhub'
-  };
 }
 
 /**
@@ -208,14 +227,14 @@ async function searchClawHub(opts = {}) {
  * @returns {{ slug: string, version?: string } | null}
  */
 function parseClawHubInstallUrl(installUrl) {
-  if (!installUrl || typeof installUrl !== 'string' || !installUrl.startsWith(CLAWHUB_INSTALL_PREFIX)) {
-    return null;
-  }
-  const rest = installUrl.slice(CLAWHUB_INSTALL_PREFIX.length).trim();
-  if (!rest) return null;
-  const at = rest.indexOf('@');
-  if (at === -1) return { slug: rest };
-  return { slug: rest.slice(0, at), version: rest.slice(at + 1).trim() || undefined };
+    if (!installUrl || typeof installUrl !== 'string' || !installUrl.startsWith(CLAWHUB_INSTALL_PREFIX)) {
+        return null;
+    }
+    const rest = installUrl.slice(CLAWHUB_INSTALL_PREFIX.length).trim();
+    if (!rest) return null;
+    const at = rest.indexOf('@');
+    if (at === -1) return { slug: rest };
+    return { slug: rest.slice(0, at), version: rest.slice(at + 1).trim() || undefined };
 }
 
 /**
@@ -224,16 +243,16 @@ function parseClawHubInstallUrl(installUrl) {
  * @param {Object} opts - { query, page, limit, apiKey? }
  */
 async function searchRegistry(registryId, opts = {}) {
-  switch (registryId) {
-    case 'skill0':
-      return searchSkill0(opts);
-    case 'skillsmp':
-      return searchSkillsMP(opts);
-    case 'clawhub':
-      return searchClawHub(opts);
-    default:
-      throw new Error(`未知 Registry: ${registryId}`);
-  }
+    switch (registryId) {
+        case 'skill0':
+            return searchSkill0(opts);
+        case 'skillsmp':
+            return searchSkillsMP(opts);
+        case 'clawhub':
+            return searchClawHub(opts);
+        default:
+            throw new Error(`未知 Registry: ${registryId}`);
+    }
 }
 
 /**
@@ -242,17 +261,17 @@ async function searchRegistry(registryId, opts = {}) {
  * @returns {'clawhub' | 'github' | 'zip'}
  */
 function getInstallMethod(installUrl) {
-  if (!installUrl || typeof installUrl !== 'string') return 'zip';
-  if (installUrl.startsWith(CLAWHUB_INSTALL_PREFIX)) return 'clawhub';
-  return installUrl.includes('github.com') && installUrl.includes('/tree/') ? 'github' : 'zip';
+    if (!installUrl || typeof installUrl !== 'string') return 'zip';
+    if (installUrl.startsWith(CLAWHUB_INSTALL_PREFIX)) return 'clawhub';
+    return installUrl.includes('github.com') && installUrl.includes('/tree/') ? 'github' : 'zip';
 }
 
 export const RegistryAdapters = {
-  searchSkill0,
-  searchSkillsMP,
-  searchClawHub,
-  searchRegistry,
-  getInstallMethod,
-  parseClawHubInstallUrl,
-  CLAWHUB_INSTALL_PREFIX
+    searchSkill0,
+    searchSkillsMP,
+    searchClawHub,
+    searchRegistry,
+    getInstallMethod,
+    parseClawHubInstallUrl,
+    CLAWHUB_INSTALL_PREFIX
 };

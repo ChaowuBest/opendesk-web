@@ -85,9 +85,7 @@ export interface ITagIndexDB {
 export class TagIndexer extends Indexer {
     readonly name = 'TagIndexer';
     readonly supportedFields = ['item_id', 'item_type', 'tag'];
-    readonly supportedOperators: QueryOperator[] = [
-        '=', '!=', '>', '<', '>=', '<=', 'like', 'in'
-    ];
+    readonly supportedOperators: QueryOperator[] = ['=', '!=', '>', '<', '>=', '<=', 'like', 'in'];
     private columnName;
 
     private db: ITagIndexDB | null = null;
@@ -96,9 +94,7 @@ export class TagIndexer extends Indexer {
 
     constructor(schema: ColumnSchema, dbPath: string) {
         super();
-        this.columnName = Object.keys(schema.needIndexers).find(
-            key => schema.needIndexers[key].includes(this.name)
-        );
+        this.columnName = Object.keys(schema.needIndexers).find((key) => schema.needIndexers[key].includes(this.name));
         this._dbPath = dbPath;
     }
 
@@ -124,7 +120,7 @@ export class TagIndexer extends Indexer {
         if (!this.supportsOperator(operator)) {
             throw new Error(
                 `TagIndexer does not support operator: ${operator}. ` +
-                `Supported operators: ${this.supportedOperators.join(', ')}`
+                    `Supported operators: ${this.supportedOperators.join(', ')}`
             );
         }
     }
@@ -135,8 +131,7 @@ export class TagIndexer extends Indexer {
     private validateField(field: string): void {
         if (!this.supportsField(field)) {
             throw new Error(
-                `TagIndexer does not support field: ${field}. ` +
-                `Supported fields: ${this.supportedFields.join(', ')}`
+                `TagIndexer does not support field: ${field}. ` + `Supported fields: ${this.supportedFields.join(', ')}`
             );
         }
     }
@@ -152,7 +147,7 @@ export class TagIndexer extends Indexer {
         return {
             field: cond.field as keyof TagIndexRecord,
             operator: cond.operator as ScalarOperator,
-            value: cond.value,
+            value: cond.value
         };
     }
 
@@ -166,7 +161,7 @@ export class TagIndexer extends Indexer {
         const item: Item = {
             item_id: record.item_id,
             item_type: record.item_type as ItemType,
-            tag: record.tag,
+            tag: record.tag
         };
         // 从 metadata 复制额外字段
         if (metadata) {
@@ -186,26 +181,23 @@ export class TagIndexer extends Indexer {
         return {
             item_id: item.item_id,
             item_type: item.item_type,
-            tag: tag,
+            tag: tag
         };
     }
 
     /**
      * 搜索匹配条件的 Item
      */
-    async search(
-        conditions: FilterCondition[],
-        options?: IndexerSearchOptions
-    ): Promise<IndexerSearchResult> {
+    async search(conditions: FilterCondition[], options?: IndexerSearchOptions): Promise<IndexerSearchResult> {
         // 转换条件
-        const queryConditions = conditions.map(c => this.toQueryCondition(c));
+        const queryConditions = conditions.map((c) => this.toQueryCondition(c));
 
         // Join 过滤：限制在已有结果集的 item_id 范围内
         if (options?.existingResults && options.existingResults.length > 0) {
             queryConditions.push({
                 field: 'item_id',
                 operator: 'in',
-                value: options.existingResults.map(r => r.item_id),
+                value: options.existingResults.map((r) => r.item_id)
             });
         }
 
@@ -213,19 +205,19 @@ export class TagIndexer extends Indexer {
         const records = await this.ensureDB().query(queryConditions, {
             limit: options?.limit,
             offset: options?.offset,
-            orderBy: options?.orderBy ? {
-                field: options.orderBy.field as keyof TagIndexRecord,
-                direction: options.orderBy.direction,
-            } : undefined,
+            orderBy: options?.orderBy
+                ? {
+                      field: options.orderBy.field as keyof TagIndexRecord,
+                      direction: options.orderBy.direction
+                  }
+                : undefined
         });
 
         // 如果有 existingResults，从中获取完整的 Item 元数据
-        const existingMap = new Map(
-            options?.existingResults?.map(i => [i.item_id, i])
-        );
+        const existingMap = new Map(options?.existingResults?.map((i) => [i.item_id, i]));
 
         // 转换记录为 Item
-        const items = records.map(r => this.recordToItem(r, existingMap.get(r.item_id)));
+        const items = records.map((r) => this.recordToItem(r, existingMap.get(r.item_id)));
 
         // 获取总数
         const totalCount = await this.ensureDB().count(queryConditions);
@@ -240,7 +232,7 @@ export class TagIndexer extends Indexer {
         const records: TagIndexRecord[] = [];
 
         for (const item of items) {
-            const col = item.indexer_columns?.[this.name]?.find(c => c.column === this.columnName);
+            const col = item.indexer_columns?.[this.name]?.find((c) => c.column === this.columnName);
             const record = this.itemToRecord(item, col?.content as string);
             if (record) {
                 records.push(record);
@@ -262,7 +254,7 @@ export class TagIndexer extends Indexer {
      */
     async update(items: Item[]): Promise<void> {
         for (const item of items) {
-            const col = item.indexer_columns?.[this.name]?.find(c => c.column === this.columnName);
+            const col = item.indexer_columns?.[this.name]?.find((c) => c.column === this.columnName);
             const record = this.itemToRecord(item, col?.content as string);
             await this.ensureDB().upsert(record);
         }

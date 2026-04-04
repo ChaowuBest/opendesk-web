@@ -33,7 +33,6 @@ interface ConfigData {
 }
 
 class QuickPassHelper {
-
     /**
      * 将原始 payload 编码为带校验和的 base64 字符串。
      * 格式: base64(payload) + base64(sha256(payload)[0:4])

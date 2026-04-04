@@ -39,7 +39,7 @@ function extractContextSize(model: any): number {
         model.max_context_length,
         model.max_model_len,
         model.model_info?.context_length,
-        model.model_info?.context_window,
+        model.model_info?.context_window
     ];
     for (const val of candidates) {
         if (typeof val === 'number' && val > 0) return val;
@@ -58,40 +58,54 @@ function findModelInList(models: any[], modelName: string): any | undefined {
     const normId = (m: any) => (m.id ?? '').toLowerCase().replace(/[._]/g, '-');
     const normName = (m: any) => (m.name ?? '').toLowerCase().replace(/[._]/g, '-');
 
-    return models.find((m: any) => m.id === modelName)
-        ?? models.find((m: any) => m.name === modelName)
-        ?? models.find((m: any) => normId(m) === norm)
-        ?? models.find((m: any) => normName(m) === norm)
-        ?? models
+    return (
+        models.find((m: any) => m.id === modelName) ??
+        models.find((m: any) => m.name === modelName) ??
+        models.find((m: any) => normId(m) === norm) ??
+        models.find((m: any) => normName(m) === norm) ??
+        models
             .filter((m: any) => {
-                const id = normId(m), name = normName(m);
-                return id.startsWith(norm) || name.startsWith(norm)
-                    || norm.startsWith(id) || norm.startsWith(name);
+                const id = normId(m),
+                    name = normName(m);
+                return id.startsWith(norm) || name.startsWith(norm) || norm.startsWith(id) || norm.startsWith(name);
             })
-            .sort((a: any, b: any) => (b.created ?? 0) - (a.created ?? 0))[0];
+            .sort((a: any, b: any) => (b.created ?? 0) - (a.created ?? 0))[0]
+    );
 }
 
 /**
  * 尝试通过 OpenAI 兼容 API 的 /models 端点获取模型的上下文窗口大小。
  * 失败时返回 0 表示未知。
  */
-export async function fetchContextSizeFromAPI(modelInstance: { base_url: string; api_key: string; model_name: string }): Promise<number> {
+export async function fetchContextSizeFromAPI(modelInstance: {
+    base_url: string;
+    api_key: string;
+    model_name: string;
+}): Promise<number> {
     const { base_url: baseUrl, api_key: apiKey, model_name: modelName } = modelInstance;
     const headers: Record<string, string> = {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json'
     };
 
     try {
-        const resp = await fetch(`${baseUrl}/models/${encodeURIComponent(modelName)}`, { headers, signal: AbortSignal.timeout(5000) });
+        const resp = await fetch(`${baseUrl}/models/${encodeURIComponent(modelName)}`, {
+            headers,
+            signal: AbortSignal.timeout(5000)
+        });
         if (resp.ok) {
             const size = extractContextSize(await resp.json());
             if (size > 0) return size;
         }
-    } catch { /* 忽略单模型端点错误 */ }
+    } catch {
+        /* 忽略单模型端点错误 */
+    }
 
     try {
-        const resp = await fetch(`${baseUrl}/models`, { headers, signal: AbortSignal.timeout(8000) });
+        const resp = await fetch(`${baseUrl}/models`, {
+            headers,
+            signal: AbortSignal.timeout(8000)
+        });
         if (resp.ok) {
             const body = await resp.json();
             const models: any[] = body.data ?? body;
@@ -101,7 +115,9 @@ export async function fetchContextSizeFromAPI(modelInstance: { base_url: string;
                 if (size > 0) return size;
             }
         }
-    } catch { /* 忽略列表端点错误 */ }
+    } catch {
+        /* 忽略列表端点错误 */
+    }
 
     return 0;
 }
@@ -110,23 +126,35 @@ export async function fetchContextSizeFromAPI(modelInstance: { base_url: string;
  * 尝试通过 OpenAI 兼容 API 的 /models 端点获取模型是否支持视觉输入。
  * 返回 true/false，如果无法判断则返回 undefined。
  */
-export async function fetchVisionSupportFromAPI(modelInstance: { base_url: string; api_key: string; model_name: string }): Promise<boolean | undefined> {
+export async function fetchVisionSupportFromAPI(modelInstance: {
+    base_url: string;
+    api_key: string;
+    model_name: string;
+}): Promise<boolean | undefined> {
     const { base_url: baseUrl, api_key: apiKey, model_name: modelName } = modelInstance;
     const headers: Record<string, string> = {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json'
     };
 
     try {
-        const resp = await fetch(`${baseUrl}/models/${encodeURIComponent(modelName)}`, { headers, signal: AbortSignal.timeout(5000) });
+        const resp = await fetch(`${baseUrl}/models/${encodeURIComponent(modelName)}`, {
+            headers,
+            signal: AbortSignal.timeout(5000)
+        });
         if (resp.ok) {
             const result = extractVisionSupport(await resp.json());
             if (result !== undefined) return result;
         }
-    } catch { /* 忽略单模型端点错误 */ }
+    } catch {
+        /* 忽略单模型端点错误 */
+    }
 
     try {
-        const resp = await fetch(`${baseUrl}/models`, { headers, signal: AbortSignal.timeout(8000) });
+        const resp = await fetch(`${baseUrl}/models`, {
+            headers,
+            signal: AbortSignal.timeout(8000)
+        });
         if (resp.ok) {
             const body = await resp.json();
             const models: any[] = body.data ?? body;
@@ -136,7 +164,9 @@ export async function fetchVisionSupportFromAPI(modelInstance: { base_url: strin
                 if (result !== undefined) return result;
             }
         }
-    } catch { /* 忽略列表端点错误 */ }
+    } catch {
+        /* 忽略列表端点错误 */
+    }
 
     return undefined;
 }
@@ -154,9 +184,9 @@ const KNOWN_VISION_MODELS: Record<string, boolean> = {
     'gpt-4o-mini': true,
     'gpt-4-turbo': true,
     'gpt-4': false,
-    'o1': true,
+    o1: true,
     'o1-mini': true,
-    'o3': true,
+    o3: true,
     'o3-mini': true,
     'o4-mini': true,
 
@@ -332,18 +362,18 @@ const KNOWN_CONTEXT_SIZES: Record<string, number> = {
     'gpt-4o-mini': 128000,
     'gpt-4-turbo': 128000,
     'gpt-4': 8192,
-    'gpt-4-32k': 32768,          // 旧版，API 兼容
+    'gpt-4-32k': 32768, // 旧版，API 兼容
     'gpt-3-5-turbo': 16384,
     'gpt-3-5-turbo-16k': 16384,
-    'o1': 200000,
+    o1: 200000,
     'o1-mini': 128000,
     'o1-pro': 200000,
-    'o3': 200000,
+    o3: 200000,
     'o3-mini': 200000,
     'o4-mini': 200000,
 
     // ── Claude / Anthropic ──
-    'claude-4-6-opus': 200000,   // 1M 需 beta header
+    'claude-4-6-opus': 200000, // 1M 需 beta header
     'claude-4-6-sonnet': 200000,
     'claude-4-opus': 200000,
     'claude-4-sonnet': 200000,
@@ -380,7 +410,7 @@ const KNOWN_CONTEXT_SIZES: Record<string, number> = {
     'mixtral-8x22b': 65536,
 
     // ── MiniMax ──
-    'minimax-01': 4194304,       // 4M 开源长上下文
+    'minimax-01': 4194304, // 4M 开源长上下文
     'minimax-m2-5': 204800,
     'minimax-m2-5-highspeed': 204800,
     'minimax-m2': 204800
@@ -411,14 +441,17 @@ function stripProviderPrefix(name: string): string {
  */
 function stripSuffixes(name: string): string[] {
     const variants: string[] = [name];
-    const push = (v: string) => { if (v !== name && !variants.includes(v)) variants.push(v); };
+    const push = (v: string) => {
+        if (v !== name && !variants.includes(v)) variants.push(v);
+    };
 
     // 6 位日期后缀
     push(name.replace(/-\d{6}$/, ''));
     // ISO 日期后缀
     push(name.replace(/-\d{4}-\d{2}-\d{2}$/, ''));
     // 常见变体词
-    const suffixPattern = /-(instruct|chat|preview|latest|terminus|thinking|character|functioncall|browsing|online|turbo|fast|slow|free|hf|fp16|bf16|awq|gptq|gguf)$/;
+    const suffixPattern =
+        /-(instruct|chat|preview|latest|terminus|thinking|character|functioncall|browsing|online|turbo|fast|slow|free|hf|fp16|bf16|awq|gptq|gguf)$/;
     for (const v of [...variants]) {
         const stripped = v.replace(suffixPattern, '');
         push(stripped);
@@ -444,7 +477,8 @@ export function lookupKnownContextSize(rawModelName: string): number {
     }
 
     // 最长 key 前缀匹配：key 是 base 的前缀
-    let bestLen = 0, bestSize = 0;
+    let bestLen = 0,
+        bestSize = 0;
     for (const [key, size] of Object.entries(KNOWN_CONTEXT_SIZES)) {
         if (base.startsWith(key) && key.length > bestLen) {
             bestLen = key.length;
@@ -455,7 +489,8 @@ export function lookupKnownContextSize(rawModelName: string): number {
 
     // 反向前缀匹配：base（或其去后缀版本）是 key 的前缀
     for (const c of candidates) {
-        let rBestLen = 0, rBestSize = 0;
+        let rBestLen = 0,
+            rBestSize = 0;
         for (const [key, size] of Object.entries(KNOWN_CONTEXT_SIZES)) {
             if (key.startsWith(c) && c.length > rBestLen) {
                 rBestLen = c.length;

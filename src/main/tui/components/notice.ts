@@ -1,9 +1,7 @@
-
-import { type Component, SelectList, Box, Text, Loader } from "@mariozechner/pi-tui";
-import { defaultSelectListTheme } from "../theme";
-import { OpenDeskTUI } from "../entry";
-import chalk from "chalk";
-
+import { type Component, SelectList, Box, Text, Loader } from '@mariozechner/pi-tui';
+import { defaultSelectListTheme } from '../theme';
+import { OpenDeskTUI } from '../entry';
+import chalk from 'chalk';
 
 class Splitter implements Component {
     invalidate(): void {
@@ -11,11 +9,10 @@ class Splitter implements Component {
     }
 
     render(width: number): string[] {
-        const separator = "━".repeat(width);
+        const separator = '━'.repeat(width);
         return [chalk.hex('#b6b6b6')(separator)];
     }
 }
-
 
 export interface ConfirmOptions {
     title: string;
@@ -48,12 +45,12 @@ export class ConfirmOverlay implements Component {
     constructor(openDeskTUI: OpenDeskTUI, options: ConfirmOptions) {
         this.openDeskTUI = openDeskTUI;
 
-        const confirmLabel = options.confirmLabel || "确认";
-        const cancelLabel = options.cancelLabel || "取消";
+        const confirmLabel = options.confirmLabel || '确认';
+        const cancelLabel = options.cancelLabel || '取消';
 
         const items = [
-            { value: "confirm", label: chalk.green(confirmLabel) },
-            { value: "cancel", label: chalk.red(cancelLabel) }
+            { value: 'confirm', label: chalk.green(confirmLabel) },
+            { value: 'cancel', label: chalk.red(cancelLabel) }
         ];
 
         this.header = new Text(chalk.bold(`⚠️ ${options.title}`));
@@ -63,9 +60,9 @@ export class ConfirmOverlay implements Component {
         this.box.setBgFn((text: string) => chalk.bgHex('#2d2d2d').hex('#e0e0e0')(text));
         this.box.addChild(this.header);
         this.box.addChild(new Splitter());
-        this.box.addChild(new Text("")); // Empty line for spacing
+        this.box.addChild(new Text('')); // Empty line for spacing
         this.box.addChild(this.messageText);
-        this.box.addChild(new Text("")); // Empty line for spacing
+        this.box.addChild(new Text('')); // Empty line for spacing
         this.box.addChild(this.list);
     }
 
@@ -89,7 +86,7 @@ export class ConfirmOverlay implements Component {
         const handle = this.openDeskTUI.tui.showOverlay(this, {
             width: overlayWidth,
             maxHeight: overlayMaxHeight,
-            anchor: "center",
+            anchor: 'center'
         });
 
         // 标记有 overlay 打开
@@ -102,7 +99,7 @@ export class ConfirmOverlay implements Component {
             // 标记 overlay 关闭
             this.openDeskTUI.hasOpenOverlay = false;
             this.openDeskTUI.tui.setFocus(this.openDeskTUI.inputArea.input);
-            if (item.value === "confirm") {
+            if (item.value === 'confirm') {
                 this.onConfirm?.();
             } else {
                 this.onCancel?.();
@@ -139,14 +136,14 @@ export class ProgressOverlay implements Component {
             openDeskTUI.tui,
             (s: string) => chalk.cyan(s),
             (s: string) => chalk.hex('#e0e0e0')(s),
-            options.message,
+            options.message
         );
         this.box = new Box(1, 1);
         this.box.setBgFn((text: string) => chalk.bgHex('#2d2d2d').hex('#e0e0e0')(text));
         this.box.addChild(this.header);
         this.box.addChild(new Splitter());
         this.box.addChild(this.loader);
-        this.box.addChild(new Text(""));
+        this.box.addChild(new Text(''));
     }
 
     invalidate(): void {
@@ -166,7 +163,7 @@ export class ProgressOverlay implements Component {
         this.handle = this.openDeskTUI.tui.showOverlay(this, {
             width: overlayWidth,
             maxHeight: overlayMaxHeight,
-            anchor: "center",
+            anchor: 'center'
         });
 
         this.openDeskTUI.hasOpenOverlay = true;
@@ -198,12 +195,10 @@ export class InfoOverlay implements Component {
         this.fullWidth = options.fullWidth ?? false;
         this.type = options.type ?? 'info';
 
-        const closeLabel = options.closeLabel || "确定";
+        const closeLabel = options.closeLabel || '确定';
         const icon = this.type === 'error' ? '❌' : this.type === 'warning' ? '⚠️' : 'ℹ️';
 
-        const items = [
-            { value: "close", label: chalk.cyan(closeLabel) }
-        ];
+        const items = [{ value: 'close', label: chalk.cyan(closeLabel) }];
 
         this.header = new Text(chalk.bold(`${icon} ${options.title}`));
         this.messageText = new Text(options.message);
@@ -212,9 +207,9 @@ export class InfoOverlay implements Component {
         this.box.setBgFn((text: string) => chalk.bgHex('#2d2d2d').hex('#e0e0e0')(text));
         this.box.addChild(this.header);
         this.box.addChild(new Splitter());
-        this.box.addChild(new Text("")); // Empty line for spacing
+        this.box.addChild(new Text('')); // Empty line for spacing
         this.box.addChild(this.messageText);
-        this.box.addChild(new Text("")); // Empty line for spacing
+        this.box.addChild(new Text('')); // Empty line for spacing
         this.box.addChild(this.list);
     }
 
@@ -231,15 +226,13 @@ export class InfoOverlay implements Component {
 
         const terminalWidth = this.openDeskTUI.tui.terminal.columns;
         const terminalHeight = this.openDeskTUI.tui.terminal.rows;
-        const overlayWidth = this.fullWidth
-            ? terminalWidth - 2
-            : Math.min(60, terminalWidth - 4);
+        const overlayWidth = this.fullWidth ? terminalWidth - 2 : Math.min(60, terminalWidth - 4);
         const overlayMaxHeight = Math.max(8, terminalHeight - 4);
 
         const handle = this.openDeskTUI.tui.showOverlay(this, {
             width: overlayWidth,
             maxHeight: overlayMaxHeight,
-            anchor: "center",
+            anchor: 'center'
         });
 
         // 标记有 overlay 打开
@@ -276,15 +269,15 @@ export class InfoPage implements Component {
     constructor(openDeskTUI: OpenDeskTUI, title: string, message: string, onClose: () => void) {
         this.openDeskTUI = openDeskTUI;
 
-        const items = [{ value: "close", label: chalk.cyan("确定") }];
+        const items = [{ value: 'close', label: chalk.cyan('确定') }];
         this.list = new SelectList(items, items.length, defaultSelectListTheme);
 
         this.box = new Box(1, 1);
         this.box.addChild(new Text(chalk.bold(title)));
         this.box.addChild(new Splitter());
-        this.box.addChild(new Text(""));
+        this.box.addChild(new Text(''));
         this.box.addChild(new Text(message));
-        this.box.addChild(new Text(""));
+        this.box.addChild(new Text(''));
         this.box.addChild(this.list);
 
         this.list.onSelect = () => onClose();

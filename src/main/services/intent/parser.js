@@ -16,13 +16,15 @@ import { Setting } from '../../utils/setting.js';
 import { IntentRegistry } from './intents.js';
 import { z } from 'zod';
 
-
 function buildIntentParsingPrompt(intents) {
-    const intentList = intents.map(intent =>
-        `- 意图名称: ${intent.name}\n` +
-        `  * 意图描述: ${intent.description}\n` +
-        `  * 意图的输入参数Schema: ${JSON.stringify(z.toJSONSchema(intent.params))}`
-    ).join('\n');
+    const intentList = intents
+        .map(
+            (intent) =>
+                `- 意图名称: ${intent.name}\n` +
+                `  * 意图描述: ${intent.description}\n` +
+                `  * 意图的输入参数Schema: ${JSON.stringify(z.toJSONSchema(intent.params))}`
+        )
+        .join('\n');
 
     return `
 你是一个熟悉手机和电脑操作的，善解人意的智能体，总是用中文回答用户的问题。
@@ -82,32 +84,34 @@ class IntentInstance {
      * @returns {IntentInstance[]}
      */
     static parseArray(array) {
-        return array.map(item => IntentInstance.parse(item));
+        return array.map((item) => IntentInstance.parse(item));
     }
 }
 
 class IntentParser {
-
     /**
      * Get the screenshot of the entire screen as a data URL
      * @returns {Promise<string>}
      */
     static async getScreenshotAsURL() {
-        let sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 1920, height: 1080 } })
+        const sources = await desktopCapturer.getSources({
+            types: ['screen'],
+            thumbnailSize: { width: 1920, height: 1080 }
+        });
         // You may want to adjust the thumbnailSize to your requirements or get the system's screen size
         // Here, we pick the first screen (primary screen).
         if (sources.length > 0) {
-            return sources[0].thumbnail.toDataURL()
+            return sources[0].thumbnail.toDataURL();
         } else {
             throw new Error('No screen sources found');
         }
     }
 
     static getScreenParsingPrompt() {
-        let intents = IntentRegistry.getInstance().getIntents()
-        let prompt = buildIntentParsingPrompt(intents)
+        const intents = IntentRegistry.getInstance().getIntents();
+        const prompt = buildIntentParsingPrompt(intents);
         // console.info(prompt)
-        return prompt
+        return prompt;
     }
 
     /**
@@ -116,17 +120,17 @@ class IntentParser {
      * @returns {Promise<IntentInstance[]>}
      */
     static async parseScreen(screenshotURL = undefined) {
-        console.info('start parsing screen')
+        console.info('start parsing screen');
         if (screenshotURL === undefined) {
-            screenshotURL = await this.getScreenshotAsURL()
+            screenshotURL = await this.getScreenshotAsURL();
         }
-        let model = Setting.getInstance().getDefaultIntentParsingModelInstance();
-        let question = new UserMessage()
+        const model = Setting.getInstance().getDefaultIntentParsingModelInstance();
+        const question = new UserMessage()
             .appendText(IntentParser.getScreenParsingPrompt())
             .appendImageURL(screenshotURL);
 
-        let resp = await LLM.askForObject(question, model);
-        let intents = IntentInstance.parseArray(resp);
+        const resp = await LLM.askForObject(question, model);
+        const intents = IntentInstance.parseArray(resp);
         console.info('parsed intents: ', intents);
 
         return intents;

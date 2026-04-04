@@ -9,26 +9,58 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { type Component, SelectList, Box, Text, Editor, Input, Key, matchesKey, isKeyRelease, visibleWidth, truncateToWidth } from "@mariozechner/pi-tui";
-import { defaultSelectListTheme, defaultEditorTheme } from "../../tui/theme";
-import type { OpenDeskTUI } from "../../tui/entry";
-import { LLM } from "../../aikernel/llm.js";
-import { UserMessage, ChatContext, AssistantMessage, AssistantResponse, SystemMessage, ToolCall } from "../../aikernel/messages.js";
-import { BaseToolset } from "../../aikernel/tool.js";
-import { ToolCallView, ToolCallMessagePartView } from "../../tui/components/taskview.js";
-import { logger } from "../../utils/logger.js";
-import chalk from "chalk";
-import { jsonrepair } from "jsonrepair";
-import fs from "fs";
-import path from "path";
-import nodePath from "path";
 import {
-    callMailWorker, formatSender, formatAddresses, stripHtml, buildQuotedText, buildReplyHtml,
-    GetEmailListTool, GetEmailContentTool, SearchEmailsTool,
-    SendEmailTool, ReplyEmailTool, MarkEmailReadTool, StarEmailTool, DeleteEmailTool,
-    GetCalendarItemsTool, AddCalendarItemTool, DeleteCalendarItemTool, GetCurrentTimeTool,
-} from "./tools";
-
+    type Component,
+    SelectList,
+    Box,
+    Text,
+    Editor,
+    Input,
+    Key,
+    matchesKey,
+    isKeyRelease,
+    visibleWidth,
+    truncateToWidth
+} from '@mariozechner/pi-tui';
+import { defaultSelectListTheme, defaultEditorTheme } from '../../tui/theme';
+import type { OpenDeskTUI } from '../../tui/entry';
+import { LLM } from '../../aikernel/llm.js';
+import {
+    UserMessage,
+    ChatContext,
+    AssistantMessage,
+    AssistantResponse,
+    SystemMessage,
+    ToolCall
+} from '../../aikernel/messages.js';
+import { BaseToolset } from '../../aikernel/tool.js';
+import { ToolCallView, ToolCallMessagePartView } from '../../tui/components/taskview.js';
+import { logger } from '../../utils/logger.js';
+import chalk from 'chalk';
+import { jsonrepair } from 'jsonrepair';
+import fs from 'fs';
+import path from 'path';
+import nodePath from 'path';
+import {
+    callMailWorker,
+    formatSender,
+    formatAddresses,
+    stripHtml,
+    buildQuotedText,
+    buildReplyHtml,
+    GetEmailListTool,
+    GetEmailContentTool,
+    SearchEmailsTool,
+    SendEmailTool,
+    ReplyEmailTool,
+    MarkEmailReadTool,
+    StarEmailTool,
+    DeleteEmailTool,
+    GetCalendarItemsTool,
+    AddCalendarItemTool,
+    DeleteCalendarItemTool,
+    GetCurrentTimeTool
+} from './tools';
 
 // SelectList.selectedIndex 在类型声明中是 private，但运行时可访问且无公开 getter
 function getListIndex(list: SelectList): number {
@@ -48,7 +80,7 @@ const MC = {
     dim: chalk.hex('#666666'),
     text: chalk.hex('#c0c0c0'),
     bright: chalk.hex('#e0e0e0').bold,
-    unread: chalk.hex('#00E5FF').bold,
+    unread: chalk.hex('#00E5FF').bold
 };
 
 // ━━━ 类型定义 ━━━
@@ -73,7 +105,15 @@ interface EmailContent {
     attachments: Array<{ filename: string; path: string }>;
 }
 
-type MailViewState = 'loading' | 'list' | 'detail' | 'compose' | 'assistant' | 'assistant-result' | 'search' | 'search-list';
+type MailViewState =
+    | 'loading'
+    | 'list'
+    | 'detail'
+    | 'compose'
+    | 'assistant'
+    | 'assistant-result'
+    | 'search'
+    | 'search-list';
 type FilterType = 'all' | 'unread' | 'starred' | 'draft' | 'sent';
 type ComposeType = 'reply' | 'replyall' | 'new' | 'forward';
 
@@ -106,7 +146,6 @@ function formatRecipientsInput(value?: string | string[]): string {
     return String(value);
 }
 
-
 interface FilterDef {
     key: string;
     value: FilterType;
@@ -118,7 +157,7 @@ const FILTERS: FilterDef[] = [
     { key: '2', value: 'unread', label: '未读' },
     { key: '3', value: 'starred', label: '收藏' },
     { key: '4', value: 'draft', label: '草稿' },
-    { key: '5', value: 'sent', label: '已发送' },
+    { key: '5', value: 'sent', label: '已发送' }
 ];
 
 // ━━━ 邮件助手工具（直接复用 tools.ts 的工具类） ━━━
@@ -133,7 +172,16 @@ const starEmailTool = new StarEmailTool();
 const deleteEmailTool = new DeleteEmailTool();
 
 const mailAssistantToolset = new BaseToolset('mailbox');
-mailAssistantToolset.addTools(getEmailListTool, getEmailContentTool, searchEmailsTool, sendEmailTool, replyEmailTool, markEmailReadTool, starEmailTool, deleteEmailTool);
+mailAssistantToolset.addTools(
+    getEmailListTool,
+    getEmailContentTool,
+    searchEmailsTool,
+    sendEmailTool,
+    replyEmailTool,
+    markEmailReadTool,
+    starEmailTool,
+    deleteEmailTool
+);
 
 // ━━━ 跨应用联动工具：日历（复用 tools.ts 的工具类，挂载 TUI 渲染回调） ━━━
 
@@ -147,7 +195,9 @@ getCalendarItemsTool.renderToolCallCli = function (toolcall: ToolCall, width: nu
         try {
             const r = JSON.parse(toolcall.result);
             lines.push(MC.dim(`  共 ${r.total} 项日程`));
-        } catch { lines.push(MC.dim('  ✓ 已获取日程')); }
+        } catch {
+            lines.push(MC.dim('  ✓ 已获取日程'));
+        }
     } else if (toolcall.status === 'error') lines.push(MC.red(String(toolcall.result || '获取失败')));
     return lines.length > 0 ? lines : undefined;
 };
@@ -159,7 +209,8 @@ addCalendarItemTool.renderToolCallCli = function (toolcall: ToolCall, width: num
     if (args?.subject) lines.push(MC.dim('标题: ') + MC.bright(String(args.subject)));
     if (args?.dateString) lines.push(MC.dim('日期: ') + MC.accent(String(args.dateString)));
     if (args?.isAllDay) lines.push(MC.dim('时间: ') + MC.amber('全天'));
-    else if (args?.startTime && args?.endTime) lines.push(MC.dim('时间: ') + MC.accent(`${args.startTime} — ${args.endTime}`));
+    else if (args?.startTime && args?.endTime)
+        lines.push(MC.dim('时间: ') + MC.accent(`${args.startTime} — ${args.endTime}`));
     if (args?.location) lines.push(MC.dim('地点: ') + MC.accent(String(args.location)));
     if (toolcall.status === 'running') lines.push(MC.dim('  ⏳ 添加中…'));
     else if (toolcall.status === 'success') {
@@ -167,7 +218,9 @@ addCalendarItemTool.renderToolCallCli = function (toolcall: ToolCall, width: num
             const r = JSON.parse(toolcall.result!);
             if (r.skipped) lines.push(MC.amber('  ⚠ 已存在相同日程，跳过添加'));
             else lines.push(MC.green('  ✓ 日程已添加'));
-        } catch { lines.push(MC.green('  ✓ 已添加')); }
+        } catch {
+            lines.push(MC.green('  ✓ 已添加'));
+        }
     } else if (toolcall.status === 'error') lines.push(MC.red(String(toolcall.result || '添加失败')));
     return lines.length > 0 ? lines : undefined;
 };
@@ -337,7 +390,7 @@ function formatDate(dateStr: string | Date): string {
 const mailSelectListTheme = {
     ...defaultSelectListTheme,
     selectedPrefix: (text: string) => chalk.bgHex('#1a2735').hex('#4A90D9')(text),
-    selectedText: (text: string) => chalk.bgHex('#1a2735').bold(text),
+    selectedText: (text: string) => chalk.bgHex('#1a2735').bold(text)
 };
 
 export class MailOverlay implements Component {
@@ -445,9 +498,9 @@ export class MailOverlay implements Component {
 
     async show() {
         this.handle = this.openDeskTUI.tui.showOverlay(this, {
-            width: "100%",
-            maxHeight: "100%",
-            anchor: "center",
+            width: '100%',
+            maxHeight: '100%',
+            anchor: 'center'
         });
         this.openDeskTUI.hasOpenOverlay = true;
         assistantDraftHandler = this.setAssistantDraft.bind(this);
@@ -457,7 +510,11 @@ export class MailOverlay implements Component {
             return this.handleInput(data);
         });
 
-        try { await callMailWorker('notifyMailboxOpened'); } catch { /* ignore */ }
+        try {
+            await callMailWorker('notifyMailboxOpened');
+        } catch {
+            /* ignore */
+        }
 
         await this.loadAccounts();
         await this.loadEmails();
@@ -474,7 +531,7 @@ export class MailOverlay implements Component {
         this.assistantPendingDraft = undefined;
         this.assistantUserRepliedAfterDraft = false;
 
-        callMailWorker('notifyMailboxClosed').catch(() => { });
+        callMailWorker('notifyMailboxClosed').catch(() => {});
     }
 
     // ──────────────────── 输入处理 ────────────────────
@@ -544,8 +601,11 @@ export class MailOverlay implements Component {
 
                 // Ctrl+X 删除选中的附件（或最后一个）
                 if (matchesKey(data, Key.ctrl('x')) && this.composeAttachments.length > 0) {
-                    const idx = (this.composeAttachmentSelectedIdx >= 0 && this.composeAttachmentSelectedIdx < this.composeAttachments.length)
-                        ? this.composeAttachmentSelectedIdx : this.composeAttachments.length - 1;
+                    const idx =
+                        this.composeAttachmentSelectedIdx >= 0 &&
+                        this.composeAttachmentSelectedIdx < this.composeAttachments.length
+                            ? this.composeAttachmentSelectedIdx
+                            : this.composeAttachments.length - 1;
                     this.composeAttachments.splice(idx, 1);
                     if (this.composeAttachments.length === 0) {
                         this.composeAttachmentSelectedIdx = -1;
@@ -622,7 +682,7 @@ export class MailOverlay implements Component {
                 return { consume: true };
             }
             if (matchesKey(data, Key.pageUp)) {
-                this.scrollDetailBody(-(Math.max(1, this.detailBodyVisibleLines - 2)));
+                this.scrollDetailBody(-Math.max(1, this.detailBodyVisibleLines - 2));
                 return { consume: true };
             }
             if (matchesKey(data, Key.home)) {
@@ -769,7 +829,7 @@ export class MailOverlay implements Component {
                     this.openDeskTUI.tui.requestRender(true);
                     // 翻页到接近底部时加载更多
                     if (this.hasMoreEmails && !this.isLoadingMore && next >= this.emails.length - 3) {
-                        this.loadMoreEmails().catch(err => {
+                        this.loadMoreEmails().catch((err) => {
                             logger.error(`翻页加载更多邮件失败: ${err}`);
                         });
                     }
@@ -808,7 +868,7 @@ export class MailOverlay implements Component {
                 return { consume: true };
             }
             if (matchesKey(data, Key.pageUp)) {
-                this.scrollAssistantResult(-(Math.max(1, this.assistantResultVisibleLines - 2)));
+                this.scrollAssistantResult(-Math.max(1, this.assistantResultVisibleLines - 2));
                 return { consume: true };
             }
             if (matchesKey(data, Key.home)) {
@@ -851,7 +911,7 @@ export class MailOverlay implements Component {
                 return { consume: true };
             }
             if (matchesKey(data, Key.pageUp)) {
-                this.scrollAssistantResult(-(Math.max(1, this.assistantResultVisibleLines - 2)));
+                this.scrollAssistantResult(-Math.max(1, this.assistantResultVisibleLines - 2));
                 return { consume: true };
             }
             if (matchesKey(data, Key.home)) {
@@ -951,7 +1011,7 @@ export class MailOverlay implements Component {
             }
 
             // 检查是否已添加过
-            if (this.composeAttachments.some(a => a.path === resolved)) {
+            if (this.composeAttachments.some((a) => a.path === resolved)) {
                 this.errorText = `附件已添加: ${nodePath.basename(resolved)}`;
                 this.openDeskTUI.tui.requestRender();
                 setTimeout(() => {
@@ -965,7 +1025,7 @@ export class MailOverlay implements Component {
 
             this.composeAttachments.push({
                 filename: nodePath.basename(resolved),
-                path: resolved,
+                path: resolved
             });
             this.composeAttachmentSelectedIdx = this.composeAttachments.length - 1;
             this.errorText = undefined;
@@ -1112,17 +1172,22 @@ export class MailOverlay implements Component {
 
     private buildFilterQuery(): any {
         switch (this.currentFilter) {
-            case 'unread': return { unread: true, limit: this.initialPageSize, offset: 0 };
-            case 'starred': return { starred: true, limit: this.initialPageSize, offset: 0 };
-            case 'draft': return { type: 'draft', limit: this.initialPageSize, offset: 0 };
-            case 'sent': return { type: 'sent', limit: this.initialPageSize, offset: 0 };
-            default: return { limit: this.initialPageSize, offset: 0 };
+            case 'unread':
+                return { unread: true, limit: this.initialPageSize, offset: 0 };
+            case 'starred':
+                return { starred: true, limit: this.initialPageSize, offset: 0 };
+            case 'draft':
+                return { type: 'draft', limit: this.initialPageSize, offset: 0 };
+            case 'sent':
+                return { type: 'sent', limit: this.initialPageSize, offset: 0 };
+            default:
+                return { limit: this.initialPageSize, offset: 0 };
         }
     }
 
     private parseSearchQuery(queryString: string): any {
         const query: any = { limit: 100, offset: 0 };
-        const terms = queryString.split(/\s+/).filter(t => t.length > 0);
+        const terms = queryString.split(/\s+/).filter((t) => t.length > 0);
 
         for (const term of terms) {
             const match = term.match(/^(from|to|subject|body|date):(.+)$/i);
@@ -1140,7 +1205,7 @@ export class MailOverlay implements Component {
                 } else if (normalizedField === 'date') {
                     // 处理日期，支持单个日期或日期范围
                     if (value.includes('~')) {
-                        const [startDate, endDate] = value.split('~').map(d => d.trim());
+                        const [startDate, endDate] = value.split('~').map((d) => d.trim());
                         query.startDate = startDate;
                         query.endDate = endDate || startDate;
                     } else {
@@ -1248,7 +1313,7 @@ export class MailOverlay implements Component {
 
         const items = this.emails.map((email) => ({
             value: email.uid,
-            label: this.formatEmailItem(email, contentWidth),
+            label: this.formatEmailItem(email, contentWidth)
         }));
 
         if (items.length === 0) {
@@ -1281,7 +1346,7 @@ export class MailOverlay implements Component {
                 const totalItems = this.emails.length;
                 // 当滚动到倒数第3项时开始加载更多
                 if (totalItems > 0 && selectedIndex >= totalItems - 3) {
-                    this.loadMoreEmails().catch(err => {
+                    this.loadMoreEmails().catch((err) => {
                         logger.error(`自动加载更多邮件失败: ${err}`);
                     });
                 }
@@ -1300,9 +1365,8 @@ export class MailOverlay implements Component {
         else if (email.type === 'sent') typeIcon = MC.accent('➤ ');
 
         const dateStr = MC.dim(formatDate(email.date).padEnd(12));
-        const sender = (email.type === 'sent' || email.type === 'draft')
-            ? formatAddresses(email.to)
-            : formatSender(email.from);
+        const sender =
+            email.type === 'sent' || email.type === 'draft' ? formatAddresses(email.to) : formatSender(email.from);
 
         const fixedPart = `${unreadIcon} ${typeIcon}${dateStr}`;
         const fixedVis = visibleWidth(fixedPart);
@@ -1332,7 +1396,7 @@ export class MailOverlay implements Component {
         this.openDeskTUI.tui.requestRender();
 
         try {
-            const email = this.emails.find(e => e.uid === uid);
+            const email = this.emails.find((e) => e.uid === uid);
             if (!email) return;
 
             this.selectedEmail = email;
@@ -1423,21 +1487,24 @@ export class MailOverlay implements Component {
                 break;
             case 'star': {
                 const newStarred = !this.selectedEmail.starred;
-                await callMailWorker('starEmail', { uid: this.selectedEmail.uid, starred: newStarred });
+                await callMailWorker('starEmail', {
+                    uid: this.selectedEmail.uid,
+                    starred: newStarred
+                });
                 this.selectedEmail.starred = newStarred;
                 this.buildDetailView();
                 break;
             }
             case 'delete':
                 await callMailWorker('deleteEmail', this.selectedEmail.uid);
-                this.emails = this.emails.filter(e => e.uid !== this.selectedEmail!.uid);
+                this.emails = this.emails.filter((e) => e.uid !== this.selectedEmail!.uid);
                 this.selectedEmail = undefined;
                 this.selectedEmailContent = undefined;
                 this.buildEmailList(this.isInSearchMode);
                 break;
             case 'deleteDraft':
                 await callMailWorker('deleteDraft', this.selectedEmail.uid);
-                this.emails = this.emails.filter(e => e.uid !== this.selectedEmail!.uid);
+                this.emails = this.emails.filter((e) => e.uid !== this.selectedEmail!.uid);
                 this.selectedEmail = undefined;
                 this.selectedEmailContent = undefined;
                 this.buildEmailList(this.isInSearchMode);
@@ -1540,12 +1607,15 @@ export class MailOverlay implements Component {
 
         // 默认保存路径：优先桌面，桌面不存在则用户主目录/Downloads，都不存在则用户主目录
         const homeDir = process.env.USERPROFILE || process.env.HOME || '.';
-        const candidates = [
-            path.join(homeDir, 'Desktop'),
-            path.join(homeDir, 'Downloads'),
-            homeDir,
-        ];
-        const saveDir = candidates.find(d => { try { return fs.existsSync(d) && fs.statSync(d).isDirectory(); } catch { return false; } }) || homeDir;
+        const candidates = [path.join(homeDir, 'Desktop'), path.join(homeDir, 'Downloads'), homeDir];
+        const saveDir =
+            candidates.find((d) => {
+                try {
+                    return fs.existsSync(d) && fs.statSync(d).isDirectory();
+                } catch {
+                    return false;
+                }
+            }) || homeDir;
         const defaultPath = path.join(saveDir, att.filename);
 
         this.attachmentSaveInput = new Input();
@@ -1592,7 +1662,9 @@ export class MailOverlay implements Component {
             if (fs.existsSync(p) && fs.statSync(p).isDirectory()) {
                 p = path.join(p, defaultFilename);
             }
-        } catch { /* ignore */ }
+        } catch {
+            /* ignore */
+        }
 
         // 解析为绝对路径
         return path.resolve(p);
@@ -1607,7 +1679,10 @@ export class MailOverlay implements Component {
         if (!rawInput) {
             this.errorText = '保存路径不能为空';
             this.openDeskTUI.tui.requestRender();
-            setTimeout(() => { this.errorText = undefined; this.openDeskTUI.tui.requestRender(); }, 3000);
+            setTimeout(() => {
+                this.errorText = undefined;
+                this.openDeskTUI.tui.requestRender();
+            }, 3000);
             return;
         }
 
@@ -1616,7 +1691,10 @@ export class MailOverlay implements Component {
         if (!fs.existsSync(att.path)) {
             this.errorText = `源文件不存在: ${att.filename}`;
             this.openDeskTUI.tui.requestRender();
-            setTimeout(() => { this.errorText = undefined; this.openDeskTUI.tui.requestRender(); }, 3000);
+            setTimeout(() => {
+                this.errorText = undefined;
+                this.openDeskTUI.tui.requestRender();
+            }, 3000);
             return;
         }
 
@@ -1641,12 +1719,18 @@ export class MailOverlay implements Component {
             this.errorText = `✅ 已保存到: ${destPath}`;
             this.openDeskTUI.tui.setFocus(this.attachmentList ?? null);
             this.openDeskTUI.tui.requestRender();
-            setTimeout(() => { this.errorText = undefined; this.openDeskTUI.tui.requestRender(); }, 3000);
+            setTimeout(() => {
+                this.errorText = undefined;
+                this.openDeskTUI.tui.requestRender();
+            }, 3000);
         } catch (err: any) {
             this.attachmentSaving = false;
             this.errorText = `保存失败: ${err?.message || '未知错误'}`;
             this.openDeskTUI.tui.requestRender();
-            setTimeout(() => { this.errorText = undefined; this.openDeskTUI.tui.requestRender(); }, 3000);
+            setTimeout(() => {
+                this.errorText = undefined;
+                this.openDeskTUI.tui.requestRender();
+            }, 3000);
         }
     }
 
@@ -1745,8 +1829,8 @@ export class MailOverlay implements Component {
         // 获取邮件正文摘要（取前 500 字）
         let bodySnippet = '';
         if (this.selectedEmailContent) {
-            const text = (this.selectedEmailContent.textContent?.trim())
-                || stripHtml(this.selectedEmailContent.htmlContent || '');
+            const text =
+                this.selectedEmailContent.textContent?.trim() || stripHtml(this.selectedEmailContent.htmlContent || '');
             bodySnippet = text.slice(0, 500);
         }
 
@@ -1771,7 +1855,9 @@ export class MailOverlay implements Component {
 
         // 初始化对话上下文，将邮件信息注入 system prompt
         this.chatContext = new ChatContext();
-        const detailSystemPrompt = MAIL_ASSISTANT_SYSTEM_PROMPT + '\n\n' +
+        const detailSystemPrompt =
+            MAIL_ASSISTANT_SYSTEM_PROMPT +
+            '\n\n' +
             '## 当前邮件上下文\n' +
             `用户正在查看一封邮件，信息如下：\n` +
             `- 主题: ${subject}\n` +
@@ -1985,17 +2071,23 @@ export class MailOverlay implements Component {
                 cc: draft.summary.cc || '',
                 subject: draft.summary.subject,
                 content: draft.sendArgs.text,
-                attachments: draft.summary.attachments,
-            },
+                attachments: draft.summary.attachments
+            }
         });
     }
 
     private async confirmAssistantDraft(): Promise<string> {
         if (!this.assistantPendingDraft) {
-            return JSON.stringify({ success: false, error: '没有待发送的草稿，请先让助手生成邮件内容' });
+            return JSON.stringify({
+                success: false,
+                error: '没有待发送的草稿，请先让助手生成邮件内容'
+            });
         }
         if (!this.assistantUserRepliedAfterDraft) {
-            return JSON.stringify({ success: false, error: '需要用户在草稿生成后再输入一轮确认，才能发送' });
+            return JSON.stringify({
+                success: false,
+                error: '需要用户在草稿生成后再输入一轮确认，才能发送'
+            });
         }
         try {
             const result = await callMailWorker('sendEmail', this.assistantPendingDraft.sendArgs);
@@ -2031,10 +2123,10 @@ export class MailOverlay implements Component {
             const currentEmail = this.currentAccount?.email || '';
             const toAddresses = [
                 this.selectedEmail.from?.[0]?.address,
-                ...(this.selectedEmail.to || []).filter(a => a.address !== currentEmail).map(a => a.address),
+                ...(this.selectedEmail.to || []).filter((a) => a.address !== currentEmail).map((a) => a.address)
             ].filter(Boolean);
             this.composeToInput.setValue(toAddresses.join(', '));
-            this.composeCcInput.setValue((this.selectedEmail.cc || []).map(a => a.address).join(', '));
+            this.composeCcInput.setValue((this.selectedEmail.cc || []).map((a) => a.address).join(', '));
             this.composeSubjectInput.setValue('答复全部: ' + (this.selectedEmail.subject || ''));
         } else if (type === 'forward' && this.selectedEmail) {
             this.composeToInput.setValue('');
@@ -2042,8 +2134,8 @@ export class MailOverlay implements Component {
             // 转发时自动携带原邮件的附件
             if (this.selectedEmailContent?.attachments?.length) {
                 this.composeAttachments = this.selectedEmailContent.attachments
-                    .filter(a => a.path && fs.existsSync(a.path))
-                    .map(a => ({ filename: a.filename, path: a.path }));
+                    .filter((a) => a.path && fs.existsSync(a.path))
+                    .map((a) => ({ filename: a.filename, path: a.path }));
             }
         } else {
             // 'new' — 空白邮件
@@ -2054,13 +2146,17 @@ export class MailOverlay implements Component {
         // 创建 Editor
         this.composeEditor = new Editor(this.openDeskTUI.tui, {
             ...defaultEditorTheme,
-            borderColor: () => '',
+            borderColor: () => ''
         });
 
         this.composeEditor.setText('');
 
         // 回复/回复全部时，构建原始邮件引用（不放入编辑器，单独渲染在编辑器下方）
-        if ((type === 'reply' || type === 'replyall'|| type === 'forward') && this.selectedEmail && this.selectedEmailContent) {
+        if (
+            (type === 'reply' || type === 'replyall' || type === 'forward') &&
+            this.selectedEmail &&
+            this.selectedEmailContent
+        ) {
             this.composeQuotedText = buildQuotedText(this.selectedEmail, this.selectedEmailContent);
             this.composeQuoteScrollOffset = 0;
         } else {
@@ -2071,7 +2167,7 @@ export class MailOverlay implements Component {
         this.state = 'compose';
 
         // 新邮件焦点从收件人开始；回复焦点直接到编辑器
-        if (type === 'new' ) {
+        if (type === 'new') {
             this.composeFocusIdx = 0;
             this.openDeskTUI.tui.setFocus(this.composeToInput);
         } else {
@@ -2104,12 +2200,19 @@ export class MailOverlay implements Component {
 
             // 生成 HTML：回复/回复全部时附带原始邮件引用
             let html = '';
-            if ((this.composeType === 'reply' || this.composeType === 'replyall' || this.composeType === 'forward')
-                && this.selectedEmail && this.selectedEmailContent) {
+            if (
+                (this.composeType === 'reply' || this.composeType === 'replyall' || this.composeType === 'forward') &&
+                this.selectedEmail &&
+                this.selectedEmailContent
+            ) {
                 html = buildReplyHtml(replyBody, this.selectedEmail, this.selectedEmailContent);
             } else {
                 // 新邮件：纯文本转简单 HTML
-                html = replyBody.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>');
+                html = replyBody
+                    .replace(/&/g, '&amp;')
+                    .replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;')
+                    .replace(/\n/g, '<br>');
             }
 
             await callMailWorker('sendEmail', {
@@ -2119,10 +2222,10 @@ export class MailOverlay implements Component {
                 subject,
                 text: fullText,
                 html,
-                attachments: this.composeAttachments.map(a => ({
+                attachments: this.composeAttachments.map((a) => ({
                     filename: a.filename,
-                    path: a.path,
-                })),
+                    path: a.path
+                }))
             });
 
             // 如果是编辑草稿后发送，删除原草稿
@@ -2153,12 +2256,19 @@ export class MailOverlay implements Component {
             }
             // 生成 HTML：回复/回复全部时附带原始邮件引用
             let html = '';
-            if ((this.composeType === 'reply' || this.composeType === 'replyall' || this.composeType === 'forward')
-                && this.selectedEmail && this.selectedEmailContent) {
+            if (
+                (this.composeType === 'reply' || this.composeType === 'replyall' || this.composeType === 'forward') &&
+                this.selectedEmail &&
+                this.selectedEmailContent
+            ) {
                 html = buildReplyHtml(replyBody, this.selectedEmail, this.selectedEmailContent);
             } else {
                 // 新邮件：纯文本转简单 HTML
-                html = replyBody.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>');
+                html = replyBody
+                    .replace(/&/g, '&amp;')
+                    .replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;')
+                    .replace(/\n/g, '<br>');
             }
             // 如果是编辑草稿，先删除原草稿
             if (this.draftUid) {
@@ -2172,10 +2282,10 @@ export class MailOverlay implements Component {
                 subject,
                 text: fullText,
                 html,
-                attachments: this.composeAttachments.map(a => ({
+                attachments: this.composeAttachments.map((a) => ({
                     filename: a.filename,
-                    path: a.path,
-                })),
+                    path: a.path
+                }))
             });
 
             // 存储返回的草稿 UID，以便后续编辑时能正确更新
@@ -2214,18 +2324,20 @@ export class MailOverlay implements Component {
             this.composeSubjectInput = new Input();
             this.composeCcInput = new Input();
             this.composeAttachmentInput = new Input();
-            this.composeAttachments = (content.attachments || []).map((a: any) => ({
-                filename: a.filename || nodePath.basename(a.path || ''),
-                path: a.path || '',
-            })).filter((a: any) => a.path);
+            this.composeAttachments = (content.attachments || [])
+                .map((a: any) => ({
+                    filename: a.filename || nodePath.basename(a.path || ''),
+                    path: a.path || ''
+                }))
+                .filter((a: any) => a.path);
 
-            this.composeToInput.setValue(this.selectedEmail.to?.map(a => a.address).join(', ') || '');
-            this.composeCcInput.setValue((this.selectedEmail.cc || []).map(a => a.address).join(', '));
+            this.composeToInput.setValue(this.selectedEmail.to?.map((a) => a.address).join(', ') || '');
+            this.composeCcInput.setValue((this.selectedEmail.cc || []).map((a) => a.address).join(', '));
             this.composeSubjectInput.setValue(this.selectedEmail.subject || '');
 
             this.composeEditor = new Editor(this.openDeskTUI.tui, {
                 ...defaultEditorTheme,
-                borderColor: () => '',
+                borderColor: () => ''
             });
 
             const bodyText = content.textContent || stripHtml(content.htmlContent) || '';
@@ -2303,7 +2415,7 @@ export class MailOverlay implements Component {
                     `日期: ${new Date(this.selectedEmail.date).toLocaleString()}`,
                     '',
                     '原始邮件内容：',
-                    originalBody,
+                    originalBody
                 ].join('\n');
             } else {
                 prompt = [
@@ -2311,7 +2423,7 @@ export class MailOverlay implements Component {
                     '直接给出邮件的正文内容（纯文本），不需要包含邮件头（收件人、主题等），不需要 markdown 格式。',
                     '',
                     `收件人: ${to || '(未指定)'}`,
-                    `主题: ${subject || '(未指定)'}`,
+                    `主题: ${subject || '(未指定)'}`
                 ].join('\n');
             }
 
@@ -2374,25 +2486,33 @@ export class MailOverlay implements Component {
                 const emailCount = this.emailList ? this.emails.length || 1 : 0;
                 const listPadLines = Math.max(0, listFlexLines - emailCount);
 
-                this.box.addChild(new MailHeaderBar(this.currentAccount, this.isSyncing));  // 3
-                this.box.addChild(new Text(''));                                             // 1
-                this.box.addChild(new FilterTabsBar(this.currentFilter));                   // 1
-                this.box.addChild(new SeparatorLine());                                     // 1
+                this.box.addChild(new MailHeaderBar(this.currentAccount, this.isSyncing)); // 3
+                this.box.addChild(new Text('')); // 1
+                this.box.addChild(new FilterTabsBar(this.currentFilter)); // 1
+                this.box.addChild(new SeparatorLine()); // 1
                 if (this.errorText) {
-                    this.box.addChild(new Text(MC.red(`  ⚠ ${this.errorText}`)));           // 1
+                    this.box.addChild(new Text(MC.red(`  ⚠ ${this.errorText}`))); // 1
                 }
                 if (this.emailList) {
-                    this.box.addChild(this.emailList);                                      // flex
+                    this.box.addChild(this.emailList); // flex
                 }
                 if (listPadLines > 0) {
                     this.box.addChild(new EmptyFiller(listPadLines));
                 }
                 if (this.isLoadingMore) {
-                    this.box.addChild(new Text(MC.neon('  ⟳ 正在加载更多邮件...')));        // 1
+                    this.box.addChild(new Text(MC.neon('  ⟳ 正在加载更多邮件...'))); // 1
                 }
-                this.box.addChild(new Text(''));                                             // 1
+                this.box.addChild(new Text('')); // 1
                 const listSelectedIdx = this.emailList ? getListIndex(this.emailList) : 0;
-                this.box.addChild(new ListFooter(this.accounts.length > 1, this.emails.length, this.hasMoreEmails, listSelectedIdx, this.emails.length));  // 1
+                this.box.addChild(
+                    new ListFooter(
+                        this.accounts.length > 1,
+                        this.emails.length,
+                        this.hasMoreEmails,
+                        listSelectedIdx,
+                        this.emails.length
+                    )
+                ); // 1
                 break;
             }
 
@@ -2402,21 +2522,21 @@ export class MailOverlay implements Component {
                 const searchEmailCount = this.emailList ? this.emails.length || 1 : 0;
                 const searchPadLines = Math.max(0, searchFlexLines - searchEmailCount);
 
-                this.box.addChild(new MailHeaderBar(this.currentAccount, this.isSyncing));  // 3
-                this.box.addChild(new Text(''));                                             // 1
-                this.box.addChild(new SearchResultsBar(this.searchQuery));                  // 1
-                this.box.addChild(new SeparatorLine());                                     // 1
+                this.box.addChild(new MailHeaderBar(this.currentAccount, this.isSyncing)); // 3
+                this.box.addChild(new Text('')); // 1
+                this.box.addChild(new SearchResultsBar(this.searchQuery)); // 1
+                this.box.addChild(new SeparatorLine()); // 1
                 if (this.errorText) {
-                    this.box.addChild(new Text(MC.red(`  ⚠ ${this.errorText}`)));           // 1
+                    this.box.addChild(new Text(MC.red(`  ⚠ ${this.errorText}`))); // 1
                 }
                 if (this.emailList) {
-                    this.box.addChild(this.emailList);                                      // flex
+                    this.box.addChild(this.emailList); // flex
                 }
                 if (searchPadLines > 0) {
                     this.box.addChild(new EmptyFiller(searchPadLines));
                 }
-                this.box.addChild(new Text(''));                                             // 1
-                this.box.addChild(new SearchFooter());                                      // 1
+                this.box.addChild(new Text('')); // 1
+                this.box.addChild(new SearchFooter()); // 1
                 break;
             }
 
@@ -2426,35 +2546,43 @@ export class MailOverlay implements Component {
                 const smEmailCount = this.emailList ? this.emails.length || 1 : 0;
                 const smPadLines = Math.max(0, smFlexLines - smEmailCount);
 
-                this.box.addChild(new MailHeaderBar(this.currentAccount, this.isSyncing));  // 3
-                this.box.addChild(new Text(''));                                             // 1
-                this.box.addChild(new Text(MC.dim('  输入搜索关键词，支持语法：from: 发件人 | to: 收件人 | subject: 主题 | body: 正文 | date: 日期'))); // 1
-                this.box.addChild(new Text(''));                                             // 1
+                this.box.addChild(new MailHeaderBar(this.currentAccount, this.isSyncing)); // 3
+                this.box.addChild(new Text('')); // 1
+                this.box.addChild(
+                    new Text(
+                        MC.dim(
+                            '  输入搜索关键词，支持语法：from: 发件人 | to: 收件人 | subject: 主题 | body: 正文 | date: 日期'
+                        )
+                    )
+                ); // 1
+                this.box.addChild(new Text('')); // 1
                 if (this.searchInput) {
-                    this.box.addChild(new SearchInputWrapper(this.searchInput));            // 1
+                    this.box.addChild(new SearchInputWrapper(this.searchInput)); // 1
                 }
-                this.box.addChild(new SeparatorLine());                                     // 1
+                this.box.addChild(new SeparatorLine()); // 1
                 if (this.emailList) {
-                    this.box.addChild(this.emailList);                                      // flex
+                    this.box.addChild(this.emailList); // flex
                 }
                 if (smPadLines > 0) {
                     this.box.addChild(new EmptyFiller(smPadLines));
                 }
-                this.box.addChild(new Text(''));                                             // 1
-                this.box.addChild(new SearchModeFooter());                                  // 1
+                this.box.addChild(new Text('')); // 1
+                this.box.addChild(new SearchModeFooter()); // 1
                 break;
             }
 
             case 'assistant': {
                 this.box.addChild(new MailHeaderBar(this.currentAccount, this.isSyncing));
                 this.box.addChild(new Text(''));
-                this.box.addChild(new Text(MC.dim('  描述你的需求，例如：查找最近关于「周报」的邮件；对第3封邮件做摘要。')));
+                this.box.addChild(
+                    new Text(MC.dim('  描述你的需求，例如：查找最近关于「周报」的邮件；对第3封邮件做摘要。'))
+                );
                 this.box.addChild(new Text(''));
 
                 // 计算可用空间
                 const headerLines = 5; // 标题和提示占 5 行
                 const footerLines = 3; // 底部提示和输入框占 3 行
-                let conversationLines = Math.max(3, availableForContent - headerLines - footerLines);
+                const conversationLines = Math.max(3, availableForContent - headerLines - footerLines);
 
                 // 构建完整的对话历史，包括正在生成的内容
                 let displayHistory = this.conversationHistory;
@@ -2527,11 +2655,13 @@ export class MailOverlay implements Component {
                 this.assistantResultVisibleLines = bodyLines;
 
                 this.box.addChild(new Text(''));
-                this.box.addChild(new AssistantResultFooter(
-                    this.assistantResultScrollOffset,
-                    this.assistantResultTotalLines,
-                    this.assistantResultVisibleLines
-                ));
+                this.box.addChild(
+                    new AssistantResultFooter(
+                        this.assistantResultScrollOffset,
+                        this.assistantResultTotalLines,
+                        this.assistantResultVisibleLines
+                    )
+                );
                 break;
             }
 
@@ -2557,7 +2687,9 @@ export class MailOverlay implements Component {
                         this.box.addChild(new SeparatorLine('─'));
 
                         const bodyView = new ScrollableEmailBody(
-                            this.selectedEmailContent, bodyLines, this.detailScrollOffset
+                            this.selectedEmailContent,
+                            bodyLines,
+                            this.detailScrollOffset
                         );
                         this.box.addChild(bodyView);
                         this.detailBodyTotalLines = bodyView.getTotalLines();
@@ -2573,7 +2705,9 @@ export class MailOverlay implements Component {
                     }
                     if (this.errorText) {
                         const isSuccess = this.errorText.startsWith('✅');
-                        this.box.addChild(new Text(isSuccess ? MC.green(`  ${this.errorText}`) : MC.red(`  ⚠ ${this.errorText}`)));
+                        this.box.addChild(
+                            new Text(isSuccess ? MC.green(`  ${this.errorText}`) : MC.red(`  ⚠ ${this.errorText}`))
+                        );
                     }
                     this.box.addChild(new SeparatorLine());
                     this.box.addChild(new AttachmentFooterBar(!!this.attachmentSaveInput));
@@ -2590,20 +2724,24 @@ export class MailOverlay implements Component {
                         this.box.addChild(new SeparatorLine('─'));
 
                         const bodyView = new ScrollableEmailBody(
-                            this.selectedEmailContent, bodyLines, this.detailScrollOffset
+                            this.selectedEmailContent,
+                            bodyLines,
+                            this.detailScrollOffset
                         );
                         this.box.addChild(bodyView);
                         this.detailBodyTotalLines = bodyView.getTotalLines();
                         this.detailBodyVisibleLines = bodyLines;
                     }
                     this.box.addChild(new SeparatorLine());
-                    this.box.addChild(new DetailFooter(
-                        this.detailScrollOffset,
-                        this.detailBodyTotalLines,
-                        this.detailBodyVisibleLines,
-                        this.selectedEmail,
-                        hasAtt,
-                    ));
+                    this.box.addChild(
+                        new DetailFooter(
+                            this.detailScrollOffset,
+                            this.detailBodyTotalLines,
+                            this.detailBodyVisibleLines,
+                            this.selectedEmail,
+                            hasAtt
+                        )
+                    );
                 }
                 break;
             }
@@ -2627,26 +2765,63 @@ export class MailOverlay implements Component {
                     quoteLines = 0;
                 }
 
-                const typeLabel = this.composeType === 'new' ? '写信'
-                    : this.composeType === 'replyall' ? '回复全部'
-                    : this.composeType === 'forward' ? '转发邮件'
-                        : '回复邮件';
+                const typeLabel =
+                    this.composeType === 'new'
+                        ? '写信'
+                        : this.composeType === 'replyall'
+                          ? '回复全部'
+                          : this.composeType === 'forward'
+                            ? '转发邮件'
+                            : '回复邮件';
                 this.box.addChild(new ComposeHeaderBar(typeLabel, this.composeSending, this.isAiGenerating));
                 if (this.composeToInput) {
-                    this.box.addChild(new ComposeField('收件人', this.composeToInput, fields[this.composeFocusIdx] === this.composeToInput));
+                    this.box.addChild(
+                        new ComposeField(
+                            '收件人',
+                            this.composeToInput,
+                            fields[this.composeFocusIdx] === this.composeToInput
+                        )
+                    );
                 }
                 if (this.composeCcInput) {
-                    this.box.addChild(new ComposeField('抄  送', this.composeCcInput, fields[this.composeFocusIdx] === this.composeCcInput));
+                    this.box.addChild(
+                        new ComposeField(
+                            '抄  送',
+                            this.composeCcInput,
+                            fields[this.composeFocusIdx] === this.composeCcInput
+                        )
+                    );
                 }
                 if (this.composeSubjectInput) {
-                    this.box.addChild(new ComposeField('主  题', this.composeSubjectInput, fields[this.composeFocusIdx] === this.composeSubjectInput));
+                    this.box.addChild(
+                        new ComposeField(
+                            '主  题',
+                            this.composeSubjectInput,
+                            fields[this.composeFocusIdx] === this.composeSubjectInput
+                        )
+                    );
                 }
                 if (this.composeAttachmentInput) {
                     const attachmentFocused = fields[this.composeFocusIdx] === this.composeAttachmentInput;
                     // 错误提示和成功提示直接显示在附件输入框下方
-                    this.box.addChild(new ComposeField('附  件', this.composeAttachmentInput, attachmentFocused, '输入文件完整路径后按 Enter 添加', this.errorText, this.successText));
+                    this.box.addChild(
+                        new ComposeField(
+                            '附  件',
+                            this.composeAttachmentInput,
+                            attachmentFocused,
+                            '输入文件完整路径后按 Enter 添加',
+                            this.errorText,
+                            this.successText
+                        )
+                    );
                     if (this.composeAttachments.length > 0) {
-                        this.box.addChild(new ComposeAttachmentList(this.composeAttachments, this.composeAttachmentSelectedIdx, attachmentFocused));
+                        this.box.addChild(
+                            new ComposeAttachmentList(
+                                this.composeAttachments,
+                                this.composeAttachmentSelectedIdx,
+                                attachmentFocused
+                            )
+                        );
                     }
                 }
                 this.box.addChild(new SeparatorLine('─'));
@@ -2658,18 +2833,19 @@ export class MailOverlay implements Component {
 
                 if (this.composeQuotedText && quoteLines > 0) {
                     this.box.addChild(new SeparatorLine('┄'));
-                    this.box.addChild(new QuotedTextView(this.composeQuotedText, quoteLines, this.composeQuoteScrollOffset));
+                    this.box.addChild(
+                        new QuotedTextView(this.composeQuotedText, quoteLines, this.composeQuoteScrollOffset)
+                    );
                 }
 
                 this.box.addChild(new SeparatorLine());
                 this.box.addChild(new ComposeFooterBar(this.composeAttachments.length));
                 break;
             }
-
         }
 
         // 安全截断：清洗控制字符（TAB→空格）后再截断，防止 visibleWidth 与实际渲染宽度不一致
-        return this.box.render(width).map(l => truncateToWidth(sanitizeLine(l), width, '', true));
+        return this.box.render(width).map((l) => truncateToWidth(sanitizeLine(l), width, '', true));
     }
 }
 
@@ -2678,8 +2854,11 @@ export class MailOverlay implements Component {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 class MailHeaderBar implements Component {
-    constructor(private account: any, private syncing: boolean) { }
-    invalidate() { }
+    constructor(
+        private account: any,
+        private syncing: boolean
+    ) {}
+    invalidate() {}
     render(width: number): string[] {
         const bar = MC.ghost('━'.repeat(width));
 
@@ -2687,9 +2866,7 @@ class MailHeaderBar implements Component {
         const title = MC.neonBold(' OPENDESK MAIL');
         const syncTag = this.syncing ? MC.neon(' ⟳ 同步中') : '';
 
-        const accountName = this.account
-            ? MC.dim(this.account.name || this.account.email)
-            : MC.dim('未配置账号');
+        const accountName = this.account ? MC.dim(this.account.name || this.account.email) : MC.dim('未配置账号');
 
         const leftPart = `  ${logo}${title}${syncTag}`;
         const leftVis = visibleWidth(leftPart);
@@ -2708,7 +2885,7 @@ class MailHeaderBar implements Component {
 }
 
 class DetailHeaderBar implements Component {
-    invalidate() { }
+    invalidate() {}
     render(width: number): string[] {
         const bar = MC.ghost('━'.repeat(width));
         const logo = MC.neonBold('◈');
@@ -2731,10 +2908,10 @@ class DetailHeaderBar implements Component {
 }
 
 class FilterTabsBar implements Component {
-    constructor(private current: FilterType) { }
-    invalidate() { }
+    constructor(private current: FilterType) {}
+    invalidate() {}
     render(width: number): string[] {
-        const tabs = FILTERS.map(f => {
+        const tabs = FILTERS.map((f) => {
             if (f.value === this.current) {
                 return MC.neonBold(`[${f.key}:${f.label}]`);
             }
@@ -2745,8 +2922,8 @@ class FilterTabsBar implements Component {
 }
 
 class SeparatorLine implements Component {
-    constructor(private char: string = '━') { }
-    invalidate() { }
+    constructor(private char: string = '━') {}
+    invalidate() {}
     render(width: number): string[] {
         return [MC.ghost(this.char.repeat(width))];
     }
@@ -2754,8 +2931,8 @@ class SeparatorLine implements Component {
 
 /** 空行填充，用于列表项不足时填满剩余空间 */
 class EmptyFiller implements Component {
-    constructor(private lines: number) { }
-    invalidate() { }
+    constructor(private lines: number) {}
+    invalidate() {}
     render(_width: number): string[] {
         return Array(this.lines).fill('');
     }
@@ -2763,8 +2940,11 @@ class EmptyFiller implements Component {
 
 /** 加载状态占位：垂直居中显示加载文字，精确填满指定行数 */
 class VerticalFiller implements Component {
-    constructor(private text: string, private totalLines: number) { }
-    invalidate() { }
+    constructor(
+        private text: string,
+        private totalLines: number
+    ) {}
+    invalidate() {}
     render(_width: number): string[] {
         const lines: string[] = [];
         const padTop = Math.max(0, Math.floor(this.totalLines / 2));
@@ -2782,14 +2962,13 @@ class ListFooter implements Component {
         private emailCount: number,
         private hasMore: boolean,
         private selectedIndex: number,
-        private totalCount: number,
-    ) { }
-    invalidate() { }
+        private totalCount: number
+    ) {}
+    invalidate() {}
     render(width: number): string[] {
         // 左侧：位置指示 + 操作提示
-        const position = this.totalCount > 0
-            ? MC.neonBold(` ${this.selectedIndex + 1}/${this.totalCount} `)
-            : MC.dim(' 0/0 ');
+        const position =
+            this.totalCount > 0 ? MC.neonBold(` ${this.selectedIndex + 1}/${this.totalCount} `) : MC.dim(' 0/0 ');
 
         const hints = [
             MC.neon('↑↓') + MC.dim(' 选择'),
@@ -2799,7 +2978,7 @@ class ListFooter implements Component {
             MC.neon('1-5') + MC.dim(' 筛选'),
             MC.neon('s') + MC.dim(' 同步'),
             MC.neon('p') + MC.dim(' 助手'),
-            MC.neon('l') + MC.dim(' 搜索'),
+            MC.neon('l') + MC.dim(' 搜索')
         ];
         if (this.multiAccount) {
             hints.push(MC.neon('a') + MC.dim(' 切换账号'));
@@ -2824,19 +3003,16 @@ class ListFooter implements Component {
 }
 
 class AssistantFooter implements Component {
-    invalidate() { }
+    invalidate() {}
     render(width: number): string[] {
-        const hints = [
-            MC.neon('Enter') + MC.dim(' 发送'),
-            MC.neon('ESC') + MC.dim(' 返回'),
-        ];
+        const hints = [MC.neon('Enter') + MC.dim(' 发送'), MC.neon('ESC') + MC.dim(' 返回')];
         return [truncateToWidth('  ' + hints.join('   '), width, '…')];
     }
 }
 
 class SearchResultsBar implements Component {
-    constructor(private query: string) { }
-    invalidate() { }
+    constructor(private query: string) {}
+    invalidate() {}
     render(width: number): string[] {
         const label = MC.neonBold(' 🔍 搜索结果');
         const queryText = MC.bright(`"${this.query}"`);
@@ -2848,31 +3024,30 @@ class SearchResultsBar implements Component {
 }
 
 class SearchFooter implements Component {
-    invalidate() { }
+    invalidate() {}
     render(width: number): string[] {
         const hints = [
             MC.neon('↑↓') + MC.dim(' 选择'),
             MC.neon('Enter') + MC.dim(' 查看'),
-            MC.neon('ESC') + MC.dim(' 退出搜索'),
+            MC.neon('ESC') + MC.dim(' 退出搜索')
         ];
         return [truncateToWidth('  ' + hints.join('   '), width, '…')];
     }
 }
 
 class SearchModeFooter implements Component {
-    invalidate() { }
+    invalidate() {}
     render(width: number): string[] {
-        const hints = [
-            MC.neon('Enter') + MC.dim(' 搜索'),
-            MC.neon('ESC') + MC.dim(' 取消'),
-        ];
+        const hints = [MC.neon('Enter') + MC.dim(' 搜索'), MC.neon('ESC') + MC.dim(' 取消')];
         return [truncateToWidth('  ' + hints.join('   '), width, '…')];
     }
 }
 
 class SearchInputWrapper implements Component {
-    constructor(private input: Input) { }
-    invalidate() { this.input.invalidate(); }
+    constructor(private input: Input) {}
+    invalidate() {
+        this.input.invalidate();
+    }
     render(width: number): string[] {
         const prefix = MC.dim('  搜索: ');
         const prefixVis = visibleWidth(prefix);
@@ -2884,8 +3059,11 @@ class SearchInputWrapper implements Component {
 }
 
 class EmailMetadata implements Component {
-    constructor(private email: EmailHeader, private content: EmailContent) { }
-    invalidate() { }
+    constructor(
+        private email: EmailHeader,
+        private content: EmailContent
+    ) {}
+    invalidate() {}
     render(width: number): string[] {
         const lines: string[] = [];
         const e = this.email;
@@ -2913,7 +3091,7 @@ class EmailMetadata implements Component {
         lines.push(metaLine('日  期', new Date(e.date).toLocaleString()));
 
         if (this.content?.attachments && this.content.attachments.length > 0) {
-            const names = this.content.attachments.map(a => a.filename).join(', ');
+            const names = this.content.attachments.map((a) => a.filename).join(', ');
             lines.push(metaLine('附  件', MC.amber(names)));
         }
 
@@ -2924,8 +3102,12 @@ class EmailMetadata implements Component {
 // ━━━ 撰写子组件 ━━━
 
 class ComposeHeaderBar implements Component {
-    constructor(private label: string, private sending: boolean, private aiGen: boolean) { }
-    invalidate() { }
+    constructor(
+        private label: string,
+        private sending: boolean,
+        private aiGen: boolean
+    ) {}
+    invalidate() {}
     render(width: number): string[] {
         const bar = MC.ghost('━'.repeat(width));
         const logo = MC.neonBold('◈');
@@ -2958,9 +3140,11 @@ class ComposeField implements Component {
         private active: boolean,
         private placeholder?: string,
         private errorText?: string,
-        private successText?: string,
-    ) { }
-    invalidate() { this.input.invalidate(); }
+        private successText?: string
+    ) {}
+    invalidate() {
+        this.input.invalidate();
+    }
     render(width: number): string[] {
         const lines: string[] = [];
         const prefix = `  ${MC.dim(this.label + '  ')}`;
@@ -2998,8 +3182,12 @@ const SPINNER_CHARS = '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏';
 
 /** AI 生成中的 Spinner 占位视图 */
 class SpinnerView implements Component {
-    constructor(private text: string, private frame: number, private maxLines: number) { }
-    invalidate() { }
+    constructor(
+        private text: string,
+        private frame: number,
+        private maxLines: number
+    ) {}
+    invalidate() {}
     render(_width: number): string[] {
         const char = SPINNER_CHARS[this.frame % SPINNER_CHARS.length];
         const lines: string[] = [];
@@ -3016,9 +3204,9 @@ class ComposeAttachmentList implements Component {
     constructor(
         private attachments: Array<{ filename: string; path: string }>,
         private selectedIdx: number,
-        private isFocused: boolean,
-    ) { }
-    invalidate() { }
+        private isFocused: boolean
+    ) {}
+    invalidate() {}
     render(width: number): string[] {
         const lines: string[] = [];
         for (let i = 0; i < this.attachments.length; i++) {
@@ -3035,14 +3223,14 @@ class ComposeAttachmentList implements Component {
 }
 
 class ComposeFooterBar implements Component {
-    constructor(private attachmentCount: number = 0) { }
-    invalidate() { }
+    constructor(private attachmentCount: number = 0) {}
+    invalidate() {}
     render(width: number): string[] {
         const hints = [
             MC.neon('Tab') + MC.dim(' 切换字段'),
             MC.neon('Ctrl+S') + MC.dim(' 发送'),
             MC.neon('Ctrl+D') + MC.dim(' 保存草稿'),
-            MC.neon('Ctrl+W') + MC.dim(' 帮我写'),
+            MC.neon('Ctrl+W') + MC.dim(' 帮我写')
         ];
         if (this.attachmentCount > 0) {
             hints.push(MC.neon('↑↓') + MC.dim(' 选附件') + '  ' + MC.neon('Ctrl+X') + MC.dim(' 删除'));
@@ -3059,12 +3247,12 @@ class QuotedTextView implements Component {
     constructor(
         private quotedText: string,
         private maxLines: number,
-        private scrollOffset: number,
+        private scrollOffset: number
     ) {
         this.allLines = quotedText.split('\n');
     }
 
-    invalidate() { }
+    invalidate() {}
 
     getTotalLines(): number {
         return this.allLines.length;
@@ -3102,10 +3290,10 @@ class QuotedTextView implements Component {
         }
         while (result.length < bodyArea) result.push('');
 
-        const progress = total > bodyArea
-            ? Math.round((offset / (total - bodyArea)) * 100)
-            : 100;
-        const indicator = MC.ghost(`  ── 原始邮件 ${progress}%  (${offset + 1}-${Math.min(offset + bodyArea, total)}/${total}行) ──`);
+        const progress = total > bodyArea ? Math.round((offset / (total - bodyArea)) * 100) : 100;
+        const indicator = MC.ghost(
+            `  ── 原始邮件 ${progress}%  (${offset + 1}-${Math.min(offset + bodyArea, total)}/${total}行) ──`
+        );
         result.push(truncateToWidth(indicator, width, '…'));
 
         return result;
@@ -3114,8 +3302,13 @@ class QuotedTextView implements Component {
 
 /** 包装 Editor 组件，精确输出 maxLines 行 */
 class EditorWrapper implements Component {
-    constructor(private editor: Editor, private maxLines: number) { }
-    invalidate() { this.editor.invalidate(); }
+    constructor(
+        private editor: Editor,
+        private maxLines: number
+    ) {}
+    invalidate() {
+        this.editor.invalidate();
+    }
     render(width: number): string[] {
         const editorLines = this.editor.render(width);
         const result = editorLines.slice(0, this.maxLines);
@@ -3137,12 +3330,12 @@ class ScrollableEmailBody implements Component {
     constructor(
         private content: EmailContent,
         private visibleLines: number,
-        private scrollOffset: number,
+        private scrollOffset: number
     ) {
         this.allLines = this.prepareLines();
     }
 
-    invalidate() { }
+    invalidate() {}
 
     /** 预处理：将邮件内容拆成纯文本行数组 */
     private prepareLines(): string[] {
@@ -3191,11 +3384,11 @@ class ScrollableEmailBody implements Component {
         const result: string[] = [];
         for (const rawLine of display) {
             const line = sanitizeLine(rawLine);
-                let styledLine = line;
-                if (line.startsWith('我:')) {
-                    styledLine = MC.neon(line);
-                }
-                result.push(truncateToWidth('  ' + styledLine, width - 2, '…'));
+            let styledLine = line;
+            if (line.startsWith('我:')) {
+                styledLine = MC.neon(line);
+            }
+            result.push(truncateToWidth('  ' + styledLine, width - 2, '…'));
         }
 
         // 补齐 bodyArea 行
@@ -3204,11 +3397,11 @@ class ScrollableEmailBody implements Component {
         }
 
         // 滚动指示器
-        const progress = total > bodyArea
-            ? Math.round((offset / (total - bodyArea)) * 100)
-            : 100;
+        const progress = total > bodyArea ? Math.round((offset / (total - bodyArea)) * 100) : 100;
         const scrollBar = this.renderScrollBar(width - 6, bodyArea, total, offset);
-        const indicator = MC.dim(`  ${scrollBar}  ${progress}%  (${offset + 1}-${Math.min(offset + bodyArea, total)}/${total}行)`);
+        const indicator = MC.dim(
+            `  ${scrollBar}  ${progress}%  (${offset + 1}-${Math.min(offset + bodyArea, total)}/${total}行)`
+        );
         result.push(truncateToWidth(indicator, width, '…'));
 
         return result;
@@ -3238,12 +3431,11 @@ class AssistantResultFooter implements Component {
     constructor(
         private scrollOffset: number,
         private totalLines: number,
-        private visibleLines: number,
-    ) { }
-    invalidate() { }
+        private visibleLines: number
+    ) {}
+    invalidate() {}
     render(width: number): string[] {
         const hints: string[] = [];
-
 
         // 操作提示
         hints.push(MC.neon('ESC/任意键') + MC.dim(' 返回'));
@@ -3259,9 +3451,9 @@ class DetailFooter implements Component {
         private totalLines: number,
         private visibleLines: number,
         private email?: EmailHeader,
-        private hasAttachments = false,
-    ) { }
-    invalidate() { }
+        private hasAttachments = false
+    ) {}
+    invalidate() {}
     render(width: number): string[] {
         const hints: string[] = [];
 
@@ -3297,8 +3489,8 @@ class DetailFooter implements Component {
 
 /** 内嵌附件标题行（单行，紧凑） */
 class AttachmentInlineHeader implements Component {
-    constructor(private count: number) { }
-    invalidate() { }
+    constructor(private count: number) {}
+    invalidate() {}
     render(width: number): string[] {
         const icon = MC.neonBold('📎');
         const title = MC.neonBold(` 附件 (${this.count})`);
@@ -3308,8 +3500,8 @@ class AttachmentInlineHeader implements Component {
 
 /** 附件面板底部操作提示 */
 class AttachmentFooterBar implements Component {
-    constructor(private isSaving: boolean) { }
-    invalidate() { }
+    constructor(private isSaving: boolean) {}
+    invalidate() {}
     render(width: number): string[] {
         const hints: string[] = [];
         if (this.isSaving) {
@@ -3326,8 +3518,13 @@ class AttachmentFooterBar implements Component {
 
 /** 另存为路径输入字段 */
 class SaveAsField implements Component {
-    constructor(private input: Input, private saving: boolean) { }
-    invalidate() { this.input.invalidate(); }
+    constructor(
+        private input: Input,
+        private saving: boolean
+    ) {}
+    invalidate() {
+        this.input.invalidate();
+    }
     render(width: number): string[] {
         const label = this.saving ? MC.amber('  保存中... ') : MC.neon('  另存为: ');
         const labelVis = visibleWidth(label);

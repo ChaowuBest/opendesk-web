@@ -9,10 +9,10 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { Component } from "@mariozechner/pi-tui";
-import type { TaskTodo } from "../../aikernel/todos/task-todos";
-import chalk from "chalk";
-import { Card, type BorderConfig } from "./card";
+import { Component } from '@mariozechner/pi-tui';
+import type { TaskTodo } from '../../aikernel/todos/task-todos';
+import chalk from 'chalk';
+import { Card, type BorderConfig } from './card';
 
 /**
  * TodoList component for CLI
@@ -29,7 +29,7 @@ export class TodoList implements Component {
     private accentColor = chalk.hex('#F96850');
     private borderConfig: BorderConfig = {
         style: 'square',
-        colorFn: this.accentColor,
+        colorFn: this.accentColor
     };
 
     /**
@@ -39,10 +39,9 @@ export class TodoList implements Component {
     setTodos(todos: TaskTodo[]): boolean {
         const hasChanged =
             this.todos.length !== todos.length ||
-            this.todos.some((todo, i) =>
-                todo.id !== todos[i]?.id ||
-                todo.content !== todos[i]?.content ||
-                todo.status !== todos[i]?.status
+            this.todos.some(
+                (todo, i) =>
+                    todo.id !== todos[i]?.id || todo.content !== todos[i]?.content || todo.status !== todos[i]?.status
             );
 
         if (hasChanged) {
@@ -82,18 +81,18 @@ export class TodoList implements Component {
 
     private getStatusIcon(status: string): string {
         const map: Record<string, string> = {
-            'pending': '○',
-            'in_progress': '●',
-            'completed': '✓',
+            pending: '○',
+            in_progress: '●',
+            completed: '✓'
         };
         return map[status] || '○';
     }
 
     private getStatusColor(status: string): (s: string) => string {
         const map: Record<string, (s: string) => string> = {
-            'pending': chalk.gray,
-            'in_progress': chalk.blueBright,
-            'completed': chalk.green,
+            pending: chalk.gray,
+            in_progress: chalk.blueBright,
+            completed: chalk.green
         };
         return map[status] || chalk.gray;
     }
@@ -130,7 +129,7 @@ export class TodoList implements Component {
             icon: '📋',
             title: '当前待办',
             body: bodyLines,
-            border: this.borderConfig,
+            border: this.borderConfig
         });
 
         this.cachedOutput = card.render(width);

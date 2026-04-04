@@ -9,21 +9,21 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { BaseApplication, EventDecl } from "../base";
-import { BaseTool, BaseToolset } from "../../aikernel/tool";
+import { BaseApplication, EventDecl } from '../base';
+import { BaseTool, BaseToolset } from '../../aikernel/tool';
 import { z } from 'zod';
 import { Setting } from '../../utils/setting.js';
 import { InstallMcpServerTool, ListMcpServersTool, DeleteMcpServerTool, ToggleMcpServerTool } from './tools';
-import { Skill } from "../../aikernel/skill.js";
+import { Skill } from '../../aikernel/skill.js';
 import type { McpServerConfig, McpToolInfo } from './common.js';
-import McpMgrWorker from "./worker";
-import { MANAGE_MCP_SKILL } from "./skills.js";
-
+import McpMgrWorker from './worker';
+import { MANAGE_MCP_SKILL } from './skills.js';
 
 const McpServerConfigSchema = z.object({
     id: z.string().describe('服务唯一标识符（自动生成）').default(''),
     name: z.string().describe('MCP 服务显示名称，如 filesystem、github 等').default(''),
-    transport: z.enum(['stdio', 'sse', 'streamableHttp'])
+    transport: z
+        .enum(['stdio', 'sse', 'streamableHttp'])
         .describe('传输协议类型：stdio 本地命令行进程，sse 服务器推送事件，streamableHttp 流式 HTTP')
         .default('stdio'),
     enabled: z.boolean().describe('是否启用该 MCP 服务').default(true),
@@ -32,11 +32,11 @@ const McpServerConfigSchema = z.object({
     cwd: z.string().describe('stdio 传输时的工作目录路径').optional(),
     url: z.string().describe('sse/streamableHttp 传输时的服务端 URL 地址').optional(),
     env: z.record(z.string(), z.string()).describe('stdio 传输时附加的环境变量键值对').default({}),
-    headers: z.record(z.string(), z.string()).describe('sse/streamableHttp 传输时附加的 HTTP 请求头').default({}),
+    headers: z.record(z.string(), z.string()).describe('sse/streamableHttp 传输时附加的 HTTP 请求头').default({})
 });
 
 const McpMgrConfigSchema = z.object({
-    servers: z.array(McpServerConfigSchema).describe('MCP 服务配置列表').default([]),
+    servers: z.array(McpServerConfigSchema).describe('MCP 服务配置列表').default([])
 });
 
 export class McpMgrApplication extends BaseApplication {
@@ -63,7 +63,7 @@ export class McpMgrApplication extends BaseApplication {
         if (!fullData.applications) fullData.applications = {};
         fullData.applications[this.bundleName] = {
             ...fullData.applications[this.bundleName],
-            servers,
+            servers
         };
         setting.setData(fullData);
     }
@@ -80,8 +80,10 @@ export class McpMgrApplication extends BaseApplication {
         }
 
         // sse/streamableHttp 传输：检查 url 是否相同
-        if ((a.transport === 'sse' || a.transport === 'streamableHttp') &&
-            (b.transport === 'sse' || b.transport === 'streamableHttp')) {
+        if (
+            (a.transport === 'sse' || a.transport === 'streamableHttp') &&
+            (b.transport === 'sse' || b.transport === 'streamableHttp')
+        ) {
             if (a.url === b.url) {
                 return true;
             }
@@ -94,7 +96,7 @@ export class McpMgrApplication extends BaseApplication {
         const servers = this.getServersFromConfig();
 
         // 检查是否已存在相同配置的服务器
-        const duplicate = servers.find(s => this.isServerDuplicate(s, config));
+        const duplicate = servers.find((s) => this.isServerDuplicate(s, config));
         if (duplicate) {
             throw new Error(`MCP server "${config.name}" already exists with similar configuration`);
         }
@@ -108,7 +110,7 @@ export class McpMgrApplication extends BaseApplication {
 
     async updateServer(id: string, updates: Partial<McpServerConfig>): Promise<void> {
         const servers = this.getServersFromConfig();
-        const idx = servers.findIndex(s => s.id === id);
+        const idx = servers.findIndex((s) => s.id === id);
         if (idx === -1) throw new Error('Server not found');
         servers[idx] = { ...servers[idx], ...updates, id };
         this.saveServersToConfig(servers);
@@ -116,14 +118,14 @@ export class McpMgrApplication extends BaseApplication {
     }
 
     async deleteServer(id: string): Promise<void> {
-        const servers = this.getServersFromConfig().filter(s => s.id !== id);
+        const servers = this.getServersFromConfig().filter((s) => s.id !== id);
         this.saveServersToConfig(servers);
         this.sendEventToSubscribers('serversUpdated');
     }
 
     async toggleServer(id: string, enabled: boolean): Promise<void> {
         const servers = this.getServersFromConfig();
-        const server = servers.find(s => s.id === id);
+        const server = servers.find((s) => s.id === id);
         if (!server) throw new Error('Server not found');
         server.enabled = enabled;
         this.saveServersToConfig(servers);
@@ -144,7 +146,7 @@ export class McpMgrApplication extends BaseApplication {
                 enabled: true,
                 command: cfg.command,
                 args: cfg.args || [],
-                env: cfg.env || {},
+                env: cfg.env || {}
             };
             if (cfg.url) {
                 config.transport = cfg.url?.includes('/sse') ? 'sse' : 'streamableHttp';
@@ -184,11 +186,7 @@ export class McpMgrApplication extends BaseApplication {
                     schema = z.object({}).passthrough();
                 }
 
-                const baseTool = new BaseTool(
-                    safeName,
-                    `[MCP: ${tool.serverName}] ${tool.description}`,
-                    schema,
-                );
+                const baseTool = new BaseTool(safeName, `[MCP: ${tool.serverName}] ${tool.description}`, schema);
 
                 const serverId = tool.serverId;
                 const toolName = tool.name;
@@ -207,14 +205,14 @@ export class McpMgrApplication extends BaseApplication {
     }
 
     async getSkills(): Promise<Skill[]> {
-        let mcpManageSkill = Skill.parseMd(MANAGE_MCP_SKILL);
-        let mcpManageToolset = new BaseToolset('mcp-manage');
+        const mcpManageSkill = Skill.parseMd(MANAGE_MCP_SKILL);
+        const mcpManageToolset = new BaseToolset('mcp-manage');
 
         mcpManageToolset.addTool(new InstallMcpServerTool(this));
         mcpManageToolset.addTool(new ListMcpServersTool(this));
         mcpManageToolset.addTool(new DeleteMcpServerTool(this));
         mcpManageToolset.addTool(new ToggleMcpServerTool(this));
-        mcpManageSkill.toolsets = [mcpManageToolset]
+        mcpManageSkill.toolsets = [mcpManageToolset];
         return [mcpManageSkill];
     }
 
@@ -225,8 +223,8 @@ export class McpMgrApplication extends BaseApplication {
         return [
             {
                 eventName: 'serversUpdated',
-                eventDescription: 'MCP服务器列表更新事件，当添加、删除、修改服务器配置或连接状态变化时触发',
-            },
+                eventDescription: 'MCP服务器列表更新事件，当添加、删除、修改服务器配置或连接状态变化时触发'
+            }
         ];
     }
 }

@@ -14,7 +14,14 @@ import path from 'path';
 import fs from 'fs';
 import { createRequire } from 'module';
 import { fileURLToPath } from 'url';
-import type { TagIndexRecord, QueryCondition, QueryOptions, UpdateData, TagQueryOperator, ITagIndexDB } from './tag-indexer.js';
+import type {
+    TagIndexRecord,
+    QueryCondition,
+    QueryOptions,
+    UpdateData,
+    TagQueryOperator,
+    ITagIndexDB
+} from './tag-indexer.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -24,74 +31,82 @@ const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string }).r
 
 // ── HM Addon 类型定义 ─────────────────────────────────────────────
 type HmSqliteAddon = {
-  open: (filename: string) => unknown;
-  close: (db: unknown) => void;
-  exec: (db: unknown, sql: string) => Promise<any[]>;
-  beginTransaction: (db: unknown) => Promise<void>;
-  commitTransaction: (db: unknown) => Promise<void>;
-  rollbackTransaction: (db: unknown) => Promise<void>;
-  prepare: (db: unknown, sql: string) => Promise<unknown>;
-  run: (stmt: unknown, params: any[]) => Promise<void>;
+    open: (filename: string) => unknown;
+    close: (db: unknown) => void;
+    exec: (db: unknown, sql: string) => Promise<any[]>;
+    beginTransaction: (db: unknown) => Promise<void>;
+    commitTransaction: (db: unknown) => Promise<void>;
+    rollbackTransaction: (db: unknown) => Promise<void>;
+    prepare: (db: unknown, sql: string) => Promise<unknown>;
+    run: (stmt: unknown, params: any[]) => Promise<void>;
 };
 
 const ARCH_CANDIDATES = [
-  process.arch,
-  process.arch === 'arm64' ? 'aarch64' : undefined,
-  process.arch === 'x64' ? 'x86_64' : undefined,
+    process.arch,
+    process.arch === 'arm64' ? 'aarch64' : undefined,
+    process.arch === 'x64' ? 'x86_64' : undefined
 ].filter(Boolean) as string[];
 
 const ADDON_CANDIDATES = [
-  process.env.HM_SQLITE_ADDON_PATH,
-  ...(resourcesPath
-    ? ARCH_CANDIDATES.map((arch) =>
-        path.resolve(resourcesPath, 'native', 'openharmony', arch, 'hm_sqlite_addon.node')
-      )
-    : []),
-  ...ARCH_CANDIDATES.map((arch) =>
-    path.resolve(projectRoot, 'native', 'openharmony', arch, 'hm_sqlite_addon.node')
-  ),
+    process.env.HM_SQLITE_ADDON_PATH,
+    ...(resourcesPath
+        ? ARCH_CANDIDATES.map((arch) =>
+              path.resolve(resourcesPath, 'native', 'openharmony', arch, 'hm_sqlite_addon.node')
+          )
+        : []),
+    ...ARCH_CANDIDATES.map((arch) => path.resolve(projectRoot, 'native', 'openharmony', arch, 'hm_sqlite_addon.node'))
 ].filter(Boolean) as string[];
 
 function loadAddon(): HmSqliteAddon {
-  for (const addonPath of ADDON_CANDIDATES) {
-    if (!fs.existsSync(addonPath)) continue;
-    return require(addonPath) as HmSqliteAddon;
-  }
-  throw new Error(`hm_sqlite_addon not found. Tried: ${ADDON_CANDIDATES.join(', ')}`);
+    for (const addonPath of ADDON_CANDIDATES) {
+        if (!fs.existsSync(addonPath)) continue;
+        return require(addonPath) as HmSqliteAddon;
+    }
+    throw new Error(`hm_sqlite_addon not found. Tried: ${ADDON_CANDIDATES.join(', ')}`);
 }
 
 // ── SQL 工具（SELECT 需内联参数，addon 不支持 SELECT 的 ? 绑定）────
 function literal(value: any): string {
-  if (value === null || value === undefined) return 'NULL';
-  if (typeof value === 'number') {
-    if (!Number.isFinite(value)) throw new Error(`Cannot bind non-finite number: ${value}`);
-    return String(value);
-  }
-  if (typeof value === 'boolean') return value ? '1' : '0';
-  if (typeof value === 'string') return `'${value.replace(/'/g, "''")}'`;
-  throw new Error(`Unsupported SQL literal type: ${Object.prototype.toString.call(value)}`);
+    if (value === null || value === undefined) return 'NULL';
+    if (typeof value === 'number') {
+        if (!Number.isFinite(value)) throw new Error(`Cannot bind non-finite number: ${value}`);
+        return String(value);
+    }
+    if (typeof value === 'boolean') return value ? '1' : '0';
+    if (typeof value === 'string') return `'${value.replace(/'/g, "''")}'`;
+    throw new Error(`Unsupported SQL literal type: ${Object.prototype.toString.call(value)}`);
 }
 
 function bindSqlLiterals(sql: string, params: any[]): string {
-  if (params.length === 0) return sql;
-  let out = '', paramIndex = 0, inSingle = false, inDouble = false;
-  for (let i = 0; i < sql.length; i++) {
-    const ch = sql[i];
-    if (ch === "'" && !inDouble) {
-      const escaped = inSingle && i + 1 < sql.length && sql[i + 1] === "'";
-      out += ch;
-      if (escaped) { out += sql[i + 1]; i++; } else inSingle = !inSingle;
-      continue;
+    if (params.length === 0) return sql;
+    let out = '',
+        paramIndex = 0,
+        inSingle = false,
+        inDouble = false;
+    for (let i = 0; i < sql.length; i++) {
+        const ch = sql[i];
+        if (ch === "'" && !inDouble) {
+            const escaped = inSingle && i + 1 < sql.length && sql[i + 1] === "'";
+            out += ch;
+            if (escaped) {
+                out += sql[i + 1];
+                i++;
+            } else inSingle = !inSingle;
+            continue;
+        }
+        if (ch === '"' && !inSingle) {
+            inDouble = !inDouble;
+            out += ch;
+            continue;
+        }
+        if (ch === '?' && !inSingle && !inDouble) {
+            if (paramIndex >= params.length) throw new Error('Not enough SQL params');
+            out += literal(params[paramIndex++]);
+            continue;
+        }
+        out += ch;
     }
-    if (ch === '"' && !inSingle) { inDouble = !inDouble; out += ch; continue; }
-    if (ch === '?' && !inSingle && !inDouble) {
-      if (paramIndex >= params.length) throw new Error('Not enough SQL params');
-      out += literal(params[paramIndex++]);
-      continue;
-    }
-    out += ch;
-  }
-  return out;
+    return out;
 }
 
 const SUPPORTED_OPERATORS: TagQueryOperator[] = ['=', '!=', '>', '<', '>=', '<=', 'like', 'in'];
@@ -109,7 +124,7 @@ export class TagIndexDBHm implements ITagIndexDB {
         this.addon = loadAddon();
         const dir = path.dirname(dbPath);
         if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-        this.db = this.addon.open(dbPath);  // open 是同步的
+        this.db = this.addon.open(dbPath); // open 是同步的
     }
 
     private ensureOpen(): unknown {
@@ -142,7 +157,9 @@ export class TagIndexDBHm implements ITagIndexDB {
             await this.addon.commitTransaction(db);
             return result;
         } catch (error) {
-            try { await this.addon.rollbackTransaction(db); } catch {}
+            try {
+                await this.addon.rollbackTransaction(db);
+            } catch {}
             throw error;
         }
     }
@@ -176,16 +193,22 @@ export class TagIndexDBHm implements ITagIndexDB {
             if (!SUPPORTED_OPERATORS.includes(op)) throw new Error(`Unsupported operator: ${operator}`);
             if (op === 'in') {
                 if (!Array.isArray(value)) throw new Error('in operator requires array');
-                if (value.length === 0) { clauses.push('1 = 0'); continue; }
+                if (value.length === 0) {
+                    clauses.push('1 = 0');
+                    continue;
+                }
                 const ph = value.map(() => '?').join(', ');
                 clauses.push(`${field} IN (${ph})`);
                 params.push(...value);
             } else if (op === '!=') {
-                clauses.push(`${field} <> ?`); params.push(value);
+                clauses.push(`${field} <> ?`);
+                params.push(value);
             } else if (op === 'like') {
-                clauses.push(`${field} LIKE ?`); params.push(value);
+                clauses.push(`${field} LIKE ?`);
+                params.push(value);
             } else {
-                clauses.push(`${field} ${op} ?`); params.push(value);
+                clauses.push(`${field} ${op} ?`);
+                params.push(value);
             }
         }
         return { sql: clauses.join(' AND ') || '1=1', params };
@@ -194,10 +217,11 @@ export class TagIndexDBHm implements ITagIndexDB {
     async insert(record: TagIndexRecord): Promise<boolean> {
         await this.ensureInitialized();
         try {
-            await this.runSql(
-                `INSERT INTO ${this.tableName} (item_id, item_type, tag) VALUES (?, ?, ?)`,
-                [record.item_id, record.item_type, record.tag]
-            );
+            await this.runSql(`INSERT INTO ${this.tableName} (item_id, item_type, tag) VALUES (?, ?, ?)`, [
+                record.item_id,
+                record.item_type,
+                record.tag
+            ]);
             return true;
         } catch (error: any) {
             const msg = error?.message || String(error);
@@ -213,8 +237,11 @@ export class TagIndexDBHm implements ITagIndexDB {
         return this.runTransaction(async () => {
             let count = 0;
             for (const record of records) {
-                try { if (await this.insert(record)) count++; }
-                catch (e: any) { if (!(e?.message || '').includes('already exists')) throw e; }
+                try {
+                    if (await this.insert(record)) count++;
+                } catch (e: any) {
+                    if (!(e?.message || '').includes('already exists')) throw e;
+                }
             }
             return count;
         });
@@ -257,32 +284,30 @@ export class TagIndexDBHm implements ITagIndexDB {
 
     async update(itemId: string, data: UpdateData): Promise<boolean> {
         await this.ensureInitialized();
-        const fields = (Object.keys(data) as (keyof UpdateData)[]).filter(k => k !== 'item_id');
+        const fields = (Object.keys(data) as (keyof UpdateData)[]).filter((k) => k !== 'item_id');
         if (fields.length === 0) throw new Error('No valid fields to update');
         if (!(await this.exists(itemId))) return false;
-        const setClause = fields.map(f => `${f} = ?`).join(', ');
-        const params = [...fields.map(f => data[f]), itemId];
+        const setClause = fields.map((f) => `${f} = ?`).join(', ');
+        const params = [...fields.map((f) => data[f]), itemId];
         await this.runSql(`UPDATE ${this.tableName} SET ${setClause} WHERE item_id = ?`, params);
         return true;
     }
 
     async updateByConditions(conditions: QueryCondition[], data: UpdateData): Promise<number> {
         await this.ensureInitialized();
-        const fields = (Object.keys(data) as (keyof UpdateData)[]).filter(k => k !== 'item_id');
+        const fields = (Object.keys(data) as (keyof UpdateData)[]).filter((k) => k !== 'item_id');
         if (fields.length === 0) throw new Error('No valid fields to update');
         const countBefore = await this.count(conditions);
         const { sql: whereSql, params: whereParams } = this.buildWhereClause(conditions);
-        const setClause = fields.map(f => `${f} = ?`).join(', ');
-        const params = [...fields.map(f => data[f]), ...whereParams];
+        const setClause = fields.map((f) => `${f} = ?`).join(', ');
+        const params = [...fields.map((f) => data[f]), ...whereParams];
         await this.runSql(`UPDATE ${this.tableName} SET ${setClause} WHERE ${whereSql}`, params);
         return countBefore;
     }
 
     async findById(itemId: string): Promise<TagIndexRecord | undefined> {
         await this.ensureInitialized();
-        const rows = await this.querySql(
-            `SELECT * FROM ${this.tableName} WHERE item_id = ?`, [itemId]
-        );
+        const rows = await this.querySql(`SELECT * FROM ${this.tableName} WHERE item_id = ?`, [itemId]);
         return rows[0] as TagIndexRecord | undefined;
     }
 
@@ -292,7 +317,8 @@ export class TagIndexDBHm implements ITagIndexDB {
         const params: any[] = [];
         if (options?.conditions && options.conditions.length > 0) {
             const { sql: w, params: wp } = this.buildWhereClause(options.conditions);
-            sql += ` WHERE ${w}`; params.push(...wp);
+            sql += ` WHERE ${w}`;
+            params.push(...wp);
         }
         if (options?.orderBy) sql += ` ORDER BY ${options.orderBy.field} ${options.orderBy.direction}`;
         if (options?.limit !== undefined) {
@@ -318,7 +344,8 @@ export class TagIndexDBHm implements ITagIndexDB {
         const params: any[] = [];
         if (conditions && conditions.length > 0) {
             const { sql: w, params: wp } = this.buildWhereClause(conditions);
-            sql += ` WHERE ${w}`; params.push(...wp);
+            sql += ` WHERE ${w}`;
+            params.push(...wp);
         }
         const rows = await this.querySql(sql, params);
         return (rows[0] as { count?: number })?.count ?? 0;
@@ -326,9 +353,9 @@ export class TagIndexDBHm implements ITagIndexDB {
 
     async exists(itemId: string): Promise<boolean> {
         await this.ensureInitialized();
-        const rows = await this.querySql(
-            `SELECT 1 AS present FROM ${this.tableName} WHERE item_id = ? LIMIT 1`, [itemId]
-        );
+        const rows = await this.querySql(`SELECT 1 AS present FROM ${this.tableName} WHERE item_id = ? LIMIT 1`, [
+            itemId
+        ]);
         return rows.length > 0;
     }
 
@@ -352,7 +379,10 @@ export class TagIndexDBHm implements ITagIndexDB {
     }
 
     close(): void {
-        if (this.db) { this.addon.close(this.db); this.db = null; }
+        if (this.db) {
+            this.addon.close(this.db);
+            this.db = null;
+        }
         this.isInitialized = false;
     }
 }

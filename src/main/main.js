@@ -19,7 +19,7 @@ import {
     shell,
     Menu,
     dialog,
-    protocol,
+    protocol
 } from 'electron';
 import { Setting, getAppDirectory } from './utils/setting.js';
 import { GlobalState } from './aikernel/states/global.js';
@@ -33,19 +33,19 @@ import {
     initializeRegistry,
     initializeRegistryWorker,
     notifyWorkerSettingUpdate,
-    ApplicationRegistry,
+    ApplicationRegistry
 } from './applications/registry';
 import {
     initializeRegistryProtocols,
     initializeProtocolHandlers,
-    registerApplicationRegistryHandlers,
+    registerApplicationRegistryHandlers
 } from './applications/registry_electron.js';
 import { UpdateClient } from '../updater/client.js';
 import { setPlatform } from '../platforms/base.js';
 import {
     ElectronTaskUpdateSubscriber,
     ElectronPlatform,
-    ElectronTaskManagerUpdateSubscriber,
+    ElectronTaskManagerUpdateSubscriber
 } from '../platforms/electron.js';
 import { exportTaskToHtml, generateTaskHtml } from './utils/export';
 import { MainAgentDecl } from './aikernel/agents/mainagent.js';
@@ -79,7 +79,7 @@ function resolveBundledSkillsDir() {
     const candidates = [
         path.join(__dirname, 'applications', 'skills', 'resources'),
         path.join(appPath, 'applications', 'skills', 'resources'),
-        path.join(appPath, 'src', 'main', 'applications', 'skills', 'resources'),
+        path.join(appPath, 'src', 'main', 'applications', 'skills', 'resources')
     ];
     for (const dir of candidates) {
         if (fs.existsSync(dir)) return dir;
@@ -141,8 +141,8 @@ const createWindow = () => {
             nodeIntegration: false,
             nodeIntegrationInSubFrames: true,
             contextIsolation: true,
-            preload: path.join(__dirname, '..', 'preload', 'index.js'),
-        },
+            preload: path.join(__dirname, '..', 'preload', 'index.js')
+        }
     });
 
     mainWindow.setMenu(null);
@@ -294,20 +294,10 @@ const registerTaskManagerAPIHandlers = () => {
                 const toolCallId = crypto.randomUUID();
 
                 const result = new Promise((resolve, reject) => {
-                    ipcMain.once(
-                        `taskManager:reportToolCallResult:${toolCallId}`,
-                        (event, result) => {
-                            resolve(result);
-                        }
-                    );
-                    event.senderFrame.send(
-                        `taskManager:callTool`,
-                        taskId,
-                        toolCallId,
-                        toolset.name,
-                        tool.name,
-                        args
-                    );
+                    ipcMain.once(`taskManager:reportToolCallResult:${toolCallId}`, (event, result) => {
+                        resolve(result);
+                    });
+                    event.senderFrame.send(`taskManager:callTool`, taskId, toolCallId, toolset.name, tool.name, args);
                 });
 
                 return await result;
@@ -424,7 +414,7 @@ const registerFSAPIHandlers = () => {
     ipcMain.handle('fs:dialog-open', async () => {
         const { canceled, filePaths } = await dialog.showOpenDialog({
             title: '选择附件',
-            properties: ['openFile', 'multiSelections'], // 允许选文件、允许多选
+            properties: ['openFile', 'multiSelections'] // 允许选文件、允许多选
         });
 
         if (canceled) {
@@ -550,9 +540,7 @@ const registerHotKeys = () => {
         globalMainWindow.webContents.send('command:openHomePage');
     });
     if (!ret) {
-        console.log(
-            `hotkey ${hotkey} register failed, possibly because the hot key is already in use`
-        );
+        console.log(`hotkey ${hotkey} register failed, possibly because the hot key is already in use`);
     }
 };
 
@@ -564,27 +552,27 @@ const registerTray = () => {
             label: '打开主窗口',
             click: () => {
                 globalMainWindow.show();
-            },
+            }
         },
         {
             label: '录制用户活动',
             click: () => {
                 recallApplication.requestCaptureActivity();
-            },
+            }
         },
         {
             label: '打开开发者工具',
             click: () => {
                 globalMainWindow.webContents.openDevTools();
-            },
+            }
         },
         { type: 'separator' },
         {
             label: '退出',
             click: () => {
                 app.quit();
-            },
-        },
+            }
+        }
     ]);
 
     globalTray = new Tray(icon);
@@ -604,7 +592,7 @@ const initializeUpdater = () => {
     const updateServerUrls = [
         // 如果要进行更新测试，可以把下边这一行注释打开
         // 'http://localhost:3000',
-        'https://fillipdesk.uv0xab.com/update',
+        'https://fillipdesk.uv0xab.com/update'
     ];
 
     // 只在生产环境启用自动更新，或者设置了 DEBUG_UPDATER 环境变量
@@ -613,7 +601,7 @@ const initializeUpdater = () => {
         updateClient = new UpdateClient({
             serverUrls: updateServerUrls,
             currentVersion: app.getVersion(),
-            checkInterval: 3600000, // 每小时检查一次
+            checkInterval: 3600000 // 每小时检查一次
         });
 
         // 延迟检查更新，避免影响应用启动速度
@@ -659,7 +647,7 @@ function startApplication() {
     app.whenReady().then(async () => {
         GlobalState.initialize();
         GlobalState.getInstance().taskManagerState.toolsetProvider = {
-            listAvailableToolsets: () => ApplicationRegistry.listAvailableToolsets(),
+            listAvailableToolsets: () => ApplicationRegistry.listAvailableToolsets()
         };
         createWindow();
 

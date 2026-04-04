@@ -1,18 +1,26 @@
-
-import { Component, Markdown, Box, type TUI, visibleWidth, truncateToWidth } from "@mariozechner/pi-tui";
-import type { TaskState, TaskUpdateChunk, TaskUpdateUserChunk, TaskUpdateAssistantChunk } from "../../aikernel/states/tasks";
+import { Component, Markdown, Box, type TUI, visibleWidth, truncateToWidth } from '@mariozechner/pi-tui';
+import type {
+    TaskState,
+    TaskUpdateChunk,
+    TaskUpdateUserChunk,
+    TaskUpdateAssistantChunk
+} from '../../aikernel/states/tasks';
 import {
-    AssistantMessage, ReasoningMessagePart, TextMessagePart,
-    ToolCallMessagePart, ErrorMessagePart, UserMessage, ToolCall
-} from "../../aikernel/messages";
-import { shouldCompact, compactContext } from "../../aikernel/compact";
-import { logger, getDebugMode } from "../../utils/logger.js";
-import { defaultMarkdownTheme } from "../theme";
-import { DefaultToolCallView } from "./toolcall";
-import { Card } from "./card";
-import chalk from "chalk";
-import type { TaskStatusBarData } from "./input";
-
+    AssistantMessage,
+    ReasoningMessagePart,
+    TextMessagePart,
+    ToolCallMessagePart,
+    ErrorMessagePart,
+    UserMessage,
+    ToolCall
+} from '../../aikernel/messages';
+import { shouldCompact, compactContext } from '../../aikernel/compact';
+import { logger, getDebugMode } from '../../utils/logger.js';
+import { defaultMarkdownTheme } from '../theme';
+import { DefaultToolCallView } from './toolcall';
+import { Card } from './card';
+import chalk from 'chalk';
+import type { TaskStatusBarData } from './input';
 
 /**
  * 流式输出时 Markdown 渲染的最小间隔（毫秒）。
@@ -20,7 +28,6 @@ import type { TaskStatusBarData } from "./input";
  * 调整此值可在渲染实时性和 UI 流畅度之间取得平衡。
  */
 export const MD_RENDER_THROTTLE_MS = 150;
-
 
 export class TextMessagePartView implements Component {
     text: Markdown = new Markdown('', 0, 0, defaultMarkdownTheme);
@@ -146,9 +153,7 @@ export class ReasoningMessagePartView implements Component {
             const contentWidth = Math.max(1, width - 4);
 
             const now = Date.now();
-            const skipMdRender = this._dirty
-                && this.cachedOutput
-                && (now - this._lastRenderMs < MD_RENDER_THROTTLE_MS);
+            const skipMdRender = this._dirty && this.cachedOutput && now - this._lastRenderMs < MD_RENDER_THROTTLE_MS;
 
             let bodyLines: string[];
             if (skipMdRender) {
@@ -163,7 +168,7 @@ export class ReasoningMessagePartView implements Component {
             const card = new Card({
                 icon: this.getIcon(),
                 title: '思考',
-                body: bodyLines,
+                body: bodyLines
             });
             return card.render(width);
         }
@@ -178,7 +183,7 @@ export class ReasoningMessagePartView implements Component {
         const card = new Card({
             icon: this.getIcon(),
             title: '思考',
-            body: bodyLines,
+            body: bodyLines
         });
         this.cachedOutput = card.render(width);
         this.invalidated = false;
@@ -187,7 +192,6 @@ export class ReasoningMessagePartView implements Component {
 }
 
 export class ToolCallView implements Component {
-
     private toolCall: ToolCall;
     private defaultView: DefaultToolCallView;
     private invalidated = true;
@@ -232,7 +236,6 @@ export class ToolCallView implements Component {
 }
 
 export class ToolCallMessagePartView implements Component {
-
     private box: Box = new Box(0, 0);
     private invalidated = true;
     private lastWidth?: number;
@@ -301,7 +304,9 @@ export class ErrorMessagePartView implements Component {
         this.invalidated = true;
     }
 
-    invalidate() { this.invalidated = true; }
+    invalidate() {
+        this.invalidated = true;
+    }
 
     render(width: number): string[] {
         if (!this.invalidated && this.lastWidth === width && this.cachedOutput) {
@@ -318,7 +323,7 @@ export class ErrorMessagePartView implements Component {
         this.cachedOutput = new Card({
             icon: chalk.redBright('⚠'),
             title: chalk.redBright(this.title),
-            body,
+            body
         }).render(width);
 
         this.invalidated = false;
@@ -345,7 +350,9 @@ export class CompactSeparatorView implements Component {
         this.invalidated = true;
     }
 
-    invalidate() { this.invalidated = true; }
+    invalidate() {
+        this.invalidated = true;
+    }
 
     private buildLine(label: string, width: number): string {
         const labelW = visibleWidth(label);
@@ -381,7 +388,7 @@ export class UserMessageView implements Component {
     private cachedOutput?: string[];
 
     constructor(message: UserMessage) {
-        this.box.setBgFn((text: string) => chalk.white.bgGrey((text)));
+        this.box.setBgFn((text: string) => chalk.white.bgGrey(text));
         this.message = message;
         for (const part of message.content) {
             if (part.type === 'text') {
@@ -428,7 +435,6 @@ export class UserMessageView implements Component {
 }
 
 export class AssistantMessageView implements Component {
-
     box: Box = new Box(0, 1);
     parts: Array<ReasoningMessagePartView | TextMessagePartView | ToolCallMessagePartView | ErrorMessagePartView> = [];
     private invalidated = true;
@@ -446,7 +452,7 @@ export class AssistantMessageView implements Component {
 
         const existingPartView = this.parts[index];
         if (!(existingPartView instanceof TextMessagePartView)) {
-            throw new Error(`part type mismatch`)
+            throw new Error(`part type mismatch`);
         }
 
         existingPartView.setMarkdown(textPart.text);
@@ -462,7 +468,7 @@ export class AssistantMessageView implements Component {
 
         const existingPartView = this.parts[index];
         if (!(existingPartView instanceof ReasoningMessagePartView)) {
-            throw new Error(`part type mismatch`)
+            throw new Error(`part type mismatch`);
         }
 
         existingPartView.setStreaming(true);
@@ -492,7 +498,7 @@ export class AssistantMessageView implements Component {
 
         const existingPartView = this.parts[index];
         if (!(existingPartView instanceof ToolCallMessagePartView)) {
-            throw new Error(`part type mismatch`)
+            throw new Error(`part type mismatch`);
         }
 
         existingPartView.setToolcalls(toolCallPart.toolcalls);
@@ -579,7 +585,6 @@ export class AssistantMessageView implements Component {
  * 用于显示任务的对话历史
  */
 export class TaskView implements Component {
-
     taskState?: TaskState;
     messages: Array<UserMessageView | AssistantMessageView | CompactSeparatorView> = [];
 
@@ -605,7 +610,9 @@ export class TaskView implements Component {
     private _lastStreamRenderMs = 0;
     private static readonly STREAM_RENDER_INTERVAL_MS = 100;
 
-    get isCompacting() { return this._compacting; }
+    get isCompacting() {
+        return this._compacting;
+    }
 
     constructor(tui: TUI) {
         this.tui = tui;
@@ -706,7 +713,9 @@ export class TaskView implements Component {
                 this.messageLayout.addChild(userView);
                 this.invalidated = true;
             }
-        } catch { /* shouldCompact 失败不影响正常流程 */ }
+        } catch {
+            /* shouldCompact 失败不影响正常流程 */
+        }
 
         await this.taskState.submitUserMessage(text);
         const renderInterval = setInterval(() => {
@@ -834,7 +843,7 @@ export class TaskView implements Component {
     }
 
     invalidate() {
-        this.messages.forEach(message => message.invalidate());
+        this.messages.forEach((message) => message.invalidate());
         this.invalidated = true;
     }
 

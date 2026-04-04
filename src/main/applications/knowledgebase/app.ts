@@ -21,21 +21,22 @@ import {
     ConfigureLibraryProviderTool,
     ToggleLibraryProviderTool,
     CreateKnowledgeBaseTool,
-    DeleteKnowledgeBaseTool,
+    DeleteKnowledgeBaseTool
 } from './tools/manage';
 import {
     ListKnowledgeBasesTool,
     RetrieveFromKnowledgeBaseTool,
     AskKnowledgeBaseTool,
-    AddFilesToKnowledgeBaseTool,
+    AddFilesToKnowledgeBaseTool
 } from './tools/knowledge';
 
-
 const KnowledgeBaseApplicationConfigSchema = z.object({
-    zhipu: z.object({
-        api_key: z.string().default('').describe('智谱AI API密钥'),
-        enabled: z.boolean().default(false).describe('是否启用智谱AI知识库'),
-    }).optional(),
+    zhipu: z
+        .object({
+            api_key: z.string().default('').describe('智谱AI API密钥'),
+            enabled: z.boolean().default(false).describe('是否启用智谱AI知识库')
+        })
+        .optional()
 });
 
 type KnowledgeBaseConfig = z.output<typeof KnowledgeBaseApplicationConfigSchema>;
@@ -82,17 +83,31 @@ export class KnowledgeBaseApplication extends BaseApplication {
         return result;
     }
 
-    getProviderStatusList(): { id: string; name: string; description: string; enabled: boolean; has_api_key: boolean }[] {
+    getProviderStatusList(): {
+        id: string;
+        name: string;
+        description: string;
+        enabled: boolean;
+        has_api_key: boolean;
+    }[] {
         const config = this.getConfig() as KnowledgeBaseConfig | undefined;
-        const result: { id: string; name: string; description: string; enabled: boolean; has_api_key: boolean }[] = [];
+        const result: {
+            id: string;
+            name: string;
+            description: string;
+            enabled: boolean;
+            has_api_key: boolean;
+        }[] = [];
         for (const [id, provider] of this.providers) {
-            const providerConfig = config?.[id as keyof KnowledgeBaseConfig] as { enabled?: boolean; api_key?: string } | undefined;
+            const providerConfig = config?.[id as keyof KnowledgeBaseConfig] as
+                | { enabled?: boolean; api_key?: string }
+                | undefined;
             result.push({
                 id: provider.id,
                 name: provider.name,
                 description: provider.description,
                 enabled: !!providerConfig?.enabled,
-                has_api_key: !!(providerConfig?.api_key && providerConfig.api_key.length > 0),
+                has_api_key: !!(providerConfig?.api_key && providerConfig.api_key.length > 0)
             });
         }
         return result;

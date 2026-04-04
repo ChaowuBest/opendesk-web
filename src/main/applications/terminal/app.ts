@@ -9,10 +9,15 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { BaseToolset } from "../../aikernel/tool";
-import { BaseApplication } from "../base";
-import { ExecutePowerShellTool, ExecuteBashTool, ExecuteZshTool, CheckShellStatusTool, findExecutableInPath } from "./tools.js";
-
+import { BaseToolset } from '../../aikernel/tool';
+import { BaseApplication } from '../base';
+import {
+    ExecutePowerShellTool,
+    ExecuteBashTool,
+    ExecuteZshTool,
+    CheckShellStatusTool,
+    findExecutableInPath
+} from './tools.js';
 
 export class TerminalApplication extends BaseApplication {
     constructor() {

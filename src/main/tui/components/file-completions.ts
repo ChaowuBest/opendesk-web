@@ -1,7 +1,7 @@
-import type { AutocompleteItem } from "@mariozechner/pi-tui";
-import { readdirSync, statSync } from "fs";
-import { join, resolve, isAbsolute } from "path";
-import { homedir } from "os";
+import type { AutocompleteItem } from '@mariozechner/pi-tui';
+import { readdirSync, statSync } from 'fs';
+import { join, resolve, isAbsolute } from 'path';
+import { homedir } from 'os';
 
 /** 文件补全下拉列表中显示的最大条目数，可按需调整 */
 export const FILE_COMPLETION_MAX_RESULTS = 30;
@@ -11,13 +11,13 @@ export const FILE_COMPLETION_MAX_RESULTS = 30;
  * 支持 $HOME、$APPDATA、$TEMP、$USERPROFILE 等任意环境变量。
  */
 function expandPath(p: string): string {
-    if (p === "~" || p.startsWith("~/")) {
+    if (p === '~' || p.startsWith('~/')) {
         return homedir() + p.slice(1);
     }
     const envMatch = p.match(/^\$([A-Za-z_][A-Za-z0-9_]*)(\/.*)?$/);
     if (envMatch) {
         const varName = envMatch[1]!;
-        const rest = envMatch[2] ?? "";
+        const rest = envMatch[2] ?? '';
         const value = process.env[varName];
         if (value) return value + rest;
     }
@@ -30,10 +30,13 @@ function expandPath(p: string): string {
 function isAbsoluteOrSpecial(p: string): boolean {
     return (
         isAbsolute(p) ||
-        p.startsWith("~/") || p === "~" ||
-        p.startsWith("$") ||
-        p.startsWith("../") || p === ".." ||
-        p.startsWith("./") || p === "."
+        p.startsWith('~/') ||
+        p === '~' ||
+        p.startsWith('$') ||
+        p.startsWith('../') ||
+        p === '..' ||
+        p.startsWith('./') ||
+        p === '.'
     );
 }
 
@@ -65,25 +68,20 @@ export function getFileCompletions(
         extensions?: string[];
         /** 最大返回数量，默认使用 FILE_COMPLETION_MAX_RESULTS */
         maxResults?: number;
-    } = {},
+    } = {}
 ): AutocompleteItem[] {
-    const {
-        atPrefix = false,
-        valuePrefix = "",
-        extensions,
-        maxResults = FILE_COMPLETION_MAX_RESULTS,
-    } = options;
+    const { atPrefix = false, valuePrefix = '', extensions, maxResults = FILE_COMPLETION_MAX_RESULTS } = options;
 
     try {
         let searchDir: string;
         let filter: string;
         let displayBase: string;
 
-        const normalizedQuery = query.replace(/\\/g, "/");
+        const normalizedQuery = query.replace(/\\/g, '/');
         const expanded = expandPath(normalizedQuery);
 
-        if (normalizedQuery.includes("/")) {
-            const lastSlash = normalizedQuery.lastIndexOf("/");
+        if (normalizedQuery.includes('/')) {
+            const lastSlash = normalizedQuery.lastIndexOf('/');
             displayBase = normalizedQuery.slice(0, lastSlash + 1);
             filter = normalizedQuery.slice(lastSlash + 1).toLowerCase();
 
@@ -95,52 +93,52 @@ export function getFileCompletions(
             }
         } else if (isAbsoluteOrSpecial(expanded)) {
             searchDir = isAbsolute(expanded) ? expanded : resolve(basePath, expanded);
-            filter = "";
+            filter = '';
             displayBase = normalizedQuery;
         } else {
             searchDir = basePath;
             filter = normalizedQuery.toLowerCase();
-            displayBase = "";
+            displayBase = '';
         }
 
         const entries = readdirSync(searchDir, { withFileTypes: true });
         const items: AutocompleteItem[] = [];
 
         for (const entry of entries) {
-            if (entry.name.startsWith(".")) continue;
+            if (entry.name.startsWith('.')) continue;
             if (filter && !entry.name.toLowerCase().startsWith(filter)) continue;
 
             let isDir = entry.isDirectory();
             if (!isDir && entry.isSymbolicLink()) {
                 try {
                     isDir = statSync(join(searchDir, entry.name)).isDirectory();
-                } catch { /* broken symlink */ }
+                } catch {
+                    /* broken symlink */
+                }
             }
 
             if (extensions && !isDir) {
-                const ext = entry.name.slice(entry.name.lastIndexOf("."));
+                const ext = entry.name.slice(entry.name.lastIndexOf('.'));
                 if (!extensions.includes(ext.toLowerCase())) continue;
             }
 
-            const relativePath = displayBase
-                ? displayBase + entry.name
-                : entry.name;
+            const relativePath = displayBase ? displayBase + entry.name : entry.name;
 
-            const displayPath = isDir ? relativePath + "/" : relativePath;
+            const displayPath = isDir ? relativePath + '/' : relativePath;
 
-            const pfx = atPrefix ? "@" : "";
+            const pfx = atPrefix ? '@' : '';
             const value = valuePrefix + pfx + displayPath;
 
             items.push({
                 value,
-                label: entry.name + (isDir ? "/" : ""),
-                description: displayPath,
+                label: entry.name + (isDir ? '/' : ''),
+                description: displayPath
             });
         }
 
         items.sort((a, b) => {
-            const aIsDir = a.label.endsWith("/");
-            const bIsDir = b.label.endsWith("/");
+            const aIsDir = a.label.endsWith('/');
+            const bIsDir = b.label.endsWith('/');
             if (aIsDir && !bIsDir) return -1;
             if (!aIsDir && bIsDir) return 1;
             return a.label.localeCompare(b.label);
@@ -157,12 +155,12 @@ export function getFileCompletions(
  * @ 必须出现在行首或空白分隔符之后。
  */
 export function extractAtQuery(text: string): { fullPrefix: string; query: string } | null {
-    const delimiters = new Set([" ", "\t", '"', "'", "="]);
+    const delimiters = new Set([' ', '\t', '"', "'", '=']);
     for (let i = text.length - 1; i >= 0; i--) {
-        if (text[i] === "@" && (i === 0 || delimiters.has(text[i - 1]!))) {
+        if (text[i] === '@' && (i === 0 || delimiters.has(text[i - 1]!))) {
             return {
                 fullPrefix: text.slice(i),
-                query: text.slice(i + 1),
+                query: text.slice(i + 1)
             };
         }
     }

@@ -12,9 +12,7 @@
 import { BaseApplication } from '../main/applications/base';
 import open from 'open';
 
-
 export abstract class AbstractPlatform {
-
     getName(): string {
         throw new Error('Not implemented');
     }
@@ -23,15 +21,13 @@ export abstract class AbstractPlatform {
         await open(filePath);
     }
 
-    async showItemInFolder(filePath: string) {
-
-    }
+    async showItemInFolder(filePath: string) {}
 
     getWorkerPath(): string {
         return process.argv[1];
     }
 
-    getApplicationClasses(): typeof BaseApplication[] {
+    getApplicationClasses(): (typeof BaseApplication)[] {
         return [];
     }
 }

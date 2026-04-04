@@ -9,7 +9,6 @@
  * See the Mulan PSL v2 for more details.
  */
 
-
 export const TASK_MANAGEMENT_PROMPT = `
 # 任务规划与执行
 

@@ -1,6 +1,5 @@
-import { ProcessTerminal } from "@mariozechner/pi-tui";
+import { ProcessTerminal } from '@mariozechner/pi-tui';
 import { FULL_CLEAR } from './components/constants';
-
 
 /**
  * 包装 ProcessTerminal，在 resize 时只走一条路径：先清屏再 requestRender，

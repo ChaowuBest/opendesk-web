@@ -21,7 +21,7 @@ import type {
     ChannelAccountStatus,
     ChannelGatewayContext,
     InboundChannelMessage,
-    PluginLogger,
+    PluginLogger
 } from '../main/aikernel/plugins/types.js';
 import { getAppDirectory } from '../main/utils/setting.js';
 import readline from 'readline';
@@ -38,27 +38,39 @@ const C = {
     red: '\x1b[31m',
     yellow: '\x1b[33m',
     cyan: '\x1b[36m',
-    magenta: '\x1b[35m',
+    magenta: '\x1b[35m'
 };
 
-function ok(msg: string) { console.log(`  ${C.green}✓${C.reset} ${msg}`); }
-function fail(msg: string) { console.log(`  ${C.red}✗${C.reset} ${msg}`); }
-function info(msg: string) { console.log(`  ${C.cyan}ℹ${C.reset} ${msg}`); }
-function warn(msg: string) { console.log(`  ${C.yellow}⚠${C.reset} ${msg}`); }
-function heading(msg: string) { console.log(`\n${C.bold}${C.magenta}═══ ${msg} ═══${C.reset}`); }
-function subheading(msg: string) { console.log(`\n${C.bold}  ── ${msg} ──${C.reset}`); }
+function ok(msg: string) {
+    console.log(`  ${C.green}✓${C.reset} ${msg}`);
+}
+function fail(msg: string) {
+    console.log(`  ${C.red}✗${C.reset} ${msg}`);
+}
+function info(msg: string) {
+    console.log(`  ${C.cyan}ℹ${C.reset} ${msg}`);
+}
+function warn(msg: string) {
+    console.log(`  ${C.yellow}⚠${C.reset} ${msg}`);
+}
+function heading(msg: string) {
+    console.log(`\n${C.bold}${C.magenta}═══ ${msg} ═══${C.reset}`);
+}
+function subheading(msg: string) {
+    console.log(`\n${C.bold}  ── ${msg} ──${C.reset}`);
+}
 
 function createTestLogger(prefix: string): PluginLogger {
     return {
         info: (...args: any[]) => console.log(`  ${C.dim}[${prefix}]${C.reset}`, ...args),
         warn: (...args: any[]) => console.log(`  ${C.yellow}[${prefix}]${C.reset}`, ...args),
         error: (...args: any[]) => console.log(`  ${C.red}[${prefix}]${C.reset}`, ...args),
-        debug: (...args: any[]) => console.log(`  ${C.dim}[${prefix}:debug]${C.reset}`, ...args),
+        debug: (...args: any[]) => console.log(`  ${C.dim}[${prefix}:debug]${C.reset}`, ...args)
     };
 }
 
 function sleep(ms: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, ms));
+    return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function buildGatewayContext(
@@ -66,7 +78,7 @@ function buildGatewayContext(
     accountId: string,
     account: any,
     config: any,
-    overrides?: Partial<ChannelGatewayContext>,
+    overrides?: Partial<ChannelGatewayContext>
 ): ChannelGatewayContext {
     const log = createTestLogger(`${cp.id}:${accountId}`);
     return {
@@ -79,18 +91,18 @@ function buildGatewayContext(
             log: (...args: any[]) => console.log(`  ${C.dim}[${cp.id}:${accountId}]${C.reset}`, ...args),
             error: (...args: any[]) => console.error(`  ${C.red}[${cp.id}:${accountId}]${C.reset}`, ...args),
             warn: (...args: any[]) => console.warn(`  ${C.yellow}[${cp.id}:${accountId}]${C.reset}`, ...args),
-            platform: 'opendesk',
+            platform: 'opendesk'
         },
         dispatch: async () => {},
         setStatus: () => {},
-        ...overrides,
+        ...overrides
     };
 }
 
 function prompt(question: string): Promise<string> {
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-    return new Promise(resolve => {
-        rl.question(question, answer => {
+    return new Promise((resolve) => {
+        rl.question(question, (answer) => {
             rl.close();
             resolve(answer.trim());
         });
@@ -113,7 +125,7 @@ async function loadChannelPlugins(): Promise<PluginEntry[]> {
             fail(`插件 ${e.id} 加载失败: ${e.error}`);
         }
     }
-    const channelPlugins = loadResult.entries.filter(p => p.channelPlugin);
+    const channelPlugins = loadResult.entries.filter((p) => p.channelPlugin);
 
     if (channelPlugins.length === 0) {
         warn('已安装的插件中没有消息插件');
@@ -125,9 +137,7 @@ async function loadChannelPlugins(): Promise<PluginEntry[]> {
 
 function findPlugin(plugins: PluginEntry[], channelId?: string): PluginEntry | undefined {
     if (!channelId) return plugins[0];
-    return plugins.find(
-        p => p.channelPlugin?.id === channelId || p.id === channelId,
-    );
+    return plugins.find((p) => p.channelPlugin?.id === channelId || p.id === channelId);
 }
 
 // ── 子命令: info ─────────────────────────────────────────────────────────────
@@ -242,14 +252,18 @@ async function cmdConnect(channelId?: string): Promise<boolean> {
         const ctx = buildGatewayContext(cp, accountId, account, config, {
             dispatch: async (message: InboundChannelMessage) => {
                 messageLog.push(message);
-                info(`收到消息: [${message.senderName || message.senderId}] ${message.text?.substring(0, 80) || '(空)'}`);
+                info(
+                    `收到消息: [${message.senderName || message.senderId}] ${message.text?.substring(0, 80) || '(空)'}`
+                );
             },
             setStatus: (status: any) => {
                 statusLog.push({ time: Date.now() - startTime, status });
                 const icon = status.online ? C.green + '●' : C.red + '○';
                 const statusText = status.statusText || status.status || (status.online ? '在线' : '离线');
-                console.log(`  ${icon}${C.reset} 状态变更: ${statusText}${status.error ? ` (${status.error})` : ''} [+${Date.now() - startTime}ms]`);
-            },
+                console.log(
+                    `  ${icon}${C.reset} 状态变更: ${statusText}${status.error ? ` (${status.error})` : ''} [+${Date.now() - startTime}ms]`
+                );
+            }
         });
 
         // 测试 1: 启动连接（startAccount 是长连接，不等它 resolve）
@@ -294,10 +308,7 @@ async function cmdConnect(channelId?: string): Promise<boolean> {
         abortController.abort();
         if (cp.gateway.stopAccount) {
             try {
-                await Promise.race([
-                    cp.gateway.stopAccount(ctx),
-                    sleep(5000),
-                ]);
+                await Promise.race([cp.gateway.stopAccount(ctx), sleep(5000)]);
                 ok('stopAccount 调用成功');
             } catch (err: any) {
                 warn(`stopAccount: ${err?.message || err}`);
@@ -368,17 +379,23 @@ async function cmdSend(args: string[]): Promise<boolean> {
     if (cp.gateway?.startAccount) {
         info('需要先建立连接，正在启动 gateway...');
         let account: any;
-        try { account = cp.config.resolveAccount(config, accountId); } catch { account = {}; }
+        try {
+            account = cp.config.resolveAccount(config, accountId);
+        } catch {
+            account = {};
+        }
         gatewayCtx = buildGatewayContext(cp, accountId, account, config, {
             setStatus: (status: any) => {
                 const icon = status.online ? C.green + '●' : C.red + '○';
                 console.log(`  ${icon}${C.reset} 状态: ${status.statusText || status.status || ''}`);
-            },
+            }
         });
         try {
             await Promise.race([
                 cp.gateway.startAccount(gatewayCtx),
-                sleep(15000).then(() => { throw new Error('连接超时'); }),
+                sleep(15000).then(() => {
+                    throw new Error('连接超时');
+                })
             ]);
             ok('Gateway 已启动');
             await sleep(2000);
@@ -394,7 +411,7 @@ async function cmdSend(args: string[]): Promise<boolean> {
         accountId,
         to,
         text,
-        cfg: config,
+        cfg: config
     };
 
     try {
@@ -413,7 +430,9 @@ async function cmdSend(args: string[]): Promise<boolean> {
 
     // 停止 gateway
     if (gatewayCtx && cp.gateway?.stopAccount) {
-        try { await cp.gateway.stopAccount(gatewayCtx); } catch {}
+        try {
+            await cp.gateway.stopAccount(gatewayCtx);
+        } catch {}
     }
 
     return true;
@@ -443,7 +462,11 @@ async function cmdListen(channelId?: string): Promise<boolean> {
 
     const config = buildTestConfig(cp);
     let accountIds: string[];
-    try { accountIds = cp.config.listAccountIds(config); } catch { accountIds = []; }
+    try {
+        accountIds = cp.config.listAccountIds(config);
+    } catch {
+        accountIds = [];
+    }
     if (accountIds.length === 0) {
         accountIds = ['default'];
         warn('未从配置中解析到 account，使用 default');
@@ -454,7 +477,11 @@ async function cmdListen(channelId?: string): Promise<boolean> {
 
     for (const accountId of accountIds) {
         let account: any;
-        try { account = cp.config.resolveAccount(config, accountId); } catch { account = {}; }
+        try {
+            account = cp.config.resolveAccount(config, accountId);
+        } catch {
+            account = {};
+        }
 
         const ctx = buildGatewayContext(cp, accountId, account, config, {
             dispatch: async (message: InboundChannelMessage) => {
@@ -470,8 +497,10 @@ async function cmdListen(channelId?: string): Promise<boolean> {
             setStatus: (status: any) => {
                 const icon = status.online ? C.green + '●' : C.red + '○';
                 const statusText = status.statusText || status.status || (status.online ? '在线' : '离线');
-                console.log(`  ${icon}${C.reset} [${accountId}] ${statusText}${status.error ? ` (${status.error})` : ''}`);
-            },
+                console.log(
+                    `  ${icon}${C.reset} [${accountId}] ${statusText}${status.error ? ` (${status.error})` : ''}`
+                );
+            }
         });
         gatewayContexts.push(ctx);
 
@@ -479,7 +508,9 @@ async function cmdListen(channelId?: string): Promise<boolean> {
         try {
             await Promise.race([
                 cp.gateway.startAccount(ctx),
-                sleep(15000).then(() => { throw new Error('连接超时 (15s)'); }),
+                sleep(15000).then(() => {
+                    throw new Error('连接超时 (15s)');
+                })
             ]);
             ok(`Account ${accountId} 已启动`);
         } catch (err: any) {
@@ -487,10 +518,12 @@ async function cmdListen(channelId?: string): Promise<boolean> {
         }
     }
 
-    console.log(`\n  ${C.cyan}⏳${C.reset} 正在监听消息... 按 ${C.bold}Ctrl+C${C.reset} 或输入 ${C.bold}q${C.reset} 退出\n`);
+    console.log(
+        `\n  ${C.cyan}⏳${C.reset} 正在监听消息... 按 ${C.bold}Ctrl+C${C.reset} 或输入 ${C.bold}q${C.reset} 退出\n`
+    );
 
     // 等待用户退出
-    const exitPromise = new Promise<void>(resolve => {
+    const exitPromise = new Promise<void>((resolve) => {
         if (process.stdin.isTTY) {
             process.stdin.setRawMode(true);
             process.stdin.resume();
@@ -512,10 +545,7 @@ async function cmdListen(channelId?: string): Promise<boolean> {
     if (cp.gateway.stopAccount) {
         for (const ctx of gatewayContexts) {
             try {
-                await Promise.race([
-                    cp.gateway.stopAccount(ctx),
-                    sleep(5000),
-                ]);
+                await Promise.race([cp.gateway.stopAccount(ctx), sleep(5000)]);
             } catch {}
         }
     }
@@ -557,7 +587,13 @@ async function cmdMock(channelId?: string): Promise<boolean> {
         accountIds = ['default'];
     }
 
-    const defaultId = (() => { try { return cp.config.defaultAccountId(config); } catch { return 'default'; } })();
+    const defaultId = (() => {
+        try {
+            return cp.config.defaultAccountId(config);
+        } catch {
+            return 'default';
+        }
+    })();
     ok(`defaultAccountId: ${defaultId}`);
 
     try {
@@ -593,7 +629,7 @@ async function cmdMock(channelId?: string): Promise<boolean> {
         senderName: '测试用户',
         text: '你好，这是一条测试消息。',
         chatType: 'direct',
-        messageId: `mock-${Date.now()}`,
+        messageId: `mock-${Date.now()}`
     };
     info(`模拟消息: [${mockMessage.senderName}] ${mockMessage.text}`);
 
@@ -622,7 +658,11 @@ async function cmdMock(channelId?: string): Promise<boolean> {
     // 如果有 gateway，构造 context 并调用 dispatch
     if (cp.gateway?.startAccount) {
         let account: any;
-        try { account = cp.config.resolveAccount(config, defaultId); } catch { account = {}; }
+        try {
+            account = cp.config.resolveAccount(config, defaultId);
+        } catch {
+            account = {};
+        }
         const gatewayCtx = buildGatewayContext(cp, defaultId, account, config, {
             dispatch: async (message) => {
                 dispatchCalled = true;
@@ -631,7 +671,7 @@ async function cmdMock(channelId?: string): Promise<boolean> {
             setStatus: (status: any) => {
                 const icon = status.online ? C.green + '●' : C.red + '○';
                 console.log(`  ${icon}${C.reset} mock setStatus: ${status.statusText || ''}`);
-            },
+            }
         });
 
         // 手动触发 dispatch
@@ -644,9 +684,11 @@ async function cmdMock(channelId?: string): Promise<boolean> {
         info('无 gateway，直接测试 outbound');
         if (cp.outbound?.sendText) {
             await cp.outbound.sendText({
-                channelId: cp.id, accountId: defaultId,
-                to: mockMessage.senderId, text: '这是一条模拟回复。',
-                cfg: config,
+                channelId: cp.id,
+                accountId: defaultId,
+                to: mockMessage.senderId,
+                text: '这是一条模拟回复。',
+                cfg: config
             });
         }
     }
@@ -675,12 +717,11 @@ function buildTestConfig(cp: ChannelPlugin): any {
         if (fs.existsSync(settingPath)) {
             const setting = JSON.parse(fs.readFileSync(settingPath, 'utf-8'));
             // 支持 channelmgr (新名称) 和 channels (旧名称兼容)
-            const channelConfig = setting?.applications?.channelmgr?.[cp.id]
-                || setting?.applications?.channels?.[cp.id]
-                || {};
+            const channelConfig =
+                setting?.applications?.channelmgr?.[cp.id] || setting?.applications?.channels?.[cp.id] || {};
             return {
                 channels: { [cp.id]: channelConfig },
-                ...channelConfig,
+                ...channelConfig
             };
         }
     } catch (err: any) {

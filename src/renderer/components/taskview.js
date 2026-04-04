@@ -15,7 +15,7 @@ class TaskView extends HTMLElement {
     constructor() {
         super();
 
-        const task_id = this.getAttribute('task_id')
+        const task_id = this.getAttribute('task_id');
         if (task_id === null) {
             throw new Error('task_id is required');
         }
@@ -70,9 +70,9 @@ class TaskView extends HTMLElement {
     }
 
     renderUserMessage(user_message) {
-        var content = "";
-        var hasTextPart = false;
-        for (let part of user_message.content) {
+        let content = '';
+        let hasTextPart = false;
+        for (const part of user_message.content) {
             content += `<div class="${TaskView.USER_PART_CLASS_MAP[part.type]}">${part.rendered}</div>`;
             if (part.type === 'text') {
                 hasTextPart = true;
@@ -86,32 +86,32 @@ class TaskView extends HTMLElement {
                     <!-- <span class="text-xs text-gray-500 mt-1 block">10:31</span> -->
                 </div>
             </div>
-            `
+            `;
         } else {
             return `
             <div class="flex items-start space-x-3 flex-row-reverse">
                 ${content}
             </div>
-            `
+            `;
         }
     }
 
     static USER_PART_CLASS_MAP = {
-        'text': 'bg-transparent text-base text-black markdown-body'
-    }
+        text: 'bg-transparent text-base text-black markdown-body'
+    };
 
     static ASSISTANT_PART_CLASS_MAP = {
-        'text': 'bg-transparent text-base text-black markdown-body',
-        'reasoning': 'bg-gray-200 rounded-xl text-gray-500 text-xs p-3 mb-3',
-        'tool_call': ''
-    }
+        text: 'bg-transparent text-base text-black markdown-body',
+        reasoning: 'bg-gray-200 rounded-xl text-gray-500 text-xs p-3 mb-3',
+        tool_call: ''
+    };
 
     renderAssistantMessage(assistant_message) {
-        var content = "";
-        for (let part of assistant_message.content) {
+        let content = '';
+        for (const part of assistant_message.content) {
             content += `<div class="${TaskView.ASSISTANT_PART_CLASS_MAP[part.type]}">${part.rendered}</div>`;
         }
-        var html = `
+        const html = `
         <div class="flex items-start space-x-3">
             <div id='message-container-${assistant_message.message_id}' class="p-3 bg-transparent w-full">
                 <div id='message-content-${assistant_message.message_id}'>
@@ -126,8 +126,8 @@ class TaskView extends HTMLElement {
                 </span>
             </div>
         </div>
-        `
-        return html
+        `;
+        return html;
     }
 
     createEmptyAssistantContainer(message_id) {
@@ -143,23 +143,27 @@ class TaskView extends HTMLElement {
     }
 
     tryScrollToEnd() {
-        if (!this.auto_scrolling_to_bottom) { return; }
+        if (!this.auto_scrolling_to_bottom) {
+            return;
+        }
         const domElement = this.getHistoryContainer();
         setTimeout(() => {
-            if (!this.auto_scrolling_to_bottom) { return; }
+            if (!this.auto_scrolling_to_bottom) {
+                return;
+            }
             domElement.scroll({
                 top: domElement.scrollHeight,
                 behavior: 'smooth'
-            })
-        }, 100)
+            });
+        }, 100);
     }
 
     async reload() {
-        var task_state = await window.taskManagerAPI.getFullTask(this.task_id);
+        const task_state = await window.taskManagerAPI.getFullTask(this.task_id);
         this.task_status = task_state.task_status || 'waiting';
         this.updateStopButtonVisibility();
 
-        var history_container = this.getHistoryContainer();
+        const history_container = this.getHistoryContainer();
         history_container.innerHTML = '';
         for (const message of task_state.chat_context.messages) {
             if (message.role === 'user') {
@@ -169,7 +173,7 @@ class TaskView extends HTMLElement {
             } else if (message.role === 'compact_separator') {
                 history_container.innerHTML += TaskView.renderCompactSeparator();
             }
-            this.tryScrollToEnd()
+            this.tryScrollToEnd();
         }
     }
 
@@ -243,35 +247,53 @@ class TaskView extends HTMLElement {
         // Initialize toolbar
         const toolbarContainer = this.querySelector('#taskview-toolbar');
         if (toolbarContainer) {
-            const toolbar = new ElasticToolbarWidget([
-                {
-                    id: 'taskview-export-btn',
-                    icon: 'fa-download',
-                    label: '导出',
-                    labelStayVisible: false,
-                    action: () => { this.exportTask(); }
-                }
-            ], '智能体对话');
+            const toolbar = new ElasticToolbarWidget(
+                [
+                    {
+                        id: 'taskview-export-btn',
+                        icon: 'fa-download',
+                        label: '导出',
+                        labelStayVisible: false,
+                        action: () => {
+                            this.exportTask();
+                        }
+                    }
+                ],
+                '智能体对话'
+            );
             toolbarContainer.appendChild(toolbar);
         }
 
         this.setUpEventListeners();
         this.reload().then(async () => {
-            this.subscription_id = await window.taskManagerAPI.subscribeTaskUpdate(this.task_id, progress => {
+            this.subscription_id = await window.taskManagerAPI.subscribeTaskUpdate(this.task_id, (progress) => {
                 const history_container = this.getHistoryContainer();
 
                 if (progress.type === 'user') {
-                    const userMsg = { content: [{ type: progress.last_part.type, rendered: progress.last_part.rendered || '' }] };
+                    const userMsg = {
+                        content: [
+                            {
+                                type: progress.last_part.type,
+                                rendered: progress.last_part.rendered || ''
+                            }
+                        ]
+                    };
                     history_container.insertAdjacentHTML('beforeend', this.renderUserMessage(userMsg));
                 } else {
                     let message_container = this.querySelector(`#message-container-${progress.message_id}`);
                     if (!message_container) {
-                        history_container.insertAdjacentHTML('beforeend', this.createEmptyAssistantContainer(progress.message_id));
+                        history_container.insertAdjacentHTML(
+                            'beforeend',
+                            this.createEmptyAssistantContainer(progress.message_id)
+                        );
                         message_container = this.querySelector(`#message-container-${progress.message_id}`);
                     }
                     const message_content = message_container.querySelector(`#message-content-${progress.message_id}`);
                     if (message_content.children.length <= progress.last_part_index) {
-                        message_content.insertAdjacentHTML('beforeend', `<div class='${TaskView.ASSISTANT_PART_CLASS_MAP[progress.last_part.type]}'></div>`);
+                        message_content.insertAdjacentHTML(
+                            'beforeend',
+                            `<div class='${TaskView.ASSISTANT_PART_CLASS_MAP[progress.last_part.type]}'></div>`
+                        );
                     }
                     const last_part_element = message_content.children[progress.last_part_index];
                     last_part_element.innerHTML = progress.last_part.rendered || '';
@@ -289,8 +311,8 @@ class TaskView extends HTMLElement {
                     this.updateStopButtonVisibility();
                 }
                 this.tryScrollToEnd();
-            })
-        })
+            });
+        });
     }
 
     disconnectedCallback() {
@@ -324,38 +346,37 @@ class TaskView extends HTMLElement {
                 <agent-input id="task-${this.task_id}-input" />
             </div>
         </div>
-        `
+        `;
     }
 
     setUpEventListeners() {
         // 为输入框添加事件监听器
-        const input_widget = this.querySelector(`#task-${this.task_id}-input`)
+        const input_widget = this.querySelector(`#task-${this.task_id}-input`);
         input_widget.addEventListener('submit', async (event) => {
             this.task_status = 'running';
             this.updateStopButtonVisibility();
-            await window.taskManagerAPI.submitMessage(this.task_id, event.detail)
+            await window.taskManagerAPI.submitMessage(this.task_id, event.detail);
             await this.reload();
-        })
+        });
         const chatHistory = this.querySelector('#taskview-chat-history');
         chatHistory.addEventListener('scroll', (event) => {
             const scrollBottom = chatHistory.scrollTop + chatHistory.clientHeight;
             const distanceToBottom = Math.abs(chatHistory.scrollHeight - scrollBottom);
             this.setAutoScrollingToBottom(distanceToBottom < 50);
-        })
+        });
         const scrollButton = this.querySelector('#taskview-scroll-to-bottom-button');
         scrollButton.addEventListener('click', () => {
             this.setAutoScrollingToBottom(true);
             this.tryScrollToEnd();
-        })
+        });
     }
 }
 
 class EmbeddedTaskView extends HTMLElement {
-
     constructor() {
         super();
 
-        const task_id = this.getAttribute('task_id')
+        const task_id = this.getAttribute('task_id');
         if (task_id === null) {
             throw new Error('task_id is required');
         }
@@ -404,9 +425,9 @@ class EmbeddedTaskView extends HTMLElement {
             return '';
         }
 
-        var content = "";
-        var hasTextPart = false;
-        for (let part of user_message.content) {
+        let content = '';
+        let hasTextPart = false;
+        for (const part of user_message.content) {
             content += `<div class="${EmbeddedTaskView.USER_PART_CLASS_MAP[part.type]}">${part.rendered}</div>`;
             if (part.type === 'text') {
                 hasTextPart = true;
@@ -419,32 +440,32 @@ class EmbeddedTaskView extends HTMLElement {
                     ${content}
                 </div>
             </div>
-            `
+            `;
         } else {
             return `
             <div class="flex items-start space-x-3 flex-row-reverse">
                 ${content}
             </div>
-            `
+            `;
         }
     }
 
     static USER_PART_CLASS_MAP = {
-        'text': 'bg-transparent text-sm text-black markdown-body'
-    }
+        text: 'bg-transparent text-sm text-black markdown-body'
+    };
 
     static ASSISTANT_PART_CLASS_MAP = {
-        'text': 'bg-transparent text-sm text-black markdown-body',
-        'reasoning': 'bg-gray-200 rounded-xl text-gray-500 text-xs p-3 mb-1',
-        'tool_call': ''
-    }
+        text: 'bg-transparent text-sm text-black markdown-body',
+        reasoning: 'bg-gray-200 rounded-xl text-gray-500 text-xs p-3 mb-1',
+        tool_call: ''
+    };
 
     renderAssistantMessage(assistant_message) {
-        var content = "";
-        for (let part of assistant_message.content) {
+        let content = '';
+        for (const part of assistant_message.content) {
             content += `<div class="${EmbeddedTaskView.ASSISTANT_PART_CLASS_MAP[part.type]}">${part.rendered}</div>`;
         }
-        var html = `
+        const html = `
         <div class="flex items-start space-x-3">
             <div class="p-3 bg-transparent w-full">
                 <div id='message-${assistant_message.message_id}'>
@@ -452,8 +473,8 @@ class EmbeddedTaskView extends HTMLElement {
                 </div>
             </div>
         </div>
-        `
-        return html
+        `;
+        return html;
     }
 
     createEmptyAssistantContainer(message_id) {
@@ -470,20 +491,22 @@ class EmbeddedTaskView extends HTMLElement {
     tryScrollToEnd() {
         const domElement = this.getHistoryContainer();
         setTimeout(() => {
-            if (!this.auto_scrolling_to_bottom) { return; }
+            if (!this.auto_scrolling_to_bottom) {
+                return;
+            }
             domElement.scroll({
                 top: domElement.scrollHeight,
                 behavior: 'smooth'
-            })
-        }, 100)
+            });
+        }, 100);
     }
 
     async reload() {
-        var task_state = await window.taskManagerAPI.getFullTask(this.task_id);
+        const task_state = await window.taskManagerAPI.getFullTask(this.task_id);
         this.task_status = task_state.task_status || 'waiting';
         this.updateStopButtonVisibility();
 
-        var history_container = this.getHistoryContainer();
+        const history_container = this.getHistoryContainer();
         history_container.innerHTML = '';
         for (const message of task_state.chat_context.messages) {
             if (message.role === 'user') {
@@ -493,7 +516,7 @@ class EmbeddedTaskView extends HTMLElement {
             } else if (message.role === 'compact_separator') {
                 history_container.innerHTML += TaskView.renderCompactSeparator();
             }
-            this.tryScrollToEnd()
+            this.tryScrollToEnd();
         }
     }
 
@@ -518,7 +541,7 @@ class EmbeddedTaskView extends HTMLElement {
     }
 
     async reload() {
-        var task_state = await window.taskManagerAPI.getFullTask(this.task_id);
+        const task_state = await window.taskManagerAPI.getFullTask(this.task_id);
         const previous_status = this.task_status;
         this.task_status = task_state.task_status || 'waiting';
         this.updateStopButtonVisibility();
@@ -528,7 +551,7 @@ class EmbeddedTaskView extends HTMLElement {
             this.emitTaskStatusChanged(this.task_status);
         }
 
-        var history_container = this.getHistoryContainer();
+        const history_container = this.getHistoryContainer();
         history_container.innerHTML = '';
         for (const message of task_state.chat_context.messages) {
             if (message.role === 'user') {
@@ -538,7 +561,7 @@ class EmbeddedTaskView extends HTMLElement {
             } else if (message.role === 'compact_separator') {
                 history_container.innerHTML += TaskView.renderCompactSeparator();
             }
-            this.tryScrollToEnd()
+            this.tryScrollToEnd();
         }
     }
 
@@ -548,20 +571,33 @@ class EmbeddedTaskView extends HTMLElement {
             // 在首次加载完成后，发送一次初始状态事件
             this.emitTaskStatusChanged(this.task_status);
 
-            this.subscription_id = await window.taskManagerAPI.subscribeTaskUpdate(this.task_id, progress => {
+            this.subscription_id = await window.taskManagerAPI.subscribeTaskUpdate(this.task_id, (progress) => {
                 const history_container = this.getHistoryContainer();
 
                 if (progress.type === 'user') {
-                    const userMsg = { content: [{ type: progress.last_part.type, rendered: progress.last_part.rendered || '' }] };
+                    const userMsg = {
+                        content: [
+                            {
+                                type: progress.last_part.type,
+                                rendered: progress.last_part.rendered || ''
+                            }
+                        ]
+                    };
                     history_container.insertAdjacentHTML('beforeend', this.renderUserMessage(userMsg));
                 } else {
                     let message_element = this.querySelector(`#message-${progress.message_id}`);
                     if (!message_element) {
-                        history_container.insertAdjacentHTML('beforeend', this.createEmptyAssistantContainer(progress.message_id));
+                        history_container.insertAdjacentHTML(
+                            'beforeend',
+                            this.createEmptyAssistantContainer(progress.message_id)
+                        );
                         message_element = this.querySelector(`#message-${progress.message_id}`);
                     }
                     if (message_element && message_element.children.length <= progress.last_part_index) {
-                        message_element.insertAdjacentHTML('beforeend', `<div class='${EmbeddedTaskView.ASSISTANT_PART_CLASS_MAP[progress.last_part.type]}'></div>`);
+                        message_element.insertAdjacentHTML(
+                            'beforeend',
+                            `<div class='${EmbeddedTaskView.ASSISTANT_PART_CLASS_MAP[progress.last_part.type]}'></div>`
+                        );
                     }
                     if (message_element) {
                         const last_part_element = message_element.children[progress.last_part_index];
@@ -574,8 +610,8 @@ class EmbeddedTaskView extends HTMLElement {
                     this.task_status = progress.task_status;
                     this.emitTaskStatusChanged(this.task_status);
                 }
-            })
-        })
+            });
+        });
     }
 
     disconnectedCallback() {
@@ -609,20 +645,19 @@ class EmbeddedTaskView extends HTMLElement {
                 <span class="ml-1">滚动到底部</span>
             </button>
         </div>
-        `
+        `;
 
         this.querySelector('#taskview-scroll-to-bottom-button').addEventListener('click', () => {
             this.setAutoScrollingToBottom(true);
             this.tryScrollToEnd();
-        })
+        });
         this.querySelector('#taskview-chat-history').addEventListener('scroll', (event) => {
             const scrollBottom = event.target.scrollTop + event.target.clientHeight;
             const distanceToBottom = Math.abs(event.target.scrollHeight - scrollBottom);
             this.setAutoScrollingToBottom(distanceToBottom < 50);
-        })
+        });
     }
-
 }
 
-customElements.define('task-view', TaskView)
-customElements.define('embedded-task-view', EmbeddedTaskView)
+customElements.define('task-view', TaskView);
+customElements.define('embedded-task-view', EmbeddedTaskView);

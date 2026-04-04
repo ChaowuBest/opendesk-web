@@ -19,7 +19,6 @@ import { Card } from '../../tui/components/card.js';
 import { statusDisplay, truncText } from '../../tui/components/toolcall.js';
 import type { TaskManagerState, TaskState } from './tasks.js';
 
-
 // ═══════════════════ Helpers ═══════════════════
 
 /** 当工具参数中这些字段的值过大时，将其替换为占位符以避免信息过载 */
@@ -31,9 +30,9 @@ function sanitizeToolArgs(args: any): any {
     const sanitized = { ...args };
     for (const field of LARGE_CONTENT_FIELDS) {
         if (
-            field in sanitized
-            && typeof sanitized[field] === 'string'
-            && sanitized[field].length > CONTENT_TRUNCATE_THRESHOLD
+            field in sanitized &&
+            typeof sanitized[field] === 'string' &&
+            sanitized[field].length > CONTENT_TRUNCATE_THRESHOLD
         ) {
             sanitized[field] = `[内容已省略，共 ${sanitized[field].length} 字符]`;
         }
@@ -48,8 +47,8 @@ function formatToolCallBrief(toolName: string, argsObj: any): string {
 
 function formatMessageBrief(message: UserMessage | AssistantMessage): string {
     if (message instanceof UserMessage) {
-        const textParts = message.content.filter(p => p.type === 'text');
-        const text = textParts.map(p => (p as { text: string }).text).join(' ');
+        const textParts = message.content.filter((p) => p.type === 'text');
+        const text = textParts.map((p) => (p as { text: string }).text).join(' ');
         const truncated = text.slice(0, 200);
         return `> **用户**: ${truncated}${text.length > 200 ? '...' : ''}`;
     } else {
@@ -68,12 +67,11 @@ function formatMessageBrief(message: UserMessage | AssistantMessage): string {
     }
 }
 
-
 // ═══════════════════ listRecentTasks ═══════════════════
 
 const ListRecentTasksSchema = z.object({
     startDate: z.string().describe('起始日期，格式为 YYYY-MM-DD'),
-    endDate: z.string().describe('结束日期，格式为 YYYY-MM-DD'),
+    endDate: z.string().describe('结束日期，格式为 YYYY-MM-DD')
 });
 
 class ListRecentTasksTool extends BaseTool<typeof ListRecentTasksSchema> {
@@ -83,7 +81,7 @@ class ListRecentTasksTool extends BaseTool<typeof ListRecentTasksSchema> {
         super(
             'listRecentTasks',
             '按照指定的起止日期列出日期范围内所有任务的信息摘要，包含任务ID、名称、时间和消息摘要',
-            ListRecentTasksSchema,
+            ListRecentTasksSchema
         );
         this.taskManagerState = taskManagerState;
         this.setExecutor(this.handleExecute.bind(this));
@@ -108,13 +106,13 @@ class ListRecentTasksTool extends BaseTool<typeof ListRecentTasksSchema> {
             icon: '📋',
             title: '列出任务',
             status: statusDisplay(toolcall.status),
-            body,
+            body
         }).render(width);
     }
 
     async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
         const args = toolcall.args_object as z.output<typeof ListRecentTasksSchema> | undefined;
-        const dateRange = (args?.startDate && args?.endDate) ? `${args.startDate} ~ ${args.endDate}` : '';
+        const dateRange = args?.startDate && args?.endDate ? `${args.startDate} ~ ${args.endDate}` : '';
 
         if (toolcall.status === 'running') {
             return `
@@ -156,7 +154,7 @@ class ListRecentTasksTool extends BaseTool<typeof ListRecentTasksSchema> {
             throw new Error('日期格式无效，请使用 YYYY-MM-DD 格式');
         }
 
-        const filteredTasks = this.taskManagerState.tasks.filter(task => {
+        const filteredTasks = this.taskManagerState.tasks.filter((task) => {
             if (task.parent_id !== null) return false;
             if (!task.started_at) return false;
             return task.started_at >= start && task.started_at <= end;
@@ -180,14 +178,11 @@ class ListRecentTasksTool extends BaseTool<typeof ListRecentTasksSchema> {
     private formatTaskEntry(task: TaskState): string {
         const messages = task.chat_context.messages;
         const contentMessages = messages.filter(
-            (m): m is UserMessage | AssistantMessage =>
-                m instanceof UserMessage || m instanceof AssistantMessage
+            (m): m is UserMessage | AssistantMessage => m instanceof UserMessage || m instanceof AssistantMessage
         );
 
         const firstMsgTime = task.started_at?.toISOString() ?? '未知';
-        const lastMsgTime = task.finished_at?.toISOString()
-            ?? task.started_at?.toISOString()
-            ?? '未知';
+        const lastMsgTime = task.finished_at?.toISOString() ?? task.started_at?.toISOString() ?? '未知';
 
         let md = `## ${task.task_name ?? '未命名任务'}\n\n`;
         md += `- **任务ID**: \`${task.task_id}\`\n`;
@@ -221,23 +216,18 @@ class ListRecentTasksTool extends BaseTool<typeof ListRecentTasksSchema> {
     }
 }
 
-
 // ═══════════════════ askFromTask ═══════════════════
 
 const AskFromTaskSchema = z.object({
     taskId: z.string().describe('要查询的任务ID'),
-    question: z.string().describe('要对该任务内容提出的问题'),
+    question: z.string().describe('要对该任务内容提出的问题')
 });
 
 class AskFromTaskTool extends BaseTool<typeof AskFromTaskSchema> {
     private taskManagerState: TaskManagerState;
 
     constructor(taskManagerState: TaskManagerState) {
-        super(
-            'askFromTask',
-            '给定任务ID和一个问题，由大模型根据该任务的完整对话记录回答问题',
-            AskFromTaskSchema,
-        );
+        super('askFromTask', '给定任务ID和一个问题，由大模型根据该任务的完整对话记录回答问题', AskFromTaskSchema);
         this.taskManagerState = taskManagerState;
         this.setExecutor(this.handleExecute.bind(this));
     }
@@ -265,7 +255,7 @@ class AskFromTaskTool extends BaseTool<typeof AskFromTaskSchema> {
             status: statusDisplay(toolcall.status),
             body,
             maxLines: 8,
-            truncateStrategy: 'tail',
+            truncateStrategy: 'tail'
         }).render(width);
     }
 
@@ -317,21 +307,17 @@ class AskFromTaskTool extends BaseTool<typeof AskFromTaskSchema> {
         let conversationRecord = '';
         for (const msg of task.chat_context.messages) {
             if (msg instanceof UserMessage) {
-                const textParts = msg.content.filter(p => p.type === 'text');
-                const text = textParts.map(p => (p as { text: string }).text).join('\n');
+                const textParts = msg.content.filter((p) => p.type === 'text');
+                const text = textParts.map((p) => (p as { text: string }).text).join('\n');
                 if (text.trim()) {
-                    const truncated = text.length > 2000
-                        ? text.slice(0, 2000) + '...[截断]'
-                        : text;
+                    const truncated = text.length > 2000 ? text.slice(0, 2000) + '...[截断]' : text;
                     conversationRecord += `用户: ${truncated}\n\n`;
                 }
             } else if (msg instanceof AssistantMessage) {
-                const textParts = msg.content.filter(p => p.type === 'text');
-                const text = textParts.map(p => (p as { text: string }).text).join('\n');
+                const textParts = msg.content.filter((p) => p.type === 'text');
+                const text = textParts.map((p) => (p as { text: string }).text).join('\n');
                 if (text.trim()) {
-                    const truncated = text.length > 2000
-                        ? text.slice(0, 2000) + '...[截断]'
-                        : text;
+                    const truncated = text.length > 2000 ? text.slice(0, 2000) + '...[截断]' : text;
                     conversationRecord += `助手: ${truncated}\n\n`;
                 }
             }
@@ -356,14 +342,15 @@ class AskFromTaskTool extends BaseTool<typeof AskFromTaskSchema> {
     }
 }
 
-
 // ═══════════════════ getTaskHistory ═══════════════════
 
 const GetTaskHistorySchema = z.object({
     taskId: z.string().describe('要查询的任务ID'),
     limit: z.number().default(10).describe('获取的消息条数限制，默认为10'),
-    includeFullToolContent: z.boolean().default(false)
-        .describe('是否包含完整的工具调用内容（参数和返回值），默认为false'),
+    includeFullToolContent: z
+        .boolean()
+        .default(false)
+        .describe('是否包含完整的工具调用内容（参数和返回值），默认为false')
 });
 
 class GetTaskHistoryTool extends BaseTool<typeof GetTaskHistorySchema> {
@@ -373,7 +360,7 @@ class GetTaskHistoryTool extends BaseTool<typeof GetTaskHistorySchema> {
         super(
             'getTaskHistory',
             '获取指定任务的最近N条消息历史，可选择是否包含完整的工具调用细节',
-            GetTaskHistorySchema,
+            GetTaskHistorySchema
         );
         this.taskManagerState = taskManagerState;
         this.setExecutor(this.handleExecute.bind(this));
@@ -402,7 +389,7 @@ class GetTaskHistoryTool extends BaseTool<typeof GetTaskHistorySchema> {
             icon: '📜',
             title: '获取历史',
             status: statusDisplay(toolcall.status),
-            body,
+            body
         }).render(width);
     }
 
@@ -450,8 +437,7 @@ class GetTaskHistoryTool extends BaseTool<typeof GetTaskHistorySchema> {
 
         const messages = task.chat_context.messages;
         const contentMessages = messages.filter(
-            (m): m is UserMessage | AssistantMessage =>
-                m instanceof UserMessage || m instanceof AssistantMessage
+            (m): m is UserMessage | AssistantMessage => m instanceof UserMessage || m instanceof AssistantMessage
         );
 
         const lastN = contentMessages.slice(-args.limit);
@@ -470,10 +456,7 @@ class GetTaskHistoryTool extends BaseTool<typeof GetTaskHistorySchema> {
         return result;
     }
 
-    private formatMessage(
-        message: UserMessage | AssistantMessage,
-        includeFullToolContent: boolean,
-    ): string {
+    private formatMessage(message: UserMessage | AssistantMessage, includeFullToolContent: boolean): string {
         if (message instanceof UserMessage) {
             let result = '### 👤 用户\n\n';
             for (const part of message.content) {
@@ -511,7 +494,6 @@ class GetTaskHistoryTool extends BaseTool<typeof GetTaskHistorySchema> {
     }
 }
 
-
 // ═══════════════════ Toolset Factory ═══════════════════
 
 export function createTaskInfoToolset(taskManagerState: TaskManagerState): BaseToolset {
@@ -519,7 +501,7 @@ export function createTaskInfoToolset(taskManagerState: TaskManagerState): BaseT
     toolset.addTools(
         new ListRecentTasksTool(taskManagerState),
         new AskFromTaskTool(taskManagerState),
-        new GetTaskHistoryTool(taskManagerState),
+        new GetTaskHistoryTool(taskManagerState)
     );
     return toolset;
 }

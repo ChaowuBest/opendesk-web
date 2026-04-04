@@ -9,15 +9,14 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { type Component, Box, Text, SelectList, matchesKey } from "@mariozechner/pi-tui";
-import { defaultSelectListTheme } from "../theme";
-import { OpenDeskTUI } from "../entry";
-import { TaskState } from "../../states/tasks";
-import { SelectTable, type SelectRow } from "./selecttable";
-import { ConfirmOverlay } from "./notice";
+import { type Component, Box, Text, SelectList, matchesKey } from '@mariozechner/pi-tui';
+import { defaultSelectListTheme } from '../theme';
+import { OpenDeskTUI } from '../entry';
+import { TaskState } from '../../states/tasks';
+import { SelectTable, type SelectRow } from './selecttable';
+import { ConfirmOverlay } from './notice';
 
-import chalk from "chalk";
-
+import chalk from 'chalk';
 
 export class TaskSwitcher implements Component {
     private openDeskTUI: OpenDeskTUI;
@@ -125,7 +124,7 @@ export class TaskSwitcher implements Component {
             running: '🏃 执行中',
             waiting: '⏳ 等待中',
             stopped: '🟢 已完成',
-            failed: '🔴 已中断',
+            failed: '🔴 已中断'
         };
 
         return this.buildOrderedTasks().map(({ task: t, depth }) => {
@@ -137,7 +136,7 @@ export class TaskSwitcher implements Component {
 
             return {
                 labels: [name, timeStr, status],
-                value: t.task_id,
+                value: t.task_id
             };
         });
     }
@@ -153,12 +152,8 @@ export class TaskSwitcher implements Component {
             this.close();
             return;
         }
-        this.table.innerRows = rows.map(row => ({ ...row, label: '' }));
-        this.table.innerList = new SelectList(
-            this.table.innerRows,
-            Math.min(rows.length, 15),
-            defaultSelectListTheme,
-        );
+        this.table.innerRows = rows.map((row) => ({ ...row, label: '' }));
+        this.table.innerList = new SelectList(this.table.innerRows, Math.min(rows.length, 15), defaultSelectListTheme);
 
         this.table.innerList.onSelect = (item) => {
             this.table.onSelect?.(item.value);
@@ -211,10 +206,10 @@ export class TaskSwitcher implements Component {
             const taskName = task?.task_name || '未命名任务';
 
             const confirm = new ConfirmOverlay(this.openDeskTUI, {
-                title: "删除任务",
+                title: '删除任务',
                 message: `确定要删除任务「${taskName}」吗？此操作不可恢复。`,
-                confirmLabel: "删除",
-                cancelLabel: "取消",
+                confirmLabel: '删除',
+                cancelLabel: '取消'
             });
             confirm.show(
                 () => {
@@ -227,7 +222,7 @@ export class TaskSwitcher implements Component {
                 () => {
                     this.openDeskTUI.hasOpenOverlay = true;
                     this.openDeskTUI.tui.setFocus(this);
-                },
+                }
             );
             return;
         }
@@ -263,9 +258,9 @@ export class TaskSwitcher implements Component {
     show() {
         if (this.getTasks().length === 0) return;
         this.hideHandle = this.openDeskTUI.tui.showOverlay(this, {
-            width: "80%",
-            maxHeight: "80%",
-            anchor: "center",
+            width: '80%',
+            maxHeight: '80%',
+            anchor: 'center'
         });
 
         this.openDeskTUI.hasOpenOverlay = true;

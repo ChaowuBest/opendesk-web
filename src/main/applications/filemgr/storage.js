@@ -21,7 +21,6 @@ import readline from 'readline';
 import nedb from 'nedb-promises';
 import PQueue from 'p-queue';
 
-
 const queue = new PQueue({ concurrency: 1 });
 
 const FileEntrySchema = z.object({
@@ -32,18 +31,16 @@ const FileEntrySchema = z.object({
     created: z.number(),
     accessed: z.number(),
     type: z.enum(['file', 'directory'])
-})
+});
 
 const FileScannerMetadataSchema = z.object({
     type: z.literal('metadata').default('metadata'),
     root: z.string(),
     last_full_scan: z.number().default(0),
-    total_files: z.number().default(0),
-})
-
+    total_files: z.number().default(0)
+});
 
 class FSStorage {
-
     /** @type {FSStorage | null} */
     static instance = null;
 
@@ -72,25 +69,33 @@ class FSStorage {
     }
 
     async initialize() {
-        await this.loaddb().catch(err => {
-            logger.error(`error loading fs_storage.db: ${err}`);
-            fs.rmSync(FSStorage.dbPath);
-            this.db = new nedb({ filename: FSStorage.dbPath, autoload: true });
-            NotificationManager.getInstance().error('文件系统', '文件系统扫描', `文件系统数据库损坏，已删除并重新创建`);
-        }).finally(() => {
-            this.db.ensureIndex({ fieldName: 'path', unique: true, sparse: true });
-            this.db.ensureIndex({ fieldName: 'filename', sparse: true });
-        })
+        await this.loaddb()
+            .catch((err) => {
+                logger.error(`error loading fs_storage.db: ${err}`);
+                fs.rmSync(FSStorage.dbPath);
+                this.db = new nedb({ filename: FSStorage.dbPath, autoload: true });
+                NotificationManager.getInstance().error(
+                    '文件系统',
+                    '文件系统扫描',
+                    `文件系统数据库损坏，已删除并重新创建`
+                );
+            })
+            .finally(() => {
+                this.db.ensureIndex({ fieldName: 'path', unique: true, sparse: true });
+                this.db.ensureIndex({ fieldName: 'filename', sparse: true });
+            });
 
         let startTime = Date.now();
         logger.info(`loading vector cache from ${FSStorage.vectorCachePath}`);
         if (fs.existsSync(FSStorage.vectorCachePath)) {
-            const fileStream = fs.createReadStream(FSStorage.vectorCachePath, { encoding: 'utf-8' });
+            const fileStream = fs.createReadStream(FSStorage.vectorCachePath, {
+                encoding: 'utf-8'
+            });
             const rl = readline.createInterface({
                 input: fileStream,
                 crlfDelay: Infinity
-              });
-              for await (const line of rl) {
+            });
+            for await (const line of rl) {
                 if (!line.trim()) continue;
                 try {
                     const cacheItem = JSON.parse(line);
@@ -113,7 +118,9 @@ class FSStorage {
                 await this.vecdb.insertItem({ id: key, vector: vector });
             }
             await this.vecdb.endUpdate();
-            logger.info(`creating vector index and inserting ${this.vec_cache.size} items to vector database: ${Date.now() - startTime}ms`);
+            logger.info(
+                `creating vector index and inserting ${this.vec_cache.size} items to vector database: ${Date.now() - startTime}ms`
+            );
         } catch (e) {
             await this.vecdb.createIndex({ deleteIfExists: true });
             logger.error(`error creating vector index, using empty index instead`);
@@ -125,16 +132,16 @@ class FSStorage {
         await this.vecdb.createIndex({ deleteIfExists: true });
         this.vec_cache.clear();
         fs.rmSync(FSStorage.vectorCachePath, { force: true });
-        logger.info('storage reset finished')
+        logger.info('storage reset finished');
     }
 
     async getStatus() {
-        let vecdb_stats = await this.vecdb.getIndexStats();
-        let db_count = await this.db.count({ type: { $ne: 'metadata' } });
+        const vecdb_stats = await this.vecdb.getIndexStats();
+        const db_count = await this.db.count({ type: { $ne: 'metadata' } });
         return {
             veccache_size: this.vec_cache.size,
             vecdb_size: vecdb_stats.items,
-            db_size: db_count,
+            db_size: db_count
         };
     }
 
@@ -153,7 +160,7 @@ class FSStorage {
 
         // 去重并过滤已存在的文件名
         const uniqueFilenames = Array.from(new Set(filenames));
-        const unexistFilenames = uniqueFilenames.filter(filename => !this.vec_cache.has(filename));
+        const unexistFilenames = uniqueFilenames.filter((filename) => !this.vec_cache.has(filename));
 
         if (unexistFilenames.length === 0) {
             return true;
@@ -237,14 +244,17 @@ class FSStorage {
         }
 
         // 1. 批量查询 base_db 中已有记录（按 path 索引，性能可接受）
-        const paths = files.map(f => f.path);
-        const existingRecords = await this.db.find({ path: { $in: paths }, type: { $ne: 'metadata' } });
-        const existingMap = new Map(existingRecords.map(r => [r.path, r]));
+        const paths = files.map((f) => f.path);
+        const existingRecords = await this.db.find({
+            path: { $in: paths },
+            type: { $ne: 'metadata' }
+        });
+        const existingMap = new Map(existingRecords.map((r) => [r.path, r]));
 
         // 2. Per-file checkpoint：跳过 modified 未变化的文件
-        const filesToProcess = files.filter(file => {
+        const filesToProcess = files.filter((file) => {
             const existing = existingMap.get(file.path);
-            if (!existing) return true;               // 新文件，需处理
+            if (!existing) return true; // 新文件，需处理
             return file.modified !== existing.modified; // modified 变化，需处理
         });
 
@@ -254,12 +264,14 @@ class FSStorage {
             return 0;
         }
         if (skippedCount > 0) {
-            logger.debug(`saveFiles: ${filesToProcess.length} to process, ${skippedCount} skipped (modified unchanged)`);
+            logger.debug(
+                `saveFiles: ${filesToProcess.length} to process, ${skippedCount} skipped (modified unchanged)`
+            );
         }
 
         // 3. Embedding 先于 base_db 更新。
         //    所有 embedding 阶段错误统一在这里收口：本批不写 base_db，不推进 checkpoint。
-        const filenames = filesToProcess.map(f => f.filename);
+        const filenames = filesToProcess.map((f) => f.filename);
         try {
             await this.saveFilenameEmbeddings(filenames);
         } catch (error) {
@@ -274,9 +286,7 @@ class FSStorage {
 
         for (let i = 0; i < filesToProcess.length; i++) {
             const file = filesToProcess[i];
-            updatePromises.push(
-                this.db.update({ path: file.path }, { $set: file }, { upsert: true })
-            );
+            updatePromises.push(this.db.update({ path: file.path }, { $set: file }, { upsert: true }));
 
             if (updatePromises.length >= CONCURRENT_UPDATES || i === filesToProcess.length - 1) {
                 await Promise.all(updatePromises);
@@ -285,13 +295,15 @@ class FSStorage {
         }
 
         const dbTime = Date.now() - startTime;
-        logger.info(`saveFiles: processed ${filesToProcess.length} files (${skippedCount} skipped), db update: ${dbTime}ms`);
+        logger.info(
+            `saveFiles: processed ${filesToProcess.length} files (${skippedCount} skipped), db update: ${dbTime}ms`
+        );
         return filesToProcess.length;
     }
 
     async searchFilesByKeyword(keyword) {
         const startTime = Date.now();
-        const result = await this.db.find({ filename: { $regex: new RegExp(keyword, 'i') } })
+        const result = await this.db.find({ filename: { $regex: new RegExp(keyword, 'i') } });
         const totalTime = Date.now() - startTime;
         logger.info(`searching files by keyword ${keyword} in ${totalTime}ms`);
         return result;
@@ -313,7 +325,10 @@ class FSStorage {
             this.refreshLatestSetting();
             embedding = await LLM.embed(query);
         } catch (error) {
-            logger.warn(`[vector] failed to create embedding for query="${query}", skipping similarity search: ${error.message}`, error);
+            logger.warn(
+                `[vector] failed to create embedding for query="${query}", skipping similarity search: ${error.message}`,
+                error
+            );
             return [];
         }
         const embedTime = Date.now() - embedStart;
@@ -334,7 +349,7 @@ class FSStorage {
                 break;
             }
 
-            let files = await this.db.find({ filename: item.item.id });
+            const files = await this.db.find({ filename: item.item.id });
             result.push(...files);
         }
 
@@ -348,22 +363,22 @@ class FSStorage {
     }
 
     async getFileScannerMetadata(root) {
-        let metadata = await this.db.findOne({ root: root });
+        const metadata = await this.db.findOne({ root: root });
         if (!metadata) {
             logger.info(`no file scanner metadata found for ${root}, creating new one`);
             // 使用Schema的默认值，last_full_scan默认为0
             return FileScannerMetadataSchema.parse({
-                root: root,
+                root: root
             });
         }
         try {
-            let result = FileScannerMetadataSchema.parse(metadata);
+            const result = FileScannerMetadataSchema.parse(metadata);
             return result;
         } catch (error) {
             logger.warn(`error parsing existing file scanner metadata: ${error}`);
             // 解析失败时，创建新的metadata，使用Schema的默认值
             return FileScannerMetadataSchema.parse({
-                root: root,
+                root: root
             });
         }
     }
@@ -371,7 +386,6 @@ class FSStorage {
     async saveFileScannerMetadata(metadata) {
         await this.db.update({ root: metadata.root }, { $set: metadata }, { upsert: true });
     }
-
 }
 
 export { FileEntrySchema, FileScannerMetadataSchema, FSStorage };

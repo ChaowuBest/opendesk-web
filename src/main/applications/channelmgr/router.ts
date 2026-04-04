@@ -21,7 +21,6 @@ import type { InboundChannelMessage, Participant } from '../../aikernel/plugins/
 import type { AgentDecl } from '../../aikernel/agent.js';
 import { SEND_FILE_TOOL_NAME } from './tools.js';
 
-
 export interface ChannelReply {
     text: string;
     mediaUrls: string[];
@@ -40,7 +39,6 @@ interface TaskEntry {
 const taskMap = new Map<string, TaskEntry>();
 
 export class ChannelMessageRouter {
-
     private taskManagerState: TaskManagerState;
     private agentDecl: AgentDecl;
     private model?: string;
@@ -88,16 +86,20 @@ export class ChannelMessageRouter {
     async routeInboundMessage(message: InboundChannelMessage): Promise<ChannelReply | null> {
         // For group messages, use groupId as the conversation key so all members share the same task.
         // For direct messages, use senderId.
-        const taskKey = message.chatType === 'group' && message.groupId
-            ? `${message.channelId}:${message.accountId}:${message.groupId}`
-            : `${message.channelId}:${message.accountId}:${message.senderId}`;
+        const taskKey =
+            message.chatType === 'group' && message.groupId
+                ? `${message.channelId}:${message.accountId}:${message.groupId}`
+                : `${message.channelId}:${message.accountId}:${message.senderId}`;
 
         let task: TaskState;
         try {
             task = await this.resolveSessionTask(taskKey, message);
         } catch (err: any) {
             logger.error(`创建消息会话失败: ${err?.message || err}`);
-            return { text: `抱歉，系统在创建会话时遇到了问题：${err?.message || err}\n请联系管理员检查系统配置。`, mediaUrls: [] };
+            return {
+                text: `抱歉，系统在创建会话时遇到了问题：${err?.message || err}\n请联系管理员检查系统配置。`,
+                mediaUrls: []
+            };
         }
 
         if (task.task_status === 'running') {
@@ -213,12 +215,12 @@ export class ChannelMessageRouter {
             '用户的新消息：',
             newMessageText,
             '',
-            '请仅回答 "相关" 或 "不相关"，不要包含其他内容。',
+            '请仅回答 "相关" 或 "不相关"，不要包含其他内容。'
         ].join('\n');
 
         const answer = await Promise.race([
             LLM.ask(new UserMessage(prompt), this.model),
-            new Promise<string>((_, reject) => setTimeout(() => reject(new Error('LLM relevance check timeout')), 8000)),
+            new Promise<string>((_, reject) => setTimeout(() => reject(new Error('LLM relevance check timeout')), 8000))
         ]);
 
         return !answer.includes('不相关');
@@ -244,7 +246,8 @@ export class ChannelMessageRouter {
             } else if (msg instanceof AssistantMessage) {
                 for (const p of msg.content) {
                     if (p.type === 'text' && (p as any).text) {
-                        const text = (p as any).text.length > 200 ? (p as any).text.slice(0, 200) + '...' : (p as any).text;
+                        const text =
+                            (p as any).text.length > 200 ? (p as any).text.slice(0, 200) + '...' : (p as any).text;
                         parts.unshift(`[助手]: ${text}`);
                     }
                 }
@@ -259,9 +262,7 @@ export class ChannelMessageRouter {
         const systemPrompt = await this.agentDecl.createSystemPrompt();
 
         // Determine reply target: group ID for group chats, sender ID for direct messages
-        const replyTarget = (message.chatType === 'group' && message.groupId)
-            ? message.groupId
-            : message.senderId;
+        const replyTarget = message.chatType === 'group' && message.groupId ? message.groupId : message.senderId;
 
         const channelContext = [
             systemPrompt,
@@ -270,8 +271,10 @@ export class ChannelMessageRouter {
             `Channel: ${message.channelId}`,
             `Sender: ${message.senderName || message.senderId}`,
             message.chatType === 'group' ? `Group: ${message.groupName || message.groupId}` : '',
-            'Please respond concisely and naturally, as this is a chat message from a messaging platform.',
-        ].filter(Boolean).join('\n');
+            'Please respond concisely and naturally, as this is a chat message from a messaging platform.'
+        ]
+            .filter(Boolean)
+            .join('\n');
 
         await task.setSystemPrompt(channelContext);
 
@@ -280,7 +283,7 @@ export class ChannelMessageRouter {
             type: 'channel',
             channel: message.channelId,
             accountId: message.accountId,
-            recipientId: replyTarget,
+            recipientId: replyTarget
         };
         taskMap.set(taskKey, { taskId: task.task_id, lastMessageAt: Date.now() });
 
@@ -298,7 +301,7 @@ export class ChannelMessageRouter {
     private async submitAndWaitForReply(
         task: TaskState,
         userText: string,
-        media?: Array<{ path: string; contentType?: string }>,
+        media?: Array<{ path: string; contentType?: string }>
     ): Promise<ChannelReply | null> {
         task.task_status = 'running';
         task.started_at = new Date();
@@ -312,8 +315,8 @@ export class ChannelMessageRouter {
                 const IMAGE_EXTS = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp'];
                 for (const item of media) {
                     const ct = item.contentType?.toLowerCase() || '';
-                    const isImage = ct.startsWith('image/')
-                        || IMAGE_EXTS.some(ext => item.path.toLowerCase().endsWith(ext));
+                    const isImage =
+                        ct.startsWith('image/') || IMAGE_EXTS.some((ext) => item.path.toLowerCase().endsWith(ext));
                     if (!isImage) {
                         logger.info(`[router] skipping non-image media: ${item.path} (${ct})`);
                         continue;

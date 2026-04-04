@@ -19,9 +19,11 @@ import { z } from 'zod';
 import fs from 'fs';
 import path from 'path';
 
-
 const ListKnowledgeBasesArgsSchema = z.object({
-    provider_id: z.string().optional().describe('可选，指定服务商ID以仅列出该服务商的知识库。不指定则列出所有已启用服务商的知识库'),
+    provider_id: z
+        .string()
+        .optional()
+        .describe('可选，指定服务商ID以仅列出该服务商的知识库。不指定则列出所有已启用服务商的知识库')
 });
 
 export class ListKnowledgeBasesTool extends BaseTool<typeof ListKnowledgeBasesArgsSchema> {
@@ -31,7 +33,7 @@ export class ListKnowledgeBasesTool extends BaseTool<typeof ListKnowledgeBasesAr
         super(
             'listKnowledgeBases',
             '列出所有知识库清单，包括各知识库的ID、名称、描述、文档数量等信息',
-            ListKnowledgeBasesArgsSchema,
+            ListKnowledgeBasesArgsSchema
         );
         this.app = app;
         this.setExecutor(this.list.bind(this));
@@ -48,7 +50,9 @@ export class ListKnowledgeBasesTool extends BaseTool<typeof ListKnowledgeBasesAr
                 for (const group of result.knowledge_bases || []) {
                     const kbs = group.items || [];
                     total += kbs.length;
-                    body.push(chalk.dim(`  ${chalk.magenta(group.provider_id)}: ${chalk.white(String(kbs.length))} 个知识库`));
+                    body.push(
+                        chalk.dim(`  ${chalk.magenta(group.provider_id)}: ${chalk.white(String(kbs.length))} 个知识库`)
+                    );
                     for (const kb of kbs) {
                         body.push(`    ${chalk.cyan(kb.name)} ${chalk.dim(`(${kb.id})`)}`);
                     }
@@ -60,7 +64,12 @@ export class ListKnowledgeBasesTool extends BaseTool<typeof ListKnowledgeBasesAr
         } else if (toolcall.status === 'error' && toolcall.result) {
             body.push(chalk.redBright('  ' + truncText(toolcall.result, width - 10)));
         }
-        return new Card({ icon: '📚', title: '知识库列表', status: statusDisplay(toolcall.status), body }).render(width);
+        return new Card({
+            icon: '📚',
+            title: '知识库列表',
+            status: statusDisplay(toolcall.status),
+            body
+        }).render(width);
     }
 
     async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
@@ -140,13 +149,13 @@ export class ListKnowledgeBasesTool extends BaseTool<typeof ListKnowledgeBasesAr
                 results.push({
                     provider_id: provider.id,
                     provider_name: provider.name,
-                    items: kbs,
+                    items: kbs
                 });
             } catch (err: any) {
                 results.push({
                     provider_id: provider.id,
                     provider_name: provider.name,
-                    items: [{ error: err.message }],
+                    items: [{ error: err.message }]
                 });
             }
         }
@@ -155,12 +164,11 @@ export class ListKnowledgeBasesTool extends BaseTool<typeof ListKnowledgeBasesAr
     }
 }
 
-
 const RetrieveFromKnowledgeBaseArgsSchema = z.object({
     provider_id: z.string().describe('知识库所属的服务商ID'),
     knowledge_base_id: z.string().describe('知识库ID'),
     query: z.string().describe('检索查询内容'),
-    top_k: z.number().optional().describe('返回结果数量，默认5'),
+    top_k: z.number().optional().describe('返回结果数量，默认5')
 });
 
 export class RetrieveFromKnowledgeBaseTool extends BaseTool<typeof RetrieveFromKnowledgeBaseArgsSchema> {
@@ -170,7 +178,7 @@ export class RetrieveFromKnowledgeBaseTool extends BaseTool<typeof RetrieveFromK
         super(
             'retrieveFromKnowledgeBase',
             '从指定知识库中检索相关内容片段，返回按相似度排序的结果',
-            RetrieveFromKnowledgeBaseArgsSchema,
+            RetrieveFromKnowledgeBaseArgsSchema
         );
         this.app = app;
         this.setExecutor(this.retrieve.bind(this));
@@ -194,7 +202,12 @@ export class RetrieveFromKnowledgeBaseTool extends BaseTool<typeof RetrieveFromK
         } else if (toolcall.status === 'error' && toolcall.result) {
             body.push(chalk.redBright('  ' + truncText(toolcall.result, width - 10)));
         }
-        return new Card({ icon: '🔍', title: '知识库检索', status: statusDisplay(toolcall.status), body }).render(width);
+        return new Card({
+            icon: '🔍',
+            title: '知识库检索',
+            status: statusDisplay(toolcall.status),
+            body
+        }).render(width);
     }
 
     private async retrieve(args: z.output<typeof RetrieveFromKnowledgeBaseArgsSchema>): Promise<string> {
@@ -209,11 +222,10 @@ export class RetrieveFromKnowledgeBaseTool extends BaseTool<typeof RetrieveFromK
     }
 }
 
-
 const AskKnowledgeBaseArgsSchema = z.object({
     provider_id: z.string().describe('知识库所属的服务商ID'),
     knowledge_base_id: z.string().describe('知识库ID'),
-    question: z.string().describe('要提问的问题'),
+    question: z.string().describe('要提问的问题')
 });
 
 export class AskKnowledgeBaseTool extends BaseTool<typeof AskKnowledgeBaseArgsSchema> {
@@ -223,7 +235,7 @@ export class AskKnowledgeBaseTool extends BaseTool<typeof AskKnowledgeBaseArgsSc
         super(
             'askKnowledgeBase',
             '在指定知识库上下文中提问，大模型会结合知识库内容生成回答',
-            AskKnowledgeBaseArgsSchema,
+            AskKnowledgeBaseArgsSchema
         );
         this.app = app;
         this.setExecutor(this.ask.bind(this));
@@ -232,7 +244,8 @@ export class AskKnowledgeBaseTool extends BaseTool<typeof AskKnowledgeBaseArgsSc
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
         const args = toolcall.args_object as any;
         const body: string[] = [];
-        if (args?.question) body.push(chalk.dim('问题: ') + chalk.cyan(`"${truncText(String(args.question), width - 16)}"`));
+        if (args?.question)
+            body.push(chalk.dim('问题: ') + chalk.cyan(`"${truncText(String(args.question), width - 16)}"`));
         if (args?.knowledge_base_id) body.push(chalk.dim('知识库: ') + chalk.magenta(String(args.knowledge_base_id)));
 
         if (toolcall.status === 'running') {
@@ -248,7 +261,12 @@ export class AskKnowledgeBaseTool extends BaseTool<typeof AskKnowledgeBaseArgsSc
         } else if (toolcall.status === 'error' && toolcall.result) {
             body.push(chalk.redBright('  ' + truncText(toolcall.result, width - 10)));
         }
-        return new Card({ icon: '💬', title: '知识库问答', status: statusDisplay(toolcall.status), body }).render(width);
+        return new Card({
+            icon: '💬',
+            title: '知识库问答',
+            status: statusDisplay(toolcall.status),
+            body
+        }).render(width);
     }
 
     private async ask(args: z.output<typeof AskKnowledgeBaseArgsSchema>): Promise<string> {
@@ -263,11 +281,10 @@ export class AskKnowledgeBaseTool extends BaseTool<typeof AskKnowledgeBaseArgsSc
     }
 }
 
-
 const AddFilesToKnowledgeBaseArgsSchema = z.object({
     provider_id: z.string().describe('知识库所属的服务商ID'),
     knowledge_base_id: z.string().describe('知识库ID'),
-    paths: z.array(z.string()).describe('本地文件或目录路径列表'),
+    paths: z.array(z.string()).describe('本地文件或目录路径列表')
 });
 
 export class AddFilesToKnowledgeBaseTool extends BaseTool<typeof AddFilesToKnowledgeBaseArgsSchema> {
@@ -277,7 +294,7 @@ export class AddFilesToKnowledgeBaseTool extends BaseTool<typeof AddFilesToKnowl
         super(
             'addFilesToKnowledgeBase',
             '将本地文件或目录下的文件添加到知识库中。支持递归添加目录中所有受支持格式的文件',
-            AddFilesToKnowledgeBaseArgsSchema,
+            AddFilesToKnowledgeBaseArgsSchema
         );
         this.app = app;
         this.setExecutor(this.addFiles.bind(this));
@@ -302,7 +319,12 @@ export class AddFilesToKnowledgeBaseTool extends BaseTool<typeof AddFilesToKnowl
         } else if (toolcall.status === 'error' && toolcall.result) {
             body.push(chalk.redBright('  ' + truncText(toolcall.result, width - 10)));
         }
-        return new Card({ icon: '📁', title: '添加文件到知识库', status: statusDisplay(toolcall.status), body }).render(width);
+        return new Card({
+            icon: '📁',
+            title: '添加文件到知识库',
+            status: statusDisplay(toolcall.status),
+            body
+        }).render(width);
     }
 
     private async addFiles(args: z.output<typeof AddFilesToKnowledgeBaseArgsSchema>): Promise<string> {
@@ -335,7 +357,7 @@ export class AddFilesToKnowledgeBaseTool extends BaseTool<typeof AddFilesToKnowl
                 success_count: 0,
                 fail_count: 0,
                 message: '没有找到支持的文件',
-                supported_types: kb.getSupportedFileTypes(),
+                supported_types: kb.getSupportedFileTypes()
             });
         }
 
@@ -355,7 +377,7 @@ export class AddFilesToKnowledgeBaseTool extends BaseTool<typeof AddFilesToKnowl
             success_count: successes.length,
             fail_count: failures.length,
             successes,
-            failures,
+            failures
         });
     }
 

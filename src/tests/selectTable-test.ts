@@ -58,7 +58,7 @@ function testRender() {
     const rows = [
         { labels: ['任务A', '执行中', '2026-01-01'], key: 'task-a' },
         { labels: ['任务B（长名称测试）', '空闲', '2026-01-02'], key: 'task-b' },
-        { labels: ['任务C', '已完成', '2026-01-03'], key: 'task-c' },
+        { labels: ['任务C', '已完成', '2026-01-03'], key: 'task-c' }
     ];
 
     // 测试参数
@@ -115,7 +115,7 @@ function testRender() {
             colWidths.push(colMaxWidths[col]);
         } else {
             if (totalStretchFactor > 0) {
-                const stretchWidth = Math.floor(availableForStretch * stretchFactors[col] / totalStretchFactor);
+                const stretchWidth = Math.floor((availableForStretch * stretchFactors[col]) / totalStretchFactor);
                 colWidths.push(Math.max(1, stretchWidth));
             } else {
                 colWidths.push(1);
@@ -176,7 +176,7 @@ function testRender() {
 function testMultiColumnStretch() {
     const rows = [
         { labels: ['短', '中等长度', '很长很长很长的内容'], key: 'a' },
-        { labels: ['非常长的内容在这里', '短', '中'], key: 'b' },
+        { labels: ['非常长的内容在这里', '短', '中'], key: 'b' }
     ];
 
     const stretchFactors = [1, 2, 1]; // 三列都可拉伸，比例为 1:2:1
@@ -201,13 +201,13 @@ function testMultiColumnStretch() {
     console.log('每列最大宽度:', colMaxWidths);
 
     // 计算拉伸
-    let totalStretchFactor = stretchFactors.reduce((a, b) => a + b, 0);
+    const totalStretchFactor = stretchFactors.reduce((a, b) => a + b, 0);
     const separatorWidth = numCols - 1;
     const availableForStretch = width - separatorWidth;
 
     const colWidths: number[] = [];
     for (let col = 0; col < numCols; col++) {
-        const stretchWidth = Math.floor(availableForStretch * stretchFactors[col] / totalStretchFactor);
+        const stretchWidth = Math.floor((availableForStretch * stretchFactors[col]) / totalStretchFactor);
         colWidths.push(Math.max(1, stretchWidth));
     }
     console.log('每列最终宽度:', colWidths);
@@ -250,9 +250,7 @@ function testMultiColumnStretch() {
 }
 
 function testTruncation() {
-    const rows = [
-        { labels: ['这是一个非常非常长的内容需要被截断', '短'], key: 'a' },
-    ];
+    const rows = [{ labels: ['这是一个非常非常长的内容需要被截断', '短'], key: 'a' }];
 
     const stretchFactors = [0, 1]; // 第一列固定，第二列拉伸
     const alignments: ('left' | 'right' | 'center')[] = ['left', 'left'];
@@ -305,9 +303,7 @@ function testTruncation() {
 }
 
 function testCenterAlignment() {
-    const rows = [
-        { labels: ['左', '中', '右'], key: 'a' },
-    ];
+    const rows = [{ labels: ['左', '中', '右'], key: 'a' }];
 
     const stretchFactors = [1, 1, 1];
     const alignments: ('left' | 'right' | 'center')[] = ['left', 'center', 'right'];
@@ -359,9 +355,7 @@ function testFixedColumnOverflow() {
     console.log('  stretchFactors: [0, 0] (两列都是固定列)');
     console.log('  总宽度: 20 (不足以容纳固定列)');
 
-    const rows = [
-        { labels: ['这是一个非常非常长的内容', '短'], key: 'a' },
-    ];
+    const rows = [{ labels: ['这是一个非常非常长的内容', '短'], key: 'a' }];
 
     const stretchFactors = [0, 0]; // 两列都是固定列
     const alignments: ('left' | 'right' | 'center')[] = ['left', 'left'];

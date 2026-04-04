@@ -34,12 +34,11 @@ import {
     ListPendingPairingsTool,
     ApproveDevicePairingTool,
     RejectDevicePairingTool,
-    InvokeDeviceCommandTool,
+    InvokeDeviceCommandTool
 } from './tools.js';
 import { MANAGE_DEVICES_SKILL } from './skills.js';
 
 export class DeviceMgrApplication extends BaseApplication {
-
     private gateway: DeviceGateway | null = null;
     private startPromise: Promise<void> | null = null;
 
@@ -62,7 +61,7 @@ export class DeviceMgrApplication extends BaseApplication {
      */
     setRegistry(registry: typeof ApplicationRegistry): void {
         super.setRegistry(registry);
-        this.startGateway().catch(err => {
+        this.startGateway().catch((err) => {
             logger.error(`[devicemgr] 自动启动网关失败: ${err?.message || err}`);
         });
     }
@@ -97,7 +96,7 @@ export class DeviceMgrApplication extends BaseApplication {
             registerOpenClawMethods(this.gateway, {
                 taskManagerState: globalState.taskManagerState,
                 model: settingData?.default_model || undefined,
-                workspace: process.cwd(),
+                workspace: process.cwd()
             });
 
             await this.gateway.start();
@@ -148,7 +147,7 @@ export class DeviceMgrApplication extends BaseApplication {
             { eventName: 'device:connected', eventDescription: '设备节点已连接到网关' },
             { eventName: 'device:disconnected', eventDescription: '设备节点已断开连接' },
             { eventName: 'device:pairing-requested', eventDescription: '收到新的设备配对请求' },
-            { eventName: 'device:command-result', eventDescription: '设备命令调用完成' },
+            { eventName: 'device:command-result', eventDescription: '设备命令调用完成' }
         ];
     }
 
@@ -185,22 +184,23 @@ export class DeviceMgrApplication extends BaseApplication {
                 getArgumentCompletions: (argPrefix: string) => {
                     const options = ['status', 'list', 'paired', 'pending'];
                     return options
-                        .filter(opt => opt.startsWith(argPrefix.toLowerCase()))
-                        .map(opt => ({
+                        .filter((opt) => opt.startsWith(argPrefix.toLowerCase()))
+                        .map((opt) => ({
                             value: opt,
                             label: opt,
-                            description: {
-                                status: '查看网关状态',
-                                list: '列出在线设备',
-                                paired: '列出已配对设备',
-                                pending: '列出待审批配对',
-                            }[opt] || '',
+                            description:
+                                {
+                                    status: '查看网关状态',
+                                    list: '列出在线设备',
+                                    paired: '列出已配对设备',
+                                    pending: '列出待审批配对'
+                                }[opt] || ''
                         }));
                 },
                 execute: async (args: string) => {
                     await this.handleDevicesCommand(args, tui);
-                },
-            },
+                }
+            }
         ];
     }
 
@@ -209,11 +209,13 @@ export class DeviceMgrApplication extends BaseApplication {
 
         const showInfo = (title: string, message: string) => {
             // Dynamic import to avoid hard dependency on TUI components at load time
-            import('../../tui/components/notice.js').then(({ InfoOverlay }) => {
-                new InfoOverlay(tui, { title, message }).show();
-            }).catch(() => {
-                logger.info(`[devicemgr] ${title}: ${message}`);
-            });
+            import('../../tui/components/notice.js')
+                .then(({ InfoOverlay }) => {
+                    new InfoOverlay(tui, { title, message }).show();
+                })
+                .catch(() => {
+                    logger.info(`[devicemgr] ${title}: ${message}`);
+                });
         };
 
         if (!this.gateway?.isRunning()) {
@@ -225,13 +227,16 @@ export class DeviceMgrApplication extends BaseApplication {
             case 'status': {
                 const connected = this.gateway.getNodeRegistry().listConnected();
                 const pairing = this.gateway.getPairingStore().list();
-                showInfo('设备网关状态', [
-                    `端口: ${this.gateway.getPort()}`,
-                    `网关 ID: ${this.gateway.getIdentity().deviceId.substring(0, 16)}...`,
-                    `在线设备: ${connected.length}`,
-                    `已配对设备: ${pairing.paired.length}`,
-                    `待审批配对: ${pairing.pending.length}`,
-                ].join('\n'));
+                showInfo(
+                    '设备网关状态',
+                    [
+                        `端口: ${this.gateway.getPort()}`,
+                        `网关 ID: ${this.gateway.getIdentity().deviceId.substring(0, 16)}...`,
+                        `在线设备: ${connected.length}`,
+                        `已配对设备: ${pairing.paired.length}`,
+                        `待审批配对: ${pairing.pending.length}`
+                    ].join('\n')
+                );
                 break;
             }
             case 'list': {
@@ -239,7 +244,7 @@ export class DeviceMgrApplication extends BaseApplication {
                 if (nodes.length === 0) {
                     showInfo('在线设备', '当前没有在线设备');
                 } else {
-                    const lines = nodes.map(n => {
+                    const lines = nodes.map((n) => {
                         const icon = '●';
                         return `  ${icon} ${n.displayName || n.nodeId.substring(0, 12)} [${n.platform || '?'}] caps=${n.caps.join(',')}`;
                     });
@@ -252,8 +257,13 @@ export class DeviceMgrApplication extends BaseApplication {
                 if (paired.length === 0) {
                     showInfo('已配对设备', '暂无已配对设备');
                 } else {
-                    const connectedIds = new Set(this.gateway.getNodeRegistry().listConnected().map(n => n.nodeId));
-                    const lines = paired.map(n => {
+                    const connectedIds = new Set(
+                        this.gateway
+                            .getNodeRegistry()
+                            .listConnected()
+                            .map((n) => n.nodeId)
+                    );
+                    const lines = paired.map((n) => {
                         const icon = connectedIds.has(n.nodeId) ? '●' : '○';
                         return `  ${icon} ${n.displayName || n.nodeId.substring(0, 12)} [${n.platform || '?'}]`;
                     });
@@ -266,8 +276,9 @@ export class DeviceMgrApplication extends BaseApplication {
                 if (pending.length === 0) {
                     showInfo('待审批配对', '暂无待审批的配对请求');
                 } else {
-                    const lines = pending.map(r =>
-                        `  ○ ${r.displayName || r.nodeId.substring(0, 12)} [${r.platform || '?'}] id=${r.requestId.substring(0, 8)}`
+                    const lines = pending.map(
+                        (r) =>
+                            `  ○ ${r.displayName || r.nodeId.substring(0, 12)} [${r.platform || '?'}] id=${r.requestId.substring(0, 8)}`
                     );
                     showInfo('待审批配对', lines.join('\n'));
                 }

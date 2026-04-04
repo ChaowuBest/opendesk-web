@@ -19,7 +19,6 @@ import hljs from 'highlight.js';
 import path from 'path';
 import fs from 'fs';
 
-
 /**
  * 检查工具调用的 args_string 是否为合法 JSON。
  * 空字符串视为合法（部分模型对无参数工具返回空串）。
@@ -39,17 +38,19 @@ export const marked = new Marked(
         emptyLangClass: 'hljs',
         langPrefix: 'hljs language-',
         highlight(code, lang, info) {
-        const language = hljs.getLanguage(lang) ? lang : 'plaintext';
-        return hljs.highlight(code, { language }).value;
+            const language = hljs.getLanguage(lang) ? lang : 'plaintext';
+            return hljs.highlight(code, { language }).value;
         }
     })
 );
 
-marked.use(markedKatex({
-    throwOnError: false,
-    displayMode: true,
-    nonStandard: true
-}));
+marked.use(
+    markedKatex({
+        throwOnError: false,
+        displayMode: true,
+        nonStandard: true
+    })
+);
 
 /**
  * This is NOT an OpenAI message part, but a message part for our own message system.
@@ -62,7 +63,7 @@ export class ReasoningMessagePart {
     /** cached render result of the reasoning */
     rendered?: string;
 
-    constructor (content: string, source: 'reasoning_content' | 'think_tag') {
+    constructor(content: string, source: 'reasoning_content' | 'think_tag') {
         this.content = content;
         this.source = source;
     }
@@ -88,9 +89,8 @@ export class ReasoningMessagePart {
 const LARGE_ARGS_THRESHOLD = 500;
 
 export class ToolCall {
-
     index: number;
-    id: string
+    id: string;
     tool_name: string;
     args_string: string;
     args_object: any = {};
@@ -108,7 +108,12 @@ export class ToolCall {
         this.tool_name = tool_name;
         this.args_string = args_string;
 
-        Object.defineProperty(this, 'tool', { value: undefined, writable: true, enumerable: false, configurable: true });
+        Object.defineProperty(this, 'tool', {
+            value: undefined,
+            writable: true,
+            enumerable: false,
+            configurable: true
+        });
     }
 
     toOpenAIMessagePart(): object {
@@ -117,7 +122,7 @@ export class ToolCall {
             id: this.id,
             index: this.index,
             tool_name: this.tool_name,
-            args_string: this.args_string || "",
+            args_string: this.args_string || ''
         };
     }
 
@@ -146,7 +151,7 @@ export class ToolCall {
 
         /* 如果工具自定义了渲染函数，则使用工具的渲染函数（需确认为 BaseTool 实例，反序列化后可能为纯对象） */
         if (this.tool !== undefined && typeof (this.tool as any).renderToolCall === 'function') {
-            let rendered = await this.tool.renderToolCall(this);
+            const rendered = await this.tool.renderToolCall(this);
             if (rendered !== undefined) {
                 return rendered;
             }
@@ -163,7 +168,7 @@ export class ToolCall {
                     <span class="ml-2 font-semibold text-slate-800">${this.tool_name}</span>
                 </div>
             </div>
-            `
+            `;
         } else if (this.status === 'success') {
             return `
             <div class="flex mt-3 mb-3 text-sm items-center space-x-4 bg-white/80 backdrop-blur-md border border-slate-200 py-2 px-4 rounded-full shadow-sm w-fit">
@@ -174,7 +179,7 @@ export class ToolCall {
                     <span class="ml-2 font-medium text-slate-600">${this.tool_name}</span>
                 </div>
             </div>
-            `
+            `;
         } else if (this.status === 'error') {
             return `
             <div class="flex mt-3 mb-3 text-sm items-center space-x-4 bg-white/80 backdrop-blur-md border border-slate-200 py-2 px-4 rounded-full shadow-sm w-fit">
@@ -223,7 +228,12 @@ export class ToolCall {
         if ('tool' in tc) {
             delete (tc as any).tool;
         }
-        Object.defineProperty(tc, 'tool', { value: undefined, writable: true, enumerable: false, configurable: true });
+        Object.defineProperty(tc, 'tool', {
+            value: undefined,
+            writable: true,
+            enumerable: false,
+            configurable: true
+        });
         return tc;
     }
 }
@@ -238,14 +248,14 @@ export class ToolCallMessagePart {
      * 需要注意，我们特意设计成不允许在构造函数中传递toolcalls，这是因为如果模型直接输出
      * 了多个ToolCall（但实际上是同一个TC的多个流式组件的话，直接初始化会造成它们无法自动合并
      */
-    constructor() { }
+    constructor() {}
 
     push(toolcall: ToolCall) {
         const hasValidId = typeof toolcall.id === 'string' && toolcall.id.trim().length > 0;
         if (hasValidId) {
             this.toolcalls.push(toolcall);
         } else {
-            const target = this.toolcalls.find(tc => tc.index === toolcall.index);
+            const target = this.toolcalls.find((tc) => tc.index === toolcall.index);
             if (target === undefined) {
                 this.toolcalls.push(toolcall);
             } else {
@@ -258,8 +268,8 @@ export class ToolCallMessagePart {
     }
 
     extend(tool_call_message_part: ToolCallMessagePart) {
-        for (let toolcall of tool_call_message_part.toolcalls) {
-            this.push(toolcall)
+        for (const toolcall of tool_call_message_part.toolcalls) {
+            this.push(toolcall);
         }
     }
 
@@ -268,17 +278,17 @@ export class ToolCallMessagePart {
      */
     toOpenAIToolCalls(): object[] {
         return this.toolcalls
-            .filter(toolcall => {
+            .filter((toolcall) => {
                 if (!isValidToolCallArgs(toolcall.args_string)) {
                     logger.warn(
                         `Dropping tool call "${toolcall.tool_name}" (id=${toolcall.id}) from OpenAI tool_calls: ` +
-                        `args_string is not valid JSON. Raw args: ${toolcall.args_string?.substring(0, 200)}`
+                            `args_string is not valid JSON. Raw args: ${toolcall.args_string?.substring(0, 200)}`
                     );
                     return false;
                 }
                 return true;
             })
-            .map(toolcall => ({
+            .map((toolcall) => ({
                 id: toolcall.id,
                 type: 'function',
                 function: {
@@ -292,9 +302,7 @@ export class ToolCallMessagePart {
      * 用来生成OpenAI工具调用的Response消息
      */
     toOpenAIMessagePart(): object[] {
-        return [
-            ...this.toolcalls.map(toolcall => toolcall.toOpenAIMessagePart())
-        ];
+        return [...this.toolcalls.map((toolcall) => toolcall.toOpenAIMessagePart())];
     }
 
     async render(): Promise<string> {
@@ -307,8 +315,8 @@ export class ToolCallMessagePart {
 
     static assign(tool_call_message_part_obj: any) {
         Object.setPrototypeOf(tool_call_message_part_obj, ToolCallMessagePart.prototype);
-        for (let toolcall of tool_call_message_part_obj.toolcalls) {
-            ToolCall.assign(toolcall)
+        for (const toolcall of tool_call_message_part_obj.toolcalls) {
+            ToolCall.assign(toolcall);
         }
         return tool_call_message_part_obj;
     }
@@ -329,7 +337,7 @@ export class FileMessagePart {
         return {
             type: 'text',
             text: `用户添加了文件附件: ${this.path}，其内容以文本形式提取如下，供你参考: <content>${this.content}</content>`
-        }
+        };
     }
 
     async render(): Promise<string> {
@@ -385,12 +393,12 @@ export class TextMessagePart {
     text: string;
     rendered?: string;
 
-    constructor (text: string) {
+    constructor(text: string) {
         this.text = text;
     }
 
     toOpenAIMessagePart(): object {
-        return { type: 'text', text: this.text }
+        return { type: 'text', text: this.text };
     }
 
     static assign(text_message_part_obj: object): TextMessagePart {
@@ -399,7 +407,7 @@ export class TextMessagePart {
     }
 
     async render(): Promise<string> {
-        this.rendered = await marked.parse(this.text)
+        this.rendered = await marked.parse(this.text);
         return this.rendered;
     }
 }
@@ -442,7 +450,7 @@ export class ImageMessagePart {
     image_url: { url: string };
     rendered?: string;
 
-    constructor (image_url: string) {
+    constructor(image_url: string) {
         this.image_url = { url: image_url };
     }
 
@@ -460,7 +468,6 @@ export class ImageMessagePart {
         return image_message_part_obj as ImageMessagePart;
     }
 }
-
 
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp']);
 
@@ -481,7 +488,9 @@ export function extractImagePaths(text: string): string[] {
             if (fs.existsSync(resolved)) {
                 foundPaths.add(resolved);
             }
-        } catch { /* 无效路径，跳过 */ }
+        } catch {
+            /* 无效路径，跳过 */
+        }
     };
 
     // Phase 1: extract paths wrapped in quotes (e.g. "C:\xxx.png" or 'C:\xxx.png')
@@ -493,11 +502,11 @@ export function extractImagePaths(text: string): string[] {
 
     // Phase 2: unquoted path patterns
     const patterns = [
-        /(?<![<"'\w])([A-Za-z]:[\\\/][^\s<>"'|*?]+\.\w{2,5})(?!["\w])/g,
+        /(?<![<"'\w])([A-Za-z]:[\\/][^\s<>"'|*?]+\.\w{2,5})(?!["\w])/g,
         /(?<![<"'\w])(\/(?:[^\s<>"'|*?]+)\/[^\s<>"'|*?]+\.\w{2,5})(?!["\w])/g,
-        /(?<![<"'\w])(\.\.?[\\\/][^\s<>"'|*?]+\.\w{2,5})(?!["\w])/g,
-        /(?<![<"'\w])(~[\\\/][^\s<>"'|*?]+\.\w{2,5})(?!["\w])/g,
-        /(?<![<"'\\\/\w])(\w[^\s<>"'|*?]*[\\\/][^\s<>"'|*?]+\.\w{2,5})(?!["\w])/g,
+        /(?<![<"'\w])(\.\.?[\\/][^\s<>"'|*?]+\.\w{2,5})(?!["\w])/g,
+        /(?<![<"'\w])(~[\\/][^\s<>"'|*?]+\.\w{2,5})(?!["\w])/g,
+        /(?<![<"'\\/]\w)(\w[^\s<>"'|*?]*[\\/][^\s<>"'|*?]+\.\w{2,5})(?!["\w])/g
     ];
     for (const pattern of patterns) {
         let match: RegExpExecArray | null;
@@ -507,7 +516,7 @@ export function extractImagePaths(text: string): string[] {
     }
 
     // Phase 3: bare filenames (e.g. "test.png")
-    const bareFilenamePattern = /(?<![<"'\\\/\w])([A-Za-z0-9_\-][A-Za-z0-9_\-. ]*\.(png|jpe?g|gif|webp|bmp))(?!["\w])/gi;
+    const bareFilenamePattern = /(?<![<"'\\/]\w)([A-Za-z0-9_-][A-Za-z0-9_\-. ]*\.(png|jpe?g|gif|webp|bmp))(?!["\w])/gi;
     let match: RegExpExecArray | null;
     while ((match = bareFilenamePattern.exec(text)) !== null) {
         tryAdd(match[1].trim());
@@ -518,12 +527,22 @@ export function extractImagePaths(text: string): string[] {
 
 function detectImageMimeFromBuffer(buf: Buffer): string | null {
     if (!buf || buf.length < 4) return null;
-    if (buf[0] === 0xFF && buf[1] === 0xD8) return 'image/jpeg';
-    if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47) return 'image/png';
+    if (buf[0] === 0xff && buf[1] === 0xd8) return 'image/jpeg';
+    if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return 'image/png';
     if (buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46) return 'image/gif';
-    if (buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46
-        && buf.length > 11 && buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50) return 'image/webp';
-    if (buf[0] === 0x42 && buf[1] === 0x4D) return 'image/bmp';
+    if (
+        buf[0] === 0x52 &&
+        buf[1] === 0x49 &&
+        buf[2] === 0x46 &&
+        buf[3] === 0x46 &&
+        buf.length > 11 &&
+        buf[8] === 0x57 &&
+        buf[9] === 0x45 &&
+        buf[10] === 0x42 &&
+        buf[11] === 0x50
+    )
+        return 'image/webp';
+    if (buf[0] === 0x42 && buf[1] === 0x4d) return 'image/bmp';
     return null;
 }
 
@@ -538,7 +557,7 @@ export function imageToDataUri(imagePath: string): string {
         '.jpeg': 'image/jpeg',
         '.gif': 'image/gif',
         '.webp': 'image/webp',
-        '.bmp': 'image/bmp',
+        '.bmp': 'image/bmp'
     };
     const data = fs.readFileSync(imagePath);
     const mime = mimeMap[ext] || detectImageMimeFromBuffer(data) || 'image/png';
@@ -580,7 +599,7 @@ export class SystemMessage {
         return {
             role: this.role,
             content: this.content
-        }
+        };
     }
 }
 
@@ -597,7 +616,7 @@ export class UserMessage {
      */
     internal?: boolean;
 
-    constructor (content?: string) {
+    constructor(content?: string) {
         if (content) {
             this.content.push(new TextMessagePart(content));
         }
@@ -648,7 +667,7 @@ export class UserMessage {
             user_message.message_id = crypto.randomUUID();
         }
         if (user_message.content !== undefined) {
-            for (let part of user_message.content) {
+            for (const part of user_message.content) {
                 if (part.type === 'text') {
                     TextMessagePart.assign(part);
                 } else if (part.type === 'file') {
@@ -664,26 +683,24 @@ export class UserMessage {
     }
 
     async render(): Promise<void> {
-        for (let part of this.content) {
+        for (const part of this.content) {
             await part.render();
         }
     }
 
     toOpenAIMessage(supportsVision: boolean = true): object {
-        const parts = supportsVision
-            ? this.content
-            : this.content.filter(part => part.type !== 'image_url');
+        const parts = supportsVision ? this.content : this.content.filter((part) => part.type !== 'image_url');
 
         if (parts.length === 1 && parts[0].type === 'text') {
             return {
                 role: this.role,
                 content: parts[0].text
-            }
+            };
         }
         return {
             role: this.role,
-            content: parts.map(part => part.toOpenAIMessagePart())
-        }
+            content: parts.map((part) => part.toOpenAIMessagePart())
+        };
     }
 }
 
@@ -696,9 +713,13 @@ export class AssistantMessage {
     usage?: Usage;
     private _insideThinkTag: boolean = false;
 
-    constructor (content: Array<AssistantMessagePart> = []) {
+    constructor(content: Array<AssistantMessagePart> = []) {
         this.content = content;
-        Object.defineProperty(this, '_insideThinkTag', { value: false, writable: true, enumerable: false });
+        Object.defineProperty(this, '_insideThinkTag', {
+            value: false,
+            writable: true,
+            enumerable: false
+        });
     }
 
     /**
@@ -706,10 +727,14 @@ export class AssistantMessage {
      */
     static assign(raw_obj: object): AssistantMessage {
         Object.setPrototypeOf(raw_obj, AssistantMessage.prototype);
-        let assistant_message = raw_obj as AssistantMessage;
-        Object.defineProperty(assistant_message, '_insideThinkTag', { value: false, writable: true, enumerable: false });
+        const assistant_message = raw_obj as AssistantMessage;
+        Object.defineProperty(assistant_message, '_insideThinkTag', {
+            value: false,
+            writable: true,
+            enumerable: false
+        });
         if (assistant_message.content !== undefined) {
-            for (let part of assistant_message.content) {
+            for (const part of assistant_message.content) {
                 if (part.type === 'text') {
                     TextMessagePart.assign(part);
                 } else if (part.type === 'reasoning') {
@@ -725,7 +750,7 @@ export class AssistantMessage {
     }
 
     async render(): Promise<void> {
-        for (let part of this.content) {
+        for (const part of this.content) {
             await part.render();
         }
     }
@@ -734,13 +759,15 @@ export class AssistantMessage {
      * Merges the give message to this message and returns itself
      */
     mergeChunk(chunk: AssistantMessage): AssistantMessage {
-        for (var part of chunk.content) {
+        for (const part of chunk.content) {
             this.appendPart(part);
         }
         return this;
     }
 
-    appendPart(part: TextMessagePart | ReasoningMessagePart | ToolCallMessagePart | ErrorMessagePart): AssistantMessage {
+    appendPart(
+        part: TextMessagePart | ReasoningMessagePart | ToolCallMessagePart | ErrorMessagePart
+    ): AssistantMessage {
         if (part.type === 'text') {
             this.appendText(part.text);
         } else if (part.type === 'reasoning') {
@@ -758,7 +785,10 @@ export class AssistantMessage {
         return this;
     }
 
-    appendReasoningContent(content: string, source: 'reasoning_content' | 'think_tag' = 'reasoning_content'): AssistantMessage {
+    appendReasoningContent(
+        content: string,
+        source: 'reasoning_content' | 'think_tag' = 'reasoning_content'
+    ): AssistantMessage {
         const last_part = this.content[this.content.length - 1];
         if (last_part && last_part.type === 'reasoning' && last_part.source === source) {
             last_part.content += content;
@@ -890,20 +920,20 @@ export class AssistantMessage {
             if (currentText.length === 0 && currentReasoning.length === 0) {
                 return;
             }
-            var message: any = { 'role': 'assistant' };
+            const message: any = { role: 'assistant' };
             if (currentReasoning.length > 0) {
                 message.reasoning_content = currentReasoning;
             }
             if (currentText.length > 0) {
-                message.content = [{ type: 'text', text: currentText }]
+                message.content = [{ type: 'text', text: currentText }];
             } else {
                 // 确保 content 字段始终存在，即使为空字符串
-                message.content = "";
+                message.content = '';
             }
             currentReasoning = '';
             currentText = '';
             messages.push(message);
-        }
+        };
 
         for (const part of this.content) {
             switch (part.type) {
@@ -919,23 +949,23 @@ export class AssistantMessage {
                     processCurrentMessage();
                     const validToolcalls: ToolCall[] = [];
                     for (const tc of part.toolcalls) {
-                        const argsToCheck = (tc.compress_id && tc.args_string && tc.args_string.length > LARGE_ARGS_THRESHOLD)
-                            ? `{"compressed":"placeholder"}`
-                            : (tc.args_string || "");
+                        const argsToCheck =
+                            tc.compress_id && tc.args_string && tc.args_string.length > LARGE_ARGS_THRESHOLD
+                                ? `{"compressed":"placeholder"}`
+                                : tc.args_string || '';
                         if (!isValidToolCallArgs(argsToCheck)) {
                             logger.warn(
                                 `Dropping tool call "${tc.tool_name}" (id=${tc.id}) from OpenAI context: ` +
-                                `args_string is not valid JSON. Raw args: ${tc.args_string?.substring(0, 200)}`
+                                    `args_string is not valid JSON. Raw args: ${tc.args_string?.substring(0, 200)}`
                             );
                             continue;
                         }
                         validToolcalls.push(tc);
                     }
                     if (validToolcalls.length > 0) {
-                        const toolCallObjects = validToolcalls.map(tc => {
-                            const shouldCompressArgs = tc.compress_id
-                                && tc.args_string
-                                && tc.args_string.length > LARGE_ARGS_THRESHOLD;
+                        const toolCallObjects = validToolcalls.map((tc) => {
+                            const shouldCompressArgs =
+                                tc.compress_id && tc.args_string && tc.args_string.length > LARGE_ARGS_THRESHOLD;
                             return {
                                 id: tc.id,
                                 type: 'function',
@@ -943,13 +973,13 @@ export class AssistantMessage {
                                     name: tc.tool_name,
                                     arguments: shouldCompressArgs
                                         ? `{"compressed":"工具参数已被压缩，数据ID为 ${tc.compress_id}"}`
-                                        : (tc.args_string || "")
+                                        : tc.args_string || ''
                                 }
                             };
                         });
                         messages.push({ role: 'assistant', tool_calls: toolCallObjects });
                         for (const toolcall of validToolcalls) {
-                            let toolCallMsg: any = { 'role': 'tool', tool_call_id: toolcall.id };
+                            const toolCallMsg: any = { role: 'tool', tool_call_id: toolcall.id };
                             if (toolcall.compress_id) {
                                 toolCallMsg.content = `工具返回结果已被压缩，数据ID为 ${toolcall.compress_id}`;
                             } else if (toolcall.status === 'error') {
@@ -981,14 +1011,14 @@ export class AssistantMessage {
     }
 
     getOpenAIToolMessages(): object[] {
-        var messages: object[] = [];
-        var tool_call_parts = this.content.filter(part => part.type === 'tool_call');
-        for (let part of tool_call_parts) {
-            for (let toolcall of part.toolcalls) {
+        const messages: object[] = [];
+        const tool_call_parts = this.content.filter((part) => part.type === 'tool_call');
+        for (const part of tool_call_parts) {
+            for (const toolcall of part.toolcalls) {
                 if (!isValidToolCallArgs(toolcall.args_string)) {
                     logger.warn(
                         `Skipping tool response for "${toolcall.tool_name}" (id=${toolcall.id}): ` +
-                        `original tool call had invalid JSON args`
+                            `original tool call had invalid JSON args`
                     );
                     continue;
                 }
@@ -1019,7 +1049,7 @@ export class AssistantMessage {
     }
 
     static parseOpenAIMessage(openai_message: any): AssistantMessage {
-        var message = new AssistantMessage();
+        const message = new AssistantMessage();
 
         const reasoning_content = openai_message['reasoning_content'];
         if (reasoning_content) {
@@ -1028,9 +1058,9 @@ export class AssistantMessage {
 
         const tool_calls = openai_message['tool_calls'];
         if (tool_calls) {
-            let part = new ToolCallMessagePart()
-            for (let tool_call of tool_calls) {
-                let tc = new ToolCall(
+            const part = new ToolCallMessagePart();
+            for (const tool_call of tool_calls) {
+                const tc = new ToolCall(
                     tool_call['index'],
                     tool_call['id'],
                     tool_call['function']['name'],
@@ -1057,17 +1087,17 @@ export class AssistantResponse {
     finish_reason: 'stop' | 'error' | 'tool_calls' | null;
     usage?: Usage;
 
-    constructor (content: AssistantMessage, finish_reason: 'stop' | 'error' | 'tool_calls' | null = null) {
+    constructor(content: AssistantMessage, finish_reason: 'stop' | 'error' | 'tool_calls' | null = null) {
         this.content = content;
         this.finish_reason = finish_reason;
     }
 
     static richError(title: string, reason: string, ...attachments: string[]) {
-        var response = new AssistantResponse(new AssistantMessage(), 'error');
+        const response = new AssistantResponse(new AssistantMessage(), 'error');
         let message = reason;
         if (getDebugMode()) {
             for (const attachment of attachments) {
-                message += "\n```\n" + attachment + "\n```\n";
+                message += '\n```\n' + attachment + '\n```\n';
             }
         }
         response.content.appendError(title, message);
@@ -1075,7 +1105,7 @@ export class AssistantResponse {
     }
 
     static error(reason: string): AssistantResponse {
-        var response = new AssistantResponse(new AssistantMessage(), 'error');
+        const response = new AssistantResponse(new AssistantMessage(), 'error');
         response.content.appendError('Error', reason);
         return response;
     }
@@ -1100,11 +1130,7 @@ export class AssistantResponse {
 
         const usage = openai_response['usage'];
         if (usage) {
-            response.usage = new Usage(
-                usage['prompt_tokens'],
-                usage['completion_tokens'],
-                usage['total_tokens']
-            );
+            response.usage = new Usage(usage['prompt_tokens'], usage['completion_tokens'], usage['total_tokens']);
         }
         return response;
     }
@@ -1131,14 +1157,18 @@ export class CompactSeparatorMessage {
     toOpenAIMessage(): object {
         return {
             role: 'user',
-            content: [{
-                type: 'text',
-                text: `[上下文压缩通知] 以下是对之前对话历史的结构化总结。此前的消息已被压缩并省略，请基于以下总结继续对话：\n\n${this.summary}`
-            }]
+            content: [
+                {
+                    type: 'text',
+                    text: `[上下文压缩通知] 以下是对之前对话历史的结构化总结。此前的消息已被压缩并省略，请基于以下总结继续对话：\n\n${this.summary}`
+                }
+            ]
         };
     }
 
-    async render(): Promise<void> { /* 渲染在 TUI/GUI 层处理 */ }
+    async render(): Promise<void> {
+        /* 渲染在 TUI/GUI 层处理 */
+    }
 }
 
 export type ChatMessage = UserMessage | AssistantMessage | CompactSeparatorMessage;
@@ -1155,20 +1185,20 @@ export class ChatContext {
      * Attach multiple toolsets to the chat context
      */
     attachToolsets(...toolsets: BaseToolset[]) {
-        for (let toolset of toolsets) {
+        for (const toolset of toolsets) {
             this.toolsets.set(toolset.name, toolset);
         }
     }
 
     getTool(name: string): BaseTool<any> | undefined {
-        let tools = this.getTools()
+        const tools = this.getTools();
         return tools.get(name);
     }
 
     getTools(): Map<string, BaseTool<any>> {
-        let tools: Map<string, BaseTool<any>> = new Map();
-        for (let toolset of this.toolsets.values()) {
-            for (let tool of toolset.tools.values()) {
+        const tools: Map<string, BaseTool<any>> = new Map();
+        for (const toolset of this.toolsets.values()) {
+            for (const tool of toolset.tools.values()) {
                 tools.set(`${toolset.name}-${tool.name}`, tool);
             }
         }
@@ -1179,7 +1209,7 @@ export class ChatContext {
         return {
             system_prompt: this.system_prompt,
             messages: this.messages
-        }
+        };
     }
 
     appendMessage(message: ChatMessage): void {
@@ -1202,7 +1232,7 @@ export class ChatContext {
 
     /** 移除已有的分隔符并在指定位置插入新的 CompactSeparatorMessage */
     insertCompactSeparator(separator: CompactSeparatorMessage, position: number): void {
-        this.messages = this.messages.filter(m => (m as any).role !== 'compact_separator');
+        this.messages = this.messages.filter((m) => (m as any).role !== 'compact_separator');
         this.messages.splice(position, 0, separator);
     }
 
@@ -1224,7 +1254,7 @@ export class ChatContext {
      * Assign the prototype of the given object to the ChatContext prototype
      */
     static assign(chat_context_obj: any): ChatContext {
-        let ctx = new ChatContext();
+        const ctx = new ChatContext();
         const system_prompt = chat_context_obj['system_prompt'];
         if (system_prompt !== undefined) {
             ctx.system_prompt = SystemMessage.assign(system_prompt);
@@ -1232,7 +1262,7 @@ export class ChatContext {
 
         const messages = chat_context_obj['messages'];
         if (messages !== undefined) {
-            for (let message of messages) {
+            for (const message of messages) {
                 if (message.role === 'user') {
                     ctx.messages.push(UserMessage.assign(message));
                 } else if (message.role === 'assistant') {

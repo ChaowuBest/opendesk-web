@@ -30,19 +30,19 @@ import { theme } from './a2ui-to-html.js';
 function getThemeStyles(componentType, variant = null) {
     const addStyles = theme.additionalStyles?.[componentType];
     if (!addStyles) return '';
-    
+
     if (variant && addStyles[variant]) {
         return Object.entries(addStyles[variant])
             .map(([prop, val]) => `${prop}: ${val}`)
             .join('; ');
     }
-    
+
     // 过滤掉嵌套对象（如 h1, h2 等）
     const directStyles = Object.entries(addStyles)
         .filter(([, val]) => typeof val !== 'object')
         .map(([prop, val]) => `${prop}: ${val}`)
         .join('; ');
-    
+
     return directStyles;
 }
 
@@ -309,8 +309,7 @@ export function isJSON(text) {
 
     const trimmed = text.trim();
     // 检查是否以 JSON 数组或对象开头
-    if ((trimmed.startsWith('[') && trimmed.endsWith(']')) ||
-        (trimmed.startsWith('{') && trimmed.endsWith('}'))) {
+    if ((trimmed.startsWith('[') && trimmed.endsWith(']')) || (trimmed.startsWith('{') && trimmed.endsWith('}'))) {
         try {
             JSON.parse(trimmed);
             return true;
@@ -363,13 +362,15 @@ function renderObject(obj, depth = 0) {
         }
 
         // 普通数组
-        const items = obj.map(item => {
-            if (typeof item === 'object' && item !== null) {
-                return `<div class="json-item">${nextIndent}${renderObject(item, depth + 1)}</div>`;
-            } else {
-                return `<div class="json-item">${nextIndent}${renderValue(item)}</div>`;
-            }
-        }).join('');
+        const items = obj
+            .map((item) => {
+                if (typeof item === 'object' && item !== null) {
+                    return `<div class="json-item">${nextIndent}${renderObject(item, depth + 1)}</div>`;
+                } else {
+                    return `<div class="json-item">${nextIndent}${renderValue(item)}</div>`;
+                }
+            })
+            .join('');
 
         return `<div class="json-array">[${items}\n${indent}]</div>`;
     }
@@ -380,19 +381,21 @@ function renderObject(obj, depth = 0) {
             return '<span class="json-object">{}</span>';
         }
 
-        const items = keys.map(key => {
-            const value = obj[key];
-            const keyHtml = `<span class="json-key">${escapeHtml(key)}</span>`;
-            let valueHtml;
+        const items = keys
+            .map((key) => {
+                const value = obj[key];
+                const keyHtml = `<span class="json-key">${escapeHtml(key)}</span>`;
+                let valueHtml;
 
-            if (typeof value === 'object' && value !== null) {
-                valueHtml = renderObject(value, depth + 1);
-            } else {
-                valueHtml = renderValue(value);
-            }
+                if (typeof value === 'object' && value !== null) {
+                    valueHtml = renderObject(value, depth + 1);
+                } else {
+                    valueHtml = renderValue(value);
+                }
 
-            return `<div class="json-property">${nextIndent}${keyHtml}: ${valueHtml}</div>`;
-        }).join('');
+                return `<div class="json-property">${nextIndent}${keyHtml}: ${valueHtml}</div>`;
+            })
+            .join('');
 
         return `<div class="json-object">{${items}\n${indent}}</div>`;
     }
@@ -437,11 +440,12 @@ function renderObjectArray(array) {
     }
 
     // 检查是否是表格类型（所有对象有相同的键）
-    if (keys.length > 0 && array.every(item => 
-        typeof item === 'object' && 
-        item !== null && 
-        Object.keys(item).every(key => keys.includes(key))
-    )) {
+    if (
+        keys.length > 0 &&
+        array.every(
+            (item) => typeof item === 'object' && item !== null && Object.keys(item).every((key) => keys.includes(key))
+        )
+    ) {
         return renderTable(array, keys);
     }
 
@@ -455,56 +459,72 @@ function renderObjectArray(array) {
  * @returns {string} HTML 字符串
  */
 function renderArticleList(articles) {
-    const items = articles.map((article, index) => {
-        const title = article.title || article.name || '';
-        const summary = article.summary || article.content || article.description || '';
-        const url = article.url || article.link || article.href || '';
-        const image = article.image || article.thumbnail || '';
-        const date = article.date || article.publishedAt || article.time || '';
+    const items = articles
+        .map((article, index) => {
+            const title = article.title || article.name || '';
+            const summary = article.summary || article.content || article.description || '';
+            const url = article.url || article.link || article.href || '';
+            const image = article.image || article.thumbnail || '';
+            const date = article.date || article.publishedAt || article.time || '';
 
-        let html = '<div class="json-article-item">';
-        
-        if (image) {
-            html += `<div class="json-article-image"><img src="${escapeHtml(image)}" alt="${escapeHtml(title)}" /></div>`;
-        }
+            let html = '<div class="json-article-item">';
 
-        html += '<div class="json-article-content">';
-        
-        if (title) {
-            if (url) {
-                html += `<h3 class="json-article-title"><a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(title)}</a></h3>`;
-            } else {
-                html += `<h3 class="json-article-title">${escapeHtml(title)}</h3>`;
+            if (image) {
+                html += `<div class="json-article-image"><img src="${escapeHtml(image)}" alt="${escapeHtml(title)}" /></div>`;
             }
-        }
 
-        if (date) {
-            html += `<div class="json-article-date">${escapeHtml(date)}</div>`;
-        }
+            html += '<div class="json-article-content">';
 
-        if (summary) {
-            html += `<div class="json-article-summary">${escapeHtml(summary)}</div>`;
-        }
-
-        // 渲染其他字段
-        const otherFields = Object.keys(article).filter(key => 
-            !['title', 'summary', 'content', 'description', 'url', 'link', 'href', 'image', 'thumbnail', 'date', 'publishedAt', 'time'].includes(key)
-        );
-
-        if (otherFields.length > 0) {
-            html += '<div class="json-article-meta">';
-            otherFields.forEach(key => {
-                const value = article[key];
-                if (value !== null && value !== undefined && value !== '') {
-                    html += `<div class="json-article-meta-item"><strong>${escapeHtml(key)}:</strong> ${escapeHtml(String(value))}</div>`;
+            if (title) {
+                if (url) {
+                    html += `<h3 class="json-article-title"><a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(title)}</a></h3>`;
+                } else {
+                    html += `<h3 class="json-article-title">${escapeHtml(title)}</h3>`;
                 }
-            });
-            html += '</div>';
-        }
+            }
 
-        html += '</div></div>';
-        return html;
-    }).join('');
+            if (date) {
+                html += `<div class="json-article-date">${escapeHtml(date)}</div>`;
+            }
+
+            if (summary) {
+                html += `<div class="json-article-summary">${escapeHtml(summary)}</div>`;
+            }
+
+            // 渲染其他字段
+            const otherFields = Object.keys(article).filter(
+                (key) =>
+                    ![
+                        'title',
+                        'summary',
+                        'content',
+                        'description',
+                        'url',
+                        'link',
+                        'href',
+                        'image',
+                        'thumbnail',
+                        'date',
+                        'publishedAt',
+                        'time'
+                    ].includes(key)
+            );
+
+            if (otherFields.length > 0) {
+                html += '<div class="json-article-meta">';
+                otherFields.forEach((key) => {
+                    const value = article[key];
+                    if (value !== null && value !== undefined && value !== '') {
+                        html += `<div class="json-article-meta-item"><strong>${escapeHtml(key)}:</strong> ${escapeHtml(String(value))}</div>`;
+                    }
+                });
+                html += '</div>';
+            }
+
+            html += '</div></div>';
+            return html;
+        })
+        .join('');
 
     return `<div class="json-article-list">${items}</div>`;
 }
@@ -516,14 +536,18 @@ function renderArticleList(articles) {
  * @returns {string} HTML 字符串
  */
 function renderTable(data, columns) {
-    const header = `<thead><tr>${columns.map(col => `<th>${escapeHtml(col)}</th>`).join('')}</tr></thead>`;
-    const rows = data.map(item => {
-        const cells = columns.map(col => {
-            const value = item[col];
-            return `<td>${renderValue(value)}</td>`;
-        }).join('');
-        return `<tr>${cells}</tr>`;
-    }).join('');
+    const header = `<thead><tr>${columns.map((col) => `<th>${escapeHtml(col)}</th>`).join('')}</tr></thead>`;
+    const rows = data
+        .map((item) => {
+            const cells = columns
+                .map((col) => {
+                    const value = item[col];
+                    return `<td>${renderValue(value)}</td>`;
+                })
+                .join('');
+            return `<tr>${cells}</tr>`;
+        })
+        .join('');
 
     return `<table class="json-table"><tbody>${header}${rows}</tbody></table>`;
 }
@@ -534,21 +558,23 @@ function renderTable(data, columns) {
  * @returns {string} HTML 字符串
  */
 function renderCardList(items) {
-    const cards = items.map((item, index) => {
-        const fields = Object.keys(item);
-        let html = '<div class="json-card">';
+    const cards = items
+        .map((item, index) => {
+            const fields = Object.keys(item);
+            let html = '<div class="json-card">';
 
-        fields.forEach(key => {
-            const value = item[key];
-            html += `<div class="json-card-field">`;
-            html += `<div class="json-card-key">${escapeHtml(key)}</div>`;
-            html += `<div class="json-card-value">${renderValue(value)}</div>`;
-            html += `</div>`;
-        });
+            fields.forEach((key) => {
+                const value = item[key];
+                html += `<div class="json-card-field">`;
+                html += `<div class="json-card-key">${escapeHtml(key)}</div>`;
+                html += `<div class="json-card-value">${renderValue(value)}</div>`;
+                html += `</div>`;
+            });
 
-        html += '</div>';
-        return html;
-    }).join('');
+            html += '</div>';
+            return html;
+        })
+        .join('');
 
     return `<div class="json-card-list">${cards}</div>`;
 }

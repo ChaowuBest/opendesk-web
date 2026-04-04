@@ -11,7 +11,6 @@
 
 import iconv from 'iconv-lite';
 
-
 /** 用于检测编码时读取的文件头字节数 */
 export const HEAD_BYTES = 8192;
 

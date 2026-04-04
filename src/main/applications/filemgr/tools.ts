@@ -24,7 +24,6 @@ import fileType from 'file-type';
 import chalk from 'chalk';
 import fastGlob from 'fast-glob';
 
-
 const MAX_DIFF_LINES = 50;
 const RENDER_CONTENT_MAX_CHARS = 4000;
 const RENDER_CONTENT_MAX_LINES = 80;
@@ -95,7 +94,12 @@ function renderDiffOutput(oldContent: string, newContent: string, width: number)
         oldEnd: number;
         newStart: number;
         newEnd: number;
-        lines: Array<{ type: 'context' | 'removed' | 'added'; oldNum?: number; newNum?: number; content: string }>;
+        lines: Array<{
+            type: 'context' | 'removed' | 'added';
+            oldNum?: number;
+            newNum?: number;
+            content: string;
+        }>;
     }
 
     const blocks: DiffBlock[] = [];
@@ -110,8 +114,10 @@ function renderDiffOutput(oldContent: string, newContent: string, width: number)
         if (part.added) {
             if (!currentBlock) {
                 currentBlock = {
-                    oldStart: oldLineNum, oldEnd: oldLineNum,
-                    newStart: newLineNum, newEnd: newLineNum + lines.length - 1,
+                    oldStart: oldLineNum,
+                    oldEnd: oldLineNum,
+                    newStart: newLineNum,
+                    newEnd: newLineNum + lines.length - 1,
                     lines: []
                 };
             }
@@ -123,8 +129,10 @@ function renderDiffOutput(oldContent: string, newContent: string, width: number)
         } else if (part.removed) {
             if (!currentBlock) {
                 currentBlock = {
-                    oldStart: oldLineNum, oldEnd: oldLineNum + lines.length - 1,
-                    newStart: newLineNum, newEnd: newLineNum,
+                    oldStart: oldLineNum,
+                    oldEnd: oldLineNum + lines.length - 1,
+                    newStart: newLineNum,
+                    newEnd: newLineNum,
                     lines: []
                 };
             }
@@ -138,7 +146,12 @@ function renderDiffOutput(oldContent: string, newContent: string, width: number)
                 let contextCount = 0;
                 for (const line of lines) {
                     if (contextCount < DIFF_CONTEXT_LINES) {
-                        currentBlock.lines.push({ type: 'context', oldNum: oldLineNum, newNum: newLineNum, content: line });
+                        currentBlock.lines.push({
+                            type: 'context',
+                            oldNum: oldLineNum,
+                            newNum: newLineNum,
+                            content: line
+                        });
                         contextCount++;
                     }
                     oldLineNum++;
@@ -153,12 +166,19 @@ function renderDiffOutput(oldContent: string, newContent: string, width: number)
 
                 if (contextLines.length > 0) {
                     currentBlock = {
-                        oldStart: oldLineNum, oldEnd: oldLineNum + contextLines.length - 1,
-                        newStart: newLineNum, newEnd: newLineNum + contextLines.length - 1,
+                        oldStart: oldLineNum,
+                        oldEnd: oldLineNum + contextLines.length - 1,
+                        newStart: newLineNum,
+                        newEnd: newLineNum + contextLines.length - 1,
                         lines: []
                     };
                     for (const line of contextLines) {
-                        currentBlock.lines.push({ type: 'context', oldNum: oldLineNum, newNum: newLineNum, content: line });
+                        currentBlock.lines.push({
+                            type: 'context',
+                            oldNum: oldLineNum,
+                            newNum: newLineNum,
+                            content: line
+                        });
                         oldLineNum++;
                         newLineNum++;
                     }
@@ -180,8 +200,14 @@ function renderDiffOutput(oldContent: string, newContent: string, width: number)
             body.push(chalk.dim('  ...'));
         }
 
-        const oldRange = block.oldStart === block.oldEnd ? `${block.oldStart}` : `${block.oldStart},${block.oldEnd - block.oldStart + 1}`;
-        const newRange = block.newStart === block.newEnd ? `${block.newStart}` : `${block.newStart},${block.newEnd - block.newStart + 1}`;
+        const oldRange =
+            block.oldStart === block.oldEnd
+                ? `${block.oldStart}`
+                : `${block.oldStart},${block.oldEnd - block.oldStart + 1}`;
+        const newRange =
+            block.newStart === block.newEnd
+                ? `${block.newStart}`
+                : `${block.newStart},${block.newEnd - block.newStart + 1}`;
         body.push(chalk.cyan(`@@ -${oldRange} +${newRange} @@`));
 
         for (const line of block.lines) {
@@ -373,17 +399,21 @@ async function readSingleFile(filePath: string, offsetKB: number): Promise<ReadF
 
         if (type?.mime && isBinaryMedia(type.mime)) {
             return {
-                path: filePath, requestedOffsetKB: offsetKB,
+                path: filePath,
+                requestedOffsetKB: offsetKB,
                 metadata: { size, modified, mime: type.mime, ext: type.ext },
-                content: undefined, nonText: true
+                content: undefined,
+                nonText: true
             };
         }
 
         if (size === 0) {
             return {
-                path: filePath, requestedOffsetKB: offsetKB,
+                path: filePath,
+                requestedOffsetKB: offsetKB,
                 metadata: { size, modified, totalChars: 0, encoding: 'UTF-8' },
-                content: '', truncated: false
+                content: '',
+                truncated: false
             };
         }
 
@@ -398,9 +428,11 @@ async function readSingleFile(filePath: string, offsetKB: number): Promise<ReadF
 
         if (!type && hasBinaryContent(headBuf)) {
             return {
-                path: filePath, requestedOffsetKB: offsetKB,
+                path: filePath,
+                requestedOffsetKB: offsetKB,
                 metadata: { size, modified },
-                content: undefined, nonText: true
+                content: undefined,
+                nonText: true
             };
         }
 
@@ -413,9 +445,11 @@ async function readSingleFile(filePath: string, offsetKB: number): Promise<ReadF
 
         if (readLen === 0) {
             return {
-                path: filePath, requestedOffsetKB: offsetKB,
+                path: filePath,
+                requestedOffsetKB: offsetKB,
                 metadata: { size, modified, encoding: encodingLabel },
-                content: '', truncated: false
+                content: '',
+                truncated: false
             };
         }
 
@@ -437,7 +471,8 @@ async function readSingleFile(filePath: string, offsetKB: number): Promise<ReadF
         const nextOffsetKB = Math.ceil((byteOffset + readLen) / 1024);
 
         return {
-            path: filePath, requestedOffsetKB: offsetKB,
+            path: filePath,
+            requestedOffsetKB: offsetKB,
             metadata: { size, modified, encoding: encodingLabel },
             content,
             truncated: truncated ? true : undefined,
@@ -487,9 +522,7 @@ function formatReadFileResult(result: ReadFileResult): string {
         }
         if (result.truncated && result.nextOffsetKB !== undefined) {
             const sizeStr = result.metadata?.size !== undefined ? `，文件总大小 ${result.metadata.size} 字节` : '';
-            parts.push(
-                `[ 后续被截断，你可指定 offsetKB = ${result.nextOffsetKB} 继续读${sizeStr} ]`
-            );
+            parts.push(`[ 后续被截断，你可指定 offsetKB = ${result.nextOffsetKB} 继续读${sizeStr} ]`);
         }
     }
 
@@ -512,15 +545,19 @@ export class ReadFilesTool extends BaseTool<typeof readFilesSchema> {
         const fileItems =
             files && Array.isArray(files)
                 ? files
-                    .slice(0, 12)
-                    .map(f => {
-                        const pRaw = typeof f === 'object' && f && 'path' in f ? f.path : f;
-                        const p = typeof pRaw === 'string' ? pRaw : String(pRaw ?? '');
-                        const off = typeof f === 'object' && f && 'offsetKB' in f ? (f as { offsetKB?: number }).offsetKB : 0;
-                        const label = (off ?? 0) > 0 ? `${escapeHtml(p)} <span class="text-amber-600">(从 ${off} KB 开始)</span>` : escapeHtml(p);
-                        return `<li class="mt-0.5 flex items-center gap-1">${openFileButton(p)} <span>${label}</span></li>`;
-                    })
-                    .join('')
+                      .slice(0, 12)
+                      .map((f) => {
+                          const pRaw = typeof f === 'object' && f && 'path' in f ? f.path : f;
+                          const p = typeof pRaw === 'string' ? pRaw : String(pRaw ?? '');
+                          const off =
+                              typeof f === 'object' && f && 'offsetKB' in f ? (f as { offsetKB?: number }).offsetKB : 0;
+                          const label =
+                              (off ?? 0) > 0
+                                  ? `${escapeHtml(p)} <span class="text-amber-600">(从 ${off} KB 开始)</span>`
+                                  : escapeHtml(p);
+                          return `<li class="mt-0.5 flex items-center gap-1">${openFileButton(p)} <span>${label}</span></li>`;
+                      })
+                      .join('')
                 : '';
         const listHtml =
             fileItems.length > 0
@@ -530,7 +567,9 @@ export class ReadFilesTool extends BaseTool<typeof readFilesSchema> {
         let resultHtml = '';
         if (toolcall.status === 'success' && toolcall.result) {
             const { text, truncated } = truncateContent(toolcall.result);
-            const truncNote = truncated ? '<p class="mt-1 text-xs text-amber-600">… 内容已截断，完整内容请点击文件打开查看</p>' : '';
+            const truncNote = truncated
+                ? '<p class="mt-1 text-xs text-amber-600">… 内容已截断，完整内容请点击文件打开查看</p>'
+                : '';
             resultHtml = `<div class="mt-3 rounded-lg border border-slate-200 bg-slate-50/80 p-3 text-sm overflow-x-auto"><pre class="whitespace-pre-wrap break-words font-mono text-slate-800">${escapeHtml(text)}</pre>${truncNote}</div>`;
         } else if (toolcall.status === 'running') {
             resultHtml = '<p class="mt-2 text-slate-400 text-sm animate-pulse">读取中…</p>';
@@ -589,7 +628,12 @@ export class ReadFilesTool extends BaseTool<typeof readFilesSchema> {
             }
         }
 
-        return new Card({ icon: '📖', title: '读取文件', status: statusDisplay(toolcall.status), body }).render(width);
+        return new Card({
+            icon: '📖',
+            title: '读取文件',
+            status: statusDisplay(toolcall.status),
+            body
+        }).render(width);
     }
 
     async executeCommand(args: z.output<typeof readFilesSchema>): Promise<string> {
@@ -602,7 +646,8 @@ export class ReadFilesTool extends BaseTool<typeof readFilesSchema> {
             const batch = args.files.slice(i, i + READ_FILES_MAX_CONCURRENCY);
             const batchResults = await Promise.all(
                 batch.map((f: any) => {
-                    const rawPath = typeof f === 'string' ? f : (typeof f.path === 'string' ? f.path : String(f.path ?? ''));
+                    const rawPath =
+                        typeof f === 'string' ? f : typeof f.path === 'string' ? f.path : String(f.path ?? '');
                     const p = sanitizePath(rawPath);
                     const offsetKB = Number(f.offsetKB ?? 0);
                     return readSingleFile(p, offsetKB);
@@ -623,7 +668,8 @@ export class ReadFilesTool extends BaseTool<typeof readFilesSchema> {
 
 const writeFileSchema = z.object({
     path: z.string().describe('要写入的文件路径'),
-    mode: z.enum(['append', 'overwrite'])
+    mode: z
+        .enum(['append', 'overwrite'])
         .default('overwrite')
         .describe('写入模式(append - 在原有内容基础上追加, overwrite - 覆盖原有内容)，默认为覆盖原有内容'),
     content: z.string().describe('要写入的文件内容')
@@ -700,18 +746,19 @@ function getWriteFileInfo(toolcall: ToolCall, content: string): WriteFileRenderC
         end = nlPos;
     }
 
-    const info: WriteFileRenderCache = { contentHash, contentLen: content.length, lineCount, tailLines };
+    const info: WriteFileRenderCache = {
+        contentHash,
+        contentLen: content.length,
+        lineCount,
+        tailLines
+    };
     _writeFileCache.set(toolcall, info);
     return info;
 }
 
 export class WriteFileTool extends BaseTool<typeof writeFileSchema> {
     constructor() {
-        super(
-            'writeFile',
-            '将文件内容写入给定的文件路径中，支持覆盖模式与追加模式, 默认为覆盖模式',
-            writeFileSchema
-        );
+        super('writeFile', '将文件内容写入给定的文件路径中，支持覆盖模式与追加模式, 默认为覆盖模式', writeFileSchema);
 
         this.setExecutor(this.executeCommand);
     }
@@ -782,7 +829,12 @@ export class WriteFileTool extends BaseTool<typeof writeFileSchema> {
 
         const mode = toolcall.args_object?.['mode'];
         const title = '写入文件' + (mode === 'append' ? ' (追加)' : '');
-        return new Card({ icon: '✏️', title: title, status: statusDisplay(toolcall.status), body }).render(width);
+        return new Card({
+            icon: '✏️',
+            title: title,
+            status: statusDisplay(toolcall.status),
+            body
+        }).render(width);
     }
 
     async executeCommand(args: z.output<typeof writeFileSchema>): Promise<string> {
@@ -821,9 +873,17 @@ export class WriteFileTool extends BaseTool<typeof writeFileSchema> {
 
 const editFileSchema = z.object({
     filePath: z.string().describe('要修改或创建的文件路径，可以使用工作区相对路径或绝对路径'),
-    oldString: z.string().describe('要替换的原始文本（必须与文件内容完全匹配，包括所有空白和缩进）。对于单次替换，建议在目标文本前后各包含至少3行上下文。使用空字符串可创建新文件'),
+    oldString: z
+        .string()
+        .describe(
+            '要替换的原始文本（必须与文件内容完全匹配，包括所有空白和缩进）。对于单次替换，建议在目标文本前后各包含至少3行上下文。使用空字符串可创建新文件'
+        ),
     newString: z.string().describe('替换后的新文本。当创建新文件时（oldString 为空），此参数将成为文件内容'),
-    expectedReplacements: z.number().min(1).optional().describe('预期的替换次数，默认为 1。当需要替换同一文本的多个出现时使用')
+    expectedReplacements: z
+        .number()
+        .min(1)
+        .optional()
+        .describe('预期的替换次数，默认为 1。当需要替换同一文本的多个出现时使用')
 });
 
 export class EditFileTool extends BaseTool<typeof editFileSchema> {
@@ -900,7 +960,12 @@ export class EditFileTool extends BaseTool<typeof editFileSchema> {
 
         const isNewFile = oldString === '' || oldString === undefined;
         const title = isNewFile ? '创建文件' : '编辑文件';
-        return new Card({ icon: isNewFile ? '📄' : '✂️', title: title, status: statusDisplay(toolcall.status), body }).render(width);
+        return new Card({
+            icon: isNewFile ? '📄' : '✂️',
+            title: title,
+            status: statusDisplay(toolcall.status),
+            body
+        }).render(width);
     }
 
     async executeCommand(args: z.output<typeof editFileSchema>): Promise<string> {
@@ -945,8 +1010,14 @@ export class EditFileTool extends BaseTool<typeof editFileSchema> {
                 needRestoreCRLF = originalLineEnding === '\r\n';
             } else {
                 // 3. 尝试去除行尾空白后匹配，给出更有用的诊断信息
-                const trimmedContent = normalizedContent.split('\n').map(l => l.trimEnd()).join('\n');
-                const trimmedOld = normalizedOld.split('\n').map(l => l.trimEnd()).join('\n');
+                const trimmedContent = normalizedContent
+                    .split('\n')
+                    .map((l) => l.trimEnd())
+                    .join('\n');
+                const trimmedOld = normalizedOld
+                    .split('\n')
+                    .map((l) => l.trimEnd())
+                    .join('\n');
 
                 if (trimmedContent.includes(trimmedOld)) {
                     return `错误: 未找到完全匹配的文本。去除行尾空白后可以匹配到，请检查 oldString 中是否有多余的行尾空格或制表符`;
@@ -956,7 +1027,7 @@ export class EditFileTool extends BaseTool<typeof editFileSchema> {
                 const oldLines = normalizedOld.split('\n');
                 const firstLine = oldLines[0].trim();
                 if (firstLine.length > 10) {
-                    const lineIdx = normalizedContent.split('\n').findIndex(l => l.trim() === firstLine);
+                    const lineIdx = normalizedContent.split('\n').findIndex((l) => l.trim() === firstLine);
                     if (lineIdx >= 0) {
                         return `错误: 未找到要替换的文本。提示：在文件第 ${lineIdx + 1} 行找到了与 oldString 第一行相似的内容，但后续行不完全匹配。请使用 readFiles 工具重新读取文件以获取最新内容`;
                     }
@@ -1045,7 +1116,12 @@ export class SearchReplaceTool extends BaseTool<typeof searchReplaceSchema> {
             bodyHtml += `<p class="mt-1 text-sm text-rose-600">${escapeHtml(toolcall.result)}</p>`;
         }
 
-        return renderToolCard({ icon: '🔍', title: '搜索替换', status: toolcall.status, body: bodyHtml });
+        return renderToolCard({
+            icon: '🔍',
+            title: '搜索替换',
+            status: toolcall.status,
+            body: bodyHtml
+        });
     }
 
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
@@ -1077,7 +1153,12 @@ export class SearchReplaceTool extends BaseTool<typeof searchReplaceSchema> {
             }
         }
 
-        return new Card({ icon: '🔍', title: '搜索替换', status: statusDisplay(toolcall.status), body }).render(width);
+        return new Card({
+            icon: '🔍',
+            title: '搜索替换',
+            status: statusDisplay(toolcall.status),
+            body
+        }).render(width);
     }
 
     async executeCommand(args: z.output<typeof searchReplaceSchema>): Promise<string> {
@@ -1138,13 +1219,25 @@ function parsePatch(patch: string): Array<{
     type: 'create' | 'delete' | 'update';
     path: string;
     content?: string;
-    hunks?: Array<{ oldStart: number; oldLines: number; newStart: number; newLines: number; lines: string[] }>;
+    hunks?: Array<{
+        oldStart: number;
+        oldLines: number;
+        newStart: number;
+        newLines: number;
+        lines: string[];
+    }>;
 }> {
     const operations: Array<{
         type: 'create' | 'delete' | 'update';
         path: string;
         content?: string;
-        hunks?: Array<{ oldStart: number; oldLines: number; newStart: number; newLines: number; lines: string[] }>;
+        hunks?: Array<{
+            oldStart: number;
+            oldLines: number;
+            newStart: number;
+            newLines: number;
+            lines: string[];
+        }>;
     }> = [];
 
     const lines = patch.split('\n');
@@ -1159,7 +1252,13 @@ function parsePatch(patch: string): Array<{
                 const newPath = lines[i].slice(4).trim();
                 i++;
 
-                const hunks: Array<{ oldStart: number; oldLines: number; newStart: number; newLines: number; lines: string[] }> = [];
+                const hunks: Array<{
+                    oldStart: number;
+                    oldLines: number;
+                    newStart: number;
+                    newLines: number;
+                    lines: string[];
+                }> = [];
 
                 while (i < lines.length && lines[i].startsWith('@@')) {
                     const match = lines[i].match(/@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/);
@@ -1173,7 +1272,12 @@ function parsePatch(patch: string): Array<{
                         };
                         i++;
 
-                        while (i < lines.length && !lines[i].startsWith('@@') && !lines[i].startsWith('diff') && !lines[i].startsWith('---')) {
+                        while (
+                            i < lines.length &&
+                            !lines[i].startsWith('@@') &&
+                            !lines[i].startsWith('diff') &&
+                            !lines[i].startsWith('---')
+                        ) {
                             hunk.lines.push(lines[i]);
                             i++;
                         }
@@ -1208,7 +1312,16 @@ function parsePatch(patch: string): Array<{
     return operations;
 }
 
-function applyHunk(content: string, hunk: { oldStart: number; oldLines: number; newStart: number; newLines: number; lines: string[] }): string {
+function applyHunk(
+    content: string,
+    hunk: {
+        oldStart: number;
+        oldLines: number;
+        newStart: number;
+        newLines: number;
+        lines: string[];
+    }
+): string {
     const contentLines = content.split('\n');
     const result: string[] = [];
     let contentIndex = 0;
@@ -1226,8 +1339,8 @@ function applyHunk(content: string, hunk: { oldStart: number; oldLines: number; 
                 const lineNum = contentIndex + 1;
                 throw new Error(
                     `上下文行不匹配（第 ${lineNum} 行）:\n` +
-                    `  期望: ${JSON.stringify(expected)}\n` +
-                    `  实际: ${JSON.stringify(actual ?? '<文件已结束>')}`
+                        `  期望: ${JSON.stringify(expected)}\n` +
+                        `  实际: ${JSON.stringify(actual ?? '<文件已结束>')}`
                 );
             }
             result.push(actual);
@@ -1239,8 +1352,8 @@ function applyHunk(content: string, hunk: { oldStart: number; oldLines: number; 
                 const lineNum = contentIndex + 1;
                 throw new Error(
                     `删除行不匹配（第 ${lineNum} 行）:\n` +
-                    `  期望删除: ${JSON.stringify(expected)}\n` +
-                    `  实际内容: ${JSON.stringify(actual ?? '<文件已结束>')}`
+                        `  期望删除: ${JSON.stringify(expected)}\n` +
+                        `  实际内容: ${JSON.stringify(actual ?? '<文件已结束>')}`
                 );
             }
             contentIndex++;
@@ -1280,10 +1393,16 @@ export class ApplyPatchTool extends BaseTool<typeof applyPatchSchema> {
             const removedLines = (patch.match(/^-[^-]/gm) || []).length;
 
             const fileMatches = patch.match(/^\+\+\+ .+$/gm) || [];
-            const fileList = fileMatches.slice(0, 10).map(l => {
-                const fp = l.slice(4).trim().replace(/^[ab]\//, '');
-                return `<li class="mt-0.5 flex items-center gap-1">${openFileButton(fp)} <span class="font-mono text-sm">${escapeHtml(fp)}</span></li>`;
-            }).join('');
+            const fileList = fileMatches
+                .slice(0, 10)
+                .map((l) => {
+                    const fp = l
+                        .slice(4)
+                        .trim()
+                        .replace(/^[ab]\//, '');
+                    return `<li class="mt-0.5 flex items-center gap-1">${openFileButton(fp)} <span class="font-mono text-sm">${escapeHtml(fp)}</span></li>`;
+                })
+                .join('');
             if (fileList) {
                 bodyHtml += `<ul class="list-none text-slate-600 mt-1 space-y-0.5">${fileList}</ul>`;
             }
@@ -1301,7 +1420,12 @@ export class ApplyPatchTool extends BaseTool<typeof applyPatchSchema> {
             bodyHtml += `<p class="mt-1 text-sm text-rose-600">${escapeHtml(toolcall.result)}</p>`;
         }
 
-        return renderToolCard({ icon: '🩹', title: '应用补丁', status: toolcall.status, body: bodyHtml });
+        return renderToolCard({
+            icon: '🩹',
+            title: '应用补丁',
+            status: toolcall.status,
+            body: bodyHtml
+        });
     }
 
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
@@ -1326,7 +1450,12 @@ export class ApplyPatchTool extends BaseTool<typeof applyPatchSchema> {
             body.push(chalk.dim('  ✅ 补丁已应用'));
         }
 
-        return new Card({ icon: '🩹', title: '应用补丁', status: statusDisplay(toolcall.status), body }).render(width);
+        return new Card({
+            icon: '🩹',
+            title: '应用补丁',
+            status: statusDisplay(toolcall.status),
+            body
+        }).render(width);
     }
 
     async executeCommand(args: z.output<typeof applyPatchSchema>): Promise<string> {
@@ -1361,7 +1490,6 @@ export class ApplyPatchTool extends BaseTool<typeof applyPatchSchema> {
 
                     await fs.promises.writeFile(op.path, content, 'utf8');
                     results.push(`✅ 创建: ${op.path}`);
-
                 } else if (op.type === 'delete') {
                     if (fs.existsSync(op.path)) {
                         await fs.promises.unlink(op.path);
@@ -1369,7 +1497,6 @@ export class ApplyPatchTool extends BaseTool<typeof applyPatchSchema> {
                     } else {
                         results.push(`⚠️ 文件不存在: ${op.path}`);
                     }
-
                 } else if (op.type === 'update' && op.hunks) {
                     let content = await fs.promises.readFile(op.path, 'utf8');
 
@@ -1393,15 +1520,27 @@ export class ApplyPatchTool extends BaseTool<typeof applyPatchSchema> {
 // ==================== Glob 工具 ====================
 
 const DEFAULT_GLOB_IGNORE = [
-    'node_modules/**', '.git/**', 'dist/**', 'build/**',
-    '.next/**', '.nuxt/**', '__pycache__/**', '.cache/**',
-    'coverage/**', '.tsbuildinfo',
+    'node_modules/**',
+    '.git/**',
+    'dist/**',
+    'build/**',
+    '.next/**',
+    '.nuxt/**',
+    '__pycache__/**',
+    '.cache/**',
+    'coverage/**',
+    '.tsbuildinfo'
 ];
 
 const globSchema = z.object({
-    pattern: z.string().describe('glob 模式，如 **/*.ts、src/**/*.js、*.md 等。不以 **/ 开头的模式会自动加上 **/ 前缀以递归搜索'),
+    pattern: z
+        .string()
+        .describe('glob 模式，如 **/*.ts、src/**/*.js、*.md 等。不以 **/ 开头的模式会自动加上 **/ 前缀以递归搜索'),
     path: z.string().optional().describe('搜索根目录，默认为当前工作目录'),
-    ignore: z.array(z.string()).optional().describe('额外的忽略模式列表（默认已忽略 node_modules, .git, dist, build 等）'),
+    ignore: z
+        .array(z.string())
+        .optional()
+        .describe('额外的忽略模式列表（默认已忽略 node_modules, .git, dist, build 等）'),
     caseSensitive: z.boolean().default(false).describe('是否区分大小写，默认 false'),
     maxResults: z.number().min(1).max(1000).default(200).describe('最大返回结果数，默认 200')
 });
@@ -1439,12 +1578,12 @@ export class GlobFilesTool extends BaseTool<typeof globSchema> {
             body.push(chalk.dim('  🔍 搜索中…'));
         } else if (toolcall.status === 'success' && toolcall.result) {
             const lines = toolcall.result.split('\n');
-            const count = lines.filter(l => l.trim() && !l.startsWith('找到')).length;
+            const count = lines.filter((l) => l.trim() && !l.startsWith('找到')).length;
             const foundMatch = toolcall.result.match(/找到 (\d+) 个文件/);
             const fileCount = foundMatch ? foundMatch[1] : count;
             body.push(chalk.dim('  ✅ 找到 ') + chalk.green(fileCount) + chalk.dim(' 个文件'));
 
-            const files = lines.filter(l => l.trim() && !l.startsWith('找到'));
+            const files = lines.filter((l) => l.trim() && !l.startsWith('找到'));
             for (const file of files.slice(0, 5)) {
                 body.push(chalk.dim('    ') + truncText(file, width - 8));
             }
@@ -1455,7 +1594,12 @@ export class GlobFilesTool extends BaseTool<typeof globSchema> {
             body.push(chalk.red(`  ✗ ${truncText(String(toolcall.result), width - 10)}`));
         }
 
-        return new Card({ icon: '🔍', title: '模式匹配 | Glob', status: statusDisplay(toolcall.status), body }).render(width);
+        return new Card({
+            icon: '🔍',
+            title: '模式匹配 | Glob',
+            status: statusDisplay(toolcall.status),
+            body
+        }).render(width);
     }
 
     async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
@@ -1482,7 +1626,12 @@ export class GlobFilesTool extends BaseTool<typeof globSchema> {
             bodyHtml += `<p class="mt-2 text-sm text-rose-600">${escapeHtml(toolcall.result)}</p>`;
         }
 
-        return renderToolCard({ icon: '🔍', title: '模式匹配 | Glob', status: toolcall.status, body: bodyHtml });
+        return renderToolCard({
+            icon: '🔍',
+            title: '模式匹配 | Glob',
+            status: toolcall.status,
+            body: bodyHtml
+        });
     }
 
     async executeCommand(args: z.output<typeof globSchema>): Promise<string> {
@@ -1512,7 +1661,7 @@ export class GlobFilesTool extends BaseTool<typeof globSchema> {
                 absolute: true,
                 onlyFiles: true,
                 followSymbolicLinks: false,
-                suppressErrors: true,
+                suppressErrors: true
             };
 
             let files = await fastGlob(pattern, options);
@@ -1523,7 +1672,7 @@ export class GlobFilesTool extends BaseTool<typeof globSchema> {
                 const extMatch = patternToMatch.match(/\.\w+$/);
                 if (extMatch) {
                     const ext = extMatch[0];
-                    files = files.filter(f => f.endsWith(ext));
+                    files = files.filter((f) => f.endsWith(ext));
                 }
             }
 
@@ -1533,7 +1682,7 @@ export class GlobFilesTool extends BaseTool<typeof globSchema> {
 
             // 将绝对路径转为相对于搜索目录的路径，统一使用正斜杠
             const basePath = searchPath || process.cwd();
-            const displayFiles = files.slice(0, maxResults).map(f => {
+            const displayFiles = files.slice(0, maxResults).map((f) => {
                 const rel = path.relative(basePath, f);
                 return toForwardSlash(rel.startsWith('..') ? f : rel);
             });
@@ -1554,10 +1703,19 @@ export class GlobFilesTool extends BaseTool<typeof globSchema> {
 // ==================== Grep 工具 ====================
 
 const DEFAULT_GREP_IGNORE = [
-    'node_modules/**', '.git/**', 'dist/**', 'build/**',
-    '*.min.js', '*.min.css', '*.map', '*.lock',
-    '.next/**', '.nuxt/**', '__pycache__/**', '.cache/**',
-    'coverage/**',
+    'node_modules/**',
+    '.git/**',
+    'dist/**',
+    'build/**',
+    '*.min.js',
+    '*.min.css',
+    '*.map',
+    '*.lock',
+    '.next/**',
+    '.nuxt/**',
+    '__pycache__/**',
+    '.cache/**',
+    'coverage/**'
 ];
 
 const grepSchema = z.object({
@@ -1620,11 +1778,17 @@ export class GrepFilesTool extends BaseTool<typeof grepSchema> {
             // 从第一行统计摘要提取数据: "在 X 个文件中找到 Y 处匹配:"
             const summaryMatch = lines[0]?.match(/在 (\d+) 个文件中找到 (\d+) 处匹配/);
             if (summaryMatch) {
-                body.push(chalk.dim('  ✅ 在 ') + chalk.green(summaryMatch[1]) + chalk.dim(' 个文件中找到 ') + chalk.green(summaryMatch[2]) + chalk.dim(' 处匹配'));
+                body.push(
+                    chalk.dim('  ✅ 在 ') +
+                        chalk.green(summaryMatch[1]) +
+                        chalk.dim(' 个文件中找到 ') +
+                        chalk.green(summaryMatch[2]) +
+                        chalk.dim(' 处匹配')
+                );
             }
 
             // 显示匹配行（以 > 开头的是匹配行）
-            const matchLines = lines.filter(l => l.startsWith('> '));
+            const matchLines = lines.filter((l) => l.startsWith('> '));
             for (const m of matchLines.slice(0, 5)) {
                 body.push(chalk.dim('    ') + truncText(m, width - 8));
             }
@@ -1635,7 +1799,12 @@ export class GrepFilesTool extends BaseTool<typeof grepSchema> {
             body.push(chalk.red(`  ✗ ${truncText(String(toolcall.result), width - 10)}`));
         }
 
-        return new Card({ icon: '🔎', title: '内容搜索 | Grep', status: statusDisplay(toolcall.status), body }).render(width);
+        return new Card({
+            icon: '🔎',
+            title: '内容搜索 | Grep',
+            status: statusDisplay(toolcall.status),
+            body
+        }).render(width);
     }
 
     async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
@@ -1666,7 +1835,12 @@ export class GrepFilesTool extends BaseTool<typeof grepSchema> {
             bodyHtml += `<p class="mt-2 text-sm text-rose-600">${escapeHtml(toolcall.result)}</p>`;
         }
 
-        return renderToolCard({ icon: '🔎', title: '内容搜索 | Grep', status: toolcall.status, body: bodyHtml });
+        return renderToolCard({
+            icon: '🔎',
+            title: '内容搜索 | Grep',
+            status: toolcall.status,
+            body: bodyHtml
+        });
     }
 
     async executeCommand(args: z.output<typeof grepSchema>): Promise<string> {
@@ -1700,7 +1874,7 @@ export class GrepFilesTool extends BaseTool<typeof grepSchema> {
                         ignore: DEFAULT_GREP_IGNORE,
                         absolute: true,
                         onlyFiles: true,
-                        suppressErrors: true,
+                        suppressErrors: true
                     });
                 }
             } catch {
@@ -1710,7 +1884,7 @@ export class GrepFilesTool extends BaseTool<typeof grepSchema> {
                     ignore: DEFAULT_GREP_IGNORE,
                     absolute: true,
                     onlyFiles: true,
-                    suppressErrors: true,
+                    suppressErrors: true
                 });
             }
 
@@ -1749,7 +1923,7 @@ export class GrepFilesTool extends BaseTool<typeof grepSchema> {
                                 column: match.index + 1,
                                 content: line,
                                 contextBefore: lines.slice(Math.max(0, i - contextLines), i),
-                                contextAfter: lines.slice(i + 1, Math.min(lines.length, i + 1 + contextLines)),
+                                contextAfter: lines.slice(i + 1, Math.min(lines.length, i + 1 + contextLines))
                             });
 
                             if (fileMatches.length >= maxResults) break;
@@ -1824,7 +1998,7 @@ export class GrepFilesTool extends BaseTool<typeof grepSchema> {
                 }
             }
 
-            const fileCount = new Set(matches.map(m => m.file)).size;
+            const fileCount = new Set(matches.map((m) => m.file)).size;
             output.unshift(`在 ${fileCount} 个文件中找到 ${matches.length} 处匹配:`);
 
             return output.join('\n');

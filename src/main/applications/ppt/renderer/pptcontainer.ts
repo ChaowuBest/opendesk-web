@@ -53,7 +53,7 @@ export class PPTContainer extends HTMLElement {
             try {
                 const res = await fetch(`ppt://metadata/${this.pptId}`);
                 const respObject = await res.json();
-                slides = (respObject.data) as Slides;
+                slides = respObject.data as Slides;
             } catch (e) {
                 console.error('Failed to fetch slides metadata:', e);
             }
@@ -131,7 +131,9 @@ export class PPTContainer extends HTMLElement {
         if (this.isFullscreen()) {
             await this.exitFullscreen();
         } else {
-            const el = this.fullscreenRoot as HTMLElement & { webkitRequestFullscreen?: () => Promise<void> };
+            const el = this.fullscreenRoot as HTMLElement & {
+                webkitRequestFullscreen?: () => Promise<void>;
+            };
             try {
                 if (el.requestFullscreen) await el.requestFullscreen();
                 else if (el.webkitRequestFullscreen) await el.webkitRequestFullscreen();

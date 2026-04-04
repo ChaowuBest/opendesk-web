@@ -21,14 +21,14 @@
  */
 function groupSnapshotsByCapture(snapshots) {
     const captureGroups = new Map();
-    snapshots.forEach(snapshot => {
+    snapshots.forEach((snapshot) => {
         const groupKey = snapshot.captureId || snapshot.id;
         if (!captureGroups.has(groupKey)) {
             captureGroups.set(groupKey, []);
         }
         captureGroups.get(groupKey).push(snapshot);
     });
-    
+
     // 转换为显示数据，每个capture作为一个项
     return Array.from(captureGroups.entries()).map(([captureId, snapshots]) => {
         // 按sourceIndex排序
@@ -39,7 +39,7 @@ function groupSnapshotsByCapture(snapshots) {
             captureId: captureId,
             timestamp: firstSnapshot.timestamp,
             snapshots: snapshots,
-            isMarked: snapshots.some(s => s.isMarked),
+            isMarked: snapshots.some((s) => s.isMarked),
             activityId: firstSnapshot.activityId,
             activityName: firstSnapshot.activityName
         };
@@ -80,40 +80,39 @@ function transformSnapshot(s, getAppNameFn) {
 }
 
 class BrowserPage extends HTMLElement {
-
     constructor() {
         super();
         // 视图模式：daily=日视图, activity=活动详情, eventGroup=事件组详情
         this.viewMode = 'daily';
         // 默认图片视图
         this.dailyViewType = 'images';
-        
+
         this.currentIndex = 0; // 当前展示的索引
         this.currentActivityId = null; // 当前查看的活动ID
         this.currentEventGroupId = null; // 当前查看的事件组ID
         this.currentData = []; // 当前视图的数据（总是图片数组）
-        
+
         // 保存日视图的状态，用于返回时恢复
         this.savedDailyState = {
             viewType: 'images', // 默认图片视图
             index: 0
         };
-        
+
         this.showDetail = false;
         this.selectedItem = null;
         this.allActivities = [];
         this.bookmarks = new Set();
-        
+
         // 可拖拽分隔条的宽度
         this.leftPanelWidth = 288;
         this.rightPanelWidth = 320;
-        
+
         // 图片预加载缓存
         this.imageCache = new Map();
-        
+
         // 选中的日期（默认今天）
         this.selectedDate = new Date().toISOString().split('T')[0];
-        
+
         // PDF状态轮询
         this._pdfStatusPollingInterval = null;
         this._pollingActivityIds = new Set(); // 正在轮询的活动ID
@@ -155,25 +154,25 @@ class BrowserPage extends HTMLElement {
             const date = new Date(this.selectedDate);
             const startTime = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0, 0).getTime();
             const endTime = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 23, 59, 59, 999).getTime();
-            
+
             // 加载指定日期的截图
             const result = await window.applicationAPI.call('getAllSnapshots', startTime, endTime, 500);
-            
+
             if (result && result.success && result.snapshots) {
-                const allSnapshots = result.snapshots.map(s => 
+                const allSnapshots = result.snapshots.map((s) =>
                     transformSnapshot(s, this.getSnapshotAppName.bind(this))
                 );
-                
+
                 // 按captureId分组并转换为capture格式
                 this.currentData = groupSnapshotsByCapture(allSnapshots);
-                
+
                 // 按时间排序
                 this.currentData.sort((a, b) => a.timestamp - b.timestamp);
-                
+
                 // 从数据库加载标记状态
                 this.bookmarks.clear();
-                this.currentData.forEach(item => {
-                    item.snapshots.forEach(snapshot => {
+                this.currentData.forEach((item) => {
+                    item.snapshots.forEach((snapshot) => {
                         if (snapshot.isMarked) {
                             this.bookmarks.add(snapshot.id);
                         }
@@ -186,14 +185,14 @@ class BrowserPage extends HTMLElement {
             console.error('[BrowserPage] Failed to load daily view:', error);
             this.currentData = [];
         }
-        
+
         if (this.isConnected) {
             this.updateMainView();
             this.updateBackButton();
             this.updateViewTypeButtons();
             this.updateTimeline();
         }
-        
+
         // 清除左侧活动列表的选中状态
         const listComponent = this.querySelector('recall-activity-list');
         if (listComponent) {
@@ -206,7 +205,7 @@ class BrowserPage extends HTMLElement {
         try {
             const activities = await window.applicationAPI.call('getHistoryActivities', 0, Date.now());
             this.allActivities = activities || [];
-            
+
             // 只在DOM已经挂载后才更新
             if (this.isConnected) {
                 this.updateActivityList();
@@ -225,7 +224,7 @@ class BrowserPage extends HTMLElement {
                 listComponent.selectedActivityId = this.currentActivityId;
                 listComponent.render();
             }
-            
+
             // 移除旧的事件监听器（如果存在）
             if (listComponent._activitySelectedHandler) {
                 listComponent.removeEventListener('activitySelected', listComponent._activitySelectedHandler);
@@ -233,7 +232,7 @@ class BrowserPage extends HTMLElement {
             if (listComponent._activityDeletedHandler) {
                 listComponent.removeEventListener('activityDeleted', listComponent._activityDeletedHandler);
             }
-            
+
             // 创建新的事件处理器并保存引用
             listComponent._activitySelectedHandler = (e) => {
                 this.loadActivityView(e.detail.activityId);
@@ -242,23 +241,23 @@ class BrowserPage extends HTMLElement {
                 const activityId = e.detail.activityId;
                 try {
                     await window.applicationAPI.call('deleteHistoryActivity', activityId);
-                    
+
                     // 如果删除的是当前查看的活动，返回到日视图
                     if (this.viewMode === 'activity' && this.currentActivityId === activityId) {
                         this.viewMode = 'daily';
                         this.currentActivityId = null;
                         this.currentIndex = 0;
-                        
+
                         // 恢复之前的日视图状态
                         if (this.savedDailyState) {
                             this.dailyViewType = this.savedDailyState.viewType;
                             this.currentIndex = this.savedDailyState.index;
                         }
-                        
+
                         // 重新加载日视图数据
                         await this.loadDailyView();
                     }
-                    
+
                     // 重新加载活动列表
                     await this.loadActivities();
                 } catch (error) {
@@ -266,7 +265,7 @@ class BrowserPage extends HTMLElement {
                     alert('删除活动失败，请重试');
                 }
             };
-            
+
             // 添加事件监听器
             listComponent.addEventListener('activitySelected', listComponent._activitySelectedHandler);
             listComponent.addEventListener('activityDeleted', listComponent._activityDeletedHandler);
@@ -317,16 +316,16 @@ class BrowserPage extends HTMLElement {
             const result = await window.applicationAPI.call('getActivitySnapshots', activityId);
 
             if (result && result.success && result.snapshots) {
-                const allSnapshots = result.snapshots.map(s => 
+                const allSnapshots = result.snapshots.map((s) =>
                     transformSnapshot(s, this.getSnapshotAppName.bind(this))
                 );
-                
+
                 // 按captureId分组并转换为capture格式
                 this.currentData = groupSnapshotsByCapture(allSnapshots);
-                
+
                 // 按时间排序
                 this.currentData.sort((a, b) => a.timestamp - b.timestamp);
-                
+
                 // 处理PDF相关信息（所有活动统一处理）
                 if (currentActivity) {
                     this.currentActivity = currentActivity;
@@ -373,7 +372,7 @@ class BrowserPage extends HTMLElement {
      * @param {string} activityId 活动ID
      */
     async pollActivityStatus(activityId) {
-        const maxPolls = 60;  // 最多轮询60次（2分钟）
+        const maxPolls = 60; // 最多轮询60次（2分钟）
         let polls = 0;
 
         const pollInterval = setInterval(async () => {
@@ -392,15 +391,15 @@ class BrowserPage extends HTMLElement {
 
                         // 重新加载活动列表和活动视图
                         if (status === 'completed') {
-                            await this.loadActivities();  // 刷新活动列表
+                            await this.loadActivities(); // 刷新活动列表
                             await this.loadActivityView(activityId);
                         } else if (status === 'failed') {
                             console.error('[BrowserPage] PDF generation failed');
-                            await this.loadActivities();  // 刷新活动列表
+                            await this.loadActivities(); // 刷新活动列表
                             await this.loadActivityView(activityId);
                         } else if (polls >= maxPolls) {
                             console.warn('[BrowserPage] PDF generation polling timeout');
-                            await this.loadActivities();  // 超时也刷新
+                            await this.loadActivities(); // 超时也刷新
                         }
                     }
                 } else {
@@ -410,7 +409,7 @@ class BrowserPage extends HTMLElement {
                 console.error('[BrowserPage] Error polling activity status:', error);
                 clearInterval(pollInterval);
             }
-        }, 2000);  // 每2秒检查一次
+        }, 2000); // 每2秒检查一次
     }
 
     /**
@@ -422,7 +421,7 @@ class BrowserPage extends HTMLElement {
 
         this._pdfStatusPollingInterval = setInterval(() => {
             this.pollPDFStatus();
-        }, 2000);  // 每2秒检查一次
+        }, 2000); // 每2秒检查一次
     }
 
     /**
@@ -440,7 +439,7 @@ class BrowserPage extends HTMLElement {
      */
     async pollPDFStatus() {
         // 获取所有状态为 pending 或 processing 的活动
-        const activitiesToPoll = this.allActivities.filter(activity => {
+        const activitiesToPoll = this.allActivities.filter((activity) => {
             const status = activity.pdfStatus;
             return status === 'pending' || status === 'processing';
         });
@@ -449,14 +448,10 @@ class BrowserPage extends HTMLElement {
             return;
         }
 
-
         // 轮询每个活动
         for (const activity of activitiesToPoll) {
             try {
-                const result = await window.applicationAPI.call(
-                    'getHistoryActivityById',
-                    activity.activityId
-                );
+                const result = await window.applicationAPI.call('getHistoryActivityById', activity.activityId);
 
                 if (result && result.success && result.activity) {
                     const newStatus = result.activity.pdfStatus;
@@ -498,18 +493,18 @@ class BrowserPage extends HTMLElement {
         this.viewMode = 'daily';
         this.currentActivityId = null;
         this.currentEventGroupId = null;
-        
+
         // 恢复日视图类型和索引
         this.dailyViewType = this.savedDailyState.viewType;
         this.currentIndex = this.savedDailyState.index;
-        
+
         // 重新加载日视图数据
         this.loadDailyView();
-        
+
         this.updateBackButton();
         this.updateViewTypeButtons();
         this.hideDetail();
-        
+
         // 清除左侧活动列表的选中状态
         const listComponent = this.querySelector('recall-activity-list');
         if (listComponent) {
@@ -548,23 +543,21 @@ class BrowserPage extends HTMLElement {
         } else {
             // 如果是capture组，显示第一个snapshot的缩略图
             const thumbnailSrc = item.snapshots
-                ? (item.snapshots[0].thumbnailDataURL || item.snapshots[0].imageDataURL || '')
-                : (item.thumbnailDataURL || item.imageDataURL || '');
-            const altText = item.snapshots
-                ? item.snapshots[0].sourceName
-                : item.app;
+                ? item.snapshots[0].thumbnailDataURL || item.snapshots[0].imageDataURL || ''
+                : item.thumbnailDataURL || item.imageDataURL || '';
+            const altText = item.snapshots ? item.snapshots[0].sourceName : item.app;
             return `
                 <img src="${thumbnailSrc}" alt="${altText}"
                      class="w-48 h-48 object-contain rounded-lg shadow-lg pointer-events-none" />
             `;
         }
     }
-    
+
     onEventGroupClick(groupId) {
         // 点击事件组，进入事件组详情视图
         this.loadEventGroupView(groupId);
     }
-    
+
     /**
      * 通过ID查找并显示图片详情
      * @param {string} snapshotId - snapshot的ID
@@ -572,21 +565,19 @@ class BrowserPage extends HTMLElement {
      */
     async showImageDetailById(snapshotId, captureId) {
         // 从currentData中查找对应的capture
-        const capture = this.currentData.find(item => item.captureId === captureId || item.id === captureId);
+        const capture = this.currentData.find((item) => item.captureId === captureId || item.id === captureId);
         if (!capture) {
             console.error('[BrowserPage] 找不到对应的capture:', captureId);
             return;
         }
-        
-        
+
         if (!capture.snapshots) {
             console.error('[BrowserPage] capture没有snapshots字段');
             return;
         }
-        
-        
+
         // 从capture的snapshots中查找对应的snapshot
-        const snapshot = capture.snapshots.find(s => s.id === snapshotId);
+        const snapshot = capture.snapshots.find((s) => s.id === snapshotId);
         if (!snapshot) {
             console.error('[BrowserPage] 找不到对应的snapshot:', snapshotId);
             return;
@@ -594,22 +585,19 @@ class BrowserPage extends HTMLElement {
         await this.getSnapshotExtraction(snapshot);
         this.showImageDetail(snapshot);
     }
-    
+
     async getSnapshotExtraction(snapshot) {
         this.showDetail = true;
         this.selectedItem = snapshot;
 
         // 查询该快照的 extraction（每次点击都重新查询，确保数据最新）
         try {
-            const result = await window.applicationAPI.call(
-                'getSnapshotExtractions',
-                snapshot.id
-            );
+            const result = await window.applicationAPI.call('getSnapshotExtractions', snapshot.id);
 
             if (result.success && result.extractions.length > 0) {
                 // 找到 summary 类型的 extraction
                 const summaryExtraction = result.extractions.find(
-                    e => e.pageType === 'summary' && e.contentType === 'llm'
+                    (e) => e.pageType === 'summary' && e.contentType === 'llm'
                 );
                 snapshot.memory = summaryExtraction ? summaryExtraction.content : null;
             } else {
@@ -626,10 +614,10 @@ class BrowserPage extends HTMLElement {
         // 点击单张图片，显示右侧详情面板
         this.selectedItem = item;
         this.showDetail = true;
-        
+
         // 调整窗口大小以容纳详情面板
         this.adjustWindowSize(true);
-        
+
         // 立即更新详情面板
         this.updateDetailPanel();
     }
@@ -637,19 +625,19 @@ class BrowserPage extends HTMLElement {
     hideDetail() {
         this.showDetail = false;
         this.selectedItem = null;
-        
+
         // 恢复窗口大小
         this.adjustWindowSize(false);
-        
+
         // 隐藏详情面板，保持三栏布局
         const detailPanel = this.querySelector('#detail-panel');
         const rightResizer = this.querySelector('#right-resizer');
-        
+
         if (detailPanel) {
             detailPanel.style.width = '0px';
             detailPanel.classList.add('hidden');
         }
-        
+
         if (rightResizer) {
             rightResizer.classList.add('hidden');
         }
@@ -663,9 +651,8 @@ class BrowserPage extends HTMLElement {
             if (this.showDetail) {
                 const currentItem = this.currentData[this.currentIndex];
                 // 如果是capture组，使用第一个snapshot；否则使用当前item
-                this.selectedItem = (currentItem.snapshots && currentItem.snapshots.length > 0) 
-                    ? currentItem.snapshots[0] 
-                    : currentItem;
+                this.selectedItem =
+                    currentItem.snapshots && currentItem.snapshots.length > 0 ? currentItem.snapshots[0] : currentItem;
                 if (this.selectedItem.memory === undefined) {
                     await this.getSnapshotExtraction(this.selectedItem);
                 }
@@ -682,9 +669,8 @@ class BrowserPage extends HTMLElement {
             if (this.showDetail) {
                 const currentItem = this.currentData[this.currentIndex];
                 // 如果是capture组，使用第一个snapshot；否则使用当前item
-                this.selectedItem = (currentItem.snapshots && currentItem.snapshots.length > 0) 
-                    ? currentItem.snapshots[0] 
-                    : currentItem;
+                this.selectedItem =
+                    currentItem.snapshots && currentItem.snapshots.length > 0 ? currentItem.snapshots[0] : currentItem;
                 if (this.selectedItem.memory === undefined) {
                     await this.getSnapshotExtraction(this.selectedItem);
                 }
@@ -716,30 +702,34 @@ class BrowserPage extends HTMLElement {
         }
 
         const item = this.currentData[this.currentIndex];
-        
+
         const prevItem = this.currentIndex > 0 ? this.currentData[this.currentIndex - 1] : null;
-        const nextItem = this.currentIndex < this.currentData.length - 1 ? this.currentData[this.currentIndex + 1] : null;
-        
+        const nextItem =
+            this.currentIndex < this.currentData.length - 1 ? this.currentData[this.currentIndex + 1] : null;
+
         // 只有在日视图且选择了事件组展示时，才显示事件组卡片
         const isGroup = this.viewMode === 'daily' && this.dailyViewType === 'groups';
         // 检查是否被标记（capture组检查snapshots，单个检查自身）
-        const isBookmarked = item.isMarked || 
-            (item.snapshots && item.snapshots.some(s => this.bookmarks.has(s.id))) ||
+        const isBookmarked =
+            item.isMarked ||
+            (item.snapshots && item.snapshots.some((s) => this.bookmarks.has(s.id))) ||
             this.bookmarks.has(item.id);
-        
-        
+
         // 确保snapshots字段存在
         if (!isGroup && (!item.snapshots || item.snapshots.length === 0)) {
             console.error('[BrowserPage] 错误: item.snapshots为空或不存在!', item);
-            container.innerHTML = '<div class="flex items-center justify-center h-full text-red-500">数据错误：无法找到截图</div>';
+            container.innerHTML =
+                '<div class="flex items-center justify-center h-full text-red-500">数据错误：无法找到截图</div>';
             return;
         }
-        
+
         container.innerHTML = `
             <div class="w-full h-full flex items-center justify-center relative p-6 overflow-auto">
                 <!-- 当前项目展示（中心） -->
                 <div class="relative z-10 transition-all duration-500 ease-out flex items-center justify-center w-full" id="main-item-container">
-                    ${isGroup ? `
+                    ${
+                        isGroup
+                            ? `
                         <!-- 事件组显示（可悬停查看详情） -->
                         <div class="relative group cursor-pointer transition-all duration-300"
                              onclick="document.querySelector('recall-browser-page').onEventGroupClick('${item.id}')">
@@ -767,7 +757,8 @@ class BrowserPage extends HTMLElement {
                                 </div>
                             </div>
                         </div>
-                    ` : `
+                    `
+                            : `
                         <!-- Capture组显示（包含时间、显示器信息和截图网格） -->
                         <div class="flex flex-col gap-3 max-w-5xl" data-item-id="${item.id}">
                             <!-- 上方：时间信息 -->
@@ -777,13 +768,13 @@ class BrowserPage extends HTMLElement {
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
                                     </svg>
                                     <div class="text-base font-semibold text-blue-600">
-                                        ${new Date(item.timestamp).toLocaleString('zh-CN', { 
-                                            year: 'numeric', 
-                                            month: 'long', 
-                                            day: 'numeric', 
-                                            hour: '2-digit', 
-                                            minute: '2-digit', 
-                                            second: '2-digit' 
+                                        ${new Date(item.timestamp).toLocaleString('zh-CN', {
+                                            year: 'numeric',
+                                            month: 'long',
+                                            day: 'numeric',
+                                            hour: '2-digit',
+                                            minute: '2-digit',
+                                            second: '2-digit'
                                         })}
                                     </div>
                                 </div>
@@ -791,7 +782,11 @@ class BrowserPage extends HTMLElement {
                             
                             <!-- 中间：截图网格 -->
                             <div class="grid gap-3" style="grid-template-columns: repeat(${item.snapshots ? Math.min(item.snapshots.length, 2) : 1}, 1fr);">
-                                ${item.snapshots ? item.snapshots.map((snapshot, idx) => `
+                                ${
+                                    item.snapshots
+                                        ? item.snapshots
+                                              .map(
+                                                  (snapshot, idx) => `
                                     <div class="flex flex-col gap-2">
                                         <!-- 显示器标签 -->
                                         <div class="flex items-center justify-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-blue-50 to-purple-50 rounded-lg shadow-sm border border-blue-200">
@@ -818,7 +813,11 @@ class BrowserPage extends HTMLElement {
                                             </div>
                                         </div>
                                     </div>
-                                `).join('') : ''}
+                                `
+                                              )
+                                              .join('')
+                                        : ''
+                                }
                             </div>
                             
                             <!-- 下方：提示文字 -->
@@ -831,26 +830,35 @@ class BrowserPage extends HTMLElement {
 
                             ${this.viewMode === 'activity' && this.currentActivity && this.currentIndex === 0 ? this.generateActivityPDFCard() : ''}
                         </div>
-                    `}
+                    `
+                    }
                 </div>
 
                 <!-- 导航箭头 -->
-                ${this.currentIndex > 0 ? `
+                ${
+                    this.currentIndex > 0
+                        ? `
                     <button onclick="event.stopPropagation(); document.querySelector('recall-browser-page').prevItem()" 
                             class="absolute left-4 top-1/2 -translate-y-1/2 w-12 h-12 bg-white/90 hover:bg-white rounded-full shadow-lg flex items-center justify-center transition-all hover:scale-110 z-20">
                         <svg class="w-6 h-6 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
                         </svg>
                     </button>
-                ` : ''}
-                ${this.currentIndex < this.currentData.length - 1 ? `
+                `
+                        : ''
+                }
+                ${
+                    this.currentIndex < this.currentData.length - 1
+                        ? `
                     <button onclick="event.stopPropagation(); document.querySelector('recall-browser-page').nextItem()" 
                             class="absolute right-4 top-1/2 -translate-y-1/2 w-12 h-12 bg-white/90 hover:bg-white rounded-full shadow-lg flex items-center justify-center transition-all hover:scale-110 z-20">
                         <svg class="w-6 h-6 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
                         </svg>
                     </button>
-                ` : ''}
+                `
+                        : ''
+                }
 
                 <!-- 固定位置的标记按钮（左下角） -->
                 <button onclick="event.stopPropagation(); document.querySelector('recall-browser-page').toggleBookmark('${item.id}')" 
@@ -864,13 +872,13 @@ class BrowserPage extends HTMLElement {
         `;
 
         this.updateTimeline();
-        
+
         // 预加载相邻图片
         this.preloadAdjacentImages();
-        
+
         // 注意：图片点击事件已经在HTML模板中通过onclick属性绑定
         // 不需要在这里重复绑定，否则会导致传递错误的数据（capture对象而不是snapshot对象）
-        
+
         // 添加滑入动画
         const mainContainer = container.querySelector('#main-item-container');
         if (mainContainer) {
@@ -882,15 +890,15 @@ class BrowserPage extends HTMLElement {
             }, 50);
         }
     }
-    
+
     async toggleBookmark(itemId) {
         // itemId可能是captureId（当前项）或snapshotId（单个快照）
         const currentItem = this.currentData[this.currentIndex];
-        
+
         if (currentItem && currentItem.snapshots) {
             // 如果是capture组，标记所有snapshots
             const shouldMark = !currentItem.isMarked;
-            
+
             for (const snapshot of currentItem.snapshots) {
                 if (shouldMark) {
                     this.bookmarks.add(snapshot.id);
@@ -900,7 +908,7 @@ class BrowserPage extends HTMLElement {
                 await window.applicationAPI.call('updateSnapshotMark', snapshot.id, shouldMark);
                 snapshot.isMarked = shouldMark;
             }
-            
+
             currentItem.isMarked = shouldMark;
         } else {
             // 单个快照的标记逻辑（兼容旧代码）
@@ -911,25 +919,21 @@ class BrowserPage extends HTMLElement {
                 this.bookmarks.add(itemId);
                 await window.applicationAPI.call('updateSnapshotMark', itemId, true);
             }
-            
-            const item = this.currentData.find(d => d.id === itemId);
+
+            const item = this.currentData.find((d) => d.id === itemId);
             if (item) {
                 item.isMarked = this.bookmarks.has(itemId);
             }
         }
-        
+
         this.updateMainView();
     }
 
     // PDF 相关方法
     async generateActivityPDF(activityId) {
         try {
-
             // Check current status first
-            const result = await window.applicationAPI.call(
-                'getHistoryActivityById',
-                activityId
-            );
+            const result = await window.applicationAPI.call('getHistoryActivityById', activityId);
 
             const currentStatus = result.activity?.pdfStatus;
 
@@ -951,7 +955,7 @@ class BrowserPage extends HTMLElement {
                     this.currentActivity.pdfStatus = 'processing';
                     this.refreshPDFCard();
                 }
-                
+
                 // 启动轮询检测状态变化
                 this.pollActivityStatus(activityId);
             } else {
@@ -970,7 +974,7 @@ class BrowserPage extends HTMLElement {
         const { activityId, status, pdfPath, keyframeCount, error } = payload;
 
         // CRITICAL: Update this.allActivities first to maintain data consistency
-        const activity = this.allActivities.find(a => a.activityId === activityId);
+        const activity = this.allActivities.find((a) => a.activityId === activityId);
         if (activity) {
             if (!activity.metadata) activity.metadata = {};
 
@@ -982,7 +986,6 @@ class BrowserPage extends HTMLElement {
                 if (!activity.metadata.pdf) activity.metadata.pdf = {};
                 activity.metadata.pdf.error = error;
             }
-
         } else {
             console.warn('[BrowserPage] ⚠️ Activity not found in allActivities:', activityId?.substring(0, 8));
         }
@@ -1059,7 +1062,10 @@ class BrowserPage extends HTMLElement {
                 if (showResult && showResult.success) {
                     this.showNotification('PDF 已保存，正在打开文件位置...', 'success');
                 } else {
-                    this.showNotification('PDF 已保存，但无法打开文件位置: ' + (showResult.message || '未知错误'), 'warning');
+                    this.showNotification(
+                        'PDF 已保存，但无法打开文件位置: ' + (showResult.message || '未知错误'),
+                        'warning'
+                    );
                 }
             } else {
                 this.showNotification('PDF 下载失败: ' + (result?.message || '未知错误'), 'error');
@@ -1072,20 +1078,23 @@ class BrowserPage extends HTMLElement {
 
     showNotification(message, type = 'info') {
         // 简单的通知显示，可以后续扩展为更精美的UI
-        
+
         // 创建临时通知元素
         const notification = document.createElement('div');
         notification.className = `fixed top-4 right-4 px-4 py-2 rounded-lg shadow-lg z-50 transition-all duration-300 ${
-            type === 'success' ? 'bg-green-500 text-white' :
-            type === 'error' ? 'bg-red-500 text-white' :
-            type === 'warning' ? 'bg-yellow-500 text-black' :
-            'bg-blue-500 text-white'
+            type === 'success'
+                ? 'bg-green-500 text-white'
+                : type === 'error'
+                  ? 'bg-red-500 text-white'
+                  : type === 'warning'
+                    ? 'bg-yellow-500 text-black'
+                    : 'bg-blue-500 text-white'
         }`;
         notification.textContent = message;
-        
+
         // 添加到页面
         document.body.appendChild(notification);
-        
+
         // 3秒后移除
         setTimeout(() => {
             notification.style.opacity = '0';
@@ -1102,35 +1111,45 @@ class BrowserPage extends HTMLElement {
 
         const currentItem = this.currentData[this.currentIndex];
         const timeValue = currentItem.startTime || currentItem.timestamp;
-        
+
         // 计算时间范围和热力值
-        const timestamps = this.currentData.map(item => item.startTime || item.timestamp);
+        const timestamps = this.currentData.map((item) => item.startTime || item.timestamp);
         const minTime = Math.min(...timestamps);
         const maxTime = Math.max(...timestamps);
         const timeRange = maxTime - minTime || 1;
         const currentPosition = ((timeValue - minTime) / timeRange) * 100;
-        
+
         // 计算热力图数据（将时间轴分成40个区间，更平滑）
         const heatmapSegments = 40;
         const segmentDuration = timeRange / heatmapSegments;
         const heatmap = new Array(heatmapSegments).fill(0);
-        
+
         // 统计每个区间的截图数量，并添加平滑过渡
-        timestamps.forEach(ts => {
+        timestamps.forEach((ts) => {
             const segmentIndex = Math.min(Math.floor((ts - minTime) / segmentDuration), heatmapSegments - 1);
             heatmap[segmentIndex]++;
             // 为相邻区间添加一些热度（平滑效果）
             if (segmentIndex > 0) heatmap[segmentIndex - 1] += 0.3;
             if (segmentIndex < heatmapSegments - 1) heatmap[segmentIndex + 1] += 0.3;
         });
-        
+
         const maxHeat = Math.max(...heatmap, 1);
-        
+
         // 格式化起始时间
-        const startTimeStr = new Date(minTime).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
-        const endTimeStr = new Date(maxTime).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
-        const currentTimeStr = new Date(timeValue).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-        
+        const startTimeStr = new Date(minTime).toLocaleTimeString('zh-CN', {
+            hour: '2-digit',
+            minute: '2-digit'
+        });
+        const endTimeStr = new Date(maxTime).toLocaleTimeString('zh-CN', {
+            hour: '2-digit',
+            minute: '2-digit'
+        });
+        const currentTimeStr = new Date(timeValue).toLocaleTimeString('zh-CN', {
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit'
+        });
+
         timeline.innerHTML = `
             <div class="w-full h-full flex items-center gap-4">
                 <!-- 起始时间 -->
@@ -1145,27 +1164,31 @@ class BrowserPage extends HTMLElement {
                     
                     <!-- 热力图背景（带渐变过渡） -->
                     <div class="absolute left-0 right-0 h-5 top-1/2 -translate-y-1/2 flex rounded-full overflow-hidden shadow-inner bg-gray-100" style="pointer-events: none;">
-                        ${heatmap.map((heat, i) => {
-                            const intensity = Math.min(heat / maxHeat, 1);
-                            // 使用渐变色，从蓝色到橙色到红色
-                            const r = Math.round(59 + intensity * 180);  // 59 -> 239
-                            const g = Math.round(130 - intensity * 62);  // 130 -> 68
-                            const b = Math.round(246 - intensity * 178); // 246 -> 68
-                            const alpha = 0.3 + intensity * 0.7; // 0.3 -> 1.0
-                            return `<div style="flex: 1; background: rgba(${r}, ${g}, ${b}, ${alpha}); transition: all 0.3s ease; pointer-events: none;"></div>`;
-                        }).join('')}
+                        ${heatmap
+                            .map((heat, i) => {
+                                const intensity = Math.min(heat / maxHeat, 1);
+                                // 使用渐变色，从蓝色到橙色到红色
+                                const r = Math.round(59 + intensity * 180); // 59 -> 239
+                                const g = Math.round(130 - intensity * 62); // 130 -> 68
+                                const b = Math.round(246 - intensity * 178); // 246 -> 68
+                                const alpha = 0.3 + intensity * 0.7; // 0.3 -> 1.0
+                                return `<div style="flex: 1; background: rgba(${r}, ${g}, ${b}, ${alpha}); transition: all 0.3s ease; pointer-events: none;"></div>`;
+                            })
+                            .join('')}
                     </div>
                     
                     <!-- 标记旗帜（在时间轴上） -->
-                    ${this.currentData.map((dataItem, idx) => {
-                        // 检查当前项是否被标记（capture组或单个snapshot）
-                        const isItemMarked = dataItem.isMarked || 
-                            (dataItem.snapshots && dataItem.snapshots.some(s => this.bookmarks.has(s.id))) ||
-                            this.bookmarks.has(dataItem.id);
-                        if (!isItemMarked) return '';
-                        const itemTime = dataItem.startTime || dataItem.timestamp;
-                        const itemPosition = ((itemTime - minTime) / timeRange) * 100;
-                        return `
+                    ${this.currentData
+                        .map((dataItem, idx) => {
+                            // 检查当前项是否被标记（capture组或单个snapshot）
+                            const isItemMarked =
+                                dataItem.isMarked ||
+                                (dataItem.snapshots && dataItem.snapshots.some((s) => this.bookmarks.has(s.id))) ||
+                                this.bookmarks.has(dataItem.id);
+                            if (!isItemMarked) return '';
+                            const itemTime = dataItem.startTime || dataItem.timestamp;
+                            const itemPosition = ((itemTime - minTime) / timeRange) * 100;
+                            return `
                             <div class="absolute top-1/2 -translate-y-1/2 transition-all duration-300 z-15" 
                                  style="left: ${itemPosition}%; pointer-events: none;">
                                 <div class="absolute -top-6 left-1/2 -translate-x-1/2">
@@ -1175,7 +1198,8 @@ class BrowserPage extends HTMLElement {
                                 </div>
                             </div>
                         `;
-                    }).join('')}
+                        })
+                        .join('')}
                     
                     <!-- 当前位置指示器 -->
                     <div class="absolute top-1/2 -translate-y-1/2 transition-all duration-300 z-20" 
@@ -1207,7 +1231,7 @@ class BrowserPage extends HTMLElement {
                 </div>
             </div>
         `;
-        
+
         // 等待 DOM 渲染完成后设置拖动功能
         requestAnimationFrame(() => {
             requestAnimationFrame(() => {
@@ -1215,21 +1239,19 @@ class BrowserPage extends HTMLElement {
             });
         });
     }
-    
+
     jumpToIndex(index) {
         if (index >= 0 && index < this.currentData.length) {
             this.currentIndex = index;
             this.updateMainView();
             if (this.showDetail) {
                 const item = this.currentData[this.currentIndex];
-                this.selectedItem = (item.snapshots && item.snapshots.length > 0) 
-                    ? item.snapshots[0] 
-                    : item;
+                this.selectedItem = item.snapshots && item.snapshots.length > 0 ? item.snapshots[0] : item;
                 this.updateDetailPanel();
             }
         }
     }
-    
+
     setupTimelineDrag() {
         const track = this.querySelector('#timeline-track');
         if (!track) {
@@ -1238,8 +1260,7 @@ class BrowserPage extends HTMLElement {
         if (this.currentData.length === 0) {
             return;
         }
-        
-        
+
         // 清理旧的监听器
         if (this._timelineDragListeners) {
             const old = this._timelineDragListeners;
@@ -1248,21 +1269,21 @@ class BrowserPage extends HTMLElement {
             document.removeEventListener('mousemove', old.onMouseMove);
             document.removeEventListener('mouseup', old.onMouseUp);
         }
-        
+
         let isDragging = false;
         let pendingIndex = null;
-        
+
         const handleDrag = (clientX, isPreview = true) => {
             const rect = track.getBoundingClientRect();
             const x = Math.max(0, Math.min(clientX - rect.left, rect.width));
             const percent = x / rect.width;
-            
+
             // 按时间查找最近的项
-            const timestamps = this.currentData.map(item => item.startTime || item.timestamp);
+            const timestamps = this.currentData.map((item) => item.startTime || item.timestamp);
             const minTime = Math.min(...timestamps);
             const maxTime = Math.max(...timestamps);
             const targetTime = minTime + (maxTime - minTime) * percent;
-            
+
             // 找到最接近的项
             let closestIndex = 0;
             let minDiff = Math.abs(timestamps[0] - targetTime);
@@ -1273,24 +1294,22 @@ class BrowserPage extends HTMLElement {
                     closestIndex = i;
                 }
             }
-            
+
             if (closestIndex !== this.currentIndex) {
                 pendingIndex = closestIndex;
-                
+
                 if (isPreview) {
                     // 拖动预览：只更新指示器位置和详情面板
                     const indicator = this.querySelector('#timeline-indicator');
                     if (indicator) {
-                        const newPercent = (timestamps[closestIndex] - minTime) / (maxTime - minTime) * 100;
+                        const newPercent = ((timestamps[closestIndex] - minTime) / (maxTime - minTime)) * 100;
                         indicator.style.left = newPercent + '%';
                     }
-                    
+
                     // 如果详情面板是打开的，更新详情内容
                     if (this.showDetail) {
                         const item = this.currentData[closestIndex];
-                        this.selectedItem = (item.snapshots && item.snapshots.length > 0) 
-                            ? item.snapshots[0] 
-                            : item;
+                        this.selectedItem = item.snapshots && item.snapshots.length > 0 ? item.snapshots[0] : item;
                         this.updateDetailPanel();
                     }
                 } else {
@@ -1299,15 +1318,13 @@ class BrowserPage extends HTMLElement {
                     this.updateMainView();
                     if (this.showDetail) {
                         const item = this.currentData[this.currentIndex];
-                        this.selectedItem = (item.snapshots && item.snapshots.length > 0) 
-                            ? item.snapshots[0] 
-                            : item;
+                        this.selectedItem = item.snapshots && item.snapshots.length > 0 ? item.snapshots[0] : item;
                         this.updateDetailPanel();
                     }
                 }
             }
         };
-        
+
         const onMouseDown = (e) => {
             isDragging = true;
             pendingIndex = null;
@@ -1315,13 +1332,13 @@ class BrowserPage extends HTMLElement {
             handleDrag(e.clientX, true); // 预览模式
             e.preventDefault();
         };
-        
+
         const onMouseMove = (e) => {
             if (isDragging) {
                 handleDrag(e.clientX, true); // 预览模式
             }
         };
-        
+
         const onMouseUp = (e) => {
             if (isDragging) {
                 isDragging = false;
@@ -1338,44 +1355,48 @@ class BrowserPage extends HTMLElement {
                 pendingIndex = null;
             }
         };
-        
+
         // 点击时间轴直接跳转
         const onClick = (e) => {
             if (!isDragging) {
                 handleDrag(e.clientX, false); // 立即更新模式
             }
         };
-        
+
         track.addEventListener('mousedown', onMouseDown);
         track.addEventListener('click', onClick);
         document.addEventListener('mousemove', onMouseMove);
         document.addEventListener('mouseup', onMouseUp);
-        
-        
+
         // 保存监听器引用以便清理
         this._timelineDragListeners = { onMouseDown, onClick, onMouseMove, onMouseUp };
     }
-    
+
     updateTimelineIndicatorOnly() {
         // 只更新时间轴指示器位置，不重新渲染整个时间轴
         const indicator = this.querySelector('#timeline-indicator');
         const timeDisplay = this.querySelector('#timeline-container .text-sm');
         if (!indicator || this.currentData.length === 0) return;
-        
+
         const currentItem = this.currentData[this.currentIndex];
         const timeValue = currentItem.startTime || currentItem.timestamp;
-        const timestamps = this.currentData.map(item => item.startTime || item.timestamp);
+        const timestamps = this.currentData.map((item) => item.startTime || item.timestamp);
         const minTime = Math.min(...timestamps);
         const maxTime = Math.max(...timestamps);
         const timeRange = maxTime - minTime || 1;
         const currentPosition = ((timeValue - minTime) / timeRange) * 100;
-        
+
         indicator.style.left = `${currentPosition}%`;
-        
+
         if (timeDisplay) {
-            timeDisplay.textContent = timeValue ? new Date(timeValue).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : '--:--';
+            timeDisplay.textContent = timeValue
+                ? new Date(timeValue).toLocaleTimeString('zh-CN', {
+                      hour: '2-digit',
+                      minute: '2-digit'
+                  })
+                : '--:--';
         }
-        
+
         // 更新标记旗帜
         const flagContainer = indicator.querySelector('div:first-child');
         if (flagContainer) {
@@ -1397,14 +1418,14 @@ class BrowserPage extends HTMLElement {
         const rect = timeline.getBoundingClientRect();
         const x = event.clientX - rect.left;
         const percent = x / rect.width;
-        
+
         // 如果有时间戳，按时间查找最近的项
         if (this.currentData.length > 0 && (this.currentData[0].startTime || this.currentData[0].timestamp)) {
-            const timestamps = this.currentData.map(item => item.startTime || item.timestamp);
+            const timestamps = this.currentData.map((item) => item.startTime || item.timestamp);
             const minTime = Math.min(...timestamps);
             const maxTime = Math.max(...timestamps);
             const clickedTime = minTime + (maxTime - minTime) * percent;
-            
+
             // 找到最接近的项
             let closestIndex = 0;
             let minDiff = Math.abs(timestamps[0] - clickedTime);
@@ -1435,7 +1456,7 @@ class BrowserPage extends HTMLElement {
      */
     getSnapshotAppName(snapshot) {
         if (!snapshot) return '未知应用';
-        
+
         // 直接使用 sourceName，这是最简单和清晰的方式
         const displayName = snapshot.sourceName || '未知来源';
         return displayName;
@@ -1456,7 +1477,7 @@ class BrowserPage extends HTMLElement {
     updateDetailPanel() {
         const panel = this.querySelector('#detail-panel');
         const rightResizer = this.querySelector('#right-resizer');
-        
+
         if (!panel) {
             console.error('[BrowserPage] 找不到 detail-panel 元素!');
             return;
@@ -1475,24 +1496,23 @@ class BrowserPage extends HTMLElement {
         let imageSrc;
         if (this.selectedItem.snapshots && this.selectedItem.snapshots.length > 0) {
             // capture组，使用第一个snapshot的图片
-            imageSrc = this.selectedItem.snapshots[0].imageDataURL || this.selectedItem.snapshots[0].thumbnailDataURL || '';
+            imageSrc =
+                this.selectedItem.snapshots[0].imageDataURL || this.selectedItem.snapshots[0].thumbnailDataURL || '';
         } else {
             // 单个snapshot
             imageSrc = this.selectedItem.imageDataURL || this.selectedItem.thumbnailDataURL || '';
         }
 
-        
         // 使用智能方法获取应用名
-        let appName = this.getSnapshotAppName(this.selectedItem);
-        
-        
+        const appName = this.getSnapshotAppName(this.selectedItem);
+
         // 显示面板
         panel.classList.remove('hidden');
         panel.style.width = `${this.rightPanelWidth}px`;
         if (rightResizer) {
             rightResizer.classList.remove('hidden');
         }
-        
+
         panel.innerHTML = `
             <div class="p-6 h-full overflow-y-auto">
                 <div class="flex items-center justify-between mb-6">
@@ -1528,26 +1548,38 @@ class BrowserPage extends HTMLElement {
                         </div>
                     </div>
 
-                    ${this.selectedItem.title ? `
+                    ${
+                        this.selectedItem.title
+                            ? `
                         <div>
                             <div class="text-sm text-gray-500 mb-1">标题</div>
                             <div class="text-base text-gray-800">${this.selectedItem.title}</div>
                         </div>
-                    ` : ''}
+                    `
+                            : ''
+                    }
 
-                    ${this.selectedItem.content ? `
+                    ${
+                        this.selectedItem.content
+                            ? `
                         <div>
                             <div class="text-sm text-gray-500 mb-1">内容</div>
                             <div class="text-sm text-gray-600">${this.selectedItem.content}</div>
                         </div>
-                    ` : ''}
+                    `
+                            : ''
+                    }
 
-                    ${this.selectedItem.count ? `
+                    ${
+                        this.selectedItem.count
+                            ? `
                         <div>
                             <div class="text-sm text-gray-500 mb-1">截图数量</div>
                             <div class="text-base text-gray-800">${this.selectedItem.count} 张</div>
                         </div>
-                    ` : ''}
+                    `
+                            : ''
+                    }
                     
                     ${this.renderMemorySection(this.selectedItem)}
 
@@ -1653,7 +1685,7 @@ class BrowserPage extends HTMLElement {
             }
         };
         document.addEventListener('keydown', keyHandler);
-        
+
         // 搜索框事件
         const searchInput = this.querySelector('#search-input');
         if (searchInput) {
@@ -1665,19 +1697,19 @@ class BrowserPage extends HTMLElement {
                 }, 1000); // 防抖：1000ms后执行搜索
             });
         }
-        
+
         // 日期选择器事件
         const dateInput = this.querySelector('#date-picker');
         if (dateInput) {
             dateInput.addEventListener('change', async (e) => {
                 this.selectedDate = e.target.value;
                 this.currentIndex = 0; // 重置索引到第一项
-                
+
                 // 记住详情面板是否打开
                 const wasDetailOpen = this.showDetail;
-                
+
                 await this.loadDailyView();
-                
+
                 // 如果之前详情面板是打开的，更新为当前显示的项
                 if (wasDetailOpen && this.currentData.length > 0) {
                     this.selectedItem = this.currentData[0];
@@ -1685,11 +1717,11 @@ class BrowserPage extends HTMLElement {
                 }
             });
         }
-        
+
         // 组件销毁时移除监听器
         this._keyHandler = keyHandler;
     }
-    
+
     /**
      * 预加载相邻的图片
      */
@@ -1697,14 +1729,14 @@ class BrowserPage extends HTMLElement {
         const preloadCount = 3; // 预加载前后3张
         const start = Math.max(0, this.currentIndex - preloadCount);
         const end = Math.min(this.currentData.length - 1, this.currentIndex + preloadCount);
-        
+
         for (let i = start; i <= end; i++) {
             if (i === this.currentIndex) continue; // 跳过当前图片
             const item = this.currentData[i];
-            
+
             // 处理capture组（包含多个snapshots）
             if (item && item.snapshots) {
-                item.snapshots.forEach(snapshot => {
+                item.snapshots.forEach((snapshot) => {
                     if (snapshot.imagePath && !this.imageCache.has(snapshot.imagePath)) {
                         const img = new Image();
                         img.src = snapshot.imagePath;
@@ -1713,7 +1745,7 @@ class BrowserPage extends HTMLElement {
                         };
                     }
                 });
-            } 
+            }
             // 处理单个图片（兼容旧数据）
             else if (item && item.imagePath && !this.imageCache.has(item.imagePath)) {
                 const img = new Image();
@@ -1724,17 +1756,16 @@ class BrowserPage extends HTMLElement {
             }
         }
     }
-    
+
     /**
      * 调整窗口大小
      * @param {boolean} expandDetail - 是否展开详情面板
      */
     adjustWindowSize(expandDetail) {
-        
         try {
             // 尝试多个可能的 electronAPI 位置
             let electronAPI = null;
-            
+
             // 1. 检查当前 window
             if (window.electronAPI) {
                 electronAPI = window.electronAPI;
@@ -1747,19 +1778,19 @@ class BrowserPage extends HTMLElement {
             else if (window.top && window.top.electronAPI) {
                 electronAPI = window.top.electronAPI;
             }
-            
+
             if (!electronAPI) {
                 console.warn('[BrowserPage] 未找到 electronAPI，窗口大小将不会调整');
                 // 不阻断执行，让详情面板仍然可以显示
                 return;
             }
-            
+
             if (!electronAPI.resizeWindow) {
                 console.error('[BrowserPage] electronAPI.resizeWindow 方法不存在!');
                 console.error('[BrowserPage] electronAPI 的所有方法:', Object.keys(electronAPI));
                 return;
             }
-            
+
             if (expandDetail) {
                 // 展开详情面板，增加宽度以容纳详情面板（原宽度 + 详情面板宽度）
                 const newWidth = 1200 + this.rightPanelWidth;
@@ -1772,7 +1803,7 @@ class BrowserPage extends HTMLElement {
             console.error('[BrowserPage] 调整窗口大小失败:', error);
         }
     }
-    
+
     async handleSearch(query) {
         if (!query || query.trim() === '') {
             // 清空搜索，返回日视图
@@ -1782,13 +1813,12 @@ class BrowserPage extends HTMLElement {
         try {
             const result = await window.applicationAPI.call('searchSnapshots', query);
 
-            if (result && result.success && result.snapshots) {   
-                const allSnapshots = result.snapshots.map(s => 
+            if (result && result.success && result.snapshots) {
+                const allSnapshots = result.snapshots.map((s) =>
                     transformSnapshot(s, this.getSnapshotAppName.bind(this))
                 );
                 // 按captureId分组并转换为capture格式
                 this.currentData = groupSnapshotsByCapture(allSnapshots);
-                
             } else {
                 this.currentData = [];
             }
@@ -1796,7 +1826,7 @@ class BrowserPage extends HTMLElement {
             console.error('[BrowserPage] 搜索失败:', error);
             this.currentData = [];
         }
-        
+
         this.viewMode = 'search';
         this.currentIndex = 0;
         this.updateMainView();
@@ -1821,7 +1851,7 @@ class BrowserPage extends HTMLElement {
         if (this.viewMode !== 'daily') {
             return;
         }
-        
+
         // 暂时只支持图片视图
         if (type === 'groups') {
             console.warn('[BrowserPage] 事件组视图尚未实现');
@@ -1844,7 +1874,7 @@ class BrowserPage extends HTMLElement {
             }
             return;
         }
-        
+
         // 切换到图片视图时始终刷新数据
         if (type === 'images') {
             this.dailyViewType = 'images';
@@ -1861,7 +1891,7 @@ class BrowserPage extends HTMLElement {
         const groupsBtn = this.querySelector('#view-groups-btn');
         const imagesBtn = this.querySelector('#view-images-btn');
         const viewTypeBtnsContainer = this.querySelector('#view-type-buttons');
-        
+
         // 只有在日视图下才显示切换按钮
         if (viewTypeBtnsContainer) {
             if (this.viewMode === 'daily') {
@@ -1870,7 +1900,7 @@ class BrowserPage extends HTMLElement {
                 viewTypeBtnsContainer.style.display = 'none';
             }
         }
-        
+
         if (groupsBtn && imagesBtn) {
             if (this.dailyViewType === 'groups') {
                 groupsBtn.className = 'px-3 py-2 text-sm bg-blue-500 text-white transition-colors';
@@ -1951,7 +1981,9 @@ class BrowserPage extends HTMLElement {
             </div>
 
             <div class="space-y-3">
-                ${status === 'completed' ? `
+                ${
+                    status === 'completed'
+                        ? `
                     <!-- PDF 已生成状态 -->
                     <div class="flex items-center justify-between p-3 bg-green-50 border border-green-200 rounded-lg">
                         <div class="flex items-center gap-2">
@@ -1971,7 +2003,9 @@ class BrowserPage extends HTMLElement {
                             </button>
                         </div>
                     </div>
-                ` : status === 'processing' ? `
+                `
+                        : status === 'processing'
+                          ? `
                     <!-- PDF 生成中状态 -->
                     <div class="bg-amber-50 border border-amber-200 rounded-lg p-4">
                         <div class="flex items-center gap-3">
@@ -2004,7 +2038,9 @@ class BrowserPage extends HTMLElement {
                             </button>
                         </div>
                     </div>
-                ` : status === 'failed' ? `
+                `
+                          : status === 'failed'
+                            ? `
                     <!-- PDF 生成失败状态 -->
                     <div class="bg-red-50 border border-red-200 rounded-lg p-4">
                         <div class="flex items-center gap-3 mb-3">
@@ -2023,7 +2059,9 @@ class BrowserPage extends HTMLElement {
                             重新生成 PDF
                         </button>
                     </div>
-                ` : status === 'completed' ? `
+                `
+                            : status === 'completed'
+                              ? `
                     <!-- 无关键帧状态 -->
                     <div class="bg-gray-50 border border-gray-200 rounded-lg p-4">
                         <div class="flex items-center gap-3">
@@ -2038,7 +2076,8 @@ class BrowserPage extends HTMLElement {
                             </div>
                         </div>
                     </div>
-                ` : `
+                `
+                              : `
                     <!-- PDF 可生成状态（默认/null状态） -->
                     <div class="flex items-center justify-between p-3 bg-blue-50 border border-blue-200 rounded-lg">
                         <div class="flex items-center gap-2">
@@ -2052,7 +2091,8 @@ class BrowserPage extends HTMLElement {
                             生成 PDF
                         </button>
                     </div>
-                `}
+                `
+                }
 
                 <!-- 统计信息 -->
                 <div class="grid grid-cols-2 gap-4 pt-3 border-t border-gray-100">
@@ -2121,7 +2161,9 @@ class BrowserPage extends HTMLElement {
                     </div>
                 </div>
 
-                ${status === 'completed' ? `
+                ${
+                    status === 'completed'
+                        ? `
                     <!-- PDF 已生成状态 -->
                     <div class="bg-green-50 border border-green-200 rounded-lg p-4 mb-4">
                         <div class="flex items-center gap-2 mb-3">
@@ -2148,7 +2190,9 @@ class BrowserPage extends HTMLElement {
                             下载活动文档
                         </button>
                     </div>
-                ` : status === 'processing' ? `
+                `
+                        : status === 'processing'
+                          ? `
                     <!-- PDF 生成中状态 -->
                     <div class="bg-amber-50 border border-amber-200 rounded-lg p-4">
                         <div class="flex items-center gap-3 mb-3">
@@ -2177,7 +2221,8 @@ class BrowserPage extends HTMLElement {
                             生成完成后可预览
                         </button>
                     </div>
-                ` : `
+                `
+                          : `
                     <!-- 生成 PDF 按钮 -->
                     <button onclick="document.querySelector('recall-browser-page').generateActivityPDF('${activity.activityId}')"
                             class="w-full px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors flex items-center justify-center gap-2">
@@ -2186,7 +2231,8 @@ class BrowserPage extends HTMLElement {
                         </svg>
                         生成活动文档
                     </button>
-                `}
+                `
+                }
             </div>
         </div>
         `;

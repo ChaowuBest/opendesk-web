@@ -9,19 +9,19 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { BaseTool } from '../tool.js'
-import { z } from 'zod'
-import { SoulRegistry } from './registry.js'
+import { BaseTool } from '../tool.js';
+import { z } from 'zod';
+import { SoulRegistry } from './registry.js';
 
 function getRegistry(): SoulRegistry {
-    const registry = SoulRegistry.getInstance()
+    const registry = SoulRegistry.getInstance();
     if (!registry) {
-        throw new Error('SoulRegistry not initialized')
+        throw new Error('SoulRegistry not initialized');
     }
-    return registry
+    return registry;
 }
 
-const ListSoulsArgsSchema = z.object({})
+const ListSoulsArgsSchema = z.object({});
 
 export class ListSoulsTool extends BaseTool<typeof ListSoulsArgsSchema> {
     constructor() {
@@ -29,58 +29,56 @@ export class ListSoulsTool extends BaseTool<typeof ListSoulsArgsSchema> {
             'listSouls',
             '列出所有可用的人设及当前激活的人设。返回每个人设的 uid、昵称、描述和激活状态。',
             ListSoulsArgsSchema
-        )
-        this.setExecutor(this.execute_impl.bind(this))
+        );
+        this.setExecutor(this.execute_impl.bind(this));
     }
 
     private async execute_impl(): Promise<string> {
-        const registry = getRegistry()
-        const souls = registry.listSouls()
-        const activeUid = SoulRegistry.getActiveSoulUid()
+        const registry = getRegistry();
+        const souls = registry.listSouls();
+        const activeUid = SoulRegistry.getActiveSoulUid();
         const result = souls.map((s) => ({
             ...s,
-            active: s.uid === activeUid,
-        }))
-        return JSON.stringify(result, null, 2)
+            active: s.uid === activeUid
+        }));
+        return JSON.stringify(result, null, 2);
     }
 }
 
 const GetSoulArgsSchema = z.object({
-    uid: z.string().describe('人设的唯一标识符(uid)'),
-})
+    uid: z.string().describe('人设的唯一标识符(uid)')
+});
 
 export class GetSoulTool extends BaseTool<typeof GetSoulArgsSchema> {
     constructor() {
-        super('getSoul', '获取指定人设的完整内容（通过 uid 查找）', GetSoulArgsSchema)
-        this.setExecutor(this.execute_impl.bind(this))
+        super('getSoul', '获取指定人设的完整内容（通过 uid 查找）', GetSoulArgsSchema);
+        this.setExecutor(this.execute_impl.bind(this));
     }
 
     private async execute_impl(args: z.output<typeof GetSoulArgsSchema>): Promise<string> {
-        const registry = getRegistry()
-        const soul = registry.getSoul(args.uid)
-        if (!soul) return JSON.stringify({ error: `人设 (uid=${args.uid}) 不存在` })
+        const registry = getRegistry();
+        const soul = registry.getSoul(args.uid);
+        if (!soul) return JSON.stringify({ error: `人设 (uid=${args.uid}) 不存在` });
         return JSON.stringify(
             {
                 uid: soul.frontmatter.uid,
                 name: soul.frontmatter.name,
                 description: soul.frontmatter.description,
                 author: soul.frontmatter.author,
-                body: soul.body,
+                body: soul.body
             },
             null,
             2
-        )
+        );
     }
 }
 
 const CreateSoulArgsSchema = z.object({
     name: z.string().describe('人设的昵称/名字（用户可见的显示名，如"小明"、"代码大师"）'),
     description: z.string().describe('人设的简短描述'),
-    body: z
-        .string()
-        .describe('人设的完整内容（Markdown格式），描述该人设的性格、语气、专长、行为准则等'),
-    author: z.string().optional().describe('人设作者'),
-})
+    body: z.string().describe('人设的完整内容（Markdown格式），描述该人设的性格、语气、专长、行为准则等'),
+    author: z.string().optional().describe('人设作者')
+});
 
 export class CreateSoulTool extends BaseTool<typeof CreateSoulArgsSchema> {
     constructor() {
@@ -88,14 +86,14 @@ export class CreateSoulTool extends BaseTool<typeof CreateSoulArgsSchema> {
             'createSoul',
             '创建一个全新的人设。注意：如果用户只是想修改现有人设，应该使用 updateSoul 而非本工具。',
             CreateSoulArgsSchema
-        )
-        this.setExecutor(this.execute_impl.bind(this))
+        );
+        this.setExecutor(this.execute_impl.bind(this));
     }
 
     private async execute_impl(args: z.output<typeof CreateSoulArgsSchema>): Promise<string> {
-        const registry = getRegistry()
-        const result = registry.createSoul(args.name, args.description, args.body, args.author)
-        return JSON.stringify(result)
+        const registry = getRegistry();
+        const result = registry.createSoul(args.name, args.description, args.body, args.author);
+        return JSON.stringify(result);
     }
 }
 
@@ -103,8 +101,8 @@ const UpdateSoulArgsSchema = z.object({
     uid: z.string().describe('要更新的人设的 uid'),
     name: z.string().optional().describe('更新后的昵称/名字'),
     description: z.string().optional().describe('更新后的描述'),
-    body: z.string().optional().describe('更新后的人设完整内容（Markdown格式）'),
-})
+    body: z.string().optional().describe('更新后的人设完整内容（Markdown格式）')
+});
 
 export class UpdateSoulTool extends BaseTool<typeof UpdateSoulArgsSchema> {
     constructor() {
@@ -112,56 +110,56 @@ export class UpdateSoulTool extends BaseTool<typeof UpdateSoulArgsSchema> {
             'updateSoul',
             '修改一个已有的人设。可以更新昵称、描述或内容。这是修改人设的首选方式。',
             UpdateSoulArgsSchema
-        )
-        this.setExecutor(this.execute_impl.bind(this))
+        );
+        this.setExecutor(this.execute_impl.bind(this));
     }
 
     private async execute_impl(args: z.output<typeof UpdateSoulArgsSchema>): Promise<string> {
-        const registry = getRegistry()
+        const registry = getRegistry();
         const result = registry.updateSoul(args.uid, {
             name: args.name,
             description: args.description,
-            body: args.body,
-        })
-        return JSON.stringify(result)
+            body: args.body
+        });
+        return JSON.stringify(result);
     }
 }
 
 const DeleteSoulArgsSchema = z.object({
-    uid: z.string().describe('要删除的人设 uid（不能删除默认人设 uid="default"）'),
-})
+    uid: z.string().describe('要删除的人设 uid（不能删除默认人设 uid="default"）')
+});
 
 export class DeleteSoulTool extends BaseTool<typeof DeleteSoulArgsSchema> {
     constructor() {
-        super('deleteSoul', '删除一个人设（不能删除默认人设）', DeleteSoulArgsSchema)
-        this.setExecutor(this.execute_impl.bind(this))
+        super('deleteSoul', '删除一个人设（不能删除默认人设）', DeleteSoulArgsSchema);
+        this.setExecutor(this.execute_impl.bind(this));
     }
 
     private async execute_impl(args: z.output<typeof DeleteSoulArgsSchema>): Promise<string> {
-        const registry = getRegistry()
-        const result = registry.deleteSoul(args.uid)
-        return JSON.stringify(result)
+        const registry = getRegistry();
+        const result = registry.deleteSoul(args.uid);
+        return JSON.stringify(result);
     }
 }
 
 const SwitchSoulArgsSchema = z.object({
-    uid: z.string().describe('要切换到的人设 uid'),
-})
+    uid: z.string().describe('要切换到的人设 uid')
+});
 
 export class SwitchSoulTool extends BaseTool<typeof SwitchSoulArgsSchema> {
     constructor() {
-        super('switchSoul', '切换当前激活的人设。切换后在新会话中生效。', SwitchSoulArgsSchema)
-        this.setExecutor(this.execute_impl.bind(this))
+        super('switchSoul', '切换当前激活的人设。切换后在新会话中生效。', SwitchSoulArgsSchema);
+        this.setExecutor(this.execute_impl.bind(this));
     }
 
     private async execute_impl(args: z.output<typeof SwitchSoulArgsSchema>): Promise<string> {
-        const registry = getRegistry()
-        const result = registry.switchSoul(args.uid)
-        return JSON.stringify(result)
+        const registry = getRegistry();
+        const result = registry.switchSoul(args.uid);
+        return JSON.stringify(result);
     }
 }
 
-const ResetDefaultSoulArgsSchema = z.object({})
+const ResetDefaultSoulArgsSchema = z.object({});
 
 export class ResetDefaultSoulTool extends BaseTool<typeof ResetDefaultSoulArgsSchema> {
     constructor() {
@@ -169,13 +167,13 @@ export class ResetDefaultSoulTool extends BaseTool<typeof ResetDefaultSoulArgsSc
             'resetDefaultSoul',
             '重置系统默认人设（uid=default）到初始状态。会覆盖用户对默认人设的任何修改。',
             ResetDefaultSoulArgsSchema
-        )
-        this.setExecutor(this.execute_impl.bind(this))
+        );
+        this.setExecutor(this.execute_impl.bind(this));
     }
 
     private async execute_impl(): Promise<string> {
-        const registry = getRegistry()
-        const result = registry.resetDefaultSoul()
-        return JSON.stringify(result)
+        const registry = getRegistry();
+        const result = registry.resetDefaultSoul();
+        return JSON.stringify(result);
     }
 }

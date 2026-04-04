@@ -76,7 +76,9 @@ export class RecallVectorStorage {
             }
 
             await this.vecdb.endUpdate();
-            logger.info(`[RecallVectorStorage] Index created with ${this.vecCache.size} items: ${Date.now() - indexStartTime}ms`);
+            logger.info(
+                `[RecallVectorStorage] Index created with ${this.vecCache.size} items: ${Date.now() - indexStartTime}ms`
+            );
         } catch (error) {
             await this.vecdb.createIndex({ deleteIfExists: true });
             logger.error(`[RecallVectorStorage] Failed to create index: ${error.message}`);
@@ -95,7 +97,7 @@ export class RecallVectorStorage {
 
         // 过滤已存在和空内容
         const newMemories = memories.filter(
-            m => m.summary && m.summary.trim() !== '' && !this.vecCache.has(m.snapshotId)
+            (m) => m.summary && m.summary.trim() !== '' && !this.vecCache.has(m.snapshotId)
         );
 
         if (newMemories.length === 0) {
@@ -107,7 +109,7 @@ export class RecallVectorStorage {
             logger.info(`[RecallVectorStorage] Batch embedding ${newMemories.length} memories`);
 
             // 使用 batchEmbed 批量生成向量
-            const summaries = newMemories.map(m => m.summary);
+            const summaries = newMemories.map((m) => m.summary);
             const embeddings = await LLM.batchEmbed(summaries);
 
             const embedTime = Date.now() - startTime;
@@ -119,9 +121,7 @@ export class RecallVectorStorage {
             }
 
             // 写入缓存文件
-            const records = newMemories.map((m, i) =>
-                JSON.stringify({ key: m.snapshotId, vec: embeddings[i] })
-            );
+            const records = newMemories.map((m, i) => JSON.stringify({ key: m.snapshotId, vec: embeddings[i] }));
             fs.appendFileSync(RecallVectorStorage.vectorCachePath, records.join('\n') + '\n');
 
             // 异步批量更新向量数据库
@@ -140,7 +140,6 @@ export class RecallVectorStorage {
                     logger.error(`[RecallVectorStorage] Failed to save to vecdb: ${error.message}`);
                 }
             });
-
         } catch (error) {
             logger.error(`[RecallVectorStorage] Batch save failed: ${error.message}`);
             throw error;
@@ -156,7 +155,7 @@ export class RecallVectorStorage {
 
     async searchMemories(query, topK = 20, threshold = 0.5) {
         try {
-            const embedding = await LLM.embed(query)
+            const embedding = await LLM.embed(query);
             const items = await this.vecdb.queryItems(embedding, topK);
 
             const results = [];

@@ -9,17 +9,16 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { BaseApplication } from "../base";
-import { BaseTool } from "../../aikernel/tool";
+import { BaseApplication } from '../base';
+import { BaseTool } from '../../aikernel/tool';
 import { FSEntrySchema } from './setting.js';
 import { createFileManagerToolset } from './tools.js';
 import { Setting } from '../../utils/setting.js';
 import open from 'open';
 import { z } from 'zod';
-import FileManagerWorker from "./worker";
+import FileManagerWorker from './worker';
 import { logger, getDebugMode } from '../../utils/logger.js';
 import { ApplicationRegistry } from '../registry.js';
-
 
 class FileMgrApplication extends BaseApplication {
     constructor() {
@@ -52,7 +51,7 @@ class FileMgrApplication extends BaseApplication {
     static getConfigSchema() {
         return z.object({
             enabled: z.boolean().describe('启用AI文件系统').default(false),
-            entries: z.array(FSEntrySchema).describe('文件系统入口').default([]),
+            entries: z.array(FSEntrySchema).describe('文件系统入口').default([])
         });
     }
 
@@ -68,7 +67,7 @@ class FileMgrApplication extends BaseApplication {
                     'searchFile',
                     '根据给定的查询内容对文件进行模糊搜索',
                     z.object({
-                        query: z.string().describe('查询内容'),
+                        query: z.string().describe('查询内容')
                     })
                 );
                 searchFileTool.setExecutor(async (args) => {
@@ -116,9 +115,7 @@ class FileMgrApplication extends BaseApplication {
                 lines.push('运行 /config -> 文件扫描配置 添加目录');
             } else {
                 for (const s of scanners) {
-                    const lastScan = s.lastFullScan
-                        ? new Date(s.lastFullScan).toLocaleString()
-                        : '从未';
+                    const lastScan = s.lastFullScan ? new Date(s.lastFullScan).toLocaleString() : '从未';
                     lines.push(s.entry.root);
                     lines.push(`  文件数: ${s.totalFiles} | 上次全量扫描: ${lastScan}`);
                     lines.push('');
@@ -223,7 +220,9 @@ class FileMgrApplication extends BaseApplication {
                             logger.info(`[fs-status] workerStatus: ${workerResp.status}`);
                             logger.info(`[fs-status] scannerStatus: ${workerResp.data.status}`);
                             logger.info(`[fs-status] scannersCount: ${(workerResp.data.scanners ?? []).length}`);
-                            logger.info(`[fs-status] storageStats: db=${dbSize}, vecdb=${vecSize}, cache=${storage.veccache_size ?? 0}`);
+                            logger.info(
+                                `[fs-status] storageStats: db=${dbSize}, vecdb=${vecSize}, cache=${storage.veccache_size ?? 0}`
+                            );
                             logger.info('[fs-status] =======================');
 
                             message += `\n\n${formatFsStatusDebugMessage(filemgrConfig, result)}`;
@@ -235,8 +234,8 @@ class FileMgrApplication extends BaseApplication {
                         logger.error(`[fs-status] ${msg}`);
                         tui.showTextPage('文件扫描状态', msg);
                     }
-                },
-            },
+                }
+            }
         ];
     }
 }

@@ -28,7 +28,7 @@ import type {
     PluginEntry,
     PluginLoadResult,
     PluginLoadError,
-    ChannelPlugin,
+    ChannelPlugin
 } from './types.js';
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -72,16 +72,24 @@ function saveInstallRecords(records: PluginInstallRecord[]): void {
 function ensureExtensionPackageJson(): void {
     const pkgPath = path.join(getExtensionsDir(), 'package.json');
     if (!fs.existsSync(pkgPath)) {
-        fs.writeFileSync(pkgPath, JSON.stringify({
-            name: 'opendesk-extensions',
-            private: true,
-            version: '1.0.0',
-            description: 'OpenDesk plugin extensions',
-            type: 'module',
-            dependencies: {
-                zod: '^3.22.0',
-            },
-        }, null, 2), 'utf-8');
+        fs.writeFileSync(
+            pkgPath,
+            JSON.stringify(
+                {
+                    name: 'opendesk-extensions',
+                    private: true,
+                    version: '1.0.0',
+                    description: 'OpenDesk plugin extensions',
+                    type: 'module',
+                    dependencies: {
+                        zod: '^3.22.0'
+                    }
+                },
+                null,
+                2
+            ),
+            'utf-8'
+        );
     }
 }
 
@@ -108,7 +116,7 @@ function downloadFile(url: string, destPath: string): Promise<void> {
             // Use curl for downloading - it handles redirects, proxies, and various network conditions better
             execSync(`curl -L -o "${destPath}" "${url}"`, {
                 stdio: 'pipe',
-                timeout: 300000, // 5 minutes
+                timeout: 300000 // 5 minutes
             });
 
             // Verify the file was downloaded
@@ -180,7 +188,10 @@ export async function installPlugin(npmSpecOrUrl: string): Promise<{ success: bo
                 await downloadFile(npmSpecOrUrl, tempTgzPath);
                 logger.info(`Downloaded plugin package to: ${tempTgzPath}`);
             } catch (downloadErr: any) {
-                return { success: false, error: `Failed to download plugin: ${downloadErr.message}` };
+                return {
+                    success: false,
+                    error: `Failed to download plugin: ${downloadErr.message}`
+                };
             }
 
             // Install from local file
@@ -189,7 +200,7 @@ export async function installPlugin(npmSpecOrUrl: string): Promise<{ success: bo
                     cwd: extensionsDir,
                     stdio: 'inherit',
                     timeout: 180000,
-                    env: { ...process.env, npm_config_fund: 'false' },
+                    env: { ...process.env, npm_config_fund: 'false' }
                 });
             } catch (npmErr: any) {
                 const errMsg = npmErr?.message || String(npmErr);
@@ -210,7 +221,7 @@ export async function installPlugin(npmSpecOrUrl: string): Promise<{ success: bo
                 // Look for newly installed packages in node_modules
                 const nodeModulesDir = path.join(extensionsDir, 'node_modules');
                 if (fs.existsSync(nodeModulesDir)) {
-                    const entries = fs.readdirSync(nodeModulesDir).filter(e => !e.startsWith('.'));
+                    const entries = fs.readdirSync(nodeModulesDir).filter((e) => !e.startsWith('.'));
                     if (entries.length === 1) {
                         pkgName = entries[0];
                     } else if (entries.length > 1) {
@@ -232,7 +243,10 @@ export async function installPlugin(npmSpecOrUrl: string): Promise<{ success: bo
             }
 
             if (!pkgName) {
-                return { success: false, error: 'Could not determine package name from downloaded archive' };
+                return {
+                    success: false,
+                    error: 'Could not determine package name from downloaded archive'
+                };
             }
 
             // Ensure the openclaw shim is in place
@@ -260,7 +274,7 @@ export async function installPlugin(npmSpecOrUrl: string): Promise<{ success: bo
 
             // Save install record
             const records = loadInstallRecords();
-            const existingIdx = records.findIndex(r => r.id === (manifest.id || pkgName));
+            const existingIdx = records.findIndex((r) => r.id === (manifest.id || pkgName));
             const record: PluginInstallRecord = {
                 id: manifest.id || pkgName,
                 npmSpec: npmSpecOrUrl,
@@ -268,7 +282,7 @@ export async function installPlugin(npmSpecOrUrl: string): Promise<{ success: bo
                 enabled: true,
                 source: 'url',
                 path: pluginDir,
-                url: npmSpecOrUrl,
+                url: npmSpecOrUrl
             };
 
             if (existingIdx >= 0) {
@@ -287,7 +301,10 @@ export async function installPlugin(npmSpecOrUrl: string): Promise<{ success: bo
             // Determine the package name early so we can verify installation
             const pkgName = extractPackageName(npmSpecOrUrl);
             if (!pkgName) {
-                return { success: false, error: `Could not determine package name from spec: ${npmSpecOrUrl}` };
+                return {
+                    success: false,
+                    error: `Could not determine package name from spec: ${npmSpecOrUrl}`
+                };
             }
 
             // Install the npm package
@@ -299,7 +316,7 @@ export async function installPlugin(npmSpecOrUrl: string): Promise<{ success: bo
                     cwd: extensionsDir,
                     stdio: 'inherit',
                     timeout: 180000,
-                    env: { ...process.env, npm_config_fund: 'false' },
+                    env: { ...process.env, npm_config_fund: 'false' }
                 });
             } catch (npmErr: any) {
                 const errMsg = npmErr?.message || String(npmErr);
@@ -311,7 +328,10 @@ export async function installPlugin(npmSpecOrUrl: string): Promise<{ success: bo
             const pluginDir = path.join(extensionsDir, 'node_modules', pkgName);
             if (!fs.existsSync(pluginDir)) {
                 logger.error(`npm install completed but package directory not found: ${pluginDir}`);
-                return { success: false, error: `Package directory not found after install. npm may have installed to a different location. Check that no parent directory contains a package.json that could confuse npm.` };
+                return {
+                    success: false,
+                    error: `Package directory not found after install. npm may have installed to a different location. Check that no parent directory contains a package.json that could confuse npm.`
+                };
             }
 
             // Ensure the openclaw shim is in place
@@ -336,14 +356,14 @@ export async function installPlugin(npmSpecOrUrl: string): Promise<{ success: bo
 
             // Save install record
             const records = loadInstallRecords();
-            const existingIdx = records.findIndex(r => r.id === (manifest.id || pkgName));
+            const existingIdx = records.findIndex((r) => r.id === (manifest.id || pkgName));
             const record: PluginInstallRecord = {
                 id: manifest.id || pkgName,
                 npmSpec: npmSpecOrUrl,
                 installedAt: new Date().toISOString(),
                 enabled: true,
                 source: 'npm',
-                path: pluginDir,
+                path: pluginDir
             };
 
             if (existingIdx >= 0) {
@@ -369,7 +389,7 @@ export async function installPlugin(npmSpecOrUrl: string): Promise<{ success: bo
 export async function uninstallPlugin(pluginId: string): Promise<{ success: boolean; error?: string }> {
     const extensionsDir = getExtensionsDir();
     const records = loadInstallRecords();
-    const record = records.find(r => r.id === pluginId || r.npmSpec.startsWith(pluginId));
+    const record = records.find((r) => r.id === pluginId || r.npmSpec.startsWith(pluginId));
 
     if (!record) {
         return { success: false, error: `Plugin not found: ${pluginId}` };
@@ -380,10 +400,10 @@ export async function uninstallPlugin(pluginId: string): Promise<{ success: bool
         execSync(`npm uninstall --prefix "${extensionsDir}" ${pkgName}`, {
             cwd: extensionsDir,
             stdio: 'pipe',
-            timeout: 60000,
+            timeout: 60000
         });
 
-        const updatedRecords = records.filter(r => r.id !== record.id);
+        const updatedRecords = records.filter((r) => r.id !== record.id);
         saveInstallRecords(updatedRecords);
 
         logger.info(`Plugin uninstalled: ${pluginId}`);
@@ -409,7 +429,7 @@ export function listInstalledPlugins(): PluginInstallRecord[] {
  */
 export function setPluginEnabled(pluginId: string, enabled: boolean): boolean {
     const records = loadInstallRecords();
-    const record = records.find(r => r.id === pluginId);
+    const record = records.find((r) => r.id === pluginId);
     if (!record) return false;
     record.enabled = enabled;
     saveInstallRecords(records);
@@ -424,7 +444,7 @@ export function setPluginEnabled(pluginId: string, enabled: boolean): boolean {
  */
 export async function loadPlugins(): Promise<PluginLoadResult> {
     const records = loadInstallRecords();
-    const enabledRecords = records.filter(r => r.enabled);
+    const enabledRecords = records.filter((r) => r.enabled);
     const entries: PluginEntry[] = [];
     const errors: PluginLoadError[] = [];
 
@@ -456,7 +476,11 @@ function resolvePluginEntryPoint(pluginDir: string): string | null {
     if (!fs.existsSync(pkgJsonPath)) return null;
 
     let pkgJson: any;
-    try { pkgJson = JSON.parse(fs.readFileSync(pkgJsonPath, 'utf-8')); } catch { return null; }
+    try {
+        pkgJson = JSON.parse(fs.readFileSync(pkgJsonPath, 'utf-8'));
+    } catch {
+        return null;
+    }
 
     // openclaw.extensions field (e.g., ["./index.ts"])
     const extensions = pkgJson?.openclaw?.extensions;
@@ -467,8 +491,10 @@ function resolvePluginEntryPoint(pluginDir: string): string | null {
 
     // Standard Node.js resolution: exports -> module -> main
     if (pkgJson.exports) {
-        const root = typeof pkgJson.exports === 'string' ? pkgJson.exports
-            : pkgJson.exports['.']?.import || pkgJson.exports['.']?.default || pkgJson.exports['.'];
+        const root =
+            typeof pkgJson.exports === 'string'
+                ? pkgJson.exports
+                : pkgJson.exports['.']?.import || pkgJson.exports['.']?.default || pkgJson.exports['.'];
         if (typeof root === 'string') {
             const entry = path.join(pluginDir, root);
             if (fs.existsSync(entry)) return entry;
@@ -504,7 +530,9 @@ async function compileTypeScriptPlugin(entryPoint: string, pluginDir: string): P
             if (compiledMtime > sourceMtime) {
                 return compiledPath;
             }
-        } catch { /* recompile */ }
+        } catch {
+            /* recompile */
+        }
     }
 
     // Collect plugin's own dependencies to mark as external
@@ -517,7 +545,9 @@ async function compileTypeScriptPlugin(entryPoint: string, pluginDir: string): P
                 externalPackages.push(...Object.keys(pkgJson[depField]));
             }
         }
-    } catch { /* best effort */ }
+    } catch {
+        /* best effort */
+    }
 
     // Try dynamic import of esbuild
     try {
@@ -530,7 +560,7 @@ async function compileTypeScriptPlugin(entryPoint: string, pluginDir: string): P
             platform: 'node',
             target: 'node20',
             external: externalPackages,
-            logLevel: 'silent',
+            logLevel: 'silent'
         });
         logger.info(`Compiled TypeScript plugin: ${entryPoint}`);
         return compiledPath;
@@ -540,10 +570,10 @@ async function compileTypeScriptPlugin(entryPoint: string, pluginDir: string): P
 
     // Fallback: use npx esbuild CLI
     try {
-        const externals = externalPackages.map(p => `--external:${p}`).join(' ');
+        const externals = externalPackages.map((p) => `--external:${p}`).join(' ');
         execSync(
             `npx esbuild "${entryPoint}" --bundle --format=esm --platform=node --target=node20 ${externals} --outfile="${compiledPath}"`,
-            { stdio: 'pipe', timeout: 30000 },
+            { stdio: 'pipe', timeout: 30000 }
         );
         logger.info(`Compiled TypeScript plugin via CLI: ${entryPoint}`);
         return compiledPath;
@@ -570,7 +600,9 @@ async function loadSinglePlugin(record: PluginInstallRecord): Promise<PluginEntr
     if (fs.existsSync(manifestPath)) {
         try {
             manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
-        } catch { /* use defaults */ }
+        } catch {
+            /* use defaults */
+        }
     }
 
     // Resolve and load the plugin module
@@ -613,7 +645,7 @@ async function loadSinglePlugin(record: PluginInstallRecord): Promise<PluginEntr
         manifest,
         installRecord: record,
         module: pluginModule,
-        rootDir: pluginDir,
+        rootDir: pluginDir
     };
 
     // Execute the plugin's register function with our API shim

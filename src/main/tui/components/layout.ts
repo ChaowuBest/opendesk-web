@@ -1,6 +1,5 @@
-
-import type { Component } from "@mariozechner/pi-tui";
-import { visibleWidth } from "@mariozechner/pi-tui";
+import type { Component } from '@mariozechner/pi-tui';
+import { visibleWidth } from '@mariozechner/pi-tui';
 
 export interface VerticalLayoutPadding {
     top?: number;
@@ -10,10 +9,10 @@ export interface VerticalLayoutPadding {
 }
 
 /** 水平对齐：行内内容在可用宽度内的对齐方式 */
-export type HorizontalAlign = "left" | "center" | "right";
+export type HorizontalAlign = 'left' | 'center' | 'right';
 
 /** 垂直对齐：当总行数小于 minLines 时，多余空行的分布 */
-export type VerticalAlign = "top" | "center" | "bottom";
+export type VerticalAlign = 'top' | 'center' | 'bottom';
 
 export interface VerticalLayoutOptions {
     /** 最小行数，不足时按 verticalAlign 补空行 */
@@ -28,9 +27,14 @@ export interface VerticalLayoutOptions {
     alignVertical?: VerticalAlign;
 }
 
-function normalizePadding(padding: number | VerticalLayoutPadding | undefined): { top: number; right: number; bottom: number; left: number } {
+function normalizePadding(padding: number | VerticalLayoutPadding | undefined): {
+    top: number;
+    right: number;
+    bottom: number;
+    left: number;
+} {
     if (padding === undefined) return { top: 0, right: 0, bottom: 0, left: 0 };
-    if (typeof padding === "number") {
+    if (typeof padding === 'number') {
         const n = Math.max(0, padding);
         return { top: n, right: n, bottom: n, left: n };
     }
@@ -38,7 +42,7 @@ function normalizePadding(padding: number | VerticalLayoutPadding | undefined): 
         top: Math.max(0, padding.top ?? 0),
         right: Math.max(0, padding.right ?? 0),
         bottom: Math.max(0, padding.bottom ?? 0),
-        left: Math.max(0, padding.left ?? 0),
+        left: Math.max(0, padding.left ?? 0)
     };
 }
 
@@ -57,8 +61,8 @@ export class VerticalLayout implements Component {
         this.minLines = options.minLines ?? 0;
         this.padding = normalizePadding(options.padding);
         this.spacing = Math.max(0, options.spacing ?? 0);
-        this.alignHorizontal = options.alignHorizontal ?? "left";
-        this.alignVertical = options.alignVertical ?? "top";
+        this.alignHorizontal = options.alignHorizontal ?? 'left';
+        this.alignVertical = options.alignVertical ?? 'top';
     }
 
     addChild(component: Component): void {
@@ -105,15 +109,15 @@ export class VerticalLayout implements Component {
     render(width: number): string[] {
         const { top: padT, right: padR, bottom: padB, left: padL } = this.padding;
         const contentWidth = Math.max(1, width - padL - padR);
-        const emptyLine = " ".repeat(width);
+        const emptyLine = ' '.repeat(width);
 
         const contentLines: string[] = [];
 
         // 上 padding
         for (let i = 0; i < padT; i++) contentLines.push(emptyLine);
 
-        const isLeftAligned = this.alignHorizontal === "left";
-        const leftPrefix = padL > 0 ? " ".repeat(padL) : "";
+        const isLeftAligned = this.alignHorizontal === 'left';
+        const leftPrefix = padL > 0 ? ' '.repeat(padL) : '';
 
         for (let c = 0; c < this.children.length; c++) {
             if (c > 0 && this.spacing > 0) {
@@ -128,13 +132,13 @@ export class VerticalLayout implements Component {
                 for (const line of childLines) {
                     const vis = visibleWidth(line);
                     let leftPad: number;
-                    if (this.alignHorizontal === "center") {
+                    if (this.alignHorizontal === 'center') {
                         leftPad = padL + Math.max(0, Math.floor((contentWidth - vis) / 2));
                     } else {
                         leftPad = width - padR - vis;
                     }
                     const rightPad = Math.max(0, width - leftPad - vis);
-                    contentLines.push(" ".repeat(leftPad) + line + " ".repeat(rightPad));
+                    contentLines.push(' '.repeat(leftPad) + line + ' '.repeat(rightPad));
                 }
             }
         }
@@ -145,20 +149,16 @@ export class VerticalLayout implements Component {
         const minPad = Math.max(0, this.minLines - contentLines.length);
         if (minPad <= 0) return contentLines;
 
-        if (this.alignVertical === "top") {
+        if (this.alignVertical === 'top') {
             return [...contentLines, ...Array(minPad).fill(emptyLine)];
         }
-        if (this.alignVertical === "bottom") {
+        if (this.alignVertical === 'bottom') {
             return [...Array(minPad).fill(emptyLine), ...contentLines];
         }
         // center
         const topExtra = Math.floor(minPad / 2);
         const bottomExtra = minPad - topExtra;
-        return [
-            ...Array(topExtra).fill(emptyLine),
-            ...contentLines,
-            ...Array(bottomExtra).fill(emptyLine),
-        ];
+        return [...Array(topExtra).fill(emptyLine), ...contentLines, ...Array(bottomExtra).fill(emptyLine)];
     }
 }
 
@@ -187,7 +187,7 @@ export class HorizontalLayout implements Component {
         this.minLines = options.minLines ?? 0;
         this.padding = normalizePadding(options.padding);
         this.spacing = Math.max(0, options.spacing ?? 0);
-        this.alignVertical = options.alignVertical ?? "top";
+        this.alignVertical = options.alignVertical ?? 'top';
     }
 
     /** 添加子组件，weight 决定该组件分配到的宽度比例（默认 1） */
@@ -232,7 +232,7 @@ export class HorizontalLayout implements Component {
     render(width: number): string[] {
         const { top: padT, right: padR, bottom: padB, left: padL } = this.padding;
         const contentWidth = Math.max(1, width - padL - padR);
-        const emptyLine = " ".repeat(width);
+        const emptyLine = ' '.repeat(width);
 
         if (this.children.length === 0) {
             const lines: string[] = [];
@@ -272,9 +272,9 @@ export class HorizontalLayout implements Component {
         const contentLines: string[] = [];
         for (let i = 0; i < padT; i++) contentLines.push(emptyLine);
 
-        const spacer = " ".repeat(this.spacing);
+        const spacer = ' '.repeat(this.spacing);
         for (let row = 0; row < maxHeight; row++) {
-            let line = " ".repeat(padL);
+            let line = ' '.repeat(padL);
             for (let c = 0; c < this.children.length; c++) {
                 if (c > 0) line += spacer;
 
@@ -284,9 +284,9 @@ export class HorizontalLayout implements Component {
 
                 // 根据垂直对齐计算偏移
                 let offset: number;
-                if (this.alignVertical === "top") {
+                if (this.alignVertical === 'top') {
                     offset = 0;
-                } else if (this.alignVertical === "bottom") {
+                } else if (this.alignVertical === 'bottom') {
                     offset = maxHeight - childHeight;
                 } else {
                     offset = Math.floor((maxHeight - childHeight) / 2);
@@ -296,15 +296,15 @@ export class HorizontalLayout implements Component {
                 if (childRow >= 0 && childRow < childHeight) {
                     const cellContent = output[childRow];
                     const vis = visibleWidth(cellContent);
-                    line += cellContent + " ".repeat(Math.max(0, childWidth - vis));
+                    line += cellContent + ' '.repeat(Math.max(0, childWidth - vis));
                 } else {
-                    line += " ".repeat(childWidth);
+                    line += ' '.repeat(childWidth);
                 }
             }
 
             // 补齐右侧到总宽度
             const vis = visibleWidth(line);
-            line += " ".repeat(Math.max(0, width - vis));
+            line += ' '.repeat(Math.max(0, width - vis));
             contentLines.push(line);
         }
 

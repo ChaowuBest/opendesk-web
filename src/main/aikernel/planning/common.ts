@@ -11,7 +11,6 @@
 
 import type { TaskState } from '../states/tasks.js';
 
-
 export interface SubTaskConfig {
     /** 任务标题，主要方便在主任务界面中向用户显示 */
     title: string;

@@ -1,5 +1,5 @@
-import { type Component, Input, TUI, Key, matchesKey, visibleWidth, isKeyRelease } from "@mariozechner/pi-tui";
-import chalk from "chalk";
+import { type Component, Input, TUI, Key, matchesKey, visibleWidth, isKeyRelease } from '@mariozechner/pi-tui';
+import chalk from 'chalk';
 
 export interface TextFieldDef {
     type: 'text';
@@ -58,7 +58,7 @@ export class ConfigForm implements Component {
         fields: FieldDef[],
         actions: ActionDef[],
         onAction: (actionKey: string, values: Record<string, any>) => void,
-        onCancel: () => void,
+        onCancel: () => void
     ) {
         this.tui = tui;
         this.title = title;
@@ -72,19 +72,29 @@ export class ConfigForm implements Component {
                 input.onSubmit = () => this.moveToNext();
                 this.items.push({ type: 'text', key: field.key, label: field.label, input });
             } else if (field.type === 'boolean') {
-                this.items.push({ type: 'boolean', key: field.key, label: field.label, value: field.value });
+                this.items.push({
+                    type: 'boolean',
+                    key: field.key,
+                    label: field.label,
+                    value: field.value
+                });
             } else if (field.type === 'select') {
                 this.items.push({
-                    type: 'select', key: field.key, label: field.label,
-                    value: field.value, options: [...field.options],
+                    type: 'select',
+                    key: field.key,
+                    label: field.label,
+                    value: field.value,
+                    options: [...field.options]
                 });
             }
         }
 
         for (const action of actions) {
             this.items.push({
-                type: 'action', key: action.key,
-                label: action.label, style: action.style ?? 'default',
+                type: 'action',
+                key: action.key,
+                label: action.label,
+                style: action.style ?? 'default'
             });
         }
     }
@@ -107,7 +117,7 @@ export class ConfigForm implements Component {
         if (isKeyRelease(data)) {
             return { consume: true };
         }
-        if (matchesKey(data, Key.up) || matchesKey(data, Key.shift("tab"))) {
+        if (matchesKey(data, Key.up) || matchesKey(data, Key.shift('tab'))) {
             this.moveToPrev();
             return { consume: true };
         }
@@ -201,7 +211,7 @@ export class ConfigForm implements Component {
         return result;
     }
 
-    invalidate() { }
+    invalidate() {}
 
     render(width: number): string[] {
         const lines: string[] = [];
@@ -235,9 +245,7 @@ export class ConfigForm implements Component {
         return lines;
     }
 
-    private renderTextField(
-        lines: string[], item: FormItem & { type: 'text' }, active: boolean, width: number,
-    ) {
+    private renderTextField(lines: string[], item: FormItem & { type: 'text' }, active: boolean, width: number) {
         const labelColor = active ? chalk.cyan : chalk.dim;
         lines.push(labelColor(`  ${item.label}:`));
 
@@ -257,18 +265,14 @@ export class ConfigForm implements Component {
         lines.push('');
     }
 
-    private renderBooleanField(
-        lines: string[], item: FormItem & { type: 'boolean' }, active: boolean,
-    ) {
+    private renderBooleanField(lines: string[], item: FormItem & { type: 'boolean' }, active: boolean) {
         const indicator = active ? chalk.cyan('❯ ') : '  ';
         const label = active ? chalk.cyan(item.label) : chalk.dim(item.label);
         const value = item.value ? chalk.green('是') : chalk.red('否');
         lines.push(`${indicator}${label}: ${value}`);
     }
 
-    private renderSelectField(
-        lines: string[], item: FormItem & { type: 'select' }, active: boolean,
-    ) {
+    private renderSelectField(lines: string[], item: FormItem & { type: 'select' }, active: boolean) {
         const indicator = active ? chalk.cyan('❯ ') : '  ';
         const label = active ? chalk.cyan(item.label) : chalk.dim(item.label);
         const value = active ? chalk.cyan.bold(item.value || '(未选择)') : chalk.dim(item.value || '(未选择)');
@@ -278,9 +282,7 @@ export class ConfigForm implements Component {
         }
     }
 
-    private renderAction(
-        lines: string[], item: FormItem & { type: 'action' }, active: boolean,
-    ) {
+    private renderAction(lines: string[], item: FormItem & { type: 'action' }, active: boolean) {
         const indicator = active ? chalk.cyan('❯ ') : '  ';
         let label: string;
         if (item.style === 'primary') {

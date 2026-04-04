@@ -88,21 +88,17 @@ console.log('\nTest 5: /skillname pattern extraction from user message');
         'extract /test-normal at start of message'
     );
     assert(
-        JSON.stringify(extractSkillNames('I want to use /test-manual-only to solve a problem')) === '["test-manual-only"]',
+        JSON.stringify(extractSkillNames('I want to use /test-manual-only to solve a problem')) ===
+            '["test-manual-only"]',
         'extract /test-manual-only in middle of message'
     );
     assert(
-        JSON.stringify(extractSkillNames('/test-normal and /test-manual-only both')) === '["test-normal","test-manual-only"]',
+        JSON.stringify(extractSkillNames('/test-normal and /test-manual-only both')) ===
+            '["test-normal","test-manual-only"]',
         'extract multiple skill names'
     );
-    assert(
-        JSON.stringify(extractSkillNames('no slash commands here')) === '[]',
-        'no skill names found in plain text'
-    );
-    assert(
-        JSON.stringify(extractSkillNames('/test-normal')) === '["test-normal"]',
-        'extract /test-normal alone'
-    );
+    assert(JSON.stringify(extractSkillNames('no slash commands here')) === '[]', 'no skill names found in plain text');
+    assert(JSON.stringify(extractSkillNames('/test-normal')) === '["test-normal"]', 'extract /test-normal alone');
 }
 
 // Test 6: isUserInvocable filter
@@ -112,28 +108,28 @@ console.log('\nTest 6: User-invocable filtering');
         parseTestSkill('test-normal-skill'),
         parseTestSkill('test-manual-only'),
         parseTestSkill('test-hidden-skill'),
-        parseTestSkill('test-fully-hidden'),
+        parseTestSkill('test-fully-hidden')
     ];
 
-    const userInvocable = allSkills.filter(s => s.isUserInvocable);
+    const userInvocable = allSkills.filter((s) => s.isUserInvocable);
     assert(userInvocable.length === 2, `should have 2 user-invocable skills, got ${userInvocable.length}`);
     assert(
-        userInvocable.some(s => s.frontmatter.name === 'test-normal'),
+        userInvocable.some((s) => s.frontmatter.name === 'test-normal'),
         'test-normal should be user-invocable'
     );
     assert(
-        userInvocable.some(s => s.frontmatter.name === 'test-manual-only'),
+        userInvocable.some((s) => s.frontmatter.name === 'test-manual-only'),
         'test-manual-only should be user-invocable'
     );
 
-    const modelInvocable = allSkills.filter(s => s.isModelInvocable);
+    const modelInvocable = allSkills.filter((s) => s.isModelInvocable);
     assert(modelInvocable.length === 2, `should have 2 model-invocable skills, got ${modelInvocable.length}`);
     assert(
-        modelInvocable.some(s => s.frontmatter.name === 'test-normal'),
+        modelInvocable.some((s) => s.frontmatter.name === 'test-normal'),
         'test-normal should be model-invocable'
     );
     assert(
-        modelInvocable.some(s => s.frontmatter.name === 'test-hidden'),
+        modelInvocable.some((s) => s.frontmatter.name === 'test-hidden'),
         'test-hidden should be model-invocable'
     );
 }

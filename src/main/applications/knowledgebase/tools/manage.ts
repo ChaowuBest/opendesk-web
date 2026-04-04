@@ -17,18 +17,13 @@ import { type KnowledgeBaseApplication } from '../app';
 import chalk from 'chalk';
 import { z } from 'zod';
 
-
 const ListLibraryProvidersArgsSchema = z.object({});
 
 export class ListLibraryProvidersTool extends BaseTool<typeof ListLibraryProvidersArgsSchema> {
     private app: KnowledgeBaseApplication;
 
     constructor(app: KnowledgeBaseApplication) {
-        super(
-            'listLibraryProviders',
-            '列出所有知识库服务商及其启用状态和配置信息',
-            ListLibraryProvidersArgsSchema,
-        );
+        super('listLibraryProviders', '列出所有知识库服务商及其启用状态和配置信息', ListLibraryProvidersArgsSchema);
         this.app = app;
         this.setExecutor(this.list.bind(this));
     }
@@ -53,7 +48,12 @@ export class ListLibraryProvidersTool extends BaseTool<typeof ListLibraryProvide
         } else if (toolcall.status === 'error' && toolcall.result) {
             body.push(chalk.redBright('  ' + truncText(toolcall.result, width - 10)));
         }
-        return new Card({ icon: '📚', title: '知识库服务商列表', status: statusDisplay(toolcall.status), body }).render(width);
+        return new Card({
+            icon: '📚',
+            title: '知识库服务商列表',
+            status: statusDisplay(toolcall.status),
+            body
+        }).render(width);
     }
 
     private async list(): Promise<string> {
@@ -62,11 +62,10 @@ export class ListLibraryProvidersTool extends BaseTool<typeof ListLibraryProvide
     }
 }
 
-
 const ConfigureLibraryProviderArgsSchema = z.object({
     id: z.string().describe('服务商ID，如 "zhipu"'),
     api_key: z.string().optional().describe('API密钥'),
-    enabled: z.boolean().optional().describe('是否启用该服务商'),
+    enabled: z.boolean().optional().describe('是否启用该服务商')
 });
 
 export class ConfigureLibraryProviderTool extends BaseTool<typeof ConfigureLibraryProviderArgsSchema> {
@@ -76,7 +75,7 @@ export class ConfigureLibraryProviderTool extends BaseTool<typeof ConfigureLibra
         super(
             'configureLibraryProvider',
             '配置知识库服务商，包括设置API密钥和启用/禁用',
-            ConfigureLibraryProviderArgsSchema,
+            ConfigureLibraryProviderArgsSchema
         );
         this.app = app;
         this.setExecutor(this.configure.bind(this));
@@ -86,8 +85,10 @@ export class ConfigureLibraryProviderTool extends BaseTool<typeof ConfigureLibra
         const args = toolcall.args_object as any;
         const body: string[] = [];
         if (args?.id) body.push(chalk.dim('服务商: ') + chalk.cyan(String(args.id)));
-        if (args?.api_key !== undefined) body.push(chalk.dim('API密钥: ') + chalk.yellow(args.api_key ? '已设置' : '已清空'));
-        if (args?.enabled !== undefined) body.push(chalk.dim('状态: ') + (args.enabled ? chalk.green('启用') : chalk.gray('禁用')));
+        if (args?.api_key !== undefined)
+            body.push(chalk.dim('API密钥: ') + chalk.yellow(args.api_key ? '已设置' : '已清空'));
+        if (args?.enabled !== undefined)
+            body.push(chalk.dim('状态: ') + (args.enabled ? chalk.green('启用') : chalk.gray('禁用')));
 
         if (toolcall.status === 'running') {
             body.push(chalk.dim('  配置中...'));
@@ -96,39 +97,39 @@ export class ConfigureLibraryProviderTool extends BaseTool<typeof ConfigureLibra
         } else if (toolcall.status === 'error' && toolcall.result) {
             body.push(chalk.redBright('  ' + truncText(toolcall.result, width - 10)));
         }
-        return new Card({ icon: '⚙️', title: '配置知识库服务商', status: statusDisplay(toolcall.status), body }).render(width);
+        return new Card({
+            icon: '⚙️',
+            title: '配置知识库服务商',
+            status: statusDisplay(toolcall.status),
+            body
+        }).render(width);
     }
 
     private async configure(args: z.output<typeof ConfigureLibraryProviderArgsSchema>): Promise<string> {
         this.app.configureProvider(args.id, {
             api_key: args.api_key,
-            enabled: args.enabled,
+            enabled: args.enabled
         });
         const providers = this.app.getProviderStatusList();
-        const p = providers.find(x => x.id === args.id);
+        const p = providers.find((x) => x.id === args.id);
         return JSON.stringify({
             success: true,
             message: `服务商 "${p?.name || args.id}" 配置成功`,
-            provider: p,
+            provider: p
         });
     }
 }
 
-
 const ToggleLibraryProviderArgsSchema = z.object({
     id: z.string().describe('服务商ID'),
-    enabled: z.boolean().describe('是否启用'),
+    enabled: z.boolean().describe('是否启用')
 });
 
 export class ToggleLibraryProviderTool extends BaseTool<typeof ToggleLibraryProviderArgsSchema> {
     private app: KnowledgeBaseApplication;
 
     constructor(app: KnowledgeBaseApplication) {
-        super(
-            'toggleLibraryProvider',
-            '快速启用或禁用知识库服务商',
-            ToggleLibraryProviderArgsSchema,
-        );
+        super('toggleLibraryProvider', '快速启用或禁用知识库服务商', ToggleLibraryProviderArgsSchema);
         this.app = app;
         this.setExecutor(this.toggle.bind(this));
     }
@@ -137,7 +138,8 @@ export class ToggleLibraryProviderTool extends BaseTool<typeof ToggleLibraryProv
         const args = toolcall.args_object as any;
         const body: string[] = [];
         if (args?.id) body.push(chalk.dim('服务商: ') + chalk.cyan(String(args.id)));
-        if (args?.enabled !== undefined) body.push(chalk.dim('操作: ') + (args.enabled ? chalk.green('启用') : chalk.gray('禁用')));
+        if (args?.enabled !== undefined)
+            body.push(chalk.dim('操作: ') + (args.enabled ? chalk.green('启用') : chalk.gray('禁用')));
 
         if (toolcall.status === 'running') {
             body.push(chalk.dim('  更新中...'));
@@ -146,36 +148,36 @@ export class ToggleLibraryProviderTool extends BaseTool<typeof ToggleLibraryProv
         } else if (toolcall.status === 'error' && toolcall.result) {
             body.push(chalk.redBright('  ' + truncText(toolcall.result, width - 10)));
         }
-        return new Card({ icon: '🔄', title: '切换知识库服务商', status: statusDisplay(toolcall.status), body }).render(width);
+        return new Card({
+            icon: '🔄',
+            title: '切换知识库服务商',
+            status: statusDisplay(toolcall.status),
+            body
+        }).render(width);
     }
 
     private async toggle(args: z.output<typeof ToggleLibraryProviderArgsSchema>): Promise<string> {
         this.app.configureProvider(args.id, { enabled: args.enabled });
         const providers = this.app.getProviderStatusList();
-        const p = providers.find(x => x.id === args.id);
+        const p = providers.find((x) => x.id === args.id);
         return JSON.stringify({
             success: true,
-            message: `服务商 "${p?.name || args.id}" 已${args.enabled ? '启用' : '禁用'}`,
+            message: `服务商 "${p?.name || args.id}" 已${args.enabled ? '启用' : '禁用'}`
         });
     }
 }
 
-
 const CreateKnowledgeBaseArgsSchema = z.object({
     provider_id: z.string().describe('服务商ID，如 "zhipu"'),
     name: z.string().describe('知识库名称'),
-    description: z.string().optional().describe('知识库描述'),
+    description: z.string().optional().describe('知识库描述')
 });
 
 export class CreateKnowledgeBaseTool extends BaseTool<typeof CreateKnowledgeBaseArgsSchema> {
     private app: KnowledgeBaseApplication;
 
     constructor(app: KnowledgeBaseApplication) {
-        super(
-            'createKnowledgeBase',
-            '在指定服务商下创建新的知识库',
-            CreateKnowledgeBaseArgsSchema,
-        );
+        super('createKnowledgeBase', '在指定服务商下创建新的知识库', CreateKnowledgeBaseArgsSchema);
         this.app = app;
         this.setExecutor(this.create.bind(this));
     }
@@ -198,7 +200,12 @@ export class CreateKnowledgeBaseTool extends BaseTool<typeof CreateKnowledgeBase
         } else if (toolcall.status === 'error' && toolcall.result) {
             body.push(chalk.redBright('  ' + truncText(toolcall.result, width - 10)));
         }
-        return new Card({ icon: '📖', title: '创建知识库', status: statusDisplay(toolcall.status), body }).render(width);
+        return new Card({
+            icon: '📖',
+            title: '创建知识库',
+            status: statusDisplay(toolcall.status),
+            body
+        }).render(width);
     }
 
     private async create(args: z.output<typeof CreateKnowledgeBaseArgsSchema>): Promise<string> {
@@ -211,26 +218,21 @@ export class CreateKnowledgeBaseTool extends BaseTool<typeof CreateKnowledgeBase
             success: true,
             knowledge_base_id: kb.id,
             name: kb.name,
-            message: `知识库 "${args.name}" 创建成功`,
+            message: `知识库 "${args.name}" 创建成功`
         });
     }
 }
 
-
 const DeleteKnowledgeBaseArgsSchema = z.object({
     provider_id: z.string().describe('服务商ID'),
-    knowledge_base_id: z.string().describe('知识库ID'),
+    knowledge_base_id: z.string().describe('知识库ID')
 });
 
 export class DeleteKnowledgeBaseTool extends BaseTool<typeof DeleteKnowledgeBaseArgsSchema> {
     private app: KnowledgeBaseApplication;
 
     constructor(app: KnowledgeBaseApplication) {
-        super(
-            'deleteKnowledgeBase',
-            '删除指定服务商下的知识库',
-            DeleteKnowledgeBaseArgsSchema,
-        );
+        super('deleteKnowledgeBase', '删除指定服务商下的知识库', DeleteKnowledgeBaseArgsSchema);
         this.app = app;
         this.setExecutor(this.delete.bind(this));
     }
@@ -246,7 +248,12 @@ export class DeleteKnowledgeBaseTool extends BaseTool<typeof DeleteKnowledgeBase
         } else if (toolcall.status === 'error' && toolcall.result) {
             body.push(chalk.redBright('  ' + truncText(toolcall.result, width - 10)));
         }
-        return new Card({ icon: '🗑️', title: '删除知识库', status: statusDisplay(toolcall.status), body }).render(width);
+        return new Card({
+            icon: '🗑️',
+            title: '删除知识库',
+            status: statusDisplay(toolcall.status),
+            body
+        }).render(width);
     }
 
     private async delete(args: z.output<typeof DeleteKnowledgeBaseArgsSchema>): Promise<string> {
@@ -257,7 +264,7 @@ export class DeleteKnowledgeBaseTool extends BaseTool<typeof DeleteKnowledgeBase
         await provider.deleteKnowledgeBase(args.knowledge_base_id);
         return JSON.stringify({
             success: true,
-            message: `知识库 "${args.knowledge_base_id}" 已删除`,
+            message: `知识库 "${args.knowledge_base_id}" 已删除`
         });
     }
 }

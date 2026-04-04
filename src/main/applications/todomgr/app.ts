@@ -9,15 +9,22 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { BaseApplication } from "../base";
-import { BaseToolset } from "../../aikernel/tool";
-import { Skill } from "../../aikernel/skill.js";
+import { BaseApplication } from '../base';
+import { BaseToolset } from '../../aikernel/tool';
+import { Skill } from '../../aikernel/skill.js';
 import { z } from 'zod';
-import { TodoWriteTool, AddGlobalTodoTool, UpdateGlobalTodoTool, ListGlobalTodosTool, DeleteGlobalTodoTool, GetCurrentTimeTool, GetSupportedEventsTool } from './tools';
-import TodoMgrWorker from "./worker";
-import { MANAGE_GLOBAL_TODOS_SKILL } from "./skills.js";
-import chalk from "chalk";
-
+import {
+    TodoWriteTool,
+    AddGlobalTodoTool,
+    UpdateGlobalTodoTool,
+    ListGlobalTodosTool,
+    DeleteGlobalTodoTool,
+    GetCurrentTimeTool,
+    GetSupportedEventsTool
+} from './tools';
+import TodoMgrWorker from './worker';
+import { MANAGE_GLOBAL_TODOS_SKILL } from './skills.js';
+import chalk from 'chalk';
 
 export class TodoMgrApplication extends BaseApplication {
     constructor() {
@@ -82,8 +89,8 @@ export class TodoMgrApplication extends BaseApplication {
         return [
             {
                 eventName: 'globalTodosUpdated',
-                eventDescription: '全局待办列表更新事件，当添加、删除、更新待办事项时触发',
-            },
+                eventDescription: '全局待办列表更新事件，当添加、删除、更新待办事项时触发'
+            }
         ];
     }
 }

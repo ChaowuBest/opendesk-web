@@ -13,7 +13,7 @@ import { BaseTool } from '../../aikernel/tool';
 import { z } from 'zod';
 
 const AddSkillFromPathArgsSchema = z.object({
-    sourcePath: z.string().describe('本地目录路径，该目录必须包含SKILL.md文件'),
+    sourcePath: z.string().describe('本地目录路径，该目录必须包含SKILL.md文件')
 });
 
 export class AddSkillFromPathTool extends BaseTool<typeof AddSkillFromPathArgsSchema> {
@@ -23,7 +23,7 @@ export class AddSkillFromPathTool extends BaseTool<typeof AddSkillFromPathArgsSc
         super(
             'addSkillFromPath',
             '从本地目录添加一个Skill。目录必须包含SKILL.md文件。添加成功后需要刷新才能生效。',
-            AddSkillFromPathArgsSchema,
+            AddSkillFromPathArgsSchema
         );
         this.skillApp = skillApp;
         this.executor = this.add.bind(this);
@@ -36,7 +36,7 @@ export class AddSkillFromPathTool extends BaseTool<typeof AddSkillFromPathArgsSc
 }
 
 const AddSkillFromUrlArgsSchema = z.object({
-    url: z.string().describe('Skill的下载URL，支持.zip、.tar.gz等压缩包格式'),
+    url: z.string().describe('Skill的下载URL，支持.zip、.tar.gz等压缩包格式')
 });
 
 export class AddSkillFromUrlTool extends BaseTool<typeof AddSkillFromUrlArgsSchema> {
@@ -46,7 +46,7 @@ export class AddSkillFromUrlTool extends BaseTool<typeof AddSkillFromUrlArgsSche
         super(
             'addSkillFromUrl',
             '从URL下载并添加一个Skill。URL指向的文件可以是.zip或.tar.gz等压缩包格式。添加成功后需要刷新才能生效。',
-            AddSkillFromUrlArgsSchema,
+            AddSkillFromUrlArgsSchema
         );
         this.skillApp = skillApp;
         this.executor = this.add.bind(this);
@@ -59,7 +59,7 @@ export class AddSkillFromUrlTool extends BaseTool<typeof AddSkillFromUrlArgsSche
 }
 
 const AddSkillFromGitHubUrlArgsSchema = z.object({
-    githubUrl: z.string().describe('GitHub仓库URL，例如 https://github.com/username/repo/tree/main/skill-name'),
+    githubUrl: z.string().describe('GitHub仓库URL，例如 https://github.com/username/repo/tree/main/skill-name')
 });
 
 export class AddSkillFromGitHubUrlTool extends BaseTool<typeof AddSkillFromGitHubUrlArgsSchema> {
@@ -69,7 +69,7 @@ export class AddSkillFromGitHubUrlTool extends BaseTool<typeof AddSkillFromGitHu
         super(
             'addSkillFromGitHubUrl',
             '从GitHub仓库URL添加一个Skill。URL应该指向包含Skill的目录。添加成功后需要刷新才能生效。',
-            AddSkillFromGitHubUrlArgsSchema,
+            AddSkillFromGitHubUrlArgsSchema
         );
         this.skillApp = skillApp;
         this.executor = this.add.bind(this);
@@ -87,11 +87,7 @@ export class ListSkillsTool extends BaseTool<typeof ListSkillsArgsSchema> {
     private skillApp: any;
 
     constructor(skillApp: any) {
-        super(
-            'listSkills',
-            '列出所有已安装的Skills及其详细信息，包括名称、描述、许可证等',
-            ListSkillsArgsSchema,
-        );
+        super('listSkills', '列出所有已安装的Skills及其详细信息，包括名称、描述、许可证等', ListSkillsArgsSchema);
         this.skillApp = skillApp;
         this.executor = this.list.bind(this);
     }
@@ -103,18 +99,14 @@ export class ListSkillsTool extends BaseTool<typeof ListSkillsArgsSchema> {
 }
 
 const DeleteSkillArgsSchema = z.object({
-    skillId: z.string().describe('要删除的Skill ID（即目录名）'),
+    skillId: z.string().describe('要删除的Skill ID（即目录名）')
 });
 
 export class DeleteSkillTool extends BaseTool<typeof DeleteSkillArgsSchema> {
     private skillApp: any;
 
     constructor(skillApp: any) {
-        super(
-            'deleteSkill',
-            '删除指定的Skill。删除后需要刷新才能生效。',
-            DeleteSkillArgsSchema,
-        );
+        super('deleteSkill', '删除指定的Skill。删除后需要刷新才能生效。', DeleteSkillArgsSchema);
         this.skillApp = skillApp;
         this.executor = this.delete.bind(this);
     }
@@ -134,7 +126,7 @@ export class RefreshSkillsTool extends BaseTool<typeof RefreshSkillsArgsSchema> 
         super(
             'refreshSkills',
             '刷新所有Skills，重新加载并注册到AI内核。在添加或删除Skill后调用此工具。',
-            RefreshSkillsArgsSchema,
+            RefreshSkillsArgsSchema
         );
         this.skillApp = skillApp;
         this.executor = this.refresh.bind(this);
@@ -152,11 +144,7 @@ export class GetSkillsDirectoryTool extends BaseTool<typeof GetSkillsDirectoryAr
     private skillApp: any;
 
     constructor(skillApp: any) {
-        super(
-            'getSkillsDirectory',
-            '获取当前Skills的存储目录路径',
-            GetSkillsDirectoryArgsSchema,
-        );
+        super('getSkillsDirectory', '获取当前Skills的存储目录路径', GetSkillsDirectoryArgsSchema);
         this.skillApp = skillApp;
         this.executor = this.get.bind(this);
     }

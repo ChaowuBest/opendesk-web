@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { BaseWorker } from "../base";
+import { BaseWorker } from '../base';
 import { logger } from '../../utils/logger';
 import { Cron } from 'croner';
 import { parentPort } from 'worker_threads';
@@ -19,9 +19,7 @@ import type { GlobalTodo, GlobalTodoStorage, TodoTrigger } from './common';
 import type { Participant } from '../../aikernel/plugins/types';
 import type { Cron as CronerJob } from 'croner';
 
-
 export default class TodoMgrWorker extends BaseWorker {
-
     private globalTodosPath!: string;
     private globalTodos: GlobalTodo[] = [];
 
@@ -84,7 +82,7 @@ export default class TodoMgrWorker extends BaseWorker {
         const storage: GlobalTodoStorage = {
             version: '1.1',
             todos: this.globalTodos,
-            last_updated: new Date().toISOString(),
+            last_updated: new Date().toISOString()
         };
 
         const dir = path.dirname(this.globalTodosPath);
@@ -117,7 +115,7 @@ export default class TodoMgrWorker extends BaseWorker {
             trigger,
             deliver,
             created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
         };
         this.globalTodos.unshift(todo);
         await this.saveGlobalTodos();
@@ -130,8 +128,11 @@ export default class TodoMgrWorker extends BaseWorker {
         return todo;
     }
 
-    async updateGlobalTodo(id: string, updates: Partial<GlobalTodo> & { removeTrigger?: boolean }): Promise<GlobalTodo> {
-        const idx = this.globalTodos.findIndex(t => t.id === id);
+    async updateGlobalTodo(
+        id: string,
+        updates: Partial<GlobalTodo> & { removeTrigger?: boolean }
+    ): Promise<GlobalTodo> {
+        const idx = this.globalTodos.findIndex((t) => t.id === id);
         if (idx === -1) throw new Error(`GlobalTodo not found: ${id}`);
 
         const { removeTrigger, ...todoUpdates } = updates;
@@ -148,7 +149,7 @@ export default class TodoMgrWorker extends BaseWorker {
             ...this.globalTodos[idx],
             ...todoUpdates,
             id,
-            updated_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
         };
 
         if (removeTrigger) {
@@ -187,24 +188,24 @@ export default class TodoMgrWorker extends BaseWorker {
         let result = [...this.globalTodos];
 
         if (status && status !== 'all') {
-            result = result.filter(t => t.status === status);
+            result = result.filter((t) => t.status === status);
         }
         if (category) {
-            result = result.filter(t => t.category === category);
+            result = result.filter((t) => t.category === category);
         }
         if (priority) {
-            result = result.filter(t => t.priority === priority);
+            result = result.filter((t) => t.priority === priority);
         }
 
         return result;
     }
 
     async getGlobalTodoById(id: string): Promise<GlobalTodo | undefined> {
-        return this.globalTodos.find(t => t.id === id);
+        return this.globalTodos.find((t) => t.id === id);
     }
 
     async deleteGlobalTodo(id: string): Promise<GlobalTodo> {
-        const idx = this.globalTodos.findIndex(t => t.id === id);
+        const idx = this.globalTodos.findIndex((t) => t.id === id);
         if (idx === -1) {
             throw new Error(`GlobalTodo not found: ${id}`);
         }
@@ -230,14 +231,14 @@ export default class TodoMgrWorker extends BaseWorker {
 
         // 启动 scheduled 任务的定时检查（每 30 秒检查一次）
         this.scheduledCheckInterval = setInterval(() => {
-            this.checkScheduledTriggers().catch(err => {
+            this.checkScheduledTriggers().catch((err) => {
                 logger.error('scheduled 触发器检查失败:', err);
             });
         }, 30_000);
 
         // 延迟 5 秒后执行首次检查
         setTimeout(() => {
-            this.checkScheduledTriggers().catch(err => {
+            this.checkScheduledTriggers().catch((err) => {
                 logger.error('首次 scheduled 触发器检查失败:', err);
             });
         }, 5_000);
@@ -248,7 +249,7 @@ export default class TodoMgrWorker extends BaseWorker {
      * 注意：cron 是周期性任务，不因 completed 状态而停止，只有手动删除或移除触发器才会停止
      */
     private startCronJob(todo: GlobalTodo): void {
-        logger.info(`[todomgr] starting cron job ${todo.title}: ${todo.trigger}`)
+        logger.info(`[todomgr] starting cron job ${todo.title}: ${todo.trigger}`);
         if (!todo.trigger || todo.trigger.type !== 'cron') return;
 
         // 如果已有该 todo 的 cron 任务，先停止
@@ -262,7 +263,7 @@ export default class TodoMgrWorker extends BaseWorker {
                 logger.info(`[todomgr] cron 触发 [${todo.id}]: ${todo.content}`);
 
                 // 重新获取最新的 todo 状态
-                const currentTodo = this.globalTodos.find(t => t.id === todo.id);
+                const currentTodo = this.globalTodos.find((t) => t.id === todo.id);
                 if (!currentTodo) {
                     logger.info(`[todomgr] todo [${todo.id}] 不存在，跳过触发`);
                     return;
@@ -321,7 +322,9 @@ export default class TodoMgrWorker extends BaseWorker {
                 const triggerTs = triggerTime.getTime();
                 const timeDiff = triggerTs - nowTs;
 
-                logger.info(`[todomgr] 检查 scheduled 待办 [${todo.id}]: 触发时间=${todo.trigger.triggerAt}, 时间差=${timeDiff}ms`);
+                logger.info(
+                    `[todomgr] 检查 scheduled 待办 [${todo.id}]: 触发时间=${todo.trigger.triggerAt}, 时间差=${timeDiff}ms`
+                );
 
                 // 只有当当前时间 >= 触发时间 且 尚未触发过时才执行
                 if (nowTs >= triggerTs) {
@@ -382,7 +385,7 @@ export default class TodoMgrWorker extends BaseWorker {
             todoTitle: todo.title,
             todoContent: todo.content,
             trigger: todo.trigger,
-            deliver: todo.deliver,
+            deliver: todo.deliver
         });
     }
 
@@ -399,7 +402,7 @@ export default class TodoMgrWorker extends BaseWorker {
             todoTitle: todo.title,
             todoContent: todo.content,
             trigger: todo.trigger,
-            deliver: todo.deliver,
+            deliver: todo.deliver
         });
     }
 }

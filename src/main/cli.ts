@@ -12,17 +12,8 @@
 import { setPlatform } from '../platforms/base';
 import { CliPlatform } from '../platforms/cli.js';
 import { isMainThread } from 'worker_threads';
-import {
-    useCliTransport,
-    useConsoleTransport,
-    useDumpLogTransport,
-    interceptConsole,
-} from './utils/logger.js';
-import {
-    initializeRegistry,
-    initializeRegistryWorker,
-    ApplicationRegistry,
-} from './applications/registry';
+import { useCliTransport, useConsoleTransport, useDumpLogTransport, interceptConsole } from './utils/logger.js';
+import { initializeRegistry, initializeRegistryWorker, ApplicationRegistry } from './applications/registry';
 import { initializeAppWorkers } from './applications/worker';
 import { GlobalState } from './aikernel/states/global.js';
 import { FULL_CLEAR } from './tui/components/constants';
@@ -89,9 +80,7 @@ function parseCommandLineArgs() {
 
             const resolved = path.resolve(skillPath);
             if (!fs.existsSync(resolved) || !fs.statSync(resolved).isDirectory()) {
-                console.error(
-                    `[error] skill directory ${resolved} does not exist or is not a directory`
-                );
+                console.error(`[error] skill directory ${resolved} does not exist or is not a directory`);
                 process.exit(1);
             }
 
@@ -122,9 +111,7 @@ function parseCommandLineArgs() {
                 else if (t.status === 'error') icon = '!';
 
                 const durationSec = (t.duration / 1000).toFixed(2);
-                console.log(
-                    `  ${icon} ${t.name} [${t.status}] (${durationSec}s) - ${t.message ?? ''}`
-                );
+                console.log(`  ${icon} ${t.name} [${t.status}] (${durationSec}s) - ${t.message ?? ''}`);
                 if (t.suggestion) {
                     console.log(`      建议: ${t.suggestion}`);
                 }
@@ -188,9 +175,7 @@ function parseCommandLineArgs() {
         }
 
         if ((kwargs.exportHtml || kwargs.exportJson) && !kwargs.command) {
-            console.error(
-                '[error] --export-html and --export-json can only be used with -c/--command'
-            );
+            console.error('[error] --export-html and --export-json can only be used with -c/--command');
             process.exit(1);
         }
 
@@ -221,7 +206,7 @@ function parseCommandLineArgs() {
             exportHtml: kwargs.exportHtml,
             exportJson: kwargs.exportJson,
             dumpLog: kwargs.dumpLog,
-            headless: !!kwargs.headless,
+            headless: !!kwargs.headless
         });
     });
 
@@ -245,7 +230,7 @@ function main(args: CommandLineArgs) {
         initializeRegistry();
         initializeRegistryWorker();
         GlobalState.getInstance().taskManagerState.toolsetProvider = {
-            listAvailableToolsets: () => ApplicationRegistry.listAvailableToolsets(),
+            listAvailableToolsets: () => ApplicationRegistry.listAvailableToolsets()
         };
 
         const runner = new HeadlessRunner(args);
@@ -264,21 +249,15 @@ function main(args: CommandLineArgs) {
         initializeRegistry();
         initializeRegistryWorker();
         GlobalState.getInstance().taskManagerState.toolsetProvider = {
-            listAvailableToolsets: () => ApplicationRegistry.listAvailableToolsets(),
+            listAvailableToolsets: () => ApplicationRegistry.listAvailableToolsets()
         };
 
         // Initialize channelmgr after registry is ready
         ApplicationRegistry.onReady(async () => {
-            const channelMgrApp = ApplicationRegistry.getApplication('channelmgr') as
-                | ChannelMgrApplication
-                | undefined;
+            const channelMgrApp = ApplicationRegistry.getApplication('channelmgr') as ChannelMgrApplication | undefined;
             if (channelMgrApp) {
                 const agentDecl = new ShellAgentDecl({ workspace: args.workspace });
-                const router = new ChannelMessageRouter(
-                    tui.taskManagerState,
-                    agentDecl,
-                    args.model
-                );
+                const router = new ChannelMessageRouter(tui.taskManagerState, agentDecl, args.model);
 
                 router.onTaskResolved = (task, message) => {
                     const senderLabel = message.senderName || message.senderId;
@@ -299,14 +278,12 @@ function main(args: CommandLineArgs) {
 
                 await channelMgrApp.initializeChannels(router, args.workspace);
 
-                const syncChannelStates = (
-                    states: { label: string; status: { online: boolean } }[]
-                ) => {
+                const syncChannelStates = (states: { label: string; status: { online: boolean } }[]) => {
                     tui.inputArea.statusBar.update({
                         channelStates: states.map((s) => ({
                             label: s.label,
-                            online: s.status.online,
-                        })),
+                            online: s.status.online
+                        }))
                     });
                 };
                 channelMgrApp.onChannelStateChange(syncChannelStates);

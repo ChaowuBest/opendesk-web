@@ -27,7 +27,7 @@ export async function runTavilySearchTests(): Promise<boolean> {
         console.log('1. 测试基本搜索 - "OpenDesk application"');
         const toolResult1 = await tavilyTool.execute({
             query: 'OpenDesk application',
-            count: 5,
+            count: 5
         });
         console.log('   ✓ 基本搜索成功');
         console.log('   - 结果状态:', toolResult1.status, '\n');
@@ -38,7 +38,7 @@ export async function runTavilySearchTests(): Promise<boolean> {
             query: 'artificial intelligence trends 2024',
             count: 3,
             search_depth: 'advanced',
-            include_answer: true,
+            include_answer: true
         });
         console.log('   ✓ 深度搜索成功');
         console.log('   - 结果状态:', toolResult2.status, '\n');
@@ -53,7 +53,7 @@ export async function runTavilySearchTests(): Promise<boolean> {
             args_string: JSON.stringify({ query: 'machine learning' }),
             args_object: { query: 'machine learning' },
             status: 'success' as const,
-            result: '**结果数量**: 5',
+            result: '**结果数量**: 5'
         };
         const rendered = tavilyTool.renderToolCallCli(mockToolCall as any, 80);
         console.log('   ✓ 渲染成功');

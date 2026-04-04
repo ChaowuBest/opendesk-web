@@ -1,8 +1,8 @@
-import { type Component, SelectList, type TUI } from "@mariozechner/pi-tui";
-import { defaultSelectListTheme } from "../../theme.js";
-import { Setting } from "../../../utils/setting.js";
-import { ConfigForm, type FieldDef, type ActionDef } from "./form";
-import chalk from "chalk";
+import { type Component, SelectList, type TUI } from '@mariozechner/pi-tui';
+import { defaultSelectListTheme } from '../../theme.js';
+import { Setting } from '../../../utils/setting.js';
+import { ConfigForm, type FieldDef, type ActionDef } from './form';
+import chalk from 'chalk';
 
 interface ModelData {
     alias: string;
@@ -41,8 +41,8 @@ export class ModelConfigPage implements Component {
             { value: '__add__', label: chalk.green('➕ 添加模型') },
             ...models.map((m: ModelData, i: number) => ({
                 value: String(i),
-                label: `${m.alias}  ${chalk.dim(`${m.provider_name} / ${m.model_name}`)}`,
-            })),
+                label: `${m.alias}  ${chalk.dim(`${m.provider_name} / ${m.model_name}`)}`
+            }))
         ];
 
         this.list = new SelectList(items, Math.min(items.length, 15), defaultSelectListTheme);
@@ -69,33 +69,36 @@ export class ModelConfigPage implements Component {
         const data = Setting.getInstance().getData() as any;
         const providerNames: string[] = (data.providers ?? []).map((p: any) => p.name);
 
-        const fields: FieldDef[] = [
-            { type: 'text', key: 'alias', label: '模型别名', value: model.alias },
-        ];
+        const fields: FieldDef[] = [{ type: 'text', key: 'alias', label: '模型别名', value: model.alias }];
 
         if (providerNames.length > 0) {
             const currentProvider = providerNames.includes(model.provider_name)
                 ? model.provider_name
                 : providerNames[0];
             fields.push({
-                type: 'select', key: 'provider_name', label: '模型服务商',
-                value: currentProvider, options: providerNames,
+                type: 'select',
+                key: 'provider_name',
+                label: '模型服务商',
+                value: currentProvider,
+                options: providerNames
             });
         } else {
             fields.push({
-                type: 'text', key: 'provider_name', label: '模型服务商',
-                value: model.provider_name,
+                type: 'text',
+                key: 'provider_name',
+                label: '模型服务商',
+                value: model.provider_name
             });
         }
 
         fields.push({
-            type: 'text', key: 'model_name', label: '模型名称 (提供商侧)',
-            value: model.model_name,
+            type: 'text',
+            key: 'model_name',
+            label: '模型名称 (提供商侧)',
+            value: model.model_name
         });
 
-        const actions: ActionDef[] = [
-            { key: 'save', label: '✅ 保存', style: 'primary' },
-        ];
+        const actions: ActionDef[] = [{ key: 'save', label: '✅ 保存', style: 'primary' }];
         if (this.editingIndex >= 0) {
             actions.push({ key: 'delete', label: '🗑️  删除', style: 'danger' });
         }
@@ -103,9 +106,12 @@ export class ModelConfigPage implements Component {
 
         const title = this.editingIndex >= 0 ? '编辑模型' : '添加模型';
         this.form = new ConfigForm(
-            this.tui, title, fields, actions,
+            this.tui,
+            title,
+            fields,
+            actions,
             (actionKey, values) => this.handleAction(actionKey, values),
-            () => this.showList(),
+            () => this.showList()
         );
         this.form.activate();
         this.tui.requestRender();
@@ -129,7 +135,7 @@ export class ModelConfigPage implements Component {
         const model: ModelData = {
             alias: values.alias ?? '',
             provider_name: values.provider_name ?? '',
-            model_name: values.model_name ?? '',
+            model_name: values.model_name ?? ''
         };
 
         if (this.editingIndex >= 0) {
@@ -153,7 +159,7 @@ export class ModelConfigPage implements Component {
         this.showList();
     }
 
-    invalidate() { }
+    invalidate() {}
 
     render(width: number): string[] {
         const lines: string[] = [];

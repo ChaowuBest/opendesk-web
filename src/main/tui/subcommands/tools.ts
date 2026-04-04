@@ -37,7 +37,10 @@ async function collectAllToolsets(): Promise<BaseToolset[]> {
     return [...appToolsets, skillToolset, memoryToolset, planningToolset];
 }
 
-function findTool(toolsets: BaseToolset[], toolName: string): { tool: BaseTool<z.ZodType>; toolsetName: string } | undefined {
+function findTool(
+    toolsets: BaseToolset[],
+    toolName: string
+): { tool: BaseTool<z.ZodType>; toolsetName: string } | undefined {
     for (const toolset of toolsets) {
         const tool = toolset.getTool(toolName);
         if (tool) {
@@ -59,9 +62,8 @@ export function registerToolsCommand(prog: Command): void {
             for (const toolset of toolsets) {
                 console.log(`\n[${toolset.name}]`);
                 for (const [name, tool] of toolset.getTools()) {
-                    const desc = tool.description.length > 80
-                        ? tool.description.slice(0, 77) + '...'
-                        : tool.description;
+                    const desc =
+                        tool.description.length > 80 ? tool.description.slice(0, 77) + '...' : tool.description;
                     console.log(`  ${name}  -  ${desc}`);
                 }
             }
@@ -84,7 +86,9 @@ export function registerToolsCommand(prog: Command): void {
             console.log(`名称:      ${tool.name}`);
             console.log(`描述:      ${tool.description}`);
             console.log(`所在Bundle: ${toolsetName}`);
-            console.log(`执行方式:   ${tool.universalExecutor ? 'universalExecutor (流式)' : tool.executor ? 'executor' : '(无)'}`);
+            console.log(
+                `执行方式:   ${tool.universalExecutor ? 'universalExecutor (流式)' : tool.executor ? 'executor' : '(无)'}`
+            );
             console.log(`InputSchema:`);
             console.log(JSON.stringify(tool.params.toJSONSchema(), null, 2));
             process.exit(0);

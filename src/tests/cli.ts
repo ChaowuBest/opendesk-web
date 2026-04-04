@@ -83,8 +83,8 @@ async function cmdChannels(...args: string[]) {
 
 const commands: Record<string, (...args: string[]) => void | Promise<void>> = {
     'get-config': cmdGetConfig,
-    'ut': cmdUt,
-    'channels': cmdChannels,
+    ut: cmdUt,
+    channels: cmdChannels
 };
 
 async function main() {

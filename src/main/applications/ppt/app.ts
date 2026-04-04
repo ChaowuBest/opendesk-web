@@ -9,19 +9,18 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { BaseToolset } from "../../aikernel/tool";
-import { BaseApplication } from "../base";
-import { CreatePPTTool, PPTAgent } from "./tools";
-import path from "path";
-import fs from "fs";
-import { z } from "zod";
-import PPTWorker from "./worker";
-
+import { BaseToolset } from '../../aikernel/tool';
+import { BaseApplication } from '../base';
+import { CreatePPTTool, PPTAgent } from './tools';
+import path from 'path';
+import fs from 'fs';
+import { z } from 'zod';
+import PPTWorker from './worker';
 
 const DEFAULT_SERVICE_URL = 'http://119.8.241.85:59801';
 
 const PPTCreatorConfigSchema = z.object({
-    service_url: z.string().default(DEFAULT_SERVICE_URL).describe('PPT制作服务地址'),
+    service_url: z.string().default(DEFAULT_SERVICE_URL).describe('PPT制作服务地址')
 });
 
 export class PPTCreatorApplication extends BaseApplication {
@@ -71,8 +70,7 @@ export class PPTCreatorApplication extends BaseApplication {
                         }
                     }
                     return new Response(null, { status: 200 });
-                }
-                else if (request.url.startsWith('ppt://metadata/')) {
+                } else if (request.url.startsWith('ppt://metadata/')) {
                     const tokens = request.url.split('metadata/')[1].split('/');
                     const uid = tokens[0];
                     const slides = await this.callWorker('getSlides', uid);
@@ -81,8 +79,8 @@ export class PPTCreatorApplication extends BaseApplication {
 
                 console.error('unsupported ppt url:', request.url);
                 return new Response(null, { status: 404 });
-            },
-        }
-        return [ pptHandler ];
+            }
+        };
+        return [pptHandler];
     }
 }

@@ -91,7 +91,11 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
         }
 
         const getStatusIcon = (status: string) => {
-            const map: Record<string, string> = { pending: '⭕', in_progress: '🔄', completed: '✅' };
+            const map: Record<string, string> = {
+                pending: '⭕',
+                in_progress: '🔄',
+                completed: '✅'
+            };
             return map[status] || '⭕';
         };
 
@@ -99,7 +103,7 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
             const colorMap: Record<string, string> = {
                 low: 'bg-blue-100 text-blue-700',
                 medium: 'bg-amber-100 text-amber-700',
-                high: 'bg-red-100 text-red-700',
+                high: 'bg-red-100 text-red-700'
             };
             const labelMap: Record<string, string> = { low: '低', medium: '中', high: '高' };
             const cls = colorMap[priority] || colorMap['medium'];
@@ -109,7 +113,9 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
 
         contentDiv.innerHTML = `
       <div class="space-y-3">
-        ${this.globalTodos.map(todo => `
+        ${this.globalTodos
+            .map(
+                (todo) => `
           <div class="bg-white rounded-2xl p-4 shadow-sm border border-[#F0F0F2]">
             <div class="flex items-start gap-3">
               <span class="text-xl">${getStatusIcon(todo.status)}</span>
@@ -126,11 +132,12 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
               </div>
             </div>
           </div>
-        `).join('')}
+        `
+            )
+            .join('')}
       </div>
     `;
     }
-
 }
 
 customElements.define('todomgr-entry-widget', TodoMgrEntryWidget);

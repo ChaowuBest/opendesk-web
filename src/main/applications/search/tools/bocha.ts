@@ -17,7 +17,6 @@ import chalk from 'chalk';
 import { z } from 'zod';
 import { fetch, ProxyAgent, type Dispatcher } from 'undici';
 
-
 const BOCHA_SEARCH_URL = 'https://api.bocha.cn/v1/web-search';
 const FETCH_TIMEOUT_MS = 30000;
 const DEFAULT_RESULT_COUNT = 10;
@@ -102,7 +101,7 @@ const BochaSearchArgsSchema = z.object({
         .optional()
         .describe('搜索时间范围: noLimit=不限(默认), oneDay=一天内, oneWeek=一周内, oneMonth=一个月内, oneYear=一年内'),
     include: z.string().optional().describe('指定搜索的网站范围，多个域名使用|或,分隔'),
-    exclude: z.string().optional().describe('排除搜索的网站范围，多个域名使用|或,分隔'),
+    exclude: z.string().optional().describe('排除搜索的网站范围，多个域名使用|或,分隔')
 });
 
 export class BochaSearchTool extends BaseTool<typeof BochaSearchArgsSchema> {
@@ -112,7 +111,7 @@ export class BochaSearchTool extends BaseTool<typeof BochaSearchArgsSchema> {
         super(
             'bochaSearch',
             '使用博查搜索引擎搜索网页信息，专为AI设计的中文搜索API，返回优化过的搜索结果。支持摘要生成和时间范围筛选功能',
-            BochaSearchArgsSchema,
+            BochaSearchArgsSchema
         );
         this.apiKey = apiKey;
         this.setExecutor(this.search.bind(this));
@@ -137,7 +136,12 @@ export class BochaSearchTool extends BaseTool<typeof BochaSearchArgsSchema> {
             body.push(chalk.redBright('  ' + truncText(toolcall.result, width - 10)));
         }
 
-        return new Card({ icon: '🔍', title: '搜索 (博查)', status: statusDisplay(toolcall.status), body }).render(width);
+        return new Card({
+            icon: '🔍',
+            title: '搜索 (博查)',
+            status: statusDisplay(toolcall.status),
+            body
+        }).render(width);
     }
 
     private async search(args: z.output<typeof BochaSearchArgsSchema>): Promise<string> {
@@ -168,7 +172,7 @@ export class BochaSearchTool extends BaseTool<typeof BochaSearchArgsSchema> {
         summary?: boolean,
         freshness?: 'noLimit' | 'oneDay' | 'oneWeek' | 'oneMonth' | 'oneYear',
         include?: string,
-        exclude?: string,
+        exclude?: string
     ): Promise<BochaSearchResponse> {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
@@ -176,7 +180,7 @@ export class BochaSearchTool extends BaseTool<typeof BochaSearchArgsSchema> {
         const requestBody: Record<string, any> = {
             query,
             count,
-            summary: summary ?? false,
+            summary: summary ?? false
         };
 
         if (freshness) {
@@ -189,17 +193,24 @@ export class BochaSearchTool extends BaseTool<typeof BochaSearchArgsSchema> {
             requestBody.exclude = exclude;
         }
 
-        const fetchOptions: { method: string; headers: Record<string, string>; body: string; signal: AbortSignal; dispatcher?: Dispatcher } = {
+        const fetchOptions: {
+            method: string;
+            headers: Record<string, string>;
+            body: string;
+            signal: AbortSignal;
+            dispatcher?: Dispatcher;
+        } = {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${this.apiKey}`,
+                Authorization: `Bearer ${this.apiKey}`
             },
             body: JSON.stringify(requestBody),
-            signal: controller.signal,
+            signal: controller.signal
         };
 
-        const proxyUrl = process.env.HTTPS_PROXY || process.env.https_proxy || process.env.HTTP_PROXY || process.env.http_proxy;
+        const proxyUrl =
+            process.env.HTTPS_PROXY || process.env.https_proxy || process.env.HTTP_PROXY || process.env.http_proxy;
         if (proxyUrl) {
             fetchOptions.dispatcher = new ProxyAgent(proxyUrl);
         }
@@ -210,7 +221,7 @@ export class BochaSearchTool extends BaseTool<typeof BochaSearchArgsSchema> {
             if (!response.ok) {
                 const errorText = await response.text().catch(() => '');
                 throw new Error(
-                    `博查 Search API 请求失败，HTTP ${response.status}: ${errorText || response.statusText}`,
+                    `博查 Search API 请求失败，HTTP ${response.status}: ${errorText || response.statusText}`
                 );
             }
 
@@ -252,9 +263,8 @@ export class BochaSearchTool extends BaseTool<typeof BochaSearchArgsSchema> {
                 }
                 if (item.summary) {
                     // 限制摘要长度，避免输出过长
-                    const truncatedSummary = item.summary.length > 500
-                        ? item.summary.substring(0, 500) + '...'
-                        : item.summary;
+                    const truncatedSummary =
+                        item.summary.length > 500 ? item.summary.substring(0, 500) + '...' : item.summary;
                     output += `  - 内容摘要: <content>${truncatedSummary}</content>\n`;
                 }
                 if (item.datePublished) {
@@ -267,7 +277,8 @@ export class BochaSearchTool extends BaseTool<typeof BochaSearchArgsSchema> {
         const images = data.images?.value ?? [];
         if (images.length > 0) {
             output += '\n### 相关图片\n';
-            for (const img of images.slice(0, 5)) { // 最多显示5张图片
+            for (const img of images.slice(0, 5)) {
+                // 最多显示5张图片
                 if (img.thumbnailUrl) {
                     output += `- 图片: ${img.name || '相关图片'}\n`;
                     output += `  - 缩略图: ${img.thumbnailUrl}\n`;
@@ -282,7 +293,8 @@ export class BochaSearchTool extends BaseTool<typeof BochaSearchArgsSchema> {
         const videos = data.videos?.value ?? [];
         if (videos.length > 0) {
             output += '\n### 相关视频\n';
-            for (const video of videos.slice(0, 3)) { // 最多显示3个视频
+            for (const video of videos.slice(0, 3)) {
+                // 最多显示3个视频
                 if (video.name) {
                     output += `- 视频: ${video.name}\n`;
                     if (video.description) {

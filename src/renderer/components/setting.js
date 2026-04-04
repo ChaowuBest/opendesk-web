@@ -10,7 +10,6 @@
  */
 
 class SettingEditor extends HTMLElement {
-
     constructor() {
         super();
     }
@@ -21,33 +20,36 @@ class SettingEditor extends HTMLElement {
             await this.loadSettingSchema();
             await this.loadSettingData();
             this.setUpEventListeners();
-        })()
+        })();
     }
 
     async loadSettingSchema() {
-        let schema = await window.settingAPI.loadSettingSchema()
+        const schema = await window.settingAPI.loadSettingSchema();
         console.log(schema);
         this.querySelector('#setting-schema-editor').setSchema(schema);
     }
 
     async loadSettingData() {
-        let data = await window.settingAPI.loadSettingObject()
+        const data = await window.settingAPI.loadSettingObject();
         console.info('load setting data', data);
         this.querySelector('#setting-schema-editor').setValue(data);
     }
 
     saveSettingData() {
-        let data = this.querySelector('#setting-schema-editor').getValue();
-        window.settingAPI.saveSettingObject(data).then(async () => {
-            await this.loadSettingData();
-            window.notificationAPI.sendNotification('info', '设置', '保存成功', '设置已成功保存');
-        }).catch(error => {
-            window.notificationAPI.sendNotification('error', '设置', '保存失败', error.message);
-        });
+        const data = this.querySelector('#setting-schema-editor').getValue();
+        window.settingAPI
+            .saveSettingObject(data)
+            .then(async () => {
+                await this.loadSettingData();
+                window.notificationAPI.sendNotification('info', '设置', '保存成功', '设置已成功保存');
+            })
+            .catch((error) => {
+                window.notificationAPI.sendNotification('error', '设置', '保存失败', error.message);
+            });
     }
 
     async exportSettingData() {
-        let data = this.querySelector('#setting-schema-editor').getValue();
+        const data = this.querySelector('#setting-schema-editor').getValue();
 
         // 弹窗让用户选择保存到哪儿
         try {
@@ -56,9 +58,9 @@ class SettingEditor extends HTMLElement {
                 types: [
                     {
                         description: 'JSON 文件',
-                        accept: {'application/json': ['.json']},
-                    },
-                ],
+                        accept: { 'application/json': ['.json'] }
+                    }
+                ]
             };
             const handle = await window.showSaveFilePicker(opts);
             const writable = await handle.createWritable();
@@ -83,8 +85,8 @@ class SettingEditor extends HTMLElement {
                 types: [
                     {
                         description: 'JSON 文件',
-                        accept: { 'application/json': ['.json'] },
-                    },
+                        accept: { 'application/json': ['.json'] }
+                    }
                 ],
                 multiple: false
             });
@@ -97,19 +99,24 @@ class SettingEditor extends HTMLElement {
             try {
                 jsonData = JSON.parse(text);
             } catch (err) {
-                this.querySelector('#setting-error-msg').innerHTML = `<span class="text-red-500">文件内容不是有效的JSON：${err.message}</span>`;
+                this.querySelector('#setting-error-msg').innerHTML =
+                    `<span class="text-red-500">文件内容不是有效的JSON：${err.message}</span>`;
                 return;
             }
 
             // 保存设置
-            window.settingAPI.saveSettingObject(jsonData).then(async () => {
-                await this.loadSettingData();
-                this.querySelector('#setting-error-msg').innerHTML = '';
-                this.querySelector('#setting-error-msg').innerHTML = '<span class="text-green-500">导入并保存成功</span>';
-            }).catch(error => {
-                this.querySelector('#setting-error-msg').innerHTML = `<span class="text-red-500">${error.message}</span>`;
-            });
-
+            window.settingAPI
+                .saveSettingObject(jsonData)
+                .then(async () => {
+                    await this.loadSettingData();
+                    this.querySelector('#setting-error-msg').innerHTML = '';
+                    this.querySelector('#setting-error-msg').innerHTML =
+                        '<span class="text-green-500">导入并保存成功</span>';
+                })
+                .catch((error) => {
+                    this.querySelector('#setting-error-msg').innerHTML =
+                        `<span class="text-red-500">${error.message}</span>`;
+                });
         } catch (err) {
             if (err.name !== 'AbortError') {
                 this.querySelector('#setting-error-msg').innerHTML = `<span class="text-red-500">${err.message}</span>`;
@@ -163,9 +170,8 @@ class SettingEditor extends HTMLElement {
             <!-- 错误信息 -->
             <div id="setting-error-msg" class="min-h-[1.5em] text-sm"></div>
         </div>
-        `
+        `;
     }
-
 }
 
-customElements.define("setting-editor", SettingEditor)
+customElements.define('setting-editor', SettingEditor);

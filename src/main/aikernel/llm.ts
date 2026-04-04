@@ -64,7 +64,6 @@ interface RerankApiResponse {
 }
 
 class LLM {
-
     private static __visionCache = new Map<string, boolean>();
 
     /**
@@ -94,7 +93,9 @@ class LLM {
                 logger.info(`vision support for ${modelInstance.model_name}: ${apiResult} (from API)`);
                 return apiResult;
             }
-        } catch { /* API 查询失败 */ }
+        } catch {
+            /* API 查询失败 */
+        }
 
         this.__visionCache.set(cacheKey, true);
         logger.info(`vision support for ${modelInstance.model_name}: true (default optimistic)`);
@@ -130,11 +131,11 @@ class LLM {
         const modelInstance = Setting.getInstance().getDefaultEmbeddingModelInstance();
         const client = new OpenAI({
             apiKey: modelInstance.api_key,
-            baseURL: modelInstance.base_url,
+            baseURL: modelInstance.base_url
         });
         const response = await client.embeddings.create({
             model: modelInstance.model_name,
-            input: text,
+            input: text
         });
         return response.data[0].embedding;
     }
@@ -143,7 +144,7 @@ class LLM {
         const modelInstance = Setting.getInstance().getDefaultEmbeddingModelInstance();
         const client = new OpenAI({
             apiKey: modelInstance.api_key,
-            baseURL: modelInstance.base_url,
+            baseURL: modelInstance.base_url
         });
         const embeddings: number[][] = [];
         for (let i = 0; i < texts.length; i += batchSize) {
@@ -151,9 +152,9 @@ class LLM {
             const batch = texts.slice(i, i + batchSize);
             const response = await client.embeddings.create({
                 model: modelInstance.model_name,
-                input: batch,
+                input: batch
             });
-            embeddings.push(...response.data.map(data => data.embedding));
+            embeddings.push(...response.data.map((data) => data.embedding));
         }
         return embeddings;
     }
@@ -168,7 +169,7 @@ class LLM {
         query: string,
         items: T[],
         stringifier: (item: T) => string,
-        model: ModelParam = undefined,
+        model: ModelParam = undefined
     ): Promise<T[]> {
         if (model === undefined) {
             model = Setting.getInstance().getDefaultRerankerModelInstance();
@@ -180,13 +181,13 @@ class LLM {
             method: 'POST',
             headers: {
                 Authorization: `Bearer ${modelInstance.api_key}`,
-                'Content-Type': 'application/json',
+                'Content-Type': 'application/json'
             },
             body: JSON.stringify({
                 model: modelInstance.model_name,
                 query: query,
-                documents: items.map(item => stringifier(item)),
-            }),
+                documents: items.map((item) => stringifier(item))
+            })
         });
 
         const rerankResult: RerankApiResponse = await response.json();
@@ -232,7 +233,7 @@ class LLM {
         const modelInstance = LLM.__getModelInstance(options.model);
         const client = new OpenAI({
             apiKey: modelInstance.api_key,
-            baseURL: modelInstance.base_url,
+            baseURL: modelInstance.base_url
         });
 
         let finalResponse: string | object | undefined = undefined;
@@ -240,11 +241,11 @@ class LLM {
         const messages: object[] = [options.question.toOpenAIMessage()];
 
         while (finalResponse === undefined && numRetries < 5) {
-            const response = await withRateLimitRetry(
-                () => client.chat.completions.create({
+            const response = await withRateLimitRetry(() =>
+                client.chat.completions.create({
                     model: modelInstance.model_name,
-                    messages: messages as OpenAI.ChatCompletionMessageParam[],
-                }),
+                    messages: messages as OpenAI.ChatCompletionMessageParam[]
+                })
             );
 
             if (response.choices.length !== 1) {
@@ -320,7 +321,7 @@ class LLM {
         const options: LLMAskOptions = {
             question,
             model,
-            validator: (content) => LLM.__objectValidator(content),
+            validator: (content) => LLM.__objectValidator(content)
         };
         const result = await LLM.__ask(options);
         if (typeof result === 'object') {
@@ -332,12 +333,12 @@ class LLM {
     static async askForObjectWithSchema(
         question: UserMessage,
         schema: z.ZodSchema,
-        model: ModelParam = undefined,
+        model: ModelParam = undefined
     ): Promise<object> {
         const options: LLMAskOptions = {
             question,
             model,
-            validator: (content) => LLM.__objectValidator(content, schema),
+            validator: (content) => LLM.__objectValidator(content, schema)
         };
         const result = await LLM.__ask(options);
         if (typeof result === 'object') {
@@ -398,59 +399,58 @@ class LLM {
                     function: {
                         name: toolId,
                         description: tool.description,
-                        parameters: tool.params.toJSONSchema(),
-                    },
-                })),
+                        parameters: tool.params.toJSONSchema()
+                    }
+                }))
             };
         }
         return {};
     }
 
-    static async complete(
-        chatContext: ChatContext,
-        model: ModelParam = undefined,
-    ): Promise<AssistantResponse> {
+    static async complete(chatContext: ChatContext, model: ModelParam = undefined): Promise<AssistantResponse> {
         const modelInstance = this.__getModelInstance(model);
         const client = new OpenAI({
             apiKey: modelInstance.api_key,
-            baseURL: modelInstance.base_url,
+            baseURL: modelInstance.base_url
         });
         const visionSupported = await this.supportsVision(model);
         const messages = this.buildMessages(chatContext, visionSupported);
         const toolOptions = this.buildToolOptions(chatContext);
 
-        const response = await withRateLimitRetry(
-            () => client.chat.completions.create({
+        const response = await withRateLimitRetry(() =>
+            client.chat.completions.create({
                 model: modelInstance.model_name,
                 messages: messages as OpenAI.ChatCompletionMessageParam[],
                 max_completion_tokens: 16384,
-                ...toolOptions,
-            }),
+                ...toolOptions
+            })
         );
         return AssistantResponse.parseOpenAIResponse(response);
     }
 
     static async *streamComplete(
         chatContext: ChatContext,
-        model: ModelParam = undefined,
+        model: ModelParam = undefined
     ): AsyncIterable<AssistantResponse> {
         const modelInstance = this.__getModelInstance(model);
         this.__ensureProxy(modelInstance);
 
         const client = new OpenAI({
             apiKey: modelInstance.api_key,
-            baseURL: modelInstance.base_url,
+            baseURL: modelInstance.base_url
         });
         const visionSupported = await this.supportsVision(model);
         const messages = this.buildMessages(chatContext, visionSupported);
         const toolOptions = this.buildToolOptions(chatContext);
 
         if (logger) {
-            const hasImages = messages.some((m: any) =>
-                Array.isArray(m.content) && m.content.some((p: any) => p.type === 'image_url')
+            const hasImages = messages.some(
+                (m: any) => Array.isArray(m.content) && m.content.some((p: any) => p.type === 'image_url')
             );
             if (hasImages) {
-                logger.info(`streamComplete: sending ${messages.length} messages with inline images (visionSupported=${visionSupported})`);
+                logger.info(
+                    `streamComplete: sending ${messages.length} messages with inline images (visionSupported=${visionSupported})`
+                );
             }
         }
 
@@ -458,15 +458,15 @@ class LLM {
             // 使用原始流式 API 而非 .stream() 方法
             // 某些模型提供商的流式响应不包含 role 字段，会导致 SDK 的 finalizeChatCompletion 报错
             // 使用 .create() with stream: true 可以绕过 SDK 的严格验证
-            const stream = await withRateLimitRetry(
-                () => client.chat.completions.create({
+            const stream = await withRateLimitRetry(() =>
+                client.chat.completions.create({
                     model: modelInstance.model_name,
                     messages: messages as OpenAI.ChatCompletionMessageParam[],
                     max_completion_tokens: 16384,
                     stream: true,
                     stream_options: { include_usage: true },
-                    ...toolOptions,
-                }),
+                    ...toolOptions
+                })
             );
 
             for await (const chunk of stream) {
@@ -477,7 +477,8 @@ class LLM {
                 logger.warn('Rate limit error during stream reading, will be caught by outer retry logic', String(err));
             }
             yield AssistantResponse.richError(
-                'Stream Completion Failed', String(err),
+                'Stream Completion Failed',
+                String(err),
                 JSON.stringify(messages, undefined, 2)
             );
         }

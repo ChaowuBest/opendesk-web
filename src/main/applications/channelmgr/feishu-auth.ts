@@ -56,7 +56,7 @@ async function postRegistration(params: Record<string, string>): Promise<any> {
             method: 'POST',
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
             body,
-            signal: controller.signal,
+            signal: controller.signal
         });
         return await res.json();
     } finally {
@@ -73,13 +73,13 @@ export async function feishuAuthBegin(): Promise<FeishuBeginResponse> {
         action: 'begin',
         archetype: 'PersonalAgent',
         auth_method: 'client_secret',
-        request_user_info: 'open_id',
+        request_user_info: 'open_id'
     });
 }
 
 export async function feishuAuthPoll(deviceCode: string): Promise<FeishuPollResponse> {
     return postRegistration({
         action: 'poll',
-        device_code: deviceCode,
+        device_code: deviceCode
     });
 }

@@ -49,7 +49,10 @@ function getZipUncompressedSize(zip) {
         }
         total += size;
         if (total > ZIP_MAX_UNCOMPRESSED_BYTES) {
-            return { total, error: `解压后体积超过限制（${(ZIP_MAX_UNCOMPRESSED_BYTES / 1024 / 1024).toFixed(0)}MB），当前约 ${(total / 1024 / 1024).toFixed(1)}MB` };
+            return {
+                total,
+                error: `解压后体积超过限制（${(ZIP_MAX_UNCOMPRESSED_BYTES / 1024 / 1024).toFixed(0)}MB），当前约 ${(total / 1024 / 1024).toFixed(1)}MB`
+            };
         }
     }
     return { total };
@@ -93,7 +96,7 @@ function readResourcesFromDir(resolvedDir, intoRefs, intoScripts, intoAssets) {
             const content = safeReadFile(path.join(resolvedDir, e.name));
             if (content) intoRefs.push({ name: e.name, content });
         }
-    } catch (_) { }
+    } catch (_) {}
 
     const refDir = path.join(resolvedDir, REFERENCES_DIR);
     if (fs.existsSync(refDir) && fs.statSync(refDir).isDirectory()) {
@@ -106,7 +109,7 @@ function readResourcesFromDir(resolvedDir, intoRefs, intoScripts, intoAssets) {
                     if (content) intoRefs.push({ name: `${REFERENCES_DIR}/${e.name}`, content });
                 }
             }
-        } catch (_) { }
+        } catch (_) {}
     }
 
     const scriptsDir = path.join(resolvedDir, SCRIPTS_DIR);
@@ -114,7 +117,7 @@ function readResourcesFromDir(resolvedDir, intoRefs, intoScripts, intoAssets) {
         try {
             const list = fs.readdirSync(scriptsDir);
             intoScripts.push(...list.map((name) => `${SCRIPTS_DIR}/${name}`));
-        } catch (_) { }
+        } catch (_) {}
     }
 
     const assetsDirPath = path.join(resolvedDir, ASSETS_DIR);
@@ -122,7 +125,7 @@ function readResourcesFromDir(resolvedDir, intoRefs, intoScripts, intoAssets) {
         try {
             const list = fs.readdirSync(assetsDirPath);
             intoAssets.push(...list.map((name) => `${ASSETS_DIR}/${name}`));
-        } catch (_) { }
+        } catch (_) {}
     }
 }
 
@@ -146,7 +149,9 @@ function loadSkillResources(skillDir, skillName) {
         }
     }
 
-    logger.info(`SkillRegistry: 渐进式加载 [${skillName}] 参考文档=${referencesSections.length} 脚本=${scriptsList.length} 资源=${assetsList.length}`);
+    logger.info(
+        `SkillRegistry: 渐进式加载 [${skillName}] 参考文档=${referencesSections.length} 脚本=${scriptsList.length} 资源=${assetsList.length}`
+    );
     return { referencesSections, scriptsList, assetsList };
 }
 
@@ -171,10 +176,12 @@ function formatProgressiveSkillContent(body, resources, usageContext) {
     if (usageContext && (hasScripts || hasRefs)) {
         parts.push(
             '## 如何实际使用本技能\n\n' +
-            '上述参考文档与脚本为**可执行能力**，请根据本技能的说明与参考文档，在用户提出相关需求时：\n' +
-            '1. **执行脚本**：以本技能目录为工作目录（cwd）运行 `scripts/` 中对应脚本，按脚本约定传入参数或 stdin。\n' +
-            '2. **或按说明执行代码/命令**：根据技能说明与参考文档，在终端中编写并执行相应代码或命令，完成用户任务并返回结果。\n' +
-            (usageContext.skillDir ? `\n**技能目录（执行脚本或命令时请设为此 cwd）**: \`${usageContext.skillDir}\`\n` : '')
+                '上述参考文档与脚本为**可执行能力**，请根据本技能的说明与参考文档，在用户提出相关需求时：\n' +
+                '1. **执行脚本**：以本技能目录为工作目录（cwd）运行 `scripts/` 中对应脚本，按脚本约定传入参数或 stdin。\n' +
+                '2. **或按说明执行代码/命令**：根据技能说明与参考文档，在终端中编写并执行相应代码或命令，完成用户任务并返回结果。\n' +
+                (usageContext.skillDir
+                    ? `\n**技能目录（执行脚本或命令时请设为此 cwd）**: \`${usageContext.skillDir}\`\n`
+                    : '')
         );
         parts.push('');
     }
@@ -237,7 +244,10 @@ function loadSkillFromDir(skillDir) {
         }
     } else {
         paramsSchema.properties = {
-            input: { type: 'string', description: '可选：当前任务或用户输入摘要，供技能执行时参考' }
+            input: {
+                type: 'string',
+                description: '可选：当前任务或用户输入摘要，供技能执行时参考'
+            }
         };
         paramsSchema.required = [];
     }
@@ -321,7 +331,12 @@ function createExecutor(skillName, skillDir, body, frontmatter, handler) {
                 const res = await fetch(h.url, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ skill: skillName, input, arguments: args, skillContext })
+                    body: JSON.stringify({
+                        skill: skillName,
+                        input,
+                        arguments: args,
+                        skillContext
+                    })
                 });
                 const text = await res.text();
                 if (!res.ok) return `远程调用失败 (${res.status}): ${text}`;
@@ -351,8 +366,12 @@ function runScript(scriptPath, skillDir, input) {
         });
         let stdout = '';
         let stderr = '';
-        child.stdout?.on('data', (ch) => { stdout += ch; });
-        child.stderr?.on('data', (ch) => { stderr += ch; });
+        child.stdout?.on('data', (ch) => {
+            stdout += ch;
+        });
+        child.stderr?.on('data', (ch) => {
+            stderr += ch;
+        });
         child.on('error', (err) => reject(err));
         child.on('close', (code) => {
             if (code !== 0) {
@@ -428,7 +447,7 @@ function listSkills() {
                 const stat = fs.statSync(dirPath);
                 addedAt = (stat.birthtimeMs != null ? stat.birthtimeMs : stat.mtimeMs) || 0;
             }
-        } catch (_) { }
+        } catch (_) {}
         return {
             id,
             name: s.frontmatter.name,
@@ -440,7 +459,7 @@ function listSkills() {
             addedAt
         };
     });
-    list.sort((a, b) => (b.addedAt - a.addedAt));
+    list.sort((a, b) => b.addedAt - a.addedAt);
     return list.map(({ addedAt, ...rest }) => rest);
 }
 
@@ -505,7 +524,7 @@ function rmRecursive(p) {
             fs.rmSync(p, { recursive: true, force: true });
             return;
         }
-    } catch (_) { }
+    } catch (_) {}
     if (fs.statSync(p).isDirectory()) {
         for (const name of fs.readdirSync(p)) rmRecursive(path.join(p, name));
         fs.rmdirSync(p);
@@ -543,7 +562,7 @@ function findSkillRootInDir(rootDir, relPath) {
             const found = findSkillRootInDir(sub, null);
             if (found) return found;
         }
-    } catch (_) { }
+    } catch (_) {}
     return null;
 }
 
@@ -603,16 +622,20 @@ function addSkillFromZipPath(zipPath, opts = {}) {
         }
         zip.extractAllTo(tmpDir, true);
         const entries = fs.readdirSync(tmpDir, { withFileTypes: true });
-        const extractRoot = entries.length === 1 && entries[0].isDirectory()
-            ? path.join(tmpDir, entries[0].name)
-            : tmpDir;
-        let skillRoot = skillRelPath
+        const extractRoot =
+            entries.length === 1 && entries[0].isDirectory() ? path.join(tmpDir, entries[0].name) : tmpDir;
+        const skillRoot = skillRelPath
             ? findSkillRootInDir(extractRoot, skillRelPath)
-            : (fs.existsSync(path.join(tmpDir, SKILL_MD_FILENAME)) ? tmpDir : findSkillRootInDir(tmpDir, null));
+            : fs.existsSync(path.join(tmpDir, SKILL_MD_FILENAME))
+              ? tmpDir
+              : findSkillRootInDir(tmpDir, null);
         if (!skillRoot && skillRelPath) {
             const anySkill = findSkillRootInDir(extractRoot, null);
             if (anySkill) {
-                return { success: false, error: `压缩包内路径 "${skillRelPath}" 未找到技能，但发现其它技能目录。请检查 URL` };
+                return {
+                    success: false,
+                    error: `压缩包内路径 "${skillRelPath}" 未找到技能，但发现其它技能目录。请检查 URL`
+                };
             }
         }
         if (!skillRoot) {
@@ -655,7 +678,13 @@ async function fetchWithFallback(zipUrl) {
         return await fetch(zipUrl, opts());
     } catch (e) {
         const msg = e?.message || String(e);
-        if (msg.includes('fetch failed') || msg.includes('ECONNREFUSED') || msg.includes('ENOTFOUND') || msg.includes('ETIMEDOUT') || msg.includes('network')) {
+        if (
+            msg.includes('fetch failed') ||
+            msg.includes('ECONNREFUSED') ||
+            msg.includes('ENOTFOUND') ||
+            msg.includes('ETIMEDOUT') ||
+            msg.includes('network')
+        ) {
             const mirrorUrl = `https://ghproxy.com/${zipUrl}`;
             logger.info(`SkillRegistry: 直连 GitHub 失败，尝试镜像 ${mirrorUrl}`);
             try {
@@ -671,11 +700,17 @@ async function fetchWithFallback(zipUrl) {
 async function addSkillFromGitHubUrl(githubUrl) {
     const parsed = parseGitHubTreeUrl(githubUrl);
     if (!parsed) {
-        return { success: false, error: '无效的 GitHub 技能 URL，需为 tree 格式：https://github.com/owner/repo/tree/branch/path' };
+        return {
+            success: false,
+            error: '无效的 GitHub 技能 URL，需为 tree 格式：https://github.com/owner/repo/tree/branch/path'
+        };
     }
     const { owner, repo, branch, path: relPath } = parsed;
     if (!relPath || !relPath.trim()) {
-        return { success: false, error: 'GitHub URL 须包含技能路径，如 .../tree/main/skills/pdf。当前 URL 可能缺少路径：' + githubUrl };
+        return {
+            success: false,
+            error: 'GitHub URL 须包含技能路径，如 .../tree/main/skills/pdf。当前 URL 可能缺少路径：' + githubUrl
+        };
     }
     const zipUrl = `https://github.com/${owner}/${repo}/archive/refs/heads/${branch}.zip`;
     const tmpDir = path.join(os.tmpdir(), `skill-github-${Date.now()}`);
@@ -693,14 +728,16 @@ async function addSkillFromGitHubUrl(githubUrl) {
         }
         zip.extractAllTo(tmpDir, true);
         const entries = fs.readdirSync(tmpDir, { withFileTypes: true });
-        const extractRoot = entries.length === 1 && entries[0].isDirectory()
-            ? path.join(tmpDir, entries[0].name)
-            : tmpDir;
+        const extractRoot =
+            entries.length === 1 && entries[0].isDirectory() ? path.join(tmpDir, entries[0].name) : tmpDir;
         let skillRoot = findSkillRootInDir(extractRoot, relPath);
         if (!skillRoot && relPath) {
             const anySkill = findSkillRootInDir(extractRoot, null);
             if (anySkill) {
-                return { success: false, error: `仓库内路径 "${relPath}" 未找到技能，但发现其它技能目录。请检查 skill0 返回的 URL 是否正确：${githubUrl}` };
+                return {
+                    success: false,
+                    error: `仓库内路径 "${relPath}" 未找到技能，但发现其它技能目录。请检查 skill0 返回的 URL 是否正确：${githubUrl}`
+                };
             }
         }
         if (!skillRoot && !relPath) {
@@ -744,7 +781,9 @@ async function addSkillFromUrl(url) {
             return { success: false, error: uncompressedSize.error };
         }
         zip.extractAllTo(tmpDir, true);
-        let skillRoot = fs.existsSync(path.join(tmpDir, SKILL_MD_FILENAME)) ? tmpDir : findSkillRootInDir(tmpDir, null);
+        const skillRoot = fs.existsSync(path.join(tmpDir, SKILL_MD_FILENAME))
+            ? tmpDir
+            : findSkillRootInDir(tmpDir, null);
         if (!skillRoot) {
             return { success: false, error: '压缩包内未找到含 SKILL.md 的技能目录' };
         }
@@ -783,8 +822,12 @@ async function addSkillFromClawHubSlug(slug, version) {
                 });
                 let stdout = '';
                 let stderr = '';
-                child.stdout?.on('data', (ch) => { stdout += ch; });
-                child.stderr?.on('data', (ch) => { stderr += ch; });
+                child.stdout?.on('data', (ch) => {
+                    stdout += ch;
+                });
+                child.stderr?.on('data', (ch) => {
+                    stderr += ch;
+                });
                 child.on('error', (err) => reject(err));
                 child.on('close', (code) => resolve({ code, stdout, stderr }));
             });
@@ -800,7 +843,10 @@ async function addSkillFromClawHubSlug(slug, version) {
         }
         const skillRoot = findSkillRootInDir(tmpDir, null);
         if (!skillRoot) {
-            return { success: false, error: 'ClawHub 安装后未在输出目录中找到 SKILL.md，请确认 slug 正确且已安装 clawhub（npm i -g clawhub）' };
+            return {
+                success: false,
+                error: 'ClawHub 安装后未在输出目录中找到 SKILL.md，请确认 slug 正确且已安装 clawhub（npm i -g clawhub）'
+            };
         }
         const addResult = addSkillFromPath(skillRoot);
         return addResult;

@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import Alpine from "alpinejs";
+import Alpine from 'alpinejs';
 
 import '../components/agentinput.js';
 import '../components/notification.js';

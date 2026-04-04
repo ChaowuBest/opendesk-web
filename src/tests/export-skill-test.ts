@@ -65,9 +65,8 @@ async function main() {
         }
 
         // Verify SKILL.md is in the zip
-        const hasSKILLmd = entries.some(e => e.entryName === 'SKILL.md');
+        const hasSKILLmd = entries.some((e) => e.entryName === 'SKILL.md');
         console.log(`\n  [${hasSKILLmd ? 'PASS' : 'FAIL'}] SKILL.md present in zip`);
-
     } finally {
         if (fs.existsSync(zipPath)) {
             fs.unlinkSync(zipPath);
@@ -94,7 +93,7 @@ async function main() {
     console.log('\n=== All tests passed! ===');
 }
 
-main().catch(err => {
+main().catch((err) => {
     console.error('Test failed:', err);
     process.exit(1);
 });

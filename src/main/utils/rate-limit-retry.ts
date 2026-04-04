@@ -23,7 +23,6 @@ import { logger } from './logger.js';
  * 新增服务商的限流模式时，只需在 MESSAGE_PATTERNS 中添加新的正则即可。
  */
 class RateLimitDetector {
-
     /**
      * 限流相关的错误消息模式（不区分大小写）。
      * 每个正则对应一种已知的服务商限流错误表述。
@@ -46,7 +45,7 @@ class RateLimitDetector {
         /请求(过于)?频繁/,
         /触发.*限流/,
         /限流/,
-        /频率限制/,
+        /频率限制/
     ];
 
     /** 被视为限流的 HTTP 状态码集合 */
@@ -64,7 +63,7 @@ class RateLimitDetector {
         }
 
         const message = err instanceof Error ? err.message : String(err);
-        return this.MESSAGE_PATTERNS.some(pattern => pattern.test(message));
+        return this.MESSAGE_PATTERNS.some((pattern) => pattern.test(message));
     }
 
     /**
@@ -113,7 +112,7 @@ interface RetryOptions {
 const DEFAULT_RETRY_OPTIONS: Required<Omit<RetryOptions, 'onRetry' | 'maxRetries'>> = {
     initialDelayMs: 2000,
     maxDelayMs: 120_000,
-    backoffMultiplier: 2,
+    backoffMultiplier: 2
 };
 
 /**
@@ -134,7 +133,7 @@ async function withRateLimitRetry<T>(fn: () => Promise<T>, opts: RetryOptions = 
         maxDelayMs = DEFAULT_RETRY_OPTIONS.maxDelayMs,
         backoffMultiplier = DEFAULT_RETRY_OPTIONS.backoffMultiplier,
         maxRetries,
-        onRetry,
+        onRetry
     } = opts;
 
     let attempt = 0;
@@ -168,8 +167,8 @@ async function withRateLimitRetry<T>(fn: () => Promise<T>, opts: RetryOptions = 
 
             logger.warn(
                 `Rate limited (attempt ${attempt}${maxRetries !== undefined ? `/${maxRetries}` : ''}), ` +
-                `waiting ${(delayMs / 1000).toFixed(1)}s before retry...`,
-                err instanceof Error ? err.message : String(err),
+                    `waiting ${(delayMs / 1000).toFixed(1)}s before retry...`,
+                err instanceof Error ? err.message : String(err)
             );
 
             if (onRetry) {
@@ -182,7 +181,7 @@ async function withRateLimitRetry<T>(fn: () => Promise<T>, opts: RetryOptions = 
 }
 
 function sleep(ms: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, ms));
+    return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export { RateLimitDetector, withRateLimitRetry, type RetryOptions };

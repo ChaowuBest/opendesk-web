@@ -77,21 +77,25 @@ class SchemaEditor extends HTMLElement {
      */
     setupEventListeners(container) {
         // 处理输入变化
-        container.querySelectorAll('input, textarea, select').forEach(input => {
+        container.querySelectorAll('input, textarea, select').forEach((input) => {
             input.addEventListener('input', () => {
-                this.dispatchEvent(new CustomEvent('value-change', {
-                    detail: { value: this.getValue() }
-                }));
+                this.dispatchEvent(
+                    new CustomEvent('value-change', {
+                        detail: { value: this.getValue() }
+                    })
+                );
             });
             input.addEventListener('change', () => {
-                this.dispatchEvent(new CustomEvent('value-change', {
-                    detail: { value: this.getValue() }
-                }));
+                this.dispatchEvent(
+                    new CustomEvent('value-change', {
+                        detail: { value: this.getValue() }
+                    })
+                );
             });
         });
 
         // 处理收件协议切换（POP3/IMAP）
-        container.querySelectorAll('select[data-field-path]').forEach(select => {
+        container.querySelectorAll('select[data-field-path]').forEach((select) => {
             const fieldPath = select.getAttribute('data-field-path') || '';
             if (this.isInboxProtocolPath(fieldPath)) {
                 select.addEventListener('change', () => {
@@ -101,7 +105,7 @@ class SchemaEditor extends HTMLElement {
         });
 
         // 处理数组添加按钮
-        container.querySelectorAll('[data-array-add-btn]').forEach(btn => {
+        container.querySelectorAll('[data-array-add-btn]').forEach((btn) => {
             btn.addEventListener('click', (e) => {
                 const fieldId = e.target.getAttribute('data-array-field-id');
                 const fieldPath = e.target.getAttribute('data-field-path');
@@ -111,7 +115,7 @@ class SchemaEditor extends HTMLElement {
         });
 
         // 处理可选字段的添加/移除
-        container.querySelectorAll('[data-optional-toggle]').forEach(btn => {
+        container.querySelectorAll('[data-optional-toggle]').forEach((btn) => {
             btn.addEventListener('click', (e) => {
                 // 使用 currentTarget 或 closest 确保获取到按钮元素，而不是子元素
                 const button = e.currentTarget || e.target.closest('[data-optional-toggle]');
@@ -160,7 +164,7 @@ class SchemaEditor extends HTMLElement {
                         }
                         // 清空字段值
                         const inputs = containerEl.querySelectorAll('input, textarea, select');
-                        inputs.forEach(input => {
+                        inputs.forEach((input) => {
                             if (input.type === 'checkbox') {
                                 input.checked = false;
                             } else {
@@ -171,14 +175,16 @@ class SchemaEditor extends HTMLElement {
                 }
 
                 // 触发值变化事件
-                this.dispatchEvent(new CustomEvent('value-change', {
-                    detail: { value: this.getValue() }
-                }));
+                this.dispatchEvent(
+                    new CustomEvent('value-change', {
+                        detail: { value: this.getValue() }
+                    })
+                );
             });
         });
 
         // 处理数组项删除
-        container.querySelectorAll('[data-array-item-remove]').forEach(btn => {
+        container.querySelectorAll('[data-array-item-remove]').forEach((btn) => {
             btn.addEventListener('click', (e) => {
                 const arrayItem = e.target.closest('[data-array-index]');
                 if (!arrayItem) return;
@@ -193,9 +199,11 @@ class SchemaEditor extends HTMLElement {
                 // 重新索引所有剩余的数组项
                 this.reindexArrayItems(arrayContainer);
 
-                this.dispatchEvent(new CustomEvent('value-change', {
-                    detail: { value: this.getValue() }
-                }));
+                this.dispatchEvent(
+                    new CustomEvent('value-change', {
+                        detail: { value: this.getValue() }
+                    })
+                );
             });
         });
 
@@ -212,7 +220,7 @@ class SchemaEditor extends HTMLElement {
 
         const itemsContainer = arrayContainer.querySelector('.space-y-2') || arrayContainer;
         // 只选择直接子元素，避免包含嵌套数组项
-        const currentItems = Array.from(itemsContainer.children).filter(el => el.hasAttribute('data-array-index'));
+        const currentItems = Array.from(itemsContainer.children).filter((el) => el.hasAttribute('data-array-index'));
         const index = currentItems.length;
         const itemPath = fieldPath ? `${fieldPath}[${index}]` : `${fieldId}[${index}]`;
 
@@ -247,9 +255,11 @@ class SchemaEditor extends HTMLElement {
             this.updateInputValues(this.currentValue);
         }
 
-        this.dispatchEvent(new CustomEvent('value-change', {
-            detail: { value: this.getValue() }
-        }));
+        this.dispatchEvent(
+            new CustomEvent('value-change', {
+                detail: { value: this.getValue() }
+            })
+        );
     }
 
     /**
@@ -299,21 +309,21 @@ class SchemaEditor extends HTMLElement {
 
         // 处理 anyOf/oneOf
         if (jsonSchema.anyOf) {
-            const nonNullSchema = jsonSchema.anyOf.find(s => s.type !== 'null' && s.type !== undefined);
+            const nonNullSchema = jsonSchema.anyOf.find((s) => s.type !== 'null' && s.type !== undefined);
             if (nonNullSchema) {
                 return this.renderFromJSONSchema(nonNullSchema, value, fieldPath);
             }
         }
 
         if (jsonSchema.oneOf) {
-            const nonNullSchema = jsonSchema.oneOf.find(s => s.type !== 'null' && s.type !== undefined);
+            const nonNullSchema = jsonSchema.oneOf.find((s) => s.type !== 'null' && s.type !== undefined);
             if (nonNullSchema) {
                 return this.renderFromJSONSchema(nonNullSchema, value, fieldPath);
             }
         }
 
         const type = jsonSchema.type;
-        const actualType = Array.isArray(type) ? type.find(t => t !== 'null') : type;
+        const actualType = Array.isArray(type) ? type.find((t) => t !== 'null') : type;
 
         switch (actualType) {
             case 'string':
@@ -349,8 +359,7 @@ class SchemaEditor extends HTMLElement {
         }
 
         // 检查是否是文本域
-        const isTextarea = jsonSchema.format === 'textarea' ||
-                          (jsonSchema.maxLength && jsonSchema.maxLength > 100);
+        const isTextarea = jsonSchema.format === 'textarea' || (jsonSchema.maxLength && jsonSchema.maxLength > 100);
 
         const widgetHtml = isTextarea
             ? `<textarea
@@ -425,7 +434,8 @@ class SchemaEditor extends HTMLElement {
         const description = jsonSchema.description || '';
         const fieldId = this.generateFieldId();
         const nameAttr = fieldPath || fieldId;
-        const checkedValue = value !== undefined ? value : (jsonSchema.default !== undefined ? jsonSchema.default : false);
+        const checkedValue =
+            value !== undefined ? value : jsonSchema.default !== undefined ? jsonSchema.default : false;
         const checked = checkedValue === true ? 'checked' : '';
         const descriptionHtml = this.renderDescription(description);
 
@@ -457,11 +467,13 @@ class SchemaEditor extends HTMLElement {
         const options = jsonSchema.enum || [];
         const descriptionHtml = this.renderDescription(description);
 
-        let optionsHtml = options.map(opt => {
-            const optValue = this.escapeHtml(String(opt));
-            const selected = value === opt ? 'selected' : '';
-            return `<option value="${optValue}" ${selected}>${optValue}</option>`;
-        }).join('');
+        const optionsHtml = options
+            .map((opt) => {
+                const optValue = this.escapeHtml(String(opt));
+                const selected = value === opt ? 'selected' : '';
+                return `<option value="${optValue}" ${selected}>${optValue}</option>`;
+            })
+            .join('');
 
         return `
             <div class="mb-4">
@@ -602,10 +614,11 @@ class SchemaEditor extends HTMLElement {
             `;
         }
 
-        const itemsHtml = arrayValue.map((itemValue, index) => {
-            const itemPath = fieldPath ? `${fieldPath}[${index}]` : `${fieldId}[${index}]`;
-            const itemHtml = this.renderFromJSONSchema(itemsSchema, itemValue, itemPath);
-            return `
+        const itemsHtml = arrayValue
+            .map((itemValue, index) => {
+                const itemPath = fieldPath ? `${fieldPath}[${index}]` : `${fieldId}[${index}]`;
+                const itemHtml = this.renderFromJSONSchema(itemsSchema, itemValue, itemPath);
+                return `
                 <div class="mb-3 p-3 border border-gray-200 rounded-md" data-array-index="${index}">
                     <div class="flex justify-between items-center mb-2">
                         <span class="text-xs text-gray-500">第 ${index + 1} 项</span>
@@ -614,7 +627,8 @@ class SchemaEditor extends HTMLElement {
                     ${itemHtml}
                 </div>
             `;
-        }).join('');
+            })
+            .join('');
 
         const itemsSchemaJson = this.escapeHtml(JSON.stringify(itemsSchema));
         const addButtonHtml = `
@@ -651,14 +665,14 @@ class SchemaEditor extends HTMLElement {
         }
 
         if (propertySchema.anyOf) {
-            const hasNull = propertySchema.anyOf.some(s => s.type === 'null');
+            const hasNull = propertySchema.anyOf.some((s) => s.type === 'null');
             if (hasNull) {
                 return true;
             }
         }
 
         if (propertySchema.oneOf) {
-            const hasNull = propertySchema.oneOf.some(s => s.type === 'null');
+            const hasNull = propertySchema.oneOf.some((s) => s.type === 'null');
             if (hasNull) {
                 return true;
             }
@@ -702,7 +716,7 @@ class SchemaEditor extends HTMLElement {
             '"': '&quot;',
             "'": '&#039;'
         };
-        return String(text).replace(/[&<>"']/g, m => map[m]);
+        return String(text).replace(/[&<>"']/g, (m) => map[m]);
     }
 
     /**
@@ -712,7 +726,7 @@ class SchemaEditor extends HTMLElement {
     reindexArrayItems(arrayContainer) {
         const itemsContainer = arrayContainer.querySelector('.space-y-2') || arrayContainer;
         // 只选择直接子元素，避免包含嵌套数组项
-        const arrayItems = Array.from(itemsContainer.children).filter(el => el.hasAttribute('data-array-index'));
+        const arrayItems = Array.from(itemsContainer.children).filter((el) => el.hasAttribute('data-array-index'));
         const fieldPath = arrayContainer.getAttribute('data-field-path');
 
         // 按当前索引排序，确保顺序正确
@@ -735,7 +749,7 @@ class SchemaEditor extends HTMLElement {
 
             // 更新所有子元素的 data-field-path 属性
             const inputs = item.querySelectorAll('[data-field-path]');
-            inputs.forEach(input => {
+            inputs.forEach((input) => {
                 const oldPath = input.getAttribute('data-field-path');
                 if (!oldPath) return;
 
@@ -767,7 +781,7 @@ class SchemaEditor extends HTMLElement {
         const result = {};
         const inputs = container.querySelectorAll('[data-field-path]');
 
-        inputs.forEach(input => {
+        inputs.forEach((input) => {
             const path = input.getAttribute('data-field-path');
             if (!path) return;
 
@@ -814,7 +828,6 @@ class SchemaEditor extends HTMLElement {
                 value = [];
             }
 
-
             // 如果是 optional 字段且值为 undefined，不设置该值
             if (isOptional && value === undefined) {
                 return;
@@ -859,7 +872,7 @@ class SchemaEditor extends HTMLElement {
 
     applyInboxProtocolConstraints(container) {
         let normalized = false;
-        container.querySelectorAll('select[data-field-path]').forEach(select => {
+        container.querySelectorAll('select[data-field-path]').forEach((select) => {
             const fieldPath = select.getAttribute('data-field-path') || '';
             if (!this.isInboxProtocolPath(fieldPath)) return;
 
@@ -905,7 +918,7 @@ class SchemaEditor extends HTMLElement {
         // 获取所有 optional 字段容器
         const optionalFields = container.querySelectorAll('[data-optional="true"]');
 
-        optionalFields.forEach(optionalField => {
+        optionalFields.forEach((optionalField) => {
             const fieldKey = optionalField.getAttribute('data-field-key');
             if (!fieldKey) return;
 
@@ -915,9 +928,11 @@ class SchemaEditor extends HTMLElement {
                 // 如果没有输入框，可能是空数组或空对象，检查并删除
                 if (result[fieldKey] !== undefined) {
                     const value = result[fieldKey];
-                    if ((Array.isArray(value) && value.length === 0) ||
+                    if (
+                        (Array.isArray(value) && value.length === 0) ||
                         (typeof value === 'object' && value !== null && Object.keys(value).length === 0) ||
-                        value === '') {
+                        value === ''
+                    ) {
                         delete result[fieldKey];
                     }
                 }
@@ -931,9 +946,11 @@ class SchemaEditor extends HTMLElement {
             if (path === fieldKey) {
                 const value = result[fieldKey];
                 if (value !== undefined) {
-                    if ((Array.isArray(value) && value.length === 0) ||
+                    if (
+                        (Array.isArray(value) && value.length === 0) ||
                         (typeof value === 'object' && value !== null && Object.keys(value).length === 0) ||
-                        value === '') {
+                        value === ''
+                    ) {
                         delete result[fieldKey];
                     }
                 }
@@ -941,9 +958,11 @@ class SchemaEditor extends HTMLElement {
                 // 嵌套字段，使用完整路径
                 const value = this.getNestedValue(result, path);
                 if (value !== undefined) {
-                    if ((Array.isArray(value) && value.length === 0) ||
+                    if (
+                        (Array.isArray(value) && value.length === 0) ||
                         (typeof value === 'object' && value !== null && Object.keys(value).length === 0) ||
-                        value === '') {
+                        value === ''
+                    ) {
                         // 提取基础路径（fieldKey对应的路径）
                         const pathParts = path.split('.');
                         const fieldKeyIndex = pathParts.indexOf(fieldKey);

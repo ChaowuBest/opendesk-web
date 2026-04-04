@@ -1,10 +1,10 @@
-import { type Component, SelectList, type TUI, Input, Key, matchesKey } from "@mariozechner/pi-tui";
-import { defaultSelectListTheme } from "../../theme.js";
-import { Setting } from "../../../utils/setting.js";
-import chalk from "chalk";
-import fs from "fs";
-import os from "os";
-import path from "path";
+import { type Component, SelectList, type TUI, Input, Key, matchesKey } from '@mariozechner/pi-tui';
+import { defaultSelectListTheme } from '../../theme.js';
+import { Setting } from '../../../utils/setting.js';
+import chalk from 'chalk';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 
 type PageState = 'list' | 'add';
 
@@ -47,9 +47,9 @@ export class FileMgrConfigPage implements Component {
         const items = [
             ...roots.map((root, i) => ({
                 value: `delete:${i}`,
-                label: `  ${chalk.white(root)}  ${chalk.dim.red('[删除]')}`,
+                label: `  ${chalk.white(root)}  ${chalk.dim.red('[删除]')}`
             })),
-            { value: 'add', label: chalk.green('  + 添加新目录') },
+            { value: 'add', label: chalk.green('  + 添加新目录') }
         ];
 
         this.list = new SelectList(items, items.length, defaultSelectListTheme);
@@ -101,9 +101,7 @@ export class FileMgrConfigPage implements Component {
         const input = rawInput || os.homedir();
 
         // 展开 ~ 并解析为绝对路径
-        const expanded = input.startsWith('~')
-            ? os.homedir() + input.slice(1)
-            : input;
+        const expanded = input.startsWith('~') ? os.homedir() + input.slice(1) : input;
         const root = path.resolve(expanded);
 
         let isDir = false;
@@ -162,9 +160,9 @@ export class FileMgrConfigPage implements Component {
                 filemgr: {
                     ...(data.applications?.filemgr ?? {}),
                     enabled: true,
-                    entries: currentEntries,
-                },
-            },
+                    entries: currentEntries
+                }
+            }
         };
 
         setting.setData(newData);

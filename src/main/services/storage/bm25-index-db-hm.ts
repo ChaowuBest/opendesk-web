@@ -47,19 +47,17 @@ type JiebaAddon = {
 const ARCH_CANDIDATES = [
     process.arch,
     process.arch === 'arm64' ? 'aarch64' : undefined,
-    process.arch === 'x64' ? 'x86_64' : undefined,
+    process.arch === 'x64' ? 'x86_64' : undefined
 ].filter(Boolean) as string[];
 
 const SQLITE_ADDON_CANDIDATES = [
     process.env.HM_SQLITE_ADDON_PATH,
     ...(resourcesPath
         ? ARCH_CANDIDATES.map((arch) =>
-            path.resolve(resourcesPath, 'native', 'openharmony', arch, 'hm_sqlite_addon.node')
-        )
+              path.resolve(resourcesPath, 'native', 'openharmony', arch, 'hm_sqlite_addon.node')
+          )
         : []),
-    ...ARCH_CANDIDATES.map((arch) =>
-        path.resolve(projectRoot, 'native', 'openharmony', arch, 'hm_sqlite_addon.node')
-    ),
+    ...ARCH_CANDIDATES.map((arch) => path.resolve(projectRoot, 'native', 'openharmony', arch, 'hm_sqlite_addon.node'))
 ].filter(Boolean) as string[];
 
 function unique(items: string[]): string[] {
@@ -79,20 +77,19 @@ function loadJieba(): JiebaInstance {
 
     const jiebaNameCandidates = ARCH_CANDIDATES.flatMap((arch) => [
         `jieba.${arch}-unknown-linux-musl.node`,
-        `jieba.${arch}.node`,
-    ]).concat([
-        'hm_jieba_addon.node',
-        'jieba.node',
-    ]);
+        `jieba.${arch}.node`
+    ]).concat(['hm_jieba_addon.node', 'jieba.node']);
 
     const baseDirs = [
-        ...(resourcesPath ? ARCH_CANDIDATES.map((arch) => path.resolve(resourcesPath, 'native', 'openharmony', arch)) : []),
-        ...ARCH_CANDIDATES.map((arch) => path.resolve(projectRoot, 'native', 'openharmony', arch)),
+        ...(resourcesPath
+            ? ARCH_CANDIDATES.map((arch) => path.resolve(resourcesPath, 'native', 'openharmony', arch))
+            : []),
+        ...ARCH_CANDIDATES.map((arch) => path.resolve(projectRoot, 'native', 'openharmony', arch))
     ];
 
     const jiebaCandidates = [
         jiebaEnvPath,
-        ...baseDirs.flatMap((dir) => jiebaNameCandidates.map((name) => path.resolve(dir, name))),
+        ...baseDirs.flatMap((dir) => jiebaNameCandidates.map((name) => path.resolve(dir, name)))
     ].filter(Boolean) as string[];
 
     let jiebaAddon: JiebaAddon | null = null;
@@ -109,7 +106,7 @@ function loadJieba(): JiebaInstance {
     if (!jiebaAddon.Jieba?.withEmbeddedDict) {
         throw new Error(
             'hm jieba addon does not support Jieba.withEmbeddedDict(). ' +
-            'Please rebuild native addon with embedded dict.'
+                'Please rebuild native addon with embedded dict.'
         );
     }
 
@@ -235,9 +232,7 @@ export class BM25IndexDBHm implements IBM25IndexDB {
         const tokens = this.tokenize(query);
         if (tokens.length === 0) return '';
 
-        return tokens
-            .map((token) => `"${token.replace(/"/g, '""')}"`)
-            .join(' AND ');
+        return tokens.map((token) => `"${token.replace(/"/g, '""')}"`).join(' AND ');
     }
 
     async initialize(): Promise<void> {
@@ -273,7 +268,7 @@ export class BM25IndexDBHm implements IBM25IndexDB {
         if (!matchExpr) return [];
 
         const topK = Math.max(1, Math.trunc(Number(options?.topK)) || 10);
-        const rows = await this.querySql(
+        const rows = (await this.querySql(
             `
             SELECT item_id, item_type, text, bm25(${this.tableName}) AS rank
             FROM ${this.tableName}
@@ -282,13 +277,13 @@ export class BM25IndexDBHm implements IBM25IndexDB {
             LIMIT ?
             `,
             [columnName, matchExpr, topK * 2]
-        ) as Array<{ item_id: string; item_type: string; text: string; rank: number }>;
+        )) as Array<{ item_id: string; item_type: string; text: string; rank: number }>;
 
         return rows.map((row) => ({
             item_id: row.item_id,
             item_type: row.item_type,
             text: row.text,
-            score: -(row.rank ?? 0),
+            score: -(row.rank ?? 0)
         }));
     }
 
@@ -324,10 +319,10 @@ export class BM25IndexDBHm implements IBM25IndexDB {
 
         await this.runTransaction(async () => {
             for (const record of records) {
-                await this.runSql(
-                    `DELETE FROM ${this.tableName} WHERE item_id = ? AND item_type = ?`,
-                    [record.item_id, record.item_type]
-                );
+                await this.runSql(`DELETE FROM ${this.tableName} WHERE item_id = ? AND item_type = ?`, [
+                    record.item_id,
+                    record.item_type
+                ]);
                 const tokenized = this.tokenize(record.text).join(' ');
                 await this.runSql(
                     `INSERT INTO ${this.tableName}(bm25_id, item_id, item_type, text) VALUES (?, ?, ?, ?)`,

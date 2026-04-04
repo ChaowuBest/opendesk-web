@@ -11,7 +11,6 @@
 
 import { z } from 'zod';
 
-
 const CalendarItemSchema = z.object({
     uid: z.string(),
     subject: z.string(),
