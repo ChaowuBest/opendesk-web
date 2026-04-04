@@ -74,7 +74,7 @@ export function matchesCron(cronExpression: string, date: Date = new Date()): bo
         matchCronField(hour, date.getUTCHours(), 0, 23) &&
         matchCronField(dayOfMonth, date.getUTCDate(), 1, 31) &&
         matchCronField(month, date.getUTCMonth() + 1, 1, 12) &&
-        matchCronField(dayOfWeek, date.getUTCDay(), 0, 7)  // 0 和 7 都代表周日
+        matchCronField(dayOfWeek, date.getUTCDay(), 0, 7) // 0 和 7 都代表周日
     );
 }
 
@@ -84,7 +84,9 @@ export function matchesCron(cronExpression: string, date: Date = new Date()): bo
  * 返回 { localMinute, localHour, localDow, converted } —— converted 为 true 表示已转换。
  */
 function convertCronFieldsToLocal(
-    minute: string, hour: string, dow: string
+    minute: string,
+    hour: string,
+    dow: string
 ): { localMinute: string; localHour: string; localDow: string; converted: boolean } {
     if (!/^\d+$/.test(hour) || !/^\d+$/.test(minute)) {
         return { localMinute: minute, localHour: hour, localDow: dow, converted: false };
@@ -94,23 +96,38 @@ function convertCronFieldsToLocal(
     let m = parseInt(minute, 10) + (offsetMin % 60);
     let h = parseInt(hour, 10) + Math.floor(offsetMin / 60);
 
-    if (m >= 60) { h += 1; m -= 60; }
-    if (m < 0) { h -= 1; m += 60; }
+    if (m >= 60) {
+        h += 1;
+        m -= 60;
+    }
+    if (m < 0) {
+        h -= 1;
+        m += 60;
+    }
 
     let dayShift = 0;
-    if (h >= 24) { h -= 24; dayShift = 1; }
-    if (h < 0) { h += 24; dayShift = -1; }
+    if (h >= 24) {
+        h -= 24;
+        dayShift = 1;
+    }
+    if (h < 0) {
+        h += 24;
+        dayShift = -1;
+    }
 
     let localDow = dow;
     if (dayShift !== 0 && dow !== '*') {
-        const shiftDay = (d: number) => ((d + dayShift) % 7 + 7) % 7;
+        const shiftDay = (d: number) => (((d + dayShift) % 7) + 7) % 7;
         if (/^\d+$/.test(dow)) {
             localDow = String(shiftDay(parseInt(dow, 10)));
         } else if (/^\d+-\d+$/.test(dow)) {
             const [s, e] = dow.split('-').map(Number);
             localDow = `${shiftDay(s)}-${shiftDay(e)}`;
         } else if (/^[\d,]+$/.test(dow)) {
-            localDow = dow.split(',').map(d => String(shiftDay(parseInt(d, 10)))).join(',');
+            localDow = dow
+                .split(',')
+                .map((d) => String(shiftDay(parseInt(d, 10))))
+                .join(',');
         }
     }
 
@@ -134,7 +151,7 @@ export function describeCron(cronExpression: string): string {
             const [s, e] = localDow.split('-').map(Number);
             parts.push(`周${dayNames[s] || s}-${dayNames[e] || e}`);
         } else if (localDow.includes(',')) {
-            const days = localDow.split(',').map(d => `周${dayNames[parseInt(d)] || d}`);
+            const days = localDow.split(',').map((d) => `周${dayNames[parseInt(d)] || d}`);
             parts.push(days.join('/'));
         } else {
             parts.push(`每周${dayNames[parseInt(localDow)] || localDow}`);

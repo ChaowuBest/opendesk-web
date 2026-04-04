@@ -11,7 +11,6 @@
 
 import { AgentOperableHTMLElement, RendererTool, RendererToolset } from '../../widget_utils.js';
 
-
 class NewsEntryWidget extends AgentOperableHTMLElement {
     constructor() {
         super();
@@ -38,9 +37,12 @@ class NewsEntryWidget extends AgentOperableHTMLElement {
         if (this.articles.length > 0) {
             const headlineTool = new RendererTool('getTopHeadlines', '获取当前新闻列表（前10条）', z.object({}));
             headlineTool.setExecutor(async () => {
-                return this.articles.slice(0, 10).map((item, idx) => {
-                    return `${idx + 1}. ${item.title}\n   链接: ${item.url}\n   来源: ${item.source}，作者: ${item.author || '未知'}，热度: ${item.points}`;
-                }).join('\n');
+                return this.articles
+                    .slice(0, 10)
+                    .map((item, idx) => {
+                        return `${idx + 1}. ${item.title}\n   链接: ${item.url}\n   来源: ${item.source}，作者: ${item.author || '未知'}，热度: ${item.points}`;
+                    })
+                    .join('\n');
             });
             toolset.addTool(headlineTool);
 
@@ -89,7 +91,7 @@ class NewsEntryWidget extends AgentOperableHTMLElement {
             console.info('[news-ui] fetchNews start');
             const hits = await window.applicationAPI.callMainWorld('fetchTopNews');
             console.info('[news-ui] fetchNews hits received', hits?.length);
-            this.articles = hits.map(hit => ({
+            this.articles = hits.map((hit) => ({
                 title: hit.title || hit.story_title || 'Untitled',
                 url: hit.url || hit.story_url || `https://news.ycombinator.com/item?id=${hit.objectID}`,
                 source: 'Hacker News',
@@ -198,10 +200,11 @@ class NewsEntryWidget extends AgentOperableHTMLElement {
             this.selectedIndex = 0;
         }
 
-        list.innerHTML = listArticles.map((article, idx) => {
-            const badgeClasses = 'bg-gray-100 text-gray-500';
-            const dividerClass = idx === 0 ? '' : 'border-t border-blue-300';
-            return `
+        list.innerHTML = listArticles
+            .map((article, idx) => {
+                const badgeClasses = 'bg-gray-100 text-gray-500';
+                const dividerClass = idx === 0 ? '' : 'border-t border-blue-300';
+                return `
             <div class="px-2 py-2 cursor-pointer transition group hover:bg-blue-50 border-l-4 border-transparent hover:border-blue-500 w-full ${dividerClass}" data-index="${idx}">
                 <div class="flex items-start gap-2 w-full">
                     <span class="shrink-0 w-6 h-6 rounded-sm flex items-center justify-center text-[9px] font-bold ${badgeClasses}">${idx + 1}</span>
@@ -213,10 +216,11 @@ class NewsEntryWidget extends AgentOperableHTMLElement {
                 </div>
             </div>
             `;
-        }).join('');
+            })
+            .join('');
 
         // ensure clicking the link doesn't prevent selection when clicking elsewhere
-        list.querySelectorAll('[data-index]').forEach(item => {
+        list.querySelectorAll('[data-index]').forEach((item) => {
             item.addEventListener('click', () => {
                 this.selectedIndex = Number(item.dataset.index);
                 this.renderArticleList();
@@ -229,7 +233,7 @@ class NewsEntryWidget extends AgentOperableHTMLElement {
             });
         });
 
-        list.querySelectorAll('[data-index]').forEach(item => {
+        list.querySelectorAll('[data-index]').forEach((item) => {
             item.addEventListener('click', () => {
                 this.selectedIndex = Number(item.dataset.index);
                 this.renderArticleList();

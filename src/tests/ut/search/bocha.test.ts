@@ -27,7 +27,7 @@ export async function runBochaSearchTests(): Promise<boolean> {
         console.log('1. 测试基本搜索 - "阿里巴巴 ESG报告"');
         const toolResult1 = await bochaTool.execute({
             query: '阿里巴巴 ESG报告',
-            count: 5,
+            count: 5
         });
         if (toolResult1.status === 'error') {
             console.error('   ✗ 基本搜索失败:', toolResult1.result);
@@ -41,7 +41,7 @@ export async function runBochaSearchTests(): Promise<boolean> {
         const toolResult2 = await bochaTool.execute({
             query: '人工智能发展趋势',
             count: 3,
-            summary: true,
+            summary: true
         });
         if (toolResult2.status === 'error') {
             console.error('   ✗ 带摘要搜索失败:', toolResult2.result);
@@ -55,7 +55,7 @@ export async function runBochaSearchTests(): Promise<boolean> {
         const toolResult3 = await bochaTool.execute({
             query: 'OpenAI 最新动态',
             count: 3,
-            freshness: 'oneWeek',
+            freshness: 'oneWeek'
         });
         if (toolResult3.status === 'error') {
             console.error('   ✗ 时间范围筛选搜索失败:', toolResult3.result);
@@ -74,7 +74,7 @@ export async function runBochaSearchTests(): Promise<boolean> {
             args_string: JSON.stringify({ query: '机器学习' }),
             args_object: { query: '机器学习' },
             status: 'success' as const,
-            result: '**结果数量**: 5',
+            result: '**结果数量**: 5'
         };
         const rendered = bochaTool.renderToolCallCli(mockToolCall as any, 80);
         console.log('   ✓ 渲染成功');

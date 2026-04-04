@@ -68,22 +68,15 @@ export class RecallMapper {
      */
     static activityFromDb(raw) {
         // 处理 metadata 的兼容性（可能是字符串格式）
-        const metadata = typeof raw.metadata === 'string'
-            ? JSON.parse(raw.metadata)
-            : (raw.metadata || {});
+        const metadata = typeof raw.metadata === 'string' ? JSON.parse(raw.metadata) : raw.metadata || {};
 
-        const activity = new RecallActivity(
-            raw.activityId,
-            raw.activityName,
-            raw.activityPath,
-            {
-                captureMode: raw.captureMode,
-                type: raw.type,
-                metadata: metadata,
-                pdfPath: raw.pdfPath,
-                pdfStatus: raw.pdfStatus
-            }
-        );
+        const activity = new RecallActivity(raw.activityId, raw.activityName, raw.activityPath, {
+            captureMode: raw.captureMode,
+            type: raw.type,
+            metadata: metadata,
+            pdfPath: raw.pdfPath,
+            pdfStatus: raw.pdfStatus
+        });
 
         // 恢复时间信息
         activity.startTime = raw.startTime;
@@ -161,31 +154,26 @@ export class RecallMapper {
      * @returns {RecallSnapshot} 快照实体
      */
     static snapshotFromDb(raw) {
-        return new RecallSnapshot(
-            raw.snapshotId,
-            raw.captureId,
-            raw.activityId,
-            {
-                sourceType: raw.sourceType,
-                sourceId: raw.sourceId,
-                sourceName: raw.sourceName,
-                sourceIndex: raw.sourceIndex,
-                imagePath: raw.imagePath,
-                thumbnailPath: raw.thumbnailPath,
-                imageFormat: raw.imageFormat,
-                imageWidth: raw.imageWidth,
-                imageHeight: raw.imageHeight,
-                imageSize: raw.imageSize,
-                isMarked: Boolean(raw.isMarked), // 0/1 → Boolean
-                isKeyframe: Boolean(raw.isKeyframe), // 0/1 → Boolean
-                hasAnnotation: Boolean(raw.hasAnnotation),
-                hasExtraction: Boolean(raw.hasExtraction),
-                extractionStatus: raw.extractionStatus,
-                dHash: raw.dHash,
-                metadata: raw.metadata || {},
-                createdAt: raw.createdAt  // 恢复创建时间
-            }
-        );
+        return new RecallSnapshot(raw.snapshotId, raw.captureId, raw.activityId, {
+            sourceType: raw.sourceType,
+            sourceId: raw.sourceId,
+            sourceName: raw.sourceName,
+            sourceIndex: raw.sourceIndex,
+            imagePath: raw.imagePath,
+            thumbnailPath: raw.thumbnailPath,
+            imageFormat: raw.imageFormat,
+            imageWidth: raw.imageWidth,
+            imageHeight: raw.imageHeight,
+            imageSize: raw.imageSize,
+            isMarked: Boolean(raw.isMarked), // 0/1 → Boolean
+            isKeyframe: Boolean(raw.isKeyframe), // 0/1 → Boolean
+            hasAnnotation: Boolean(raw.hasAnnotation),
+            hasExtraction: Boolean(raw.hasExtraction),
+            extractionStatus: raw.extractionStatus,
+            dHash: raw.dHash,
+            metadata: raw.metadata || {},
+            createdAt: raw.createdAt // 恢复创建时间
+        });
     }
 
     // ==================== Capture 转换 ====================
@@ -218,19 +206,14 @@ export class RecallMapper {
      * @returns {RecallCapture} 捕获实体
      */
     static captureFromDb(raw) {
-        return new RecallCapture(
-            raw.captureId,
-            raw.activityId,
-            raw.captureIndex,
-            {
-                captureFolderName: raw.captureFolderName,
-                triggerType: raw.triggerType,
-                eventType: raw.eventType,
-                captureStrategy: raw.captureStrategy,
-                captureTargets: raw.captureTargets || [],
-                isMarked: Boolean(raw.isMarked) // 0/1 → Boolean
-            }
-        );
+        return new RecallCapture(raw.captureId, raw.activityId, raw.captureIndex, {
+            captureFolderName: raw.captureFolderName,
+            triggerType: raw.triggerType,
+            eventType: raw.eventType,
+            captureStrategy: raw.captureStrategy,
+            captureTargets: raw.captureTargets || [],
+            isMarked: Boolean(raw.isMarked) // 0/1 → Boolean
+        });
     }
 
     // ==================== Extraction 转换 ====================
@@ -259,17 +242,12 @@ export class RecallMapper {
      * @returns {RecallExtraction} 提取实体
      */
     static extractionFromDb(raw) {
-        return new RecallExtraction(
-            raw.extractionId,
-            raw.snapshotId,
-            raw.activityId,
-            {
-                contentType: raw.contentType,
-                content: raw.content,
-                confidence: raw.confidence,
-                pageType: raw.pageType
-            }
-        );
+        return new RecallExtraction(raw.extractionId, raw.snapshotId, raw.activityId, {
+            contentType: raw.contentType,
+            content: raw.content,
+            confidence: raw.confidence,
+            pageType: raw.pageType
+        });
     }
 
     // ==================== Tag 转换 ====================
@@ -298,18 +276,14 @@ export class RecallMapper {
      * @returns {RecallTag} 标签实体
      */
     static tagFromDb(raw) {
-        return new RecallTag(
-            raw.tagId,
-            raw.tagName,
-            {
-                tagColor: raw.tagColor,
-                tagIcon: raw.tagIcon,
-                usageCount: raw.usageCount || 0,
-                isSystem: Boolean(raw.isSystem), // 0/1 → Boolean
-                createdAt: raw.createdAt,
-                updatedAt: raw.updatedAt
-            }
-        );
+        return new RecallTag(raw.tagId, raw.tagName, {
+            tagColor: raw.tagColor,
+            tagIcon: raw.tagIcon,
+            usageCount: raw.usageCount || 0,
+            isSystem: Boolean(raw.isSystem), // 0/1 → Boolean
+            createdAt: raw.createdAt,
+            updatedAt: raw.updatedAt
+        });
     }
 
     // ==================== Tagging 转换 ====================
@@ -339,19 +313,12 @@ export class RecallMapper {
      * @returns {RecallTagging} 标签关联实体
      */
     static taggingFromDb(raw) {
-        return new RecallTagging(
-            raw.taggingId,
-            raw.tagId,
-            raw.tagName,
-            raw.entityType,
-            raw.entityId,
-            {
-                confidence: raw.confidence || 1.0,
-                source: raw.source || 'manual',
-                createdAt: raw.createdAt,
-                createdBy: raw.createdBy || 'system'
-            }
-        );
+        return new RecallTagging(raw.taggingId, raw.tagId, raw.tagName, raw.entityType, raw.entityId, {
+            confidence: raw.confidence || 1.0,
+            source: raw.source || 'manual',
+            createdAt: raw.createdAt,
+            createdBy: raw.createdBy || 'system'
+        });
     }
 
     // ==================== 私有辅助方法 ====================

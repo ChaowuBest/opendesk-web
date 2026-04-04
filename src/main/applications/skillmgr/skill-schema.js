@@ -37,29 +37,29 @@ const COMPATIBILITY_MAX_LEN = 500;
  * @returns {{ frontmatter: object, body: string } | { error: string }}
  */
 export function parseSkillMd(raw) {
-  if (typeof raw !== 'string' || !raw.trim()) {
-    return { error: 'SKILL.md 内容为空' };
-  }
-  const trimmed = raw.trim();
-  if (!trimmed.startsWith('---')) {
-    return { error: 'SKILL.md 必须以 YAML frontmatter（---）开头' };
-  }
-  const secondDash = trimmed.indexOf('\n---', 3);
-  if (secondDash === -1) {
-    return { error: 'SKILL.md 未找到 frontmatter 结束标记（---）' };
-  }
-  const frontmatterRaw = trimmed.slice(3, secondDash).trim();
-  const body = trimmed.slice(secondDash + 4).trim();
-  let frontmatter;
-  try {
-    frontmatter = parseYaml(frontmatterRaw);
-  } catch (e) {
-    return { error: `YAML frontmatter 解析失败: ${e.message}` };
-  }
-  if (!frontmatter || typeof frontmatter !== 'object') {
-    return { error: 'frontmatter 必须为非空对象' };
-  }
-  return { frontmatter, body };
+    if (typeof raw !== 'string' || !raw.trim()) {
+        return { error: 'SKILL.md 内容为空' };
+    }
+    const trimmed = raw.trim();
+    if (!trimmed.startsWith('---')) {
+        return { error: 'SKILL.md 必须以 YAML frontmatter（---）开头' };
+    }
+    const secondDash = trimmed.indexOf('\n---', 3);
+    if (secondDash === -1) {
+        return { error: 'SKILL.md 未找到 frontmatter 结束标记（---）' };
+    }
+    const frontmatterRaw = trimmed.slice(3, secondDash).trim();
+    const body = trimmed.slice(secondDash + 4).trim();
+    let frontmatter;
+    try {
+        frontmatter = parseYaml(frontmatterRaw);
+    } catch (e) {
+        return { error: `YAML frontmatter 解析失败: ${e.message}` };
+    }
+    if (!frontmatter || typeof frontmatter !== 'object') {
+        return { error: 'frontmatter 必须为非空对象' };
+    }
+    return { frontmatter, body };
 }
 
 /**
@@ -68,17 +68,17 @@ export function parseSkillMd(raw) {
  * @returns {{ valid: boolean, error?: string }}
  */
 export function validateSkillName(name) {
-  if (typeof name !== 'string') {
-    return { valid: false, error: 'name 必须为字符串' };
-  }
-  const trimmed = name.trim();
-  if (trimmed.length === 0) {
-    return { valid: false, error: 'name 不能为空' };
-  }
-  if (trimmed.length > NAME_MAX_LEN) {
-    return { valid: false, error: `name 长度不能超过 ${NAME_MAX_LEN} 字符` };
-  }
-  return { valid: true };
+    if (typeof name !== 'string') {
+        return { valid: false, error: 'name 必须为字符串' };
+    }
+    const trimmed = name.trim();
+    if (trimmed.length === 0) {
+        return { valid: false, error: 'name 不能为空' };
+    }
+    if (trimmed.length > NAME_MAX_LEN) {
+        return { valid: false, error: `name 长度不能超过 ${NAME_MAX_LEN} 字符` };
+    }
+    return { valid: true };
 }
 
 /**
@@ -87,17 +87,17 @@ export function validateSkillName(name) {
  * @returns {{ valid: boolean, error?: string }}
  */
 export function validateSkillDescription(description) {
-  if (description == null) {
-    return { valid: false, error: 'description 必填' };
-  }
-  const str = typeof description === 'string' ? description : String(description);
-  if (str.length === 0) {
-    return { valid: false, error: 'description 不能为空' };
-  }
-  if (str.length > DESCRIPTION_MAX_LEN) {
-    return { valid: false, error: `description 长度不能超过 ${DESCRIPTION_MAX_LEN} 字符` };
-  }
-  return { valid: true };
+    if (description == null) {
+        return { valid: false, error: 'description 必填' };
+    }
+    const str = typeof description === 'string' ? description : String(description);
+    if (str.length === 0) {
+        return { valid: false, error: 'description 不能为空' };
+    }
+    if (str.length > DESCRIPTION_MAX_LEN) {
+        return { valid: false, error: `description 长度不能超过 ${DESCRIPTION_MAX_LEN} 字符` };
+    }
+    return { valid: true };
 }
 
 /**
@@ -106,20 +106,23 @@ export function validateSkillDescription(description) {
  * @returns {{ valid: boolean, error?: string }}
  */
 export function validateSkillFrontmatter(frontmatter) {
-  if (!frontmatter || typeof frontmatter !== 'object') {
-    return { valid: false, error: 'frontmatter 必须为非空对象' };
-  }
-  const nameResult = validateSkillName(frontmatter.name);
-  if (!nameResult.valid) return nameResult;
-  const descResult = validateSkillDescription(frontmatter.description);
-  if (!descResult.valid) return descResult;
-  if (frontmatter.compatibility != null) {
-    const comp = String(frontmatter.compatibility);
-    if (comp.length > COMPATIBILITY_MAX_LEN) {
-      return { valid: false, error: `compatibility 长度不能超过 ${COMPATIBILITY_MAX_LEN} 字符` };
+    if (!frontmatter || typeof frontmatter !== 'object') {
+        return { valid: false, error: 'frontmatter 必须为非空对象' };
     }
-  }
-  return { valid: true };
+    const nameResult = validateSkillName(frontmatter.name);
+    if (!nameResult.valid) return nameResult;
+    const descResult = validateSkillDescription(frontmatter.description);
+    if (!descResult.valid) return descResult;
+    if (frontmatter.compatibility != null) {
+        const comp = String(frontmatter.compatibility);
+        if (comp.length > COMPATIBILITY_MAX_LEN) {
+            return {
+                valid: false,
+                error: `compatibility 长度不能超过 ${COMPATIBILITY_MAX_LEN} 字符`
+            };
+        }
+    }
+    return { valid: true };
 }
 
 /**
@@ -128,24 +131,28 @@ export function validateSkillFrontmatter(frontmatter) {
  * @returns {{ valid: boolean, name?: string, description?: string, body?: string, frontmatter?: object, error?: string }}
  */
 export function parseAndValidateSkillMd(raw) {
-  const parsed = parseSkillMd(raw);
-  if (parsed.error) {
-    return { valid: false, error: parsed.error };
-  }
-  const { frontmatter, body } = parsed;
-  const validation = validateSkillFrontmatter(frontmatter);
-  if (!validation.valid) {
-    return { valid: false, error: validation.error };
-  }
-  const name = String(frontmatter.name).trim();
-  const description = frontmatter.description != null
-    ? (typeof frontmatter.description === 'string' ? frontmatter.description : String(frontmatter.description)).trim()
-    : '';
-  return {
-    valid: true,
-    name,
-    description,
-    body,
-    frontmatter
-  };
+    const parsed = parseSkillMd(raw);
+    if (parsed.error) {
+        return { valid: false, error: parsed.error };
+    }
+    const { frontmatter, body } = parsed;
+    const validation = validateSkillFrontmatter(frontmatter);
+    if (!validation.valid) {
+        return { valid: false, error: validation.error };
+    }
+    const name = String(frontmatter.name).trim();
+    const description =
+        frontmatter.description != null
+            ? (typeof frontmatter.description === 'string'
+                  ? frontmatter.description
+                  : String(frontmatter.description)
+              ).trim()
+            : '';
+    return {
+        valid: true,
+        name,
+        description,
+        body,
+        frontmatter
+    };
 }

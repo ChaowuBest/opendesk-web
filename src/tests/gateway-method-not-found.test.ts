@@ -33,7 +33,9 @@ function sendReq(ws: WebSocket, method: string, params?: unknown): Promise<any> 
                     ws.off('message', handler);
                     resolve(msg);
                 }
-            } catch { /* ignore parse errors */ }
+            } catch {
+                /* ignore parse errors */
+            }
         };
 
         ws.on('message', handler);
@@ -55,7 +57,9 @@ function waitForEvent(ws: WebSocket, eventName: string): Promise<any> {
                     ws.off('message', handler);
                     resolve(msg);
                 }
-            } catch { /* ignore parse errors */ }
+            } catch {
+                /* ignore parse errors */
+            }
         };
 
         ws.on('message', handler);
@@ -76,7 +80,7 @@ async function main() {
     const gateway = new DeviceGateway(tmpDir, {
         enabled: true,
         port: TEST_PORT,
-        autoApproveLocal: true,
+        autoApproveLocal: true
     });
 
     registerOpenClawMethods(gateway);
@@ -108,13 +112,13 @@ async function main() {
                 id: 'test-client',
                 version: '1.0.0',
                 platform: 'test',
-                mode: 'operator',
+                mode: 'operator'
             },
             role: 'operator',
             scopes: ['operator.read', 'operator.write'],
             caps: [],
             commands: [],
-            permissions: {},
+            permissions: {}
         });
 
         if (!connectRes.ok) {
@@ -128,7 +132,14 @@ async function main() {
 
         // 测试 openclaw 客户端常用方法
         const methodsToTest = [
-            { method: 'chat.send', params: { sessionKey: 'main', message: 'hello', idempotencyKey: crypto.randomUUID() } },
+            {
+                method: 'chat.send',
+                params: {
+                    sessionKey: 'main',
+                    message: 'hello',
+                    idempotencyKey: crypto.randomUUID()
+                }
+            },
             { method: 'chat.history', params: { sessionKey: 'main' } },
             { method: 'chat.abort', params: { sessionKey: 'main' } },
             { method: 'sessions.list', params: {} },
@@ -139,7 +150,10 @@ async function main() {
             { method: 'tools.catalog', params: {} },
             { method: 'agents.list', params: {} },
             { method: 'config.get', params: {} },
-            { method: 'send', params: { to: 'test', message: 'hello', idempotencyKey: crypto.randomUUID() } },
+            {
+                method: 'send',
+                params: { to: 'test', message: 'hello', idempotencyKey: crypto.randomUUID() }
+            }
         ];
 
         let passed = 0;
@@ -153,7 +167,9 @@ async function main() {
                 console.log(`[FAIL] ${method}: METHOD_NOT_FOUND - ${res.error.message}`);
                 failed++;
             } else if (!res.ok) {
-                console.log(`[OK]   ${method}: 方法已注册 (业务错误: ${res.error?.code || 'unknown'} - ${res.error?.message || ''})`);
+                console.log(
+                    `[OK]   ${method}: 方法已注册 (业务错误: ${res.error?.code || 'unknown'} - ${res.error?.message || ''})`
+                );
                 passed++;
             } else {
                 console.log(`[OK]   ${method}: 成功 ${res.payload ? '(有响应)' : ''}`);
@@ -172,7 +188,11 @@ async function main() {
         process.exit(failed > 0 ? 1 : 0);
     } catch (err: any) {
         console.error(`测试异常: ${err.message}`);
-        try { await gateway.stop(); } catch { /* ignore */ }
+        try {
+            await gateway.stop();
+        } catch {
+            /* ignore */
+        }
         fs.rmSync(tmpDir, { recursive: true, force: true });
         process.exit(1);
     }

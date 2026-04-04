@@ -1,4 +1,3 @@
-
 /**
  * Copyright (c) 2026 The OpenDesk Team
  * OpenDesk is licensed under Mulan PSL v2.
@@ -80,7 +79,6 @@ function wrapText(text: string, maxWidth: number): string[] {
 
     return lines.length > 0 ? lines : [''];
 }
-
 
 export type LogPanelMode = 'off' | 'last' | 'all';
 

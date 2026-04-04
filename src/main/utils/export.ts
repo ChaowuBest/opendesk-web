@@ -12,7 +12,15 @@
 import fs from 'fs';
 import path from 'path';
 import type { TaskState } from '../states/tasks';
-import { UserMessage, AssistantMessage, TextMessagePart, ToolCallMessagePart, FileMessagePart, ReasoningMessagePart, ErrorMessagePart } from '../aikernel/messages';
+import {
+    UserMessage,
+    AssistantMessage,
+    TextMessagePart,
+    ToolCallMessagePart,
+    FileMessagePart,
+    ReasoningMessagePart,
+    ErrorMessagePart
+} from '../aikernel/messages';
 import { escapeHtml } from './escape';
 
 const HIGHLIGHT_JS_CSS_LIGHT = `
@@ -134,7 +142,7 @@ pre, code {
         color: #60a5fa;
     }
 }
-`
+`;
 
 export async function exportTaskToHtml(task: TaskState, filePath: string): Promise<void> {
     const html = await generateTaskHtml(task);
@@ -146,16 +154,11 @@ export async function exportTaskToHtml(task: TaskState, filePath: string): Promi
     fs.writeFileSync(filePath, html, 'utf-8');
 }
 
-
 export async function generateTaskHtml(task: TaskState): Promise<string> {
     await task.render();
 
     const messagesHtml = await renderMessages(task);
-    return generateHtmlTemplate(
-        task.task_name || '未命名任务',
-        task.task_id,
-        messagesHtml
-    );
+    return generateHtmlTemplate(task.task_name || '未命名任务', task.task_id, messagesHtml);
 }
 
 async function renderMessages(task: TaskState): Promise<string> {
@@ -262,7 +265,6 @@ async function renderAssistantMessage(message: AssistantMessage): Promise<string
     </div>
     `;
 }
-
 
 function generateHtmlTemplate(title: string, taskId: string, messagesHtml: string): string {
     const now = new Date().toLocaleString('zh-CN', {

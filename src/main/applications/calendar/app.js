@@ -9,20 +9,18 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { BaseApplication } from "../base";
-import { BaseToolset } from "../../aikernel/tool";
-import { Skill } from "../../aikernel/skill.js";
+import { BaseApplication } from '../base';
+import { BaseToolset } from '../../aikernel/tool';
+import { Skill } from '../../aikernel/skill.js';
 import { z } from 'zod';
-import { logger } from "../../utils/logger.js";
-import CalendarWorker from "./service/worker";
-import { CalendarOverlay } from "./tui";
-import { GetCalendarItemsTool, AddCalendarItemTool, DeleteCalendarItemTool } from "./tools";
-import { CALENDAR_SKILL } from "./skills";
-import chalk from "chalk";
-
+import { logger } from '../../utils/logger.js';
+import CalendarWorker from './service/worker';
+import { CalendarOverlay } from './tui';
+import { GetCalendarItemsTool, AddCalendarItemTool, DeleteCalendarItemTool } from './tools';
+import { CALENDAR_SKILL } from './skills';
+import chalk from 'chalk';
 
 class CalendarApplication extends BaseApplication {
-
     constructor() {
         super('calendar', '日历');
     }
@@ -39,9 +37,8 @@ class CalendarApplication extends BaseApplication {
                 if (upcoming.length > 0) {
                     const next = upcoming[0];
                     const diffMin = Math.round((next.startTime - now.getTime()) / 60000);
-                    const timeStr = diffMin <= 60
-                        ? `${diffMin}分钟后`
-                        : `${Math.floor(diffMin / 60)}h${diffMin % 60}m后`;
+                    const timeStr =
+                        diffMin <= 60 ? `${diffMin}分钟后` : `${Math.floor(diffMin / 60)}h${diffMin % 60}m后`;
                     const subject = (next.subject || '').slice(0, 16) || '(无标题)';
                     const colorFn = diffMin <= 15 ? chalk.hex('#FF1744') : chalk.hex('#448AFF');
                     return `📅 ${colorFn(`${timeStr}: ${subject}`)}`;
@@ -60,11 +57,15 @@ class CalendarApplication extends BaseApplication {
 
     static getConfigSchema() {
         return z.object({
-            dataSources: z.object({
-                outlook: z.object({
-                    enabled: z.boolean().default(false).describe('是否同步Outlook日历数据'),
-                }).optional()
-            }).default({})
+            dataSources: z
+                .object({
+                    outlook: z
+                        .object({
+                            enabled: z.boolean().default(false).describe('是否同步Outlook日历数据')
+                        })
+                        .optional()
+                })
+                .default({})
         });
     }
 
@@ -80,8 +81,8 @@ class CalendarApplication extends BaseApplication {
                     } catch (err) {
                         logger.error(`打开日历失败: ${err}`);
                     }
-                },
-            },
+                }
+            }
         ];
     }
 
@@ -94,7 +95,6 @@ class CalendarApplication extends BaseApplication {
         skill.toolsets = [toolset];
         return [skill];
     }
-
 }
 
 export { CalendarApplication };

@@ -9,19 +9,24 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { type Component, SelectList, Box, Text, Input, Key, matchesKey, truncateToWidth, wrapTextWithAnsi } from "@mariozechner/pi-tui";
-import chalk from "chalk";
-import { defaultSelectListTheme } from "../../tui/theme";
-import { OpenDeskTUI } from "../../tui/entry";
-import { SkillTestFramework, type TestSuiteResult } from "./skill-test.js";
-import { SkillRegistry } from "./skillregistry.js";
+import {
+    type Component,
+    SelectList,
+    Box,
+    Text,
+    Input,
+    Key,
+    matchesKey,
+    truncateToWidth,
+    wrapTextWithAnsi
+} from '@mariozechner/pi-tui';
+import chalk from 'chalk';
+import { defaultSelectListTheme } from '../../tui/theme';
+import { OpenDeskTUI } from '../../tui/entry';
+import { SkillTestFramework, type TestSuiteResult } from './skill-test.js';
+import { SkillRegistry } from './skillregistry.js';
 
-type TestViewState =
-    | 'main'
-    | 'select-skill'
-    | 'running'
-    | 'results'
-    | 'test-detail';
+type TestViewState = 'main' | 'select-skill' | 'running' | 'results' | 'test-detail';
 
 export class SkillTestOverlay implements Component {
     private openDeskTUI: OpenDeskTUI;
@@ -95,7 +100,7 @@ export class SkillTestOverlay implements Component {
         const items = [
             { value: 'select', label: chalk.cyan('🔍 选择技能进行测试') },
             { value: 'input', label: chalk.green('⌨️ 输入技能名称测试') },
-            { value: 'all', label: chalk.yellow('📋 测试所有可测试技能') },
+            { value: 'all', label: chalk.yellow('📋 测试所有可测试技能') }
         ];
 
         this.list = new SelectList(items, items.length, defaultSelectListTheme);
@@ -115,14 +120,14 @@ export class SkillTestOverlay implements Component {
             const items = [{ value: 'back', label: chalk.gray('没有可测试的技能，按 Enter 返回') }];
             this.list = new SelectList(items, 1, defaultSelectListTheme);
         } else {
-            const items = this.testableSkills.map(skillId => {
+            const items = this.testableSkills.map((skillId) => {
                 const skill = SkillRegistry.getSkillBody(skillId);
                 const name = skill?.frontmatter?.name || skillId;
                 const desc = skill?.frontmatter?.description || '';
                 const truncatedDesc = truncateToWidth(desc, 30, '...', false);
                 return {
                     value: skillId,
-                    label: `${chalk.bold(name)} ${chalk.dim('·')} ${chalk.dim(truncatedDesc)}`,
+                    label: `${chalk.bold(name)} ${chalk.dim('·')} ${chalk.dim(truncatedDesc)}`
                 };
             });
             this.list = new SelectList(items, Math.min(items.length, 10), defaultSelectListTheme);
@@ -142,7 +147,7 @@ export class SkillTestOverlay implements Component {
 
         this.input = new Input();
         this.input.onSubmit = () => {
-            this.runTestForSkill(this.input?.getValue().trim() || '').catch(err => {
+            this.runTestForSkill(this.input?.getValue().trim() || '').catch((err) => {
                 console.error('Test error:', err);
             });
         };
@@ -164,7 +169,7 @@ export class SkillTestOverlay implements Component {
 
         try {
             const result = await SkillTestFramework.runSkillTests(skillId);
-            
+
             if (!result) {
                 this.showMessage(`技能 "${skillId}" 不存在`, true);
                 this.showMain();
@@ -229,10 +234,9 @@ export class SkillTestOverlay implements Component {
         }
 
         const result = this.currentResult;
-        const statusIcon = result.summary.failed === 0 && result.summary.error === 0
-            ? chalk.green('✓')
-            : chalk.red('✗');
-        
+        const statusIcon =
+            result.summary.failed === 0 && result.summary.error === 0 ? chalk.green('✓') : chalk.red('✗');
+
         this.header = new Text(chalk.bold(` 测试结果 ${statusIcon} ${result.skillName}`));
 
         this.buildResultContent();
@@ -375,9 +379,7 @@ export class SkillTestOverlay implements Component {
     /** 清洗进程输出用于 TUI 显示：统一换行、去除 ANSI、替换控制字符，避免乱码与 \r 导致只显示末尾 */
     private sanitizeForDisplay(raw: string): string {
         if (!raw || typeof raw !== 'string') return '';
-        let s = raw
-            .replace(/\r\n/g, '\n')
-            .replace(/\r/g, '\n');
+        let s = raw.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
         s = s.replace(/\x1b\[[0-9;]*[mGKHJ]/g, '');
         s = s.replace(/\x1b\]8;;[^\x07]*\x07/g, '');
         s = s.replace(/\x1b_[^\x07\x1b]*(?:\x07|\x1b\\)/g, '');
@@ -395,7 +397,9 @@ export class SkillTestOverlay implements Component {
         const contentWidth = Math.max(16, innerWidth - 4);
 
         this.detailContentLines.push(`${chalk.bold('名称')}: ${test.name}`);
-        this.detailContentLines.push(`${chalk.bold('文件')}: ${truncateToWidth(test.file, innerWidth - 6, '…', false)}`);
+        this.detailContentLines.push(
+            `${chalk.bold('文件')}: ${truncateToWidth(test.file, innerWidth - 6, '…', false)}`
+        );
         this.detailContentLines.push(`${chalk.bold('状态')}: ${this.formatStatus(test.status)}`);
         this.detailContentLines.push(`${chalk.bold('耗时')}: ${test.duration}ms`);
 
@@ -481,10 +485,14 @@ export class SkillTestOverlay implements Component {
         this.resultContentLines.push(chalk.dim(sep1));
 
         const summary = result.summary;
-        const summaryLine = `总计: ${summary.total}  ` +
-            chalk.green(`通过: ${summary.passed}`) + '  ' +
-            chalk.red(`失败: ${summary.failed}`) + '  ' +
-            chalk.yellow(`跳过: ${summary.skipped}`) + '  ' +
+        const summaryLine =
+            `总计: ${summary.total}  ` +
+            chalk.green(`通过: ${summary.passed}`) +
+            '  ' +
+            chalk.red(`失败: ${summary.failed}`) +
+            '  ' +
+            chalk.yellow(`跳过: ${summary.skipped}`) +
+            '  ' +
             `耗时: ${(summary.duration / 1000).toFixed(2)}s`;
         this.resultContentLines.push(summaryLine);
 
@@ -681,8 +689,7 @@ export class SkillTestOverlay implements Component {
 
         if (isResults) {
             const r = this.currentResult!;
-            const icon = r.summary.failed === 0 && r.summary.error === 0
-                ? chalk.green('✓') : chalk.red('✗');
+            const icon = r.summary.failed === 0 && r.summary.error === 0 ? chalk.green('✓') : chalk.red('✗');
             out.push(styledLine(chalk.bold(` 测试结果 ${icon} ${r.skillName}`)));
         } else {
             const test = this.currentResult!.tests[this.selectedTestIndex];
@@ -766,8 +773,8 @@ export class SkillTestOverlay implements Component {
 
         this.overlayHandle = this.openDeskTUI.tui.showOverlay(this, {
             width: overlayWidth,
-            maxHeight: "100%",
-            anchor: "center",
+            maxHeight: '100%',
+            anchor: 'center'
         });
 
         this.openDeskTUI.hasOpenOverlay = true;

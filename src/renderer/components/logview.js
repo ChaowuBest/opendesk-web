@@ -27,9 +27,9 @@ class LogView extends HTMLElement {
     }
 
     reload() {
-        window.settingAPI.getLogContent().then(content => {
+        window.settingAPI.getLogContent().then((content) => {
             this.querySelector('#log-content').innerHTML = content;
-        })
+        });
     }
 
     render() {
@@ -38,7 +38,7 @@ class LogView extends HTMLElement {
             <pre id="log-content" class="w-full text-xs overflow-y-auto" style="display: block; height: 100%;">
             </pre>
         </div>
-        `
+        `;
     }
 }
 

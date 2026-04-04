@@ -17,17 +17,21 @@ import chalk from 'chalk';
 import { z } from 'zod';
 import type { McpServerConfig } from './common';
 
-
 const InstallMcpServerArgsSchema = z.object({
     name: z.string().describe('Server name, e.g., "filesystem", "github", "my-server"'),
-    transport: z.enum(['stdio', 'sse', 'streamableHttp']).describe('Transport type: stdio for local commands, sse/streamableHttp for remote servers'),
+    transport: z
+        .enum(['stdio', 'sse', 'streamableHttp'])
+        .describe('Transport type: stdio for local commands, sse/streamableHttp for remote servers'),
     command: z.string().optional().describe('Command for stdio transport, e.g., "npx", "node", "python", "uvx"'),
-    args: z.array(z.string()).optional().describe('Arguments for stdio transport, e.g., ["-y", "@modelcontextprotocol/server-filesystem", "/path"]'),
+    args: z
+        .array(z.string())
+        .optional()
+        .describe('Arguments for stdio transport, e.g., ["-y", "@modelcontextprotocol/server-filesystem", "/path"]'),
     cwd: z.string().optional().describe('Working directory for stdio transport'),
     url: z.string().optional().describe('URL for sse/streamableHttp transport'),
     headers: z.record(z.string(), z.string()).optional().describe('HTTP headers for sse/streamableHttp'),
     env: z.record(z.string(), z.string()).optional().describe('Environment variables'),
-    enabled: z.boolean().default(true).describe('Whether to enable the server after installation'),
+    enabled: z.boolean().default(true).describe('Whether to enable the server after installation')
 });
 
 export class InstallMcpServerTool extends BaseTool<typeof InstallMcpServerArgsSchema> {
@@ -37,7 +41,7 @@ export class InstallMcpServerTool extends BaseTool<typeof InstallMcpServerArgsSc
         super(
             'installMcpServer',
             'Install a new MCP server with specified configuration. Use this when user wants to add a new MCP server.',
-            InstallMcpServerArgsSchema,
+            InstallMcpServerArgsSchema
         );
         this.mcpApp = mcpApp;
         this.setExecutor(this.install.bind(this));
@@ -75,13 +79,18 @@ export class InstallMcpServerTool extends BaseTool<typeof InstallMcpServerArgsSc
             body.push(chalk.redBright('  ' + truncText(toolcall.result, width - 10)));
         }
 
-        return new Card({ icon: '📦', title: '安装 MCP 服务', status: statusDisplay(toolcall.status), body }).render(width);
+        return new Card({
+            icon: '📦',
+            title: '安装 MCP 服务',
+            status: statusDisplay(toolcall.status),
+            body
+        }).render(width);
     }
 
     private async install(args: z.output<typeof InstallMcpServerArgsSchema>): Promise<string> {
         const config: McpServerConfig = {
             id: `mcp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-            ...args,
+            ...args
         };
 
         const servers = this.mcpApp.getServersFromConfig();
@@ -93,7 +102,7 @@ export class InstallMcpServerTool extends BaseTool<typeof InstallMcpServerArgsSc
                 serverId: existing.id,
                 name: existing.name,
                 transport: existing.transport,
-                alreadyExists: true,
+                alreadyExists: true
             });
         }
 
@@ -107,7 +116,7 @@ export class InstallMcpServerTool extends BaseTool<typeof InstallMcpServerArgsSc
                     message: `MCP server "${server.name}" installed and connected successfully`,
                     serverId: server.id,
                     name: server.name,
-                    transport: server.transport,
+                    transport: server.transport
                 });
             } catch (err: any) {
                 return JSON.stringify({
@@ -116,7 +125,7 @@ export class InstallMcpServerTool extends BaseTool<typeof InstallMcpServerArgsSc
                     serverId: server.id,
                     name: server.name,
                     transport: server.transport,
-                    warning: 'Server installed but not connected. Please check the configuration.',
+                    warning: 'Server installed but not connected. Please check the configuration.'
                 });
             }
         }
@@ -126,7 +135,7 @@ export class InstallMcpServerTool extends BaseTool<typeof InstallMcpServerArgsSc
             message: `MCP server "${server.name}" installed successfully`,
             serverId: server.id,
             name: server.name,
-            transport: server.transport,
+            transport: server.transport
         });
     }
 }
@@ -140,7 +149,7 @@ export class ListMcpServersTool extends BaseTool<typeof ListMcpServersArgsSchema
         super(
             'listMcpServers',
             'List all installed MCP servers with their status and configuration',
-            ListMcpServersArgsSchema,
+            ListMcpServersArgsSchema
         );
         this.mcpApp = mcpApp;
         this.setExecutor(this.list.bind(this));
@@ -161,8 +170,15 @@ export class ListMcpServersTool extends BaseTool<typeof ListMcpServersArgsSchema
                     body.push(chalk.dim(`  找到 ${chalk.white(String(servers.length))} 个 MCP 服务:`));
                     for (const server of servers.slice(0, 5)) {
                         const statusIcon = server.status === 'connected' ? '✓' : server.status === 'error' ? '✗' : '○';
-                        const statusColor = server.status === 'connected' ? chalk.green : server.status === 'error' ? chalk.red : chalk.gray;
-                        body.push(`    ${statusColor(statusIcon)} ${chalk.cyan(String(server.name))} (${chalk.yellow(String(server.transport))})`);
+                        const statusColor =
+                            server.status === 'connected'
+                                ? chalk.green
+                                : server.status === 'error'
+                                  ? chalk.red
+                                  : chalk.gray;
+                        body.push(
+                            `    ${statusColor(statusIcon)} ${chalk.cyan(String(server.name))} (${chalk.yellow(String(server.transport))})`
+                        );
                     }
                     if (servers.length > 5) {
                         body.push(chalk.dim(`    ... 还有 ${servers.length - 5} 个`));
@@ -175,7 +191,12 @@ export class ListMcpServersTool extends BaseTool<typeof ListMcpServersArgsSchema
             body.push(chalk.redBright('  ' + truncText(toolcall.result, width - 10)));
         }
 
-        return new Card({ icon: '📋', title: 'MCP 服务列表', status: statusDisplay(toolcall.status), body }).render(width);
+        return new Card({
+            icon: '📋',
+            title: 'MCP 服务列表',
+            status: statusDisplay(toolcall.status),
+            body
+        }).render(width);
     }
 
     private async list(): Promise<string> {
@@ -186,18 +207,14 @@ export class ListMcpServersTool extends BaseTool<typeof ListMcpServersArgsSchema
 }
 
 const DeleteMcpServerArgsSchema = z.object({
-    nameOrId: z.string().describe('Server name or ID to delete'),
+    nameOrId: z.string().describe('Server name or ID to delete')
 });
 
 export class DeleteMcpServerTool extends BaseTool<typeof DeleteMcpServerArgsSchema> {
     private mcpApp: any;
 
     constructor(mcpApp: any) {
-        super(
-            'deleteMcpServer',
-            'Delete an MCP server by name or ID',
-            DeleteMcpServerArgsSchema,
-        );
+        super('deleteMcpServer', 'Delete an MCP server by name or ID', DeleteMcpServerArgsSchema);
         this.mcpApp = mcpApp;
         this.setExecutor(this.delete.bind(this));
     }
@@ -224,14 +241,17 @@ export class DeleteMcpServerTool extends BaseTool<typeof DeleteMcpServerArgsSche
             body.push(chalk.redBright('  ' + truncText(toolcall.result, width - 10)));
         }
 
-        return new Card({ icon: '🗑️', title: '删除 MCP 服务', status: statusDisplay(toolcall.status), body }).render(width);
+        return new Card({
+            icon: '🗑️',
+            title: '删除 MCP 服务',
+            status: statusDisplay(toolcall.status),
+            body
+        }).render(width);
     }
 
     private async delete(args: z.output<typeof DeleteMcpServerArgsSchema>): Promise<string> {
         const servers = this.mcpApp.getServersFromConfig();
-        const server = servers.find((s: any) =>
-            s.name === args.nameOrId || s.id === args.nameOrId
-        );
+        const server = servers.find((s: any) => s.name === args.nameOrId || s.id === args.nameOrId);
 
         if (!server) {
             throw new Error(`MCP server "${args.nameOrId}" not found`);
@@ -242,14 +262,14 @@ export class DeleteMcpServerTool extends BaseTool<typeof DeleteMcpServerArgsSche
             success: true,
             message: `MCP server "${server.name}" deleted successfully`,
             serverId: server.id,
-            name: server.name,
+            name: server.name
         });
     }
 }
 
 const ToggleMcpServerArgsSchema = z.object({
     nameOrId: z.string().describe('Server name or ID to toggle'),
-    enabled: z.boolean().describe('Whether to enable (true) or disable (false) the server'),
+    enabled: z.boolean().describe('Whether to enable (true) or disable (false) the server')
 });
 
 export class ToggleMcpServerTool extends BaseTool<typeof ToggleMcpServerArgsSchema> {
@@ -259,7 +279,7 @@ export class ToggleMcpServerTool extends BaseTool<typeof ToggleMcpServerArgsSche
         super(
             'toggleMcpServer',
             'Toggle an MCP server on/off by name or ID. Set enabled=true to activate the server, enabled=false to deactivate it. The server configuration is preserved.',
-            ToggleMcpServerArgsSchema,
+            ToggleMcpServerArgsSchema
         );
         this.mcpApp = mcpApp;
         this.setExecutor(this.toggle.bind(this));
@@ -301,9 +321,7 @@ export class ToggleMcpServerTool extends BaseTool<typeof ToggleMcpServerArgsSche
 
     private async toggle(args: z.output<typeof ToggleMcpServerArgsSchema>): Promise<string> {
         const servers = this.mcpApp.getServersFromConfig();
-        const server = servers.find((s: any) =>
-            s.name === args.nameOrId || s.id === args.nameOrId
-        );
+        const server = servers.find((s: any) => s.name === args.nameOrId || s.id === args.nameOrId);
 
         if (!server) {
             throw new Error(`MCP server "${args.nameOrId}" not found`);
@@ -316,7 +334,7 @@ export class ToggleMcpServerTool extends BaseTool<typeof ToggleMcpServerArgsSche
                 serverId: server.id,
                 name: server.name,
                 enabled: args.enabled,
-                alreadyInState: true,
+                alreadyInState: true
             });
         }
 
@@ -330,7 +348,7 @@ export class ToggleMcpServerTool extends BaseTool<typeof ToggleMcpServerArgsSche
                     message: `MCP server "${server.name}" enabled and connected successfully`,
                     serverId: server.id,
                     name: server.name,
-                    enabled: true,
+                    enabled: true
                 });
             } catch (err: any) {
                 return JSON.stringify({
@@ -339,7 +357,7 @@ export class ToggleMcpServerTool extends BaseTool<typeof ToggleMcpServerArgsSche
                     serverId: server.id,
                     name: server.name,
                     enabled: true,
-                    warning: 'Server enabled but not connected. Please check the configuration.',
+                    warning: 'Server enabled but not connected. Please check the configuration.'
                 });
             }
         } else {
@@ -356,7 +374,7 @@ export class ToggleMcpServerTool extends BaseTool<typeof ToggleMcpServerArgsSche
                 message: `MCP server "${server.name}" disabled successfully`,
                 serverId: server.id,
                 name: server.name,
-                enabled: false,
+                enabled: false
             });
         }
     }

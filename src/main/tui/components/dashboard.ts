@@ -9,33 +9,33 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { type Component, SelectList, Box, Text, truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
-import { defaultSelectListTheme } from "../theme";
-import { OpenDeskTUI } from "../entry";
-import { Card, type CardStatus, type BorderConfig } from "./card";
-import { ApplicationRegistry } from "../../applications/registry";
-import { renderResponsiveCells, type ResponsiveCell } from "./responsive-bar";
-import { getNotificationBadge } from "./notification";
-import chalk from "chalk";
-import type { GlobalTodo } from "../../applications/todomgr/common";
-import type { TaskState } from "../../states/tasks";
-import { describeCron } from "../../utils/cron";
-import type { ChannelRuntimeState } from "../../applications/channelmgr/app.js";
+import { type Component, SelectList, Box, Text, truncateToWidth, visibleWidth } from '@mariozechner/pi-tui';
+import { defaultSelectListTheme } from '../theme';
+import { OpenDeskTUI } from '../entry';
+import { Card, type CardStatus, type BorderConfig } from './card';
+import { ApplicationRegistry } from '../../applications/registry';
+import { renderResponsiveCells, type ResponsiveCell } from './responsive-bar';
+import { getNotificationBadge } from './notification';
+import chalk from 'chalk';
+import type { GlobalTodo } from '../../applications/todomgr/common';
+import type { TaskState } from '../../states/tasks';
+import { describeCron } from '../../utils/cron';
+import type { ChannelRuntimeState } from '../../applications/channelmgr/app.js';
 
 // ━━━ 科幻配色 ━━━
 const C = {
-    neon:      chalk.hex('#00E5FF'),       // 主色 - 霓虹青
-    neonBold:  chalk.hex('#00E5FF').bold,
-    glow:      chalk.hex('#39FF14'),       // 亮绿 - 在线/成功
-    amber:     chalk.hex('#FFAB00'),       // 琥珀 - 警告/中优先级
-    red:       chalk.hex('#FF1744'),       // 红 - 错误/高优先级
-    blue:      chalk.hex('#448AFF'),       // 蓝 - 低优先级
-    ghost:     chalk.hex('#4a4a4a'),       // 幽灵灰 - 边框/分隔
-    dim:       chalk.hex('#666666'),       // 暗灰 - 次要信息
-    text:      chalk.hex('#c0c0c0'),       // 正文
-    bright:    chalk.hex('#e0e0e0').bold,  // 高亮正文
-    panel:     chalk.hex('#1a1a2e'),       // 面板底色参考
-    headerBg:  chalk.bgHex('#0a1628').hex('#00E5FF').bold,
+    neon: chalk.hex('#00E5FF'), // 主色 - 霓虹青
+    neonBold: chalk.hex('#00E5FF').bold,
+    glow: chalk.hex('#39FF14'), // 亮绿 - 在线/成功
+    amber: chalk.hex('#FFAB00'), // 琥珀 - 警告/中优先级
+    red: chalk.hex('#FF1744'), // 红 - 错误/高优先级
+    blue: chalk.hex('#448AFF'), // 蓝 - 低优先级
+    ghost: chalk.hex('#4a4a4a'), // 幽灵灰 - 边框/分隔
+    dim: chalk.hex('#666666'), // 暗灰 - 次要信息
+    text: chalk.hex('#c0c0c0'), // 正文
+    bright: chalk.hex('#e0e0e0').bold, // 高亮正文
+    panel: chalk.hex('#1a1a2e'), // 面板底色参考
+    headerBg: chalk.bgHex('#0a1628').hex('#00E5FF').bold
 };
 
 /** 进度条 */
@@ -95,9 +95,9 @@ export class DashboardOverlay implements Component {
 
     show() {
         const handle = this.openDeskTUI.tui.showOverlay(this, {
-            width: "100%",
-            maxHeight: "100%",
-            anchor: "center",
+            width: '100%',
+            maxHeight: '100%',
+            anchor: 'center'
         });
 
         this.openDeskTUI.hasOpenOverlay = true;
@@ -143,14 +143,21 @@ class DashboardRenderer implements Component {
         const activePanel = this.renderActivePanel(W);
         const telemetryPanel = this.renderTelemetryPanel(W);
 
-        const fixedLines = header.length + 1
-            + statusBar.length + 1
-            + mailPanel.length + 1
-            + channelsPanel.length + 1
-            + todosPanel.length + 1
-            + activePanel.length + 1
-            + 1
-            + telemetryPanel.length;
+        const fixedLines =
+            header.length +
+            1 +
+            statusBar.length +
+            1 +
+            mailPanel.length +
+            1 +
+            channelsPanel.length +
+            1 +
+            todosPanel.length +
+            1 +
+            activePanel.length +
+            1 +
+            1 +
+            telemetryPanel.length;
 
         const historyAvailable = Math.max(3, this.targetHeight - fixedLines);
         const historyPanel = this.renderHistoryPanel(W, historyAvailable);
@@ -207,14 +214,14 @@ class DashboardRenderer implements Component {
         const todos = this.data.globalTodos;
         const tasks = this.data.tasks;
 
-        const activeTodos = todos.filter(t => t.status !== 'completed').length;
-        const cronTodos = todos.filter(t => t.trigger?.type === 'cron').length;
-        const eventTodos = todos.filter(t => t.trigger?.type === 'event').length;
-        const runningTasks = tasks.filter(t => t.task_status === 'running').length;
+        const activeTodos = todos.filter((t) => t.status !== 'completed').length;
+        const cronTodos = todos.filter((t) => t.trigger?.type === 'cron').length;
+        const eventTodos = todos.filter((t) => t.trigger?.type === 'event').length;
+        const runningTasks = tasks.filter((t) => t.task_status === 'running').length;
         const totalTasks = tasks.length;
 
         const channelStates = this.data.channelStates || [];
-        const onlineChannels = channelStates.filter(c => c.status.online).length;
+        const onlineChannels = channelStates.filter((c) => c.status.online).length;
         const totalChannels = channelStates.length;
 
         const mailAccounts = this.data.mailAccounts || [];
@@ -225,8 +232,12 @@ class DashboardRenderer implements Component {
             C.neon('▣') + C.dim(' TODOS ') + C.bright(String(activeTodos)),
             C.neon('⟳') + C.dim(' CRON ') + C.bright(String(cronTodos)),
             C.neon('⚡') + C.dim(' EVENT ') + C.bright(String(eventTodos)),
-            (runningTasks > 0 ? C.glow('●') : C.ghost('●')) + C.dim(' TASKS ') + C.bright(`${runningTasks}/${totalTasks}`),
-            (onlineChannels > 0 ? C.glow('◉') : C.ghost('◉')) + C.dim(' MSG ') + C.bright(`${onlineChannels}/${totalChannels}`),
+            (runningTasks > 0 ? C.glow('●') : C.ghost('●')) +
+                C.dim(' TASKS ') +
+                C.bright(`${runningTasks}/${totalTasks}`),
+            (onlineChannels > 0 ? C.glow('◉') : C.ghost('◉')) +
+                C.dim(' MSG ') +
+                C.bright(`${onlineChannels}/${totalChannels}`)
         ];
 
         const sep = C.ghost('  │  ');
@@ -267,9 +278,12 @@ class DashboardRenderer implements Component {
 
         const card = new Card({
             title: '邮箱账号',
-            status: { icon: totalUnread > 0 ? C.amber('📬') : C.neon('📭'), text: C.dim(`${totalUnread} UNREAD / ${accounts.length} ACCOUNTS`) },
+            status: {
+                icon: totalUnread > 0 ? C.amber('📬') : C.neon('📭'),
+                text: C.dim(`${totalUnread} UNREAD / ${accounts.length} ACCOUNTS`)
+            },
             body: body,
-            border: { style: 'single', colorFn: C.ghost },
+            border: { style: 'single', colorFn: C.ghost }
         });
 
         return card.render(W);
@@ -279,7 +293,7 @@ class DashboardRenderer implements Component {
 
     private renderChannelsPanel(W: number): string[] {
         const channels = this.data.channelStates || [];
-        const online = channels.filter(c => c.status.online).length;
+        const online = channels.filter((c) => c.status.online).length;
         const total = channels.length;
 
         const body: string[] = [];
@@ -308,7 +322,7 @@ class DashboardRenderer implements Component {
             title: '消息插件连接状态',
             status: { icon: C.neon('◉'), text: C.dim(`${online}/${total} ONLINE`) },
             body: body,
-            border: { style: 'single', colorFn: C.ghost },
+            border: { style: 'single', colorFn: C.ghost }
         });
 
         return card.render(W);
@@ -318,8 +332,8 @@ class DashboardRenderer implements Component {
 
     private renderTodosPanel(W: number): string[] {
         const todos = this.data.globalTodos;
-        const active = todos.filter(t => t.status !== 'completed').length;
-        const done = todos.filter(t => t.status === 'completed').length;
+        const active = todos.filter((t) => t.status !== 'completed').length;
+        const done = todos.filter((t) => t.status === 'completed').length;
 
         const body: string[] = [];
         if (todos.length === 0) {
@@ -337,7 +351,7 @@ class DashboardRenderer implements Component {
             title: '全局待办事项',
             status: { icon: C.neon('▣'), text: C.dim(`${active} ACTIVE / ${done} DONE`) },
             body: body,
-            border: { style: 'single', colorFn: C.ghost },
+            border: { style: 'single', colorFn: C.ghost }
         });
 
         return card.render(W);
@@ -347,12 +361,14 @@ class DashboardRenderer implements Component {
         const statusIcons: Record<string, string> = {
             completed: C.glow('✓'),
             in_progress: C.neon('▶'),
-            pending: C.ghost('▷'),
+            pending: C.ghost('▷')
         };
         const icon = statusIcons[todo.status] || C.ghost('▷');
 
         const priorityFn: Record<string, (s: string) => string> = {
-            high: C.red, medium: C.amber, low: C.blue,
+            high: C.red,
+            medium: C.amber,
+            low: C.blue
         };
         const pFn = priorityFn[todo.priority] || C.amber;
         const pTag = pFn(`[${todo.priority.toUpperCase().padEnd(4)}]`);
@@ -374,9 +390,7 @@ class DashboardRenderer implements Component {
 
         // 优先显示 title，如果没有则显示 content（兼容旧数据）
         const displayText = todo.title || todo.content;
-        const content = todo.status === 'completed'
-            ? chalk.strikethrough(C.dim(displayText))
-            : C.text(displayText);
+        const content = todo.status === 'completed' ? chalk.strikethrough(C.dim(displayText)) : C.text(displayText);
 
         // 计算布局: icon pTag content ... triggerTag
         const leftPart = `  ${icon} ${pTag} ${content}`;
@@ -394,7 +408,7 @@ class DashboardRenderer implements Component {
     // ──────────────────── 活跃进程面板 ────────────────────
 
     private renderActivePanel(W: number): string[] {
-        const running = this.data.tasks.filter(t => t.task_status === 'running');
+        const running = this.data.tasks.filter((t) => t.task_status === 'running');
 
         const body: string[] = [];
         if (running.length === 0) {
@@ -412,7 +426,7 @@ class DashboardRenderer implements Component {
             title: '当前运行中任务',
             status: { icon: C.neon('▶'), text: C.dim(`${running.length} RUNNING`) },
             body: body,
-            border: { style: 'single', colorFn: C.ghost },
+            border: { style: 'single', colorFn: C.ghost }
         });
 
         return card.render(W);
@@ -421,9 +435,7 @@ class DashboardRenderer implements Component {
     // ──────────────────── 任务归档面板（弹性高度） ────────────────────
 
     private renderHistoryPanel(W: number, availableHeight: number): string[] {
-        const allHistory = this.data.tasks
-            .filter(t => t.task_status !== 'running')
-            .reverse();
+        const allHistory = this.data.tasks.filter((t) => t.task_status !== 'running').reverse();
 
         // 面板框架占 2 行（top + bottom）
         const contentSlots = Math.max(1, availableHeight - 2);
@@ -439,9 +451,9 @@ class DashboardRenderer implements Component {
             }
         } else {
             const statusCfg: Record<string, { icon: string; label: string }> = {
-                stopped:  { icon: C.glow('✦'), label: C.glow('DONE') },
-                waiting:  { icon: C.dim('○'), label: C.dim('IDLE') },
-                failed:   { icon: C.red('✖'), label: C.red('ABORT') },
+                stopped: { icon: C.glow('✦'), label: C.glow('DONE') },
+                waiting: { icon: C.dim('○'), label: C.dim('IDLE') },
+                failed: { icon: C.red('✖'), label: C.red('ABORT') }
             };
 
             for (const task of history) {
@@ -465,9 +477,12 @@ class DashboardRenderer implements Component {
 
         const card = new Card({
             title: '历史任务记录',
-            status: { icon: C.neon('▣'), text: C.dim(`${history.length}/${allHistory.length} ITEMS`) },
+            status: {
+                icon: C.neon('▣'),
+                text: C.dim(`${history.length}/${allHistory.length} ITEMS`)
+            },
             body: body,
-            border: { style: 'single', colorFn: C.ghost },
+            border: { style: 'single', colorFn: C.ghost }
         });
 
         return card.render(W);
@@ -482,7 +497,7 @@ class DashboardRenderer implements Component {
         const metrics = [
             { label: '1H', value: '--.-K', ratio: 0 },
             { label: '1D', value: '--.-K', ratio: 0 },
-            { label: '1M', value: '--.-K', ratio: 0 },
+            { label: '1M', value: '--.-K', ratio: 0 }
         ];
 
         for (const m of metrics) {
@@ -498,7 +513,7 @@ class DashboardRenderer implements Component {
             title: '资源使用累计',
             status: { icon: C.neon('◎'), text: C.dim('TOKEN USAGE') },
             body: body,
-            border: { style: 'single', colorFn: C.ghost },
+            border: { style: 'single', colorFn: C.ghost }
         });
 
         return card.render(W);
@@ -567,7 +582,9 @@ export class DashboardBar implements Component {
         }
     }
 
-    isVisible(): boolean { return this.visible; }
+    isVisible(): boolean {
+        return this.visible;
+    }
 
     setVisible(v: boolean): void {
         if (this.visible !== v) {
@@ -577,7 +594,9 @@ export class DashboardBar implements Component {
         }
     }
 
-    toggleVisible(): void { this.setVisible(!this.visible); }
+    toggleVisible(): void {
+        this.setVisible(!this.visible);
+    }
 
     private async refresh(): Promise<void> {
         const cells: string[] = [];
@@ -597,9 +616,7 @@ export class DashboardBar implements Component {
 
         // 从所有应用拉取状态
         const apps = Array.from(ApplicationRegistry.applications.values());
-        const results = await Promise.allSettled(
-            apps.map(app => app.getTUIStatusBlock())
-        );
+        const results = await Promise.allSettled(apps.map((app) => app.getTUIStatusBlock()));
         for (const result of results) {
             if (result.status === 'fulfilled' && result.value) {
                 cells.push(result.value);
@@ -612,7 +629,9 @@ export class DashboardBar implements Component {
         this.requestRender();
     }
 
-    invalidate(): void { this.invalidated = true; }
+    invalidate(): void {
+        this.invalidated = true;
+    }
 
     render(width: number): string[] {
         if (!this.visible) return [];
@@ -630,7 +649,7 @@ export class DashboardBar implements Component {
             return this.cachedOutput;
         }
 
-        const responsiveCells: ResponsiveCell[] = this.cells.map(text => ({ text }));
+        const responsiveCells: ResponsiveCell[] = this.cells.map((text) => ({ text }));
 
         if (responsiveCells.length === 0) {
             this.cachedOutput = [];
@@ -641,7 +660,7 @@ export class DashboardBar implements Component {
         const sep = C.ghost(' │ ');
         const line = renderResponsiveCells(responsiveCells, width, {
             separator: sep,
-            horizontalPadding: 1,
+            horizontalPadding: 1
         });
 
         if (!line) {
@@ -650,10 +669,7 @@ export class DashboardBar implements Component {
             return [];
         }
 
-        this.cachedOutput = [
-            C.ghost('┄'.repeat(width)),
-            line,
-        ];
+        this.cachedOutput = [C.ghost('┄'.repeat(width)), line];
 
         this.invalidated = false;
         return this.cachedOutput;

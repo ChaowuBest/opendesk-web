@@ -9,16 +9,12 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { type Component, SelectList, Box, Text, Loader } from "@mariozechner/pi-tui";
-import chalk from "chalk";
-import { defaultSelectListTheme } from "../../tui/theme";
-import { OpenDeskTUI } from "../../tui/entry";
-import { InfoOverlay } from "../../tui/components/notice";
-import {
-    uninstallPlugin,
-    listInstalledPlugins,
-    setPluginEnabled,
-} from '../../aikernel/plugins/index.js';
+import { type Component, SelectList, Box, Text, Loader } from '@mariozechner/pi-tui';
+import chalk from 'chalk';
+import { defaultSelectListTheme } from '../../tui/theme';
+import { OpenDeskTUI } from '../../tui/entry';
+import { InfoOverlay } from '../../tui/components/notice';
+import { uninstallPlugin, listInstalledPlugins, setPluginEnabled } from '../../aikernel/plugins/index.js';
 import type { PluginInstallRecord } from '../../aikernel/plugins/types.js';
 
 type ViewState = 'list' | 'confirm-toggle' | 'confirm-uninstall' | 'uninstalling';
@@ -70,18 +66,22 @@ export class PluginsListOverlay implements Component {
             const items = [{ value: '__empty__', label: chalk.gray('暂无已安装的插件') }];
             this.list = new SelectList(items, 1, defaultSelectListTheme);
         } else {
-            const items = this.plugins.map(r => {
+            const items = this.plugins.map((r) => {
                 const status = r.enabled ? chalk.green('✓ 已启用') : chalk.red('✗ 已禁用');
                 return {
                     value: r.id,
-                    label: `${chalk.bold(r.id)} ${chalk.dim(`(${r.npmSpec})`)} [${status}]`,
+                    label: `${chalk.bold(r.id)} ${chalk.dim(`(${r.npmSpec})`)} [${status}]`
                 };
             });
             this.list = new SelectList(items, Math.min(items.length, 10), defaultSelectListTheme);
         }
 
-        this.list.onSelect = () => { /* Enter on list item does nothing in this view */ };
-        this.list.onCancel = () => { this.close(); };
+        this.list.onSelect = () => {
+            /* Enter on list item does nothing in this view */
+        };
+        this.list.onCancel = () => {
+            this.close();
+        };
 
         this.removeInputListener = this.openDeskTUI.tui.addInputListener((data: string) => {
             if (this.state !== 'list') return undefined;
@@ -105,7 +105,7 @@ export class PluginsListOverlay implements Component {
         if (!this.list || this.plugins.length === 0) return undefined;
         const item = this.list.getSelectedItem();
         if (!item || item.value === '__empty__') return undefined;
-        return this.plugins.find(p => p.id === item.value);
+        return this.plugins.find((p) => p.id === item.value);
     }
 
     // ── Toggle enable/disable ────────────────────────────────────────────────
@@ -125,7 +125,7 @@ export class PluginsListOverlay implements Component {
 
         const items = [
             { value: 'confirm', label: chalk.green(`确认${action}`) },
-            { value: 'cancel', label: chalk.red('取消') },
+            { value: 'cancel', label: chalk.red('取消') }
         ];
 
         this.list = new SelectList(items, items.length, defaultSelectListTheme);
@@ -136,7 +136,9 @@ export class PluginsListOverlay implements Component {
                 this.showList();
             }
         };
-        this.list.onCancel = () => { this.showList(); };
+        this.list.onCancel = () => {
+            this.showList();
+        };
 
         this.renderBox();
         this.openDeskTUI.tui.setFocus(this.list);
@@ -147,7 +149,11 @@ export class PluginsListOverlay implements Component {
         const ok = setPluginEnabled(plugin.id, !plugin.enabled);
         if (ok) {
             if (this.onReload) {
-                try { await this.onReload(); } catch { /* best effort */ }
+                try {
+                    await this.onReload();
+                } catch {
+                    /* best effort */
+                }
             }
             this.showList();
             this.showResultMessage(`插件已${action}: ${plugin.id}\n\n消息渠道已自动重新加载。`);
@@ -173,7 +179,7 @@ export class PluginsListOverlay implements Component {
 
         const items = [
             { value: 'confirm', label: chalk.red('确认卸载') },
-            { value: 'cancel', label: chalk.green('取消') },
+            { value: 'cancel', label: chalk.green('取消') }
         ];
 
         this.list = new SelectList(items, items.length, defaultSelectListTheme);
@@ -184,7 +190,9 @@ export class PluginsListOverlay implements Component {
                 this.showList();
             }
         };
-        this.list.onCancel = () => { this.showList(); };
+        this.list.onCancel = () => {
+            this.showList();
+        };
 
         this.renderBox();
         this.openDeskTUI.tui.setFocus(this.list);
@@ -199,14 +207,18 @@ export class PluginsListOverlay implements Component {
             this.openDeskTUI.tui,
             (s: string) => chalk.cyan(s),
             (s: string) => chalk.hex('#e0e0e0')(s),
-            `正在卸载插件: ${plugin.id} ...`,
+            `正在卸载插件: ${plugin.id} ...`
         );
         this.renderBox();
 
         try {
             const result = await uninstallPlugin(plugin.id);
             if (result.success && this.onReload) {
-                try { await this.onReload(); } catch { /* best effort */ }
+                try {
+                    await this.onReload();
+                } catch {
+                    /* best effort */
+                }
             }
             this.cleanup();
             this.showList();
@@ -228,7 +240,7 @@ export class PluginsListOverlay implements Component {
         this.close();
         new InfoOverlay(this.openDeskTUI, {
             title: '插件管理',
-            message,
+            message
         }).show();
     }
 
@@ -239,9 +251,9 @@ export class PluginsListOverlay implements Component {
         this.box.addChild(this.header);
 
         if (this.state === 'uninstalling' && this.loader) {
-            this.box.addChild(new Text(""));
+            this.box.addChild(new Text(''));
             this.box.addChild(this.loader);
-            this.box.addChild(new Text(""));
+            this.box.addChild(new Text(''));
         } else {
             if (this.list) {
                 this.box.addChild(this.list);
@@ -249,10 +261,10 @@ export class PluginsListOverlay implements Component {
         }
 
         if (this.state === 'list') {
-            this.box.addChild(new Text(""));
+            this.box.addChild(new Text(''));
             this.box.addChild(new Text(chalk.dim('  D 启用/禁用  U 卸载  Esc 关闭')));
         } else if (this.state === 'confirm-toggle' || this.state === 'confirm-uninstall') {
-            this.box.addChild(new Text(""));
+            this.box.addChild(new Text(''));
             this.box.addChild(new Text(chalk.dim('  ↑↓ 选择  Enter 确认  Esc 取消')));
         }
 
@@ -291,7 +303,7 @@ export class PluginsListOverlay implements Component {
         this.overlayHandle = this.openDeskTUI.tui.showOverlay(this, {
             width: overlayWidth,
             maxHeight: overlayMaxHeight,
-            anchor: "center",
+            anchor: 'center'
         });
 
         this.openDeskTUI.hasOpenOverlay = true;

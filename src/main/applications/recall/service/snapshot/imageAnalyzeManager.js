@@ -21,9 +21,9 @@ import { LLM } from '../../../../aikernel/llm.js';
 
 // 关键帧检测阈值常量
 const KEYFRAME_DETECTION = {
-    DHASH_THRESHOLD: 5,           // dHash差异阈值
-    SSIM_THRESHOLD: 0.8,          // SSIM相似度阈值
-    MIN_INTERVAL_MS: 10000        // 最小间隔时间(毫秒)
+    DHASH_THRESHOLD: 5, // dHash差异阈值
+    SSIM_THRESHOLD: 0.8, // SSIM相似度阈值
+    MIN_INTERVAL_MS: 10000 // 最小间隔时间(毫秒)
 };
 
 /**
@@ -49,11 +49,7 @@ function calculateHammingDistance(hash1, hash2) {
 async function calculateDHash(imageBuffer) {
     try {
         // 使用sharp将图像转换为8位灰度图并调整为9x8大小
-        const grayBuffer = await sharp(imageBuffer)
-            .resize(9, 8, { fit: 'fill' })
-            .grayscale()
-            .raw()
-            .toBuffer();
+        const grayBuffer = await sharp(imageBuffer).resize(9, 8, { fit: 'fill' }).grayscale().raw().toBuffer();
 
         // 计算dHash：比较每行相邻像素的亮度差异
         let hash = '';
@@ -85,15 +81,11 @@ async function calculateSSIM(imagePath1, imagePath2) {
         // 将图像转换为 RGBA 格式（ssim.js 需要4通道数据）
         const img1Buffer = await sharp(imagePath1)
             .resize(256, 256, { fit: 'fill' })
-            .ensureAlpha()  // 确保有 alpha 通道
+            .ensureAlpha() // 确保有 alpha 通道
             .raw()
             .toBuffer();
 
-        const img2Buffer = await sharp(imagePath2)
-            .resize(256, 256, { fit: 'fill' })
-            .ensureAlpha()
-            .raw()
-            .toBuffer();
+        const img2Buffer = await sharp(imagePath2).resize(256, 256, { fit: 'fill' }).ensureAlpha().raw().toBuffer();
 
         // 转换为 Uint8ClampedArray 格式
         const img1Data = new Uint8ClampedArray(img1Buffer);
@@ -261,10 +253,10 @@ class ImageAnalyzeManager {
             // 映射回 snapshotId
             const results = [];
             for (let i = 0; i < snapshots.length; i++) {
-                const memory = response.memories.find(m => m.index === i);
+                const memory = response.memories.find((m) => m.index === i);
                 results.push({
                     snapshotId: snapshots[i].snapshotId,
-                    summary: memory ? (memory.summary || '') : ''
+                    summary: memory ? memory.summary || '' : ''
                 });
             }
 
@@ -282,9 +274,7 @@ class ImageAnalyzeManager {
      * @returns {Promise<string>}
      */
     static async generateMemory(snapshotId, imageUrl) {
-        const results = await ImageAnalyzeManager.batchGenerateMemories([
-            { snapshotId, imageUrl }
-        ]);
+        const results = await ImageAnalyzeManager.batchGenerateMemories([{ snapshotId, imageUrl }]);
         return results[0]?.summary || '';
     }
 }

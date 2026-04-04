@@ -1,11 +1,10 @@
-import { type Component, Box, Text, Key, matchesKey } from "@mariozechner/pi-tui";
-import chalk from "chalk";
-import { SlashCommandRegistry } from "../commands";
-import { defaultSelectListTheme } from "../theme";
-import { OpenDeskTUI } from "../entry";
-import { SelectTable, type SelectRow } from "./selecttable";
-import { SkillRegistry } from "../../aikernel/skill";
-
+import { type Component, Box, Text, Key, matchesKey } from '@mariozechner/pi-tui';
+import chalk from 'chalk';
+import { SlashCommandRegistry } from '../commands';
+import { defaultSelectListTheme } from '../theme';
+import { OpenDeskTUI } from '../entry';
+import { SelectTable, type SelectRow } from './selecttable';
+import { SkillRegistry } from '../../aikernel/skill';
 
 type HelpTab = 'commands' | 'skills';
 
@@ -26,15 +25,13 @@ export class HelpOverlay implements Component {
 
         // ── 构建 Commands 表格 ──
         const commands = this.openDeskTUI.commandRegistry.getAll();
-        const commandRows: SelectRow[] = commands.map(cmd => ({
+        const commandRows: SelectRow[] = commands.map((cmd) => ({
             labels: [
                 chalk.bold('/' + cmd.name),
-                cmd.shortcut
-                    ? chalk.cyan(SlashCommandRegistry.formatKeyLabel(cmd.shortcut))
-                    : '',
-                cmd.description,
+                cmd.shortcut ? chalk.cyan(SlashCommandRegistry.formatKeyLabel(cmd.shortcut)) : '',
+                cmd.description
             ],
-            value: cmd.name,
+            value: cmd.name
         }));
         if (commandRows.length === 0) {
             commandRows.push({ labels: ['', '', chalk.dim('暂无命令')], value: '_empty' });
@@ -44,9 +41,7 @@ export class HelpOverlay implements Component {
         this.commandTable.setColumnStrechFactors([0, 0, 1]);
 
         // ── 构建 Skills 表格（初始为空，异步填充） ──
-        const placeholderRows: SelectRow[] = [
-            { labels: [chalk.dim('加载中...')], value: '_loading' },
-        ];
+        const placeholderRows: SelectRow[] = [{ labels: [chalk.dim('加载中...')], value: '_loading' }];
         this.skillTable = new SelectTable(placeholderRows, 1, defaultSelectListTheme);
         this.skillTable.setColumnStrechFactors([0, 1]);
 
@@ -83,12 +78,8 @@ export class HelpOverlay implements Component {
     }
 
     private buildHeader(): string {
-        const cmdLabel = this.activeTab === 'commands'
-            ? chalk.bold.underline(' 指令 ')
-            : chalk.dim(' 指令 ');
-        const skillLabel = this.activeTab === 'skills'
-            ? chalk.bold.underline(' 技能 ')
-            : chalk.dim(' 技能 ');
+        const cmdLabel = this.activeTab === 'commands' ? chalk.bold.underline(' 指令 ') : chalk.dim(' 指令 ');
+        const skillLabel = this.activeTab === 'skills' ? chalk.bold.underline(' 技能 ') : chalk.dim(' 技能 ');
         return ` ${cmdLabel}  ${skillLabel}  ${chalk.dim('← → 切换')}`;
     }
 
@@ -98,23 +89,21 @@ export class HelpOverlay implements Component {
             const userInvocable = await registry.getUserInvocableSkills();
 
             const rows: SelectRow[] = userInvocable.map(({ bundleName, skill }) => {
-                const invocableTag = skill.isModelInvocable
-                    ? chalk.green('auto')
-                    : chalk.yellow('manual');
+                const invocableTag = skill.isModelInvocable ? chalk.green('auto') : chalk.yellow('manual');
                 return {
                     labels: [
                         chalk.bold('/' + skill.frontmatter.name),
                         invocableTag,
-                        skill.frontmatter.description || '',
+                        skill.frontmatter.description || ''
                     ],
-                    value: skill.frontmatter.name,
+                    value: skill.frontmatter.name
                 };
             });
 
             if (rows.length === 0) {
                 rows.push({
                     labels: [chalk.dim('暂无可用技能'), '', chalk.dim('使用 /skills 管理技能')],
-                    value: '_empty',
+                    value: '_empty'
                 });
             }
 
@@ -167,7 +156,7 @@ export class HelpOverlay implements Component {
         this.overlayHandle = this.openDeskTUI.tui.showOverlay(this, {
             width: overlayWidth,
             maxHeight: overlayMaxHeight,
-            anchor: "center",
+            anchor: 'center'
         });
 
         this.openDeskTUI.hasOpenOverlay = true;

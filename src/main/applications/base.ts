@@ -21,14 +21,12 @@ import path from 'path';
 import fs from 'fs';
 import PQueue from 'p-queue';
 
-
 export interface EventDecl {
     eventName: string;
     eventDescription: string;
 }
 
 export class BaseWorker {
-
     bundleName: string;
     config: object;
     appDataDirectory: string;
@@ -45,15 +43,15 @@ export class BaseWorker {
      * 消息处理封装，由上级Worker统一接收消息并调用
      */
     async handleMessage(methodName: string, ...args: any[]): Promise<any> {
-        if (typeof (this as any)[methodName] === "function") {
+        if (typeof (this as any)[methodName] === 'function') {
             return await (this as any)[methodName](...args);
         } else {
             throw new Error(`unknown message ${methodName}, implement this method in the worker class`);
         }
     }
 
-    async * handleStreamMessage(methodName: string, ...args: any[]): AsyncGenerator<any> {
-        if (typeof (this as any)[methodName] === "function") {
+    async *handleStreamMessage(methodName: string, ...args: any[]): AsyncGenerator<any> {
+        if (typeof (this as any)[methodName] === 'function') {
             yield* (this as any)[methodName](...args);
         } else {
             throw new Error(`unknown message ${methodName}, implement this method in the worker class`);
@@ -63,9 +61,9 @@ export class BaseWorker {
     /**
      * 初始化工作，各个应用的Worker需要自己继承并实现
      */
-    async initialize(): Promise<void> { }
+    async initialize(): Promise<void> {}
 
-    async finalize(): Promise<void> { }
+    async finalize(): Promise<void> {}
 
     async applicationConfigChanged(config: object): Promise<void> {
         this.config = config;
@@ -76,7 +74,7 @@ export class BaseWorker {
             type: 'emitEvent',
             bundleName: this.bundleName,
             eventName: eventName,
-            args: args,
+            args: args
         });
     }
 
@@ -95,7 +93,6 @@ export interface ProtocolHandlerConfig {
 }
 
 export abstract class BaseApplication {
-
     bundleName: string;
     name: string;
     /** 是否在侧边栏应用列表中显示图标，仅提供工具不提供界面的应用可设为 false */
@@ -103,7 +100,7 @@ export abstract class BaseApplication {
     eventSubscribers: Map<string, Set<Electron.WebFrameMain>>;
     registry?: typeof ApplicationRegistry;
 
-    constructor(bundleName: string, name: string = "未命名应用", showIcon: boolean = true) {
+    constructor(bundleName: string, name: string = '未命名应用', showIcon: boolean = true) {
         this.bundleName = bundleName;
         this.name = name;
         this.showIcon = showIcon;
@@ -122,7 +119,7 @@ export abstract class BaseApplication {
         return {
             bundleName: this.bundleName,
             name: this.name,
-            showIcon: this.showIcon,
+            showIcon: this.showIcon
         };
     }
 
@@ -184,7 +181,7 @@ export abstract class BaseApplication {
             return this._declaredEventsCache;
         }
         const events = await this.getSupportedEvents();
-        this._declaredEventsCache = new Set(events.map(e => e.eventName));
+        this._declaredEventsCache = new Set(events.map((e) => e.eventName));
         return this._declaredEventsCache;
     }
 
@@ -205,7 +202,7 @@ export abstract class BaseApplication {
         if (!declaredEvents.has(eventName)) {
             logger.warn(
                 `Event "${eventName}" is not declared in getSupportedEvents() for application "${this.bundleName}". ` +
-                `Please add it to the getSupportedEvents() return value.`
+                    `Please add it to the getSupportedEvents() return value.`
             );
             return false;
         }
@@ -323,7 +320,7 @@ export abstract class BaseApplication {
     }
 
     getDataDirectory(): string {
-        let data_directory = path.join(getAppDirectory(), 'apps', this.bundleName);
+        const data_directory = path.join(getAppDirectory(), 'apps', this.bundleName);
         if (!fs.existsSync(data_directory)) {
             fs.mkdirSync(data_directory, { recursive: true });
         }

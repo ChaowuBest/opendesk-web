@@ -21,7 +21,7 @@ export async function runArxivSearchTests(): Promise<boolean> {
         console.log('1. 测试基本搜索 - "deep learning"');
         const toolResult1 = await arxivTool.execute({
             query: 'deep learning',
-            count: 3,
+            count: 3
         });
         console.log('   ✓ 基本搜索成功');
         console.log('   - 结果状态:', toolResult1.status, '\n');
@@ -32,7 +32,7 @@ export async function runArxivSearchTests(): Promise<boolean> {
             query: 'cat:cs.AI',
             count: 2,
             sort_by: 'submittedDate',
-            sort_order: 'descending',
+            sort_order: 'descending'
         });
         console.log('   ✓ 分类搜索成功');
         console.log('   - 结果状态:', toolResult2.status, '\n');
@@ -47,7 +47,7 @@ export async function runArxivSearchTests(): Promise<boolean> {
             args_string: JSON.stringify({ query: 'machine learning' }),
             args_object: { query: 'machine learning' },
             status: 'success' as const,
-            result: '**结果数量**: 5',
+            result: '**结果数量**: 5'
         };
         const rendered = arxivTool.renderToolCallCli(mockToolCall as any, 80);
         console.log('   ✓ 渲染成功');

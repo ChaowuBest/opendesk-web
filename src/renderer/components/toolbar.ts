@@ -18,7 +18,6 @@ interface Button {
 }
 
 export class ElasticToolbarWidget extends HTMLElement {
-
     uid: string;
     buttons: Button[];
     toolbarTitle?: string;
@@ -50,12 +49,13 @@ export class ElasticToolbarWidget extends HTMLElement {
     }
 
     render() {
-        const topButtonsHTML = this.buttons.map(button => {
-            const labelStayVisible = !!button.labelStayVisible;
-            const labelSpanClass = labelStayVisible
-                ? 'max-w-[120px] opacity-100 ml-2 transition-all duration-500 ease-in-out whitespace-nowrap font-medium tracking-tight text-sm'
-                : 'max-w-0 overflow-hidden opacity-0 group-hover:max-w-[120px] group-hover:opacity-100 group-hover:ml-2 transition-all duration-500 ease-in-out whitespace-nowrap font-medium tracking-tight text-sm';
-            return `
+        const topButtonsHTML = this.buttons
+            .map((button) => {
+                const labelStayVisible = !!button.labelStayVisible;
+                const labelSpanClass = labelStayVisible
+                    ? 'max-w-[120px] opacity-100 ml-2 transition-all duration-500 ease-in-out whitespace-nowrap font-medium tracking-tight text-sm'
+                    : 'max-w-0 overflow-hidden opacity-0 group-hover:max-w-[120px] group-hover:opacity-100 group-hover:ml-2 transition-all duration-500 ease-in-out whitespace-nowrap font-medium tracking-tight text-sm';
+                return `
             <button id='${button.id}-${this.uid}' class="group flex items-center px-2 py-2 rounded-full
                         bg-transparent hover:bg-gray-100
                         transition-all duration-500 ease-[cubic-bezier(0.23,1,0.32,1)]
@@ -66,13 +66,14 @@ export class ElasticToolbarWidget extends HTMLElement {
                 </span>
             </button>
             `;
-        }).join('');
+            })
+            .join('');
 
         const titleHTML = this.toolbarTitle
             ? `<div class="inline-block pl-4 py-2 font-semibold text-gray-800 text-sm">${this.toolbarTitle}</div>`
             : '';
 
-        let toolbarHTML = `
+        const toolbarHTML = `
         <header class="h-16 px-4 flex items-center justify-center">
             <div class="flex items-center gap-3 p-1 rounded-full bg-white shadow">
                 ${titleHTML}
@@ -82,7 +83,7 @@ export class ElasticToolbarWidget extends HTMLElement {
         `;
 
         this.innerHTML = toolbarHTML;
-        this.buttons.forEach(button => {
+        this.buttons.forEach((button) => {
             const buttonElement = this.querySelector(`#${button.id}-${this.uid}`);
             if (buttonElement) {
                 buttonElement.addEventListener('click', () => {

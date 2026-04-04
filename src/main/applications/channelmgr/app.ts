@@ -25,7 +25,7 @@ import {
     installPlugin,
     uninstallPlugin,
     setPluginEnabled,
-    invalidatePluginRequireCache,
+    invalidatePluginRequireCache
 } from '../../aikernel/plugins/index.js';
 import type {
     PluginEntry,
@@ -35,7 +35,7 @@ import type {
     ChannelGatewayContext,
     InboundChannelMessage,
     ChannelAccountSnapshot,
-    Participant,
+    Participant
 } from '../../aikernel/plugins/types.js';
 import { registerChannelDispatch, unregisterChannelDispatch } from '../../aikernel/plugins/openclaw/api.js';
 import { ChannelMessageRouter, type ChannelReply } from './router.js';
@@ -61,13 +61,9 @@ import {
     CreateFeishuBotTool,
     SendFileTool,
     LoginChannelTool,
-    type LoginChannelState,
+    type LoginChannelState
 } from './tools.js';
-import {
-    feishuAuthInit,
-    feishuAuthBegin,
-    feishuAuthPoll,
-} from './feishu-auth.js';
+import { feishuAuthInit, feishuAuthBegin, feishuAuthPoll } from './feishu-auth.js';
 import { NotificationManager } from '../../utils/notificationmgr.js';
 import { ToolResult } from '../../aikernel/tool.js';
 import qrcodeTerminal from 'qrcode-terminal';
@@ -82,14 +78,14 @@ export interface ChannelRuntimeState {
 }
 
 const CHANNEL_DISPLAY_NAMES: Record<string, string> = {
-    'feishu': '飞书',
+    feishu: '飞书',
     'openclaw-weixin': '微信',
-    'whatsapp': 'WhatsApp',
-    'zalouser': 'Zalo',
-    'telegram': 'Telegram',
-    'discord': 'Discord',
-    'slack': 'Slack',
-    'signal': 'Signal',
+    whatsapp: 'WhatsApp',
+    zalouser: 'Zalo',
+    telegram: 'Telegram',
+    discord: 'Discord',
+    slack: 'Slack',
+    signal: 'Signal'
 };
 
 function resolveChannelDisplayName(channelId: string, fallbackLabel: string): string {
@@ -107,7 +103,6 @@ export interface LoginResult {
 }
 
 export class ChannelMgrApplication extends BaseApplication {
-
     private workspace?: string;
     private plugins: PluginEntry[] = [];
     private pluginLoadErrors: PluginLoadError[] = [];
@@ -133,7 +128,11 @@ export class ChannelMgrApplication extends BaseApplication {
     private notifyStateChange(): void {
         const states = this.getChannelStates();
         for (const cb of this.stateChangeCallbacks) {
-            try { cb(states); } catch { /* ignore callback errors */ }
+            try {
+                cb(states);
+            } catch {
+                /* ignore callback errors */
+            }
         }
         this.noticeTUIStatusUpdate();
     }
@@ -147,7 +146,7 @@ export class ChannelMgrApplication extends BaseApplication {
             { eventName: 'channel:connected', eventDescription: '消息插件已连接' },
             { eventName: 'channel:disconnected', eventDescription: '消息插件已断开' },
             { eventName: 'channel:message', eventDescription: '收到消息插件消息' },
-            { eventName: 'channel:error', eventDescription: '消息插件发生错误' },
+            { eventName: 'channel:error', eventDescription: '消息插件发生错误' }
         ];
     }
 
@@ -257,7 +256,7 @@ export class ChannelMgrApplication extends BaseApplication {
             const loadResult = await loadPlugins();
             this.plugins = loadResult.entries;
             this.pluginLoadErrors = loadResult.errors;
-            const channelPlugins = this.plugins.filter(p => p.channelPlugin);
+            const channelPlugins = this.plugins.filter((p) => p.channelPlugin);
             logger.info(`已加载 ${this.plugins.length} 个插件，其中 ${channelPlugins.length} 个消息插件`);
             if (this.pluginLoadErrors.length > 0) {
                 for (const e of this.pluginLoadErrors) {
@@ -295,7 +294,7 @@ export class ChannelMgrApplication extends BaseApplication {
                 pluginId: entry.id,
                 accountId,
                 status: { online: false, statusText: '启动中' },
-                label: resolveChannelDisplayName(channelId, cp.meta.label),
+                label: resolveChannelDisplayName(channelId, cp.meta.label)
             };
             this.channelStates.set(stateKey, state);
 
@@ -316,7 +315,11 @@ export class ChannelMgrApplication extends BaseApplication {
                         if (s && s.status.online) {
                             s.status = { online: false, statusText: '断开', error: err?.message };
                             this.notifyStateChange();
-                            this.emitEvent('channel:error', { channelId, accountId, error: err?.message });
+                            this.emitEvent('channel:error', {
+                                channelId,
+                                accountId,
+                                error: err?.message
+                            });
                             logger.error(`消息插件 ${channelId}:${accountId} 断开连接: ${err?.message || err}`);
                         }
                     });
@@ -324,10 +327,7 @@ export class ChannelMgrApplication extends BaseApplication {
                     // Many plugins (e.g. Feishu) start long-running event loops in startAccount
                     // that never resolve. Wait briefly for fast failures (config/auth errors),
                     // then assume the plugin is running.
-                    await Promise.race([
-                        startPromise,
-                        new Promise<void>(resolve => setTimeout(resolve, 5000)),
-                    ]);
+                    await Promise.race([startPromise, new Promise<void>((resolve) => setTimeout(resolve, 5000))]);
 
                     state.status = { online: true, statusText: '已连接' };
                     this.notifyStateChange();
@@ -352,21 +352,27 @@ export class ChannelMgrApplication extends BaseApplication {
         cp: ChannelPlugin,
         accountId: string,
         account: any,
-        config: any,
+        config: any
     ): ChannelGatewayContext {
         const stateKey = `${cp.id}:${accountId}`;
         const tag = `[${cp.id}:${accountId}]`;
-        const fmt = (...args: any[]) => args.map(a => {
-            if (typeof a === 'string') return a;
-            try { return JSON.stringify(a, null, 2) ?? String(a); }
-            catch { return String(a); }
-        }).join(' ');
+        const fmt = (...args: any[]) =>
+            args
+                .map((a) => {
+                    if (typeof a === 'string') return a;
+                    try {
+                        return JSON.stringify(a, null, 2) ?? String(a);
+                    } catch {
+                        return String(a);
+                    }
+                })
+                .join(' ');
 
         const pluginLogger = {
             info: (...args: any[]) => logger.info(`${tag} ${fmt(...args)}`),
             warn: (...args: any[]) => logger.warn(`${tag} ${fmt(...args)}`),
             error: (...args: any[]) => logger.error(`${tag} ${fmt(...args)}`),
-            debug: (...args: any[]) => logger.info(`${tag}[debug] ${fmt(...args)}`),
+            debug: (...args: any[]) => logger.info(`${tag}[debug] ${fmt(...args)}`)
         };
 
         // Create an AbortController for this channel account
@@ -383,7 +389,7 @@ export class ChannelMgrApplication extends BaseApplication {
                 log: (...args: any[]) => logger.info(`${tag} ${fmt(...args)}`),
                 error: (...args: any[]) => logger.error(`${tag} ${fmt(...args)}`),
                 warn: (...args: any[]) => logger.warn(`${tag} ${fmt(...args)}`),
-                platform: 'opendesk',
+                platform: 'opendesk'
             },
             // ── OpenClaw session / store ─────────────────────────────────────
             session: {
@@ -392,13 +398,15 @@ export class ChannelMgrApplication extends BaseApplication {
                     return sessionKey;
                 },
                 recordInboundSession: async (params: any) => {
-                    logger.debug(`recordInboundSession: storePath=${params?.storePath}, sessionKey=${params?.sessionKey}`);
-                },
+                    logger.debug(
+                        `recordInboundSession: storePath=${params?.storePath}, sessionKey=${params?.sessionKey}`
+                    );
+                }
             },
             // ── OpenClaw reply / inbound ─────────────────────────────────────
             reply: {
                 finalizeInboundContext: (ctx: any) => ctx || {},
-                resolveHumanDelayConfig: (cfg: any, agentId: any) => ({ delayMs: 0 }),
+                resolveHumanDelayConfig: (cfg: any, agentId: any) => ({ delayMs: 0 })
             },
             // ── OpenClaw routing ───────────────────────────────────────────────
             routing: {
@@ -407,15 +415,15 @@ export class ChannelMgrApplication extends BaseApplication {
                     return {
                         agentId: params?.agentId || null,
                         sessionKey,
-                        mainSessionKey: sessionKey,
+                        mainSessionKey: sessionKey
                     };
-                },
+                }
             },
             // ── OpenClaw commands runtime ──────────────────────────────────────
             commands: {
                 resolveSenderCommandAuthorizationWithRuntime: async (params: any) => {
                     return { senderAllowedForCommands: true, commandAuthorized: true };
-                },
+                }
             },
             abortSignal: abortController.signal,
             dispatch: async (message: InboundChannelMessage) => {
@@ -435,34 +443,33 @@ export class ChannelMgrApplication extends BaseApplication {
                     state.status = {
                         ...state.status,
                         ...status,
-                        online: status.online ?? state.status.online,
+                        online: status.online ?? state.status.online
                     };
                     this.notifyStateChange();
                 }
-            },
+            }
         };
     }
 
     private async handleInboundMessage(
         cp: ChannelPlugin,
         accountId: string,
-        message: InboundChannelMessage,
+        message: InboundChannelMessage
     ): Promise<void> {
         if (!this.router) {
             logger.warn('消息路由未配置，丢弃入站消息');
             return;
         }
 
-        const replyTo = (message.chatType === 'group' && message.groupId)
-            ? message.groupId
-            : message.senderId;
+        const replyTo = message.chatType === 'group' && message.groupId ? message.groupId : message.senderId;
         const cfg = this.getChannelConfig(cp.id);
         const baseCtx = {
-            channelId: cp.id, accountId,
+            channelId: cp.id,
+            accountId,
             to: replyTo,
             threadId: message.threadId,
             replyToMessageId: message.messageId,
-            cfg,
+            cfg
         };
 
         const reply = await this.router.routeInboundMessage(message);
@@ -487,15 +494,17 @@ export class ChannelMgrApplication extends BaseApplication {
 
         try {
             if (hasMedia && cp.outbound?.sendPayload) {
-                logger.info(`[channelmgr] using sendPayload with text="${reply.text?.substring(0, 50)}...", media=${reply.mediaUrls[0]}`);
+                logger.info(
+                    `[channelmgr] using sendPayload with text="${reply.text?.substring(0, 50)}...", media=${reply.mediaUrls[0]}`
+                );
                 await cp.outbound.sendPayload({
                     ...baseCtx,
                     payload: {
                         text: reply.text,
                         mediaUrl: reply.mediaUrls[0],
-                        mediaUrls: reply.mediaUrls,
+                        mediaUrls: reply.mediaUrls
                     },
-                    mediaLocalRoots,
+                    mediaLocalRoots
                 });
             } else if (hasMedia && cp.outbound?.sendMedia) {
                 logger.info(`[channelmgr] using sendMedia, ${reply.mediaUrls.length} files`);
@@ -507,13 +516,15 @@ export class ChannelMgrApplication extends BaseApplication {
                             ...baseCtx,
                             text: i === 0 ? reply.text : '',
                             mediaUrl: reply.mediaUrls[i],
-                            mediaLocalRoots,
+                            mediaLocalRoots
                         });
                         if (i === 0) textSent = true;
                     } catch (mediaErr: any) {
                         const fileName = path.basename(reply.mediaUrls[i].replace(/^file:\/\//, ''));
                         failedFiles.push(fileName);
-                        logger.error(`[channelmgr] 发送媒体文件失败 ${cp.id}:${accountId} media=${reply.mediaUrls[i]}: ${mediaErr?.message || mediaErr}`);
+                        logger.error(
+                            `[channelmgr] 发送媒体文件失败 ${cp.id}:${accountId} media=${reply.mediaUrls[i]}: ${mediaErr?.message || mediaErr}`
+                        );
                     }
                 }
                 if (failedFiles.length > 0) {
@@ -526,9 +537,14 @@ export class ChannelMgrApplication extends BaseApplication {
                         if (cp.outbound?.sendText) {
                             await cp.outbound.sendText({ ...baseCtx, text: warning });
                         } else if (cp.outbound?.sendPayload) {
-                            await cp.outbound.sendPayload({ ...baseCtx, payload: { text: warning } });
+                            await cp.outbound.sendPayload({
+                                ...baseCtx,
+                                payload: { text: warning }
+                            });
                         }
-                    } catch { /* 警告发送失败不阻塞流程 */ }
+                    } catch {
+                        /* 警告发送失败不阻塞流程 */
+                    }
                 }
             } else if (reply.text && cp.outbound?.sendText) {
                 logger.info(`[channelmgr] using sendText, text="${reply.text?.substring(0, 50)}..."`);
@@ -537,7 +553,9 @@ export class ChannelMgrApplication extends BaseApplication {
                 logger.info(`[channelmgr] using sendPayload (text only), text="${reply.text?.substring(0, 50)}..."`);
                 await cp.outbound.sendPayload({ ...baseCtx, payload: { text: reply.text } });
             } else {
-                logger.warn(`[channelmgr] no suitable send method: hasMedia=${hasMedia}, hasText=${!!reply.text}, sendPayload=${!!cp.outbound?.sendPayload}, sendMedia=${!!cp.outbound?.sendMedia}, sendText=${!!cp.outbound?.sendText}`);
+                logger.warn(
+                    `[channelmgr] no suitable send method: hasMedia=${hasMedia}, hasText=${!!reply.text}, sendPayload=${!!cp.outbound?.sendPayload}, sendMedia=${!!cp.outbound?.sendMedia}, sendText=${!!cp.outbound?.sendText}`
+                );
             }
         } catch (err: any) {
             logger.error(`发送回复失败 ${cp.id}:${accountId}: ${err?.message || err}`);
@@ -552,9 +570,9 @@ export class ChannelMgrApplication extends BaseApplication {
         const config = this.getConfig() || {};
         return {
             channels: {
-                [channelId]: config[channelId] || {},
+                [channelId]: config[channelId] || {}
             },
-            ...config,
+            ...config
         };
     }
 
@@ -562,9 +580,11 @@ export class ChannelMgrApplication extends BaseApplication {
         const states = this.getChannelStates();
         if (states.length === 0) return null;
 
-        const parts = states.map(s => {
+        const parts = states.map((s) => {
             const dot = s.status.online ? chalk.hex('#39FF14')('●') : chalk.hex('#FF1744')('○');
-            const name = s.status.online ? chalk.hex('#39FF14')(s.label || s.channelId) : chalk.hex('#FF1744')(s.label || s.channelId);
+            const name = s.status.online
+                ? chalk.hex('#39FF14')(s.label || s.channelId)
+                : chalk.hex('#FF1744')(s.label || s.channelId);
             return `${dot}${name}`;
         });
         return `💬 ${parts.join(' ')}`;
@@ -578,11 +598,11 @@ export class ChannelMgrApplication extends BaseApplication {
 
     getChannelPlugins(): { id: string; label: string; description?: string }[] {
         return this.plugins
-            .filter(p => p.channelPlugin)
-            .map(p => ({
+            .filter((p) => p.channelPlugin)
+            .map((p) => ({
                 id: p.channelPlugin!.id,
                 label: resolveChannelDisplayName(p.channelPlugin!.id, p.channelPlugin!.meta.label),
-                description: p.channelPlugin!.meta.description,
+                description: p.channelPlugin!.meta.description
             }));
     }
 
@@ -597,10 +617,12 @@ export class ChannelMgrApplication extends BaseApplication {
     async sendTextToParticipant(participant: Participant, text: string): Promise<void> {
         const { channel, accountId, recipientId } = participant;
 
-        logger.info(`[channelmgr] sendTextToParticipant: channel=${channel}, accountId=${accountId}, recipientId=${recipientId}, text_len=${text.length}`);
+        logger.info(
+            `[channelmgr] sendTextToParticipant: channel=${channel}, accountId=${accountId}, recipientId=${recipientId}, text_len=${text.length}`
+        );
 
         // Find the channel plugin
-        const entry = this.plugins.find(p => p.channelPlugin?.id === channel);
+        const entry = this.plugins.find((p) => p.channelPlugin?.id === channel);
         if (!entry?.channelPlugin) {
             logger.error(`[channelmgr] 找不到 channel plugin: ${channel}`);
             return;
@@ -613,7 +635,7 @@ export class ChannelMgrApplication extends BaseApplication {
             channelId: cp.id,
             accountId: accountId,
             to: recipientId,
-            cfg: config,
+            cfg: config
         };
 
         logger.info(`[channelmgr] sending via ${cp.id}, to=${recipientId}`);
@@ -636,8 +658,10 @@ export class ChannelMgrApplication extends BaseApplication {
     /**
      * 根据 Participant 获取 channel 和 account 信息。
      */
-    getParticipantInfo(participant: Participant): { channelId: string; accountId: string; recipientId: string; label: string } | null {
-        const entry = this.plugins.find(p => p.channelPlugin?.id === participant.channel);
+    getParticipantInfo(
+        participant: Participant
+    ): { channelId: string; accountId: string; recipientId: string; label: string } | null {
+        const entry = this.plugins.find((p) => p.channelPlugin?.id === participant.channel);
         if (!entry?.channelPlugin) {
             return null;
         }
@@ -645,7 +669,7 @@ export class ChannelMgrApplication extends BaseApplication {
             channelId: participant.channel,
             accountId: participant.accountId,
             recipientId: participant.recipientId,
-            label: resolveChannelDisplayName(participant.channel, entry.channelPlugin.meta.label),
+            label: resolveChannelDisplayName(participant.channel, entry.channelPlugin.meta.label)
         };
     }
 
@@ -658,16 +682,18 @@ export class ChannelMgrApplication extends BaseApplication {
      */
     async loginChannel(channelId: string, accountId = 'default', result?: ToolResult): Promise<LoginResult> {
         // 先在已加载的插件中查找
-        let entry = this.plugins.find(p => p.channelPlugin?.id === channelId);
+        let entry = this.plugins.find((p) => p.channelPlugin?.id === channelId);
 
         // 如果未找到，尝试（重新）加载插件——可能是安装后未重启，或首次调用
         if (!entry?.channelPlugin) {
-            logger.info(`[loginChannel] channel ${channelId} not found in ${this.plugins.length} loaded plugins, reloading...`);
+            logger.info(
+                `[loginChannel] channel ${channelId} not found in ${this.plugins.length} loaded plugins, reloading...`
+            );
             const loadResult = await loadPlugins();
             this.plugins = loadResult.entries;
             this.pluginLoadErrors = loadResult.errors;
             logger.info(`[loginChannel] reloaded ${this.plugins.length} plugins`);
-            entry = this.plugins.find(p => p.channelPlugin?.id === channelId);
+            entry = this.plugins.find((p) => p.channelPlugin?.id === channelId);
         }
 
         if (!entry?.channelPlugin) {
@@ -697,11 +723,10 @@ export class ChannelMgrApplication extends BaseApplication {
                 accountId,
                 runtime,
                 verbose: false,
-                channelInput: channelId,
+                channelInput: channelId
             });
             loginResult = { phase: 'success', message: `${channelId} 登录完成` };
-        }
-        else {
+        } else {
             return { phase: 'error', error: `渠道 ${channelId} 不支持 login` };
         }
 
@@ -725,11 +750,16 @@ export class ChannelMgrApplication extends BaseApplication {
         cp: ChannelPlugin,
         channelId: string,
         accountId: string,
-        result?: ToolResult,
+        result?: ToolResult
     ): Promise<LoginResult> {
         const updateState = (state: Partial<LoginChannelState>) => {
             if (result) {
-                result.updateResultObject({ phase: 'polling', channelId, accountId, ...state } as LoginChannelState);
+                result.updateResultObject({
+                    phase: 'polling',
+                    channelId,
+                    accountId,
+                    ...state
+                } as LoginChannelState);
             }
         };
 
@@ -739,12 +769,15 @@ export class ChannelMgrApplication extends BaseApplication {
             accountId,
             force: false,
             timeoutMs: 60_000,
-            verbose: false,
+            verbose: false
         });
 
         const qrUrl = (startResult as any).qrDataUrl || (startResult as any).qrcodeUrl;
         if (!qrUrl) {
-            return { phase: 'error', error: `渠道 ${channelId} 未能生成二维码: ${startResult.message || '未知错误'}` };
+            return {
+                phase: 'error',
+                error: `渠道 ${channelId} 未能生成二维码: ${startResult.message || '未知错误'}`
+            };
         }
 
         // 推送 QR 码状态
@@ -763,19 +796,19 @@ export class ChannelMgrApplication extends BaseApplication {
         // 主动让出事件循环，让 TUI 完成一次渲染再进入阻塞等待。
         // 否则 requestStreamRender 的 100ms  throttle 导致渲染被延迟到 loginWithQrWait 返回之后，
         // 此时 phase 已变为 success，QR 码永远不会显示。
-        await new Promise(resolve => setImmediate(resolve));
+        await new Promise((resolve) => setImmediate(resolve));
 
         // Step 2: 轮询等待扫码完成
         const waitResult = await cp.gateway!.loginWithQrWait!({
             accountId,
             sessionKey: (startResult as any).sessionKey,
-            timeoutMs: 480_000,
+            timeoutMs: 480_000
         });
 
         if (waitResult.connected) {
             updateState({
                 phase: 'success',
-                message: `${channelId} 登录成功！`,
+                message: `${channelId} 登录成功！`
             });
             return { phase: 'success', message: `${channelId} 登录成功` };
         }
@@ -788,10 +821,19 @@ export class ChannelMgrApplication extends BaseApplication {
      */
     private buildRuntimeEnv(channelId: string) {
         return {
-            log: (...args: any[]) => logger.info(`[${channelId}] ${args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ')}`),
-            error: (...args: any[]) => logger.error(`[${channelId}] ${args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ')}`),
-            warn: (...args: any[]) => logger.warn(`[${channelId}] ${args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ')}`),
-            platform: 'opendesk',
+            log: (...args: any[]) =>
+                logger.info(
+                    `[${channelId}] ${args.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ')}`
+                ),
+            error: (...args: any[]) =>
+                logger.error(
+                    `[${channelId}] ${args.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ')}`
+                ),
+            warn: (...args: any[]) =>
+                logger.warn(
+                    `[${channelId}] ${args.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ')}`
+                ),
+            platform: 'opendesk'
         };
     }
 
@@ -804,7 +846,12 @@ export class ChannelMgrApplication extends BaseApplication {
 
         const updateState = (state: Partial<LoginChannelState>) => {
             if (result) {
-                result.updateResultObject({ phase: 'polling', channelId: 'feishu', accountId, ...state } as LoginChannelState);
+                result.updateResultObject({
+                    phase: 'polling',
+                    channelId: 'feishu',
+                    accountId,
+                    ...state
+                } as LoginChannelState);
             }
         };
 
@@ -834,10 +881,14 @@ export class ChannelMgrApplication extends BaseApplication {
             qrAscii = `请手动打开链接: ${verification_uri_complete}`;
         }
 
-        updateState({ qr_ascii: qrAscii, verification_url: verification_uri_complete, phase: 'generating_qr' });
+        updateState({
+            qr_ascii: qrAscii,
+            verification_url: verification_uri_complete,
+            phase: 'generating_qr'
+        });
 
         // 让出事件循环，确保 TUI 在进入轮询前先渲染一次（显示 QR 或初始提示）
-        await new Promise(resolve => setImmediate(resolve));
+        await new Promise((resolve) => setImmediate(resolve));
 
         // Step 4: 轮询等待扫码
         const startTime = Date.now();
@@ -846,7 +897,7 @@ export class ChannelMgrApplication extends BaseApplication {
         const deadlineMs = Math.min(expireInSec, FEISHU_BOT_POLL_TIMEOUT_SEC) * 1000;
 
         while (Date.now() - startTime < deadlineMs) {
-            await new Promise(resolve => setTimeout(resolve, pollIntervalSec * 1000));
+            await new Promise((resolve) => setTimeout(resolve, pollIntervalSec * 1000));
 
             let pollRes;
             try {
@@ -869,11 +920,11 @@ export class ChannelMgrApplication extends BaseApplication {
 
                 this.setConfig({
                     ...currentConfig,
-                    'feishu': {
+                    feishu: {
                         ...feishuConfig,
                         enabled: true,
-                        accounts,
-                    },
+                        accounts
+                    }
                 });
 
                 logger.info(`[loginChannel:feishu] 登录成功: ${appId}`);
@@ -882,14 +933,14 @@ export class ChannelMgrApplication extends BaseApplication {
                     phase: 'success',
                     appId,
                     appSecret,
-                    message: `飞书机器人创建成功，App ID: ${appId}`,
+                    message: `飞书机器人创建成功，App ID: ${appId}`
                 });
 
                 return {
                     phase: 'success',
                     message: `飞书机器人创建成功（App ID: ${appId}，Open ID: ${openId}）`,
                     appId,
-                    appSecret,
+                    appSecret
                 };
             }
 
@@ -904,7 +955,10 @@ export class ChannelMgrApplication extends BaseApplication {
                 } else if (pollRes.error === 'expired_token') {
                     return { phase: 'error', error: '二维码已过期，请重新调用' };
                 } else {
-                    return { phase: 'error', error: `${pollRes.error}${pollRes.error_description ? ': ' + pollRes.error_description : ''}` };
+                    return {
+                        phase: 'error',
+                        error: `${pollRes.error}${pollRes.error_description ? ': ' + pollRes.error_description : ''}`
+                    };
                 }
             }
         }
@@ -930,9 +984,17 @@ export class ChannelMgrApplication extends BaseApplication {
                 if (cp.gateway?.stopAccount) {
                     const account = cp.config.resolveAccount(config, accountId);
                     await cp.gateway.stopAccount({
-                        accountId, account, cfg: config,
-                        logger: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} },
-                        dispatch: async () => {}, setStatus: () => {},
+                        accountId,
+                        account,
+                        cfg: config,
+                        logger: {
+                            info: () => {},
+                            warn: () => {},
+                            error: () => {},
+                            debug: () => {}
+                        },
+                        dispatch: async () => {},
+                        setStatus: () => {}
                     });
                 }
 
@@ -954,7 +1016,11 @@ export class ChannelMgrApplication extends BaseApplication {
             if (!cp) continue;
             const config = this.getChannelConfig(cp.id);
             let accountIds: string[];
-            try { accountIds = cp.config.listAccountIds(config); } catch { accountIds = ['default']; }
+            try {
+                accountIds = cp.config.listAccountIds(config);
+            } catch {
+                accountIds = ['default'];
+            }
             await this.stopChannelPluginAccounts(cp, accountIds);
         }
         this.started = false;
@@ -966,7 +1032,7 @@ export class ChannelMgrApplication extends BaseApplication {
      * 用于 loginChannel 成功后立即建立消息收发通道。
      */
     async restartChannelPlugin(channelId: string): Promise<void> {
-        const entry = this.plugins.find(p => p.channelPlugin?.id === channelId);
+        const entry = this.plugins.find((p) => p.channelPlugin?.id === channelId);
         if (!entry?.channelPlugin) {
             logger.warn(`[channelmgr] restartChannelPlugin: 未找到渠道 ${channelId}`);
             return;
@@ -987,7 +1053,9 @@ export class ChannelMgrApplication extends BaseApplication {
             for (const id of cp.config.listAccountIds(config)) {
                 runningAccountIds.add(id);
             }
-        } catch { /* best effort */ }
+        } catch {
+            /* best effort */
+        }
 
         const allAccountIds = Array.from(runningAccountIds);
         if (allAccountIds.length === 0) allAccountIds.push('default');
@@ -1036,7 +1104,7 @@ export class ChannelMgrApplication extends BaseApplication {
         this.plugins = loadResult.entries;
         this.pluginLoadErrors = loadResult.errors;
 
-        const channelPlugins = this.plugins.filter(p => p.channelPlugin);
+        const channelPlugins = this.plugins.filter((p) => p.channelPlugin);
         logger.info(`[channelmgr] 重新加载完成: ${this.plugins.length} 个插件, ${channelPlugins.length} 个消息插件`);
 
         if (this.pluginLoadErrors.length > 0) {
@@ -1068,15 +1136,25 @@ export class ChannelMgrApplication extends BaseApplication {
                     const parts = argPrefix.split(/\s+/);
                     if (parts.length <= 1) {
                         return options
-                            .filter(opt => opt.startsWith((parts[0] || '').toLowerCase()))
-                            .map(opt => ({
-                                value: opt, label: opt,
-                                description: { install: '安装插件', uninstall: '卸载插件', list: '列出已安装插件', enable: '启用插件', disable: '禁用插件' }[opt] || '',
+                            .filter((opt) => opt.startsWith((parts[0] || '').toLowerCase()))
+                            .map((opt) => ({
+                                value: opt,
+                                label: opt,
+                                description:
+                                    {
+                                        install: '安装插件',
+                                        uninstall: '卸载插件',
+                                        list: '列出已安装插件',
+                                        enable: '启用插件',
+                                        disable: '禁用插件'
+                                    }[opt] || ''
                             }));
                     }
                     return null;
                 },
-                execute: async (args: string) => { await this.handlePluginsCommand(args, tui); },
+                execute: async (args: string) => {
+                    await this.handlePluginsCommand(args, tui);
+                }
             },
             {
                 name: 'channels',
@@ -1084,14 +1162,17 @@ export class ChannelMgrApplication extends BaseApplication {
                 getArgumentCompletions: (argPrefix: string) => {
                     const options = ['list', 'status'];
                     return options
-                        .filter(opt => opt.startsWith(argPrefix.toLowerCase()))
-                        .map(opt => ({
-                            value: opt, label: opt,
-                            description: opt === 'list' ? '列出所有消息插件' : '查看消息插件状态',
+                        .filter((opt) => opt.startsWith(argPrefix.toLowerCase()))
+                        .map((opt) => ({
+                            value: opt,
+                            label: opt,
+                            description: opt === 'list' ? '列出所有消息插件' : '查看消息插件状态'
                         }));
                 },
-                execute: async (args: string) => { await this.handleChannelsCommand(args, tui); },
-            },
+                execute: async (args: string) => {
+                    await this.handleChannelsCommand(args, tui);
+                }
+            }
         ];
     }
 
@@ -1106,10 +1187,13 @@ export class ChannelMgrApplication extends BaseApplication {
 
         switch (subCmd) {
             case 'install': {
-                if (!rest) { showInfo('用法提示', '/plugins install <npm-spec|url>'); return; }
+                if (!rest) {
+                    showInfo('用法提示', '/plugins install <npm-spec|url>');
+                    return;
+                }
                 const progress = new ProgressOverlay(tui, {
                     title: '安装中',
-                    message: `正在安装插件: ${rest} ...\n\n请稍候，安装完成后会自动提示。`,
+                    message: `正在安装插件: ${rest} ...\n\n请稍候，安装完成后会自动提示。`
                 });
                 progress.show();
                 try {
@@ -1129,10 +1213,13 @@ export class ChannelMgrApplication extends BaseApplication {
                 break;
             }
             case 'uninstall': {
-                if (!rest) { showInfo('用法提示', '/plugins uninstall <plugin-id>'); return; }
+                if (!rest) {
+                    showInfo('用法提示', '/plugins uninstall <plugin-id>');
+                    return;
+                }
                 const progress = new ProgressOverlay(tui, {
                     title: '卸载中',
-                    message: `正在卸载插件: ${rest} ...\n\n请稍候，卸载完成后会自动提示。`,
+                    message: `正在卸载插件: ${rest} ...\n\n请稍候，卸载完成后会自动提示。`
                 });
                 progress.show();
                 try {
@@ -1156,7 +1243,10 @@ export class ChannelMgrApplication extends BaseApplication {
                 break;
             }
             case 'enable': {
-                if (!rest) { showInfo('用法提示', '/plugins enable <plugin-id>'); return; }
+                if (!rest) {
+                    showInfo('用法提示', '/plugins enable <plugin-id>');
+                    return;
+                }
                 if (setPluginEnabled(rest, true)) {
                     await this.reloadChannels();
                     showInfo('启用成功', `插件已启用: ${rest}\n\n消息渠道已自动重新加载。`);
@@ -1166,7 +1256,10 @@ export class ChannelMgrApplication extends BaseApplication {
                 break;
             }
             case 'disable': {
-                if (!rest) { showInfo('用法提示', '/plugins disable <plugin-id>'); return; }
+                if (!rest) {
+                    showInfo('用法提示', '/plugins disable <plugin-id>');
+                    return;
+                }
                 if (setPluginEnabled(rest, false)) {
                     await this.reloadChannels();
                     showInfo('禁用成功', `插件已禁用: ${rest}\n\n消息渠道已自动重新加载。`);
@@ -1187,12 +1280,8 @@ export class ChannelMgrApplication extends BaseApplication {
             new InfoOverlay(tui, { title, message }).show();
         };
 
-        const errorLines = this.pluginLoadErrors.map(e =>
-            `  ✗ ${e.id}: 加载失败 - ${e.error}`
-        );
-        const errorSection = errorLines.length > 0
-            ? `\n\n加载失败的插件:\n${errorLines.join('\n')}`
-            : '';
+        const errorLines = this.pluginLoadErrors.map((e) => `  ✗ ${e.id}: 加载失败 - ${e.error}`);
+        const errorSection = errorLines.length > 0 ? `\n\n加载失败的插件:\n${errorLines.join('\n')}` : '';
 
         switch (subCmd) {
             case 'list': {
@@ -1200,8 +1289,8 @@ export class ChannelMgrApplication extends BaseApplication {
                 if (channels.length === 0 && errorLines.length === 0) {
                     showInfo('消息插件', '暂无已注册的消息插件');
                 } else {
-                    const lines = channels.map(ch =>
-                        `  ${ch.id}: ${ch.label}${ch.description ? ` - ${ch.description}` : ''}`
+                    const lines = channels.map(
+                        (ch) => `  ${ch.id}: ${ch.label}${ch.description ? ` - ${ch.description}` : ''}`
                     );
                     const body = channels.length > 0 ? lines.join('\n') : '暂无已成功加载的消息插件';
                     showInfo('消息插件列表', body + errorSection);
@@ -1213,7 +1302,7 @@ export class ChannelMgrApplication extends BaseApplication {
                 if (states.length === 0 && errorLines.length === 0) {
                     showInfo('消息插件状态', '暂无运行中的消息插件');
                 } else {
-                    const lines = states.map(s => {
+                    const lines = states.map((s) => {
                         const icon = s.status.online ? '●' : '○';
                         const statusText = s.status.statusText || (s.status.online ? '在线' : '离线');
                         const errText = s.status.error ? ` (${s.status.error})` : '';

@@ -34,10 +34,10 @@ class SnapshotProcessor {
     constructor(repository, vectorStorage = null) {
         // 使用 Repository 代替直接的数据库实例
         this.repository = repository;
-        this.vectorStorage = vectorStorage;  // 新增
+        this.vectorStorage = vectorStorage; // 新增
 
         // 创建异步处理队列（并发数为2）
-        this.memoryQueue = new PQueue({ concurrency: 2 });  // 新增
+        this.memoryQueue = new PQueue({ concurrency: 2 }); // 新增
     }
 
     /**
@@ -61,9 +61,13 @@ class SnapshotProcessor {
         );
 
         if (result.isSimilar) {
-            logger.debug(`[SnapshotProcessor] Frame is duplicate - hammingDistance: ${result.hammingDistance}, SSIM: ${result.ssimValue?.toFixed(3)}`);
+            logger.debug(
+                `[SnapshotProcessor] Frame is duplicate - hammingDistance: ${result.hammingDistance}, SSIM: ${result.ssimValue?.toFixed(3)}`
+            );
         } else {
-            logger.debug(`[SnapshotProcessor] Frame is different - hammingDistance: ${result.hammingDistance}, SSIM: ${result.ssimValue?.toFixed(3)}`);
+            logger.debug(
+                `[SnapshotProcessor] Frame is different - hammingDistance: ${result.hammingDistance}, SSIM: ${result.ssimValue?.toFixed(3)}`
+            );
         }
 
         return result.isSimilar;
@@ -98,7 +102,9 @@ class SnapshotProcessor {
             );
 
             if (result.isSimilar) {
-                logger.debug(`[SnapshotProcessor] Frame rejected as keyframe - SSIM: ${result.ssimValue?.toFixed(3)} with existing keyframe`);
+                logger.debug(
+                    `[SnapshotProcessor] Frame rejected as keyframe - SSIM: ${result.ssimValue?.toFixed(3)} with existing keyframe`
+                );
                 return false; // 与某个关键帧相似，不是关键帧
             }
         }
@@ -112,7 +118,9 @@ class SnapshotProcessor {
      * 获取图像分析器实例（向后兼容）
      */
     getImageAnalyzer() {
-        logger.warn('[SnapshotProcessor] getImageAnalyzer() is deprecated. Use isDuplicateOfPrevious() or isKeyframe() instead.');
+        logger.warn(
+            '[SnapshotProcessor] getImageAnalyzer() is deprecated. Use isDuplicateOfPrevious() or isKeyframe() instead.'
+        );
         // 返回一个兼容对象，避免立即崩溃
         return {
             reset: async () => {
@@ -141,20 +149,24 @@ class SnapshotProcessor {
 
             // 使用 Repository 获取所有关键帧快照
             const keyframeEntities = await this.repository.findKeyframesByActivity(activityId);
-            const keyframes = keyframeEntities.map(s => RecallMapper.snapshotToDb(s));
+            const keyframes = keyframeEntities.map((s) => RecallMapper.snapshotToDb(s));
 
             // 如果没有关键帧，查询所有快照并报告
             if (keyframes.length === 0) {
                 const allSnapshotEntities = await this.repository.findSnapshotsByActivity(activityId);
-                logger.warn(`[SnapshotProcessor] No keyframes found, but activity has ${allSnapshotEntities.length} total snapshots`);
+                logger.warn(
+                    `[SnapshotProcessor] No keyframes found, but activity has ${allSnapshotEntities.length} total snapshots`
+                );
 
                 // 检查是否有快照标记了 isKeyframe
-                const markedSnapshots = allSnapshotEntities.filter(s => s.isKeyframe);
+                const markedSnapshots = allSnapshotEntities.filter((s) => s.isKeyframe);
                 logger.warn(`[SnapshotProcessor] Snapshots with isKeyframe=true: ${markedSnapshots.length}`);
 
                 // 如果有快照但没有关键帧，记录详细信息
                 if (allSnapshotEntities.length > 0 && markedSnapshots.length === 0) {
-                    logger.warn(`[SnapshotProcessor] All ${allSnapshotEntities.length} snapshots failed keyframe detection - check detection thresholds`);
+                    logger.warn(
+                        `[SnapshotProcessor] All ${allSnapshotEntities.length} snapshots failed keyframe detection - check detection thresholds`
+                    );
                 }
 
                 // 更新状态并返回
@@ -177,7 +189,6 @@ class SnapshotProcessor {
                     'metadata.pdf.completedAt': Date.now()
                 });
             }
-
         } catch (error) {
             logger.error(`[SnapshotProcessor] Processing failed: ${error.message}`, error);
 
@@ -199,21 +210,34 @@ class SnapshotProcessor {
         const lowerText = text.toLowerCase();
 
         // 标题页特征
-        if (lowerText.includes('title') || lowerText.includes('标题') ||
-            lowerText.includes('主题') || text.length < 100) {
+        if (
+            lowerText.includes('title') ||
+            lowerText.includes('标题') ||
+            lowerText.includes('主题') ||
+            text.length < 100
+        ) {
             return 'title';
         }
 
         // 总结页特征
-        if (lowerText.includes('summary') || lowerText.includes('总结') ||
-            lowerText.includes('结论') || lowerText.includes('conclusion') ||
-            lowerText.includes('thank') || lowerText.includes('谢谢')) {
+        if (
+            lowerText.includes('summary') ||
+            lowerText.includes('总结') ||
+            lowerText.includes('结论') ||
+            lowerText.includes('conclusion') ||
+            lowerText.includes('thank') ||
+            lowerText.includes('谢谢')
+        ) {
             return 'summary';
         }
 
         // 议程页特征
-        if (lowerText.includes('agenda') || lowerText.includes('议程') ||
-            lowerText.includes('目录') || lowerText.includes('outline')) {
+        if (
+            lowerText.includes('agenda') ||
+            lowerText.includes('议程') ||
+            lowerText.includes('目录') ||
+            lowerText.includes('outline')
+        ) {
             return 'agenda';
         }
 
@@ -242,7 +266,9 @@ class SnapshotProcessor {
                 // 尝试嵌入支持中文的字体
                 normalFont = await this._embedChineseFont(pdfDoc);
             } catch (error) {
-                logger.error(`[SnapshotProcessor] CRITICAL: Failed to embed Chinese font, falling back to standard fonts: ${error.message}`);
+                logger.error(
+                    `[SnapshotProcessor] CRITICAL: Failed to embed Chinese font, falling back to standard fonts: ${error.message}`
+                );
                 logger.error(`[SnapshotProcessor] Stack trace: ${error.stack}`);
                 // 回退到标准字体（仅英文）
                 normalFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
@@ -267,7 +293,6 @@ class SnapshotProcessor {
             // 使用异步写入，避免阻塞事件循环
             await fsPromises.writeFile(pdfPath, pdfBytes);
             return pdfPath;
-
         } catch (error) {
             logger.error(`[SnapshotProcessor] Failed to generate PDF: ${error.message}`);
             return null;
@@ -416,7 +441,15 @@ class SnapshotProcessor {
             const imagePath = path.join(activity.activityPath, keyframe.imagePath);
 
             if (fs.existsSync(imagePath)) {
-                await this._embedImage(pdfDoc, page, imagePath, 50, imageAreaTop - imageAreaHeight, imageAreaWidth, imageAreaHeight);
+                await this._embedImage(
+                    pdfDoc,
+                    page,
+                    imagePath,
+                    50,
+                    imageAreaTop - imageAreaHeight,
+                    imageAreaWidth,
+                    imageAreaHeight
+                );
             } else {
                 // 显示占位符
                 page.drawRectangle({
@@ -542,7 +575,7 @@ class SnapshotProcessor {
             }
 
             // 异步重新生成PDF
-            this.processActivityResults(activityId).catch(error => {
+            this.processActivityResults(activityId).catch((error) => {
                 logger.error(`[SnapshotProcessor] Failed to regenerate PDF: ${error.message}`);
             });
 
@@ -567,7 +600,7 @@ class SnapshotProcessor {
 
             // 使用 Repository 查询关键帧
             const keyframeEntities = await this.repository.findKeyframesByActivity(activityId);
-            const keyframes = keyframeEntities.map(s => RecallMapper.snapshotToDb(s));
+            const keyframes = keyframeEntities.map((s) => RecallMapper.snapshotToDb(s));
 
             return { success: true, keyframes };
         } catch (error) {
@@ -593,7 +626,7 @@ class SnapshotProcessor {
 
             // 转换为数据库格式并按时间排序
             const extractions = allExtractions
-                .map(e => RecallMapper.extractionToDb(e))
+                .map((e) => RecallMapper.extractionToDb(e))
                 .sort((a, b) => a.createdAt - b.createdAt);
 
             return { success: true, extractions };
@@ -614,7 +647,9 @@ class SnapshotProcessor {
                 logger.error(`[SnapshotProcessor] Font encoding error: ${error.message}`);
                 logger.error(`[SnapshotProcessor] Font name: ${options.font.name || 'Unknown'}`);
                 logger.error(`[SnapshotProcessor] Problematic text sample: "${text.substring(0, 50)}..."`);
-                logger.error(`[SnapshotProcessor] This may indicate that fontkit was not properly registered or the font does not support Unicode`);
+                logger.error(
+                    `[SnapshotProcessor] This may indicate that fontkit was not properly registered or the font does not support Unicode`
+                );
 
                 // 如果字体不支持某些字符，尝试过滤或替换
                 let filteredText = '';
@@ -624,14 +659,18 @@ class SnapshotProcessor {
                         options.font.widthOfTextAtSize(char, options.size || 12);
                         filteredText += char;
                     } catch (charError) {
-                        logger.warn(`[SnapshotProcessor] Character '${char}' (U+${char.charCodeAt(0).toString(16)}) cannot be encoded by font`);
+                        logger.warn(
+                            `[SnapshotProcessor] Character '${char}' (U+${char.charCodeAt(0).toString(16)}) cannot be encoded by font`
+                        );
                         // 用问号替换不支持的字符
                         filteredText += '?';
                     }
                 }
 
                 if (filteredText !== text) {
-                    logger.warn(`[SnapshotProcessor] ${text.length - filteredText.replace(/\?/g, '').length} characters were replaced with '?' due to font encoding issues`);
+                    logger.warn(
+                        `[SnapshotProcessor] ${text.length - filteredText.replace(/\?/g, '').length} characters were replaced with '?' due to font encoding issues`
+                    );
                 }
 
                 page.drawText(filteredText, options);
@@ -646,7 +685,15 @@ class SnapshotProcessor {
      */
     async _embedChineseFont(pdfDoc) {
         const fontPaths = [
-            path.join('resources', 'main', 'applications', 'recall', 'assets', 'fonts', 'AlibabaPuHuiTi-3-55-Regular.otf')
+            path.join(
+                'resources',
+                'main',
+                'applications',
+                'recall',
+                'assets',
+                'fonts',
+                'AlibabaPuHuiTi-3-55-Regular.otf'
+            )
         ];
 
         let fontPath = null;
@@ -661,7 +708,7 @@ class SnapshotProcessor {
 
         if (!fontPath) {
             logger.error(`[SnapshotProcessor] Bundled font not found in any of the following paths:`);
-            fontPaths.forEach(p => logger.error(`  - ${p}`));
+            fontPaths.forEach((p) => logger.error(`  - ${p}`));
             throw new Error('Bundled font file not found in any expected location');
         }
 
@@ -696,14 +743,20 @@ class SnapshotProcessor {
             const batch = snapshots.slice(i, i + batchSize);
 
             // 添加到队列异步处理
-            this.memoryQueue.add(async () => {
-                await this._processBatchMemory(batch);
-            }).catch(error => {
-                logger.error(`[SnapshotProcessor] Failed to process batch ${i}-${i + batch.length}: ${error.message}`);
-            });
+            this.memoryQueue
+                .add(async () => {
+                    await this._processBatchMemory(batch);
+                })
+                .catch((error) => {
+                    logger.error(
+                        `[SnapshotProcessor] Failed to process batch ${i}-${i + batch.length}: ${error.message}`
+                    );
+                });
         }
 
-        logger.info(`[SnapshotProcessor] Memory generation tasks queued (${Math.ceil(snapshots.length / batchSize)} batches)`);
+        logger.info(
+            `[SnapshotProcessor] Memory generation tasks queued (${Math.ceil(snapshots.length / batchSize)} batches)`
+        );
     }
 
     /**
@@ -750,23 +803,18 @@ class SnapshotProcessor {
                     continue;
                 }
 
-                const snapshot = batch.find(s => s.snapshotId === memory.snapshotId);
+                const snapshot = batch.find((s) => s.snapshotId === memory.snapshotId);
                 if (!snapshot) {
                     continue;
                 }
 
                 // 创建 Extraction 实体
-                const extraction = new RecallExtraction(
-                    uuidv4(),
-                    snapshot.snapshotId,
-                    snapshot.activityId,
-                    {
-                        contentType: 'llm',
-                        content: memory.summary,
-                        confidence: 100,
-                        pageType: 'summary'
-                    }
-                );
+                const extraction = new RecallExtraction(uuidv4(), snapshot.snapshotId, snapshot.activityId, {
+                    contentType: 'llm',
+                    content: memory.summary,
+                    confidence: 100,
+                    pageType: 'summary'
+                });
 
                 // 保存到数据库
                 await this.repository.saveExtraction(extraction);
@@ -782,7 +830,9 @@ class SnapshotProcessor {
                     summary: memory.summary
                 });
 
-                logger.debug(`[SnapshotProcessor] Saved memory for snapshot ${snapshot.snapshotId}: "${memory.summary}"`);
+                logger.debug(
+                    `[SnapshotProcessor] Saved memory for snapshot ${snapshot.snapshotId}: "${memory.summary}"`
+                );
             }
 
             // 批量保存到向量库（使用 batchEmbed）
@@ -796,8 +846,9 @@ class SnapshotProcessor {
             }
 
             const elapsedTime = Date.now() - startTime;
-            logger.info(`[SnapshotProcessor] Batch processed in ${elapsedTime}ms (${memories.length} memories generated)`);
-
+            logger.info(
+                `[SnapshotProcessor] Batch processed in ${elapsedTime}ms (${memories.length} memories generated)`
+            );
         } catch (error) {
             logger.error(`[SnapshotProcessor] Failed to process batch: ${error.message}`, error);
             throw error;
@@ -821,7 +872,7 @@ class SnapshotProcessor {
         }
 
         // 清空队列
-        this.memoryQueue.clear();  // 新增
+        this.memoryQueue.clear(); // 新增
     }
 }
 

@@ -1,15 +1,24 @@
-
-import { Box, Component, Text, Editor, TUI, CombinedAutocompleteProvider, Markdown, type AutocompleteProvider, type AutocompleteItem } from "@mariozechner/pi-tui";
-import { defaultEditorTheme, defaultMarkdownTheme } from "../theme";
-import { SlashCommandRegistry } from "../commands";
-import type { OpenDeskTUI } from "../entry";
-import chalk from "chalk";
-import { visibleWidth, truncateToWidth } from "@mariozechner/pi-tui";
-import { getFileCompletions, extractAtQuery, FILE_COMPLETION_MAX_RESULTS } from "./file-completions";
-import { getShellCompletions, executeShellCommand } from "./shell";
-import { spawnSync } from "child_process";
-import process from "process";
-import { SkillRegistry as AISkillRegistry } from "../../aikernel/skill";
+import {
+    Box,
+    Component,
+    Text,
+    Editor,
+    TUI,
+    CombinedAutocompleteProvider,
+    Markdown,
+    type AutocompleteProvider,
+    type AutocompleteItem
+} from '@mariozechner/pi-tui';
+import { defaultEditorTheme, defaultMarkdownTheme } from '../theme';
+import { SlashCommandRegistry } from '../commands';
+import type { OpenDeskTUI } from '../entry';
+import chalk from 'chalk';
+import { visibleWidth, truncateToWidth } from '@mariozechner/pi-tui';
+import { getFileCompletions, extractAtQuery, FILE_COMPLETION_MAX_RESULTS } from './file-completions';
+import { getShellCompletions, executeShellCommand } from './shell';
+import { spawnSync } from 'child_process';
+import process from 'process';
+import { SkillRegistry as AISkillRegistry } from '../../aikernel/skill';
 
 type AgentInputStatus = 'idle' | 'running';
 
@@ -30,7 +39,12 @@ export interface TaskStatusBarData {
 export class TaskStatusBar implements Component {
     private static readonly SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
-    private data: TaskStatusBarData = { elapsedMs: 0, totalTokens: 0, contextSize: 0, modelName: '' };
+    private data: TaskStatusBarData = {
+        elapsedMs: 0,
+        totalTokens: 0,
+        contextSize: 0,
+        modelName: ''
+    };
     private timerStarted = false;
     private timerStart: number = 0;
     private accumulatedMs: number = 0;
@@ -129,9 +143,13 @@ export class TaskStatusBar implements Component {
         } else {
             if (this.timerStarted) {
                 const icon = TaskStatusBar.SPINNER[this.spinnerFrame];
-                leftCells.push({ text: chalk.greenBright(`${icon} ${this.formatElapsed(elapsedMs)}`) });
+                leftCells.push({
+                    text: chalk.greenBright(`${icon} ${this.formatElapsed(elapsedMs)}`)
+                });
             } else if (elapsedMs > 0) {
-                leftCells.push({ text: chalk.hex('#d4d4d4')(`⏱ ${this.formatElapsed(elapsedMs)}`) });
+                leftCells.push({
+                    text: chalk.hex('#d4d4d4')(`⏱ ${this.formatElapsed(elapsedMs)}`)
+                });
             }
             if (totalTokens > 0) {
                 const pct = contextSize > 0 ? ((totalTokens / contextSize) * 100).toFixed(1) : '—';
@@ -142,7 +160,7 @@ export class TaskStatusBar implements Component {
             }
         }
 
-        const leftContent = leftCells.length > 0 ? ` ${leftCells.map(c => c.text).join('  │  ')}` : '';
+        const leftContent = leftCells.length > 0 ? ` ${leftCells.map((c) => c.text).join('  │  ')}` : '';
 
         // 右侧固定区域：帮助提示
         const rightHint = chalk.hex('#d4d4d4')('/help 帮助') + ' ';
@@ -160,9 +178,7 @@ export class TaskStatusBar implements Component {
 
         const gap = Math.max(1, width - leftW - rightW);
         const line = chalk.bgHex('#3a3a3a')(
-            chalk.hex('#d4d4d4')(finalLeft) +
-            ' '.repeat(gap) +
-            chalk.hex('#d4d4d4')(rightHint)
+            chalk.hex('#d4d4d4')(finalLeft) + ' '.repeat(gap) + chalk.hex('#d4d4d4')(rightHint)
         );
         this.cachedOutput = [line];
         this.invalidated = false;
@@ -176,20 +192,21 @@ let _cachedFdPath: string | null | undefined;
 
 function detectFd(): string | null {
     if (_cachedFdPath !== undefined) return _cachedFdPath;
-    for (const bin of ["fd", "fdfind"]) {
+    for (const bin of ['fd', 'fdfind']) {
         try {
-            const cmd = process.platform === "win32" ? "where" : "which";
-            const r = spawnSync(cmd, [bin], { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] });
+            const cmd = process.platform === 'win32' ? 'where' : 'which';
+            const r = spawnSync(cmd, [bin], { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] });
             if (r.status === 0 && r.stdout.trim()) {
                 _cachedFdPath = r.stdout.trim().split(/\r?\n/)[0]!;
                 return _cachedFdPath;
             }
-        } catch { /* ignore */ }
+        } catch {
+            /* ignore */
+        }
     }
     _cachedFdPath = null;
     return null;
 }
-
 
 /** 缓存的 user-invocable skill 列表（name -> description），用于同步的自动补全 */
 interface CachedSkillInfo {
@@ -212,7 +229,7 @@ async function refreshSkillCache() {
             name: skill.frontmatter.name,
             description: skill.frontmatter.description || '',
             bundleName,
-            argumentHint: skill.frontmatter['argument-hint'],
+            argumentHint: skill.frontmatter['argument-hint']
         }));
     } catch {
         // 初始阶段 registry 可能还没就绪，静默忽略
@@ -234,7 +251,7 @@ class FileAwareAutocompleteProvider implements AutocompleteProvider {
     constructor(
         private inner: CombinedAutocompleteProvider,
         private basePath: string,
-        commandNames: string[],
+        commandNames: string[]
     ) {
         this.commandNames = new Set(commandNames);
     }
@@ -264,7 +281,7 @@ class FileAwareAutocompleteProvider implements AutocompleteProvider {
                 items.push({
                     value: skill.name,
                     label: skill.name,
-                    description: `[skill] ${skill.description.slice(0, 60)}`,
+                    description: `[skill] ${skill.description.slice(0, 60)}`
                 });
             }
         }
@@ -273,7 +290,7 @@ class FileAwareAutocompleteProvider implements AutocompleteProvider {
     }
 
     getSuggestions(lines: string[], cursorLine: number, cursorCol: number) {
-        const currentLine = lines[cursorLine] || "";
+        const currentLine = lines[cursorLine] || '';
         const textBeforeCursor = currentLine.slice(0, cursorCol);
         const trimmedFull = currentLine.trimStart();
 
@@ -308,7 +325,7 @@ class FileAwareAutocompleteProvider implements AutocompleteProvider {
                     skillItems.push({
                         value: skill.name,
                         label: skill.name,
-                        description: `[skill] ${skill.description.slice(0, 60)}`,
+                        description: `[skill] ${skill.description.slice(0, 60)}`
                     });
                 }
             }
@@ -337,7 +354,7 @@ class FileAwareAutocompleteProvider implements AutocompleteProvider {
         if (atMatch) {
             const items = getFileCompletions(this.basePath, atMatch.query, {
                 atPrefix: true,
-                maxResults: FILE_COMPLETION_MAX_RESULTS,
+                maxResults: FILE_COMPLETION_MAX_RESULTS
             });
             if (items.length > 0) {
                 return { items, prefix: atMatch.fullPrefix };
@@ -347,12 +364,9 @@ class FileAwareAutocompleteProvider implements AutocompleteProvider {
         return result;
     }
 
-    applyCompletion(
-        lines: string[], cursorLine: number, cursorCol: number,
-        item: AutocompleteItem, prefix: string,
-    ) {
+    applyCompletion(lines: string[], cursorLine: number, cursorCol: number, item: AutocompleteItem, prefix: string) {
         // For shell mode completions, handle insertion manually
-        const currentLine = lines[cursorLine] || "";
+        const currentLine = lines[cursorLine] || '';
         const trimmedFull = currentLine.trimStart();
         if (trimmedFull.startsWith('!')) {
             const before = currentLine.slice(0, cursorCol);
@@ -433,7 +447,7 @@ export class InlineResultPanel implements Component {
         this.scrollOffset = Math.min(max, this.scrollOffset + n);
     }
 
-    invalidate(): void { }
+    invalidate(): void {}
 
     render(width: number): string[] {
         if (!this.visible || this.lines.length === 0) return [];
@@ -481,7 +495,6 @@ export type ShellResultPanel = InlineResultPanel;
  * 任务运行期间用户仍可输入，新消息入队，当前回复完成后自动发送。
  */
 export class AgentInputArea implements Component {
-
     input: Editor;
     /** 任务级状态栏，仅展示当前任务相关信息（计时、token、模型）。 */
     statusBar: TaskStatusBar = new TaskStatusBar();
@@ -604,7 +617,7 @@ export class AgentInputArea implements Component {
             },
             requestRender: () => {
                 this.openDeskTUI.tui.requestRender();
-            },
+            }
         });
     }
 
@@ -624,8 +637,14 @@ export class AgentInputArea implements Component {
 
     dismissAllInlinePanels() {
         let changed = false;
-        if (this.shellResultPanel.isVisible()) { this.shellResultPanel.hide(); changed = true; }
-        if (this.btwResultPanel.isVisible()) { this.btwResultPanel.hide(); changed = true; }
+        if (this.shellResultPanel.isVisible()) {
+            this.shellResultPanel.hide();
+            changed = true;
+        }
+        if (this.btwResultPanel.isVisible()) {
+            this.btwResultPanel.hide();
+            changed = true;
+        }
         if (changed) this.openDeskTUI.tui.requestRender();
     }
 
@@ -652,12 +671,8 @@ export class AgentInputArea implements Component {
         const basePath = this.openDeskTUI.workspace;
         const fdPath = detectFd();
         const commands = this.commandRegistry.toPiTuiSlashCommands();
-        const commandNames = this.commandRegistry.getAll().map(c => c.name);
-        const inner = new CombinedAutocompleteProvider(
-            commands,
-            basePath,
-            fdPath,
-        );
+        const commandNames = this.commandRegistry.getAll().map((c) => c.name);
+        const inner = new CombinedAutocompleteProvider(commands, basePath, fdPath);
         const provider = new FileAwareAutocompleteProvider(inner, basePath, commandNames);
         this.input.setAutocompleteProvider(provider);
         // 异步刷新 skill 缓存
@@ -768,9 +783,8 @@ export class AgentInputArea implements Component {
         if (len === 0) {
             this.hintText.setText('');
         } else if (len === 1) {
-            const preview = this.messageQueue[0].length > 60
-                ? this.messageQueue[0].slice(0, 57) + '...'
-                : this.messageQueue[0];
+            const preview =
+                this.messageQueue[0].length > 60 ? this.messageQueue[0].slice(0, 57) + '...' : this.messageQueue[0];
             this.hintText.setText(chalk.yellow(`📨 待发送: ${preview} (输入 /cancel 撤销)`));
         } else {
             this.hintText.setText(chalk.yellow(`📨 ${len} 条消息待发送 (输入 /cancel 撤销)`));

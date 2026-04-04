@@ -20,14 +20,14 @@ interface McpServerState {
 const TRANSPORT_LABELS: Record<string, string> = {
     stdio: 'STDIO',
     sse: 'SSE',
-    streamableHttp: 'Streamable HTTP',
+    streamableHttp: 'Streamable HTTP'
 };
 
 const STATUS_CONFIG: Record<string, { dot: string; label: string; color: string }> = {
-    connected:    { dot: 'bg-emerald-400', label: '已连接',  color: 'text-emerald-600' },
-    connecting:   { dot: 'bg-amber-400 animate-pulse', label: '连接中', color: 'text-amber-600' },
-    disconnected: { dot: 'bg-gray-300', label: '未连接',  color: 'text-gray-400' },
-    error:        { dot: 'bg-red-400', label: '连接失败', color: 'text-red-500' },
+    connected: { dot: 'bg-emerald-400', label: '已连接', color: 'text-emerald-600' },
+    connecting: { dot: 'bg-amber-400 animate-pulse', label: '连接中', color: 'text-amber-600' },
+    disconnected: { dot: 'bg-gray-300', label: '未连接', color: 'text-gray-400' },
+    error: { dot: 'bg-red-400', label: '连接失败', color: 'text-red-500' }
 };
 
 function escapeHtml(str: string): string {
@@ -55,8 +55,10 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
     }
 
     getAgentInstruct(): string {
-        return '你是 MCP 服务管理助手。用户可以通过你添加、管理和使用 MCP（Model Context Protocol）服务。'
-            + '当前页面展示了用户已注册的所有 MCP 服务及其连接状态和可用工具。';
+        return (
+            '你是 MCP 服务管理助手。用户可以通过你添加、管理和使用 MCP（Model Context Protocol）服务。' +
+            '当前页面展示了用户已注册的所有 MCP 服务及其连接状态和可用工具。'
+        );
     }
 
     getToolset(): RendererToolset {
@@ -65,33 +67,37 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
         const listTool = new RendererTool(
             'listMcpServers',
             '获取当前已注册的所有 MCP 服务的名称、类型、连接状态和可用工具数量',
-            z.object({}),
+            z.object({})
         );
         listTool.setExecutor(async () => {
-            return JSON.stringify(this.servers.map(s => ({
-                name: s.name,
-                transport: s.transport,
-                enabled: s.enabled,
-                status: s.status,
-                toolCount: s.tools?.length || 0,
-                error: s.error,
-            })));
+            return JSON.stringify(
+                this.servers.map((s) => ({
+                    name: s.name,
+                    transport: s.transport,
+                    enabled: s.enabled,
+                    status: s.status,
+                    toolCount: s.tools?.length || 0,
+                    error: s.error
+                }))
+            );
         });
         toolset.addTool(listTool);
 
         if (this.selectedServerId) {
-            const server = this.servers.find(s => s.id === this.selectedServerId);
+            const server = this.servers.find((s) => s.id === this.selectedServerId);
             if (server && server.tools?.length > 0) {
                 const detailTool = new RendererTool(
                     'getSelectedServerTools',
                     '获取当前选中 MCP 服务的所有可用工具详情',
-                    z.object({}),
+                    z.object({})
                 );
                 detailTool.setExecutor(async () => {
-                    return JSON.stringify(server.tools.map(t => ({
-                        name: t.name,
-                        description: t.description,
-                    })));
+                    return JSON.stringify(
+                        server.tools.map((t) => ({
+                            name: t.name,
+                            description: t.description
+                        }))
+                    );
                 });
                 toolset.addTool(detailTool);
             }
@@ -152,7 +158,7 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
 
     async loadServers() {
         try {
-            this.servers = await window.applicationAPI.call('getServers') as McpServerState[];
+            this.servers = (await window.applicationAPI.call('getServers')) as McpServerState[];
         } catch (e: any) {
             this.servers = [];
         }
@@ -174,16 +180,18 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
             return;
         }
 
-        list.innerHTML = this.servers.map(server => {
-            const st = STATUS_CONFIG[server.status] || STATUS_CONFIG.disconnected;
-            const isSelected = server.id === this.selectedServerId;
-            const transportLabel = TRANSPORT_LABELS[server.transport] || server.transport;
-            const toolCount = server.tools?.length || 0;
-            const desc = server.transport === 'stdio'
-                ? `${server.command || ''} ${(server.args || []).join(' ')}`.trim()
-                : server.url || '';
+        list.innerHTML = this.servers
+            .map((server) => {
+                const st = STATUS_CONFIG[server.status] || STATUS_CONFIG.disconnected;
+                const isSelected = server.id === this.selectedServerId;
+                const transportLabel = TRANSPORT_LABELS[server.transport] || server.transport;
+                const toolCount = server.tools?.length || 0;
+                const desc =
+                    server.transport === 'stdio'
+                        ? `${server.command || ''} ${(server.args || []).join(' ')}`.trim()
+                        : server.url || '';
 
-            return `
+                return `
             <div class="group bg-white rounded-2xl p-4 border-2 cursor-pointer transition-all duration-200 hover:shadow-md
                 ${isSelected ? 'border-blue-400 shadow-md ring-2 ring-blue-100' : 'border-[#F0F0F2] hover:border-blue-200'}"
                 data-server-id="${server.id}">
@@ -202,18 +210,23 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
                 </div>
                 <div class="mt-2 flex items-center gap-2 text-xs">
                     <span class="px-1.5 py-0.5 rounded font-medium
-                        ${server.transport === 'stdio' ? 'bg-purple-50 text-purple-600' :
-                          server.transport === 'sse' ? 'bg-sky-50 text-sky-600' :
-                          'bg-emerald-50 text-emerald-600'}">${transportLabel}</span>
+                        ${
+                            server.transport === 'stdio'
+                                ? 'bg-purple-50 text-purple-600'
+                                : server.transport === 'sse'
+                                  ? 'bg-sky-50 text-sky-600'
+                                  : 'bg-emerald-50 text-emerald-600'
+                        }">${transportLabel}</span>
                     <span class="${st.color} font-medium">${st.label}</span>
                     ${toolCount > 0 ? `<span class="text-gray-400">${toolCount} 个工具</span>` : ''}
                 </div>
                 ${desc ? `<p class="mt-1.5 text-xs text-gray-400 truncate font-mono">${escapeHtml(desc)}</p>` : ''}
                 ${server.error ? `<p class="mt-1.5 text-xs text-red-400 truncate"><i class="fa-solid fa-circle-exclamation mr-1"></i>${escapeHtml(server.error)}</p>` : ''}
             </div>`;
-        }).join('');
+            })
+            .join('');
 
-        list.querySelectorAll('.toggle-wrap').forEach(label => {
+        list.querySelectorAll('.toggle-wrap').forEach((label) => {
             label.addEventListener('click', (e) => {
                 console.info(label);
                 e.stopPropagation();
@@ -221,13 +234,13 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
                 const input = label.querySelector('.toggle-server') as HTMLInputElement | null;
                 if (!input) return;
                 const id = input.dataset.toggleId!;
-                const server = this.servers.find(s => s.id === id);
+                const server = this.servers.find((s) => s.id === id);
                 if (!server) return;
                 this.handleToggleServer(id, !server.enabled);
             });
         });
 
-        list.querySelectorAll('[data-server-id]').forEach(card => {
+        list.querySelectorAll('[data-server-id]').forEach((card) => {
             card.addEventListener('click', (e) => {
                 if ((e.target as HTMLElement).closest('.toggle-wrap')) return;
                 this.selectedServerId = (card as HTMLElement).dataset.serverId!;
@@ -246,7 +259,7 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
             return;
         }
 
-        const server = this.servers.find(s => s.id === this.selectedServerId);
+        const server = this.servers.find((s) => s.id === this.selectedServerId);
         if (!server) {
             this.selectedServerId = null;
             detail.innerHTML = this.renderEmptyDetail();
@@ -265,18 +278,26 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
             <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
                 <div class="flex items-center gap-3">
                     <div class="w-10 h-10 rounded-xl flex items-center justify-center
-                        ${server.transport === 'stdio' ? 'bg-purple-50 text-purple-500' :
-                          server.transport === 'sse' ? 'bg-sky-50 text-sky-500' :
-                          'bg-emerald-50 text-emerald-500'}">
+                        ${
+                            server.transport === 'stdio'
+                                ? 'bg-purple-50 text-purple-500'
+                                : server.transport === 'sse'
+                                  ? 'bg-sky-50 text-sky-500'
+                                  : 'bg-emerald-50 text-emerald-500'
+                        }">
                         <i class="fa-solid ${server.transport === 'stdio' ? 'fa-terminal' : 'fa-globe'} text-lg"></i>
                     </div>
                     <div>
                         <h2 class="text-lg font-semibold text-gray-800">${escapeHtml(server.name)}</h2>
                         <div class="flex items-center gap-2 text-xs mt-0.5">
                             <span class="px-1.5 py-0.5 rounded font-medium
-                                ${server.transport === 'stdio' ? 'bg-purple-50 text-purple-600' :
-                                  server.transport === 'sse' ? 'bg-sky-50 text-sky-600' :
-                                  'bg-emerald-50 text-emerald-600'}">${transportLabel}</span>
+                                ${
+                                    server.transport === 'stdio'
+                                        ? 'bg-purple-50 text-purple-600'
+                                        : server.transport === 'sse'
+                                          ? 'bg-sky-50 text-sky-600'
+                                          : 'bg-emerald-50 text-emerald-600'
+                                }">${transportLabel}</span>
                             <span class="flex items-center gap-1 ${st.color}">
                                 <span class="w-1.5 h-1.5 rounded-full ${st.dot}"></span>
                                 ${st.label}
@@ -285,10 +306,14 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
                     </div>
                 </div>
                 <div class="flex items-center gap-1.5">
-                    ${server.status === 'connected' || server.status === 'error' ? `
+                    ${
+                        server.status === 'connected' || server.status === 'error'
+                            ? `
                     <button class="p-2 rounded-lg hover:bg-gray-100 text-gray-500 transition" id="btn-reconnect" title="重新连接">
                         <i class="fa-solid fa-rotate"></i>
-                    </button>` : ''}
+                    </button>`
+                            : ''
+                    }
                     <button class="p-2 rounded-lg hover:bg-gray-100 text-gray-500 transition" id="btn-edit" title="编辑">
                         <i class="fa-solid fa-pen-to-square"></i>
                     </button>
@@ -298,14 +323,20 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
                 </div>
             </div>
 
-            ${server.error ? `
+            ${
+                server.error
+                    ? `
             <div class="mx-6 mt-4 p-3 rounded-xl bg-red-50 border border-red-100 text-red-600 text-xs">
                 <i class="fa-solid fa-circle-exclamation mr-1.5"></i>${escapeHtml(server.error)}
-            </div>` : ''}
+            </div>`
+                    : ''
+            }
 
             <div class="p-6 space-y-4">
                 <div class="grid grid-cols-2 gap-4 text-sm">
-                    ${server.transport === 'stdio' ? `
+                    ${
+                        server.transport === 'stdio'
+                            ? `
                     <div>
                         <p class="text-xs text-gray-400 mb-1">命令</p>
                         <p class="font-mono text-gray-700 bg-gray-50 px-3 py-1.5 rounded-lg text-xs">${escapeHtml(server.command || '-')}</p>
@@ -314,44 +345,66 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
                         <p class="text-xs text-gray-400 mb-1">参数</p>
                         <p class="font-mono text-gray-700 bg-gray-50 px-3 py-1.5 rounded-lg text-xs">${escapeHtml((server.args || []).join(' ') || '-')}</p>
                     </div>
-                    ${server.cwd ? `
+                    ${
+                        server.cwd
+                            ? `
                     <div class="col-span-2">
                         <p class="text-xs text-gray-400 mb-1">工作目录</p>
                         <p class="font-mono text-gray-700 bg-gray-50 px-3 py-1.5 rounded-lg text-xs">${escapeHtml(server.cwd)}</p>
-                    </div>` : ''}
-                    ` : `
+                    </div>`
+                            : ''
+                    }
+                    `
+                            : `
                     <div class="col-span-2">
                         <p class="text-xs text-gray-400 mb-1">URL</p>
                         <p class="font-mono text-gray-700 bg-gray-50 px-3 py-1.5 rounded-lg text-xs break-all">${escapeHtml(server.url || '-')}</p>
                     </div>
-                    `}
+                    `
+                    }
                 </div>
 
-                ${envEntries.length > 0 ? `
+                ${
+                    envEntries.length > 0
+                        ? `
                 <div>
                     <p class="text-xs text-gray-400 mb-2">环境变量</p>
                     <div class="space-y-1">
-                        ${envEntries.map(([k, v]) => `
+                        ${envEntries
+                            .map(
+                                ([k, v]) => `
                         <div class="flex gap-2 text-xs font-mono">
                             <span class="text-purple-600 bg-purple-50 px-2 py-0.5 rounded">${escapeHtml(k)}</span>
                             <span class="text-gray-500">=</span>
                             <span class="text-gray-600 truncate">${escapeHtml(v.length > 32 ? v.slice(0, 8) + '••••' + v.slice(-4) : v)}</span>
-                        </div>`).join('')}
+                        </div>`
+                            )
+                            .join('')}
                     </div>
-                </div>` : ''}
+                </div>`
+                        : ''
+                }
 
-                ${headerEntries.length > 0 ? `
+                ${
+                    headerEntries.length > 0
+                        ? `
                 <div>
                     <p class="text-xs text-gray-400 mb-2">请求头</p>
                     <div class="space-y-1">
-                        ${headerEntries.map(([k, v]) => `
+                        ${headerEntries
+                            .map(
+                                ([k, v]) => `
                         <div class="flex gap-2 text-xs font-mono">
                             <span class="text-sky-600 bg-sky-50 px-2 py-0.5 rounded">${escapeHtml(k)}</span>
                             <span class="text-gray-500">:</span>
                             <span class="text-gray-600 truncate">${escapeHtml(v.length > 32 ? v.slice(0, 8) + '••••' + v.slice(-4) : v)}</span>
-                        </div>`).join('')}
+                        </div>`
+                            )
+                            .join('')}
                     </div>
-                </div>` : ''}
+                </div>`
+                        : ''
+                }
             </div>
 
             <div class="border-t border-gray-100">
@@ -362,19 +415,27 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
                     </h3>
                 </div>
                 <div class="px-6 pb-5">
-                    ${tools.length === 0 ? `
+                    ${
+                        tools.length === 0
+                            ? `
                     <div class="text-center py-8 text-gray-400 text-sm">
-                        ${server.status === 'connected' ? '此服务未提供任何工具' :
-                          server.status === 'connecting' ? '<i class="fa-solid fa-rotate fa-spin mr-1.5"></i>正在发现工具...' :
-                          '连接服务后可查看可用工具'}
-                    </div>` : `
+                        ${
+                            server.status === 'connected'
+                                ? '此服务未提供任何工具'
+                                : server.status === 'connecting'
+                                  ? '<i class="fa-solid fa-rotate fa-spin mr-1.5"></i>正在发现工具...'
+                                  : '连接服务后可查看可用工具'
+                        }
+                    </div>`
+                            : `
                     <div class="space-y-2">
-                        ${tools.map(tool => {
-                            const schema = tool.inputSchema as any;
-                            const props = schema?.properties || {};
-                            const required = schema?.required || [];
-                            const paramEntries = Object.entries(props);
-                            return `
+                        ${tools
+                            .map((tool) => {
+                                const schema = tool.inputSchema as any;
+                                const props = schema?.properties || {};
+                                const required = schema?.required || [];
+                                const paramEntries = Object.entries(props);
+                                return `
                             <div class="group/tool rounded-xl border border-gray-100 hover:border-blue-200 transition p-3">
                                 <div class="flex items-start gap-2">
                                     <span class="shrink-0 w-6 h-6 rounded-lg bg-blue-50 text-blue-500 flex items-center justify-center text-xs mt-0.5">
@@ -383,23 +444,31 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
                                     <div class="min-w-0">
                                         <p class="text-sm font-semibold text-gray-800 font-mono">${escapeHtml(tool.name)}</p>
                                         ${tool.description ? `<p class="text-xs text-gray-500 mt-0.5 leading-relaxed">${escapeHtml(tool.description)}</p>` : ''}
-                                        ${paramEntries.length > 0 ? `
+                                        ${
+                                            paramEntries.length > 0
+                                                ? `
                                         <div class="mt-2 flex flex-wrap gap-1.5">
-                                            ${paramEntries.map(([pName, pSchema]: [string, any]) => {
-                                                const isRequired = required.includes(pName);
-                                                const pType = pSchema?.type || 'any';
-                                                return `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-mono
+                                            ${paramEntries
+                                                .map(([pName, pSchema]: [string, any]) => {
+                                                    const isRequired = required.includes(pName);
+                                                    const pType = pSchema?.type || 'any';
+                                                    return `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-mono
                                                     ${isRequired ? 'bg-amber-50 text-amber-700 border border-amber-200' : 'bg-gray-50 text-gray-500 border border-gray-200'}">
                                                     ${escapeHtml(pName)}<span class="opacity-50">: ${pType}</span>
                                                     ${isRequired ? '<span class="text-red-400">*</span>' : ''}
                                                 </span>`;
-                                            }).join('')}
-                                        </div>` : ''}
+                                                })
+                                                .join('')}
+                                        </div>`
+                                                : ''
+                                        }
                                     </div>
                                 </div>
                             </div>`;
-                        }).join('')}
-                    </div>`}
+                            })
+                            .join('')}
+                    </div>`
+                    }
                 </div>
             </div>
         </div>`;
@@ -438,7 +507,9 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
                 <div>
                     <label class="block text-sm font-medium text-gray-700 mb-2">传输方式</label>
                     <div class="flex gap-2">
-                        ${(['stdio', 'sse', 'streamableHttp'] as const).map(t => `
+                        ${(['stdio', 'sse', 'streamableHttp'] as const)
+                            .map(
+                                (t) => `
                         <label class="flex-1 cursor-pointer">
                             <input type="radio" name="transport" value="${t}" class="sr-only peer" ${transport === t ? 'checked' : ''}>
                             <div class="text-center py-2 px-3 rounded-xl border-2 text-sm font-medium transition
@@ -446,7 +517,9 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
                                 border-gray-200 text-gray-500 hover:border-gray-300">
                                 ${TRANSPORT_LABELS[t]}
                             </div>
-                        </label>`).join('')}
+                        </label>`
+                            )
+                            .join('')}
                     </div>
                 </div>
 
@@ -505,7 +578,7 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
         content.querySelector('#btn-modal-close')!.addEventListener('click', () => this.hideModal());
         content.querySelector('#btn-cancel')!.addEventListener('click', () => this.hideModal());
 
-        content.querySelectorAll('input[name="transport"]').forEach(radio => {
+        content.querySelectorAll('input[name="transport"]').forEach((radio) => {
             radio.addEventListener('change', () => {
                 const val = (radio as HTMLInputElement).value;
                 const stdioFields = content.querySelector('#fields-stdio') as HTMLElement;
@@ -624,7 +697,9 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
             }
             config.command = command;
             config.args = (this.querySelector('#f-args') as HTMLTextAreaElement).value
-                .split('\n').map((s: string) => s.trim()).filter(Boolean);
+                .split('\n')
+                .map((s: string) => s.trim())
+                .filter(Boolean);
             const cwd = (this.querySelector('#f-cwd') as HTMLInputElement).value.trim();
             if (cwd) config.cwd = cwd;
         } else {
@@ -635,13 +710,11 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
                 return;
             }
             config.url = url;
-            const headers = this.parseKvLines(
-                (this.querySelector('#f-headers') as HTMLTextAreaElement).value, ':');
+            const headers = this.parseKvLines((this.querySelector('#f-headers') as HTMLTextAreaElement).value, ':');
             if (Object.keys(headers).length > 0) config.headers = headers;
         }
 
-        const env = this.parseKvLines(
-            (this.querySelector('#f-env') as HTMLTextAreaElement).value, '=');
+        const env = this.parseKvLines((this.querySelector('#f-env') as HTMLTextAreaElement).value, '=');
         if (Object.keys(env).length > 0) config.env = env;
 
         try {
@@ -658,7 +731,7 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
     }
 
     async handleDeleteServer(id: string) {
-        const server = this.servers.find(s => s.id === id);
+        const server = this.servers.find((s) => s.id === id);
         if (!server) return;
         if (!confirm(`确定要删除服务「${server.name}」吗？`)) return;
 
@@ -671,7 +744,7 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
     }
 
     async handleToggleServer(id: string, enabled: boolean) {
-        const server = this.servers.find(s => s.id === id);
+        const server = this.servers.find((s) => s.id === id);
         if (server) {
             server.enabled = enabled;
             this.renderServerList();

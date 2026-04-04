@@ -84,10 +84,7 @@ export abstract class Indexer {
      * @param options - 搜索选项，包括用于 join 的已有结果
      * @returns 搜索结果
      */
-    abstract search(
-        conditions: FilterCondition[],
-        options?: IndexerSearchOptions
-    ): Promise<IndexerSearchResult>;
+    abstract search(conditions: FilterCondition[], options?: IndexerSearchOptions): Promise<IndexerSearchResult>;
 
     /**
      * 向索引中插入 Item

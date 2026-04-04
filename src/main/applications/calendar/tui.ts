@@ -9,34 +9,43 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { type Component, SelectList, Box, Text, Key, matchesKey, visibleWidth, truncateToWidth } from "@mariozechner/pi-tui";
-import { HorizontalLayout } from "../../tui/components/layout";
-import { defaultSelectListTheme } from "../../tui/theme";
-import type { OpenDeskTUI } from "../../tui/entry";
-import { ApplicationRegistry } from "../../applications/registry";
-import { logger } from "../../utils/logger.js";
-import chalk from "chalk";
+import {
+    type Component,
+    SelectList,
+    Box,
+    Text,
+    Key,
+    matchesKey,
+    visibleWidth,
+    truncateToWidth
+} from '@mariozechner/pi-tui';
+import { HorizontalLayout } from '../../tui/components/layout';
+import { defaultSelectListTheme } from '../../tui/theme';
+import type { OpenDeskTUI } from '../../tui/entry';
+import { ApplicationRegistry } from '../../applications/registry';
+import { logger } from '../../utils/logger.js';
+import chalk from 'chalk';
 
 // ━━━ 配色方案 ━━━
 
 const CC = {
-    accent:     chalk.hex('#5B9BD5'),
+    accent: chalk.hex('#5B9BD5'),
     accentBold: chalk.hex('#5B9BD5').bold,
-    cyan:       chalk.hex('#70C0E8'),
-    cyanBold:   chalk.hex('#70C0E8').bold,
-    green:      chalk.hex('#7ECE8E'),
-    amber:      chalk.hex('#E5A84B'),
-    red:        chalk.hex('#E55B5B'),
-    ghost:      chalk.hex('#333333'),
-    dim:        chalk.hex('#606060'),
-    muted:      chalk.hex('#808080'),
-    text:       chalk.hex('#c0c0c0'),
-    bright:     chalk.hex('#e0e0e0').bold,
-    today:      chalk.bgHex('#1e3a5f').hex('#70C0E8').bold,
-    selected:   chalk.bgHex('#1a2735').hex('#70C0E8').bold,
-    weekend:    chalk.hex('#D4846A'),
+    cyan: chalk.hex('#70C0E8'),
+    cyanBold: chalk.hex('#70C0E8').bold,
+    green: chalk.hex('#7ECE8E'),
+    amber: chalk.hex('#E5A84B'),
+    red: chalk.hex('#E55B5B'),
+    ghost: chalk.hex('#333333'),
+    dim: chalk.hex('#606060'),
+    muted: chalk.hex('#808080'),
+    text: chalk.hex('#c0c0c0'),
+    bright: chalk.hex('#e0e0e0').bold,
+    today: chalk.bgHex('#1e3a5f').hex('#70C0E8').bold,
+    selected: chalk.bgHex('#1a2735').hex('#70C0E8').bold,
+    weekend: chalk.hex('#D4846A'),
     otherMonth: chalk.hex('#2a2a2a'),
-    section:    chalk.hex('#70C0E8').bold,
+    section: chalk.hex('#70C0E8').bold
 };
 
 // ━━━ 类型定义 ━━━
@@ -79,9 +88,15 @@ function formatTime(ts: number): string {
 }
 
 function formatDateFull(date: Date): string {
-    return date.toLocaleDateString('zh-CN', {
-        year: 'numeric', month: 'long', day: 'numeric'
-    }) + ' ' + WEEKDAY_NAMES[date.getDay()];
+    return (
+        date.toLocaleDateString('zh-CN', {
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric'
+        }) +
+        ' ' +
+        WEEKDAY_NAMES[date.getDay()]
+    );
 }
 
 function formatDateShort(date: Date): string {
@@ -99,9 +114,7 @@ function toDateString(date: Date): string {
 }
 
 function isSameDay(a: Date, b: Date): boolean {
-    return a.getFullYear() === b.getFullYear() &&
-           a.getMonth() === b.getMonth() &&
-           a.getDate() === b.getDate();
+    return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -111,7 +124,7 @@ function isSameDay(a: Date, b: Date): boolean {
 const calendarSelectListTheme = {
     ...defaultSelectListTheme,
     selectedPrefix: (text: string) => chalk.bgHex('#1a2735').hex('#5B9BD5')(text),
-    selectedText: (text: string) => chalk.bgHex('#1a2735').bold(text),
+    selectedText: (text: string) => chalk.bgHex('#1a2735').bold(text)
 };
 
 export class CalendarOverlay implements Component {
@@ -145,9 +158,9 @@ export class CalendarOverlay implements Component {
 
     async show() {
         this.handle = this.openDeskTUI.tui.showOverlay(this, {
-            width: "100%",
-            maxHeight: "100%",
-            anchor: "center",
+            width: '100%',
+            maxHeight: '100%',
+            anchor: 'center'
         });
         this.openDeskTUI.hasOpenOverlay = true;
 
@@ -231,13 +244,15 @@ export class CalendarOverlay implements Component {
 
             const [todayData, tomorrowData] = await Promise.all([
                 callCalendarWorker('getCalendarItems', dateStr),
-                callCalendarWorker('getCalendarItems', nextDateStr),
+                callCalendarWorker('getCalendarItems', nextDateStr)
             ]);
 
-            this.events = (Array.isArray(todayData) ? todayData : [])
-                .sort((a: CalendarItem, b: CalendarItem) => a.startTime - b.startTime);
-            this.nextDayEvents = (Array.isArray(tomorrowData) ? tomorrowData : [])
-                .sort((a: CalendarItem, b: CalendarItem) => a.startTime - b.startTime);
+            this.events = (Array.isArray(todayData) ? todayData : []).sort(
+                (a: CalendarItem, b: CalendarItem) => a.startTime - b.startTime
+            );
+            this.nextDayEvents = (Array.isArray(tomorrowData) ? tomorrowData : []).sort(
+                (a: CalendarItem, b: CalendarItem) => a.startTime - b.startTime
+            );
             this.buildCalendarView();
         } catch (err: any) {
             logger.error(`加载日程失败: ${err}`);
@@ -260,11 +275,7 @@ export class CalendarOverlay implements Component {
     }
 
     private changeMonth(delta: number) {
-        const newDate = new Date(
-            this.currentDate.getFullYear(),
-            this.currentDate.getMonth() + delta,
-            1
-        );
+        const newDate = new Date(this.currentDate.getFullYear(), this.currentDate.getMonth() + delta, 1);
         const daysInNewMonth = new Date(newDate.getFullYear(), newDate.getMonth() + 1, 0).getDate();
         const day = Math.min(this.currentDate.getDate(), daysInNewMonth);
         this.currentDate = new Date(newDate.getFullYear(), newDate.getMonth(), day);
@@ -296,7 +307,7 @@ export class CalendarOverlay implements Component {
 
         const items = this.events.map((event) => ({
             value: event.uid,
-            label: this.formatEventItem(event),
+            label: this.formatEventItem(event)
         }));
 
         if (items.length === 0) {
@@ -308,7 +319,7 @@ export class CalendarOverlay implements Component {
 
         this.eventList.onSelect = async (item: any) => {
             if (item.value === '__empty__') return;
-            const event = this.events.find(e => e.uid === item.value);
+            const event = this.events.find((e) => e.uid === item.value);
             if (event) {
                 this.selectedEvent = event;
                 this.buildDetailView();
@@ -323,19 +334,13 @@ export class CalendarOverlay implements Component {
     }
 
     private formatEventItem(event: CalendarItem): string {
-        const timeStr = event.isAllDay
-            ? CC.amber('全天  ')
-            : CC.dim(formatTime(event.startTime).padEnd(6));
+        const timeStr = event.isAllDay ? CC.amber('全天  ') : CC.dim(formatTime(event.startTime).padEnd(6));
 
         const cancelledTag = event.isCancelled ? CC.red('✕ ') : '';
 
-        const subject = event.isCancelled
-            ? CC.dim(event.subject || '(无标题)')
-            : CC.text(event.subject || '(无标题)');
+        const subject = event.isCancelled ? CC.dim(event.subject || '(无标题)') : CC.text(event.subject || '(无标题)');
 
-        const location = event.location
-            ? CC.ghost(' · ' + event.location)
-            : '';
+        const location = event.location ? CC.ghost(' · ' + event.location) : '';
 
         return `  ${timeStr} ${cancelledTag}${subject}${location}`;
     }
@@ -369,7 +374,7 @@ export class CalendarOverlay implements Component {
                 const layoutSpacing = 4;
                 const mainLayout = new HorizontalLayout({
                     spacing: layoutSpacing,
-                    alignVertical: 'top',
+                    alignVertical: 'top'
                 });
 
                 const monthCount = Math.max(1, Math.min(4, Math.floor((contentHeight - 6) / 8)));
@@ -378,10 +383,7 @@ export class CalendarOverlay implements Component {
                 const availableForChildren = width - 2 - layoutSpacing;
                 const rightWeight = Math.max(1, availableForChildren - calendarFixedWidth);
 
-                mainLayout.addChild(
-                    new MultiMonthPanel(this.currentDate, monthCount),
-                    calendarFixedWidth
-                );
+                mainLayout.addChild(new MultiMonthPanel(this.currentDate, monthCount), calendarFixedWidth);
 
                 const nextDay = new Date(
                     this.currentDate.getFullYear(),
@@ -390,9 +392,12 @@ export class CalendarOverlay implements Component {
                 );
                 mainLayout.addChild(
                     new EventsPanel(
-                        this.currentDate, this.events,
-                        nextDay, this.nextDayEvents,
-                        this.eventList, this.errorText
+                        this.currentDate,
+                        this.events,
+                        nextDay,
+                        this.nextDayEvents,
+                        this.eventList,
+                        this.errorText
                     ),
                     rightWeight
                 );
@@ -412,7 +417,7 @@ export class CalendarOverlay implements Component {
             }
         }
 
-        const result = this.box.render(width).map(l => truncateToWidth(sanitizeLine(l), width, '', true));
+        const result = this.box.render(width).map((l) => truncateToWidth(sanitizeLine(l), width, '', true));
         while (result.length < targetHeight) {
             result.push('');
         }
@@ -444,17 +449,17 @@ class CalendarHeaderBar implements Component {
             titleLine = leftPart + ' '.repeat(gap) + dateInfo + '  ';
         }
 
-        return [
-            truncateToWidth(titleLine, width, '…'),
-            CC.ghost('─'.repeat(width)),
-        ];
+        return [truncateToWidth(titleLine, width, '…'), CC.ghost('─'.repeat(width))];
     }
 }
 
 // ━━━ 多月日历面板（左侧） ━━━
 
 class MultiMonthPanel implements Component {
-    constructor(private selectedDate: Date, private monthCount: number) {}
+    constructor(
+        private selectedDate: Date,
+        private monthCount: number
+    ) {}
     invalidate() {}
     render(width: number): string[] {
         const lines: string[] = [];
@@ -466,7 +471,10 @@ class MultiMonthPanel implements Component {
             const mini = new MiniMonth(year, month, this.selectedDate);
             lines.push(...mini.render(width));
             month++;
-            if (month > 11) { month = 0; year++; }
+            if (month > 11) {
+                month = 0;
+                year++;
+            }
         }
 
         return lines;
@@ -475,14 +483,24 @@ class MultiMonthPanel implements Component {
 
 class MiniMonth implements Component {
     private static MONTH_NAMES = [
-        '1月', '2月', '3月', '4月', '5月', '6月',
-        '7月', '8月', '9月', '10月', '11月', '12月',
+        '1月',
+        '2月',
+        '3月',
+        '4月',
+        '5月',
+        '6月',
+        '7月',
+        '8月',
+        '9月',
+        '10月',
+        '11月',
+        '12月'
     ];
 
     constructor(
         private year: number,
         private month: number,
-        private selectedDate: Date,
+        private selectedDate: Date
     ) {}
 
     invalidate() {}
@@ -494,10 +512,12 @@ class MiniMonth implements Component {
         const titleText = `${MiniMonth.MONTH_NAMES[this.month]} ${this.year}`;
         const titleLine = indent + CC.bright(titleText);
 
-        const weekdayLine = indent + WEEKDAY_SHORT_EN.map((d, i) => {
-            const padded = d.padStart(cellW - 1) + ' ';
-            return (i >= 5) ? CC.weekend(padded) : CC.dim(padded);
-        }).join('');
+        const weekdayLine =
+            indent +
+            WEEKDAY_SHORT_EN.map((d, i) => {
+                const padded = d.padStart(cellW - 1) + ' ';
+                return i >= 5 ? CC.weekend(padded) : CC.dim(padded);
+            }).join('');
 
         const firstDay = new Date(this.year, this.month, 1);
         const lastDay = new Date(this.year, this.month + 1, 0);
@@ -507,8 +527,8 @@ class MiniMonth implements Component {
 
         const today = new Date();
         const isCurrentMonth = today.getFullYear() === this.year && today.getMonth() === this.month;
-        const isSelectedMonth = this.selectedDate.getFullYear() === this.year &&
-                                this.selectedDate.getMonth() === this.month;
+        const isSelectedMonth =
+            this.selectedDate.getFullYear() === this.year && this.selectedDate.getMonth() === this.month;
 
         const cells: string[] = [];
 
@@ -537,10 +557,7 @@ class MiniMonth implements Component {
 
         const lines = [titleLine, weekdayLine];
         for (let row = 0; row < totalRows; row++) {
-            lines.push(truncateToWidth(
-                indent + cells.slice(row * 7, row * 7 + 7).join(''),
-                width, ''
-            ));
+            lines.push(truncateToWidth(indent + cells.slice(row * 7, row * 7 + 7).join(''), width, ''));
         }
 
         return lines;
@@ -549,11 +566,16 @@ class MiniMonth implements Component {
     private fmtCell(text: string, cellW: number, style: 'normal' | 'today' | 'selected' | 'other' | 'weekend'): string {
         const padded = text.padStart(cellW - 1) + ' ';
         switch (style) {
-            case 'selected': return CC.selected(padded);
-            case 'today':    return CC.today(padded);
-            case 'other':    return CC.otherMonth(padded);
-            case 'weekend':  return CC.weekend(padded);
-            default:         return CC.text(padded);
+            case 'selected':
+                return CC.selected(padded);
+            case 'today':
+                return CC.today(padded);
+            case 'other':
+                return CC.otherMonth(padded);
+            case 'weekend':
+                return CC.weekend(padded);
+            default:
+                return CC.text(padded);
         }
     }
 }
@@ -567,7 +589,7 @@ class EventsPanel implements Component {
         private nextDay: Date,
         private nextDayEvents: CalendarItem[],
         private selectList: SelectList | undefined,
-        private errorText: string | undefined,
+        private errorText: string | undefined
     ) {}
 
     invalidate() {}
@@ -579,9 +601,7 @@ class EventsPanel implements Component {
         const isToday = isSameDay(this.selectedDate, today);
         const dayLabel = isToday ? '今天' : formatDateShort(this.selectedDate);
         const eventCount = this.events.length;
-        const countInfo = eventCount > 0
-            ? CC.muted(` · ${eventCount}项日程`)
-            : CC.dim(' · 无日程');
+        const countInfo = eventCount > 0 ? CC.muted(` · ${eventCount}项日程`) : CC.dim(' · 无日程');
 
         lines.push(CC.section(`  ${dayLabel}`) + countInfo);
         lines.push(CC.ghost('  ' + '─'.repeat(Math.max(1, width - 4))));
@@ -600,9 +620,7 @@ class EventsPanel implements Component {
         const isTomorrow = isSameDay(this.nextDay, tomorrow);
         const nextLabel = isTomorrow ? '明天' : formatDateShort(this.nextDay);
         const nextCount = this.nextDayEvents.length;
-        const nextCountInfo = nextCount > 0
-            ? CC.muted(` · ${nextCount}项日程`)
-            : CC.dim(' · 无日程');
+        const nextCountInfo = nextCount > 0 ? CC.muted(` · ${nextCount}项日程`) : CC.dim(' · 无日程');
 
         lines.push(CC.section(`  ${nextLabel}`) + nextCountInfo);
         lines.push(CC.ghost('  ' + '─'.repeat(Math.max(1, width - 4))));
@@ -622,14 +640,10 @@ class EventsPanel implements Component {
     }
 
     private fmtEvent(event: CalendarItem, width: number): string {
-        const timeStr = event.isAllDay
-            ? CC.amber('全天  ')
-            : CC.dim(formatTime(event.startTime).padEnd(6));
+        const timeStr = event.isAllDay ? CC.amber('全天  ') : CC.dim(formatTime(event.startTime).padEnd(6));
 
         const cancelledTag = event.isCancelled ? CC.red('✕ ') : '';
-        const subject = event.isCancelled
-            ? CC.dim(event.subject || '(无标题)')
-            : CC.text(event.subject || '(无标题)');
+        const subject = event.isCancelled ? CC.dim(event.subject || '(无标题)') : CC.text(event.subject || '(无标题)');
 
         return truncateToWidth(`  ${timeStr} ${cancelledTag}${subject}`, width, '…');
     }
@@ -645,7 +659,10 @@ class SeparatorLine implements Component {
 }
 
 class VerticalFiller implements Component {
-    constructor(private text: string, private totalLines: number) {}
+    constructor(
+        private text: string,
+        private totalLines: number
+    ) {}
     invalidate() {}
     render(_width: number): string[] {
         const lines: string[] = [];
@@ -668,7 +685,7 @@ class CalendarFooter implements Component {
             CC.cyan('t') + CC.dim(' 今天'),
             CC.cyan('↑↓') + CC.dim(' 选择'),
             CC.cyan('⏎') + CC.dim(' 详情'),
-            CC.cyan('ESC') + CC.dim(' 关闭'),
+            CC.cyan('ESC') + CC.dim(' 关闭')
         ];
         return [truncateToWidth('  ' + hints.join('   '), width, '…')];
     }
@@ -677,7 +694,10 @@ class CalendarFooter implements Component {
 // ━━━ 详情视图 ━━━
 
 class EventDetailView implements Component {
-    constructor(private event: CalendarItem, private availableLines: number) {}
+    constructor(
+        private event: CalendarItem,
+        private availableLines: number
+    ) {}
     invalidate() {}
     render(width: number): string[] {
         const lines: string[] = [];

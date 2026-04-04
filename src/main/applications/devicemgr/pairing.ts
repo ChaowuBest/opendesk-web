@@ -97,7 +97,7 @@ export class PairingStore {
         const nodeId = req.nodeId.trim();
         if (!nodeId) throw new Error('nodeId required');
 
-        const existing = Object.values(state.pendingById).find(p => p.nodeId === nodeId);
+        const existing = Object.values(state.pendingById).find((p) => p.nodeId === nodeId);
         if (existing) {
             return { status: 'pending', request: existing, created: false };
         }
@@ -116,7 +116,7 @@ export class PairingStore {
             remoteIp: req.remoteIp,
             silent: req.silent,
             isRepair,
-            ts: Date.now(),
+            ts: Date.now()
         };
 
         state.pendingById[request.requestId] = request;
@@ -146,7 +146,7 @@ export class PairingStore {
             commands: pending.commands,
             remoteIp: pending.remoteIp,
             createdAtMs: existing?.createdAtMs ?? now,
-            approvedAtMs: now,
+            approvedAtMs: now
         };
 
         delete state.pendingById[requestId];
@@ -201,7 +201,10 @@ export class PairingStore {
     /**
      * 更新已配对节点的最后连接时间及元数据。
      */
-    updateLastConnected(nodeId: string, patch?: Partial<Pick<PairedNode, 'version' | 'platform' | 'deviceFamily' | 'caps' | 'commands' | 'remoteIp'>>): void {
+    updateLastConnected(
+        nodeId: string,
+        patch?: Partial<Pick<PairedNode, 'version' | 'platform' | 'deviceFamily' | 'caps' | 'commands' | 'remoteIp'>>
+    ): void {
         const state = this.loadState();
         const node = state.pairedByNodeId[nodeId.trim()];
         if (!node) return;

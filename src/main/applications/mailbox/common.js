@@ -13,25 +13,31 @@ import { z } from 'zod';
 
 const InboxServerSchema = z.object({
     protocol: z.enum(['pop3', 'imap']).optional().describe('收信协议(pop3/imap)'),
-    pop3: z.object({
-        host: z.string().default(''),
-        tls: z.boolean().default(true),
-        port: z.number().default(995),
-    }).optional(),
-    imap: z.object({
-        host: z.string().default(''),
-        tls: z.boolean().default(true),
-        port: z.number().default(993),
-    }).optional(),
+    pop3: z
+        .object({
+            host: z.string().default(''),
+            tls: z.boolean().default(true),
+            port: z.number().default(995)
+        })
+        .optional(),
+    imap: z
+        .object({
+            host: z.string().default(''),
+            tls: z.boolean().default(true),
+            port: z.number().default(993)
+        })
+        .optional()
 });
 
 const OutboxServerSchema = z.object({
-    smtp: z.object({
-        account: z.string().default(''),
-        host: z.string().default(''),
-        tls: z.boolean().default(true),
-        port: z.number().default(587),
-    }).optional(),
+    smtp: z
+        .object({
+            account: z.string().default(''),
+            host: z.string().default(''),
+            tls: z.boolean().default(true),
+            port: z.number().default(587)
+        })
+        .optional()
 });
 
 // 单个账号的配置
@@ -43,13 +49,13 @@ const EmailProfileSchema = z.object({
     email: z.string().optional(),
     password: z.string().default(''),
     inbox: InboxServerSchema.optional(),
-    outbox: OutboxServerSchema.optional(),
+    outbox: OutboxServerSchema.optional()
 });
 
 // 【核心修改】应用层级配置，包含 profiles 数组
 const MailboxConfigSchema = z.object({
     currentProfileId: z.string().optional(),
-    profiles: z.array(EmailProfileSchema).default([]),
+    profiles: z.array(EmailProfileSchema).default([])
 });
 
 const EmailHeaderQuerySchema = z.object({
@@ -60,7 +66,7 @@ const EmailHeaderQuerySchema = z.object({
     startDate: z.string().describe('开始日期，格式为YYYY-MM-DD').optional(),
     endDate: z.string().describe('结束日期，格式为YYYY-MM-DD').optional(),
     limit: z.number().describe('限制返回的邮件数量').optional(),
-    offset: z.number().describe('偏移量').optional(),
+    offset: z.number().describe('偏移量').optional()
 });
 
 const sendEmailSchema = z.object({
@@ -70,7 +76,7 @@ const sendEmailSchema = z.object({
     subject: z.string().default(''),
     text: z.string().default(''),
     html: z.string().default(''),
-    attachments: z.array(z.string()).default([]),
+    attachments: z.array(z.string()).default([])
 });
 
 class EmailAddress {
@@ -91,7 +97,19 @@ class EmailHeader {
      * @param {EmailAddress[]} bcc - The bcc recipient of the email
      * @param {Date} date - The date of the email
      */
-    constructor(uid, subject, from, to, cc, bcc, date, unread = true, starred = false, deleted = false, type = 'inbox') {
+    constructor(
+        uid,
+        subject,
+        from,
+        to,
+        cc,
+        bcc,
+        date,
+        unread = true,
+        starred = false,
+        deleted = false,
+        type = 'inbox'
+    ) {
         this.uid = uid;
         this.subject = subject;
         this.from = from;
@@ -129,5 +147,5 @@ export {
     MailboxConfigSchema, // 导出这个新的 Schema
     InboxServerSchema,
     OutboxServerSchema,
-    sendEmailSchema,
+    sendEmailSchema
 };

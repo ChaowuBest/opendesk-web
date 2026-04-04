@@ -11,7 +11,6 @@
 
 import { ElasticToolbarWidget } from '../../../../renderer/components/toolbar.ts';
 
-
 class CalendarEntryWidget extends HTMLElement {
     constructor() {
         super();
@@ -75,7 +74,7 @@ class CalendarEntryWidget extends HTMLElement {
 
         // 星期标题
         const weekDays = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
-        weekDays.forEach(day => {
+        weekDays.forEach((day) => {
             gridHTML += `<div class="h-6 flex items-center justify-center text-[10px] font-bold text-slate-400 uppercase tracking-widest">${day}</div>`;
         });
 
@@ -94,10 +93,12 @@ class CalendarEntryWidget extends HTMLElement {
             const isToday = isCurrentMonth && day === today.getDate();
             const isSelected = day === selectedDate;
 
-            let classes = 'h-9 flex items-center justify-center text-sm font-medium text-slate-700 hover:bg-white/60 rounded-xl cursor-pointer';
+            let classes =
+                'h-9 flex items-center justify-center text-sm font-medium text-slate-700 hover:bg-white/60 rounded-xl cursor-pointer';
 
             if (isSelected) {
-                classes = 'h-9 flex items-center justify-center text-sm font-bold text-white bg-slate-800 rounded-xl shadow-lg shadow-black/20 ring-1 ring-black/10';
+                classes =
+                    'h-9 flex items-center justify-center text-sm font-bold text-white bg-slate-800 rounded-xl shadow-lg shadow-black/20 ring-1 ring-black/10';
             } else if (isToday) {
                 classes += ' ring-2 ring-blue-400';
             }
@@ -115,7 +116,7 @@ class CalendarEntryWidget extends HTMLElement {
         calendarGrid.innerHTML = gridHTML;
 
         // 为日期添加点击事件
-        calendarGrid.querySelectorAll('[data-day]').forEach(cell => {
+        calendarGrid.querySelectorAll('[data-day]').forEach((cell) => {
             cell.addEventListener('click', () => {
                 const day = parseInt(cell.getAttribute('data-day'));
                 this.currentDate = new Date(year, month, day);
@@ -139,17 +140,20 @@ class CalendarEntryWidget extends HTMLElement {
             this.currentDate = new Date(dateString);
         }
 
-        var date = this.currentDate;
+        const date = this.currentDate;
         const weekdayNames = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六'];
         const dayOfWeek = weekdayNames[date.getDay()];
-        const currentDateString = date.toLocaleDateString('zh-CN', {
-            year: 'numeric',
-            month: 'long',
-            day: 'numeric'
-        }) + ' ' + dayOfWeek;
+        const currentDateString =
+            date.toLocaleDateString('zh-CN', {
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric'
+            }) +
+            ' ' +
+            dayOfWeek;
 
         const scheduleElement = this.querySelector('#calendar-current-day-schedule');
-        var scheduleHTML = '';
+        let scheduleHTML = '';
         scheduleHTML += `
         <div class="flex items-center justify-between mb-2">
             <span class="text-[11px] font-bold text-gray-500 uppercase tracking-[0.15em]">${currentDateString}</span>
@@ -161,7 +165,10 @@ class CalendarEntryWidget extends HTMLElement {
 
         for (let i = 0; i < calendarItems.length; i++) {
             const item = calendarItems[i];
-            const startTime = new Date(item.startTime).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+            const startTime = new Date(item.startTime).toLocaleTimeString('zh-CN', {
+                hour: '2-digit',
+                minute: '2-digit'
+            });
             scheduleHTML += `
             <div class="calendar-item flex gap-4 cursor-pointer" data-item-index="${i}">
                 <div class="flex flex-col items-center">
@@ -253,7 +260,10 @@ class CalendarEntryWidget extends HTMLElement {
         // 格式化日期和时间
         const startDate = new Date(item.startTime);
         const endDate = item.endTime ? new Date(item.endTime) : null;
-        const startTimeStr = startDate.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+        const startTimeStr = startDate.toLocaleTimeString('zh-CN', {
+            hour: '2-digit',
+            minute: '2-digit'
+        });
         const endTimeStr = endDate ? endDate.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : '';
         const timeRange = endTimeStr ? `${startTimeStr} — ${endTimeStr}` : startTimeStr;
 
@@ -303,54 +313,85 @@ class CalendarEntryWidget extends HTMLElement {
                             <i class="fa-regular fa-calendar-check w-6 text-gray-400"></i>
                             ${fullDateStr}
                         </div>
-                        ${item.location ? `
+                        ${
+                            item.location
+                                ? `
                         <div class="flex items-center text-gray-500 text-sm">
                             <i class="fa-solid fa-location-dot w-6 text-gray-400"></i>
                             ${item.location}
                         </div>
-                        ` : ''}
+                        `
+                                : ''
+                        }
                     </div>
                 </div>
 
                 <!-- 详细内容描述 -->
                 <div class="space-y-6">
-                    ${item.description ? `
+                    ${
+                        item.description
+                            ? `
                     <section>
                         <h4 class="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3">日程描述</h4>
                         <div class="text-gray-700 leading-relaxed bg-white/20 p-4 rounded-xl border border-black/5">
                             ${item.description}
                         </div>
                     </section>
-                    ` : ''}
+                    `
+                            : ''
+                    }
 
-                    ${item.attendees && item.attendees.length > 0 ? `
+                    ${
+                        item.attendees && item.attendees.length > 0
+                            ? `
                     <section>
                         <h4 class="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3">参与人员 (${item.attendees.length})</h4>
                         <div class="flex flex-wrap gap-2">
-                            ${item.attendees.map((attendee, idx) => `
+                            ${item.attendees
+                                .map(
+                                    (attendee, idx) => `
                             <div class="flex items-center bg-white/50 border border-gray-200 py-1 px-3 rounded-full shadow-sm">
                                 <img src="https://i.pravatar.cc/100?u=${idx}" class="w-5 h-5 rounded-full mr-2">
                                 <span class="text-xs font-medium text-gray-700">${attendee}</span>
                             </div>
-                            `).join('')}
+                            `
+                                )
+                                .join('')}
                         </div>
                     </section>
-                    ` : ''}
+                    `
+                            : ''
+                    }
                 </div>
             </div>
         </div>
         `;
 
         const buttons = [
-            { id: 'calendar-item-back-button', icon: 'fa-circle-arrow-left', label: '返回', action: () => {
-                this.clearCalendarItem();
-            }},
-            { id: 'calendar-item-edit-button', icon: 'fa-edit', label: '编辑', action: () => {
-                console.log('编辑日程', item);
-            }},
-            { id: 'calendar-item-delete-button', icon: 'fa-trash-alt', label: '删除', action: () => {
-                console.log('删除日程', item);
-            }},
+            {
+                id: 'calendar-item-back-button',
+                icon: 'fa-circle-arrow-left',
+                label: '返回',
+                action: () => {
+                    this.clearCalendarItem();
+                }
+            },
+            {
+                id: 'calendar-item-edit-button',
+                icon: 'fa-edit',
+                label: '编辑',
+                action: () => {
+                    console.log('编辑日程', item);
+                }
+            },
+            {
+                id: 'calendar-item-delete-button',
+                icon: 'fa-trash-alt',
+                label: '删除',
+                action: () => {
+                    console.log('删除日程', item);
+                }
+            }
         ];
         const headerToolbar = new ElasticToolbarWidget(buttons);
         this.querySelector('#calendar-item-toolbar').appendChild(headerToolbar);

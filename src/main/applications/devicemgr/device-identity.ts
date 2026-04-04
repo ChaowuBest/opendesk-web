@@ -25,10 +25,7 @@ const ED25519_SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex');
 // ── Base64url helpers ───────────────────────────────────────────────────────
 
 export function base64UrlEncode(buf: Buffer): string {
-    return buf.toString('base64')
-        .replaceAll('+', '-')
-        .replaceAll('/', '_')
-        .replace(/=+$/g, '');
+    return buf.toString('base64').replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/g, '');
 }
 
 export function base64UrlDecode(input: string): Buffer {
@@ -61,9 +58,7 @@ export function fingerprintPublicKey(publicKeyPem: string): string {
  */
 export function deriveDeviceId(publicKey: string): string | null {
     try {
-        const raw = publicKey.includes('BEGIN')
-            ? derivePublicKeyRaw(publicKey)
-            : base64UrlDecode(publicKey);
+        const raw = publicKey.includes('BEGIN') ? derivePublicKeyRaw(publicKey) : base64UrlDecode(publicKey);
         if (raw.length === 0) return null;
         return crypto.createHash('sha256').update(raw).digest('hex');
     } catch {
@@ -108,7 +103,7 @@ export function loadOrCreateGatewayIdentity(dataDir: string): GatewayIdentity {
                 return {
                     deviceId: parsed.deviceId,
                     publicKeyPem: parsed.publicKeyPem,
-                    privateKeyPem: parsed.privateKeyPem,
+                    privateKeyPem: parsed.privateKeyPem
                 };
             }
         }
@@ -123,7 +118,7 @@ export function loadOrCreateGatewayIdentity(dataDir: string): GatewayIdentity {
         deviceId: identity.deviceId,
         publicKeyPem: identity.publicKeyPem,
         privateKeyPem: identity.privateKeyPem,
-        createdAtMs: Date.now(),
+        createdAtMs: Date.now()
     };
     fs.writeFileSync(filePath, JSON.stringify(stored, null, 2) + '\n', { mode: 0o600 });
     return identity;
@@ -134,22 +129,21 @@ export function loadOrCreateGatewayIdentity(dataDir: string): GatewayIdentity {
 /**
  * 验证客户端 Ed25519 签名。publicKey 可以是 PEM 格式或 raw base64url。
  */
-export function verifyDeviceSignature(
-    publicKey: string,
-    payload: string,
-    signatureBase64Url: string,
-): boolean {
+export function verifyDeviceSignature(publicKey: string, payload: string, signatureBase64Url: string): boolean {
     try {
         const key = publicKey.includes('BEGIN')
             ? crypto.createPublicKey(publicKey)
             : crypto.createPublicKey({
-                key: Buffer.concat([ED25519_SPKI_PREFIX, base64UrlDecode(publicKey)]),
-                type: 'spki',
-                format: 'der',
-            });
+                  key: Buffer.concat([ED25519_SPKI_PREFIX, base64UrlDecode(publicKey)]),
+                  type: 'spki',
+                  format: 'der'
+              });
         const sig = (() => {
-            try { return base64UrlDecode(signatureBase64Url); }
-            catch { return Buffer.from(signatureBase64Url, 'base64'); }
+            try {
+                return base64UrlDecode(signatureBase64Url);
+            } catch {
+                return Buffer.from(signatureBase64Url, 'base64');
+            }
         })();
         return crypto.verify(null, Buffer.from(payload, 'utf8'), key, sig);
     } catch {
@@ -191,7 +185,7 @@ export function buildDeviceAuthPayloadV3(params: DeviceAuthPayloadV3Params): str
         token,
         params.nonce,
         platform,
-        deviceFamily,
+        deviceFamily
     ].join('|');
 }
 
@@ -210,7 +204,7 @@ export function buildDeviceAuthPayloadV2(params: Omit<DeviceAuthPayloadV3Params,
         scopes,
         String(params.signedAtMs),
         token,
-        params.nonce,
+        params.nonce
     ].join('|');
 }
 

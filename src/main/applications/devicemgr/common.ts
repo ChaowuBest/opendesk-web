@@ -175,7 +175,7 @@ export type GatewayIdentity = {
 export const DeviceMgrConfigSchema = z.object({
     enabled: z.boolean().describe('启用设备网关服务').default(true),
     port: z.number().describe('WebSocket 监听端口').default(18789),
-    autoApproveLocal: z.boolean().describe('自动审批来自本机的配对请求').default(true),
+    autoApproveLocal: z.boolean().describe('自动审批来自本机的配对请求').default(true)
 });
 
 export type DeviceMgrConfig = z.output<typeof DeviceMgrConfigSchema>;
@@ -249,7 +249,7 @@ export const GATEWAY_METHODS = [
     'logs.tail',
     'last-heartbeat',
     'set-heartbeats',
-    'wake',
+    'wake'
 ];
 
 export const GATEWAY_EVENTS = [
@@ -265,5 +265,5 @@ export const GATEWAY_EVENTS = [
     'sessions.changed',
     'presence',
     'health',
-    'heartbeat',
+    'heartbeat'
 ];

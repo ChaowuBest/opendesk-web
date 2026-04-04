@@ -32,40 +32,38 @@ const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string }).r
 
 // ── HM Addon 类型定义 ─────────────────────────────────────────────
 type HmSqliteAddon = {
-  open: (filename: string) => unknown;
-  close: (db: unknown) => void;
-  exec: (db: unknown, sql: string) => Promise<any[]>;
-  beginTransaction: (db: unknown) => Promise<void>;
-  commitTransaction: (db: unknown) => Promise<void>;
-  rollbackTransaction: (db: unknown) => Promise<void>;
-  prepare: (db: unknown, sql: string) => Promise<unknown>;
-  run: (stmt: unknown, params: any[]) => Promise<void>;
+    open: (filename: string) => unknown;
+    close: (db: unknown) => void;
+    exec: (db: unknown, sql: string) => Promise<any[]>;
+    beginTransaction: (db: unknown) => Promise<void>;
+    commitTransaction: (db: unknown) => Promise<void>;
+    rollbackTransaction: (db: unknown) => Promise<void>;
+    prepare: (db: unknown, sql: string) => Promise<unknown>;
+    run: (stmt: unknown, params: any[]) => Promise<void>;
 };
 
 const ARCH_CANDIDATES = [
-  process.arch,
-  process.arch === 'arm64' ? 'aarch64' : undefined,
-  process.arch === 'x64' ? 'x86_64' : undefined,
+    process.arch,
+    process.arch === 'arm64' ? 'aarch64' : undefined,
+    process.arch === 'x64' ? 'x86_64' : undefined
 ].filter(Boolean) as string[];
 
 const ADDON_CANDIDATES = [
-  process.env.HM_SQLITE_ADDON_PATH,
-  ...(resourcesPath
-    ? ARCH_CANDIDATES.map((arch) =>
-        path.resolve(resourcesPath, 'native', 'openharmony', arch, 'hm_sqlite_addon.node')
-      )
-    : []),
-  ...ARCH_CANDIDATES.map((arch) =>
-    path.resolve(projectRoot, 'native', 'openharmony', arch, 'hm_sqlite_addon.node')
-  ),
+    process.env.HM_SQLITE_ADDON_PATH,
+    ...(resourcesPath
+        ? ARCH_CANDIDATES.map((arch) =>
+              path.resolve(resourcesPath, 'native', 'openharmony', arch, 'hm_sqlite_addon.node')
+          )
+        : []),
+    ...ARCH_CANDIDATES.map((arch) => path.resolve(projectRoot, 'native', 'openharmony', arch, 'hm_sqlite_addon.node'))
 ].filter(Boolean) as string[];
 
 function loadAddon(): HmSqliteAddon {
-  for (const addonPath of ADDON_CANDIDATES) {
-    if (!fs.existsSync(addonPath)) continue;
-    return require(addonPath) as HmSqliteAddon;
-  }
-  throw new Error(`hm_sqlite_addon not found. Tried: ${ADDON_CANDIDATES.join(', ')}`);
+    for (const addonPath of ADDON_CANDIDATES) {
+        if (!fs.existsSync(addonPath)) continue;
+        return require(addonPath) as HmSqliteAddon;
+    }
+    throw new Error(`hm_sqlite_addon not found. Tried: ${ADDON_CANDIDATES.join(', ')}`);
 }
 
 // ── Float32Array → X'hex' 字面量（用于 vec0 虚拟表内联）────────────
@@ -123,7 +121,9 @@ export class VectorIndexDBHm implements IVectorIndexDB {
             await this.addon.commitTransaction(db);
             return result;
         } catch (error) {
-            try { await this.addon.rollbackTransaction(db); } catch {}
+            try {
+                await this.addon.rollbackTransaction(db);
+            } catch {}
             throw error;
         }
     }
@@ -202,7 +202,11 @@ export class VectorIndexDBHm implements IVectorIndexDB {
                     count++;
                 } catch (error: any) {
                     const msg = error?.message || String(error);
-                    if (!msg.includes('UNIQUE constraint failed') && !msg.includes('PRIMARYKEY') && !msg.includes('already exists'))
+                    if (
+                        !msg.includes('UNIQUE constraint failed') &&
+                        !msg.includes('PRIMARYKEY') &&
+                        !msg.includes('already exists')
+                    )
                         throw error;
                 }
             }
@@ -216,23 +220,24 @@ export class VectorIndexDBHm implements IVectorIndexDB {
         const hexRepr = float32ToHexLiteral(record.repr);
         await this.runTransaction(async () => {
             // 查询 item_id + item_type 对应的旧 vector_id（只替换同列向量）
-            const oldRows = await this.execSql(
+            const oldRows = (await this.execSql(
                 `SELECT vector_id FROM ${this.metaTableName} WHERE item_id = '${escapeStr(record.item_id)}' AND item_type = '${escapeStr(record.item_type)}'`
-            ) as Array<{ vector_id: string }>;
+            )) as Array<{ vector_id: string }>;
             // 删除旧 vec 条目
             for (const row of oldRows) {
                 await this.execSql(`DELETE FROM ${this.vecTableName} WHERE vector_id = '${escapeStr(row.vector_id)}'`);
             }
             // 删除旧 meta 条目
-            await this.runSql(
-                `DELETE FROM ${this.metaTableName} WHERE item_id = ? AND item_type = ?`,
-                [record.item_id, record.item_type]
-            );
+            await this.runSql(`DELETE FROM ${this.metaTableName} WHERE item_id = ? AND item_type = ?`, [
+                record.item_id,
+                record.item_type
+            ]);
             // 插入新 meta 条目
-            await this.runSql(
-                `INSERT INTO ${this.metaTableName} (vector_id, item_id, item_type) VALUES (?, ?, ?)`,
-                [record.vector_id, record.item_id, record.item_type]
-            );
+            await this.runSql(`INSERT INTO ${this.metaTableName} (vector_id, item_id, item_type) VALUES (?, ?, ?)`, [
+                record.vector_id,
+                record.item_id,
+                record.item_type
+            ]);
             // 插入新 vec 条目（repr 字段用 X'hex' 字面量，vec0 不支持参数化写入）
             await this.execSql(`
                 INSERT INTO ${this.vecTableName} (vector_id, repr)
@@ -246,9 +251,9 @@ export class VectorIndexDBHm implements IVectorIndexDB {
         await this.ensureInitialized();
         if (!(await this.exists(itemId))) return false;
         await this.runTransaction(async () => {
-            const rows = await this.execSql(
+            const rows = (await this.execSql(
                 `SELECT vector_id FROM ${this.metaTableName} WHERE item_id = '${escapeStr(itemId)}'`
-            ) as Array<{ vector_id: string }>;
+            )) as Array<{ vector_id: string }>;
             for (const row of rows) {
                 await this.execSql(`DELETE FROM ${this.vecTableName} WHERE vector_id = '${escapeStr(row.vector_id)}'`);
             }
@@ -263,11 +268,13 @@ export class VectorIndexDBHm implements IVectorIndexDB {
         let count = 0;
         await this.runTransaction(async () => {
             for (const id of itemIds) {
-                const rows = await this.execSql(
+                const rows = (await this.execSql(
                     `SELECT vector_id FROM ${this.metaTableName} WHERE item_id = '${escapeStr(id)}'`
-                ) as Array<{ vector_id: string }>;
+                )) as Array<{ vector_id: string }>;
                 for (const row of rows) {
-                    await this.execSql(`DELETE FROM ${this.vecTableName} WHERE vector_id = '${escapeStr(row.vector_id)}'`);
+                    await this.execSql(
+                        `DELETE FROM ${this.vecTableName} WHERE vector_id = '${escapeStr(row.vector_id)}'`
+                    );
                 }
                 await this.runSql(`DELETE FROM ${this.metaTableName} WHERE item_id = ?`, [id]);
                 if (rows.length > 0) count++;
@@ -304,7 +311,7 @@ export class VectorIndexDBHm implements IVectorIndexDB {
         let sql: string;
         if (filterItemIds && filterItemIds.length > 0) {
             // 带过滤的搜索：用 IN 子句（字面量内联）
-            const idList = filterItemIds.map(id => `'${id.replace(/'/g, "''")}'`).join(', ');
+            const idList = filterItemIds.map((id) => `'${id.replace(/'/g, "''")}'`).join(', ');
             sql = `
                 SELECT m.item_id, m.item_type,
                        ${distanceFunc}(v.repr, ${hexVec}) as distance
@@ -327,11 +334,13 @@ export class VectorIndexDBHm implements IVectorIndexDB {
             `;
         }
 
-        const rows = await this.execSql(sql) as Array<{
-            item_id: string; item_type: string; distance: number;
+        const rows = (await this.execSql(sql)) as Array<{
+            item_id: string;
+            item_type: string;
+            distance: number;
         }>;
 
-        const results: VectorSearchResult[] = rows.map(row => ({
+        const results: VectorSearchResult[] = rows.map((row) => ({
             item_id: row.item_id,
             item_type: row.item_type,
             distance: row.distance,
@@ -346,11 +355,11 @@ export class VectorIndexDBHm implements IVectorIndexDB {
                     default:
                         return 1 - row.distance;
                 }
-            })(),
+            })()
         }));
 
         if (options?.threshold !== undefined) {
-            return results.filter(r => r.similarity >= options.threshold!);
+            return results.filter((r) => r.similarity >= options.threshold!);
         }
         return results;
     }
@@ -383,7 +392,10 @@ export class VectorIndexDBHm implements IVectorIndexDB {
     }
 
     close(): void {
-        if (this.db) { this.addon.close(this.db); this.db = null; }
+        if (this.db) {
+            this.addon.close(this.db);
+            this.db = null;
+        }
         this.isInitialized = false;
     }
 

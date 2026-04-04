@@ -9,18 +9,9 @@
  * See the Mulan PSL v2 for more details.
  */
 
-const supportedFileExtensions = [
-    'pdf',
-    'docx',
-    'doc',
-    'xls',
-    'xlsx',
-    'ppt',
-    'pptx',
-]
+const supportedFileExtensions = ['pdf', 'docx', 'doc', 'xls', 'xlsx', 'ppt', 'pptx'];
 
 class AgentInput extends HTMLElement {
-
     constructor() {
         super();
         this.attachedFilePaths = [];
@@ -33,14 +24,17 @@ class AgentInput extends HTMLElement {
         this.render();
     }
 
-    disconnectedCallback() {
-
-    }
+    disconnectedCallback() {}
 
     attachFilePath(filePath) {
         const extname = filePath.split('.').pop();
         if (!supportedFileExtensions.includes(extname)) {
-            window.notificationAPI.sendNotification('error', '文件管理', '不支持的文件类型', `当前还不支持在对话中使用${extname} 文件`);
+            window.notificationAPI.sendNotification(
+                'error',
+                '文件管理',
+                '不支持的文件类型',
+                `当前还不支持在对话中使用${extname} 文件`
+            );
             return;
         }
         this.attachedFilePaths.push(filePath);
@@ -48,7 +42,7 @@ class AgentInput extends HTMLElement {
     }
 
     removeFilePath(filePath) {
-        this.attachedFilePaths = this.attachedFilePaths.filter(p => p !== filePath);
+        this.attachedFilePaths = this.attachedFilePaths.filter((p) => p !== filePath);
         this.render();
     }
 
@@ -103,9 +97,10 @@ class AgentInput extends HTMLElement {
     }
 
     render() {
-        let fileItems = this.attachedFilePaths.map(filePath => {
-            let fileName = filePath.split('/').pop();
-            return `
+        let fileItems = this.attachedFilePaths
+            .map((filePath) => {
+                const fileName = filePath.split('/').pop();
+                return `
             <div class="px-3 py-1 bg-blue-50 text-blue-700 hover:text-gray-600 hover:bg-blue-20 rounded-full border border-blue-100 transition-all shadow-sm text-xs cursor-pointer flex items-center">
                 <i class="fas fa-paperclip mr-1"></i>
                 <span class="max-w-[120px] truncate whitespace-nowrap overflow-hidden" style="display:inline-block;">${fileName}</span>
@@ -114,7 +109,8 @@ class AgentInput extends HTMLElement {
                 </button>
             </div>
             `;
-        }).join('');
+            })
+            .join('');
 
         if (this.attachedFilePaths.length === 0) {
             fileItems = `
@@ -166,18 +162,18 @@ class AgentInput extends HTMLElement {
                 </div>
             </div>
         </div>
-        `
+        `;
 
         this.setUpEventListeners();
         this.updateInputState();
     }
 
     setUpEventListeners() {
-        const container = this.querySelector('#agent-input-container')
-        const textarea = this.querySelector('#agent-input-textarea')
-        const submitBtn = this.querySelector('#agent-input-submit-btn')
-        const stopBtn = this.querySelector('#agent-input-stop-btn')
-        const removeFileBtns = this.querySelectorAll('.agent-input-remove-file-btn')
+        const container = this.querySelector('#agent-input-container');
+        const textarea = this.querySelector('#agent-input-textarea');
+        const submitBtn = this.querySelector('#agent-input-submit-btn');
+        const stopBtn = this.querySelector('#agent-input-stop-btn');
+        const removeFileBtns = this.querySelectorAll('.agent-input-remove-file-btn');
 
         // 提交消息的函数
         const handleSubmit = () => {
@@ -186,7 +182,7 @@ class AgentInput extends HTMLElement {
                 return;
             }
 
-            const message = textarea.value.trim()
+            const message = textarea.value.trim();
             if (message === '') {
                 return;
             }
@@ -202,9 +198,9 @@ class AgentInput extends HTMLElement {
 
             textarea.value = '';
             this.clearAttachedFilePaths();
-        }
+        };
 
-        submitBtn.addEventListener('click', handleSubmit)
+        submitBtn.addEventListener('click', handleSubmit);
 
         // 停止按钮事件
         if (stopBtn) {
@@ -215,7 +211,7 @@ class AgentInput extends HTMLElement {
             });
         }
 
-        removeFileBtns.forEach(btn => {
+        removeFileBtns.forEach((btn) => {
             btn.addEventListener('click', (e) => {
                 this.removeFilePath(btn.dataset.file_path);
             });
@@ -224,7 +220,7 @@ class AgentInput extends HTMLElement {
         container.addEventListener('dragover', (e) => {
             e.preventDefault();
             e.stopPropagation();
-        })
+        });
 
         container.addEventListener('drop', async (e) => {
             e.preventDefault();
@@ -254,7 +250,7 @@ class AgentInput extends HTMLElement {
                 }
                 // 如果pathType为null（路径不存在），则不执行任何操作
             }
-        })
+        });
 
         // Ctrl+Enter 快捷键
         textarea.addEventListener('keydown', (e) => {
@@ -268,21 +264,22 @@ class AgentInput extends HTMLElement {
                 e.preventDefault();
                 handleSubmit();
             }
-        })
+        });
 
         textarea.addEventListener('input', (e) => {
-            this.dispatchEvent(new CustomEvent('contentChanged', {
-                detail: {
-                    value: e.target.value
-                },
-                bubbles: true
-            }));
-        })
+            this.dispatchEvent(
+                new CustomEvent('contentChanged', {
+                    detail: {
+                        value: e.target.value
+                    },
+                    bubbles: true
+                })
+            );
+        });
     }
 }
 
 class ApplicationAgentInput extends HTMLElement {
-
     /**
      * 这个组件用于显示嵌入在应用之中的悬浮AI输入框
      */
@@ -426,7 +423,7 @@ class ApplicationAgentInput extends HTMLElement {
 
             </div>
         </div>
-        `
+        `;
 
         const textarea = this.querySelector('#application-agent-input-textarea');
         const container = this.querySelector('#input-container');
@@ -512,9 +509,7 @@ class ApplicationAgentInput extends HTMLElement {
         // 初始化显示状态
         this.updateDisplay();
     }
-
 }
-
 
 customElements.define('agent-input', AgentInput);
 customElements.define('application-agent-input', ApplicationAgentInput);

@@ -9,14 +9,13 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { type Component, Box, Text } from "@mariozechner/pi-tui";
-import { defaultSelectListTheme } from "../theme";
-import { OpenDeskTUI } from "../entry";
-import { TaskState } from "../../states/tasks";
-import { SelectTable, type SelectRow } from "./selecttable";
+import { type Component, Box, Text } from '@mariozechner/pi-tui';
+import { defaultSelectListTheme } from '../theme';
+import { OpenDeskTUI } from '../entry';
+import { TaskState } from '../../states/tasks';
+import { SelectTable, type SelectRow } from './selecttable';
 
-import chalk from "chalk";
-
+import chalk from 'chalk';
 
 export class BookmarkList implements Component {
     private openDeskTUI: OpenDeskTUI;
@@ -25,7 +24,7 @@ export class BookmarkList implements Component {
     private container: Box;
 
     getBookmarkedTasks(): TaskState[] {
-        return this.openDeskTUI.taskManagerState.tasks.filter(t => t.bookmark_path !== undefined);
+        return this.openDeskTUI.taskManagerState.tasks.filter((t) => t.bookmark_path !== undefined);
     }
 
     constructor(openDeskTUI: OpenDeskTUI) {
@@ -74,26 +73,28 @@ export class BookmarkList implements Component {
             running: '🏃',
             waiting: '⏳',
             stopped: '🟢',
-            failed: '🔴',
+            failed: '🔴'
         };
 
         const bookmarkedTasks = this.getBookmarkedTasks();
 
         if (bookmarkedTasks.length === 0) {
-            return [{
-                labels: ['暂无书签任务', ''],
-                value: '__empty__',
-            }];
+            return [
+                {
+                    labels: ['暂无书签任务', ''],
+                    value: '__empty__'
+                }
+            ];
         }
 
-        return bookmarkedTasks.reverse().map(t => {
+        return bookmarkedTasks.reverse().map((t) => {
             const name = t.task_name || '未命名任务';
             const status = statusIcons[t.task_status] ?? '❓';
             const timeStr = this.formatLastMessageTime(t.finished_at || t.started_at);
 
             return {
                 labels: [`${status} ${name}`, timeStr],
-                value: t.task_id,
+                value: t.task_id
             };
         });
     }
@@ -108,9 +109,9 @@ export class BookmarkList implements Component {
 
     show() {
         const handle = this.openDeskTUI.tui.showOverlay(this, {
-            width: "80%",
-            maxHeight: "80%",
-            anchor: "center",
+            width: '80%',
+            maxHeight: '80%',
+            anchor: 'center'
         });
 
         // 标记有 overlay 打开

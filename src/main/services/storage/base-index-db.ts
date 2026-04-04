@@ -24,9 +24,18 @@ import type { BaseQueryCondition, BaseQueryOperator, BaseQueryOptions, IBaseInde
 
 // 支持的操作符列表
 const SUPPORTED_OPERATORS: BaseQueryOperator[] = [
-    '=', '!=', '>', '<', '>=', '<=',
-    'like', 'notlike', 'in', 'notin',
-    'between', 'notbetween'
+    '=',
+    '!=',
+    '>',
+    '<',
+    '>=',
+    '<=',
+    'like',
+    'notlike',
+    'in',
+    'notin',
+    'between',
+    'notbetween'
 ];
 
 /**
@@ -91,9 +100,10 @@ export class BaseIndexDB implements IBaseIndexDB {
                     colDef += ' NOT NULL';
                 }
                 if (allowedDef.defaultValue !== undefined && allowedDef.defaultValue !== null) {
-                    const defaultVal = typeof allowedDef.defaultValue === 'string'
-                        ? `'${allowedDef.defaultValue}'`
-                        : allowedDef.defaultValue;
+                    const defaultVal =
+                        typeof allowedDef.defaultValue === 'string'
+                            ? `'${allowedDef.defaultValue}'`
+                            : allowedDef.defaultValue;
                     colDef += ` DEFAULT ${defaultVal}`;
                 }
             }
@@ -120,7 +130,7 @@ export class BaseIndexDB implements IBaseIndexDB {
      * 为 schema 中的列创建索引
      */
     private createIndexes(): void {
-        const indexableColumns = this.validFields.filter(col => col !== 'item_id');
+        const indexableColumns = this.validFields.filter((col) => col !== 'item_id');
 
         for (const column of indexableColumns) {
             const indexName = `idx_base_${column}`;
@@ -160,9 +170,9 @@ export class BaseIndexDB implements IBaseIndexDB {
      * 插入单条记录
      */
     async insert(record: Record<string, any>): Promise<boolean> {
-        const columns = this.validFields.filter(col => record[col] !== undefined);
+        const columns = this.validFields.filter((col) => record[col] !== undefined);
         const placeholders = columns.map(() => '?').join(', ');
-        const values = columns.map(col => record[col]);
+        const values = columns.map((col) => record[col]);
 
         const stmt = this.db.prepare(`
             INSERT INTO ${this.tableName} (${columns.join(', ')})
@@ -190,9 +200,9 @@ export class BaseIndexDB implements IBaseIndexDB {
             let count = 0;
             for (const record of records) {
                 try {
-                    const columns = this.validFields.filter(col => record[col] !== undefined);
+                    const columns = this.validFields.filter((col) => record[col] !== undefined);
                     const placeholders = columns.map(() => '?').join(', ');
-                    const values = columns.map(col => record[col]);
+                    const values = columns.map((col) => record[col]);
 
                     const insertStmt = this.db.prepare(`
                         INSERT INTO ${this.tableName} (${columns.join(', ')})
@@ -217,12 +227,12 @@ export class BaseIndexDB implements IBaseIndexDB {
      * 插入或更新记录（upsert）
      */
     async upsert(record: Record<string, any>): Promise<boolean> {
-        const columns = this.validFields.filter(col => record[col] !== undefined);
+        const columns = this.validFields.filter((col) => record[col] !== undefined);
         const placeholders = columns.map(() => '?').join(', ');
-        const values = columns.map(col => record[col]);
+        const values = columns.map((col) => record[col]);
 
-        const updateColumns = columns.filter(c => c !== 'item_id');
-        const updateClause = updateColumns.map(col => `${col} = excluded.${col}`).join(', ');
+        const updateColumns = columns.filter((c) => c !== 'item_id');
+        const updateClause = updateColumns.map((col) => `${col} = excluded.${col}`).join(', ');
 
         const stmt = this.db.prepare(`
             INSERT INTO ${this.tableName} (${columns.join(', ')})
@@ -273,14 +283,14 @@ export class BaseIndexDB implements IBaseIndexDB {
      * 更新记录
      */
     async update(itemId: string, data: Record<string, any>): Promise<boolean> {
-        const fields = Object.keys(data).filter(key =>
-            this.validFields.includes(key) && key !== 'item_id' && data[key] !== undefined
+        const fields = Object.keys(data).filter(
+            (key) => this.validFields.includes(key) && key !== 'item_id' && data[key] !== undefined
         );
         if (fields.length === 0) {
             throw new Error('No valid fields to update');
         }
 
-        const setClause = fields.map(field => `${field} = @${field}`).join(', ');
+        const setClause = fields.map((field) => `${field} = @${field}`).join(', ');
         const stmt = this.db.prepare(`UPDATE ${this.tableName} SET ${setClause} WHERE item_id = @item_id`);
 
         const result = stmt.run({ ...data, item_id: itemId });
@@ -341,7 +351,10 @@ export class BaseIndexDB implements IBaseIndexDB {
     /**
      * 根据条件查询记录
      */
-    async query(conditions: BaseQueryCondition[], options?: Omit<BaseQueryOptions, 'conditions'>): Promise<Record<string, any>[]> {
+    async query(
+        conditions: BaseQueryCondition[],
+        options?: Omit<BaseQueryOptions, 'conditions'>
+    ): Promise<Record<string, any>[]> {
         return this.findAll({ ...options, conditions });
     }
 
@@ -400,7 +413,10 @@ export class BaseIndexDB implements IBaseIndexDB {
     /**
      * 构建 WHERE 子句
      */
-    private buildWhereClause(conditions: BaseQueryCondition[]): { whereClause: string; params: any[] } {
+    private buildWhereClause(conditions: BaseQueryCondition[]): {
+        whereClause: string;
+        params: any[];
+    } {
         const clauses: string[] = [];
         const params: any[] = [];
 
@@ -413,7 +429,9 @@ export class BaseIndexDB implements IBaseIndexDB {
 
             // 验证操作符
             if (!BaseIndexDB.isOperatorSupported(op)) {
-                throw new Error(`Unsupported operator: ${operator}. Supported operators: ${SUPPORTED_OPERATORS.join(', ')}`);
+                throw new Error(
+                    `Unsupported operator: ${operator}. Supported operators: ${SUPPORTED_OPERATORS.join(', ')}`
+                );
             }
 
             if (op === 'in' || op === 'notin') {

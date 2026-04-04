@@ -176,8 +176,7 @@ export class VectorIndexDB implements IVectorIndexDB {
                 insertVec.run(record.vector_id, vecData);
                 return true;
             } catch (error: any) {
-                if (error.code === 'SQLITE_CONSTRAINT_PRIMARYKEY' ||
-                    error.code === 'SQLITE_CONSTRAINT') {
+                if (error.code === 'SQLITE_CONSTRAINT_PRIMARYKEY' || error.code === 'SQLITE_CONSTRAINT') {
                     throw new Error(`Record with item_id '${record.item_id}' already exists`);
                 }
                 throw error;
@@ -216,9 +215,11 @@ export class VectorIndexDB implements IVectorIndexDB {
                     count++;
                 } catch (error: any) {
                     // 跳过重复记录，继续插入其他记录
-                    if (error.code !== 'SQLITE_CONSTRAINT_PRIMARYKEY' &&
+                    if (
+                        error.code !== 'SQLITE_CONSTRAINT_PRIMARYKEY' &&
                         error.code !== 'SQLITE_CONSTRAINT' &&
-                        !error.message?.includes('already exists')) {
+                        !error.message?.includes('already exists')
+                    ) {
                         throw error;
                     }
                 }
@@ -254,7 +255,7 @@ export class VectorIndexDB implements IVectorIndexDB {
             VALUES (?, ?)
         `);
 
-        let tempTableName = `temp_vector_ids_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+        const tempTableName = `temp_vector_ids_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
 
         const transaction = this.db.transaction(() => {
             // 1. 插入/更新 meta 表
@@ -269,10 +270,14 @@ export class VectorIndexDB implements IVectorIndexDB {
             for (const row of vectorRows) {
                 insertTemp.run(row.vector_id);
             }
-            this.db.prepare(`
+            this.db
+                .prepare(
+                    `
                 DELETE FROM ${this.vecTableName}
                 WHERE vector_id IN (SELECT vector_id FROM ${tempTableName})
-            `).run();
+            `
+                )
+                .run();
 
             // 4. 插入对应 vector_id 的向量
             insertVec.run(record.vector_id, vecData);
@@ -402,19 +407,23 @@ export class VectorIndexDB implements IVectorIndexDB {
             }
 
             const stmt = this.db.prepare(sql);
-            const rows = stmt.all(...params) as Array<{ item_id: string; item_type: string; distance: number }>;
+            const rows = stmt.all(...params) as Array<{
+                item_id: string;
+                item_type: string;
+                distance: number;
+            }>;
 
             // 转换为搜索结果
-            const results: VectorSearchResult[] = rows.map(row => ({
+            const results: VectorSearchResult[] = rows.map((row) => ({
                 item_id: row.item_id,
                 item_type: row.item_type,
                 distance: row.distance,
-                similarity: this.distanceToSimilarity(row.distance, metric),
+                similarity: this.distanceToSimilarity(row.distance, metric)
             }));
 
             // 应用相似度阈值过滤
             if (threshold !== undefined) {
-                return results.filter(r => r.similarity >= threshold);
+                return results.filter((r) => r.similarity >= threshold);
             }
 
             return results;
@@ -424,7 +433,6 @@ export class VectorIndexDB implements IVectorIndexDB {
             }
         }
     }
-
 
     /**
      * 统计记录数

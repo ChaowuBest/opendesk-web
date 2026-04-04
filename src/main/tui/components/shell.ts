@@ -1,10 +1,9 @@
-
-import { type AutocompleteItem } from "@mariozechner/pi-tui";
-import { spawnSync, spawn, type ChildProcess } from "child_process";
-import chalk from "chalk";
-import process from "process";
-import path from "path";
-import fs from "fs";
+import { type AutocompleteItem } from '@mariozechner/pi-tui';
+import { spawnSync, spawn, type ChildProcess } from 'child_process';
+import chalk from 'chalk';
+import process from 'process';
+import path from 'path';
+import fs from 'fs';
 
 // ── Shell 检测 ──────────────────────────────────────────────────────────
 
@@ -16,21 +15,31 @@ function detectShell(): { shell: string; args: string[] } {
     if (process.platform === 'win32') {
         for (const bin of ['bash']) {
             try {
-                const r = spawnSync('where', [bin], { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] });
+                const r = spawnSync('where', [bin], {
+                    encoding: 'utf-8',
+                    stdio: ['pipe', 'pipe', 'pipe']
+                });
                 if (r.status === 0 && r.stdout.trim()) {
                     return { shell: r.stdout.trim().split(/\r?\n/)[0]!, args: ['-c'] };
                 }
-            } catch { /* ignore */ }
+            } catch {
+                /* ignore */
+            }
         }
         return { shell: 'powershell.exe', args: ['-Command'] };
     }
     for (const bin of ['bash', 'sh']) {
         try {
-            const r = spawnSync('which', [bin], { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] });
+            const r = spawnSync('which', [bin], {
+                encoding: 'utf-8',
+                stdio: ['pipe', 'pipe', 'pipe']
+            });
             if (r.status === 0 && r.stdout.trim()) {
                 return { shell: r.stdout.trim().split(/\r?\n/)[0]!, args: ['-c'] };
             }
-        } catch { /* ignore */ }
+        } catch {
+            /* ignore */
+        }
     }
     return { shell: '/bin/sh', args: ['-c'] };
 }
@@ -82,7 +91,7 @@ export function shellQuoteCwd(cwd: string): string {
 // ── Shell 命令补全 ──────────────────────────────────────────────────────
 
 const SHELL_COMPLETION_MAX = 30;
-let _shellCompletionCache: Map<string, { items: AutocompleteItem[]; ts: number }> = new Map();
+const _shellCompletionCache: Map<string, { items: AutocompleteItem[]; ts: number }> = new Map();
 const SHELL_CACHE_TTL = 30_000;
 
 export function getShellCompletions(inputCmd: string, cwd: string): AutocompleteItem[] {
@@ -105,16 +114,20 @@ export function getShellCompletions(inputCmd: string, cwd: string): Autocomplete
 
         if (isFirstToken) {
             const result = spawnSync(shell, [...args, `compgen -c -- '${lastToken.replace(/'/g, "'\\''")}'`], {
-                cwd, encoding: 'utf-8', timeout: 3000,
-                stdio: ['pipe', 'pipe', 'pipe'],
+                cwd,
+                encoding: 'utf-8',
+                timeout: 3000,
+                stdio: ['pipe', 'pipe', 'pipe']
             });
             if (result.status === 0 && result.stdout) {
                 completions = result.stdout.trim().split('\n').filter(Boolean);
             }
         } else {
             const result = spawnSync(shell, [...args, `compgen -f -- '${lastToken.replace(/'/g, "'\\''")}'`], {
-                cwd, encoding: 'utf-8', timeout: 3000,
-                stdio: ['pipe', 'pipe', 'pipe'],
+                cwd,
+                encoding: 'utf-8',
+                timeout: 3000,
+                stdio: ['pipe', 'pipe', 'pipe']
             });
             if (result.status === 0 && result.stdout) {
                 completions = result.stdout.trim().split('\n').filter(Boolean);
@@ -128,27 +141,31 @@ export function getShellCompletions(inputCmd: string, cwd: string): Autocomplete
         if (isFirstToken && lastToken.length > 0) {
             const psCmd = `(Get-Command '${lastToken}*' -ErrorAction SilentlyContinue | Select-Object -First ${SHELL_COMPLETION_MAX} -ExpandProperty Name) -join "\\n"`;
             const result = spawnSync(shell, [...args, psCmd], {
-                cwd, encoding: 'utf-8', timeout: 5000,
-                stdio: ['pipe', 'pipe', 'pipe'],
+                cwd,
+                encoding: 'utf-8',
+                timeout: 5000,
+                stdio: ['pipe', 'pipe', 'pipe']
             });
             if (result.status === 0 && result.stdout) {
                 completions = result.stdout.trim().split(/\r?\n/).filter(Boolean);
             }
         } else if (!isFirstToken) {
             try {
-                const dir = lastToken.includes('/') || lastToken.includes('\\')
-                    ? path.resolve(cwd, path.dirname(lastToken))
-                    : cwd;
-                const prefix = lastToken.includes('/') || lastToken.includes('\\')
-                    ? path.basename(lastToken)
-                    : lastToken;
+                const dir =
+                    lastToken.includes('/') || lastToken.includes('\\')
+                        ? path.resolve(cwd, path.dirname(lastToken))
+                        : cwd;
+                const prefix =
+                    lastToken.includes('/') || lastToken.includes('\\') ? path.basename(lastToken) : lastToken;
                 const entries = fs.readdirSync(dir, { withFileTypes: true });
                 for (const entry of entries) {
                     if (entry.name.toLowerCase().startsWith(prefix.toLowerCase())) {
                         completions.push(entry.name + (entry.isDirectory() ? '/' : ''));
                     }
                 }
-            } catch { /* ignore */ }
+            } catch {
+                /* ignore */
+            }
         }
     }
 
@@ -184,7 +201,11 @@ let _runningShellProcess: ChildProcess | undefined;
 
 export function killRunningShell() {
     if (_runningShellProcess) {
-        try { _runningShellProcess.kill(); } catch { /* ignore */ }
+        try {
+            _runningShellProcess.kill();
+        } catch {
+            /* ignore */
+        }
         _runningShellProcess = undefined;
     }
 }
@@ -205,7 +226,7 @@ export function executeShellCommand(cmd: string, cwd: string, callbacks: ShellEx
 
     const child = spawn(shell, [...args, wrappedCmd], {
         env: { ...process.env },
-        stdio: ['pipe', 'pipe', 'pipe'],
+        stdio: ['pipe', 'pipe', 'pipe']
     });
     _runningShellProcess = child;
 
@@ -213,17 +234,19 @@ export function executeShellCommand(cmd: string, cwd: string, callbacks: ShellEx
 
     let stdout = '';
     let stderr = '';
-    child.stdout?.on('data', (data: Buffer) => { stdout += data.toString(); });
-    child.stderr?.on('data', (data: Buffer) => { stderr += data.toString(); });
+    child.stdout?.on('data', (data: Buffer) => {
+        stdout += data.toString();
+    });
+    child.stderr?.on('data', (data: Buffer) => {
+        stderr += data.toString();
+    });
 
     child.on('close', (code) => {
         if (_runningShellProcess === child) {
             _runningShellProcess = undefined;
         }
 
-        const exitLabel = code === 0
-            ? chalk.green(`exit: ${code}`)
-            : chalk.red(`exit: ${code ?? '?'}`);
+        const exitLabel = code === 0 ? chalk.green(`exit: ${code}`) : chalk.red(`exit: ${code ?? '?'}`);
         const header = `${chalk.cyan('$')} ${chalk.bold(cmd)}  ${exitLabel}`;
 
         let displayOutput = stdout;
@@ -242,9 +265,7 @@ export function executeShellCommand(cmd: string, cwd: string, callbacks: ShellEx
             if (lastLine && path.isAbsolute(lastLine) && fs.existsSync(resolvedNew)) {
                 const oldCwd = path.resolve(cwd);
                 displayOutput = lines.slice(0, -1).join('\n');
-                const cwdChanged = isWin
-                    ? resolvedNew.toLowerCase() !== oldCwd.toLowerCase()
-                    : resolvedNew !== oldCwd;
+                const cwdChanged = isWin ? resolvedNew.toLowerCase() !== oldCwd.toLowerCase() : resolvedNew !== oldCwd;
                 if (cwdChanged) {
                     callbacks.onCwdChanged(resolvedNew);
                     cwdChangedMsg = chalk.yellow(`📂 工作空间已切换: ${oldCwd} → ${resolvedNew}`);

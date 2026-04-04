@@ -14,7 +14,6 @@
  * 路由选择：根据 query 参数切换录制页 vs 浏览页
  */
 class RecallEntryWidget extends HTMLElement {
-
     constructor() {
         super();
         /** @type {'recording' | 'browser'} */

@@ -15,29 +15,25 @@ async function fetchTopNews() {
     const url = 'https://hn.algolia.com/api/v1/search?tags=front_page&hitsPerPage=5';
 
     const data = await new Promise((resolve, reject) => {
-        const req = https.get(
-            url,
-            { headers: { Accept: 'application/json' } },
-            (res) => {
-                const { statusCode } = res;
+        const req = https.get(url, { headers: { Accept: 'application/json' } }, (res) => {
+            const { statusCode } = res;
 
-                if (!statusCode || statusCode < 200 || statusCode >= 300) {
-                    reject(new Error(`HTTP status ${statusCode}`));
-                    res.resume();
-                    return;
-                }
-
-                let rawData = '';
-                res.on('data', chunk => rawData += chunk);
-                res.on('end', () => {
-                    try {
-                        resolve(JSON.parse(rawData));
-                    } catch (e) {
-                        reject(e);
-                    }
-                });
+            if (!statusCode || statusCode < 200 || statusCode >= 300) {
+                reject(new Error(`HTTP status ${statusCode}`));
+                res.resume();
+                return;
             }
-        );
+
+            let rawData = '';
+            res.on('data', (chunk) => (rawData += chunk));
+            res.on('end', () => {
+                try {
+                    resolve(JSON.parse(rawData));
+                } catch (e) {
+                    reject(e);
+                }
+            });
+        });
 
         req.on('error', reject);
         req.setTimeout(10000, () => {
@@ -59,7 +55,7 @@ async function fetchTopNews() {
             title: news[0]?.title,
             url: news[0]?.url,
             author: news[0]?.author,
-            points: news[0]?.points,
+            points: news[0]?.points
         });
     } catch (err) {
         console.error('获取失败:', err.message);

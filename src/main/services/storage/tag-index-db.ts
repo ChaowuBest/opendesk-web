@@ -19,7 +19,14 @@
 import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
-import type { TagQueryOperator, TagIndexRecord, QueryCondition, QueryOptions, UpdateData, ITagIndexDB } from './tag-indexer.js';
+import type {
+    TagQueryOperator,
+    TagIndexRecord,
+    QueryCondition,
+    QueryOptions,
+    UpdateData,
+    ITagIndexDB
+} from './tag-indexer.js';
 
 // 支持的操作符列表
 const SUPPORTED_OPERATORS: TagQueryOperator[] = ['=', '!=', '>', '<', '>=', '<=', 'like', 'in'];
@@ -210,12 +217,12 @@ export class TagIndexDB implements ITagIndexDB {
      * @returns 是否更新成功
      */
     async update(itemId: string, data: UpdateData): Promise<boolean> {
-        const fields = Object.keys(data).filter(key => data[key as keyof UpdateData] !== undefined);
+        const fields = Object.keys(data).filter((key) => data[key as keyof UpdateData] !== undefined);
         if (fields.length === 0) {
             throw new Error('No fields to update');
         }
 
-        const setClause = fields.map(field => `${field} = @${field}`).join(', ');
+        const setClause = fields.map((field) => `${field} = @${field}`).join(', ');
         const stmt = this.db.prepare(`UPDATE ${this.tableName} SET ${setClause} WHERE item_id = @item_id`);
 
         const result = stmt.run({ ...data, item_id: itemId });
@@ -233,14 +240,14 @@ export class TagIndexDB implements ITagIndexDB {
             throw new Error('At least one condition is required for updateByConditions');
         }
 
-        const fields = Object.keys(data).filter(key => data[key as keyof UpdateData] !== undefined);
+        const fields = Object.keys(data).filter((key) => data[key as keyof UpdateData] !== undefined);
         if (fields.length === 0) {
             throw new Error('No fields to update');
         }
 
         const { whereClause, params: whereParams } = this.buildWhereClause(conditions);
-        const setClause = fields.map(field => `${field} = ?`).join(', ');
-        const setParams = fields.map(field => data[field as keyof UpdateData]);
+        const setClause = fields.map((field) => `${field} = ?`).join(', ');
+        const setParams = fields.map((field) => data[field as keyof UpdateData]);
 
         const stmt = this.db.prepare(`UPDATE ${this.tableName} SET ${setClause} WHERE ${whereClause}`);
         const result = stmt.run(...setParams, ...whereParams);
@@ -376,7 +383,9 @@ export class TagIndexDB implements ITagIndexDB {
 
             // 验证操作符
             if (!TagIndexDB.isOperatorSupported(operator)) {
-                throw new Error(`Unsupported operator: ${operator}. Supported operators: ${SUPPORTED_OPERATORS.join(', ')}`);
+                throw new Error(
+                    `Unsupported operator: ${operator}. Supported operators: ${SUPPORTED_OPERATORS.join(', ')}`
+                );
             }
 
             if (operator === 'in') {

@@ -83,7 +83,7 @@ export class BM25Indexer extends Indexer {
         if (!indexers || !indexers.includes(this.name)) {
             throw new Error(
                 `BM25Indexer does not support field: ${field}. ` +
-                `Field must be listed in schema.needIndexers with BM25Indexer`
+                    `Field must be listed in schema.needIndexers with BM25Indexer`
             );
         }
     }
@@ -92,7 +92,7 @@ export class BM25Indexer extends Indexer {
         if (!this.supportsOperator(operator)) {
             throw new Error(
                 `BM25Indexer does not support operator: ${operator}. ` +
-                `Supported operators: ${this.supportedOperators.join(', ')}`
+                    `Supported operators: ${this.supportedOperators.join(', ')}`
             );
         }
     }
@@ -101,7 +101,7 @@ export class BM25Indexer extends Indexer {
         const item: Item = {
             item_id: result.item_id,
             item_type: result.item_type as ItemType,
-            text: result.text,
+            text: result.text
         };
 
         if (metadata) {
@@ -123,14 +123,11 @@ export class BM25Indexer extends Indexer {
             bm25_id: newId,
             item_id: item.item_id,
             item_type: colName,
-            text,
+            text
         };
     }
 
-    async search(
-        conditions: FilterCondition[],
-        options?: IndexerSearchOptions
-    ): Promise<IndexerSearchResult> {
+    async search(conditions: FilterCondition[], options?: IndexerSearchOptions): Promise<IndexerSearchResult> {
         if (conditions.length === 0) {
             return { items: [], totalCount: 0 };
         }
@@ -147,16 +144,14 @@ export class BM25Indexer extends Indexer {
         const topK = bm25Query.topK ?? options?.limit ?? this.defaultTopK;
         const results = await this.ensureDB().search(bm25Query.query, {
             columnName: condition.field,
-            topK: topK * 2,
+            topK: topK * 2
         });
 
         if (results.length === 0) {
             return { items: [], totalCount: 0 };
         }
 
-        const existingIds = options?.existingResults
-            ? new Set(options.existingResults.map((r) => r.item_id))
-            : null;
+        const existingIds = options?.existingResults ? new Set(options.existingResults.map((r) => r.item_id)) : null;
 
         const existingMap = new Map(options?.existingResults?.map((i) => [i.item_id, i]));
 
@@ -187,7 +182,7 @@ export class BM25Indexer extends Indexer {
         return {
             items: finalItems,
             totalCount: finalItems.length,
-            scores,
+            scores
         };
     }
 
@@ -205,7 +200,9 @@ export class BM25Indexer extends Indexer {
                 const columnName = col.column;
                 const text = col.content;
                 if (typeof text !== 'string') {
-                    console.error(`[BM25Indexer] Item ${item.item_id} does not contain a valid text for indexer ${this.name} (${columnName})`);
+                    console.error(
+                        `[BM25Indexer] Item ${item.item_id} does not contain a valid text for indexer ${this.name} (${columnName})`
+                    );
                     continue;
                 }
 
@@ -236,7 +233,9 @@ export class BM25Indexer extends Indexer {
                 const columnName = col.column;
                 const text = col.content;
                 if (typeof text !== 'string') {
-                    console.error(`[BM25Indexer] Item ${item.item_id} does not contain a valid text for indexer ${this.name} (${columnName})`);
+                    console.error(
+                        `[BM25Indexer] Item ${item.item_id} does not contain a valid text for indexer ${this.name} (${columnName})`
+                    );
                     continue;
                 }
 

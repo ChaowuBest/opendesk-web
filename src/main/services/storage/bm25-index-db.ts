@@ -70,7 +70,7 @@ export class BM25IndexDB implements IBM25IndexDB {
         for (const [columnName, indexers] of Object.entries(this.schema.needIndexers)) {
             if (!indexers.includes('BM25Indexer')) continue;
             this.si[columnName] = await new SearchIndexCtor({
-                name: `${this.dbPath}-${columnName}`,
+                name: `${this.dbPath}-${columnName}`
             });
             console.info(
                 `[BM25IndexDB] Initializing BM25 index for column: ${columnName}, dbPath: ${this.dbPath}-${columnName}`
@@ -102,7 +102,7 @@ export class BM25IndexDB implements IBM25IndexDB {
                 const index = this.si![options.columnName]!;
                 const results = await index.SEARCH(queryTokens, {
                     SCORE: { TYPE: 'TFIDF' },
-                    PAGE: { SIZE: topK * 2 },
+                    PAGE: { SIZE: topK * 2 }
                 });
 
                 const allDocs = await index.ALL_DOCUMENTS();
@@ -117,7 +117,7 @@ export class BM25IndexDB implements IBM25IndexDB {
                         item_id: doc.item_id,
                         item_type: doc.item_type ?? 'file',
                         text: Array.isArray(doc.text) ? doc.text.join(' ') : doc.text,
-                        score: result._score ?? 0,
+                        score: result._score ?? 0
                     });
                 }
 
@@ -147,7 +147,7 @@ export class BM25IndexDB implements IBM25IndexDB {
                     _id: record.bm25_id,
                     item_id: record.item_id,
                     item_type: record.item_type,
-                    text: this.tokenize(record.text).join(' '),
+                    text: this.tokenize(record.text).join(' ')
                 }));
                 await index.PUT(docs);
             }
@@ -161,7 +161,9 @@ export class BM25IndexDB implements IBM25IndexDB {
             for (const index of Object.values(this.si!)) {
                 for (const itemId of itemIds) {
                     try {
-                        const results = await index.SEARCH([`item_id:${itemId}`], { PAGE: { SIZE: 100 } });
+                        const results = await index.SEARCH([`item_id:${itemId}`], {
+                            PAGE: { SIZE: 100 }
+                        });
                         if (results.RESULT && results.RESULT.length > 0) {
                             const docIds = results.RESULT.map((r: any) => r._id);
                             await index.DELETE(...docIds);
@@ -193,7 +195,7 @@ export class BM25IndexDB implements IBM25IndexDB {
                     _id: record.bm25_id,
                     item_id: record.item_id,
                     item_type: record.item_type,
-                    text: this.tokenize(record.text).join(' '),
+                    text: this.tokenize(record.text).join(' ')
                 }));
                 await index.PUT(docs);
             }

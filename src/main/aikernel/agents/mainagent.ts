@@ -9,11 +9,11 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { AgentDecl } from './common'
-import { SkillRegistry } from '../skill'
-import { SoulRegistry } from '../soul/registry'
-import { TASK_MANAGEMENT_PROMPT } from '../planning/prompt'
-import format from 'string-template'
+import { AgentDecl } from './common';
+import { SkillRegistry } from '../skill';
+import { SoulRegistry } from '../soul/registry';
+import { TASK_MANAGEMENT_PROMPT } from '../planning/prompt';
+import format from 'string-template';
 
 const MAIN_AGENT_SYSTEM_PROMPT = `
 你是一个有用的助手，请根据用户的问题给出回答。你被赋予了丰富的工具来帮用户解决问题，
@@ -37,15 +37,15 @@ const MAIN_AGENT_SYSTEM_PROMPT = `
 ## 你可以使用的技能 (Skills)
 
 {skillFrontmatters}
-`
+`;
 
 export class MainAgentDecl extends AgentDecl {
     async createSystemPrompt(): Promise<string> {
-        const skillFrontmatters = await SkillRegistry.getInstance().getSkillFrontmatterXml()
+        const skillFrontmatters = await SkillRegistry.getInstance().getSkillFrontmatterXml();
 
-        const soulUid = SoulRegistry.getActiveSoulUid()
-        const soulName = SoulRegistry.getActiveSoulName()
-        const soulContent = SoulRegistry.getActiveSoulContent()
+        const soulUid = SoulRegistry.getActiveSoulUid();
+        const soulName = SoulRegistry.getActiveSoulName();
+        const soulContent = SoulRegistry.getActiveSoulContent();
 
         return format(MAIN_AGENT_SYSTEM_PROMPT, {
             date: new Date().toLocaleString(),
@@ -53,7 +53,7 @@ export class MainAgentDecl extends AgentDecl {
             soulContent: soulContent,
             soulUid: soulUid,
             soulName: soulName,
-            taskManagementPrompt: TASK_MANAGEMENT_PROMPT,
-        })
+            taskManagementPrompt: TASK_MANAGEMENT_PROMPT
+        });
     }
 }

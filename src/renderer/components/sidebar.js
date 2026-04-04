@@ -11,9 +11,7 @@
 
 import './statustags';
 
-
 class SideBar extends HTMLElement {
-
     constructor() {
         super();
 
@@ -27,11 +25,11 @@ class SideBar extends HTMLElement {
 
     connectedCallback() {
         this.render();
-        window.taskManagerAPI.getTaskList().then(taskList => {
+        window.taskManagerAPI.getTaskList().then((taskList) => {
             this.taskList = taskList;
             this.reloadTaskList();
             this.setUpEventListeners();
-        })
+        });
     }
 
     disconnectedCallback() {
@@ -41,37 +39,37 @@ class SideBar extends HTMLElement {
     }
 
     setUpEventListeners() {
-        window.taskManagerAPI.subscribeTaskListUpdate(taskList => {
-            console.info('task list updated', taskList)
+        window.taskManagerAPI.subscribeTaskListUpdate((taskList) => {
+            console.info('task list updated', taskList);
             this.taskList = taskList;
             this.reloadTaskList();
-        })
+        });
         this.querySelector('#create-task-btn').addEventListener('click', async () => {
             const taskId = await window.taskManagerAPI.createTask();
             window.globalControlAPI.openTask(taskId);
             this.currentTaskId = taskId;
             this.reloadTaskList();
-        })
+        });
         this.querySelector('#open-home-btn').addEventListener('click', () => {
             this.currentTaskId = null;
             window.globalControlAPI.openHomePage();
             this.reloadTaskList();
-        })
+        });
         this.querySelector('#open-memory-btn').addEventListener('click', () => {
             // window.globalControlAPI.openMemory();
-        })
+        });
         this.querySelector('#open-file-system-btn').addEventListener('click', () => {
             // window.globalControlAPI.openFileSystem();
-        })
+        });
         this.querySelector('#open-setting-editor-btn').addEventListener('click', () => {
             window.globalControlAPI.openSettingEditor();
-        })
+        });
         this.querySelector('#open-dev-tools-btn').addEventListener('click', () => {
             window.settingAPI.openDevTools();
-        })
+        });
         this.querySelector('#open-log-view-btn').addEventListener('click', () => {
             window.globalControlAPI.openLogView();
-        })
+        });
     }
 
     render() {
@@ -157,7 +155,7 @@ class SideBar extends HTMLElement {
                 </div>
             </div>
         </div>
-        `
+        `;
         this.reloadApplicationList();
     }
 
@@ -165,7 +163,7 @@ class SideBar extends HTMLElement {
         const app_container = this.querySelector('#app-container');
         app_container.innerHTML = '';
         const appList = await window.applicationRegistryAPI.getApplicationList();
-        for (let app of appList) {
+        for (const app of appList) {
             if (app.showIcon === false) continue;
             const isMailbox = app.bundleName === 'mailbox';
             app_container.innerHTML += `
@@ -176,7 +174,7 @@ class SideBar extends HTMLElement {
                 </div>
                 <span class="mt-2 text-xs font-medium text-gray-800 drop-shadow-sm w-16 text-center truncate">${app.name}</span>
             </div>
-            `
+            `;
         }
         // 更新邮箱应用的未读数量标记
         this.updateMailboxBadge();
@@ -205,12 +203,12 @@ class SideBar extends HTMLElement {
 
     connectedCallback() {
         this.render();
-        window.taskManagerAPI.getTaskList().then(taskList => {
+        window.taskManagerAPI.getTaskList().then((taskList) => {
             this.taskList = taskList;
             this.reloadTaskList();
             this.setUpEventListeners();
             this.subscribeToUnreadCounts();
-        })
+        });
     }
 
     disconnectedCallback() {
@@ -222,21 +220,25 @@ class SideBar extends HTMLElement {
     async subscribeToUnreadCounts() {
         // 订阅新邮件数量更新事件
         try {
-            this.unreadCountsUnsubscribe = await window.applicationRegistryAPI.subscribeEvent('mailbox', 'newEmailCountsUpdated', (counts) => {
-                const total = Object.values(counts || {}).reduce((sum, count) => sum + (count || 0), 0);
-                const mailboxApp = this.querySelector('[data-bundle-name="mailbox"]');
-                if (mailboxApp) {
-                    const badge = mailboxApp.querySelector('.mailbox-unread-badge');
-                    if (badge) {
-                        if (total > 0) {
-                            badge.textContent = total > 99 ? '99+' : total.toString();
-                            badge.classList.remove('hidden');
-                        } else {
-                            badge.classList.add('hidden');
+            this.unreadCountsUnsubscribe = await window.applicationRegistryAPI.subscribeEvent(
+                'mailbox',
+                'newEmailCountsUpdated',
+                (counts) => {
+                    const total = Object.values(counts || {}).reduce((sum, count) => sum + (count || 0), 0);
+                    const mailboxApp = this.querySelector('[data-bundle-name="mailbox"]');
+                    if (mailboxApp) {
+                        const badge = mailboxApp.querySelector('.mailbox-unread-badge');
+                        if (badge) {
+                            if (total > 0) {
+                                badge.textContent = total > 99 ? '99+' : total.toString();
+                                badge.classList.remove('hidden');
+                            } else {
+                                badge.classList.add('hidden');
+                            }
                         }
                     }
                 }
-            });
+            );
             // 初始加载新邮件数量
             this.updateMailboxBadge();
         } catch (error) {
@@ -360,7 +362,7 @@ class SideBar extends HTMLElement {
             `;
         }
 
-        taskListContainer.querySelectorAll('.task-item').forEach(item => {
+        taskListContainer.querySelectorAll('.task-item').forEach((item) => {
             item.addEventListener('click', (event) => {
                 const taskId = event.currentTarget.dataset.task_id;
                 window.globalControlAPI.openTask(taskId);
@@ -378,7 +380,7 @@ class SideBar extends HTMLElement {
             this.reloadTaskList();
         });
 
-        taskListContainer.querySelectorAll('.delete-task-btn').forEach(btn => {
+        taskListContainer.querySelectorAll('.delete-task-btn').forEach((btn) => {
             btn.addEventListener('click', async (event) => {
                 event.stopPropagation();
                 const confirmDelete = window.confirm('确定要删除这个任务吗？删除后无法恢复。');
@@ -394,5 +396,4 @@ class SideBar extends HTMLElement {
     }
 }
 
-
-customElements.define("main-sidebar", SideBar)
+customElements.define('main-sidebar', SideBar);

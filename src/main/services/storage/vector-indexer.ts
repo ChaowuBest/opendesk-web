@@ -17,7 +17,16 @@
  */
 
 import { Indexer, IndexerSearchOptions, IndexerSearchResult } from './indexer.js';
-import { Item, FilterCondition, VectorOperator, QueryOperator, VectorQuery, ItemType, ColumnSchema, SimilarityMetric } from './abstract-storage.js';
+import {
+    Item,
+    FilterCondition,
+    VectorOperator,
+    QueryOperator,
+    VectorQuery,
+    ItemType,
+    ColumnSchema,
+    SimilarityMetric
+} from './abstract-storage.js';
 import { createVectorIndexDB } from './vector-index-db.js';
 import { randomUUID } from 'crypto';
 
@@ -33,8 +42,8 @@ export interface VectorIndexRecord {
 export interface VectorSearchResult {
     item_id: string;
     item_type: string;
-    similarity: number;  // 0-1，越高越相似
-    distance: number;    // 原始距离值
+    similarity: number; // 0-1，越高越相似
+    distance: number; // 原始距离值
 }
 
 // 向量搜索选项
@@ -57,7 +66,11 @@ export interface IVectorIndexDB {
     upsert(record: VectorIndexRecord): Promise<boolean>;
     delete(itemId: string): Promise<boolean>;
     deleteMany(itemIds: string[]): Promise<number>;
-    search(queryVector: Float32Array | number[], options?: VectorSearchOptions, filterItemIds?: string[]): Promise<VectorSearchResult[]>;
+    search(
+        queryVector: Float32Array | number[],
+        options?: VectorSearchOptions,
+        filterItemIds?: string[]
+    ): Promise<VectorSearchResult[]>;
     count(): Promise<number>;
     exists(itemId: string): Promise<boolean>;
     clear(): Promise<number>;
@@ -90,7 +103,7 @@ export class VectorIndexer extends Indexer {
     private readonly _dbPath: string;
     private readonly dimension: number;
     private schema: ColumnSchema;
-    
+
     constructor(schema: ColumnSchema, dbPath: string, dimension: number = 1024) {
         super();
         this.dimension = dimension;
@@ -119,7 +132,7 @@ export class VectorIndexer extends Indexer {
         if (!this.supportsOperator(operator)) {
             throw new Error(
                 `VectorIndexer does not support operator: ${operator}. ` +
-                `Supported operators: ${this.supportedOperators.join(', ')}`
+                    `Supported operators: ${this.supportedOperators.join(', ')}`
             );
         }
     }
@@ -132,7 +145,7 @@ export class VectorIndexer extends Indexer {
         if (!indexers || !indexers.includes(this.name)) {
             throw new Error(
                 `VectorIndexer does not support field: ${field}. ` +
-                `Field must be listed in schema.needIndexers with VectorIndexer`
+                    `Field must be listed in schema.needIndexers with VectorIndexer`
             );
         }
     }
@@ -156,13 +169,10 @@ export class VectorIndexer extends Indexer {
      * 注意：VectorIndexRecord 不包含 text, tag, created_at, updated_at 字段
      * 如果有 existingResults，从中获取完整元数据
      */
-    private resultToItem(
-        result: { item_id: string; item_type: string },
-        metadata?: Partial<Item>
-    ): Item {
+    private resultToItem(result: { item_id: string; item_type: string }, metadata?: Partial<Item>): Item {
         const item: Item = {
             item_id: result.item_id,
-            item_type: result.item_type as ItemType,
+            item_type: result.item_type as ItemType
         };
         // 从 metadata 复制所有额外字段
         if (metadata) {
@@ -179,22 +189,24 @@ export class VectorIndexer extends Indexer {
      * Item → VectorIndexRecord 转换
      * 注意：需要 Item 附带 repr 属性
      */
-    private itemToRecord(item: Item, colName: string, repr: Float32Array | number[], new_id: string): VectorIndexRecord | null {
+    private itemToRecord(
+        item: Item,
+        colName: string,
+        repr: Float32Array | number[],
+        new_id: string
+    ): VectorIndexRecord | null {
         return {
             vector_id: new_id,
             item_id: item.item_id,
             item_type: colName,
-            repr: repr,
+            repr: repr
         };
     }
 
     /**
      * 搜索匹配条件的 Item
      */
-    async search(
-        conditions: FilterCondition[],
-        options?: IndexerSearchOptions
-    ): Promise<IndexerSearchResult> {
+    async search(conditions: FilterCondition[], options?: IndexerSearchOptions): Promise<IndexerSearchResult> {
         if (conditions.length === 0) {
             return { items: [], totalCount: 0 };
         }
@@ -210,12 +222,12 @@ export class VectorIndexer extends Indexer {
         const operator = condition.operator as VectorOperator;
 
         // 从 existingResults 获取 filterItemIds（用于 join）
-        const filterItemIds = options?.existingResults?.map(r => r.item_id);
+        const filterItemIds = options?.existingResults?.map((r) => r.item_id);
 
         // 构建搜索选项
         const searchOptions: VectorSearchOptions = {
             columnName: condition.field,
-            metric: vectorQuery.metric || 'cosine',
+            metric: vectorQuery.metric || 'cosine'
         };
 
         // 根据操作符设置搜索参数
@@ -249,36 +261,30 @@ export class VectorIndexer extends Indexer {
         let filteredResults = results;
         switch (operator) {
             case 'vector_similarity':
-                filteredResults = results.filter(r => r.similarity >= vectorQuery.threshold);
+                filteredResults = results.filter((r) => r.similarity >= vectorQuery.threshold);
                 break;
 
             case 'vector_not_similar':
-                filteredResults = results.filter(r => r.similarity < vectorQuery.threshold);
+                filteredResults = results.filter((r) => r.similarity < vectorQuery.threshold);
                 break;
 
             case 'vector_range':
                 // 假设 threshold 是最小值，可以扩展支持 min/max
                 const minThreshold = vectorQuery.threshold;
                 const maxThreshold = (vectorQuery as any).maxThreshold ?? 1.0;
-                filteredResults = results.filter(
-                    r => r.similarity >= minThreshold && r.similarity <= maxThreshold
-                );
+                filteredResults = results.filter((r) => r.similarity >= minThreshold && r.similarity <= maxThreshold);
                 break;
         }
 
         // 构建 scores Map（用于排序）
         const scores = new Map<string, number>();
-        filteredResults.forEach(r => scores.set(r.item_id, r.similarity));
+        filteredResults.forEach((r) => scores.set(r.item_id, r.similarity));
 
         // 如果有 existingResults，从中获取完整的 Item 元数据
-        const existingMap = new Map(
-            options?.existingResults?.map(i => [i.item_id, i])
-        );
+        const existingMap = new Map(options?.existingResults?.map((i) => [i.item_id, i]));
 
         // 转换为 Item
-        const items = filteredResults.map(r =>
-            this.resultToItem(r, existingMap.get(r.item_id))
-        );
+        const items = filteredResults.map((r) => this.resultToItem(r, existingMap.get(r.item_id)));
 
         // 应用 limit 和 offset
         let finalItems = items;
@@ -292,7 +298,7 @@ export class VectorIndexer extends Indexer {
         return {
             items: finalItems,
             totalCount: filteredResults.length,
-            scores,
+            scores
         };
     }
 
@@ -302,7 +308,9 @@ export class VectorIndexer extends Indexer {
     async insert(items: Item[]): Promise<void> {
         const records: VectorIndexRecord[] = [];
         for (const item of items) {
-            const columns = item.indexer_columns?.[this.name] as Array<{ column: string; content: string | number[] }> | undefined;
+            const columns = item.indexer_columns?.[this.name] as
+                | Array<{ column: string; content: string | number[] }>
+                | undefined;
             if (!columns || columns.length === 0) {
                 console.error(`[VectorIndexer] Item ${item.item_id} does not contain indexer_columns for ${this.name}`);
                 continue;
@@ -311,9 +319,12 @@ export class VectorIndexer extends Indexer {
             for (const col of columns) {
                 const columnName = col.column;
                 const repr = col.content;
-                const validRepr = Array.isArray(repr) && repr.length === this.dimension && repr.every(v => typeof v === 'number');
+                const validRepr =
+                    Array.isArray(repr) && repr.length === this.dimension && repr.every((v) => typeof v === 'number');
                 if (!validRepr) {
-                    console.error(`[VectorIndexer] Item ${item.item_id} does not contain a valid repr for indexer ${this.name} (${columnName})`);
+                    console.error(
+                        `[VectorIndexer] Item ${item.item_id} does not contain a valid repr for indexer ${this.name} (${columnName})`
+                    );
                     continue;
                 }
 
@@ -340,7 +351,9 @@ export class VectorIndexer extends Indexer {
      */
     async update(items: Item[]): Promise<void> {
         for (const item of items) {
-            const columns = item.indexer_columns?.[this.name] as Array<{ column: string; content: string | number[] }> | undefined;
+            const columns = item.indexer_columns?.[this.name] as
+                | Array<{ column: string; content: string | number[] }>
+                | undefined;
             if (!columns || columns.length === 0) {
                 console.error(`[VectorIndexer] Item ${item.item_id} does not contain indexer_columns for ${this.name}`);
                 continue;
@@ -349,9 +362,12 @@ export class VectorIndexer extends Indexer {
             for (const col of columns) {
                 const columnName = col.column;
                 const repr = col.content;
-                const validRepr = Array.isArray(repr) && repr.length === this.dimension && repr.every(v => typeof v === 'number');
+                const validRepr =
+                    Array.isArray(repr) && repr.length === this.dimension && repr.every((v) => typeof v === 'number');
                 if (!validRepr) {
-                    console.error(`[VectorIndexer] Item ${item.item_id} does not contain a valid repr for indexer ${this.name} (${columnName})`);
+                    console.error(
+                        `[VectorIndexer] Item ${item.item_id} does not contain a valid repr for indexer ${this.name} (${columnName})`
+                    );
                     continue;
                 }
 

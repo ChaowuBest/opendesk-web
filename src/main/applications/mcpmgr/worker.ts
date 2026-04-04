@@ -1,4 +1,4 @@
-import { BaseWorker } from "../base";
+import { BaseWorker } from '../base';
 import { logger } from '../../utils/logger.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
@@ -15,7 +15,6 @@ interface McpConnection {
 }
 
 export default class McpMgrWorker extends BaseWorker {
-
     private servers: McpServerConfig[] = [];
     private connections: Map<string, McpConnection> = new Map();
 
@@ -29,7 +28,7 @@ export default class McpMgrWorker extends BaseWorker {
 
         for (const server of this.servers) {
             if (server.enabled) {
-                this.connectServer(server.id).catch(err => {
+                this.connectServer(server.id).catch((err) => {
                     logger.error(`[mcpmgr] Auto-connect failed for ${server.name}: ${err.message}`);
                 });
             }
@@ -54,8 +53,8 @@ export default class McpMgrWorker extends BaseWorker {
     }
 
     private async syncConnections(newServers: McpServerConfig[], oldServers: McpServerConfig[]): Promise<void> {
-        const newMap = new Map(newServers.map(s => [s.id, s]));
-        const oldMap = new Map(oldServers.map(s => [s.id, s]));
+        const newMap = new Map(newServers.map((s) => [s.id, s]));
+        const oldMap = new Map(oldServers.map((s) => [s.id, s]));
 
         for (const [id] of oldMap) {
             const newServer = newMap.get(id);
@@ -75,7 +74,7 @@ export default class McpMgrWorker extends BaseWorker {
                 if (this.connections.has(id)) {
                     await this.disconnectServer(id);
                 }
-                this.connectServer(id).catch(err => {
+                this.connectServer(id).catch((err) => {
                     logger.error(`[mcpmgr] Connect failed for ${newServer.name}: ${err.message}`);
                 });
             }
@@ -89,14 +88,14 @@ export default class McpMgrWorker extends BaseWorker {
     }
 
     async getServers(): Promise<object[]> {
-        return this.servers.map(s => ({
+        return this.servers.map((s) => ({
             ...s,
-            ...this.getConnectionState(s.id),
+            ...this.getConnectionState(s.id)
         }));
     }
 
     async connectServer(id: string): Promise<void> {
-        const server = this.servers.find(s => s.id === id);
+        const server = this.servers.find((s) => s.id === id);
         if (!server) throw new Error('Server not found');
 
         if (this.connections.has(id)) {
@@ -106,7 +105,7 @@ export default class McpMgrWorker extends BaseWorker {
         const conn: McpConnection = {
             client: null as any,
             tools: [],
-            status: 'connecting',
+            status: 'connecting'
         };
         this.connections.set(id, conn);
         await this.emitEvent('serversUpdated');
@@ -116,7 +115,7 @@ export default class McpMgrWorker extends BaseWorker {
 
             const client = new Client({
                 name: 'opendesk-mcpmgr',
-                version: '1.0.0',
+                version: '1.0.0'
             });
 
             const withTimeout = <T>(promise: Promise<T>, ms: number, label: string): Promise<T> => {
@@ -124,7 +123,7 @@ export default class McpMgrWorker extends BaseWorker {
                     promise,
                     new Promise<never>((_, reject) =>
                         setTimeout(() => reject(new Error(`${label} timed out after ${ms / 1000}s`)), ms)
-                    ),
+                    )
                 ]);
             };
 
@@ -133,10 +132,10 @@ export default class McpMgrWorker extends BaseWorker {
 
             logger.info(`[mcpmgr] Connected to "${server.name}", listing tools...`);
             const toolsResult = await withTimeout(client.listTools(), 15_000, 'listTools');
-            const tools = (toolsResult.tools || []).map(t => ({
+            const tools = (toolsResult.tools || []).map((t) => ({
                 name: t.name,
                 description: t.description || '',
-                inputSchema: t.inputSchema || {},
+                inputSchema: t.inputSchema || {}
             }));
 
             conn.client = client;
@@ -158,8 +157,8 @@ export default class McpMgrWorker extends BaseWorker {
      * 优先使用 HTTPS_PROXY/HTTP_PROXY 环境变量，支持 HTTP/HTTPS 代理。
      */
     private createProxyFetch(): ((url: URL | string, init?: RequestInit) => Promise<Response>) | undefined {
-        const proxyUrl = process.env.HTTPS_PROXY || process.env.https_proxy ||
-                         process.env.HTTP_PROXY || process.env.http_proxy;
+        const proxyUrl =
+            process.env.HTTPS_PROXY || process.env.https_proxy || process.env.HTTP_PROXY || process.env.http_proxy;
 
         if (!proxyUrl) {
             return undefined;
@@ -172,7 +171,7 @@ export default class McpMgrWorker extends BaseWorker {
             const urlString = typeof url === 'string' ? url : url instanceof URL ? url.href : (url as Request).url;
             const mergedInit = {
                 ...init,
-                dispatcher: proxyAgent,
+                dispatcher: proxyAgent
             } as RequestInit & { dispatcher: typeof proxyAgent };
             return fetch(urlString, mergedInit as RequestInit);
         };
@@ -196,21 +195,21 @@ export default class McpMgrWorker extends BaseWorker {
                     args: server.args || [],
                     cwd: server.cwd || undefined,
                     env,
-                    stderr: 'pipe', // 捕获子进程stderr，避免泄漏到主进程stdout/stderr
+                    stderr: 'pipe' // 捕获子进程stderr，避免泄漏到主进程stdout/stderr
                 });
             }
             case 'sse': {
                 const proxyFetch = this.createProxyFetch();
                 return new SSEClientTransport(new URL(server.url!), {
                     requestInit: { headers: server.headers || {} },
-                    fetch: proxyFetch,
+                    fetch: proxyFetch
                 });
             }
             case 'streamableHttp': {
                 const proxyFetch = this.createProxyFetch();
                 return new StreamableHTTPClientTransport(new URL(server.url!), {
                     requestInit: { headers: server.headers || {} },
-                    fetch: proxyFetch,
+                    fetch: proxyFetch
                 });
             }
             default:
@@ -246,7 +245,7 @@ export default class McpMgrWorker extends BaseWorker {
                     serverName: server.name,
                     name: tool.name,
                     description: tool.description,
-                    inputSchema: tool.inputSchema || {},
+                    inputSchema: tool.inputSchema || {}
                 });
             }
         }
@@ -262,9 +261,7 @@ export default class McpMgrWorker extends BaseWorker {
         const result = await conn.client.callTool({ name: toolName, arguments: args });
 
         if (result.content && Array.isArray(result.content)) {
-            return result.content
-                .map((c: any) => (c.type === 'text' ? c.text : JSON.stringify(c)))
-                .join('\n');
+            return result.content.map((c: any) => (c.type === 'text' ? c.text : JSON.stringify(c))).join('\n');
         }
         return JSON.stringify(result);
     }

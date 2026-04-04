@@ -41,7 +41,7 @@ const NOT_FOUND_STATUS: BackgroundProcessStatus = Object.freeze({
     exitCode: null,
     output: '',
     elapsedMs: 0,
-    command: '',
+    command: ''
 });
 
 // ── 内部条目 ─────────────────────────────────────────────────────────────────
@@ -90,11 +90,15 @@ export class BackgroundProcessManager {
             proc,
             output: currentOutput,
             exitCode: null,
-            finished: false,
+            finished: false
         };
 
-        proc.stdout?.on('data', (data: Buffer) => { entry.output += data.toString(); });
-        proc.stderr?.on('data', (data: Buffer) => { entry.output += data.toString(); });
+        proc.stdout?.on('data', (data: Buffer) => {
+            entry.output += data.toString();
+        });
+        proc.stderr?.on('data', (data: Buffer) => {
+            entry.output += data.toString();
+        });
 
         const markFinished = (code: number | null) => {
             if (entry.finished) return;
@@ -121,7 +125,7 @@ export class BackgroundProcessManager {
             exitCode: entry.exitCode,
             output: entry.output,
             elapsedMs: Date.now() - entry.startTime,
-            command: entry.command,
+            command: entry.command
         };
     }
 
@@ -129,7 +133,11 @@ export class BackgroundProcessManager {
         const entry = this.entries.get(pid);
         if (!entry || entry.finished) return false;
         // 先用 proc.kill 确保 Node.js 事件能正确触发
-        try { entry.proc.kill('SIGTERM'); } catch { /* ignore */ }
+        try {
+            entry.proc.kill('SIGTERM');
+        } catch {
+            /* ignore */
+        }
         // 再用 killProcessTree 确保子进程树也被杀掉
         killProcessTree(entry.proc);
         return true;
@@ -144,7 +152,7 @@ export class BackgroundProcessManager {
         if (entry.finished) return true;
         const start = Date.now();
         while (Date.now() - start < maxWaitMs) {
-            await new Promise(resolve => setTimeout(resolve, 200));
+            await new Promise((resolve) => setTimeout(resolve, 200));
             if (entry.finished) return true;
         }
         return entry.finished;
@@ -154,7 +162,7 @@ export class BackgroundProcessManager {
     private pruneFinished(): void {
         const now = Date.now();
         for (const [pid, entry] of this.entries) {
-            if (entry.finished && entry.finishedAt && (now - entry.finishedAt > FINISHED_ENTRY_TTL_MS)) {
+            if (entry.finished && entry.finishedAt && now - entry.finishedAt > FINISHED_ENTRY_TTL_MS) {
                 this.entries.delete(pid);
             }
         }
@@ -180,7 +188,9 @@ export function killProcessTree(proc: ChildProcess): void {
                 proc.kill('SIGTERM');
             }
         }
-    } catch { /* process already dead */ }
+    } catch {
+        /* process already dead */
+    }
 }
 
 // ── Shell 超时后台化辅助 ─────────────────────────────────────────────────────
@@ -261,7 +271,7 @@ export function installTimeoutBackgrounding(opts: {
                 const header = [
                     `[超时] 命令已执行 ${elapsedSec}s 未完成，已将进程放到后台继续执行。`,
                     `PID: ${pid}`,
-                    `提示: 使用 checkShellStatus 工具并传入 pid=${pid} 来检查命令的执行状态。如果这是一个合理的长时间任务，请等待一段时间后再检查输出；如果判断进程已卡住，可以通过 checkShellStatus 的 kill 参数终止它。`,
+                    `提示: 使用 checkShellStatus 工具并传入 pid=${pid} 来检查命令的执行状态。如果这是一个合理的长时间任务，请等待一段时间后再检查输出；如果判断进程已卡住，可以通过 checkShellStatus 的 kill 参数终止它。`
                 ].join('\n');
                 const output = getOutput().trim() || '(暂无输出)';
                 result.updateResult(header + '\n---\n' + output);

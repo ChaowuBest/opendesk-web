@@ -1,14 +1,13 @@
-import { type Component, type TUI } from "@mariozechner/pi-tui";
-import { Setting } from "../../../utils/setting";
-import { ConfigForm, type FieldDef, type ActionDef } from "./form";
-import chalk from "chalk";
-
+import { type Component, type TUI } from '@mariozechner/pi-tui';
+import { Setting } from '../../../utils/setting';
+import { ConfigForm, type FieldDef, type ActionDef } from './form';
+import chalk from 'chalk';
 
 const DEFAULT_MODEL_FIELDS = [
     { key: 'default_model', label: '默认对话模型' },
     // { key: 'default_intent_parsing_model', label: '意图解析模型' },
     { key: 'default_embedding_model', label: '向量嵌入模型' },
-    { key: 'default_reranker_model', label: '重排序模型' },
+    { key: 'default_reranker_model', label: '重排序模型' }
     // { key: 'default_vision_model', label: '视觉模型' },
 ] as const;
 
@@ -34,7 +33,7 @@ export class DefaultModelConfigPage implements Component {
         const aliases: string[] = (data.models ?? []).map((m: any) => m.alias);
         const optionsWithEmpty = ['', ...aliases];
 
-        const fields: FieldDef[] = DEFAULT_MODEL_FIELDS.map(f => {
+        const fields: FieldDef[] = DEFAULT_MODEL_FIELDS.map((f) => {
             const current: string = data[f.key] ?? '';
             if (optionsWithEmpty.length > 1) {
                 return {
@@ -42,7 +41,7 @@ export class DefaultModelConfigPage implements Component {
                     key: f.key,
                     label: f.label,
                     value: optionsWithEmpty.includes(current) ? current : '',
-                    options: optionsWithEmpty,
+                    options: optionsWithEmpty
                 };
             }
             return { type: 'text' as const, key: f.key, label: f.label, value: current };
@@ -50,16 +49,19 @@ export class DefaultModelConfigPage implements Component {
 
         const actions: ActionDef[] = [
             { key: 'save', label: '✅ 保存', style: 'primary' },
-            { key: 'cancel', label: '↩  返回' },
+            { key: 'cancel', label: '↩  返回' }
         ];
 
         this.form = new ConfigForm(
-            this.tui, '默认模型配置', fields, actions,
+            this.tui,
+            '默认模型配置',
+            fields,
+            actions,
             (actionKey, values) => {
                 if (actionKey === 'save') this.save(values);
                 else this.close();
             },
-            () => this.close(),
+            () => this.close()
         );
         this.form.activate();
         this.tui.requestRender();
@@ -86,7 +88,7 @@ export class DefaultModelConfigPage implements Component {
         this.close();
     }
 
-    invalidate() { }
+    invalidate() {}
 
     render(width: number): string[] {
         if (!this.form) return [];

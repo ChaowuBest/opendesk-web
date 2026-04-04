@@ -20,5 +20,7 @@ export function escapeHtml(content: string | undefined | null): string {
         '"': '"',
         "'": '&#039;'
     };
-    return String(content).replace(/[&<>"']/g, function (m: string) { return map[m]; });
+    return String(content).replace(/[&<>"']/g, function (m: string) {
+        return map[m];
+    });
 }

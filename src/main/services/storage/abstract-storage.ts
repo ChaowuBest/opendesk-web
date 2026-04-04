@@ -45,14 +45,14 @@ import { Indexer, IndexerSearchOptions as BaseIndexerSearchOptions, IndexerSearc
 import { BM25Indexer } from './bm25-indexer.js';
 import { VectorIndexer } from './vector-indexer.js';
 import { TagIndexer } from './tag-indexer.js';
-import {BaseIndexer} from './base-indexer.js';
+import { BaseIndexer } from './base-indexer.js';
 
 export type ItemType = 'file' | 'mail' | 'memory';
 
 export interface Item {
     item_id: string;
     item_type: ItemType;
-    [key: string]: any;  // 支持动态字段，用于传递列名
+    [key: string]: any; // 支持动态字段，用于传递列名
     // key代表indexer，array的string代表列名，
     indexer_columns?: {
         [indexer: string]: Array<{ column: string; content: string | number[] }>;
@@ -104,7 +104,10 @@ export interface ColumnSchema {
  * Schema 验证错误
  */
 export class SchemaValidationError extends Error {
-    constructor(message: string, public invalidColumns?: string[]) {
+    constructor(
+        message: string,
+        public invalidColumns?: string[]
+    ) {
         super(message);
         this.name = 'SchemaValidationError';
     }
@@ -142,10 +145,7 @@ export function validateColumnSchema(schema: ColumnSchema): void {
     }
 
     if (errors.length > 0) {
-        throw new SchemaValidationError(
-            `Schema validation failed:\n${errors.join('\n')}`,
-            invalidColumns
-        );
+        throw new SchemaValidationError(`Schema validation failed:\n${errors.join('\n')}`, invalidColumns);
     }
 }
 
@@ -181,7 +181,19 @@ export interface VectorQuery {
 }
 
 // 标量操作符
-export type ScalarOperator = '=' | '!=' | '>' | '<' | '>=' | '<=' | 'like' | 'notlike' | 'in' | 'notin' | 'between' | 'notbetween';
+export type ScalarOperator =
+    | '='
+    | '!='
+    | '>'
+    | '<'
+    | '>='
+    | '<='
+    | 'like'
+    | 'notlike'
+    | 'in'
+    | 'notin'
+    | 'between'
+    | 'notbetween';
 
 // 向量操作符
 export type VectorOperator = 'vector_similarity' | 'vector_near' | 'vector_not_similar' | 'vector_range';
@@ -205,7 +217,6 @@ export interface FilterCondition {
     value: any;
     vectorQuery?: VectorQuery;
 }
-
 
 // ============================================================================
 // BaseStorage - 多索引器协调存储
@@ -248,7 +259,7 @@ export class BaseStorage {
             this.baseIndexer.initialize(),
             this.bm25Indexer.initialize(),
             this.vectorIndexer.initialize(),
-            this.tagIndexer.initialize(),
+            this.tagIndexer.initialize()
         ]);
     }
 
@@ -273,8 +284,7 @@ export class BaseStorage {
 
         for (const indexerName of indexerOrder) {
             let conditions = conditionsByIndexer[indexerName];
-            if ( ( !conditions || conditions.length === 0 ) 
-                && (indexerName != 'BaseIndexer') ) continue;
+            if ((!conditions || conditions.length === 0) && indexerName != 'BaseIndexer') continue;
             if (typeof conditions === 'undefined') {
                 conditions = [];
             }
@@ -288,9 +298,9 @@ export class BaseStorage {
                 hasInitialData = true;
             } else {
                 // 后续 indexer，基于已有结果进行 join
-                const existingItems = results.map(r => r.item);
+                const existingItems = results.map((r) => r.item);
                 const searchResult = await indexer.search(conditions, {
-                    existingResults: existingItems,
+                    existingResults: existingItems
                 });
                 results = this.mergeSearchResults(results, searchResult.items, searchResult.scores, indexerName);
             }
@@ -310,18 +320,21 @@ export class BaseStorage {
     async insert(items: Item[]): Promise<void> {
         if (items.length === 0) return;
 
-
         // 检查 items 内的每个 item，其 key 是否对应 schema 中的定义，不对应时直接 return
         for (const item of items) {
             for (const [col, indexers] of Object.entries(this.schema.needIndexers)) {
-            // 检查当前 item 的 indexer_columns 是否包含对应的 indexer 和 column
+                // 检查当前 item 的 indexer_columns 是否包含对应的 indexer 和 column
                 for (const ind of indexers) {
-                    if (!item.indexer_columns ||
+                    if (
+                        !item.indexer_columns ||
                         !item.indexer_columns[ind] ||
-                        !item.indexer_columns[ind].some(colObj => colObj.column === col)) {
-                            console.error(`[BaseStorage] Item ${item.item_id} does not contain the required column ${col} for indexer ${ind}`);
-                            return;
-                        }
+                        !item.indexer_columns[ind].some((colObj) => colObj.column === col)
+                    ) {
+                        console.error(
+                            `[BaseStorage] Item ${item.item_id} does not contain the required column ${col} for indexer ${ind}`
+                        );
+                        return;
+                    }
                 }
             }
         }
@@ -356,13 +369,13 @@ export class BaseStorage {
     async delete(items: Item[]): Promise<void> {
         if (items.length === 0) return;
 
-        const itemIds = items.map(i => i.item_id);
+        const itemIds = items.map((i) => i.item_id);
 
         await Promise.all([
             this.baseIndexer.delete(itemIds),
             this.bm25Indexer.delete(itemIds),
             this.vectorIndexer.delete(itemIds),
-            this.tagIndexer.delete(itemIds),
+            this.tagIndexer.delete(itemIds)
         ]);
     }
 
@@ -376,7 +389,7 @@ export class BaseStorage {
             this.baseIndexer.update(items),
             this.bm25Indexer.update(items),
             this.vectorIndexer.update(items),
-            this.tagIndexer.update(items),
+            this.tagIndexer.update(items)
         ]);
     }
 
@@ -422,18 +435,14 @@ export class BaseStorage {
     /**
      * 将 Item[] 转换为 SearchItem[]
      */
-    private itemsToSearchItems(
-        items: Item[],
-        scores?: Map<string, number>,
-        indexerName?: string
-    ): SearchItem[] {
-        return items.map(item => {
+    private itemsToSearchItems(items: Item[], scores?: Map<string, number>, indexerName?: string): SearchItem[] {
+        return items.map((item) => {
             const score = scores?.get(item.item_id);
             return {
                 item,
                 tags: item.tag,
                 BM25Score: indexerName === 'BM25Indexer' ? score : undefined,
-                VecScore: indexerName === 'VectorIndexer' ? score : undefined,
+                VecScore: indexerName === 'VectorIndexer' ? score : undefined
             };
         });
     }
@@ -447,21 +456,17 @@ export class BaseStorage {
         scores?: Map<string, number>,
         indexerName?: string
     ): SearchItem[] {
-        const existingMap = new Map(existing.map(r => [r.item.item_id, r]));
+        const existingMap = new Map(existing.map((r) => [r.item.item_id, r]));
 
-        return newItems.map(item => {
+        return newItems.map((item) => {
             const existingResult = existingMap.get(item.item_id);
             const score = scores?.get(item.item_id);
             return {
                 item,
                 tags: existingResult?.tags ?? item.tag,
-                BM25Score: indexerName === 'BM25Indexer'
-                    ? score
-                    : existingResult?.BM25Score,
+                BM25Score: indexerName === 'BM25Indexer' ? score : existingResult?.BM25Score,
                 ChunkScore: existingResult?.ChunkScore,
-                VecScore: indexerName === 'VectorIndexer'
-                    ? score
-                    : existingResult?.VecScore,
+                VecScore: indexerName === 'VectorIndexer' ? score : existingResult?.VecScore
             };
         });
     }

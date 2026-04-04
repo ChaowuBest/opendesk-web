@@ -9,8 +9,8 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { Skill } from '../skill.js'
-import { BaseToolset } from '../tool.js'
+import { Skill } from '../skill.js';
+import { BaseToolset } from '../tool.js';
 import {
     ListSoulsTool,
     GetSoulTool,
@@ -18,8 +18,8 @@ import {
     UpdateSoulTool,
     DeleteSoulTool,
     SwitchSoulTool,
-    ResetDefaultSoulTool,
-} from './tools.js'
+    ResetDefaultSoulTool
+} from './tools.js';
 
 export const MANAGE_SOULS_SKILL = `
 ---
@@ -86,25 +86,25 @@ description: 管理智能体的人设：查看、修改、创建、删除和切�
 
 使用 \`resetDefaultSoul\` 将系统默认人设（uid="default"）重置为初始状态。这会覆盖用户对默认人设的任何修改。
 当用户觉得默认人设被改乱了、想要恢复原始设置时使用。
-`
+`;
 
 /**
  * aikernel 内置的 Soul skill provider，在 SkillRegistry 初始化时自动注册。
  */
 export class SoulSkillProvider {
     async getSkills(): Promise<Skill[]> {
-        const skill = Skill.parseMd(MANAGE_SOULS_SKILL)
-        const toolset = new BaseToolset('manage-souls')
+        const skill = Skill.parseMd(MANAGE_SOULS_SKILL);
+        const toolset = new BaseToolset('manage-souls');
 
-        toolset.addTool(new ListSoulsTool())
-        toolset.addTool(new GetSoulTool())
-        toolset.addTool(new CreateSoulTool())
-        toolset.addTool(new UpdateSoulTool())
-        toolset.addTool(new DeleteSoulTool())
-        toolset.addTool(new SwitchSoulTool())
-        toolset.addTool(new ResetDefaultSoulTool())
+        toolset.addTool(new ListSoulsTool());
+        toolset.addTool(new GetSoulTool());
+        toolset.addTool(new CreateSoulTool());
+        toolset.addTool(new UpdateSoulTool());
+        toolset.addTool(new DeleteSoulTool());
+        toolset.addTool(new SwitchSoulTool());
+        toolset.addTool(new ResetDefaultSoulTool());
 
-        skill.toolsets = [toolset]
-        return [skill]
+        skill.toolsets = [toolset];
+        return [skill];
     }
 }

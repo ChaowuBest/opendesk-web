@@ -1,5 +1,4 @@
-import type { SlashCommand as PiTuiSlashCommand, AutocompleteItem, KeyId } from "@mariozechner/pi-tui";
-
+import type { SlashCommand as PiTuiSlashCommand, AutocompleteItem, KeyId } from '@mariozechner/pi-tui';
 
 export interface SlashCommandHandler {
     name: string;
@@ -26,7 +25,9 @@ export class SlashCommandRegistry {
             if (warnOnDuplicate) {
                 const existingSource = existing.source || '未知来源';
                 const newSource = command.source || '未知来源';
-                console.warn(`[SlashCommandRegistry] 命令 "/${command.name}" 已被 "${existingSource}" 注册，忽略来自 "${newSource}" 的重复注册`);
+                console.warn(
+                    `[SlashCommandRegistry] 命令 "/${command.name}" 已被 "${existingSource}" 注册，忽略来自 "${newSource}" 的重复注册`
+                );
             }
             return false;
         }
@@ -43,7 +44,9 @@ export class SlashCommandRegistry {
         if (existing) {
             const existingSource = existing.source || '未知来源';
             const newSource = command.source || '未知来源';
-            console.warn(`[SlashCommandRegistry] 命令 "/${command.name}" 已被 "${existingSource}" 注册，被 "${newSource}" 覆盖`);
+            console.warn(
+                `[SlashCommandRegistry] 命令 "/${command.name}" 已被 "${existingSource}" 注册，被 "${newSource}" 覆盖`
+            );
         }
         this.commands.set(command.name, command);
     }
@@ -68,20 +71,23 @@ export class SlashCommandRegistry {
     }
 
     toPiTuiSlashCommands(): PiTuiSlashCommand[] {
-        return this.getAll().map(cmd => ({
+        return this.getAll().map((cmd) => ({
             name: cmd.name,
             description: cmd.description,
-            getArgumentCompletions: cmd.getArgumentCompletions,
+            getArgumentCompletions: cmd.getArgumentCompletions
         }));
     }
 
     static formatKeyLabel(key: KeyId): string {
-        return key.split('+').map(part => {
-            if (part === 'ctrl') return 'Ctrl';
-            if (part === 'shift') return 'Shift';
-            if (part === 'alt') return 'Alt';
-            return part.toUpperCase();
-        }).join('+');
+        return key
+            .split('+')
+            .map((part) => {
+                if (part === 'ctrl') return 'Ctrl';
+                if (part === 'shift') return 'Shift';
+                if (part === 'alt') return 'Alt';
+                return part.toUpperCase();
+            })
+            .join('+');
     }
 
     /**

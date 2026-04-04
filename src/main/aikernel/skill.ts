@@ -23,25 +23,25 @@
  * 参考：https://agentskills.io/specification
  */
 
-import path from 'path'
-import fs from 'fs'
-import { parse as parseYaml } from 'yaml'
-import { BaseToolset, BaseTool, ToolResult } from './tool'
-import { z } from 'zod'
-import { logger } from '../utils/logger'
-import dotenv from 'dotenv'
-import { jsonrepair } from 'jsonrepair'
-import format from 'string-template'
-import { ToolCall } from './messages'
-import chalk from 'chalk'
-import { statusDisplay } from '../tui/components/toolcall'
-import type { TaskState } from './states/tasks'
-import { SoulSkillProvider } from './soul/skills'
-import { SoulRegistry } from './soul/registry'
+import path from 'path';
+import fs from 'fs';
+import { parse as parseYaml } from 'yaml';
+import { BaseToolset, BaseTool, ToolResult } from './tool';
+import { z } from 'zod';
+import { logger } from '../utils/logger';
+import dotenv from 'dotenv';
+import { jsonrepair } from 'jsonrepair';
+import format from 'string-template';
+import { ToolCall } from './messages';
+import chalk from 'chalk';
+import { statusDisplay } from '../tui/components/toolcall';
+import type { TaskState } from './states/tasks';
+import { SoulSkillProvider } from './soul/skills';
+import { SoulRegistry } from './soul/registry';
 
-const NAME_MAX_LEN = 64
-const DESCRIPTION_MAX_LEN = 1024
-const COMPATIBILITY_MAX_LEN = 500
+const NAME_MAX_LEN = 64;
+const DESCRIPTION_MAX_LEN = 1024;
+const COMPATIBILITY_MAX_LEN = 500;
 
 const SKILL_FRONTMATTER_XML = `
 <skill>
@@ -50,7 +50,7 @@ const SKILL_FRONTMATTER_XML = `
     <directory>{skillDirectory}</directory>
     <description>{description}</description>
 </skill>
-`
+`;
 
 const TOOL_XML = `
 <tool>
@@ -58,64 +58,59 @@ const TOOL_XML = `
     <description>{description}</description>
     <paramSchema>{parameters}</paramSchema>
 </tool>
-`
+`;
 
 /** SKILL.md 文件名（规范要求） */
-export const SKILL_MD_FILENAME = 'SKILL.md'
+export const SKILL_MD_FILENAME = 'SKILL.md';
 
 export interface SkillFrontmatter {
     // Anthropic Agent Skills 标准字段
     /** 技能名称（1-64 字符） */
-    name: string
+    name: string;
     /** 技能描述（1-1024 字符） */
-    description: string
+    description: string;
     /** 许可证信息 */
-    license?: string
+    license?: string;
     /** 兼容性说明（≤500 字符） */
-    compatibility?: string
+    compatibility?: string;
     /** 元数据 */
-    metadata?: Record<string, unknown>
+    metadata?: Record<string, unknown>;
     /** 预先被允许使用的工具（即调用这些工具无需用户手动确认）列表 -- 实验性特性 */
-    'allowed-tools'?: string[]
+    'allowed-tools'?: string[];
 
     // Claude Code 扩展字段
     /** 控制是否在 / 菜单中显示（默认 true） */
-    'user-invocable'?: boolean
+    'user-invocable'?: boolean;
     /** 阻止 LLM 自动激活此 Skill（默认 false）；为 true 时 Skill 描述不会加载到 LLM 上下文 */
-    'disable-model-invocation'?: boolean
+    'disable-model-invocation'?: boolean;
     /** 自动补全时显示的参数提示 */
-    'argument-hint'?: string
+    'argument-hint'?: string;
 
     /** 允许扩展字段 */
-    [key: string]: unknown
+    [key: string]: unknown;
 }
 
 /**
  * Skill 类表示一个 Agent Skill
  */
 export class Skill {
-    frontmatter: SkillFrontmatter
-    body: string
-    directory?: string
-    toolsets?: BaseToolset[]
+    frontmatter: SkillFrontmatter;
+    body: string;
+    directory?: string;
+    toolsets?: BaseToolset[];
     /** skill 自带的 .env 文件中的环境变量，加载 skill 时从 directory/.env 解析 */
-    env: Record<string, string> = {}
+    env: Record<string, string> = {};
 
-    constructor(
-        frontmatter: SkillFrontmatter,
-        body: string,
-        directory?: string,
-        toolsets?: BaseToolset[]
-    ) {
-        this.frontmatter = frontmatter
-        this.body = body
-        this.directory = directory
-        this.toolsets = toolsets
+    constructor(frontmatter: SkillFrontmatter, body: string, directory?: string, toolsets?: BaseToolset[]) {
+        this.frontmatter = frontmatter;
+        this.body = body;
+        this.directory = directory;
+        this.toolsets = toolsets;
         if (directory) {
-            const envPath = path.join(directory, '.env')
+            const envPath = path.join(directory, '.env');
             if (fs.existsSync(envPath)) {
                 try {
-                    this.env = dotenv.parse(fs.readFileSync(envPath, 'utf-8'))
+                    this.env = dotenv.parse(fs.readFileSync(envPath, 'utf-8'));
                 } catch {
                     /* .env 解析失败不影响 skill 加载 */
                 }
@@ -125,35 +120,35 @@ export class Skill {
 
     /** 用户是否可以通过 /skillname 调用此 Skill（默认 true） */
     get isUserInvocable(): boolean {
-        return this.frontmatter['user-invocable'] !== false
+        return this.frontmatter['user-invocable'] !== false;
     }
 
     /** LLM 是否可以自动激活此 Skill（默认 true；disable-model-invocation=true 时为 false） */
     get isModelInvocable(): boolean {
-        return this.frontmatter['disable-model-invocation'] !== true
+        return this.frontmatter['disable-model-invocation'] !== true;
     }
 
     getFullContent() {
-        let result = this.body
+        let result = this.body;
         if (!this.toolsets) {
-            return result
+            return result;
         }
 
-        result += '\n\n'
-        result += '# 该Skill自带的可以被CallSkillTool调用的内部工具\n\n'
-        result += '<tools>\n'
+        result += '\n\n';
+        result += '# 该Skill自带的可以被CallSkillTool调用的内部工具\n\n';
+        result += '<tools>\n';
         for (const toolset of this.toolsets) {
             for (const [, tool] of toolset.tools) {
                 result += format(TOOL_XML, {
                     name: tool.name,
                     description: tool.description,
-                    parameters: JSON.stringify(tool.params.toJSONSchema()),
-                })
+                    parameters: JSON.stringify(tool.params.toJSONSchema())
+                });
             }
         }
-        result += '</tools>'
+        result += '</tools>';
 
-        return result
+        return result;
     }
 
     /**
@@ -163,15 +158,15 @@ export class Skill {
      */
     getTool(toolName: string): BaseTool<z.ZodType> | undefined {
         if (!this.toolsets) {
-            return undefined
+            return undefined;
         }
         for (const toolset of this.toolsets) {
-            const tool = toolset.getTool(toolName)
+            const tool = toolset.getTool(toolName);
             if (tool) {
-                return tool
+                return tool;
             }
         }
-        return undefined
+        return undefined;
     }
 
     /**
@@ -182,33 +177,33 @@ export class Skill {
      */
     static parseMd(raw: string): Skill {
         if (typeof raw !== 'string' || !raw.trim()) {
-            throw new Error('SKILL.md 内容为空')
+            throw new Error('SKILL.md 内容为空');
         }
-        const trimmed = raw.trim()
+        const trimmed = raw.trim();
         if (!trimmed.startsWith('---')) {
-            throw new Error('SKILL.md 必须以 YAML frontmatter（---）开头')
+            throw new Error('SKILL.md 必须以 YAML frontmatter（---）开头');
         }
-        const secondDash = trimmed.indexOf('\n---', 3)
+        const secondDash = trimmed.indexOf('\n---', 3);
         if (secondDash === -1) {
-            throw new Error('SKILL.md 未找到 frontmatter 结束标记（---）')
+            throw new Error('SKILL.md 未找到 frontmatter 结束标记（---）');
         }
-        const frontmatterRaw = trimmed.slice(3, secondDash).trim()
-        const body = trimmed.slice(secondDash + 4).trim()
-        let frontmatter: SkillFrontmatter
+        const frontmatterRaw = trimmed.slice(3, secondDash).trim();
+        const body = trimmed.slice(secondDash + 4).trim();
+        let frontmatter: SkillFrontmatter;
         try {
-            frontmatter = parseYaml(frontmatterRaw) as SkillFrontmatter
+            frontmatter = parseYaml(frontmatterRaw) as SkillFrontmatter;
         } catch (e) {
-            const errorMessage = e instanceof Error ? e.message : String(e)
-            throw new Error(`YAML frontmatter 解析失败: ${errorMessage}`)
+            const errorMessage = e instanceof Error ? e.message : String(e);
+            throw new Error(`YAML frontmatter 解析失败: ${errorMessage}`);
         }
         if (!frontmatter || typeof frontmatter !== 'object') {
-            throw new Error('frontmatter 必须为非空对象')
+            throw new Error('frontmatter 必须为非空对象');
         }
 
         // 验证 frontmatter
-        Skill.validateFrontmatter(frontmatter)
+        Skill.validateFrontmatter(frontmatter);
 
-        return new Skill(frontmatter, body)
+        return new Skill(frontmatter, body);
     }
 
     /**
@@ -218,14 +213,14 @@ export class Skill {
      */
     static validateName(name: unknown): void {
         if (typeof name !== 'string') {
-            throw new Error('name 必须为字符串')
+            throw new Error('name 必须为字符串');
         }
-        const trimmed = name.trim()
+        const trimmed = name.trim();
         if (trimmed.length === 0) {
-            throw new Error('name 不能为空')
+            throw new Error('name 不能为空');
         }
         if (trimmed.length > NAME_MAX_LEN) {
-            throw new Error(`name 长度不能超过 ${NAME_MAX_LEN} 字符`)
+            throw new Error(`name 长度不能超过 ${NAME_MAX_LEN} 字符`);
         }
     }
 
@@ -236,14 +231,14 @@ export class Skill {
      */
     static validateDescription(description: unknown): void {
         if (description == null) {
-            throw new Error('description 必填')
+            throw new Error('description 必填');
         }
-        const str = typeof description === 'string' ? description : String(description)
+        const str = typeof description === 'string' ? description : String(description);
         if (str.length === 0) {
-            throw new Error('description 不能为空')
+            throw new Error('description 不能为空');
         }
         if (str.length > DESCRIPTION_MAX_LEN) {
-            throw new Error(`description 长度不能超过 ${DESCRIPTION_MAX_LEN} 字符`)
+            throw new Error(`description 长度不能超过 ${DESCRIPTION_MAX_LEN} 字符`);
         }
     }
 
@@ -254,14 +249,14 @@ export class Skill {
      */
     static validateFrontmatter(frontmatter: unknown): void {
         if (!frontmatter || typeof frontmatter !== 'object') {
-            throw new Error('frontmatter 必须为非空对象')
+            throw new Error('frontmatter 必须为非空对象');
         }
-        Skill.validateName(frontmatter.name)
-        Skill.validateDescription(frontmatter.description)
+        Skill.validateName(frontmatter.name);
+        Skill.validateDescription(frontmatter.description);
         if (frontmatter.compatibility != null) {
-            const comp = String(frontmatter.compatibility)
+            const comp = String(frontmatter.compatibility);
             if (comp.length > COMPATIBILITY_MAX_LEN) {
-                throw new Error(`compatibility 长度不能超过 ${COMPATIBILITY_MAX_LEN} 字符`)
+                throw new Error(`compatibility 长度不能超过 ${COMPATIBILITY_MAX_LEN} 字符`);
             }
         }
     }
@@ -269,13 +264,13 @@ export class Skill {
 
 const LoadSkillSchema = z.object({
     bundleName: z.string().describe('要读取的Skill所属的应用名(bundleName)'),
-    skillName: z.string().describe('要读取的Skill的名称(name)'),
-})
+    skillName: z.string().describe('要读取的Skill的名称(name)')
+});
 
 class LoadSkillTool extends BaseTool<typeof LoadSkillSchema> {
     constructor() {
-        super('LoadSkill', '读取指定技能(Skill)的内容', LoadSkillSchema)
-        this.setExecutor(this.loadSkill.bind(this))
+        super('LoadSkill', '读取指定技能(Skill)的内容', LoadSkillSchema);
+        this.setExecutor(this.loadSkill.bind(this));
     }
 
     /**
@@ -283,50 +278,45 @@ class LoadSkillTool extends BaseTool<typeof LoadSkillSchema> {
      * 显示为简洁的技能加载卡片
      */
     renderToolCallCli(toolcall: ToolCall, _width: number): string[] | undefined {
-        const args = toolcall.args_object as z.output<typeof LoadSkillSchema> | undefined
+        const args = toolcall.args_object as z.output<typeof LoadSkillSchema> | undefined;
         if (!args) {
-            return [chalk.dim('📚 加载技能...')]
+            return [chalk.dim('📚 加载技能...')];
         }
 
-        const { bundleName, skillName } = args
-        const { icon } = statusDisplay(toolcall.status)
+        const { bundleName, skillName } = args;
+        const { icon } = statusDisplay(toolcall.status);
 
         // 构建标题行
-        const title = `${bundleName}/${skillName}`
+        const title = `${bundleName}/${skillName}`;
 
         // 根据状态显示不同的卡片
         if (toolcall.status === 'running') {
-            return [
-                `  ${icon} ${chalk.cyan('📚')} ${chalk.bold(title)} ${chalk.dim('· 加载中...')}`,
-            ]
+            return [`  ${icon} ${chalk.cyan('📚')} ${chalk.bold(title)} ${chalk.dim('· 加载中...')}`];
         } else if (toolcall.status === 'success') {
-            return [`  ${icon} ${chalk.cyan('📚')} ${chalk.bold(title)} ${chalk.dim('· 已加载')}`]
+            return [`  ${icon} ${chalk.cyan('📚')} ${chalk.bold(title)} ${chalk.dim('· 已加载')}`];
         } else if (toolcall.status === 'error') {
-            return [`  ${icon} ${chalk.red('📚')} ${chalk.bold(title)} ${chalk.dim('· 加载失败')}`]
+            return [`  ${icon} ${chalk.red('📚')} ${chalk.bold(title)} ${chalk.dim('· 加载失败')}`];
         } else {
-            return [`  ${icon} ${chalk.cyan('📚')} ${chalk.bold(title)}`]
+            return [`  ${icon} ${chalk.cyan('📚')} ${chalk.bold(title)}`];
         }
     }
 
-    private async loadSkill(
-        args: z.output<typeof LoadSkillSchema>,
-        taskState?: TaskState
-    ): Promise<string> {
-        const skill = await SkillRegistry.getInstance().getSkill(args.bundleName, args.skillName)
+    private async loadSkill(args: z.output<typeof LoadSkillSchema>, taskState?: TaskState): Promise<string> {
+        const skill = await SkillRegistry.getInstance().getSkill(args.bundleName, args.skillName);
         if (!skill) {
-            return '未找到该Skill'
+            return '未找到该Skill';
         } else {
             // 将 skill 的 .env 环境变量合并到当前 task 的 envContext
             if (taskState && skill.env && Object.keys(skill.env).length > 0) {
-                Object.assign(taskState.envContext, skill.env)
+                Object.assign(taskState.envContext, skill.env);
                 logger.info(
                     `skill ${args.skillName} env merged to task envContext: ${Object.keys(skill.env).join(', ')}`
-                )
+                );
             }
 
-            const fullContent = skill.getFullContent()
-            logger.info(`skill ${args.bundleName} ${args.skillName} 的完整内容是:\n` + fullContent)
-            return fullContent
+            const fullContent = skill.getFullContent();
+            logger.info(`skill ${args.bundleName} ${args.skillName} 的完整内容是:\n` + fullContent);
+            return fullContent;
         }
     }
 }
@@ -335,10 +325,8 @@ const CallSkillToolSchema = z.object({
     bundleName: z.string().describe('要调用的Skill内置工具所属的应用名(bundleName)'),
     skillName: z.string().describe('要调用的Skill的名称'),
     toolName: z.string().describe('要调用的工具名称'),
-    toolArgs: z
-        .unknown()
-        .describe('要传递给工具的参数, 该参数是一个object, 应该遵循被调用的工具给出的Schema'),
-})
+    toolArgs: z.unknown().describe('要传递给工具的参数, 该参数是一个object, 应该遵循被调用的工具给出的Schema')
+});
 
 /**
  * 创建一个临时的 ToolCall 对象用于渲染内部工具调用
@@ -354,19 +342,19 @@ function createInnerToolCall(
     tool: BaseTool<z.ZodType>,
     parentToolCall: ToolCall
 ): ToolCall {
-    const innerToolCall = new ToolCall(0, `inner-${toolName}`, toolName, JSON.stringify(toolArgs))
-    innerToolCall.args_object = toolArgs
-    innerToolCall.status = parentToolCall.status
-    innerToolCall.result = parentToolCall.result
-    innerToolCall.result_object = parentToolCall.result_object
-    innerToolCall.setTool(tool)
-    return innerToolCall
+    const innerToolCall = new ToolCall(0, `inner-${toolName}`, toolName, JSON.stringify(toolArgs));
+    innerToolCall.args_object = toolArgs;
+    innerToolCall.status = parentToolCall.status;
+    innerToolCall.result = parentToolCall.result;
+    innerToolCall.result_object = parentToolCall.result_object;
+    innerToolCall.setTool(tool);
+    return innerToolCall;
 }
 
 class CallSkillTool extends BaseTool<typeof CallSkillToolSchema> {
     constructor() {
-        super('CallSkillTool', '调用Skill提供的内部工具', CallSkillToolSchema)
-        this.setUniversalExecutor(this.callSkillToolUniversal.bind(this))
+        super('CallSkillTool', '调用Skill提供的内部工具', CallSkillToolSchema);
+        this.setUniversalExecutor(this.callSkillToolUniversal.bind(this));
     }
 
     /**
@@ -374,12 +362,12 @@ class CallSkillTool extends BaseTool<typeof CallSkillToolSchema> {
      * 优先使用内部工具的自定义渲染
      */
     async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
-        const inner = this.resolveInnerTool(toolcall)
+        const inner = this.resolveInnerTool(toolcall);
         if (inner) {
-            const result = await inner.tool.renderToolCall(inner.toolCall)
-            if (result) return result
+            const result = await inner.tool.renderToolCall(inner.toolCall);
+            if (result) return result;
         }
-        return undefined
+        return undefined;
     }
 
     /**
@@ -387,66 +375,49 @@ class CallSkillTool extends BaseTool<typeof CallSkillToolSchema> {
      * 优先使用内部工具的自定义渲染，否则显示默认的技能工具调用卡片
      */
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
-        const args = toolcall.args_object as z.output<typeof CallSkillToolSchema> | undefined
+        const args = toolcall.args_object as z.output<typeof CallSkillToolSchema> | undefined;
         if (!args) {
-            return this.renderDefaultCard(toolcall, width, '', '', '')
+            return this.renderDefaultCard(toolcall, width, '', '', '');
         }
 
-        const { bundleName, skillName, toolName } = args
+        const { bundleName, skillName, toolName } = args;
         if (!bundleName || !skillName || !toolName) {
-            return this.renderDefaultCard(
-                toolcall,
-                width,
-                bundleName || '',
-                skillName || '',
-                toolName || ''
-            )
+            return this.renderDefaultCard(toolcall, width, bundleName || '', skillName || '', toolName || '');
         }
 
-        const inner = this.resolveInnerTool(toolcall)
+        const inner = this.resolveInnerTool(toolcall);
         if (inner) {
-            const customRender = inner.tool.renderToolCallCli(inner.toolCall, width)
-            if (customRender) return customRender
+            const customRender = inner.tool.renderToolCallCli(inner.toolCall, width);
+            if (customRender) return customRender;
         }
 
-        return this.renderDefaultCard(toolcall, width, bundleName, skillName, toolName)
+        return this.renderDefaultCard(toolcall, width, bundleName, skillName, toolName);
     }
 
     /**
      * 从父级 ToolCall 中解析并构建内部工具的 ToolCall，供渲染使用
      */
-    private resolveInnerTool(
-        toolcall: ToolCall
-    ): { tool: BaseTool<z.ZodType>; toolCall: ToolCall } | undefined {
-        const args = toolcall.args_object as z.output<typeof CallSkillToolSchema> | undefined
-        if (!args?.bundleName || !args?.skillName || !args?.toolName) return undefined
+    private resolveInnerTool(toolcall: ToolCall): { tool: BaseTool<z.ZodType>; toolCall: ToolCall } | undefined {
+        const args = toolcall.args_object as z.output<typeof CallSkillToolSchema> | undefined;
+        if (!args?.bundleName || !args?.skillName || !args?.toolName) return undefined;
 
-        const cachedSkill = SkillRegistry.getInstance().getCachedSkill(
-            args.bundleName,
-            args.skillName
-        )
-        if (!cachedSkill) return undefined
+        const cachedSkill = SkillRegistry.getInstance().getCachedSkill(args.bundleName, args.skillName);
+        if (!cachedSkill) return undefined;
 
-        const innerTool = cachedSkill.getTool(args.toolName)
-        if (!innerTool) return undefined
+        const innerTool = cachedSkill.getTool(args.toolName);
+        if (!innerTool) return undefined;
 
-        let parsedToolArgs: object
+        let parsedToolArgs: object;
         try {
-            if (typeof args.toolArgs === 'object') parsedToolArgs = args.toolArgs
-            else if (typeof args.toolArgs === 'string')
-                parsedToolArgs = JSON.parse(jsonrepair(args.toolArgs))
-            else parsedToolArgs = {}
+            if (typeof args.toolArgs === 'object') parsedToolArgs = args.toolArgs;
+            else if (typeof args.toolArgs === 'string') parsedToolArgs = JSON.parse(jsonrepair(args.toolArgs));
+            else parsedToolArgs = {};
         } catch {
-            parsedToolArgs = {}
+            parsedToolArgs = {};
         }
 
-        const innerToolCall = createInnerToolCall(
-            args.toolName,
-            parsedToolArgs,
-            innerTool,
-            toolcall
-        )
-        return { tool: innerTool, toolCall: innerToolCall }
+        const innerToolCall = createInnerToolCall(args.toolName, parsedToolArgs, innerTool, toolcall);
+        return { tool: innerTool, toolCall: innerToolCall };
     }
 
     /**
@@ -459,10 +430,10 @@ class CallSkillTool extends BaseTool<typeof CallSkillToolSchema> {
         skillName: string,
         toolName: string
     ): string[] {
-        const { icon } = statusDisplay(toolcall.status)
+        const { icon } = statusDisplay(toolcall.status);
 
-        const skillPath = bundleName && skillName ? `${bundleName}/${skillName}` : '未知技能'
-        const tool = toolName || '未知工具'
+        const skillPath = bundleName && skillName ? `${bundleName}/${skillName}` : '未知技能';
+        const tool = toolName || '未知工具';
 
         const accentColor =
             toolcall.status === 'error'
@@ -471,18 +442,18 @@ class CallSkillTool extends BaseTool<typeof CallSkillToolSchema> {
                   ? chalk.green
                   : toolcall.status === 'running'
                     ? chalk.blue
-                    : chalk.dim
+                    : chalk.dim;
 
-        const header = `  ${icon} ${chalk.magenta('⚡')} ${accentColor.bold(tool)} ${chalk.dim('·')} ${chalk.dim(skillPath)}`
+        const header = `  ${icon} ${chalk.magenta('⚡')} ${accentColor.bold(tool)} ${chalk.dim('·')} ${chalk.dim(skillPath)}`;
 
         if (toolcall.status === 'running') {
-            return [header + ' ' + chalk.dim('执行中...')]
+            return [header + ' ' + chalk.dim('执行中...')];
         } else if (toolcall.status === 'success') {
-            return [header + ' ' + chalk.dim('完成')]
+            return [header + ' ' + chalk.dim('完成')];
         } else if (toolcall.status === 'error') {
-            return [header + ' ' + chalk.red('失败')]
+            return [header + ' ' + chalk.red('失败')];
         } else {
-            return [header]
+            return [header];
         }
     }
 
@@ -495,88 +466,88 @@ class CallSkillTool extends BaseTool<typeof CallSkillToolSchema> {
         parentResult: ToolResult,
         taskState?: TaskState
     ): Promise<void> {
-        const skill = await SkillRegistry.getInstance().getSkill(args.bundleName, args.skillName)
+        const skill = await SkillRegistry.getInstance().getSkill(args.bundleName, args.skillName);
         if (!skill) {
-            parentResult.updateResult('未找到该Skill')
-            return
+            parentResult.updateResult('未找到该Skill');
+            return;
         }
 
-        const tool = skill.getTool(args.toolName)
+        const tool = skill.getTool(args.toolName);
         if (!tool) {
-            parentResult.updateResult(`未找到工具 ${args.toolName}`)
-            return
+            parentResult.updateResult(`未找到工具 ${args.toolName}`);
+            return;
         }
 
         try {
-            let toolArgs: object
+            let toolArgs: object;
             if (typeof args.toolArgs == 'object') {
-                toolArgs = args.toolArgs
+                toolArgs = args.toolArgs;
             } else if (typeof args.toolArgs == 'string') {
-                toolArgs = JSON.parse(jsonrepair(args.toolArgs))
+                toolArgs = JSON.parse(jsonrepair(args.toolArgs));
             } else {
-                parentResult.updateResult('错误: toolArgs的类型无法解析')
-                return
+                parentResult.updateResult('错误: toolArgs的类型无法解析');
+                return;
             }
 
-            logger.info(`call skill tool ${args.toolName} with ${JSON.stringify(args.toolArgs)}`)
+            logger.info(`call skill tool ${args.toolName} with ${JSON.stringify(args.toolArgs)}`);
 
             const innerResult = await tool.execute(
                 toolArgs,
                 (innerToolResult) => {
-                    parentResult.result = innerToolResult.result
-                    parentResult.result_object = innerToolResult.result_object
+                    parentResult.result = innerToolResult.result;
+                    parentResult.result_object = innerToolResult.result_object;
                     if (parentResult.updatedCallback) {
-                        parentResult.updatedCallback(parentResult)
+                        parentResult.updatedCallback(parentResult);
                     }
                 },
                 taskState
-            )
+            );
 
-            parentResult.result = innerResult.result
-            parentResult.result_object = innerResult.result_object
+            parentResult.result = innerResult.result;
+            parentResult.result_object = innerResult.result_object;
 
             if (innerResult.status === 'error') {
-                throw new Error(innerResult.result || '工具调用失败')
+                throw new Error(innerResult.result || '工具调用失败');
             }
         } catch (err) {
-            logger.error(`skill tool call failed: ${err}`)
-            const errorMessage = err instanceof Error ? err.message : String(err)
-            parentResult.updateResult(`工具调用失败: ${errorMessage}`)
+            logger.error(`skill tool call failed: ${err}`);
+            const errorMessage = err instanceof Error ? err.message : String(err);
+            parentResult.updateResult(`工具调用失败: ${errorMessage}`);
         }
     }
 }
 
 interface SkillProvider {
-    getSkills(): Promise<Skill[]>
+    getSkills(): Promise<Skill[]>;
 }
 
 export class SkillRegistry {
-    static instance: SkillRegistry | null = null
+    static instance: SkillRegistry | null = null;
 
-    providers: Map<string, SkillProvider> = new Map()
+    providers: Map<string, SkillProvider> = new Map();
 
     /** Skill 缓存，用于同步获取已加载的 Skill */
-    private skillCache: Map<string, Map<string, Skill>> = new Map()
+    private skillCache: Map<string, Map<string, Skill>> = new Map();
 
     static getInstance(): SkillRegistry {
         if (SkillRegistry.instance === null) {
-            SkillRegistry.instance = new SkillRegistry()
-            SkillRegistry.instance.registerBuiltinProviders()
+            SkillRegistry.instance = new SkillRegistry();
+            SkillRegistry.instance.registerBuiltinProviders();
         }
-        return SkillRegistry.instance
+        return SkillRegistry.instance;
     }
 
     private registerBuiltinProviders(): void {
-        SoulRegistry.initialize()
-        this.registerSkillProvider('soul', new SoulSkillProvider())
+        SoulRegistry.initialize();
+        this.registerSkillProvider('soul', new SoulSkillProvider());
     }
 
     registerSkillProvider(bundleName: string, provider: SkillProvider) {
-        this.providers.set(bundleName, provider)
+        this.providers.set(bundleName, provider);
     }
 
     getSkillProvider(bundleName: string): SkillProvider | undefined {
-        return this.providers.get(bundleName)
+        return this.providers.get(bundleName);
     }
 
     /**
@@ -586,11 +557,11 @@ export class SkillRegistry {
      * @returns 缓存中的 Skill，如果未缓存则返回 undefined
      */
     getCachedSkill(bundleName: string, skillName: string): Skill | undefined {
-        const bundleCache = this.skillCache.get(bundleName)
+        const bundleCache = this.skillCache.get(bundleName);
         if (!bundleCache) {
-            return undefined
+            return undefined;
         }
-        return bundleCache.get(skillName)
+        return bundleCache.get(skillName);
     }
 
     /**
@@ -599,12 +570,12 @@ export class SkillRegistry {
      * @param skill - 要缓存的 Skill
      */
     cacheSkill(bundleName: string, skill: Skill): void {
-        let bundleCache = this.skillCache.get(bundleName)
+        let bundleCache = this.skillCache.get(bundleName);
         if (!bundleCache) {
-            bundleCache = new Map()
-            this.skillCache.set(bundleName, bundleCache)
+            bundleCache = new Map();
+            this.skillCache.set(bundleName, bundleCache);
         }
-        bundleCache.set(skill.frontmatter.name, skill)
+        bundleCache.set(skill.frontmatter.name, skill);
     }
 
     /**
@@ -613,111 +584,111 @@ export class SkillRegistry {
      */
     clearCache(bundleName?: string): void {
         if (bundleName) {
-            this.skillCache.delete(bundleName)
+            this.skillCache.delete(bundleName);
         } else {
-            this.skillCache.clear()
+            this.skillCache.clear();
         }
     }
 
     async getAvailableSkills(): Promise<Map<string, Skill[]>> {
-        const result: Map<string, Skill[]> = new Map()
+        const result: Map<string, Skill[]> = new Map();
         for (const [bundleName, provider] of this.providers) {
             try {
-                const skills = await provider.getSkills()
-                result.set(bundleName, skills)
+                const skills = await provider.getSkills();
+                result.set(bundleName, skills);
                 // 更新缓存
                 for (const skill of skills) {
-                    this.cacheSkill(bundleName, skill)
+                    this.cacheSkill(bundleName, skill);
                 }
             } catch (err) {
-                logger.error(`获取技能失败: ${err}`)
+                logger.error(`获取技能失败: ${err}`);
             }
         }
-        return result
+        return result;
     }
 
     async getSkillFrontmatterXml(): Promise<string> {
-        let result = '<available_skills>\n'
+        let result = '<available_skills>\n';
         for (const [bundleName, provider] of this.providers) {
-            const skills = await provider.getSkills()
+            const skills = await provider.getSkills();
             for (const skill of skills) {
                 // disable-model-invocation=true 的 Skill 不向 LLM 暴露描述
-                if (!skill.isModelInvocable) continue
+                if (!skill.isModelInvocable) continue;
                 result += format(SKILL_FRONTMATTER_XML, {
                     bundleName: bundleName,
                     skillName: skill.frontmatter.name,
                     skillDirectory: skill.directory || '该Skill不存在文件系统中',
-                    description: skill.frontmatter.description,
-                })
+                    description: skill.frontmatter.description
+                });
             }
         }
-        result += '</available_skills>'
-        return result
+        result += '</available_skills>';
+        return result;
     }
 
     /**
      * 获取所有 user-invocable 的 Skill 列表（供 / 菜单和自动补全使用）
      */
     async getUserInvocableSkills(): Promise<{ bundleName: string; skill: Skill }[]> {
-        const result: { bundleName: string; skill: Skill }[] = []
+        const result: { bundleName: string; skill: Skill }[] = [];
         for (const [bundleName, provider] of this.providers) {
             try {
-                const skills = await provider.getSkills()
+                const skills = await provider.getSkills();
                 for (const skill of skills) {
                     if (skill.isUserInvocable) {
-                        result.push({ bundleName, skill })
+                        result.push({ bundleName, skill });
                     }
                 }
             } catch (err) {
-                logger.error(`获取 user-invocable 技能失败: ${err}`)
+                logger.error(`获取 user-invocable 技能失败: ${err}`);
             }
         }
-        return result
+        return result;
     }
 
     /**
      * 获取所有 Skill（含 bundleName），平坦列表
      */
     async getAllSkillsFlat(): Promise<{ bundleName: string; skill: Skill }[]> {
-        const result: { bundleName: string; skill: Skill }[] = []
+        const result: { bundleName: string; skill: Skill }[] = [];
         for (const [bundleName, provider] of this.providers) {
             try {
-                const skills = await provider.getSkills()
+                const skills = await provider.getSkills();
                 for (const skill of skills) {
-                    result.push({ bundleName, skill })
+                    result.push({ bundleName, skill });
                 }
             } catch (err) {
-                logger.error(`获取技能失败: ${err}`)
+                logger.error(`获取技能失败: ${err}`);
             }
         }
-        return result
+        return result;
     }
 
     async getSkill(bundleName: string, skillName: string): Promise<Skill | undefined> {
         // 先检查缓存
-        const cachedSkill = this.getCachedSkill(bundleName, skillName)
+        const cachedSkill = this.getCachedSkill(bundleName, skillName);
         if (cachedSkill) {
-            return cachedSkill
+            return cachedSkill;
         }
 
-        const provider = this.providers.get(bundleName)
+        const provider = this.providers.get(bundleName);
         if (!provider) {
-            return undefined
+            return undefined;
         }
 
-        const skills = await provider.getSkills()
-        const skill = skills.find((skill) => skill.frontmatter.name === skillName)
+        const skills = await provider.getSkills();
+        const skill = skills.find((skill) => skill.frontmatter.name === skillName);
         if (skill) {
             // 缓存找到的 Skill
-            this.cacheSkill(bundleName, skill)
+            this.cacheSkill(bundleName, skill);
         }
-        return skill
+        return skill;
     }
 
     getToolset(): BaseToolset {
-        const toolset = new BaseToolset('skill-manager')
-        toolset.addTool(new LoadSkillTool())
-        toolset.addTool(new CallSkillTool())
-        return toolset
+        const toolset = new BaseToolset('skill-manager');
+        toolset.addTool(new LoadSkillTool());
+        toolset.addTool(new CallSkillTool());
+        return toolset;
     }
 }

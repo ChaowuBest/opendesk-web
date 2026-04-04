@@ -62,17 +62,18 @@ class A2AEntryWidget extends HTMLElement {
             { type: 'css', url: 'https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css' },
             // JS 文件
             { type: 'js', url: 'https://cdn.jsdelivr.net/npm/marked@12.0.0/marked.min.js' },
-            { type: 'js', url: 'https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/lib/highlight.min.js' },
+            {
+                type: 'js',
+                url: 'https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/lib/highlight.min.js'
+            },
             { type: 'js', url: 'https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js' }
         ];
 
-        const loadPromises = resources.map(resource => {
+        const loadPromises = resources.map((resource) => {
             return new Promise((resolve, reject) => {
                 // 检查是否已经存在
                 const existing = document.querySelector(
-                    resource.type === 'css'
-                        ? `link[href="${resource.url}"]`
-                        : `script[src="${resource.url}"]`
+                    resource.type === 'css' ? `link[href="${resource.url}"]` : `script[src="${resource.url}"]`
                 );
                 if (existing) {
                     resolve();
@@ -130,20 +131,22 @@ class A2AEntryWidget extends HTMLElement {
             this.showError(`清空对话失败: ${error.message}`);
         }
     }
-    
+
     /**
      * 处理 A2UI 按钮点击
-     * @param {HTMLElement} btn 
+     * @param {HTMLElement} btn
      */
     async handleA2UIAction(btn) {
         try {
             const messageContainer = btn.closest('[data-agent-id]');
             const boundAgentId = messageContainer ? messageContainer.getAttribute('data-agent-id') : null;
             const targetAgentId = boundAgentId || this.lastAgentId;
-            console.log(`[A2UI Action] Button clicked. Bound Agent: ${boundAgentId}, Global Last Agent: ${this.lastAgentId}, Target: ${targetAgentId}`);
+            console.log(
+                `[A2UI Action] Button clicked. Bound Agent: ${boundAgentId}, Global Last Agent: ${this.lastAgentId}, Target: ${targetAgentId}`
+            );
             const actionDef = JSON.parse(btn.dataset.a2uiAction);
             const actionName = actionDef.name;
-            const contextDefs = actionDef.context || []; 
+            const contextDefs = actionDef.context || [];
             console.log(`[A2UI] 触发动作: ${actionName}`, contextDefs);
 
             let messageToSend = '';
@@ -167,11 +170,13 @@ class A2AEntryWidget extends HTMLElement {
                             const decodedStr = decodeURIComponent(rawModelStr);
                             const parsedMessages = JSON.parse(decodedStr);
                             const updates = Array.isArray(parsedMessages) ? parsedMessages : [parsedMessages];
-                            
+
                             for (const update of updates) {
                                 if (update.dataModelUpdate && update.dataModelUpdate.contents) {
                                     // 查找 key 为 articleId 或 id 的数据
-                                    const idData = update.dataModelUpdate.contents.find(c => c.key === 'articleId' || c.key === 'id');
+                                    const idData = update.dataModelUpdate.contents.find(
+                                        (c) => c.key === 'articleId' || c.key === 'id'
+                                    );
                                     if (idData && idData.valueString) {
                                         articleId = idData.valueString;
                                     }
@@ -179,18 +184,16 @@ class A2AEntryWidget extends HTMLElement {
                             }
                         }
                     } catch (e) {
-                        console.error("[Debug] 读取 articleId 失败:", e);
+                        console.error('[Debug] 读取 articleId 失败:', e);
                     }
                 }
                 // 3. 构建规范的 ACTION 消息发送给 Agent
                 if (articleId) {
                     messageToSend = `ACTION: start_quiz with data: ${JSON.stringify({ articleId })}`;
                 } else {
-                    messageToSend = "The user clicked 'Generate Quiz'."; 
+                    messageToSend = "The user clicked 'Generate Quiz'.";
                 }
-            }
-
-            else if (actionName === 'submit_quiz') {
+            } else if (actionName === 'submit_quiz') {
                 if (btn.disabled || btn.classList.contains('a2ui-btn-disabled')) {
                     return;
                 }
@@ -200,26 +203,28 @@ class A2AEntryWidget extends HTMLElement {
                 const allRadios = messageBubble.querySelectorAll('input[type="radio"]');
                 const seenGroups = new Set();
                 let originalQuestionsMap = [];
-                let currentArticleTitle = "";
-                let currentArticleContent = "";
+                let currentArticleTitle = '';
+                let currentArticleContent = '';
                 try {
                     const rawModelStr = messageBubble.getAttribute('data-a2ui-model');
                     if (rawModelStr) {
                         const decodedStr = decodeURIComponent(rawModelStr);
                         const parsedMessages = JSON.parse(decodedStr);
-                        
+
                         const updates = Array.isArray(parsedMessages) ? parsedMessages : [parsedMessages];
                         for (const update of updates) {
                             if (update.dataModelUpdate && update.dataModelUpdate.contents) {
-                                const qData = update.dataModelUpdate.contents.find(c => c.key === 'questions');
+                                const qData = update.dataModelUpdate.contents.find((c) => c.key === 'questions');
                                 if (qData && qData.valueMap) {
-                                    originalQuestionsMap = qData.valueMap;                                  
+                                    originalQuestionsMap = qData.valueMap;
                                 }
-                                const contentData = update.dataModelUpdate.contents.find(c => c.key === 'articleContent');
+                                const contentData = update.dataModelUpdate.contents.find(
+                                    (c) => c.key === 'articleContent'
+                                );
                                 if (contentData && contentData.valueString) {
                                     currentArticleContent = contentData.valueString;
                                 }
-                                const titleData = update.dataModelUpdate.contents.find(c => c.key === 'articleTitle');
+                                const titleData = update.dataModelUpdate.contents.find((c) => c.key === 'articleTitle');
                                 if (titleData && titleData.valueString) {
                                     currentArticleTitle = titleData.valueString;
                                 }
@@ -227,11 +232,11 @@ class A2AEntryWidget extends HTMLElement {
                         }
                     }
                 } catch (e) {
-                    console.error("[Debug] 读取原始数据失败:", e);
+                    console.error('[Debug] 读取原始数据失败:', e);
                 }
 
-                let groupIndex = 0; 
-                allRadios.forEach(radio => {
+                let groupIndex = 0;
+                allRadios.forEach((radio) => {
                     radio.disabled = true;
                     radio.setAttribute('disabled', 'disabled');
                     if (radio.checked) {
@@ -244,7 +249,7 @@ class A2AEntryWidget extends HTMLElement {
                     const checked = messageBubble.querySelector(`input[name="${radio.name}"]:checked`);
                     const qIndex = answers.length + 1;
                     const qId = `question${qIndex}`;
-                    const userSelection = checked ? checked.value : "OptionA"; 
+                    const userSelection = checked ? checked.value : 'OptionA';
 
                     const answerObj = {
                         questionId: qId,
@@ -254,10 +259,10 @@ class A2AEntryWidget extends HTMLElement {
                         const originalQ = originalQuestionsMap[groupIndex];
                         if (originalQ && originalQ.valueMap) {
                             const getValue = (key) => {
-                                const item = originalQ.valueMap.find(v => v.key === key);
-                                return item ? (item.valueString || '') : '';
+                                const item = originalQ.valueMap.find((v) => v.key === key);
+                                return item ? item.valueString || '' : '';
                             };
-                            
+
                             answerObj.question = getValue('question');
                             answerObj.correctAnswer = getValue('correctAnswer');
                             answerObj.optionA = getValue('optionA');
@@ -266,19 +271,19 @@ class A2AEntryWidget extends HTMLElement {
                             answerObj.optionD = getValue('optionD');
                         }
                     }
-                    
+
                     answers.push(answerObj);
                     groupIndex++;
                 });
                 btn.disabled = true;
-                btn.setAttribute('disabled', 'disabled'); 
-                btn.textContent = '已提交'; 
+                btn.setAttribute('disabled', 'disabled');
+                btn.textContent = '已提交';
                 btn.classList.add('a2ui-btn-disabled');
                 const updatedHtml = messageBubble.outerHTML;
                 const messageContainer = btn.closest('[data-message-id]');
                 if (messageContainer) {
                     const targetMsgId = messageContainer.getAttribute('data-message-id');
-                    const targetMsg = this.conversationHistory.find(m => m.id === targetMsgId);
+                    const targetMsg = this.conversationHistory.find((m) => m.id === targetMsgId);
                     if (targetMsg) {
                         targetMsg.content = updatedHtml;
                         console.log(`[UI Update] Updated specific message: ${targetMsgId}`);
@@ -286,7 +291,7 @@ class A2AEntryWidget extends HTMLElement {
                 }
                 const payload = {
                     results: {
-                        questions: answers, 
+                        questions: answers
                     },
                     articleTitle: currentArticleTitle,
                     articleContent: currentArticleContent
@@ -299,7 +304,7 @@ class A2AEntryWidget extends HTMLElement {
                 if (!url && Array.isArray(contextDefs)) {
                     for (const ctx of contextDefs) {
                         if (ctx.key === 'url') {
-                            url = (ctx.value && ctx.value.literalString) ? ctx.value.literalString : ctx.value;
+                            url = ctx.value && ctx.value.literalString ? ctx.value.literalString : ctx.value;
                             break;
                         }
                     }
@@ -310,13 +315,15 @@ class A2AEntryWidget extends HTMLElement {
                 } else {
                     console.warn('[A2UI] open_url 动作未找到有效的 url 参数');
                 }
-                
-                return; 
+
+                return;
             }
             //  点击 Done (完成) ---
             else if (['done', 'finish', 'close', 'complete', 'close_result'].includes(actionName.toLowerCase())) {
                 btn.style.display = 'none';
-                btn.insertAdjacentHTML('afterend', `
+                btn.insertAdjacentHTML(
+                    'afterend',
+                    `
                     <div style="
                         text-align: center;
                         color: #8b5cf6; 
@@ -328,7 +335,8 @@ class A2AEntryWidget extends HTMLElement {
                         Thank you for your use and support
                     </div>
                     <style>@keyframes fadeIn { from { opacity:0; } to { opacity:1; } }</style>
-                `);
+                `
+                );
                 const root = btn.closest('.a2ui-root');
                 if (root) {
                     const newHtml = root.outerHTML;
@@ -339,34 +347,32 @@ class A2AEntryWidget extends HTMLElement {
                         }
                     }
                 }
-                return; 
+                return;
+            } else {
+                console.log(`[A2UI] 执行通用动作: ${actionName}`);
+                // 1. 动态提取并组装所有上下文参数 (context)
+                const actionPayload = {};
+                if (Array.isArray(contextDefs)) {
+                    for (const ctx of contextDefs) {
+                        if (ctx.key) {
+                            // 兼容获取数据，处理 literalString 嵌套的情况
+                            let val = ctx.value;
+                            if (val && typeof val === 'object' && val.literalString !== undefined) {
+                                val = val.literalString;
+                            }
+                            actionPayload[ctx.key] = val;
+                        }
+                    }
+                } else if (typeof contextDefs === 'object' && contextDefs !== null) {
+                    // 兼容 context 直接是一个对象的情况
+                    Object.assign(actionPayload, contextDefs);
+                }
+                // 2. 将动作名称和参数结构化，交给 sendMessage 统一发给后端/Agent
+                messageToSend = `ACTION: ${actionName} with data: ${JSON.stringify(actionPayload)}`;
             }
-            else {
- 	                 console.log(`[A2UI] 执行通用动作: ${actionName}`);
- 	                 // 1. 动态提取并组装所有上下文参数 (context)
- 	                 const actionPayload = {};                
- 	                 if (Array.isArray(contextDefs)) {
- 	                     for (const ctx of contextDefs) {
- 	                         if (ctx.key) {
- 	                             // 兼容获取数据，处理 literalString 嵌套的情况
- 	                             let val = ctx.value;
- 	                             if (val && typeof val === 'object' && val.literalString !== undefined) {
- 	                                 val = val.literalString;
- 	                             }
- 	                             actionPayload[ctx.key] = val;
- 	                         }
- 	                     }
- 	                 } else if (typeof contextDefs === 'object' && contextDefs !== null) {
- 	                     // 兼容 context 直接是一个对象的情况
- 	                     Object.assign(actionPayload, contextDefs);
- 	                 }
- 	                 // 2. 将动作名称和参数结构化，交给 sendMessage 统一发给后端/Agent
- 	                 messageToSend = `ACTION: ${actionName} with data: ${JSON.stringify(actionPayload)}`;
- 	             }
             if (messageToSend) {
                 this.sendMessage(messageToSend, true, targetAgentId);
             }
-
         } catch (error) {
             console.error('处理 A2UI 动作失败:', error);
             this.showError('无法执行操作: ' + error.message);
@@ -381,32 +387,33 @@ class A2AEntryWidget extends HTMLElement {
             (chunk) => {
                 const assistantMessageId = `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
             },
-            this.conversationId, messageData
+            this.conversationId,
+            messageData
         );
         this.isSending = true;
         if (!isSystemAction) {
         } else {
-             let displayAction = '执行操作';
- 	             
- 	             if (text.includes('submit_quiz')) {
- 	                 displayAction = '提交答案';
- 	             } else if (text.includes('start_quiz')) {
- 	                 displayAction = '生成题目';
- 	             } else {
- 	                 const match = text.match(/ACTION:\s*([^\s]+)/);
- 	                 if (match) {
- 	                     displayAction = `触发动作: ${match[1]}`; 
- 	                 }
- 	             }
- 	 
- 	             this.conversationHistory.push({
- 	                 role: 'user',
- 	                 content: `[系统指令] ${displayAction}...`,
- 	                 id: `sys_${Date.now()}`,
- 	                 isSystem: true
+            let displayAction = '执行操作';
+
+            if (text.includes('submit_quiz')) {
+                displayAction = '提交答案';
+            } else if (text.includes('start_quiz')) {
+                displayAction = '生成题目';
+            } else {
+                const match = text.match(/ACTION:\s*([^\s]+)/);
+                if (match) {
+                    displayAction = `触发动作: ${match[1]}`;
+                }
+            }
+
+            this.conversationHistory.push({
+                role: 'user',
+                content: `[系统指令] ${displayAction}...`,
+                id: `sys_${Date.now()}`,
+                isSystem: true
             });
         }
-        
+
         const assistantMessageId = `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
         this.conversationHistory.push({
             role: 'assistant',
@@ -420,10 +427,14 @@ class A2AEntryWidget extends HTMLElement {
             window.applicationAPI.streamCall(
                 'sendChatMessage',
                 (chunk) => this.handleStreamChunk(chunk, assistantMessageId),
-                this.conversationId, messageData
+                this.conversationId,
+                messageData
             );
-        } catch(e) { /*...*/ }
-        finally { this.isSending = false; }
+        } catch (e) {
+            /*...*/
+        } finally {
+            this.isSending = false;
+        }
     }
 
     setUpEventListeners() {
@@ -512,7 +523,7 @@ class A2AEntryWidget extends HTMLElement {
             // 构建消息对象
             const messageData = {
                 text: text || '',
-                attachments: this.attachments.map(att => ({
+                attachments: this.attachments.map((att) => ({
                     type: att.type,
                     data: att.data,
                     mimeType: att.mimeType,
@@ -523,7 +534,8 @@ class A2AEntryWidget extends HTMLElement {
 
             // 添加用户消息到历史（显示文本和附件信息）
             const userMessageId = `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-            const userMessageContent = text || (this.attachments.length > 0 ? `[${this.attachments.length} 个附件]` : '');
+            const userMessageContent =
+                text || (this.attachments.length > 0 ? `[${this.attachments.length} 个附件]` : '');
             this.conversationHistory.push({
                 role: 'user',
                 content: userMessageContent,
@@ -558,12 +570,13 @@ class A2AEntryWidget extends HTMLElement {
                         // console.info('received', chunk);
                         this.handleStreamChunk(chunk, assistantMessageId);
                     },
-                    this.conversationId, messageData
+                    this.conversationId,
+                    messageData
                 );
             } catch (error) {
                 console.error('发送消息失败:', error);
                 // 移除占位的 AI 响应
-                this.conversationHistory = this.conversationHistory.filter(msg => msg.id !== assistantMessageId);
+                this.conversationHistory = this.conversationHistory.filter((msg) => msg.id !== assistantMessageId);
                 this.conversationHistory.push({
                     role: 'assistant',
                     content: `错误: ${error.message}`,
@@ -614,7 +627,7 @@ class A2AEntryWidget extends HTMLElement {
         const { type, agentId, chunk, error, success, message, agentName, skillName } = data;
 
         if (type === 'agent_selection') {
-            const currentAssistantMsg = this.conversationHistory.find(msg => msg.id === assistantMessageId);
+            const currentAssistantMsg = this.conversationHistory.find((msg) => msg.id === assistantMessageId);
             if (agentId) {
                 this.lastAgentId = agentId; // [新增] 记住这个 Agent
                 console.log('Current active agent:', this.lastAgentId);
@@ -626,16 +639,18 @@ class A2AEntryWidget extends HTMLElement {
             // 处理 Agent 选择提示消息
             const selectionMessageId = `selection_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
             // 在用户消息和 AI 响应之间插入系统提示消息
-            const userMessageIndex = this.conversationHistory.findIndex(msg => msg.id === assistantMessageId) - 1;
+            const userMessageIndex = this.conversationHistory.findIndex((msg) => msg.id === assistantMessageId) - 1;
             if (userMessageIndex >= 0) {
                 // 检查是否已经存在选择提示（避免重复）
-                const existingSelection = this.conversationHistory.find(msg =>
-                    msg.role === 'system' && msg.isAgentSelection && msg.relatedAssistantId === assistantMessageId
+                const existingSelection = this.conversationHistory.find(
+                    (msg) =>
+                        msg.role === 'system' && msg.isAgentSelection && msg.relatedAssistantId === assistantMessageId
                 );
                 if (!existingSelection) {
                     this.conversationHistory.splice(userMessageIndex + 1, 0, {
                         role: 'system',
-                        content: message || `已选择 Agent: **${agentName}**${skillName ? `，Skill: **${skillName}**` : ''}`,
+                        content:
+                            message || `已选择 Agent: **${agentName}**${skillName ? `，Skill: **${skillName}**` : ''}`,
                         id: selectionMessageId,
                         isAgentSelection: true,
                         relatedAssistantId: assistantMessageId,
@@ -647,12 +662,12 @@ class A2AEntryWidget extends HTMLElement {
             }
         } else if (type === 'stream_chunk' && chunk) {
             // 更新 AI 响应内容
-            const assistantMessage = this.conversationHistory.find(msg => msg.id === assistantMessageId);
+            const assistantMessage = this.conversationHistory.find((msg) => msg.id === assistantMessageId);
             if (assistantMessage) {
                 // 提取文本内容
                 const textParts = chunk.content
-                    .filter(part => part.type === 'text')
-                    .map(part => part.text)
+                    .filter((part) => part.type === 'text')
+                    .map((part) => part.text)
                     .join('');
 
                 const currentContent = assistantMessage.content || '';
@@ -677,14 +692,14 @@ class A2AEntryWidget extends HTMLElement {
             }
         } else if (type === 'stream_complete' && success) {
             // 流式完成，立即更新
-            const assistantMessage = this.conversationHistory.find(msg => msg.id === assistantMessageId);
+            const assistantMessage = this.conversationHistory.find((msg) => msg.id === assistantMessageId);
             if (assistantMessage) {
                 assistantMessage.isStreaming = false;
                 this.updateMessages(true); // 立即更新
             }
         } else if (type === 'stream_error') {
             // 流式错误，立即更新
-            const assistantMessage = this.conversationHistory.find(msg => msg.id === assistantMessageId);
+            const assistantMessage = this.conversationHistory.find((msg) => msg.id === assistantMessageId);
             if (assistantMessage) {
                 assistantMessage.content = `错误: ${error || '未知错误'}`;
                 assistantMessage.isStreaming = false;
@@ -753,11 +768,12 @@ class A2AEntryWidget extends HTMLElement {
                         </button>
                     </div>
                     <div class="space-y-4">
-                        ${this.conversationHistory.map((msg) => {
-                            if (msg.role === 'system' && msg.isAgentSelection) {
-                                // 系统提示消息：Agent 选择提示
-                                const renderedContent = this.renderMarkdown(msg.content || '');
-                                return `
+                        ${this.conversationHistory
+                            .map((msg) => {
+                                if (msg.role === 'system' && msg.isAgentSelection) {
+                                    // 系统提示消息：Agent 选择提示
+                                    const renderedContent = this.renderMarkdown(msg.content || '');
+                                    return `
                                     <div class="flex justify-center">
                                         <div class="max-w-[80%] p-3 bg-blue-50 border border-blue-200 rounded-lg shadow-sm">
                                             <div class="flex items-center gap-2 mb-1">
@@ -768,36 +784,36 @@ class A2AEntryWidget extends HTMLElement {
                                         </div>
                                     </div>
                                 `;
-                            } else if (msg.role === 'user') {
-                                let attachmentsHtml = '';
-                                if (msg.attachments && msg.attachments.length > 0) {
-                                    attachmentsHtml = '<div class="mt-2 flex flex-wrap gap-2">';
-                                    msg.attachments.forEach(att => {
-                                        if (att.type === 'image') {
-                                            attachmentsHtml += `
+                                } else if (msg.role === 'user') {
+                                    let attachmentsHtml = '';
+                                    if (msg.attachments && msg.attachments.length > 0) {
+                                        attachmentsHtml = '<div class="mt-2 flex flex-wrap gap-2">';
+                                        msg.attachments.forEach((att) => {
+                                            if (att.type === 'image') {
+                                                attachmentsHtml += `
                                                 <img src="${att.data}" alt="${this.escapeHtml(att.name)}"
                                                      class="max-w-[200px] max-h-[200px] object-cover rounded border border-white/30" />
                                             `;
-                                        } else if (att.type === 'audio') {
-                                            attachmentsHtml += `
+                                            } else if (att.type === 'audio') {
+                                                attachmentsHtml += `
                                                 <div class="bg-white/20 rounded p-2 flex items-center gap-2">
                                                     <i class="fas fa-music"></i>
                                                     <span class="text-xs">${this.escapeHtml(att.name)}</span>
                                                 </div>
                                             `;
-                                        } else {
-                                            attachmentsHtml += `
+                                            } else {
+                                                attachmentsHtml += `
                                                 <div class="bg-white/20 rounded p-2 flex items-center gap-2">
                                                     <i class="fas fa-file"></i>
                                                     <span class="text-xs">${this.escapeHtml(att.name)}</span>
                                                 </div>
                                             `;
-                                        }
-                                    });
-                                    attachmentsHtml += '</div>';
-                                }
+                                            }
+                                        });
+                                        attachmentsHtml += '</div>';
+                                    }
 
-                                return `
+                                    return `
                                     <div class="flex justify-end">
                                         <div class="max-w-[80%] p-3 bg-purple-500 text-white rounded-lg shadow-sm">
                                             ${msg.content ? `<div class="text-sm">${this.escapeHtml(msg.content)}</div>` : ''}
@@ -805,30 +821,33 @@ class A2AEntryWidget extends HTMLElement {
                                         </div>
                                     </div>
                                 `;
-                            } else {
-                                const isStreaming = msg.isStreaming ? '<span class="inline-block w-2 h-2 bg-gray-400 rounded-full animate-pulse ml-1"></span>' : '';
-                                const errorClass = msg.isError ? 'border-red-300 bg-red-50' : 'bg-gray-50';
-                                // 渲染 markdown 内容
-                                const renderedContent = msg.isError
-                                    ? this.escapeHtml(msg.content || '')
-                                    : this.renderMarkdown(msg.content || '');
+                                } else {
+                                    const isStreaming = msg.isStreaming
+                                        ? '<span class="inline-block w-2 h-2 bg-gray-400 rounded-full animate-pulse ml-1"></span>'
+                                        : '';
+                                    const errorClass = msg.isError ? 'border-red-300 bg-red-50' : 'bg-gray-50';
+                                    // 渲染 markdown 内容
+                                    const renderedContent = msg.isError
+                                        ? this.escapeHtml(msg.content || '')
+                                        : this.renderMarkdown(msg.content || '');
 
-                                // 检测是否是 HTML 内容（a2ui）
-                                const isHTMLContent = this.isHTML(msg.content || '');
-                                // 对于 HTML 内容，不使用 markdown-body 类，避免样式覆盖
-                                const contentClass = isHTMLContent 
-                                    ? 'a2a-html-content' 
-                                    : 'text-sm text-gray-800 a2a-markdown-body markdown-body';
-                                const boundAgentId = msg.agentId || '';
-                                return `
+                                    // 检测是否是 HTML 内容（a2ui）
+                                    const isHTMLContent = this.isHTML(msg.content || '');
+                                    // 对于 HTML 内容，不使用 markdown-body 类，避免样式覆盖
+                                    const contentClass = isHTMLContent
+                                        ? 'a2a-html-content'
+                                        : 'text-sm text-gray-800 a2a-markdown-body markdown-body';
+                                    const boundAgentId = msg.agentId || '';
+                                    return `
                                     <div class="flex justify-start" data-agent-id="${boundAgentId}" data-message-id="${msg.id}">
                                         <div class="max-w-[80%] p-3 ${errorClass} rounded-lg border border-gray-200 shadow-sm">
                                             <div class="${contentClass}">${renderedContent}${isStreaming}</div>
                                         </div>
                                     </div>
                                 `;
-                            }
-                        }).join('')}
+                                }
+                            })
+                            .join('')}
                     </div>
                 </div>
             `;
@@ -914,7 +933,7 @@ class A2AEntryWidget extends HTMLElement {
      */
     setupAgentsListToggle() {
         const toggleButtons = this.querySelectorAll('[data-action="toggle-agents-list"]');
-        toggleButtons.forEach(button => {
+        toggleButtons.forEach((button) => {
             // 移除可能存在的旧事件监听器
             const newButton = button.cloneNode(true);
             button.parentNode.replaceChild(newButton, button);
@@ -957,15 +976,16 @@ class A2AEntryWidget extends HTMLElement {
         }
         // 检查是否包含 HTML 标签（特别是 a2ui-root 类）
         const trimmed = content.trim();
-        return trimmed.startsWith('<') && (
-            trimmed.includes('<div') ||
-            trimmed.includes('<span') ||
-            trimmed.includes('<h1') ||
-            trimmed.includes('<h2') ||
-            trimmed.includes('<h3') ||
-            trimmed.includes('<p') ||
-            trimmed.includes('class="a2ui-root"') ||
-            trimmed.includes("class='a2ui-root'")
+        return (
+            trimmed.startsWith('<') &&
+            (trimmed.includes('<div') ||
+                trimmed.includes('<span') ||
+                trimmed.includes('<h1') ||
+                trimmed.includes('<h2') ||
+                trimmed.includes('<h3') ||
+                trimmed.includes('<p') ||
+                trimmed.includes('class="a2ui-root"') ||
+                trimmed.includes("class='a2ui-root'"))
         );
     }
 
@@ -1062,10 +1082,10 @@ class A2AEntryWidget extends HTMLElement {
             });
 
             // 替换所有占位符
-            blockPlaceholders.forEach(item => {
+            blockPlaceholders.forEach((item) => {
                 text = text.replace(item.placeholder, item.html);
             });
-            inlinePlaceholders.forEach(item => {
+            inlinePlaceholders.forEach((item) => {
                 text = text.replace(item.placeholder, item.html);
             });
 
@@ -1111,12 +1131,12 @@ class A2AEntryWidget extends HTMLElement {
             // 配置 marked（兼容不同版本）
             const markedOptions = {
                 breaks: true, // 支持换行
-                gfm: true, // GitHub Flavored Markdown
+                gfm: true // GitHub Flavored Markdown
             };
 
             // 如果 highlight.js 可用，添加代码高亮
             if (typeof hljs !== 'undefined') {
-                markedOptions.highlight = function(code, lang) {
+                markedOptions.highlight = function (code, lang) {
                     if (lang && hljs.getLanguage(lang)) {
                         try {
                             return hljs.highlight(code, { language: lang }).value;
@@ -1161,10 +1181,11 @@ class A2AEntryWidget extends HTMLElement {
             return '<div class="text-xs text-gray-400 flex items-center"><i class="fas fa-info-circle mr-1"></i> 可以添加图片、音频或其他文件</div>';
         }
 
-        return this.attachments.map((attachment, index) => {
-            let preview = '';
-            if (attachment.type === 'image') {
-                preview = `
+        return this.attachments
+            .map((attachment, index) => {
+                let preview = '';
+                if (attachment.type === 'image') {
+                    preview = `
                     <div class="relative group">
                         <img src="${attachment.data}" alt="${this.escapeHtml(attachment.name)}"
                              class="w-16 h-16 object-cover rounded border border-gray-300" />
@@ -1174,8 +1195,8 @@ class A2AEntryWidget extends HTMLElement {
                         </button>
                     </div>
                 `;
-            } else if (attachment.type === 'audio') {
-                preview = `
+                } else if (attachment.type === 'audio') {
+                    preview = `
                     <div class="relative group bg-blue-50 border border-blue-200 rounded p-2 flex items-center gap-2">
                         <i class="fas fa-music text-blue-600"></i>
                         <div class="flex-1 min-w-0">
@@ -1188,8 +1209,8 @@ class A2AEntryWidget extends HTMLElement {
                         </button>
                     </div>
                 `;
-            } else {
-                preview = `
+                } else {
+                    preview = `
                     <div class="relative group bg-gray-100 border border-gray-300 rounded p-2 flex items-center gap-2">
                         <i class="fas fa-file text-gray-600"></i>
                         <div class="flex-1 min-w-0">
@@ -1202,9 +1223,10 @@ class A2AEntryWidget extends HTMLElement {
                         </button>
                     </div>
                 `;
-            }
-            return preview;
-        }).join('');
+                }
+                return preview;
+            })
+            .join('');
     }
 
     updateAttachmentsPreview() {
@@ -1217,7 +1239,7 @@ class A2AEntryWidget extends HTMLElement {
 
     setupAttachmentRemoveButtons() {
         const removeButtons = this.querySelectorAll('.a2a-remove-attachment');
-        removeButtons.forEach(btn => {
+        removeButtons.forEach((btn) => {
             btn.addEventListener('click', (e) => {
                 const index = parseInt(btn.dataset.attachmentIndex);
                 this.removeAttachment(index);
@@ -1281,7 +1303,7 @@ class A2AEntryWidget extends HTMLElement {
     renderAgentsList() {
         try {
             const converter = this.a2uiConverter;
-            
+
             // 获取主题样式类
             const cardClasses = converter.getComponentStyleClasses('Card').join(' ');
             const cardStyles = converter.getAdditionalStyles('Card');
@@ -1291,18 +1313,18 @@ class A2AEntryWidget extends HTMLElement {
             const rowStyles = converter.getAdditionalStyles('Row');
             const listClasses = converter.getComponentStyleClasses('List').join(' ');
             const listStyles = converter.getAdditionalStyles('List');
-            
+
             // 获取文本样式
             const h2Styles = converter.getAdditionalStyles('Text', 'h2');
             const h3Styles = converter.getAdditionalStyles('Text', 'h3');
             const h4Styles = converter.getAdditionalStyles('Text', 'h4');
             const bodyStyles = converter.getAdditionalStyles('Text', 'body');
             const captionStyles = converter.getAdditionalStyles('Text', 'caption');
-            
+
             // 获取图标样式
             const iconClasses = converter.getComponentStyleClasses('Icon').join(' ');
             const iconStyles = converter.getAdditionalStyles('Icon');
-            
+
             // 获取 Root 背景样式（用于整个列表容器）
             const rootStyles = converter.getAdditionalStyles('Root');
 
@@ -1311,40 +1333,45 @@ class A2AEntryWidget extends HTMLElement {
             const buttonStyles = converter.getAdditionalStyles('Button');
 
             // 构建 Agents 卡片 HTML
-            const agentsHtml = this.agents.map((entry) => {
-                const agentName = entry.name || '';
-                const agentId = agentName.includes('/')
-                    ? agentName.split('/').pop()
-                    : agentName;
-                const card = entry.card || {};
-                const skills = card.skills || [];
+            const agentsHtml = this.agents
+                .map((entry) => {
+                    const agentName = entry.name || '';
+                    const agentId = agentName.includes('/') ? agentName.split('/').pop() : agentName;
+                    const card = entry.card || {};
+                    const skills = card.skills || [];
 
-                // 构建技能列表 HTML
-                let skillsHtml = '';
-                if (skills.length > 0) {
-                    const skillsList = skills.map(skill => {
-                        const skillName = skill.name || skill.id || 'N/A';
-                        const skillExamples = skill.examples || [];
-                        const firstExample = skillExamples.length > 0 ? skillExamples[0] : null;
+                    // 构建技能列表 HTML
+                    let skillsHtml = '';
+                    if (skills.length > 0) {
+                        const skillsList = skills
+                            .map((skill) => {
+                                const skillName = skill.name || skill.id || 'N/A';
+                                const skillExamples = skill.examples || [];
+                                const firstExample = skillExamples.length > 0 ? skillExamples[0] : null;
 
-                        // 使用主题样式构建技能卡片
-                        return `
+                                // 使用主题样式构建技能卡片
+                                return `
                             <div class="a2ui-card ${cardClasses}" style="${cardStyles}; background: linear-gradient(135deg, rgba(139, 92, 246, 0.1) 0%, rgba(167, 139, 250, 0.05) 100%); border: 1px solid rgba(139, 92, 246, 0.2); margin-bottom: 4px;">
                                 <div class="a2ui-column ${columnClasses}" style="${columnStyles}">
                                     <h4 style="${h4Styles}; margin: 0 0 4px 0; color: #7c3aed;">
                                         ${this.escapeHtml(skillName)}
                                     </h4>
-                                    ${firstExample ? `
+                                    ${
+                                        firstExample
+                                            ? `
                                         <p style="${captionStyles}; margin: 0; background: rgba(255, 255, 255, 0.8); padding: 4px 6px; border-radius: 4px; border: 1px solid rgba(0, 0, 0, 0.05);">
                                             ${this.escapeHtml(firstExample)}
                                         </p>
-                                    ` : ''}
+                                    `
+                                            : ''
+                                    }
                                 </div>
                             </div>
                         `;
-                    }).join('');
+                            })
+                            .join('');
 
-                    skillsHtml = `
+                        skillsHtml = `
                         <div class="a2ui-column ${columnClasses}" style="${columnStyles}; margin-top: 8px;">
                             <p style="${captionStyles}; margin: 0 0 4px 0; font-weight: 500;">
                                 技能 (${skills.length}):
@@ -1354,25 +1381,30 @@ class A2AEntryWidget extends HTMLElement {
                             </div>
                         </div>
                     `;
-                }
+                    }
 
-                // 使用主题样式构建 Agent 卡片
-                return `
+                    // 使用主题样式构建 Agent 卡片
+                    return `
                     <div class="a2ui-card ${cardClasses} agents-card-item" style="${cardStyles}; margin-bottom: 8px; transition: all 0.2s ease; cursor: default;">
                         <div class="a2ui-column ${columnClasses}" style="${columnStyles}">
                             <h3 style="${h3Styles}; margin: 0;">
                                 ${this.escapeHtml(card.name || agentId)}
                             </h3>
-                            ${card.description ? `
+                            ${
+                                card.description
+                                    ? `
                                 <p style="${bodyStyles}; margin: 4px 0 0 0;">
                                     ${this.escapeHtml(card.description)}
                                 </p>
-                            ` : ''}
+                            `
+                                    : ''
+                            }
                             ${skillsHtml}
                         </div>
                     </div>
                 `;
-            }).join('');
+                })
+                .join('');
 
             // 使用主题样式构建完整的列表
             const isExpanded = this.agentsListExpanded;
@@ -1434,7 +1466,7 @@ class A2AEntryWidget extends HTMLElement {
                     }
                 </style>
             `;
-            
+
             return `
                 <div class="mb-6">
                     ${additionalStyles}
@@ -1493,54 +1525,69 @@ class A2AEntryWidget extends HTMLElement {
                     Agents 列表 (${this.agents.length})
                 </h2>
                 <div class="space-y-3">
-                    ${this.agents.map((entry, index) => {
-                        const agentName = entry.name || '';
-                        const agentId = agentName.includes('/')
-                            ? agentName.split('/').pop()
-                            : agentName;
-                        const card = entry.card || {};
-                        const skills = card.skills || [];
+                    ${this.agents
+                        .map((entry, index) => {
+                            const agentName = entry.name || '';
+                            const agentId = agentName.includes('/') ? agentName.split('/').pop() : agentName;
+                            const card = entry.card || {};
+                            const skills = card.skills || [];
 
-                        return `
+                            return `
                             <div class="p-4 bg-white rounded-lg border border-gray-200 shadow-sm hover:shadow-md transition-shadow">
                                 <div class="flex items-start justify-between mb-2">
                                     <div class="flex-1">
                                         <h3 class="font-semibold text-gray-800">${this.escapeHtml(card.name || agentId)}</h3>
                                     </div>
                                 </div>
-                                ${card.description ? `
+                                ${
+                                    card.description
+                                        ? `
                                     <p class="text-sm text-gray-600 mt-2 mb-3">${this.escapeHtml(card.description)}</p>
-                                ` : ''}
-                                ${skills.length > 0 ? `
+                                `
+                                        : ''
+                                }
+                                ${
+                                    skills.length > 0
+                                        ? `
                                     <div class="mt-2">
                                         <p class="text-xs font-medium text-gray-500 mb-1">技能 (${skills.length}):</p>
                                         <div class="space-y-2">
-                                            ${skills.map(skill => {
-                                                const skillName = skill.name || skill.id || 'N/A';
-                                                const skillExamples = skill.examples || [];
-                                                const firstExample = skillExamples.length > 0 ? skillExamples[0] : null;
+                                            ${skills
+                                                .map((skill) => {
+                                                    const skillName = skill.name || skill.id || 'N/A';
+                                                    const skillExamples = skill.examples || [];
+                                                    const firstExample =
+                                                        skillExamples.length > 0 ? skillExamples[0] : null;
 
-                                                return `
+                                                    return `
                                                     <div class="p-2 bg-purple-50 rounded border border-purple-100">
                                                         <div class="font-semibold text-xs text-purple-700 mb-1">
                                                             ${this.escapeHtml(skillName)}
                                                         </div>
-                                                        ${firstExample ? `
+                                                        ${
+                                                            firstExample
+                                                                ? `
                                                             <div class="mt-1">
                                                                 <div class="text-xs text-gray-700 bg-white px-2 py-1 rounded border border-gray-200">
                                                                     ${this.escapeHtml(firstExample)}
                                                                 </div>
                                                             </div>
-                                                        ` : ''}
+                                                        `
+                                                                : ''
+                                                        }
                                                     </div>
                                                 `;
-                                            }).join('')}
+                                                })
+                                                .join('')}
                                         </div>
                                     </div>
-                                ` : ''}
+                                `
+                                        : ''
+                                }
                             </div>
                         `;
-                    }).join('')}
+                        })
+                        .join('')}
                 </div>
             </div>
         `;

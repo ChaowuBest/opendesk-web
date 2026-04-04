@@ -1,13 +1,12 @@
-import type { OpenDeskTUI } from "../entry.js";
-import { setDebugMode, getDebugMode } from "../../utils/logger.js";
-import { logger } from "../../utils/logger.js";
-import { InfoOverlay } from "../components/notice.js";
-
+import type { OpenDeskTUI } from '../entry.js';
+import { setDebugMode, getDebugMode } from '../../utils/logger.js';
+import { logger } from '../../utils/logger.js';
+import { InfoOverlay } from '../components/notice.js';
 
 export function registerDebugCommand(tui: OpenDeskTUI): void {
     tui.commandRegistry.register({
-        name: "debug",
-        description: "调试命令，用法: /debug log [on|off] | /debug taskid",
+        name: 'debug',
+        description: '调试命令，用法: /debug log [on|off] | /debug taskid',
         getArgumentCompletions: (argPrefix: string) => {
             const subCommands = ['log', 'taskid'];
             const logOptions = ['on', 'off'];
@@ -19,9 +18,9 @@ export function registerDebugCommand(tui: OpenDeskTUI): void {
 
             // 如果还没有输入第一个参数，或者正在输入第一个参数
             if (parts.length === 1) {
-                const matchingSubCommands = subCommands.filter(cmd => cmd.startsWith(firstArg));
+                const matchingSubCommands = subCommands.filter((cmd) => cmd.startsWith(firstArg));
                 if (matchingSubCommands.length > 0) {
-                    return matchingSubCommands.map(cmd => ({
+                    return matchingSubCommands.map((cmd) => ({
                         value: cmd,
                         label: cmd,
                         description: cmd === 'log' ? '调试日志开关 (on|off)' : '显示当前任务ID'
@@ -32,8 +31,8 @@ export function registerDebugCommand(tui: OpenDeskTUI): void {
             // 如果第一个参数是 log，提供 on/off 选项
             if (firstArg === 'log' && parts.length === 2) {
                 return logOptions
-                    .filter(opt => opt.startsWith(secondArg))
-                    .map(opt => ({
+                    .filter((opt) => opt.startsWith(secondArg))
+                    .map((opt) => ({
                         value: `log ${opt}`,
                         label: opt,
                         description: opt === 'on' ? '开启调试日志' : '关闭调试日志'
@@ -65,15 +64,15 @@ export function registerDebugCommand(tui: OpenDeskTUI): void {
                 const taskId = tui.activeTaskId;
                 if (taskId) {
                     const info = new InfoOverlay(tui, {
-                        title: "当前任务ID",
+                        title: '当前任务ID',
                         message: taskId,
                         fullWidth: true
                     });
                     info.show();
                 } else {
                     const info = new InfoOverlay(tui, {
-                        title: "提示",
-                        message: "当前没有活跃任务"
+                        title: '提示',
+                        message: '当前没有活跃任务'
                     });
                     info.show();
                 }
@@ -85,6 +84,6 @@ export function registerDebugCommand(tui: OpenDeskTUI): void {
                     logger.info(`未知子命令: ${subCommand}。用法: /debug log [on|off] | /debug taskid`);
                 }
             }
-        },
+        }
     });
 }

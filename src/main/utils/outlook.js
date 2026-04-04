@@ -12,7 +12,6 @@
 import { spawnSync } from 'child_process';
 import { z } from 'zod';
 
-
 const POWERSHELL_CMD_GET_OUTLOOK_CALENDAR_ITEMS = (daysBefore, daysAfter) => `
 $OutputEncoding = [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
@@ -51,7 +50,7 @@ $objects = $items | ForEach-Object {
 
 $jsonOutput = $objects | ConvertTo-Json -Depth 2
 Write-Output $jsonOutput
-`
+`;
 
 const OutlookCalendarItemSchema = z.object({
     entryID: z.string(),
@@ -65,11 +64,10 @@ const OutlookCalendarItemSchema = z.object({
     isPrivate: z.boolean(),
     isMeeting: z.boolean(),
     isCancelled: z.boolean(),
-    isRecurring: z.boolean(),
+    isRecurring: z.boolean()
 });
 
 export class OutlookUtils {
-
     /**
      * @param {number} daysBefore
      * @param {number} daysAfter
@@ -89,5 +87,4 @@ export class OutlookUtils {
             return jsonOutput;
         }
     }
-
 }

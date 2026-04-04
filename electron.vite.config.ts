@@ -1,7 +1,6 @@
-import { defineConfig, loadEnv } from 'electron-vite'
-import tailwindcss from '@tailwindcss/vite'
-import path from 'path'
-
+import { defineConfig, loadEnv } from 'electron-vite';
+import tailwindcss from '@tailwindcss/vite';
+import path from 'path';
 
 export default defineConfig(({ mode }) => {
     return {
@@ -28,8 +27,8 @@ export default defineConfig(({ mode }) => {
                         index: path.join(__dirname, 'src', 'renderer', 'preload.js')
                     },
                     output: {
-                        format: "cjs",
-                        entryFileNames: "[name].js",
+                        format: 'cjs',
+                        entryFileNames: '[name].js'
                     }
                 },
                 sourcemap: true

@@ -10,8 +10,12 @@
  */
 
 import {
-    ChatContext, AssistantMessage, CompactSeparatorMessage,
-    UserMessage, ToolCall, type ChatMessage
+    ChatContext,
+    AssistantMessage,
+    CompactSeparatorMessage,
+    UserMessage,
+    ToolCall,
+    type ChatMessage
 } from './messages.js';
 import { LLM } from './llm.js';
 import { Setting, ModelInstance, getArtifactDirectory } from '../utils/setting.js';
@@ -21,7 +25,6 @@ import { HookRegistry } from './hooks.js';
 import type { TaskState } from './states/tasks.js';
 import path from 'path';
 import fs from 'fs';
-
 
 /**
  * 构建结构化总结所使用的 system prompt
@@ -109,7 +112,7 @@ export function compressToolCalls(chatContext: ChatContext): number {
 
     const keepCount = Math.max(Math.ceil(total * 0.3), Math.min(10, total));
     const compressUpTo = total - keepCount;
-    const alreadyCompressed = activeToolCalls.filter(tc => tc.compress_id).length;
+    const alreadyCompressed = activeToolCalls.filter((tc) => tc.compress_id).length;
 
     let newlyCompressed = 0;
     for (let i = 0; i < compressUpTo; i++) {
@@ -122,13 +125,13 @@ export function compressToolCalls(chatContext: ChatContext): number {
     if (newlyCompressed > 0) {
         logger.info(
             `[Compact L1] 工具调用压缩: 活跃上下文共 ${total} 个, ` +
-            `本次新压缩 ${newlyCompressed} 个, 此前已压缩 ${alreadyCompressed} 个, ` +
-            `保留最近 ${keepCount} 个不压缩`
+                `本次新压缩 ${newlyCompressed} 个, 此前已压缩 ${alreadyCompressed} 个, ` +
+                `保留最近 ${keepCount} 个不压缩`
         );
     } else {
         logger.info(
             `[Compact L1] 无新增压缩 (活跃上下文共 ${total} 个工具调用, ` +
-            `已压缩 ${alreadyCompressed} 个, 保留 ${keepCount} 个)`
+                `已压缩 ${alreadyCompressed} 个, 保留 ${keepCount} 个)`
         );
     }
 
@@ -141,11 +144,13 @@ function buildMessagesText(messages: ChatMessage[]): string {
 
     for (const msg of messages) {
         if (msg instanceof UserMessage) {
-            const text = msg.content.map(p => {
-                if (p.type === 'text') return p.text;
-                if (p.type === 'file') return `[File: ${p.path}]`;
-                return '';
-            }).join('\n');
+            const text = msg.content
+                .map((p) => {
+                    if (p.type === 'text') return p.text;
+                    if (p.type === 'file') return `[File: ${p.path}]`;
+                    return '';
+                })
+                .join('\n');
             parts.push(`[User]: ${text}`);
         } else if (msg instanceof AssistantMessage) {
             for (const part of msg.content) {
@@ -156,12 +161,18 @@ function buildMessagesText(messages: ChatMessage[]): string {
                 } else if (part.type === 'tool_call') {
                     for (const tc of part.toolcalls) {
                         const resultSnippet = tc.result
-                            ? (tc.result.length > 300 ? tc.result.substring(0, 300) + '…' : tc.result)
+                            ? tc.result.length > 300
+                                ? tc.result.substring(0, 300) + '…'
+                                : tc.result
                             : 'no result';
                         const argsSnippet = tc.args_string
-                            ? (tc.args_string.length > 300 ? tc.args_string.substring(0, 300) + '…' : tc.args_string)
+                            ? tc.args_string.length > 300
+                                ? tc.args_string.substring(0, 300) + '…'
+                                : tc.args_string
                             : 'none';
-                        parts.push(`[Tool Call: ${tc.tool_name}] Args: ${argsSnippet} → Result(${tc.status}): ${resultSnippet}`);
+                        parts.push(
+                            `[Tool Call: ${tc.tool_name}] Args: ${argsSnippet} → Result(${tc.status}): ${resultSnippet}`
+                        );
                     }
                 }
             }
@@ -176,21 +187,22 @@ function buildMessagesText(messages: ChatMessage[]): string {
 /**
  * 调用 LLM 生成对话历史的结构化总结
  */
-async function generateSummary(
-    messages: ChatMessage[],
-    model?: string
-): Promise<string> {
+async function generateSummary(messages: ChatMessage[], model?: string): Promise<string> {
     const messagesText = buildMessagesText(messages);
     const question = new UserMessage();
-    question.appendText(
-        `${getCompressionPrompt()}\n\n---\n\n以下是需要总结的对话历史：\n\n${messagesText}`
-    );
+    question.appendText(`${getCompressionPrompt()}\n\n---\n\n以下是需要总结的对话历史：\n\n${messagesText}`);
     return await LLM.ask(question, model);
 }
 
 /** 统计消息列表中的对话轮次和工具调用数 */
-function countMessageStats(messages: ChatMessage[]): { userMsgs: number; assistantMsgs: number; toolCalls: number } {
-    let userMsgs = 0, assistantMsgs = 0, toolCalls = 0;
+function countMessageStats(messages: ChatMessage[]): {
+    userMsgs: number;
+    assistantMsgs: number;
+    toolCalls: number;
+} {
+    let userMsgs = 0,
+        assistantMsgs = 0,
+        toolCalls = 0;
     for (const msg of messages) {
         if (msg instanceof UserMessage) {
             userMsgs++;
@@ -221,9 +233,7 @@ async function compressWithSeparator(chatContext: ChatContext, model?: string): 
     const oldIndex = existingSep?.index;
 
     // 移除已存在的 separator（用 role 字段检查，避免 instanceof 跨模块失效）
-    chatContext.messages = chatContext.messages.filter(
-        m => (m as any).role !== 'compact_separator'
-    );
+    chatContext.messages = chatContext.messages.filter((m) => (m as any).role !== 'compact_separator');
 
     const totalMessages = chatContext.messages.length;
     if (totalMessages < MIN_KEPT_MESSAGES) {
@@ -248,9 +258,7 @@ async function compressWithSeparator(chatContext: ChatContext, model?: string): 
     }
     // 极端情况：separator 无法比当前位置更前进
     if (oldIndex !== undefined && separatorPosition <= oldIndex) {
-        logger.info(
-            `[Compact L2] 已压缩到极限: separator 后仅剩 ${totalMessages - oldIndex} 条消息, 无法继续前移`
-        );
+        logger.info(`[Compact L2] 已压缩到极限: separator 后仅剩 ${totalMessages - oldIndex} 条消息, 无法继续前移`);
         // 退无可退时仍然重新生成总结（可能旧总结遗漏了新消息）
         separatorPosition = oldIndex;
     }
@@ -265,15 +273,19 @@ async function compressWithSeparator(chatContext: ChatContext, model?: string): 
     const keptMessages = chatContext.messages.slice(separatorPosition);
     const keptStats = countMessageStats(keptMessages);
 
-    const action = oldIndex === undefined ? '插入'
-        : (separatorPosition > oldIndex ? `前移 ${oldIndex} → ${separatorPosition}` : '重新生成');
+    const action =
+        oldIndex === undefined
+            ? '插入'
+            : separatorPosition > oldIndex
+              ? `前移 ${oldIndex} → ${separatorPosition}`
+              : '重新生成';
 
     logger.info(
         `[Compact L2] ${action} 分隔符, 位置 ${separatorPosition}/${totalMessages}, ` +
-        `折叠: ${summarizedStats.userMsgs} 条用户 + ${summarizedStats.assistantMsgs} 条助手 ` +
-        `(${summarizedStats.toolCalls} 个工具调用), ` +
-        `保留: ${keptStats.userMsgs} 条用户 + ${keptStats.assistantMsgs} 条助手 ` +
-        `(${keptStats.toolCalls} 个工具调用), 正在生成总结…`
+            `折叠: ${summarizedStats.userMsgs} 条用户 + ${summarizedStats.assistantMsgs} 条助手 ` +
+            `(${summarizedStats.toolCalls} 个工具调用), ` +
+            `保留: ${keptStats.userMsgs} 条用户 + ${keptStats.assistantMsgs} 条助手 ` +
+            `(${keptStats.toolCalls} 个工具调用), 正在生成总结…`
     );
 
     try {
@@ -293,7 +305,7 @@ async function compressWithSeparator(chatContext: ChatContext, model?: string): 
  */
 export async function compactContext(chatContext: ChatContext, model?: string): Promise<boolean> {
     chatContext.deduplicateSeparators();
-    const totalMessages = chatContext.messages.filter(m => (m as any).role !== 'compact_separator').length;
+    const totalMessages = chatContext.messages.filter((m) => (m as any).role !== 'compact_separator').length;
     logger.info(`[Compact] 开始压缩, 当前消息数: ${totalMessages}`);
 
     const newlyCompressed = compressToolCalls(chatContext);
@@ -358,7 +370,7 @@ export async function shouldCompact(chatContext: ChatContext, model?: string): P
     if (needed) {
         logger.info(
             `[Compact] 自动压缩触发: prompt_tokens=${lastUsage.prompt_tokens}, ` +
-            `阈值=${Math.floor(threshold)} (${contextSize} × 80%)`
+                `阈值=${Math.floor(threshold)} (${contextSize} × 80%)`
         );
     }
     return needed;
@@ -377,8 +389,7 @@ const ARTIFACT_TAIL_CHARS = 8_000;
 const TOOLS_EXCLUDED_FROM_RESULT_COMPRESSION = new Set(['readFiles']);
 
 function isExcludedFromCompression(tool_name: string): boolean {
-    return TOOLS_EXCLUDED_FROM_RESULT_COMPRESSION.has(tool_name)
-        || tool_name.endsWith('-readFiles');
+    return TOOLS_EXCLUDED_FROM_RESULT_COMPRESSION.has(tool_name) || tool_name.endsWith('-readFiles');
 }
 
 function truncateByLines(result: string): string | undefined {

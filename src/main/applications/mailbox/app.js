@@ -9,24 +9,31 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { BaseApplication } from "../base";
-import { BaseToolset } from "../../aikernel/tool";
-import { Skill } from "../../aikernel/skill.js";
-import { MailboxConfigSchema } from "./common.js"; // 引入新的 Schema
-import { logger } from "../../utils/logger.js";
-import MailboxWorker from "./service/worker";
-import { MANAGE_MAILBOX_SKILL, OPERATE_MAILBOX_SKILL } from "./skills";
+import { BaseApplication } from '../base';
+import { BaseToolset } from '../../aikernel/tool';
+import { Skill } from '../../aikernel/skill.js';
+import { MailboxConfigSchema } from './common.js'; // 引入新的 Schema
+import { logger } from '../../utils/logger.js';
+import MailboxWorker from './service/worker';
+import { MANAGE_MAILBOX_SKILL, OPERATE_MAILBOX_SKILL } from './skills';
 import {
-    AddMailAccountTool, ListMailAccountsTool, RemoveMailAccountTool, SwitchMailAccountTool,
-    GetEmailListTool, GetEmailContentTool, SearchEmailsTool,
-    SendEmailTool, ReplyEmailTool, MarkEmailReadTool, StarEmailTool, DeleteEmailTool,
-} from "./tools";
-import { MailOverlay } from "./tui.js";
-import chalk from "chalk";
-
+    AddMailAccountTool,
+    ListMailAccountsTool,
+    RemoveMailAccountTool,
+    SwitchMailAccountTool,
+    GetEmailListTool,
+    GetEmailContentTool,
+    SearchEmailsTool,
+    SendEmailTool,
+    ReplyEmailTool,
+    MarkEmailReadTool,
+    StarEmailTool,
+    DeleteEmailTool
+} from './tools';
+import { MailOverlay } from './tui.js';
+import chalk from 'chalk';
 
 class MailboxApplication extends BaseApplication {
-
     constructor() {
         super('mailbox', '邮箱');
     }
@@ -35,12 +42,14 @@ class MailboxApplication extends BaseApplication {
         try {
             const [accountsRes, countsRes] = await Promise.allSettled([
                 this.callWorker('getAccountList'),
-                this.callWorker('getAllNewEmailCounts'),
+                this.callWorker('getAllNewEmailCounts')
             ]);
-            const accounts = accountsRes.status === 'fulfilled' && accountsRes.value?.status === 'ok'
-                ? (accountsRes.value.data || []) : [];
-            const counts = countsRes.status === 'fulfilled' && countsRes.value?.status === 'ok'
-                ? (countsRes.value.data || {}) : {};
+            const accounts =
+                accountsRes.status === 'fulfilled' && accountsRes.value?.status === 'ok'
+                    ? accountsRes.value.data || []
+                    : [];
+            const counts =
+                countsRes.status === 'fulfilled' && countsRes.value?.status === 'ok' ? countsRes.value.data || {} : {};
             const totalUnread = Object.values(counts).reduce((s, n) => s + n, 0);
 
             if (accounts.length === 0) return null;
@@ -96,9 +105,18 @@ class MailboxApplication extends BaseApplication {
 
     async getSupportedEvents() {
         return [
-            { eventName: 'newEmailCountsUpdated', eventDescription: '新邮件数量更新（各账户未读邮件计数发生变化时触发）' },
-            { eventName: 'emailListUpdated', eventDescription: '当前账户的邮件列表已更新（收到新邮件或同步完成时触发）' },
-            { eventName: 'accountsUpdated', eventDescription: '邮箱账户列表已更新（账户增删或配置重载时触发）' },
+            {
+                eventName: 'newEmailCountsUpdated',
+                eventDescription: '新邮件数量更新（各账户未读邮件计数发生变化时触发）'
+            },
+            {
+                eventName: 'emailListUpdated',
+                eventDescription: '当前账户的邮件列表已更新（收到新邮件或同步完成时触发）'
+            },
+            {
+                eventName: 'accountsUpdated',
+                eventDescription: '邮箱账户列表已更新（账户增删或配置重载时触发）'
+            }
         ];
     }
 
@@ -119,11 +137,10 @@ class MailboxApplication extends BaseApplication {
                     } catch (err) {
                         logger.error(`打开邮箱失败: ${err}`);
                     }
-                },
-            },
+                }
+            }
         ];
     }
-
 }
 
 export { MailboxApplication };

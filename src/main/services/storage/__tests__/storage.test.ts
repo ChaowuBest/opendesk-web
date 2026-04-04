@@ -63,8 +63,8 @@ function buildTestItems(): Item[] {
             indexer_columns: {
                 VectorIndexer: [{ column: 'text', content: vectorA }],
                 TagIndexer: [{ column: 'tag', content: 'todo' }],
-                BM25Indexer: [{ column: 'text', content: '项目计划书 project proposal' }],
-            },
+                BM25Indexer: [{ column: 'text', content: '项目计划书 project proposal' }]
+            }
         },
         {
             item_id: 'item-2',
@@ -78,9 +78,9 @@ function buildTestItems(): Item[] {
             indexer_columns: {
                 VectorIndexer: [{ column: 'text', content: vectorB }],
                 TagIndexer: [{ column: 'tag', content: 'idea' }],
-                BM25Indexer: [{ column: 'text', content: '会议纪要 meeting notes' }],
-            },
-        },
+                BM25Indexer: [{ column: 'text', content: '会议纪要 meeting notes' }]
+            }
+        }
     ];
 }
 
@@ -90,69 +90,84 @@ async function seedItems(storage: BaseStorage): Promise<void> {
 }
 
 async function testBaseSearch(storage: BaseStorage): Promise<void> {
-    const results = await storage.search([], [
-        {
-            indexer: 'BaseIndexer',
-            field: 'text',
-            operator: 'like',
-            value: 'vector%',
-            // field: 'semi_text',
-            // operator: 'like',
-            // value: 'vector%',
-        },
-    ]);
+    const results = await storage.search(
+        [],
+        [
+            {
+                indexer: 'BaseIndexer',
+                field: 'text',
+                operator: 'like',
+                value: 'vector%'
+                // field: 'semi_text',
+                // operator: 'like',
+                // value: 'vector%',
+            }
+        ]
+    );
 
     console.log('[BaseIndexer] results:', results);
 }
 
 async function testVectorSearch(storage: BaseStorage): Promise<void> {
     const queryVector = makeOneHotVector(0);
-    const results = await storage.search([], [
-        {
-            indexer: 'VectorIndexer',
-            field: 'text',
-            operator: 'vector_near',
-            value: queryVector,
-            vectorQuery: { topK: 1, metric: 'cosine', threshold: 0.0 },
-        },
-    ]);
+    const results = await storage.search(
+        [],
+        [
+            {
+                indexer: 'VectorIndexer',
+                field: 'text',
+                operator: 'vector_near',
+                value: queryVector,
+                vectorQuery: { topK: 1, metric: 'cosine', threshold: 0.0 }
+            }
+        ]
+    );
 
     console.log('[VectorIndexer] results:', results);
 }
 
 async function testTagSearch(storage: BaseStorage): Promise<void> {
-    const results = await storage.search([], [
-        {
-            indexer: 'TagIndexer',
-            field: 'tag',
-            operator: 'like',
-            value: 'todo',
-        },
-    ]);
+    const results = await storage.search(
+        [],
+        [
+            {
+                indexer: 'TagIndexer',
+                field: 'tag',
+                operator: 'like',
+                value: 'todo'
+            }
+        ]
+    );
 
     console.log('[TagIndexer] results:', results);
 }
 
 async function testBM25Search(storage: BaseStorage): Promise<void> {
-    const results = await storage.search([], [
-        {
-            indexer: 'BM25Indexer',
-            field: 'text',
-            operator: 'bm25_match',
-            value: { query: 'project', topK: 10 } as BM25Query,
-        },
-    ]);
+    const results = await storage.search(
+        [],
+        [
+            {
+                indexer: 'BM25Indexer',
+                field: 'text',
+                operator: 'bm25_match',
+                value: { query: 'project', topK: 10 } as BM25Query
+            }
+        ]
+    );
 
     console.log('[BM25Indexer] results:', results);
 
-    const zhResults = await storage.search([], [
-        {
-            indexer: 'BM25Indexer',
-            field: 'text',
-            operator: 'bm25_match',
-            value: { query: '项目计划书', topK: 10 } as BM25Query,
-        },
-    ]);
+    const zhResults = await storage.search(
+        [],
+        [
+            {
+                indexer: 'BM25Indexer',
+                field: 'text',
+                operator: 'bm25_match',
+                value: { query: '项目计划书', topK: 10 } as BM25Query
+            }
+        ]
+    );
     console.log('[BM25Indexer] zh results:', zhResults);
     if (zhResults.length === 0 || zhResults[0]?.item?.item_id !== 'item-1') {
         throw new Error('[BM25Indexer] FAIL: 中文查询 "项目计划书" 未命中预期文档 item-1');
@@ -168,12 +183,12 @@ async function testVectorBaseOnly(): Promise<void> {
             text: { type: 'TEXT', nullable: true },
             semi_text: { type: 'TEXT', nullable: true },
             created_at: { type: 'INTEGER', nullable: true },
-            updated_at: { type: 'INTEGER', nullable: true },
+            updated_at: { type: 'INTEGER', nullable: true }
         },
         needIndexers: {
             text: ['VectorIndexer'],
-            semi_text: ['VectorIndexer'],
-        },
+            semi_text: ['VectorIndexer']
+        }
     };
 
     const storage = new BaseStorage('storage-test2-vector-base', schema, TEST_DB_DIR_VB);
@@ -192,9 +207,9 @@ async function testVectorBaseOnly(): Promise<void> {
             indexer_columns: {
                 VectorIndexer: [
                     { column: 'text', content: makeOneHotVector(2) },
-                    { column: 'semi_text', content: makeOneHotVector(3) },
-                ],
-            },
+                    { column: 'semi_text', content: makeOneHotVector(3) }
+                ]
+            }
         },
         {
             item_id: 'vb-2',
@@ -207,9 +222,9 @@ async function testVectorBaseOnly(): Promise<void> {
             indexer_columns: {
                 VectorIndexer: [
                     { column: 'text', content: makeOneHotVector(4) },
-                    { column: 'semi_text', content: makeOneHotVector(5) },
-                ],
-            },
+                    { column: 'semi_text', content: makeOneHotVector(5) }
+                ]
+            }
         },
         {
             item_id: 'vb-3',
@@ -222,9 +237,9 @@ async function testVectorBaseOnly(): Promise<void> {
             indexer_columns: {
                 VectorIndexer: [
                     { column: 'text', content: makeOneHotVector(6) },
-                    { column: 'semi_text', content: makeOneHotVector(7) },
-                ],
-            },
+                    { column: 'semi_text', content: makeOneHotVector(7) }
+                ]
+            }
         },
         {
             item_id: 'vb-4',
@@ -237,10 +252,10 @@ async function testVectorBaseOnly(): Promise<void> {
             indexer_columns: {
                 VectorIndexer: [
                     { column: 'text', content: makeOneHotVector(8) },
-                    { column: 'semi_text', content: makeOneHotVector(9) },
-                ],
-            },
-        },
+                    { column: 'semi_text', content: makeOneHotVector(9) }
+                ]
+            }
+        }
     ];
 
     await storage.insert(items);
@@ -255,32 +270,38 @@ async function testVectorBaseOnly(): Promise<void> {
     // ]);
     // console.log('[Vector+Base] BaseIndexer results:', baseResults);
 
-    const vecResultsText = await storage.search([], [
-        {
-            indexer: 'VectorIndexer',
-            field: 'text',
-            operator: 'vector_near',
-            value: items[0].indexer_columns?.VectorIndexer?.[0].content as number[],
-            vectorQuery: { topK: 1, metric: 'cosine', threshold: 0.0 },
-        },
-        {
-            indexer: 'BaseIndexer',
-            field: 'text',
-            operator: 'like',
-            value: 'text-%',
-        }
-    ]);
+    const vecResultsText = await storage.search(
+        [],
+        [
+            {
+                indexer: 'VectorIndexer',
+                field: 'text',
+                operator: 'vector_near',
+                value: items[0].indexer_columns?.VectorIndexer?.[0].content as number[],
+                vectorQuery: { topK: 1, metric: 'cosine', threshold: 0.0 }
+            },
+            {
+                indexer: 'BaseIndexer',
+                field: 'text',
+                operator: 'like',
+                value: 'text-%'
+            }
+        ]
+    );
     console.log('[Vector+Base] VectorIndexer(text) results:', vecResultsText);
 
-    const vecResultsSemi = await storage.search([], [
-        {
-            indexer: 'VectorIndexer',
-            field: 'semi_text',
-            operator: 'vector_near',
-            value: items[1].indexer_columns?.VectorIndexer?.[1].content as number[],
-            vectorQuery: { topK: 1, metric: 'cosine', threshold: 0.0 },
-        },
-    ]);
+    const vecResultsSemi = await storage.search(
+        [],
+        [
+            {
+                indexer: 'VectorIndexer',
+                field: 'semi_text',
+                operator: 'vector_near',
+                value: items[1].indexer_columns?.VectorIndexer?.[1].content as number[],
+                vectorQuery: { topK: 1, metric: 'cosine', threshold: 0.0 }
+            }
+        ]
+    );
     console.log('[Vector+Base] VectorIndexer(semi_text) results:', vecResultsSemi);
 }
 
@@ -293,15 +314,19 @@ async function testBM25Only(): Promise<void> {
             text: { type: 'TEXT', nullable: true },
             semi_text: { type: 'TEXT', nullable: true },
             created_at: { type: 'INTEGER', nullable: true },
-            updated_at: { type: 'INTEGER', nullable: true },
+            updated_at: { type: 'INTEGER', nullable: true }
         },
         needIndexers: {
             text: ['BM25Indexer'],
-            semi_text: ['BM25Indexer'],
-        },
+            semi_text: ['BM25Indexer']
+        }
     };
 
-    const storage = new BaseStorage('storage-test2-bm25-only', schema, path.join(os.tmpdir(), 'storage-test2-bm25-only'));
+    const storage = new BaseStorage(
+        'storage-test2-bm25-only',
+        schema,
+        path.join(os.tmpdir(), 'storage-test2-bm25-only')
+    );
     await storage.initialize();
 
     const now = Date.now();
@@ -320,9 +345,9 @@ async function testBM25Only(): Promise<void> {
                 indexer_columns: {
                     BM25Indexer: [
                         { column: 'text', content: text },
-                        { column: 'semi_text', content: semiText },
-                    ],
-                },
+                        { column: 'semi_text', content: semiText }
+                    ]
+                }
             };
         })(),
         (() => {
@@ -339,9 +364,9 @@ async function testBM25Only(): Promise<void> {
                 indexer_columns: {
                     BM25Indexer: [
                         { column: 'text', content: text },
-                        { column: 'semi_text', content: semiText },
-                    ],
-                },
+                        { column: 'semi_text', content: semiText }
+                    ]
+                }
             };
         })(),
         (() => {
@@ -358,9 +383,9 @@ async function testBM25Only(): Promise<void> {
                 indexer_columns: {
                     BM25Indexer: [
                         { column: 'text', content: text },
-                        { column: 'semi_text', content: semiText },
-                    ],
-                },
+                        { column: 'semi_text', content: semiText }
+                    ]
+                }
             };
         })(),
         (() => {
@@ -377,45 +402,51 @@ async function testBM25Only(): Promise<void> {
                 indexer_columns: {
                     BM25Indexer: [
                         { column: 'text', content: text },
-                        { column: 'semi_text', content: semiText },
-                    ],
-                },
+                        { column: 'semi_text', content: semiText }
+                    ]
+                }
             };
-        })(),
+        })()
     ];
 
     await storage.insert(items);
 
-    const resultsText = await storage.search([], [
-        {
-            indexer: 'BM25Indexer',
-            field: 'text',
-            operator: 'bm25_match',
-            value: { query: 'project', topK: 10 } as BM25Query,
-        },
-    ]);
+    const resultsText = await storage.search(
+        [],
+        [
+            {
+                indexer: 'BM25Indexer',
+                field: 'text',
+                operator: 'bm25_match',
+                value: { query: 'project', topK: 10 } as BM25Query
+            }
+        ]
+    );
     console.log('[BM25Only] text results:', resultsText);
 
     // 校验词频：'project plan project' 包含 2 个 project，应该排在 'project beta notes' 前面
     if (resultsText.length >= 2) {
-        const scores = resultsText.map(r => r.BM25Score ?? 0);
+        const scores = resultsText.map((r) => r.BM25Score ?? 0);
         if (scores[0] <= scores[1]) {
             throw new Error(
                 `[BM25Only] FAIL: 词频高的文档应该有更高的 BM25Score. ` +
-                `bm-1 (2个project) score: ${scores[0]}, bm-2 (1个project) score: ${scores[1]}`
+                    `bm-1 (2个project) score: ${scores[0]}, bm-2 (1个project) score: ${scores[1]}`
             );
         }
         console.log('[BM25Only] PASS: 词频校验通过');
     }
 
-    const resultsSemi = await storage.search([], [
-        {
-            indexer: 'BM25Indexer',
-            field: 'semi_text',
-            operator: 'bm25_match',
-            value: { query: 'design', topK: 10 } as BM25Query,
-        },
-    ]);
+    const resultsSemi = await storage.search(
+        [],
+        [
+            {
+                indexer: 'BM25Indexer',
+                field: 'semi_text',
+                operator: 'bm25_match',
+                value: { query: 'design', topK: 10 } as BM25Query
+            }
+        ]
+    );
     console.log('[BM25Only] semi_text results:', resultsSemi);
 }
 
@@ -431,12 +462,12 @@ async function main(): Promise<void> {
             tag: { type: 'TEXT', nullable: true },
             created_at: { type: 'INTEGER', nullable: true },
             updated_at: { type: 'INTEGER', nullable: true },
-            semi_text: { type: 'TEXT', nullable: true },
+            semi_text: { type: 'TEXT', nullable: true }
         },
         needIndexers: {
             tag: ['TagIndexer'],
-            text: ['VectorIndexer', 'BM25Indexer'],
-        },
+            text: ['VectorIndexer', 'BM25Indexer']
+        }
     };
 
     const storage = new BaseStorage('storage-test2', schema, TEST_DB_DIR);

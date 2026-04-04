@@ -9,22 +9,21 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { type Component, Box, Text, SelectList, matchesKey } from "@mariozechner/pi-tui";
-import { defaultSelectListTheme } from "../theme";
-import { OpenDeskTUI } from "../entry";
-import { SelectTable, type SelectRow } from "./selecttable";
-import { MemoryRegistry } from "../../aikernel/memory/registry";
-import { MEMORY_CATEGORY_LABELS, type MemoryScope, type MemoryMeta } from "../../aikernel/memory/common";
+import { type Component, Box, Text, SelectList, matchesKey } from '@mariozechner/pi-tui';
+import { defaultSelectListTheme } from '../theme';
+import { OpenDeskTUI } from '../entry';
+import { SelectTable, type SelectRow } from './selecttable';
+import { MemoryRegistry } from '../../aikernel/memory/registry';
+import { MEMORY_CATEGORY_LABELS, type MemoryScope, type MemoryMeta } from '../../aikernel/memory/common';
 
-import chalk from "chalk";
-
+import chalk from 'chalk';
 
 type FilterMode = 'all' | 'global' | 'workspace';
 
 const FILTER_LABELS: Record<FilterMode, string> = {
     all: '全部',
     global: '全局',
-    workspace: '工作区',
+    workspace: '工作区'
 };
 
 const FILTER_CYCLE: FilterMode[] = ['all', 'workspace', 'global'];
@@ -52,11 +51,7 @@ export class MemoryListOverlay implements Component {
         this.previewText = new Text(chalk.dim('  选择一条记忆以预览内容'));
 
         const rows = this.buildRows();
-        this.table = new SelectTable(
-            rows,
-            Math.max(Math.min(rows.length, 12), 3),
-            defaultSelectListTheme,
-        );
+        this.table = new SelectTable(rows, Math.max(Math.min(rows.length, 12), 3), defaultSelectListTheme);
         this.table.setColumnStrechFactors([0, 1, 0, 0]);
         this.table.setAlignments(['left', 'left', 'left', 'right']);
 
@@ -79,12 +74,12 @@ export class MemoryListOverlay implements Component {
         if (this.filterMode === 'all') {
             this.filteredMemories = [...this.allMemories];
         } else {
-            this.filteredMemories = this.allMemories.filter(m => m.scope === this.filterMode);
+            this.filteredMemories = this.allMemories.filter((m) => m.scope === this.filterMode);
         }
     }
 
     private buildHeaderText(): string {
-        const tabs = FILTER_CYCLE.map(mode => {
+        const tabs = FILTER_CYCLE.map((mode) => {
             const label = FILTER_LABELS[mode];
             if (mode === this.filterMode) {
                 return chalk.bgHex('#4a6fa5').white.bold(` ${label} `);
@@ -97,10 +92,12 @@ export class MemoryListOverlay implements Component {
 
     private buildRows(): SelectRow[] {
         if (this.filteredMemories.length === 0) {
-            return [{
-                labels: ['', '暂无记忆', '', ''],
-                value: '__empty__',
-            }];
+            return [
+                {
+                    labels: ['', '暂无记忆', '', ''],
+                    value: '__empty__'
+                }
+            ];
         }
 
         return this.filteredMemories.map(({ scope, meta }) => {
@@ -110,7 +107,7 @@ export class MemoryListOverlay implements Component {
 
             return {
                 labels: [scopeIcon, meta.name, categoryLabel, dateStr],
-                value: meta.uid,
+                value: meta.uid
             };
         });
     }
@@ -190,11 +187,11 @@ export class MemoryListOverlay implements Component {
         this.header.setText(this.buildHeaderText());
 
         const rows = this.buildRows();
-        this.table.innerRows = rows.map(row => ({ ...row, label: '' }));
+        this.table.innerRows = rows.map((row) => ({ ...row, label: '' }));
         this.table.innerList = new SelectList(
             this.table.innerRows,
             Math.max(Math.min(rows.length, 12), 3),
-            defaultSelectListTheme,
+            defaultSelectListTheme
         );
 
         this.table.innerList.onSelect = (item) => {
@@ -253,9 +250,9 @@ export class MemoryListOverlay implements Component {
 
     show() {
         const handle = this.openDeskTUI.tui.showOverlay(this, {
-            width: "90%",
-            maxHeight: "85%",
-            anchor: "center",
+            width: '90%',
+            maxHeight: '85%',
+            anchor: 'center'
         });
         this.hideHandle = handle;
         this.openDeskTUI.hasOpenOverlay = true;

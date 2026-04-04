@@ -17,7 +17,6 @@ import chalk from 'chalk';
 import { z } from 'zod';
 import { fetch, ProxyAgent, type Dispatcher } from 'undici';
 
-
 const BRAVE_SEARCH_URL = 'https://api.search.brave.com/res/v1/web/search';
 const FETCH_TIMEOUT_MS = 30000;
 const DEFAULT_RESULT_COUNT = 15;
@@ -49,7 +48,7 @@ const BraveSearchArgsSchema = z.object({
     freshness: z
         .enum(['pd', 'pw', 'pm', 'py'])
         .optional()
-        .describe('时效过滤: pd=24小时内, pw=7天内, pm=31天内, py=1年内'),
+        .describe('时效过滤: pd=24小时内, pw=7天内, pm=31天内, py=1年内')
 });
 
 export class BraveSearchTool extends BaseTool<typeof BraveSearchArgsSchema> {
@@ -59,7 +58,7 @@ export class BraveSearchTool extends BaseTool<typeof BraveSearchArgsSchema> {
         super(
             'braveSearch',
             '使用Brave搜索引擎搜索网页信息，返回搜索结果的标题、URL和摘要。基于Brave独立网络索引，覆盖超过300亿个网页',
-            BraveSearchArgsSchema,
+            BraveSearchArgsSchema
         );
         this.apiKey = apiKey;
         this.setExecutor(this.search.bind(this));
@@ -84,7 +83,12 @@ export class BraveSearchTool extends BaseTool<typeof BraveSearchArgsSchema> {
             body.push(chalk.redBright('  ' + truncText(toolcall.result, width - 10)));
         }
 
-        return new Card({ icon: '🔍', title: '搜索 (Brave)', status: statusDisplay(toolcall.status), body }).render(width);
+        return new Card({
+            icon: '🔍',
+            title: '搜索 (Brave)',
+            status: statusDisplay(toolcall.status),
+            body
+        }).render(width);
     }
 
     private async search(args: z.output<typeof BraveSearchArgsSchema>): Promise<string> {
@@ -109,7 +113,7 @@ export class BraveSearchTool extends BaseTool<typeof BraveSearchArgsSchema> {
         query: string,
         count: number,
         country?: string,
-        freshness?: string,
+        freshness?: string
     ): Promise<BraveSearchResponse> {
         const url = new URL(BRAVE_SEARCH_URL);
         url.searchParams.set('q', query);
@@ -126,17 +130,23 @@ export class BraveSearchTool extends BaseTool<typeof BraveSearchArgsSchema> {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
-        const fetchOptions: { method: string; headers: Record<string, string>; signal: AbortSignal; dispatcher?: Dispatcher } = {
+        const fetchOptions: {
+            method: string;
+            headers: Record<string, string>;
+            signal: AbortSignal;
+            dispatcher?: Dispatcher;
+        } = {
             method: 'GET',
             headers: {
-                'Accept': 'application/json',
+                Accept: 'application/json',
                 'Accept-Encoding': 'gzip',
-                'X-Subscription-Token': this.apiKey,
+                'X-Subscription-Token': this.apiKey
             },
-            signal: controller.signal,
+            signal: controller.signal
         };
 
-        const proxyUrl = process.env.HTTPS_PROXY || process.env.https_proxy || process.env.HTTP_PROXY || process.env.http_proxy;
+        const proxyUrl =
+            process.env.HTTPS_PROXY || process.env.https_proxy || process.env.HTTP_PROXY || process.env.http_proxy;
         if (proxyUrl) {
             fetchOptions.dispatcher = new ProxyAgent(proxyUrl);
         }
@@ -147,7 +157,7 @@ export class BraveSearchTool extends BaseTool<typeof BraveSearchArgsSchema> {
             if (!response.ok) {
                 const errorText = await response.text().catch(() => '');
                 throw new Error(
-                    `Brave Search API 请求失败，HTTP ${response.status}: ${errorText || response.statusText}`,
+                    `Brave Search API 请求失败，HTTP ${response.status}: ${errorText || response.statusText}`
                 );
             }
 

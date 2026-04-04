@@ -17,15 +17,17 @@
  * @returns {Promise<string>} 返回给模型的文本结果
  */
 export async function execute(input, args) {
-  const action = args?.action ?? (input?.toLowerCase().includes('时间') || input?.toLowerCase().includes('time') ? 'time' : 'echo');
-  const message = args?.message ?? input ?? '';
+    const action =
+        args?.action ??
+        (input?.toLowerCase().includes('时间') || input?.toLowerCase().includes('time') ? 'time' : 'echo');
+    const message = args?.message ?? input ?? '';
 
-  if (action === 'time') {
-    const now = new Date();
-    return `[示例技能] 当前本地时间: ${now.toLocaleString('zh-CN')}`;
-  }
-  if (action === 'echo') {
-    return `[示例技能] 已回显: ${message}`;
-  }
-  return `[示例技能] 未知 action: ${action}。支持 action: echo, time。`;
+    if (action === 'time') {
+        const now = new Date();
+        return `[示例技能] 当前本地时间: ${now.toLocaleString('zh-CN')}`;
+    }
+    if (action === 'echo') {
+        return `[示例技能] 已回显: ${message}`;
+    }
+    return `[示例技能] 未知 action: ${action}。支持 action: echo, time。`;
 }

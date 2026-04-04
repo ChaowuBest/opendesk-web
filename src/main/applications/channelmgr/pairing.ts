@@ -58,7 +58,7 @@ function loadData(): PairingData {
         const data = JSON.parse(raw) as PairingData;
         return {
             approvedUsers: data.approvedUsers || [],
-            pendingRequests: data.pendingRequests || [],
+            pendingRequests: data.pendingRequests || []
         };
     } catch (err: any) {
         logger.warn(`Failed to load pairing data: ${err?.message || err}`);
@@ -81,27 +81,28 @@ function saveData(data: PairingData): void {
 
 export function getApprovedUsers(channel?: string, accountId?: string): ApprovedUser[] {
     const data = loadData();
-    return data.approvedUsers.filter(u =>
-        (!channel || u.channel === channel) &&
-        (!accountId || u.accountId === accountId),
+    return data.approvedUsers.filter(
+        (u) => (!channel || u.channel === channel) && (!accountId || u.accountId === accountId)
     );
 }
 
 export function getApprovedUserIds(channel: string, accountId: string): string[] {
-    return getApprovedUsers(channel, accountId).map(u => u.id);
+    return getApprovedUsers(channel, accountId).map((u) => u.id);
 }
 
 export function isUserApproved(channel: string, accountId: string, userId: string): boolean {
-    return getApprovedUsers(channel, accountId).some(u => u.id === userId);
+    return getApprovedUsers(channel, accountId).some((u) => u.id === userId);
 }
 
 export function approveUser(
-    channel: string, accountId: string, userId: string,
-    meta?: { name?: string; [key: string]: any },
+    channel: string,
+    accountId: string,
+    userId: string,
+    meta?: { name?: string; [key: string]: any }
 ): void {
     const data = loadData();
     const exists = data.approvedUsers.some(
-        u => u.channel === channel && u.accountId === accountId && u.id === userId,
+        (u) => u.channel === channel && u.accountId === accountId && u.id === userId
     );
     if (!exists) {
         data.approvedUsers.push({
@@ -109,11 +110,11 @@ export function approveUser(
             channel,
             accountId,
             meta,
-            approvedAt: new Date().toISOString(),
+            approvedAt: new Date().toISOString()
         });
     }
     data.pendingRequests = data.pendingRequests.filter(
-        r => !(r.channel === channel && r.accountId === accountId && r.id === userId),
+        (r) => !(r.channel === channel && r.accountId === accountId && r.id === userId)
     );
     saveData(data);
 }
@@ -122,7 +123,7 @@ export function revokeUser(channel: string, accountId: string, userId: string): 
     const data = loadData();
     const before = data.approvedUsers.length;
     data.approvedUsers = data.approvedUsers.filter(
-        u => !(u.channel === channel && u.accountId === accountId && u.id === userId),
+        (u) => !(u.channel === channel && u.accountId === accountId && u.id === userId)
     );
     if (data.approvedUsers.length < before) {
         saveData(data);
@@ -133,15 +134,16 @@ export function revokeUser(channel: string, accountId: string, userId: string): 
 
 export function getPendingRequests(channel?: string, accountId?: string): PairingRequest[] {
     const data = loadData();
-    return data.pendingRequests.filter(r =>
-        (!channel || r.channel === channel) &&
-        (!accountId || r.accountId === accountId),
+    return data.pendingRequests.filter(
+        (r) => (!channel || r.channel === channel) && (!accountId || r.accountId === accountId)
     );
 }
 
 export function upsertPairingRequest(
-    channel: string, accountId: string, userId: string,
-    meta?: { name?: string; [key: string]: any },
+    channel: string,
+    accountId: string,
+    userId: string,
+    meta?: { name?: string; [key: string]: any }
 ): { code: string; created: boolean } {
     if (isUserApproved(channel, accountId, userId)) {
         return { code: '', created: false };
@@ -149,7 +151,7 @@ export function upsertPairingRequest(
 
     const data = loadData();
     const existing = data.pendingRequests.find(
-        r => r.channel === channel && r.accountId === accountId && r.id === userId,
+        (r) => r.channel === channel && r.accountId === accountId && r.id === userId
     );
     if (existing) {
         return { code: existing.code, created: false };
@@ -162,7 +164,7 @@ export function upsertPairingRequest(
         accountId,
         code,
         meta,
-        createdAt: new Date().toISOString(),
+        createdAt: new Date().toISOString()
     });
     saveData(data);
     return { code, created: true };
@@ -172,7 +174,7 @@ export function removePairingRequest(channel: string, accountId: string, userId:
     const data = loadData();
     const before = data.pendingRequests.length;
     data.pendingRequests = data.pendingRequests.filter(
-        r => !(r.channel === channel && r.accountId === accountId && r.id === userId),
+        (r) => !(r.channel === channel && r.accountId === accountId && r.id === userId)
     );
     if (data.pendingRequests.length < before) {
         saveData(data);

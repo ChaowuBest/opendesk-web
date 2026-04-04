@@ -1,0 +1,17 @@
+COMMIT_MSG_FILE=$1
+COMMIT_SOURCE=$2
+
+# Only add the trailer for normal commits (not merges, squashes, amends, etc.)
+if [ -z "$COMMIT_SOURCE" ]; then
+  # Avoid duplicate trailer (check for exact phrase at start of line)
+  if ! grep -q "^Reviewed-by: Husky" "$COMMIT_MSG_FILE"; then
+    # Remove trailing empty lines (handle both Unix and DOS line endings)
+    sed -i 's/\r$//' "$COMMIT_MSG_FILE"
+    # grep -v '^$' may produce empty output (exit 1 when all lines are empty),
+    # so we use '|| true' to ensure mv always runs
+    grep -v '^$' "$COMMIT_MSG_FILE" > "${COMMIT_MSG_FILE}.tmp" || true
+    mv "${COMMIT_MSG_FILE}.tmp" "$COMMIT_MSG_FILE"
+    # Add trailer - file already ends with newline from grep -v, just add the line
+    printf 'Reviewed-by: Husky 🐺\n' >> "$COMMIT_MSG_FILE"
+  fi
+fi

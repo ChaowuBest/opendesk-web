@@ -35,17 +35,13 @@ let ApplicationConfigSchema: z.ZodObject<z.ZodRawShape> = z.object({});
 
 function getSettingSchema(): z.ZodObject<z.ZodRawShape> {
     return z.object({
-        default_model: z.string()
-            .describe('在对话等场景中使用的默认模型')
-            .default(''),
+        default_model: z.string().describe('在对话等场景中使用的默认模型').default(''),
         default_intent_parsing_model: z.string().describe('在意图解析中使用的多模态模型').default(''),
         default_embedding_model: z.string().describe('知识库，检索使用的中使用的向量嵌入模型').default(''),
         default_reranker_model: z.string().describe('在检索结果重排序中使用的模型').default(''),
         default_vision_model: z.string().describe('在图片记忆提取中使用的多模态模型').default(''),
         providers: z.array(ProviderSchema).describe('可用AI模型提供商').default([]),
-        models: z.array(ModelSchema)
-            .describe('可用AI模型')
-            .default([]),
+        models: z.array(ModelSchema).describe('可用AI模型').default([]),
         applications: ApplicationConfigSchema.describe('OpenDesk应用相关配置').default({})
     });
 }
@@ -73,7 +69,6 @@ export class ModelInstance {
 }
 
 export class Setting {
-
     static instance: Setting | null = null;
     static applicationConfigChangedCallbacks = new Map<string, () => void>();
 
@@ -155,7 +150,9 @@ export class Setting {
      * @param configChangedCallback - 配置变更时的回调
      */
     static registerApplicationSettings(application: BaseApplication, configChangedCallback: () => void): void {
-        const applicationConfigSchema = (Object.getPrototypeOf(application).constructor as typeof BaseApplication).getConfigSchema();
+        const applicationConfigSchema = (
+            Object.getPrototypeOf(application).constructor as typeof BaseApplication
+        ).getConfigSchema();
         ApplicationConfigSchema = ApplicationConfigSchema.extend({
             [application.bundleName]: applicationConfigSchema.optional()
         }) as z.ZodObject<z.ZodRawShape>;
@@ -321,10 +318,4 @@ function getArtifactDirectory(): string {
     return artifactDirectory;
 }
 
-export {
-    getAppDirectory,
-    getLogDirectory,
-    getTaskDirectory,
-    getArtifactDirectory,
-    getSettingSchema
-};
+export { getAppDirectory, getLogDirectory, getTaskDirectory, getArtifactDirectory, getSettingSchema };

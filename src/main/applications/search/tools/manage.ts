@@ -17,11 +17,10 @@ import { type SearchApplication } from '../app';
 import chalk from 'chalk';
 import { z } from 'zod';
 
-
 const ConfigureSearchToolArgsSchema = z.object({
     id: z.string().describe('搜索工具的ID，如 "bing", "duckduckgo", "brave", "tavily", "bocha", "exa", "arxiv"'),
     api_key: z.string().optional().describe('API密钥，适用于需要API的搜索工具'),
-    enabled: z.boolean().optional().describe('是否启用该搜索工具'),
+    enabled: z.boolean().optional().describe('是否启用该搜索工具')
 });
 
 export class ConfigureSearchTool extends BaseTool<typeof ConfigureSearchToolArgsSchema> {
@@ -31,7 +30,7 @@ export class ConfigureSearchTool extends BaseTool<typeof ConfigureSearchToolArgs
         super(
             'configureSearchTool',
             '配置搜索工具，包括设置API密钥和启用/禁用状态。使用此工具来配置Brave Search、Tavily Search、Exa Search等需要API的工具。',
-            ConfigureSearchToolArgsSchema,
+            ConfigureSearchToolArgsSchema
         );
         this.searchApp = searchApp;
         this.setExecutor(this.configure.bind(this));
@@ -65,7 +64,12 @@ export class ConfigureSearchTool extends BaseTool<typeof ConfigureSearchToolArgs
             body.push(chalk.redBright('  ' + truncText(toolcall.result, width - 10)));
         }
 
-        return new Card({ icon: '⚙️', title: '配置搜索工具', status: statusDisplay(toolcall.status), body }).render(width);
+        return new Card({
+            icon: '⚙️',
+            title: '配置搜索工具',
+            status: statusDisplay(toolcall.status),
+            body
+        }).render(width);
     }
 
     private async configure(args: z.output<typeof ConfigureSearchToolArgsSchema>): Promise<string> {
@@ -90,11 +94,10 @@ export class ConfigureSearchTool extends BaseTool<typeof ConfigureSearchToolArgs
             success: true,
             message: `搜索工具 "${tool.name}" 配置成功`,
             id: tool.id,
-            name: tool.name,
+            name: tool.name
         });
     }
 }
-
 
 const ListSearchToolsArgsSchema = z.object({});
 
@@ -102,11 +105,7 @@ export class ListSearchToolsTool extends BaseTool<typeof ListSearchToolsArgsSche
     private searchApp: any;
 
     constructor(searchApp: any) {
-        super(
-            'listSearchTools',
-            '列出所有可用的搜索工具及其状态和配置信息',
-            ListSearchToolsArgsSchema,
-        );
+        super('listSearchTools', '列出所有可用的搜索工具及其状态和配置信息', ListSearchToolsArgsSchema);
         this.searchApp = searchApp;
         this.setExecutor(this.list.bind(this));
     }
@@ -129,7 +128,9 @@ export class ListSearchToolsTool extends BaseTool<typeof ListSearchToolsArgsSche
                         const statusColor = tool.enabled ? chalk.green : chalk.gray;
                         const hasApiKey = tool.api_key && tool.api_key.length > 0;
                         const apiKeyIndicator = hasApiKey ? chalk.yellow(' [API已设置]') : '';
-                        body.push(`    ${statusColor(statusIcon)} ${chalk.cyan(String(tool.name))} (${chalk.magenta(String(tool.type))})${apiKeyIndicator}`);
+                        body.push(
+                            `    ${statusColor(statusIcon)} ${chalk.cyan(String(tool.name))} (${chalk.magenta(String(tool.type))})${apiKeyIndicator}`
+                        );
                     }
                 }
             } catch {
@@ -139,7 +140,12 @@ export class ListSearchToolsTool extends BaseTool<typeof ListSearchToolsArgsSche
             body.push(chalk.redBright('  ' + truncText(toolcall.result, width - 10)));
         }
 
-        return new Card({ icon: '📋', title: '搜索工具列表', status: statusDisplay(toolcall.status), body }).render(width);
+        return new Card({
+            icon: '📋',
+            title: '搜索工具列表',
+            status: statusDisplay(toolcall.status),
+            body
+        }).render(width);
     }
 
     private async list(): Promise<string> {
@@ -147,7 +153,7 @@ export class ListSearchToolsTool extends BaseTool<typeof ListSearchToolsArgsSche
         // 隐藏API密钥的具体值，只显示是否已设置
         const sanitizedTools = tools.map((tool: any) => ({
             ...tool,
-            api_key: tool.api_key && tool.api_key.length > 0 ? '****' : '',
+            api_key: tool.api_key && tool.api_key.length > 0 ? '****' : ''
         }));
         return JSON.stringify({ tools: sanitizedTools });
     }
@@ -155,20 +161,16 @@ export class ListSearchToolsTool extends BaseTool<typeof ListSearchToolsArgsSche
 
 const ToggleSearchToolArgsSchema = z.object({
     id: z.string().describe('要切换的搜索工具ID'),
-    enabled: z.boolean().describe('是否启用该工具，true为启用，false为禁用'),
+    enabled: z.boolean().describe('是否启用该工具，true为启用，false为禁用')
 });
 
 export class ToggleSearchToolTool extends BaseTool<typeof ToggleSearchToolArgsSchema> {
     private searchApp: SearchApplication;
 
     constructor(searchApp: SearchApplication) {
-        super(
-            'toggleSearchTool',
-            '快速启用或禁用搜索工具，无需修改其他配置',
-            ToggleSearchToolArgsSchema,
-        );
+        super('toggleSearchTool', '快速启用或禁用搜索工具，无需修改其他配置', ToggleSearchToolArgsSchema);
         this.searchApp = searchApp;
-        this.setExecutor(this.toggle.bind(this))
+        this.setExecutor(this.toggle.bind(this));
     }
 
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
@@ -197,7 +199,12 @@ export class ToggleSearchToolTool extends BaseTool<typeof ToggleSearchToolArgsSc
             body.push(chalk.redBright('  ' + truncText(toolcall.result, width - 10)));
         }
 
-        return new Card({ icon: '🔄', title: '切换搜索工具', status: statusDisplay(toolcall.status), body }).render(width);
+        return new Card({
+            icon: '🔄',
+            title: '切换搜索工具',
+            status: statusDisplay(toolcall.status),
+            body
+        }).render(width);
     }
 
     private async toggle(args: z.output<typeof ToggleSearchToolArgsSchema>): Promise<string> {
@@ -215,7 +222,7 @@ export class ToggleSearchToolTool extends BaseTool<typeof ToggleSearchToolArgsSc
             message: `搜索工具 "${tool.name}" 已${args.enabled ? '启用' : '禁用'}`,
             id: tool.id,
             name: tool.name,
-            enabled: args.enabled,
+            enabled: args.enabled
         });
     }
 }

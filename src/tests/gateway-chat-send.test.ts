@@ -62,7 +62,9 @@ function sendReq(ws: WebSocket, method: string, params?: unknown): Promise<any> 
                     ws.off('message', handler);
                     resolve(msg);
                 }
-            } catch { /* ignore */ }
+            } catch {
+                /* ignore */
+            }
         };
         ws.on('message', handler);
         ws.send(JSON.stringify(frame));
@@ -83,7 +85,9 @@ function waitForEvent(ws: WebSocket, eventName: string): Promise<any> {
                     ws.off('message', handler);
                     resolve(msg);
                 }
-            } catch { /* ignore */ }
+            } catch {
+                /* ignore */
+            }
         };
         ws.on('message', handler);
     });
@@ -108,7 +112,9 @@ function collectChatEvents(ws: WebSocket, timeoutMs: number = 30_000): Promise<a
                         resolve(events);
                     }
                 }
-            } catch { /* ignore */ }
+            } catch {
+                /* ignore */
+            }
         };
         ws.on('message', handler);
     });
@@ -133,12 +139,12 @@ async function main() {
     const gateway = new DeviceGateway(tmpDir, {
         enabled: true,
         port: TEST_PORT,
-        autoApproveLocal: true,
+        autoApproveLocal: true
     });
 
     registerOpenClawMethods(gateway, {
         taskManagerState,
-        workspace: tmpDir,
+        workspace: tmpDir
     });
 
     let passed = 0;
@@ -173,12 +179,17 @@ async function main() {
         const connectRes = await sendReq(ws, 'connect', {
             minProtocol: 3,
             maxProtocol: 3,
-            client: { id: 'test-chat-client', version: '1.0.0', platform: 'test', mode: 'operator' },
+            client: {
+                id: 'test-chat-client',
+                version: '1.0.0',
+                platform: 'test',
+                mode: 'operator'
+            },
             role: 'operator',
             scopes: ['operator.read', 'operator.write'],
             caps: [],
             commands: [],
-            permissions: {},
+            permissions: {}
         });
         assert(connectRes.ok, 'connect 握手成功');
 
@@ -191,7 +202,7 @@ async function main() {
         const sendRes = await sendReq(ws, 'chat.send', {
             sessionKey: 'test-session',
             message: '你好',
-            idempotencyKey,
+            idempotencyKey
         });
 
         assert(sendRes.ok === true, 'chat.send 返回 ok=true');
@@ -206,7 +217,7 @@ async function main() {
 
         assert(chatEvents.length > 0, '收到至少 1 个 chat 事件');
 
-        const finalEvent = chatEvents.find(e => e.state === 'final');
+        const finalEvent = chatEvents.find((e) => e.state === 'final');
         assert(!!finalEvent, '收到 final 事件');
 
         if (finalEvent?.message?.content) {
@@ -214,7 +225,9 @@ async function main() {
             const hasExpectedText = textContent?.text?.includes(MOCK_REPLY) ?? false;
             assert(hasExpectedText, `final 事件包含预期回复文本`);
             if (textContent) {
-                console.log(`  回复文本: "${textContent.text.slice(0, 80)}${textContent.text.length > 80 ? '...' : ''}"`);
+                console.log(
+                    `  回复文本: "${textContent.text.slice(0, 80)}${textContent.text.length > 80 ? '...' : ''}"`
+                );
             }
         } else {
             assert(false, 'final 事件包含 message.content', `payload: ${JSON.stringify(finalEvent)}`);
@@ -236,7 +249,7 @@ async function main() {
         assert(historyRes.ok === true, 'chat.history 返回 ok=true');
         assert(
             Array.isArray(historyRes.payload?.messages) && historyRes.payload.messages.length >= 2,
-            `chat.history 返回消息 (count=${historyRes.payload?.messages?.length ?? 0})`,
+            `chat.history 返回消息 (count=${historyRes.payload?.messages?.length ?? 0})`
         );
 
         // ── 测试 5: chat.abort ──────────────────────────────
@@ -253,7 +266,7 @@ async function main() {
         assert(sessionsRes.ok === true, 'sessions.list 返回 ok=true');
         assert(
             Array.isArray(sessionsRes.payload?.sessions) && sessionsRes.payload.sessions.length >= 1,
-            `sessions.list 返回 session (count=${sessionsRes.payload?.sessions?.length ?? 0})`,
+            `sessions.list 返回 session (count=${sessionsRes.payload?.sessions?.length ?? 0})`
         );
 
         // ── 清理 ──────────────────────────────────────────────
@@ -264,11 +277,14 @@ async function main() {
 
         console.log(`\n=== 测试结果: ${passed} 通过, ${failed} 失败 ===\n`);
         process.exit(failed > 0 ? 1 : 0);
-
     } catch (err: any) {
         console.error(`\n测试异常: ${err.message}\n${err.stack}`);
         restoreLLM();
-        try { await gateway.stop(); } catch { /* ignore */ }
+        try {
+            await gateway.stop();
+        } catch {
+            /* ignore */
+        }
         fs.rmSync(tmpDir, { recursive: true, force: true });
         process.exit(1);
     }
