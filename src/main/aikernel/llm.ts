@@ -15,6 +15,7 @@ import { Setting, ModelInstance } from '../utils/setting.js';
 import { z } from 'zod';
 import { logger } from '../utils/logger.js';
 import { lookupKnownVisionSupport, fetchVisionSupportFromAPI } from '../utils/model-context.js';
+import { withRateLimitRetry, RateLimitDetector } from '../utils/rate-limit-retry.js';
 import type { BaseTool } from './tool';
 
 /** Model 参数支持传入 ModelInstance 对象、模型别名字符串、或 undefined（使用默认模型） */
@@ -239,10 +240,12 @@ class LLM {
         const messages: object[] = [options.question.toOpenAIMessage()];
 
         while (finalResponse === undefined && numRetries < 5) {
-            const response = await client.chat.completions.create({
-                model: modelInstance.model_name,
-                messages: messages as OpenAI.ChatCompletionMessageParam[],
-            });
+            const response = await withRateLimitRetry(
+                () => client.chat.completions.create({
+                    model: modelInstance.model_name,
+                    messages: messages as OpenAI.ChatCompletionMessageParam[],
+                }),
+            );
 
             if (response.choices.length !== 1) {
                 throw new Error('unsupported openai response type');
@@ -416,12 +419,14 @@ class LLM {
         const messages = this.buildMessages(chatContext, visionSupported);
         const toolOptions = this.buildToolOptions(chatContext);
 
-        const response = await client.chat.completions.create({
-            model: modelInstance.model_name,
-            messages: messages as OpenAI.ChatCompletionMessageParam[],
-            max_completion_tokens: 16384,
-            ...toolOptions,
-        });
+        const response = await withRateLimitRetry(
+            () => client.chat.completions.create({
+                model: modelInstance.model_name,
+                messages: messages as OpenAI.ChatCompletionMessageParam[],
+                max_completion_tokens: 16384,
+                ...toolOptions,
+            }),
+        );
         return AssistantResponse.parseOpenAIResponse(response);
     }
 
@@ -453,19 +458,24 @@ class LLM {
             // 使用原始流式 API 而非 .stream() 方法
             // 某些模型提供商的流式响应不包含 role 字段，会导致 SDK 的 finalizeChatCompletion 报错
             // 使用 .create() with stream: true 可以绕过 SDK 的严格验证
-            const stream = await client.chat.completions.create({
-                model: modelInstance.model_name,
-                messages: messages as OpenAI.ChatCompletionMessageParam[],
-                max_completion_tokens: 16384,
-                stream: true,
-                stream_options: { include_usage: true },
-                ...toolOptions,
-            });
+            const stream = await withRateLimitRetry(
+                () => client.chat.completions.create({
+                    model: modelInstance.model_name,
+                    messages: messages as OpenAI.ChatCompletionMessageParam[],
+                    max_completion_tokens: 16384,
+                    stream: true,
+                    stream_options: { include_usage: true },
+                    ...toolOptions,
+                }),
+            );
 
             for await (const chunk of stream) {
                 yield AssistantResponse.parseOpenAIResponse(chunk);
             }
         } catch (err) {
+            if (RateLimitDetector.isRateLimitError(err)) {
+                logger.warn('Rate limit error during stream reading, will be caught by outer retry logic', String(err));
+            }
             yield AssistantResponse.richError(
                 'Stream Completion Failed', String(err),
                 JSON.stringify(messages, undefined, 2)
