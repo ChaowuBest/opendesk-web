@@ -37,7 +37,12 @@ import type {
     ChannelAccountSnapshot,
     Participant
 } from '../../aikernel/plugins/types.js';
-import { registerChannelDispatch, unregisterChannelDispatch } from '../../aikernel/plugins/openclaw/api.js';
+import {
+    registerChannelDispatch,
+    unregisterChannelDispatch,
+    setPairingProvider
+} from '../../aikernel/plugins/openclaw/api.js';
+import * as pairing from './pairing.js';
 import { ChannelMessageRouter, type ChannelReply } from './router.js';
 import { getTempDirectory } from '../filemgr/tools.js';
 import os from 'os';
@@ -254,6 +259,7 @@ export class ChannelMgrApplication extends BaseApplication {
     private async doInitialize(): Promise<void> {
         if (this.started) return;
         try {
+            setPairingProvider(pairing);
             const loadResult = await loadPlugins();
             this.plugins = loadResult.entries;
             this.pluginLoadErrors = loadResult.errors;
