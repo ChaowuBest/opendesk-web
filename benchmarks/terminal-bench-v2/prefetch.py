@@ -6,6 +6,7 @@ prefetch.py - 预下载 TerminalBench 2.0 运行所需的 Docker 镜像。
   download  预拉取所有任务的 Docker 基础镜像（支持 --concurrency 指定并发数）
   clear     删除所有已拉取的 TerminalBench 相关镜像
   hosts     预下载 GitHub hosts 文件（解决国内 GitHub 网络问题）
+  tools     预下载 uv 二进制到 mount 目录（加速容器内安装）
 """
 
 import argparse
@@ -196,6 +197,128 @@ async def pull_all_images(
     return ok, fail
 
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+MOUNT_STAGING_DIR = SCRIPT_DIR / ".mount-staging"
+
+# uv 下载地址模板（国内镜像优先，经测试无代理可用）
+UV_DOWNLOAD_URLS = [
+    "https://gh-proxy.com/https://github.com/astral-sh/uv/releases/latest/download/uv-{arch}.tar.gz",
+    "https://ghfast.top/https://github.com/astral-sh/uv/releases/latest/download/uv-{arch}.tar.gz",
+    "https://github.com/astral-sh/uv/releases/latest/download/uv-{arch}.tar.gz",
+]
+
+UV_LINUX_ARCHS = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+]
+
+
+def _download_url(url: str, timeout: int = 120) -> bytes | None:
+    """使用 urllib 下载 URL，返回字节内容或 None。"""
+    import urllib.request
+    import urllib.error
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "uv-prefetch/1.0"})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = resp.read()
+            if len(data) > 1000:
+                return data
+            print(f"    响应过小: {len(data)} bytes")
+    except urllib.error.HTTPError as e:
+        print(f"    HTTP 错误: {e.code} {e.reason}")
+    except urllib.error.URLError as e:
+        print(f"    连接错误: {e.reason}")
+    except OSError as e:
+        print(f"    网络错误: {e}")
+    return None
+
+
+def _extract_tar_gz(data: bytes, dest_dir: Path) -> bool:
+    """从内存中的 tar.gz 数据解压到目标目录。"""
+    import io
+    import tarfile
+    try:
+        with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tar:
+            tar.extractall(path=dest_dir, filter="data")
+        return True
+    except (tarfile.TarError, OSError) as e:
+        print(f"    解压错误: {e}")
+        return False
+
+
+def prefetch_uv_binaries():
+    """预下载 uv 二进制到 mount staging 目录。
+
+    在宿主机上为每种 Linux 架构下载 uv，解压后放到
+    .mount-staging/uv-{arch}/ 目录中，容器启动时直接复制即可。
+    """
+    MOUNT_STAGING_DIR.mkdir(parents=True, exist_ok=True)
+    downloaded = 0
+
+    for arch in UV_LINUX_ARCHS:
+        dest_dir = MOUNT_STAGING_DIR / f"uv-{arch}"
+        uv_bin = dest_dir / "uv"
+        if uv_bin.exists():
+            print(f"  [跳过] uv-{arch} 已存在")
+            downloaded += 1
+            continue
+
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        success = False
+        for url_template in UV_DOWNLOAD_URLS:
+            url = url_template.format(arch=arch)
+            print(f"  [下载] uv-{arch} from {url} ...")
+            data = _download_url(url)
+            if data is None:
+                print(f"  [重试] {arch} 从该源下载失败")
+                continue
+
+            print(f"    下载完成: {len(data) / 1024 / 1024:.1f} MB，正在解压...")
+            if not _extract_tar_gz(data, dest_dir):
+                print(f"  [重试] {arch} 解压失败")
+                continue
+
+            # tar 可能会创建子目录 uv-xxx/，把文件提到顶层
+            if not uv_bin.exists():
+                for candidate in dest_dir.rglob("uv"):
+                    if candidate.is_file() and candidate.name == "uv":
+                        import shutil
+                        shutil.move(str(candidate), str(uv_bin))
+                        uvx_candidate = candidate.parent / "uvx"
+                        if uvx_candidate.exists():
+                            shutil.move(str(uvx_candidate), str(dest_dir / "uvx"))
+                        # 清理空的子目录
+                        for d in sorted(dest_dir.iterdir(), reverse=True):
+                            if d.is_dir():
+                                try:
+                                    d.rmdir()
+                                except OSError:
+                                    pass
+                        break
+
+            if uv_bin.exists():
+                print(f"  [完成] uv-{arch}")
+                success = True
+                downloaded += 1
+                break
+            else:
+                print(f"  [重试] {arch} 解压后未找到 uv 二进制")
+
+        if not success:
+            print(f"  [失败] uv-{arch} 所有源均失败")
+
+    return downloaded
+
+
+def cmd_tools(args):
+    """tools 子命令入口：预下载容器内工具（uv 二进制）。"""
+    print("[工具预下载] 开始预下载容器内工具...")
+    downloaded = prefetch_uv_binaries()
+    print(f"[工具预下载] 完成: {downloaded}/{len(UV_LINUX_ARCHS)} 个架构")
+    if downloaded == 0:
+        print("[工具预下载] 警告: 未能下载任何 uv 二进制，容器内将从网络下载")
+
+
 def cmd_hosts(args):
     """hosts 子命令入口：预下载 GitHub hosts 文件。"""
     content = fetch_github_hosts(verbose=True)
@@ -210,6 +333,9 @@ def cmd_download(args):
     """download 子命令入口。"""
     # 预获取 GitHub hosts（加速后续 git clone 等网络操作）
     fetch_github_hosts(verbose=True)
+
+    # 预下载容器内工具（uv 二进制）
+    prefetch_uv_binaries()
 
     # 尝试配置镜像加速
     if args.mirror:
@@ -315,6 +441,9 @@ def main():
 
     hosts_parser = subparsers.add_parser("hosts", help="预下载 GitHub hosts 文件")
     hosts_parser.set_defaults(func=cmd_hosts)
+
+    tools_parser = subparsers.add_parser("tools", help="预下载容器内工具（uv 二进制）")
+    tools_parser.set_defaults(func=cmd_tools)
 
     args = parser.parse_args()
     args.func(args)

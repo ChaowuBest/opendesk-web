@@ -209,6 +209,10 @@ def prepare_mount_dir(model_alias: str) -> Path:
             '{"name":"number-to-alphabet","version":"0.0.0-stub","main":"index.js"}\n'
         )
 
+    # 预下载 uv 二进制到 mount 目录（容器内直接复制，无需网络下载）
+    from prefetch import prefetch_uv_binaries
+    prefetch_uv_binaries()
+
     # 准备 GitHub hosts 文件（用于容器内加速 GitHub 访问）
     hosts_content = fetch_github_hosts(verbose=True)
     hosts_file = mount_dir / "github-hosts.txt"

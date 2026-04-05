@@ -60,11 +60,24 @@ python prefetch.py clear
 
 `prefetch.py` 内置了国内 Docker 加速镜像，会自动尝试多个源。
 
-也可以单独预下载 GitHub hosts 文件：
+也可以单独预下载 GitHub hosts 或容器内工具：
 
 ```bash
+# 预下载 GitHub hosts 文件
 python prefetch.py hosts
+
+# 预下载 uv 二进制（容器内直接复制，避免网络下载）
+python prefetch.py tools
 ```
+
+### Verifier 加速
+
+容器内的 verifier 阶段需要下载 uv 和 cpython，在国内网络下非常慢。
+`run.py` 会自动做以下加速：
+
+- **uv 二进制**：预下载到 mount 目录，容器内直接复制安装
+- **cpython**：通过 `UV_PYTHON_INSTALL_MIRROR` 使用淘宝 NPM 镜像加速下载
+- **GitHub Hosts**：自动注入到容器 `/etc/hosts`
 
 ## 运行评估
 
