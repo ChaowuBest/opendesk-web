@@ -17,6 +17,12 @@
 
 3. 确保 `~/.opendesk/setting.json`（Windows 为 `%APPDATA%/opendesk/setting.json`）已配置好模型和 Provider。
 
+4. GitHub Hosts 加速（自动）
+
+- 运行 `prefetch.py` 或 `run.py` 时会自动从 [github-hosts](https://github.com/maxiaof/github-hosts) 获取最新 hosts 并注入到容器中；
+- 如果自动获取失败，请手动从上面的链接复制 hosts 内容，保存到 `benchmarks/terminal-bench-v2/hosts.txt`；
+- hosts 会在每次运行时自动写入容器的 `/etc/hosts`，无需手动配置宿主机。
+
 ## 构建 Linux 二进制
 
 容器内运行的是 Linux 环境，需要交叉编译 OpenDesk CLI 二进制：
@@ -53,6 +59,12 @@ python prefetch.py clear
 ```
 
 `prefetch.py` 内置了国内 Docker 加速镜像，会自动尝试多个源。
+
+也可以单独预下载 GitHub hosts 文件：
+
+```bash
+python prefetch.py hosts
+```
 
 ## 运行评估
 
@@ -105,8 +117,10 @@ python run.py --model qwen3.6-plus --task regex-chess --timeout-mul 4.0 -o ./job
 
 ## 文件说明
 
-| 文件                | 用途                                             |
-| ------------------- | ------------------------------------------------ |
-| `run.py`            | 主入口，准备挂载目录、调用 Harbor 运行评估       |
-| `opendesk_agent.py` | Harbor Agent 适配器，在容器内安装并运行 OpenDesk |
-| `prefetch.py`       | 预下载 Docker 镜像，支持国内加速                 |
+| 文件                | 用途                                                    |
+| ------------------- | ------------------------------------------------------- |
+| `run.py`            | 主入口，准备挂载目录、调用 Harbor 运行评估              |
+| `opendesk_agent.py` | Harbor Agent 适配器，在容器内安装并运行 OpenDesk        |
+| `prefetch.py`       | 预下载 Docker 镜像，支持国内加速                        |
+| `github_hosts.py`   | GitHub hosts 获取工具，在线获取或回退到本地 `hosts.txt` |
+| `hosts.txt`         | GitHub hosts 本地缓存，自动更新或可手动维护             |

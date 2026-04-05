@@ -5,6 +5,7 @@ prefetch.py - 预下载 TerminalBench 2.0 运行所需的 Docker 镜像。
 子命令:
   download  预拉取所有任务的 Docker 基础镜像（支持 --concurrency 指定并发数）
   clear     删除所有已拉取的 TerminalBench 相关镜像
+  hosts     预下载 GitHub hosts 文件（解决国内 GitHub 网络问题）
 """
 
 import argparse
@@ -15,6 +16,8 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+
+from github_hosts import fetch_github_hosts, parse_host_lines
 
 DATASET_NAME = "terminal-bench@2.0"
 HARBOR_CACHE_DIR = Path("~/.cache/harbor/tasks").expanduser()
@@ -193,8 +196,21 @@ async def pull_all_images(
     return ok, fail
 
 
+def cmd_hosts(args):
+    """hosts 子命令入口：预下载 GitHub hosts 文件。"""
+    content = fetch_github_hosts(verbose=True)
+    if content:
+        lines = parse_host_lines(content)
+        print(f"[GitHub Hosts] 共 {len(lines)} 条有效 hosts 记录")
+    else:
+        sys.exit(1)
+
+
 def cmd_download(args):
     """download 子命令入口。"""
+    # 预获取 GitHub hosts（加速后续 git clone 等网络操作）
+    fetch_github_hosts(verbose=True)
+
     # 尝试配置镜像加速
     if args.mirror:
         configure_docker_mirrors()
@@ -296,6 +312,9 @@ def main():
 
     clear_parser = subparsers.add_parser("clear", help="删除所有已下载的镜像")
     clear_parser.set_defaults(func=cmd_clear)
+
+    hosts_parser = subparsers.add_parser("hosts", help="预下载 GitHub hosts 文件")
+    hosts_parser.set_defaults(func=cmd_hosts)
 
     args = parser.parse_args()
     args.func(args)

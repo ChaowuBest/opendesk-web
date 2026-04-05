@@ -169,6 +169,21 @@ class OpenDeskAgent(BaseInstalledAgent):
     )
 
     async def install(self, environment: BaseEnvironment) -> None:
+        # 将 GitHub hosts 写入容器的 /etc/hosts（加速 GitHub 网络访问）
+        await self.exec_as_root(
+            environment,
+            command=(
+                f"if [ -f {self.MOUNT_PATH}/github-hosts.txt ]; then "
+                f"  echo '# GitHub Hosts Start' >> /etc/hosts && "
+                f"  cat {self.MOUNT_PATH}/github-hosts.txt >> /etc/hosts && "
+                f"  echo '# GitHub Hosts End' >> /etc/hosts && "
+                f"  echo '[hosts] GitHub hosts 已写入 /etc/hosts'; "
+                f"else "
+                f"  echo '[hosts] 未找到 github-hosts.txt，跳过'; "
+                f"fi"
+            ),
+        )
+
         # 替换为国内镜像源（加速 apt/apk 下载）
         await self.exec_as_root(environment, command=self._MIRROR_CMD)
 

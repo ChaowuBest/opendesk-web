@@ -28,6 +28,8 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+from github_hosts import fetch_github_hosts, parse_host_lines
+
 SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIR.parent.parent
 
@@ -206,6 +208,19 @@ def prepare_mount_dir(model_alias: str) -> Path:
         (n2a_dir / "package.json").write_text(
             '{"name":"number-to-alphabet","version":"0.0.0-stub","main":"index.js"}\n'
         )
+
+    # 准备 GitHub hosts 文件（用于容器内加速 GitHub 访问）
+    hosts_content = fetch_github_hosts(verbose=True)
+    hosts_file = mount_dir / "github-hosts.txt"
+    if hosts_content:
+        host_lines = parse_host_lines(hosts_content)
+        if host_lines:
+            hosts_file.write_text("\n".join(host_lines) + "\n", encoding="utf-8")
+            print(f"[准备] GitHub hosts: {len(host_lines)} 条记录")
+        else:
+            print("[警告] GitHub hosts 文件内容无效，容器内可能无法访问 GitHub")
+    else:
+        print("[警告] 未获取到 GitHub hosts，容器内可能无法访问 GitHub")
 
     print(f"[准备] 挂载目录: {mount_dir}")
     return mount_dir
