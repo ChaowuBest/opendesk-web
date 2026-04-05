@@ -226,6 +226,23 @@ export interface ChannelPlugin<ResolvedAccount = any, Probe = unknown, Audit = u
     gatewayMethods?: string[];
 }
 
+// ── Pairing Provider (decouples aikernel from applications layer) ─────────────
+
+export interface PairingProvider {
+    getApprovedUserIds(channel: string, accountId: string): string[];
+    isUserApproved(channel: string, accountId: string, userId: string): boolean;
+    upsertPairingRequest(
+        channel: string,
+        accountId: string,
+        userId: string,
+        meta?: any
+    ): { code: string; created: boolean };
+    removePairingRequest(channel: string, accountId: string, userId: string): boolean;
+    getPendingRequests(channel?: string, accountId?: string): any[];
+    approveUser(channel: string, accountId: string, userId: string, meta?: any): void;
+    revokeUser(channel: string, accountId: string, userId: string): boolean;
+}
+
 // ── Plugin Logger & API ───────────────────────────────────────────────────────
 
 export interface PluginLogger {

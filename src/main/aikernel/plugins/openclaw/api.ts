@@ -18,16 +18,14 @@
 
 import { getAppDirectory } from '../../../utils/setting.js';
 import { logger, addConsoleInterceptHook } from '../../../utils/logger.js';
-import type { PluginEntry, ChannelPlugin, PluginLogger, OpenClawPluginApi, InboundChannelMessage } from '../types.js';
-import {
-    getApprovedUserIds,
-    isUserApproved,
-    upsertPairingRequest,
-    removePairingRequest,
-    getPendingRequests,
-    approveUser,
-    revokeUser
-} from '../../../applications/channelmgr/pairing.js';
+import type {
+    PluginEntry,
+    ChannelPlugin,
+    PluginLogger,
+    OpenClawPluginApi,
+    InboundChannelMessage,
+    PairingProvider
+} from '../types.js';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
@@ -78,6 +76,24 @@ function fmtArgs(...args: any[]): string {
 // the OpenClaw plugin message pipeline into OpenDesk's routing system.
 
 const channelDispatchers = new Map<string, (msg: InboundChannelMessage) => Promise<void>>();
+
+// ── Pairing Provider (injected by applications layer) ────────────────────────
+
+const NO_OP_PAIRING: PairingProvider = {
+    getApprovedUserIds: () => [],
+    isUserApproved: () => false,
+    upsertPairingRequest: () => ({ code: '', created: false }),
+    removePairingRequest: () => false,
+    getPendingRequests: () => [],
+    approveUser: () => {},
+    revokeUser: () => false
+};
+
+let pairingProvider: PairingProvider = NO_OP_PAIRING;
+
+export function setPairingProvider(provider: PairingProvider): void {
+    pairingProvider = provider;
+}
 
 export function registerChannelDispatch(
     channelId: string,
@@ -298,23 +314,24 @@ function buildPluginRuntime() {
                         codeSuffix: params.code ? String(params.code).slice(-4) : ''
                     }),
                 readAllowFromStore: (params: any) =>
-                    getApprovedUserIds(params?.channel || '', params?.accountId || 'default'),
+                    pairingProvider.getApprovedUserIds(params?.channel || '', params?.accountId || 'default'),
                 upsertPairingRequest: (params: any) =>
-                    upsertPairingRequest(
+                    pairingProvider.upsertPairingRequest(
                         params?.channel || '',
                         params?.accountId || 'default',
                         params?.id || '',
                         params?.meta
                     ),
                 isUserApproved: (channel: string, accountId: string, userId: string) =>
-                    isUserApproved(channel, accountId, userId),
+                    pairingProvider.isUserApproved(channel, accountId, userId),
                 removePairingRequest: (channel: string, accountId: string, userId: string) =>
-                    removePairingRequest(channel, accountId, userId),
-                listPairingRequests: (channel?: string, accountId?: string) => getPendingRequests(channel, accountId),
+                    pairingProvider.removePairingRequest(channel, accountId, userId),
+                listPairingRequests: (channel?: string, accountId?: string) =>
+                    pairingProvider.getPendingRequests(channel, accountId),
                 approveUser: (channel: string, accountId: string, userId: string, meta?: any) =>
-                    approveUser(channel, accountId, userId, meta),
+                    pairingProvider.approveUser(channel, accountId, userId, meta),
                 revokeUser: (channel: string, accountId: string, userId: string) =>
-                    revokeUser(channel, accountId, userId)
+                    pairingProvider.revokeUser(channel, accountId, userId)
             },
 
             // ── reply (bridges to OpenDesk dispatch) ─────────────────────
