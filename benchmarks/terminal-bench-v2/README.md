@@ -6,8 +6,15 @@
 ## 准备工作
 
 1. 安装 [uv](https://docs.astral.sh/uv/) 并配置国内 PyPI 镜像源；
+
+- 配置 uv/uvx 使用国内镜像源，可以在你的 shell 环境中配置下面的环境变量:
+- `export UV_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/`
+- 建议使用 shell 类环境 (如 bash, zsh 等，在 Windows 平台上建议使用 Git Bash 进行后续操作)
+
 2. 安装 Docker 并配置国内镜像源：
-    - Windows 上可使用 Docker Desktop，参考 [腾讯云教程](https://cloud.tencent.com/developer/article/2516747) 配置镜像加速；
+
+- Windows 上可使用 Docker Desktop，参考 [腾讯云教程](https://cloud.tencent.com/developer/article/2516747) 配置镜像加速；
+
 3. 确保 `~/.opendesk/setting.json`（Windows 为 `%APPDATA%/opendesk/setting.json`）已配置好模型和 Provider。
 
 ## 构建 Linux 二进制
