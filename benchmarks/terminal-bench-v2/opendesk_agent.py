@@ -127,6 +127,47 @@ class OpenDeskAgent(BaseInstalledAgent):
         " fi"
     )
 
+    # 预装 uv 的脚本（使用国内镜像，避免 verifier 阶段从 github.com 下载失败）
+    _UV_INSTALL_CMD = (
+        "if ! command -v uv &> /dev/null; then "
+        "  ARCH=$(uname -m); "
+        "  if [ \"$ARCH\" = \"x86_64\" ] || [ \"$ARCH\" = \"amd64\" ]; then "
+        "    UV_ARCH='x86_64-unknown-linux-gnu'; "
+        "  elif [ \"$ARCH\" = \"aarch64\" ] || [ \"$ARCH\" = \"arm64\" ]; then "
+        "    UV_ARCH='aarch64-unknown-linux-gnu'; "
+        "  else "
+        "    echo 'Unsupported arch for uv: '$ARCH; exit 0; "
+        "  fi; "
+        # 先尝试国内镜像
+        "  UV_URL=\"https://mirror.ghproxy.com/https://github.com/astral-sh/uv/releases/latest/download/uv-${UV_ARCH}.tar.gz\"; "
+        "  mkdir -p /tmp/uv-install && "
+        "  (curl -fsSL --connect-timeout 10 --max-time 60 \"$UV_URL\" | tar xz -C /tmp/uv-install 2>/dev/null) || "
+        # 回退到官方源
+        "  (curl -fsSL --connect-timeout 15 --max-time 120 "
+        "    \"https://github.com/astral-sh/uv/releases/latest/download/uv-${UV_ARCH}.tar.gz\" "
+        "    | tar xz -C /tmp/uv-install 2>/dev/null) || "
+        "  (echo 'uv download failed, trying installer'; "
+        "   curl -LsSf https://astral.sh/uv/install.sh | sh 2>/dev/null) || "
+        "  true; "
+        "  if [ -f /tmp/uv-install/uv ]; then "
+        "    cp /tmp/uv-install/uv /usr/local/bin/uv && chmod +x /usr/local/bin/uv; "
+        "    cp /tmp/uv-install/uvx /usr/local/bin/uvx 2>/dev/null && chmod +x /usr/local/bin/uvx 2>/dev/null; "
+        "  elif ls /tmp/uv-install/uv-*/uv 2>/dev/null; then "
+        "    cp /tmp/uv-install/uv-*/uv /usr/local/bin/uv && chmod +x /usr/local/bin/uv; "
+        "    cp /tmp/uv-install/uv-*/uvx /usr/local/bin/uvx 2>/dev/null && chmod +x /usr/local/bin/uvx 2>/dev/null; "
+        "  fi; "
+        "  rm -rf /tmp/uv-install; "
+        # 确保 ~/.local/bin 也有 uv（verifier 的 test.sh 可能期望在这里）
+        "  if command -v uv &> /dev/null; then "
+        "    mkdir -p /root/.local/bin && "
+        "    ln -sf $(which uv) /root/.local/bin/uv 2>/dev/null; "
+        "    ln -sf $(which uvx) /root/.local/bin/uvx 2>/dev/null; "
+        # 创建 env 脚本（verifier 的 test.sh 可能 source 它）
+        "    echo 'export PATH=\"/root/.local/bin:$PATH\"' > /root/.local/bin/env; "
+        "  fi; "
+        "fi"
+    )
+
     async def install(self, environment: BaseEnvironment) -> None:
         # 替换为国内镜像源（加速 apt/apk 下载）
         await self.exec_as_root(environment, command=self._MIRROR_CMD)
@@ -144,6 +185,12 @@ class OpenDeskAgent(BaseInstalledAgent):
                 " fi"
             ),
             env={"DEBIAN_FRONTEND": "noninteractive"},
+        )
+
+        # 预装 uv（避免 verifier 阶段因网络问题下载失败）
+        await self.exec_as_root(
+            environment,
+            command=self._UV_INSTALL_CMD,
         )
 
         # 自动检测容器架构并复制对应二进制
@@ -216,7 +263,8 @@ class OpenDeskAgent(BaseInstalledAgent):
         await self.exec_as_agent(
             environment,
             command=(
-                f"cd /app && "
+                f"WORKDIR=/app; [ -d \"$WORKDIR\" ] || WORKDIR=$HOME; "
+                f"cd \"$WORKDIR\" && "
                 f"opendesk {model_flag}"
                 f"--headless "
                 f"--export-json /logs/agent/opendesk-result.json "
