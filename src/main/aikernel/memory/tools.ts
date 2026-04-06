@@ -17,7 +17,7 @@ import { Card } from '../../tui/components/card';
 import { statusDisplay, truncText } from '../../tui/components/toolcall';
 import { MemoryRegistry } from './registry';
 import { MEMORY_CATEGORY_LABELS, type MemoryScope } from './common';
-import type { TaskState } from '../../states/tasks';
+import type { TaskState } from '../states/tasks';
 
 // ═══════════════════ addMemory ═══════════════════
 
