@@ -1,7 +1,11 @@
+#!/usr/bin/env bash
+
 COMMIT_MSG_FILE=$1
 COMMIT_SOURCE=$2
 
 # Only add the trailer for normal commits (not merges, squashes, amends, etc.)
+# COMMIT_SOURCE is empty for editor-based commits, "message" for -m/-F commits
+
 if [ -z "$COMMIT_SOURCE" ] || [ "$COMMIT_SOURCE" = "message" ]; then
   # Avoid duplicate trailer (check for exact phrase at start of line)
   if ! grep -q "^Reviewed-by: Husky" "$COMMIT_MSG_FILE"; then
