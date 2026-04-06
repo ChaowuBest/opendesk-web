@@ -52,6 +52,10 @@ class TaskView extends HTMLElement {
         this.task_status = 'waiting';
     }
 
+    static isCompactBoundaryMessage(message) {
+        return Boolean(message) && message.role === 'compact_separator';
+    }
+
     setAutoScrollingToBottom(auto_scrolling_to_bottom) {
         this.auto_scrolling_to_bottom = auto_scrolling_to_bottom;
         const scrollButton = this.querySelector('#taskview-scroll-to-bottom-button');
@@ -170,14 +174,14 @@ class TaskView extends HTMLElement {
                 history_container.innerHTML += this.renderUserMessage(message);
             } else if (message.role === 'assistant') {
                 history_container.innerHTML += this.renderAssistantMessage(message);
-            } else if (message.role === 'compact_separator') {
-                history_container.innerHTML += TaskView.renderCompactSeparator();
+            } else if (TaskView.isCompactBoundaryMessage(message)) {
+                history_container.innerHTML += TaskView.renderCompactBoundary();
             }
             this.tryScrollToEnd();
         }
     }
 
-    static renderCompactSeparator() {
+    static renderCompactBoundary() {
         return `
         <div class="flex items-center my-6 select-none">
             <div class="flex-grow border-t border-dashed border-amber-300/60"></div>
@@ -189,6 +193,10 @@ class TaskView extends HTMLElement {
             </span>
             <div class="flex-grow border-t border-dashed border-amber-300/60"></div>
         </div>`;
+    }
+
+    static renderCompactSeparator() {
+        return TaskView.renderCompactBoundary();
     }
 
     updateStopButtonVisibility() {
@@ -513,8 +521,8 @@ class EmbeddedTaskView extends HTMLElement {
                 history_container.innerHTML += this.renderUserMessage(message);
             } else if (message.role === 'assistant') {
                 history_container.innerHTML += this.renderAssistantMessage(message);
-            } else if (message.role === 'compact_separator') {
-                history_container.innerHTML += TaskView.renderCompactSeparator();
+            } else if (TaskView.isCompactBoundaryMessage(message)) {
+                history_container.innerHTML += TaskView.renderCompactBoundary();
             }
             this.tryScrollToEnd();
         }
@@ -558,8 +566,8 @@ class EmbeddedTaskView extends HTMLElement {
                 history_container.innerHTML += this.renderUserMessage(message);
             } else if (message.role === 'assistant') {
                 history_container.innerHTML += this.renderAssistantMessage(message);
-            } else if (message.role === 'compact_separator') {
-                history_container.innerHTML += TaskView.renderCompactSeparator();
+            } else if (TaskView.isCompactBoundaryMessage(message)) {
+                history_container.innerHTML += TaskView.renderCompactBoundary();
             }
             this.tryScrollToEnd();
         }

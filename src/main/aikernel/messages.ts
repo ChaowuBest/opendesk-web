@@ -1141,16 +1141,109 @@ export class AssistantResponse {
  * 消息历史中最多出现一次，其前面的消息在构建 OpenAI 上下文时会被跳过，
  * 由 summary 字段中的结构化快照替代。
  */
+export interface CompactSummarizedRange {
+    start_index: number;
+    end_index_exclusive: number;
+    message_count: number;
+    user_messages: number;
+    assistant_messages: number;
+    tool_calls: number;
+}
+
+export interface CompactBoundaryMetadata {
+    boundary_id: string;
+    summary_version: number;
+    created_at: string;
+    summarized_range?: CompactSummarizedRange;
+    previous_boundary_id?: string;
+}
+
+export const COMPACT_SUMMARY_VERSION = 1;
+
 export class CompactSeparatorMessage {
     role: 'compact_separator' = 'compact_separator';
     summary: string;
+    metadata: CompactBoundaryMetadata;
 
-    constructor(summary: string) {
+    constructor(summary: string, metadata: Partial<CompactBoundaryMetadata> = {}) {
         this.summary = summary;
+        this.metadata = CompactSeparatorMessage.normalizeMetadata(metadata);
     }
 
-    static assign(obj: object): CompactSeparatorMessage {
+    private static normalizeMetadata(metadata?: Partial<CompactBoundaryMetadata>): CompactBoundaryMetadata {
+        const normalized: CompactBoundaryMetadata = {
+            boundary_id:
+                typeof metadata?.boundary_id === 'string' && metadata.boundary_id.trim().length > 0
+                    ? metadata.boundary_id
+                    : crypto.randomUUID(),
+            summary_version:
+                typeof metadata?.summary_version === 'number' && Number.isInteger(metadata.summary_version)
+                    ? metadata.summary_version
+                    : COMPACT_SUMMARY_VERSION,
+            created_at:
+                typeof metadata?.created_at === 'string' && metadata.created_at.trim().length > 0
+                    ? metadata.created_at
+                    : new Date().toISOString()
+        };
+
+        const summarizedRange = CompactSeparatorMessage.normalizeSummarizedRange(metadata?.summarized_range);
+        if (summarizedRange !== undefined) {
+            normalized.summarized_range = summarizedRange;
+        }
+
+        if (typeof metadata?.previous_boundary_id === 'string' && metadata.previous_boundary_id.trim().length > 0) {
+            normalized.previous_boundary_id = metadata.previous_boundary_id;
+        }
+
+        return normalized;
+    }
+
+    private static normalizeSummarizedRange(
+        range?: Partial<CompactSummarizedRange>
+    ): CompactSummarizedRange | undefined {
+        if (range === undefined || range === null || typeof range !== 'object') {
+            return undefined;
+        }
+
+        const fields = [
+            'start_index',
+            'end_index_exclusive',
+            'message_count',
+            'user_messages',
+            'assistant_messages',
+            'tool_calls'
+        ] as const;
+
+        for (const field of fields) {
+            const value = range[field];
+            if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) {
+                return undefined;
+            }
+        }
+
+        return {
+            start_index: range.start_index!,
+            end_index_exclusive: range.end_index_exclusive!,
+            message_count: range.message_count!,
+            user_messages: range.user_messages!,
+            assistant_messages: range.assistant_messages!,
+            tool_calls: range.tool_calls!
+        };
+    }
+
+    static assign(obj: any): CompactSeparatorMessage {
         Object.setPrototypeOf(obj, CompactSeparatorMessage.prototype);
+        const legacyMetadata =
+            obj.metadata && typeof obj.metadata === 'object'
+                ? obj.metadata
+                : {
+                      boundary_id: obj.boundary_id,
+                      summary_version: obj.summary_version,
+                      created_at: obj.created_at,
+                      summarized_range: obj.summarized_range,
+                      previous_boundary_id: obj.previous_boundary_id
+                  };
+        obj.metadata = CompactSeparatorMessage.normalizeMetadata(legacyMetadata);
         return obj as CompactSeparatorMessage;
     }
 
@@ -1169,6 +1262,12 @@ export class CompactSeparatorMessage {
     async render(): Promise<void> {
         /* 渲染在 TUI/GUI 层处理 */
     }
+}
+
+export function isCompactBoundaryMessage(message: unknown): message is CompactSeparatorMessage {
+    return (
+        typeof message === 'object' && message !== null && (message as { role?: string }).role === 'compact_separator'
+    );
 }
 
 export type ChatMessage = UserMessage | AssistantMessage | CompactSeparatorMessage;
@@ -1220,27 +1319,42 @@ export class ChatContext {
         return this.messages[this.messages.length - 1];
     }
 
-    /** 查找最后一条 CompactSeparatorMessage 的位置（从末尾搜索，确保多条时取最新的） */
-    findCompactSeparator(): { index: number; message: CompactSeparatorMessage } | undefined {
+    /** 查找最后一条 compact boundary 的位置（从末尾搜索，确保多条时取最新的） */
+    findCompactBoundary(): { index: number; message: CompactSeparatorMessage } | undefined {
         for (let i = this.messages.length - 1; i >= 0; i--) {
-            if ((this.messages[i] as any).role === 'compact_separator') {
+            if (isCompactBoundaryMessage(this.messages[i])) {
                 return { index: i, message: this.messages[i] as CompactSeparatorMessage };
             }
         }
         return undefined;
     }
 
-    /** 移除已有的分隔符并在指定位置插入新的 CompactSeparatorMessage */
-    insertCompactSeparator(separator: CompactSeparatorMessage, position: number): void {
-        this.messages = this.messages.filter((m) => (m as any).role !== 'compact_separator');
-        this.messages.splice(position, 0, separator);
+    /** 兼容旧命名：查找最后一条 CompactSeparatorMessage 的位置 */
+    findCompactSeparator(): { index: number; message: CompactSeparatorMessage } | undefined {
+        return this.findCompactBoundary();
     }
 
-    /** 确保最多只有一条 CompactSeparatorMessage，保留最后一条 */
-    deduplicateSeparators(): void {
+    /** 移除所有 compact boundary */
+    clearCompactBoundaries(): void {
+        this.messages = this.messages.filter((message) => !isCompactBoundaryMessage(message));
+    }
+
+    /** 移除已有的 compact boundary 并在指定位置插入新的 boundary */
+    replaceCompactBoundary(boundary: CompactSeparatorMessage, position: number): void {
+        this.clearCompactBoundaries();
+        this.messages.splice(position, 0, boundary);
+    }
+
+    /** 兼容旧命名：移除已有的分隔符并在指定位置插入新的 CompactSeparatorMessage */
+    insertCompactSeparator(separator: CompactSeparatorMessage, position: number): void {
+        this.replaceCompactBoundary(separator, position);
+    }
+
+    /** 确保最多只有一条 compact boundary，保留最后一条 */
+    deduplicateCompactBoundaries(): void {
         let lastIdx = -1;
         for (let i = this.messages.length - 1; i >= 0; i--) {
-            if ((this.messages[i] as any).role === 'compact_separator') {
+            if (isCompactBoundaryMessage(this.messages[i])) {
                 if (lastIdx === -1) {
                     lastIdx = i;
                 } else {
@@ -1248,6 +1362,11 @@ export class ChatContext {
                 }
             }
         }
+    }
+
+    /** 兼容旧命名：确保最多只有一条 CompactSeparatorMessage，保留最后一条 */
+    deduplicateSeparators(): void {
+        this.deduplicateCompactBoundaries();
     }
 
     /**
@@ -1267,12 +1386,12 @@ export class ChatContext {
                     ctx.messages.push(UserMessage.assign(message));
                 } else if (message.role === 'assistant') {
                     ctx.messages.push(AssistantMessage.assign(message));
-                } else if (message.role === 'compact_separator') {
+                } else if (isCompactBoundaryMessage(message)) {
                     ctx.messages.push(CompactSeparatorMessage.assign(message));
                 }
             }
         }
-        ctx.deduplicateSeparators();
+        ctx.deduplicateCompactBoundaries();
         // we cannot load any toolset from the saved chat context
         return ctx;
     }

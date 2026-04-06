@@ -23,6 +23,7 @@ import { lookupKnownContextSize, fetchContextSizeFromAPI } from '../utils/model-
 import { logger } from '../utils/logger.js';
 import { HookRegistry } from './hooks.js';
 import type { TaskState } from './states/tasks.js';
+import { buildActiveContextView, countNonBoundaryMessages } from './compaction/context-view.js';
 import path from 'path';
 import fs from 'fs';
 
@@ -75,16 +76,13 @@ function getCompressionPrompt(): string {
 }
 
 /**
- * 收集"活跃上下文"中的工具调用——即 CompactSeparatorMessage 之后的部分。
- * separator 之前的消息已被 buildMessages 跳过，对它们做 Level 1 压缩无意义。
+ * 收集当前活跃上下文中的工具调用。
+ * 活跃上下文由统一的 context-view 层定义，默认即最近一次 compact boundary 之后的部分。
  */
 function collectActiveToolCalls(chatContext: ChatContext): ToolCall[] {
-    const separator = chatContext.findCompactSeparator();
-    const startIndex = separator ? separator.index + 1 : 0;
-
+    const activeContext = buildActiveContextView(chatContext);
     const toolCalls: ToolCall[] = [];
-    for (let i = startIndex; i < chatContext.messages.length; i++) {
-        const message = chatContext.messages[i];
+    for (const message of activeContext.messages) {
         if (message instanceof AssistantMessage) {
             for (const part of message.content) {
                 if (part.type === 'tool_call') {
@@ -222,18 +220,18 @@ function countMessageStats(messages: ChatMessage[]): {
 const MIN_KEPT_MESSAGES = 4;
 
 /**
- * Level 2：插入或渐进式前移 CompactSeparatorMessage。
+ * Level 2：插入或渐进式前移 compact boundary。
  *
  * - 首次：separator 放在总消息数的 50% 位置。
  * - 再次：separator 前移到"旧位置 ↔ 末尾"的中点，每次砍掉剩余消息的一半。
  * - 保底：separator 后至少保留 MIN_KEPT_MESSAGES 条消息，否则视为已压缩到极限。
  */
 async function compressWithSeparator(chatContext: ChatContext, model?: string): Promise<void> {
-    const existingSep = chatContext.findCompactSeparator();
-    const oldIndex = existingSep?.index;
+    const existingBoundary = chatContext.findCompactBoundary();
+    const oldIndex = existingBoundary?.index;
 
-    // 移除已存在的 separator（用 role 字段检查，避免 instanceof 跨模块失效）
-    chatContext.messages = chatContext.messages.filter((m) => (m as any).role !== 'compact_separator');
+    // 统一由 ChatContext 维护 compact boundary 的唯一性。
+    chatContext.clearCompactBoundaries();
 
     const totalMessages = chatContext.messages.length;
     if (totalMessages < MIN_KEPT_MESSAGES) {
@@ -290,8 +288,18 @@ async function compressWithSeparator(chatContext: ChatContext, model?: string): 
 
     try {
         const summary = await generateSummary(messagesToSummarize, model);
-        const separator = new CompactSeparatorMessage(summary);
-        chatContext.messages.splice(separatorPosition, 0, separator);
+        const boundary = new CompactSeparatorMessage(summary, {
+            summarized_range: {
+                start_index: 0,
+                end_index_exclusive: separatorPosition,
+                message_count: messagesToSummarize.length,
+                user_messages: summarizedStats.userMsgs,
+                assistant_messages: summarizedStats.assistantMsgs,
+                tool_calls: summarizedStats.toolCalls
+            },
+            previous_boundary_id: existingBoundary?.message.metadata?.boundary_id
+        });
+        chatContext.replaceCompactBoundary(boundary, separatorPosition);
         logger.info(`[Compact L2] 结构化总结生成完成 (${summary.length} 字符)`);
     } catch (err: any) {
         logger.error(`[Compact L2] 总结生成失败: ${err?.message ?? err}`);
@@ -304,8 +312,8 @@ async function compressWithSeparator(chatContext: ChatContext, model?: string): 
  * @returns 是否执行了压缩操作
  */
 export async function compactContext(chatContext: ChatContext, model?: string): Promise<boolean> {
-    chatContext.deduplicateSeparators();
-    const totalMessages = chatContext.messages.filter((m) => (m as any).role !== 'compact_separator').length;
+    chatContext.deduplicateCompactBoundaries();
+    const totalMessages = countNonBoundaryMessages(chatContext);
     logger.info(`[Compact] 开始压缩, 当前消息数: ${totalMessages}`);
 
     const newlyCompressed = compressToolCalls(chatContext);
@@ -315,8 +323,8 @@ export async function compactContext(chatContext: ChatContext, model?: string): 
         await compressWithSeparator(chatContext, model);
     } else {
         // Level 1 有效果，但如果 separator 还不存在且消息数较多，也主动启动 Level 2
-        const hasSeparator = chatContext.findCompactSeparator() !== undefined;
-        if (!hasSeparator && totalMessages > MIN_KEPT_MESSAGES * 2) {
+        const hasBoundary = chatContext.findCompactBoundary() !== undefined;
+        if (!hasBoundary && totalMessages > MIN_KEPT_MESSAGES * 2) {
             logger.info('[Compact] Level 1 完成, 消息数仍较多且无 separator, 同时执行 Level 2');
             await compressWithSeparator(chatContext, model);
         }
