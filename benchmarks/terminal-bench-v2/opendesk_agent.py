@@ -110,7 +110,7 @@ class OpenDeskAgent(BaseInstalledAgent):
         return "opendesk"
 
     def version(self) -> str | None:
-        return self._version or "0.1.4"
+        return self._version or "0.2.0"
 
     # 国内镜像源替换脚本（apt/apk/yum 通用，兼容 DEB822 和传统格式）
     _MIRROR_CMD = (

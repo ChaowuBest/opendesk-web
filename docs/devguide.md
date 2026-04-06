@@ -11,7 +11,7 @@
 
 ### 1.1 安装NVM, NodeJS和Electron
 
-#### 安装NVM (*Node Version Manager*)
+#### 安装NVM (_Node Version Manager_)
 
 - MacOS和Linux环境在这里下载并安装最新版本的[nvm](https://github.com/nvm-sh/nvm)
 - Windows环境建议使用[nvm-windows](https://github.com/coreybutler/nvm-windows)
@@ -19,11 +19,13 @@
 #### 配置国内镜像源
 
 首先需要配置国内的NPM镜像源
+
 ```shell
 npm config set registry https://registry.npmmirror.com
 npm config get registry
 # 看到 https://registry.npmmirror.com 则修改成功
 ```
+
 由于Electron安装过程中还会单独下载Electron自己的二进制文件，所以需要额外配置镜像。
 根据你使用的Shell环境不同，你需要自己选择正确的环境变量配置方式，以`bash`为例，需要在
 `$HOME/.bashrc`中添加:
@@ -31,6 +33,7 @@ npm config get registry
 ```sh
 export ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/
 ```
+
 如果是Windows CMD/PowerShell环境则需要对应地修改Windows环境变量。
 
 #### 安装
@@ -61,6 +64,7 @@ node -v
 npm run package
 npm run make
 ```
+
 即可在`out/make/`中生成对应的dmg格式安装包。
 
 ### Windows (MSI)
@@ -92,27 +96,26 @@ OpenDesk 采用经典的 Electron 应用架构支持跨平台开发。为了保�
 项目的主入口为[src/main/main.js](../src/main/main.js), 在这里我们创建Electron应用的主窗口，并建立窗口前端网页与后端服务的IPC通信管道。
 
 1. **主进程（Main Process）** - `src/main/`
-   - 应用入口和核心逻辑
-   - 窗口管理、系统集成
-   - 服务管理和应用注册
-   - IPC 通信处理
+    - 应用入口和核心逻辑
+    - 窗口管理、系统集成
+    - 服务管理和应用注册
+    - IPC 通信处理
 
 2. **渲染进程（Renderer Process）** - `src/renderer/`
-   - 用户界面展示
-   - OpenDesk主程序的前端组件和交互逻辑（各个内嵌应用的逻辑分布在应用系统中）
-   - 通过 IPC 与主进程通信
+    - 用户界面展示
+    - OpenDesk主程序的前端组件和交互逻辑（各个内嵌应用的逻辑分布在应用系统中）
+    - 通过 IPC 与主进程通信
 
 3. **应用系统（Applications）** - `src/main/applications/`
-   - 可扩展的应用模块
-   - 每个应用可提供服务、工具和 GUI 界面
-   - 通过应用注册机制统一管理
+    - 可扩展的应用模块
+    - 每个应用可提供服务、工具和 GUI 界面
+    - 通过应用注册机制统一管理
 
 4. **服务系统（Services）** - `src/main/services/`
-   - 后台服务，运行在独立的工作线程中
-   - 提供文件系统、意图解析等系统级功能
+    - 后台服务，运行在独立的工作线程中
+    - 提供文件系统、意图解析等系统级功能
 
 ### 3.2. 前端界面
-
 
 前端界面位于 `src/renderer/` 目录，采用原生 Web 技术构建。
 
@@ -140,26 +143,25 @@ src/renderer/
 #### 前端特性
 
 1. **Web Components 架构**
-   - 使用自定义元素（Custom Elements）构建组件
-   - 组件间通过事件和属性通信
+    - 使用自定义元素（Custom Elements）构建组件
+    - 组件间通过事件和属性通信
 
 2. **IPC 通信**
-   - 通过 `preload.js` 暴露安全的 API
-   - 主要 API 包括：
-     - `taskManagerAPI`: 任务管理相关操作
-     - `fsAPI`: 文件系统操作
-     - `settingAPI`: 设置管理
-     - `notificationAPI`: 通知系统
-     - `applicationAPI`: 应用间通信
+    - 通过 `preload.js` 暴露安全的 API
+    - 主要 API 包括：
+        - `taskManagerAPI`: 任务管理相关操作
+        - `fsAPI`: 文件系统操作
+        - `settingAPI`: 设置管理
+        - `notificationAPI`: 通知系统
+        - `applicationAPI`: 应用间通信
 
 3. **实时更新机制**
-   - 通过 IPC 订阅任务更新
-   - 支持流式渲染 AI 响应内容
+    - 通过 IPC 订阅任务更新
+    - 支持流式渲染 AI 响应内容
 
 4. **样式系统**
-   - 使用 Tailwind CSS 进行样式管理
-   - 支持 Markdown 渲染（代码高亮、数学公式等）
-
+    - 使用 Tailwind CSS 进行样式管理
+    - 支持 Markdown 渲染（代码高亮、数学公式等）
 
 ### 3.3. 后端逻辑
 
@@ -178,70 +180,70 @@ src/renderer/
 
 #### 版本节奏
 
-- 每周更新一个修订版本(Patch version), e.g. 从`0.1.0`到`0.1.1`
-- 有部分新增完整功能的时候更新小版本(Minor version), e.g. 从`0.1.13`到`0.2.0`
+- 在有新功能的前提下每天更新nightly版本
+- 有部分新增完整功能的时候更新小版本(Minor version), e.g. 从`0.2.0`, `0.2.1`
 - 在合适的时机(Who Knows?)推出大版本
 
 #### 当前计划支持的功能
 
 - 基础功能
-  - [ ] 聊天界面
-    - [ ] 支持tokens统计和费用统计
-    - [ ] 支持发送图片
-    - [ ] 支持接收图片模型收到的图片
+    - [ ] 聊天界面
+        - [ ] 支持tokens统计和费用统计
+        - [ ] 支持发送图片
+        - [ ] 支持接收图片模型收到的图片
 - 系统服务
-  - [ ] AI文件系统
-    - [ ] 显示文件系统索引状态
-    - [ ] 优化标题嵌入搜索效果
-    - [ ] 文件内容分块嵌入和查找
-      - [ ] ppt/doc格式处理
-      - [ ] pdf格式处理
-      - ...
-  - [ ] AI工作空间
-  - [ ] 生成式通知
-  - [ ] 系统设置
-    - [x] 设置刷新后自动重启对应服务
-    - [ ] 设置接入AI，更加傻瓜化
+    - [ ] AI文件系统
+        - [ ] 显示文件系统索引状态
+        - [ ] 优化标题嵌入搜索效果
+        - [ ] 文件内容分块嵌入和查找
+            - [ ] ppt/doc格式处理
+            - [ ] pdf格式处理
+            - ...
+    - [ ] AI工作空间
+    - [ ] 生成式通知
+    - [ ] 系统设置
+        - [x] 设置刷新后自动重启对应服务
+        - [ ] 设置接入AI，更加傻瓜化
 - 独立智能体
-  - [x] 基础对话
-  - [ ] DeepResearch
+    - [x] 基础对话
+    - [ ] DeepResearch
 - AI原生应用
-  - [ ] AI 统一搜索
-  - [ ] AI 收件箱
-    - [ ] 基础邮件功能
-      - [ ] 远端邮件协议
-        - [x] pop3
-        - [ ] imap
-        - [ ] smtp
-        - [ ] exchange
-      - [ ] 邮件管理和操作
-        - [x] 标记已读
-        - [ ] 邮件回复
-        - [ ] 邮件删除
-        - [ ] 邮件列表显示
-            > 注：当前虽然已经支持了邮件列表，但是对于过多邮件的场景，我们是做了截断的，如果用户有几万封邮件，当前无法一次性显示，而且到底如何显示才具有更好的可用性也需要思考。
-    - [ ] 邮件接入全局AI助手
-      - [ ] 前端工具集
-        - [x] 获取邮件列表
-        - [x] 获取当前邮件内容
-        - [x] 获取指定uid邮件内容
-        - [ ] 邮件搜索
-        - [ ] 邮件已读情况管理
-      - [ ] 邮件与其他应用打通的体验设计
-        - [ ] 邮件附件接入AI文件系统
-      - [ ] 收到邮件时的智能化操作
-    - [ ] 邮件接入统一搜索
-  - [ ] AI  活动记录
-    - [ ] 会议录制
-    - [ ] 会议文本生成和摘要
-    - [ ] 会议报告(PPT)输出？
-  - [ ] AI 备忘录
-  - [ ] AI 日历管理
-  - [ ] AI PPT生成
+    - [ ] AI 统一搜索
+    - [ ] AI 收件箱
+        - [ ] 基础邮件功能
+            - [ ] 远端邮件协议
+                - [x] pop3
+                - [ ] imap
+                - [ ] smtp
+                - [ ] exchange
+            - [ ] 邮件管理和操作
+                - [x] 标记已读
+                - [ ] 邮件回复
+                - [ ] 邮件删除
+                - [ ] 邮件列表显示
+                    > 注：当前虽然已经支持了邮件列表，但是对于过多邮件的场景，我们是做了截断的，如果用户有几万封邮件，当前无法一次性显示，而且到底如何显示才具有更好的可用性也需要思考。
+        - [ ] 邮件接入全局AI助手
+            - [ ] 前端工具集
+                - [x] 获取邮件列表
+                - [x] 获取当前邮件内容
+                - [x] 获取指定uid邮件内容
+                - [ ] 邮件搜索
+                - [ ] 邮件已读情况管理
+            - [ ] 邮件与其他应用打通的体验设计
+                - [ ] 邮件附件接入AI文件系统
+            - [ ] 收到邮件时的智能化操作
+        - [ ] 邮件接入统一搜索
+    - [ ] AI 活动记录
+        - [ ] 会议录制
+        - [ ] 会议文本生成和摘要
+        - [ ] 会议报告(PPT)输出？
+    - [ ] AI 备忘录
+    - [ ] AI 日历管理
+    - [ ] AI PPT生成
 
 ## 5. 开发必读资料
 
 ### Electron前端开发相关
 
 - Electron-Vite相关
-  * [Vite资源处理](https://cn.electron-vite.org/guide/assets) 这部分详细讲述了如何在Electron Vite的打包框架之下应该如何引入静态资源
+    - [Vite资源处理](https://cn.electron-vite.org/guide/assets) 这部分详细讲述了如何在Electron Vite的打包框架之下应该如何引入静态资源
