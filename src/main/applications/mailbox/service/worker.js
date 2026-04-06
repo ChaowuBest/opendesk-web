@@ -533,7 +533,7 @@ class IMAPEmailClient extends EmailContentHelper {
     static buildImapIdInfo(host) {
         return {
             name: 'FillipDesk',
-            version: '0.1.4',
+            version: '0.2.0',
             vendor: 'FillipDesk',
             'support-email': 'support@fillipdesk.local'
         };
