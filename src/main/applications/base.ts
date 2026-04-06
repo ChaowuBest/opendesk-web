@@ -17,6 +17,7 @@ import { BaseToolset } from '../aikernel/tool.js';
 import { Skill } from '../aikernel/skill.js';
 import type { SlashCommandHandler } from '../tui/commands/index.js';
 import type { ApplicationRegistry } from './registry.js';
+import type { Command } from 'commander';
 import path from 'path';
 import fs from 'fs';
 import PQueue from 'p-queue';
@@ -233,6 +234,12 @@ export abstract class BaseApplication {
     setRegistry(registry: typeof ApplicationRegistry): void {
         this.registry = registry;
     }
+
+    /**
+     * 注册应用提供的 CLI 子命令（如 `skill install`、`skill list` 等）。
+     * 在 commander 解析命令行参数之前调用，应用可重写此静态方法来扩展 CLI。
+     */
+    static registerCliSubcommands(_prog: Command): void {}
 
     /**
      * 返回应用的配置 schema，用于在设置界面中显示和编辑配置。如果不需要配置，则返回空对象。

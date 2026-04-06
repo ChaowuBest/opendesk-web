@@ -27,6 +27,10 @@ import {
     GetSkillsDirectoryTool
 } from './tools.js';
 import type { SlashCommandHandler } from '../../tui/commands/index.js';
+import type { Command } from 'commander';
+import { useCliTransport, useConsoleTransport } from '../../utils/logger.js';
+import path from 'path';
+import fs from 'fs';
 
 export class SkillMgrApplication extends BaseApplication {
     /** 静态回调列表：refresh 后通知订阅方（如 TUI 自动补全）*/
@@ -48,6 +52,136 @@ export class SkillMgrApplication extends BaseApplication {
 
     constructor() {
         super('skillmgr', 'Skills');
+    }
+
+    /**
+     * 注册 `skill` CLI 子命令：install / uninstall / list
+     */
+    static registerCliSubcommands(prog: Command): void {
+        const skillCmd = prog.command('skill').description('技能管理');
+
+        skillCmd
+            .command('install <source>')
+            .description('安装技能（本地目录、本地 zip 文件或远程 zip URL）')
+            .action(async (source: string) => {
+                useCliTransport();
+                useConsoleTransport();
+                const resolved = path.resolve(source);
+                let result: { success: boolean; name?: string; error?: string };
+
+                if (fs.existsSync(resolved)) {
+                    const stat = fs.statSync(resolved);
+                    if (stat.isDirectory()) {
+                        console.log(`正在从本地目录安装技能: ${resolved}`);
+                        result = SkillRegistry.addSkillFromPath(resolved);
+                    } else if (stat.isFile() && resolved.toLowerCase().endsWith('.zip')) {
+                        console.log(`正在从本地 zip 文件安装技能: ${resolved}`);
+                        result = SkillRegistry.addSkillFromZipPath(resolved);
+                    } else {
+                        console.error('✗ 本地文件必须是目录或 .zip 格式');
+                        process.exit(1);
+                        return;
+                    }
+                } else if (source.startsWith('http://') || source.startsWith('https://')) {
+                    if (source.includes('github.com') && source.includes('/tree/')) {
+                        console.log(`正在从 GitHub URL 安装技能: ${source}`);
+                        result = await SkillRegistry.addSkillFromGitHubUrl(source);
+                    } else {
+                        console.log(`正在从 URL 下载并安装技能: ${source}`);
+                        result = await SkillRegistry.addSkillFromUrl(source);
+                    }
+                } else {
+                    console.error(`✗ 无法识别来源: ${source}`);
+                    console.error('  支持: 本地目录、本地 .zip 文件、http(s):// URL');
+                    process.exit(1);
+                    return;
+                }
+
+                if (result.success) {
+                    console.log(`✓ 技能安装成功: ${result.name}`);
+                } else {
+                    console.error(`✗ 技能安装失败: ${result.error}`);
+                    process.exit(1);
+                }
+                process.exit(0);
+            });
+
+        skillCmd
+            .command('uninstall <skillName>')
+            .description('卸载指定名称的技能')
+            .action((skillName: string) => {
+                useCliTransport();
+                useConsoleTransport();
+                console.log(`正在卸载技能: ${skillName}`);
+                const result = SkillRegistry.deleteSkill(skillName);
+                if (result.success) {
+                    console.log(`✓ 技能已卸载: ${skillName}`);
+                } else {
+                    console.error(`✗ 卸载失败: ${result.error}`);
+                    process.exit(1);
+                }
+                process.exit(0);
+            });
+
+        skillCmd
+            .command('list')
+            .description('列出所有已安装的技能')
+            .option('--json', '以 JSON 格式输出')
+            .action((opts: { json?: boolean }) => {
+                useCliTransport();
+                useConsoleTransport();
+                const skills = SkillRegistry.listSkills();
+                const skillsDir = SkillRegistry.getSkillsDirectory();
+
+                const enriched = skills.map((s: any) => {
+                    const dirPath = path.join(skillsDir, s.name ?? s.id);
+                    let fileCount = 0;
+                    let totalSize = 0;
+                    try {
+                        const countFiles = (dir: string) => {
+                            const entries = fs.readdirSync(dir, { withFileTypes: true });
+                            for (const e of entries) {
+                                const full = path.join(dir, e.name);
+                                if (e.isDirectory()) {
+                                    countFiles(full);
+                                } else {
+                                    fileCount++;
+                                    totalSize += fs.statSync(full).size;
+                                }
+                            }
+                        };
+                        if (fs.existsSync(dirPath)) countFiles(dirPath);
+                    } catch {
+                        /* ignore */
+                    }
+                    return { ...s, fileCount, totalSize };
+                });
+
+                if (opts.json) {
+                    console.log(JSON.stringify(enriched, null, 2));
+                } else {
+                    if (enriched.length === 0) {
+                        console.log('暂无已安装的技能');
+                    } else {
+                        console.log(`已安装的技能 (共 ${enriched.length} 个):\n`);
+                        for (const s of enriched) {
+                            const sizeStr =
+                                s.totalSize < 1024
+                                    ? `${s.totalSize} B`
+                                    : s.totalSize < 1024 * 1024
+                                      ? `${(s.totalSize / 1024).toFixed(1)} KB`
+                                      : `${(s.totalSize / (1024 * 1024)).toFixed(1)} MB`;
+                            console.log(`  📦 ${s.name ?? s.id}`);
+                            console.log(`     ${s.description || '(无描述)'}`);
+                            if (s.license) console.log(`     许可证: ${s.license}`);
+                            if (s.compatibility) console.log(`     兼容性: ${s.compatibility}`);
+                            console.log(`     文件数: ${s.fileCount}  目录大小: ${sizeStr}`);
+                            console.log('');
+                        }
+                    }
+                }
+                process.exit(0);
+            });
     }
 
     static getWorkerClass(): typeof BaseWorker | undefined {
