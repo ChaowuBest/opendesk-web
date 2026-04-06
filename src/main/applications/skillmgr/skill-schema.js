@@ -54,7 +54,22 @@ export function parseSkillMd(raw) {
     try {
         frontmatter = parseYaml(frontmatterRaw);
     } catch (e) {
-        return { error: `YAML frontmatter 解析失败: ${e.message}` };
+        // fallback: 自动给含冒号的值加引号后重试
+        try {
+            const patched = frontmatterRaw
+                .split('\n')
+                .map((line) => {
+                    const m = line.match(/^(\w[\w-]*):(\s+)(.+)$/);
+                    if (m && m[3].includes(':') && !m[3].startsWith('"') && !m[3].startsWith("'")) {
+                        return m[1] + ':' + m[2] + JSON.stringify(m[3]);
+                    }
+                    return line;
+                })
+                .join('\n');
+            frontmatter = parseYaml(patched);
+        } catch (_) {
+            return { error: `YAML frontmatter 解析失败: ${e.message}` };
+        }
     }
     if (!frontmatter || typeof frontmatter !== 'object') {
         return { error: 'frontmatter 必须为非空对象' };
