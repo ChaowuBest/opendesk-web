@@ -14,13 +14,13 @@
 
 ### HarmonyOS 说明
 
-在 `process.platform === 'openharmony'` 时，storage 工厂现在会自动切到新的 WASM 路径：
+在 `process.platform === 'openharmony'` 时，所有 `create*IndexDB` 工厂函数会自动切到 WASM 实现：
 
 - `BaseIndexDBWasm` / `TagIndexDBWasm`
 - `BM25IndexDBWasm`（`node-sqlite3-wasm + FTS5 + jieba-wasm`）
 - `VectorIndexDBWasm` / `ChunkIndexDBWasm`（SQLite BLOB 真源 + `hnsw` ANN 缓存）
 
-旧的 `*-hm.ts/js` 文件仍然保留，但分发入口不再优先走 native addon 实现。
+旧的 `*-hm.ts` native addon 实现已被 WASM 路径完全替代，工厂函数不再引用它们。文件保留仅供参考。
 
 HarmonyOS / WASM 路径的当前约定：
 
@@ -351,9 +351,13 @@ await storage.upsert([item]);
 ## 6. 删除
 
 ```typescript
+// 传 Item 对象
 await storage.delete([
   { item_id: 'doc_001', item_type: 'file' },
 ]);
+
+// 或直接传 item_id 字符串数组
+await storage.delete(['doc_001', 'doc_002']);
 ```
 
 删除会同步从所有 Indexer 中移除该 item 的数据。
