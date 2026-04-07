@@ -7,4 +7,9 @@ npm run build || {
   exit 1
 }
 
+npm run check:architecture || {
+  echo "Architecture check failed"
+  exit 1
+}
+
 echo "Pre-push checks passed"
