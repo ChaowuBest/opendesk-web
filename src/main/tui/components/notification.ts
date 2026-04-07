@@ -464,7 +464,7 @@ export class NotificationCenterOverlay implements Component {
             read: '已读'
         };
         const filterLabel = chalk.dim(` [${FILTER_LABELS[this.filter]}]`);
-        return chalk.bold(`🔔 通知中心`) + chalk.dim(` (${unreadCount}/${total})`) + filterLabel;
+        return chalk.bold(`🪧 通知中心`) + chalk.dim(` (${unreadCount}/${total})`) + filterLabel;
     }
 
     private rebuildBox(): void {
@@ -652,12 +652,12 @@ export function getNotificationBadge(): string {
 
     const byPriority = store.getUnreadCountByPriority();
     if (byPriority.urgent > 0) {
-        return chalk.bgRed.white(` 📬 ${unread} `);
+        return chalk.bgRed.white(` 🪧 ${unread} `);
     }
     if (byPriority.high > 0) {
-        return chalk.bgYellow.black(` 📬 ${unread} `);
+        return chalk.bgYellow.black(` 🪧 ${unread} `);
     }
-    return chalk.hex('#d4d4d4')(` 📬 ${unread} `);
+    return chalk.hex('#d4d4d4')(` 🪧 ${unread} `);
 }
 
 // ─── Utility functions ──────────────────────────────────────

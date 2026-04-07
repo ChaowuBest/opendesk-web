@@ -18,7 +18,7 @@ import { renderResponsiveCells, type ResponsiveCell } from './responsive-bar';
 import { getNotificationBadge } from './notification';
 import chalk from 'chalk';
 import type { GlobalTodo } from '../../applications/todomgr/common';
-import type { TaskState } from '../../states/tasks';
+import type { TaskState } from '../../aikernel/states/tasks.js';
 import { describeCron } from '../../utils/cron';
 import type { ChannelRuntimeState } from '../../applications/channelmgr/app.js';
 
