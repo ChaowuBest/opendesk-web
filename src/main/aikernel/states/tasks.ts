@@ -25,7 +25,8 @@ import {
     extractImagePaths,
     imageToDataUri
 } from '../messages.js';
-import { shouldCompact, compactContext } from '../compact.js';
+import { compactContext } from '../compact.js';
+import { prepareContextForModel } from '../compaction/pipeline.js';
 import { BaseToolset } from '../tool.js';
 import { LLM } from '../llm.js';
 import { getTaskDirectory } from '../../utils/setting.js';
@@ -262,10 +263,11 @@ export class TaskState {
             this._compactedBeforeSubmit = false;
         } else {
             try {
-                if (await shouldCompact(this.chat_context, this.model)) {
-                    logger.info(`Auto-compacting context for task ${this.task_id}`);
-                    await compactContext(this.chat_context, this.model);
-                }
+                await prepareContextForModel(this.chat_context, this.model, {
+                    beforeCompact: () => {
+                        logger.info(`Auto-compacting context for task ${this.task_id}`);
+                    }
+                });
             } catch (err: unknown) {
                 logger.warn(`Auto-compact check failed: ${err instanceof Error ? err.message : err}`);
             }

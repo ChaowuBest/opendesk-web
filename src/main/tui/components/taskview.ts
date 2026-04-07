@@ -12,9 +12,11 @@ import {
     ToolCallMessagePart,
     ErrorMessagePart,
     UserMessage,
+    isCompactBoundaryMessage,
     ToolCall
 } from '../../aikernel/messages';
-import { shouldCompact, compactContext } from '../../aikernel/compact';
+import { compactContext } from '../../aikernel/compact';
+import { prepareContextForModel } from '../../aikernel/compaction/pipeline.js';
 import { logger, getDebugMode } from '../../utils/logger.js';
 import { defaultMarkdownTheme } from '../theme';
 import { DefaultToolCallView } from './toolcall';
@@ -335,11 +337,11 @@ const COMPACT_SPINNER_FRAMES = ['◐', '◓', '◑', '◒'];
 const COMPACT_SPINNER_MS = 120;
 
 /**
- * 上下文压缩分隔线视图。
+ * 上下文压缩 boundary 视图。
  * - 静态模式：渲染为一条带 ✂ 的水平分隔线
  * - loading 模式：渲染为带旋转动画的"正在压缩…"提示
  */
-export class CompactSeparatorView implements Component {
+export class CompactBoundaryView implements Component {
     private _loading = false;
     private invalidated = true;
     private lastWidth?: number;
@@ -379,6 +381,8 @@ export class CompactSeparatorView implements Component {
         return this.cachedOutput;
     }
 }
+
+export { CompactBoundaryView as CompactSeparatorView };
 
 export class UserMessageView implements Component {
     message: UserMessage;
@@ -586,7 +590,7 @@ export class AssistantMessageView implements Component {
  */
 export class TaskView implements Component {
     taskState?: TaskState;
-    messages: Array<UserMessageView | AssistantMessageView | CompactSeparatorView> = [];
+    messages: Array<UserMessageView | AssistantMessageView | CompactBoundaryView> = [];
 
     /** 用于向外部回传 TaskStatusBar 数据 */
     onStatusBarUpdate?: (data: Partial<TaskStatusBarData>) => void;
@@ -660,7 +664,7 @@ export class TaskView implements Component {
         if (!this.taskState || this._compacting) return;
         this._compacting = true;
 
-        const indicatorView = new CompactSeparatorView();
+        const indicatorView = new CompactBoundaryView();
         indicatorView.setLoading(true);
         this.messageLayout.addChild(indicatorView);
         this.invalidated = true;
@@ -704,9 +708,15 @@ export class TaskView implements Component {
 
         // 在提交新消息前检查是否需要压缩上下文（TUI 层负责展示动画）
         try {
-            if (await shouldCompact(this.taskState.chat_context, this.taskState.model)) {
-                logger.info(`Auto-compacting context for task ${this.taskState.task_id}`);
-                await this.performCompactWithAnimation();
+            const preparation = await prepareContextForModel(this.taskState.chat_context, this.taskState.model, {
+                beforeCompact: () => {
+                    logger.info(`Auto-compacting context for task ${this.taskState!.task_id}`);
+                },
+                executeCompact: async () => {
+                    await this.performCompactWithAnimation();
+                }
+            });
+            if (preparation.compacted) {
                 // 压缩重建后重新添加用户消息视图（此时尚未入 chat_context）
                 this.clearMessages();
                 this.rebuildFromHistory();
@@ -787,8 +797,8 @@ export class TaskView implements Component {
         this.messageIdToAssistantView.clear();
 
         for (const msg of this.taskState.chat_context.messages) {
-            if ((msg as any).role === 'compact_separator') {
-                const view = new CompactSeparatorView();
+            if (isCompactBoundaryMessage(msg)) {
+                const view = new CompactBoundaryView();
                 this.messages.push(view);
                 this.messageLayout.addChild(view);
             } else if (msg instanceof UserMessage) {

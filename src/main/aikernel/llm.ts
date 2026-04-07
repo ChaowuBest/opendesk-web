@@ -10,8 +10,9 @@
  */
 
 import { OpenAI } from 'openai';
-import { ChatContext, AssistantResponse, UserMessage, AssistantMessage, CompactSeparatorMessage } from './messages';
+import { ChatContext, AssistantResponse, UserMessage, AssistantMessage, isCompactBoundaryMessage } from './messages';
 import { Setting, ModelInstance } from '../utils/setting.js';
+import { buildActiveContextView } from './compaction/context-view.js';
 import { z } from 'zod';
 import { logger } from '../utils/logger.js';
 import { lookupKnownVisionSupport, fetchVisionSupportFromAPI } from '../utils/model-context.js';
@@ -350,8 +351,9 @@ class LLM {
     /**
      * 将 ChatContext 中的消息序列转换为 OpenAI API 所需的 messages 数组。
      *
-     * - 若存在 CompactSeparatorMessage，则跳过其之前的所有消息（system prompt 除外），
-     *   并将 separator 本身作为一条 UserMessage（含结构化总结）插入上下文。
+     * - 模型可见消息统一由 compaction/context-view 决定。
+     * - 若存在 compact boundary，则 active context 从该消息开始，
+     *   并将 boundary 本身作为一条 UserMessage（含结构化总结）插入上下文。
      * - 对于 AssistantMessage，会调用其 toOpenAIMessages() 方法进行拆分，
      *   以保持 reasoning、tool_call、text 的正确顺序。
      * @param supportsVision 当前模型是否支持视觉输入，false 时 UserMessage 中的图像部分会被过滤
@@ -364,15 +366,10 @@ class LLM {
             messages.push(chatContext.system_prompt.toOpenAIMessage());
         }
 
-        // 如果存在 CompactSeparatorMessage，从它的位置开始（跳过之前的所有消息）
-        const separator = chatContext.findCompactSeparator();
-        const startIndex = separator ? separator.index : 0;
-
-        for (let i = startIndex; i < chatContext.messages.length; i++) {
-            const message = chatContext.messages[i];
-
-            if ((message as any).role === 'compact_separator') {
-                messages.push((message as CompactSeparatorMessage).toOpenAIMessage());
+        const activeContext = buildActiveContextView(chatContext);
+        for (const message of activeContext.messages) {
+            if (isCompactBoundaryMessage(message)) {
+                messages.push(message.toOpenAIMessage());
             } else if (message instanceof AssistantMessage) {
                 if (message.content.length === 0) {
                     continue;
