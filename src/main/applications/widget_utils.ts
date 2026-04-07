@@ -11,7 +11,7 @@
 
 import { BaseTool, BaseToolset } from '../aikernel/tool';
 import { z } from 'zod';
-import type { TaskState } from '../states/tasks';
+import type { TaskState } from '../aikernel/states/tasks';
 
 export class AgentOperableHTMLElement extends HTMLElement {
     constructor() {
