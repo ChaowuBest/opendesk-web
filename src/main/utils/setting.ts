@@ -285,37 +285,72 @@ function getAppDirectory(): string {
 /**
  * 获取应用日志目录
  */
-function getLogDirectory(): string {
-    const appDirectory = getAppDirectory();
-    const logDirectory = path.join(appDirectory, 'logs');
-    if (!fs.existsSync(logDirectory)) {
-        fs.mkdirSync(logDirectory, { recursive: true });
+function ensureDirectoryExists(directory: string): string {
+    if (!fs.existsSync(directory)) {
+        fs.mkdirSync(directory, { recursive: true });
     }
-    return logDirectory;
+    return directory;
+}
+
+function resolveArtifactDirectory(): string {
+    return path.join(getAppDirectory(), 'artifacts');
+}
+
+function getLogDirectory(): string {
+    return ensureDirectoryExists(path.join(getAppDirectory(), 'logs'));
 }
 
 /**
  * 获取应用任务目录
  */
 function getTaskDirectory(): string {
-    const appDirectory = getAppDirectory();
-    const taskDirectory = path.join(appDirectory, 'tasks');
-    if (!fs.existsSync(taskDirectory)) {
-        fs.mkdirSync(taskDirectory, { recursive: true });
-    }
-    return taskDirectory;
+    return ensureDirectoryExists(path.join(getAppDirectory(), 'tasks'));
 }
 
 /**
  * 获取应用产物目录
  */
 function getArtifactDirectory(): string {
-    const appDirectory = getAppDirectory();
-    const artifactDirectory = path.join(appDirectory, 'artifacts');
-    if (!fs.existsSync(artifactDirectory)) {
-        fs.mkdirSync(artifactDirectory, { recursive: true });
-    }
-    return artifactDirectory;
+    return ensureDirectoryExists(resolveArtifactDirectory());
 }
 
-export { getAppDirectory, getLogDirectory, getTaskDirectory, getArtifactDirectory, getSettingSchema };
+/**
+ * 获取任务级产物目录。
+ * 默认在访问时创建 `artifacts/<taskId>/`，清理等仅读场景可显式关闭创建。
+ */
+function getTaskArtifactDirectory(taskId: string, ensureExists: boolean = true): string {
+    const artifactDirectory = resolveArtifactDirectory();
+    const taskArtifactDirectory = path.join(artifactDirectory, taskId);
+
+    if (ensureExists) {
+        ensureDirectoryExists(artifactDirectory);
+        ensureDirectoryExists(taskArtifactDirectory);
+    }
+
+    return taskArtifactDirectory;
+}
+
+/**
+ * 获取任务级工具结果目录 `artifacts/<taskId>/tool-results/`。
+ * 默认在访问时创建目录，仅读场景可显式关闭创建。
+ */
+function getTaskToolResultDirectory(taskId: string, ensureExists: boolean = true): string {
+    const taskArtifactDirectory = getTaskArtifactDirectory(taskId, ensureExists);
+    const toolResultDirectory = path.join(taskArtifactDirectory, 'tool-results');
+
+    if (ensureExists) {
+        ensureDirectoryExists(toolResultDirectory);
+    }
+
+    return toolResultDirectory;
+}
+
+export {
+    getAppDirectory,
+    getLogDirectory,
+    getTaskDirectory,
+    getArtifactDirectory,
+    getTaskArtifactDirectory,
+    getTaskToolResultDirectory,
+    getSettingSchema
+};

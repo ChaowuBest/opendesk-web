@@ -88,6 +88,18 @@ export class ReasoningMessagePart {
 /** 当压缩后的工具参数长度超过此阈值时，参数本身也会被替换为压缩占位 */
 const LARGE_ARGS_THRESHOLD = 500;
 
+export const TOOL_RESULT_STORAGE_VERSION = 1;
+
+export interface ToolResultStorageMetadata {
+    result_id: string;
+    storage_version: number;
+    relative_path?: string;
+    original_chars?: number;
+    original_lines?: number;
+    persisted_at?: string;
+    replacement_text?: string;
+}
+
 export class ToolCall {
     index: number;
     id: string;
@@ -101,6 +113,8 @@ export class ToolCall {
     tool?: BaseTool<any>;
     /** undefined = 未压缩；非空 UUID = 已被上下文压缩 */
     compress_id?: string;
+    /** 大工具结果落盘后的稳定引用信息 */
+    result_storage?: ToolResultStorageMetadata;
 
     constructor(index: number, id: string, tool_name: string, args_string: string) {
         this.index = index;
@@ -130,6 +144,90 @@ export class ToolCall {
     toJSON(): object {
         const { tool, ...rest } = this as ToolCall & { tool?: BaseTool<any> };
         return rest;
+    }
+
+    static normalizeResultStorage(
+        metadata?: Partial<ToolResultStorageMetadata> | null
+    ): ToolResultStorageMetadata | undefined {
+        if (metadata === undefined || metadata === null || typeof metadata !== 'object') {
+            return undefined;
+        }
+
+        const resultId =
+            typeof metadata.result_id === 'string' && metadata.result_id.trim().length > 0
+                ? metadata.result_id
+                : undefined;
+        if (resultId === undefined) {
+            return undefined;
+        }
+
+        const normalized: ToolResultStorageMetadata = {
+            result_id: resultId,
+            storage_version:
+                typeof metadata.storage_version === 'number' &&
+                Number.isInteger(metadata.storage_version) &&
+                metadata.storage_version > 0
+                    ? metadata.storage_version
+                    : TOOL_RESULT_STORAGE_VERSION
+        };
+
+        if (typeof metadata.relative_path === 'string' && metadata.relative_path.trim().length > 0) {
+            normalized.relative_path = metadata.relative_path;
+        }
+
+        if (
+            typeof metadata.original_chars === 'number' &&
+            Number.isInteger(metadata.original_chars) &&
+            metadata.original_chars >= 0
+        ) {
+            normalized.original_chars = metadata.original_chars;
+        }
+
+        if (
+            typeof metadata.original_lines === 'number' &&
+            Number.isInteger(metadata.original_lines) &&
+            metadata.original_lines >= 0
+        ) {
+            normalized.original_lines = metadata.original_lines;
+        }
+
+        if (typeof metadata.persisted_at === 'string' && metadata.persisted_at.trim().length > 0) {
+            normalized.persisted_at = metadata.persisted_at;
+        }
+
+        if (typeof metadata.replacement_text === 'string' && metadata.replacement_text.length > 0) {
+            normalized.replacement_text = metadata.replacement_text;
+        }
+
+        return normalized;
+    }
+
+    ensureResultStorage(metadata: Partial<ToolResultStorageMetadata> = {}): ToolResultStorageMetadata {
+        const normalized = ToolCall.normalizeResultStorage({
+            ...this.result_storage,
+            ...metadata,
+            result_id:
+                typeof metadata.result_id === 'string' && metadata.result_id.trim().length > 0
+                    ? metadata.result_id
+                    : (this.result_storage?.result_id ?? crypto.randomUUID())
+        });
+
+        if (normalized === undefined) {
+            throw new Error('failed to normalize tool result storage metadata');
+        }
+
+        this.result_storage = normalized;
+        return normalized;
+    }
+
+    setResultStorage(metadata?: Partial<ToolResultStorageMetadata> | null): ToolResultStorageMetadata | undefined {
+        const normalized = ToolCall.normalizeResultStorage(metadata);
+        this.result_storage = normalized;
+        return normalized;
+    }
+
+    clearResultStorage(): void {
+        this.result_storage = undefined;
     }
 
     setTool(tool: BaseTool<any>) {
@@ -234,6 +332,7 @@ export class ToolCall {
             enumerable: false,
             configurable: true
         });
+        tc.result_storage = ToolCall.normalizeResultStorage(tc.result_storage);
         return tc;
     }
 }

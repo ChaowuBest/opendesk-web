@@ -9,6 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
+import { ToolResultReplacementStates, type ToolResultReplacementState } from '../compaction/tool-results.js';
 import {
     ChatContext,
     UserMessage,
@@ -29,7 +30,7 @@ import { prepareContextForModel } from '../compaction/pipeline.js';
 import { compactContext } from '../compact.js';
 import { BaseTool, BaseToolset } from '../tool.js';
 import { LLM } from '../llm.js';
-import { getTaskDirectory } from '../../utils/setting.js';
+import { getTaskArtifactDirectory, getTaskDirectory } from '../../utils/setting.js';
 import { logger } from '../../utils/logger.js';
 import { type ToolsetProvider, EmptyToolsetProvider } from './toolset-provider.js';
 import { jsonrepair } from 'jsonrepair';
@@ -118,6 +119,7 @@ export class TaskState {
     task_name: string | null = null;
     task_status: TaskStatus = 'waiting';
     chat_context: ChatContext = new ChatContext();
+    tool_result_replacement_state: ToolResultReplacementState = ToolResultReplacementStates.create();
 
     model?: string;
     message_queue: string[] = [];
@@ -164,6 +166,10 @@ export class TaskState {
         task.task_name = task_json.task_name;
         task.task_status = task_json.task_status === 'running' ? 'failed' : task_json.task_status;
         task.chat_context = ChatContext.assign(task_json.chat_context);
+        task.tool_result_replacement_state = ToolResultReplacementStates.deserialize(
+            task_json.tool_result_replacement_state,
+            task.chat_context
+        );
         if (task_json.started_at) {
             task.started_at = new Date(task_json.started_at);
         }
@@ -201,12 +207,14 @@ export class TaskState {
     }
 
     toJSON() {
+        const toolResultReplacementState = this.getSynchronizedToolResultReplacementState();
         return {
             task_id: this.task_id,
             parent_id: this.parent_id,
             task_name: this.task_name,
             task_status: this.task_status,
             chat_context: this.chat_context.toJSON(),
+            tool_result_replacement_state: ToolResultReplacementStates.serialize(toolResultReplacementState),
             started_at: this.started_at?.toISOString(),
             finished_at: this.finished_at?.toISOString(),
             total_elapsed_ms: this.total_elapsed_ms,
@@ -219,6 +227,14 @@ export class TaskState {
     setSystemPrompt(prompt: string) {
         // logger.info(`setting system prompt ${prompt} to task ${this.task_id}`);
         this.chat_context.system_prompt = new SystemMessage(prompt);
+    }
+
+    private getSynchronizedToolResultReplacementState(): ToolResultReplacementState {
+        this.tool_result_replacement_state = ToolResultReplacementStates.synchronize(
+            this.tool_result_replacement_state,
+            this.chat_context
+        );
+        return this.tool_result_replacement_state;
     }
 
     async attachToolset(toolset: BaseToolset) {
@@ -321,6 +337,7 @@ export class TaskState {
      */
     cleanup() {
         const taskDirectory = getTaskDirectory();
+        const taskArtifactDirectory = getTaskArtifactDirectory(this.task_id, false);
 
         // 1. Delete task JSON configuration
         const taskJsonPath = path.join(taskDirectory, `${this.task_id}.json`);
@@ -332,20 +349,30 @@ export class TaskState {
             }
         }
 
-        // 2. Delete associated Artifacts (logs)
-        const artifactsDir = path.join(taskDirectory, 'artifacts');
-        if (fs.existsSync(artifactsDir)) {
+        // 2. Delete task-scoped artifacts under artifacts/<taskId>/
+        if (fs.existsSync(taskArtifactDirectory)) {
             try {
-                const files = fs.readdirSync(artifactsDir);
-                for (const file of files) {
-                    // If filename starts with task_id, it belongs to this task
-                    if (file.startsWith(`${this.task_id}_`)) {
-                        const filePath = path.join(artifactsDir, file);
-                        fs.unlinkSync(filePath);
+                fs.rmSync(taskArtifactDirectory, { recursive: true, force: true });
+            } catch (err) {
+                logger.error(
+                    `Failed to cleanup task artifact directory ${taskArtifactDirectory}: ${(err as Error).message}`
+                );
+            }
+        }
+
+        // 3. Compatibility cleanup for older task-scoped artifacts under tasks/artifacts/
+        const legacyArtifactsDir = path.join(taskDirectory, 'artifacts');
+        if (fs.existsSync(legacyArtifactsDir)) {
+            try {
+                const entries = fs.readdirSync(legacyArtifactsDir);
+                for (const entry of entries) {
+                    if (!entry.startsWith(`${this.task_id}_`)) {
+                        continue;
                     }
+                    fs.rmSync(path.join(legacyArtifactsDir, entry), { recursive: true, force: true });
                 }
             } catch (err) {
-                logger.error(`Failed to cleanup artifacts for task ${this.task_id}: ${(err as Error).message}`);
+                logger.error(`Failed to cleanup legacy artifacts for task ${this.task_id}: ${(err as Error).message}`);
             }
         }
     }
@@ -509,9 +536,11 @@ export class TaskState {
      */
     fork(): TaskState {
         const forkedTask = new TaskState(this.task_manager_state, null);
+        const toolResultReplacementState = this.getSynchronizedToolResultReplacementState();
 
         // Copy chat context via serialization
         forkedTask.chat_context = ChatContext.assign(this.chat_context.toJSON());
+        forkedTask.tool_result_replacement_state = ToolResultReplacementStates.clone(toolResultReplacementState);
 
         // Copy model
         forkedTask.model = this.model;
