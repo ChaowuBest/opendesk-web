@@ -22,7 +22,7 @@
 
 import { type Component, SelectList, Text } from '@mariozechner/pi-tui';
 import { visibleWidth, truncateToWidth } from '@mariozechner/pi-tui';
-import { defaultSelectListTheme, getTerminalColorScheme } from '../theme';
+import { defaultSelectListTheme } from '../theme';
 import type { OpenDeskTUI } from '../entry';
 import type {
     PermissionRequest,
@@ -52,35 +52,21 @@ function padBgLine(line: string, width: number, bgFn: (s: string) => string): st
 }
 
 /**
- * 根据终端深/浅主题返回权限确认框的配色方案。
+ * 权限确认框配色——不区分深浅主题，选用在黑底和白底下都有良好可读性的中性色值。
+ * 背景使用 ANSI 256 色中的深灰蓝 (#2e3440)，在浅色终端上有足够区分度，
+ * 在深色终端上也不会与纯黑背景混为一体。
  */
-function getPermissionColors() {
-    const scheme = getTerminalColorScheme();
-    if (scheme === 'light') {
-        return {
-            bg: (s: string) => chalk.bgHex('#fff3cd')(s),
-            title: (s: string) => chalk.bgHex('#e8a700').black.bold(s),
-            path: (s: string) => chalk.hex('#0055aa')(s),
-            question: (s: string) => chalk.hex('#333333').bold(s),
-            allow: (s: string) => chalk.hex('#1a7f37')(s),
-            allowBright: (s: string) => chalk.hex('#0969da')(s),
-            deny: (s: string) => chalk.hex('#cf222e')(s),
-            hint: (s: string) => chalk.hex('#888888')(s),
-            separator: (s: string) => chalk.hex('#cccccc')(s)
-        };
-    }
-    return {
-        bg: (s: string) => chalk.bgHex('#3d2a00')(s),
-        title: (s: string) => chalk.bold.bgYellow.black(s),
-        path: (s: string) => chalk.cyan(s),
-        question: (s: string) => chalk.bold(s),
-        allow: (s: string) => chalk.green(s),
-        allowBright: (s: string) => chalk.greenBright(s),
-        deny: (s: string) => chalk.red(s),
-        hint: (s: string) => chalk.dim(s),
-        separator: (s: string) => chalk.dim(s)
-    };
-}
+const permissionColors = {
+    bg: (s: string) => chalk.bgHex('#2e3440')(s),
+    title: (s: string) => chalk.bgHex('#d08700').hex('#1a1a1a').bold(s),
+    path: (s: string) => chalk.hex('#5cbbf6')(s),
+    question: (s: string) => chalk.hex('#e0e0e0').bold(s),
+    allow: (s: string) => chalk.hex('#5cbb5c')(s),
+    allowBright: (s: string) => chalk.hex('#6cb6e6')(s),
+    deny: (s: string) => chalk.hex('#e05555')(s),
+    hint: (s: string) => chalk.hex('#888888')(s),
+    separator: (s: string) => chalk.hex('#888888')(s)
+};
 
 /**
  * 权限确认 widget，直接嵌入输入区域替换 Editor。
@@ -92,13 +78,11 @@ export class PermissionPromptWidget implements Component {
     private resourcePaths: string[];
     private questionText: string;
     private hintLine: Text;
-    private colors: ReturnType<typeof getPermissionColors>;
 
     onDone?: (response: PermissionUserResponse) => void;
 
     constructor(requests: PermissionRequest[], toolName: string) {
-        this.colors = getPermissionColors();
-        const c = this.colors;
+        const c = permissionColors;
 
         const first = requests[0];
         const actionLabel = ACTION_LABELS[first.action] || first.action;
@@ -155,7 +139,7 @@ export class PermissionPromptWidget implements Component {
     }
 
     render(width: number): string[] {
-        const c = this.colors;
+        const c = permissionColors;
         const bgFn = c.bg;
         const emptyLine = bgFn(' '.repeat(width));
 
