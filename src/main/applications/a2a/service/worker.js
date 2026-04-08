@@ -11,6 +11,7 @@
 
 import { BaseWorker } from '../../base';
 import { A2ARegistryClient } from './client.js';
+import fs from 'fs';
 import { LLM } from '../../../aikernel/llm.js';
 import { ChatContext, UserMessage, AssistantMessage, FileMessagePart } from '../../../aikernel/messages';
 import { logger } from '../../../utils/logger.js';
@@ -264,12 +265,36 @@ ${agentsDescription}
                         }
                     });
                 } else if (attachment.type === 'file') {
-                    // 对于文件，可以发送文件路径或转换为文本描述
-                    // 这里先发送文件路径，如果 agent 需要读取文件内容，可以通过其他方式
-                    parts.push({
-                        kind: 'text',
-                        text: `[文件附件: ${attachment.name}${attachment.filePath ? ` (路径: ${attachment.filePath})` : ''}]`
-                    });
+                    let base64Data = attachment.data;
+
+                    if (!base64Data && attachment.filePath) {
+                        try {
+                            const fileBuffer = fs.readFileSync(attachment.filePath);
+                            base64Data = fileBuffer.toString('base64');
+                        } catch (err) {
+                            logger.error(`暴力读取本地文件失败: ${err.message}`);
+                        }
+                    }
+
+                    if (base64Data) {
+                        // 处理前缀
+                        if (base64Data.startsWith('data:')) {
+                            const base64Match = base64Data.match(/^data:[^;]+;base64,(.+)$/);
+                            if (base64Match) base64Data = base64Match[1];
+                        }
+                        parts.push({
+                            kind: 'file',
+                            file: {
+                                bytes: base64Data,
+                                mimeType: attachment.mimeType || 'text/plain'
+                            }
+                        });
+                    } else {
+                        parts.push({
+                            kind: 'text',
+                            text: `[文件附件: ${attachment.name}]`
+                        });
+                    }
                 }
             }
 
@@ -480,27 +505,31 @@ ${agentsDescription}
                             success: true
                         };
 
-                        // 保存对话历史
-                        const userMessage = new UserMessage(textContent);
-                        // 如果有附件，添加到消息中
-                        if (attachments.length > 0) {
-                            for (const attachment of attachments) {
-                                if (attachment.type === 'image') {
-                                    userMessage.appendImageURL(attachment.data);
-                                } else if (attachment.type === 'file') {
-                                    // FileMessagePart 需要文件路径和内容，这里先只添加路径
-                                    // 如果需要提取内容，可以在这里处理
-                                    userMessage.content.push(
-                                        new FileMessagePart(attachment.filePath || attachment.name, '')
-                                    );
+                        try {
+                            // 保存对话历史
+                            const userMessage = new UserMessage(textContent);
+                            // 如果有附件，添加到消息中
+                            if (attachments.length > 0) {
+                                for (const attachment of attachments) {
+                                    if (attachment.type === 'image') {
+                                        userMessage.appendImageURL(attachment.data);
+                                    } else if (attachment.type === 'file') {
+                                        // FileMessagePart 需要文件路径和内容，这里先只添加路径
+                                        // 如果需要提取内容，可以在这里处理
+                                        userMessage.content.push(
+                                            new FileMessagePart(attachment.filePath || attachment.name, '')
+                                        );
+                                    }
                                 }
-                                // audio 类型暂时作为文本描述处理
                             }
+                            chatContext.appendMessage(userMessage);
+
+                            const assistantMessage = new AssistantMessage();
+                            assistantMessage.content = [{ type: 'text', text: responseText }];
+                            chatContext.appendMessage(assistantMessage);
+                        } catch (histErr) {
+                            logger.error(`保存历史记录异常 (已安全拦截): ${histErr.message}`);
                         }
-                        chatContext.appendMessage(userMessage);
-                        const assistantMessage = new AssistantMessage();
-                        assistantMessage.content = [{ type: 'text', text: responseText }];
-                        chatContext.appendMessage(assistantMessage);
 
                         return { success: true };
                     } else {
@@ -514,7 +543,12 @@ ${agentsDescription}
             }
         } catch (error) {
             logger.error(`Error selecting/calling agent: ${error.message}`);
-            // 如果 A2A 调用失败，回退到 LLM
+            yield {
+                type: 'stream_error',
+                conversationId: conversationId,
+                error: `Agent 调用失败: ${error.message}`
+            };
+            return { success: false };
         }
 
         // 回退方案：使用 LLM 生成响应

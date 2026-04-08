@@ -1052,6 +1052,14 @@ class A2UIToHTMLConverter {
                 const styleClasses = this.getComponentStyleClasses('Video');
                 return `<video class="${styleClasses.join(' ')}" src="${this.escapeHtml(url)}" controls></video>`;
             }
+            case 'AudioPlayer': {
+                const url = this.resolveBoundValue(props.url || props.src, dataModel);
+                return `
+          <div style="width: 100%; min-width: 260px; flex-shrink: 0; margin-top: 8px;">
+            <audio controls src="${this.escapeHtml(url)}" style="width: 100%; height: 44px; outline: none; border-radius: 8px;"></audio>
+          </div>
+        `;
+            }
             default: {
                 const defaultChildren = this.getChildren(props, compBuf, dataModel);
                 return `<div class="a2ui-${type.toLowerCase()}">${defaultChildren}</div>`;
