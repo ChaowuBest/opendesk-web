@@ -14,10 +14,11 @@ OpenDesk 的权限系统用于控制 AI Agent 对外部资源的访问。当 Age
 
 **设计原则：**
 
-- **deny > allow > ask**：deny 规则优先于 allow，都不匹配时隐式回退到 ask
+- **deny > ask(显式保护) > allow > ask(隐式)**：deny 最优先，其次是显式 ask 保护规则（如敏感路径），然后是 allow，都不匹配时隐式回退到 ask
 - **基于路径，不绑定工具**：权限规则作用于资源路径，与哪个工具发起请求无关
 - **不落盘**：`harnessContext`（包括权限引擎）不参与序列化，每次任务启动由宿主重新构建
-- **封装实现**：外部模块只依赖 `permission.ts` 中的接口，不感知 casbin 等具体引擎
+- **封装实现**：外部模块只依赖 `permission.ts` 中的接口，不感知具体引擎实现
+- **dotfiles 正常匹配**：glob 匹配启用 `dot: true`，工作空间内 `.gitignore`、`.eslintrc` 等 dotfiles 正常读写
 
 ## 2. 类型定义
 
@@ -86,42 +87,33 @@ interface PermissionUserResponse {
 
 ### 3.1 三态实现策略
 
-casbin 原生仅支持 allow/deny 两态。OpenDesk 通过维护**两个独立的 casbin enforcer** 实现三态：
+OpenDesk 通过维护**三组独立的规则列表**实现四级判定（基于 picomatch 的 glob 匹配）：
 
 ```
-┌─────────────┐     ┌─────────────┐
-│ denyEnforcer │     │allowEnforcer│
-│  (deny 规则) │     │ (allow 规则) │
-└──────┬──────┘     └──────┬──────┘
-       │                    │
-       ▼                    ▼
-   匹配 → deny         匹配 → allow
-   不匹配 ──────────────→ 不匹配 → ask
+┌───────────┐     ┌───────────┐     ┌────────────┐
+│ denyRules │     │ askRules  │     │ allowRules │
+│ (deny规则) │     │ (保护规则) │     │ (allow规则) │
+└─────┬─────┘     └─────┬─────┘     └─────┬──────┘
+      │                  │                  │
+      ▼                  ▼                  ▼
+  匹配 → deny       匹配 → ask        匹配 → allow
+  不匹配 ──────→ 不匹配 ──────→ 不匹配 → ask(隐式)
 ```
 
 判定顺序：
 
-1. 先查 denyEnforcer，匹配则返回 `deny`
-2. 再查 allowEnforcer，匹配则返回 `allow`
-3. 都不匹配，返回 `ask`
+1. 先查 denyRules，匹配则返回 `deny`
+2. 再查 askRules（显式保护规则），匹配则返回 `ask`
+3. 再查 allowRules，匹配则返回 `allow`
+4. 都不匹配，返回 `ask`（隐式回退）
 
-### 3.2 casbin 模型
+### 3.2 匹配引擎
 
-```
-[request_definition]
-r = res_type, obj, act
+使用 [picomatch](https://github.com/micromatch/picomatch) 进行 glob 匹配，配置 `dot: true`：
 
-[policy_definition]
-p = res_type, obj, act
-
-[policy_effect]
-e = some(where (p_eft == allow))
-
-[matchers]
-m = r.res_type == p.res_type && globMatch(r.obj, p.obj) && r.act == p.act
-```
-
-使用 `globMatch` 内置函数进行路径匹配，支持 `*`、`**`、`?` 等 glob 语法。
+- 支持 `*`、`**`、`?` 等标准 glob 语法
+- **启用 dot 匹配**：`workspace/**` 可正确匹配 `.gitignore`、`.eslintrc` 等 dotfiles
+- 每条规则在添加时预编译为 matcher 函数，运行时匹配开销极小
 
 ### 3.3 路径规范化
 
@@ -132,15 +124,36 @@ m = r.res_type == p.res_type && globMatch(r.obj, p.obj) && r.act == p.act
 
 通过 `createDefaultPermissionRules(workspace)` 生成：
 
-| 资源    | 操作               | 路径模式          | 判定        |
-| ------- | ------------------ | ----------------- | ----------- |
-| file    | read               | `${workspace}/**` | allow       |
-| file    | write              | `${workspace}/**` | allow       |
-| file    | execute            | `${workspace}/**` | allow       |
-| skill   | read               | `**`              | allow       |
-| file    | read/write/execute | 工作空间外        | ask（隐式） |
-| network | access             | \*                | ask（隐式） |
-| skill   | write              | \*                | ask（隐式） |
+| 资源    | 操作               | 路径模式               | 判定            |
+| ------- | ------------------ | ---------------------- | --------------- |
+| file    | read               | `${workspace}/**`      | allow           |
+| file    | write              | `${workspace}/**`      | allow           |
+| file    | execute            | `${workspace}/**`      | allow           |
+| skill   | read               | `**`                   | allow           |
+| file    | read/write/execute | `~/.ssh/**` 等敏感路径 | ask（显式保护） |
+| file    | read/write/execute | `**/.env`、`**/.env.*` | ask（显式保护） |
+| file    | read/write/execute | 工作空间外             | ask（隐式）     |
+| network | access             | \*                     | ask（隐式）     |
+| skill   | write              | \*                     | ask（隐式）     |
+
+### 3.5 敏感路径保护
+
+当工作空间范围较大（例如 `$HOME`）时，`workspace/**` 的 allow 规则会覆盖大量本不应被无条件允许的路径。
+敏感路径保护规则（定义在 `utils/permissionRules.ts`）以 `ask` 效果注入，优先级高于 allow：
+
+| 保护路径             | 说明             |
+| -------------------- | ---------------- |
+| `~/.ssh/**`          | SSH 密钥与配置   |
+| `~/.gnupg/**`        | GPG 密钥         |
+| `~/.aws/**`          | AWS 凭证         |
+| `~/.docker/**`       | Docker 凭证      |
+| `~/.kube/**`         | Kubernetes 配置  |
+| `~/.git-credentials` | Git 凭证存储     |
+| `~/.npmrc`           | npm 配置与 token |
+| `**/.env`            | 环境变量文件     |
+| `**/.env.*`          | 环境变量文件     |
+
+扩展方式：在 `SENSITIVE_PATH_PATTERNS` 数组中添加新条目即可。
 
 ## 4. HarnessContext
 
@@ -278,9 +291,12 @@ Agent 调用 `deleteSkills({ skillIds: ['a', 'b', 'c'] })`：
 ```
 aikernel/security/
 ├── permission.ts       # 公共类型定义与接口（唯一的外部依赖点）
-├── enforcer.ts         # casbin 实现（外部不应直接引用）
+├── enforcer.ts         # picomatch 实现（外部不应直接引用）
 ├── harness.ts          # HarnessContext 定义
 └── electron-prompt.ts  # Electron 环境的确认 UI
+
+utils/
+└── permissionRules.ts  # 敏感路径保护规则定义
 
 tui/components/
 └── permission.ts       # TUI 环境的确认 widget

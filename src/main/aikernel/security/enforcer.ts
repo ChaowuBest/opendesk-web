@@ -10,109 +10,90 @@
  */
 
 /**
- * 基于 casbin 的权限引擎封装。
+ * 基于 picomatch 的权限引擎实现。
  *
  * 外部模块不应直接引用本文件——请通过 permission.ts 中的 PermissionEnforcer 接口交互。
- * 本文件是 PermissionEnforcer 的唯一实现，负责将 casbin 的细节完全隐藏在封装层内。
  *
- * 三态权限策略：
- * casbin 原生仅支持 allow/deny 两态。我们通过维护两个 enforcer 来实现三态：
- * - allowEnforcer: 只包含 allow 规则，匹配到即 allow
- * - denyEnforcer: 只包含 deny 规则，匹配到即 deny
- * - 两者都不匹配则为 ask（默认行为）
+ * 三态权限策略（通过三组独立的规则列表实现）：
+ * - denyRules: 匹配到即 deny
+ * - askRules: 匹配到即 ask（显式保护规则，覆盖 allow）
+ * - allowRules: 匹配到即 allow
+ * - 三者都不匹配则为隐式 ask（默认行为）
  *
- * 规则优先级：deny > allow > ask
+ * 规则优先级：deny > ask(显式保护) > allow > ask(隐式回退)
+ *
+ * 使用 picomatch 进行 glob 匹配，配置 dot: true 以正确匹配 dotfiles。
  */
 
-import { newModelFromString, Enforcer as CasbinEnforcer, StringAdapter } from 'casbin';
+import picomatch from 'picomatch';
 import path from 'path';
-import type {
-    PermissionEnforcer,
-    PermissionRequest,
-    PermissionCheckResult,
-    PermissionRule,
-    PermissionEffect
-} from './permission.js';
+import type { PermissionEnforcer, PermissionRequest, PermissionCheckResult, PermissionRule } from './permission.js';
 import { logger } from '../../utils/logger.js';
-
-/**
- * casbin 模型定义（简单 ACL）
- * request: 资源类型(res_type), 资源路径(obj), 操作(act)
- * policy:  资源类型(res_type), 路径模式(obj), 操作(act)
- * matcher: globMatch 进行路径匹配
- */
-const CASBIN_MODEL = `
-[request_definition]
-r = res_type, obj, act
-
-[policy_definition]
-p = res_type, obj, act
-
-[policy_effect]
-e = some(where (p_eft == allow))
-
-[matchers]
-m = r.res_type == p.res_type && globMatch(r.obj, p.obj) && r.act == p.act
-`.trim();
+import { createSensitivePathRules } from '../../utils/permissionRules.js';
 
 function normalizePath(p: string): string {
     return p.replace(/\\/g, '/');
 }
 
-async function createCasbinEnforcer(policyLines: string): Promise<CasbinEnforcer> {
-    const model = newModelFromString(CASBIN_MODEL);
-    // StringAdapter 不接受空字符串，用一个不会被匹配的占位规则
-    const effectivePolicy = policyLines.trim() || 'p, __noop__, __noop__, __noop__';
-    const adapter = new StringAdapter(effectivePolicy);
-    const enforcer = new CasbinEnforcer();
-    await enforcer.initWithModelAndAdapter(model, adapter);
-    await enforcer.loadPolicy();
-    return enforcer;
+interface CompiledRule {
+    resourceType: string;
+    action: string;
+    pathPattern: string;
+    matcher: (path: string) => boolean;
 }
 
-export class CasbinPermissionEnforcer implements PermissionEnforcer {
-    private allowEnforcer!: CasbinEnforcer;
-    private denyEnforcer!: CasbinEnforcer;
-    private askRules: PermissionRule[] = [];
-    private initialized = false;
+const PICO_OPTIONS: picomatch.PicomatchOptions = { dot: true };
 
-    static async create(initialRules: PermissionRule[] = []): Promise<CasbinPermissionEnforcer> {
-        const instance = new CasbinPermissionEnforcer();
-        await instance.initialize(initialRules);
+function compileRule(rule: PermissionRule): CompiledRule {
+    const patternNorm = normalizePath(rule.pathPattern);
+    return {
+        resourceType: rule.resourceType,
+        action: rule.action,
+        pathPattern: patternNorm,
+        matcher: picomatch(patternNorm, PICO_OPTIONS)
+    };
+}
+
+function matchesRule(compiled: CompiledRule, resourceType: string, objNorm: string, action: string): boolean {
+    return compiled.resourceType === resourceType && compiled.action === action && compiled.matcher(objNorm);
+}
+
+function matchesAny(rules: CompiledRule[], resourceType: string, objNorm: string, action: string): boolean {
+    for (const rule of rules) {
+        if (matchesRule(rule, resourceType, objNorm, action)) return true;
+    }
+    return false;
+}
+
+export class GlobPermissionEnforcer implements PermissionEnforcer {
+    private allowRules: CompiledRule[] = [];
+    private denyRules: CompiledRule[] = [];
+    private askRules: CompiledRule[] = [];
+
+    static async create(initialRules: PermissionRule[] = []): Promise<GlobPermissionEnforcer> {
+        const instance = new GlobPermissionEnforcer();
+        instance.initialize(initialRules);
         return instance;
     }
 
-    private async initialize(initialRules: PermissionRule[]): Promise<void> {
-        const allowLines: string[] = [];
-        const denyLines: string[] = [];
-
+    private initialize(initialRules: PermissionRule[]): void {
         for (const rule of initialRules) {
-            const patternNorm = normalizePath(rule.pathPattern);
-            const line = `p, ${rule.resourceType}, ${patternNorm}, ${rule.action}`;
+            const compiled = compileRule(rule);
             if (rule.effect === 'allow') {
-                allowLines.push(line);
+                this.allowRules.push(compiled);
             } else if (rule.effect === 'deny') {
-                denyLines.push(line);
+                this.denyRules.push(compiled);
             } else {
-                this.askRules.push(rule);
+                this.askRules.push(compiled);
             }
         }
-
-        this.allowEnforcer = await createCasbinEnforcer(allowLines.join('\n'));
-        this.denyEnforcer = await createCasbinEnforcer(denyLines.join('\n'));
-        this.initialized = true;
     }
 
     async check(request: PermissionRequest): Promise<PermissionCheckResult> {
-        if (!this.initialized) {
-            throw new Error('PermissionEnforcer not initialized');
-        }
-
         const objNorm = normalizePath(request.resourcePath);
 
         // deny 优先
-        const denied = await this.denyEnforcer.enforce(request.resourceType, objNorm, request.action);
-        if (denied) {
+        if (matchesAny(this.denyRules, request.resourceType, objNorm, request.action)) {
             return {
                 effect: 'deny',
                 reason: `权限被拒绝: ${request.action} ${request.resourcePath}`,
@@ -120,16 +101,24 @@ export class CasbinPermissionEnforcer implements PermissionEnforcer {
             };
         }
 
+        // 显式 ask（保护规则）优先于 allow
+        if (matchesAny(this.askRules, request.resourceType, objNorm, request.action)) {
+            return {
+                effect: 'ask',
+                reason: `敏感路径需要用户确认: ${request.action} ${request.resourcePath}`,
+                request
+            };
+        }
+
         // 然后检查 allow
-        const allowed = await this.allowEnforcer.enforce(request.resourceType, objNorm, request.action);
-        if (allowed) {
+        if (matchesAny(this.allowRules, request.resourceType, objNorm, request.action)) {
             return {
                 effect: 'allow',
                 request
             };
         }
 
-        // 都不匹配则为 ask
+        // 都不匹配则为隐式 ask
         return {
             effect: 'ask',
             reason: `需要用户确认: ${request.action} ${request.resourcePath}`,
@@ -163,43 +152,36 @@ export class CasbinPermissionEnforcer implements PermissionEnforcer {
     }
 
     async addRule(rule: PermissionRule): Promise<void> {
-        if (!this.initialized) {
-            throw new Error('PermissionEnforcer not initialized');
-        }
-
-        const patternNorm = normalizePath(rule.pathPattern);
+        const compiled = compileRule(rule);
 
         if (rule.effect === 'allow') {
-            await this.allowEnforcer.addPolicy(rule.resourceType, patternNorm, rule.action);
+            this.allowRules.push(compiled);
         } else if (rule.effect === 'deny') {
-            await this.denyEnforcer.addPolicy(rule.resourceType, patternNorm, rule.action);
+            this.denyRules.push(compiled);
         } else {
-            this.askRules.push(rule);
+            this.askRules.push(compiled);
         }
 
-        logger.info(`permission rule added: ${rule.effect} ${rule.resourceType}:${rule.action} ${patternNorm}`);
+        logger.info(
+            `permission rule added: ${rule.effect} ${rule.resourceType}:${rule.action} ${compiled.pathPattern}`
+        );
     }
 
     async removeRule(rule: PermissionRule): Promise<void> {
-        if (!this.initialized) {
-            throw new Error('PermissionEnforcer not initialized');
-        }
-
         const patternNorm = normalizePath(rule.pathPattern);
 
-        if (rule.effect === 'allow') {
-            await this.allowEnforcer.removePolicy(rule.resourceType, patternNorm, rule.action);
-        } else if (rule.effect === 'deny') {
-            await this.denyEnforcer.removePolicy(rule.resourceType, patternNorm, rule.action);
-        } else {
-            this.askRules = this.askRules.filter(
+        const removeFrom = (list: CompiledRule[]): CompiledRule[] =>
+            list.filter(
                 (r) =>
-                    !(
-                        r.resourceType === rule.resourceType &&
-                        r.action === rule.action &&
-                        normalizePath(r.pathPattern) === patternNorm
-                    )
+                    !(r.resourceType === rule.resourceType && r.action === rule.action && r.pathPattern === patternNorm)
             );
+
+        if (rule.effect === 'allow') {
+            this.allowRules = removeFrom(this.allowRules);
+        } else if (rule.effect === 'deny') {
+            this.denyRules = removeFrom(this.denyRules);
+        } else {
+            this.askRules = removeFrom(this.askRules);
         }
 
         logger.info(`permission rule removed: ${rule.effect} ${rule.resourceType}:${rule.action} ${patternNorm}`);
@@ -210,7 +192,8 @@ export class CasbinPermissionEnforcer implements PermissionEnforcer {
  * 为指定的工作空间创建默认权限规则。
  *
  * 默认策略：
- * - 工作空间内的文件读写执行 → allow
+ * - 工作空间内的文件读写执行 → allow（包括 dotfiles，如 .gitignore、.eslintrc 等）
+ * - 工作空间内的敏感路径（.ssh、.gnupg 等） → ask（显式保护，覆盖 allow）
  * - 工作空间外的文件读写执行 → ask（隐式回退）
  * - 网络访问 → ask（隐式回退）
  * - 技能读取 → allow（所有技能均可读取/加载）
@@ -220,11 +203,13 @@ export function createDefaultPermissionRules(workspace: string): PermissionRule[
     const workspaceNorm = normalizePath(path.resolve(workspace));
 
     return [
-        // 工作空间内读写允许
+        // 工作空间内读写允许（dot: true 确保 .gitignore 等 dotfiles 也被匹配）
         { resourceType: 'file', action: 'read', pathPattern: `${workspaceNorm}/**`, effect: 'allow' },
         { resourceType: 'file', action: 'write', pathPattern: `${workspaceNorm}/**`, effect: 'allow' },
         { resourceType: 'file', action: 'execute', pathPattern: `${workspaceNorm}/**`, effect: 'allow' },
         // 所有技能读取允许（加载、查看等），写入/执行需用户确认（隐式 ask）
-        { resourceType: 'skill', action: 'read', pathPattern: '**', effect: 'allow' }
+        { resourceType: 'skill', action: 'read', pathPattern: '**', effect: 'allow' },
+        // 敏感路径保护规则（即使在工作空间内也需要用户确认）
+        ...createSensitivePathRules(workspace)
     ];
 }

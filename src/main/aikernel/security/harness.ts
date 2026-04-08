@@ -20,7 +20,7 @@
  */
 
 import type { PermissionEnforcer, PermissionPromptProvider } from './permission.js';
-import { CasbinPermissionEnforcer, createDefaultPermissionRules } from './enforcer.js';
+import { GlobPermissionEnforcer, createDefaultPermissionRules } from './enforcer.js';
 
 export class HarnessContext {
     /**
@@ -54,7 +54,7 @@ export class HarnessContext {
         ctx.workspace = workspace;
 
         const rules = createDefaultPermissionRules(workspace);
-        ctx.permission = await CasbinPermissionEnforcer.create(rules);
+        ctx.permission = await GlobPermissionEnforcer.create(rules);
 
         return ctx;
     }
