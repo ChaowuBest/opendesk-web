@@ -12,6 +12,7 @@ const fs = require('fs');
 const path = require('path');
 
 const LAYER_DEPS = {
+    utils: [],
     aikernel: ['utils', 'tui'],
     applications: ['aikernel', 'services', 'tui', 'utils']
 };
@@ -32,7 +33,8 @@ function extractImports(filePath) {
     const content = fs.readFileSync(filePath, 'utf-8');
     const imports = [];
 
-    const esImportRegex = /import\s+.*?\s+from\s+['"](.+?)['"]/g;
+    // ES6 import (排除 import type)
+    const esImportRegex = /import\s+(?!type\s+).*?\s+from\s+['"](.+?)['"]/g;
     let match;
     while ((match = esImportRegex.exec(content)) !== null) {
         imports.push(match[1]);
