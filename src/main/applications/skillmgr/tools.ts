@@ -11,6 +11,7 @@
 
 import { BaseTool } from '../../aikernel/tool';
 import { z } from 'zod';
+import type { PermissionRequest } from '../../aikernel/security/permission';
 
 const AddSkillFromPathArgsSchema = z.object({
     sourcePath: z.string().describe('本地目录路径，该目录必须包含SKILL.md文件')
@@ -98,22 +99,33 @@ export class ListSkillsTool extends BaseTool<typeof ListSkillsArgsSchema> {
     }
 }
 
-const DeleteSkillArgsSchema = z.object({
-    skillId: z.string().describe('要删除的Skill ID（即目录名）')
+const DeleteSkillsArgsSchema = z.object({
+    skillIds: z.array(z.string()).describe('要删除的Skill ID列表（即目录名列表），支持批量删除')
 });
 
-export class DeleteSkillTool extends BaseTool<typeof DeleteSkillArgsSchema> {
+export class DeleteSkillsTool extends BaseTool<typeof DeleteSkillsArgsSchema> {
     private skillApp: any;
 
     constructor(skillApp: any) {
-        super('deleteSkill', '删除指定的Skill。删除后需要刷新才能生效。', DeleteSkillArgsSchema);
+        super('deleteSkills', '批量删除指定的Skill。删除后需要刷新才能生效。', DeleteSkillsArgsSchema);
         this.skillApp = skillApp;
         this.executor = this.delete.bind(this);
     }
 
-    private async delete(args: z.output<typeof DeleteSkillArgsSchema>): Promise<string> {
-        const result = this.skillApp.deleteSkill(args.skillId);
-        return JSON.stringify(result);
+    getDeclaredPermissions(args: z.output<typeof DeleteSkillsArgsSchema>): PermissionRequest[] {
+        return args.skillIds.map((id) => ({
+            resourceType: 'skill' as const,
+            action: 'write' as const,
+            resourcePath: id
+        }));
+    }
+
+    private async delete(args: z.output<typeof DeleteSkillsArgsSchema>): Promise<string> {
+        const results = args.skillIds.map((id) => ({
+            skillId: id,
+            ...this.skillApp.deleteSkill(id)
+        }));
+        return JSON.stringify(results);
     }
 }
 

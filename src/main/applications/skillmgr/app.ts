@@ -22,7 +22,7 @@ import {
     AddSkillFromUrlTool,
     AddSkillFromGitHubUrlTool,
     ListSkillsTool,
-    DeleteSkillTool,
+    DeleteSkillsTool,
     RefreshSkillsTool,
     GetSkillsDirectoryTool
 } from './tools.js';
@@ -223,7 +223,7 @@ export class SkillMgrApplication extends BaseApplication {
         manageSkillsToolset.addTool(new AddSkillFromUrlTool(this));
         manageSkillsToolset.addTool(new AddSkillFromGitHubUrlTool(this));
         manageSkillsToolset.addTool(new ListSkillsTool(this));
-        manageSkillsToolset.addTool(new DeleteSkillTool(this));
+        manageSkillsToolset.addTool(new DeleteSkillsTool(this));
         manageSkillsToolset.addTool(new RefreshSkillsTool(this));
         manageSkillsToolset.addTool(new GetSkillsDirectoryTool(this));
 

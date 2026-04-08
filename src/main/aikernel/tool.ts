@@ -12,6 +12,7 @@
 import { z } from 'zod';
 import { ToolCall } from './messages';
 import type { TaskState } from './states/tasks';
+import type { PermissionRequest } from './security/permission';
 
 export class ToolResult {
     status: 'running' | 'success' | 'error' = 'running';
@@ -85,6 +86,19 @@ export class BaseTool<T extends z.ZodType> {
      * 默认空实现，调用方无需检查是否重写。
      */
     async stop(): Promise<void> {}
+
+    /**
+     * 声明本工具在执行给定参数时所需的权限。
+     * 子类应重写此方法来声明具体的权限需求（如文件读写路径）。
+     * 默认返回空数组表示不需要特殊权限。
+     *
+     * @param args 本次调用的参数
+     * @param taskState 当前任务状态（可用于获取工作空间等上下文）
+     * @returns 所需权限列表
+     */
+    getDeclaredPermissions(args: z.output<T>, taskState?: TaskState): PermissionRequest[] {
+        return [];
+    }
 
     /**
      * 自定义的工具调用结果渲染函数，如果返回 undefined，则不渲染工具调用

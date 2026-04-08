@@ -389,9 +389,10 @@ export async function startSubTask(options: StartSubTaskOptions): Promise<SubTas
         };
     }
 
-    // 创建子任务
+    // 创建子任务，继承父任务的 harnessContext（共享权限引擎和环境变量）
     const subTask = parentTask.task_manager_state.createSubTask(parentTask.task_id);
     subTask.model = parentTask.model;
+    subTask.harnessContext = parentTask.harnessContext;
     subTask.task_name = config.title || '未命名子任务';
 
     const skillFrontmatters = await SkillRegistry.getInstance().getSkillFrontmatterXml();

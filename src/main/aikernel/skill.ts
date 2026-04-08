@@ -36,6 +36,7 @@ import { ToolCall } from './messages';
 import chalk from 'chalk';
 import { statusDisplay } from '../tui/components/toolcall';
 import type { TaskState } from './states/tasks';
+import type { PermissionRequest } from './security/permission';
 import { SoulSkillProvider } from './soul/skills';
 import { SoulRegistry } from './soul/registry';
 
@@ -273,6 +274,10 @@ class LoadSkillTool extends BaseTool<typeof LoadSkillSchema> {
         this.setExecutor(this.loadSkill.bind(this));
     }
 
+    getDeclaredPermissions(args: z.output<typeof LoadSkillSchema>): PermissionRequest[] {
+        return [{ resourceType: 'skill', action: 'read', resourcePath: `${args.bundleName}/${args.skillName}` }];
+    }
+
     /**
      * 渲染 LoadSkill 工具调用的 TUI 界面
      * 显示为简洁的技能加载卡片
@@ -306,11 +311,11 @@ class LoadSkillTool extends BaseTool<typeof LoadSkillSchema> {
         if (!skill) {
             return '未找到该Skill';
         } else {
-            // 将 skill 的 .env 环境变量合并到当前 task 的 envContext
+            // 将 skill 的 .env 环境变量合并到当前 task 的 harnessContext.environ
             if (taskState && skill.env && Object.keys(skill.env).length > 0) {
-                Object.assign(taskState.envContext, skill.env);
+                Object.assign(taskState.harnessContext.environ, skill.env);
                 logger.info(
-                    `skill ${args.skillName} env merged to task envContext: ${Object.keys(skill.env).join(', ')}`
+                    `skill ${args.skillName} env merged to task harnessContext.environ: ${Object.keys(skill.env).join(', ')}`
                 );
             }
 
@@ -355,6 +360,29 @@ class CallSkillTool extends BaseTool<typeof CallSkillToolSchema> {
     constructor() {
         super('CallSkillTool', '调用Skill提供的内部工具', CallSkillToolSchema);
         this.setUniversalExecutor(this.callSkillToolUniversal.bind(this));
+    }
+
+    getDeclaredPermissions(args: z.output<typeof CallSkillToolSchema>): PermissionRequest[] {
+        // 委托给内部工具的权限声明
+        const cachedSkill = SkillRegistry.getInstance().getCachedSkill(args.bundleName, args.skillName);
+        if (cachedSkill) {
+            const innerTool = cachedSkill.getTool(args.toolName);
+            if (innerTool) {
+                let parsedToolArgs: object;
+                try {
+                    if (typeof args.toolArgs === 'object') parsedToolArgs = args.toolArgs;
+                    else if (typeof args.toolArgs === 'string') parsedToolArgs = JSON.parse(jsonrepair(args.toolArgs));
+                    else parsedToolArgs = {};
+                } catch {
+                    parsedToolArgs = {};
+                }
+                const innerPerms = innerTool.getDeclaredPermissions(parsedToolArgs);
+                if (innerPerms.length > 0) {
+                    return innerPerms;
+                }
+            }
+        }
+        return [];
     }
 
     /**

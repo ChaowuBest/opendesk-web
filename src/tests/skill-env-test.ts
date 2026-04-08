@@ -4,8 +4,8 @@
  * 测试内容：
  * 1. dotenv.parse 解析 .env 内容
  * 2. Skill 构造函数自动加载 .env
- * 3. envContext 合并与覆盖
- * 4. 完整链路模拟（Skill -> envContext -> spawn env）
+ * 3. harnessContext.environ 合并与覆盖
+ * 4. 完整链路模拟（Skill -> harnessContext.environ -> spawn env）
  *
  * 运行方式: npx tsx src/tests/skill-env-test.ts
  */
@@ -108,39 +108,39 @@ console.log('\nTest 5: Skill without .env has empty env');
     assert(Object.keys(skillWithDir.env).length === 0, 'normal skill without .env has empty env');
 }
 
-// Test 6: Simulate env merging into task envContext
-console.log('\nTest 6: Simulate env merging into task envContext');
+// Test 6: Simulate env merging into task harnessContext.environ
+console.log('\nTest 6: Simulate env merging into task harnessContext.environ');
 {
-    const envContext: Record<string, string> = {};
+    const environ: Record<string, string> = {};
 
     const skill1Dir = path.join(TEST_SKILLS_DIR, 'test-env-skill');
     const skill1 = new Skill({ name: 'test-env', description: 'test env skill' }, '', skill1Dir);
-    Object.assign(envContext, skill1.env);
-    assert(envContext['TEST_SKILL_API_KEY'] === 'sk-test-12345-env-injection', 'first skill env merged');
-    assert(envContext['TEST_SKILL_REGION'] === 'cn-north-1', 'first skill region merged');
+    Object.assign(environ, skill1.env);
+    assert(environ['TEST_SKILL_API_KEY'] === 'sk-test-12345-env-injection', 'first skill env merged');
+    assert(environ['TEST_SKILL_REGION'] === 'cn-north-1', 'first skill region merged');
 
     // 第二个 skill 覆盖部分 key
-    Object.assign(envContext, {
+    Object.assign(environ, {
         TEST_SKILL_REGION: 'ap-southeast-1',
         ANOTHER_KEY: 'another_value'
     });
-    assert(envContext['TEST_SKILL_REGION'] === 'ap-southeast-1', 'second skill overrides region');
-    assert(envContext['ANOTHER_KEY'] === 'another_value', 'second skill adds new key');
-    assert(envContext['TEST_SKILL_API_KEY'] === 'sk-test-12345-env-injection', 'first skill key still present');
+    assert(environ['TEST_SKILL_REGION'] === 'ap-southeast-1', 'second skill overrides region');
+    assert(environ['ANOTHER_KEY'] === 'another_value', 'second skill adds new key');
+    assert(environ['TEST_SKILL_API_KEY'] === 'sk-test-12345-env-injection', 'first skill key still present');
 }
 
-// Test 7: Full chain simulation (Skill -> envContext -> spawn env)
+// Test 7: Full chain simulation (Skill -> harnessContext.environ -> spawn env)
 console.log('\nTest 7: Full chain simulation');
 {
-    const envContext: Record<string, string> = {};
+    const environ: Record<string, string> = {};
     const skillDir = path.join(TEST_SKILLS_DIR, 'test-env-skill');
     const skill = new Skill({ name: 'test-env', description: 'test env skill' }, '', skillDir);
 
     if (Object.keys(skill.env).length > 0) {
-        Object.assign(envContext, skill.env);
+        Object.assign(environ, skill.env);
     }
 
-    const spawnEnv = Object.keys(envContext).length > 0 ? { ...process.env, ...envContext } : process.env;
+    const spawnEnv = Object.keys(environ).length > 0 ? { ...process.env, ...environ } : process.env;
 
     assert(spawnEnv['TEST_SKILL_API_KEY'] === 'sk-test-12345-env-injection', 'spawn env has skill API key');
     assert(spawnEnv['TEST_SKILL_REGION'] === 'cn-north-1', 'spawn env has skill region');
