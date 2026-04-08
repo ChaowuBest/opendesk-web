@@ -521,16 +521,18 @@ function rmRecursive(p) {
     if (!fs.existsSync(p)) return;
     try {
         if (typeof fs.rmSync === 'function') {
-            fs.rmSync(p, { recursive: true, force: true });
+            fs.rmSync(p, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
             return;
         }
     } catch (_) {}
-    if (fs.statSync(p).isDirectory()) {
-        for (const name of fs.readdirSync(p)) rmRecursive(path.join(p, name));
-        fs.rmdirSync(p);
-    } else {
-        fs.unlinkSync(p);
-    }
+    try {
+        if (fs.statSync(p).isDirectory()) {
+            for (const name of fs.readdirSync(p)) rmRecursive(path.join(p, name));
+            fs.rmdirSync(p);
+        } else {
+            fs.unlinkSync(p);
+        }
+    } catch (_) {}
 }
 
 /**
@@ -645,7 +647,9 @@ function addSkillFromZipPath(zipPath, opts = {}) {
     } catch (e) {
         return { success: false, error: e.message || '解压或添加失败' };
     } finally {
-        if (fs.existsSync(tmpDir)) rmRecursive(tmpDir);
+        try {
+            if (fs.existsSync(tmpDir)) rmRecursive(tmpDir);
+        } catch (_) {}
     }
 }
 
@@ -750,7 +754,9 @@ async function addSkillFromGitHubUrl(githubUrl) {
     } catch (e) {
         return { success: false, error: e.message || '下载或解压失败' };
     } finally {
-        if (fs.existsSync(tmpDir)) rmRecursive(tmpDir);
+        try {
+            if (fs.existsSync(tmpDir)) rmRecursive(tmpDir);
+        } catch (_) {}
     }
 }
 
@@ -792,7 +798,9 @@ async function addSkillFromUrl(url) {
     } catch (e) {
         return { success: false, error: e.message || '下载或解压失败' };
     } finally {
-        if (fs.existsSync(tmpDir)) rmRecursive(tmpDir);
+        try {
+            if (fs.existsSync(tmpDir)) rmRecursive(tmpDir);
+        } catch (_) {}
     }
 }
 
@@ -853,7 +861,9 @@ async function addSkillFromClawHubSlug(slug, version) {
     } catch (e) {
         return { success: false, error: e.message || 'ClawHub 安装异常' };
     } finally {
-        if (fs.existsSync(tmpDir)) rmRecursive(tmpDir);
+        try {
+            if (fs.existsSync(tmpDir)) rmRecursive(tmpDir);
+        } catch (_) {}
     }
 }
 
