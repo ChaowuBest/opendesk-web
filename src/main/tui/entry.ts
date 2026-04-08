@@ -46,6 +46,8 @@ import { NotificationStore, NotificationCenterOverlay, ToastManager } from './co
 import { NotificationManager } from '../utils/notificationmgr.js';
 import { SkillMgrApplication } from '../applications/skillmgr/app.js';
 import { DashboardBar } from './components/dashboard';
+import { HarnessContext } from '../aikernel/security/harness.js';
+import { TUIPermissionPromptProvider } from './components/permission.js';
 
 import format from 'string-template';
 import path from 'path';
@@ -307,6 +309,7 @@ export class OpenDeskTUI {
                 const task = this.taskManagerState.createTask(this.model);
                 const systemPrompt = await this.agentDecl.createSystemPrompt();
                 task.setSystemPrompt(systemPrompt);
+                await this.initTaskHarness(task);
 
                 // 如果待办有 deliver 配置，设置任务的 origin，使其结果投递到对应 channel
                 if (deliver) {
@@ -651,6 +654,7 @@ export class OpenDeskTUI {
         const task = this.taskManagerState.createTask(this.model);
         const systemPrompt = await this.agentDecl.createSystemPrompt();
         task.setSystemPrompt(systemPrompt);
+        await this.initTaskHarness(task);
 
         this.activeTaskId = task.task_id;
         this.taskView.taskState = task;
@@ -954,6 +958,7 @@ export class OpenDeskTUI {
             this.taskView.taskState = this.taskManagerState.createTask(this.model);
             const systemPrompt = await this.agentDecl.createSystemPrompt();
             this.taskView.taskState.setSystemPrompt(systemPrompt);
+            await this.initTaskHarness(this.taskView.taskState);
 
             // 绑定到新任务的队列
             this.inputArea.bindToTaskQueue(this.taskView.taskState.task_id, this.taskView.taskState.message_queue);
@@ -1203,6 +1208,19 @@ export class OpenDeskTUI {
      */
     isModelNotConfiguredMode(): boolean {
         return this.modelNotConfiguredMode;
+    }
+
+    /**
+     * 为新创建的任务初始化 harnessContext（权限引擎 + 环境变量 + 权限确认 UI）
+     */
+    private async initTaskHarness(task: TaskState): Promise<void> {
+        try {
+            task.harnessContext = await HarnessContext.createWithDefaults(this.workspace);
+            task.harnessContext.permissionPrompt = new TUIPermissionPromptProvider(this);
+        } catch (err) {
+            logger.warn(`Failed to init task harness, using empty context: ${err}`);
+            task.harnessContext = HarnessContext.createEmpty();
+        }
     }
 
     /**

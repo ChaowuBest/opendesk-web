@@ -16,6 +16,8 @@ import { Card } from '../../tui/components/card';
 import { statusDisplay, truncText } from '../../tui/components/toolcall';
 import { z } from 'zod';
 import { detectEncoding, decodeBuffer, encodingDisplayName, HEAD_BYTES } from '../terminal/encoding.js';
+import type { PermissionRequest } from '../../aikernel/security/permission';
+import type { TaskState } from '../../aikernel/states/tasks';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
@@ -46,6 +48,11 @@ function sanitizePath(inputPath: string): string {
         .replace(/\x0A/g, '\\n')
         .replace(/\x0C/g, '\\f')
         .replace(/\x0D/g, '\\r');
+
+    // 展开 ~ 为用户主目录
+    if (p === '~' || p.startsWith('~/') || p.startsWith('~\\')) {
+        p = os.homedir() + p.slice(1);
+    }
 
     // 统一使用正斜杠（Node.js 在 Windows 上也接受正斜杠）
     p = p.replace(/\\/g, '/');
@@ -540,6 +547,15 @@ export class ReadFilesTool extends BaseTool<typeof readFilesSchema> {
         this.setExecutor(this.executeCommand);
     }
 
+    getDeclaredPermissions(args: z.output<typeof readFilesSchema>): PermissionRequest[] {
+        if (!args.files || !Array.isArray(args.files)) return [];
+        return args.files.map((f: any) => ({
+            resourceType: 'file' as const,
+            action: 'read' as const,
+            resourcePath: sanitizePath(typeof f === 'string' ? f : f.path || '')
+        }));
+    }
+
     async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
         const files = toolcall.args_object?.['files'] as Array<{ path: string; offsetKB?: number }> | undefined;
         const fileItems =
@@ -763,6 +779,10 @@ export class WriteFileTool extends BaseTool<typeof writeFileSchema> {
         this.setExecutor(this.executeCommand);
     }
 
+    getDeclaredPermissions(args: z.output<typeof writeFileSchema>): PermissionRequest[] {
+        return [{ resourceType: 'file', action: 'write', resourcePath: sanitizePath(args.path) }];
+    }
+
     async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
         const filePath = toolcall.args_object?.['path'] as string | undefined;
         const content = toolcall.args_object?.['content'] as string | undefined;
@@ -895,6 +915,17 @@ export class EditFileTool extends BaseTool<typeof editFileSchema> {
         );
 
         this.setExecutor(this.executeCommand);
+    }
+
+    getDeclaredPermissions(args: z.output<typeof editFileSchema>): PermissionRequest[] {
+        const p = sanitizePath(args.filePath);
+        if (args.oldString === '') {
+            return [{ resourceType: 'file', action: 'write', resourcePath: p }];
+        }
+        return [
+            { resourceType: 'file', action: 'read', resourcePath: p },
+            { resourceType: 'file', action: 'write', resourcePath: p }
+        ];
     }
 
     async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
@@ -1093,6 +1124,14 @@ export class SearchReplaceTool extends BaseTool<typeof searchReplaceSchema> {
         );
 
         this.setExecutor(this.executeCommand);
+    }
+
+    getDeclaredPermissions(args: z.output<typeof searchReplaceSchema>): PermissionRequest[] {
+        const p = sanitizePath(args.filePath);
+        return [
+            { resourceType: 'file', action: 'read', resourcePath: p },
+            { resourceType: 'file', action: 'write', resourcePath: p }
+        ];
     }
 
     async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
@@ -1383,6 +1422,28 @@ export class ApplyPatchTool extends BaseTool<typeof applyPatchSchema> {
         this.setExecutor(this.executeCommand);
     }
 
+    getDeclaredPermissions(args: z.output<typeof applyPatchSchema>): PermissionRequest[] {
+        const ops = parsePatch(args.patch);
+        const permissions: PermissionRequest[] = [];
+        const seen = new Set<string>();
+        for (const op of ops) {
+            const p = sanitizePath(op.path);
+            if (op.type === 'update' || op.type === 'delete') {
+                const readKey = `read:${p}`;
+                if (!seen.has(readKey)) {
+                    permissions.push({ resourceType: 'file', action: 'read', resourcePath: p });
+                    seen.add(readKey);
+                }
+            }
+            const writeKey = `write:${p}`;
+            if (!seen.has(writeKey)) {
+                permissions.push({ resourceType: 'file', action: 'write', resourcePath: p });
+                seen.add(writeKey);
+            }
+        }
+        return permissions;
+    }
+
     async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
         const patch = toolcall.args_object?.['patch'] as string | undefined;
         let bodyHtml = '';
@@ -1554,6 +1615,11 @@ export class GlobFilesTool extends BaseTool<typeof globSchema> {
         );
 
         this.setExecutor(this.executeCommand);
+    }
+
+    getDeclaredPermissions(args: z.output<typeof globSchema>): PermissionRequest[] {
+        const searchPath = args.path ? sanitizePath(args.path) : process.cwd();
+        return [{ resourceType: 'file', action: 'read', resourcePath: searchPath + '/**' }];
     }
 
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
@@ -1745,6 +1811,17 @@ export class GrepFilesTool extends BaseTool<typeof grepSchema> {
         );
 
         this.setExecutor(this.executeCommand);
+    }
+
+    getDeclaredPermissions(args: z.output<typeof grepSchema>): PermissionRequest[] {
+        const searchPath = args.path ? sanitizePath(args.path) : process.cwd();
+        return [
+            {
+                resourceType: 'file',
+                action: 'read',
+                resourcePath: searchPath.includes('.') && !searchPath.endsWith('/') ? searchPath : searchPath + '/**'
+            }
+        ];
     }
 
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {

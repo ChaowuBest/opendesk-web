@@ -31,13 +31,13 @@ const MAX_CLI_OUTPUT_LINES = 10;
 const LIVE_UPDATE_INTERVAL_MS = 200;
 
 /**
- * 构建子进程的环境变量：系统 env + task 的 envContext（skill .env 合并而来）
+ * 构建子进程的环境变量：系统 env + task 的 harnessContext.environ（skill .env 合并而来）
  */
 function buildSpawnEnv(taskState?: TaskState): NodeJS.ProcessEnv | undefined {
-    if (!taskState || Object.keys(taskState.envContext).length === 0) {
+    if (!taskState || Object.keys(taskState.harnessContext.environ).length === 0) {
         return undefined;
     }
-    return { ...process.env, ...taskState.envContext };
+    return { ...process.env, ...taskState.harnessContext.environ };
 }
 
 /**

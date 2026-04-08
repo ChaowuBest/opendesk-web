@@ -25,9 +25,9 @@ import {
     extractImagePaths,
     imageToDataUri
 } from '../messages.js';
-import { compactContext } from '../compact.js';
 import { prepareContextForModel } from '../compaction/pipeline.js';
-import { BaseToolset } from '../tool.js';
+import { compactContext } from '../compact.js';
+import { BaseTool, BaseToolset } from '../tool.js';
 import { LLM } from '../llm.js';
 import { getTaskDirectory } from '../../utils/setting.js';
 import { logger } from '../../utils/logger.js';
@@ -42,6 +42,8 @@ import { createMainPlanningToolset, createSubTaskPlanningToolset } from '../plan
 import { createTaskInfoToolset } from './tools.js';
 import { TaskHooks } from '../hooks.js';
 import type { Participant } from '../plugins/types.js';
+import { HarnessContext } from '../security/harness.js';
+import type { PermissionRequest, PermissionCheckResult, PermissionUserResponse } from '../security/permission.js';
 
 type TaskStatus = 'waiting' | 'running' | 'stopped';
 
@@ -120,10 +122,10 @@ export class TaskState {
     message_queue: string[] = [];
 
     /**
-     * 环境变量上下文：skill 的 .env 会合并到此处，终端类工具执行时注入到子进程
-     * 按优先级合并：系统 env < skill .env（后加载的覆盖先加载的）
+     * 工程框架上下文：包含环境变量、权限等非聊天信息的外部约束。
+     * 不参与序列化/持久化——其中的 environ 等字段可能包含敏感数据。
      */
-    envContext: Record<string, string> = {};
+    harnessContext: HarnessContext = HarnessContext.createEmpty();
 
     stop_requested_by_user: boolean = false;
     started_at?: Date;
@@ -437,11 +439,11 @@ export class TaskState {
                 const loadedSkill = await registry.getSkill(bundleName, name);
                 if (!loadedSkill) continue;
 
-                // 将 skill 的 .env 环境变量合并到当前 task 的 envContext
+                // 将 skill 的 .env 环境变量合并到当前 task 的 harnessContext.environ
                 if (loadedSkill.env && Object.keys(loadedSkill.env).length > 0) {
-                    Object.assign(this.envContext, loadedSkill.env);
+                    Object.assign(this.harnessContext.environ, loadedSkill.env);
                     logger.info(
-                        `preloaded skill ${name} env merged to task envContext: ${Object.keys(loadedSkill.env).join(', ')}`
+                        `preloaded skill ${name} env merged to task harnessContext.environ: ${Object.keys(loadedSkill.env).join(', ')}`
                     );
                 }
 
@@ -519,6 +521,9 @@ export class TaskState {
         forkedTask.started_at = this.started_at;
         forkedTask.finished_at = this.finished_at;
         forkedTask.total_elapsed_ms = this.total_elapsed_ms;
+
+        // harnessContext 不落盘但 fork 时复制环境变量（便于工具继续使用）
+        forkedTask.harnessContext.environ = { ...this.harnessContext.environ };
 
         // Add to task manager
         this.task_manager_state.tasks.push(forkedTask);
@@ -753,10 +758,18 @@ export class TaskState {
     }
 
     /**
+     * 根据 tool_call 查找对应的 BaseTool 实例（不设置 tool_call 状态）
+     */
+    private resolveToolForCall(tool_call: ToolCall): BaseTool<any> | undefined {
+        return this.chat_context.getTool(tool_call.tool_name);
+    }
+
+    /**
      * 完成一个工具调用的实际执行过程, 并将结果直接写入 tool_call 中
      * @param tool_call 要被执行的工具调用
+     * @param skipPermission 是否跳过权限检查（已在 processToolCalls 预检阶段完成时为 true）
      */
-    async processToolCall(tool_call: ToolCall): Promise<void> {
+    async processToolCall(tool_call: ToolCall, skipPermission = false): Promise<void> {
         const tool = this.chat_context.getTool(tool_call.tool_name);
         if (tool === undefined) {
             logger.error(`tool ${tool_call.tool_name} not found`);
@@ -784,6 +797,14 @@ export class TaskState {
                 return;
             }
 
+            if (!skipPermission) {
+                /* 权限检查：工具声明所需权限 → 引擎判定 → allow/deny/ask */
+                const permissionDenied = await this.handleToolPermissions(tool, args, tool_call);
+                if (permissionDenied) {
+                    return;
+                }
+            }
+
             await this.hooks.checkBeforeToolCall(this, tool_call);
 
             const result = await tool.execute(
@@ -805,6 +826,117 @@ export class TaskState {
         } finally {
             await this.hooks.noticeAfterToolCall(this, tool_call);
             await tool_call.freezeRenderResult();
+        }
+    }
+
+    /**
+     * 处理工具的全部权限请求。
+     *
+     * 1. 收集所有声明的权限并逐条检查
+     * 2. 如有 deny → 直接拒绝
+     * 3. 将所有 ask 按 (resourceType, action) 分组合并
+     * 4. 逐组提示用户
+     *
+     * @returns true 表示工具被拒绝执行，false 表示可以继续
+     */
+    private async handleToolPermissions(
+        tool: BaseTool<any>,
+        args: Record<string, unknown>,
+        tool_call: ToolCall
+    ): Promise<boolean> {
+        const enforcer = this.harnessContext.permission;
+        if (!enforcer) {
+            return false;
+        }
+
+        const declaredPermissions = tool.getDeclaredPermissions(args, this);
+        if (!declaredPermissions || declaredPermissions.length === 0) {
+            return false;
+        }
+
+        const allResults = await enforcer.checkAllDetailed(declaredPermissions);
+        if (allResults.length === 0) {
+            return false;
+        }
+
+        // deny 优先：只要有一个 deny 就拒绝整个工具调用
+        const denied = allResults.find((r) => r.effect === 'deny');
+        if (denied) {
+            tool_call.status = 'error';
+            tool_call.result = `权限被拒绝: ${denied.reason || denied.request.action + ' ' + denied.request.resourcePath}`;
+            tool_call.result_object = { permission_denied: true };
+            return true;
+        }
+
+        // 剩下全是 ask，按 (resourceType, action) 分组合并
+        const askResults = allResults.filter((r) => r.effect === 'ask');
+        if (askResults.length === 0) {
+            return false;
+        }
+
+        const groups = new Map<string, PermissionCheckResult[]>();
+        for (const result of askResults) {
+            const key = `${result.request.resourceType}:${result.request.action}`;
+            if (!groups.has(key)) {
+                groups.set(key, []);
+            }
+            groups.get(key)!.push(result);
+        }
+
+        // 逐组提示用户
+        for (const [, groupResults] of groups) {
+            const requests = groupResults.map((r) => r.request);
+            const response = await this.promptPermissionBatch(requests, tool.name);
+
+            if (response.decision === 'deny') {
+                const paths = requests.map((r) => r.resourcePath).join(', ');
+                tool_call.status = 'error';
+                tool_call.result = `用户拒绝了权限请求: ${requests[0].action} ${paths}`;
+                tool_call.result_object = { permission_denied: true };
+                return true;
+            }
+
+            // 根据用户选择写回规则
+            if (response.rememberScope === 'exact' && this.harnessContext.permission) {
+                for (const req of requests) {
+                    await this.harnessContext.permission.addRule({
+                        resourceType: req.resourceType,
+                        action: req.action,
+                        pathPattern: req.resourcePath,
+                        effect: 'allow'
+                    });
+                }
+            } else if (response.rememberScope === 'type' && this.harnessContext.permission) {
+                await this.harnessContext.permission.addRule({
+                    resourceType: requests[0].resourceType,
+                    action: requests[0].action,
+                    pathPattern: '**',
+                    effect: 'allow'
+                });
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * 通过 harnessContext 的 permissionPrompt 向用户请求权限确认（合并后的批量请求）
+     */
+    private async promptPermissionBatch(
+        requests: PermissionRequest[],
+        toolName: string
+    ): Promise<PermissionUserResponse> {
+        const promptProvider = this.harnessContext.permissionPrompt;
+        if (!promptProvider) {
+            logger.warn(`permission ask required but no prompt provider configured, defaulting to deny`);
+            return { decision: 'deny', rememberScope: 'none' };
+        }
+
+        try {
+            return await promptProvider.prompt(requests, toolName);
+        } catch (err) {
+            logger.error(`permission prompt failed: ${err}`);
+            return { decision: 'deny', rememberScope: 'none' };
         }
     }
 
@@ -841,9 +973,35 @@ export class TaskState {
             return false;
         }
 
+        // 阶段 1：串行完成所有权限检查（避免多个权限提示同时弹出）
+        const permissionResults = new Map<ToolCall, boolean>();
+        for (const { tool_call } of pendingCalls) {
+            const tool = this.resolveToolForCall(tool_call);
+            if (tool) {
+                let args: Record<string, unknown> = {};
+                try {
+                    if (tool_call.args_string) {
+                        const repaired = jsonrepair(tool_call.args_string);
+                        args = JSON.parse(repaired);
+                    }
+                } catch {
+                    // parse 失败时不做预检，让 processToolCall 里处理
+                }
+                const denied = await this.handleToolPermissions(tool, args, tool_call);
+                permissionResults.set(tool_call, denied);
+            }
+        }
+
+        // 阶段 2：并行执行所有通过权限检查的工具（已拒绝的跳过执行阶段）
         await Promise.all(
             pendingCalls.map(async ({ tool_call, partIndex }) => {
-                await this.processToolCall(tool_call);
+                const alreadyDenied = permissionResults.get(tool_call);
+                if (alreadyDenied) {
+                    await tool_call.render();
+                    await this.sendSubscriptionFeedback(partIndex);
+                    return;
+                }
+                await this.processToolCall(tool_call, true);
                 await tool_call.render();
                 await this.sendSubscriptionFeedback(partIndex);
             })

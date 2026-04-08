@@ -11,7 +11,9 @@
 1. [应用的基本概念](#1-应用的基本概念)
 2. [创建一个新应用](#2-创建一个新应用)
 3. [为 Agent 提供工具](#3-为-agent-提供工具)
+    - 3.5 [提供 Skills](#35-提供-skills)
 4. [开发终端字符界面](#4-开发终端字符界面)
+    - 4.6 [注册 CLI 子命令](#46-注册-cli-子命令)
 5. [开发应用主界面](#5-开发应用主界面)
 6. [使用 Worker 执行后台任务](#6-使用-worker-执行后台任务)
 7. [注册应用](#7-注册应用)
@@ -23,12 +25,12 @@
 
 OpenDesk 中的每个功能模块都以"应用（Application）"的形式组织。每个应用由以下几个核心部分组成：
 
-| 部分 | 文件 | 说明 |
-|------|------|------|
-| **应用类** | `app.ts` | 应用的核心，继承 `BaseApplication`，声明应用元数据、工具集和 Worker |
-| **Worker 类** | `worker.ts` | 可选，继承 `BaseWorker`，在独立线程中执行耗时的后台任务 |
-| **渲染入口** | `renderer/entry.ts` | 可选，定义应用主界面的 Web Component，显示在应用面板中 |
-| **应用图标** | `resources/renderer/applications/<bundleName>/icon.png` | 在侧边栏中展示的应用图标 |
+| 部分          | 文件                                                    | 说明                                                                |
+| ------------- | ------------------------------------------------------- | ------------------------------------------------------------------- |
+| **应用类**    | `app.ts`                                                | 应用的核心，继承 `BaseApplication`，声明应用元数据、工具集和 Worker |
+| **Worker 类** | `worker.ts`                                             | 可选，继承 `BaseWorker`，在独立线程中执行耗时的后台任务             |
+| **渲染入口**  | `renderer/entry.ts`                                     | 可选，定义应用主界面的 Web Component，显示在应用面板中              |
+| **应用图标**  | `resources/renderer/applications/<bundleName>/icon.png` | 在侧边栏中展示的应用图标                                            |
 
 这几个部分相互独立、按需组合：如果你的应用只需要提供工具而不需要界面，可以不创建渲染入口；如果所有操作都很轻量、无需后台线程，可以不创建 Worker。
 
@@ -60,15 +62,15 @@ resources/renderer/applications/<bundleName>/
 
 ```typescript
 // src/main/applications/myapp/app.ts
-import { BaseApplication } from "../base.js";
-import { BaseToolset } from "../../aikernel/tool";
+import { BaseApplication } from '../base.js';
+import { BaseToolset } from '../../aikernel/tool';
 import { z } from 'zod';
-import MyAppWorker from "./worker";
+import MyAppWorker from './worker';
 
 // 在 app.ts 中直接定义配置 Schema，也可以提取到 common.ts 中
 const MyAppConfigSchema = z.object({
     enabled: z.boolean().describe('启用此应用').default(true),
-    api_key: z.string().describe('API 密钥').default(''),
+    api_key: z.string().describe('API 密钥').default('')
 });
 
 export class MyAppApplication extends BaseApplication {
@@ -119,13 +121,13 @@ export class MyAppApplication extends BaseApplication {
 
 在应用类的任何方法中，都可以使用以下由基类提供的方法：
 
-| 方法 | 说明 |
-|------|------|
-| `this.getConfig()` | 获取当前应用的配置（已解析为 JS 对象，类型由 `getConfigSchema()` 决定） |
-| `await this.getDataDirectory()` | 获取应用专属的数据目录路径（`apps/<bundleName>/`），若目录不存在则自动创建 |
-| `await this.callWorker(methodName, ...args)` | 调用 Worker 线程中的方法，支持任意参数和返回值 |
-| `this.getProtocolHandlers()` | 覆写此方法以注册自定义 URL 协议（如 `myapp://`），用于在渲染进程中安全加载应用内资源 |
-| `this.sendEventToSubscribers(eventName, ...args)` | 向所有订阅了指定事件的渲染进程帧广播消息 |
+| 方法                                              | 说明                                                                                 |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `this.getConfig()`                                | 获取当前应用的配置（已解析为 JS 对象，类型由 `getConfigSchema()` 决定）              |
+| `await this.getDataDirectory()`                   | 获取应用专属的数据目录路径（`apps/<bundleName>/`），若目录不存在则自动创建           |
+| `await this.callWorker(methodName, ...args)`      | 调用 Worker 线程中的方法，支持任意参数和返回值                                       |
+| `this.getProtocolHandlers()`                      | 覆写此方法以注册自定义 URL 协议（如 `myapp://`），用于在渲染进程中安全加载应用内资源 |
+| `this.sendEventToSubscribers(eventName, ...args)` | 向所有订阅了指定事件的渲染进程帧广播消息                                             |
 
 ### 2.3 添加应用图标
 
@@ -152,8 +154,8 @@ OpenDesk 内置的 Agent 可以调用应用注册的"工具（Tool）"来感知�
 
 ```typescript
 // src/main/applications/myapp/app.ts
-import { BaseApplication } from "../base.js";
-import { BaseTool, BaseToolset } from "../../aikernel/tool";
+import { BaseApplication } from '../base.js';
+import { BaseTool, BaseToolset } from '../../aikernel/tool';
 import { z } from 'zod';
 
 export class MyAppApplication extends BaseApplication {
@@ -171,7 +173,7 @@ export class MyAppApplication extends BaseApplication {
             '根据给定的关键词查询相关数据，返回匹配的数据列表',
             z.object({
                 keyword: z.string().describe('查询关键词'),
-                limit: z.number().optional().describe('返回结果的最大数量').default(10),
+                limit: z.number().optional().describe('返回结果的最大数量').default(10)
             })
         );
 
@@ -238,11 +240,7 @@ class MyAppEntryWidget extends AgentOperableHTMLElement {
 
         // 只有在页面有数据时才注册读取数据的工具，避免 Agent 调用到空工具
         if (this.currentData.length > 0) {
-            const getDataTool = new RendererTool(
-                'getCurrentData',
-                '获取当前页面展示的数据列表',
-                z.object({})
-            );
+            const getDataTool = new RendererTool('getCurrentData', '获取当前页面展示的数据列表', z.object({}));
             // 执行器可以直接访问组件实例的属性和方法
             getDataTool.setExecutor(async () => {
                 return JSON.stringify(this.currentData);
@@ -255,7 +253,7 @@ class MyAppEntryWidget extends AgentOperableHTMLElement {
             'selectItem',
             '选中指定索引的数据项，使其在详情区域高亮显示',
             z.object({
-                index: z.number().describe('要选中的数据项索引（从 0 开始）'),
+                index: z.number().describe('要选中的数据项索引（从 0 开始）')
             })
         );
         selectItemTool.setExecutor(async (args) => {
@@ -274,6 +272,62 @@ class MyAppEntryWidget extends AgentOperableHTMLElement {
 customElements.define('myapp-entry-widget', MyAppEntryWidget);
 ```
 
+### 3.5 提供 Skills
+
+Skill 是一种比 Tool 更高级的 Agent 交互单元，它可以包含多个工具集（Toolset），并支持自然语言描述的"操作步骤"（以 Markdown 格式编写），让 Agent 能够通过对话式的多轮交互完成任务。Skill 通过 `getSkills()` 方法注册到应用中。
+
+Skill 适用于复杂的多步骤任务场景，例如"管理技能"、"管理频道"等。每个 Skill 包含：
+
+- **名称与描述**：供 Agent 理解和选择
+- **工具集（Toolsets）**：将相关的 Tool 组合在一起
+- **操作步骤（Body）**：用自然语言描述的操作指引，Agent 会参考这些步骤来决定如何调用工具
+
+```typescript
+// src/main/applications/myapp/app.ts
+import { BaseApplication } from '../base.js';
+import { Skill } from '../../aikernel/skill.js';
+import { BaseToolset, BaseTool } from '../../aikernel/tool.js';
+import { z } from 'zod';
+
+export class MyAppApplication extends BaseApplication {
+    constructor() {
+        super('myapp', '我的应用');
+    }
+
+    async getSkills(): Promise<Skill[]> {
+        const skill = Skill.parseMd(`---
+name: myapp-manage
+description: 管理和操作我的应用数据
+---
+
+你是我的应用助手。当用户请求管理数据时，使用以下工具完成操作。`);
+
+        // 创建工具集并添加工具
+        const toolset = new BaseToolset('myapp-manage');
+        const queryTool = new BaseTool('queryData', '根据关键词查询数据', z.object({ keyword: z.string() }));
+        queryTool.setExecutor(async (args) => {
+            const result = await this.callWorker('doQuery', args.keyword);
+            return JSON.stringify(result);
+        });
+        toolset.addTool(queryTool);
+
+        // 将工具集关联到 Skill
+        skill.toolsets = [toolset];
+
+        return [skill];
+    }
+}
+```
+
+**Skill 与 Tool 的区别：**
+
+| 特性     | Tool               | Skill                   |
+| -------- | ------------------ | ----------------------- |
+| 粒度     | 单个操作           | 多步骤任务              |
+| 操作描述 | Tool 名称和描述    | Markdown 格式的操作步骤 |
+| 工具组合 | 独立使用           | 可包含多个工具集        |
+| 适用场景 | 简单、原子化的操作 | 复杂、多轮交互的任务    |
+
 ---
 
 ## 4. 开发终端字符界面
@@ -286,8 +340,8 @@ OpenDesk 支持在终端中以 TUI（Text User Interface，文本用户界面）
 
 ```typescript
 // src/main/applications/myapp/app.ts
-import { BaseApplication } from "../base.js";
-import type { SlashCommandHandler } from "../../tui/commands.js";
+import { BaseApplication } from '../base.js';
+import type { SlashCommandHandler } from '../../tui/commands.js';
 
 export class MyAppApplication extends BaseApplication {
     constructor() {
@@ -301,15 +355,15 @@ export class MyAppApplication extends BaseApplication {
     getCliSlashCommands(tui: any): SlashCommandHandler[] {
         return [
             {
-                name: 'myapp',           // 命令名称（用户输入 /myapp 来调用）
+                name: 'myapp', // 命令名称（用户输入 /myapp 来调用）
                 description: '打开我的应用', // 在帮助中显示的描述
                 execute: async (args: string) => {
                     // 命令执行逻辑
                     console.log(`执行 myapp 命令，参数: ${args}`);
                     // 可以调用 Worker 方法
                     await this.callWorker('doSomething', args);
-                },
-            },
+                }
+            }
         ];
     }
 }
@@ -319,13 +373,13 @@ export class MyAppApplication extends BaseApplication {
 
 `SlashCommandHandler` 接口包含以下字段：
 
-| 字段 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `name` | `string` | 是 | 命令名称（不含 `/` 前缀） |
-| `description` | `string` | 是 | 命令描述，显示在帮助列表中 |
-| `execute` | `(args: string) => void \| Promise<void>` | 是 | 命令执行函数，`args` 为用户输入的参数 |
-| `shortcut` | `KeyId` | 否 | 快捷键，如 `Key.ctrl('m')` |
-| `getArgumentCompletions` | `(argPrefix: string) => AutocompleteItem[] \| null` | 否 | 参数自动补全函数 |
+| 字段                     | 类型                                                | 必填 | 说明                                  |
+| ------------------------ | --------------------------------------------------- | ---- | ------------------------------------- |
+| `name`                   | `string`                                            | 是   | 命令名称（不含 `/` 前缀）             |
+| `description`            | `string`                                            | 是   | 命令描述，显示在帮助列表中            |
+| `execute`                | `(args: string) => void \| Promise<void>`           | 是   | 命令执行函数，`args` 为用户输入的参数 |
+| `shortcut`               | `KeyId`                                             | 否   | 快捷键，如 `Key.ctrl('m')`            |
+| `getArgumentCompletions` | `(argPrefix: string) => AutocompleteItem[] \| null` | 否   | 参数自动补全函数                      |
 
 ### 4.3 完整示例：带参数补全的命令
 
@@ -333,9 +387,9 @@ export class MyAppApplication extends BaseApplication {
 
 ```typescript
 // src/main/applications/myapp/app.ts
-import { BaseApplication } from "../base.js";
-import type { SlashCommandHandler } from "../../tui/commands.js";
-import { Key } from "@mariozechner/pi-tui";
+import { BaseApplication } from '../base.js';
+import type { SlashCommandHandler } from '../../tui/commands.js';
+import { Key } from '@mariozechner/pi-tui';
 
 export class MyAppApplication extends BaseApplication {
     constructor() {
@@ -351,12 +405,11 @@ export class MyAppApplication extends BaseApplication {
                 getArgumentCompletions: (argPrefix: string) => {
                     const options = ['list', 'add', 'remove'];
                     return options
-                        .filter(opt => opt.startsWith(argPrefix.toLowerCase()))
-                        .map(opt => ({
+                        .filter((opt) => opt.startsWith(argPrefix.toLowerCase()))
+                        .map((opt) => ({
                             value: opt,
                             label: opt,
-                            description: opt === 'list' ? '列出所有项目' :
-                                         opt === 'add' ? '添加新项目' : '移除项目'
+                            description: opt === 'list' ? '列出所有项目' : opt === 'add' ? '添加新项目' : '移除项目'
                         }));
                 },
                 execute: async (args: string) => {
@@ -374,8 +427,8 @@ export class MyAppApplication extends BaseApplication {
                         default:
                             console.log('用法: /myapp [list|add|remove]');
                     }
-                },
-            },
+                }
+            }
         ];
     }
 }
@@ -387,9 +440,9 @@ export class MyAppApplication extends BaseApplication {
 
 ```javascript
 // src/main/applications/mailbox/app.js
-import { BaseApplication } from "../base";
-import { MailOverlay } from "./tui.js";
-import { logger } from "../../utils/logger.js";
+import { BaseApplication } from '../base';
+import { MailOverlay } from './tui.js';
+import { logger } from '../../utils/logger.js';
 
 class MailboxApplication extends BaseApplication {
     constructor() {
@@ -408,8 +461,8 @@ class MailboxApplication extends BaseApplication {
                     } catch (err) {
                         logger.error(`打开邮箱失败: ${err}`);
                     }
-                },
-            },
+                }
+            }
         ];
     }
 }
@@ -423,6 +476,74 @@ class MailboxApplication extends BaseApplication {
 [SlashCommandRegistry] 命令 "/mail" 已被 "邮箱" 注册，忽略来自 "其他应用" 的重复注册
 ```
 
+### 4.6 注册 CLI 子命令
+
+除了 TUI 斜杠命令外，应用还可以通过静态方法 `registerCliSubcommands()` 注册全局的 CLI 子命令。这些子命令在应用启动时就被注册，用户可以通过 `opendesk skill install <source>` 这种形式直接从命令行调用，而无需进入 TUI 界面。
+
+框架在启动 CLI 时会自动遍历所有应用类，调用它们的 `registerCliSubcommands` 方法来注册子命令。
+
+```typescript
+// src/main/applications/skillmgr/app.ts
+import { BaseApplication } from '../base.js';
+import type { Command } from 'commander';
+
+export class SkillMgrApplication extends BaseApplication {
+    constructor() {
+        super('skillmgr', 'Skills');
+    }
+
+    /**
+     * 注册 CLI 子命令：opendesk skill install / uninstall / list
+     * @param prog Commander 程序实例
+     */
+    static registerCliSubcommands(prog: Command): void {
+        // 创建一个 "skill" 子命令
+        const skillCmd = prog.command('skill').description('技能管理');
+
+        // 注册 "skill install <source>" 子命令
+        skillCmd
+            .command('install <source>')
+            .description('安装技能（本地目录、本地 zip 文件或远程 zip URL）')
+            .action(async (source: string) => {
+                // 实际安装逻辑...
+                console.log(`正在安装技能: ${source}`);
+            });
+
+        // 注册 "skill uninstall <skillName>" 子命令
+        skillCmd
+            .command('uninstall <skillName>')
+            .description('卸载指定名称的技能')
+            .action((skillName: string) => {
+                console.log(`正在卸载技能: ${skillName}`);
+            });
+
+        // 注册 "skill list" 子命令
+        skillCmd
+            .command('list')
+            .description('列出所有已安装的技能')
+            .action(() => {
+                console.log('已安装的技能列表');
+            });
+    }
+}
+```
+
+注册后，用户可以直接使用以下命令：
+
+```bash
+# 安装技能
+opendesk skill install ./my-skill
+opendesk skill install https://example.com/skill.zip
+
+# 卸载技能
+opendesk skill uninstall my-skill
+
+# 列出已安装的技能
+opendesk skill list
+```
+
+**使用场景：** CLI 子命令适合需要后台执行、不依赖图形界面的操作，例如安装/卸载包、导出数据、执行维护任务等。
+
 ---
 
 ## 5. 开发应用主界面
@@ -432,6 +553,7 @@ class MailboxApplication extends BaseApplication {
 应用的主界面通过一个自定义 HTML 元素（Web Component）来实现。框架在打开应用时，会动态加载 `renderer/entry.ts`，并将其中定义的 `<bundleName>-entry-widget` 元素挂载到应用容器中。
 
 编写界面时，需要：
+
 1. 创建一个类，继承 `AgentOperableHTMLElement`（它已继承自标准 `HTMLElement`）
 2. 在 `connectedCallback()` 生命周期方法中初始化界面和数据加载
 3. 在 `disconnectedCallback()` 中清理所有定时器、事件订阅等，防止内存泄漏
@@ -494,8 +616,7 @@ class MyAppEntryWidget extends AgentOperableHTMLElement {
         try {
             // 通过 applicationAPI 调用 Worker 中的方法获取数据
             const data = await window.applicationAPI.call('fetchData');
-            this.querySelector('#content')!.innerHTML =
-                `<pre class="text-sm">${JSON.stringify(data, null, 2)}</pre>`;
+            this.querySelector('#content')!.innerHTML = `<pre class="text-sm">${JSON.stringify(data, null, 2)}</pre>`;
         } catch (error: any) {
             this.querySelector('#content')!.textContent = `加载失败: ${error.message}`;
         }
@@ -509,13 +630,13 @@ customElements.define('myapp-entry-widget', MyAppEntryWidget);
 
 在 `renderer/entry.ts` 中，可通过 `window.applicationAPI` 与主进程通信。这是渲染进程与后端逻辑交互的唯一入口，所有调用都经过 Electron 的 IPC 安全通道。
 
-| 方法 | 说明 |
-|------|------|
-| `await window.applicationAPI.call(methodName, ...args)` | 调用当前应用 **Worker** 的方法，等待结果返回 |
-| `await window.applicationAPI.callMainWorld(methodName, ...args)` | 调用当前应用**主进程实例**（`app.ts`）的方法，适合调用非耗时的主进程逻辑 |
-| `window.applicationAPI.streamCall(methodName, ...args)` | 流式调用 Worker 方法，返回 `AsyncGenerator`，可使用 `for await...of` 逐步消费结果 |
-| `window.applicationAPI.subscribe(eventName, callback)` | 订阅来自 Worker 的事件，`callback` 将在事件触发时被调用 |
-| `window.applicationAPI.unsubscribe(eventName, callback)` | 取消事件订阅，建议在 `disconnectedCallback` 中调用，防止内存泄漏 |
+| 方法                                                             | 说明                                                                              |
+| ---------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| `await window.applicationAPI.call(methodName, ...args)`          | 调用当前应用 **Worker** 的方法，等待结果返回                                      |
+| `await window.applicationAPI.callMainWorld(methodName, ...args)` | 调用当前应用**主进程实例**（`app.ts`）的方法，适合调用非耗时的主进程逻辑          |
+| `window.applicationAPI.streamCall(methodName, ...args)`          | 流式调用 Worker 方法，返回 `AsyncGenerator`，可使用 `for await...of` 逐步消费结果 |
+| `window.applicationAPI.subscribe(eventName, callback)`           | 订阅来自 Worker 的事件，`callback` 将在事件触发时被调用                           |
+| `window.applicationAPI.unsubscribe(eventName, callback)`         | 取消事件订阅，建议在 `disconnectedCallback` 中调用，防止内存泄漏                  |
 
 ### 5.3 样式规范
 
@@ -581,13 +702,12 @@ Worker 类中定义的所有公开的 `async` 方法，都可以从主进程（�
 
 ```typescript
 // src/main/applications/myapp/worker.ts
-import { BaseWorker } from "../base.js";
+import { BaseWorker } from '../base.js';
 import { logger } from '../../utils/logger.js';
 import path from 'path';
 import fs from 'fs';
 
 export default class MyAppWorker extends BaseWorker {
-
     private data: object[] = [];
 
     /**
@@ -623,9 +743,7 @@ export default class MyAppWorker extends BaseWorker {
     }
 
     async searchItems(keyword: string): Promise<object[]> {
-        return this.data.filter((item: any) =>
-            JSON.stringify(item).includes(keyword)
-        );
+        return this.data.filter((item: any) => JSON.stringify(item).includes(keyword));
     }
 
     /**
@@ -635,7 +753,7 @@ export default class MyAppWorker extends BaseWorker {
     async processLargeTask(): Promise<string> {
         return await this.runSequentially(async () => {
             logger.info('开始执行大型任务...');
-            await new Promise(resolve => setTimeout(resolve, 1000)); // 模拟耗时
+            await new Promise((resolve) => setTimeout(resolve, 1000)); // 模拟耗时
             return 'done';
         });
     }
@@ -648,7 +766,7 @@ export default class MyAppWorker extends BaseWorker {
     async *streamResults(query: string): AsyncGenerator<object> {
         for (let i = 0; i < 10; i++) {
             yield { index: i, content: `第 ${i + 1} 条与 "${query}" 相关的结果` };
-            await new Promise(resolve => setTimeout(resolve, 200));
+            await new Promise((resolve) => setTimeout(resolve, 200));
         }
     }
 }
@@ -660,10 +778,9 @@ export default class MyAppWorker extends BaseWorker {
 
 ```typescript
 // src/main/applications/myapp/app.ts
-import MyAppWorker from "./worker";
+import MyAppWorker from './worker';
 
 export class MyAppApplication extends BaseApplication {
-
     // 告知框架此应用使用哪个 Worker 类
     static getWorkerClass() {
         return MyAppWorker;
@@ -750,10 +867,10 @@ async syncData(): Promise<void> {
 
 OpenDesk 支持两种运行平台，每个平台维护各自独立的应用注册列表：
 
-| 平台 | 文件 | 说明 |
-|------|------|------|
+| 平台                  | 文件                        | 说明                                             |
+| --------------------- | --------------------------- | ------------------------------------------------ |
 | **Electron 图形界面** | `src/platforms/electron.ts` | 基于 Electron 运行的完整桌面客户端，支持图形界面 |
-| **CLI 命令行** | `src/platforms/cli.ts` | 基于终端运行的纯命令行模式，不渲染任何界面 |
+| **CLI 命令行**        | `src/platforms/cli.ts`      | 基于终端运行的纯命令行模式，不渲染任何界面       |
 
 所有需要在 OpenDesk 中运行的应用，都必须在对应平台的配置文件中注册。注册时，框架会在启动时实例化应用类，并将其加入全局的应用注册表。
 
@@ -773,13 +890,13 @@ OpenDesk 支持两种运行平台，每个平台维护各自独立的应用注�
 
 ```typescript
 // src/platforms/electron.ts
-import { MyAppApplication } from "../main/applications/myapp/app.js";
+import { MyAppApplication } from '../main/applications/myapp/app.js';
 
 export class ElectronPlatform extends AbstractPlatform {
-    getApplicationClasses(): typeof BaseApplication[] {
+    getApplicationClasses(): (typeof BaseApplication)[] {
         return [
             // ... 现有应用 ...
-            MyAppApplication,  // 在此追加新应用
+            MyAppApplication // 在此追加新应用
         ];
     }
 }
@@ -793,13 +910,13 @@ export class ElectronPlatform extends AbstractPlatform {
 
 ```typescript
 // src/platforms/cli.ts
-import { MyAppApplication } from "../main/applications/myapp/app.js";
+import { MyAppApplication } from '../main/applications/myapp/app.js';
 
 export class CliPlatform extends AbstractPlatform {
-    getApplicationClasses(): typeof BaseApplication[] {
+    getApplicationClasses(): (typeof BaseApplication)[] {
         return [
             // ... 现有应用 ...
-            MyAppApplication,  // 在此追加新应用
+            MyAppApplication // 在此追加新应用
         ];
     }
 }
@@ -832,10 +949,10 @@ resources/renderer/applications/notes/
 
 ```typescript
 // src/main/applications/notes/app.ts
-import { BaseApplication } from "../base.js";
-import { BaseTool, BaseToolset } from "../../aikernel/tool";
+import { BaseApplication } from '../base.js';
+import { BaseTool, BaseToolset } from '../../aikernel/tool';
 import { z } from 'zod';
-import NotesWorker from "./worker";
+import NotesWorker from './worker';
 
 export class NotesApplication extends BaseApplication {
     constructor() {
@@ -866,7 +983,7 @@ export class NotesApplication extends BaseApplication {
             '根据提供的标题和内容创建一条新笔记',
             z.object({
                 title: z.string().describe('笔记标题'),
-                content: z.string().describe('笔记正文内容'),
+                content: z.string().describe('笔记正文内容')
             })
         );
         createTool.setExecutor(async (args) => {
@@ -886,7 +1003,7 @@ Worker 类负责所有涉及文件读写的逻辑。每次笔记数据发生变�
 
 ```typescript
 // src/main/applications/notes/worker.ts
-import { BaseWorker } from "../base.js";
+import { BaseWorker } from '../base.js';
 import { logger } from '../../utils/logger.js';
 import path from 'path';
 import fs from 'fs';
@@ -899,7 +1016,6 @@ interface Note {
 }
 
 export default class NotesWorker extends BaseWorker {
-
     private notesFile!: string;
     private notes: Note[] = [];
 
@@ -921,7 +1037,7 @@ export default class NotesWorker extends BaseWorker {
             id: Date.now(),
             title,
             content,
-            createdAt: new Date().toISOString(),
+            createdAt: new Date().toISOString()
         };
         this.notes.unshift(note);
         fs.writeFileSync(this.notesFile, JSON.stringify(this.notes, null, 2));
@@ -932,9 +1048,7 @@ export default class NotesWorker extends BaseWorker {
     }
 
     async searchNotes(keyword: string): Promise<Note[]> {
-        return this.notes.filter(n =>
-            n.title.includes(keyword) || n.content.includes(keyword)
-        );
+        return this.notes.filter((n) => n.title.includes(keyword) || n.content.includes(keyword));
     }
 }
 ```
@@ -986,17 +1100,15 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
         const toolset = new RendererToolset('notes');
 
         // 提供读取当前笔记列表的工具，让 Agent 能感知界面内容
-        const listTool = new RendererTool(
-            'listCurrentNotes',
-            '获取当前界面中显示的所有笔记的标题和摘要',
-            z.object({})
-        );
+        const listTool = new RendererTool('listCurrentNotes', '获取当前界面中显示的所有笔记的标题和摘要', z.object({}));
         listTool.setExecutor(async () => {
-            return JSON.stringify(this.notes.map(n => ({
-                id: n.id,
-                title: n.title,
-                preview: n.content.slice(0, 50),
-            })));
+            return JSON.stringify(
+                this.notes.map((n) => ({
+                    id: n.id,
+                    title: n.title,
+                    preview: n.content.slice(0, 50)
+                }))
+            );
         });
         toolset.addTool(listTool);
 
@@ -1038,13 +1150,17 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
             return;
         }
 
-        list.innerHTML = this.notes.map(note => `
+        list.innerHTML = this.notes
+            .map(
+                (note) => `
             <div class="bg-white rounded-2xl p-4 shadow-sm border border-[#F0F0F2]">
                 <h3 class="font-semibold text-gray-800">${note.title}</h3>
                 <p class="text-sm text-[#86868B] mt-1 line-clamp-2">${note.content}</p>
                 <p class="text-xs text-gray-400 mt-2">${new Date(note.createdAt).toLocaleString()}</p>
             </div>
-        `).join('');
+        `
+            )
+            .join('');
     }
 
     async handleCreate() {
@@ -1093,6 +1209,7 @@ NotesApplication,
 **Q: `bundleName` 有什么命名要求？**
 
 `bundleName` 是应用在整个平台内的唯一标识，建议只使用小写字母、数字和连字符（例如 `my-app`）。以下所有位置的命名必须与 `bundleName` 严格一致：
+
 - Web Component 注册名：`<bundleName>-entry-widget`
 - 图标资源目录：`resources/renderer/applications/<bundleName>/`
 - Worker 中的 `super(bundleName, ...)` 调用

@@ -12,6 +12,7 @@ import {
 import { defaultEditorTheme, defaultMarkdownTheme, getStatusBarColors } from '../theme';
 import { SlashCommandRegistry } from '../commands';
 import type { OpenDeskTUI } from '../entry';
+import type { PermissionPromptWidget } from './permission';
 import chalk from 'chalk';
 import { visibleWidth, truncateToWidth } from '@mariozechner/pi-tui';
 import { getFileCompletions, extractAtQuery, FILE_COMPLETION_MAX_RESULTS } from './file-completions';
@@ -511,6 +512,7 @@ export class AgentInputArea implements Component {
     private quickPassHandler?: (text: string) => boolean;
     private shellCommandMode = false;
     private defaultBorderColor: (str: string) => string;
+    private permissionWidget: PermissionPromptWidget | null = null;
 
     constructor(openDeskTUI: OpenDeskTUI) {
         this.openDeskTUI = openDeskTUI;
@@ -836,6 +838,29 @@ export class AgentInputArea implements Component {
         this.currentTaskId = undefined;
         this.messageQueue = [];
         this.updateQueueHint();
+    }
+
+    /**
+     * 显示权限确认 widget，临时替换掉 Editor 输入框。
+     */
+    showPermissionPrompt(widget: PermissionPromptWidget) {
+        this.permissionWidget = widget;
+        this.layout.removeChild(this.input);
+        this.layout.removeChild(this.statusBar);
+        this.layout.addChild(widget);
+        this.layout.addChild(this.statusBar);
+    }
+
+    /**
+     * 隐藏权限确认 widget，恢复 Editor 输入框。
+     */
+    hidePermissionPrompt() {
+        if (!this.permissionWidget) return;
+        this.layout.removeChild(this.permissionWidget);
+        this.layout.removeChild(this.statusBar);
+        this.layout.addChild(this.input);
+        this.layout.addChild(this.statusBar);
+        this.permissionWidget = null;
     }
 
     invalidate() {

@@ -39,11 +39,44 @@ import {
     ToolCallMessagePart,
     ErrorMessagePart
 } from '../aikernel/messages.js';
+import { HarnessContext } from '../aikernel/security/harness.js';
+import type {
+    PermissionRequest,
+    PermissionUserResponse,
+    PermissionPromptProvider
+} from '../aikernel/security/permission.js';
 import chalk from 'chalk';
 import path from 'path';
 import fs from 'fs';
 
 const RENDER_WIDTH = 80;
+
+const HEADLESS_ACTION_LABELS: Record<string, string> = {
+    read: '读取',
+    write: '编辑',
+    execute: '执行',
+    access: '访问'
+};
+const HEADLESS_RESOURCE_LABELS: Record<string, string> = {
+    file: '文件',
+    network: '网络',
+    skill: '技能'
+};
+
+/**
+ * Headless 模式下的权限确认：无交互能力，直接拒绝 ask 请求并输出日志。
+ */
+class HeadlessPermissionPromptProvider implements PermissionPromptProvider {
+    async prompt(requests: PermissionRequest[], toolName: string): Promise<PermissionUserResponse> {
+        const first = requests[0];
+        const action = HEADLESS_ACTION_LABELS[first.action] || first.action;
+        const resType = HEADLESS_RESOURCE_LABELS[first.resourceType] || first.resourceType;
+        const paths = requests.map((r) => r.resourcePath).join(', ');
+        process.stdout.write(chalk.bold.yellow('[权限] ') + `${toolName} 工具请求${action}${resType}资源: ${paths}\n`);
+        process.stdout.write(chalk.bold.red('[权限] ') + `headless 模式下无法交互确认，已自动拒绝\n`);
+        return { decision: 'deny', rememberScope: 'none' };
+    }
+}
 
 export class HeadlessRunner {
     private taskManagerState: TaskManagerState;
@@ -66,6 +99,13 @@ export class HeadlessRunner {
         const task = this.taskManagerState.createTask(this.args.model);
         const systemPrompt = await this.agentDecl.createSystemPrompt();
         await task.setSystemPrompt(systemPrompt);
+
+        try {
+            task.harnessContext = await HarnessContext.createWithDefaults(this.args.workspace);
+            task.harnessContext.permissionPrompt = new HeadlessPermissionPromptProvider();
+        } catch (err) {
+            logger.warn(`Failed to init headless task harness: ${err}`);
+        }
 
         // 打印用户输入
         this.printUserMessage(command);

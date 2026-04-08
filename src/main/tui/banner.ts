@@ -106,6 +106,7 @@ export class OpenDeskBanner implements Component {
         this.workspace = workspace;
         this.layout.addChild(this.logo);
         this.layout.addChild(new CenteredText(chalk.dim('当前工作空间为: ') + this.workspace));
+        this.layout.addChild(new CenteredText(''));
     }
 
     invalidate() {

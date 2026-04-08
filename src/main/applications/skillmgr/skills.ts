@@ -59,7 +59,7 @@ license: MIT
 
 ## Skill 删除
 
-使用本Skill内置的deleteSkill工具可以删除已经安装的Skill。
+使用本Skill内置的deleteSkills工具可以批量删除已经安装的Skill。你可以传入一个或多个skillId。
 
 ## Skill 刷新
 
