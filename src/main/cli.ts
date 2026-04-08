@@ -44,6 +44,7 @@ function parseCommandLineArgs() {
     prog.option('--export-json <path>', 'export session as JSON when -c task completes', (v) => v);
     prog.option('--dump-log <path>', 'dump all log output to specified file', (v) => v);
     prog.option('--headless', 'run in headless mode (no TUI, requires -c)');
+    prog.option('--profile <path>', 'write performance profile to specified JSON file', (v) => v);
     prog.option('-v, --version', 'print the version');
 
     registerPluginsCommand(prog);
@@ -144,6 +145,11 @@ function parseCommandLineArgs() {
             }
         }
 
+        if (kwargs.profile && !kwargs.command) {
+            console.error('[error] --profile can only be used with -c/--command');
+            process.exit(1);
+        }
+
         main({
             workspace: workspacePath,
             command: kwargs.command,
@@ -151,7 +157,8 @@ function parseCommandLineArgs() {
             exportHtml: kwargs.exportHtml,
             exportJson: kwargs.exportJson,
             dumpLog: kwargs.dumpLog,
-            headless: !!kwargs.headless
+            headless: !!kwargs.headless,
+            profile: kwargs.profile
         });
     });
 

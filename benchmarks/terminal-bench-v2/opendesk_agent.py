@@ -268,6 +268,7 @@ class OpenDeskAgent(BaseInstalledAgent):
                 f"opendesk {model_flag}"
                 f"--headless "
                 f"--export-json /logs/agent/opendesk-result.json "
+                f"--profile /logs/agent/profile.json "
                 f"-c {escaped_instruction} "
                 f"2>&1 | tee /logs/agent/opendesk.txt"
             ),
