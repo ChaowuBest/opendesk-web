@@ -155,7 +155,7 @@ class LLM {
                 model: modelInstance.model_name,
                 input: batch
             });
-            embeddings.push(...response.data.map((data) => data.embedding));
+            embeddings.push(...response.data.sort((a, b) => a.index - b.index).map((data) => data.embedding));
         }
         return embeddings;
     }
