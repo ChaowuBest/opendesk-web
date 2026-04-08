@@ -44,6 +44,7 @@ import { TaskHooks } from '../hooks.js';
 import type { Participant } from '../plugins/types.js';
 import { HarnessContext } from '../security/harness.js';
 import type { PermissionRequest, PermissionCheckResult, PermissionUserResponse } from '../security/permission.js';
+import { TaskProfiler } from '../profiler.js';
 
 type TaskStatus = 'waiting' | 'running' | 'stopped';
 
@@ -134,6 +135,9 @@ export class TaskState {
     bookmark_path?: string;
     /** Task origin - set for channel-initiated tasks to identify the source channel */
     origin?: Participant;
+
+    /** 性能分析器，当 CLI --profile 启用时创建 */
+    profiler: TaskProfiler | null = null;
 
     /** 任务钩子，用于在一系列任务控制点中执行回调函数 */
     hooks: TaskHooks = new TaskHooks();
@@ -623,6 +627,8 @@ export class TaskState {
             return;
         }
 
+        this.profiler?.beginLLM(this._currentTurn);
+
         // Track the last sent text part index to avoid duplicate sends
         let lastSentTextPartIndex = -1;
 
@@ -672,6 +678,12 @@ export class TaskState {
         if (lastPart?.type === 'text' && lastSentTextPartIndex < assistant_message.content.length - 1) {
             this.onTextPartComplete?.(lastPart.text);
         }
+
+        this.profiler?.endLLM({
+            prompt_tokens: assistant_message.usage?.prompt_tokens,
+            completion_tokens: assistant_message.usage?.completion_tokens,
+            total_tokens: assistant_message.usage?.total_tokens
+        });
 
         this.task_manager_state.save();
     }
@@ -778,6 +790,8 @@ export class TaskState {
             return;
         }
 
+        const profilerToken = this.profiler?.beginTool(tool_call.tool_name, this._currentTurn);
+
         tool_call.setTool(tool);
         try {
             let args: Record<string, unknown> = {};
@@ -824,6 +838,9 @@ export class TaskState {
             tool_call.status = 'error';
             tool_call.result = `工具运行错误: ${err}`;
         } finally {
+            if (profilerToken !== undefined) {
+                this.profiler?.endTool(profilerToken, { status: tool_call.status });
+            }
             await this.hooks.noticeAfterToolCall(this, tool_call);
             await tool_call.freezeRenderResult();
         }
@@ -1016,9 +1033,13 @@ export class TaskState {
      * 从收到消息，到反复执行工具获取结果，直到没有新的工具要执行为止，这样的过程我们
      * 称为一个轮次 (turn)。processTaskTurn 负责这个执行过程以及相关的钩子判断。
      */
+    /** 当前 turn 索引，供 profiler 记录 */
+    private _currentTurn: number = 0;
+
     async processTaskTurn() {
         this._turnRunning = true;
         let hookRejectCount = 0;
+        this._currentTurn = 0;
 
         try {
             while (this.task_status !== 'stopped') {
@@ -1033,6 +1054,7 @@ export class TaskState {
                     // 如果本轮有工具调用，说明任务还没有结束，应该重置 hookRejectCount 计数器
                     // 因为该计数器是用来判断无法提供 attempCompletion 等异常情况的
                     hookRejectCount = 0;
+                    this._currentTurn++;
                     continue;
                 }
 

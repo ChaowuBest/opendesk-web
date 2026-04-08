@@ -45,6 +45,7 @@ import type {
     PermissionUserResponse,
     PermissionPromptProvider
 } from '../aikernel/security/permission.js';
+import { TaskProfiler } from '../aikernel/profiler.js';
 import chalk from 'chalk';
 import path from 'path';
 import fs from 'fs';
@@ -99,6 +100,10 @@ export class HeadlessRunner {
         const task = this.taskManagerState.createTask(this.args.model);
         const systemPrompt = await this.agentDecl.createSystemPrompt();
         await task.setSystemPrompt(systemPrompt);
+
+        if (this.args.profile) {
+            task.profiler = new TaskProfiler(task.task_id);
+        }
 
         try {
             task.harnessContext = await HarnessContext.createWithDefaults(this.args.workspace);
@@ -215,6 +220,18 @@ export class HeadlessRunner {
                 logger.info(`Task exported to JSON: ${jsonPath}`);
             } catch (err) {
                 logger.error(`Failed to export JSON: ${err}`);
+            }
+        }
+
+        if (this.args.profile && task.profiler) {
+            const profilePath = path.resolve(this.args.workspace, this.args.profile);
+            try {
+                const report = task.profiler.finish();
+                TaskProfiler.writeReport(report, profilePath);
+                logger.info(`Profile written to: ${profilePath}`);
+                process.stdout.write(chalk.dim(`  Profile: ${profilePath}`) + '\n');
+            } catch (err) {
+                logger.error(`Failed to write profile: ${err}`);
             }
         }
 

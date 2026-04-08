@@ -48,6 +48,7 @@ import { SkillMgrApplication } from '../applications/skillmgr/app.js';
 import { DashboardBar } from './components/dashboard';
 import { HarnessContext } from '../aikernel/security/harness.js';
 import { TUIPermissionPromptProvider } from './components/permission.js';
+import { TaskProfiler } from '../aikernel/profiler.js';
 
 import format from 'string-template';
 import path from 'path';
@@ -83,6 +84,7 @@ export interface CommandLineArgs {
     exportJson?: string;
     dumpLog?: string;
     headless?: boolean;
+    profile?: string;
 }
 
 export class OpenDeskTUI {
@@ -119,6 +121,7 @@ export class OpenDeskTUI {
      * todo: 这个地方未来可以考虑用LLM来判断任务是不是已经完成了还是需要后续的互动 ;)
      */
     private singleShot?: boolean;
+    private profilePath?: string;
 
     /** -c 模式下任务结束、退出前执行的钩子（如导出），按注册顺序执行 */
     private beforeExitHooks: Array<(taskId: string) => void | Promise<void>> = [];
@@ -157,6 +160,7 @@ export class OpenDeskTUI {
         this.workspace = args.workspace;
         this.model = args.model;
         this.singleShot = !!args.command;
+        this.profilePath = args.profile;
         if (args.command) {
             if (args.exportHtml) {
                 const htmlPath = path.resolve(args.workspace, args.exportHtml);
@@ -185,6 +189,20 @@ export class OpenDeskTUI {
                         logger.info(`Task exported to JSON: ${jsonPath}`);
                     } catch (err) {
                         logger.error(`Failed to export JSON: ${err}`);
+                    }
+                });
+            }
+            if (args.profile) {
+                const profilePath = path.resolve(args.workspace, args.profile);
+                this.onBeforeExit(async (taskId) => {
+                    const task = this.taskManagerState.getTask(taskId);
+                    if (!task?.profiler) return;
+                    try {
+                        const report = task.profiler.finish();
+                        TaskProfiler.writeReport(report, profilePath);
+                        logger.info(`Profile written to: ${profilePath}`);
+                    } catch (err) {
+                        logger.error(`Failed to write profile: ${err}`);
                     }
                 });
             }
@@ -959,6 +977,10 @@ export class OpenDeskTUI {
             const systemPrompt = await this.agentDecl.createSystemPrompt();
             this.taskView.taskState.setSystemPrompt(systemPrompt);
             await this.initTaskHarness(this.taskView.taskState);
+
+            if (this.profilePath) {
+                this.taskView.taskState.profiler = new TaskProfiler(this.taskView.taskState.task_id);
+            }
 
             // 绑定到新任务的队列
             this.inputArea.bindToTaskQueue(this.taskView.taskState.task_id, this.taskView.taskState.message_queue);
