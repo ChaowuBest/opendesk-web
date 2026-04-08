@@ -14,7 +14,7 @@
  *
  * 设计原则：
  * - 本文件只包含纯类型定义和接口，不依赖任何具体的权限引擎实现
- * - 所有需要权限检查的模块只需引用本文件即可，无需感知 casbin 等实现细节
+ * - 所有需要权限检查的模块只需引用本文件即可，无需感知引擎实现细节
  */
 
 /** 权限判定结果 */
@@ -74,7 +74,7 @@ export interface PermissionRule {
 
 /**
  * 权限引擎的抽象接口。
- * 具体实现（如基于 casbin 的实现）需要实现此接口。
+ * 具体实现（如 GlobPermissionEnforcer）需要实现此接口。
  */
 export interface PermissionEnforcer {
     /**

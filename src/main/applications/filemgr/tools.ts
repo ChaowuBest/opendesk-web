@@ -704,6 +704,7 @@ interface WriteFileRenderCache {
 const _writeFileCache = new WeakMap<ToolCall, WriteFileRenderCache>();
 
 function computeContentHash(content: string): string {
+    if (typeof content !== 'string') content = String(content);
     const len = content.length;
     if (len === 0) return '0:';
 
@@ -723,6 +724,7 @@ function computeContentHash(content: string): string {
 }
 
 function getWriteFileInfo(toolcall: ToolCall, content: string): WriteFileRenderCache {
+    if (typeof content !== 'string') content = String(content);
     const prev = _writeFileCache.get(toolcall);
     const contentHash = computeContentHash(content);
 
