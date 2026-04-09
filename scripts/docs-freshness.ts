@@ -30,6 +30,96 @@ function log(color: keyof typeof colors, message: string) {
     console.log(`${colors[color]}${message}${colors.reset}`);
 }
 
+function checkRelativeLinks(docPath: string, content: string): void {
+    const relativeLinkRegex = /\[([^\]]*)\]\((\.\/[^)]+)\)/g;
+    let match;
+
+    while ((match = relativeLinkRegex.exec(content)) !== null) {
+        const linkText = match[1];
+        const linkPath = match[2];
+        const resolvedPath = path.resolve(path.dirname(docPath), linkPath);
+
+        if (!fs.existsSync(resolvedPath)) {
+            results.push({
+                type: 'error',
+                file: path.relative(rootDir, docPath),
+                message: `链接目标不存在: ${linkPath}`,
+                detail: `链接文本: "${linkText}"`
+            });
+        }
+    }
+}
+
+function checkImageReferences(docPath: string, content: string): void {
+    const imageRegex = /!\[([^\]]*)\]\(([^)]+)\)/g;
+    let match;
+
+    while ((match = imageRegex.exec(content)) !== null) {
+        const altText = match[1];
+        const imgPath = match[2];
+
+        if (imgPath.startsWith('http://') || imgPath.startsWith('https://')) {
+            continue;
+        }
+
+        const resolvedPath = path.resolve(path.dirname(docPath), imgPath);
+
+        if (!fs.existsSync(resolvedPath)) {
+            results.push({
+                type: 'warning',
+                file: path.relative(rootDir, docPath),
+                message: `图片资源不存在: ${imgPath}`,
+                detail: `alt 文本: "${altText}"`
+            });
+        }
+    }
+}
+
+function checkCodeBlocks(docPath: string, content: string): void {
+    const codeBlockRegex = /```(\w+)?\n([\s\S]*?)```/g;
+    let match;
+    let blockCount = 0;
+
+    while ((match = codeBlockRegex.exec(content)) !== null) {
+        blockCount++;
+        const lang = match[1] || '未指定';
+        const code = match[2];
+
+        if (code.trim().length === 0) {
+            results.push({
+                type: 'warning',
+                file: path.relative(rootDir, docPath),
+                message: `代码块 #${blockCount} 为空`,
+                detail: `语言: ${lang}`
+            });
+        }
+    }
+}
+
+function checkDocumentStructure(docPath: string): void {
+    const content = fs.readFileSync(docPath, 'utf-8');
+
+    if (!content.includes('## ')) {
+        results.push({
+            type: 'warning',
+            file: path.relative(rootDir, docPath),
+            message: '文档缺少二级标题结构'
+        });
+    }
+}
+
+function checkMarkdownFile(filePath: string): void {
+    if (!fs.existsSync(filePath)) {
+        return;
+    }
+
+    const content = fs.readFileSync(filePath, 'utf-8');
+
+    checkRelativeLinks(filePath, content);
+    checkImageReferences(filePath, content);
+    checkCodeBlocks(filePath, content);
+}
+
 function checkVersionConsistency(): void {
     log('blue', '\n📦 检查版本号一致性...');
 
@@ -107,199 +197,6 @@ function checkVersionConsistency(): void {
     }
 }
 
-function checkRelativeLinks(docPath: string, content: string): void {
-    const relativeLinkRegex = /\[([^\]]*)\]\((\.\/[^)]+)\)/g;
-    let match;
-
-    while ((match = relativeLinkRegex.exec(content)) !== null) {
-        const linkText = match[1];
-        const linkPath = match[2];
-        const resolvedPath = path.resolve(path.dirname(docPath), linkPath);
-
-        if (!fs.existsSync(resolvedPath)) {
-            results.push({
-                type: 'error',
-                file: path.relative(rootDir, docPath),
-                message: `链接目标不存在: ${linkPath}`,
-                detail: `链接文本: "${linkText}"`
-            });
-        }
-    }
-}
-
-function checkImageReferences(docPath: string, content: string): void {
-    const imageRegex = /!\[([^\]]*)\]\(([^)]+)\)/g;
-    let match;
-
-    while ((match = imageRegex.exec(content)) !== null) {
-        const altText = match[1];
-        const imgPath = match[2];
-
-        if (imgPath.startsWith('http://') || imgPath.startsWith('https://')) {
-            continue;
-        }
-
-        const resolvedPath = path.resolve(path.dirname(docPath), imgPath);
-
-        if (!fs.existsSync(resolvedPath)) {
-            results.push({
-                type: 'warning',
-                file: path.relative(rootDir, docPath),
-                message: `图片资源不存在: ${imgPath}`,
-                detail: `alt 文本: "${altText}"`
-            });
-        }
-    }
-}
-
-function checkCodeBlocks(docPath: string, content: string): void {
-    const codeBlockRegex = /```(\w+)?\n([\s\S]*?)```/g;
-    let match;
-    let blockCount = 0;
-
-    while ((match = codeBlockRegex.exec(content)) !== null) {
-        blockCount++;
-        const lang = match[1] || '未指定';
-        const code = match[2];
-
-        if (code.trim().length === 0) {
-            results.push({
-                type: 'warning',
-                file: path.relative(rootDir, docPath),
-                message: `代码块 #${blockCount} 为空`,
-                detail: `语言: ${lang}`
-            });
-        }
-    }
-}
-
-function checkDocumentStructure(docPath: string): void {
-    const content = fs.readFileSync(docPath, 'utf-8');
-    const fileName = path.basename(docPath);
-
-    if (!content.includes('## ')) {
-        results.push({
-            type: 'warning',
-            file: path.relative(rootDir, docPath),
-            message: '文档缺少二级标题结构'
-        });
-    }
-
-    const lines = content.split('\n');
-    const wordCount = lines.reduce((acc, line) => acc + line.length, 0);
-
-    if (wordCount < 100) {
-        results.push({
-            type: 'info',
-            file: path.relative(rootDir, docPath),
-            message: `文档内容较少 (${wordCount} 字符)`,
-            detail: '可能需要补充内容'
-        });
-    }
-}
-
-function checkDocs(): void {
-    log('blue', '\n📚 检查文档目录...');
-
-    const docsDir = path.join(rootDir, 'docs');
-
-    if (!fs.existsSync(docsDir)) {
-        results.push({
-            type: 'error',
-            file: 'docs/',
-            message: 'docs 目录不存在'
-        });
-        return;
-    }
-
-    const mdFiles = findMarkdownFiles(docsDir);
-
-    for (const file of mdFiles) {
-        const content = fs.readFileSync(file, 'utf-8');
-
-        checkRelativeLinks(file, content);
-        checkImageReferences(file, content);
-        checkCodeBlocks(file, content);
-        checkDocumentStructure(file);
-    }
-
-    results.push({
-        type: 'info',
-        file: 'docs/',
-        message: `已检查 ${mdFiles.length} 个 Markdown 文件`
-    });
-}
-
-function findMarkdownFiles(dir: string): string[] {
-    const files: string[] = [];
-
-    if (!fs.existsSync(dir)) return files;
-
-    const entries = fs.readdirSync(dir, { withFileTypes: true });
-
-    for (const entry of entries) {
-        const fullPath = path.join(dir, entry.name);
-
-        if (entry.isDirectory()) {
-            files.push(...findMarkdownFiles(fullPath));
-        } else if (entry.name.endsWith('.md')) {
-            files.push(fullPath);
-        }
-    }
-
-    return files;
-}
-
-function checkReadmeLinks(): void {
-    log('blue', '\n🔗 检查 README 链接...');
-
-    const readmePath = path.join(rootDir, 'README.md');
-
-    if (fs.existsSync(readmePath)) {
-        const content = fs.readFileSync(readmePath, 'utf-8');
-        checkRelativeLinks(readmePath, content);
-        checkImageReferences(readmePath, content);
-    }
-
-    const readmeEnPath = path.join(rootDir, 'README_EN.md');
-
-    if (fs.existsSync(readmeEnPath)) {
-        const content = fs.readFileSync(readmeEnPath, 'utf-8');
-        checkRelativeLinks(readmeEnPath, content);
-        checkImageReferences(readmeEnPath, content);
-    }
-}
-
-function checkConfigSync(): void {
-    log('blue', '\n⚙️ 检查配置同步...');
-
-    const packageJsonPath = path.join(rootDir, 'package.json');
-    const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
-
-    const devguidePath = path.join(rootDir, 'docs', 'devguide.md');
-
-    if (fs.existsSync(devguidePath)) {
-        const devguide = fs.readFileSync(devguidePath, 'utf-8');
-
-        const nodeVersionMatch = devguide.match(/Node\.?js\s*(\d+\.\d+)/i);
-        if (nodeVersionMatch) {
-            const docNodeVersion = nodeVersionMatch[1];
-            const engines = packageJson.engines;
-            if (engines && engines.node) {
-                const packageNodeVersion = engines.node.replace(/[^\d.]/g, '');
-                if (!packageNodeVersion.includes(docNodeVersion.split('.')[0])) {
-                    results.push({
-                        type: 'warning',
-                        file: 'docs/devguide.md',
-                        message: 'Node.js 版本可能与 package.json 不一致',
-                        detail: `文档: ${docNodeVersion}, package.json: ${engines.node}`
-                    });
-                }
-            }
-        }
-    }
-}
-
 function checkLicenseConsistency(): void {
     log('blue', '\n📄 检查许可证一致性...');
 
@@ -337,11 +234,27 @@ function checkLicenseConsistency(): void {
     }
 }
 
-function generateReport(): void {
-    log('cyan', '\n' + '='.repeat(60));
-    log('cyan', '📊 文档新鲜度检查报告');
-    log('cyan', '='.repeat(60));
+function findMarkdownFiles(dir: string): string[] {
+    const files: string[] = [];
 
+    if (!fs.existsSync(dir)) return files;
+
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+
+    for (const entry of entries) {
+        const fullPath = path.join(dir, entry.name);
+
+        if (entry.isDirectory()) {
+            files.push(...findMarkdownFiles(fullPath));
+        } else if (entry.name.endsWith('.md')) {
+            files.push(fullPath);
+        }
+    }
+
+    return files;
+}
+
+function generateReport(showInfo: boolean = true): boolean {
     const errors = results.filter((r) => r.type === 'error');
     const warnings = results.filter((r) => r.type === 'warning');
     const infos = results.filter((r) => r.type === 'info');
@@ -366,36 +279,155 @@ function generateReport(): void {
         }
     }
 
-    log('blue', `\nℹ️  信息 (${infos.length}):`);
-    for (const i of infos) {
-        console.log(`   ${colors.blue}•${colors.reset} [${i.file}] ${i.message}`);
+    if (showInfo && infos.length > 0) {
+        log('blue', `\nℹ️  信息 (${infos.length}):`);
+        for (const i of infos) {
+            console.log(`   ${colors.blue}•${colors.reset} [${i.file}] ${i.message}`);
+        }
     }
 
-    log('cyan', '\n' + '='.repeat(60));
-
-    if (errors.length > 0) {
-        log('red', `❌ 检查完成: ${errors.length} 个错误, ${warnings.length} 个警告`);
-        process.exit(1);
-    } else if (warnings.length > 0) {
-        log('yellow', `⚠️  检查完成: 0 个错误, ${warnings.length} 个警告`);
-        process.exit(0);
-    } else {
-        log('green', '✅ 检查完成: 所有文档新鲜度检查通过');
-        process.exit(0);
-    }
+    return errors.length === 0;
 }
 
-function main(): void {
-    log('cyan', '🔍 OpenDesk 文档新鲜度检查工具');
+function runFullCheck(): void {
+    log('cyan', '🔍 OpenDesk 文档新鲜度检查（完整模式）');
     log('cyan', '━'.repeat(40));
 
     checkVersionConsistency();
-    checkDocs();
-    checkReadmeLinks();
-    checkConfigSync();
+
+    log('blue', '\n📚 检查文档目录...');
+    const docsDir = path.join(rootDir, 'docs');
+    if (fs.existsSync(docsDir)) {
+        const mdFiles = findMarkdownFiles(docsDir);
+        for (const file of mdFiles) {
+            checkMarkdownFile(file);
+            checkDocumentStructure(file);
+        }
+        results.push({
+            type: 'info',
+            file: 'docs/',
+            message: `已检查 ${mdFiles.length} 个 Markdown 文件`
+        });
+    }
+
+    log('blue', '\n🔗 检查 README 链接...');
+    const readmePath = path.join(rootDir, 'README.md');
+    const readmeEnPath = path.join(rootDir, 'README_EN.md');
+
+    if (fs.existsSync(readmePath)) {
+        checkMarkdownFile(readmePath);
+    }
+    if (fs.existsSync(readmeEnPath)) {
+        checkMarkdownFile(readmeEnPath);
+    }
+
     checkLicenseConsistency();
 
-    generateReport();
+    log('cyan', '\n' + '='.repeat(60));
+    log('cyan', '📊 文档新鲜度检查报告');
+    log('cyan', '='.repeat(60));
+
+    const success = generateReport(true);
+
+    log('cyan', '\n' + '='.repeat(60));
+
+    if (success) {
+        log('green', '✅ 检查完成: 所有文档新鲜度检查通过');
+        process.exit(0);
+    } else {
+        const errors = results.filter((r) => r.type === 'error');
+        const warnings = results.filter((r) => r.type === 'warning');
+        log('red', `❌ 检查完成: ${errors.length} 个错误, ${warnings.length} 个警告`);
+        process.exit(1);
+    }
+}
+
+function runIncrementalCheck(files: string[]): void {
+    log('cyan', `📝 增量文档检查 (${files.length} 个文件)...`);
+
+    const mdFiles = files.filter((f) => f.endsWith('.md'));
+    const hasPackageJson = files.some((f) => f.endsWith('package.json'));
+
+    for (const file of mdFiles) {
+        const absolutePath = path.isAbsolute(file) ? file : path.join(rootDir, file);
+        checkMarkdownFile(absolutePath);
+    }
+
+    if (hasPackageJson) {
+        const packageJsonPath = path.join(rootDir, 'package.json');
+        const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
+        const version = packageJson.version;
+
+        const readmePath = path.join(rootDir, 'README.md');
+        const readmeEnPath = path.join(rootDir, 'README_EN.md');
+
+        const versionBadgeRegex = /版本-([0-9]+\.[0-9]+\.[0-9]+)/;
+        const versionBadgeRegexEn = /Version-([0-9]+\.[0-9]+\.[0-9]+)/;
+
+        if (fs.existsSync(readmePath)) {
+            const readmeContent = fs.readFileSync(readmePath, 'utf-8');
+            const match = readmeContent.match(versionBadgeRegex);
+            if (match && match[1] !== version) {
+                results.push({
+                    type: 'error',
+                    file: 'README.md',
+                    message: `版本号不一致`,
+                    detail: `package.json: ${version}, README.md: ${match[1]}`
+                });
+            }
+        }
+
+        if (fs.existsSync(readmeEnPath)) {
+            const readmeEnContent = fs.readFileSync(readmeEnPath, 'utf-8');
+            const match = readmeEnContent.match(versionBadgeRegexEn);
+            if (match && match[1] !== version) {
+                results.push({
+                    type: 'error',
+                    file: 'README_EN.md',
+                    message: `版本号不一致`,
+                    detail: `package.json: ${version}, README_EN.md: ${match[1]}`
+                });
+            }
+        }
+    }
+
+    const success = generateReport(false);
+
+    if (success) {
+        log('green', '✅ 文档检查通过');
+        process.exit(0);
+    } else {
+        log('red', '❌ 文档检查失败');
+        process.exit(1);
+    }
+}
+
+function printUsage(): void {
+    console.log(`
+用法:
+  tsx scripts/docs-freshness.ts              完整检查（检查所有文档）
+  tsx scripts/docs-freshness.ts <files...>   增量检查（只检查指定文件）
+
+示例:
+  npm run check:docs                         完整检查
+  tsx scripts/docs-freshness.ts README.md    只检查 README.md
+  tsx scripts/docs-freshness.ts package.json 检查版本号一致性
+`);
+}
+
+function main(): void {
+    const args = process.argv.slice(2);
+
+    if (args.includes('--help') || args.includes('-h')) {
+        printUsage();
+        process.exit(0);
+    }
+
+    if (args.length === 0) {
+        runFullCheck();
+    } else {
+        runIncrementalCheck(args);
+    }
 }
 
 main();

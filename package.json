@@ -39,8 +39,15 @@
             "eslint --fix",
             "prettier --write"
         ],
-        "*.{json,md,css,scss,yaml,yml,html}": [
+        "*.md": [
+            "prettier --write",
+            "tsx scripts/docs-freshness.ts"
+        ],
+        "*.{json,css,scss,yaml,yml,html}": [
             "prettier --write"
+        ],
+        "package.json": [
+            "tsx scripts/docs-freshness.ts"
         ]
     },
     "devDependencies": {
