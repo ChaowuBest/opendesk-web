@@ -76,6 +76,7 @@
     },
     "dependencies": {
         "@a2a-js/sdk": "^0.3.7",
+        "@xmldom/xmldom": "^0.9.8",
         "@a2ui/lit": "^0.8.0",
         "@electron-toolkit/utils": "^4.0.0",
         "@fortawesome/fontawesome-free": "^7.1.0",
@@ -109,6 +110,7 @@
         "jsonrepair": "^3.13.2",
         "katex": "^0.16.27",
         "linkedom": "^0.18.12",
+        "llm-chunk": "0.0.1",
         "mailparser": "^3.9.1",
         "marked": "^17.0.1",
         "marked-highlight": "^2.2.3",
@@ -141,12 +143,15 @@
         "tinymce": "^7.0.0",
         "tinymce-i18n": "^26.1.12",
         "turndown": "^7.2.2",
+        "unpdf": "^1.4.0",
         "vectra": "^0.11.1",
         "winston": "^3.19.0",
         "winston-transport": "^4.9.0",
         "ws": "^8.20.0",
+        "xlsx": "^0.18.5",
         "xml2js": "^0.6.2",
         "yaml": "^2.8.2",
+        "yauzl": "^2.10.0",
         "zod": "^4.2.1"
     }
 }
