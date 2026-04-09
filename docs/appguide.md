@@ -61,7 +61,7 @@ resources/renderer/applications/<bundleName>/
 在 `src/main/applications/<bundleName>/app.ts` 中创建应用类：
 
 ```typescript
-// src/main/applications/myapp/app.ts
+// src/main/applications/<myapp>/app.ts
 import { BaseApplication } from '../base.js';
 import { BaseToolset } from '../../aikernel/tool';
 import { z } from 'zod';
@@ -134,7 +134,7 @@ export class MyAppApplication extends BaseApplication {
 侧边栏会根据 `bundleName` 自动查找并加载对应的图标文件。请在以下路径放置一张 PNG 格式的图标：
 
 ```
-resources/renderer/applications/myapp/icon.png
+resources/renderer/applications/<myapp>/icon.png
 ```
 
 ---
@@ -153,7 +153,7 @@ OpenDesk 内置的 Agent 可以调用应用注册的"工具（Tool）"来感知�
 多个工具集可以同时返回，每个工具集对应应用的一个功能分组。
 
 ```typescript
-// src/main/applications/myapp/app.ts
+// src/main/applications/<myapp>/app.ts
 import { BaseApplication } from '../base.js';
 import { BaseTool, BaseToolset } from '../../aikernel/tool';
 import { z } from 'zod';
@@ -215,7 +215,7 @@ streamTool.setUniversalExecutor(async (args, result) => {
 同时，建议覆写 `getAgentInstruct()` 方法，返回一段描述当前界面和 Agent 角色的说明文字，帮助 Agent 更好地理解上下文。
 
 ```typescript
-// src/main/applications/myapp/renderer/entry.ts
+// src/main/applications/<myapp>/renderer/entry.ts
 import { AgentOperableHTMLElement, RendererTool, RendererToolset } from '../../widget_utils.js';
 import { z } from 'zod';
 
@@ -283,7 +283,7 @@ Skill 适用于复杂的多步骤任务场景，例如"管理技能"、"管理�
 - **操作步骤（Body）**：用自然语言描述的操作指引，Agent 会参考这些步骤来决定如何调用工具
 
 ```typescript
-// src/main/applications/myapp/app.ts
+// src/main/applications/<myapp>/app.ts
 import { BaseApplication } from '../base.js';
 import { Skill } from '../../aikernel/skill.js';
 import { BaseToolset, BaseTool } from '../../aikernel/tool.js';
@@ -339,7 +339,7 @@ OpenDesk 支持在终端中以 TUI（Text User Interface，文本用户界面）
 在应用类中覆写 `getCliSlashCommands()` 方法，返回一个 `SlashCommandHandler` 数组：
 
 ```typescript
-// src/main/applications/myapp/app.ts
+// src/main/applications/<myapp>/app.ts
 import { BaseApplication } from '../base.js';
 import type { SlashCommandHandler } from '../../tui/commands.js';
 
@@ -386,7 +386,7 @@ export class MyAppApplication extends BaseApplication {
 以下示例展示了一个带参数自动补全功能的命令：
 
 ```typescript
-// src/main/applications/myapp/app.ts
+// src/main/applications/<myapp>/app.ts
 import { BaseApplication } from '../base.js';
 import type { SlashCommandHandler } from '../../tui/commands.js';
 import { Key } from '@mariozechner/pi-tui';
@@ -562,7 +562,7 @@ opendesk skill list
 界面使用 **Tailwind CSS** 构建，所有样式类均可直接使用。
 
 ```typescript
-// src/main/applications/myapp/renderer/entry.ts
+// src/main/applications/<myapp>/renderer/entry.ts
 import { AgentOperableHTMLElement } from '../../widget_utils.js';
 
 class MyAppEntryWidget extends AgentOperableHTMLElement {
@@ -701,7 +701,7 @@ Worker 类必须继承 `BaseWorker`。框架在 Worker 线程启动后，会自�
 Worker 类中定义的所有公开的 `async` 方法，都可以从主进程（通过 `this.callWorker()`）或渲染进程（通过 `window.applicationAPI.call()`）调用。
 
 ```typescript
-// src/main/applications/myapp/worker.ts
+// src/main/applications/<myapp>/worker.ts
 import { BaseWorker } from '../base.js';
 import { logger } from '../../utils/logger.js';
 import path from 'path';
@@ -777,7 +777,7 @@ export default class MyAppWorker extends BaseWorker {
 在应用类中通过 `static getWorkerClass()` 返回 Worker 类，框架会自动处理后续的实例化和生命周期管理。工具执行器中可以通过 `this.callWorker()` 代理调用 Worker 的方法：
 
 ```typescript
-// src/main/applications/myapp/app.ts
+// src/main/applications/<myapp>/app.ts
 import MyAppWorker from './worker';
 
 export class MyAppApplication extends BaseApplication {
@@ -890,7 +890,7 @@ OpenDesk 支持两种运行平台，每个平台维护各自独立的应用注�
 
 ```typescript
 // src/platforms/electron.ts
-import { MyAppApplication } from '../main/applications/myapp/app.js';
+import { MyAppApplication } from '../main/applications/<myapp>/app.js';
 
 export class ElectronPlatform extends AbstractPlatform {
     getApplicationClasses(): (typeof BaseApplication)[] {
@@ -910,7 +910,7 @@ export class ElectronPlatform extends AbstractPlatform {
 
 ```typescript
 // src/platforms/cli.ts
-import { MyAppApplication } from '../main/applications/myapp/app.js';
+import { MyAppApplication } from '../main/applications/<myapp>/app.js';
 
 export class CliPlatform extends AbstractPlatform {
     getApplicationClasses(): (typeof BaseApplication)[] {
@@ -933,13 +933,13 @@ export class CliPlatform extends AbstractPlatform {
 ### 目录结构
 
 ```
-src/main/applications/notes/
+src/main/applications/<notes>/
 ├── app.ts
 ├── worker.ts
 └── renderer/
     └── entry.ts
 
-resources/renderer/applications/notes/
+resources/renderer/applications/<notes>/
 └── icon.png
 ```
 
@@ -948,7 +948,7 @@ resources/renderer/applications/notes/
 应用类是整个应用的入口，负责关联 Worker 并向 Agent 注册工具。工具的具体执行逻辑通过 `callWorker()` 委托给 Worker 线程。
 
 ```typescript
-// src/main/applications/notes/app.ts
+// src/main/applications/<notes>/app.ts
 import { BaseApplication } from '../base.js';
 import { BaseTool, BaseToolset } from '../../aikernel/tool';
 import { z } from 'zod';
@@ -1002,7 +1002,7 @@ export class NotesApplication extends BaseApplication {
 Worker 类负责所有涉及文件读写的逻辑。每次笔记数据发生变化后，Worker 通过 `emitEvent()` 通知界面刷新，无需前端轮询。
 
 ```typescript
-// src/main/applications/notes/worker.ts
+// src/main/applications/<notes>/worker.ts
 import { BaseWorker } from '../base.js';
 import { logger } from '../../utils/logger.js';
 import path from 'path';
@@ -1058,7 +1058,7 @@ export default class NotesWorker extends BaseWorker {
 入口组件负责渲染界面、响应用户操作，并通过事件订阅实时反映 Worker 的数据变化。同时提供渲染进程工具，让 Agent 能够感知当前显示的笔记内容。
 
 ```typescript
-// src/main/applications/notes/renderer/entry.ts
+// src/main/applications/<notes>/renderer/entry.ts
 import { AgentOperableHTMLElement, RendererTool, RendererToolset } from '../../widget_utils.js';
 import { z } from 'zod';
 
@@ -1184,7 +1184,7 @@ customElements.define('notes-entry-widget', NotesEntryWidget);
 
 ```typescript
 // src/platforms/electron.ts
-import { NotesApplication } from "../main/applications/notes/app.js";
+import { NotesApplication } from "../main/applications/<notes>/app.js";
 
 // 在 getApplicationClasses() 的返回数组中追加：
 NotesApplication,
@@ -1194,13 +1194,13 @@ NotesApplication,
 
 ```typescript
 // src/platforms/cli.ts
-import { NotesApplication } from "../main/applications/notes/app.js";
+import { NotesApplication } from "../main/applications/<notes>/app.js";
 
 // 在 getApplicationClasses() 的返回数组中追加：
 NotesApplication,
 ```
 
-重新运行 `npm run dev`，笔记应用即会出现在侧边栏中；在 CLI 模式下，Agent 也可以通过工具调用来搜索和创建笔记。
+重新运行 `npm run start`，笔记应用即会出现在侧边栏中；在 CLI 模式下，Agent 也可以通过工具调用来搜索和创建笔记。
 
 ---
 

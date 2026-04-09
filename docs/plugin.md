@@ -6,18 +6,18 @@
 
 1. [系统架构概览](#系统架构概览)
 2. [插件管理](#插件管理)
-   - [安装流程](#安装流程)
-   - [卸载流程](#卸载流程)
-   - [启用/禁用](#启用禁用)
+    - [安装流程](#安装流程)
+    - [卸载流程](#卸载流程)
+    - [启用/禁用](#启用禁用)
 3. [插件加载机制](#插件加载机制)
-   - [入口点解析](#入口点解析)
-   - [TypeScript 编译](#typescript-编译)
-   - [插件注册](#插件注册)
+    - [入口点解析](#入口点解析)
+    - [TypeScript 编译](#typescript-编译)
+    - [插件注册](#插件注册)
 4. [OpenClaw 兼容层](#openclaw-兼容层)
 5. [Channel 消息通信](#channel-消息通信)
-   - [消息插件结构](#消息插件结构)
-   - [消息流转流程](#消息流转流程)
-   - [会话管理](#会话管理)
+    - [消息插件结构](#消息插件结构)
+    - [消息流转流程](#消息流转流程)
+    - [会话管理](#会话管理)
 6. [核心类型定义](#核心类型定义)
 7. [扩展开发指南](#扩展开发指南)
 
@@ -48,13 +48,13 @@ OpenDesk 的插件系统采用与 OpenClaw 兼容的设计，支持通过 npm �
 
 **核心文件：**
 
-| 文件路径 | 职责 |
-|---------|------|
-| [`src/main/plugins/manager.ts`](../src/main/plugins/manager.ts) | 插件安装、卸载、加载管理 |
-| [`src/main/plugins/types.ts`](../src/main/plugins/types.ts) | 插件类型定义 |
-| [`src/main/applications/channels/app.ts`](../src/main/applications/channels/app.ts) | 消息插件应用，管理生命周期 |
-| [`src/main/applications/channels/router.ts`](../src/main/applications/channels/router.ts) | 消息路由，对接 AI Agent |
-| [`src/main/cli.ts`](../src/main/cli.ts) | CLI 命令入口 |
+| 文件路径                                                                                      | 职责                       |
+| --------------------------------------------------------------------------------------------- | -------------------------- |
+| [`src/main/aikernel/plugins/manager.ts`](../src/main/aikernel/plugins/manager.ts)             | 插件安装、卸载、加载管理   |
+| [`src/main/aikernel/plugins/types.ts`](../src/main/aikernel/plugins/types.ts)                 | 插件类型定义               |
+| [`src/main/applications/channelmgr/app.ts`](../src/main/applications/channelmgr/app.ts)       | 消息插件应用，管理生命周期 |
+| [`src/main/applications/channelmgr/router.ts`](../src/main/applications/channelmgr/router.ts) | 消息路由，对接 AI Agent    |
+| [`src/main/cli.ts`](../src/main/cli.ts)                                                       | CLI 命令入口               |
 
 ---
 
@@ -104,7 +104,7 @@ OpenDesk 的插件系统采用与 OpenClaw 兼容的设计，支持通过 npm �
 **关键代码：**
 
 ```typescript
-// src/main/plugins/manager.ts
+// src/main/aikernel/plugins/manager.ts
 export async function installPlugin(npmSpec: string): Promise<{ success: boolean; id?: string; error?: string }> {
     const extensionsDir = getExtensionsDir();
     ensureExtensionPackageJson();
@@ -113,7 +113,7 @@ export async function installPlugin(npmSpec: string): Promise<{ success: boolean
     execSync(`npm install ${npmSpec} --ignore-scripts --save`, {
         cwd: extensionsDir,
         stdio: 'pipe',
-        timeout: 120000,
+        timeout: 120000
     });
 
     // 确保兼容层存在
@@ -167,7 +167,7 @@ export async function installPlugin(npmSpec: string): Promise<{ success: boolean
 ```typescript
 export function setPluginEnabled(pluginId: string, enabled: boolean): boolean {
     const records = loadInstallRecords();
-    const record = records.find(r => r.id === pluginId);
+    const record = records.find((r) => r.id === pluginId);
     if (!record) return false;
     record.enabled = enabled;
     saveInstallRecords(records);
@@ -295,7 +295,7 @@ async function compileTypeScriptPlugin(entryPoint: string, pluginDir: string): P
         format: 'esm',
         platform: 'node',
         target: 'node20',
-        external: externalPackages,
+        external: externalPackages
     });
 
     return compiledPath;
@@ -323,14 +323,14 @@ async function loadSinglePlugin(record: PluginInstallRecord): Promise<PluginEntr
     // 3. 创建 API 对象
     let channelPlugin: ChannelPlugin | null = null;
     const api = createPluginApi(entry, (cp: ChannelPlugin) => {
-        channelPlugin = cp;  // 回调捕获注册的 ChannelPlugin
+        channelPlugin = cp; // 回调捕获注册的 ChannelPlugin
     });
 
     // 4. 调用注册函数
     if (typeof pluginModule === 'function') {
-        await pluginModule(api);           // 导出为函数
+        await pluginModule(api); // 导出为函数
     } else if (typeof pluginModule?.register === 'function') {
-        await pluginModule.register(api);  // 导出为 { register } 对象
+        await pluginModule.register(api); // 导出为 { register } 对象
     }
 
     // 5. 保存结果
@@ -364,22 +364,22 @@ OpenDesk 实现了 OpenClaw 插件 SDK 的兼容层（Shim），使 OpenClaw 生
 
 兼容层提供了以下 OpenClaw SDK 函数：
 
-| 类别 | 函数 | 说明 |
-|------|------|------|
-| **账户管理** | `createAccountListHelpers()` | 创建账户列表辅助函数 |
-| | `normalizeAccountId()` | 规范化账户 ID |
-| | `isDefaultAccountId()` | 判断是否默认账户 |
-| **配置解析** | `resolveChannelAccountConfigBasePath()` | 解析配置路径 |
-| | `resolveThreadSessionKeys()` | 解析会话键 |
-| **消息处理** | `createNormalizedOutboundDeliverer()` | 创建消息发送器 |
-| | `buildMediaPayload()` | 构建媒体消息 |
-| **状态管理** | `buildBaseChannelStatusSummary()` | 构建状态摘要 |
-| | `createDefaultChannelRuntimeState()` | 创建运行状态 |
-| **安全验证** | `normalizeAllowFrom()` | 规范化允许列表 |
-| | `isAllowedParsedChatSender()` | 检查发送者权限 |
-| **工具函数** | `acquireFileLock()` | 文件锁 |
-| | `createDedupeCache()` | 去重缓存 |
-| | `createFixedWindowRateLimiter()` | 速率限制 |
+| 类别         | 函数                                    | 说明                 |
+| ------------ | --------------------------------------- | -------------------- |
+| **账户管理** | `createAccountListHelpers()`            | 创建账户列表辅助函数 |
+|              | `normalizeAccountId()`                  | 规范化账户 ID        |
+|              | `isDefaultAccountId()`                  | 判断是否默认账户     |
+| **配置解析** | `resolveChannelAccountConfigBasePath()` | 解析配置路径         |
+|              | `resolveThreadSessionKeys()`            | 解析会话键           |
+| **消息处理** | `createNormalizedOutboundDeliverer()`   | 创建消息发送器       |
+|              | `buildMediaPayload()`                   | 构建媒体消息         |
+| **状态管理** | `buildBaseChannelStatusSummary()`       | 构建状态摘要         |
+|              | `createDefaultChannelRuntimeState()`    | 创建运行状态         |
+| **安全验证** | `normalizeAllowFrom()`                  | 规范化允许列表       |
+|              | `isAllowedParsedChatSender()`           | 检查发送者权限       |
+| **工具函数** | `acquireFileLock()`                     | 文件锁               |
+|              | `createDedupeCache()`                   | 去重缓存             |
+|              | `createFixedWindowRateLimiter()`        | 速率限制             |
 
 ### API 对象
 
@@ -387,16 +387,16 @@ OpenDesk 实现了 OpenClaw 插件 SDK 的兼容层（Shim），使 OpenClaw 生
 
 ```typescript
 interface OpenClawPluginApi {
-    id: string;                    // 插件 ID
-    name: string;                  // 插件名称
-    version?: string;              // 版本
-    description?: string;          // 描述
-    source: string;                // 来源
-    config: any;                   // 配置
-    logger: PluginLogger;          // 日志器
+    id: string; // 插件 ID
+    name: string; // 插件名称
+    version?: string; // 版本
+    description?: string; // 描述
+    source: string; // 来源
+    config: any; // 配置
+    logger: PluginLogger; // 日志器
 
     // 注册方法
-    registerChannel: (registration: any) => void;  // 注册消息插件
+    registerChannel: (registration: any) => void; // 注册消息插件
     registerTool: (tool: any, opts?: any) => void;
     registerHook: (events: string | string[], handler: any, opts?: any) => void;
     registerHttpHandler: (handler: any) => void;
@@ -423,8 +423,8 @@ interface OpenClawPluginApi {
 
 ```typescript
 interface ChannelPlugin {
-    id: ChannelId;                    // 插件唯一标识
-    meta: ChannelMeta;                // 元信息（标签、描述等）
+    id: ChannelId; // 插件唯一标识
+    meta: ChannelMeta; // 元信息（标签、描述等）
     capabilities: ChannelCapabilities; // 能力声明
 
     // 配置适配器
@@ -440,22 +440,22 @@ interface ChannelPlugin {
     status?: ChannelStatusAdapter;
 
     // 其他可选组件
-    auth?: any;        // 认证
-    threading?: any;   // 线程支持
+    auth?: any; // 认证
+    threading?: any; // 线程支持
     messaging?: ChannelMessagingAdapter;
     agentPrompt?: any; // Agent 提示词
-    agentTools?: any;  // Agent 工具
+    agentTools?: any; // Agent 工具
 }
 ```
 
 **核心适配器说明：**
 
-| 适配器 | 职责 | 关键方法 |
-|--------|------|----------|
-| `config` | 配置管理 | `listAccountIds()`, `resolveAccount()` |
+| 适配器     | 职责     | 关键方法                                     |
+| ---------- | -------- | -------------------------------------------- |
+| `config`   | 配置管理 | `listAccountIds()`, `resolveAccount()`       |
 | `outbound` | 发送消息 | `sendText()`, `sendPayload()`, `sendMedia()` |
-| `gateway` | 接收消息 | `startAccount()`, `stopAccount()` |
-| `status` | 状态监控 | `buildChannelSummary()` |
+| `gateway`  | 接收消息 | `startAccount()`, `stopAccount()`            |
+| `status`   | 状态监控 | `buildChannelSummary()`                      |
 
 ### 消息流转流程
 
@@ -625,12 +625,12 @@ private async submitAndWaitForReply(task: TaskState, userText: string): Promise<
 
 ```typescript
 interface PluginInstallRecord {
-    id: string;              // 插件 ID
-    npmSpec: string;         // npm 规格字符串
-    installedAt: string;     // 安装时间 (ISO 8601)
-    enabled: boolean;        // 是否启用
+    id: string; // 插件 ID
+    npmSpec: string; // npm 规格字符串
+    installedAt: string; // 安装时间 (ISO 8601)
+    enabled: boolean; // 是否启用
     source: 'npm' | 'local'; // 安装来源
-    path?: string;           // 本地路径
+    path?: string; // 本地路径
 }
 ```
 
@@ -638,11 +638,11 @@ interface PluginInstallRecord {
 
 ```typescript
 interface PluginEntry {
-    id: string;                      // 插件 ID
-    manifest: PluginManifest;        // 清单信息
+    id: string; // 插件 ID
+    manifest: PluginManifest; // 清单信息
     installRecord: PluginInstallRecord;
-    module?: any;                    // 加载的模块
-    channelPlugin?: ChannelPlugin;   // 解析出的消息插件
+    module?: any; // 加载的模块
+    channelPlugin?: ChannelPlugin; // 解析出的消息插件
 }
 ```
 
@@ -650,19 +650,19 @@ interface PluginEntry {
 
 ```typescript
 interface InboundChannelMessage {
-    channelId: string;        // 渠道 ID
-    accountId: string;        // 账户 ID
-    senderId: string;         // 发送者 ID
-    senderName?: string;      // 发送者名称
-    text: string;             // 消息文本
-    chatType: 'direct' | 'group';  // 聊天类型
-    groupId?: string;         // 群组 ID（群聊）
-    groupName?: string;       // 群组名称
-    threadId?: string;        // 线程 ID
-    messageId?: string;       // 消息 ID
+    channelId: string; // 渠道 ID
+    accountId: string; // 账户 ID
+    senderId: string; // 发送者 ID
+    senderName?: string; // 发送者名称
+    text: string; // 消息文本
+    chatType: 'direct' | 'group'; // 聊天类型
+    groupId?: string; // 群组 ID（群聊）
+    groupName?: string; // 群组名称
+    threadId?: string; // 线程 ID
+    messageId?: string; // 消息 ID
     replyToMessageId?: string; // 回复的消息 ID
-    media?: any[];            // 媒体附件
-    raw?: any;                // 原始数据
+    media?: any[]; // 媒体附件
+    raw?: any; // 原始数据
 }
 ```
 
@@ -674,7 +674,7 @@ interface ChannelGatewayContext<ResolvedAccount = any> {
     account: ResolvedAccount;
     cfg: any;
     logger: PluginLogger;
-    log?: PluginLogger;       // 兼容别名
+    log?: PluginLogger; // 兼容别名
     runtime?: {
         log?: (...args: any[]) => void;
         error?: (...args: any[]) => void;
@@ -682,7 +682,7 @@ interface ChannelGatewayContext<ResolvedAccount = any> {
         platform: string;
     };
     abortSignal?: AbortSignal;
-    dispatch: ChannelDispatchFn;  // 消息分发函数
+    dispatch: ChannelDispatchFn; // 消息分发函数
     setStatus: (status: ChannelAccountStatus) => void;
 }
 ```
@@ -707,16 +707,16 @@ my-channel-plugin/
 
 ```json
 {
-  "name": "my-channel-plugin",
-  "version": "1.0.0",
-  "type": "module",
-  "main": "index.js",
-  "openclaw": {
-    "extensions": ["./index.ts"]
-  },
-  "peerDependencies": {
-    "openclaw": ">=2024.0.0"
-  }
+    "name": "my-channel-plugin",
+    "version": "1.0.0",
+    "type": "module",
+    "main": "index.js",
+    "openclaw": {
+        "extensions": ["./index.ts"]
+    },
+    "peerDependencies": {
+        "openclaw": ">=2024.0.0"
+    }
 }
 ```
 
@@ -724,11 +724,11 @@ my-channel-plugin/
 
 ```json
 {
-  "id": "my-channel",
-  "name": "My Channel Plugin",
-  "description": "A custom channel plugin",
-  "version": "1.0.0",
-  "kind": "channel"
+    "id": "my-channel",
+    "name": "My Channel Plugin",
+    "description": "A custom channel plugin",
+    "version": "1.0.0",
+    "kind": "channel"
 }
 ```
 
@@ -794,18 +794,18 @@ opendesk plugins install my-channel-plugin@latest
 
 ```json
 {
-  "applications": {
-    "channels": {
-      "my-channel": {
-        "accounts": {
-          "default": {
-            "token": "your-token",
-            "webhookUrl": "https://..."
-          }
+    "applications": {
+        "channels": {
+            "my-channel": {
+                "accounts": {
+                    "default": {
+                        "token": "your-token",
+                        "webhookUrl": "https://..."
+                    }
+                }
+            }
         }
-      }
     }
-  }
 }
 ```
 

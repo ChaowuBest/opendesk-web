@@ -160,7 +160,7 @@ Fillip Desk 采用模块化的应用架构，每个功能模块都是独立的�
 
 ## 📄 许可证
 
-本项目采用 [BSD-3-Clause](./LICENSE) 许可证。
+本项目采用 [MulanPSL-2.0](./LICENSE) 许可证。
 
 ---
 

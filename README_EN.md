@@ -160,7 +160,7 @@ For detailed development documentation, project structure, and development workf
 
 ## 📄 License
 
-This project is licensed under the [BSD-3-Clause](./LICENSE) License.
+This project is licensed under the [MulanPSL-2.0](./LICENSE) License.
 
 ---
 
