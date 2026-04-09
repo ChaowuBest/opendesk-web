@@ -175,7 +175,7 @@ Contributions are welcome! Whether it's code, bug reports, or suggestions, pleas
 - [中文版本](./README.md) | [English Version](./README_EN.md)
 - [Intelli OS Project](https://github.com/intelli-os) (if applicable)
 - [Development Guide](./docs/devguide.md)
-- [OpenHarmony Version Notes](./docs/FillipDesk-oh.md)
+- [OpenHarmony Version Notes](./docs/platforms/openharmony.md)
 
 ---
 
