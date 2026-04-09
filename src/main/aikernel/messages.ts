@@ -721,6 +721,10 @@ export class UserMessage {
         }
     }
 
+    getPlainText(): string {
+        return this.content.map((part) => (part.type === 'text' ? part.text : '')).join('\n');
+    }
+
     /**
      * Append a text part to the message
      * @param {string} text
@@ -1251,6 +1255,9 @@ export class AssistantResponse {
             throw new Error('invalid openai response');
         }
 
+        if (response.finish_reason === 'stop') {
+            logger.info(JSON.stringify(openai_response, null, 2));
+        }
         const usage = openai_response['usage'];
         if (usage) {
             response.usage = new Usage(usage['prompt_tokens'], usage['completion_tokens'], usage['total_tokens']);
@@ -1436,6 +1443,15 @@ export class ChatContext {
 
     appendMessage(message: ChatMessage): void {
         this.messages.push(message);
+    }
+
+    lastUserMessage(): UserMessage | undefined {
+        for (let i = this.messages.length - 1; i >= 0; i--) {
+            if (this.messages[i].role === 'user') {
+                return this.messages[i] as UserMessage;
+            }
+        }
+        return undefined;
     }
 
     lastMessage(): ChatMessage | undefined {

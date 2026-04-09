@@ -370,11 +370,8 @@ export class OpenDeskTUI {
                     await task.waitUntilFinished();
                     logger.info(`触发器任务已完成`);
 
-                    // 提取最终回复并发送
-                    // Search backwards through all messages to find the last text part
-                    // (handles cases where hook rejection causes multiple internal turns)
+                    // 提取最终回复：从消息历史中找到最后一条 assistant 文本
                     const texts: string[] = [];
-                    let completionMessage: string | null = null;
                     for (let msgIdx = task.chat_context.messages.length - 1; msgIdx >= 0; msgIdx--) {
                         const msg = task.chat_context.messages[msgIdx];
                         if (!(msg instanceof AssistantMessage)) continue;
@@ -384,24 +381,12 @@ export class OpenDeskTUI {
                             if (part.type === 'text' && (part as any).text) {
                                 texts.unshift((part as any).text);
                                 break;
-                            } else if (part.type === 'tool_call') {
-                                for (const tc of part.toolcalls) {
-                                    if (tc.tool_name === 'planning-attemptCompletion' && tc.args_object?.type) {
-                                        if (tc.args_object.type === 'ask' || tc.args_object.type === 'fail') {
-                                            completionMessage = tc.args_object.message || '';
-                                        }
-                                    }
-                                }
                             }
                         }
                         if (texts.length > 0) break;
                     }
 
-                    let finalText = texts.join('\n').trim();
-                    // If attemptCompletion returned ask or fail, prepend that message
-                    if (completionMessage) {
-                        finalText = finalText ? `${completionMessage}\n\n${finalText}` : completionMessage;
-                    }
+                    const finalText = texts.join('\n').trim();
 
                     logger.info(`触发器任务最终回复: text_len=${finalText.length}`);
                     if (finalText && channelMgr?.sendTextToParticipant) {

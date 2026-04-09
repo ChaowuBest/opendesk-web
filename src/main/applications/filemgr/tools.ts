@@ -54,6 +54,9 @@ function sanitizePath(inputPath: string): string {
         p = os.homedir() + p.slice(1);
     }
 
+    // 将相对路径解析为绝对路径，确保权限检查时能与工作空间规则正确匹配
+    p = path.resolve(p);
+
     // 统一使用正斜杠（Node.js 在 Windows 上也接受正斜杠）
     p = p.replace(/\\/g, '/');
 

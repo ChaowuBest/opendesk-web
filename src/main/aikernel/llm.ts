@@ -292,8 +292,12 @@ class LLM {
         return content.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
     }
 
-    static async ask(question: UserMessage, model: ModelParam = undefined): Promise<string> {
-        const options: LLMAskOptions = { question, model, validator: undefined };
+    static async ask(question: UserMessage | string, model: ModelParam = undefined): Promise<string> {
+        const options: LLMAskOptions = {
+            question: question instanceof UserMessage ? question : new UserMessage(question),
+            model: model,
+            validator: undefined
+        };
         const result = await LLM.__ask(options);
         return typeof result === 'string' ? result : JSON.stringify(result);
     }

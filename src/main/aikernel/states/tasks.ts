@@ -331,6 +331,7 @@ export class TaskState {
 
         this.processTaskTurn();
     }
+
     /**
      * Clean up the task resources (delete JSON file and artifacts)
      * Imported from tasks.js
@@ -1123,8 +1124,6 @@ export class TaskState {
 
                 const hasToolCalls = await this.processToolCalls();
                 if (hasToolCalls) {
-                    // 如果本轮有工具调用，说明任务还没有结束，应该重置 hookRejectCount 计数器
-                    // 因为该计数器是用来判断无法提供 attempCompletion 等异常情况的
                     hookRejectCount = 0;
                     this._currentTurn++;
                     continue;
@@ -1139,7 +1138,6 @@ export class TaskState {
                         logger.warn(
                             `task ${this.task_id}: beforeFinishTurn hook rejected ${hookRejectCount} times consecutively, force-ending turn`
                         );
-                        await this.appendSyntheticFailedAttemptCompletion();
                         break;
                     }
                     const user_message = new UserMessage(checkHooks.message);
@@ -1162,35 +1160,6 @@ export class TaskState {
         } finally {
             this._turnRunning = false;
         }
-    }
-
-    private async appendSyntheticFailedAttemptCompletion() {
-        let lastMessage = this.chat_context.lastMessage();
-        if (!(lastMessage instanceof AssistantMessage)) {
-            lastMessage = new AssistantMessage();
-            this.chat_context.appendMessage(lastMessage);
-        }
-
-        const errorMessage = '模型未能正确使用 attemptCompletion 进行参数传递';
-        const toolCall = new ToolCall(
-            0,
-            `synth_${crypto.randomUUID()}`,
-            'planning-attemptCompletion',
-            JSON.stringify({ type: 'fail', message: errorMessage })
-        );
-        toolCall.args_object = { type: 'fail', message: errorMessage };
-        toolCall.status = 'error';
-        toolCall.result = errorMessage;
-
-        const tool = this.chat_context.getTool('planning-attemptCompletion');
-        if (tool) toolCall.setTool(tool);
-        await toolCall.freezeRenderResult();
-
-        const toolCallPart = new ToolCallMessagePart();
-        toolCallPart.push(toolCall);
-        (lastMessage as AssistantMessage).content.push(toolCallPart);
-
-        logger.warn(`task ${this.task_id}: appended synthetic failed attemptCompletion`);
     }
 
     async render() {
