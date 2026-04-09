@@ -13,6 +13,7 @@ import { OpenAI } from 'openai';
 import { ChatContext, AssistantResponse, UserMessage, AssistantMessage, isCompactBoundaryMessage } from './messages';
 import { Setting, ModelInstance } from '../utils/setting.js';
 import { buildActiveContextView } from './compaction/context-view.js';
+import type { ActiveContextView } from './compaction/types.js';
 import { z } from 'zod';
 import { logger } from '../utils/logger.js';
 import { lookupKnownVisionSupport, fetchVisionSupportFromAPI } from '../utils/model-context.js';
@@ -52,6 +53,11 @@ interface LLMAskOptions {
     question: UserMessage;
     model: ModelParam;
     validator: ValidatorFn | undefined;
+}
+
+interface LLMMessageBuildOptions {
+    activeContext?: ActiveContextView;
+    toolResultOverrides?: Map<string, string>;
 }
 
 /** Reranker API 返回的单条结果 */
@@ -358,7 +364,11 @@ class LLM {
      *   以保持 reasoning、tool_call、text 的正确顺序。
      * @param supportsVision 当前模型是否支持视觉输入，false 时 UserMessage 中的图像部分会被过滤
      */
-    static buildMessages(chatContext: ChatContext, supportsVision: boolean = true): object[] {
+    static buildMessages(
+        chatContext: ChatContext,
+        supportsVision: boolean = true,
+        options: LLMMessageBuildOptions = {}
+    ): object[] {
         const messages: object[] = [];
 
         // system prompt 始终保留
@@ -366,7 +376,8 @@ class LLM {
             messages.push(chatContext.system_prompt.toOpenAIMessage());
         }
 
-        const activeContext = buildActiveContextView(chatContext);
+        const activeContext = options.activeContext ?? buildActiveContextView(chatContext);
+        const toolResultOverrides = options.toolResultOverrides;
         for (const message of activeContext.messages) {
             if (isCompactBoundaryMessage(message)) {
                 messages.push(message.toOpenAIMessage());
@@ -374,7 +385,7 @@ class LLM {
                 if (message.content.length === 0) {
                     continue;
                 }
-                messages.push(...message.toOpenAIMessages());
+                messages.push(...message.toOpenAIMessages(toolResultOverrides));
             } else if (message instanceof UserMessage) {
                 messages.push(message.toOpenAIMessage(supportsVision));
             } else {
@@ -404,14 +415,18 @@ class LLM {
         return {};
     }
 
-    static async complete(chatContext: ChatContext, model: ModelParam = undefined): Promise<AssistantResponse> {
+    static async complete(
+        chatContext: ChatContext,
+        model: ModelParam = undefined,
+        options: LLMMessageBuildOptions = {}
+    ): Promise<AssistantResponse> {
         const modelInstance = this.__getModelInstance(model);
         const client = new OpenAI({
             apiKey: modelInstance.api_key,
             baseURL: modelInstance.base_url
         });
         const visionSupported = await this.supportsVision(model);
-        const messages = this.buildMessages(chatContext, visionSupported);
+        const messages = this.buildMessages(chatContext, visionSupported, options);
         const toolOptions = this.buildToolOptions(chatContext);
 
         const response = await withRateLimitRetry(() =>
@@ -427,7 +442,8 @@ class LLM {
 
     static async *streamComplete(
         chatContext: ChatContext,
-        model: ModelParam = undefined
+        model: ModelParam = undefined,
+        options: LLMMessageBuildOptions = {}
     ): AsyncIterable<AssistantResponse> {
         const modelInstance = this.__getModelInstance(model);
         this.__ensureProxy(modelInstance);
@@ -437,7 +453,7 @@ class LLM {
             baseURL: modelInstance.base_url
         });
         const visionSupported = await this.supportsVision(model);
-        const messages = this.buildMessages(chatContext, visionSupported);
+        const messages = this.buildMessages(chatContext, visionSupported, options);
         const toolOptions = this.buildToolOptions(chatContext);
 
         if (logger) {

@@ -27,6 +27,7 @@ import { buildActiveContextView, countNonBoundaryMessages } from './compaction/c
 import {
     buildToolResultReplacementText,
     getToolResultArtifactPath,
+    isToolResultCompressionExcluded,
     persistToolResultForToolCall,
     truncateToolResultForPreview
 } from './compaction/tool-results.js';
@@ -390,15 +391,8 @@ export async function shouldCompact(chatContext: ChatContext, model?: string): P
 
 // ─── 全局 afterToolCall：超长工具结果落盘并替换为摘要 ─────────────────────────────
 
-/** 不压缩这些工具的结果，保留完整输出供 agent 使用（如读文件工具） */
-const TOOLS_EXCLUDED_FROM_RESULT_COMPRESSION = new Set(['readFiles']);
-
-function isExcludedFromCompression(tool_name: string): boolean {
-    return TOOLS_EXCLUDED_FROM_RESULT_COMPRESSION.has(tool_name) || tool_name.endsWith('-readFiles');
-}
-
 function afterToolCallLargeResultToArtifact(task: TaskState, tool_call: ToolCall): void {
-    if (isExcludedFromCompression(tool_call.tool_name)) {
+    if (isToolResultCompressionExcluded(tool_call.tool_name)) {
         return;
     }
     const result = tool_call.result;

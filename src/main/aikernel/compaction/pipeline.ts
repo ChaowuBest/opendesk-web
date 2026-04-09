@@ -1,6 +1,7 @@
 import { compactContext, shouldCompact } from '../compact.js';
 import { ChatContext } from '../messages.js';
 import { buildActiveContextView } from './context-view.js';
+import { buildToolResultBudgetProjectionForChatContext } from './tool-results.js';
 import type { PrepareContextOptions, PreparedContextResult } from './types.js';
 
 /**
@@ -30,9 +31,39 @@ export async function prepareContextForModel(
         compacted = true;
     }
 
+    if (options.enableToolResultBudget && options.taskId && options.toolResultReplacementState) {
+        const projection = buildToolResultBudgetProjectionForChatContext(
+            chatContext,
+            options.taskId,
+            options.toolResultReplacementState,
+            {
+                groupBudgetChars: options.toolResultBudgetChars,
+                previewOptions: options.toolResultBudgetPreviewOptions,
+                skipToolNames: options.skipToolNames
+            }
+        );
+        const stats = projection.stats;
+        return {
+            activeContext: projection.activeContext,
+            shouldCompact: shouldRunCompact,
+            compacted,
+            budgetApplied: true,
+            toolResultOverrides: projection.overrides,
+            toolResultReplacementState: projection.replacementState,
+            toolResultBudgetStats: stats,
+            toolResultStateChanged:
+                stats.newlySeenCount > 0 || stats.newlySelectedCount > 0 || stats.stableIdsCreatedCount > 0
+        };
+    }
+
     return {
         activeContext: buildActiveContextView(chatContext),
         shouldCompact: shouldRunCompact,
-        compacted
+        compacted,
+        budgetApplied: false,
+        toolResultOverrides: new Map<string, string>(),
+        toolResultReplacementState: options.toolResultReplacementState,
+        toolResultBudgetStats: undefined,
+        toolResultStateChanged: false
     };
 }

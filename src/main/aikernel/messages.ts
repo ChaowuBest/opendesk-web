@@ -1007,7 +1007,43 @@ export class AssistantMessage {
      *
      * @returns OpenAI 消息数组
      */
-    toOpenAIMessages(): object[] {
+    private static resolveToolCallOverrideContent(
+        toolcall: ToolCall,
+        toolResultOverrides?: Map<string, string>
+    ): string | undefined {
+        const resultId = toolcall.result_storage?.result_id;
+        if (!resultId) {
+            return undefined;
+        }
+        const overrideContent = toolResultOverrides?.get(resultId);
+        if (typeof overrideContent === 'string' && overrideContent.length > 0) {
+            return overrideContent;
+        }
+        return undefined;
+    }
+
+    private static buildOpenAIToolResultContent(toolcall: ToolCall, toolResultOverrides?: Map<string, string>): string {
+        if (toolcall.compress_id) {
+            return `工具返回结果已被压缩，数据ID为 ${toolcall.compress_id}`;
+        }
+
+        const overrideContent = AssistantMessage.resolveToolCallOverrideContent(toolcall, toolResultOverrides);
+        if (overrideContent !== undefined) {
+            return overrideContent;
+        }
+
+        if (toolcall.status === 'error') {
+            return `Toolcall failed: ${toolcall.result ?? ''}`;
+        }
+
+        if (toolcall.status === 'success') {
+            return toolcall.result ?? '工具调用成功完成';
+        }
+
+        return 'Toolcall failed: unfinished tool call';
+    }
+
+    toOpenAIMessages(toolResultOverrides?: Map<string, string>): object[] {
         const messages: object[] = [];
 
         let currentReasoning = '';
@@ -1079,15 +1115,10 @@ export class AssistantMessage {
                         messages.push({ role: 'assistant', tool_calls: toolCallObjects });
                         for (const toolcall of validToolcalls) {
                             const toolCallMsg: any = { role: 'tool', tool_call_id: toolcall.id };
-                            if (toolcall.compress_id) {
-                                toolCallMsg.content = `工具返回结果已被压缩，数据ID为 ${toolcall.compress_id}`;
-                            } else if (toolcall.status === 'error') {
-                                toolCallMsg.content = `Toolcall failed: ${toolcall.result}`;
-                            } else if (toolcall.status === 'success') {
-                                toolCallMsg.content = toolcall.result ?? '工具调用成功完成';
-                            } else {
-                                toolCallMsg.content = `Toolcall failed: unfinished tool call`;
-                            }
+                            toolCallMsg.content = AssistantMessage.buildOpenAIToolResultContent(
+                                toolcall,
+                                toolResultOverrides
+                            );
                             messages.push(toolCallMsg);
                         }
                     }
@@ -1109,7 +1140,7 @@ export class AssistantMessage {
         return messages;
     }
 
-    getOpenAIToolMessages(): object[] {
+    getOpenAIToolMessages(toolResultOverrides?: Map<string, string>): object[] {
         const messages: object[] = [];
         const tool_call_parts = this.content.filter((part) => part.type === 'tool_call');
         for (const part of tool_call_parts) {
@@ -1121,27 +1152,20 @@ export class AssistantMessage {
                     );
                     continue;
                 }
-                if (toolcall.compress_id) {
-                    messages.push({
-                        role: 'tool',
-                        tool_call_id: toolcall.id,
-                        content: `工具返回结果已被压缩，数据ID为 ${toolcall.compress_id}`
-                    });
-                } else if (toolcall.status === 'error') {
-                    messages.push({
-                        role: 'tool',
-                        tool_call_id: toolcall.id,
-                        content: `Toolcall failed: ${toolcall.result ?? ''}`
-                    });
-                } else if (toolcall.status === 'success') {
-                    messages.push({
-                        role: 'tool',
-                        tool_call_id: toolcall.id,
-                        content: toolcall.result ?? '工具调用成功完成'
-                    });
-                } else {
+                const overrideContent = AssistantMessage.resolveToolCallOverrideContent(toolcall, toolResultOverrides);
+                if (
+                    !toolcall.compress_id &&
+                    overrideContent === undefined &&
+                    toolcall.status !== 'success' &&
+                    toolcall.status !== 'error'
+                ) {
                     throw new Error(`unfinished toolcall status ${toolcall.status}`);
                 }
+                messages.push({
+                    role: 'tool',
+                    tool_call_id: toolcall.id,
+                    content: AssistantMessage.buildOpenAIToolResultContent(toolcall, toolResultOverrides)
+                });
             }
         }
         return messages;
