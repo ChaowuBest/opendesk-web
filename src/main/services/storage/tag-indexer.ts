@@ -18,7 +18,7 @@
 
 import { Indexer, IndexerSearchOptions, IndexerSearchResult } from './indexer.js';
 import { Item, FilterCondition, ScalarOperator, QueryOperator, ItemType, ColumnSchema } from './abstract-storage.js';
-import { createTagIndexDB } from './tag-index-db.js';
+import { createTagIndexDB } from './tag-index-db-factory.js';
 
 // TagIndexDB 支持的操作符（从 abstract-storage 导入，保持类型别名以兼容）
 export type TagQueryOperator = ScalarOperator;
@@ -164,6 +164,7 @@ export class TagIndexer extends Indexer {
     private recordToItem(record: TagIndexRecord, metadata?: Partial<Item>): Item {
         const item = {
             item_id: record.item_id,
+            item_type: record.item_type as ItemType,
             tag: record.tag
         } as Item;
         // 从 metadata 复制额外字段

@@ -28,7 +28,7 @@ import {
     SimilarityMetric,
     DimMismatchError
 } from './abstract-storage.js';
-import { createVectorIndexDB } from './vector-index-db.js';
+import { createVectorIndexDB } from './vector-index-db-factory.js';
 
 // 向量索引记录接口 - 保持语义最小化
 export interface VectorIndexRecord {

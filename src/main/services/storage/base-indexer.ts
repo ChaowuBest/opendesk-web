@@ -11,7 +11,7 @@
 
 import path from 'path';
 import { Indexer, IndexerSearchOptions as BaseIndexerSearchOptions, IndexerSearchResult } from './indexer.js';
-import { createBaseIndexDB } from './base-index-db.js';
+import { createBaseIndexDB } from './base-index-db-factory.js';
 import {
     ColumnSchema,
     validateColumnSchema,

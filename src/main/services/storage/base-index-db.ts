@@ -525,15 +525,3 @@ export class BaseIndexDB implements IBaseIndexDB {
 }
 
 export default BaseIndexDB;
-
-/**
- * 工厂函数：根据当前平台自动选择 BaseIndexDB 实现
- * 平台判断逻辑内聚在数据层， indexer 不感知平台
- */
-export async function createBaseIndexDB(dbPath: string, schema: ColumnSchema): Promise<IBaseIndexDB> {
-    if ((process.platform as string) === 'openharmony') {
-        const { BaseIndexDBWasm } = await import('./base-index-db-wasm.js');
-        return new BaseIndexDBWasm(dbPath, schema);
-    }
-    return new BaseIndexDB(dbPath, schema);
-}

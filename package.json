@@ -24,6 +24,7 @@
         "build-cli-bun": "bun build --compile --minify-whitespace --sourcemap src/main/cli.ts --outfile dist/cli/opendesk-bun --external node-screenshots --external esbuild",
         "cli": "npm run build-cli && node --no-warnings --enable-source-maps dist/cli/opendesk-debug",
         "test-cli": "tsx src/tests/cli.ts",
+        "postinstall": "node scripts/setup-native-modules.cjs",
         "lint": "eslint .",
         "lint:fix": "eslint . --fix",
         "format": "prettier --write .",
@@ -83,7 +84,6 @@
         "@mariozechner/pi-tui": "^0.58.4",
         "@modelcontextprotocol/sdk": "^1.26.0",
         "@mozilla/readability": "^0.6.0",
-        "@node-rs/jieba": "^2.0.1",
         "@pdf-lib/fontkit": "^1.1.1",
         "@tailwindcss/postcss": "^4.1.18",
         "@tailwindcss/vite": "^4.1.18",
@@ -96,7 +96,6 @@
         "ansi-to-html": "^0.7.2",
         "async-mutex": "^0.5.0",
         "autoprefixer": "^10.4.23",
-        "better-sqlite3": "^12.6.2",
         "commander": "^14.0.3",
         "croner": "^10.0.1",
         "crypto-js": "^4.2.0",
@@ -135,9 +134,7 @@
         "postcss": "^8.5.6",
         "punycode": "^2.3.1",
         "qrcode-terminal": "^0.12.0",
-        "search-index": "^6.0.1",
         "sharp": "^0.34.5",
-        "sqlite-vec": "^0.1.7-alpha.2",
         "ssim.js": "^3.5.0",
         "string-template": "^1.0.0",
         "sweetalert2": "^11.15.10",
@@ -156,5 +153,11 @@
         "yaml": "^2.8.2",
         "yauzl": "^2.10.0",
         "zod": "^4.2.1"
+    },
+    "optionalDependencies": {
+        "better-sqlite3": "^12.6.2",
+        "sqlite-vec": "^0.1.7-alpha.2",
+        "search-index": "^6.0.1",
+        "@node-rs/jieba": "^2.0.1"
     }
 }

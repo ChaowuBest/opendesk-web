@@ -274,15 +274,4 @@ export class BM25IndexDB implements IBM25IndexDB {
     }
 }
 
-/**
- * 工厂函数：根据当前平台自动选择 BM25 实现
- */
-export async function createBM25IndexDB(schema: ColumnSchema, dbPath: string): Promise<IBM25IndexDB> {
-    if ((process.platform as string) === 'openharmony') {
-        const { BM25IndexDBWasm } = await import('./bm25-index-db-wasm.js');
-        return new BM25IndexDBWasm(schema, dbPath);
-    }
-    return new BM25IndexDB(schema, dbPath);
-}
-
 export default BM25IndexDB;

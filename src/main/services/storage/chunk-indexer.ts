@@ -20,16 +20,24 @@
  */
 
 import { Indexer, IndexerSearchOptions, IndexerSearchResult } from './indexer.js';
-import { Item, FilterCondition, QueryOperator, ColumnSchema, SimilarityMetric, DimMismatchError } from './abstract-storage.js';
+import {
+    Item,
+    FilterCondition,
+    QueryOperator,
+    ColumnSchema,
+    SimilarityMetric,
+    DimMismatchError
+} from './abstract-storage.js';
+import { createChunkIndexDB } from './chunk-index-db-factory.js';
 import { randomUUID } from 'crypto';
 
 // ── Chunk 存储记录 ─────────────────────────────────────────────────
 export interface ChunkIndexRecord {
-    chunk_pk: string;        // 内部主键，UUID，由 ChunkIndexer 生成
-    item_id: string;         // 父文件 ID
-    chunk_id: string;        // 调用方提供的 chunk 标识符
-    chunk_text: string;      // chunk 原文
-    repr: Float32Array | number[];  // chunk embedding 向量
+    chunk_pk: string; // 内部主键，UUID，由 ChunkIndexer 生成
+    item_id: string; // 父文件 ID
+    chunk_id: string; // 调用方提供的 chunk 标识符
+    chunk_text: string; // chunk 原文
+    repr: Float32Array | number[]; // chunk embedding 向量
 }
 
 // ── Chunk 搜索结果（searchChunks 返回）────────────────────────────
@@ -37,8 +45,8 @@ export interface ChunkSearchResult {
     item_id: string;
     chunk_id: string;
     chunk_text: string;
-    similarity: number;   // 0-1，越高越相似
-    distance: number;     // 原始距离
+    similarity: number; // 0-1，越高越相似
+    distance: number; // 原始距离
 }
 
 // ── ChunkIndexDB 搜索选项 ──────────────────────────────────────────
@@ -91,7 +99,7 @@ export class ChunkIndexer extends Indexer {
         'vector_similarity',
         'vector_near',
         'vector_not_similar',
-        'vector_range',
+        'vector_range'
     ];
 
     private db: IChunkIndexDB | null = null;
@@ -102,7 +110,7 @@ export class ChunkIndexer extends Indexer {
     constructor(schema: ColumnSchema, dbPath: string, options?: Record<string, any>) {
         super();
         const validKeys = ['dim'];
-        const unknown = Object.keys(options ?? {}).filter(k => !validKeys.includes(k));
+        const unknown = Object.keys(options ?? {}).filter((k) => !validKeys.includes(k));
         if (unknown.length > 0) {
             throw new Error(`ChunkIndexer: unknown options: ${unknown}`);
         }
@@ -129,18 +137,24 @@ export class ChunkIndexer extends Indexer {
         if (!entries || entries.length === 0) return [];
         for (const entry of entries) {
             if (!entry.id) throw new Error(`[ChunkIndexer] Item ${item.item_id}: entry missing 'id' (chunk_id).`);
-            if (entry.text === undefined || entry.text === null) throw new Error(`[ChunkIndexer] Item ${item.item_id}: entry missing 'text' (chunk_text).`);
-            if (!entry.content || !Array.isArray(entry.content) || entry.content.length === 0) throw new Error(`[ChunkIndexer] Item ${item.item_id}: entry missing or invalid 'content' (embedding vector).`);
-            if (entry.content.length !== this.dimension || !entry.content.every(v => typeof v === 'number')) {
-                throw new Error(`[ChunkIndexer] Item ${item.item_id}: invalid embedding dimension, expected ${this.dimension}.`);
+            if (entry.text === undefined || entry.text === null)
+                throw new Error(`[ChunkIndexer] Item ${item.item_id}: entry missing 'text' (chunk_text).`);
+            if (!entry.content || !Array.isArray(entry.content) || entry.content.length === 0)
+                throw new Error(
+                    `[ChunkIndexer] Item ${item.item_id}: entry missing or invalid 'content' (embedding vector).`
+                );
+            if (entry.content.length !== this.dimension || !entry.content.every((v) => typeof v === 'number')) {
+                throw new Error(
+                    `[ChunkIndexer] Item ${item.item_id}: invalid embedding dimension, expected ${this.dimension}.`
+                );
             }
         }
-        return entries.map(entry => ({
+        return entries.map((entry) => ({
             chunk_pk: randomUUID(),
             item_id: item.item_id,
             chunk_id: entry.id!,
             chunk_text: entry.text!,
-            repr: entry.content as number[],
+            repr: entry.content as number[]
         }));
     }
 
@@ -161,11 +175,11 @@ export class ChunkIndexer extends Indexer {
     async insert(items: Item[]): Promise<void> {
         if (items.length === 0) return;
         const db = this.ensureDB();
-        const candidateItems = items.filter(item => (item.indexer_columns?.['ChunkIndexer']?.length ?? 0) > 0);
-        const existingIds = await db.existingItemIds(candidateItems.map(item => item.item_id));
+        const candidateItems = items.filter((item) => (item.indexer_columns?.['ChunkIndexer']?.length ?? 0) > 0);
+        const existingIds = await db.existingItemIds(candidateItems.map((item) => item.item_id));
         const allRecords = candidateItems
-            .filter(item => !existingIds.has(item.item_id))
-            .flatMap(item => this.buildRecordsForItem(item));
+            .filter((item) => !existingIds.has(item.item_id))
+            .flatMap((item) => this.buildRecordsForItem(item));
         if (allRecords.length > 0) await db.insertMany(allRecords);
     }
 
@@ -189,11 +203,11 @@ export class ChunkIndexer extends Indexer {
     async update(items: Item[]): Promise<void> {
         if (items.length === 0) return;
         const db = this.ensureDB();
-        const candidateItems = items.filter(item => (item.indexer_columns?.['ChunkIndexer']?.length ?? 0) > 0);
-        const existingIds = await db.existingItemIds(candidateItems.map(item => item.item_id));
-        const updateItems = candidateItems.filter(item => existingIds.has(item.item_id));
-        const updateIds = updateItems.map(item => item.item_id);
-        const allRecords = updateItems.flatMap(item => this.buildRecordsForItem(item));
+        const candidateItems = items.filter((item) => (item.indexer_columns?.['ChunkIndexer']?.length ?? 0) > 0);
+        const existingIds = await db.existingItemIds(candidateItems.map((item) => item.item_id));
+        const updateItems = candidateItems.filter((item) => existingIds.has(item.item_id));
+        const updateIds = updateItems.map((item) => item.item_id);
+        const allRecords = updateItems.flatMap((item) => this.buildRecordsForItem(item));
         if (updateIds.length === 0 || allRecords.length === 0) return;
         await db.deleteManyByItemId(updateIds);
         await db.insertMany(allRecords);
@@ -208,14 +222,14 @@ export class ChunkIndexer extends Indexer {
     async upsert(items: Item[]): Promise<void> {
         if (items.length === 0) return;
         const db = this.ensureDB();
-        const candidateItems = items.filter(item => (item.indexer_columns?.['ChunkIndexer']?.length ?? 0) > 0);
+        const candidateItems = items.filter((item) => (item.indexer_columns?.['ChunkIndexer']?.length ?? 0) > 0);
         if (candidateItems.length === 0) return;
 
-        const existingIds = await db.existingItemIds(candidateItems.map(item => item.item_id));
+        const existingIds = await db.existingItemIds(candidateItems.map((item) => item.item_id));
         const existingItemIds = candidateItems
-            .filter(item => existingIds.has(item.item_id))
-            .map(item => item.item_id);
-        const allRecords = candidateItems.flatMap(item => this.buildRecordsForItem(item));
+            .filter((item) => existingIds.has(item.item_id))
+            .map((item) => item.item_id);
+        const allRecords = candidateItems.flatMap((item) => this.buildRecordsForItem(item));
 
         if (existingItemIds.length > 0) {
             await db.deleteManyByItemId(existingItemIds);
@@ -245,7 +259,7 @@ export class ChunkIndexer extends Indexer {
         const options: ChunkSearchOptions = {
             metric: vectorQuery.metric || 'cosine',
             topK: vectorQuery.topK || 10,
-            threshold: vectorQuery.threshold,
+            threshold: vectorQuery.threshold
         };
         return this.ensureDB().search(queryVector, options, filterItemIds);
     }
@@ -256,10 +270,7 @@ export class ChunkIndexer extends Indexer {
      * ChunkIndexer 必须通过 BaseStorage.searchWithChunkIndexer() 调用，
      * 直接调用此方法说明存在代码路径错误。
      */
-    async search(
-        _conditions: FilterCondition[],
-        _options?: IndexerSearchOptions
-    ): Promise<IndexerSearchResult> {
+    async search(_conditions: FilterCondition[], _options?: IndexerSearchOptions): Promise<IndexerSearchResult> {
         // ChunkIndexer 不支持标准 search() 协议。
         // 向量搜索必须通过 BaseStorage 的私有路径 searchWithChunkIndexer() 调用 searchChunks()。
         // 直接调用此方法是编程错误。
@@ -279,25 +290,13 @@ export class ChunkIndexer extends Indexer {
         const db = this.ensureDB();
         return {
             size: await db.count(),
-            dim: db.getDimension(),
+            dim: db.getDimension()
         };
     }
 
     getDimension(): number {
         return this.dimension;
     }
-}
-
-/**
- * 工厂函数：根据平台自动选择 ChunkIndexDB 实现
- */
-export async function createChunkIndexDB(dbPath: string, dimension: number = 1024): Promise<IChunkIndexDB> {
-    if ((process.platform as string) === 'openharmony') {
-        const { ChunkIndexDBWasm } = await import('./chunk-index-db-wasm.js');
-        return new ChunkIndexDBWasm(dbPath, dimension);
-    }
-    const { ChunkIndexDB } = await import('./chunk-index-db.js');
-    return new ChunkIndexDB(dbPath, dimension);
 }
 
 export default ChunkIndexer;

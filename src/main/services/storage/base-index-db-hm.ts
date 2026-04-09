@@ -18,52 +18,9 @@
 
 import path from 'path';
 import fs from 'fs';
-import { createRequire } from 'module';
-import { fileURLToPath } from 'url';
 import { ColumnSchema, validateColumnSchema } from './abstract-storage.js';
+import { loadSqliteAddon, type HmSqliteAddon } from './hm-addon-loader.js';
 import type { BaseQueryCondition, BaseQueryOptions, BaseQueryOperator, IBaseIndexDB } from './base-indexer.js';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const require = createRequire(import.meta.url);
-const projectRoot = path.resolve(__dirname, '../../../../');
-const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
-
-// ── HM Addon 类型定义 ──────────────────────────────────────────────
-type HmSqliteAddon = {
-    open: (filename: string) => unknown;
-    close: (db: unknown) => void;
-    exec: (db: unknown, sql: string) => Promise<any[]>;
-    beginTransaction: (db: unknown) => Promise<void>;
-    commitTransaction: (db: unknown) => Promise<void>;
-    rollbackTransaction: (db: unknown) => Promise<void>;
-    prepare: (db: unknown, sql: string) => Promise<unknown>;
-    run: (stmt: unknown, params: any[]) => Promise<void>;
-};
-
-const ARCH_CANDIDATES = [
-    process.arch,
-    process.arch === 'arm64' ? 'aarch64' : undefined,
-    process.arch === 'x64' ? 'x86_64' : undefined
-].filter(Boolean) as string[];
-
-const ADDON_CANDIDATES = [
-    process.env.HM_SQLITE_ADDON_PATH,
-    ...(resourcesPath
-        ? ARCH_CANDIDATES.map((arch) =>
-              path.resolve(resourcesPath, 'native', 'openharmony', arch, 'hm_sqlite_addon.node')
-          )
-        : []),
-    ...ARCH_CANDIDATES.map((arch) => path.resolve(projectRoot, 'native', 'openharmony', arch, 'hm_sqlite_addon.node'))
-].filter(Boolean) as string[];
-
-function loadAddon(): HmSqliteAddon {
-    for (const addonPath of ADDON_CANDIDATES) {
-        if (!fs.existsSync(addonPath)) continue;
-        return require(addonPath) as HmSqliteAddon;
-    }
-    throw new Error(`hm_sqlite_addon not found. Tried: ${ADDON_CANDIDATES.join(', ')}`);
-}
 
 // ── SQL 绑定工具（鸿蒙 SELECT 不支持 prepared statement 参数，用字面量替换）──
 function literal(value: any): string {
@@ -127,7 +84,7 @@ export class BaseIndexDBHm implements IBaseIndexDB {
         this.schema = schema;
         this.validFields = Object.keys(schema.columns);
         this.dbPath = dbPath;
-        this.addon = loadAddon();
+        this.addon = loadSqliteAddon();
     }
 
     async initialize(): Promise<void> {

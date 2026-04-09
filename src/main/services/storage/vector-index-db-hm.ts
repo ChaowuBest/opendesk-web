@@ -20,51 +20,8 @@
 
 import path from 'path';
 import fs from 'fs';
-import { createRequire } from 'module';
-import { fileURLToPath } from 'url';
+import { loadSqliteAddon, type HmSqliteAddon } from './hm-addon-loader.js';
 import type { VectorIndexRecord, VectorSearchResult, VectorSearchOptions, IVectorIndexDB } from './vector-indexer.js';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const require = createRequire(import.meta.url);
-const projectRoot = path.resolve(__dirname, '../../../../');
-const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
-
-// ── HM Addon 类型定义 ─────────────────────────────────────────────
-type HmSqliteAddon = {
-    open: (filename: string) => unknown;
-    close: (db: unknown) => void;
-    exec: (db: unknown, sql: string) => Promise<any[]>;
-    beginTransaction: (db: unknown) => Promise<void>;
-    commitTransaction: (db: unknown) => Promise<void>;
-    rollbackTransaction: (db: unknown) => Promise<void>;
-    prepare: (db: unknown, sql: string) => Promise<unknown>;
-    run: (stmt: unknown, params: any[]) => Promise<void>;
-};
-
-const ARCH_CANDIDATES = [
-    process.arch,
-    process.arch === 'arm64' ? 'aarch64' : undefined,
-    process.arch === 'x64' ? 'x86_64' : undefined
-].filter(Boolean) as string[];
-
-const ADDON_CANDIDATES = [
-    process.env.HM_SQLITE_ADDON_PATH,
-    ...(resourcesPath
-        ? ARCH_CANDIDATES.map((arch) =>
-              path.resolve(resourcesPath, 'native', 'openharmony', arch, 'hm_sqlite_addon.node')
-          )
-        : []),
-    ...ARCH_CANDIDATES.map((arch) => path.resolve(projectRoot, 'native', 'openharmony', arch, 'hm_sqlite_addon.node'))
-].filter(Boolean) as string[];
-
-function loadAddon(): HmSqliteAddon {
-    for (const addonPath of ADDON_CANDIDATES) {
-        if (!fs.existsSync(addonPath)) continue;
-        return require(addonPath) as HmSqliteAddon;
-    }
-    throw new Error(`hm_sqlite_addon not found. Tried: ${ADDON_CANDIDATES.join(', ')}`);
-}
 
 // ── Float32Array → X'hex' 字面量（用于 vec0 虚拟表内联）────────────
 function float32ToHexLiteral(arr: Float32Array | number[]): string {
@@ -91,7 +48,7 @@ export class VectorIndexDBHm implements IVectorIndexDB {
     constructor(dbPath: string, dimension: number = 1024) {
         this.dimension = dimension;
         this.dbPath = dbPath;
-        this.addon = loadAddon();
+        this.addon = loadSqliteAddon();
         const dir = path.dirname(dbPath);
         if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
         this.db = this.addon.open(dbPath);

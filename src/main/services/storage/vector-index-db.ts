@@ -235,7 +235,7 @@ export class VectorIndexDB implements IVectorIndexDB {
 
     async upsertMany(records: VectorIndexRecord[]): Promise<number> {
         if (records.length === 0) return 0;
-        const vectorIds = records.map(record => record.vector_id);
+        const vectorIds = records.map((record) => record.vector_id);
         const placeholders = vectorIds.map(() => '?').join(', ');
         this.db.prepare(`DELETE FROM ${this.metaTableName} WHERE vector_id IN (${placeholders})`).run(vectorIds);
         this.db.prepare(`DELETE FROM ${this.vecTableName} WHERE vector_id IN (${placeholders})`).run(vectorIds);
@@ -244,15 +244,15 @@ export class VectorIndexDB implements IVectorIndexDB {
 
     async updateMany(records: VectorIndexRecord[]): Promise<number> {
         if (records.length === 0) return 0;
-        const vectorIds = records.map(record => record.vector_id);
+        const vectorIds = records.map((record) => record.vector_id);
         const placeholders = vectorIds.map(() => '?').join(', ');
-        const existingRows = this.db.prepare(
-            `SELECT vector_id FROM ${this.metaTableName} WHERE vector_id IN (${placeholders})`
-        ).all(vectorIds) as { vector_id: string }[];
-        const existingSet = new Set(existingRows.map(row => row.vector_id));
-        const toUpdate = records.filter(record => existingSet.has(record.vector_id));
+        const existingRows = this.db
+            .prepare(`SELECT vector_id FROM ${this.metaTableName} WHERE vector_id IN (${placeholders})`)
+            .all(vectorIds) as { vector_id: string }[];
+        const existingSet = new Set(existingRows.map((row) => row.vector_id));
+        const toUpdate = records.filter((record) => existingSet.has(record.vector_id));
         if (toUpdate.length === 0) return 0;
-        const updateIds = toUpdate.map(record => record.vector_id);
+        const updateIds = toUpdate.map((record) => record.vector_id);
         const updatePlaceholders = updateIds.map(() => '?').join(', ');
         this.db.prepare(`DELETE FROM ${this.metaTableName} WHERE vector_id IN (${updatePlaceholders})`).run(updateIds);
         this.db.prepare(`DELETE FROM ${this.vecTableName} WHERE vector_id IN (${updatePlaceholders})`).run(updateIds);
@@ -478,18 +478,4 @@ export class VectorIndexDB implements IVectorIndexDB {
     }
 }
 
-/**
- * 创建 VectorIndexDB 实例的工厂函数
 export default VectorIndexDB;
-
-/**
- * 工厂函数：根据当前平台自动选择 VectorIndexDB 实现
- * 平台判断逻辑内聚在数据层， indexer 不感知平台
- */
-export async function createVectorIndexDB(dbPath: string, dimension: number = 1024): Promise<IVectorIndexDB> {
-    if ((process.platform as string) === 'openharmony') {
-        const { VectorIndexDBWasm } = await import('./vector-index-db-wasm.js');
-        return new VectorIndexDBWasm(dbPath, dimension);
-    }
-    return new VectorIndexDB(dbPath, dimension);
-}

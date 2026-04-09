@@ -15,7 +15,7 @@
 
 import { Indexer, IndexerSearchOptions, IndexerSearchResult } from './indexer.js';
 import { Item, FilterCondition, QueryOperator, BM25Query, ItemType, ColumnSchema } from './abstract-storage.js';
-import { createBM25IndexDB } from './bm25-index-db.js';
+import { createBM25IndexDB } from './bm25-index-db-factory.js';
 
 export interface BM25Record {
     bm25_id: string;
@@ -101,6 +101,7 @@ export class BM25Indexer extends Indexer {
     private resultToItem(result: BM25SearchResult, metadata?: Partial<Item>): Item {
         const item = {
             item_id: result.item_id,
+            item_type: result.item_type as ItemType,
             text: result.text
         } as Item;
 

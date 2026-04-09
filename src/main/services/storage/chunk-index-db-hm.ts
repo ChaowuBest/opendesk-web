@@ -19,53 +19,8 @@
 
 import path from 'path';
 import fs from 'fs';
-import { createRequire } from 'module';
-import { fileURLToPath } from 'url';
+import { loadSqliteAddon, type HmSqliteAddon } from './hm-addon-loader.js';
 import type { ChunkIndexRecord, ChunkSearchResult, ChunkSearchOptions, IChunkIndexDB } from './chunk-indexer.js';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const require = createRequire(import.meta.url);
-const projectRoot = path.resolve(__dirname, '../../../../');
-const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
-
-// ── HM Addon 类型定义 ─────────────────────────────────────────────
-type HmSqliteAddon = {
-  open: (filename: string) => unknown;
-  close: (db: unknown) => void;
-  exec: (db: unknown, sql: string) => Promise<any[]>;
-  beginTransaction: (db: unknown) => Promise<void>;
-  commitTransaction: (db: unknown) => Promise<void>;
-  rollbackTransaction: (db: unknown) => Promise<void>;
-  prepare: (db: unknown, sql: string) => Promise<unknown>;
-  run: (stmt: unknown, params: any[]) => Promise<void>;
-};
-
-const ARCH_CANDIDATES = [
-  process.arch,
-  process.arch === 'arm64' ? 'aarch64' : undefined,
-  process.arch === 'x64' ? 'x86_64' : undefined,
-].filter(Boolean) as string[];
-
-const ADDON_CANDIDATES = [
-  process.env.HM_SQLITE_ADDON_PATH,
-  ...(resourcesPath
-    ? ARCH_CANDIDATES.map((arch) =>
-        path.resolve(resourcesPath, 'native', 'openharmony', arch, 'hm_sqlite_addon.node')
-      )
-    : []),
-  ...ARCH_CANDIDATES.map((arch) =>
-    path.resolve(projectRoot, 'native', 'openharmony', arch, 'hm_sqlite_addon.node')
-  ),
-].filter(Boolean) as string[];
-
-function loadAddon(): HmSqliteAddon {
-  for (const addonPath of ADDON_CANDIDATES) {
-    if (!fs.existsSync(addonPath)) continue;
-    return require(addonPath) as HmSqliteAddon;
-  }
-  throw new Error(`hm_sqlite_addon not found. Tried: ${ADDON_CANDIDATES.join(', ')}`);
-}
 
 // ── Float32Array → X'hex' 字面量（用于 vec0 虚拟表内联）────────────
 function float32ToHexLiteral(arr: Float32Array | number[]): string {
@@ -91,7 +46,7 @@ export class ChunkIndexDBHm implements IChunkIndexDB {
     constructor(dbPath: string, dimension: number = 1024) {
         this.dimension = dimension;
         this.dbPath = dbPath;
-        this.addon = loadAddon();
+        this.addon = loadSqliteAddon();
         const dir = path.dirname(dbPath);
         if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
         this.db = this.addon.open(dbPath);
@@ -119,7 +74,9 @@ export class ChunkIndexDBHm implements IChunkIndexDB {
             await this.addon.commitTransaction(db);
             return result;
         } catch (error) {
-            try { await this.addon.rollbackTransaction(db); } catch {}
+            try {
+                await this.addon.rollbackTransaction(db);
+            } catch {}
             throw error;
         }
     }
@@ -157,31 +114,31 @@ export class ChunkIndexDBHm implements IChunkIndexDB {
 
     async getStoredDim(): Promise<number | null> {
         await this.ensureInitialized();
-        const rows = await this.execSql(
-            `SELECT vec_length(repr) as dim FROM ${this.vecTableName} LIMIT 1`
-        ) as Array<{ dim: number }>;
+        const rows = (await this.execSql(`SELECT vec_length(repr) as dim FROM ${this.vecTableName} LIMIT 1`)) as Array<{
+            dim: number;
+        }>;
         return rows[0]?.dim ?? null;
     }
 
     async existingItemIds(ids: string[]): Promise<Set<string>> {
         if (ids.length === 0) return new Set();
         await this.ensureInitialized();
-        const idList = ids.map(id => `'${id.replace(/'/g, "''")}'`).join(', ');
-        const rows = await this.execSql(
+        const idList = ids.map((id) => `'${id.replace(/'/g, "''")}'`).join(', ');
+        const rows = (await this.execSql(
             `SELECT DISTINCT item_id FROM ${this.metaTableName} WHERE item_id IN (${idList})`
-        ) as { item_id: string }[];
-        return new Set(rows.map(row => row.item_id));
+        )) as { item_id: string }[];
+        return new Set(rows.map((row) => row.item_id));
     }
 
     async insertMany(records: ChunkIndexRecord[]): Promise<number> {
         await this.ensureInitialized();
         if (records.length === 0) return 0;
-        const pkList = records.map(record => `'${record.chunk_pk.replace(/'/g, "''")}'`).join(', ');
-        const existingRows = await this.execSql(
+        const pkList = records.map((record) => `'${record.chunk_pk.replace(/'/g, "''")}'`).join(', ');
+        const existingRows = (await this.execSql(
             `SELECT chunk_pk FROM ${this.metaTableName} WHERE chunk_pk IN (${pkList})`
-        ) as { chunk_pk: string }[];
-        const existingSet = new Set(existingRows.map(row => row.chunk_pk));
-        const toInsert = records.filter(record => !existingSet.has(record.chunk_pk));
+        )) as { chunk_pk: string }[];
+        const existingSet = new Set(existingRows.map((row) => row.chunk_pk));
+        const toInsert = records.filter((record) => !existingSet.has(record.chunk_pk));
         if (toInsert.length === 0) return 0;
         return this.runTransaction(async () => {
             let count = 0;
@@ -206,9 +163,9 @@ export class ChunkIndexDBHm implements IChunkIndexDB {
     async deleteByItemId(itemId: string): Promise<number> {
         await this.ensureInitialized();
         return this.runTransaction(async () => {
-            const rows = await this.execSql(
+            const rows = (await this.execSql(
                 `SELECT chunk_pk FROM ${this.metaTableName} WHERE item_id = '${escapeStr(itemId)}'`
-            ) as Array<{ chunk_pk: string }>;
+            )) as Array<{ chunk_pk: string }>;
             for (const row of rows) {
                 await this.execSql(`DELETE FROM ${this.vecTableName} WHERE chunk_pk = '${escapeStr(row.chunk_pk)}'`);
             }
@@ -238,17 +195,21 @@ export class ChunkIndexDBHm implements IChunkIndexDB {
         const distanceFunc = (() => {
             switch (metric) {
                 case 'cosine':
-                case 'dot_product': return 'vec_distance_cosine';
-                case 'euclidean':   return 'vec_distance_L2';
-                case 'manhattan':   return 'vec_distance_L1';
-                default:            return 'vec_distance_cosine';
+                case 'dot_product':
+                    return 'vec_distance_cosine';
+                case 'euclidean':
+                    return 'vec_distance_L2';
+                case 'manhattan':
+                    return 'vec_distance_L1';
+                default:
+                    return 'vec_distance_cosine';
             }
         })();
         const topK = Math.max(1, Math.trunc(Number(options?.topK)) || 10);
 
         let sql: string;
         if (filterItemIds && filterItemIds.length > 0) {
-            const idList = filterItemIds.map(id => `'${id.replace(/'/g, "''")}'`).join(', ');
+            const idList = filterItemIds.map((id) => `'${id.replace(/'/g, "''")}'`).join(', ');
             sql = `
                 SELECT m.item_id, m.chunk_id, m.chunk_text,
                        ${distanceFunc}(v.repr, ${hexVec}) AS distance
@@ -269,11 +230,14 @@ export class ChunkIndexDBHm implements IChunkIndexDB {
             `;
         }
 
-        const rows = await this.execSql(sql) as Array<{
-            item_id: string; chunk_id: string; chunk_text: string; distance: number;
+        const rows = (await this.execSql(sql)) as Array<{
+            item_id: string;
+            chunk_id: string;
+            chunk_text: string;
+            distance: number;
         }>;
 
-        const results: ChunkSearchResult[] = rows.map(row => ({
+        const results: ChunkSearchResult[] = rows.map((row) => ({
             item_id: row.item_id,
             chunk_id: row.chunk_id,
             chunk_text: row.chunk_text,
@@ -281,22 +245,28 @@ export class ChunkIndexDBHm implements IChunkIndexDB {
             similarity: (() => {
                 switch (metric) {
                     case 'cosine':
-                    case 'dot_product': return Math.max(0, Math.min(1, 1 - row.distance / 2));
+                    case 'dot_product':
+                        return Math.max(0, Math.min(1, 1 - row.distance / 2));
                     case 'euclidean':
-                    case 'manhattan':   return 1 / (1 + row.distance);
-                    default:            return 1 - row.distance;
+                    case 'manhattan':
+                        return 1 / (1 + row.distance);
+                    default:
+                        return 1 - row.distance;
                 }
-            })(),
+            })()
         }));
 
         if (options?.threshold !== undefined) {
-            return results.filter(r => r.similarity >= options.threshold!);
+            return results.filter((r) => r.similarity >= options.threshold!);
         }
         return results;
     }
 
     close(): void {
-        if (this.db) { this.addon.close(this.db); this.db = null; }
+        if (this.db) {
+            this.addon.close(this.db);
+            this.db = null;
+        }
         this.isInitialized = false;
     }
 

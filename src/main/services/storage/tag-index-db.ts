@@ -267,13 +267,7 @@ export class TagIndexDB implements ITagIndexDB {
         const updateAll = this.db.transaction((batch: TagIndexRecord[]) => {
             let count = 0;
             for (const record of batch) {
-                const result = stmt.run(
-                    record.item_type,
-                    record.tag,
-                    record.item_id,
-                    record.item_type,
-                    record.tag
-                );
+                const result = stmt.run(record.item_type, record.tag, record.item_id, record.item_type, record.tag);
                 count += result.changes;
             }
             return count;
@@ -481,17 +475,4 @@ export class TagIndexDB implements ITagIndexDB {
     }
 }
 
-/**
 export default TagIndexDB;
-
-/**
- * 工厂函数：根据当前平台自动选择 TagIndexDB 实现
- * 平台判断逻辑内聚在数据层， indexer 不感知平台
- */
-export async function createTagIndexDB(dbPath: string): Promise<ITagIndexDB> {
-    if ((process.platform as string) === 'openharmony') {
-        const { TagIndexDBWasm } = await import('./tag-index-db-wasm.js');
-        return new TagIndexDBWasm(dbPath);
-    }
-    return new TagIndexDB(dbPath);
-}

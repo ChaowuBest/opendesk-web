@@ -5,7 +5,15 @@ import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 
 type HnswModule = {
-    HNSW: new (M: number, efConstruction: number, d: number, metric?: 'cosine' | 'euclidean', efSearch?: number) => any;
+    HNSW: (new (
+        M: number,
+        efConstruction: number,
+        d: number,
+        metric?: 'cosine' | 'euclidean',
+        efSearch?: number
+    ) => any) & {
+        fromJSON(json: unknown): any;
+    };
     HNSWWithDB?: unknown;
 };
 
@@ -136,4 +144,3 @@ export class HnswAdapter {
         this.hnsw = newHnsw;
     }
 }
-
