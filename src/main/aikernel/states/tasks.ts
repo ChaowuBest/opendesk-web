@@ -1134,12 +1134,17 @@ export class TaskState {
                     break;
                 } else {
                     hookRejectCount++;
-                    if (hookRejectCount >= 5) {
+                    if (hookRejectCount >= 10) {
                         logger.warn(
                             `task ${this.task_id}: beforeFinishTurn hook rejected ${hookRejectCount} times consecutively, force-ending turn`
                         );
                         break;
                     }
+                    const backoffMs = 5_000;
+                    logger.info(
+                        `task ${this.task_id}: hook rejected (attempt ${hookRejectCount}), backing off ${backoffMs}ms before retry`
+                    );
+                    await new Promise((resolve) => setTimeout(resolve, backoffMs));
                     const user_message = new UserMessage(checkHooks.message);
                     user_message.internal = true;
                     const assistant_message = new AssistantMessage();

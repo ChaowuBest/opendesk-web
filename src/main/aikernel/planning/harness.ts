@@ -278,7 +278,10 @@ export function registerMainTaskTerminationHook(): void {
         try {
             const terminationState = await checkTermination(task);
             if (terminationState === 'interrupted') {
-                return { operation: 'reject', message: '请继续' };
+                return {
+                    operation: 'reject',
+                    message: '<system-reminder>当前对话异常中断，你需要继续对话</system-reminder>'
+                };
             }
         } catch (err) {
             logger.warn(`checkTermination failed: ${err instanceof Error ? err.message : err}`);

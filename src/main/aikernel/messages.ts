@@ -1255,9 +1255,6 @@ export class AssistantResponse {
             throw new Error('invalid openai response');
         }
 
-        if (response.finish_reason === 'stop') {
-            logger.info(JSON.stringify(openai_response, null, 2));
-        }
         const usage = openai_response['usage'];
         if (usage) {
             response.usage = new Usage(usage['prompt_tokens'], usage['completion_tokens'], usage['total_tokens']);
