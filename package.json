@@ -31,7 +31,7 @@
         "format": "prettier --write .",
         "format:check": "prettier --check .",
         "check:architecture": "node scripts/check-architecture.cjs",
-        "check:docs": "tsx scripts/docs-freshness.ts",
+        "check:docs": "tsx scripts/docs-freshness/docs-freshness.ts",
         "prepare": "husky"
     },
     "lint-staged": {
@@ -41,13 +41,16 @@
         ],
         "*.md": [
             "prettier --write",
-            "tsx scripts/docs-freshness.ts"
+            "tsx scripts/docs-freshness/docs-freshness.ts"
         ],
         "*.{json,css,scss,yaml,yml,html}": [
             "prettier --write"
         ],
         "package.json": [
-            "tsx scripts/docs-freshness.ts"
+            "tsx scripts/docs-freshness/docs-freshness.ts"
+        ],
+        "src/main/tui/commands/index.ts": [
+            "tsx scripts/docs-freshness/docs-freshness.ts"
         ]
     },
     "devDependencies": {
