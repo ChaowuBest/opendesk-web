@@ -1,8 +1,8 @@
 import { logger } from '../utils/logger';
 import { Setting } from '../utils/setting';
 import { LLM } from './llm';
-import { ChatContext, SystemMessage } from './messages';
 import type { TaskState } from './states/tasks';
+import type { AssistantMessagePart } from './messages';
 
 const TERMINATION_SYSTEM_PROMPT = `你是一个专业的对话终止状态判断助手。用户会给你一段对话内容，包含原始的用户问题和AI回答的最后一部分。
 你需要判断这个对话的终止状态，只能输出以下三个词之一: finished, interrupted, question。
@@ -52,6 +52,33 @@ export async function checkTerminationFromMessages(
     }
 }
 
+/**
+ * 从 AssistantMessage 的 content 中提取用于终止状态判断的文本。
+ * 从后往前扫描，收集 TextMessagePart 和 ReasoningMessagePart，
+ * 遇到第一个 ToolCallMessagePart 时停止。
+ */
+function extractTrailingResponse(parts: AssistantMessagePart[]): string {
+    const lines: string[] = [];
+    for (let i = parts.length - 1; i >= 0; i--) {
+        const part = parts[i];
+        if (part.type === 'tool_call') {
+            break;
+        }
+        if (part.type === 'text') {
+            const text = String(part.text);
+            if (text.trim()) {
+                lines.unshift(text.trim());
+            }
+        } else if (part.type === 'reasoning') {
+            const content = String(part.content);
+            if (content.trim()) {
+                lines.unshift(`[思考] ${content.trim()}`);
+            }
+        }
+    }
+    return lines.join('\n');
+}
+
 export async function checkTermination(taskState: TaskState): Promise<TerminationState> {
     const lastMessage = taskState.chat_context.lastMessage();
     const lastUserMessage = taskState.chat_context.lastUserMessage();
@@ -60,11 +87,11 @@ export async function checkTermination(taskState: TaskState): Promise<Terminatio
         throw new Error('termination state check failed: no user message or last message');
     }
 
-    const lastAssistantMessagePart = lastMessage.content[lastMessage.content.length - 1];
-    if (lastAssistantMessagePart.type !== 'text') {
-        // 如果最后一个 part 不是文本，那只能是工具等调用结果，这种情况下，对话天然应该继续进行，不可能会调用这个函数进行判断 */
-        throw new Error('termination state check failed: last assistant message part is not a text');
+    const trailingResponse = extractTrailingResponse(lastMessage.content);
+    if (!trailingResponse) {
+        // 最后一个 ToolCallMessagePart 之后没有任何文本或思考内容，说明对话被截断
+        return 'interrupted';
     }
 
-    return await checkTerminationFromMessages(lastUserMessage.getPlainText(), lastAssistantMessagePart.text);
+    return await checkTerminationFromMessages(lastUserMessage.getPlainText(), trailingResponse);
 }
