@@ -85,6 +85,7 @@ export interface CommandLineArgs {
     dumpLog?: string;
     headless?: boolean;
     profile?: string;
+    allowEverything?: boolean;
 }
 
 export class OpenDeskTUI {
@@ -122,6 +123,7 @@ export class OpenDeskTUI {
      */
     private singleShot?: boolean;
     private profilePath?: string;
+    private allowEverything?: boolean;
 
     /** -c 模式下任务结束、退出前执行的钩子（如导出），按注册顺序执行 */
     private beforeExitHooks: Array<(taskId: string) => void | Promise<void>> = [];
@@ -161,6 +163,7 @@ export class OpenDeskTUI {
         this.model = args.model;
         this.singleShot = !!args.command;
         this.profilePath = args.profile;
+        this.allowEverything = args.allowEverything;
         if (args.command) {
             if (args.exportHtml) {
                 const htmlPath = path.resolve(args.workspace, args.exportHtml);
@@ -1237,8 +1240,12 @@ export class OpenDeskTUI {
      */
     private async initTaskHarness(task: TaskState): Promise<void> {
         try {
-            task.harnessContext = await HarnessContext.createWithDefaults(this.workspace);
-            task.harnessContext.permissionPrompt = new TUIPermissionPromptProvider(this);
+            if (this.allowEverything) {
+                task.harnessContext = HarnessContext.createAllowEverything(this.workspace);
+            } else {
+                task.harnessContext = await HarnessContext.createWithDefaults(this.workspace);
+                task.harnessContext.permissionPrompt = new TUIPermissionPromptProvider(this);
+            }
         } catch (err) {
             logger.warn(`Failed to init task harness, using empty context: ${err}`);
             task.harnessContext = HarnessContext.createEmpty();

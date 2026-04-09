@@ -106,8 +106,12 @@ export class HeadlessRunner {
         }
 
         try {
-            task.harnessContext = await HarnessContext.createWithDefaults(this.args.workspace);
-            task.harnessContext.permissionPrompt = new HeadlessPermissionPromptProvider();
+            if (this.args.allowEverything) {
+                task.harnessContext = HarnessContext.createAllowEverything(this.args.workspace);
+            } else {
+                task.harnessContext = await HarnessContext.createWithDefaults(this.args.workspace);
+                task.harnessContext.permissionPrompt = new HeadlessPermissionPromptProvider();
+            }
         } catch (err) {
             logger.warn(`Failed to init headless task harness: ${err}`);
         }

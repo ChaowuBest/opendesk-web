@@ -32,6 +32,7 @@ import { logger } from '../../utils/logger.js';
 import { createSensitivePathRules } from '../../utils/permissionRules.js';
 
 function normalizePath(p: string): string {
+    if (!p) return '';
     return p.replace(/\\/g, '/');
 }
 
@@ -63,6 +64,26 @@ function matchesAny(rules: CompiledRule[], resourceType: string, objNorm: string
         if (matchesRule(rule, resourceType, objNorm, action)) return true;
     }
     return false;
+}
+
+/**
+ * 全放通权限引擎：所有权限检查直接返回 allow，用于 --allow-everything 模式。
+ */
+export class AllowEverythingEnforcer implements PermissionEnforcer {
+    async check(request: PermissionRequest): Promise<PermissionCheckResult> {
+        return { effect: 'allow', request };
+    }
+
+    async checkAll(_requests: PermissionRequest[]): Promise<PermissionCheckResult | null> {
+        return null;
+    }
+
+    async checkAllDetailed(_requests: PermissionRequest[]): Promise<PermissionCheckResult[]> {
+        return [];
+    }
+
+    async addRule(_rule: PermissionRule): Promise<void> {}
+    async removeRule(_rule: PermissionRule): Promise<void> {}
 }
 
 export class GlobPermissionEnforcer implements PermissionEnforcer {
