@@ -40,7 +40,7 @@ const DIFF_CONTEXT_LINES = 3;
  * 此函数将这些控制字符还原为对应的反斜杠字母组合，然后统一使用正斜杠。
  */
 function sanitizePath(inputPath: string): string {
-    if (!inputPath || typeof inputPath !== 'string') return inputPath;
+    if (!inputPath || typeof inputPath !== 'string') return '';
 
     let p = inputPath
         .replace(/\x08/g, '\\b')
@@ -53,6 +53,9 @@ function sanitizePath(inputPath: string): string {
     if (p === '~' || p.startsWith('~/') || p.startsWith('~\\')) {
         p = os.homedir() + p.slice(1);
     }
+
+    // 将相对路径解析为绝对路径，确保权限检查时能与工作空间规则正确匹配
+    p = path.resolve(p);
 
     // 统一使用正斜杠（Node.js 在 Windows 上也接受正斜杠）
     p = p.replace(/\\/g, '/');
@@ -704,7 +707,7 @@ interface WriteFileRenderCache {
 const _writeFileCache = new WeakMap<ToolCall, WriteFileRenderCache>();
 
 function computeContentHash(content: string): string {
-    if (typeof content !== 'string') content = String(content);
+    if (typeof content !== 'string') content = String(content ?? '');
     const len = content.length;
     if (len === 0) return '0:';
 
@@ -724,7 +727,7 @@ function computeContentHash(content: string): string {
 }
 
 function getWriteFileInfo(toolcall: ToolCall, content: string): WriteFileRenderCache {
-    if (typeof content !== 'string') content = String(content);
+    if (typeof content !== 'string') content = String(content ?? '');
     const prev = _writeFileCache.get(toolcall);
     const contentHash = computeContentHash(content);
 
@@ -787,7 +790,9 @@ export class WriteFileTool extends BaseTool<typeof writeFileSchema> {
 
     async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
         const filePath = toolcall.args_object?.['path'] as string | undefined;
-        const content = toolcall.args_object?.['content'] as string | undefined;
+        const rawContent = toolcall.args_object?.['content'];
+        const content =
+            typeof rawContent === 'string' ? rawContent : rawContent != null ? String(rawContent) : undefined;
         const mode = toolcall.args_object?.['mode'] as string | undefined;
         const title = '写入文件' + (mode === 'append' ? ' (追加)' : '');
 

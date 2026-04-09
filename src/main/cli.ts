@@ -45,6 +45,7 @@ function parseCommandLineArgs() {
     prog.option('--dump-log <path>', 'dump all log output to specified file', (v) => v);
     prog.option('--headless', 'run in headless mode (no TUI, requires -c)');
     prog.option('--profile <path>', 'write performance profile to specified JSON file', (v) => v);
+    prog.option('--allow-everything', 'bypass all permission checks (auto-allow everything)');
     prog.option('-v, --version', 'print the version');
 
     registerPluginsCommand(prog);
@@ -158,7 +159,8 @@ function parseCommandLineArgs() {
             exportJson: kwargs.exportJson,
             dumpLog: kwargs.dumpLog,
             headless: !!kwargs.headless,
-            profile: kwargs.profile
+            profile: kwargs.profile,
+            allowEverything: !!kwargs.allowEverything
         });
     });
 

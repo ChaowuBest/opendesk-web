@@ -95,13 +95,15 @@ class QuickPassHelper {
         }
 
         const inner = trimmed.slice(QUICKPASS_PREFIX.length, -QUICKPASS_SUFFIX.length);
-        const separatorIndex = inner.indexOf(QUICKPASS_SEPARATOR);
-        if (separatorIndex === -1) {
+
+        // 兼容旧格式 " --payload" 和新格式 " -- payload"
+        const sepMatch = inner.match(/\s--\s?/);
+        if (!sepMatch || sepMatch.index === undefined) {
             throw new Error('口令格式错误：缺少分隔符 --');
         }
 
-        const name = inner.slice(0, separatorIndex).trim();
-        const encoded = inner.slice(separatorIndex + QUICKPASS_SEPARATOR.length).replace(/\s+/g, '');
+        const name = inner.slice(0, sepMatch.index).trim();
+        const encoded = inner.slice(sepMatch.index + sepMatch[0].length).replace(/\s+/g, '');
 
         if (!encoded) {
             throw new Error('口令格式错误：payload 为空');

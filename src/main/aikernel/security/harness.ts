@@ -20,7 +20,7 @@
  */
 
 import type { PermissionEnforcer, PermissionPromptProvider } from './permission.js';
-import { GlobPermissionEnforcer, createDefaultPermissionRules } from './enforcer.js';
+import { GlobPermissionEnforcer, AllowEverythingEnforcer, createDefaultPermissionRules } from './enforcer.js';
 
 export class HarnessContext {
     /**
@@ -56,6 +56,16 @@ export class HarnessContext {
         const rules = createDefaultPermissionRules(workspace);
         ctx.permission = await GlobPermissionEnforcer.create(rules);
 
+        return ctx;
+    }
+
+    /**
+     * 创建全放通模式的 HarnessContext（--allow-everything），所有权限检查自动通过。
+     */
+    static createAllowEverything(workspace: string): HarnessContext {
+        const ctx = new HarnessContext();
+        ctx.workspace = workspace;
+        ctx.permission = new AllowEverythingEnforcer();
         return ctx;
     }
 

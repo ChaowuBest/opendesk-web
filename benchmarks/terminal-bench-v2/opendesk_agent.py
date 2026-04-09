@@ -322,6 +322,7 @@ class OpenDeskAgent(BaseInstalledAgent):
                 f"cd \"$WORKDIR\" && "
                 f"opendesk {model_flag}"
                 f"--headless "
+                f"--allow-everything "
                 f"--export-json /logs/agent/opendesk-result.json "
                 f"--profile /logs/agent/profile.json "
                 f"-c {escaped_instruction} "
