@@ -27,6 +27,7 @@ import {
     imageToDataUri
 } from '../messages.js';
 import { prepareContextForModel } from '../compaction/pipeline.js';
+import type { ActiveContextView } from '../compaction/types.js';
 import { compactContext } from '../compact.js';
 import { BaseTool, BaseToolset } from '../tool.js';
 import { LLM } from '../llm.js';
@@ -656,12 +657,54 @@ export class TaskState {
             return;
         }
 
+        let streamOptions:
+            | {
+                  toolResultOverrides?: Map<string, string>;
+                  activeContext?: ActiveContextView;
+              }
+            | undefined = undefined;
+        try {
+            const preparation = await prepareContextForModel(this.chat_context, this.model, {
+                beforeCompact: () => {
+                    logger.info(`Auto-compacting context for task ${this.task_id}`);
+                },
+                enableToolResultBudget: true,
+                taskId: this.task_id,
+                toolResultReplacementState: this.tool_result_replacement_state
+            });
+
+            if (preparation.toolResultReplacementState) {
+                this.tool_result_replacement_state = preparation.toolResultReplacementState;
+            }
+
+            if (preparation.budgetApplied && preparation.toolResultBudgetStats) {
+                const stats = preparation.toolResultBudgetStats;
+                logger.info(
+                    `[Compact Step4] query-time tool result budget: groups=${stats.groupCount}, ` +
+                        `overrides=${stats.overrideCount}, reapplied=${stats.reappliedCount}, ` +
+                        `newlySelected=${stats.newlySelectedCount}, newlySeen=${stats.newlySeenCount}, ` +
+                        `overBudgetGroups=${stats.overBudgetGroupCount}`
+                );
+            }
+
+            if (preparation.compacted || preparation.toolResultStateChanged) {
+                this.task_manager_state.save();
+            }
+
+            streamOptions = {
+                activeContext: preparation.activeContext,
+                toolResultOverrides: preparation.toolResultOverrides
+            };
+        } catch (err: unknown) {
+            logger.warn(`Prepare context before completion failed: ${err instanceof Error ? err.message : err}`);
+        }
+
         this.profiler?.beginLLM(this._currentTurn);
 
         // Track the last sent text part index to avoid duplicate sends
         let lastSentTextPartIndex = -1;
 
-        for await (const chunk_resp of LLM.streamComplete(this.chat_context, this.model)) {
+        for await (const chunk_resp of LLM.streamComplete(this.chat_context, this.model, streamOptions)) {
             // 检查是否已停止
             if (this.task_status === 'stopped') {
                 logger.info(`task ${this.task_id} completion interrupted by stop request`);
