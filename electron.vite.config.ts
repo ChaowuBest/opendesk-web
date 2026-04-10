@@ -13,6 +13,12 @@ export default defineConfig(({ mode }) => {
                     input: {
                         main: path.join(__dirname, 'src', 'main', 'main.js'),
                         worker: path.join(__dirname, 'src', 'main', 'worker.ts')
+                    },
+                    onwarn(warning, warn) {
+                        if (warning.code === 'DYNAMIC_IMPORT_WILL_NOT_MOVE') {
+                            throw new Error(warning.message);
+                        }
+                        warn(warning);
                     }
                 },
                 sourcemap: true

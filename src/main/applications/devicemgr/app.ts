@@ -37,6 +37,7 @@ import {
     InvokeDeviceCommandTool
 } from './tools.js';
 import { MANAGE_DEVICES_SKILL } from './skills.js';
+import { InfoOverlay } from '../../tui/components/notice.js';
 
 export class DeviceMgrApplication extends BaseApplication {
     private gateway: DeviceGateway | null = null;
@@ -208,14 +209,11 @@ export class DeviceMgrApplication extends BaseApplication {
         const subCmd = args.trim().toLowerCase();
 
         const showInfo = (title: string, message: string) => {
-            // Dynamic import to avoid hard dependency on TUI components at load time
-            import('../../tui/components/notice.js')
-                .then(({ InfoOverlay }) => {
-                    new InfoOverlay(tui, { title, message }).show();
-                })
-                .catch(() => {
-                    logger.info(`[devicemgr] ${title}: ${message}`);
-                });
+            try {
+                new InfoOverlay(tui, { title, message }).show();
+            } catch {
+                logger.info(`[devicemgr] ${title}: ${message}`);
+            }
         };
 
         if (!this.gateway?.isRunning()) {

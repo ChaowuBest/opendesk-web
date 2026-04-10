@@ -31,6 +31,7 @@ import type { Command } from 'commander';
 import { useCliTransport, useConsoleTransport } from '../../utils/logger.js';
 import path from 'path';
 import fs from 'fs';
+import { RegistryAdapters } from './registry-adapters.js';
 
 export class SkillMgrApplication extends BaseApplication {
     /** 静态回调列表：refresh 后通知订阅方（如 TUI 自动补全）*/
@@ -267,7 +268,6 @@ export class SkillMgrApplication extends BaseApplication {
     }
 
     async installFromRegistry(installUrl: string) {
-        const { RegistryAdapters } = await import('./registry-adapters.js');
         const method = RegistryAdapters.getInstallMethod(installUrl);
         let result;
         if (method === 'clawhub') {
