@@ -171,6 +171,65 @@ export class Skill {
     }
 
     /**
+     * 尝试修补常见的 YAML frontmatter 格式错误，使其可被严格解析器接受。
+     *
+     * 已知的技能作者常犯错误：
+     *  1. 未加引号的冒号值 — `description: 支持 http://xxx 的访问`
+     *     YAML 将第二个冒号视为嵌套映射，导致解析失败。
+     *     修补：用 JSON.stringify 包裹整个值。
+     *
+     *  2. 未闭合的双引号 — `description: "很长的描述但忘了关引号`
+     *     YAML 期望匹配的关闭引号，遇到 EOF 报错。
+     *     修补：在行尾补上对应的闭合引号。
+     *
+     *  3. 未闭合的单引号 — 同上，单引号版本。
+     *
+     * @returns 修补后的文本；如果无需修补则返回原文
+     */
+    static patchFrontmatterYaml(raw: string): string {
+        return raw
+            .split('\n')
+            .map((line) => {
+                const m = line.match(/^(\w[\w-]*):(\s+)(.+)$/);
+                if (!m) return line;
+                const [, key, spacing, value] = m;
+                if (value.includes(':') && !value.startsWith('"') && !value.startsWith("'")) {
+                    return key + ':' + spacing + JSON.stringify(value);
+                }
+                if (value.startsWith('"') && !value.endsWith('"')) {
+                    return key + ':' + spacing + value + '"';
+                }
+                if (value.startsWith("'") && !value.endsWith("'")) {
+                    return key + ':' + spacing + value + "'";
+                }
+                return line;
+            })
+            .join('\n');
+    }
+
+    /**
+     * 先用严格解析尝试；失败后自动 patch 再重试一次。
+     * @throws 如果 patch 后仍然解析失败
+     */
+    private static tryParseYamlWithPatch(raw: string): SkillFrontmatter {
+        try {
+            return parseYaml(raw) as SkillFrontmatter;
+        } catch (firstErr) {
+            const patched = Skill.patchFrontmatterYaml(raw);
+            if (patched === raw) {
+                const msg = firstErr instanceof Error ? firstErr.message : String(firstErr);
+                throw new Error(`YAML frontmatter 解析失败: ${msg}`);
+            }
+            try {
+                return parseYaml(patched) as SkillFrontmatter;
+            } catch (_) {
+                const msg = firstErr instanceof Error ? firstErr.message : String(firstErr);
+                throw new Error(`YAML frontmatter 解析失败: ${msg}`);
+            }
+        }
+    }
+
+    /**
      * 解析并验证 SKILL.md 内容
      * @param raw - 文件全文
      * @returns 解析后的 Skill 对象
@@ -190,13 +249,7 @@ export class Skill {
         }
         const frontmatterRaw = trimmed.slice(3, secondDash).trim();
         const body = trimmed.slice(secondDash + 4).trim();
-        let frontmatter: SkillFrontmatter;
-        try {
-            frontmatter = parseYaml(frontmatterRaw) as SkillFrontmatter;
-        } catch (e) {
-            const errorMessage = e instanceof Error ? e.message : String(e);
-            throw new Error(`YAML frontmatter 解析失败: ${errorMessage}`);
-        }
+        const frontmatter = Skill.tryParseYamlWithPatch(frontmatterRaw);
         if (!frontmatter || typeof frontmatter !== 'object') {
             throw new Error('frontmatter 必须为非空对象');
         }
