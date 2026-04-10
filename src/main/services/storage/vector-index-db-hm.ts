@@ -20,51 +20,8 @@
 
 import path from 'path';
 import fs from 'fs';
-import { createRequire } from 'module';
-import { fileURLToPath } from 'url';
+import { loadSqliteAddon, type HmSqliteAddon } from './hm-addon-loader.js';
 import type { VectorIndexRecord, VectorSearchResult, VectorSearchOptions, IVectorIndexDB } from './vector-indexer.js';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const require = createRequire(import.meta.url);
-const projectRoot = path.resolve(__dirname, '../../../../');
-const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
-
-// ── HM Addon 类型定义 ─────────────────────────────────────────────
-type HmSqliteAddon = {
-    open: (filename: string) => unknown;
-    close: (db: unknown) => void;
-    exec: (db: unknown, sql: string) => Promise<any[]>;
-    beginTransaction: (db: unknown) => Promise<void>;
-    commitTransaction: (db: unknown) => Promise<void>;
-    rollbackTransaction: (db: unknown) => Promise<void>;
-    prepare: (db: unknown, sql: string) => Promise<unknown>;
-    run: (stmt: unknown, params: any[]) => Promise<void>;
-};
-
-const ARCH_CANDIDATES = [
-    process.arch,
-    process.arch === 'arm64' ? 'aarch64' : undefined,
-    process.arch === 'x64' ? 'x86_64' : undefined
-].filter(Boolean) as string[];
-
-const ADDON_CANDIDATES = [
-    process.env.HM_SQLITE_ADDON_PATH,
-    ...(resourcesPath
-        ? ARCH_CANDIDATES.map((arch) =>
-              path.resolve(resourcesPath, 'native', 'openharmony', arch, 'hm_sqlite_addon.node')
-          )
-        : []),
-    ...ARCH_CANDIDATES.map((arch) => path.resolve(projectRoot, 'native', 'openharmony', arch, 'hm_sqlite_addon.node'))
-].filter(Boolean) as string[];
-
-function loadAddon(): HmSqliteAddon {
-    for (const addonPath of ADDON_CANDIDATES) {
-        if (!fs.existsSync(addonPath)) continue;
-        return require(addonPath) as HmSqliteAddon;
-    }
-    throw new Error(`hm_sqlite_addon not found. Tried: ${ADDON_CANDIDATES.join(', ')}`);
-}
 
 // ── Float32Array → X'hex' 字面量（用于 vec0 虚拟表内联）────────────
 function float32ToHexLiteral(arr: Float32Array | number[]): string {
@@ -91,7 +48,7 @@ export class VectorIndexDBHm implements IVectorIndexDB {
     constructor(dbPath: string, dimension: number = 1024) {
         this.dimension = dimension;
         this.dbPath = dbPath;
-        this.addon = loadAddon();
+        this.addon = loadSqliteAddon();
         const dir = path.dirname(dbPath);
         if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
         this.db = this.addon.open(dbPath);
@@ -158,93 +115,84 @@ export class VectorIndexDBHm implements IVectorIndexDB {
         }
     }
 
+    private async existingVectorIds(vectorIds: string[]): Promise<Set<string>> {
+        if (vectorIds.length === 0) return new Set();
+        const idList = vectorIds.map((id) => `'${escapeStr(id)}'`).join(', ');
+        const rows = (await this.execSql(
+            `SELECT vector_id FROM ${this.metaTableName} WHERE vector_id IN (${idList})`
+        )) as { vector_id: string }[];
+        return new Set(rows.map((row) => row.vector_id));
+    }
+
     async insert(record: VectorIndexRecord): Promise<boolean> {
         await this.ensureInitialized();
         this.validateDimension(record.repr);
         const hexRepr = float32ToHexLiteral(record.repr);
-        try {
-            await this.runTransaction(async () => {
-                await this.runSql(
-                    `INSERT INTO ${this.metaTableName} (vector_id, item_id, item_type) VALUES (?, ?, ?)`,
-                    [record.vector_id, record.item_id, record.item_type]
-                );
-                await this.execSql(`
-                    INSERT INTO ${this.vecTableName} (vector_id, repr)
-                    VALUES ('${escapeStr(record.vector_id)}', ${hexRepr})
-                `);
-            });
-            return true;
-        } catch (error: any) {
-            const msg = error?.message || String(error);
-            if (msg.includes('UNIQUE constraint failed') || msg.includes('PRIMARYKEY'))
-                throw new Error(`Record with item_id '${record.item_id}' already exists`);
-            throw error;
-        }
-    }
-
-    async insertMany(records: VectorIndexRecord[]): Promise<number> {
-        await this.ensureInitialized();
-        if (records.length === 0) return 0;
-        return this.runTransaction(async () => {
-            let count = 0;
-            for (const record of records) {
-                try {
-                    this.validateDimension(record.repr);
-                    const hexRepr = float32ToHexLiteral(record.repr);
-                    await this.runSql(
-                        `INSERT INTO ${this.metaTableName} (vector_id, item_id, item_type) VALUES (?, ?, ?)`,
-                        [record.vector_id, record.item_id, record.item_type]
-                    );
-                    await this.execSql(`
-                        INSERT INTO ${this.vecTableName} (vector_id, repr)
-                        VALUES ('${escapeStr(record.vector_id)}', ${hexRepr})
-                    `);
-                    count++;
-                } catch (error: any) {
-                    const msg = error?.message || String(error);
-                    if (
-                        !msg.includes('UNIQUE constraint failed') &&
-                        !msg.includes('PRIMARYKEY') &&
-                        !msg.includes('already exists')
-                    )
-                        throw error;
-                }
-            }
-            return count;
-        });
-    }
-
-    async upsert(record: VectorIndexRecord): Promise<boolean> {
-        await this.ensureInitialized();
-        this.validateDimension(record.repr);
-        const hexRepr = float32ToHexLiteral(record.repr);
         await this.runTransaction(async () => {
-            // 查询 item_id + item_type 对应的旧 vector_id（只替换同列向量）
-            const oldRows = (await this.execSql(
-                `SELECT vector_id FROM ${this.metaTableName} WHERE item_id = '${escapeStr(record.item_id)}' AND item_type = '${escapeStr(record.item_type)}'`
-            )) as Array<{ vector_id: string }>;
-            // 删除旧 vec 条目
-            for (const row of oldRows) {
-                await this.execSql(`DELETE FROM ${this.vecTableName} WHERE vector_id = '${escapeStr(row.vector_id)}'`);
-            }
-            // 删除旧 meta 条目
-            await this.runSql(`DELETE FROM ${this.metaTableName} WHERE item_id = ? AND item_type = ?`, [
-                record.item_id,
-                record.item_type
-            ]);
-            // 插入新 meta 条目
-            await this.runSql(`INSERT INTO ${this.metaTableName} (vector_id, item_id, item_type) VALUES (?, ?, ?)`, [
-                record.vector_id,
-                record.item_id,
-                record.item_type
-            ]);
-            // 插入新 vec 条目（repr 字段用 X'hex' 字面量，vec0 不支持参数化写入）
+            await this.runSql(
+                `INSERT OR REPLACE INTO ${this.metaTableName} (vector_id, item_id, item_type) VALUES (?, ?, ?)`,
+                [record.vector_id, record.item_id, record.item_type]
+            );
+            await this.execSql(`DELETE FROM ${this.vecTableName} WHERE vector_id = '${escapeStr(record.vector_id)}'`);
             await this.execSql(`
                 INSERT INTO ${this.vecTableName} (vector_id, repr)
                 VALUES ('${escapeStr(record.vector_id)}', ${hexRepr})
             `);
         });
         return true;
+    }
+
+    async insertMany(records: VectorIndexRecord[]): Promise<number> {
+        await this.ensureInitialized();
+        if (records.length === 0) return 0;
+        const existingSet = await this.existingVectorIds(records.map((record) => record.vector_id));
+        const toInsert = records.filter((record) => !existingSet.has(record.vector_id));
+        if (toInsert.length === 0) return 0;
+        return this.runTransaction(async () => {
+            let count = 0;
+            for (const record of toInsert) {
+                this.validateDimension(record.repr);
+                const hexRepr = float32ToHexLiteral(record.repr);
+                await this.runSql(
+                    `INSERT OR IGNORE INTO ${this.metaTableName} (vector_id, item_id, item_type) VALUES (?, ?, ?)`,
+                    [record.vector_id, record.item_id, record.item_type]
+                );
+                await this.execSql(
+                    `DELETE FROM ${this.vecTableName} WHERE vector_id = '${escapeStr(record.vector_id)}'`
+                );
+                await this.execSql(`
+                    INSERT INTO ${this.vecTableName} (vector_id, repr)
+                    VALUES ('${escapeStr(record.vector_id)}', ${hexRepr})
+                `);
+                count++;
+            }
+            return count;
+        });
+    }
+
+    async upsert(record: VectorIndexRecord): Promise<boolean> {
+        return (await this.upsertMany([record])) > 0;
+    }
+
+    async upsertMany(records: VectorIndexRecord[]): Promise<number> {
+        await this.ensureInitialized();
+        if (records.length === 0) return 0;
+        const idList = records.map((record) => `'${escapeStr(record.vector_id)}'`).join(', ');
+        await this.execSql(`DELETE FROM ${this.metaTableName} WHERE vector_id IN (${idList})`);
+        await this.execSql(`DELETE FROM ${this.vecTableName} WHERE vector_id IN (${idList})`);
+        return this.insertMany(records);
+    }
+
+    async updateMany(records: VectorIndexRecord[]): Promise<number> {
+        await this.ensureInitialized();
+        if (records.length === 0) return 0;
+        const existingSet = await this.existingVectorIds(records.map((record) => record.vector_id));
+        const toUpdate = records.filter((record) => existingSet.has(record.vector_id));
+        if (toUpdate.length === 0) return 0;
+        const idList = toUpdate.map((record) => `'${escapeStr(record.vector_id)}'`).join(', ');
+        await this.execSql(`DELETE FROM ${this.metaTableName} WHERE vector_id IN (${idList})`);
+        await this.execSql(`DELETE FROM ${this.vecTableName} WHERE vector_id IN (${idList})`);
+        return this.insertMany(toUpdate);
     }
 
     async delete(itemId: string): Promise<boolean> {
@@ -401,6 +349,14 @@ export class VectorIndexDBHm implements IVectorIndexDB {
 
     getDimension(): number {
         return this.dimension;
+    }
+
+    async getStoredDim(): Promise<number | null> {
+        await this.ensureInitialized();
+        const rows = (await this.execSql(`SELECT vec_length(repr) as dim FROM ${this.vecTableName} LIMIT 1`)) as Array<{
+            dim: number;
+        }>;
+        return rows[0]?.dim ?? null;
     }
 
     async getStats(): Promise<{ totalRecords: number; dimension: number; dbSize: number }> {

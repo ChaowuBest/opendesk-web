@@ -18,52 +18,9 @@
 
 import path from 'path';
 import fs from 'fs';
-import { createRequire } from 'module';
-import { fileURLToPath } from 'url';
 import { ColumnSchema, validateColumnSchema } from './abstract-storage.js';
+import { loadSqliteAddon, type HmSqliteAddon } from './hm-addon-loader.js';
 import type { BaseQueryCondition, BaseQueryOptions, BaseQueryOperator, IBaseIndexDB } from './base-indexer.js';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const require = createRequire(import.meta.url);
-const projectRoot = path.resolve(__dirname, '../../../../');
-const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
-
-// ── HM Addon 类型定义 ──────────────────────────────────────────────
-type HmSqliteAddon = {
-    open: (filename: string) => unknown;
-    close: (db: unknown) => void;
-    exec: (db: unknown, sql: string) => Promise<any[]>;
-    beginTransaction: (db: unknown) => Promise<void>;
-    commitTransaction: (db: unknown) => Promise<void>;
-    rollbackTransaction: (db: unknown) => Promise<void>;
-    prepare: (db: unknown, sql: string) => Promise<unknown>;
-    run: (stmt: unknown, params: any[]) => Promise<void>;
-};
-
-const ARCH_CANDIDATES = [
-    process.arch,
-    process.arch === 'arm64' ? 'aarch64' : undefined,
-    process.arch === 'x64' ? 'x86_64' : undefined
-].filter(Boolean) as string[];
-
-const ADDON_CANDIDATES = [
-    process.env.HM_SQLITE_ADDON_PATH,
-    ...(resourcesPath
-        ? ARCH_CANDIDATES.map((arch) =>
-              path.resolve(resourcesPath, 'native', 'openharmony', arch, 'hm_sqlite_addon.node')
-          )
-        : []),
-    ...ARCH_CANDIDATES.map((arch) => path.resolve(projectRoot, 'native', 'openharmony', arch, 'hm_sqlite_addon.node'))
-].filter(Boolean) as string[];
-
-function loadAddon(): HmSqliteAddon {
-    for (const addonPath of ADDON_CANDIDATES) {
-        if (!fs.existsSync(addonPath)) continue;
-        return require(addonPath) as HmSqliteAddon;
-    }
-    throw new Error(`hm_sqlite_addon not found. Tried: ${ADDON_CANDIDATES.join(', ')}`);
-}
 
 // ── SQL 绑定工具（鸿蒙 SELECT 不支持 prepared statement 参数，用字面量替换）──
 function literal(value: any): string {
@@ -127,7 +84,7 @@ export class BaseIndexDBHm implements IBaseIndexDB {
         this.schema = schema;
         this.validFields = Object.keys(schema.columns);
         this.dbPath = dbPath;
-        this.addon = loadAddon();
+        this.addon = loadSqliteAddon();
     }
 
     async initialize(): Promise<void> {
@@ -233,36 +190,50 @@ export class BaseIndexDBHm implements IBaseIndexDB {
             throw new Error(`Invalid field name: ${field}. Valid fields: ${this.validFields.join(', ')}`);
     }
 
+    private getRecordColumns(record: Record<string, any>): string[] {
+        return this.validFields.filter((col) => record[col] !== undefined);
+    }
+
+    private async loadExistingRows(itemIds: string[]): Promise<Map<string, Record<string, any>>> {
+        const uniqueIds = [...new Set(itemIds)];
+        if (uniqueIds.length === 0) return new Map();
+        const placeholders = uniqueIds.map(() => '?').join(', ');
+        const rows = (await this.queryAllSql(
+            `SELECT * FROM ${this.tableName} WHERE item_id IN (${placeholders})`,
+            uniqueIds
+        )) as Record<string, any>[];
+        return new Map(rows.filter((row) => row.item_id !== undefined).map((row) => [row.item_id, row]));
+    }
+
     async insert(record: Record<string, any>): Promise<boolean> {
         await this.ensureInitialized();
-        const columns = this.validFields.filter((col) => record[col] !== undefined);
-        const placeholders = columns.map(() => '?').join(', ');
-        const values = columns.map((col) => record[col]);
-        const sql = `INSERT INTO ${this.tableName} (${columns.join(', ')}) VALUES (${placeholders})`;
-        try {
-            await this.runSql(sql, values);
-            return true;
-        } catch (error: any) {
-            const message = error?.message || String(error);
-            if (message.includes('UNIQUE constraint failed') || message.includes('PRIMARYKEY'))
-                throw new Error(`Record with item_id '${record.item_id}' already exists`);
-            throw error;
-        }
+        return (await this.insertMany([record])) > 0;
     }
 
     async insertMany(records: Record<string, any>[]): Promise<number> {
         await this.ensureInitialized();
         if (records.length === 0) return 0;
+        const normalizedRecords = records.filter(
+            (record) => record.item_id !== undefined && this.getRecordColumns(record).length > 0
+        );
+        if (normalizedRecords.length === 0) return 0;
+        const existingRows = await this.loadExistingRows(normalizedRecords.map((record) => record.item_id));
         return this.runTransaction(async () => {
             let count = 0;
-            for (const record of records) {
-                try {
-                    const inserted = await this.insert(record);
-                    if (inserted) count++;
-                } catch (error: any) {
-                    const message = error?.message || String(error);
-                    if (!message.includes('already exists')) throw error;
-                }
+            const seenItemIds = new Set(existingRows.keys());
+            for (const record of normalizedRecords) {
+                const itemId = record.item_id;
+                if (seenItemIds.has(itemId)) continue;
+                seenItemIds.add(itemId);
+                const columns = this.getRecordColumns(record);
+                if (columns.length === 0) continue;
+                const placeholders = columns.map(() => '?').join(', ');
+                const values = columns.map((col) => record[col]);
+                await this.runSql(
+                    `INSERT INTO ${this.tableName} (${columns.join(', ')}) VALUES (${placeholders}) ON CONFLICT(item_id) DO NOTHING`,
+                    values
+                );
+                count++;
             }
             return count;
         });
@@ -270,16 +241,48 @@ export class BaseIndexDBHm implements IBaseIndexDB {
 
     async upsert(record: Record<string, any>): Promise<boolean> {
         await this.ensureInitialized();
-        const columns = this.validFields.filter((col) => record[col] !== undefined);
-        const placeholders = columns.map(() => '?').join(', ');
-        const values = columns.map((col) => record[col]);
-        const updateColumns = columns.filter((c) => c !== 'item_id');
-        const updateClause = updateColumns.map((col) => `${col} = excluded.${col}`).join(', ');
-        await this.runSql(
-            `INSERT INTO ${this.tableName} (${columns.join(', ')}) VALUES (${placeholders}) ON CONFLICT(item_id) DO UPDATE SET ${updateClause}`,
-            values
+        return (await this.upsertMany([record])) > 0;
+    }
+
+    async upsertMany(records: Record<string, any>[]): Promise<number> {
+        await this.ensureInitialized();
+        if (records.length === 0) return 0;
+        const normalizedRecords = records.filter(
+            (record) => record.item_id !== undefined && this.getRecordColumns(record).length > 0
         );
-        return true;
+        if (normalizedRecords.length === 0) return 0;
+        const existingRows = await this.loadExistingRows(normalizedRecords.map((record) => record.item_id));
+        return this.runTransaction(async () => {
+            let count = 0;
+            const currentRows = new Map(existingRows);
+            for (const record of normalizedRecords) {
+                const itemId = record.item_id;
+                const columns = this.getRecordColumns(record);
+                if (columns.length === 0) continue;
+                const updateColumns = columns.filter((col) => col !== 'item_id');
+                const existing = currentRows.get(itemId);
+                if (!existing) {
+                    const placeholders = columns.map(() => '?').join(', ');
+                    const values = columns.map((col) => record[col]);
+                    await this.runSql(
+                        `INSERT INTO ${this.tableName} (${columns.join(', ')}) VALUES (${placeholders}) ON CONFLICT(item_id) DO NOTHING`,
+                        values
+                    );
+                    count++;
+                    currentRows.set(itemId, { ...record });
+                    continue;
+                }
+                if (updateColumns.length === 0) continue;
+                const hasChanges = updateColumns.some((col) => !Object.is(existing[col], record[col]));
+                if (!hasChanges) continue;
+                const setClause = updateColumns.map((col) => `${col} = ?`).join(', ');
+                const values = [...updateColumns.map((col) => record[col]), itemId];
+                await this.runSql(`UPDATE ${this.tableName} SET ${setClause} WHERE item_id = ?`, values);
+                count++;
+                currentRows.set(itemId, { ...existing, ...record });
+            }
+            return count;
+        });
     }
 
     async delete(itemId: string): Promise<boolean> {
@@ -314,12 +317,37 @@ export class BaseIndexDBHm implements IBaseIndexDB {
             (key) => this.validFields.includes(key) && key !== 'item_id' && data[key] !== undefined
         );
         if (fields.length === 0) throw new Error('No valid fields to update');
-        const setClause = fields.map((field) => `${field} = ?`).join(', ');
-        const params = [...fields.map((field) => data[field]), itemId];
-        const existsBefore = await this.exists(itemId);
-        if (!existsBefore) return false;
-        await this.runSql(`UPDATE ${this.tableName} SET ${setClause} WHERE item_id = ?`, params);
-        return true;
+        const updated = await this.updateMany([{ ...data, item_id: itemId }]);
+        return updated > 0;
+    }
+
+    async updateMany(records: Record<string, any>[]): Promise<number> {
+        await this.ensureInitialized();
+        if (records.length === 0) return 0;
+        const normalizedRecords = records.filter(
+            (record) => record.item_id !== undefined && this.getRecordColumns(record).some((col) => col !== 'item_id')
+        );
+        if (normalizedRecords.length === 0) return 0;
+        const existingRows = await this.loadExistingRows(normalizedRecords.map((record) => record.item_id));
+        return this.runTransaction(async () => {
+            let count = 0;
+            const currentRows = new Map(existingRows);
+            for (const record of normalizedRecords) {
+                const itemId = record.item_id;
+                const columns = this.getRecordColumns(record).filter((col) => col !== 'item_id');
+                if (columns.length === 0) continue;
+                const existing = currentRows.get(itemId);
+                if (!existing) continue;
+                const hasChanges = columns.some((col) => !Object.is(existing[col], record[col]));
+                if (!hasChanges) continue;
+                const setClause = columns.map((field) => `${field} = ?`).join(', ');
+                const values = [...columns.map((field) => record[field]), itemId];
+                await this.runSql(`UPDATE ${this.tableName} SET ${setClause} WHERE item_id = ?`, values);
+                count++;
+                currentRows.set(itemId, { ...existing, ...record });
+            }
+            return count;
+        });
     }
 
     async findById(itemId: string): Promise<Record<string, any> | undefined> {
@@ -363,7 +391,7 @@ export class BaseIndexDBHm implements IBaseIndexDB {
         return this.queryAllSql(sql, params) as Promise<Record<string, any>[]>;
     }
 
-    async query(
+    async search(
         conditions: BaseQueryCondition[],
         options?: Omit<BaseQueryOptions, 'conditions'>
     ): Promise<Record<string, any>[]> {
@@ -425,10 +453,7 @@ export class BaseIndexDBHm implements IBaseIndexDB {
         return { totalRecords, dbSize: 0 };
     }
 
-    private buildWhereClause(conditions: BaseQueryCondition[]): {
-        whereClause: string;
-        params: any[];
-    } {
+    private buildWhereClause(conditions: BaseQueryCondition[]): { whereClause: string; params: any[] } {
         const clauses: string[] = [];
         const params: any[] = [];
         for (const condition of conditions) {

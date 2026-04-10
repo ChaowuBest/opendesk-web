@@ -161,8 +161,12 @@ export class VectorIndexDB implements IVectorIndexDB {
         const vecData = this.toFloat32Array(record.repr);
 
         const insertMeta = this.db.prepare(`
-            INSERT INTO ${this.metaTableName} (vector_id, item_id, item_type)
-            VALUES (?, ?)
+            INSERT OR REPLACE INTO ${this.metaTableName} (vector_id, item_id, item_type)
+            VALUES (?, ?, ?)
+        `);
+
+        const deleteVec = this.db.prepare(`
+            DELETE FROM ${this.vecTableName} WHERE vector_id = ?
         `);
 
         const insertVec = this.db.prepare(`
@@ -171,16 +175,10 @@ export class VectorIndexDB implements IVectorIndexDB {
         `);
 
         const transaction = this.db.transaction(() => {
-            try {
-                insertMeta.run(record.vector_id, record.item_id, record.item_type);
-                insertVec.run(record.vector_id, vecData);
-                return true;
-            } catch (error: any) {
-                if (error.code === 'SQLITE_CONSTRAINT_PRIMARYKEY' || error.code === 'SQLITE_CONSTRAINT') {
-                    throw new Error(`Record with item_id '${record.item_id}' already exists`);
-                }
-                throw error;
-            }
+            insertMeta.run(record.vector_id, record.item_id, record.item_type);
+            deleteVec.run(record.vector_id);
+            insertVec.run(record.vector_id, vecData);
+            return true;
         });
 
         return transaction();
@@ -195,8 +193,12 @@ export class VectorIndexDB implements IVectorIndexDB {
         if (records.length === 0) return 0;
 
         const insertMeta = this.db.prepare(`
-            INSERT INTO ${this.metaTableName} (vector_id, item_id, item_type)
+            INSERT OR IGNORE INTO ${this.metaTableName} (vector_id, item_id, item_type)
             VALUES (?, ?, ?)
+        `);
+
+        const deleteVec = this.db.prepare(`
+            DELETE FROM ${this.vecTableName} WHERE vector_id = ?
         `);
 
         const insertVec = this.db.prepare(`
@@ -207,21 +209,13 @@ export class VectorIndexDB implements IVectorIndexDB {
         const insertAll = this.db.transaction((records: VectorIndexRecord[]) => {
             let count = 0;
             for (const record of records) {
-                try {
-                    this.validateDimension(record.repr);
-                    const vecData = this.toFloat32Array(record.repr);
-                    insertMeta.run(record.vector_id, record.item_id, record.item_type);
+                this.validateDimension(record.repr);
+                const vecData = this.toFloat32Array(record.repr);
+                const metaResult = insertMeta.run(record.vector_id, record.item_id, record.item_type);
+                if (metaResult.changes > 0) {
+                    deleteVec.run(record.vector_id);
                     insertVec.run(record.vector_id, vecData);
                     count++;
-                } catch (error: any) {
-                    // 跳过重复记录，继续插入其他记录
-                    if (
-                        error.code !== 'SQLITE_CONSTRAINT_PRIMARYKEY' &&
-                        error.code !== 'SQLITE_CONSTRAINT' &&
-                        !error.message?.includes('already exists')
-                    ) {
-                        throw error;
-                    }
                 }
             }
             return count;
@@ -236,59 +230,33 @@ export class VectorIndexDB implements IVectorIndexDB {
      * @returns 是否操作成功
      */
     async upsert(record: VectorIndexRecord): Promise<boolean> {
-        this.validateDimension(record.repr);
-        const vecData = this.toFloat32Array(record.repr);
+        return (await this.upsertMany([record])) > 0;
+    }
 
-        const upsertMeta = this.db.prepare(`
-            INSERT INTO ${this.metaTableName} (vector_id, item_id, item_type)
-            VALUES (?, ?, ?)
-            ON CONFLICT(vector_id) DO UPDATE SET
-                item_type = excluded.item_type
-        `);
+    async upsertMany(records: VectorIndexRecord[]): Promise<number> {
+        if (records.length === 0) return 0;
+        const vectorIds = records.map((record) => record.vector_id);
+        const placeholders = vectorIds.map(() => '?').join(', ');
+        this.db.prepare(`DELETE FROM ${this.metaTableName} WHERE vector_id IN (${placeholders})`).run(vectorIds);
+        this.db.prepare(`DELETE FROM ${this.vecTableName} WHERE vector_id IN (${placeholders})`).run(vectorIds);
+        return this.insertMany(records);
+    }
 
-        const selectVectorIds = this.db.prepare(`
-            SELECT vector_id FROM ${this.metaTableName} WHERE item_id = ?
-        `);
-
-        const insertVec = this.db.prepare(`
-            INSERT INTO ${this.vecTableName} (vector_id, repr)
-            VALUES (?, ?)
-        `);
-
-        const tempTableName = `temp_vector_ids_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
-
-        const transaction = this.db.transaction(() => {
-            // 1. 插入/更新 meta 表
-            upsertMeta.run(record.vector_id, record.item_id, record.item_type);
-
-            // 2. 查询 item_id 对应的所有 vector_id
-            const vectorRows = selectVectorIds.all(record.item_id) as Array<{ vector_id: string }>;
-
-            // 3. 构建临时表并删除所有旧 vector_id
-            this.db.exec(`CREATE TEMP TABLE ${tempTableName} (vector_id TEXT PRIMARY KEY)`);
-            const insertTemp = this.db.prepare(`INSERT INTO ${tempTableName} (vector_id) VALUES (?)`);
-            for (const row of vectorRows) {
-                insertTemp.run(row.vector_id);
-            }
-            this.db
-                .prepare(
-                    `
-                DELETE FROM ${this.vecTableName}
-                WHERE vector_id IN (SELECT vector_id FROM ${tempTableName})
-            `
-                )
-                .run();
-
-            // 4. 插入对应 vector_id 的向量
-            insertVec.run(record.vector_id, vecData);
-            return true;
-        });
-
-        try {
-            return transaction();
-        } finally {
-            this.db.exec(`DROP TABLE IF EXISTS ${tempTableName}`);
-        }
+    async updateMany(records: VectorIndexRecord[]): Promise<number> {
+        if (records.length === 0) return 0;
+        const vectorIds = records.map((record) => record.vector_id);
+        const placeholders = vectorIds.map(() => '?').join(', ');
+        const existingRows = this.db
+            .prepare(`SELECT vector_id FROM ${this.metaTableName} WHERE vector_id IN (${placeholders})`)
+            .all(vectorIds) as { vector_id: string }[];
+        const existingSet = new Set(existingRows.map((row) => row.vector_id));
+        const toUpdate = records.filter((record) => existingSet.has(record.vector_id));
+        if (toUpdate.length === 0) return 0;
+        const updateIds = toUpdate.map((record) => record.vector_id);
+        const updatePlaceholders = updateIds.map(() => '?').join(', ');
+        this.db.prepare(`DELETE FROM ${this.metaTableName} WHERE vector_id IN (${updatePlaceholders})`).run(updateIds);
+        this.db.prepare(`DELETE FROM ${this.vecTableName} WHERE vector_id IN (${updatePlaceholders})`).run(updateIds);
+        return this.insertMany(toUpdate);
     }
 
     /**
@@ -297,12 +265,16 @@ export class VectorIndexDB implements IVectorIndexDB {
      * @returns 是否删除成功
      */
     async delete(itemId: string): Promise<boolean> {
+        const selectVectorIds = this.db.prepare(`SELECT vector_id FROM ${this.metaTableName} WHERE item_id = ?`);
         const deleteMeta = this.db.prepare(`DELETE FROM ${this.metaTableName} WHERE item_id = ?`);
-        const deleteVec = this.db.prepare(`DELETE FROM ${this.vecTableName} WHERE item_id = ?`);
+        const deleteVec = this.db.prepare(`DELETE FROM ${this.vecTableName} WHERE vector_id = ?`);
 
         const transaction = this.db.transaction(() => {
+            const rows = selectVectorIds.all(itemId) as { vector_id: string }[];
+            for (const row of rows) {
+                deleteVec.run(row.vector_id);
+            }
             const metaResult = deleteMeta.run(itemId);
-            deleteVec.run(itemId);
             return metaResult.changes > 0;
         });
 
@@ -380,7 +352,7 @@ export class VectorIndexDB implements IVectorIndexDB {
 
                 sql = `
                     SELECT
-                        v.vector_id,
+                        t.item_id,
                         m.item_type,
                         ${distanceFunc}(v.repr, ?) as distance
                     FROM ${tempTableName} t
@@ -407,11 +379,7 @@ export class VectorIndexDB implements IVectorIndexDB {
             }
 
             const stmt = this.db.prepare(sql);
-            const rows = stmt.all(...params) as Array<{
-                item_id: string;
-                item_type: string;
-                distance: number;
-            }>;
+            const rows = stmt.all(...params) as Array<{ item_id: string; item_type: string; distance: number }>;
 
             // 转换为搜索结果
             const results: VectorSearchResult[] = rows.map((row) => ({
@@ -489,6 +457,14 @@ export class VectorIndexDB implements IVectorIndexDB {
         return this.dimension;
     }
 
+    async getStoredDim(): Promise<number | null> {
+        const stmt = this.db.prepare(`
+            SELECT vec_length(repr) as dim FROM ${this.vecTableName} LIMIT 1
+        `);
+        const row = stmt.get() as { dim: number } | undefined;
+        return row?.dim ?? null;
+    }
+
     /**
      * 获取数据库统计信息
      */
@@ -502,18 +478,4 @@ export class VectorIndexDB implements IVectorIndexDB {
     }
 }
 
-/**
- * 创建 VectorIndexDB 实例的工厂函数
 export default VectorIndexDB;
-
-/**
- * 工厂函数：根据当前平台自动选择 VectorIndexDB 实现
- * 平台判断逻辑内聚在数据层， indexer 不感知平台
- */
-export async function createVectorIndexDB(dbPath: string, dimension: number = 1024): Promise<IVectorIndexDB> {
-    if ((process.platform as string) === 'openharmony') {
-        const { VectorIndexDBHm } = await import('./vector-index-db-hm.js');
-        return new VectorIndexDBHm(dbPath, dimension);
-    }
-    return new VectorIndexDB(dbPath, dimension);
-}

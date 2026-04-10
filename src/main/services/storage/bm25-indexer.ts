@@ -15,8 +15,7 @@
 
 import { Indexer, IndexerSearchOptions, IndexerSearchResult } from './indexer.js';
 import { Item, FilterCondition, QueryOperator, BM25Query, ItemType, ColumnSchema } from './abstract-storage.js';
-import { createBM25IndexDB } from './bm25-index-db.js';
-import { randomUUID } from 'crypto';
+import { createBM25IndexDB } from './bm25-index-db-factory.js';
 
 export interface BM25Record {
     bm25_id: string;
@@ -43,9 +42,11 @@ export interface IBM25IndexDB {
     insert(records: BM25Record[]): Promise<void>;
     delete(itemIds: string[]): Promise<void>;
     update(records: BM25Record[]): Promise<void>;
-    flush(): Promise<void>;
+    existingItemIds(ids: string[]): Promise<Set<string>>;
+    deleteByKeys(keys: Array<{ item_id: string; item_type: string }>): Promise<void>;
     close(): void;
-    deleteAll(): Promise<void>;
+    clear(): Promise<void>;
+    count(): Promise<number>;
 }
 
 export class BM25Indexer extends Indexer {
@@ -80,7 +81,7 @@ export class BM25Indexer extends Indexer {
 
     private validateField(field: string): void {
         const indexers = this.schema.needIndexers?.[field];
-        if (!indexers || !indexers.includes(this.name)) {
+        if (!indexers || !indexers.some((b) => b.indexer === this.name)) {
             throw new Error(
                 `BM25Indexer does not support field: ${field}. ` +
                     `Field must be listed in schema.needIndexers with BM25Indexer`
@@ -98,11 +99,11 @@ export class BM25Indexer extends Indexer {
     }
 
     private resultToItem(result: BM25SearchResult, metadata?: Partial<Item>): Item {
-        const item: Item = {
+        const item = {
             item_id: result.item_id,
             item_type: result.item_type as ItemType,
             text: result.text
-        };
+        } as Item;
 
         if (metadata) {
             for (const [key, value] of Object.entries(metadata)) {
@@ -110,9 +111,27 @@ export class BM25Indexer extends Indexer {
                     item[key] = value;
                 }
             }
+            if (metadata.item_type !== undefined) {
+                item.item_type = metadata.item_type;
+            }
         }
 
         return item;
+    }
+
+    private buildRecords(items: Item[]): BM25Record[] {
+        const records: BM25Record[] = [];
+        for (const item of items) {
+            const columns = item.indexer_columns?.[this.name] as Array<{ column: string; content: string }> | undefined;
+            if (!columns || columns.length === 0) continue;
+            for (const col of columns) {
+                if (typeof col.content !== 'string') {
+                    throw new Error(`[BM25Indexer] Item ${item.item_id} column ${col.column}: text must be string`);
+                }
+                records.push(this.itemToRecord(item, col.column, `${item.item_id}_${col.column}`));
+            }
+        }
+        return records;
     }
 
     private itemToRecord(item: Item, colName: string, newId: string): BM25Record {
@@ -187,32 +206,12 @@ export class BM25Indexer extends Indexer {
     }
 
     async insert(items: Item[]): Promise<void> {
-        const records: BM25Record[] = [];
-
-        for (const item of items) {
-            const columns = item.indexer_columns?.[this.name] as Array<{ column: string; content: string }> | undefined;
-            if (!columns || columns.length === 0) {
-                console.error(`[BM25Indexer] Item ${item.item_id} does not contain indexer_columns for ${this.name}`);
-                continue;
-            }
-
-            for (const col of columns) {
-                const columnName = col.column;
-                const text = col.content;
-                if (typeof text !== 'string') {
-                    console.error(
-                        `[BM25Indexer] Item ${item.item_id} does not contain a valid text for indexer ${this.name} (${columnName})`
-                    );
-                    continue;
-                }
-
-                records.push(this.itemToRecord(item, columnName, randomUUID()));
-            }
-        }
-
-        if (records.length > 0) {
-            await this.ensureDB().insert(records);
-        }
+        if (items.length === 0) return;
+        const db = this.ensureDB();
+        const existingIds = await db.existingItemIds(items.map((i) => i.item_id));
+        const newItems = items.filter((i) => !existingIds.has(i.item_id));
+        const records = this.buildRecords(newItems);
+        if (records.length > 0) await db.insert(records);
     }
 
     async delete(itemIds: string[]): Promise<void> {
@@ -220,48 +219,33 @@ export class BM25Indexer extends Indexer {
     }
 
     async update(items: Item[]): Promise<void> {
-        const records: BM25Record[] = [];
+        if (items.length === 0) return;
+        const db = this.ensureDB();
+        const existingIds = await db.existingItemIds(items.map((i) => i.item_id));
+        const toUpdate = items.filter((i) => existingIds.has(i.item_id));
+        const records = this.buildRecords(toUpdate);
+        if (records.length > 0) await db.update(records);
+    }
 
-        for (const item of items) {
-            const columns = item.indexer_columns?.[this.name] as Array<{ column: string; content: string }> | undefined;
-            if (!columns || columns.length === 0) {
-                console.error(`[BM25Indexer] Item ${item.item_id} does not contain indexer_columns for ${this.name}`);
-                continue;
-            }
-
-            for (const col of columns) {
-                const columnName = col.column;
-                const text = col.content;
-                if (typeof text !== 'string') {
-                    console.error(
-                        `[BM25Indexer] Item ${item.item_id} does not contain a valid text for indexer ${this.name} (${columnName})`
-                    );
-                    continue;
-                }
-
-                records.push(this.itemToRecord(item, columnName, randomUUID()));
-            }
-        }
-
-        if (records.length > 0) {
-            await this.ensureDB().update(records);
-        }
+    async upsert(items: Item[]): Promise<void> {
+        if (items.length === 0) return;
+        const db = this.ensureDB();
+        const records = this.buildRecords(items);
+        await db.deleteByKeys(records.map((record) => ({ item_id: record.item_id, item_type: record.item_type })));
+        if (records.length > 0) await db.insert(records);
     }
 
     close(): void {
         this.db?.close();
     }
 
-    async flush(): Promise<void> {
-        await this.ensureDB().flush();
+    async clear(): Promise<void> {
+        await this.ensureDB().clear();
     }
 
-    getDB(): IBM25IndexDB {
-        return this.ensureDB();
-    }
-
-    async deleteAll(): Promise<void> {
-        await this.ensureDB().deleteAll();
+    async getInfo(): Promise<Record<string, any>> {
+        const size = await this.ensureDB().count();
+        return { size };
     }
 }
 

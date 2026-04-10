@@ -25,10 +25,10 @@ import {
     VectorQuery,
     ItemType,
     ColumnSchema,
-    SimilarityMetric
+    SimilarityMetric,
+    DimMismatchError
 } from './abstract-storage.js';
-import { createVectorIndexDB } from './vector-index-db.js';
-import { randomUUID } from 'crypto';
+import { createVectorIndexDB } from './vector-index-db-factory.js';
 
 // 向量索引记录接口 - 保持语义最小化
 export interface VectorIndexRecord {
@@ -64,6 +64,8 @@ export interface IVectorIndexDB {
     insert(record: VectorIndexRecord): Promise<boolean>;
     insertMany(records: VectorIndexRecord[]): Promise<number>;
     upsert(record: VectorIndexRecord): Promise<boolean>;
+    upsertMany(records: VectorIndexRecord[]): Promise<number>;
+    updateMany(records: VectorIndexRecord[]): Promise<number>;
     delete(itemId: string): Promise<boolean>;
     deleteMany(itemIds: string[]): Promise<number>;
     search(
@@ -77,6 +79,7 @@ export interface IVectorIndexDB {
     transaction<T>(fn: () => Promise<T>): Promise<T>;
     close(): void;
     getDimension(): number;
+    getStoredDim(): Promise<number | null>;
 }
 
 /**
@@ -104,9 +107,12 @@ export class VectorIndexer extends Indexer {
     private readonly dimension: number;
     private schema: ColumnSchema;
 
-    constructor(schema: ColumnSchema, dbPath: string, dimension: number = 1024) {
+    constructor(schema: ColumnSchema, dbPath: string, options?: Record<string, any>) {
         super();
-        this.dimension = dimension;
+        const validKeys = ['dim'];
+        const unknown = Object.keys(options ?? {}).filter((k) => !validKeys.includes(k));
+        if (unknown.length > 0) throw new Error(`VectorIndexer: unknown options: ${unknown}`);
+        this.dimension = typeof options?.dim === 'number' ? options.dim : 1024;
         this.schema = schema;
         this._dbPath = dbPath;
     }
@@ -117,6 +123,11 @@ export class VectorIndexer extends Indexer {
     async initialize(): Promise<void> {
         if (!this.db) {
             this.db = await createVectorIndexDB(this._dbPath, this.dimension);
+        }
+        // Check stored dim matches configured dim
+        const storedDim = await this.db.getStoredDim();
+        if (storedDim !== null && storedDim !== this.dimension) {
+            throw new DimMismatchError(storedDim, this.dimension);
         }
     }
 
@@ -142,7 +153,7 @@ export class VectorIndexer extends Indexer {
      */
     private validateField(field: string): void {
         const indexers = this.schema.needIndexers?.[field];
-        if (!indexers || !indexers.includes(this.name)) {
+        if (!indexers || !indexers.some((b) => b.indexer === this.name)) {
             throw new Error(
                 `VectorIndexer does not support field: ${field}. ` +
                     `Field must be listed in schema.needIndexers with VectorIndexer`
@@ -170,10 +181,9 @@ export class VectorIndexer extends Indexer {
      * 如果有 existingResults，从中获取完整元数据
      */
     private resultToItem(result: { item_id: string; item_type: string }, metadata?: Partial<Item>): Item {
-        const item: Item = {
-            item_id: result.item_id,
-            item_type: result.item_type as ItemType
-        };
+        const item = {
+            item_id: result.item_id
+        } as Item;
         // 从 metadata 复制所有额外字段
         if (metadata) {
             for (const [key, value] of Object.entries(metadata)) {
@@ -181,8 +191,35 @@ export class VectorIndexer extends Indexer {
                     item[key] = value;
                 }
             }
+            if (metadata.item_type !== undefined) {
+                item.item_type = metadata.item_type;
+            }
         }
         return item;
+    }
+
+    private buildRecords(items: Item[]): VectorIndexRecord[] {
+        const records: VectorIndexRecord[] = [];
+        for (const item of items) {
+            const columns = item.indexer_columns?.[this.name] as
+                | Array<{ column: string; content: string | number[] }>
+                | undefined;
+            if (!columns || columns.length === 0) continue;
+            for (const col of columns) {
+                const repr = col.content;
+                const validRepr =
+                    Array.isArray(repr) && repr.length === this.dimension && repr.every((v) => typeof v === 'number');
+                if (!validRepr) {
+                    throw new Error(
+                        `[VectorIndexer] Item ${item.item_id} has invalid repr for column ${col.column}: expected number[] of length ${this.dimension}`
+                    );
+                }
+                const stableId = `${item.item_id}_${col.column}`;
+                const record = this.itemToRecord(item, col.column, repr as number[], stableId);
+                if (record) records.push(record);
+            }
+        }
+        return records;
     }
 
     /**
@@ -306,34 +343,7 @@ export class VectorIndexer extends Indexer {
      * 向索引中插入 Item
      */
     async insert(items: Item[]): Promise<void> {
-        const records: VectorIndexRecord[] = [];
-        for (const item of items) {
-            const columns = item.indexer_columns?.[this.name] as
-                | Array<{ column: string; content: string | number[] }>
-                | undefined;
-            if (!columns || columns.length === 0) {
-                console.error(`[VectorIndexer] Item ${item.item_id} does not contain indexer_columns for ${this.name}`);
-                continue;
-            }
-
-            for (const col of columns) {
-                const columnName = col.column;
-                const repr = col.content;
-                const validRepr =
-                    Array.isArray(repr) && repr.length === this.dimension && repr.every((v) => typeof v === 'number');
-                if (!validRepr) {
-                    console.error(
-                        `[VectorIndexer] Item ${item.item_id} does not contain a valid repr for indexer ${this.name} (${columnName})`
-                    );
-                    continue;
-                }
-
-                const record = this.itemToRecord(item, columnName, repr as number[], randomUUID());
-                if (record) {
-                    records.push(record);
-                }
-            }
-        }
+        const records = this.buildRecords(items);
         if (records.length > 0) {
             await this.ensureDB().insertMany(records);
         }
@@ -350,33 +360,13 @@ export class VectorIndexer extends Indexer {
      * 更新索引中的 Item
      */
     async update(items: Item[]): Promise<void> {
-        for (const item of items) {
-            const columns = item.indexer_columns?.[this.name] as
-                | Array<{ column: string; content: string | number[] }>
-                | undefined;
-            if (!columns || columns.length === 0) {
-                console.error(`[VectorIndexer] Item ${item.item_id} does not contain indexer_columns for ${this.name}`);
-                continue;
-            }
+        const records = this.buildRecords(items);
+        if (records.length > 0) await this.ensureDB().updateMany(records);
+    }
 
-            for (const col of columns) {
-                const columnName = col.column;
-                const repr = col.content;
-                const validRepr =
-                    Array.isArray(repr) && repr.length === this.dimension && repr.every((v) => typeof v === 'number');
-                if (!validRepr) {
-                    console.error(
-                        `[VectorIndexer] Item ${item.item_id} does not contain a valid repr for indexer ${this.name} (${columnName})`
-                    );
-                    continue;
-                }
-
-                const record = this.itemToRecord(item, columnName, repr as number[], randomUUID());
-                if (record) {
-                    await this.ensureDB().upsert(record);
-                }
-            }
-        }
+    async upsert(items: Item[]): Promise<void> {
+        const records = this.buildRecords(items);
+        if (records.length > 0) await this.ensureDB().upsertMany(records);
     }
 
     /**
@@ -387,25 +377,31 @@ export class VectorIndexer extends Indexer {
     }
 
     /**
-     * 获取底层 VectorIndexDB 实例（用于高级操作）
-     */
-    getDB(): IVectorIndexDB {
-        return this.ensureDB();
-    }
-
-    /**
      * 获取向量维度
      */
     getDimension(): number {
         return this.dimension;
+    }
+
+    async clear(): Promise<void> {
+        await this.ensureDB().clear();
+    }
+
+    async getInfo(): Promise<Record<string, any>> {
+        const size = await this.ensureDB().count();
+        return { size, dim: this.dimension };
     }
 }
 
 /**
  * 创建 VectorIndexer 实例的工厂函数
  */
-export function createVectorIndexer(schema: ColumnSchema, dbPath: string, dimension: number = 1024): VectorIndexer {
-    return new VectorIndexer(schema, dbPath, dimension);
+export function createVectorIndexer(
+    schema: ColumnSchema,
+    dbPath: string,
+    options?: Record<string, any>
+): VectorIndexer {
+    return new VectorIndexer(schema, dbPath, options);
 }
 
 export default VectorIndexer;
