@@ -1227,7 +1227,8 @@ export class TaskManagerState {
         const taskDirectory = getTaskDirectory();
         const taskListFile = path.join(taskDirectory, 'task_list.json');
         if (!fs.existsSync(taskListFile)) {
-            return null;
+            logger.info('task_list.json not found, attempting to rebuild from task files...');
+            return TaskManagerState.rebuildTaskListFromDirectory();
         }
 
         const taskManagerState = new TaskManagerState();
@@ -1249,6 +1250,53 @@ export class TaskManagerState {
             }
         }
         return taskManagerState.tasks.length > 0 ? taskManagerState : null;
+    }
+
+    /**
+     * 从任务目录中扫描所有任务 JSON 文件，重建 task_list.json。
+     * 用于 task_list.json 丢失后的自动恢复以及 /recover tasks 命令。
+     * @returns 重建后的 TaskManagerState，若无有效任务文件则返回 null
+     */
+    static rebuildTaskListFromDirectory(): TaskManagerState | null {
+        const taskDirectory = getTaskDirectory();
+        let files: string[];
+        try {
+            files = fs.readdirSync(taskDirectory);
+        } catch {
+            return null;
+        }
+
+        const taskManagerState = new TaskManagerState();
+
+        for (const file of files) {
+            if (!file.endsWith('.json') || file === 'task_list.json') {
+                continue;
+            }
+
+            const filePath = path.join(taskDirectory, file);
+            try {
+                const task = TaskState.load(filePath, taskManagerState);
+                taskManagerState.tasks.push(task);
+                logger.info(`recovered task: ${task.task_id} (${task.task_name ?? 'unnamed'})`);
+            } catch (err) {
+                logger.warn(`skipping unrecoverable task file ${file}: ${err}`);
+                continue;
+            }
+        }
+
+        if (taskManagerState.tasks.length === 0) {
+            return null;
+        }
+
+        taskManagerState.tasks.sort((a, b) => {
+            const aTime = a.started_at?.getTime() ?? 0;
+            const bTime = b.started_at?.getTime() ?? 0;
+            return aTime - bTime;
+        });
+
+        taskManagerState.save();
+        logger.info(`task list rebuilt: ${taskManagerState.tasks.length} task(s) recovered`);
+        return taskManagerState;
     }
 
     save(): void {
