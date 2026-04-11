@@ -62,10 +62,24 @@ export class ReasoningMessagePart {
     source: 'reasoning_content' | 'think_tag';
     /** cached render result of the reasoning */
     rendered?: string;
+    private _frozen!: boolean;
 
     constructor(content: string, source: 'reasoning_content' | 'think_tag') {
         this.content = content;
         this.source = source;
+        Object.defineProperty(this, '_frozen', { value: false, writable: true, enumerable: false });
+    }
+
+    /** 流式追加内容时调用，清除已缓存的渲染结果 */
+    invalidateRender(): void {
+        if (!this._frozen) {
+            this.rendered = undefined;
+        }
+    }
+
+    /** 冻结渲染缓存 */
+    freezeRender(): void {
+        this._frozen = true;
     }
 
     async render() {
@@ -91,7 +105,9 @@ export class ReasoningMessagePart {
 
     static assign(reasoning_message_part_obj: object): ReasoningMessagePart {
         Object.setPrototypeOf(reasoning_message_part_obj, ReasoningMessagePart.prototype);
-        return reasoning_message_part_obj as ReasoningMessagePart;
+        const part = reasoning_message_part_obj as ReasoningMessagePart;
+        Object.defineProperty(part, '_frozen', { value: false, writable: true, enumerable: false });
+        return part;
     }
 }
 
@@ -531,9 +547,12 @@ export class TextMessagePart {
     type: 'text' = 'text';
     text: string;
     rendered?: string;
+    /** 标记 rendered 是否已冻结（流式结束后冻结，避免重复渲染） */
+    private _frozen!: boolean;
 
     constructor(text: string) {
         this.text = text;
+        Object.defineProperty(this, '_frozen', { value: false, writable: true, enumerable: false });
     }
 
     toOpenAIMessagePart(): object {
@@ -542,7 +561,21 @@ export class TextMessagePart {
 
     static assign(text_message_part_obj: object): TextMessagePart {
         Object.setPrototypeOf(text_message_part_obj, TextMessagePart.prototype);
-        return text_message_part_obj as TextMessagePart;
+        const part = text_message_part_obj as TextMessagePart;
+        Object.defineProperty(part, '_frozen', { value: false, writable: true, enumerable: false });
+        return part;
+    }
+
+    /** 流式追加文本时调用，清除已缓存的渲染结果以便下次 render() 重新生成 */
+    invalidateRender(): void {
+        if (!this._frozen) {
+            this.rendered = undefined;
+        }
+    }
+
+    /** 冻结渲染缓存，流式结束后调用以启用永久缓存 */
+    freezeRender(): void {
+        this._frozen = true;
     }
 
     async render(): Promise<string> {
@@ -804,6 +837,7 @@ export class UserMessage {
         const last_part = this.content[this.content.length - 1];
         if (last_part && last_part.type === 'text') {
             last_part.text += text;
+            last_part.invalidateRender();
         } else {
             this.content.push(new TextMessagePart(text));
         }
@@ -983,6 +1017,7 @@ export class AssistantMessage {
         const last_part = this.content[this.content.length - 1];
         if (last_part && last_part.type === 'reasoning' && last_part.source === source) {
             last_part.content += content;
+            last_part.invalidateRender();
         } else {
             this.content.push(new ReasoningMessagePart(content, source));
         }
@@ -1010,6 +1045,7 @@ export class AssistantMessage {
         const last_part = this.content[this.content.length - 1];
         if (last_part && last_part.type === 'text') {
             last_part.text += text;
+            last_part.invalidateRender();
         } else {
             this.content.push(new TextMessagePart(text));
         }
@@ -1019,6 +1055,7 @@ export class AssistantMessage {
         const last_part = this.content[this.content.length - 1];
         if (last_part && last_part.type === 'reasoning') {
             last_part.content += text;
+            last_part.invalidateRender();
         } else {
             this.content.push(new ReasoningMessagePart(text, 'think_tag'));
         }
@@ -1040,6 +1077,7 @@ export class AssistantMessage {
 
         if (beforeThink.trim().length > 0) {
             last_part.text = beforeThink;
+            last_part.invalidateRender();
         } else {
             this.content.pop();
         }
@@ -1067,6 +1105,7 @@ export class AssistantMessage {
         const afterClose = last_part.content.substring(closeIdx + '</think>'.length);
 
         last_part.content = reasoningText;
+        last_part.invalidateRender();
         this._insideThinkTag = false;
 
         if (afterClose.trim().length > 0) {

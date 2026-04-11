@@ -34,6 +34,15 @@ function exposeTaskManagerAPI() {
                 throw new Error(result.message);
             }
         },
+        forkTask: async (taskId) => {
+            const result = await ipcRenderer.invoke('taskManager:forkTask', taskId);
+            if (result.status === 'ok') {
+                return result.data;
+            } else {
+                console.error('forking task failed', result.message);
+                throw new Error(result.message);
+            }
+        },
         clearAllTasks: async () => {
             const result = await ipcRenderer.invoke('taskManager:clearAllTasks');
             if (result.status !== 'ok') {

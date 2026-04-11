@@ -244,6 +244,14 @@ const registerTaskManagerAPIHandlers = () => {
         globalState.taskManagerState.removeTask(taskId);
         return { status: 'ok', data: task.task_id };
     });
+    ipcMain.handle('taskManager:forkTask', (event, taskId) => {
+        const task = globalState.taskManagerState.getTask(taskId);
+        if (task === undefined) {
+            return { status: 'error', message: `task ${taskId} not found` };
+        }
+        const forkedTask = task.fork();
+        return { status: 'ok', data: forkedTask.task_id };
+    });
     ipcMain.handle('taskManager:clearAllTasks', () => {
         globalState.taskManagerState.clearAllTasks();
         return { status: 'ok' };

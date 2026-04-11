@@ -169,6 +169,15 @@ export async function startWebServer(port = 3001) {
                 }
                 globalState.taskManagerState.removeTask(body.taskId);
                 sendJSON(res, { status: 'ok', data: task.task_id });
+            } else if (pathname === '/api/taskManager/forkTask' && req.method === 'POST') {
+                const body = await parseBody(req);
+                const task = globalState.taskManagerState.getTask(body.taskId);
+                if (!task) {
+                    sendJSON(res, { status: 'error', message: `task ${body.taskId} not found` });
+                    return;
+                }
+                const forkedTask = task.fork();
+                sendJSON(res, { status: 'ok', data: forkedTask.task_id });
             } else if (pathname === '/api/taskManager/clearAllTasks' && req.method === 'POST') {
                 globalState.taskManagerState.clearAllTasks();
                 sendJSON(res, { status: 'ok' });

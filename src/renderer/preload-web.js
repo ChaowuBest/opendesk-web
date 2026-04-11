@@ -97,6 +97,11 @@
             if (result.status === 'ok') return result.data;
             throw new Error(result.message);
         },
+        forkTask: async (taskId) => {
+            const result = await apiPost('/api/taskManager/forkTask', { taskId });
+            if (result.status === 'ok') return result.data;
+            throw new Error(result.message);
+        },
         clearAllTasks: async () => {
             const result = await apiPost('/api/taskManager/clearAllTasks');
             if (result.status !== 'ok') throw new Error(result.message);
