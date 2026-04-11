@@ -257,6 +257,29 @@ export class Setting {
     }
 }
 
+/** 用户通过 --config-directory 指定的自定义配置目录（主线程生效） */
+let customAppDirectory: string | undefined;
+
+/**
+ * 设置自定义应用数据目录（由 CLI --config-directory 选项调用）
+ */
+function setCustomAppDirectory(dir: string): void {
+    customAppDirectory = path.resolve(dir);
+}
+
+/**
+ * 获取默认的应用数据目录路径（不创建目录），供 CLI help 提示使用
+ */
+function getDefaultAppDirectory(): string {
+    if (process.env.APPDATA) {
+        return path.join(process.env.APPDATA, 'opendesk');
+    } else if (process.env.HOME) {
+        return path.join(process.env.HOME, '.opendesk');
+    } else {
+        return '<unknown>';
+    }
+}
+
 /**
  * 获取应用数据目录
  */
@@ -266,7 +289,9 @@ function getAppDirectory(): string {
     }
 
     let userDataPath = '';
-    if (process.env.APPDATA) {
+    if (customAppDirectory) {
+        userDataPath = customAppDirectory;
+    } else if (process.env.APPDATA) {
         userDataPath = path.join(process.env.APPDATA, 'opendesk');
     } else if (process.env.HOME) {
         userDataPath = path.join(process.env.HOME, '.opendesk');
@@ -347,6 +372,8 @@ function getTaskToolResultDirectory(taskId: string, ensureExists: boolean = true
 
 export {
     getAppDirectory,
+    getDefaultAppDirectory,
+    setCustomAppDirectory,
     getLogDirectory,
     getTaskDirectory,
     getArtifactDirectory,

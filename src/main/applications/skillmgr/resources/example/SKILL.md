@@ -3,24 +3,24 @@ name: example
 description: 示例技能，用于测试本地端侧 Agent Skills 发现与调用。可回显输入或返回当前时间。
 license: MIT
 metadata:
-  version: "1.0.0"
-  author: FillipDesk
-# FillipDesk 扩展：配置后主进程会执行并返回结果；不配置则仅返回下方正文供模型参考
+    version: '1.0.0'
+    author: OpenDesk
+# OpenDesk 扩展：配置后主进程会执行并返回结果；不配置则仅返回下方正文供模型参考
 fillipdesk:
-  handler:
-    type: module
-    path: handler.js
-  input_schema:
-    type: object
-    properties:
-      action:
-        type: string
-        enum: [echo, time]
-        description: 执行动作，echo=回显输入，time=返回当前时间
-      message:
-        type: string
-        description: 当 action 为 echo 时的要回显的文本
-    required: []
+    handler:
+        type: module
+        path: handler.js
+    input_schema:
+        type: object
+        properties:
+            action:
+                type: string
+                enum: [echo, time]
+                description: 执行动作，echo=回显输入，time=返回当前时间
+            message:
+                type: string
+                description: 当 action 为 echo 时的要回显的文本
+        required: []
 ---
 
 # 示例技能说明

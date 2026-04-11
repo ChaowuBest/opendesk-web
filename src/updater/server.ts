@@ -352,7 +352,7 @@ export class UpdateServer {
  * 打印帮助信息
  */
 function printHelp(): void {
-    console.log('FillipDesk 更新服务器');
+    console.log('OpenDesk 更新服务器');
     console.log('');
     console.log('用法:');
     console.log('  tsx src/updater/server.ts [选项] --directory <directory>');

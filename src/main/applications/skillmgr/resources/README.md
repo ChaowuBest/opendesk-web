@@ -31,7 +31,7 @@ name: example
 description: 示例技能，用于测试本地端侧 Agent Skills 发现与调用。
 license: MIT
 metadata:
-  version: "1.0.0"
+    version: '1.0.0'
 ---
 ```
 
@@ -48,21 +48,21 @@ metadata:
 
 因此无需在发现阶段加载全文；模型在“需要该技能时”调用 tool，即可获得完整说明与参考文档、脚本列表，便于按步骤执行或调用脚本。
 
-## FillipDesk 扩展（可选执行）
+## OpenDesk 扩展（可选执行）
 
 未配置执行器时，主进程调用技能会返回上述渐进式加载的完整内容。若需“执行并返回结果”，可在 frontmatter 中增加 `fillipdesk` 扩展：
 
 ```yaml
 fillipdesk:
-  handler:
-    type: module   # 或 script / url
-    path: handler.js   # 相对技能目录
-  input_schema:        # 可选，定义 tool 参数（JSON Schema）
-    type: object
-    properties:
-      action: { type: string, enum: [echo, time] }
-      message: { type: string }
-    required: []
+    handler:
+        type: module # 或 script / url
+        path: handler.js # 相对技能目录
+    input_schema: # 可选，定义 tool 参数（JSON Schema）
+        type: object
+        properties:
+            action: { type: string, enum: [echo, time] }
+            message: { type: string }
+        required: []
 ```
 
 - **handler.type = module**：动态 import `path` 指向的模块，需导出 `execute(input, args, skillContext?) => Promise<string>`
@@ -77,8 +77,8 @@ fillipdesk:
 
 ```js
 export async function execute(input, args, skillContext) {
-  // input: 可选任务/输入摘要；args: input_schema 解析后的参数
-  // skillContext: { skillDir, body, frontmatter, resources: { referencesSections, scriptsList, assetsList } }
-  return "结果文本";
+    // input: 可选任务/输入摘要；args: input_schema 解析后的参数
+    // skillContext: { skillDir, body, frontmatter, resources: { referencesSections, scriptsList, assetsList } }
+    return '结果文本';
 }
 ```

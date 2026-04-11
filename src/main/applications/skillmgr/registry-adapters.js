@@ -96,7 +96,7 @@ async function fetchSkillsMP(endpoint, opts = {}) {
     const { query = '', page = 1, limit = 20, apiKey, timeout = 15000 } = opts;
     if (!apiKey || !apiKey.trim()) {
         throw new Error(
-            'SkillsMP 需配置 API Key。请在 FillipDesk「设置」→ 应用配置 → Skills 中填写并保存后重试。获取 Key：https://skillsmp.com/auth/login'
+            'SkillsMP 需配置 API Key。请在 OpenDesk「设置」→ 应用配置 → Skills 中填写并保存后重试。获取 Key：https://skillsmp.com/auth/login'
         );
     }
     const params = new URLSearchParams({

@@ -10,7 +10,7 @@
  */
 
 /**
- * 示例技能执行器（Anthropic Agent Skills + FillipDesk 扩展）
+ * 示例技能执行器（Anthropic Agent Skills + OpenDesk 扩展）
  * 主进程通过 SkillRegistry 动态 import 并调用 execute(input, args)
  * @param {string} input - 可选任务/输入摘要（来自 tool 参数 input）
  * @param {object} args - 已解析的完整参数（含 input_schema 中定义的 action、message 等）

@@ -19,7 +19,7 @@ import { GlobalState } from './aikernel/states/global.js';
 import { FULL_CLEAR } from './tui/components/constants';
 import { OpenDeskTUI, CommandLineArgs } from './tui/entry.js';
 import { HeadlessRunner } from './tui/headless.js';
-import { Setting } from './utils/setting';
+import { Setting, getDefaultAppDirectory, setCustomAppDirectory } from './utils/setting';
 import { program as prog } from 'commander';
 import { listInstalledPlugins, loadPlugins } from './aikernel/plugins/index.js';
 import { ChannelMgrApplication } from './applications/channelmgr/app.js';
@@ -46,6 +46,11 @@ function parseCommandLineArgs() {
     prog.option('--headless', 'run in headless mode (no TUI, requires -c)');
     prog.option('--profile <path>', 'write performance profile to specified JSON file', (v) => v);
     prog.option('--allow-everything', 'bypass all permission checks (auto-allow everything)');
+    prog.option(
+        '--config-directory <path>',
+        `specify custom config directory (default: ${getDefaultAppDirectory()})`,
+        (v) => v
+    );
     prog.option('-v, --version', 'print the version');
 
     registerPluginsCommand(prog);
@@ -113,6 +118,10 @@ function parseCommandLineArgs() {
             const version = await getCurrentVersion();
             console.log(version ?? 'unknown');
             process.exit(0);
+        }
+
+        if (kwargs.configDirectory) {
+            setCustomAppDirectory(kwargs.configDirectory);
         }
 
         const workspacePath = path.resolve(workspace);

@@ -11,6 +11,7 @@
         "start": "run-script-os",
         "start:win32": "chcp 65001 && electron-vite dev",
         "start:darwin": "electron-vite dev",
+        "start-debug": "tsx scripts/start-debug.ts",
         "build": "electron-vite build",
         "package": "run-script-os",
         "package:win32": "npm run build && electron-forge package --platform=win32",

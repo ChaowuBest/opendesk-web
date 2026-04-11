@@ -69,6 +69,9 @@ export class ReasoningMessagePart {
     }
 
     async render() {
+        if (this.rendered !== undefined) {
+            return this.rendered;
+        }
         this.rendered = this.content;
     }
 
@@ -79,6 +82,13 @@ export class ReasoningMessagePart {
      * @param reasoning_message_part_obj - The object to assign the prototype to
      * @returns The assigned reasoning message part
      */
+    toRenderJSON(): object {
+        return {
+            type: this.type,
+            rendered: this.rendered
+        };
+    }
+
     static assign(reasoning_message_part_obj: object): ReasoningMessagePart {
         Object.setPrototypeOf(reasoning_message_part_obj, ReasoningMessagePart.prototype);
         return reasoning_message_part_obj as ReasoningMessagePart;
@@ -144,6 +154,17 @@ export class ToolCall {
     toJSON(): object {
         const { tool, ...rest } = this as ToolCall & { tool?: BaseTool<any> };
         return rest;
+    }
+
+    /** 仅包含前端渲染所需的字段，排除 args_string / result 等大字段 */
+    toRenderJSON(): object {
+        return {
+            index: this.index,
+            id: this.id,
+            tool_name: this.tool_name,
+            status: this.status,
+            rendered: this.rendered
+        };
     }
 
     static normalizeResultStorage(
@@ -412,6 +433,14 @@ export class ToolCallMessagePart {
         return this.rendered;
     }
 
+    toRenderJSON(): object {
+        return {
+            type: this.type,
+            rendered: this.rendered,
+            toolcalls: this.toolcalls.map((tc) => tc.toRenderJSON())
+        };
+    }
+
     static assign(tool_call_message_part_obj: any) {
         Object.setPrototypeOf(tool_call_message_part_obj, ToolCallMessagePart.prototype);
         for (const toolcall of tool_call_message_part_obj.toolcalls) {
@@ -440,6 +469,9 @@ export class FileMessagePart {
     }
 
     async render(): Promise<string> {
+        if (this.rendered !== undefined) {
+            return this.rendered;
+        }
         this.rendered = `
         <div class="flex items-center group cursor-pointer w-fit min-w-[280px] max-w-sm
             bg-white/70 backdrop-blur-xl
@@ -481,6 +513,14 @@ export class FileMessagePart {
         return this.rendered;
     }
 
+    toRenderJSON(): object {
+        return {
+            type: this.type,
+            path: this.path,
+            rendered: this.rendered
+        };
+    }
+
     static assign(file_message_part_obj: object): FileMessagePart {
         Object.setPrototypeOf(file_message_part_obj, FileMessagePart.prototype);
         return file_message_part_obj as FileMessagePart;
@@ -506,8 +546,18 @@ export class TextMessagePart {
     }
 
     async render(): Promise<string> {
+        if (this.rendered !== undefined) {
+            return this.rendered;
+        }
         this.rendered = await marked.parse(this.text);
         return this.rendered;
+    }
+
+    toRenderJSON(): object {
+        return {
+            type: this.type,
+            rendered: this.rendered
+        };
     }
 }
 
@@ -527,6 +577,9 @@ export class ErrorMessagePart {
     }
 
     async render(): Promise<string> {
+        if (this.rendered !== undefined) {
+            return this.rendered;
+        }
         this.rendered = `
         <div class="flex flex-col mt-3 mb-3 text-sm bg-rose-50/80 backdrop-blur-md border border-rose-200 py-3 px-4 rounded-2xl shadow-sm w-fit min-w-[280px] max-w-2xl">
             <div class="flex items-center space-x-2 mb-2">
@@ -536,6 +589,13 @@ export class ErrorMessagePart {
             <div class="text-xs text-slate-600 whitespace-pre-wrap">${this.message}</div>
         </div>`;
         return this.rendered;
+    }
+
+    toRenderJSON(): object {
+        return {
+            type: this.type,
+            rendered: this.rendered
+        };
     }
 
     static assign(obj: object): ErrorMessagePart {
@@ -558,8 +618,18 @@ export class ImageMessagePart {
     }
 
     async render(): Promise<string> {
+        if (this.rendered !== undefined) {
+            return this.rendered;
+        }
         this.rendered = `<img src="${this.image_url.url}" alt="image" />`;
         return this.rendered;
+    }
+
+    toRenderJSON(): object {
+        return {
+            type: this.type,
+            rendered: this.rendered
+        };
     }
 
     static assign(image_message_part_obj: object): ImageMessagePart {
@@ -791,6 +861,15 @@ export class UserMessage {
         }
     }
 
+    toRenderJSON(): object {
+        return {
+            role: this.role,
+            message_id: this.message_id,
+            internal: this.internal,
+            content: this.content.map((part) => part.toRenderJSON())
+        };
+    }
+
     toOpenAIMessage(supportsVision: boolean = true): object {
         const parts = supportsVision ? this.content : this.content.filter((part) => part.type !== 'image_url');
 
@@ -856,6 +935,15 @@ export class AssistantMessage {
         for (const part of this.content) {
             await part.render();
         }
+    }
+
+    toRenderJSON(): object {
+        return {
+            role: this.role,
+            message_id: this.message_id,
+            usage: this.usage,
+            content: this.content.map((part) => part.toRenderJSON())
+        };
     }
 
     /**
@@ -1389,6 +1477,12 @@ export class CompactSeparatorMessage {
     async render(): Promise<void> {
         /* 渲染在 TUI/GUI 层处理 */
     }
+
+    toRenderJSON(): object {
+        return {
+            role: this.role
+        };
+    }
 }
 
 export function isCompactBoundaryMessage(message: unknown): message is CompactSeparatorMessage {
@@ -1435,6 +1529,12 @@ export class ChatContext {
         return {
             system_prompt: this.system_prompt,
             messages: this.messages
+        };
+    }
+
+    toRenderJSON(): object {
+        return {
+            messages: this.messages.map((m) => m.toRenderJSON())
         };
     }
 

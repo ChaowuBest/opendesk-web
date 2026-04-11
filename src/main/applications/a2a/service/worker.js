@@ -20,6 +20,7 @@ import { ClientFactory } from '@a2a-js/sdk/client';
 import { randomUUID } from 'crypto';
 import { A2UIToHTMLConverter } from '../../../services/a2ui/a2ui-to-html.js';
 import { isJSON, jsonToHTML } from '../../../services/a2ui/json-to-html.js';
+import { Setting } from '../../../utils/setting.js';
 
 // 硬编码的服务器地址
 const GATEWAY_URL = 'http://1.92.70.52:8080';
@@ -46,7 +47,6 @@ class A2AWorker extends BaseWorker {
             return null;
         }
 
-        const { Setting } = await import('../../../utils/setting.js');
         const modelInstance = Setting.getInstance().getModelInstance(this.config.default_a2a_model.trim());
 
         if (!modelInstance) {

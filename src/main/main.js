@@ -225,7 +225,14 @@ const registerTaskManagerAPIHandlers = () => {
     ipcMain.handle('taskManager:createTask', async () => {
         const task = globalState.taskManagerState.createTask();
         const agentDecl = new MainAgentDecl();
-        task.setSystemPrompt(await agentDecl.createSystemPrompt());
+        agentDecl
+            .createSystemPrompt()
+            .then((prompt) => {
+                task.setSystemPrompt(prompt);
+            })
+            .catch((err) => {
+                logger.error('failed to create system prompt', err);
+            });
         return { status: 'ok', data: task.task_id };
     });
     ipcMain.handle('taskManager:removeTask', (event, taskId) => {
@@ -248,7 +255,7 @@ const registerTaskManagerAPIHandlers = () => {
         }
 
         await task.render();
-        return { status: 'ok', data: task.toJSON() };
+        return { status: 'ok', data: task.toRenderJSON() };
     });
     ipcMain.handle('taskManager:subscribeTaskUpdate', (event, taskId) => {
         const task = globalState.taskManagerState.getTask(taskId);
@@ -576,7 +583,7 @@ const registerTray = () => {
     ]);
 
     globalTray = new Tray(icon);
-    globalTray.setToolTip('Fillip Desk | 弹指神通');
+    globalTray.setToolTip('OpenDesk | 一站式智慧办公空间');
     globalTray.setContextMenu(menu);
     globalTray.on('click', () => {
         globalMainWindow.show();
