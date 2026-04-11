@@ -11,6 +11,8 @@
 
 import './statustags';
 
+const TASK_PAGE_SIZE = 30;
+
 class SideBar extends HTMLElement {
     constructor() {
         super();
@@ -21,6 +23,12 @@ class SideBar extends HTMLElement {
          */
         this.currentTaskId = null;
         this.taskList = [];
+        /** 当前已显示的根任务数量（子任务不计入） */
+        this._displayedRootCount = 0;
+        /** 是否正在加载更多 */
+        this._loadingMore = false;
+        /** 完整渲染列表的缓存 */
+        this._fullRenderList = [];
     }
 
     connectedCallback() {
@@ -53,7 +61,7 @@ class SideBar extends HTMLElement {
         this.querySelector('#open-home-btn').addEventListener('click', () => {
             this.currentTaskId = null;
             window.globalControlAPI.openHomePage();
-            this.reloadTaskList();
+            this._updateTaskHighlight();
         });
         this.querySelector('#open-memory-btn').addEventListener('click', () => {
             // window.globalControlAPI.openMemory();
@@ -82,9 +90,9 @@ class SideBar extends HTMLElement {
 
         <div class="h-full flex flex-col" x-data="{ showApps: false }">
             <header class="py-2 px-1 flex flex-row items-start flex-shrink-0">
-                <img src="./images/icon_round.png" alt="Fillip Desk Icon" class="w-12 h-12 mr-3"/>
+                <img src="./images/icon_round.png" alt="OpenDesk Icon" class="w-12 h-12 mr-3"/>
                 <div class="flex flex-col items-start">
-                    <img src="./images/banner.png" alt="Fillip Desk Banner" class="w-32 h-auto"/>
+                    <img src="./images/banner.png" alt="OpenDesk Banner" class="w-32 h-auto"/>
                     <p class="text-xs mt-1 text-gray-500">一站式智慧办公空间</p>
                 </div>
             </header>
@@ -286,113 +294,328 @@ class SideBar extends HTMLElement {
         return renderList;
     }
 
-    reloadTaskList() {
+    _buildTaskItemHtml(item) {
         const standardClass = 'cursor-pointer rounded-xl pr-2 py-2 mb-2 transition-colors duration-200';
-        const taskListContainer = this.querySelector('#task-list-container');
-        taskListContainer.innerHTML = '';
+        const task = item.task;
+        const depth = item.depth;
+        const indentPx = 12 + Math.min(depth, 5) * 14;
 
-        const renderList = this.buildTaskRenderList();
-        for (const item of renderList) {
-            const task = item.task;
-            const depth = item.depth;
-            const indentPx = 12 + Math.min(depth, 5) * 14;
+        let taskStyle = '';
+        let connectorHtml = '';
+        const isCurrentTask = task.task_id === this.currentTaskId;
+        const isSubTask = depth > 0;
 
-            let taskStyle = '';
-            let connectorHtml = '';
-            const isCurrentTask = task.task_id === this.currentTaskId;
-            const isSubTask = depth > 0;
-
-            if (isSubTask) {
-                // 子任务样式
-                const connectorColor = isCurrentTask ? 'bg-[#C94C40]' : 'bg-gray-300';
-                const connectorLineColor = isCurrentTask ? 'bg-[#C94C40]' : 'bg-gray-300';
-                connectorHtml = `<span class="inline-block w-4 h-full mr-1 relative flex-shrink-0">
-                    <span class="absolute left-0 top-0 bottom-0 ${connectorLineColor}" style="height:calc(100% - 0.5rem);top:0.5rem;width:2px;"></span>
-                    <span class="absolute left-0 top-1/2 -translate-y-1/2 ${connectorColor}" style="width:8px;height:8px;border-radius:50%;left:0;"></span>
-                </span>`;
-                if (isCurrentTask) {
-                    taskStyle = 'text-[#C94C40] font-semibold border border-[#C94C40]';
-                } else {
-                    taskStyle = 'bg-gray-50 text-gray-700 hover:bg-gray-100 border border-gray-200';
-                }
-            } else if (isCurrentTask) {
-                taskStyle = 'bg-[#C94C40] text-white font-semibold';
+        if (isSubTask) {
+            const connectorColor = isCurrentTask ? 'bg-[#C94C40]' : 'bg-gray-300';
+            const connectorLineColor = isCurrentTask ? 'bg-[#C94C40]' : 'bg-gray-300';
+            connectorHtml = `<span class="inline-block w-4 h-full mr-1 relative flex-shrink-0">
+                <span class="absolute left-0 top-0 bottom-0 ${connectorLineColor}" style="height:calc(100% - 0.5rem);top:0.5rem;width:2px;"></span>
+                <span class="absolute left-0 top-1/2 -translate-y-1/2 ${connectorColor}" style="width:8px;height:8px;border-radius:50%;left:0;"></span>
+            </span>`;
+            if (isCurrentTask) {
+                taskStyle = 'text-[#C94C40] font-semibold border border-[#C94C40]';
             } else {
-                taskStyle = 'bg-white text-gray-700 hover:shadow-sm hover:border-l-2 hover:border-l-[#C94C40]';
+                taskStyle = 'bg-gray-50 text-gray-700 hover:bg-gray-100 border border-gray-200';
+            }
+        } else if (isCurrentTask) {
+            taskStyle = 'bg-[#C94C40] text-white font-semibold';
+        } else {
+            taskStyle = 'bg-white text-gray-700 hover:shadow-sm hover:border-l-2 hover:border-l-[#C94C40]';
+        }
+
+        const taskNameClass = isSubTask ? 'text-xs truncate' : 'text-sm truncate';
+        const subTaskBadge = isSubTask
+            ? '<span class="ml-1.5 text-[9px] px-1.5 py-0.5 rounded-full bg-gray-200 text-gray-600 font-medium">子</span>'
+            : '';
+
+        return `
+        <div
+            class="task-item ${taskStyle} ${standardClass} ${isSubTask ? 'py-1.5' : ''}"
+            style="padding-left:${indentPx}px"
+            data-task_id="${task.task_id}"
+            data-parent_id="${task.parent_id || ''}"
+            data-depth="${depth}"
+        >
+            <div class="flex items-center justify-between min-w-0 gap-2">
+                <div class="flex items-center flex-1 min-w-0 overflow-hidden gap-1">
+                    ${connectorHtml}
+                    <p class="${taskNameClass} flex-shrink-0">${task.task_name || '未命名任务'}</p>
+                    ${subTaskBadge}
+                    ${task.task_status === 'running' ? '<task-status-tag class="flex-shrink-0 ml-1"></task-status-tag>' : ''}
+                </div>
+                <button
+                    class="delete-task-btn flex-shrink-0 ${isSubTask ? 'w-4 h-4' : 'w-5 h-5'} flex items-center justify-center rounded-full bg-white hover:bg-[#FFF8E7] transition-colors duration-200"
+                    data-task_id="${task.task_id}"
+                    title="删除"
+                >
+                    <span class="${isSubTask ? 'text-xs' : 'text-sm'} text-gray-600 pointer-events-none hover:text-white transition-colors duration-200" style="line-height:1;">×</span>
+                </button>
+            </div>
+        </div>
+        `;
+    }
+
+    /**
+     * 获取截止到第 rootLimit 个根任务（含其所有子任务）的渲染列表
+     */
+    _sliceRenderList(renderList, rootLimit) {
+        const result = [];
+        let rootCount = 0;
+        for (const item of renderList) {
+            if (item.depth === 0) {
+                rootCount++;
+                if (rootCount > rootLimit) break;
+            }
+            result.push(item);
+        }
+        return result;
+    }
+
+    _countRootTasks(renderList) {
+        let count = 0;
+        for (const item of renderList) {
+            if (item.depth === 0) count++;
+        }
+        return count;
+    }
+
+    _loadMoreTasks() {
+        if (this._loadingMore) return;
+        const fullRenderList = this._fullRenderList;
+        const totalRootTasks = this._countRootTasks(fullRenderList);
+        if (this._displayedRootCount >= totalRootTasks) return;
+
+        this._loadingMore = true;
+        const taskListContainer = this.querySelector('#task-list-container');
+        const sentinel = this.querySelector('#task-list-sentinel');
+
+        // 插入加载动画
+        const loadingEl = document.createElement('div');
+        loadingEl.id = 'task-list-loading';
+        loadingEl.className = 'flex items-center justify-center py-3';
+        loadingEl.innerHTML = `
+            <div class="flex items-center gap-2 text-gray-400 text-xs">
+                <svg class="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"/>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+                </svg>
+                <span>加载更多任务...</span>
+            </div>
+        `;
+        if (sentinel) {
+            taskListContainer.insertBefore(loadingEl, sentinel);
+        } else {
+            taskListContainer.appendChild(loadingEl);
+        }
+
+        setTimeout(() => {
+            const nextLimit = this._displayedRootCount + TASK_PAGE_SIZE;
+            const slicedBefore = this._sliceRenderList(fullRenderList, this._displayedRootCount);
+            const slicedAfter = this._sliceRenderList(fullRenderList, nextLimit);
+            const newItems = slicedAfter.slice(slicedBefore.length);
+
+            const loadingIndicator = this.querySelector('#task-list-loading');
+            if (loadingIndicator) loadingIndicator.remove();
+
+            const fragment = document.createDocumentFragment();
+            for (const item of newItems) {
+                const wrapper = document.createElement('div');
+                wrapper.innerHTML = this._buildTaskItemHtml(item);
+                const el = wrapper.firstElementChild;
+                el.style.opacity = '0';
+                el.style.transform = 'translateY(8px)';
+                el.style.transition = 'opacity 0.3s ease, transform 0.3s ease';
+                fragment.appendChild(el);
             }
 
-            const taskNameClass = isSubTask ? 'text-xs truncate' : 'text-sm truncate';
-            const subTaskBadge = isSubTask
-                ? '<span class="ml-1.5 text-[9px] px-1.5 py-0.5 rounded-full bg-gray-200 text-gray-600 font-medium">子</span>'
-                : '';
+            if (sentinel) {
+                taskListContainer.insertBefore(fragment, sentinel);
+            } else {
+                taskListContainer.appendChild(fragment);
+            }
 
-            taskListContainer.innerHTML += `
-            <div
-                class="task-item ${taskStyle} ${standardClass} ${isSubTask ? 'py-1.5' : ''}"
-                style="padding-left:${indentPx}px"
-                data-task_id="${task.task_id}"
-                data-parent_id="${task.parent_id || ''}"
-                data-depth="${depth}"
-            >
-                <div class="flex items-center justify-between min-w-0 gap-2">
-                    <div class="flex items-center flex-1 min-w-0 overflow-hidden gap-1">
-                        ${connectorHtml}
-                        <p class="${taskNameClass} flex-shrink-0">${task.task_name || '未命名任务'}</p>
-                        ${subTaskBadge}
-                        ${task.task_status === 'running' ? '<task-status-tag class="flex-shrink-0 ml-1"></task-status-tag>' : ''}
-                    </div>
-                    <button
-                        class="delete-task-btn flex-shrink-0 ${isSubTask ? 'w-4 h-4' : 'w-5 h-5'} flex items-center justify-center rounded-full bg-white hover:bg-[#FFF8E7] transition-colors duration-200"
-                        data-task_id="${task.task_id}"
-                        title="删除"
-                    >
-                        <span class="${isSubTask ? 'text-xs' : 'text-sm'} text-gray-600 pointer-events-none hover:text-white transition-colors duration-200" style="line-height:1;">×</span>
-                    </button>
-                </div>
-            </div>
-            `;
-        }
+            // 触发入场动画
+            requestAnimationFrame(() => {
+                const allItems = taskListContainer.querySelectorAll('.task-item');
+                allItems.forEach((el) => {
+                    if (el.style.opacity === '0') {
+                        el.style.opacity = '1';
+                        el.style.transform = 'translateY(0)';
+                    }
+                });
+            });
 
-        if (this.taskList.length > 0) {
-            taskListContainer.innerHTML += `
-            <div id="delete-all-tasks-btn" class="${standardClass} bg-white text-sm text-gray-700 hover:bg-[#C94C40] hover:text-white flex items-center justify-center gap-2">
-                <i class="fa-solid fa-trash"></i>
-                <span>全部删除</span>
-            </div>
-            `;
-        }
+            this._displayedRootCount = nextLimit;
+            this._loadingMore = false;
 
-        taskListContainer.querySelectorAll('.task-item').forEach((item) => {
+            this._bindTaskItemEvents(taskListContainer);
+        }, 400);
+    }
+
+    /**
+     * 仅更新任务列表中的选中高亮样式，不做 DOM 重建
+     */
+    _updateTaskHighlight() {
+        const container = this.querySelector('#task-list-container');
+        if (!container) return;
+
+        container.querySelectorAll('.task-item').forEach((item) => {
+            const taskId = item.dataset.task_id;
+            const depth = parseInt(item.dataset.depth || '0', 10);
+            const isCurrentTask = taskId === this.currentTaskId;
+            const isSubTask = depth > 0;
+
+            // 清除所有可能的选中/非选中样式
+            item.classList.remove(
+                'bg-[#C94C40]',
+                'text-white',
+                'font-semibold',
+                'text-[#C94C40]',
+                'border',
+                'border-[#C94C40]',
+                'bg-gray-50',
+                'text-gray-700',
+                'hover:bg-gray-100',
+                'border-gray-200',
+                'bg-white',
+                'hover:shadow-sm',
+                'hover:border-l-2',
+                'hover:border-l-[#C94C40]'
+            );
+
+            if (isSubTask) {
+                if (isCurrentTask) {
+                    item.classList.add('text-[#C94C40]', 'font-semibold', 'border', 'border-[#C94C40]');
+                } else {
+                    item.classList.add('bg-gray-50', 'text-gray-700', 'hover:bg-gray-100', 'border', 'border-gray-200');
+                }
+                // 更新连接器颜色
+                const connectorDot = item.querySelector('span > span:last-child');
+                const connectorLine = item.querySelector('span > span:first-child');
+                if (connectorDot) {
+                    connectorDot.classList.toggle('bg-[#C94C40]', isCurrentTask);
+                    connectorDot.classList.toggle('bg-gray-300', !isCurrentTask);
+                }
+                if (connectorLine) {
+                    connectorLine.classList.toggle('bg-[#C94C40]', isCurrentTask);
+                    connectorLine.classList.toggle('bg-gray-300', !isCurrentTask);
+                }
+            } else if (isCurrentTask) {
+                item.classList.add('bg-[#C94C40]', 'text-white', 'font-semibold');
+            } else {
+                item.classList.add(
+                    'bg-white',
+                    'text-gray-700',
+                    'hover:shadow-sm',
+                    'hover:border-l-2',
+                    'hover:border-l-[#C94C40]'
+                );
+            }
+        });
+    }
+
+    _bindTaskItemEvents(container) {
+        container.querySelectorAll('.task-item').forEach((item) => {
+            if (item._bound) return;
+            item._bound = true;
             item.addEventListener('click', (event) => {
                 const taskId = event.currentTarget.dataset.task_id;
                 window.globalControlAPI.openTask(taskId);
                 this.currentTaskId = taskId;
-                this.reloadTaskList();
+                this._updateTaskHighlight();
             });
         });
 
-        this.querySelector('#delete-all-tasks-btn')?.addEventListener('click', async (event) => {
-            event.stopPropagation();
-            if (!window.confirm('确定要删除所有任务吗？删除后无法恢复。')) return;
-            window.globalControlAPI.openHomePage();
-            this.currentTaskId = null;
-            await window.taskManagerAPI.clearAllTasks();
-            this.reloadTaskList();
-        });
-
-        taskListContainer.querySelectorAll('.delete-task-btn').forEach((btn) => {
+        container.querySelectorAll('.delete-task-btn').forEach((btn) => {
+            if (btn._bound) return;
+            btn._bound = true;
             btn.addEventListener('click', async (event) => {
                 event.stopPropagation();
                 const confirmDelete = window.confirm('确定要删除这个任务吗？删除后无法恢复。');
                 if (!confirmDelete) return;
 
                 const taskId = event.currentTarget.dataset.task_id;
+                window.globalControlAPI.removeTaskViewCache(taskId);
                 if (this.currentTaskId === taskId) {
                     window.globalControlAPI.openTask(null);
                 }
                 await window.taskManagerAPI.removeTask(taskId);
             });
         });
+    }
+
+    reloadTaskList() {
+        const standardClass = 'cursor-pointer rounded-xl pr-2 py-2 mb-2 transition-colors duration-200';
+        const taskListContainer = this.querySelector('#task-list-container');
+        taskListContainer.innerHTML = '';
+
+        const fullRenderList = this.buildTaskRenderList();
+        this._fullRenderList = fullRenderList;
+        const totalRootTasks = this._countRootTasks(fullRenderList);
+
+        const initialSlice = this._sliceRenderList(fullRenderList, TASK_PAGE_SIZE);
+        this._displayedRootCount = Math.min(TASK_PAGE_SIZE, totalRootTasks);
+
+        const htmlParts = [];
+        for (const item of initialSlice) {
+            htmlParts.push(this._buildTaskItemHtml(item));
+        }
+
+        if (totalRootTasks > TASK_PAGE_SIZE) {
+            htmlParts.push(`
+            <div id="task-list-sentinel" class="flex items-center justify-center py-2 text-gray-400 text-xs">
+                <span>↓ 滚动加载更多（共 ${totalRootTasks} 个任务）</span>
+            </div>
+            `);
+        }
+
+        if (this.taskList.length > 0) {
+            htmlParts.push(`
+            <div id="delete-all-tasks-btn" class="${standardClass} bg-white text-sm text-gray-700 hover:bg-[#C94C40] hover:text-white flex items-center justify-center gap-2">
+                <i class="fa-solid fa-trash"></i>
+                <span>全部删除</span>
+            </div>
+            `);
+        }
+
+        taskListContainer.innerHTML = htmlParts.join('');
+
+        this._bindTaskItemEvents(taskListContainer);
+
+        this.querySelector('#delete-all-tasks-btn')?.addEventListener('click', async (event) => {
+            event.stopPropagation();
+            if (!window.confirm('确定要删除所有任务吗？删除后无法恢复。')) return;
+            window.globalControlAPI.clearAllTaskViewCache();
+            window.globalControlAPI.openHomePage();
+            this.currentTaskId = null;
+            await window.taskManagerAPI.clearAllTasks();
+            this.reloadTaskList();
+        });
+
+        // IntersectionObserver 实现下拉到底延迟加载
+        const sentinel = this.querySelector('#task-list-sentinel');
+        if (sentinel) {
+            if (this._scrollObserver) {
+                this._scrollObserver.disconnect();
+            }
+            this._scrollObserver = new IntersectionObserver(
+                (entries) => {
+                    for (const entry of entries) {
+                        if (entry.isIntersecting) {
+                            this._loadMoreTasks();
+                            const totalRoot = this._countRootTasks(this._fullRenderList);
+                            if (this._displayedRootCount >= totalRoot) {
+                                this._scrollObserver.disconnect();
+                                const s = this.querySelector('#task-list-sentinel');
+                                if (s) s.remove();
+                            }
+                        }
+                    }
+                },
+                { root: taskListContainer, threshold: 0.1 }
+            );
+            this._scrollObserver.observe(sentinel);
+        }
     }
 }
 

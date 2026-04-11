@@ -225,6 +225,16 @@ export class TaskState {
         };
     }
 
+    /** 仅包含前端渲染所需的字段（不含 args_string / result 等大字段） */
+    toRenderJSON() {
+        return {
+            task_id: this.task_id,
+            task_name: this.task_name,
+            task_status: this.task_status,
+            chat_context: this.chat_context.toRenderJSON()
+        };
+    }
+
     setSystemPrompt(prompt: string) {
         // logger.info(`setting system prompt ${prompt} to task ${this.task_id}`);
         this.chat_context.system_prompt = new SystemMessage(prompt);

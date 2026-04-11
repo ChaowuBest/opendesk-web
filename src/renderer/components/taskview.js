@@ -15,40 +15,13 @@ class TaskView extends HTMLElement {
     constructor() {
         super();
 
-        const task_id = this.getAttribute('task_id');
-        if (task_id === null) {
-            throw new Error('task_id is required');
-        }
-
-        /**
-         * The task id to load in this task view
-         * @type {string}
-         */
-        this.task_id = task_id;
-        /**
-         * The widget id to identify this widget
-         * @type {string}
-         */
+        this.task_id = null;
         this.widget_id = crypto.randomUUID();
-        /**
-         * The history container to display the chat history
-         * @type {HTMLDivElement | null}
-         */
+        /** @type {HTMLDivElement | null} */
         this.history_container = null;
-        /**
-         * The subscription id for task update
-         * @type {string | null}
-         */
+        /** @type {string | null} */
         this.subscription_id = null;
-        /**
-         * Whether to auto scroll to bottom when new messages are added
-         * @type {boolean}
-         */
         this.auto_scrolling_to_bottom = true;
-        /**
-         * Current task status
-         * @type {string}
-         */
         this.task_status = 'waiting';
     }
 
@@ -168,17 +141,18 @@ class TaskView extends HTMLElement {
         this.updateStopButtonVisibility();
 
         const history_container = this.getHistoryContainer();
-        history_container.innerHTML = '';
+        const htmlParts = [];
         for (const message of task_state.chat_context.messages) {
             if (message.role === 'user') {
-                history_container.innerHTML += this.renderUserMessage(message);
+                htmlParts.push(this.renderUserMessage(message));
             } else if (message.role === 'assistant') {
-                history_container.innerHTML += this.renderAssistantMessage(message);
+                htmlParts.push(this.renderAssistantMessage(message));
             } else if (TaskView.isCompactBoundaryMessage(message)) {
-                history_container.innerHTML += TaskView.renderCompactBoundary();
+                htmlParts.push(TaskView.renderCompactBoundary());
             }
-            this.tryScrollToEnd();
         }
+        history_container.innerHTML = htmlParts.join('');
+        this.tryScrollToEnd();
     }
 
     static renderCompactBoundary() {
@@ -250,6 +224,12 @@ class TaskView extends HTMLElement {
     }
 
     connectedCallback() {
+        const task_id = this.getAttribute('task_id');
+        if (task_id === null) {
+            throw new Error('task_id is required');
+        }
+        this.task_id = task_id;
+
         this.render();
 
         // Initialize toolbar
@@ -384,30 +364,11 @@ class EmbeddedTaskView extends HTMLElement {
     constructor() {
         super();
 
-        const task_id = this.getAttribute('task_id');
-        if (task_id === null) {
-            throw new Error('task_id is required');
-        }
-
-        /**
-         * The task id to load in this task view
-         * @type {string}
-         */
-        this.task_id = task_id;
-        /**
-         * The widget id to identify this widget
-         * @type {string}
-         */
+        this.task_id = null;
         this.widget_id = crypto.randomUUID();
-        /**
-         * The history container to display the chat history
-         * @type {HTMLDivElement | null}
-         */
+        /** @type {HTMLDivElement | null} */
         this.history_container = null;
-        /**
-         * The subscription id for task update
-         * @type {string | null}
-         */
+        /** @type {string | null} */
         this.subscription_id = null;
         /**
          * Whether to auto scroll to bottom when new messages are added
@@ -509,25 +470,6 @@ class EmbeddedTaskView extends HTMLElement {
         }, 100);
     }
 
-    async reload() {
-        const task_state = await window.taskManagerAPI.getFullTask(this.task_id);
-        this.task_status = task_state.task_status || 'waiting';
-        this.updateStopButtonVisibility();
-
-        const history_container = this.getHistoryContainer();
-        history_container.innerHTML = '';
-        for (const message of task_state.chat_context.messages) {
-            if (message.role === 'user') {
-                history_container.innerHTML += this.renderUserMessage(message);
-            } else if (message.role === 'assistant') {
-                history_container.innerHTML += this.renderAssistantMessage(message);
-            } else if (TaskView.isCompactBoundaryMessage(message)) {
-                history_container.innerHTML += TaskView.renderCompactBoundary();
-            }
-            this.tryScrollToEnd();
-        }
-    }
-
     updateStopButtonVisibility() {
         // EmbeddedTaskView 没有输入框，不需要停止按钮
         // 停止功能由应用层面的输入框控制
@@ -560,20 +502,27 @@ class EmbeddedTaskView extends HTMLElement {
         }
 
         const history_container = this.getHistoryContainer();
-        history_container.innerHTML = '';
+        const htmlParts = [];
         for (const message of task_state.chat_context.messages) {
             if (message.role === 'user') {
-                history_container.innerHTML += this.renderUserMessage(message);
+                htmlParts.push(this.renderUserMessage(message));
             } else if (message.role === 'assistant') {
-                history_container.innerHTML += this.renderAssistantMessage(message);
+                htmlParts.push(this.renderAssistantMessage(message));
             } else if (TaskView.isCompactBoundaryMessage(message)) {
-                history_container.innerHTML += TaskView.renderCompactBoundary();
+                htmlParts.push(TaskView.renderCompactBoundary());
             }
-            this.tryScrollToEnd();
         }
+        history_container.innerHTML = htmlParts.join('');
+        this.tryScrollToEnd();
     }
 
     connectedCallback() {
+        const task_id = this.getAttribute('task_id');
+        if (task_id === null) {
+            throw new Error('task_id is required');
+        }
+        this.task_id = task_id;
+
         this.render();
         this.reload().then(async () => {
             // 在首次加载完成后，发送一次初始状态事件

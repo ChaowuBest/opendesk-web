@@ -1,38 +1,41 @@
-<!DOCTYPE html>
+<!doctype html>
 <html>
     <head>
-        <title>Flipper Desk | 一站式办公生活空间 </title>
-        <meta charset="utf-8">
+        <title>OpenDesk | 一站式办公生活空间</title>
+        <meta charset="utf-8" />
 
         <!-- 与MarkDown渲染有关的样式表 -->
-        <link rel="stylesheet" href="./styles/common.css">
-        <link rel="stylesheet" href="./styles/highlight-vs.min.css">
-        <link rel="stylesheet" href="./styles/github-markdown-light.min.css">
+        <link rel="stylesheet" href="./styles/common.css" />
+        <link rel="stylesheet" href="./styles/highlight-vs.min.css" />
+        <link rel="stylesheet" href="./styles/github-markdown-light.min.css" />
 
         <script type="module" src="./scripts/index.js"></script>
 
-        <link rel="stylesheet" href="./styles/titlebar.css">
-        <link rel="stylesheet" href="./styles/custom.css">
+        <link rel="stylesheet" href="./styles/titlebar.css" />
+        <link rel="stylesheet" href="./styles/custom.css" />
     </head>
     <body>
         <div class="drag-overlay">
             <div class="absolute top-4 right-4 z-10 flex gap-2">
                 <button
-                    id="minimize-btn" title="最小化"
+                    id="minimize-btn"
+                    title="最小化"
                     class="window-control-btn w-7 h-7 rounded-full text-xs bg-white hover:bg-gray-200 text-gray-500 shadow-sm transition"
                     onclick="window.settingAPI.minimizeMainWindow()"
                 >
                     <i class="fas fa-minus"></i>
                 </button>
                 <button
-                    id="maximize-btn" title="最大化"
+                    id="maximize-btn"
+                    title="最大化"
                     class="window-control-btn w-7 h-7 rounded-full text-xs bg-white hover:bg-gray-200 text-gray-500 shadow-sm transition"
                     onclick="window.settingAPI.maximizeMainWindow().then(() => updateMaximizeIcon())"
                 >
                     <i class="far fa-square" id="maximize-icon"></i>
                 </button>
                 <button
-                    id="close-drag-overlay-btn" title="关闭"
+                    id="close-drag-overlay-btn"
+                    title="关闭"
                     class="window-control-btn w-7 h-7 rounded-full text-xs bg-white hover:bg-red-500 hover:text-white text-gray-500 shadow-sm transition"
                     onclick="window.settingAPI.closeMainWindow()"
                 >
@@ -44,117 +47,210 @@
             <splitter-widget class="w-full h-full flex">
                 <!-- 左侧面板 -->
                 <div id="leftPanel" slot="left" class="bg-gray-100 p-4 overflow-auto w-full h-full">
-                    <main-sidebar id="main-sidebar" class="w-full h-full"/>
+                    <main-sidebar id="main-sidebar" class="w-full h-full" />
                 </div>
 
                 <!-- 右侧面板：双槽常驻，切换只显隐不销毁，保证应用对话保活 -->
                 <div id="rightPanel" slot="right" class="bg-white p-0 overflow-auto w-full h-full">
-                    <div id="rightPanelInner" style="position:relative;width:100%;height:100%;">
+                    <div id="rightPanelInner" style="position: relative; width: 100%; height: 100%">
                         <div id="nonAppSlot" class="w-full h-full">
                             <home-page id="home-page" class="h-full w-full" />
                         </div>
-                        <div id="app-frames-container" style="display:none;position:absolute;top:0;left:0;width:100%;height:100%;"></div>
+                        <div
+                            id="app-frames-container"
+                            style="display: none; position: absolute; top: 0; left: 0; width: 100%; height: 100%"
+                        ></div>
                     </div>
                 </div>
             </splitter-widget>
 
             <!-- 通知面板 -->
-            <notification-panel id="notification-panel" class="fixed top-16 right-5 z-50 flex flex-col gap-3 w-[360px] font-sans" />
+            <notification-panel
+                id="notification-panel"
+                class="fixed top-16 right-5 z-50 flex flex-col gap-3 w-[360px] font-sans"
+            />
         </div>
     </body>
 
     <script>
-    (function () {
-        var nonAppSlot = null;
-        var appFramesContainer = null;
-        var appFrameCache = {};
+        (function () {
+            var nonAppSlot = null;
+            var appFramesContainer = null;
+            var appFrameCache = {};
+            var taskViewCache = {};
+            var currentNonAppContent = null; // 'home' | 'task:xxx' | 'setting' | 'logview'
 
-        function ensureSlots() {
-            if (nonAppSlot && appFramesContainer) return;
-            nonAppSlot = document.getElementById('nonAppSlot');
-            appFramesContainer = document.getElementById('app-frames-container');
-            if (!nonAppSlot || !appFramesContainer) return;
-            if (!window.__appFrameCache) window.__appFrameCache = {};
-            appFrameCache = window.__appFrameCache;
-        }
-
-        function showNonApp() {
-            ensureSlots();
-            if (nonAppSlot) nonAppSlot.style.display = '';
-            if (appFramesContainer) appFramesContainer.style.display = 'none';
-        }
-
-        function showAppFrames() {
-            ensureSlots();
-            if (nonAppSlot) nonAppSlot.style.display = 'none';
-            if (appFramesContainer) appFramesContainer.style.display = 'block';
-        }
-
-        function openTask(taskId) {
-            ensureSlots();
-            window.applicationRegistryAPI.call('mailbox', 'notifyMailboxClosed')
-            if (taskId === null) {
-                nonAppSlot.innerHTML = '<home-page id="home-page" class="h-full w-full" style="width:100%;height:100%;"/>';
-            } else {
-                nonAppSlot.innerHTML = '<task-view task_id="' + taskId + '" style="width:100%;height:100%;"/>';
+            function ensureSlots() {
+                if (nonAppSlot && appFramesContainer) return;
+                nonAppSlot = document.getElementById('nonAppSlot');
+                appFramesContainer = document.getElementById('app-frames-container');
+                if (!nonAppSlot || !appFramesContainer) return;
+                if (!window.__appFrameCache) window.__appFrameCache = {};
+                appFrameCache = window.__appFrameCache;
             }
-            showNonApp();
-        }
 
-        function openHomePage() {
-            ensureSlots();
-            window.applicationRegistryAPI.call('mailbox', 'notifyMailboxClosed')
-            nonAppSlot.innerHTML = '<home-page id="home-page" class="h-full w-full" style="width:100%;height:100%;"/>';
-            showNonApp();
-        }
-
-        window.settingAPI.registerCommandCallback('openHomePage', openHomePage);
-
-        async function updateMaximizeIcon() {
-            const isMaximized = await window.settingAPI.isMaximized();
-            const maximizeIcon = document.getElementById('maximize-icon');
-            if (maximizeIcon) {
-                maximizeIcon.className = isMaximized ? 'fas fa-window-restore' : 'far fa-square';
+            function showNonApp() {
+                ensureSlots();
+                if (nonAppSlot) nonAppSlot.style.display = '';
+                if (appFramesContainer) appFramesContainer.style.display = 'none';
             }
-        }
-        window.addEventListener('resize', updateMaximizeIcon);
-        updateMaximizeIcon();
 
-        window.globalControlAPI = {
-            openSettingEditor: function () {
+            function showAppFrames() {
                 ensureSlots();
-                nonAppSlot.innerHTML = '<setting-editor style="width:100%;height:100%;"/>';
-                showNonApp();
-            },
-            openLogView: function () {
+                if (nonAppSlot) nonAppSlot.style.display = 'none';
+                if (appFramesContainer) appFramesContainer.style.display = 'block';
+            }
+
+            /**
+             * 隐藏 nonAppSlot 中所有直接子元素
+             */
+            function hideAllNonAppChildren() {
+                if (!nonAppSlot) return;
+                for (var i = 0; i < nonAppSlot.children.length; i++) {
+                    nonAppSlot.children[i].style.display = 'none';
+                }
+            }
+
+            /**
+             * 清除非 task-view 的临时内容（如 home-page、setting-editor、log-view）
+             */
+            function clearNonTaskContent() {
+                if (!nonAppSlot) return;
+                var toRemove = [];
+                for (var i = 0; i < nonAppSlot.children.length; i++) {
+                    var child = nonAppSlot.children[i];
+                    if (!child.hasAttribute('data-task-view-cached')) {
+                        toRemove.push(child);
+                    }
+                }
+                for (var j = 0; j < toRemove.length; j++) {
+                    nonAppSlot.removeChild(toRemove[j]);
+                }
+            }
+
+            function openTask(taskId) {
                 ensureSlots();
-                nonAppSlot.innerHTML = '<log-view style="width:100%;height:100%;"/>';
-                showNonApp();
-            },
-            openTask: openTask,
-            openHomePage: openHomePage,
-            openApplication: function (bundleName) {
-                ensureSlots();
-                // 如果切换到其他应用，通知邮箱应用用户已离开
-                if (bundleName !== 'mailbox') {
-                    window.applicationRegistryAPI.call('mailbox', 'notifyMailboxClosed')
+                window.applicationRegistryAPI.call('mailbox', 'notifyMailboxClosed');
+                hideAllNonAppChildren();
+
+                if (taskId === null) {
+                    clearNonTaskContent();
+                    var homePage = document.createElement('home-page');
+                    homePage.id = 'home-page';
+                    homePage.className = 'h-full w-full';
+                    homePage.style.cssText = 'width:100%;height:100%;';
+                    nonAppSlot.appendChild(homePage);
+                    currentNonAppContent = 'home';
                 } else {
-                    window.applicationRegistryAPI.call('mailbox', 'notifyMailboxOpened')
+                    clearNonTaskContent();
+                    if (!taskViewCache[taskId]) {
+                        var el = document.createElement('task-view');
+                        el.setAttribute('task_id', taskId);
+                        el.setAttribute('data-task-view-cached', '1');
+                        el.style.cssText = 'width:100%;height:100%;';
+                        nonAppSlot.appendChild(el);
+                        taskViewCache[taskId] = el;
+                    }
+                    taskViewCache[taskId].style.display = '';
+                    currentNonAppContent = 'task:' + taskId;
                 }
-                if (!appFrameCache[bundleName]) {
-                    var iframe = document.createElement('iframe');
-                    iframe.className = 'w-full h-full';
-                    iframe.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;border:0;';
-                    iframe.src = './application.html?applicationBundleName=' + encodeURIComponent(bundleName);
-                    appFramesContainer.appendChild(iframe);
-                    appFrameCache[bundleName] = iframe;
-                }
-                Object.keys(appFrameCache).forEach(function (name) {
-                    appFrameCache[name].style.display = name === bundleName ? 'block' : 'none';
-                });
-                showAppFrames();
+                showNonApp();
             }
-        };
-    })();
+
+            function openHomePage() {
+                ensureSlots();
+                window.applicationRegistryAPI.call('mailbox', 'notifyMailboxClosed');
+                hideAllNonAppChildren();
+                clearNonTaskContent();
+                var homePage = document.createElement('home-page');
+                homePage.id = 'home-page';
+                homePage.className = 'h-full w-full';
+                homePage.style.cssText = 'width:100%;height:100%;';
+                nonAppSlot.appendChild(homePage);
+                currentNonAppContent = 'home';
+                showNonApp();
+            }
+
+            /**
+             * 当任务被删除时，从缓存中清除对应的 task-view
+             */
+            function removeTaskViewCache(taskId) {
+                if (taskViewCache[taskId]) {
+                    if (taskViewCache[taskId].parentNode) {
+                        taskViewCache[taskId].parentNode.removeChild(taskViewCache[taskId]);
+                    }
+                    delete taskViewCache[taskId];
+                }
+            }
+
+            /**
+             * 清除所有 task-view 缓存
+             */
+            function clearAllTaskViewCache() {
+                Object.keys(taskViewCache).forEach(function (tid) {
+                    removeTaskViewCache(tid);
+                });
+            }
+
+            window.settingAPI.registerCommandCallback('openHomePage', openHomePage);
+
+            async function updateMaximizeIcon() {
+                const isMaximized = await window.settingAPI.isMaximized();
+                const maximizeIcon = document.getElementById('maximize-icon');
+                if (maximizeIcon) {
+                    maximizeIcon.className = isMaximized ? 'fas fa-window-restore' : 'far fa-square';
+                }
+            }
+            window.addEventListener('resize', updateMaximizeIcon);
+            updateMaximizeIcon();
+
+            window.globalControlAPI = {
+                openSettingEditor: function () {
+                    ensureSlots();
+                    hideAllNonAppChildren();
+                    clearNonTaskContent();
+                    var el = document.createElement('setting-editor');
+                    el.style.cssText = 'width:100%;height:100%;';
+                    nonAppSlot.appendChild(el);
+                    currentNonAppContent = 'setting';
+                    showNonApp();
+                },
+                openLogView: function () {
+                    ensureSlots();
+                    hideAllNonAppChildren();
+                    clearNonTaskContent();
+                    var el = document.createElement('log-view');
+                    el.style.cssText = 'width:100%;height:100%;';
+                    nonAppSlot.appendChild(el);
+                    currentNonAppContent = 'logview';
+                    showNonApp();
+                },
+                openTask: openTask,
+                openHomePage: openHomePage,
+                removeTaskViewCache: removeTaskViewCache,
+                clearAllTaskViewCache: clearAllTaskViewCache,
+                openApplication: function (bundleName) {
+                    ensureSlots();
+                    // 如果切换到其他应用，通知邮箱应用用户已离开
+                    if (bundleName !== 'mailbox') {
+                        window.applicationRegistryAPI.call('mailbox', 'notifyMailboxClosed');
+                    } else {
+                        window.applicationRegistryAPI.call('mailbox', 'notifyMailboxOpened');
+                    }
+                    if (!appFrameCache[bundleName]) {
+                        var iframe = document.createElement('iframe');
+                        iframe.className = 'w-full h-full';
+                        iframe.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;border:0;';
+                        iframe.src = './application.html?applicationBundleName=' + encodeURIComponent(bundleName);
+                        appFramesContainer.appendChild(iframe);
+                        appFrameCache[bundleName] = iframe;
+                    }
+                    Object.keys(appFrameCache).forEach(function (name) {
+                        appFrameCache[name].style.display = name === bundleName ? 'block' : 'none';
+                    });
+                    showAppFrames();
+                }
+            };
+        })();
     </script>
 </html>

@@ -388,7 +388,7 @@ class SnapshotProcessor {
         }
 
         // 底部说明
-        this._safeDrawText(page, '由 FillipDesk Recall 自动生成', {
+        this._safeDrawText(page, '由 OpenDesk Recall 自动生成', {
             x: 50,
             y: 50,
             size: 10,

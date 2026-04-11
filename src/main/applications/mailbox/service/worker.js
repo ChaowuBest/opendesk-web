@@ -532,10 +532,10 @@ class IMAPEmailClient extends EmailContentHelper {
 
     static buildImapIdInfo(host) {
         return {
-            name: 'FillipDesk',
+            name: 'OpenDesk',
             version: '0.2.0',
-            vendor: 'FillipDesk',
-            'support-email': 'support@fillipdesk.local'
+            vendor: 'OpenDesk',
+            'support-email': 'support@opendesk.local'
         };
     }
 
