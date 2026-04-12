@@ -1242,8 +1242,8 @@ export class OpenDeskTUI {
                 task.harnessContext = HarnessContext.createAllowEverything(this.workspace);
             } else {
                 task.harnessContext = await HarnessContext.createWithDefaults(this.workspace);
-                task.harnessContext.permissionPrompt = new TUIPermissionPromptProvider(this);
             }
+            task.harnessContext.permissionPrompt = new TUIPermissionPromptProvider(this);
         } catch (err) {
             logger.warn(`Failed to init task harness, using empty context: ${err}`);
             task.harnessContext = HarnessContext.createEmpty();

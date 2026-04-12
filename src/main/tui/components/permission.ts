@@ -71,6 +71,7 @@ const permissionColors = {
 /**
  * 权限确认 widget，直接嵌入输入区域替换 Editor。
  * 支持一组同类型的合并请求，展示所有资源路径。
+ * 支持前缀选项：用户可以选择授权精确路径、某个父目录、或所有同类操作。
  */
 export class PermissionPromptWidget implements Component {
     private list: SelectList;
@@ -81,7 +82,11 @@ export class PermissionPromptWidget implements Component {
 
     onDone?: (response: PermissionUserResponse) => void;
 
-    constructor(requests: PermissionRequest[], toolName: string) {
+    constructor(
+        requests: PermissionRequest[],
+        toolName: string,
+        prefixOptions: { label: string; pattern: string }[] = []
+    ) {
         const c = permissionColors;
 
         const first = requests[0];
@@ -95,31 +100,37 @@ export class PermissionPromptWidget implements Component {
 
         this.questionText = c.question(`  ${toolName} 请求${typeActionLabel}，是否允许？`);
 
-        const items = [
-            { value: 'allow', label: c.allow('本次允许') },
-            { value: 'allow_exact', label: c.allowBright(`始终允许对上述路径的${typeActionLabel}操作`) },
-            { value: 'allow_type', label: c.allowBright(`始终允许所有${typeActionLabel}操作`) },
-            { value: 'deny', label: c.deny('拒绝') }
-        ];
+        const items: { value: string; label: string }[] = [];
+        items.push({ value: 'allow', label: c.allow('本次允许') });
+
+        // 为每个前缀选项添加"始终允许"选项
+        for (let i = 0; i < Math.min(prefixOptions.length, 4); i++) {
+            const opt = prefixOptions[i];
+            items.push({
+                value: `prefix:${opt.pattern}`,
+                label: c.allowBright(`始终允许 ${opt.label} 的${typeActionLabel}`)
+            });
+        }
+
+        items.push({ value: 'allow_type', label: c.allowBright(`始终允许所有${typeActionLabel}操作`) });
+        items.push({ value: 'deny', label: c.deny('拒绝') });
 
         this.list = new SelectList(items, items.length, defaultSelectListTheme);
 
         this.hintLine = new Text(c.hint('Esc 取消'));
 
         this.list.onSelect = (item) => {
-            switch (item.value) {
-                case 'allow':
-                    this.onDone?.({ decision: 'allow', rememberScope: 'none' });
-                    break;
-                case 'allow_exact':
-                    this.onDone?.({ decision: 'allow', rememberScope: 'exact' });
-                    break;
-                case 'allow_type':
-                    this.onDone?.({ decision: 'allow', rememberScope: 'type' });
-                    break;
-                default:
-                    this.onDone?.({ decision: 'deny', rememberScope: 'none' });
-                    break;
+            if (item.value === 'allow') {
+                this.onDone?.({ decision: 'allow', rememberScope: 'none' });
+            } else if (item.value === 'allow_type') {
+                this.onDone?.({ decision: 'allow', rememberScope: 'type' });
+            } else if (item.value === 'deny') {
+                this.onDone?.({ decision: 'deny', rememberScope: 'none' });
+            } else if (item.value.startsWith('prefix:')) {
+                const pattern = item.value.slice('prefix:'.length);
+                this.onDone?.({ decision: 'allow', rememberScope: 'prefix', selectedPrefixPattern: pattern });
+            } else {
+                this.onDone?.({ decision: 'deny', rememberScope: 'none' });
             }
         };
 
@@ -178,8 +189,12 @@ export class TUIPermissionPromptProvider implements PermissionPromptProvider {
         this.openDeskTUI = openDeskTUI;
     }
 
-    async prompt(requests: PermissionRequest[], toolName: string): Promise<PermissionUserResponse> {
-        const widget = new PermissionPromptWidget(requests, toolName);
+    async prompt(
+        requests: PermissionRequest[],
+        toolName: string,
+        prefixOptions: { label: string; pattern: string }[]
+    ): Promise<PermissionUserResponse> {
+        const widget = new PermissionPromptWidget(requests, toolName, prefixOptions);
 
         return new Promise<PermissionUserResponse>((resolve) => {
             widget.onDone = (response) => {

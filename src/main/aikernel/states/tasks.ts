@@ -46,6 +46,7 @@ import { TaskHooks } from '../hooks.js';
 import type { Participant } from '../plugins/types.js';
 import { HarnessContext } from '../security/harness.js';
 import type { PermissionRequest, PermissionCheckResult, PermissionUserResponse } from '../security/permission.js';
+import { createResourcePath } from '../security/permission.js';
 import { TaskProfiler } from '../profiler.js';
 
 type TaskStatus = 'waiting' | 'running' | 'stopped';
@@ -571,8 +572,11 @@ export class TaskState {
         forkedTask.finished_at = this.finished_at;
         forkedTask.total_elapsed_ms = this.total_elapsed_ms;
 
-        // harnessContext 不落盘但 fork 时复制环境变量（便于工具继续使用）
+        // harnessContext 不落盘但 fork 时复制环境变量和权限引擎（便于工具继续使用）
         forkedTask.harnessContext.environ = { ...this.harnessContext.environ };
+        forkedTask.harnessContext.permission = this.harnessContext.permission;
+        forkedTask.harnessContext.permissionPrompt = this.harnessContext.permissionPrompt;
+        forkedTask.harnessContext.workspace = this.harnessContext.workspace;
 
         // Add to task manager
         this.task_manager_state.tasks.push(forkedTask);
@@ -995,7 +999,11 @@ export class TaskState {
         // 逐组提示用户
         for (const [, groupResults] of groups) {
             const requests = groupResults.map((r) => r.request);
-            const response = await this.promptPermissionBatch(requests, tool.name);
+
+            // 计算所有请求路径的共同前缀选项
+            const prefixOptions = this.computePrefixOptions(requests);
+
+            const response = await this.promptPermissionBatch(requests, tool.name, prefixOptions);
 
             if (response.decision === 'deny') {
                 const paths = requests.map((r) => r.resourcePath).join(', ');
@@ -1006,15 +1014,17 @@ export class TaskState {
             }
 
             // 根据用户选择写回规则
-            if (response.rememberScope === 'exact' && this.harnessContext.permission) {
-                for (const req of requests) {
-                    await this.harnessContext.permission.addRule({
-                        resourceType: req.resourceType,
-                        action: req.action,
-                        pathPattern: req.resourcePath,
-                        effect: 'allow'
-                    });
-                }
+            if (
+                response.rememberScope === 'prefix' &&
+                response.selectedPrefixPattern &&
+                this.harnessContext.permission
+            ) {
+                await this.harnessContext.permission.addRule({
+                    resourceType: requests[0].resourceType,
+                    action: requests[0].action,
+                    pathPattern: response.selectedPrefixPattern,
+                    effect: 'allow'
+                });
             } else if (response.rememberScope === 'type' && this.harnessContext.permission) {
                 await this.harnessContext.permission.addRule({
                     resourceType: requests[0].resourceType,
@@ -1029,11 +1039,43 @@ export class TaskState {
     }
 
     /**
+     * 计算一组同类请求的共同前缀选项，用于让用户选择授权范围。
+     * 对所有请求的 ResourcePath.getPrefixes() 取交集（保留所有请求都共享的前缀）。
+     * 如果请求只有一个，直接返回其前缀。
+     * 如果前缀无法取交集，返回各自的精确路径前缀。
+     */
+    private computePrefixOptions(requests: PermissionRequest[]): { label: string; pattern: string }[] {
+        if (requests.length === 0) return [];
+
+        const allPrefixLists = requests.map((req) =>
+            createResourcePath(req.resourceType, req.resourcePath).getPrefixes()
+        );
+
+        if (allPrefixLists.length === 1) {
+            return allPrefixLists[0];
+        }
+
+        // 取交集：只保留所有请求都有的 pattern
+        const first = allPrefixLists[0];
+        const commonPrefixes = first.filter((prefix) =>
+            allPrefixLists.every((list) => list.some((p) => p.pattern === prefix.pattern))
+        );
+
+        if (commonPrefixes.length > 0) {
+            return commonPrefixes;
+        }
+
+        // 没有共同前缀时，返回每个请求的精确路径
+        return requests.map((req) => ({ label: req.resourcePath, pattern: req.resourcePath }));
+    }
+
+    /**
      * 通过 harnessContext 的 permissionPrompt 向用户请求权限确认（合并后的批量请求）
      */
     private async promptPermissionBatch(
         requests: PermissionRequest[],
-        toolName: string
+        toolName: string,
+        prefixOptions: { label: string; pattern: string }[]
     ): Promise<PermissionUserResponse> {
         const promptProvider = this.harnessContext.permissionPrompt;
         if (!promptProvider) {
@@ -1042,7 +1084,7 @@ export class TaskState {
         }
 
         try {
-            return await promptProvider.prompt(requests, toolName);
+            return await promptProvider.prompt(requests, toolName, prefixOptions);
         } catch (err) {
             logger.error(`permission prompt failed: ${err}`);
             return { decision: 'deny', rememberScope: 'none' };

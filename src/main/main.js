@@ -49,6 +49,8 @@ import {
 } from '../platforms/electron.js';
 import { exportTaskToHtml, generateTaskHtml } from './utils/export';
 import { MainAgentDecl } from './aikernel/agents/mainagent.js';
+import { HarnessContext } from './aikernel/security/harness.js';
+import { ElectronPermissionPromptProvider } from './aikernel/security/electron-prompt.js';
 
 import Convert from 'ansi-to-html';
 import path from 'path';
@@ -233,6 +235,14 @@ const registerTaskManagerAPIHandlers = () => {
             .catch((err) => {
                 logger.error('failed to create system prompt', err);
             });
+        try {
+            const workspace = process.cwd();
+            task.harnessContext = await HarnessContext.createWithDefaults(workspace);
+            task.harnessContext.permissionPrompt = new ElectronPermissionPromptProvider();
+        } catch (err) {
+            logger.warn(`Failed to init task harness in Electron, using empty context: ${err}`);
+            task.harnessContext = HarnessContext.createEmpty();
+        }
         return { status: 'ok', data: task.task_id };
     });
     ipcMain.handle('taskManager:removeTask', (event, taskId) => {

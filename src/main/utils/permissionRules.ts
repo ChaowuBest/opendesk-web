@@ -131,6 +131,34 @@ export function createSensitivePathRules(workspace: string): PermissionRule[] {
 }
 
 /**
+ * 创建始终生效的关键路径保护规则（不受工作空间限制）。
+ * 用于 AllowEverythingEnforcer 等低权限模式，确保 ~/.ssh 等路径
+ * 在任何工作空间下都需要用户确认。
+ */
+export function createCriticalPathRules(): PermissionRule[] {
+    const homeDir = normalizePath(os.homedir());
+    const rules: PermissionRule[] = [];
+    const allFileActions: PermissionAction[] = ['read', 'write', 'execute'];
+
+    for (const sp of SENSITIVE_PATH_PATTERNS) {
+        const resolvedPattern = sp.pattern.replace(/\{home\}/g, homeDir);
+        const resourceType = sp.resourceType ?? 'file';
+        const actions = sp.actions ?? allFileActions;
+
+        for (const action of actions) {
+            rules.push({
+                resourceType,
+                action,
+                pathPattern: resolvedPattern,
+                effect: 'ask'
+            });
+        }
+    }
+
+    return rules;
+}
+
+/**
  * 检查一个 glob 模式的路径是否可能落在 workspace 目录下。
  * 这是一个保守检查：当不确定时返回 true（宁可多保护，不可漏保护）。
  */

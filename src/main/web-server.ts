@@ -43,6 +43,7 @@ import {
     BaseTaskManagerUpdateSubscriber,
     type TaskUpdateChunk
 } from './aikernel/states/tasks.js';
+import { HarnessContext } from './aikernel/security/harness.js';
 
 const converter = new Convert();
 
@@ -159,6 +160,14 @@ export async function startWebServer(port = 3001) {
                     .catch((err) => {
                         logger.error('failed to create system prompt', err);
                     });
+                try {
+                    const workspace = process.cwd();
+                    task.harnessContext = await HarnessContext.createWithDefaults(workspace);
+                    // web-server 没有交互式 prompt provider；ask 权限默认拒绝（安全侧倒）
+                } catch (err) {
+                    logger.warn(`Failed to init task harness in web-server: ${err}`);
+                    task.harnessContext = HarnessContext.createEmpty();
+                }
                 sendJSON(res, { status: 'ok', data: task.task_id });
             } else if (pathname === '/api/taskManager/removeTask' && req.method === 'POST') {
                 const body = await parseBody(req);

@@ -68,7 +68,11 @@ const HEADLESS_RESOURCE_LABELS: Record<string, string> = {
  * Headless 模式下的权限确认：无交互能力，直接拒绝 ask 请求并输出日志。
  */
 class HeadlessPermissionPromptProvider implements PermissionPromptProvider {
-    async prompt(requests: PermissionRequest[], toolName: string): Promise<PermissionUserResponse> {
+    async prompt(
+        requests: PermissionRequest[],
+        toolName: string,
+        _prefixOptions: { label: string; pattern: string }[]
+    ): Promise<PermissionUserResponse> {
         const first = requests[0];
         const action = HEADLESS_ACTION_LABELS[first.action] || first.action;
         const resType = HEADLESS_RESOURCE_LABELS[first.resourceType] || first.resourceType;
@@ -110,8 +114,8 @@ export class HeadlessRunner {
                 task.harnessContext = HarnessContext.createAllowEverything(this.args.workspace);
             } else {
                 task.harnessContext = await HarnessContext.createWithDefaults(this.args.workspace);
-                task.harnessContext.permissionPrompt = new HeadlessPermissionPromptProvider();
             }
+            task.harnessContext.permissionPrompt = new HeadlessPermissionPromptProvider();
         } catch (err) {
             logger.warn(`Failed to init headless task harness: ${err}`);
         }
