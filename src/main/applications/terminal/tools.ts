@@ -19,6 +19,7 @@ import { z } from 'zod';
 import fs from 'fs';
 import path from 'path';
 import chalk from 'chalk';
+import type { PermissionRequest } from '../../aikernel/security/permission';
 import type { TaskState } from '../../aikernel/states/tasks';
 import {
     BackgroundProcessManager,
@@ -26,6 +27,7 @@ import {
     installTimeoutBackgrounding,
     type BackgroundProcessStatus
 } from './background';
+import { analyzeBashPermissions, analyzePowerShellPermissions } from './shellPermissions';
 
 const MAX_CLI_OUTPUT_LINES = 10;
 const LIVE_UPDATE_INTERVAL_MS = 200;
@@ -285,6 +287,16 @@ export class ExecutePowerShellTool extends BaseTool<typeof ExecutePowerShellArgs
         this.setUniversalExecutor(this.executeCommand.bind(this));
     }
 
+    getDeclaredPermissions(
+        args: z.output<typeof ExecutePowerShellArgsSchema>,
+        taskState?: TaskState
+    ): PermissionRequest[] {
+        const command = args.command;
+        if (!command || typeof command !== 'string') return [];
+        const cwd = args.workingDirectory || taskState?.harnessContext?.workspace || process.cwd();
+        return analyzePowerShellPermissions(command, cwd);
+    }
+
     async stop(): Promise<void> {
         this._killedByStop = true;
         const processes = Array.from(this.runningProcesses);
@@ -376,6 +388,13 @@ export class ExecuteBashTool extends BaseTool<typeof ExecuteBashArgsSchema> {
         this.setUniversalExecutor(this.executeCommand.bind(this));
     }
 
+    getDeclaredPermissions(args: z.output<typeof ExecuteBashArgsSchema>, taskState?: TaskState): PermissionRequest[] {
+        const command = args.command;
+        if (!command || typeof command !== 'string') return [];
+        const cwd = args.workingDirectory || taskState?.harnessContext?.workspace || process.cwd();
+        return analyzeBashPermissions(command, cwd);
+    }
+
     async stop(): Promise<void> {
         this._killedByStop = true;
         const processes = Array.from(this.runningProcesses);
@@ -447,6 +466,13 @@ export class ExecuteZshTool extends BaseTool<typeof ExecuteZshArgsSchema> {
         super('executeZsh', '执行 zsh 命令。可以执行任何有效的ZSH 命令，如 ls、cd、cat、echo 等', ExecuteZshArgsSchema);
 
         this.setUniversalExecutor(this.executeCommand.bind(this));
+    }
+
+    getDeclaredPermissions(args: z.output<typeof ExecuteZshArgsSchema>, taskState?: TaskState): PermissionRequest[] {
+        const command = args.command;
+        if (!command || typeof command !== 'string') return [];
+        const cwd = args.workingDirectory || taskState?.harnessContext?.workspace || process.cwd();
+        return analyzeBashPermissions(command, cwd);
     }
 
     async stop(): Promise<void> {
