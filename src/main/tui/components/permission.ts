@@ -125,17 +125,17 @@ export class PermissionPromptWidget implements Component {
             } else if (item.value === 'allow_type') {
                 this.onDone?.({ decision: 'allow', rememberScope: 'type' });
             } else if (item.value === 'deny') {
-                this.onDone?.({ decision: 'deny', rememberScope: 'none' });
+                this.onDone?.({ decision: 'deny', rememberScope: 'none', denyReason: 'user_denied' });
             } else if (item.value.startsWith('prefix:')) {
                 const pattern = item.value.slice('prefix:'.length);
                 this.onDone?.({ decision: 'allow', rememberScope: 'prefix', selectedPrefixPattern: pattern });
             } else {
-                this.onDone?.({ decision: 'deny', rememberScope: 'none' });
+                this.onDone?.({ decision: 'deny', rememberScope: 'none', denyReason: 'user_denied' });
             }
         };
 
         this.list.onCancel = () => {
-            this.onDone?.({ decision: 'deny', rememberScope: 'none' });
+            this.onDone?.({ decision: 'deny', rememberScope: 'none', denyReason: 'user_denied' });
         };
     }
 

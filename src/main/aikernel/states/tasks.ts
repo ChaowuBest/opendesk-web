@@ -1007,9 +1007,18 @@ export class TaskState {
 
             if (response.decision === 'deny') {
                 const paths = requests.map((r) => r.resourcePath).join(', ');
+                const reasonLabel =
+                    response.denyReason === 'timeout'
+                        ? '权限请求超时自动拒绝'
+                        : response.denyReason === 'no_prompt_provider'
+                          ? '无权限确认界面，已自动拒绝'
+                          : '用户拒绝了权限请求';
                 tool_call.status = 'error';
-                tool_call.result = `用户拒绝了权限请求: ${requests[0].action} ${paths}`;
-                tool_call.result_object = { permission_denied: true };
+                tool_call.result = `${reasonLabel}: ${requests[0].action} ${paths}`;
+                tool_call.result_object = {
+                    permission_denied: true,
+                    deny_reason: response.denyReason || 'user_denied'
+                };
                 return true;
             }
 
@@ -1080,7 +1089,7 @@ export class TaskState {
         const promptProvider = this.harnessContext.permissionPrompt;
         if (!promptProvider) {
             logger.warn(`permission ask required but no prompt provider configured, defaulting to deny`);
-            return { decision: 'deny', rememberScope: 'none' };
+            return { decision: 'deny', rememberScope: 'none', denyReason: 'no_prompt_provider' };
         }
 
         try {

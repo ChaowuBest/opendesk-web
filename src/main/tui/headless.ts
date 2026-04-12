@@ -79,7 +79,7 @@ class HeadlessPermissionPromptProvider implements PermissionPromptProvider {
         const paths = requests.map((r) => r.resourcePath).join(', ');
         process.stdout.write(chalk.bold.yellow('[权限] ') + `${toolName} 工具请求${action}${resType}资源: ${paths}\n`);
         process.stdout.write(chalk.bold.red('[权限] ') + `headless 模式下无法交互确认，已自动拒绝\n`);
-        return { decision: 'deny', rememberScope: 'none' };
+        return { decision: 'deny', rememberScope: 'none', denyReason: 'no_prompt_provider' };
     }
 }
 

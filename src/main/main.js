@@ -50,7 +50,7 @@ import {
 import { exportTaskToHtml, generateTaskHtml } from './utils/export';
 import { MainAgentDecl } from './aikernel/agents/mainagent.js';
 import { HarnessContext } from './aikernel/security/harness.js';
-import { ElectronPermissionPromptProvider } from './aikernel/security/electron-prompt.js';
+import { ElectronPermissionPromptProvider } from './aikernel/security/electronPrompt.js';
 
 import Convert from 'ansi-to-html';
 import path from 'path';

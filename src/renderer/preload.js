@@ -460,6 +460,24 @@ if (window.self !== window.top) {
         }
     });
 
+    contextBridge.exposeInMainWorld('permissionAPI', {
+        onPermissionRequest: (callback) => {
+            ipcRenderer.removeAllListeners('permission:request');
+            ipcRenderer.on('permission:request', (event, requestId, data) => {
+                callback(requestId, data);
+            });
+        },
+        onPermissionDismiss: (callback) => {
+            ipcRenderer.removeAllListeners('permission:dismiss');
+            ipcRenderer.on('permission:dismiss', (event, requestId) => {
+                callback(requestId);
+            });
+        },
+        respondPermission: (requestId, response) => {
+            ipcRenderer.send('permission:response', requestId, response);
+        }
+    });
+
     contextBridge.exposeInMainWorld('applicationRegistryAPI', {
         getApplicationGUIConfig: async (bundleName) => {
             const result = await ipcRenderer.invoke('applicationRegistry:getApplicationGUIConfig', bundleName);

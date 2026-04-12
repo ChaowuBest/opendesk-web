@@ -204,8 +204,8 @@ export function createResourcePath(resourceType: PermissionResourceType, path: s
 function parentDir(p: string): string {
     const lastSlash = p.lastIndexOf('/');
     if (lastSlash <= 0) return '';
-    // 保留盘符（如 C:）
-    if (lastSlash === 2 && p[1] === ':') return '';
+    // Windows 盘符根目录：D:/foo → D: （下一轮 parentDir('D:') 返回 '' 终止递归）
+    if (lastSlash === 2 && p[1] === ':') return p.slice(0, 2);
     return p.slice(0, lastSlash);
 }
 
@@ -289,6 +289,9 @@ export interface PermissionEnforcer {
     removeRule(rule: PermissionRule): Promise<void>;
 }
 
+/** 权限拒绝原因 */
+export type PermissionDenyReason = 'user_denied' | 'timeout' | 'no_prompt_provider';
+
 /**
  * 用户对权限 ask 请求做出的响应
  */
@@ -307,6 +310,10 @@ export interface PermissionUserResponse {
      * 由 PermissionPromptProvider 根据 ResourcePath.getPrefixes() 的选项设定。
      */
     selectedPrefixPattern?: string;
+    /**
+     * 当 decision='deny' 时，拒绝的原因。
+     */
+    denyReason?: PermissionDenyReason;
 }
 
 /**

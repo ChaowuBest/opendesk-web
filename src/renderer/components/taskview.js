@@ -1,5 +1,3 @@
-import { ElasticToolbarWidget } from './toolbar.ts';
-
 /**
  * Copyright (c) 2026 The OpenDesk Team
  * OpenDesk is licensed under Mulan PSL v2.
@@ -10,6 +8,8 @@ import { ElasticToolbarWidget } from './toolbar.ts';
  * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
  * See the Mulan PSL v2 for more details.
  */
+
+import { ElasticToolbarWidget } from './toolbar.ts';
 
 class TaskView extends HTMLElement {
     constructor() {
@@ -338,6 +338,9 @@ class TaskView extends HTMLElement {
                     <span class="ml-1">滚动到底部</span>
                 </button>
             </div>
+
+            <!-- 权限确认浮窗 -->
+            <permission-prompt id="task-${this.task_id}-permission" data-task-id="${this.task_id}" class="block px-4"></permission-prompt>
 
             <!-- 输入区域 -->
             <div class="p-4">
