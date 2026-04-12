@@ -178,11 +178,11 @@ class AgentInput extends HTMLElement {
             .map((filePath) => {
                 const fileName = filePath.split('/').pop();
                 return `
-            <div class="px-3 py-1 bg-blue-50 text-blue-700 hover:text-gray-600 hover:bg-blue-20 rounded-full border border-blue-100 transition-all shadow-sm text-xs cursor-pointer flex items-center">
-                <i class="fas fa-paperclip mr-1"></i>
-                <span class="max-w-[120px] truncate whitespace-nowrap overflow-hidden" style="display:inline-block;">${fileName}</span>
+            <div class="px-2 py-0.5 bg-blue-50 text-blue-700 hover:text-gray-600 rounded-full border border-blue-100 transition-all text-xs cursor-pointer flex items-center">
+                <i class="fas fa-paperclip mr-1 text-[10px]"></i>
+                <span class="max-w-[100px] truncate whitespace-nowrap overflow-hidden" style="display:inline-block;">${fileName}</span>
                 <button data-file_path="${filePath}" class="agent-input-remove-file-btn hover:text-red-500 leading-none">
-                    <i class="fas fa-times ml-1"></i>
+                    <i class="fas fa-times ml-1 text-[10px]"></i>
                 </button>
             </div>
             `;
@@ -191,9 +191,9 @@ class AgentInput extends HTMLElement {
 
         if (this.attachedFilePaths.length === 0) {
             fileItems = `
-            <div class="flex items-center justify-center text-sm text-gray-400 py-2">
-                <i class="fas fa-file-upload m-2"></i>
-                <span>你可以将文件拖拽到这里~</span>
+            <div class="flex items-center text-xs text-gray-400 py-0.5">
+                <i class="fas fa-paperclip mr-1.5"></i>
+                <span>拖拽文件到此处</span>
             </div>
             `;
         }
@@ -211,31 +211,31 @@ class AgentInput extends HTMLElement {
         }).join('');
 
         this.innerHTML = `
-        <div id="agent-input-container" class="w-full p-1.5 rounded-[28px] bg-white/40 border border-gray-300/60 shadow-[0_10px_40px_-15px_rgba(0,0,0,0.08)]">
-            <div class="bg-white rounded-[22px] p-1 shadow-sm border border-gray-100/40">
+        <div id="agent-input-container" class="w-full p-1 rounded-[24px] bg-white/40 border border-gray-300/60 shadow-[0_8px_30px_-12px_rgba(0,0,0,0.07)]">
+            <div class="bg-white rounded-[18px] shadow-sm border border-gray-100/40 overflow-hidden">
                 <!-- 主要输入区域 -->
-                <div class="p-3">
+                <div class="px-3.5 pt-2.5 pb-1">
                     <textarea
                         id="agent-input-textarea"
                         placeholder="在这里输入消息，按 Ctrl+Enter 发送"
-                        class="w-full h-15 resize-none border-none outline-none placeholder-gray-400 text-gray-700"
+                        class="w-full h-14 resize-none border-none outline-none placeholder-gray-400 text-gray-700 text-[13px] leading-relaxed"
                     ></textarea>
                 </div>
 
                 <!-- 工具栏 -->
-                <div class="flex items-start justify-between p-2 border-t border-gray-100">
+                <div class="flex items-center justify-between px-2.5 py-1.5 border-t border-gray-100">
                     <!-- 左侧：模型选择 + 推理模式 + 附件 -->
-                    <div class="flex items-center gap-2 flex-wrap" style="row-gap: 0.3rem;">
+                    <div class="flex items-center gap-1.5 flex-wrap" style="row-gap: 0.2rem;">
                         ${
                             this.availableModels.length > 0
                                 ? `
                         <select id="agent-input-model-select"
-                            class="text-xs bg-gray-50 border border-gray-200 rounded-full px-2.5 py-1 text-gray-600 outline-none hover:border-gray-400 transition-colors cursor-pointer"
-                            style="max-width: 140px;">
+                            class="text-xs bg-gray-50 border border-gray-200 rounded-full px-2 py-0.5 text-gray-600 outline-none hover:border-gray-400 transition-colors cursor-pointer"
+                            style="max-width: 130px;">
                             ${modelOptions}
                         </select>
                         <select id="agent-input-effort-select"
-                            class="text-xs bg-gray-50 border border-gray-200 rounded-full px-2.5 py-1 text-gray-600 outline-none hover:border-gray-400 transition-colors cursor-pointer">
+                            class="text-xs bg-gray-50 border border-gray-200 rounded-full px-2 py-0.5 text-gray-600 outline-none hover:border-gray-400 transition-colors cursor-pointer">
                             ${effortOptions}
                         </select>
                         `
@@ -244,27 +244,28 @@ class AgentInput extends HTMLElement {
                         <div
                             id="agent-input-attached-file-list"
                             class="flex flex-wrap items-center gap-1"
-                            style="row-gap: 0.3rem; overflow-x: auto;"
+                            style="row-gap: 0.2rem; overflow-x: auto;"
                         >
                             ${fileItems}
                         </div>
                     </div>
 
                     <!-- 右侧按钮 -->
-                    <div class="flex items-center space-x-2 mt-1">
+                    <div class="flex items-center gap-1.5">
                         <!-- 发送按钮 -->
-                        <button id="agent-input-submit-btn" class="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-50 rounded-full transition-colors">
-                            <i class="fas fa-arrow-up text-lg"></i>
+                        <button id="agent-input-submit-btn" class="p-1 text-gray-400 hover:text-blue-500 rounded-full transition-colors">
+                            <i class="fas fa-arrow-up text-base"></i>
                         </button>
                         <!-- 停止按钮 -->
-                        <button id="agent-input-stop-btn" class="p-1.5 bg-red-500 hover:bg-red-600 text-white rounded-full px-4 transition-colors text-sm hidden">
-                            <i class="fas fa-stop"></i>
-                            <span class="ml-1">停止任务</span>
+                        <button id="agent-input-stop-btn" class="py-1 px-3 bg-red-500 hover:bg-red-600 text-white rounded-full transition-colors text-xs hidden">
+                            <i class="fas fa-stop text-[10px]"></i>
+                            <span class="ml-1">停止</span>
                         </button>
                     </div>
                 </div>
             </div>
         </div>
+        ${this.getAttribute('hide-disclaimer') !== null ? '' : '<p class="text-center text-[11px] text-gray-400 mt-1.5 select-none">内容由 AI 生成，请核实重要信息。</p>'}
         `;
 
         this.setUpEventListeners();

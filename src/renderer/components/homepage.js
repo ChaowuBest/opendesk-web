@@ -116,66 +116,59 @@ class HomePage extends HTMLElement {
             </div>
 
             <!-- 输入框区域 -->
-            <div class="w-full max-w-4xl mb-8">
-                <agent-input id="agent-input-main"></agent-input>
+            <div class="w-full max-w-4xl mb-4">
+                <agent-input id="agent-input-main" hide-disclaimer></agent-input>
                 <div class="w-full h-2"></div>
                 <agent-files-view id="home-file-list"></agent-files-view>
             </div>
 
             <!-- 功能按钮区域 -->
             <div class="w-full max-w-4xl">
-                <div class="flex flex-wrap justify-center gap-3">
+                <div class="flex flex-wrap justify-center gap-2">
 
                     <!-- 收件箱 -->
-                    <button class="flex items-center space-x-2 px-3 py-2 bg-white rounded-full shadow-sm hover:shadow-md border border-gray-200 transition-all relative"
+                    <button class="flex items-center gap-1.5 px-2.5 py-1 bg-white rounded-full shadow-sm hover:shadow-md border border-gray-200 transition-all relative"
                         onclick="window.globalControlAPI.openApplication('mailbox')">
-                        <i class="fas fa-inbox text-indigo-500 text-sm"></i>
-                        <span class="text-sm text-gray-700">收件箱</span>
-                    </button>
-
-                    <!-- 新闻快讯 -->
-                    <button class="flex items-center space-x-2 px-3 py-2 bg-white rounded-full shadow-sm hover:shadow-md border border-gray-200 transition-all"
-                        onclick="window.globalControlAPI.openApplication('news')">
-                        <i class="fas fa-newspaper text-blue-500 text-sm"></i>
-                        <span class="text-sm text-gray-700">即时新闻</span>
+                        <i class="fas fa-inbox text-indigo-500 text-xs"></i>
+                        <span class="text-xs text-gray-700">收件箱</span>
                     </button>
 
                     <!-- 快速记录 -->
-                    <button class="flex items-center space-x-2 px-3 py-2 bg-white rounded-full shadow-sm hover:shadow-md border border-gray-200 transition-all"
+                    <button class="flex items-center gap-1.5 px-2.5 py-1 bg-white rounded-full shadow-sm hover:shadow-md border border-gray-200 transition-all"
                         onclick="window.globalControlAPI.openApplication('recall')">
-                        <i class="fas fa-video text-red-500 text-sm"></i>
-                        <span class="text-sm text-gray-700">快速记录</span>
+                        <i class="fas fa-video text-red-500 text-xs"></i>
+                        <span class="text-xs text-gray-700">快速记录</span>
                     </button>
 
                     <!-- A2A -->
-                    <button class="flex items-center space-x-2 px-3 py-2 bg-white rounded-full shadow-sm hover:shadow-md border border-gray-200 transition-all"
+                    <button class="flex items-center gap-1.5 px-2.5 py-1 bg-white rounded-full shadow-sm hover:shadow-md border border-gray-200 transition-all"
                         onclick="window.globalControlAPI.openApplication('a2a')">
-                        <i class="fas fa-comments text-purple-500 text-sm"></i>
-                        <span class="text-sm text-gray-700">A2A</span>
+                        <i class="fas fa-comments text-purple-500 text-xs"></i>
+                        <span class="text-xs text-gray-700">A2A</span>
                     </button>
 
                     <!-- 编程 -->
-                    <button class="flex items-center space-x-2 px-3 py-2 bg-gray-100 rounded-full shadow-none border border-gray-100 cursor-not-allowed opacity-50" disabled>
-                        <i class="fas fa-code text-orange-300 text-sm"></i>
-                        <span class="text-sm text-gray-400">编程</span>
+                    <button class="flex items-center gap-1.5 px-2.5 py-1 bg-gray-100 rounded-full shadow-none border border-gray-100 cursor-not-allowed opacity-50" disabled>
+                        <i class="fas fa-code text-orange-300 text-xs"></i>
+                        <span class="text-xs text-gray-400">编程</span>
                     </button>
 
                     <!-- 图像生成 -->
-                    <button class="flex items-center space-x-2 px-3 py-2 bg-gray-100 rounded-full shadow-none border border-gray-100 cursor-not-allowed opacity-50" disabled>
-                        <i class="fas fa-image text-yellow-300 text-sm"></i>
-                        <span class="text-sm text-gray-400">图像生成</span>
+                    <button class="flex items-center gap-1.5 px-2.5 py-1 bg-gray-100 rounded-full shadow-none border border-gray-100 cursor-not-allowed opacity-50" disabled>
+                        <i class="fas fa-image text-yellow-300 text-xs"></i>
+                        <span class="text-xs text-gray-400">图像生成</span>
                     </button>
 
                     <!-- 帮我写作 -->
-                    <button class="flex items-center space-x-2 px-3 py-2 bg-gray-100 rounded-full shadow-none border border-gray-100 cursor-not-allowed opacity-50" disabled>
-                        <i class="fas fa-check text-green-300 text-sm"></i>
-                        <span class="text-sm text-gray-400">帮我写作</span>
+                    <button class="flex items-center gap-1.5 px-2.5 py-1 bg-gray-100 rounded-full shadow-none border border-gray-100 cursor-not-allowed opacity-50" disabled>
+                        <i class="fas fa-check text-green-300 text-xs"></i>
+                        <span class="text-xs text-gray-400">帮我写作</span>
                     </button>
 
                     <!-- 深入研究 -->
-                    <button class="flex items-center space-x-2 px-3 py-2 bg-gray-100 rounded-full shadow-none border border-gray-100 cursor-not-allowed opacity-50" disabled>
-                        <i class="fas fa-search text-blue-300 text-sm"></i>
-                        <span class="text-sm text-gray-400">深入研究</span>
+                    <button class="flex items-center gap-1.5 px-2.5 py-1 bg-gray-100 rounded-full shadow-none border border-gray-100 cursor-not-allowed opacity-50" disabled>
+                        <i class="fas fa-search text-blue-300 text-xs"></i>
+                        <span class="text-xs text-gray-400">深入研究</span>
                     </button>
 
                 </div>
