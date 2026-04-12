@@ -81,6 +81,34 @@ class HomePage extends HTMLElement {
         const fileListView = this.querySelector('#home-file-list');
 
         agentInput.addEventListener('submit', async (event) => {
+            const message = event.detail.message;
+
+            if (window.quickpassAPI && message.trim().startsWith('[[Opendesk')) {
+                try {
+                    const isQP = await window.quickpassAPI.isQuickPass(message);
+                    if (isQP) {
+                        const { name, hasApplications } = await window.quickpassAPI.importQuickPass(message);
+                        const scope = hasApplications ? '全部设置（含应用配置）' : '基础设置（不含应用配置）';
+                        await window.notificationAPI.sendNotification(
+                            'info',
+                            '设置',
+                            `已成功导入口令`,
+                            `导入范围：${scope}`
+                        );
+                        window.globalControlAPI.openHomePage();
+                        return;
+                    }
+                } catch (err) {
+                    await window.notificationAPI.sendNotification(
+                        'error',
+                        '口令导入失败',
+                        '导入口令时出错',
+                        err.message || String(err)
+                    );
+                    return;
+                }
+            }
+
             const task = await window.taskManagerAPI.createTask();
             await window.taskManagerAPI.submitMessage(task, event.detail);
             window.globalControlAPI.openTask(task);

@@ -22,6 +22,7 @@ import {
     protocol
 } from 'electron';
 import { Setting, getAppDirectory } from './utils/setting.js';
+import { QuickPassHelper } from './utils/quickpass.js';
 import { GlobalState } from './aikernel/states/global.js';
 import { BaseToolset } from './aikernel/tool';
 import { is } from '@electron-toolkit/utils';
@@ -499,6 +500,23 @@ const registerSettingAPIHandlers = () => {
             return { status: 'ok' };
         } catch (error) {
             return { status: 'error', message: error.message };
+        }
+    });
+    ipcMain.handle('quickpass:import', (event, quickpass) => {
+        try {
+            const cleaned = quickpass.trim().replace(/[\r\n]+/g, '');
+            const result = QuickPassHelper.importConfig(cleaned);
+            notifyWorkerSettingUpdate(Setting.getInstance().getData());
+            return { status: 'ok', data: result };
+        } catch (error) {
+            return { status: 'error', message: error.message };
+        }
+    });
+    ipcMain.handle('quickpass:isQuickPass', (event, text) => {
+        try {
+            return { status: 'ok', data: QuickPassHelper.isQuickPass(text) };
+        } catch {
+            return { status: 'ok', data: false };
         }
     });
     (ipcMain.handle('setting:openDevTools', () => {

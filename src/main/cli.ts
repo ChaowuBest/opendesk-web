@@ -28,6 +28,7 @@ import { ShellAgentDecl } from './aikernel/agents/shellagent.js';
 import { NotificationManager } from './utils/notificationmgr.js';
 import { registerPluginsCommand } from './tui/subcommands/plugins.js';
 import { registerToolsCommand } from './tui/subcommands/tools.js';
+import { registerQuickpassCommand } from './tui/subcommands/quickpass.js';
 
 import { getCurrentVersion } from './utils/upgrade.js';
 
@@ -55,6 +56,7 @@ function parseCommandLineArgs() {
 
     registerPluginsCommand(prog);
     registerToolsCommand(prog);
+    registerQuickpassCommand(prog);
 
     // 让每个应用类注册自己的 CLI 子命令
     for (const AppClass of new CliPlatform().getApplicationClasses()) {

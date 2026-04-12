@@ -432,6 +432,20 @@ if (window.self !== window.top) {
         }
     });
 
+    contextBridge.exposeInMainWorld('quickpassAPI', {
+        isQuickPass: async (text) => {
+            const result = await ipcRenderer.invoke('quickpass:isQuickPass', text);
+            return result.status === 'ok' ? result.data : false;
+        },
+        importQuickPass: async (quickpass) => {
+            const result = await ipcRenderer.invoke('quickpass:import', quickpass);
+            if (result.status !== 'ok') {
+                throw new Error(result.message);
+            }
+            return result.data;
+        }
+    });
+
     contextBridge.exposeInMainWorld('notificationAPI', {
         sendNotification: async (...args) => {
             const result = await ipcRenderer.invoke('notification:sendNotification', ...args);
