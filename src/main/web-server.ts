@@ -202,6 +202,12 @@ export async function startWebServer(port = 3001) {
                 if (body.details?.attachedFilePaths) {
                     await task.attachFiles(body.details.attachedFilePaths);
                 }
+                if (body.details?.selectedModel) {
+                    task.model = body.details.selectedModel;
+                }
+                if (body.details?.reasoningEffort !== undefined) {
+                    task.reasoningEffort = body.details.reasoningEffort || undefined;
+                }
                 task.submitUserMessage(body.details?.message || body.message).catch((err: Error) =>
                     logger.error(`submitUserMessage failed for task ${body.taskId}:`, err)
                 );

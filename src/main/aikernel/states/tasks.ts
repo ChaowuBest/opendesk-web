@@ -30,7 +30,7 @@ import { prepareContextForModel } from '../compaction/pipeline.js';
 import type { ActiveContextView } from '../compaction/types.js';
 import { compactContext } from '../compact.js';
 import { BaseTool, BaseToolset } from '../tool.js';
-import { LLM } from '../llm.js';
+import { LLM, type ReasoningEffort, type LLMRequestOptions } from '../llm.js';
 import { getTaskArtifactDirectory, getTaskDirectory } from '../../utils/setting.js';
 import { logger } from '../../utils/logger.js';
 import { type ToolsetProvider, EmptyToolsetProvider } from './toolset-provider.js';
@@ -123,6 +123,7 @@ export class TaskState {
     tool_result_replacement_state: ToolResultReplacementState = ToolResultReplacementStates.create();
 
     model?: string;
+    reasoningEffort?: ReasoningEffort;
     message_queue: string[] = [];
 
     /**
@@ -231,6 +232,8 @@ export class TaskState {
             task_id: this.task_id,
             task_name: this.task_name,
             task_status: this.task_status,
+            model: this.model,
+            reasoningEffort: this.reasoningEffort,
             chat_context: this.chat_context.toRenderJSON()
         };
     }
@@ -554,8 +557,9 @@ export class TaskState {
         forkedTask.chat_context = ChatContext.assign(this.chat_context.toJSON());
         forkedTask.tool_result_replacement_state = ToolResultReplacementStates.clone(toolResultReplacementState);
 
-        // Copy model
+        // Copy model and reasoning effort
         forkedTask.model = this.model;
+        forkedTask.reasoningEffort = this.reasoningEffort;
 
         // Set forked name with "-fork" suffix
         forkedTask.task_name = this.task_name ? `${this.task_name}-fork` : null;
@@ -714,8 +718,13 @@ export class TaskState {
 
         // Track the last sent text part index to avoid duplicate sends
         let lastSentTextPartIndex = -1;
-
-        for await (const chunk_resp of LLM.streamComplete(this.chat_context, this.model, streamOptions)) {
+        const requestOptions: LLMRequestOptions = { reasoningEffort: this.reasoningEffort };
+        for await (const chunk_resp of LLM.streamComplete(
+            this.chat_context,
+            this.model,
+            streamOptions,
+            requestOptions
+        )) {
             // 检查是否已停止
             if (this.task_status === 'stopped') {
                 logger.info(`task ${this.task_id} completion interrupted by stop request`);

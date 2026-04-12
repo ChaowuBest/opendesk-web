@@ -140,6 +140,16 @@ class TaskView extends HTMLElement {
         this.task_status = task_state.task_status || 'waiting';
         this.updateStopButtonVisibility();
 
+        const input_widget = this.querySelector(`#task-${this.task_id}-input`);
+        if (input_widget) {
+            if (task_state.model) {
+                input_widget.setModel(task_state.model);
+            }
+            if (task_state.reasoningEffort !== undefined) {
+                input_widget.setReasoningEffort(task_state.reasoningEffort);
+            }
+        }
+
         const history_container = this.getHistoryContainer();
         const htmlParts = [];
         for (const message of task_state.chat_context.messages) {

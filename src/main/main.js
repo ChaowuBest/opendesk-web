@@ -337,6 +337,12 @@ const registerTaskManagerAPIHandlers = () => {
         if (details.attachedFilePaths) {
             await task.attachFiles(details.attachedFilePaths);
         }
+        if (details.selectedModel) {
+            task.model = details.selectedModel;
+        }
+        if (details.reasoningEffort !== undefined) {
+            task.reasoningEffort = details.reasoningEffort || undefined;
+        }
 
         task.submitUserMessage(details.message).catch((err) =>
             logger.error(`submitUserMessage failed for task ${taskId}:`, err)

@@ -11,6 +11,42 @@
 
 const supportedFileExtensions = ['pdf', 'docx', 'doc', 'xls', 'xlsx', 'ppt', 'pptx'];
 
+const REASONING_EFFORT_OPTIONS = [
+    { value: '', label: '默认' },
+    { value: 'none', label: '无推理' },
+    { value: 'low', label: '简洁推理' },
+    { value: 'medium', label: '推理适中' },
+    { value: 'high', label: '推理深入' }
+];
+
+/**
+ * 更新系统设置中的 default_model 和指定模型的 reasoning_effort。
+ * 只修改需要变更的字段，其余保持不变。
+ */
+async function updateSettingForModelChange(modelAlias, reasoningEffort) {
+    try {
+        if (!window.settingAPI?.saveSettingObject || !window.settingAPI?.loadSettingObject) return;
+        const settingObj = await window.settingAPI.loadSettingObject();
+        let changed = false;
+        if (modelAlias && settingObj.default_model !== modelAlias) {
+            settingObj.default_model = modelAlias;
+            changed = true;
+        }
+        if (modelAlias && reasoningEffort !== undefined) {
+            const model = (settingObj.models || []).find((m) => m.alias === modelAlias);
+            if (model && model.reasoning_effort !== reasoningEffort) {
+                model.reasoning_effort = reasoningEffort;
+                changed = true;
+            }
+        }
+        if (changed) {
+            await window.settingAPI.saveSettingObject(settingObj);
+        }
+    } catch (err) {
+        console.warn('Failed to persist model/effort setting:', err);
+    }
+}
+
 class AgentInput extends HTMLElement {
     constructor() {
         super();
@@ -18,10 +54,51 @@ class AgentInput extends HTMLElement {
         this.isDisabled = false;
         this.showStopButton = false;
         this.onStopCallback = null;
+        /** @type {{ alias: string, model_name: string }[]} */
+        this.availableModels = [];
+        this.selectedModel = '';
+        this.selectedReasoningEffort = '';
+        this.defaultModelAlias = '';
     }
 
     connectedCallback() {
-        this.render();
+        this.loadModels().then(() => this.render());
+    }
+
+    async loadModels() {
+        try {
+            if (!window.settingAPI?.loadSettingObject) return;
+            const settingObj = await window.settingAPI.loadSettingObject();
+            this.availableModels = settingObj.models || [];
+            this.defaultModelAlias = settingObj.default_model || '';
+            if (!this.selectedModel) {
+                this.selectedModel = this.defaultModelAlias;
+            }
+            const currentModel = this.availableModels.find((m) => m.alias === this.selectedModel);
+            if (currentModel && currentModel.reasoning_effort !== undefined && !this.selectedReasoningEffort) {
+                this.selectedReasoningEffort = currentModel.reasoning_effort;
+            }
+        } catch (err) {
+            console.warn('Failed to load models for agent-input:', err);
+        }
+    }
+
+    /**
+     * 外部设置当前模型（不写入系统设置，仅更新 UI 状态）
+     */
+    setModel(modelAlias) {
+        this.selectedModel = modelAlias;
+        const modelSelect = this.querySelector('#agent-input-model-select');
+        if (modelSelect) modelSelect.value = modelAlias;
+    }
+
+    /**
+     * 外部设置当前 reasoning effort（不写入系统设置，仅更新 UI 状态）
+     */
+    setReasoningEffort(effort) {
+        this.selectedReasoningEffort = effort || '';
+        const effortSelect = this.querySelector('#agent-input-effort-select');
+        if (effortSelect) effortSelect.value = this.selectedReasoningEffort;
     }
 
     disconnectedCallback() {}
@@ -121,6 +198,18 @@ class AgentInput extends HTMLElement {
             `;
         }
 
+        const modelOptions = this.availableModels
+            .map((m) => {
+                const selected = m.alias === this.selectedModel ? 'selected' : '';
+                return `<option value="${m.alias}" ${selected}>${m.alias}</option>`;
+            })
+            .join('');
+
+        const effortOptions = REASONING_EFFORT_OPTIONS.map((o) => {
+            const selected = o.value === this.selectedReasoningEffort ? 'selected' : '';
+            return `<option value="${o.value}" ${selected}>${o.label}</option>`;
+        }).join('');
+
         this.innerHTML = `
         <div id="agent-input-container" class="w-full p-1.5 rounded-[28px] bg-white/40 border border-gray-300/60 shadow-[0_10px_40px_-15px_rgba(0,0,0,0.08)]">
             <div class="bg-white rounded-[22px] p-1 shadow-sm border border-gray-100/40">
@@ -135,12 +224,26 @@ class AgentInput extends HTMLElement {
 
                 <!-- 工具栏 -->
                 <div class="flex items-start justify-between p-2 border-t border-gray-100">
-                    <!-- 左侧工具按钮 -->
-                    <div class="flex items-center space-x-3">
-                        <!-- 附件 -->
+                    <!-- 左侧：模型选择 + 推理模式 + 附件 -->
+                    <div class="flex items-center gap-2 flex-wrap" style="row-gap: 0.3rem;">
+                        ${
+                            this.availableModels.length > 0
+                                ? `
+                        <select id="agent-input-model-select"
+                            class="text-xs bg-gray-50 border border-gray-200 rounded-full px-2.5 py-1 text-gray-600 outline-none hover:border-gray-400 transition-colors cursor-pointer"
+                            style="max-width: 140px;">
+                            ${modelOptions}
+                        </select>
+                        <select id="agent-input-effort-select"
+                            class="text-xs bg-gray-50 border border-gray-200 rounded-full px-2.5 py-1 text-gray-600 outline-none hover:border-gray-400 transition-colors cursor-pointer">
+                            ${effortOptions}
+                        </select>
+                        `
+                                : ''
+                        }
                         <div
                             id="agent-input-attached-file-list"
-                            class="flex flex-wrap items-center gap-1 w-full"
+                            class="flex flex-wrap items-center gap-1"
                             style="row-gap: 0.3rem; overflow-x: auto;"
                         >
                             ${fileItems}
@@ -174,10 +277,29 @@ class AgentInput extends HTMLElement {
         const submitBtn = this.querySelector('#agent-input-submit-btn');
         const stopBtn = this.querySelector('#agent-input-stop-btn');
         const removeFileBtns = this.querySelectorAll('.agent-input-remove-file-btn');
+        const modelSelect = this.querySelector('#agent-input-model-select');
+        const effortSelect = this.querySelector('#agent-input-effort-select');
+
+        if (modelSelect) {
+            modelSelect.addEventListener('change', async () => {
+                this.selectedModel = modelSelect.value;
+                const currentModel = this.availableModels.find((m) => m.alias === this.selectedModel);
+                if (currentModel) {
+                    this.selectedReasoningEffort = currentModel.reasoning_effort || '';
+                    if (effortSelect) effortSelect.value = this.selectedReasoningEffort;
+                }
+                await updateSettingForModelChange(this.selectedModel, undefined);
+            });
+        }
+        if (effortSelect) {
+            effortSelect.addEventListener('change', async () => {
+                this.selectedReasoningEffort = effortSelect.value;
+                await updateSettingForModelChange(this.selectedModel, this.selectedReasoningEffort);
+            });
+        }
 
         // 提交消息的函数
         const handleSubmit = () => {
-            // 如果输入框被禁用，不允许提交
             if (this.isDisabled) {
                 return;
             }
@@ -190,7 +312,9 @@ class AgentInput extends HTMLElement {
             const submitEvent = new CustomEvent('submit', {
                 detail: {
                     message: message,
-                    attachedFilePaths: this.attachedFilePaths
+                    attachedFilePaths: this.attachedFilePaths,
+                    selectedModel: this.selectedModel || undefined,
+                    reasoningEffort: this.selectedReasoningEffort || undefined
                 },
                 bubbles: true
             });

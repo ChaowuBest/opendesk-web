@@ -25,7 +25,11 @@ const ProviderSchema = z.object({
 const ModelSchema = z.object({
     alias: z.string().default('model_alias').describe('模型别名(在本地配置中使用的名称)'),
     provider_name: z.string().default('openrouter').describe('模型提供商'),
-    model_name: z.string().default('google/gemini-2.5-flash').describe('模型名称(在提供商一侧的名称)')
+    model_name: z.string().default('google/gemini-2.5-flash').describe('模型名称(在提供商一侧的名称)'),
+    reasoning_effort: z
+        .enum(['', 'none', 'low', 'medium', 'high'])
+        .default('')
+        .describe('模型默认推理模式(空字符串表示默认)')
 });
 
 type Provider = z.infer<typeof ProviderSchema>;

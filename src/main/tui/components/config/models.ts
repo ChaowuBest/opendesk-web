@@ -8,7 +8,17 @@ interface ModelData {
     alias: string;
     provider_name: string;
     model_name: string;
+    reasoning_effort?: string;
 }
+
+const REASONING_EFFORT_OPTIONS = ['', 'none', 'low', 'medium', 'high'];
+const REASONING_EFFORT_LABELS: Record<string, string> = {
+    '': '默认',
+    none: '无推理',
+    low: '简洁推理',
+    medium: '推理适中',
+    high: '推理深入'
+};
 
 /**
  * 模型配置页面。
@@ -39,10 +49,15 @@ export class ModelConfigPage implements Component {
 
         const items = [
             { value: '__add__', label: chalk.green('+ 添加模型') },
-            ...models.map((m: ModelData, i: number) => ({
-                value: String(i),
-                label: `${m.alias}  ${chalk.dim(`${m.provider_name} / ${m.model_name}`)}`
-            }))
+            ...models.map((m: ModelData, i: number) => {
+                const effortTag = m.reasoning_effort
+                    ? chalk.yellow(`[${REASONING_EFFORT_LABELS[m.reasoning_effort] || m.reasoning_effort}]`)
+                    : '';
+                return {
+                    value: String(i),
+                    label: `${m.alias}  ${chalk.dim(`${m.provider_name} / ${m.model_name}`)} ${effortTag}`
+                };
+            })
         ];
 
         this.list = new SelectList(items, Math.min(items.length, 15), defaultSelectListTheme);
@@ -98,6 +113,15 @@ export class ModelConfigPage implements Component {
             value: model.model_name
         });
 
+        fields.push({
+            type: 'select',
+            key: 'reasoning_effort',
+            label: '推理模式',
+            value: model.reasoning_effort || '',
+            options: REASONING_EFFORT_OPTIONS,
+            optionLabels: REASONING_EFFORT_LABELS
+        });
+
         const actions: ActionDef[] = [{ key: 'save', label: '🆗 保存', style: 'primary' }];
         if (this.editingIndex >= 0) {
             actions.push({ key: 'delete', label: '🗑️  删除', style: 'danger' });
@@ -135,7 +159,8 @@ export class ModelConfigPage implements Component {
         const model: ModelData = {
             alias: values.alias ?? '',
             provider_name: values.provider_name ?? '',
-            model_name: values.model_name ?? ''
+            model_name: values.model_name ?? '',
+            reasoning_effort: values.reasoning_effort ?? ''
         };
 
         if (this.editingIndex >= 0) {

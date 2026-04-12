@@ -23,6 +23,9 @@ import type { BaseTool } from './tool';
 /** Model 参数支持传入 ModelInstance 对象、模型别名字符串、或 undefined（使用默认模型） */
 type ModelParam = ModelInstance | string | undefined;
 
+/** 控制模型推理深度，undefined 表示使用模型默认值 */
+type ReasoningEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
+
 /**
  * LLM 验证器的返回结果。
  * 当验证成功时 validated_content 有值且 message 为 undefined；
@@ -49,10 +52,17 @@ class LLMValidatorResult {
 /** 验证器函数签名：接收 LLM 的原始文本输出，返回验证结果 */
 type ValidatorFn = (content: string) => LLMValidatorResult;
 
+/** LLM 补全请求的通用可选参数 */
+interface LLMRequestOptions {
+    /** 控制模型推理深度，不传则使用模型默认值 */
+    reasoningEffort?: ReasoningEffort;
+}
+
 interface LLMAskOptions {
     question: UserMessage;
     model: ModelParam;
     validator: ValidatorFn | undefined;
+    requestOptions?: LLMRequestOptions;
 }
 
 interface LLMMessageBuildOptions {
@@ -251,7 +261,10 @@ class LLM {
             const response = await withRateLimitRetry(() =>
                 client.chat.completions.create({
                     model: modelInstance.model_name,
-                    messages: messages as OpenAI.ChatCompletionMessageParam[]
+                    messages: messages as OpenAI.ChatCompletionMessageParam[],
+                    ...(options.requestOptions?.reasoningEffort
+                        ? { reasoning_effort: options.requestOptions.reasoningEffort }
+                        : {})
                 })
             );
 
@@ -292,11 +305,16 @@ class LLM {
         return content.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
     }
 
-    static async ask(question: UserMessage | string, model: ModelParam = undefined): Promise<string> {
+    static async ask(
+        question: UserMessage | string,
+        model: ModelParam = undefined,
+        requestOptions?: LLMRequestOptions
+    ): Promise<string> {
         const options: LLMAskOptions = {
             question: question instanceof UserMessage ? question : new UserMessage(question),
             model: model,
-            validator: undefined
+            validator: undefined,
+            requestOptions
         };
         const result = await LLM.__ask(options);
         return typeof result === 'string' ? result : JSON.stringify(result);
@@ -328,11 +346,16 @@ class LLM {
         }
     }
 
-    static async askForObject(question: UserMessage, model: ModelParam = undefined): Promise<object> {
+    static async askForObject(
+        question: UserMessage,
+        model: ModelParam = undefined,
+        requestOptions?: LLMRequestOptions
+    ): Promise<object> {
         const options: LLMAskOptions = {
             question,
             model,
-            validator: (content) => LLM.__objectValidator(content)
+            validator: (content) => LLM.__objectValidator(content),
+            requestOptions
         };
         const result = await LLM.__ask(options);
         if (typeof result === 'object') {
@@ -344,12 +367,14 @@ class LLM {
     static async askForObjectWithSchema(
         question: UserMessage,
         schema: z.ZodSchema,
-        model: ModelParam = undefined
+        model: ModelParam = undefined,
+        requestOptions?: LLMRequestOptions
     ): Promise<object> {
         const options: LLMAskOptions = {
             question,
             model,
-            validator: (content) => LLM.__objectValidator(content, schema)
+            validator: (content) => LLM.__objectValidator(content, schema),
+            requestOptions
         };
         const result = await LLM.__ask(options);
         if (typeof result === 'object') {
@@ -422,7 +447,8 @@ class LLM {
     static async complete(
         chatContext: ChatContext,
         model: ModelParam = undefined,
-        options: LLMMessageBuildOptions = {}
+        options: LLMMessageBuildOptions = {},
+        requestOptions?: LLMRequestOptions
     ): Promise<AssistantResponse> {
         const modelInstance = this.__getModelInstance(model);
         const client = new OpenAI({
@@ -438,7 +464,8 @@ class LLM {
                 model: modelInstance.model_name,
                 messages: messages as OpenAI.ChatCompletionMessageParam[],
                 max_completion_tokens: 16384,
-                ...toolOptions
+                ...toolOptions,
+                ...(requestOptions?.reasoningEffort ? { reasoning_effort: requestOptions.reasoningEffort } : {})
             })
         );
         return AssistantResponse.parseOpenAIResponse(response);
@@ -447,7 +474,8 @@ class LLM {
     static async *streamComplete(
         chatContext: ChatContext,
         model: ModelParam = undefined,
-        options: LLMMessageBuildOptions = {}
+        options: LLMMessageBuildOptions = {},
+        requestOptions?: LLMRequestOptions
     ): AsyncIterable<AssistantResponse> {
         const modelInstance = this.__getModelInstance(model);
         this.__ensureProxy(modelInstance);
@@ -482,7 +510,8 @@ class LLM {
                     max_completion_tokens: 16384,
                     stream: true,
                     stream_options: { include_usage: true },
-                    ...toolOptions
+                    ...toolOptions,
+                    ...(requestOptions?.reasoningEffort ? { reasoning_effort: requestOptions.reasoningEffort } : {})
                 })
             );
 
@@ -502,4 +531,4 @@ class LLM {
     }
 }
 
-export { LLM };
+export { LLM, type ReasoningEffort, type LLMRequestOptions };
