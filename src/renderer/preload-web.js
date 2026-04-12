@@ -261,6 +261,27 @@
         }
     };
 
+    // --- workspaceAPI ---
+    window.workspaceAPI = {
+        getEffectiveWorkspace: async () => {
+            const result = await apiGet('/api/workspace/getEffectiveWorkspace');
+            if (result.status !== 'ok') throw new Error(result.message);
+            return result.data;
+        },
+        openWorkspaceDirectory: async () => {
+            console.warn('[preload-web] openWorkspaceDirectory: not supported in web mode');
+        },
+        selectWorkspaceDirectory: async () => {
+            console.warn('[preload-web] selectWorkspaceDirectory: not supported in web mode');
+            return null;
+        },
+        copyWorkspacePath: async () => {
+            const result = await apiGet('/api/workspace/getEffectiveWorkspace');
+            if (result.status !== 'ok') throw new Error(result.message);
+            await navigator.clipboard.writeText(result.data);
+        }
+    };
+
     // --- notificationAPI ---
     window.notificationAPI = {
         sendNotification: async (...args) => {

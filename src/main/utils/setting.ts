@@ -44,6 +44,7 @@ function getSettingSchema(): z.ZodObject<z.ZodRawShape> {
         default_embedding_model: z.string().describe('知识库，检索使用的中使用的向量嵌入模型').default(''),
         default_reranker_model: z.string().describe('在检索结果重排序中使用的模型').default(''),
         default_vision_model: z.string().describe('在图片记忆提取中使用的多模态模型').default(''),
+        default_workspace: z.string().describe('默认工作空间目录路径(为空时使用临时工作空间)').default(''),
         providers: z.array(ProviderSchema).describe('可用AI模型提供商').default([]),
         models: z.array(ModelSchema).describe('可用AI模型').default([]),
         applications: ApplicationConfigSchema.describe('OpenDesk应用相关配置').default({})
@@ -259,6 +260,25 @@ export class Setting {
         }
         return model;
     }
+
+    /**
+     * 获取当前有效的工作空间路径。
+     * 如果默认工作空间为空或目录不存在，则使用临时工作空间。
+     */
+    getEffectiveWorkspace(): string {
+        const configuredPath = this.data.default_workspace as string;
+        if (configuredPath && fs.existsSync(configuredPath)) {
+            try {
+                const stat = fs.statSync(configuredPath);
+                if (stat.isDirectory()) {
+                    return configuredPath;
+                }
+            } catch {
+                // fall through to temp workspace
+            }
+        }
+        return getTempWorkspaceDirectory();
+    }
 }
 
 /** 用户通过 --config-directory 指定的自定义配置目录（主线程生效） */
@@ -319,6 +339,22 @@ function ensureDirectoryExists(directory: string): string {
         fs.mkdirSync(directory, { recursive: true });
     }
     return directory;
+}
+
+/**
+ * 获取临时工作空间目录。
+ * - Windows: $USERPROFILE/opendesk
+ * - 类 Unix: $HOME/.opendesk/workspace
+ */
+function getTempWorkspaceDirectory(): string {
+    let workspacePath: string;
+    if (process.platform === 'win32') {
+        const userProfile = process.env.USERPROFILE || process.env.HOME || '';
+        workspacePath = path.join(userProfile, 'opendesk');
+    } else {
+        workspacePath = path.join(getAppDirectory(), 'workspace');
+    }
+    return ensureDirectoryExists(workspacePath);
 }
 
 function resolveArtifactDirectory(): string {
@@ -383,5 +419,6 @@ export {
     getArtifactDirectory,
     getTaskArtifactDirectory,
     getTaskToolResultDirectory,
+    getTempWorkspaceDirectory,
     getSettingSchema
 };

@@ -227,7 +227,7 @@ const registerTaskManagerAPIHandlers = () => {
 
     ipcMain.handle('taskManager:createTask', async () => {
         const task = globalState.taskManagerState.createTask();
-        const workspace = process.cwd();
+        const workspace = Setting.getInstance().getEffectiveWorkspace();
         const agentDecl = new MainAgentDecl({ workspace });
         agentDecl
             .createSystemPrompt()
@@ -517,6 +517,41 @@ const registerSettingAPIHandlers = () => {
             return { status: 'ok', data: QuickPassHelper.isQuickPass(text) };
         } catch {
             return { status: 'ok', data: false };
+        }
+    });
+    ipcMain.handle('workspace:getEffectiveWorkspace', () => {
+        try {
+            const workspace = Setting.getInstance().getEffectiveWorkspace();
+            return { status: 'ok', data: workspace };
+        } catch (error) {
+            return { status: 'error', message: error.message };
+        }
+    });
+    ipcMain.handle('workspace:openWorkspaceDirectory', async () => {
+        try {
+            const workspace = Setting.getInstance().getEffectiveWorkspace();
+            await shell.openPath(workspace);
+            return { status: 'ok' };
+        } catch (error) {
+            return { status: 'error', message: error.message };
+        }
+    });
+    ipcMain.handle('workspace:selectWorkspaceDirectory', async () => {
+        try {
+            const result = await dialog.showOpenDialog(globalMainWindow, {
+                title: '选择工作空间目录',
+                properties: ['openDirectory']
+            });
+            if (result.canceled || result.filePaths.length === 0) {
+                return { status: 'ok', data: null };
+            }
+            const selectedPath = result.filePaths[0].replace(/\\/g, '/');
+            const currentData = Setting.getInstance().getData();
+            Setting.getInstance().setData({ ...currentData, default_workspace: selectedPath });
+            notifyWorkerSettingUpdate(Setting.getInstance().getData());
+            return { status: 'ok', data: selectedPath };
+        } catch (error) {
+            return { status: 'error', message: error.message };
         }
     });
     (ipcMain.handle('setting:openDevTools', () => {

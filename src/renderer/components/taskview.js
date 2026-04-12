@@ -103,7 +103,8 @@ class TaskView extends HTMLElement {
         let content = '';
         for (const part of assistant_message.content) {
             if (part.type === 'reasoning') {
-                content += TaskView.createReasoningPartHtml(part.rendered, false);
+                const isShort = (part.contentLength || 0) <= 200;
+                content += TaskView.createReasoningPartHtml(part.rendered, isShort);
             } else {
                 content += `<div class="${TaskView.ASSISTANT_PART_CLASS_MAP[part.type]}">${part.rendered}</div>`;
             }
@@ -315,9 +316,13 @@ class TaskView extends HTMLElement {
                                 'beforeend',
                                 `<div class='${TaskView.ASSISTANT_PART_CLASS_MAP[progress.last_part.type]}'></div>`
                             );
-                            message_content
-                                .querySelectorAll('details.reasoning-block[open]')
-                                .forEach((el) => el.removeAttribute('open'));
+                            message_content.querySelectorAll('details.reasoning-block[open]').forEach((el) => {
+                                const contentEl = el.querySelector('.reasoning-content');
+                                const textLength = contentEl ? contentEl.textContent.length : 0;
+                                if (textLength > 200) {
+                                    el.removeAttribute('open');
+                                }
+                            });
                         }
                     }
                     const last_part_element = message_content.children[progress.last_part_index];
@@ -344,7 +349,13 @@ class TaskView extends HTMLElement {
                     if (this.task_status !== 'running') {
                         this.getHistoryContainer()
                             .querySelectorAll('details.reasoning-block[open]')
-                            .forEach((el) => el.removeAttribute('open'));
+                            .forEach((el) => {
+                                const contentEl = el.querySelector('.reasoning-content');
+                                const textLength = contentEl ? contentEl.textContent.length : 0;
+                                if (textLength > 200) {
+                                    el.removeAttribute('open');
+                                }
+                            });
                     }
                 }
                 this.tryScrollToEnd();
@@ -513,7 +524,8 @@ class EmbeddedTaskView extends HTMLElement {
         let content = '';
         for (const part of assistant_message.content) {
             if (part.type === 'reasoning') {
-                content += TaskView.createReasoningPartHtml(part.rendered, false);
+                const isShort = (part.contentLength || 0) <= 200;
+                content += TaskView.createReasoningPartHtml(part.rendered, isShort);
             } else {
                 content += `<div class="${EmbeddedTaskView.ASSISTANT_PART_CLASS_MAP[part.type]}">${part.rendered}</div>`;
             }
@@ -642,9 +654,13 @@ class EmbeddedTaskView extends HTMLElement {
                                 'beforeend',
                                 `<div class='${EmbeddedTaskView.ASSISTANT_PART_CLASS_MAP[progress.last_part.type]}'></div>`
                             );
-                            message_element
-                                .querySelectorAll('details.reasoning-block[open]')
-                                .forEach((el) => el.removeAttribute('open'));
+                            message_element.querySelectorAll('details.reasoning-block[open]').forEach((el) => {
+                                const contentEl = el.querySelector('.reasoning-content');
+                                const textLength = contentEl ? contentEl.textContent.length : 0;
+                                if (textLength > 200) {
+                                    el.removeAttribute('open');
+                                }
+                            });
                         }
                     }
                     if (message_element) {
@@ -669,7 +685,13 @@ class EmbeddedTaskView extends HTMLElement {
                     if (this.task_status !== 'running') {
                         this.getHistoryContainer()
                             .querySelectorAll('details.reasoning-block[open]')
-                            .forEach((el) => el.removeAttribute('open'));
+                            .forEach((el) => {
+                                const contentEl = el.querySelector('.reasoning-content');
+                                const textLength = contentEl ? contentEl.textContent.length : 0;
+                                if (textLength > 200) {
+                                    el.removeAttribute('open');
+                                }
+                            });
                     }
                 }
             });

@@ -326,6 +326,8 @@ export class ExecutePowerShellTool extends BaseTool<typeof ExecutePowerShellArgs
         let cwd: string | undefined = undefined;
         if (workingDirectory && typeof workingDirectory === 'string' && fs.existsSync(workingDirectory)) {
             cwd = workingDirectory;
+        } else if (taskState?.harnessContext?.workspace) {
+            cwd = taskState.harnessContext.workspace;
         }
 
         const utf8Command = `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ${command}`;
@@ -401,6 +403,8 @@ export class ExecuteBashTool extends BaseTool<typeof ExecuteBashArgsSchema> {
         let cwd: string | undefined = undefined;
         if (workingDirectory && typeof workingDirectory === 'string' && fs.existsSync(workingDirectory)) {
             cwd = workingDirectory;
+        } else if (taskState?.harnessContext?.workspace) {
+            cwd = taskState.harnessContext.workspace;
         }
 
         await executeShellCommand({
@@ -478,6 +482,8 @@ export class ExecuteZshTool extends BaseTool<typeof ExecuteZshArgsSchema> {
         let cwd: string | undefined = undefined;
         if (workingDirectory && typeof workingDirectory === 'string' && fs.existsSync(workingDirectory)) {
             cwd = workingDirectory;
+        } else if (taskState?.harnessContext?.workspace) {
+            cwd = taskState.harnessContext.workspace;
         }
 
         await executeShellCommand({

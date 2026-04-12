@@ -31,6 +31,10 @@ const RENDER_CONTENT_MAX_CHARS = 4000;
 const RENDER_CONTENT_MAX_LINES = 80;
 const DIFF_CONTEXT_LINES = 3;
 
+function getWorkingDirectory(taskState?: TaskState): string {
+    return taskState?.harnessContext?.workspace || process.cwd();
+}
+
 // ==================== 路径处理 ====================
 
 /**
@@ -1624,8 +1628,8 @@ export class GlobFilesTool extends BaseTool<typeof globSchema> {
         this.setExecutor(this.executeCommand);
     }
 
-    getDeclaredPermissions(args: z.output<typeof globSchema>): PermissionRequest[] {
-        const searchPath = args.path ? sanitizePath(args.path) : sanitizePath(process.cwd());
+    getDeclaredPermissions(args: z.output<typeof globSchema>, taskState?: TaskState): PermissionRequest[] {
+        const searchPath = args.path ? sanitizePath(args.path) : sanitizePath(getWorkingDirectory(taskState));
         return [
             {
                 resourceType: 'file',
@@ -1713,8 +1717,9 @@ export class GlobFilesTool extends BaseTool<typeof globSchema> {
         });
     }
 
-    async executeCommand(args: z.output<typeof globSchema>): Promise<string> {
+    async executeCommand(args: z.output<typeof globSchema>, taskState?: TaskState): Promise<string> {
         let { pattern, path: searchPath, ignore, caseSensitive, maxResults } = args;
+        const workingDir = getWorkingDirectory(taskState);
 
         if (!pattern || pattern.trim() === '') {
             return '错误: 请提供 glob 模式';
@@ -1734,7 +1739,7 @@ export class GlobFilesTool extends BaseTool<typeof globSchema> {
             const ignorePatterns = [...DEFAULT_GLOB_IGNORE, ...(ignore || [])];
 
             const options: fastGlob.Options = {
-                cwd: searchPath || process.cwd(),
+                cwd: searchPath || workingDir,
                 ignore: ignorePatterns,
                 caseSensitiveMatch: caseSensitive,
                 absolute: true,
@@ -1760,7 +1765,7 @@ export class GlobFilesTool extends BaseTool<typeof globSchema> {
             }
 
             // 将绝对路径转为相对于搜索目录的路径，统一使用正斜杠
-            const basePath = searchPath || process.cwd();
+            const basePath = searchPath || workingDir;
             const displayFiles = files.slice(0, maxResults).map((f) => {
                 const rel = path.relative(basePath, f);
                 return toForwardSlash(rel.startsWith('..') ? f : rel);
@@ -1826,8 +1831,8 @@ export class GrepFilesTool extends BaseTool<typeof grepSchema> {
         this.setExecutor(this.executeCommand);
     }
 
-    getDeclaredPermissions(args: z.output<typeof grepSchema>): PermissionRequest[] {
-        const searchPath = args.path ? sanitizePath(args.path) : sanitizePath(process.cwd());
+    getDeclaredPermissions(args: z.output<typeof grepSchema>, taskState?: TaskState): PermissionRequest[] {
+        const searchPath = args.path ? sanitizePath(args.path) : sanitizePath(getWorkingDirectory(taskState));
         return [
             {
                 resourceType: 'file',
@@ -1933,8 +1938,9 @@ export class GrepFilesTool extends BaseTool<typeof grepSchema> {
         });
     }
 
-    async executeCommand(args: z.output<typeof grepSchema>): Promise<string> {
+    async executeCommand(args: z.output<typeof grepSchema>, taskState?: TaskState): Promise<string> {
         const { pattern, path: searchPath, filePattern, ignoreCase, maxResults, contextLines } = args;
+        const workingDir = getWorkingDirectory(taskState);
 
         if (!pattern || pattern.trim() === '') {
             return '错误: 请提供搜索模式';
@@ -1949,7 +1955,7 @@ export class GrepFilesTool extends BaseTool<typeof grepSchema> {
                 return `错误: 无效的正则表达式 - ${e.message}`;
             }
 
-            const basePath = searchPath ? sanitizePath(searchPath) : process.cwd();
+            const basePath = searchPath ? sanitizePath(searchPath) : workingDir;
 
             // 单文件搜索快速路径
             let filesToSearch: string[];
@@ -2052,7 +2058,7 @@ export class GrepFilesTool extends BaseTool<typeof grepSchema> {
 
             const output: string[] = [];
             let currentFile = '';
-            const displayBasePath = searchPath || process.cwd();
+            const displayBasePath = searchPath || workingDir;
 
             // 去重：同一文件同一行只输出一次，合并列号
             let lastFile = '';

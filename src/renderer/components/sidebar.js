@@ -78,6 +78,104 @@ class SideBar extends HTMLElement {
         this.querySelector('#open-log-view-btn').addEventListener('click', () => {
             window.globalControlAPI.openLogView();
         });
+
+        this._initWorkspaceBar();
+    }
+
+    async _initWorkspaceBar() {
+        await this._refreshWorkspacePath();
+
+        this.querySelector('#workspace-open-btn').addEventListener('click', async () => {
+            const newPath = await window.workspaceAPI.selectWorkspaceDirectory();
+            if (newPath) {
+                await this._refreshWorkspacePath();
+            }
+        });
+
+        const pathLabel = this.querySelector('#workspace-path-label');
+        pathLabel.addEventListener('contextmenu', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            this._showWorkspaceContextMenu(event.clientX, event.clientY);
+        });
+    }
+
+    async _refreshWorkspacePath() {
+        try {
+            const workspacePath = await window.workspaceAPI.getEffectiveWorkspace();
+            const pathLabel = this.querySelector('#workspace-path-label');
+            if (pathLabel) {
+                pathLabel.textContent = workspacePath;
+                pathLabel.title = workspacePath;
+            }
+        } catch (error) {
+            console.error('Failed to get workspace path:', error);
+        }
+    }
+
+    _showWorkspaceContextMenu(x, y) {
+        this._dismissWorkspaceContextMenu();
+
+        const menu = document.createElement('div');
+        menu.id = 'workspace-context-menu';
+        menu.className =
+            'fixed z-[9999] bg-white rounded-xl shadow-xl border border-gray-200 py-1 min-w-[180px] text-sm text-gray-700 animate-in fade-in';
+        menu.style.left = `${x}px`;
+        menu.style.top = `${y}px`;
+
+        menu.innerHTML = `
+            <button data-action="copy" class="w-full text-left px-4 py-2 flex items-center gap-2 hover:bg-gray-100 transition-colors duration-150">
+                <i class="fa-solid fa-copy w-4 text-center"></i>
+                <span>复制工作空间路径</span>
+            </button>
+            <button data-action="open" class="w-full text-left px-4 py-2 flex items-center gap-2 hover:bg-gray-100 transition-colors duration-150">
+                <i class="fa-solid fa-folder-open w-4 text-center"></i>
+                <span>打开工作空间目录</span>
+            </button>
+        `;
+
+        this.appendChild(menu);
+
+        requestAnimationFrame(() => {
+            const rect = menu.getBoundingClientRect();
+            if (rect.right > window.innerWidth) {
+                menu.style.left = `${window.innerWidth - rect.width - 8}px`;
+            }
+            if (rect.bottom > window.innerHeight) {
+                menu.style.top = `${window.innerHeight - rect.height - 8}px`;
+            }
+        });
+
+        menu.querySelector('[data-action="copy"]').addEventListener('click', async () => {
+            this._dismissWorkspaceContextMenu();
+            try {
+                await window.workspaceAPI.copyWorkspacePath();
+            } catch (error) {
+                console.error('Failed to copy workspace path:', error);
+            }
+        });
+
+        menu.querySelector('[data-action="open"]').addEventListener('click', async () => {
+            this._dismissWorkspaceContextMenu();
+            try {
+                await window.workspaceAPI.openWorkspaceDirectory();
+            } catch (error) {
+                console.error('Failed to open workspace directory:', error);
+            }
+        });
+
+        const dismissHandler = (e) => {
+            if (!menu.contains(e.target)) {
+                this._dismissWorkspaceContextMenu();
+                document.removeEventListener('click', dismissHandler, true);
+            }
+        };
+        setTimeout(() => document.addEventListener('click', dismissHandler, true), 0);
+    }
+
+    _dismissWorkspaceContextMenu() {
+        const existing = this.querySelector('#workspace-context-menu');
+        if (existing) existing.remove();
     }
 
     render() {
@@ -133,6 +231,22 @@ class SideBar extends HTMLElement {
                 <div id="app-container" class="flex flex-wrap gap-y-5 gap-x-2 items-center justify-left">
 
                 </div>
+            </div>
+
+            <div id="workspace-bar" class="flex items-center gap-1.5 px-2 py-1.5 my-1 mx-0 bg-white/60 backdrop-blur-sm rounded-xl border border-gray-100 flex-shrink-0">
+                <i class="fa-solid fa-briefcase text-[10px] text-gray-400 flex-shrink-0"></i>
+                <span
+                    id="workspace-path-label"
+                    class="flex-1 text-[11px] text-gray-500 truncate cursor-default select-none leading-tight"
+                    title=""
+                ></span>
+                <button
+                    id="workspace-open-btn"
+                    class="flex-shrink-0 w-5 h-5 flex items-center justify-center rounded-md text-gray-400 hover:text-blue-600 hover:bg-blue-50/80 transition-colors duration-150"
+                    title="选择工作空间"
+                >
+                    <i class="fa-solid fa-folder-open text-[10px]"></i>
+                </button>
             </div>
 
             <div id="task-list-container" class="flex-1 overflow-y-auto py-2 pr-2">
