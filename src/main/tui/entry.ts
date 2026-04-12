@@ -25,7 +25,7 @@ import { lookupKnownContextSize, fetchContextSizeFromAPI } from '../utils/model-
 import { LLM } from '../aikernel/llm.js';
 import { UpgradeOverlay } from './components/upgrade';
 import { AgentDecl } from '../aikernel/agent.js';
-import { ShellAgentDecl } from '../aikernel/agents/shellagent.js';
+import { MainAgentDecl } from '../aikernel/agents/mainagent.js';
 import { HelpOverlay } from './components/help';
 import { ConfirmOverlay, InfoOverlay, InfoPage } from './components/notice';
 import { DashboardOverlay } from './components/dashboard';
@@ -144,7 +144,7 @@ export class OpenDeskTUI {
 
     constructor(args: CommandLineArgs) {
         this.taskManagerState = GlobalState.getInstance().taskManagerState;
-        this.agentDecl = new ShellAgentDecl({ workspace: args.workspace });
+        this.agentDecl = new MainAgentDecl({ workspace: args.workspace });
 
         const terminal = new OpenDeskTerminal();
         terminal.onResize((cols, rows) => {
@@ -641,6 +641,9 @@ export class OpenDeskTUI {
         this.container.addChild(this.inputArea);
         this.container.addChild(this.dashboardBar);
         this.container.setMinLines(this.tui.terminal.rows);
+
+        this.resolveModelInfo();
+
         this.tui.requestRender();
         setTimeout(() => {
             this.tui.setFocus(this.inputArea.input);
@@ -1027,7 +1030,17 @@ export class OpenDeskTUI {
             const modelCfg = data.models?.find((m: any) => m.alias === aliasToUse);
             const modelName = modelCfg?.model_name ?? aliasToUse;
 
-            this.inputArea.statusBar.update({ modelName: aliasToUse });
+            const effortLabels: Record<string, string> = {
+                none: '无推理',
+                low: '简洁推理',
+                medium: '推理适中',
+                high: '推理深入'
+            };
+            const effortTag = modelCfg?.reasoning_effort
+                ? ` [${effortLabels[modelCfg.reasoning_effort] || modelCfg.reasoning_effort}]`
+                : '';
+
+            this.inputArea.statusBar.update({ modelName: `${aliasToUse}${effortTag}` });
 
             // 如果没有通过命令行指定模型，则更新当前活跃任务的模型为新的默认模型
             // 这样用户在 /config 中修改模型后，继续对话时会使用新模型
@@ -1058,8 +1071,8 @@ export class OpenDeskTUI {
 
             LLM.supportsVision(this.model)
                 .then((vision) => {
-                    const suffix = vision ? '📷' : '';
-                    this.inputArea.statusBar.update({ modelName: `${aliasToUse} ${suffix}` });
+                    const suffix = vision ? ' 📷' : '';
+                    this.inputArea.statusBar.update({ modelName: `${aliasToUse}${effortTag}${suffix}` });
                 })
                 .catch(() => {});
         } catch {
@@ -1229,8 +1242,8 @@ export class OpenDeskTUI {
                 task.harnessContext = HarnessContext.createAllowEverything(this.workspace);
             } else {
                 task.harnessContext = await HarnessContext.createWithDefaults(this.workspace);
-                task.harnessContext.permissionPrompt = new TUIPermissionPromptProvider(this);
             }
+            task.harnessContext.permissionPrompt = new TUIPermissionPromptProvider(this);
         } catch (err) {
             logger.warn(`Failed to init task harness, using empty context: ${err}`);
             task.harnessContext = HarnessContext.createEmpty();

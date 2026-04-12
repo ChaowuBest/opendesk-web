@@ -293,7 +293,7 @@ aikernel/security/
 ├── permission.ts       # 公共类型定义与接口（唯一的外部依赖点）
 ├── enforcer.ts         # picomatch 实现（外部不应直接引用）
 ├── harness.ts          # HarnessContext 定义
-└── electron-prompt.ts  # Electron 环境的确认 UI
+└── electronPrompt.ts  # Electron 环境的确认 UI
 
 utils/
 └── permissionRules.ts  # 敏感路径保护规则定义

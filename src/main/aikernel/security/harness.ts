@@ -21,6 +21,7 @@
 
 import type { PermissionEnforcer, PermissionPromptProvider } from './permission.js';
 import { GlobPermissionEnforcer, AllowEverythingEnforcer, createDefaultPermissionRules } from './enforcer.js';
+import { createCriticalPathRules } from '../../utils/permissionRules.js';
 
 export class HarnessContext {
     /**
@@ -60,12 +61,15 @@ export class HarnessContext {
     }
 
     /**
-     * 创建全放通模式的 HarnessContext（--allow-everything），所有权限检查自动通过。
+     * 创建全放通模式的 HarnessContext（--allow-everything）。
+     * 除关键路径（如 ~/.ssh）外，其他权限检查自动通过。
+     * 关键路径保护不受工作空间限制。
      */
     static createAllowEverything(workspace: string): HarnessContext {
         const ctx = new HarnessContext();
         ctx.workspace = workspace;
-        ctx.permission = new AllowEverythingEnforcer();
+        const criticalRules = createCriticalPathRules();
+        ctx.permission = new AllowEverythingEnforcer(criticalRules);
         return ctx;
     }
 

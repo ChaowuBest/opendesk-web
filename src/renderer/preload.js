@@ -34,6 +34,15 @@ function exposeTaskManagerAPI() {
                 throw new Error(result.message);
             }
         },
+        forkTask: async (taskId) => {
+            const result = await ipcRenderer.invoke('taskManager:forkTask', taskId);
+            if (result.status === 'ok') {
+                return result.data;
+            } else {
+                console.error('forking task failed', result.message);
+                throw new Error(result.message);
+            }
+        },
         clearAllTasks: async () => {
             const result = await ipcRenderer.invoke('taskManager:clearAllTasks');
             if (result.status !== 'ok') {
@@ -423,6 +432,20 @@ if (window.self !== window.top) {
         }
     });
 
+    contextBridge.exposeInMainWorld('quickpassAPI', {
+        isQuickPass: async (text) => {
+            const result = await ipcRenderer.invoke('quickpass:isQuickPass', text);
+            return result.status === 'ok' ? result.data : false;
+        },
+        importQuickPass: async (quickpass) => {
+            const result = await ipcRenderer.invoke('quickpass:import', quickpass);
+            if (result.status !== 'ok') {
+                throw new Error(result.message);
+            }
+            return result.data;
+        }
+    });
+
     contextBridge.exposeInMainWorld('notificationAPI', {
         sendNotification: async (...args) => {
             const result = await ipcRenderer.invoke('notification:sendNotification', ...args);
@@ -448,6 +471,24 @@ if (window.self !== window.top) {
             ipcRenderer.on('floatWindow:intentsUpdate', (event, ...args) => {
                 callback(...args);
             });
+        }
+    });
+
+    contextBridge.exposeInMainWorld('permissionAPI', {
+        onPermissionRequest: (callback) => {
+            ipcRenderer.removeAllListeners('permission:request');
+            ipcRenderer.on('permission:request', (event, requestId, data) => {
+                callback(requestId, data);
+            });
+        },
+        onPermissionDismiss: (callback) => {
+            ipcRenderer.removeAllListeners('permission:dismiss');
+            ipcRenderer.on('permission:dismiss', (event, requestId) => {
+                callback(requestId);
+            });
+        },
+        respondPermission: (requestId, response) => {
+            ipcRenderer.send('permission:response', requestId, response);
         }
     });
 

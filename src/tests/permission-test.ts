@@ -9,16 +9,34 @@
  * 5. HarnessContext 创建和默认规则
  * 6. deny > ask(保护) > allow > ask(隐式) 优先级
  * 7. 敏感路径保护规则（.ssh、.gnupg、.env 等）
+ * 8. ResourcePath 统一抽象与前缀计算
+ * 9. AllowEverythingEnforcer 关键路径保护
+ * 10. Windows nocase 匹配
+ * 11. 目录级授权后子路径 allow（重复弹窗 bug 修复验证）
  *
  * 运行方式: npx tsx src/tests/permission-test.ts
  */
 
 import os from 'os';
 import path from 'path';
-import { GlobPermissionEnforcer, createDefaultPermissionRules } from '../main/aikernel/security/enforcer';
+import {
+    GlobPermissionEnforcer,
+    AllowEverythingEnforcer,
+    createDefaultPermissionRules
+} from '../main/aikernel/security/enforcer';
 import { HarnessContext } from '../main/aikernel/security/harness';
 import type { PermissionRequest, PermissionRule } from '../main/aikernel/security/permission';
-import { createSensitivePathRules, SENSITIVE_PATH_PATTERNS } from '../main/utils/permissionRules';
+import {
+    FileResourcePath,
+    NetworkResourcePath,
+    SkillResourcePath,
+    createResourcePath
+} from '../main/aikernel/security/permission';
+import {
+    createSensitivePathRules,
+    createCriticalPathRules,
+    SENSITIVE_PATH_PATTERNS
+} from '../main/utils/permissionRules';
 
 /** 使用当前平台的真实路径作为测试工作空间 */
 const TEST_WORKSPACE = path.resolve(process.cwd(), 'test-workspace-for-permission');
@@ -652,6 +670,282 @@ async function runTests() {
         assert(homePatterns.length > 0, `has home-based patterns: ${homePatterns.length}`);
         const globalPatterns = SENSITIVE_PATH_PATTERNS.filter((p) => p.pattern.startsWith('**/'));
         assert(globalPatterns.length > 0, `has global patterns: ${globalPatterns.length}`);
+    }
+
+    // =====================================================
+    // ResourcePath 统一抽象测试
+    // =====================================================
+
+    // Test 26: FileResourcePath.getPrefixes 基本功能
+    console.log('\nTest 26: FileResourcePath.getPrefixes for exact file path');
+    {
+        const rp = new FileResourcePath('C:/Projects/OpenDesk/src/a.txt');
+        const prefixes = rp.getPrefixes();
+        assert(prefixes.length >= 3, `at least 3 prefix levels (got ${prefixes.length})`);
+        assert(prefixes[0].pattern === 'C:/Projects/OpenDesk/src/a.txt', `first is exact path`);
+        assert(prefixes[1].pattern === 'C:/Projects/OpenDesk/src/**', `second is parent dir glob`);
+        assert(prefixes[2].pattern === 'C:/Projects/OpenDesk/**', `third is grandparent dir glob`);
+    }
+
+    // Test 27: FileResourcePath.getPrefixes for glob path (e.g. from globFiles)
+    console.log('\nTest 27: FileResourcePath.getPrefixes for glob path');
+    {
+        const rp = new FileResourcePath('D:/Users/liyif/Projects/skills/hmsign/**');
+        const prefixes = rp.getPrefixes();
+        assert(prefixes.length >= 2, `at least 2 prefix levels for glob path (got ${prefixes.length})`);
+        // glob 路径不应该有"精确路径"级别，应直接从目录开始
+        assert(
+            prefixes[0].pattern === 'D:/Users/liyif/Projects/skills/hmsign/**',
+            `first is the concrete dir glob (got ${prefixes[0].pattern})`
+        );
+        assert(
+            prefixes[1].pattern === 'D:/Users/liyif/Projects/skills/**',
+            `second is parent (got ${prefixes[1].pattern})`
+        );
+    }
+
+    // Test 28: NetworkResourcePath.getPrefixes
+    console.log('\nTest 28: NetworkResourcePath.getPrefixes');
+    {
+        const rp = new NetworkResourcePath('https://api.example.com/v1/users');
+        const prefixes = rp.getPrefixes();
+        assert(prefixes.length >= 3, `at least 3 prefix levels (got ${prefixes.length})`);
+        assert(prefixes[0].pattern === 'https://api.example.com/v1/users', `first is exact URL`);
+        assert(prefixes[1].pattern === 'https://api.example.com/v1/**', `second is /v1/**`);
+        assert(prefixes[2].pattern === 'https://api.example.com/**', `third is origin/**`);
+    }
+
+    // Test 29: SkillResourcePath.getPrefixes
+    console.log('\nTest 29: SkillResourcePath.getPrefixes');
+    {
+        const rp = new SkillResourcePath('myapp/my-skill');
+        const prefixes = rp.getPrefixes();
+        assert(prefixes.length === 2, `2 prefix levels (got ${prefixes.length})`);
+        assert(prefixes[0].pattern === 'myapp/my-skill', `first is exact skill`);
+        assert(prefixes[1].pattern === 'myapp/**', `second is bundle glob`);
+    }
+
+    // Test 30: createResourcePath factory
+    console.log('\nTest 30: createResourcePath factory');
+    {
+        const file = createResourcePath('file', '/home/user/a.txt');
+        assert(file instanceof FileResourcePath, `file type creates FileResourcePath`);
+
+        const net = createResourcePath('network', 'https://api.example.com');
+        assert(net instanceof NetworkResourcePath, `network type creates NetworkResourcePath`);
+
+        const skill = createResourcePath('skill', 'bundle/skill');
+        assert(skill instanceof SkillResourcePath, `skill type creates SkillResourcePath`);
+    }
+
+    // =====================================================
+    // AllowEverythingEnforcer 关键路径保护测试
+    // =====================================================
+
+    // Test 31: AllowEverythingEnforcer 正常文件 → allow
+    console.log('\nTest 31: AllowEverythingEnforcer allows normal files');
+    {
+        const criticalRules = createCriticalPathRules();
+        const enforcer = new AllowEverythingEnforcer(criticalRules);
+
+        const result = await enforcer.check({
+            resourceType: 'file',
+            action: 'read',
+            resourcePath: `${HOME_NORM}/projects/myapp/src/index.ts`
+        });
+        assert(result.effect === 'allow', `normal file in allow-everything is allow (got ${result.effect})`);
+    }
+
+    // Test 32: AllowEverythingEnforcer 关键路径 → ask
+    console.log('\nTest 32: AllowEverythingEnforcer protects critical paths');
+    {
+        const criticalRules = createCriticalPathRules();
+        const enforcer = new AllowEverythingEnforcer(criticalRules);
+
+        const sshResult = await enforcer.check({
+            resourceType: 'file',
+            action: 'read',
+            resourcePath: `${HOME_NORM}/.ssh/id_rsa`
+        });
+        assert(sshResult.effect === 'ask', `.ssh still needs ask in allow-everything (got ${sshResult.effect})`);
+
+        const awsResult = await enforcer.check({
+            resourceType: 'file',
+            action: 'read',
+            resourcePath: `${HOME_NORM}/.aws/credentials`
+        });
+        assert(awsResult.effect === 'ask', `.aws still needs ask in allow-everything (got ${awsResult.effect})`);
+    }
+
+    // Test 33: AllowEverythingEnforcer 网络访问 → allow
+    console.log('\nTest 33: AllowEverythingEnforcer allows network');
+    {
+        const enforcer = new AllowEverythingEnforcer([]);
+
+        const result = await enforcer.check({
+            resourceType: 'network',
+            action: 'access',
+            resourcePath: 'https://api.example.com'
+        });
+        assert(result.effect === 'allow', `network in allow-everything is allow (got ${result.effect})`);
+    }
+
+    // =====================================================
+    // 目录级授权后子路径匹配测试（修复重复弹窗 bug）
+    // =====================================================
+
+    // Test 34: 动态添加目录级 allow 后，子文件应匹配
+    console.log('\nTest 34: Directory-level allow rule covers child files');
+    {
+        const enforcer = await GlobPermissionEnforcer.create([]);
+
+        // 模拟 globFiles 的 resourcePath 被用户授权后写入 allow 规则
+        const dirPattern = `${HOME_NORM}/Projects/skills/hmsign/**`;
+        await enforcer.addRule({
+            resourceType: 'file',
+            action: 'read',
+            pathPattern: dirPattern,
+            effect: 'allow'
+        });
+
+        // 后续 readFiles 访问该目录下的文件应直接 allow
+        const fileResult = await enforcer.check({
+            resourceType: 'file',
+            action: 'read',
+            resourcePath: `${HOME_NORM}/Projects/skills/hmsign/SKILL.md`
+        });
+        assert(
+            fileResult.effect === 'allow',
+            `child file SKILL.md is allow after dir-level rule (got ${fileResult.effect})`
+        );
+
+        // 子目录中的文件也应匹配
+        const subDirResult = await enforcer.check({
+            resourceType: 'file',
+            action: 'read',
+            resourcePath: `${HOME_NORM}/Projects/skills/hmsign/scripts/run.sh`
+        });
+        assert(
+            subDirResult.effect === 'allow',
+            `nested file is allow after dir-level rule (got ${subDirResult.effect})`
+        );
+
+        // 其他目录应不受影响
+        const otherResult = await enforcer.check({
+            resourceType: 'file',
+            action: 'read',
+            resourcePath: `${HOME_NORM}/Projects/skills/other/SKILL.md`
+        });
+        assert(otherResult.effect === 'ask', `file in other dir is still ask (got ${otherResult.effect})`);
+    }
+
+    // Test 35: prefix 级别授权后的覆盖测试
+    console.log('\nTest 35: Prefix-level authorization covers all sub-paths');
+    {
+        const enforcer = await GlobPermissionEnforcer.create([]);
+
+        // 模拟用户选择了父目录级别的授权
+        const parentPattern = `${HOME_NORM}/Projects/skills/**`;
+        await enforcer.addRule({
+            resourceType: 'file',
+            action: 'read',
+            pathPattern: parentPattern,
+            effect: 'allow'
+        });
+
+        // 所有子路径都应被覆盖
+        const a = await enforcer.check({
+            resourceType: 'file',
+            action: 'read',
+            resourcePath: `${HOME_NORM}/Projects/skills/hmsign/SKILL.md`
+        });
+        assert(a.effect === 'allow', `hmsign/SKILL.md covered (got ${a.effect})`);
+
+        const b = await enforcer.check({
+            resourceType: 'file',
+            action: 'read',
+            resourcePath: `${HOME_NORM}/Projects/skills/another-skill/README.md`
+        });
+        assert(b.effect === 'allow', `another-skill/README.md covered (got ${b.effect})`);
+    }
+
+    // Test 36: HarnessContext.createAllowEverything 保护关键路径
+    console.log('\nTest 36: HarnessContext.createAllowEverything protects critical paths');
+    {
+        const ctx = HarnessContext.createAllowEverything(os.homedir());
+        assert(ctx.permission !== null, 'permission enforcer is initialized');
+
+        const sshResult = await ctx.permission!.check({
+            resourceType: 'file',
+            action: 'read',
+            resourcePath: `${HOME_NORM}/.ssh/id_rsa`
+        });
+        assert(sshResult.effect === 'ask', `.ssh protected in allow-everything mode (got ${sshResult.effect})`);
+
+        const normalResult = await ctx.permission!.check({
+            resourceType: 'file',
+            action: 'read',
+            resourcePath: `${HOME_NORM}/projects/myapp/src/index.ts`
+        });
+        assert(
+            normalResult.effect === 'allow',
+            `normal file allowed in allow-everything mode (got ${normalResult.effect})`
+        );
+    }
+
+    // Test 37: 目录路径（以 / 结尾）在 enforcer 中正确匹配 workspace/** 规则
+    console.log('\nTest 37: Directory path (trailing slash) matches workspace/** rules');
+    {
+        const ws = 'D:/Projects/OpenDesk';
+        const rules = createDefaultPermissionRules(ws);
+        const enforcer = await GlobPermissionEnforcer.create(rules);
+
+        // globFiles/grepFiles 现在申请的是目录路径（以 / 结尾）
+        const dirResult = await enforcer.check({
+            resourceType: 'file',
+            action: 'read',
+            resourcePath: ws + '/src/'
+        });
+        assert(dirResult.effect === 'allow', `workspace subdir with trailing slash is allow (got ${dirResult.effect})`);
+
+        const dirResult2 = await enforcer.check({
+            resourceType: 'file',
+            action: 'read',
+            resourcePath: ws + '/'
+        });
+        assert(
+            dirResult2.effect === 'allow',
+            `workspace root dir with trailing slash is allow (got ${dirResult2.effect})`
+        );
+
+        const outsideDir = await enforcer.check({
+            resourceType: 'file',
+            action: 'read',
+            resourcePath: 'C:/Windows/System32/'
+        });
+        assert(outsideDir.effect === 'ask', `outside workspace dir is ask (got ${outsideDir.effect})`);
+    }
+
+    // Test 38: FileResourcePath.getPrefixes 对目录路径（以 / 结尾）的处理
+    console.log('\nTest 38: FileResourcePath.getPrefixes for directory path (trailing slash)');
+    {
+        const rp = new FileResourcePath('D:/Projects/OpenDesk/src/');
+        const prefixes = rp.getPrefixes();
+        assert(prefixes.length >= 3, `at least 3 prefix levels for dir path (got ${prefixes.length})`);
+        // 第一项应该是 dir/** 而非精确路径
+        assert(
+            prefixes[0].pattern === 'D:/Projects/OpenDesk/src/**',
+            `first prefix pattern is dir/** (got ${prefixes[0].pattern})`
+        );
+        assert(
+            prefixes[0].label === 'D:/Projects/OpenDesk/src/',
+            `first prefix label ends with / (got ${prefixes[0].label})`
+        );
+        // 第二项是父目录
+        assert(
+            prefixes[1].pattern === 'D:/Projects/OpenDesk/**',
+            `second prefix pattern is parent/** (got ${prefixes[1].pattern})`
+        );
     }
 
     console.log(`\n=== Results: ${passed} passed, ${failed} failed ===\n`);

@@ -1625,8 +1625,14 @@ export class GlobFilesTool extends BaseTool<typeof globSchema> {
     }
 
     getDeclaredPermissions(args: z.output<typeof globSchema>): PermissionRequest[] {
-        const searchPath = args.path ? sanitizePath(args.path) : process.cwd();
-        return [{ resourceType: 'file', action: 'read', resourcePath: searchPath + '/**' }];
+        const searchPath = args.path ? sanitizePath(args.path) : sanitizePath(process.cwd());
+        return [
+            {
+                resourceType: 'file',
+                action: 'read',
+                resourcePath: searchPath.endsWith('/') ? searchPath : searchPath + '/'
+            }
+        ];
     }
 
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
@@ -1821,12 +1827,12 @@ export class GrepFilesTool extends BaseTool<typeof grepSchema> {
     }
 
     getDeclaredPermissions(args: z.output<typeof grepSchema>): PermissionRequest[] {
-        const searchPath = args.path ? sanitizePath(args.path) : process.cwd();
+        const searchPath = args.path ? sanitizePath(args.path) : sanitizePath(process.cwd());
         return [
             {
                 resourceType: 'file',
                 action: 'read',
-                resourcePath: searchPath.includes('.') && !searchPath.endsWith('/') ? searchPath : searchPath + '/**'
+                resourcePath: searchPath.endsWith('/') ? searchPath : searchPath + '/'
             }
         ];
     }

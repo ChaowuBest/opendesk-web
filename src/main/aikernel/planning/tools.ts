@@ -26,7 +26,7 @@ import {
     hasAttemptCompletion
 } from './harness.js';
 import { SkillRegistry } from '../skill.js';
-import { getSkillsSection } from '../agents/shellagent.js';
+import { getSkillsSection } from '../agents/mainagent.js';
 import { logger } from '../../utils/logger.js';
 import { defaultMarkdownTheme } from '../../tui/theme.js';
 import chalk from 'chalk';

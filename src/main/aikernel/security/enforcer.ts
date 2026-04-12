@@ -23,6 +23,7 @@
  * 规则优先级：deny > ask(显式保护) > allow > ask(隐式回退)
  *
  * 使用 picomatch 进行 glob 匹配，配置 dot: true 以正确匹配 dotfiles。
+ * 在 Windows 上启用 nocase: true 以处理盘符大小写差异。
  */
 
 import picomatch from 'picomatch';
@@ -43,7 +44,13 @@ interface CompiledRule {
     matcher: (path: string) => boolean;
 }
 
-const PICO_OPTIONS: picomatch.PicomatchOptions = { dot: true };
+const IS_WINDOWS = process.platform === 'win32';
+
+const PICO_OPTIONS: picomatch.PicomatchOptions = {
+    dot: true,
+    // Windows 文件系统不区分大小写，需要 nocase 处理盘符 C: vs c: 等差异
+    nocase: IS_WINDOWS
+};
 
 function compileRule(rule: PermissionRule): CompiledRule {
     const patternNorm = normalizePath(rule.pathPattern);
@@ -59,27 +66,67 @@ function matchesRule(compiled: CompiledRule, resourceType: string, objNorm: stri
     return compiled.resourceType === resourceType && compiled.action === action && compiled.matcher(objNorm);
 }
 
+/**
+ * 检查一组规则中是否有任何一条匹配给定的请求。
+ * 对于以 '/' 结尾的目录路径，同时检查去掉尾部 '/' 的路径和子路径匹配（dir/**），
+ * 使得 'workspace/**' 规则可以正确匹配对 workspace 子目录的权限请求。
+ */
 function matchesAny(rules: CompiledRule[], resourceType: string, objNorm: string, action: string): boolean {
     for (const rule of rules) {
         if (matchesRule(rule, resourceType, objNorm, action)) return true;
+    }
+    // 对于目录路径（以 / 结尾），还要检查去掉尾 / 的形式
+    if (objNorm.endsWith('/')) {
+        const withoutTrailing = objNorm.slice(0, -1);
+        for (const rule of rules) {
+            if (matchesRule(rule, resourceType, withoutTrailing, action)) return true;
+        }
     }
     return false;
 }
 
 /**
- * 全放通权限引擎：所有权限检查直接返回 allow，用于 --allow-everything 模式。
+ * 低权限引擎：除了关键路径（敏感路径保护规则）需要 ask 外，其他全部 allow。
+ * 用于 --allow-everything 模式。关键路径列表在创建时传入。
  */
 export class AllowEverythingEnforcer implements PermissionEnforcer {
+    private criticalAskRules: CompiledRule[] = [];
+
+    constructor(criticalRules: PermissionRule[] = []) {
+        for (const rule of criticalRules) {
+            if (rule.effect === 'ask') {
+                this.criticalAskRules.push(compileRule(rule));
+            }
+        }
+    }
+
     async check(request: PermissionRequest): Promise<PermissionCheckResult> {
+        const objNorm = normalizePath(request.resourcePath);
+        if (matchesAny(this.criticalAskRules, request.resourceType, objNorm, request.action)) {
+            return {
+                effect: 'ask',
+                reason: `关键路径在低权限模式下仍需用户确认: ${request.action} ${request.resourcePath}`,
+                request
+            };
+        }
         return { effect: 'allow', request };
     }
 
-    async checkAll(_requests: PermissionRequest[]): Promise<PermissionCheckResult | null> {
+    async checkAll(requests: PermissionRequest[]): Promise<PermissionCheckResult | null> {
+        for (const request of requests) {
+            const result = await this.check(request);
+            if (result.effect !== 'allow') return result;
+        }
         return null;
     }
 
-    async checkAllDetailed(_requests: PermissionRequest[]): Promise<PermissionCheckResult[]> {
-        return [];
+    async checkAllDetailed(requests: PermissionRequest[]): Promise<PermissionCheckResult[]> {
+        const results: PermissionCheckResult[] = [];
+        for (const request of requests) {
+            const result = await this.check(request);
+            if (result.effect !== 'allow') results.push(result);
+        }
+        return results;
     }
 
     async addRule(_rule: PermissionRule): Promise<void> {}

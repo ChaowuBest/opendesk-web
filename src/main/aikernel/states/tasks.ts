@@ -30,7 +30,7 @@ import { prepareContextForModel } from '../compaction/pipeline.js';
 import type { ActiveContextView } from '../compaction/types.js';
 import { compactContext } from '../compact.js';
 import { BaseTool, BaseToolset } from '../tool.js';
-import { LLM } from '../llm.js';
+import { LLM, type ReasoningEffort, type LLMRequestOptions } from '../llm.js';
 import { getTaskArtifactDirectory, getTaskDirectory } from '../../utils/setting.js';
 import { logger } from '../../utils/logger.js';
 import { type ToolsetProvider, EmptyToolsetProvider } from './toolset-provider.js';
@@ -46,6 +46,7 @@ import { TaskHooks } from '../hooks.js';
 import type { Participant } from '../plugins/types.js';
 import { HarnessContext } from '../security/harness.js';
 import type { PermissionRequest, PermissionCheckResult, PermissionUserResponse } from '../security/permission.js';
+import { createResourcePath } from '../security/permission.js';
 import { TaskProfiler } from '../profiler.js';
 
 type TaskStatus = 'waiting' | 'running' | 'stopped';
@@ -123,6 +124,7 @@ export class TaskState {
     tool_result_replacement_state: ToolResultReplacementState = ToolResultReplacementStates.create();
 
     model?: string;
+    reasoningEffort?: ReasoningEffort;
     message_queue: string[] = [];
 
     /**
@@ -231,6 +233,8 @@ export class TaskState {
             task_id: this.task_id,
             task_name: this.task_name,
             task_status: this.task_status,
+            model: this.model,
+            reasoningEffort: this.reasoningEffort,
             chat_context: this.chat_context.toRenderJSON()
         };
     }
@@ -522,7 +526,7 @@ export class TaskState {
         请返回一个简洁明了的任务名称，不要超过10个字符。不要包含任何其他内容。
         `;
 
-        const task_name = await LLM.ask(new UserMessage(prompt.trim())).catch((err) => {
+        const task_name = await LLM.ask(prompt.trim(), undefined, { reasoningEffort: 'none' }).catch((err) => {
             logger.error(err);
             return null;
         });
@@ -554,8 +558,9 @@ export class TaskState {
         forkedTask.chat_context = ChatContext.assign(this.chat_context.toJSON());
         forkedTask.tool_result_replacement_state = ToolResultReplacementStates.clone(toolResultReplacementState);
 
-        // Copy model
+        // Copy model and reasoning effort
         forkedTask.model = this.model;
+        forkedTask.reasoningEffort = this.reasoningEffort;
 
         // Set forked name with "-fork" suffix
         forkedTask.task_name = this.task_name ? `${this.task_name}-fork` : null;
@@ -567,8 +572,11 @@ export class TaskState {
         forkedTask.finished_at = this.finished_at;
         forkedTask.total_elapsed_ms = this.total_elapsed_ms;
 
-        // harnessContext 不落盘但 fork 时复制环境变量（便于工具继续使用）
+        // harnessContext 不落盘但 fork 时复制环境变量和权限引擎（便于工具继续使用）
         forkedTask.harnessContext.environ = { ...this.harnessContext.environ };
+        forkedTask.harnessContext.permission = this.harnessContext.permission;
+        forkedTask.harnessContext.permissionPrompt = this.harnessContext.permissionPrompt;
+        forkedTask.harnessContext.workspace = this.harnessContext.workspace;
 
         // Add to task manager
         this.task_manager_state.tasks.push(forkedTask);
@@ -714,8 +722,13 @@ export class TaskState {
 
         // Track the last sent text part index to avoid duplicate sends
         let lastSentTextPartIndex = -1;
-
-        for await (const chunk_resp of LLM.streamComplete(this.chat_context, this.model, streamOptions)) {
+        const requestOptions: LLMRequestOptions = { reasoningEffort: this.reasoningEffort };
+        for await (const chunk_resp of LLM.streamComplete(
+            this.chat_context,
+            this.model,
+            streamOptions,
+            requestOptions
+        )) {
             // 检查是否已停止
             if (this.task_status === 'stopped') {
                 logger.info(`task ${this.task_id} completion interrupted by stop request`);
@@ -986,26 +999,41 @@ export class TaskState {
         // 逐组提示用户
         for (const [, groupResults] of groups) {
             const requests = groupResults.map((r) => r.request);
-            const response = await this.promptPermissionBatch(requests, tool.name);
+
+            // 计算所有请求路径的共同前缀选项
+            const prefixOptions = this.computePrefixOptions(requests);
+
+            const response = await this.promptPermissionBatch(requests, tool.name, prefixOptions);
 
             if (response.decision === 'deny') {
                 const paths = requests.map((r) => r.resourcePath).join(', ');
+                const reasonLabel =
+                    response.denyReason === 'timeout'
+                        ? '权限请求超时自动拒绝'
+                        : response.denyReason === 'no_prompt_provider'
+                          ? '无权限确认界面，已自动拒绝'
+                          : '用户拒绝了权限请求';
                 tool_call.status = 'error';
-                tool_call.result = `用户拒绝了权限请求: ${requests[0].action} ${paths}`;
-                tool_call.result_object = { permission_denied: true };
+                tool_call.result = `${reasonLabel}: ${requests[0].action} ${paths}`;
+                tool_call.result_object = {
+                    permission_denied: true,
+                    deny_reason: response.denyReason || 'user_denied'
+                };
                 return true;
             }
 
             // 根据用户选择写回规则
-            if (response.rememberScope === 'exact' && this.harnessContext.permission) {
-                for (const req of requests) {
-                    await this.harnessContext.permission.addRule({
-                        resourceType: req.resourceType,
-                        action: req.action,
-                        pathPattern: req.resourcePath,
-                        effect: 'allow'
-                    });
-                }
+            if (
+                response.rememberScope === 'prefix' &&
+                response.selectedPrefixPattern &&
+                this.harnessContext.permission
+            ) {
+                await this.harnessContext.permission.addRule({
+                    resourceType: requests[0].resourceType,
+                    action: requests[0].action,
+                    pathPattern: response.selectedPrefixPattern,
+                    effect: 'allow'
+                });
             } else if (response.rememberScope === 'type' && this.harnessContext.permission) {
                 await this.harnessContext.permission.addRule({
                     resourceType: requests[0].resourceType,
@@ -1020,20 +1048,52 @@ export class TaskState {
     }
 
     /**
+     * 计算一组同类请求的共同前缀选项，用于让用户选择授权范围。
+     * 对所有请求的 ResourcePath.getPrefixes() 取交集（保留所有请求都共享的前缀）。
+     * 如果请求只有一个，直接返回其前缀。
+     * 如果前缀无法取交集，返回各自的精确路径前缀。
+     */
+    private computePrefixOptions(requests: PermissionRequest[]): { label: string; pattern: string }[] {
+        if (requests.length === 0) return [];
+
+        const allPrefixLists = requests.map((req) =>
+            createResourcePath(req.resourceType, req.resourcePath).getPrefixes()
+        );
+
+        if (allPrefixLists.length === 1) {
+            return allPrefixLists[0];
+        }
+
+        // 取交集：只保留所有请求都有的 pattern
+        const first = allPrefixLists[0];
+        const commonPrefixes = first.filter((prefix) =>
+            allPrefixLists.every((list) => list.some((p) => p.pattern === prefix.pattern))
+        );
+
+        if (commonPrefixes.length > 0) {
+            return commonPrefixes;
+        }
+
+        // 没有共同前缀时，返回每个请求的精确路径
+        return requests.map((req) => ({ label: req.resourcePath, pattern: req.resourcePath }));
+    }
+
+    /**
      * 通过 harnessContext 的 permissionPrompt 向用户请求权限确认（合并后的批量请求）
      */
     private async promptPermissionBatch(
         requests: PermissionRequest[],
-        toolName: string
+        toolName: string,
+        prefixOptions: { label: string; pattern: string }[]
     ): Promise<PermissionUserResponse> {
         const promptProvider = this.harnessContext.permissionPrompt;
         if (!promptProvider) {
             logger.warn(`permission ask required but no prompt provider configured, defaulting to deny`);
-            return { decision: 'deny', rememberScope: 'none' };
+            return { decision: 'deny', rememberScope: 'none', denyReason: 'no_prompt_provider' };
         }
 
         try {
-            return await promptProvider.prompt(requests, toolName);
+            return await promptProvider.prompt(requests, toolName, prefixOptions);
         } catch (err) {
             logger.error(`permission prompt failed: ${err}`);
             return { decision: 'deny', rememberScope: 'none' };

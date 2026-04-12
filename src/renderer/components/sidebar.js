@@ -514,6 +514,83 @@ class SideBar extends HTMLElement {
         });
     }
 
+    _dismissContextMenu() {
+        const existing = this.querySelector('#task-context-menu');
+        if (existing) existing.remove();
+    }
+
+    _showContextMenu(x, y, taskId) {
+        this._dismissContextMenu();
+
+        const menu = document.createElement('div');
+        menu.id = 'task-context-menu';
+        menu.className =
+            'fixed z-[9999] bg-white rounded-xl shadow-xl border border-gray-200 py-1 min-w-[160px] text-sm text-gray-700 animate-in fade-in';
+        menu.style.left = `${x}px`;
+        menu.style.top = `${y}px`;
+
+        const items = [
+            { id: 'fork', icon: 'fa-solid fa-code-fork', label: '复制并创建任务' },
+            { id: 'delete-all', icon: 'fa-solid fa-trash', label: '删除全部任务', danger: true }
+        ];
+
+        menu.innerHTML = items
+            .map(
+                (item) => `
+            <button
+                data-action="${item.id}"
+                class="w-full text-left px-4 py-2 flex items-center gap-2 hover:bg-gray-100 transition-colors duration-150 ${item.danger ? 'text-red-500 hover:bg-red-50' : ''}"
+            >
+                <i class="${item.icon} w-4 text-center"></i>
+                <span>${item.label}</span>
+            </button>`
+            )
+            .join('');
+
+        this.appendChild(menu);
+
+        // 确保菜单不超出视口
+        requestAnimationFrame(() => {
+            const rect = menu.getBoundingClientRect();
+            if (rect.right > window.innerWidth) {
+                menu.style.left = `${window.innerWidth - rect.width - 8}px`;
+            }
+            if (rect.bottom > window.innerHeight) {
+                menu.style.top = `${window.innerHeight - rect.height - 8}px`;
+            }
+        });
+
+        menu.querySelector('[data-action="fork"]').addEventListener('click', async () => {
+            this._dismissContextMenu();
+            try {
+                const forkedTaskId = await window.taskManagerAPI.forkTask(taskId);
+                window.globalControlAPI.openTask(forkedTaskId);
+                this.currentTaskId = forkedTaskId;
+                this.reloadTaskList();
+            } catch (error) {
+                console.error('Failed to fork task:', error);
+            }
+        });
+
+        menu.querySelector('[data-action="delete-all"]').addEventListener('click', async () => {
+            this._dismissContextMenu();
+            if (!window.confirm('确定要删除所有任务吗？删除后无法恢复。')) return;
+            window.globalControlAPI.clearAllTaskViewCache();
+            window.globalControlAPI.openHomePage();
+            this.currentTaskId = null;
+            await window.taskManagerAPI.clearAllTasks();
+            this.reloadTaskList();
+        });
+
+        const dismissHandler = (e) => {
+            if (!menu.contains(e.target)) {
+                this._dismissContextMenu();
+                document.removeEventListener('click', dismissHandler, true);
+            }
+        };
+        setTimeout(() => document.addEventListener('click', dismissHandler, true), 0);
+    }
+
     _bindTaskItemEvents(container) {
         container.querySelectorAll('.task-item').forEach((item) => {
             if (item._bound) return;
@@ -523,6 +600,12 @@ class SideBar extends HTMLElement {
                 window.globalControlAPI.openTask(taskId);
                 this.currentTaskId = taskId;
                 this._updateTaskHighlight();
+            });
+            item.addEventListener('contextmenu', (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                const taskId = event.currentTarget.dataset.task_id;
+                this._showContextMenu(event.clientX, event.clientY, taskId);
             });
         });
 

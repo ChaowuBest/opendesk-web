@@ -22,6 +22,7 @@ import {
     protocol
 } from 'electron';
 import { Setting, getAppDirectory } from './utils/setting.js';
+import { QuickPassHelper } from './utils/quickpass.js';
 import { GlobalState } from './aikernel/states/global.js';
 import { BaseToolset } from './aikernel/tool';
 import { is } from '@electron-toolkit/utils';
@@ -49,6 +50,8 @@ import {
 } from '../platforms/electron.js';
 import { exportTaskToHtml, generateTaskHtml } from './utils/export';
 import { MainAgentDecl } from './aikernel/agents/mainagent.js';
+import { HarnessContext } from './aikernel/security/harness.js';
+import { ElectronPermissionPromptProvider } from './aikernel/security/electronPrompt.js';
 
 import Convert from 'ansi-to-html';
 import path from 'path';
@@ -224,7 +227,8 @@ const registerTaskManagerAPIHandlers = () => {
 
     ipcMain.handle('taskManager:createTask', async () => {
         const task = globalState.taskManagerState.createTask();
-        const agentDecl = new MainAgentDecl();
+        const workspace = process.cwd();
+        const agentDecl = new MainAgentDecl({ workspace });
         agentDecl
             .createSystemPrompt()
             .then((prompt) => {
@@ -233,6 +237,13 @@ const registerTaskManagerAPIHandlers = () => {
             .catch((err) => {
                 logger.error('failed to create system prompt', err);
             });
+        try {
+            task.harnessContext = await HarnessContext.createWithDefaults(workspace);
+            task.harnessContext.permissionPrompt = new ElectronPermissionPromptProvider();
+        } catch (err) {
+            logger.warn(`Failed to init task harness in Electron, using empty context: ${err}`);
+            task.harnessContext = HarnessContext.createEmpty();
+        }
         return { status: 'ok', data: task.task_id };
     });
     ipcMain.handle('taskManager:removeTask', (event, taskId) => {
@@ -243,6 +254,14 @@ const registerTaskManagerAPIHandlers = () => {
 
         globalState.taskManagerState.removeTask(taskId);
         return { status: 'ok', data: task.task_id };
+    });
+    ipcMain.handle('taskManager:forkTask', (event, taskId) => {
+        const task = globalState.taskManagerState.getTask(taskId);
+        if (task === undefined) {
+            return { status: 'error', message: `task ${taskId} not found` };
+        }
+        const forkedTask = task.fork();
+        return { status: 'ok', data: forkedTask.task_id };
     });
     ipcMain.handle('taskManager:clearAllTasks', () => {
         globalState.taskManagerState.clearAllTasks();
@@ -328,6 +347,12 @@ const registerTaskManagerAPIHandlers = () => {
         }
         if (details.attachedFilePaths) {
             await task.attachFiles(details.attachedFilePaths);
+        }
+        if (details.selectedModel) {
+            task.model = details.selectedModel;
+        }
+        if (details.reasoningEffort !== undefined) {
+            task.reasoningEffort = details.reasoningEffort || undefined;
         }
 
         task.submitUserMessage(details.message).catch((err) =>
@@ -475,6 +500,23 @@ const registerSettingAPIHandlers = () => {
             return { status: 'ok' };
         } catch (error) {
             return { status: 'error', message: error.message };
+        }
+    });
+    ipcMain.handle('quickpass:import', (event, quickpass) => {
+        try {
+            const cleaned = quickpass.trim().replace(/[\r\n]+/g, '');
+            const result = QuickPassHelper.importConfig(cleaned);
+            notifyWorkerSettingUpdate(Setting.getInstance().getData());
+            return { status: 'ok', data: result };
+        } catch (error) {
+            return { status: 'error', message: error.message };
+        }
+    });
+    ipcMain.handle('quickpass:isQuickPass', (event, text) => {
+        try {
+            return { status: 'ok', data: QuickPassHelper.isQuickPass(text) };
+        } catch {
+            return { status: 'ok', data: false };
         }
     });
     (ipcMain.handle('setting:openDevTools', () => {

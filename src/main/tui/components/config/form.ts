@@ -21,6 +21,8 @@ export interface SelectFieldDef {
     label: string;
     value: string;
     options: string[];
+    /** 可选的显示标签映射，key 为 option value，value 为显示文本 */
+    optionLabels?: Record<string, string>;
 }
 
 export type FieldDef = TextFieldDef | BooleanFieldDef | SelectFieldDef;
@@ -34,7 +36,14 @@ export interface ActionDef {
 type FormItem =
     | { type: 'text'; key: string; label: string; input: Input }
     | { type: 'boolean'; key: string; label: string; value: boolean }
-    | { type: 'select'; key: string; label: string; value: string; options: string[] }
+    | {
+          type: 'select';
+          key: string;
+          label: string;
+          value: string;
+          options: string[];
+          optionLabels?: Record<string, string>;
+      }
     | { type: 'action'; key: string; label: string; style: string };
 
 /**
@@ -84,7 +93,8 @@ export class ConfigForm implements Component {
                     key: field.key,
                     label: field.label,
                     value: field.value,
-                    options: [...field.options]
+                    options: [...field.options],
+                    optionLabels: field.optionLabels
                 });
             }
         }
@@ -275,7 +285,8 @@ export class ConfigForm implements Component {
     private renderSelectField(lines: string[], item: FormItem & { type: 'select' }, active: boolean) {
         const indicator = active ? chalk.cyan('❯ ') : '  ';
         const label = active ? chalk.cyan(item.label) : chalk.dim(item.label);
-        const value = active ? chalk.cyan.bold(item.value || '(未选择)') : chalk.dim(item.value || '(未选择)');
+        const displayValue = item.optionLabels?.[item.value] ?? (item.value || '(未选择)');
+        const value = active ? chalk.cyan.bold(displayValue) : chalk.dim(displayValue);
         lines.push(`${indicator}${label}: ${value}`);
         if (active) {
             lines.push(chalk.dim('    ←→ / Enter 切换'));

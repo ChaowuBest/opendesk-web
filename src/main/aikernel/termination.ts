@@ -36,7 +36,7 @@ export async function checkTerminationFromMessages(
     userMessage += `用户的原始问题为: ${userQuestion}\n`;
     userMessage += `你的回答的最后一部分为: ${lastTextResponse}\n\n请你判断对话的状态。`;
     const model = Setting.getInstance().getDefaultModelInstance();
-    const rawResult = await LLM.ask(userMessage, model);
+    const rawResult = await LLM.ask(userMessage, model, { reasoningEffort: 'none' });
     const normalized = rawResult.trim().toLowerCase();
 
     logger.info(`termination state checked: ${rawResult} (normalized: ${normalized})`);

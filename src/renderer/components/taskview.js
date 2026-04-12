@@ -1,5 +1,3 @@
-import { ElasticToolbarWidget } from './toolbar.ts';
-
 /**
  * Copyright (c) 2026 The OpenDesk Team
  * OpenDesk is licensed under Mulan PSL v2.
@@ -10,6 +8,8 @@ import { ElasticToolbarWidget } from './toolbar.ts';
  * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
  * See the Mulan PSL v2 for more details.
  */
+
+import { ElasticToolbarWidget } from './toolbar.ts';
 
 class TaskView extends HTMLElement {
     constructor() {
@@ -57,16 +57,15 @@ class TaskView extends HTMLElement {
         }
         if (hasTextPart) {
             return `
-            <div class="flex items-start space-x-3 flex-row-reverse">
-                <div class="bg-white text-gray-900 rounded-2xl px-4 py-2 shadow-md max-w-3xl border border-gray-200" style="backdrop-filter: blur(8px);">
+            <div class="flex items-start flex-row-reverse">
+                <div class="bg-white text-gray-900 rounded-2xl px-3 py-1.5 shadow-sm max-w-3xl border border-gray-200">
                     ${content}
-                    <!-- <span class="text-xs text-gray-500 mt-1 block">10:31</span> -->
                 </div>
             </div>
             `;
         } else {
             return `
-            <div class="flex items-start space-x-3 flex-row-reverse">
+            <div class="flex items-start flex-row-reverse">
                 ${content}
             </div>
             `;
@@ -74,28 +73,49 @@ class TaskView extends HTMLElement {
     }
 
     static USER_PART_CLASS_MAP = {
-        text: 'bg-transparent text-base text-black markdown-body'
+        text: 'bg-transparent text-[11px] text-black markdown-body'
     };
 
     static ASSISTANT_PART_CLASS_MAP = {
-        text: 'bg-transparent text-base text-black markdown-body',
-        reasoning: 'bg-gray-200 rounded-xl text-gray-500 text-xs p-3 mb-3',
+        text: 'bg-transparent text-[11px] text-black markdown-body',
+        reasoning: '',
         tool_call: ''
     };
+
+    static createReasoningPartHtml(rendered, isOpen = false) {
+        return `
+        <div class="reasoning-wrapper">
+            <details class="reasoning-block bg-gray-50/60 rounded-lg mb-1.5" ${isOpen ? 'open' : ''}>
+                <summary class="flex items-center gap-1.5 px-2.5 py-1 cursor-pointer select-none text-gray-400 hover:text-gray-500 text-[11px] font-medium">
+                    <svg class="reasoning-arrow w-3 h-3 shrink-0 transition-transform duration-200" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M7.21 14.77a.75.75 0 01.02-1.06L11.168 10 7.23 6.29a.75.75 0 111.04-1.08l4.5 4.25a.75.75 0 010 1.08l-4.5 4.25a.75.75 0 01-1.06-.02z" clip-rule="evenodd"/>
+                    </svg>
+                    深度思考
+                </summary>
+                <div class="reasoning-content px-3 pb-2 text-gray-500 text-[11px] leading-relaxed">
+                    ${rendered || ''}
+                </div>
+            </details>
+        </div>`;
+    }
 
     renderAssistantMessage(assistant_message) {
         let content = '';
         for (const part of assistant_message.content) {
-            content += `<div class="${TaskView.ASSISTANT_PART_CLASS_MAP[part.type]}">${part.rendered}</div>`;
+            if (part.type === 'reasoning') {
+                content += TaskView.createReasoningPartHtml(part.rendered, false);
+            } else {
+                content += `<div class="${TaskView.ASSISTANT_PART_CLASS_MAP[part.type]}">${part.rendered}</div>`;
+            }
         }
         const html = `
-        <div class="flex items-start space-x-3">
-            <div id='message-container-${assistant_message.message_id}' class="p-3 bg-transparent w-full">
+        <div class="flex items-start">
+            <div id='message-container-${assistant_message.message_id}' class="p-2 bg-transparent w-full">
                 <div id='message-content-${assistant_message.message_id}'>
                     ${content}
                 </div>
                 <span
-                    class="message-usage text-xs text-gray-500 mt-2 block"
+                    class="message-usage text-xs text-gray-400 mt-1 block"
                     title="${assistant_message.usage ? `输入: ${assistant_message.usage.prompt_tokens}, 输出: ${assistant_message.usage.completion_tokens}, 总计: ${assistant_message.usage.total_tokens}` : ''}"
                 >
                     已输出 ${assistant_message.usage ? assistant_message.usage.completion_tokens : 0} 词,
@@ -109,11 +129,11 @@ class TaskView extends HTMLElement {
 
     createEmptyAssistantContainer(message_id) {
         return `
-        <div class="flex items-start space-x-3">
-            <div id='message-container-${message_id}' class="p-3 bg-transparent w-full">
+        <div class="flex items-start">
+            <div id='message-container-${message_id}' class="p-2 bg-transparent w-full">
                 <div id='message-content-${message_id}'>
                 </div>
-                <span class="message-usage text-xs text-gray-500 mt-2 block">已输出 0 词, 总计 0 词</span>
+                <span class="message-usage text-xs text-gray-400 mt-1 block">已输出 0 词, 总计 0 词</span>
             </div>
         </div>
         `;
@@ -139,6 +159,16 @@ class TaskView extends HTMLElement {
         const task_state = await window.taskManagerAPI.getFullTask(this.task_id);
         this.task_status = task_state.task_status || 'waiting';
         this.updateStopButtonVisibility();
+
+        const input_widget = this.querySelector(`#task-${this.task_id}-input`);
+        if (input_widget) {
+            if (task_state.model) {
+                input_widget.setModel(task_state.model);
+            }
+            if (task_state.reasoningEffort !== undefined) {
+                input_widget.setReasoningEffort(task_state.reasoningEffort);
+            }
+        }
 
         const history_container = this.getHistoryContainer();
         const htmlParts = [];
@@ -278,13 +308,27 @@ class TaskView extends HTMLElement {
                     }
                     const message_content = message_container.querySelector(`#message-content-${progress.message_id}`);
                     if (message_content.children.length <= progress.last_part_index) {
-                        message_content.insertAdjacentHTML(
-                            'beforeend',
-                            `<div class='${TaskView.ASSISTANT_PART_CLASS_MAP[progress.last_part.type]}'></div>`
-                        );
+                        if (progress.last_part.type === 'reasoning') {
+                            message_content.insertAdjacentHTML('beforeend', TaskView.createReasoningPartHtml('', true));
+                        } else {
+                            message_content.insertAdjacentHTML(
+                                'beforeend',
+                                `<div class='${TaskView.ASSISTANT_PART_CLASS_MAP[progress.last_part.type]}'></div>`
+                            );
+                            message_content
+                                .querySelectorAll('details.reasoning-block[open]')
+                                .forEach((el) => el.removeAttribute('open'));
+                        }
                     }
                     const last_part_element = message_content.children[progress.last_part_index];
-                    last_part_element.innerHTML = progress.last_part.rendered || '';
+                    if (progress.last_part.type === 'reasoning') {
+                        const reasoningContent = last_part_element.querySelector('.reasoning-content');
+                        if (reasoningContent) {
+                            reasoningContent.innerHTML = progress.last_part.rendered || '';
+                        }
+                    } else {
+                        last_part_element.innerHTML = progress.last_part.rendered || '';
+                    }
                     if (progress.usage) {
                         const usageEl = message_container.querySelector('.message-usage');
                         if (usageEl) {
@@ -297,6 +341,11 @@ class TaskView extends HTMLElement {
                 if (progress.task_status !== this.task_status) {
                     this.task_status = progress.task_status;
                     this.updateStopButtonVisibility();
+                    if (this.task_status !== 'running') {
+                        this.getHistoryContainer()
+                            .querySelectorAll('details.reasoning-block[open]')
+                            .forEach((el) => el.removeAttribute('open'));
+                    }
                 }
                 this.tryScrollToEnd();
             });
@@ -311,11 +360,11 @@ class TaskView extends HTMLElement {
     render() {
         this.innerHTML = `
         <div class="bg-gray-30 h-full flex flex-col">
-            <header id="taskview-toolbar" class="w-full pt-2"></header>
+            <header id="taskview-toolbar" class="w-full pt-1"></header>
 
             <div class="relative flex-1 overflow-y-auto">
                 <!-- 对话历史区域 - 可滚动 -->
-                <div id="taskview-chat-history" class="w-full h-full space-y-4 overflow-y-auto px-4">
+                <div id="taskview-chat-history" class="w-full h-full space-y-2 overflow-y-auto px-3">
                 </div>
                 <!-- 滚动到底部按钮, 按需显示 -->
                 <button
@@ -329,8 +378,11 @@ class TaskView extends HTMLElement {
                 </button>
             </div>
 
+            <!-- 权限确认浮窗 -->
+            <permission-prompt id="task-${this.task_id}-permission" data-task-id="${this.task_id}" class="block px-4"></permission-prompt>
+
             <!-- 输入区域 -->
-            <div class="p-4">
+            <div class="px-3 pb-3 pt-1">
                 <agent-input id="task-${this.task_id}-input" />
             </div>
         </div>
@@ -341,6 +393,34 @@ class TaskView extends HTMLElement {
         // 为输入框添加事件监听器
         const input_widget = this.querySelector(`#task-${this.task_id}-input`);
         input_widget.addEventListener('submit', async (event) => {
+            const message = event.detail.message;
+
+            if (window.quickpassAPI && message.trim().startsWith('[[Opendesk')) {
+                try {
+                    const isQP = await window.quickpassAPI.isQuickPass(message);
+                    if (isQP) {
+                        const { name, hasApplications } = await window.quickpassAPI.importQuickPass(message);
+                        const scope = hasApplications ? '全部设置（含应用配置）' : '基础设置（不含应用配置）';
+                        await window.notificationAPI.sendNotification(
+                            'info',
+                            '设置',
+                            `已成功导入口令`,
+                            `导入范围：${scope}`
+                        );
+                        window.globalControlAPI.openHomePage();
+                        return;
+                    }
+                } catch (err) {
+                    await window.notificationAPI.sendNotification(
+                        'error',
+                        '口令导入失败',
+                        '导入口令时出错',
+                        err.message || String(err)
+                    );
+                    return;
+                }
+            }
+
             this.task_status = 'running';
             this.updateStopButtonVisibility();
             await window.taskManagerAPI.submitMessage(this.task_id, event.detail);
@@ -404,15 +484,15 @@ class EmbeddedTaskView extends HTMLElement {
         }
         if (hasTextPart) {
             return `
-            <div class="flex items-start space-x-3 flex-row-reverse">
-                <div class="bg-white text-gray-900 rounded-2xl px-3 py-1 shadow-md max-w-3xl border border-gray-200" style="backdrop-filter: blur(8px);">
+            <div class="flex items-start flex-row-reverse">
+                <div class="bg-white text-gray-900 rounded-2xl px-3 py-1 shadow-sm max-w-3xl border border-gray-200">
                     ${content}
                 </div>
             </div>
             `;
         } else {
             return `
-            <div class="flex items-start space-x-3 flex-row-reverse">
+            <div class="flex items-start flex-row-reverse">
                 ${content}
             </div>
             `;
@@ -420,23 +500,27 @@ class EmbeddedTaskView extends HTMLElement {
     }
 
     static USER_PART_CLASS_MAP = {
-        text: 'bg-transparent text-sm text-black markdown-body'
+        text: 'bg-transparent text-[13px] text-black markdown-body'
     };
 
     static ASSISTANT_PART_CLASS_MAP = {
-        text: 'bg-transparent text-sm text-black markdown-body',
-        reasoning: 'bg-gray-200 rounded-xl text-gray-500 text-xs p-3 mb-1',
+        text: 'bg-transparent text-[13px] text-black markdown-body',
+        reasoning: '',
         tool_call: ''
     };
 
     renderAssistantMessage(assistant_message) {
         let content = '';
         for (const part of assistant_message.content) {
-            content += `<div class="${EmbeddedTaskView.ASSISTANT_PART_CLASS_MAP[part.type]}">${part.rendered}</div>`;
+            if (part.type === 'reasoning') {
+                content += TaskView.createReasoningPartHtml(part.rendered, false);
+            } else {
+                content += `<div class="${EmbeddedTaskView.ASSISTANT_PART_CLASS_MAP[part.type]}">${part.rendered}</div>`;
+            }
         }
         const html = `
-        <div class="flex items-start space-x-3">
-            <div class="p-3 bg-transparent w-full">
+        <div class="flex items-start">
+            <div class="p-2 bg-transparent w-full">
                 <div id='message-${assistant_message.message_id}'>
                     ${content}
                 </div>
@@ -448,8 +532,8 @@ class EmbeddedTaskView extends HTMLElement {
 
     createEmptyAssistantContainer(message_id) {
         return `
-        <div class="flex items-start space-x-3">
-            <div class="p-3 bg-transparent w-full">
+        <div class="flex items-start">
+            <div class="p-2 bg-transparent w-full">
                 <div id='message-${message_id}'>
                 </div>
             </div>
@@ -551,14 +635,30 @@ class EmbeddedTaskView extends HTMLElement {
                         message_element = this.querySelector(`#message-${progress.message_id}`);
                     }
                     if (message_element && message_element.children.length <= progress.last_part_index) {
-                        message_element.insertAdjacentHTML(
-                            'beforeend',
-                            `<div class='${EmbeddedTaskView.ASSISTANT_PART_CLASS_MAP[progress.last_part.type]}'></div>`
-                        );
+                        if (progress.last_part.type === 'reasoning') {
+                            message_element.insertAdjacentHTML('beforeend', TaskView.createReasoningPartHtml('', true));
+                        } else {
+                            message_element.insertAdjacentHTML(
+                                'beforeend',
+                                `<div class='${EmbeddedTaskView.ASSISTANT_PART_CLASS_MAP[progress.last_part.type]}'></div>`
+                            );
+                            message_element
+                                .querySelectorAll('details.reasoning-block[open]')
+                                .forEach((el) => el.removeAttribute('open'));
+                        }
                     }
                     if (message_element) {
                         const last_part_element = message_element.children[progress.last_part_index];
-                        if (last_part_element) last_part_element.innerHTML = progress.last_part.rendered || '';
+                        if (last_part_element) {
+                            if (progress.last_part.type === 'reasoning') {
+                                const reasoningContent = last_part_element.querySelector('.reasoning-content');
+                                if (reasoningContent) {
+                                    reasoningContent.innerHTML = progress.last_part.rendered || '';
+                                }
+                            } else {
+                                last_part_element.innerHTML = progress.last_part.rendered || '';
+                            }
+                        }
                     }
                 }
                 this.tryScrollToEnd();
@@ -566,6 +666,11 @@ class EmbeddedTaskView extends HTMLElement {
                 if (progress.task_status && progress.task_status !== this.task_status) {
                     this.task_status = progress.task_status;
                     this.emitTaskStatusChanged(this.task_status);
+                    if (this.task_status !== 'running') {
+                        this.getHistoryContainer()
+                            .querySelectorAll('details.reasoning-block[open]')
+                            .forEach((el) => el.removeAttribute('open'));
+                    }
                 }
             });
         });
@@ -589,7 +694,7 @@ class EmbeddedTaskView extends HTMLElement {
     render() {
         this.innerHTML = `
         <div class="bg-gray-30 h-full flex flex-col">
-            <div class="relative flex-1 overflow-y-auto p-4 space-y-1" id="taskview-chat-history"></div>
+            <div class="relative flex-1 overflow-y-auto p-3 space-y-1" id="taskview-chat-history"></div>
 
             <!-- 滚动到底部按钮, 按需显示 -->
             <button

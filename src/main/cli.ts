@@ -24,10 +24,11 @@ import { program as prog } from 'commander';
 import { listInstalledPlugins, loadPlugins } from './aikernel/plugins/index.js';
 import { ChannelMgrApplication } from './applications/channelmgr/app.js';
 import { ChannelMessageRouter } from './applications/channelmgr/router.js';
-import { ShellAgentDecl } from './aikernel/agents/shellagent.js';
+import { MainAgentDecl } from './aikernel/agents/mainagent.js';
 import { NotificationManager } from './utils/notificationmgr.js';
 import { registerPluginsCommand } from './tui/subcommands/plugins.js';
 import { registerToolsCommand } from './tui/subcommands/tools.js';
+import { registerQuickpassCommand } from './tui/subcommands/quickpass.js';
 
 import { getCurrentVersion } from './utils/upgrade.js';
 
@@ -55,6 +56,7 @@ function parseCommandLineArgs() {
 
     registerPluginsCommand(prog);
     registerToolsCommand(prog);
+    registerQuickpassCommand(prog);
 
     // 让每个应用类注册自己的 CLI 子命令
     for (const AppClass of new CliPlatform().getApplicationClasses()) {
@@ -224,7 +226,7 @@ async function main(args: CommandLineArgs) {
         ApplicationRegistry.onReady(async () => {
             const channelMgrApp = ApplicationRegistry.getApplication('channelmgr') as ChannelMgrApplication | undefined;
             if (channelMgrApp) {
-                const agentDecl = new ShellAgentDecl({ workspace: args.workspace });
+                const agentDecl = new MainAgentDecl({ workspace: args.workspace });
                 const router = new ChannelMessageRouter(tui.taskManagerState, agentDecl, args.model);
 
                 router.onTaskResolved = (task, message) => {

@@ -13,6 +13,7 @@ import Alpine from 'alpinejs';
 
 import '../components/agentinput.js';
 import '../components/notification.js';
+import '../components/permissionPrompt.ts';
 import '../components/splitter.js';
 import '../components/toolbar.ts';
 import '../components/taskview.js';

@@ -25,7 +25,7 @@ import {
     type TaskUpdateAssistantChunk
 } from '../aikernel/states/tasks.js';
 import { GlobalState } from '../aikernel/states/global.js';
-import { ShellAgentDecl } from '../aikernel/agents/shellagent.js';
+import { MainAgentDecl } from '../aikernel/agents/mainagent.js';
 import { ApplicationRegistry } from '../applications/registry.js';
 import { logger } from '../utils/logger.js';
 import { exportTaskToHtml } from '../utils/export.js';
@@ -68,20 +68,24 @@ const HEADLESS_RESOURCE_LABELS: Record<string, string> = {
  * Headless 模式下的权限确认：无交互能力，直接拒绝 ask 请求并输出日志。
  */
 class HeadlessPermissionPromptProvider implements PermissionPromptProvider {
-    async prompt(requests: PermissionRequest[], toolName: string): Promise<PermissionUserResponse> {
+    async prompt(
+        requests: PermissionRequest[],
+        toolName: string,
+        _prefixOptions: { label: string; pattern: string }[]
+    ): Promise<PermissionUserResponse> {
         const first = requests[0];
         const action = HEADLESS_ACTION_LABELS[first.action] || first.action;
         const resType = HEADLESS_RESOURCE_LABELS[first.resourceType] || first.resourceType;
         const paths = requests.map((r) => r.resourcePath).join(', ');
         process.stdout.write(chalk.bold.yellow('[权限] ') + `${toolName} 工具请求${action}${resType}资源: ${paths}\n`);
         process.stdout.write(chalk.bold.red('[权限] ') + `headless 模式下无法交互确认，已自动拒绝\n`);
-        return { decision: 'deny', rememberScope: 'none' };
+        return { decision: 'deny', rememberScope: 'none', denyReason: 'no_prompt_provider' };
     }
 }
 
 export class HeadlessRunner {
     private taskManagerState: TaskManagerState;
-    private agentDecl: ShellAgentDecl;
+    private agentDecl: MainAgentDecl;
     private args: CommandLineArgs;
 
     /** 已输出过的 part 索引（message_id → Set<partIndex>），避免重复输出 */
@@ -90,7 +94,7 @@ export class HeadlessRunner {
     constructor(args: CommandLineArgs) {
         this.args = args;
         this.taskManagerState = GlobalState.getInstance().taskManagerState;
-        this.agentDecl = new ShellAgentDecl({ workspace: args.workspace });
+        this.agentDecl = new MainAgentDecl({ workspace: args.workspace });
         MemoryRegistry.getInstance(args.workspace);
     }
 
@@ -110,8 +114,8 @@ export class HeadlessRunner {
                 task.harnessContext = HarnessContext.createAllowEverything(this.args.workspace);
             } else {
                 task.harnessContext = await HarnessContext.createWithDefaults(this.args.workspace);
-                task.harnessContext.permissionPrompt = new HeadlessPermissionPromptProvider();
             }
+            task.harnessContext.permissionPrompt = new HeadlessPermissionPromptProvider();
         } catch (err) {
             logger.warn(`Failed to init headless task harness: ${err}`);
         }

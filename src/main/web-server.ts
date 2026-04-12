@@ -43,6 +43,7 @@ import {
     BaseTaskManagerUpdateSubscriber,
     type TaskUpdateChunk
 } from './aikernel/states/tasks.js';
+import { HarnessContext } from './aikernel/security/harness.js';
 
 const converter = new Convert();
 
@@ -150,7 +151,8 @@ export async function startWebServer(port = 3001) {
             // --- Task Manager APIs ---
             if (pathname === '/api/taskManager/createTask' && req.method === 'POST') {
                 const task = globalState.taskManagerState.createTask();
-                const agentDecl = new MainAgentDecl();
+                const workspace = process.cwd();
+                const agentDecl = new MainAgentDecl({ workspace });
                 agentDecl
                     .createSystemPrompt()
                     .then((prompt) => {
@@ -159,6 +161,13 @@ export async function startWebServer(port = 3001) {
                     .catch((err) => {
                         logger.error('failed to create system prompt', err);
                     });
+                try {
+                    task.harnessContext = await HarnessContext.createWithDefaults(workspace);
+                    // web-server 没有交互式 prompt provider；ask 权限默认拒绝（安全侧倒）
+                } catch (err) {
+                    logger.warn(`Failed to init task harness in web-server: ${err}`);
+                    task.harnessContext = HarnessContext.createEmpty();
+                }
                 sendJSON(res, { status: 'ok', data: task.task_id });
             } else if (pathname === '/api/taskManager/removeTask' && req.method === 'POST') {
                 const body = await parseBody(req);
@@ -169,6 +178,15 @@ export async function startWebServer(port = 3001) {
                 }
                 globalState.taskManagerState.removeTask(body.taskId);
                 sendJSON(res, { status: 'ok', data: task.task_id });
+            } else if (pathname === '/api/taskManager/forkTask' && req.method === 'POST') {
+                const body = await parseBody(req);
+                const task = globalState.taskManagerState.getTask(body.taskId);
+                if (!task) {
+                    sendJSON(res, { status: 'error', message: `task ${body.taskId} not found` });
+                    return;
+                }
+                const forkedTask = task.fork();
+                sendJSON(res, { status: 'ok', data: forkedTask.task_id });
             } else if (pathname === '/api/taskManager/clearAllTasks' && req.method === 'POST') {
                 globalState.taskManagerState.clearAllTasks();
                 sendJSON(res, { status: 'ok' });
@@ -192,6 +210,12 @@ export async function startWebServer(port = 3001) {
                 }
                 if (body.details?.attachedFilePaths) {
                     await task.attachFiles(body.details.attachedFilePaths);
+                }
+                if (body.details?.selectedModel) {
+                    task.model = body.details.selectedModel;
+                }
+                if (body.details?.reasoningEffort !== undefined) {
+                    task.reasoningEffort = body.details.reasoningEffort || undefined;
                 }
                 task.submitUserMessage(body.details?.message || body.message).catch((err: Error) =>
                     logger.error(`submitUserMessage failed for task ${body.taskId}:`, err)
