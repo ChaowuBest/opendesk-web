@@ -25,7 +25,7 @@ import {
     type TaskUpdateAssistantChunk
 } from '../aikernel/states/tasks.js';
 import { GlobalState } from '../aikernel/states/global.js';
-import { ShellAgentDecl } from '../aikernel/agents/shellagent.js';
+import { MainAgentDecl } from '../aikernel/agents/mainagent.js';
 import { ApplicationRegistry } from '../applications/registry.js';
 import { logger } from '../utils/logger.js';
 import { exportTaskToHtml } from '../utils/export.js';
@@ -85,7 +85,7 @@ class HeadlessPermissionPromptProvider implements PermissionPromptProvider {
 
 export class HeadlessRunner {
     private taskManagerState: TaskManagerState;
-    private agentDecl: ShellAgentDecl;
+    private agentDecl: MainAgentDecl;
     private args: CommandLineArgs;
 
     /** 已输出过的 part 索引（message_id → Set<partIndex>），避免重复输出 */
@@ -94,7 +94,7 @@ export class HeadlessRunner {
     constructor(args: CommandLineArgs) {
         this.args = args;
         this.taskManagerState = GlobalState.getInstance().taskManagerState;
-        this.agentDecl = new ShellAgentDecl({ workspace: args.workspace });
+        this.agentDecl = new MainAgentDecl({ workspace: args.workspace });
         MemoryRegistry.getInstance(args.workspace);
     }
 

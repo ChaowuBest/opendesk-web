@@ -59,10 +59,14 @@ class AgentInput extends HTMLElement {
         this.selectedModel = '';
         this.selectedReasoningEffort = '';
         this.defaultModelAlias = '';
+        /** @type {{ id: string, name: string, description: string }[]} */
+        this.availableSkills = [];
+        this.skillPanelOpen = false;
+        this.skillSearchQuery = '';
     }
 
     connectedCallback() {
-        this.loadModels().then(() => this.render());
+        Promise.all([this.loadModels(), this.loadSkills()]).then(() => this.render());
     }
 
     async loadModels() {
@@ -80,6 +84,21 @@ class AgentInput extends HTMLElement {
             }
         } catch (err) {
             console.warn('Failed to load models for agent-input:', err);
+        }
+    }
+
+    async loadSkills() {
+        try {
+            if (!window.applicationRegistryAPI?.callMainWorld) return;
+            const skills = await window.applicationRegistryAPI.callMainWorld('skillmgr', 'getAllUserInvocableSkills');
+            this.availableSkills = (skills || []).map((s) => ({
+                name: s.name,
+                description: s.description || '',
+                bundleName: s.bundleName || ''
+            }));
+        } catch (err) {
+            console.warn('Failed to load skills for agent-input:', err);
+            this.availableSkills = [];
         }
     }
 
@@ -224,23 +243,44 @@ class AgentInput extends HTMLElement {
 
                 <!-- 工具栏 -->
                 <div class="flex items-center justify-between px-2.5 py-1.5 border-t border-gray-100">
-                    <!-- 左侧：模型选择 + 推理模式 + 附件 -->
+                    <!-- 左侧：模型选择 + 推理模式 + 技能 + 附件 -->
                     <div class="flex items-center gap-1.5 flex-wrap" style="row-gap: 0.2rem;">
                         ${
                             this.availableModels.length > 0
                                 ? `
                         <select id="agent-input-model-select"
-                            class="text-xs bg-gray-50 border border-gray-200 rounded-full px-2 py-0.5 text-gray-600 outline-none hover:border-gray-400 transition-colors cursor-pointer"
+                            class="agent-input-toolbar-control text-xs bg-gray-50 border border-gray-200 rounded-full px-2 py-0.5 text-gray-600 outline-none hover:border-gray-400 transition-colors cursor-pointer"
                             style="max-width: 130px;">
                             ${modelOptions}
                         </select>
                         <select id="agent-input-effort-select"
-                            class="text-xs bg-gray-50 border border-gray-200 rounded-full px-2 py-0.5 text-gray-600 outline-none hover:border-gray-400 transition-colors cursor-pointer">
+                            class="agent-input-toolbar-control text-xs bg-gray-50 border border-gray-200 rounded-full px-2 py-0.5 text-gray-600 outline-none hover:border-gray-400 transition-colors cursor-pointer">
                             ${effortOptions}
                         </select>
                         `
                                 : ''
                         }
+                        <!-- 技能选择按钮 -->
+                        <div class="relative">
+                            <button id="agent-input-skill-btn" class="agent-input-toolbar-control flex items-center justify-center gap-1 text-xs bg-gray-50 border border-gray-200 rounded-full px-2 py-0.5 text-gray-600 outline-none hover:border-purple-400 hover:text-purple-600 transition-colors cursor-pointer">
+                                <i class="fas fa-wand-magic-sparkles text-[10px]"></i>
+                                <span>技能</span>
+                            </button>
+                            <!-- 技能选择面板 -->
+                            <div id="agent-input-skill-panel" class="skill-panel-hidden">
+                                <div class="skill-panel-search">
+                                    <i class="fas fa-search text-gray-400 text-xs"></i>
+                                    <input id="agent-input-skill-search" type="text" placeholder="搜索技能" class="skill-panel-search-input" />
+                                </div>
+                                <div id="agent-input-skill-list" class="skill-panel-list"></div>
+                                <div class="skill-panel-footer">
+                                    <button id="agent-input-skill-install-btn" class="skill-panel-install-btn">
+                                        <i class="fas fa-plus text-[10px]"></i>
+                                        <span>安装技能</span>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
                         <div
                             id="agent-input-attached-file-list"
                             class="flex flex-wrap items-center gap-1"
@@ -254,7 +294,7 @@ class AgentInput extends HTMLElement {
                     <div class="flex items-center gap-1.5">
                         <!-- 发送按钮 -->
                         <button id="agent-input-submit-btn" class="p-1 text-gray-400 hover:text-blue-500 rounded-full transition-colors">
-                            <i class="fas fa-arrow-up text-base"></i>
+                            <i class="fas fa-paper-plane text-sm"></i>
                         </button>
                         <!-- 停止按钮 -->
                         <button id="agent-input-stop-btn" class="py-1 px-3 bg-red-500 hover:bg-red-600 text-white rounded-full transition-colors text-xs hidden">
@@ -270,6 +310,135 @@ class AgentInput extends HTMLElement {
 
         this.setUpEventListeners();
         this.updateInputState();
+    }
+
+    toggleSkillPanel(forceClose = false) {
+        const panel = this.querySelector('#agent-input-skill-panel');
+        if (!panel) return;
+        if (forceClose || panel.classList.contains('skill-panel-visible')) {
+            panel.classList.remove('skill-panel-visible');
+            panel.classList.add('skill-panel-hidden');
+            this.skillPanelOpen = false;
+        } else {
+            this.loadSkills().then(() => {
+                this.renderSkillList();
+                panel.classList.remove('skill-panel-hidden');
+                panel.classList.add('skill-panel-visible');
+                this.skillPanelOpen = true;
+
+                const btn = this.querySelector('#agent-input-skill-btn');
+                if (btn) {
+                    const rect = btn.getBoundingClientRect();
+                    const panelHeight = Math.min(320, panel.scrollHeight);
+                    let left = rect.left;
+                    if (left + 280 > window.innerWidth) {
+                        left = window.innerWidth - 280 - 8;
+                    }
+                    panel.style.top = rect.top - panelHeight - 8 + 'px';
+                    panel.style.left = left + 'px';
+                }
+
+                const searchInput = this.querySelector('#agent-input-skill-search');
+                if (searchInput) {
+                    searchInput.value = '';
+                    searchInput.focus();
+                }
+            });
+        }
+    }
+
+    renderSkillList(filter = '') {
+        const listEl = this.querySelector('#agent-input-skill-list');
+        if (!listEl) return;
+        const lowerFilter = filter.toLowerCase();
+        const filtered = lowerFilter
+            ? this.availableSkills.filter(
+                  (s) => s.name.toLowerCase().includes(lowerFilter) || s.description.toLowerCase().includes(lowerFilter)
+              )
+            : this.availableSkills;
+
+        if (filtered.length === 0) {
+            listEl.innerHTML = `<div class="skill-panel-empty">${filter ? '未找到匹配的技能' : '暂无已安装的技能'}</div>`;
+        } else {
+            listEl.innerHTML = filtered
+                .map(
+                    (s) => `
+                <button class="skill-panel-item" data-skill-name="${s.name}">
+                    <div class="skill-panel-item-icon">
+                        <i class="fas fa-bolt text-purple-500 text-xs"></i>
+                    </div>
+                    <div class="skill-panel-item-info">
+                        <div class="skill-panel-item-name">${s.name}</div>
+                        <div class="skill-panel-item-desc">${s.description}</div>
+                    </div>
+                </button>
+            `
+                )
+                .join('');
+        }
+        this.bindSkillItemEvents();
+    }
+
+    bindSkillItemEvents() {
+        const items = this.querySelectorAll('.skill-panel-item');
+        const textarea = this.querySelector('#agent-input-textarea');
+        items.forEach((item) => {
+            item.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const skillName = item.dataset.skillName;
+                if (!skillName || !textarea) return;
+                const prefix = `/${skillName} `;
+                const cursorPos = textarea.selectionStart;
+                const textBefore = textarea.value.substring(0, cursorPos);
+                const textAfter = textarea.value.substring(cursorPos);
+                textarea.value = textBefore + prefix + textAfter;
+                const newPos = cursorPos + prefix.length;
+                textarea.setSelectionRange(newPos, newPos);
+                textarea.focus();
+                textarea.dispatchEvent(new Event('input', { bubbles: true }));
+                this.toggleSkillPanel(true);
+            });
+        });
+    }
+
+    async handleInstallSkill() {
+        try {
+            if (!window.fsAPI?.selectFile) return;
+            const filePaths = await window.fsAPI.selectFile();
+            if (!filePaths || filePaths.length === 0) return;
+
+            const zipPath = filePaths[0];
+            if (!zipPath.toLowerCase().endsWith('.zip')) {
+                window.notificationAPI?.sendNotification(
+                    'error',
+                    '技能管理',
+                    '文件格式错误',
+                    '请选择 .zip 格式的技能包'
+                );
+                return;
+            }
+
+            const result = await window.applicationRegistryAPI.callMainWorld(
+                'skillmgr',
+                'installSkillFromZip',
+                zipPath
+            );
+            if (result.success) {
+                window.notificationAPI?.sendNotification(
+                    'success',
+                    '技能管理',
+                    '安装成功',
+                    `技能 ${result.name} 已安装`
+                );
+                await this.loadSkills();
+                this.renderSkillList(this.querySelector('#agent-input-skill-search')?.value || '');
+            } else {
+                window.notificationAPI?.sendNotification('error', '技能管理', '安装失败', result.error || '未知错误');
+            }
+        } catch (err) {
+            console.error('Failed to install skill:', err);
+            window.notificationAPI?.sendNotification('error', '技能管理', '安装失败', err.message || '未知错误');
+        }
     }
 
     setUpEventListeners() {
@@ -298,6 +467,53 @@ class AgentInput extends HTMLElement {
                 await updateSettingForModelChange(this.selectedModel, this.selectedReasoningEffort);
             });
         }
+
+        // 技能选择面板
+        const skillBtn = this.querySelector('#agent-input-skill-btn');
+        const skillSearch = this.querySelector('#agent-input-skill-search');
+
+        if (skillBtn) {
+            skillBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.toggleSkillPanel();
+            });
+        }
+        if (skillSearch) {
+            skillSearch.addEventListener('input', (e) => {
+                this.renderSkillList(e.target.value);
+            });
+            skillSearch.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape') {
+                    this.toggleSkillPanel(true);
+                    textarea.focus();
+                }
+                e.stopPropagation();
+            });
+            skillSearch.addEventListener('click', (e) => e.stopPropagation());
+        }
+
+        const skillInstallBtn = this.querySelector('#agent-input-skill-install-btn');
+        if (skillInstallBtn) {
+            skillInstallBtn.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                await this.handleInstallSkill();
+            });
+        }
+
+        if (!this._skillPanelDocClickBound) {
+            this._skillPanelDocClickBound = true;
+            document.addEventListener('click', (e) => {
+                if (this.skillPanelOpen) {
+                    const panel = this.querySelector('#agent-input-skill-panel');
+                    const btn = this.querySelector('#agent-input-skill-btn');
+                    if (panel && !panel.contains(e.target) && e.target !== btn && !btn?.contains(e.target)) {
+                        this.toggleSkillPanel(true);
+                    }
+                }
+            });
+        }
+
+        this.bindSkillItemEvents();
 
         // 提交消息的函数
         const handleSubmit = () => {

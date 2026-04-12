@@ -227,7 +227,8 @@ const registerTaskManagerAPIHandlers = () => {
 
     ipcMain.handle('taskManager:createTask', async () => {
         const task = globalState.taskManagerState.createTask();
-        const agentDecl = new MainAgentDecl();
+        const workspace = process.cwd();
+        const agentDecl = new MainAgentDecl({ workspace });
         agentDecl
             .createSystemPrompt()
             .then((prompt) => {
@@ -237,7 +238,6 @@ const registerTaskManagerAPIHandlers = () => {
                 logger.error('failed to create system prompt', err);
             });
         try {
-            const workspace = process.cwd();
             task.harnessContext = await HarnessContext.createWithDefaults(workspace);
             task.harnessContext.permissionPrompt = new ElectronPermissionPromptProvider();
         } catch (err) {

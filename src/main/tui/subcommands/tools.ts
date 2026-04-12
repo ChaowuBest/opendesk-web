@@ -23,7 +23,7 @@ import type { z } from 'zod';
 import process from 'process';
 
 /**
- * 收集 shellagent 可使用的全部工具集（与 TaskState.buildToolsets 保持一致）。
+ * 收集 mainagent 可使用的全部工具集（与 TaskState.buildToolsets 保持一致）。
  */
 async function collectAllToolsets(): Promise<BaseToolset[]> {
     setPlatform(new CliPlatform());

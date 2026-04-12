@@ -255,6 +255,32 @@ export class SkillMgrApplication extends BaseApplication {
         return SkillRegistry.listSkills();
     }
 
+    /**
+     * 获取所有 user-invocable 的技能（包含系统内置 + 已安装），供渲染进程技能选择器使用
+     */
+    async getAllUserInvocableSkills() {
+        const registry = AISkillRegistry.getInstance();
+        const skills = await registry.getUserInvocableSkills();
+        return skills.map(({ bundleName, skill }) => ({
+            name: skill.frontmatter.name,
+            description: skill.frontmatter.description || '',
+            bundleName
+        }));
+    }
+
+    /**
+     * 从 zip 文件路径安装技能，供渲染进程调用
+     */
+    installSkillFromZip(zipPath: string) {
+        const result = SkillRegistry.addSkillFromZipPath(zipPath);
+        if (result.success) {
+            SkillRegistry.refresh();
+            AISkillRegistry.getInstance().clearCache(this.bundleName);
+            SkillMgrApplication.notifyRefreshListeners();
+        }
+        return result;
+    }
+
     addSkillFromPath(sourcePath: string) {
         return SkillRegistry.addSkillFromPath(sourcePath);
     }

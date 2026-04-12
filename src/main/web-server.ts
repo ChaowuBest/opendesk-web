@@ -151,7 +151,8 @@ export async function startWebServer(port = 3001) {
             // --- Task Manager APIs ---
             if (pathname === '/api/taskManager/createTask' && req.method === 'POST') {
                 const task = globalState.taskManagerState.createTask();
-                const agentDecl = new MainAgentDecl();
+                const workspace = process.cwd();
+                const agentDecl = new MainAgentDecl({ workspace });
                 agentDecl
                     .createSystemPrompt()
                     .then((prompt) => {
@@ -161,7 +162,6 @@ export async function startWebServer(port = 3001) {
                         logger.error('failed to create system prompt', err);
                     });
                 try {
-                    const workspace = process.cwd();
                     task.harnessContext = await HarnessContext.createWithDefaults(workspace);
                     // web-server 没有交互式 prompt provider；ask 权限默认拒绝（安全侧倒）
                 } catch (err) {

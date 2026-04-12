@@ -25,7 +25,7 @@ import { lookupKnownContextSize, fetchContextSizeFromAPI } from '../utils/model-
 import { LLM } from '../aikernel/llm.js';
 import { UpgradeOverlay } from './components/upgrade';
 import { AgentDecl } from '../aikernel/agent.js';
-import { ShellAgentDecl } from '../aikernel/agents/shellagent.js';
+import { MainAgentDecl } from '../aikernel/agents/mainagent.js';
 import { HelpOverlay } from './components/help';
 import { ConfirmOverlay, InfoOverlay, InfoPage } from './components/notice';
 import { DashboardOverlay } from './components/dashboard';
@@ -144,7 +144,7 @@ export class OpenDeskTUI {
 
     constructor(args: CommandLineArgs) {
         this.taskManagerState = GlobalState.getInstance().taskManagerState;
-        this.agentDecl = new ShellAgentDecl({ workspace: args.workspace });
+        this.agentDecl = new MainAgentDecl({ workspace: args.workspace });
 
         const terminal = new OpenDeskTerminal();
         terminal.onResize((cols, rows) => {

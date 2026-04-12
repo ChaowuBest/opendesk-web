@@ -173,3 +173,153 @@ pre .hljs-regexp {
     font-family: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', monospace !important;
     border: 1px solid #e5e7eb !important;
 }
+
+/* =========================================
+   Agent input toolbar controls
+   ========================================= */
+.agent-input-toolbar-control {
+    min-width: 72px;
+    text-align: center;
+}
+
+/* =========================================
+   Skill picker panel
+   ========================================= */
+.skill-panel-hidden {
+    display: none;
+}
+.skill-panel-visible {
+    display: flex;
+    flex-direction: column;
+    position: fixed;
+    width: 280px;
+    max-height: 320px;
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+    box-shadow:
+        0 12px 40px -8px rgba(0, 0, 0, 0.12),
+        0 4px 12px -2px rgba(0, 0, 0, 0.06);
+    z-index: 9999;
+    overflow: hidden;
+    animation: skill-panel-slide-up 0.18s ease-out;
+}
+@keyframes skill-panel-slide-up {
+    from {
+        opacity: 0;
+        transform: translateY(6px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+.skill-panel-search {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 12px;
+    border-bottom: 1px solid #f3f4f6;
+}
+.skill-panel-search-input {
+    flex: 1;
+    border: none;
+    outline: none;
+    font-size: 13px;
+    color: #374151;
+    background: transparent;
+}
+.skill-panel-search-input::placeholder {
+    color: #9ca3af;
+}
+.skill-panel-list {
+    overflow-y: auto;
+    padding: 4px;
+    flex: 1;
+}
+.skill-panel-list::-webkit-scrollbar {
+    width: 4px;
+}
+.skill-panel-list::-webkit-scrollbar-thumb {
+    background: #d1d5db;
+    border-radius: 2px;
+}
+.skill-panel-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 8px 10px;
+    border: none;
+    background: transparent;
+    border-radius: 8px;
+    cursor: pointer;
+    text-align: left;
+    transition: background 0.12s;
+}
+.skill-panel-item:hover {
+    background: #f3f0ff;
+}
+.skill-panel-item-icon {
+    flex-shrink: 0;
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #f5f3ff;
+    border-radius: 8px;
+    border: 1px solid #ede9fe;
+}
+.skill-panel-item-info {
+    flex: 1;
+    min-width: 0;
+}
+.skill-panel-item-name {
+    font-size: 13px;
+    font-weight: 500;
+    color: #1f2937;
+    line-height: 1.3;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.skill-panel-item-desc {
+    font-size: 11px;
+    color: #9ca3af;
+    line-height: 1.3;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-top: 1px;
+}
+.skill-panel-empty {
+    padding: 20px 12px;
+    text-align: center;
+    color: #9ca3af;
+    font-size: 12px;
+}
+.skill-panel-footer {
+    border-top: 1px solid #f3f4f6;
+    padding: 6px 8px;
+}
+.skill-panel-install-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    width: 100%;
+    padding: 6px 0;
+    border: 1px dashed #d1d5db;
+    background: transparent;
+    border-radius: 8px;
+    color: #6b7280;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+.skill-panel-install-btn:hover {
+    border-color: #a78bfa;
+    color: #7c3aed;
+    background: #f5f3ff;
+}

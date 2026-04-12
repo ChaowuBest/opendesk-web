@@ -24,7 +24,7 @@ import { program as prog } from 'commander';
 import { listInstalledPlugins, loadPlugins } from './aikernel/plugins/index.js';
 import { ChannelMgrApplication } from './applications/channelmgr/app.js';
 import { ChannelMessageRouter } from './applications/channelmgr/router.js';
-import { ShellAgentDecl } from './aikernel/agents/shellagent.js';
+import { MainAgentDecl } from './aikernel/agents/mainagent.js';
 import { NotificationManager } from './utils/notificationmgr.js';
 import { registerPluginsCommand } from './tui/subcommands/plugins.js';
 import { registerToolsCommand } from './tui/subcommands/tools.js';
@@ -226,7 +226,7 @@ async function main(args: CommandLineArgs) {
         ApplicationRegistry.onReady(async () => {
             const channelMgrApp = ApplicationRegistry.getApplication('channelmgr') as ChannelMgrApplication | undefined;
             if (channelMgrApp) {
-                const agentDecl = new ShellAgentDecl({ workspace: args.workspace });
+                const agentDecl = new MainAgentDecl({ workspace: args.workspace });
                 const router = new ChannelMessageRouter(tui.taskManagerState, agentDecl, args.model);
 
                 router.onTaskResolved = (task, message) => {
