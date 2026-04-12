@@ -526,7 +526,7 @@ export class TaskState {
         请返回一个简洁明了的任务名称，不要超过10个字符。不要包含任何其他内容。
         `;
 
-        const task_name = await LLM.ask(new UserMessage(prompt.trim())).catch((err) => {
+        const task_name = await LLM.ask(prompt.trim(), undefined, { reasoningEffort: 'none' }).catch((err) => {
             logger.error(err);
             return null;
         });
