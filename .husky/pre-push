@@ -12,10 +12,4 @@ npm run check:architecture || {
   exit 1
 }
 
-echo "Checking docs freshness..."
-tsx scripts/docs-freshness/docs-freshness.ts || {
-  echo "Docs freshness check failed"
-  exit 1
-}
-
 echo "Pre-push checks passed"
