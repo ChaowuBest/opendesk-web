@@ -116,6 +116,7 @@ export class ReasoningMessagePart {
 const LARGE_ARGS_THRESHOLD = 500;
 
 export const TOOL_RESULT_STORAGE_VERSION = 1;
+export const TOOL_CALL_MICROCOMPACT_VERSION = 1;
 
 export interface ToolResultStorageMetadata {
     result_id: string;
@@ -125,6 +126,16 @@ export interface ToolResultStorageMetadata {
     original_lines?: number;
     persisted_at?: string;
     replacement_text?: string;
+}
+
+export interface ToolCallMicrocompactMetadata {
+    version: number;
+    strategy: 'local_clear';
+    cleared_at: string;
+    original_chars?: number;
+    original_lines?: number;
+    replacement_text?: string;
+    artifact_path_hint?: string;
 }
 
 export class ToolCall {
@@ -142,6 +153,8 @@ export class ToolCall {
     compress_id?: string;
     /** 大工具结果落盘后的稳定引用信息 */
     result_storage?: ToolResultStorageMetadata;
+    /** 本地 microcompact 后的持久化元数据 */
+    microcompact?: ToolCallMicrocompactMetadata;
 
     constructor(index: number, id: string, tool_name: string, args_string: string) {
         this.index = index;
@@ -240,6 +253,53 @@ export class ToolCall {
         return normalized;
     }
 
+    static normalizeMicrocompact(
+        metadata?: Partial<ToolCallMicrocompactMetadata> | null
+    ): ToolCallMicrocompactMetadata | undefined {
+        if (metadata === undefined || metadata === null || typeof metadata !== 'object') {
+            return undefined;
+        }
+
+        const strategy = metadata.strategy === 'local_clear' ? metadata.strategy : 'local_clear';
+        const normalized: ToolCallMicrocompactMetadata = {
+            version:
+                typeof metadata.version === 'number' && Number.isInteger(metadata.version) && metadata.version > 0
+                    ? metadata.version
+                    : TOOL_CALL_MICROCOMPACT_VERSION,
+            strategy,
+            cleared_at:
+                typeof metadata.cleared_at === 'string' && metadata.cleared_at.trim().length > 0
+                    ? metadata.cleared_at
+                    : new Date().toISOString()
+        };
+
+        if (
+            typeof metadata.original_chars === 'number' &&
+            Number.isInteger(metadata.original_chars) &&
+            metadata.original_chars >= 0
+        ) {
+            normalized.original_chars = metadata.original_chars;
+        }
+
+        if (
+            typeof metadata.original_lines === 'number' &&
+            Number.isInteger(metadata.original_lines) &&
+            metadata.original_lines >= 0
+        ) {
+            normalized.original_lines = metadata.original_lines;
+        }
+
+        if (typeof metadata.replacement_text === 'string' && metadata.replacement_text.length > 0) {
+            normalized.replacement_text = metadata.replacement_text;
+        }
+
+        if (typeof metadata.artifact_path_hint === 'string' && metadata.artifact_path_hint.trim().length > 0) {
+            normalized.artifact_path_hint = metadata.artifact_path_hint;
+        }
+
+        return normalized;
+    }
+
     ensureResultStorage(metadata: Partial<ToolResultStorageMetadata> = {}): ToolResultStorageMetadata {
         const normalized = ToolCall.normalizeResultStorage({
             ...this.result_storage,
@@ -266,6 +326,16 @@ export class ToolCall {
 
     clearResultStorage(): void {
         this.result_storage = undefined;
+    }
+
+    setMicrocompact(metadata?: Partial<ToolCallMicrocompactMetadata> | null): ToolCallMicrocompactMetadata | undefined {
+        const normalized = ToolCall.normalizeMicrocompact(metadata);
+        this.microcompact = normalized;
+        return normalized;
+    }
+
+    clearMicrocompact(): void {
+        this.microcompact = undefined;
     }
 
     setTool(tool: BaseTool<any>) {
@@ -363,6 +433,7 @@ export class ToolCall {
             configurable: true
         });
         tc.result_storage = ToolCall.normalizeResultStorage(tc.result_storage);
+        tc.microcompact = ToolCall.normalizeMicrocompact(tc.microcompact);
         return tc;
     }
 }
