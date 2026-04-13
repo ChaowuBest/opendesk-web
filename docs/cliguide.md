@@ -125,19 +125,35 @@ OpenDesk CLI 提供了丰富的斜杠命令来增强交互体验。在输入框�
 
 ### 命令列表
 
-| 命令         | 描述                           | 用法                                      |
-| ------------ | ------------------------------ | ----------------------------------------- |
-| `/new`       | 启动新任务并发送消息           | `/new [消息]`                             |
-| `/switch`    | 切换到其他任务                 | `/switch`                                 |
-| `/help`      | 显示快捷键与指令帮助           | `/help`                                   |
-| `/exit`      | 退出 OpenDesk                  | `/exit`                                   |
-| `/cancel`    | 撤销消息队列中的所有待发送消息 | `/cancel`                                 |
-| `/clear`     | 删除所有任务历史               | `/clear`                                  |
-| `/export`    | 导出当前会话为 HTML 文件       | `/export [文件名]`                        |
-| `/config`    | 打开系统设置                   | `/config`                                 |
-| `/log`       | 显示日志面板                   | `/log [off\|last\|all]`                   |
-| `/debug`     | 调试命令                       | `/debug log [on\|off]` 或 `/debug taskid` |
-| `/quickpass` | 导出快捷口令                   | `/quickpass config base\|all`             |
+| 命令            | 描述                           | 用法                                      |
+| --------------- | ------------------------------ | ----------------------------------------- |
+| `/new`          | 启动新任务并发送消息           | `/new [消息]`                             |
+| `/switch`       | 切换到其他任务                 | `/switch`                                 |
+| `/help`         | 显示快捷键与指令帮助           | `/help`                                   |
+| `/exit`         | 退出 OpenDesk                  | `/exit`                                   |
+| `/quit`         | 退出 OpenDesk（需确认）        | `/quit`                                   |
+| `/cancel`       | 撤销消息队列中的所有待发送消息 | `/cancel`                                 |
+| `/clear`        | 删除所有任务历史               | `/clear`                                  |
+| `/export`       | 导出当前会话为 HTML 文件       | `/export [文件名]`                        |
+| `/import`       | 导入会话数据                   | `/import [文件名]`                        |
+| `/config`       | 打开系统设置                   | `/config`                                 |
+| `/log`          | 显示日志面板                   | `/log [off\|last\|all]`                   |
+| `/debug`        | 调试命令                       | `/debug log [on\|off]` 或 `/debug taskid` |
+| `/quickpass`    | 导出快捷口令                   | `/quickpass config base\|all`             |
+| `/dashboard`    | 打开仪表盘                     | `/dashboard`                              |
+| `/stop`         | 停止当前正在执行的任务         | `/stop`                                   |
+| `/upgrade`      | 检查并升级 OpenDesk            | `/upgrade`                                |
+| `/rename`       | 重命名当前任务                 | `/rename [新名称]`                        |
+| `/fork`         | 复制当前任务为新任务           | `/fork`                                   |
+| `/recover`      | 从任务文件重建任务列表         | `/recover tasks`                          |
+| `/compact`      | 压缩当前会话上下文             | `/compact`                                |
+| `/memory`       | 管理长期记忆                   | `/memory`                                 |
+| `/bookmark`     | 管理书签                       | `/bookmark`                               |
+| `/notification` | 管理通知设置                   | `/notification`                           |
+| `/undo`         | 回退最近 N 条消息（默认1条）   | `/undo [数量]`                            |
+| `/redo`         | 恢复最近回退的消息             | `/redo`                                   |
+| `/btw`          | 顺便提一下（添加补充信息）     | `/btw [补充内容]`                         |
+| `/manual`       | 打开用户手册                   | `/manual`                                 |
 
 ### 命令详细说明
 
@@ -380,8 +396,8 @@ TUI（文本用户界面）位于 [`src/main/tui/`](src/main/tui/) 目录下：
 
 #### 核心状态管理
 
-- [`GlobalState`](src/main/states/global.js) - 全局状态管理
-- [`TaskManagerState`](src/main/states/tasks.ts) - 任务状态管理
+- [`GlobalState`](src/main/aikernel/states/global.ts) - 全局状态管理
+- [`TaskManagerState`](src/main/aikernel/states/tasks.ts) - 任务状态管理
 
 ### 与 Electron GUI 的关系
 

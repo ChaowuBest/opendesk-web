@@ -160,7 +160,7 @@ Fillip Desk 采用模块化的应用架构，每个功能模块都是独立的�
 
 ## 📄 许可证
 
-本项目采用 [BSD-3-Clause](./LICENSE) 许可证。
+本项目采用 [MulanPSL-2.0](./LICENSE) 许可证。
 
 ---
 
@@ -175,7 +175,7 @@ Fillip Desk 采用模块化的应用架构，每个功能模块都是独立的�
 - [中文版本](./README.md) | [English Version](./README_EN.md)
 - [Intelli OS 项目](https://github.com/intelli-os)（如适用）
 - [开发指南](./docs/devguide.md)
-- [OpenHarmony 版本说明](./docs/FillipDesk-oh.md)
+- [OpenHarmony 版本说明](./docs/platforms/openharmony.md)
 
 ---
 
