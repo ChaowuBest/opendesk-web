@@ -19,6 +19,7 @@ import { z } from 'zod';
 import fs from 'fs';
 import path from 'path';
 import chalk from 'chalk';
+import type { PermissionRequest } from '../../aikernel/security/permission';
 import type { TaskState } from '../../aikernel/states/tasks';
 import {
     BackgroundProcessManager,
@@ -26,6 +27,7 @@ import {
     installTimeoutBackgrounding,
     type BackgroundProcessStatus
 } from './background';
+import { analyzeBashPermissions, analyzePowerShellPermissions } from './shellPermissions';
 
 const MAX_CLI_OUTPUT_LINES = 10;
 const LIVE_UPDATE_INTERVAL_MS = 200;
@@ -285,6 +287,16 @@ export class ExecutePowerShellTool extends BaseTool<typeof ExecutePowerShellArgs
         this.setUniversalExecutor(this.executeCommand.bind(this));
     }
 
+    getDeclaredPermissions(
+        args: z.output<typeof ExecutePowerShellArgsSchema>,
+        taskState?: TaskState
+    ): PermissionRequest[] {
+        const command = args.command;
+        if (!command || typeof command !== 'string') return [];
+        const cwd = args.workingDirectory || taskState?.harnessContext?.workspace || process.cwd();
+        return analyzePowerShellPermissions(command, cwd);
+    }
+
     async stop(): Promise<void> {
         this._killedByStop = true;
         const processes = Array.from(this.runningProcesses);
@@ -326,6 +338,8 @@ export class ExecutePowerShellTool extends BaseTool<typeof ExecutePowerShellArgs
         let cwd: string | undefined = undefined;
         if (workingDirectory && typeof workingDirectory === 'string' && fs.existsSync(workingDirectory)) {
             cwd = workingDirectory;
+        } else if (taskState?.harnessContext?.workspace) {
+            cwd = taskState.harnessContext.workspace;
         }
 
         const utf8Command = `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ${command}`;
@@ -374,6 +388,13 @@ export class ExecuteBashTool extends BaseTool<typeof ExecuteBashArgsSchema> {
         this.setUniversalExecutor(this.executeCommand.bind(this));
     }
 
+    getDeclaredPermissions(args: z.output<typeof ExecuteBashArgsSchema>, taskState?: TaskState): PermissionRequest[] {
+        const command = args.command;
+        if (!command || typeof command !== 'string') return [];
+        const cwd = args.workingDirectory || taskState?.harnessContext?.workspace || process.cwd();
+        return analyzeBashPermissions(command, cwd);
+    }
+
     async stop(): Promise<void> {
         this._killedByStop = true;
         const processes = Array.from(this.runningProcesses);
@@ -401,6 +422,8 @@ export class ExecuteBashTool extends BaseTool<typeof ExecuteBashArgsSchema> {
         let cwd: string | undefined = undefined;
         if (workingDirectory && typeof workingDirectory === 'string' && fs.existsSync(workingDirectory)) {
             cwd = workingDirectory;
+        } else if (taskState?.harnessContext?.workspace) {
+            cwd = taskState.harnessContext.workspace;
         }
 
         await executeShellCommand({
@@ -445,6 +468,13 @@ export class ExecuteZshTool extends BaseTool<typeof ExecuteZshArgsSchema> {
         this.setUniversalExecutor(this.executeCommand.bind(this));
     }
 
+    getDeclaredPermissions(args: z.output<typeof ExecuteZshArgsSchema>, taskState?: TaskState): PermissionRequest[] {
+        const command = args.command;
+        if (!command || typeof command !== 'string') return [];
+        const cwd = args.workingDirectory || taskState?.harnessContext?.workspace || process.cwd();
+        return analyzeBashPermissions(command, cwd);
+    }
+
     async stop(): Promise<void> {
         this._killedByStop = true;
         const processes = Array.from(this.runningProcesses);
@@ -478,6 +508,8 @@ export class ExecuteZshTool extends BaseTool<typeof ExecuteZshArgsSchema> {
         let cwd: string | undefined = undefined;
         if (workingDirectory && typeof workingDirectory === 'string' && fs.existsSync(workingDirectory)) {
             cwd = workingDirectory;
+        } else if (taskState?.harnessContext?.workspace) {
+            cwd = taskState.harnessContext.workspace;
         }
 
         await executeShellCommand({

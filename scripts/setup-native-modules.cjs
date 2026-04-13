@@ -89,6 +89,51 @@ try {
     }
 }
 
+// Step 0: Patch @electron/node-gyp to support Visual Studio 2026 (version 18.x)
+//
+// @electron/node-gyp (archived Oct 2025) only recognises VS 2017/2019/2022.
+// VS 2026 ships versionMajor 18, which the bundled find-visualstudio.js treats
+// as "unsupported", causing electron-rebuild to fail.
+//
+// Upstream tracking: https://github.com/electron/rebuild/issues/1224
+// TODO: Remove this patch once @electron/rebuild ships with node-gyp ≥ 12.1.0
+(function patchElectronNodeGyp() {
+    const findVsPath = path.join(projectRoot, 'node_modules', '@electron', 'node-gyp', 'lib', 'find-visualstudio.js');
+    if (!fs.existsSync(findVsPath)) return;
+
+    let src = fs.readFileSync(findVsPath, 'utf8');
+    if (src.includes('versionYear = 2026')) return; // already patched
+
+    const patches = [
+        // getVersionInfo: recognise versionMajor 18 → 2026
+        [
+            /if \(ret\.versionMajor === 17\) \{\s*ret\.versionYear = 2022\s*return ret\s*\}/,
+            (m) => m + `\n    if (ret.versionMajor === 18) {\n      ret.versionYear = 2026\n      return ret\n    }`
+        ],
+        // getToolset: map 2026 → v145
+        [
+            /else if \(versionYear === 2022\) \{\s*return 'v143'\s*\}/,
+            (m) => m + ` else if (versionYear === 2026) {\n      return 'v145'\n    }`
+        ],
+        // supportedYears arrays: [2019, 2022] → [2019, 2022, 2026]
+        [/\[2019, 2022\]/g, '[2019, 2022, 2026]']
+    ];
+
+    let patched = false;
+    for (const [re, replacement] of patches) {
+        const next = src.replace(re, replacement);
+        if (next !== src) {
+            patched = true;
+            src = next;
+        }
+    }
+
+    if (patched) {
+        fs.writeFileSync(findVsPath, src, 'utf8');
+        console.log('[setup] Patched @electron/node-gyp to support Visual Studio 2026');
+    }
+})();
+
 // Step 1: Save system Node.js binary
 if (!fs.existsSync(buildRelease)) {
     console.warn('[setup] better-sqlite3 binary not found, skipping dual-ABI setup');

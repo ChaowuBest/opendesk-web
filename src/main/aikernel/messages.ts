@@ -99,7 +99,8 @@ export class ReasoningMessagePart {
     toRenderJSON(): object {
         return {
             type: this.type,
-            rendered: this.rendered
+            rendered: this.rendered,
+            contentLength: this.content.length
         };
     }
 

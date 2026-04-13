@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { contextBridge, ipcRenderer, webUtils } from 'electron';
+import { contextBridge, ipcRenderer, webUtils, clipboard } from 'electron';
 
 function exposeTaskManagerAPI() {
     /** @type {Map<string, Map<string, (toolName: string, args: any) => Promise<string>>>} */
@@ -429,6 +429,36 @@ if (window.self !== window.top) {
                 return false;
             }
             return result.data;
+        }
+    });
+
+    contextBridge.exposeInMainWorld('workspaceAPI', {
+        getEffectiveWorkspace: async () => {
+            const result = await ipcRenderer.invoke('workspace:getEffectiveWorkspace');
+            if (result.status !== 'ok') {
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
+        openWorkspaceDirectory: async () => {
+            const result = await ipcRenderer.invoke('workspace:openWorkspaceDirectory');
+            if (result.status !== 'ok') {
+                throw new Error(result.message);
+            }
+        },
+        selectWorkspaceDirectory: async () => {
+            const result = await ipcRenderer.invoke('workspace:selectWorkspaceDirectory');
+            if (result.status !== 'ok') {
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
+        copyWorkspacePath: async () => {
+            const result = await ipcRenderer.invoke('workspace:getEffectiveWorkspace');
+            if (result.status !== 'ok') {
+                throw new Error(result.message);
+            }
+            clipboard.writeText(result.data);
         }
     });
 

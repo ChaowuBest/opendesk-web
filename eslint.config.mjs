@@ -60,6 +60,12 @@ export default tseslint.config(
         }
     },
     {
+        files: ['src/tests/**/*.test.ts'],
+        languageOptions: {
+            globals: { ...globals.jest }
+        }
+    },
+    {
         ignores: ['dist/', 'out/', 'node_modules/', 'native/', '**/*.d.ts']
     }
 );

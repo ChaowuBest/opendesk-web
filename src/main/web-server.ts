@@ -151,7 +151,7 @@ export async function startWebServer(port = 3001) {
             // --- Task Manager APIs ---
             if (pathname === '/api/taskManager/createTask' && req.method === 'POST') {
                 const task = globalState.taskManagerState.createTask();
-                const workspace = process.cwd();
+                const workspace = Setting.getInstance().getEffectiveWorkspace();
                 const agentDecl = new MainAgentDecl({ workspace });
                 agentDecl
                     .createSystemPrompt()
@@ -266,6 +266,10 @@ export async function startWebServer(port = 3001) {
                     status: 'ok',
                     data: converter.toHtml(LogStream.getStream().getContent())
                 });
+            }
+            // --- Workspace APIs ---
+            else if (pathname === '/api/workspace/getEffectiveWorkspace' && req.method === 'GET') {
+                sendJSON(res, { status: 'ok', data: Setting.getInstance().getEffectiveWorkspace() });
             }
             // --- Application Registry APIs ---
             else if (pathname === '/api/applicationRegistry/getApplicationList' && req.method === 'GET') {
