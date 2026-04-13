@@ -51,51 +51,85 @@ class SettingEditor extends HTMLElement {
     async exportSettingData() {
         const data = this.querySelector('#setting-schema-editor').getValue();
 
-        // 弹窗让用户选择保存到哪儿
         try {
-            const opts = {
-                suggestedName: 'setting.json',
-                types: [
-                    {
-                        description: 'JSON 文件',
-                        accept: { 'application/json': ['.json'] }
-                    }
-                ]
-            };
-            const handle = await window.showSaveFilePicker(opts);
-            const writable = await handle.createWritable();
-            await writable.write(JSON.stringify(data, null, 2));
-            await writable.close();
+            if (typeof window.showSaveFilePicker === 'function') {
+                const opts = {
+                    suggestedName: 'setting.json',
+                    types: [
+                        {
+                            description: 'JSON 文件',
+                            accept: { 'application/json': ['.json'] }
+                        }
+                    ]
+                };
+                const handle = await window.showSaveFilePicker(opts);
+                const writable = await handle.createWritable();
+                await writable.write(JSON.stringify(data, null, 2));
+                await writable.close();
+            } else if (window.fsAPI && typeof window.fsAPI.saveFile === 'function') {
+                const result = await window.fsAPI.saveFile({
+                    defaultPath: 'setting.json',
+                    filters: [{ name: 'JSON 文件', extensions: ['json'] }]
+                });
+                if (result && result.filePath) {
+                    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = 'setting.json';
+                    a.click();
+                    URL.revokeObjectURL(url);
+                }
+            } else {
+                const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'setting.json';
+                a.click();
+                URL.revokeObjectURL(url);
+            }
+            this.querySelector('#setting-error-msg').innerHTML = '<span class="text-green-500">导出成功</span>';
         } catch (err) {
             if (err.name !== 'AbortError') {
                 this.querySelector('#setting-error-msg').innerHTML = `<span class="text-red-500">${err.message}</span>`;
             }
         }
-
-        window.settingAPI.exportSettingData(data).then(async () => {
-            this.querySelector('#setting-error-msg').innerHTML = '';
-            this.querySelector('#setting-error-msg').innerHTML = '<span class="text-green-500">导出成功</span>';
-        });
     }
 
     async importSettingData() {
         try {
-            // 弹出文件选择对话框，只允许选择json文件
-            const [fileHandle] = await window.showOpenFilePicker({
-                types: [
-                    {
-                        description: 'JSON 文件',
-                        accept: { 'application/json': ['.json'] }
-                    }
-                ],
-                multiple: false
-            });
-            if (!fileHandle) return;
+            let text;
+            if (typeof window.showOpenFilePicker === 'function') {
+                const [fileHandle] = await window.showOpenFilePicker({
+                    types: [
+                        {
+                            description: 'JSON 文件',
+                            accept: { 'application/json': ['.json'] }
+                        }
+                    ],
+                    multiple: false
+                });
+                if (!fileHandle) return;
+                const file = await fileHandle.getFile();
+                text = await file.text();
+            } else {
+                text = await new Promise((resolve, reject) => {
+                    const input = document.createElement('input');
+                    input.type = 'file';
+                    input.accept = '.json,application/json';
+                    input.onchange = async () => {
+                        if (input.files && input.files.length > 0) {
+                            resolve(await input.files[0].text());
+                        } else {
+                            reject(new Error('未选择文件'));
+                        }
+                    };
+                    input.click();
+                });
+            }
 
-            const file = await fileHandle.getFile();
-            const text = await file.text();
             let jsonData;
-
             try {
                 jsonData = JSON.parse(text);
             } catch (err) {
@@ -104,12 +138,10 @@ class SettingEditor extends HTMLElement {
                 return;
             }
 
-            // 保存设置
             window.settingAPI
                 .saveSettingObject(jsonData)
                 .then(async () => {
                     await this.loadSettingData();
-                    this.querySelector('#setting-error-msg').innerHTML = '';
                     this.querySelector('#setting-error-msg').innerHTML =
                         '<span class="text-green-500">导入并保存成功</span>';
                 })
