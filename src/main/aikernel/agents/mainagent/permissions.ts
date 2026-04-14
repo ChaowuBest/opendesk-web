@@ -91,6 +91,29 @@ export function createSoloModePermissionRules(): PermissionRule[] {
 }
 
 /**
+ * Unlimited Mode 权限规则：
+ * - 所有文件、网络、技能全部允许（不限制任何权限）
+ * - 敏感路径也允许（真正无限制）
+ *
+ * 这是最宽松的模式，等价于 --allow-everything。
+ */
+export function createUnlimitedModePermissionRules(): PermissionRule[] {
+    return [
+        // 设备节点始终允许
+        ...createDeviceNodeRules(),
+        // 所有文件可读可写可执行（包括敏感路径）
+        { resourceType: 'file', action: 'read', pathPattern: '**', effect: 'allow' },
+        { resourceType: 'file', action: 'write', pathPattern: '**', effect: 'allow' },
+        { resourceType: 'file', action: 'execute', pathPattern: '**', effect: 'allow' },
+        // 网络访问允许
+        { resourceType: 'network', action: 'access', pathPattern: '**', effect: 'allow' },
+        // 技能可读可执行
+        { resourceType: 'skill', action: 'read', pathPattern: '**', effect: 'allow' },
+        { resourceType: 'skill', action: 'execute', pathPattern: '**', effect: 'allow' }
+    ];
+}
+
+/**
  * 将 SENSITIVE_PATH_PATTERNS 转换为 deny 规则（而非 ask）。
  * Solo 模式下无人值守，敏感路径不能弹确认框，必须直接拒绝。
  */

@@ -14,7 +14,11 @@ import { SkillRegistry } from '../../skill';
 import { SoulRegistry } from '../../soul/registry';
 import { TASK_MANAGEMENT_PROMPT } from '../../planning/prompt';
 import { createDefaultPermissionRules } from '../../security/enforcer.js';
-import { createPlanModePermissionRules, createSoloModePermissionRules } from './permissions.js';
+import {
+    createPlanModePermissionRules,
+    createSoloModePermissionRules,
+    createUnlimitedModePermissionRules
+} from './permissions.js';
 
 /**
  * Boundary marker separating static (cacheable) content from dynamic content.
@@ -263,9 +267,22 @@ export const MAIN_AGENT_SOLO_MODE: ModeDecl = {
     permissionFactory: (_workspace) => createSoloModePermissionRules()
 };
 
+/**
+ * unlimited mode：无限制模式，所有权限全部放通（不限制任何权限）。
+ * 等价于 --allow-everything 参数。
+ */
+export const MAIN_AGENT_UNLIMITED_MODE: ModeDecl = {
+    id: 'unlimited',
+    name: 'unlimited',
+    description: '无限制模式，所有权限全部放通',
+    icon: '🎮',
+    color: '#FF4081',
+    permissionFactory: (_workspace) => createUnlimitedModePermissionRules()
+};
+
 export class MainAgentDecl extends AgentDecl {
     supportedModes(): ModeDecl[] {
-        return [MAIN_AGENT_STANDARD_MODE, MAIN_AGENT_PLAN_MODE, MAIN_AGENT_SOLO_MODE];
+        return [MAIN_AGENT_STANDARD_MODE, MAIN_AGENT_PLAN_MODE, MAIN_AGENT_SOLO_MODE, MAIN_AGENT_UNLIMITED_MODE];
     }
 
     defaultModeId(): string {

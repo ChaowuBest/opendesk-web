@@ -19,9 +19,8 @@ export interface AgentEnvironment {
 
 /**
  * Mode 安全策略工厂：根据工作空间路径生成该 Mode 下使用的权限规则。
- * 返回 null 表示使用 AllowEverythingEnforcer（仅保留关键路径保护）。
  */
-export type ModePermissionFactory = (workspace: string) => PermissionRule[] | null;
+export type ModePermissionFactory = (workspace: string) => PermissionRule[];
 
 /**
  * ModeDecl —— Agent 运行模式的声明。
@@ -44,9 +43,7 @@ export interface ModeDecl {
     /** 颜色字符串 (如 '#1a2b3c') */
     color: string;
     /**
-     * 安全策略工厂。
-     * - 返回 PermissionRule[] → 使用 GlobPermissionEnforcer
-     * - 返回 null → 使用 AllowEverythingEnforcer（仅关键路径保护）
+     * 安全策略工厂，返回该 Mode 下使用的权限规则列表。
      */
     permissionFactory: ModePermissionFactory;
     /**

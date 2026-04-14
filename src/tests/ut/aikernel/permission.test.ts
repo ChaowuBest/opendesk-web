@@ -3,24 +3,21 @@
  *
  * 覆盖范围：
  * - GlobPermissionEnforcer: 三态规则优先级、glob 匹配、动态规则增删
- * - AllowEverythingEnforcer: 关键路径保护
  * - createDefaultPermissionRules: Standard 模式默认策略
  * - createSoloModePermissionRules: Solo 模式全放通 + 敏感路径 deny
  * - createPlanModePermissionRules: Plan 模式只读 + .plan 可写
+ * - createUnlimitedModePermissionRules: Unlimited 模式全放通（无限制）
  * - createSensitivePathRules / createCriticalPathRules: 敏感路径生成
  * - ResourcePath 前缀计算
  */
 
 import os from 'os';
 import path from 'path';
-import {
-    GlobPermissionEnforcer,
-    AllowEverythingEnforcer,
-    createDefaultPermissionRules
-} from '../../../main/aikernel/security/enforcer';
+import { GlobPermissionEnforcer, createDefaultPermissionRules } from '../../../main/aikernel/security/enforcer';
 import {
     createSoloModePermissionRules,
-    createPlanModePermissionRules
+    createPlanModePermissionRules,
+    createUnlimitedModePermissionRules
 } from '../../../main/aikernel/agents/mainagent/permissions';
 import {
     createSensitivePathRules,
@@ -305,91 +302,6 @@ describe('GlobPermissionEnforcer', () => {
 });
 
 // ═══════════════════════════════════════════════════════════════
-// AllowEverythingEnforcer 测试
-// ═══════════════════════════════════════════════════════════════
-
-describe('AllowEverythingEnforcer', () => {
-    test('普通路径直接 allow', async () => {
-        const enforcer = new AllowEverythingEnforcer(createCriticalPathRules());
-        const r = await enforcer.check({
-            resourceType: 'file',
-            action: 'read',
-            resourcePath: '/home/user/project/src/index.ts'
-        });
-        expect(r.effect).toBe('allow');
-    });
-
-    test('网络请求直接 allow', async () => {
-        const enforcer = new AllowEverythingEnforcer(createCriticalPathRules());
-        const r = await enforcer.check({
-            resourceType: 'network',
-            action: 'access',
-            resourcePath: 'https://api.example.com/data'
-        });
-        expect(r.effect).toBe('allow');
-    });
-
-    test('敏感路径 ~/.ssh 仍需 ask', async () => {
-        const enforcer = new AllowEverythingEnforcer(createCriticalPathRules());
-        const r = await enforcer.check({
-            resourceType: 'file',
-            action: 'read',
-            resourcePath: `${HOME}/.ssh/id_rsa`
-        });
-        expect(r.effect).toBe('ask');
-    });
-
-    test('敏感路径 ~/.gnupg 仍需 ask', async () => {
-        const enforcer = new AllowEverythingEnforcer(createCriticalPathRules());
-        const r = await enforcer.check({
-            resourceType: 'file',
-            action: 'write',
-            resourcePath: `${HOME}/.gnupg/trustdb.gpg`
-        });
-        expect(r.effect).toBe('ask');
-    });
-
-    test('.env 文件仍需 ask', async () => {
-        const enforcer = new AllowEverythingEnforcer(createCriticalPathRules());
-        const r = await enforcer.check({
-            resourceType: 'file',
-            action: 'read',
-            resourcePath: '/workspace/project/.env'
-        });
-        expect(r.effect).toBe('ask');
-    });
-
-    test('无关键规则时全部 allow', async () => {
-        const enforcer = new AllowEverythingEnforcer([]);
-        const r = await enforcer.check({
-            resourceType: 'file',
-            action: 'read',
-            resourcePath: `${HOME}/.ssh/id_rsa`
-        });
-        expect(r.effect).toBe('allow');
-    });
-
-    test('checkAll 全部 allow 返回 null', async () => {
-        const enforcer = new AllowEverythingEnforcer([]);
-        const result = await enforcer.checkAll([
-            { resourceType: 'file', action: 'read', resourcePath: '/a.txt' },
-            { resourceType: 'file', action: 'write', resourcePath: '/b.txt' }
-        ]);
-        expect(result).toBeNull();
-    });
-
-    test('checkAllDetailed 敏感路径返回 ask', async () => {
-        const enforcer = new AllowEverythingEnforcer(createCriticalPathRules());
-        const results = await enforcer.checkAllDetailed([
-            { resourceType: 'file', action: 'read', resourcePath: '/workspace/safe.txt' },
-            { resourceType: 'file', action: 'read', resourcePath: `${HOME}/.ssh/config` }
-        ]);
-        expect(results.length).toBe(1);
-        expect(results[0].effect).toBe('ask');
-    });
-});
-
-// ═══════════════════════════════════════════════════════════════
 // Standard 模式 (createDefaultPermissionRules)
 // ═══════════════════════════════════════════════════════════════
 
@@ -650,6 +562,145 @@ describe('Solo Mode 权限规则', () => {
             resourceType: 'file',
             action: 'write',
             resourcePath: '/dev/stdin'
+        });
+        expect(r.effect).toBe('allow');
+    });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// Unlimited 模式
+// ═══════════════════════════════════════════════════════════════
+
+describe('Unlimited Mode 权限规则', () => {
+    let enforcer: GlobPermissionEnforcer;
+    beforeAll(async () => {
+        enforcer = await GlobPermissionEnforcer.create(createUnlimitedModePermissionRules());
+    });
+
+    test('普通文件读取 → allow', async () => {
+        const r = await enforcer.check({
+            resourceType: 'file',
+            action: 'read',
+            resourcePath: '/home/user/project/src/index.ts'
+        });
+        expect(r.effect).toBe('allow');
+    });
+
+    test('任意绝对路径文件写入 → allow', async () => {
+        const r = await enforcer.check({
+            resourceType: 'file',
+            action: 'write',
+            resourcePath: '/tmp/output.txt'
+        });
+        expect(r.effect).toBe('allow');
+    });
+
+    test('任意文件执行 → allow', async () => {
+        const r = await enforcer.check({
+            resourceType: 'file',
+            action: 'execute',
+            resourcePath: '/usr/bin/python3'
+        });
+        expect(r.effect).toBe('allow');
+    });
+
+    test('网络访问 → allow', async () => {
+        const r = await enforcer.check({
+            resourceType: 'network',
+            action: 'access',
+            resourcePath: 'https://api.example.com/data'
+        });
+        expect(r.effect).toBe('allow');
+    });
+
+    test('技能读取 → allow', async () => {
+        const r = await enforcer.check({
+            resourceType: 'skill',
+            action: 'read',
+            resourcePath: 'any-skill'
+        });
+        expect(r.effect).toBe('allow');
+    });
+
+    test('技能执行 → allow', async () => {
+        const r = await enforcer.check({
+            resourceType: 'skill',
+            action: 'execute',
+            resourcePath: 'any-skill'
+        });
+        expect(r.effect).toBe('allow');
+    });
+
+    // Unlimited mode 关键特性：敏感路径也允许
+    test('Unlimited: ~/.ssh 目录 → allow（无保护）', async () => {
+        const r = await enforcer.check({
+            resourceType: 'file',
+            action: 'read',
+            resourcePath: `${HOME}/.ssh/id_rsa`
+        });
+        expect(r.effect).toBe('allow');
+    });
+
+    test('Unlimited: ~/.gnupg 目录 → allow', async () => {
+        const r = await enforcer.check({
+            resourceType: 'file',
+            action: 'write',
+            resourcePath: `${HOME}/.gnupg/trustdb.gpg`
+        });
+        expect(r.effect).toBe('allow');
+    });
+
+    test('Unlimited: ~/.aws 目录 → allow', async () => {
+        const r = await enforcer.check({
+            resourceType: 'file',
+            action: 'read',
+            resourcePath: `${HOME}/.aws/credentials`
+        });
+        expect(r.effect).toBe('allow');
+    });
+
+    test('Unlimited: .env 文件 → allow', async () => {
+        const r = await enforcer.check({
+            resourceType: 'file',
+            action: 'read',
+            resourcePath: '/workspace/project/.env'
+        });
+        expect(r.effect).toBe('allow');
+    });
+
+    test('Unlimited: .env.production 文件 → allow', async () => {
+        const r = await enforcer.check({
+            resourceType: 'file',
+            action: 'read',
+            resourcePath: '/workspace/project/.env.production'
+        });
+        expect(r.effect).toBe('allow');
+    });
+
+    test('Unlimited 不应产生任何 ask 或 deny 结果', async () => {
+        const testPaths = [
+            { resourceType: 'file' as const, action: 'read' as const, resourcePath: '/home/user/anything.txt' },
+            { resourceType: 'file' as const, action: 'write' as const, resourcePath: '/tmp/output' },
+            { resourceType: 'file' as const, action: 'execute' as const, resourcePath: '/usr/bin/node' },
+            { resourceType: 'network' as const, action: 'access' as const, resourcePath: 'https://example.com' },
+            { resourceType: 'skill' as const, action: 'read' as const, resourcePath: 'test-skill' },
+            { resourceType: 'skill' as const, action: 'execute' as const, resourcePath: 'test-skill' },
+            { resourceType: 'file' as const, action: 'read' as const, resourcePath: `${HOME}/.ssh/id_rsa` },
+            { resourceType: 'file' as const, action: 'write' as const, resourcePath: `${HOME}/.ssh/config` },
+            { resourceType: 'file' as const, action: 'read' as const, resourcePath: '/workspace/.env' },
+            { resourceType: 'file' as const, action: 'read' as const, resourcePath: `${HOME}/.aws/credentials` }
+        ];
+        for (const req of testPaths) {
+            const r = await enforcer.check(req);
+            expect(r.effect).toBe('allow');
+        }
+    });
+
+    test('Unlimited: 设备节点 → allow', async () => {
+        const r = await enforcer.check({
+            resourceType: 'file',
+            action: 'read',
+            resourcePath: '/dev/null'
         });
         expect(r.effect).toBe('allow');
     });

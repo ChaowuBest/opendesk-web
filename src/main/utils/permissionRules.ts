@@ -132,8 +132,7 @@ export function createSensitivePathRules(workspace: string): PermissionRule[] {
 
 /**
  * 创建始终生效的关键路径保护规则（不受工作空间限制）。
- * 用于 AllowEverythingEnforcer 等低权限模式，确保 ~/.ssh 等路径
- * 在任何工作空间下都需要用户确认。
+ * 用于 Solo 模式，确保 ~/.ssh 等路径在任何工作空间下都需要被拒绝。
  */
 export function createCriticalPathRules(): PermissionRule[] {
     const homeDir = normalizePath(os.homedir());

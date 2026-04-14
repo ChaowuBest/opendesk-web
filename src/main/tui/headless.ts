@@ -100,7 +100,8 @@ export class HeadlessRunner {
         MemoryRegistry.getInstance(args.workspace);
 
         const modes = this.agentDecl.supportedModes();
-        const cliModeId = args.mode?.toLowerCase();
+        // allowEverything 优先级最高，等同于 unlimited mode
+        const cliModeId = args.allowEverything ? 'unlimited' : args.mode?.toLowerCase();
         const defaultId = this.agentDecl.defaultModeId();
         if (cliModeId) {
             const found = modes.find((m) => m.id === cliModeId);
@@ -131,11 +132,7 @@ export class HeadlessRunner {
         }
 
         try {
-            if (this.args.allowEverything) {
-                task.harnessContext = HarnessContext.createAllowEverything(this.args.workspace);
-            } else {
-                task.harnessContext = await HarnessContext.createForMode(this.args.workspace, this.activeMode);
-            }
+            task.harnessContext = await HarnessContext.createForMode(this.args.workspace, this.activeMode);
             task.harnessContext.permissionPrompt = new HeadlessPermissionPromptProvider();
             task.activeModeId = this.activeMode.id;
         } catch (err) {

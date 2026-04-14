@@ -85,54 +85,6 @@ function matchesAny(rules: CompiledRule[], resourceType: string, objNorm: string
     return false;
 }
 
-/**
- * 低权限引擎：除了关键路径（敏感路径保护规则）需要 ask 外，其他全部 allow。
- * 用于 --allow-everything 模式。关键路径列表在创建时传入。
- */
-export class AllowEverythingEnforcer implements PermissionEnforcer {
-    private criticalAskRules: CompiledRule[] = [];
-
-    constructor(criticalRules: PermissionRule[] = []) {
-        for (const rule of criticalRules) {
-            if (rule.effect === 'ask') {
-                this.criticalAskRules.push(compileRule(rule));
-            }
-        }
-    }
-
-    async check(request: PermissionRequest): Promise<PermissionCheckResult> {
-        const objNorm = normalizePath(request.resourcePath);
-        if (matchesAny(this.criticalAskRules, request.resourceType, objNorm, request.action)) {
-            return {
-                effect: 'ask',
-                reason: `关键路径在低权限模式下仍需用户确认: ${request.action} ${request.resourcePath}`,
-                request
-            };
-        }
-        return { effect: 'allow', request };
-    }
-
-    async checkAll(requests: PermissionRequest[]): Promise<PermissionCheckResult | null> {
-        for (const request of requests) {
-            const result = await this.check(request);
-            if (result.effect !== 'allow') return result;
-        }
-        return null;
-    }
-
-    async checkAllDetailed(requests: PermissionRequest[]): Promise<PermissionCheckResult[]> {
-        const results: PermissionCheckResult[] = [];
-        for (const request of requests) {
-            const result = await this.check(request);
-            if (result.effect !== 'allow') results.push(result);
-        }
-        return results;
-    }
-
-    async addRule(_rule: PermissionRule): Promise<void> {}
-    async removeRule(_rule: PermissionRule): Promise<void> {}
-}
-
 export class GlobPermissionEnforcer implements PermissionEnforcer {
     private allowRules: CompiledRule[] = [];
     private denyRules: CompiledRule[] = [];

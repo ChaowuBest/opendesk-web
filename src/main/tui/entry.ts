@@ -127,7 +127,6 @@ export class OpenDeskTUI {
      */
     private singleShot?: boolean;
     private profilePath?: string;
-    private allowEverything?: boolean;
 
     /** -c 模式下任务结束、退出前执行的钩子（如导出），按注册顺序执行 */
     private beforeExitHooks: Array<(taskId: string) => void | Promise<void>> = [];
@@ -150,10 +149,11 @@ export class OpenDeskTUI {
         this.taskManagerState = GlobalState.getInstance().taskManagerState;
         this.agentDecl = new MainAgentDecl({ workspace: args.workspace });
 
-        // 初始化默认 Mode
+        // 初始化默认 Mode（--allow-everything 等价于 --mode unlimited）
         {
             const modes = this.agentDecl.supportedModes();
-            const cliModeId = args.mode?.toLowerCase();
+            // allowEverything 优先级最高，等同于 unlimited mode
+            const cliModeId = args.allowEverything ? 'unlimited' : args.mode?.toLowerCase();
             const defaultId = this.agentDecl.defaultModeId();
             if (cliModeId) {
                 this._activeMode =
@@ -180,7 +180,6 @@ export class OpenDeskTUI {
         this.model = args.model;
         this.singleShot = !!args.command;
         this.profilePath = args.profile;
-        this.allowEverything = args.allowEverything;
         if (args.command) {
             if (args.exportHtml) {
                 const htmlPath = path.resolve(args.workspace, args.exportHtml);
@@ -1255,15 +1254,11 @@ export class OpenDeskTUI {
 
     /**
      * 为新创建的任务初始化 harnessContext（权限引擎 + 环境变量 + 权限确认 UI）。
-     * 当 --allow-everything 时忽略 mode 的权限策略，否则根据当前 activeMode 构建。
+     * 根据当前 activeMode 构建。
      */
     private async initTaskHarness(task: TaskState): Promise<void> {
         try {
-            if (this.allowEverything) {
-                task.harnessContext = HarnessContext.createAllowEverything(this.workspace);
-            } else {
-                task.harnessContext = await HarnessContext.createForMode(this.workspace, this._activeMode);
-            }
+            task.harnessContext = await HarnessContext.createForMode(this.workspace, this._activeMode);
             task.harnessContext.permissionPrompt = new TUIPermissionPromptProvider(this);
             task.activeModeId = this._activeMode.id;
         } catch (err) {
@@ -1343,23 +1338,17 @@ export class OpenDeskTUI {
         const savedEnv = task.harnessContext.environ;
         const savedPrompt = task.harnessContext.permissionPrompt;
 
-        const applyContext = (ctx: HarnessContext) => {
-            ctx.environ = savedEnv;
-            ctx.permissionPrompt = savedPrompt;
-            task.harnessContext = ctx;
-            task.activeModeId = mode.id;
-        };
-
         try {
-            if (this.allowEverything) {
-                applyContext(HarnessContext.createAllowEverything(this.workspace));
-            } else {
-                HarnessContext.createForMode(this.workspace, mode)
-                    .then(applyContext)
-                    .catch((err) => {
-                        logger.warn(`Failed to sync task harness for mode ${mode.id}: ${err}`);
-                    });
-            }
+            HarnessContext.createForMode(this.workspace, mode)
+                .then((ctx) => {
+                    ctx.environ = savedEnv;
+                    ctx.permissionPrompt = savedPrompt;
+                    task.harnessContext = ctx;
+                    task.activeModeId = mode.id;
+                })
+                .catch((err) => {
+                    logger.warn(`Failed to sync task harness for mode ${mode.id}: ${err}`);
+                });
         } catch (err) {
             logger.warn(`Failed to sync task harness for mode ${mode.id}: ${err}`);
         }
