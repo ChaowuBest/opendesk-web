@@ -1300,8 +1300,7 @@ export class OpenDeskTUI {
 
     /**
      * 切换到下一个模式（循环切换）。
-     * 切换后更新状态栏并通知用户，但 **不会** 影响已有任务的权限。
-     * 新模式将在下一次创建任务或新的对话轮次时生效。
+     * 切换后立即更新当前活跃任务的权限引擎，确保模式变更即时生效。
      */
     cycleMode(): void {
         const modes = this.agentDecl.supportedModes();
@@ -1310,6 +1309,7 @@ export class OpenDeskTUI {
         this._activeMode = modes[nextIndex];
 
         this.syncModeDisplay();
+        this.syncActiveTaskHarness();
         this.tui.requestRender();
         logger.info(`Mode switched to: ${this._activeMode.name} (${this._activeMode.id})`);
     }
@@ -1324,9 +1324,45 @@ export class OpenDeskTUI {
         this._activeMode = target;
 
         this.syncModeDisplay();
+        this.syncActiveTaskHarness();
         this.tui.requestRender();
         logger.info(`Mode set to: ${this._activeMode.name} (${this._activeMode.id})`);
         return true;
+    }
+
+    /**
+     * 将当前活跃任务的权限引擎同步到最新的 Mode。
+     * 保留已有的环境变量和 permissionPrompt，仅替换权限引擎和 activeModeId。
+     */
+    private syncActiveTaskHarness(): void {
+        if (!this.activeTaskId) return;
+        const task = this.taskManagerState.getTask(this.activeTaskId);
+        if (!task) return;
+
+        const mode = this._activeMode;
+        const savedEnv = task.harnessContext.environ;
+        const savedPrompt = task.harnessContext.permissionPrompt;
+
+        const applyContext = (ctx: HarnessContext) => {
+            ctx.environ = savedEnv;
+            ctx.permissionPrompt = savedPrompt;
+            task.harnessContext = ctx;
+            task.activeModeId = mode.id;
+        };
+
+        try {
+            if (this.allowEverything) {
+                applyContext(HarnessContext.createAllowEverything(this.workspace));
+            } else {
+                HarnessContext.createForMode(this.workspace, mode)
+                    .then(applyContext)
+                    .catch((err) => {
+                        logger.warn(`Failed to sync task harness for mode ${mode.id}: ${err}`);
+                    });
+            }
+        } catch (err) {
+            logger.warn(`Failed to sync task harness for mode ${mode.id}: ${err}`);
+        }
     }
 
     /**

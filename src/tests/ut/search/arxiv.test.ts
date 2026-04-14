@@ -21,7 +21,7 @@ describe('arXiv 搜索工具', () => {
     test('基本搜索 - "deep learning"', async () => {
         const result = await tool.execute({ query: 'deep learning', count: 3 });
         expect(result.status).not.toBe('error');
-    }, 30000);
+    }, 60000);
 
     test('特定分类搜索 - "cat:cs.AI"', async () => {
         const result = await tool.execute({
@@ -31,7 +31,7 @@ describe('arXiv 搜索工具', () => {
             sort_order: 'descending'
         });
         expect(result.status).not.toBe('error');
-    }, 30000);
+    }, 60000);
 
     test('命令行渲染', () => {
         const mockToolCall = {

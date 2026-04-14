@@ -21,7 +21,7 @@
  */
 
 import { type Component, SelectList, Text } from '@mariozechner/pi-tui';
-import { visibleWidth, truncateToWidth } from '@mariozechner/pi-tui';
+import { visibleWidth, truncateToWidth, wrapTextWithAnsi } from '@mariozechner/pi-tui';
 import { defaultSelectListTheme } from '../theme';
 import type { OpenDeskTUI } from '../entry';
 import type {
@@ -76,7 +76,7 @@ const permissionColors = {
 export class PermissionPromptWidget implements Component {
     private list: SelectList;
     private titleLine: Text;
-    private resourcePaths: string[];
+    private rawPaths: string[];
     private questionText: string;
     private hintLine: Text;
 
@@ -96,14 +96,13 @@ export class PermissionPromptWidget implements Component {
 
         this.titleLine = new Text(c.title(` ${typeActionLabel} `));
 
-        this.resourcePaths = requests.map((req) => `  ${c.path(req.resourcePath)}`);
+        this.rawPaths = requests.map((req) => req.resourcePath);
 
         this.questionText = c.question(`  ${toolName} 请求${typeActionLabel}，是否允许？`);
 
         const items: { value: string; label: string }[] = [];
         items.push({ value: 'allow', label: c.allow('本次允许') });
 
-        // 为每个前缀选项添加"始终允许"选项
         for (let i = 0; i < Math.min(prefixOptions.length, 4); i++) {
             const opt = prefixOptions[i];
             items.push({
@@ -153,6 +152,8 @@ export class PermissionPromptWidget implements Component {
         const c = permissionColors;
         const bgFn = c.bg;
         const emptyLine = bgFn(' '.repeat(width));
+        const indent = '  ';
+        const pathWidth = Math.max(10, width - visibleWidth(indent));
 
         const lines: string[] = [];
         lines.push(c.separator('─'.repeat(width)));
@@ -160,8 +161,12 @@ export class PermissionPromptWidget implements Component {
         for (const l of this.titleLine.render(width)) {
             lines.push(padBgLine(l, width, bgFn));
         }
-        for (const p of this.resourcePaths) {
-            lines.push(padBgLine(p, width, bgFn));
+        for (const rawPath of this.rawPaths) {
+            const coloredPath = c.path(rawPath);
+            const wrapped = wrapTextWithAnsi(coloredPath, pathWidth);
+            for (const wrappedLine of wrapped) {
+                lines.push(padBgLine(indent + wrappedLine, width, bgFn));
+            }
         }
         lines.push(emptyLine);
         lines.push(padBgLine(this.questionText, width, bgFn));

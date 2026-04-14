@@ -48,16 +48,16 @@ export function createPlanModePermissionRules(workspace: string): PermissionRule
     return [
         // 设备节点始终允许（/dev/stdin, /dev/null 等）
         ...createDeviceNodeRules(),
-        // .plan 目录可读可写可执行（优先级高于工作空间只读规则）
+        // .plan 目录可读可写可执行
         { resourceType: 'file', action: 'read', pathPattern: `${planDirNorm}/**`, effect: 'allow' },
         { resourceType: 'file', action: 'write', pathPattern: `${planDirNorm}/**`, effect: 'allow' },
         { resourceType: 'file', action: 'execute', pathPattern: `${planDirNorm}/**`, effect: 'allow' },
-        // 工作空间内只读
+        // 工作空间内只读 + 可执行
         { resourceType: 'file', action: 'read', pathPattern: `${workspaceNorm}/**`, effect: 'allow' },
-        // 工作空间内写入直接拒绝（.plan 之外不可写）
-        { resourceType: 'file', action: 'write', pathPattern: `${workspaceNorm}/**`, effect: 'deny' },
-        // 工作空间内执行允许（shell 只读命令等）
         { resourceType: 'file', action: 'execute', pathPattern: `${workspaceNorm}/**`, effect: 'allow' },
+        // 工作空间内写入不添加 allow/deny 规则，依赖隐式 ask 来阻止写入。
+        // 不能用 deny 是因为引擎中 deny 优先级最高，会覆盖上面 .plan 的 allow write。
+        // 隐式 ask 在无 prompt provider 时自动拒绝，效果等同于 deny。
         // 技能可读
         { resourceType: 'skill', action: 'read', pathPattern: '**', effect: 'allow' },
         // 敏感路径保护
