@@ -133,6 +133,12 @@ export class TaskState {
      */
     harnessContext: HarnessContext = HarnessContext.createEmpty();
 
+    /**
+     * 当前任务使用的运行模式 ID (如 'standard', 'plan', 'solo')。
+     * 不参与序列化——Mode 在每次会话时由 TUI/GUI 设定。
+     */
+    activeModeId?: string;
+
     stop_requested_by_user: boolean = false;
     started_at?: Date;
     finished_at?: Date;
@@ -577,6 +583,7 @@ export class TaskState {
         forkedTask.harnessContext.permission = this.harnessContext.permission;
         forkedTask.harnessContext.permissionPrompt = this.harnessContext.permissionPrompt;
         forkedTask.harnessContext.workspace = this.harnessContext.workspace;
+        forkedTask.activeModeId = this.activeModeId;
 
         // Add to task manager
         this.task_manager_state.tasks.push(forkedTask);

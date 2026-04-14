@@ -53,6 +53,18 @@ import { MainAgentDecl } from './aikernel/agents/mainagent.js';
 import { HarnessContext } from './aikernel/security/harness.js';
 import { ElectronPermissionPromptProvider } from './aikernel/security/electronPrompt.js';
 
+/** 全局 agentDecl 实例（延迟初始化），用于获取 mode 等元信息 */
+let _globalAgentDecl = null;
+function getGlobalAgentDecl() {
+    if (!_globalAgentDecl) {
+        const workspace = Setting.getInstance().getEffectiveWorkspace();
+        _globalAgentDecl = new MainAgentDecl({ workspace });
+    }
+    return _globalAgentDecl;
+}
+/** 当前在 Electron GUI 中选择的 modeId */
+let _currentElectronModeId = null;
+
 import Convert from 'ansi-to-html';
 import path from 'path';
 import fs from 'fs';
@@ -222,15 +234,61 @@ const createWindow = () => {
     globalMainWindow = mainWindow;
 };
 
+const registerModeAPIHandlers = () => {
+    ipcMain.handle('mode:getSupportedModes', () => {
+        try {
+            const agentDecl = getGlobalAgentDecl();
+            const modes = agentDecl.supportedModes();
+            const defaultId = agentDecl.defaultModeId();
+            const currentId = _currentElectronModeId || defaultId;
+            return {
+                status: 'ok',
+                data: {
+                    modes: modes.map((m) => ({
+                        id: m.id,
+                        name: m.name,
+                        description: m.description,
+                        icon: m.icon,
+                        color: m.color
+                    })),
+                    defaultModeId: defaultId,
+                    currentModeId: currentId
+                }
+            };
+        } catch (err) {
+            return { status: 'error', message: String(err) };
+        }
+    });
+
+    ipcMain.handle('mode:setCurrentMode', (event, modeId) => {
+        try {
+            const agentDecl = getGlobalAgentDecl();
+            const modes = agentDecl.supportedModes();
+            const target = modes.find((m) => m.id === modeId);
+            if (!target) {
+                return { status: 'error', message: `unknown mode: ${modeId}` };
+            }
+            _currentElectronModeId = modeId;
+            return { status: 'ok', data: modeId };
+        } catch (err) {
+            return { status: 'error', message: String(err) };
+        }
+    });
+};
+
 const registerTaskManagerAPIHandlers = () => {
     const globalState = GlobalState.getInstance();
 
-    ipcMain.handle('taskManager:createTask', async () => {
+    ipcMain.handle('taskManager:createTask', async (event, modeId) => {
         const task = globalState.taskManagerState.createTask();
         const workspace = Setting.getInstance().getEffectiveWorkspace();
-        const agentDecl = new MainAgentDecl({ workspace });
+        const agentDecl = getGlobalAgentDecl();
+        const modes = agentDecl.supportedModes();
+        const resolvedModeId = modeId || _currentElectronModeId || agentDecl.defaultModeId();
+        const activeMode = modes.find((m) => m.id === resolvedModeId) ?? modes[0];
+
         agentDecl
-            .createSystemPrompt()
+            .createSystemPrompt(activeMode)
             .then((prompt) => {
                 task.setSystemPrompt(prompt);
             })
@@ -238,8 +296,9 @@ const registerTaskManagerAPIHandlers = () => {
                 logger.error('failed to create system prompt', err);
             });
         try {
-            task.harnessContext = await HarnessContext.createWithDefaults(workspace);
+            task.harnessContext = await HarnessContext.createForMode(workspace, activeMode);
             task.harnessContext.permissionPrompt = new ElectronPermissionPromptProvider();
+            task.activeModeId = activeMode.id;
         } catch (err) {
             logger.warn(`Failed to init task harness in Electron, using empty context: ${err}`);
             task.harnessContext = HarnessContext.createEmpty();
@@ -743,6 +802,7 @@ function startApplication() {
         }
 
         registerTaskManagerAPIHandlers();
+        registerModeAPIHandlers();
         registerFSAPIHandlers();
         registerSettingAPIHandlers();
         registerApplicationRegistryHandlers(ipcMain);

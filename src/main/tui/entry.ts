@@ -24,7 +24,7 @@ import { logger, setDebugMode, getDebugMode } from '../utils/logger.js';
 import { lookupKnownContextSize, fetchContextSizeFromAPI } from '../utils/model-context';
 import { LLM } from '../aikernel/llm.js';
 import { UpgradeOverlay } from './components/upgrade';
-import { AgentDecl } from '../aikernel/agent.js';
+import { AgentDecl, type ModeDecl } from '../aikernel/agent.js';
 import { MainAgentDecl } from '../aikernel/agents/mainagent.js';
 import { HelpOverlay } from './components/help';
 import { ConfirmOverlay, InfoOverlay, InfoPage } from './components/notice';
@@ -86,6 +86,7 @@ export interface CommandLineArgs {
     headless?: boolean;
     profile?: string;
     allowEverything?: boolean;
+    mode?: string;
 }
 
 export class OpenDeskTUI {
@@ -117,6 +118,9 @@ export class OpenDeskTUI {
     private agentDecl: AgentDecl;
     public model?: string;
 
+    /** 当前活跃的运行模式 */
+    private _activeMode: ModeDecl;
+
     /**
      * 如果在命令行中给了-c参数，就用singleShot模式执行，第一轮补全后就自动退出.
      * todo: 这个地方未来可以考虑用LLM来判断任务是不是已经完成了还是需要后续的互动 ;)
@@ -145,6 +149,19 @@ export class OpenDeskTUI {
     constructor(args: CommandLineArgs) {
         this.taskManagerState = GlobalState.getInstance().taskManagerState;
         this.agentDecl = new MainAgentDecl({ workspace: args.workspace });
+
+        // 初始化默认 Mode
+        {
+            const modes = this.agentDecl.supportedModes();
+            const cliModeId = args.mode?.toLowerCase();
+            const defaultId = this.agentDecl.defaultModeId();
+            if (cliModeId) {
+                this._activeMode =
+                    modes.find((m) => m.id === cliModeId) ?? modes.find((m) => m.id === defaultId) ?? modes[0];
+            } else {
+                this._activeMode = modes.find((m) => m.id === defaultId) ?? modes[0];
+            }
+        }
 
         const terminal = new OpenDeskTerminal();
         terminal.onResize((cols, rows) => {
@@ -313,6 +330,9 @@ export class OpenDeskTUI {
 
         // 立即解析模型信息，让状态栏一进去就能显示当前模型
         this.resolveModelInfo();
+
+        // 初始化模式显示
+        this.syncModeDisplay();
     }
 
     /**
@@ -328,7 +348,7 @@ export class OpenDeskTUI {
         ) => {
             try {
                 const task = this.taskManagerState.createTask(this.model);
-                const systemPrompt = await this.agentDecl.createSystemPrompt();
+                const systemPrompt = await this.agentDecl.createSystemPrompt(this._activeMode);
                 task.setSystemPrompt(systemPrompt);
                 await this.initTaskHarness(task);
 
@@ -661,7 +681,7 @@ export class OpenDeskTUI {
         }
 
         const task = this.taskManagerState.createTask(this.model);
-        const systemPrompt = await this.agentDecl.createSystemPrompt();
+        const systemPrompt = await this.agentDecl.createSystemPrompt(this._activeMode);
         task.setSystemPrompt(systemPrompt);
         await this.initTaskHarness(task);
 
@@ -965,7 +985,7 @@ export class OpenDeskTUI {
     async onRequestSubmit(request: string) {
         if (this.taskView.taskState === undefined) {
             this.taskView.taskState = this.taskManagerState.createTask(this.model);
-            const systemPrompt = await this.agentDecl.createSystemPrompt();
+            const systemPrompt = await this.agentDecl.createSystemPrompt(this._activeMode);
             this.taskView.taskState.setSystemPrompt(systemPrompt);
             await this.initTaskHarness(this.taskView.taskState);
 
@@ -1234,20 +1254,79 @@ export class OpenDeskTUI {
     }
 
     /**
-     * 为新创建的任务初始化 harnessContext（权限引擎 + 环境变量 + 权限确认 UI）
+     * 为新创建的任务初始化 harnessContext（权限引擎 + 环境变量 + 权限确认 UI）。
+     * 当 --allow-everything 时忽略 mode 的权限策略，否则根据当前 activeMode 构建。
      */
     private async initTaskHarness(task: TaskState): Promise<void> {
         try {
             if (this.allowEverything) {
                 task.harnessContext = HarnessContext.createAllowEverything(this.workspace);
             } else {
-                task.harnessContext = await HarnessContext.createWithDefaults(this.workspace);
+                task.harnessContext = await HarnessContext.createForMode(this.workspace, this._activeMode);
             }
             task.harnessContext.permissionPrompt = new TUIPermissionPromptProvider(this);
+            task.activeModeId = this._activeMode.id;
         } catch (err) {
             logger.warn(`Failed to init task harness, using empty context: ${err}`);
             task.harnessContext = HarnessContext.createEmpty();
         }
+    }
+
+    // ─── Mode 管理 ────────────────────────────────────────────────
+
+    /**
+     * 获取当前活跃的运行模式
+     */
+    get activeMode(): ModeDecl {
+        return this._activeMode;
+    }
+
+    /**
+     * 获取 Agent 支持的所有模式
+     */
+    getSupportedModes(): ModeDecl[] {
+        return this.agentDecl.supportedModes();
+    }
+
+    /**
+     * 同步当前 Mode 的显示信息到 TaskStatusBar
+     */
+    private syncModeDisplay(): void {
+        this.inputArea.statusBar.update({
+            modeDisplay: `${this._activeMode.icon} ${this._activeMode.name}`,
+            modeColor: this._activeMode.color
+        });
+    }
+
+    /**
+     * 切换到下一个模式（循环切换）。
+     * 切换后更新状态栏并通知用户，但 **不会** 影响已有任务的权限。
+     * 新模式将在下一次创建任务或新的对话轮次时生效。
+     */
+    cycleMode(): void {
+        const modes = this.agentDecl.supportedModes();
+        const currentIndex = modes.findIndex((m) => m.id === this._activeMode.id);
+        const nextIndex = (currentIndex + 1) % modes.length;
+        this._activeMode = modes[nextIndex];
+
+        this.syncModeDisplay();
+        this.tui.requestRender();
+        logger.info(`Mode switched to: ${this._activeMode.name} (${this._activeMode.id})`);
+    }
+
+    /**
+     * 根据 id 切换到指定模式
+     */
+    setMode(modeId: string): boolean {
+        const modes = this.agentDecl.supportedModes();
+        const target = modes.find((m) => m.id === modeId);
+        if (!target) return false;
+        this._activeMode = target;
+
+        this.syncModeDisplay();
+        this.tui.requestRender();
+        logger.info(`Mode set to: ${this._activeMode.name} (${this._activeMode.id})`);
+        return true;
     }
 
     /**
@@ -1289,6 +1368,14 @@ export class OpenDeskTUI {
 
         // Attach a direct input listener to TUI FIRST, to hijack Ctrl+C before Editor gets it!
         this.tui.addInputListener((data) => {
+            // Shift+Tab 循环切换模式
+            if (matchesKey(data, Key.shift('tab'))) {
+                if (!this.hasOpenOverlay && !this.configComponent) {
+                    this.cycleMode();
+                    return { consume: true };
+                }
+            }
+
             // 内联结果面板交互：Esc 关闭，Ctrl+Up/Down 滚动
             const activePanel = this.inputArea.shellResultPanel.isVisible()
                 ? this.inputArea.shellResultPanel

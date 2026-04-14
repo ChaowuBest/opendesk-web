@@ -29,6 +29,10 @@ export interface TaskStatusBarData {
     contextSize: number;
     modelName: string;
     shellMode?: boolean;
+    /** 当前模式的显示文本 (如 "⚡ Standard") */
+    modeDisplay?: string;
+    /** 当前模式的颜色 (如 '#00E5FF') */
+    modeColor?: string;
 }
 
 /**
@@ -135,11 +139,18 @@ export class TaskStatusBar implements Component {
             return this.cachedOutput;
         }
         this.lastWidth = width;
-        const { elapsedMs, totalTokens, contextSize, modelName, shellMode } = this.data;
+        const { elapsedMs, totalTokens, contextSize, modelName, shellMode, modeDisplay, modeColor } = this.data;
         const colors = getStatusBarColors();
 
         // 构建左侧 cells（任务级信息）
         const leftCells: { text: string }[] = [];
+
+        // 模式指示器始终显示在最左侧
+        if (modeDisplay) {
+            const colorFn = modeColor ? chalk.hex(modeColor) : chalk.hex(colors.fg);
+            leftCells.push({ text: colorFn(modeDisplay) });
+        }
+
         if (shellMode) {
             leftCells.push({ text: chalk.cyan('📟 Shell 命令模式') });
         } else {
@@ -160,8 +171,8 @@ export class TaskStatusBar implements Component {
 
         const leftContent = leftCells.length > 0 ? ` ${leftCells.map((c) => c.text).join('  │  ')}` : '';
 
-        // 右侧固定区域：帮助提示
-        const rightHint = chalk.hex(colors.fgDim)('/help 帮助') + ' ';
+        // 右侧固定区域：帮助提示（含模式切换提示）
+        const rightHint = chalk.hex(colors.fgDim)('Shift+Tab 切换模式  /help 帮助') + ' ';
 
         let leftW = visibleWidth(leftContent);
         const rightW = visibleWidth(rightHint);

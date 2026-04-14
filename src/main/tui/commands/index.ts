@@ -27,6 +27,7 @@ import { registerUndoCommand } from './undo.js';
 import { registerRedoCommand } from './redo.js';
 import { registerBtwCommand } from './btw.js';
 import { registerRecoverCommand } from './recover.js';
+import { registerModeCommand } from './mode.js';
 
 /**
  * 注册所有内置斜杠命令到 TUI
@@ -59,4 +60,5 @@ export function registerAllCommands(tui: OpenDeskTUI): void {
     registerRedoCommand(tui);
     registerBtwCommand(tui);
     registerRecoverCommand(tui);
+    registerModeCommand(tui);
 }

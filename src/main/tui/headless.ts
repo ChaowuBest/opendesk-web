@@ -26,6 +26,7 @@ import {
 } from '../aikernel/states/tasks.js';
 import { GlobalState } from '../aikernel/states/global.js';
 import { MainAgentDecl } from '../aikernel/agents/mainagent.js';
+import type { ModeDecl } from '../aikernel/agents/common.js';
 import { ApplicationRegistry } from '../applications/registry.js';
 import { logger } from '../utils/logger.js';
 import { exportTaskToHtml } from '../utils/export.js';
@@ -87,6 +88,7 @@ export class HeadlessRunner {
     private taskManagerState: TaskManagerState;
     private agentDecl: MainAgentDecl;
     private args: CommandLineArgs;
+    private activeMode: ModeDecl;
 
     /** 已输出过的 part 索引（message_id → Set<partIndex>），避免重复输出 */
     private flushedParts: Map<string, Set<number>> = new Map();
@@ -96,13 +98,32 @@ export class HeadlessRunner {
         this.taskManagerState = GlobalState.getInstance().taskManagerState;
         this.agentDecl = new MainAgentDecl({ workspace: args.workspace });
         MemoryRegistry.getInstance(args.workspace);
+
+        const modes = this.agentDecl.supportedModes();
+        const cliModeId = args.mode?.toLowerCase();
+        const defaultId = this.agentDecl.defaultModeId();
+        if (cliModeId) {
+            const found = modes.find((m) => m.id === cliModeId);
+            if (!found) {
+                const validIds = modes.map((m) => m.id).join(', ');
+                process.stderr.write(chalk.red(`[error] unknown mode '${cliModeId}', valid modes: ${validIds}\n`));
+                process.exit(1);
+            }
+            this.activeMode = found;
+        } else {
+            this.activeMode = modes.find((m) => m.id === defaultId) ?? modes[0];
+        }
     }
 
     async execute(command: string): Promise<void> {
         const startTime = Date.now();
 
+        process.stdout.write(
+            chalk.dim(`[模式] ${this.activeMode.icon} ${this.activeMode.name} - ${this.activeMode.description}`) + '\n'
+        );
+
         const task = this.taskManagerState.createTask(this.args.model);
-        const systemPrompt = await this.agentDecl.createSystemPrompt();
+        const systemPrompt = await this.agentDecl.createSystemPrompt(this.activeMode);
         await task.setSystemPrompt(systemPrompt);
 
         if (this.args.profile) {
@@ -113,9 +134,10 @@ export class HeadlessRunner {
             if (this.args.allowEverything) {
                 task.harnessContext = HarnessContext.createAllowEverything(this.args.workspace);
             } else {
-                task.harnessContext = await HarnessContext.createWithDefaults(this.args.workspace);
+                task.harnessContext = await HarnessContext.createForMode(this.args.workspace, this.activeMode);
             }
             task.harnessContext.permissionPrompt = new HeadlessPermissionPromptProvider();
+            task.activeModeId = this.activeMode.id;
         } catch (err) {
             logger.warn(`Failed to init headless task harness: ${err}`);
         }

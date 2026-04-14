@@ -59,6 +59,10 @@ class AgentInput extends HTMLElement {
         this.selectedModel = '';
         this.selectedReasoningEffort = '';
         this.defaultModelAlias = '';
+        /** @type {{ id: string, name: string, description: string, icon: string, color: string }[]} */
+        this.availableModes = [];
+        this.selectedModeId = '';
+        this.defaultModeId = '';
         /** @type {{ id: string, name: string, description: string }[]} */
         this.availableSkills = [];
         this.skillPanelOpen = false;
@@ -66,7 +70,7 @@ class AgentInput extends HTMLElement {
     }
 
     connectedCallback() {
-        Promise.all([this.loadModels(), this.loadSkills()]).then(() => this.render());
+        Promise.all([this.loadModels(), this.loadModes(), this.loadSkills()]).then(() => this.render());
     }
 
     async loadModels() {
@@ -85,6 +89,42 @@ class AgentInput extends HTMLElement {
         } catch (err) {
             console.warn('Failed to load models for agent-input:', err);
         }
+    }
+
+    async loadModes() {
+        try {
+            if (!window.modeAPI?.getSupportedModes) return;
+            const data = await window.modeAPI.getSupportedModes();
+            this.availableModes = data.modes || [];
+            this.defaultModeId = data.defaultModeId || '';
+            if (!this.selectedModeId) {
+                this.selectedModeId = data.currentModeId || this.defaultModeId;
+            }
+        } catch (err) {
+            console.warn('Failed to load modes for agent-input:', err);
+        }
+    }
+
+    /**
+     * 外部设置当前模式（同时通知主进程）
+     */
+    setMode(modeId) {
+        this.selectedModeId = modeId;
+        const modeSelect = this.querySelector('#agent-input-mode-select');
+        if (modeSelect) modeSelect.value = modeId;
+        this.updateModeIndicator();
+        if (window.modeAPI?.setCurrentMode) {
+            window.modeAPI.setCurrentMode(modeId).catch((err) => {
+                console.warn('Failed to set mode:', err);
+            });
+        }
+    }
+
+    /**
+     * 更新模式指示器（预留扩展点，目前不改变边框颜色）
+     */
+    updateModeIndicator() {
+        // 当前不做视觉变化，保持边框颜色固定
     }
 
     async loadSkills() {
@@ -229,6 +269,13 @@ class AgentInput extends HTMLElement {
             return `<option value="${o.value}" ${selected}>${o.label}</option>`;
         }).join('');
 
+        const modeOptions = this.availableModes
+            .map((m) => {
+                const selected = m.id === this.selectedModeId ? 'selected' : '';
+                return `<option value="${m.id}" ${selected}>${m.icon} ${m.name}</option>`;
+            })
+            .join('');
+
         this.innerHTML = `
         <div id="agent-input-container" class="w-full p-1 rounded-[24px] bg-white/40 border border-gray-300/60 shadow-[0_8px_30px_-12px_rgba(0,0,0,0.07)]">
             <div class="bg-white rounded-[18px] shadow-sm border border-gray-100/40 overflow-hidden">
@@ -256,6 +303,17 @@ class AgentInput extends HTMLElement {
                         <select id="agent-input-effort-select"
                             class="agent-input-toolbar-control text-xs bg-gray-50 border border-gray-200 rounded-full px-2 py-0.5 text-gray-600 outline-none hover:border-gray-400 transition-colors cursor-pointer">
                             ${effortOptions}
+                        </select>
+                        `
+                                : ''
+                        }
+                        ${
+                            this.availableModes.length > 1
+                                ? `
+                        <select id="agent-input-mode-select"
+                            class="agent-input-toolbar-control text-xs bg-gray-50 border border-gray-200 rounded-full px-2 py-0.5 text-gray-600 outline-none hover:border-gray-400 transition-colors cursor-pointer"
+                            style="max-width: 120px;">
+                            ${modeOptions}
                         </select>
                         `
                                 : ''
@@ -310,6 +368,7 @@ class AgentInput extends HTMLElement {
 
         this.setUpEventListeners();
         this.updateInputState();
+        this.updateModeIndicator();
     }
 
     toggleSkillPanel(forceClose = false) {
@@ -449,6 +508,7 @@ class AgentInput extends HTMLElement {
         const removeFileBtns = this.querySelectorAll('.agent-input-remove-file-btn');
         const modelSelect = this.querySelector('#agent-input-model-select');
         const effortSelect = this.querySelector('#agent-input-effort-select');
+        const modeSelect = this.querySelector('#agent-input-mode-select');
 
         if (modelSelect) {
             modelSelect.addEventListener('change', async () => {
@@ -465,6 +525,11 @@ class AgentInput extends HTMLElement {
             effortSelect.addEventListener('change', async () => {
                 this.selectedReasoningEffort = effortSelect.value;
                 await updateSettingForModelChange(this.selectedModel, this.selectedReasoningEffort);
+            });
+        }
+        if (modeSelect) {
+            modeSelect.addEventListener('change', async () => {
+                this.setMode(modeSelect.value);
             });
         }
 

@@ -30,7 +30,7 @@ import picomatch from 'picomatch';
 import path from 'path';
 import type { PermissionEnforcer, PermissionRequest, PermissionCheckResult, PermissionRule } from './permission.js';
 import { logger } from '../../utils/logger.js';
-import { createSensitivePathRules } from '../../utils/permissionRules.js';
+import { createSensitivePathRules, createDeviceNodeRules } from '../../utils/permissionRules.js';
 
 function normalizePath(p: string): string {
     if (!p) return '';
@@ -271,6 +271,8 @@ export function createDefaultPermissionRules(workspace: string): PermissionRule[
     const workspaceNorm = normalizePath(path.resolve(workspace));
 
     return [
+        // 设备节点始终允许（/dev/stdin, /dev/null 等）
+        ...createDeviceNodeRules(),
         // 工作空间内读写允许（dot: true 确保 .gitignore 等 dotfiles 也被匹配）
         { resourceType: 'file', action: 'read', pathPattern: `${workspaceNorm}/**`, effect: 'allow' },
         { resourceType: 'file', action: 'write', pathPattern: `${workspaceNorm}/**`, effect: 'allow' },
