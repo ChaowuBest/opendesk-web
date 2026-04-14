@@ -10,4 +10,4 @@
  */
 
 // Re-export from canonical location for backward compatibility
-export { AgentEnvironment, AgentDecl } from './agents/common';
+export { AgentEnvironment, AgentDecl, type ModeDecl, type ModePermissionFactory } from './agents/common';

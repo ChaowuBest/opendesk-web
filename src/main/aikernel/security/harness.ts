@@ -22,6 +22,9 @@
 import type { PermissionEnforcer, PermissionPromptProvider } from './permission.js';
 import { GlobPermissionEnforcer, AllowEverythingEnforcer, createDefaultPermissionRules } from './enforcer.js';
 import { createCriticalPathRules } from '../../utils/permissionRules.js';
+import type { ModeDecl } from '../agents/common.js';
+import fs from 'fs';
+import path from 'path';
 
 export class HarnessContext {
     /**
@@ -70,6 +73,40 @@ export class HarnessContext {
         ctx.workspace = workspace;
         const criticalRules = createCriticalPathRules();
         ctx.permission = new AllowEverythingEnforcer(criticalRules);
+        return ctx;
+    }
+
+    /**
+     * 根据 ModeDecl 创建 HarnessContext。
+     * - permissionFactory 返回 PermissionRule[] → 使用 GlobPermissionEnforcer
+     * - permissionFactory 返回 null → 使用 AllowEverythingEnforcer（仅关键路径保护）
+     *
+     * 对于 Plan Mode，自动创建 .plan 目录（计划文件的输出位置）。
+     */
+    static async createForMode(workspace: string, mode: ModeDecl): Promise<HarnessContext> {
+        const ctx = new HarnessContext();
+        ctx.workspace = workspace;
+
+        const rules = mode.permissionFactory(workspace);
+        if (rules === null) {
+            const criticalRules = createCriticalPathRules();
+            ctx.permission = new AllowEverythingEnforcer(criticalRules);
+        } else {
+            ctx.permission = await GlobPermissionEnforcer.create(rules);
+        }
+
+        // Plan Mode 时自动创建 .plan 目录
+        if (mode.id === 'plan') {
+            const planDir = path.join(workspace, '.plan');
+            try {
+                if (!fs.existsSync(planDir)) {
+                    fs.mkdirSync(planDir, { recursive: true });
+                }
+            } catch {
+                /* .plan 目录创建失败不影响主流程 */
+            }
+        }
+
         return ctx;
     }
 

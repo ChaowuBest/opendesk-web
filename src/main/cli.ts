@@ -47,6 +47,7 @@ function parseCommandLineArgs() {
     prog.option('--headless', 'run in headless mode (no TUI, requires -c)');
     prog.option('--profile <path>', 'write performance profile to specified JSON file', (v) => v);
     prog.option('--allow-everything', 'bypass all permission checks (auto-allow everything)');
+    prog.option('--mode <mode>', 'agent mode to use (standard, plan, solo)', (v) => v);
     prog.option(
         '--config-directory <path>',
         `specify custom config directory (default: ${getDefaultAppDirectory()})`,
@@ -171,7 +172,8 @@ function parseCommandLineArgs() {
             dumpLog: kwargs.dumpLog,
             headless: !!kwargs.headless,
             profile: kwargs.profile,
-            allowEverything: !!kwargs.allowEverything
+            allowEverything: !!kwargs.allowEverything,
+            mode: kwargs.mode
         });
     });
 

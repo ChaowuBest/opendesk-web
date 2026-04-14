@@ -16,8 +16,8 @@ function exposeTaskManagerAPI() {
     const taskwiseToolsetCallbacks = new Map();
 
     contextBridge.exposeInMainWorld('taskManagerAPI', {
-        createTask: async () => {
-            const result = await ipcRenderer.invoke('taskManager:createTask');
+        createTask: async (modeId) => {
+            const result = await ipcRenderer.invoke('taskManager:createTask', modeId);
             if (result.status === 'ok') {
                 return result.data;
             } else {
@@ -427,6 +427,25 @@ if (window.self !== window.top) {
             const result = await ipcRenderer.invoke('setting:isMaximized');
             if (result.status !== 'ok') {
                 return false;
+            }
+            return result.data;
+        }
+    });
+
+    contextBridge.exposeInMainWorld('modeAPI', {
+        getSupportedModes: async () => {
+            const result = await ipcRenderer.invoke('mode:getSupportedModes');
+            if (result.status !== 'ok') {
+                console.error('getting supported modes failed', result.message);
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
+        setCurrentMode: async (modeId) => {
+            const result = await ipcRenderer.invoke('mode:setCurrentMode', modeId);
+            if (result.status !== 'ok') {
+                console.error('setting current mode failed', result.message);
+                throw new Error(result.message);
             }
             return result.data;
         }

@@ -9,10 +9,12 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { AgentDecl } from './common';
+import { AgentDecl, type ModeDecl } from './common';
 import { SkillRegistry } from '../skill';
 import { SoulRegistry } from '../soul/registry';
 import { TASK_MANAGEMENT_PROMPT } from '../planning/prompt';
+import { createDefaultPermissionRules } from '../security/enforcer.js';
+import { createPlanModePermissionRules, createSoloModePermissionRules } from './modes/permissions.js';
 
 /**
  * Boundary marker separating static (cacheable) content from dynamic content.
@@ -156,8 +158,121 @@ function formatBullets(items: Array<string | string[]>): string[] {
     return items.flatMap((item) => (Array.isArray(item) ? item.map((subitem) => `  - ${subitem}`) : [` - ${item}`]));
 }
 
+// ─── MainAgent Mode 定义 ──────────────────────────────────────────
+
+/**
+ * Plan Mode 专属 sub-prompt，指导 agent 在只读环境下进行探索和规划。
+ */
+function getPlanModeSubPrompt(workspace: string): string {
+    return `# 当前模式：Plan Mode (规划模式)
+
+你当前处于 **Plan Mode**，这是一种特殊的只读规划模式。在此模式下，你的核心任务是：
+**理解需求 → 探索代码库 → 设计实现方案 → 输出计划文件** —— 而不是直接执行修改。
+
+## 工作原则
+
+1. **只读为主**：你不能修改工作空间中的任何文件（.plan 目录除外）。所有文件编辑和写入工具将被禁用。
+2. **深入探索**：充分利用文件读取、搜索（glob/grep）和 shell 只读命令（如 git log, git diff, ls 等）来理解代码库。
+3. **设计为本**：你的目标是产出一份结构化的实现计划，而非直接编码。
+
+## 工作流程
+
+### 阶段 1：理解需求
+- 仔细分析用户的需求描述
+- 如有不清楚的地方，向用户提问澄清
+- 明确任务的范围、约束和验收标准
+
+### 阶段 2：探索代码库
+- 使用 readFiles、grepFiles、globFiles 等工具探索相关代码
+- 理解现有的架构模式、命名规范和代码风格
+- 找到需要修改的关键文件和它们的依赖关系
+- 使用 shell 运行只读命令获取 git 历史、分支状态等上下文
+
+### 阶段 3：设计方案
+- 基于探索结果设计实现策略
+- 识别需要修改/创建的文件列表
+- 规划修改的顺序和依赖关系
+- 预见可能的挑战和风险点
+
+### 阶段 4：输出计划
+- 将最终计划写入 \`.plan\` 目录（这是你唯一可写的路径）
+- 计划文件路径：\`${workspace}/.plan/plan.md\`
+- 计划应包含：
+  - 任务摘要
+  - 实现步骤（按执行顺序排列）
+  - 每个步骤需要修改的文件和修改内容概述
+  - 3-5 个关键文件路径
+  - 潜在风险和注意事项
+
+### 阶段 5：请求审批
+- 将计划概要呈现给用户
+- 等待用户确认或提出修改意见
+- 如果用户要求修改计划，回到阶段 3 迭代
+- **当用户确认计划没有问题后**，明确提示用户：按 **Shift+Tab** 切换到 Standard Mode（需确认关键操作）或 Solo Mode（全自动无人值守）来执行计划
+
+## 输出格式
+
+你在此模式下的文本输出应当更加详细和结构化（与标准模式的简洁风格不同），因为用户需要全面理解你的计划。
+使用 Markdown 标题、列表和代码块来组织你的分析和计划。
+
+## 重要约束
+
+- **禁止**直接修改工作空间中的代码文件
+- **禁止**执行会改变状态的 shell 命令（如 git commit, npm install 等）
+- **允许**在 .plan 目录中写入计划文件
+- **允许**执行只读的 shell 命令获取信息
+- 当用户确认计划后，提示他们按 **Shift+Tab** 切换到 Standard Mode 或 Solo Mode 来执行计划
+- Plan Mode 本身不能执行任何修改操作，必须切换模式后才能开始实施`;
+}
+
+/**
+ * Standard Mode：默认工作模式，与原来行为一致
+ */
+export const MAIN_AGENT_STANDARD_MODE: ModeDecl = {
+    id: 'standard',
+    name: 'Standard',
+    description: '默认工作模式，在工作空间内自由读写，工作空间外需确认',
+    icon: '⚡',
+    color: '#FFFFFF',
+    permissionFactory: (workspace) => createDefaultPermissionRules(workspace)
+};
+
+/**
+ * Plan Mode：只读规划模式，仅 .plan 目录可写
+ */
+export const MAIN_AGENT_PLAN_MODE: ModeDecl = {
+    id: 'plan',
+    name: 'Plan',
+    description: '规划模式，只读探索 + .plan 目录可写，先设计后执行',
+    icon: '📋',
+    color: '#FFAB00',
+    permissionFactory: (workspace) => createPlanModePermissionRules(workspace),
+    getSubPrompt: (workspace) => getPlanModeSubPrompt(workspace),
+    disabledTools: ['editFile', 'writeFile']
+};
+
+/**
+ * Solo Mode：全权限无人值守模式，工作空间内外均可读写，敏感路径直接 deny
+ */
+export const MAIN_AGENT_SOLO_MODE: ModeDecl = {
+    id: 'solo',
+    name: 'Solo',
+    description: '全权限无人值守模式，敏感路径直接拒绝',
+    icon: '🔓',
+    color: '#00E676',
+    permissionFactory: (_workspace) => createSoloModePermissionRules()
+};
+
 export class MainAgentDecl extends AgentDecl {
-    async createSystemPrompt(): Promise<string> {
+    supportedModes(): ModeDecl[] {
+        return [MAIN_AGENT_STANDARD_MODE, MAIN_AGENT_PLAN_MODE, MAIN_AGENT_SOLO_MODE];
+    }
+
+    defaultModeId(): string {
+        return 'standard';
+    }
+
+    async createSystemPrompt(activeMode?: ModeDecl): Promise<string> {
         const skillFrontmatters = await SkillRegistry.getInstance().getSkillFrontmatterXml();
 
         const soulUid = SoulRegistry.getActiveSoulUid();
@@ -174,6 +289,12 @@ export class MainAgentDecl extends AgentDecl {
             getToneAndStyleSection(soulName, soulUid, soulContent),
             getOutputEfficiencySection()
         ];
+
+        // Mode-specific sub-prompt 作为静态部分的一部分（用于 prompt cache 的考虑将来可以调整）
+        const modeSubPrompt = activeMode?.getSubPrompt?.(this.environment.workspace);
+        if (modeSubPrompt) {
+            staticSections.push(modeSubPrompt);
+        }
 
         const dynamicSections = [
             getSessionSpecificGuidanceSection(),

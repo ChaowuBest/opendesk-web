@@ -170,3 +170,41 @@ function isPathPotentiallyUnder(pattern: string, workspace: string): boolean {
     // 双向检查：模式可能是 workspace 的子路径，或 workspace 可能是模式的子路径
     return concretePrefix.startsWith(workspace) || workspace.startsWith(concretePrefix);
 }
+
+/**
+ * 设备节点的 allow 规则。
+ *
+ * /dev/stdin, /dev/stdout, /dev/stderr, /dev/null, /dev/zero, /dev/urandom 等
+ * 是工具链（如 shell 命令、进程管道）的基本依赖，所有模式都应无条件允许访问。
+ * Windows 上这些路径不存在，但规则添加了也无副作用。
+ */
+const DEVICE_NODE_PATTERNS = [
+    '/dev/stdin',
+    '/dev/stdout',
+    '/dev/stderr',
+    '/dev/null',
+    '/dev/zero',
+    '/dev/random',
+    '/dev/urandom',
+    '/dev/tty',
+    '/dev/fd/**',
+    '/proc/self/fd/**'
+];
+
+export function createDeviceNodeRules(): PermissionRule[] {
+    const rules: PermissionRule[] = [];
+    const actions: PermissionAction[] = ['read', 'write', 'execute'];
+
+    for (const pattern of DEVICE_NODE_PATTERNS) {
+        for (const action of actions) {
+            rules.push({
+                resourceType: 'file',
+                action,
+                pathPattern: pattern,
+                effect: 'allow'
+            });
+        }
+    }
+
+    return rules;
+}
