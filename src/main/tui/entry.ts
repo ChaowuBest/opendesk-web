@@ -25,7 +25,7 @@ import { lookupKnownContextSize, fetchContextSizeFromAPI } from '../utils/model-
 import { LLM } from '../aikernel/llm.js';
 import { UpgradeOverlay } from './components/upgrade';
 import { AgentDecl, type ModeDecl } from '../aikernel/agent.js';
-import { MainAgentDecl } from '../aikernel/agents/mainagent.js';
+import { MainAgentDecl } from '../aikernel/agents/mainagent/agent.js';
 import { HelpOverlay } from './components/help';
 import { ConfirmOverlay, InfoOverlay, InfoPage } from './components/notice';
 import { DashboardOverlay } from './components/dashboard';

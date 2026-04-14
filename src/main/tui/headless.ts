@@ -25,7 +25,7 @@ import {
     type TaskUpdateAssistantChunk
 } from '../aikernel/states/tasks.js';
 import { GlobalState } from '../aikernel/states/global.js';
-import { MainAgentDecl } from '../aikernel/agents/mainagent.js';
+import { MainAgentDecl } from '../aikernel/agents/mainagent/agent.js';
 import type { ModeDecl } from '../aikernel/agents/common.js';
 import { ApplicationRegistry } from '../applications/registry.js';
 import { logger } from '../utils/logger.js';

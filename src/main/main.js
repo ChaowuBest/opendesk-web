@@ -49,7 +49,7 @@ import {
     ElectronTaskManagerUpdateSubscriber
 } from '../platforms/electron.js';
 import { exportTaskToHtml, generateTaskHtml } from './utils/export';
-import { MainAgentDecl } from './aikernel/agents/mainagent.js';
+import { MainAgentDecl } from './aikernel/agents/mainagent/agent.js';
 import { HarnessContext } from './aikernel/security/harness.js';
 import { ElectronPermissionPromptProvider } from './aikernel/security/electronPrompt.js';
 

@@ -61,6 +61,59 @@ describe('Bash/Zsh permissions analysis', () => {
         });
     });
 
+    describe('目录浏览命令', () => {
+        test('ls /some/path → read /some/path', () => {
+            const perms = analyzeBashPermissions('ls /some/path', CWD);
+            assertHasExact(perms, 'read', '/some/path');
+        });
+
+        test('ls 无参数 → 隐含读取 cwd', () => {
+            const perms = analyzeBashPermissions('ls', CWD);
+            expect(perms.length).toBe(1);
+            const expectedCwd = path.resolve(CWD).replace(/\\/g, '/');
+            assertHasExact(perms, 'read', expectedCwd);
+        });
+
+        test('ls 多路径 → 全部读取', () => {
+            const perms = analyzeBashPermissions('ls /tmp /var/log', CWD);
+            assertHasExact(perms, 'read', '/tmp');
+            assertHasExact(perms, 'read', '/var/log');
+        });
+
+        test('ls 相对路径 → 基于 cwd 解析', () => {
+            const perms = analyzeBashPermissions('ls src/components', CWD);
+            const expected = path.resolve(CWD, 'src/components').replace(/\\/g, '/');
+            assertHasExact(perms, 'read', expected);
+        });
+
+        test('find /etc -name "*.conf" → read /etc', () => {
+            const perms = analyzeBashPermissions('find /etc -name "*.conf"', CWD);
+            assertHasExact(perms, 'read', '/etc');
+        });
+
+        test('find 无路径参数 → 隐含读取 cwd', () => {
+            const perms = analyzeBashPermissions('find -name "*.ts"', CWD);
+            expect(perms.length).toBe(1);
+            const expectedCwd = path.resolve(CWD).replace(/\\/g, '/');
+            assertHasExact(perms, 'read', expectedCwd);
+        });
+
+        test('du -sh /var → read /var', () => {
+            const perms = analyzeBashPermissions('du -sh /var', CWD);
+            assertHasExact(perms, 'read', '/var');
+        });
+
+        test('tree /usr/local → read', () => {
+            const perms = analyzeBashPermissions('tree /usr/local', CWD);
+            assertHasExact(perms, 'read', '/usr/local');
+        });
+
+        test('ls 工作区外绝对路径 → 产生读取权限', () => {
+            const perms = analyzeBashPermissions('ls /storage/Users/currentUser', CWD);
+            assertHasExact(perms, 'read', '/storage/Users/currentUser');
+        });
+    });
+
     describe('重定向', () => {
         test('echo hello > output.txt → write', () => {
             const perms = analyzeBashPermissions('echo hello > output.txt', CWD);
@@ -195,9 +248,10 @@ describe('Bash/Zsh permissions analysis', () => {
             assertHas(perms, 'read', 'build.js');
         });
 
-        test('python3 -c "print(1)" → 无文件权限', () => {
+        test('python3 -c "print(1)" → execute / (内联代码不可分析)', () => {
             const perms = analyzeBashPermissions('python3 -c "print(1)"', CWD);
-            expect(perms.length).toBe(0);
+            expect(perms.length).toBe(1);
+            assertHasExact(perms, 'execute', '/');
         });
     });
 
@@ -251,29 +305,33 @@ describe('Bash/Zsh permissions analysis', () => {
         });
     });
 
-    describe('变量/通配符 → 应跳过', () => {
-        test('cat $HOME/config.txt → 跳过', () => {
-            expect(analyzeBashPermissions('cat $HOME/config.txt', CWD).length).toBe(0);
+    describe('变量/通配符/命令替换 → 保守声明或跳过', () => {
+        test('cat $HOME/config.txt → 保守声明 execute / (变量可构造任意路径)', () => {
+            const perms = analyzeBashPermissions('cat $HOME/config.txt', CWD);
+            assertHasExact(perms, 'execute', '/');
         });
 
-        test('cat ${HOME}/config.txt → 跳过', () => {
-            expect(analyzeBashPermissions('cat ${HOME}/config.txt', CWD).length).toBe(0);
+        test('cat ${HOME}/config.txt → 保守声明 execute /', () => {
+            const perms = analyzeBashPermissions('cat ${HOME}/config.txt', CWD);
+            assertHasExact(perms, 'execute', '/');
         });
 
-        test('cat *.txt → 跳过', () => {
+        test('cat *.txt → 跳过 (通配符但无动态元素)', () => {
             expect(analyzeBashPermissions('cat *.txt', CWD).length).toBe(0);
         });
 
-        test('cat src/**/*.ts → 跳过', () => {
+        test('cat src/**/*.ts → 跳过 (通配符但无动态元素)', () => {
             expect(analyzeBashPermissions('cat src/**/*.ts', CWD).length).toBe(0);
         });
 
-        test('cat $(echo file.txt) → 跳过', () => {
-            expect(analyzeBashPermissions('cat $(echo file.txt)', CWD).length).toBe(0);
+        test('cat $(echo file.txt) → 保守声明 execute /', () => {
+            const perms = analyzeBashPermissions('cat $(echo file.txt)', CWD);
+            assertHasExact(perms, 'execute', '/');
         });
 
-        test('cat `echo file.txt` → 跳过', () => {
-            expect(analyzeBashPermissions('cat `echo file.txt`', CWD).length).toBe(0);
+        test('cat `echo file.txt` → 保守声明 execute /', () => {
+            const perms = analyzeBashPermissions('cat `echo file.txt`', CWD);
+            assertHasExact(perms, 'execute', '/');
         });
     });
 
@@ -298,12 +356,17 @@ describe('Bash/Zsh permissions analysis', () => {
             expect(analyzeBashPermissions('echo hello', CWD).length).toBe(0);
         });
 
-        test('ls -la → 不分析', () => {
-            expect(analyzeBashPermissions('ls -la', CWD).length).toBe(0);
+        test('ls -la → 隐含读取 cwd', () => {
+            const perms = analyzeBashPermissions('ls -la', CWD);
+            expect(perms.length).toBe(1);
+            const expectedCwd = path.resolve(CWD).replace(/\\/g, '/');
+            assertHasExact(perms, 'read', expectedCwd);
         });
 
-        test('cd /tmp → 不产生文件权限', () => {
-            expect(analyzeBashPermissions('cd /tmp', CWD).length).toBe(0);
+        test('cd /tmp → 读取目标目录', () => {
+            const perms = analyzeBashPermissions('cd /tmp', CWD);
+            expect(perms.length).toBe(1);
+            assertHasExact(perms, 'read', '/tmp');
         });
     });
 
@@ -362,6 +425,111 @@ describe('Bash/Zsh permissions analysis', () => {
         test('. .env.local → read', () => {
             const perms = analyzeBashPermissions('. .env.local', CWD);
             assertHas(perms, 'read', '.env.local');
+        });
+    });
+
+    describe('cd/pushd 目录切换命令', () => {
+        test('cd .. → 读取上级目录', () => {
+            const perms = analyzeBashPermissions('cd ..', CWD);
+            const expected = path.resolve(CWD, '..').replace(/\\/g, '/');
+            assertHasExact(perms, 'read', expected);
+        });
+
+        test('cd /etc → 读取 /etc', () => {
+            const perms = analyzeBashPermissions('cd /etc', CWD);
+            assertHasExact(perms, 'read', '/etc');
+        });
+
+        test('pushd .. → 读取上级目录', () => {
+            const perms = analyzeBashPermissions('pushd ..', CWD);
+            const expected = path.resolve(CWD, '..').replace(/\\/g, '/');
+            assertHasExact(perms, 'read', expected);
+        });
+
+        test('cd .. && ls -la → 声明读取上级目录和 cwd', () => {
+            const perms = analyzeBashPermissions('cd .. && ls -la', CWD);
+            const parent = path.resolve(CWD, '..').replace(/\\/g, '/');
+            assertHasExact(perms, 'read', parent);
+        });
+
+        test('pushd .. && ls -la && popd → 声明读取上级目录', () => {
+            const perms = analyzeBashPermissions('pushd .. && ls -la && popd', CWD);
+            const parent = path.resolve(CWD, '..').replace(/\\/g, '/');
+            assertHasExact(perms, 'read', parent);
+        });
+
+        test('cd 无参数 → 无权限', () => {
+            const perms = analyzeBashPermissions('cd', CWD);
+            expect(perms.length).toBe(0);
+        });
+    });
+
+    describe('新增读取命令 (xxd, strings, hexdump, od, rev)', () => {
+        test('xxd ../README.md → read', () => {
+            const perms = analyzeBashPermissions('xxd ../README.md', CWD);
+            assertHas(perms, 'read', 'README.md');
+        });
+
+        test('strings /etc/binary → read', () => {
+            const perms = analyzeBashPermissions('strings /etc/binary', CWD);
+            assertHasExact(perms, 'read', '/etc/binary');
+        });
+
+        test('hexdump -C ../file.bin → read', () => {
+            const perms = analyzeBashPermissions('hexdump -C ../file.bin', CWD);
+            assertHas(perms, 'read', 'file.bin');
+        });
+
+        test('od -c /etc/hosts → read', () => {
+            const perms = analyzeBashPermissions('od -c /etc/hosts', CWD);
+            assertHasExact(perms, 'read', '/etc/hosts');
+        });
+
+        test('rev ../README.md → read', () => {
+            const perms = analyzeBashPermissions('rev ../README.md', CWD);
+            assertHas(perms, 'read', 'README.md');
+        });
+
+        test('sort /etc/passwd → read', () => {
+            const perms = analyzeBashPermissions('sort /etc/passwd', CWD);
+            assertHasExact(perms, 'read', '/etc/passwd');
+        });
+
+        test('jq . config.json → read', () => {
+            const perms = analyzeBashPermissions('jq . config.json', CWD);
+            assertHas(perms, 'read', 'config.json');
+        });
+    });
+
+    describe('脚本内联代码执行', () => {
+        test('bash -c "cd .. && ls -la" → 递归分析内联命令', () => {
+            const perms = analyzeBashPermissions('bash -c "cd .. && ls -la"', CWD);
+            const parent = path.resolve(CWD, '..').replace(/\\/g, '/');
+            assertHasExact(perms, 'read', parent);
+        });
+
+        test('sh -c "cat /etc/passwd" → 递归分析内联命令', () => {
+            const perms = analyzeBashPermissions('sh -c "cat /etc/passwd"', CWD);
+            assertHasExact(perms, 'read', '/etc/passwd');
+        });
+
+        test('sh -c "cd .. && cat README.md" → 递归分析', () => {
+            const perms = analyzeBashPermissions('sh -c "cd .. && cat README.md"', CWD);
+            const parent = path.resolve(CWD, '..').replace(/\\/g, '/');
+            assertHasExact(perms, 'read', parent);
+            assertHas(perms, 'read', 'README.md');
+        });
+
+        test('perl -e "..." → execute / (不可分析)', () => {
+            const perms = analyzeBashPermissions('perl -e \'chdir(".."); opendir(D,"."); print readdir(D);\'', CWD);
+            expect(perms.length).toBeGreaterThan(0);
+            assertHasExact(perms, 'execute', '/');
+        });
+
+        test('ruby -e "..." → execute / (不可分析)', () => {
+            const perms = analyzeBashPermissions('ruby -e \'Dir.chdir(".."); puts Dir.entries(".")\'', CWD);
+            expect(perms.length).toBeGreaterThan(0);
+            assertHasExact(perms, 'execute', '/');
         });
     });
 });
@@ -477,13 +645,15 @@ describe('PowerShell permissions analysis', () => {
         });
     });
 
-    describe('变量 → 应跳过', () => {
-        test('PS $env:xxx → 跳过', () => {
-            expect(analyzePowerShellPermissions('Get-Content $env:USERPROFILE\\file.txt', WIN_CWD).length).toBe(0);
+    describe('变量 → 保守声明 execute /', () => {
+        test('PS $env:xxx → 保守声明 execute /', () => {
+            const perms = analyzePowerShellPermissions('Get-Content $env:USERPROFILE\\file.txt', WIN_CWD);
+            assertHasExact(perms, 'execute', '/');
         });
 
-        test('PS $var → 跳过', () => {
-            expect(analyzePowerShellPermissions('Get-Content $filePath', WIN_CWD).length).toBe(0);
+        test('PS $var → 保守声明 execute / (变量可构造任意路径)', () => {
+            const perms = analyzePowerShellPermissions('Get-Content $filePath', WIN_CWD);
+            assertHasExact(perms, 'execute', '/');
         });
     });
 
@@ -552,6 +722,291 @@ describe('PowerShell permissions analysis', () => {
         test('Get-FileHash → read', () => {
             const perms = analyzePowerShellPermissions('Get-FileHash -Path installer.exe -Algorithm SHA256', WIN_CWD);
             assertHas(perms, 'read', 'installer.exe');
+        });
+    });
+
+    describe('cd/Set-Location/Push-Location 目录切换', () => {
+        test('cd .. → 读取上级目录', () => {
+            const perms = analyzePowerShellPermissions('cd ..', WIN_CWD);
+            const expected = path.resolve(WIN_CWD, '..').replace(/\\/g, '/');
+            assertHasExact(perms, 'read', expected);
+        });
+
+        test('Set-Location .. → 读取上级目录', () => {
+            const perms = analyzePowerShellPermissions('Set-Location ..', WIN_CWD);
+            const expected = path.resolve(WIN_CWD, '..').replace(/\\/g, '/');
+            assertHasExact(perms, 'read', expected);
+        });
+
+        test('Push-Location .. → 读取上级目录', () => {
+            const perms = analyzePowerShellPermissions('Push-Location ..', WIN_CWD);
+            const expected = path.resolve(WIN_CWD, '..').replace(/\\/g, '/');
+            assertHasExact(perms, 'read', expected);
+        });
+
+        test('cd ..; Get-ChildItem → 声明读取上级目录', () => {
+            const perms = analyzePowerShellPermissions('cd ..; Get-ChildItem', WIN_CWD);
+            const parent = path.resolve(WIN_CWD, '..').replace(/\\/g, '/');
+            assertHasExact(perms, 'read', parent);
+        });
+
+        test('Set-Location ..; Get-Content file.txt → 声明读取上级目录+文件', () => {
+            const perms = analyzePowerShellPermissions('Set-Location ..; Get-Content file.txt', WIN_CWD);
+            const parent = path.resolve(WIN_CWD, '..').replace(/\\/g, '/');
+            assertHasExact(perms, 'read', parent);
+            assertHas(perms, 'read', 'file.txt');
+        });
+
+        test('Push-Location ..; Get-ChildItem; Pop-Location → 声明读取上级目录', () => {
+            const perms = analyzePowerShellPermissions('Push-Location ..; Get-ChildItem; Pop-Location', WIN_CWD);
+            const parent = path.resolve(WIN_CWD, '..').replace(/\\/g, '/');
+            assertHasExact(perms, 'read', parent);
+        });
+    });
+
+    describe('Invoke-Expression 动态执行', () => {
+        test('Invoke-Expression "..." → execute / (不可分析)', () => {
+            const perms = analyzePowerShellPermissions('Invoke-Expression "cd ..; Get-ChildItem"', WIN_CWD);
+            expect(perms.length).toBeGreaterThan(0);
+            assertHasExact(perms, 'execute', '/');
+        });
+
+        test('iex "..." → execute / (不可分析)', () => {
+            const perms = analyzePowerShellPermissions('iex "Get-ChildItem .."', WIN_CWD);
+            expect(perms.length).toBeGreaterThan(0);
+            assertHasExact(perms, 'execute', '/');
+        });
+    });
+
+    describe('powershell -Command 子进程', () => {
+        test('powershell -Command "cd ..; Get-ChildItem" → 递归分析', () => {
+            const perms = analyzePowerShellPermissions('powershell -Command "cd ..; Get-ChildItem"', WIN_CWD);
+            const parent = path.resolve(WIN_CWD, '..').replace(/\\/g, '/');
+            assertHasExact(perms, 'read', parent);
+        });
+
+        test('pwsh -Command "Get-Content /etc/passwd" → 递归分析', () => {
+            const perms = analyzePowerShellPermissions('pwsh -Command "Get-Content /etc/passwd"', WIN_CWD);
+            assertHas(perms, 'read', 'passwd');
+        });
+    });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// Round2 安全漏洞回归测试：动态元素保守声明
+// ═══════════════════════════════════════════════════════════════
+
+describe('Bash 动态元素保守声明', () => {
+    describe('命令替换绕过 $() 和反引号', () => {
+        test('parent=$(pwd | sed ...); ls "$parent" → execute /', () => {
+            const perms = analyzeBashPermissions('parent=$(pwd | sed \'s|/[^/]*$||\'); ls -la "$parent"', CWD);
+            assertHasExact(perms, 'execute', '/');
+        });
+
+        test('eval "ls $(dirname $(pwd))" → execute /', () => {
+            const perms = analyzeBashPermissions('eval "ls -la $(dirname $(pwd))"', CWD);
+            assertHasExact(perms, 'execute', '/');
+        });
+
+        test('pwd | xargs dirname | xargs ls → execute /', () => {
+            const perms = analyzeBashPermissions('pwd | xargs dirname | xargs ls', CWD);
+            assertHasExact(perms, 'execute', '/');
+        });
+
+        test('echo "c:/Projects" | xargs ls → execute /', () => {
+            const perms = analyzeBashPermissions('echo "c:/Projects" | xargs ls', CWD);
+            assertHasExact(perms, 'execute', '/');
+        });
+
+        test('sed -n "1p" "$(dirname $(pwd))/file" → execute /', () => {
+            const perms = analyzeBashPermissions('sed -n \'1p\' "$(dirname $(pwd))/ccprompt.md"', CWD);
+            assertHasExact(perms, 'execute', '/');
+        });
+
+        test('head -5 "$(echo c:/Projects/file)" → execute /', () => {
+            const perms = analyzeBashPermissions('head -5 "$(echo c:/Projects/ccprompt.md)"', CWD);
+            assertHasExact(perms, 'execute', '/');
+        });
+
+        test('cat < "$(pwd)/../file" → execute /', () => {
+            const perms = analyzeBashPermissions('cat < "$(pwd)/../ccprompt.md" | head -10', CWD);
+            assertHasExact(perms, 'execute', '/');
+        });
+
+        test('awk BEGIN{system("ls ...")} → execute /', () => {
+            const perms = analyzeBashPermissions('awk \'BEGIN{system("ls c:/Projects")}\'', CWD);
+            assertHasExact(perms, 'execute', '/');
+        });
+
+        test('mapfile + process substitution <(ls "$(pwd)/..") → execute /', () => {
+            const perms = analyzeBashPermissions(
+                'mapfile -t files < <(ls "$(pwd)/.."); for f in "${files[@]}"; do echo "$f"; done',
+                CWD
+            );
+            assertHasExact(perms, 'execute', '/');
+        });
+
+        test('exec 3< "$(pwd)/../file" → execute /', () => {
+            const perms = analyzeBashPermissions('exec 3< "$(pwd)/../ccprompt.md"; head -5 <&3; exec 3<&-', CWD);
+            assertHasExact(perms, 'execute', '/');
+        });
+
+        test('md5sum "$(pwd)/../file" → execute /', () => {
+            const perms = analyzeBashPermissions('md5sum "$(pwd)/../ccprompt.md"', CWD);
+            assertHasExact(perms, 'execute', '/');
+        });
+
+        test('wc -l "$(pwd)/../file" → execute /', () => {
+            const perms = analyzeBashPermissions('wc -l "$(pwd)/../ccprompt.md"', CWD);
+            assertHasExact(perms, 'execute', '/');
+        });
+
+        test('diff "$(pwd)/../a" "$(pwd)/../b" → execute /', () => {
+            const perms = analyzeBashPermissions('diff "$(pwd)/../a.md" "$(pwd)/../b.zip" 2>&1 | head -5', CWD);
+            assertHasExact(perms, 'execute', '/');
+        });
+
+        test('file "$(dirname $(pwd))/file" → execute /', () => {
+            const perms = analyzeBashPermissions('file "$(dirname $(pwd))/ccprompt.md"', CWD);
+            assertHasExact(perms, 'execute', '/');
+        });
+
+        test('tac "$(pwd)/../file" → execute /', () => {
+            const perms = analyzeBashPermissions('tac "$(pwd)/../ccprompt.md" | tail -5', CWD);
+            assertHasExact(perms, 'execute', '/');
+        });
+    });
+
+    describe('变量引用绕过 $VAR', () => {
+        test('cat $HOME/config.txt → execute /', () => {
+            const perms = analyzeBashPermissions('cat $HOME/config.txt', CWD);
+            assertHasExact(perms, 'execute', '/');
+        });
+
+        test('ls $PARENT_DIR → execute /', () => {
+            const perms = analyzeBashPermissions('ls $PARENT_DIR', CWD);
+            assertHasExact(perms, 'execute', '/');
+        });
+    });
+});
+
+describe('PowerShell 动态元素保守声明', () => {
+    describe('变量和表达式绕过', () => {
+        test('$parentPath = (Get-Item ..).FullName; GCI $parentPath → execute /', () => {
+            const perms = analyzePowerShellPermissions(
+                '$parentPath = (Get-Item ..).FullName; Get-ChildItem $parentPath | Select-Object Name',
+                WIN_CWD
+            );
+            assertHasExact(perms, 'execute', '/');
+        });
+
+        test('$p = [System.IO.Path]::GetFullPath(...); GCI $p → execute /', () => {
+            const perms = analyzePowerShellPermissions(
+                '$p = [System.IO.Path]::GetFullPath((Join-Path $PWD "..")); Get-ChildItem $p',
+                WIN_CWD
+            );
+            assertHasExact(perms, 'execute', '/');
+        });
+
+        test('foreach ($d in GCI -Path ..) → execute /', () => {
+            const perms = analyzePowerShellPermissions(
+                'foreach ($d in Get-ChildItem -Path ..) { Write-Output $d.Name }',
+                WIN_CWD
+            );
+            assertHasExact(perms, 'execute', '/');
+        });
+
+        test('$env:parent = "c:\\Projects"; GCI $env:parent → execute /', () => {
+            const perms = analyzePowerShellPermissions(
+                '$env:parent = "c:\\Projects"; Get-ChildItem $env:parent',
+                WIN_CWD
+            );
+            assertHasExact(perms, 'execute', '/');
+        });
+
+        test('$myPath = ".."; Get-Item $myPath | GCI → execute /', () => {
+            const perms = analyzePowerShellPermissions(
+                '$myPath = ".."; $items = Get-Item $myPath; $items | Get-ChildItem | Select-Object Name',
+                WIN_CWD
+            );
+            assertHasExact(perms, 'execute', '/');
+        });
+    });
+
+    describe('外部程序调用绕过', () => {
+        test('cmd.exe /c "dir c:\\Projects" → execute /', () => {
+            const perms = analyzePowerShellPermissions('cmd.exe /c "dir c:\\Projects"', WIN_CWD);
+            assertHasExact(perms, 'execute', '/');
+        });
+
+        test('& "cmd.exe" /c "dir ..\\.." → execute /', () => {
+            const perms = analyzePowerShellPermissions("& 'cmd.exe' /c 'dir ..\\..'", WIN_CWD);
+            assertHasExact(perms, 'execute', '/');
+        });
+
+        test('Start-Process cmd.exe → execute /', () => {
+            const perms = analyzePowerShellPermissions(
+                'Start-Process -FilePath "cmd.exe" -ArgumentList "/c dir c:\\Projects" -PassThru -Wait',
+                WIN_CWD
+            );
+            assertHasExact(perms, 'execute', '/');
+        });
+    });
+
+    describe('.NET API 绕过', () => {
+        test('[System.IO.File]::OpenRead("...") → execute /', () => {
+            const perms = analyzePowerShellPermissions(
+                '$stream = [System.IO.File]::OpenRead("c:\\Projects\\file.md")',
+                WIN_CWD
+            );
+            assertHasExact(perms, 'execute', '/');
+        });
+
+        test('[System.IO.File]::ReadAllBytes("...") → execute /', () => {
+            const perms = analyzePowerShellPermissions(
+                '[System.IO.File]::ReadAllBytes("c:\\Projects\\file.md")',
+                WIN_CWD
+            );
+            assertHasExact(perms, 'execute', '/');
+        });
+
+        test('[System.IO.Directory]::GetFiles("...") → execute /', () => {
+            const perms = analyzePowerShellPermissions('[System.IO.Directory]::GetFiles("c:\\Projects")', WIN_CWD);
+            assertHasExact(perms, 'execute', '/');
+        });
+
+        test('[System.IO.DirectoryInfo]::new("...") → execute /', () => {
+            const perms = analyzePowerShellPermissions(
+                '[System.IO.DirectoryInfo]::new("c:\\Projects").GetFileSystemInfos()',
+                WIN_CWD
+            );
+            assertHasExact(perms, 'execute', '/');
+        });
+
+        test('Get-Content -Path ([System.IO.Directory]::GetParent(...)) → execute /', () => {
+            const perms = analyzePowerShellPermissions(
+                "Get-Content -Path ([System.IO.Directory]::GetParent($PWD).FullName + '\\file.md') -TotalCount 5",
+                WIN_CWD
+            );
+            assertHasExact(perms, 'execute', '/');
+        });
+    });
+
+    describe('特殊语法绕过', () => {
+        test('[scriptblock]::Create("..."); & $sb → execute /', () => {
+            const perms = analyzePowerShellPermissions(
+                '$sb = [scriptblock]::Create("Get-ChildItem \'c:\\Projects\'"); & $sb',
+                WIN_CWD
+            );
+            assertHasExact(perms, 'execute', '/');
+        });
+
+        test('[WMI] win32_directory → execute /', () => {
+            const perms = analyzePowerShellPermissions(
+                '[WMI] \'win32_directory.Name="c:\\\\Projects"\' | Select-Object Name',
+                WIN_CWD
+            );
+            assertHasExact(perms, 'execute', '/');
         });
     });
 });

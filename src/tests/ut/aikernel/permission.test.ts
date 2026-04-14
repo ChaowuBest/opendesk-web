@@ -21,7 +21,7 @@ import {
 import {
     createSoloModePermissionRules,
     createPlanModePermissionRules
-} from '../../../main/aikernel/agents/modes/permissions';
+} from '../../../main/aikernel/agents/mainagent/permissions';
 import {
     createSensitivePathRules,
     createCriticalPathRules,
