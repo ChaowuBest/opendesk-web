@@ -111,6 +111,7 @@ node {
                                 npm install --prefer-offline 2>&1 | tee "${CI_LOG_DIR}/npm-install.log"
                                 npm run build-cli 2>&1 | tee "${CI_LOG_DIR}/build.log"
                             '''
+                            archiveArtifacts artifacts: 'dist/cli/*', allowEmptyArchive: true, fingerprint: true
                         }
 
                         stage('Test') {
