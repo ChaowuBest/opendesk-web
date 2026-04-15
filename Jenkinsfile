@@ -83,6 +83,8 @@ node {
                             echo "=== Stage: Build ==="
 
                             sh '''
+                                set -euo pipefail
+
                                 if [ -n "${PR_NUMBER:-}" ] && [ -n "${PR_SOURCE_BRANCH:-}" ] && [ -n "${PR_TARGET_BRANCH:-}" ]; then
                                     echo "PR #${PR_NUMBER}: ${PR_SOURCE_BRANCH} → ${PR_TARGET_BRANCH}"
 
