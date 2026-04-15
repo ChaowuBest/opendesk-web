@@ -34,30 +34,10 @@ export function registerModeCommand(tui: OpenDeskTUI): void {
         execute: (args: string) => {
             const trimmed = args.trim().toLowerCase();
             if (!trimmed) {
-                const modes = tui.getSupportedModes();
-                const currentMode = tui.activeMode;
-                const lines = modes.map((m) => {
-                    const active = m.id === currentMode.id ? chalk.hex(m.color)(' ● ') : '   ';
-                    return `${active}${m.icon} ${chalk.bold(m.name)} - ${m.description}`;
-                });
-                const info = new InfoOverlay(tui, {
-                    title: '运行模式',
-                    message: lines.join('\n') + '\n\n' + chalk.dim('使用 /mode <name> 或 Shift+Tab 切换模式'),
-                    closeLabel: '确定'
-                });
-                info.show();
                 return;
             }
 
-            if (tui.setMode(trimmed)) {
-                const mode = tui.activeMode;
-                const info = new InfoOverlay(tui, {
-                    title: '模式已切换',
-                    message: `${mode.icon} 已切换到 ${chalk.bold(mode.name)} 模式\n${mode.description}`,
-                    closeLabel: '确定'
-                });
-                info.show();
-            } else {
+            if (!tui.setMode(trimmed)) {
                 const modes = tui.getSupportedModes();
                 const validIds = modes.map((m) => m.id).join(', ');
                 const info = new InfoOverlay(tui, {

@@ -18,7 +18,7 @@ import { z } from 'zod';
 import { fetch } from 'undici';
 import { parseStringPromise } from 'xml2js';
 
-const FETCH_TIMEOUT_MS = 30000;
+const FETCH_TIMEOUT_MS = 10000;
 const DEFAULT_RESULT_COUNT = 10;
 const ARXIV_API_URL = 'http://export.arxiv.org/api/query';
 const MAX_RETRIES = 3;

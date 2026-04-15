@@ -3,6 +3,7 @@ import { defaultSelectListTheme } from '../../theme.js';
 import { Setting } from '../../../utils/setting.js';
 import { ConfigForm, type FieldDef, type ActionDef } from './form';
 import chalk from 'chalk';
+import { REASONING_EFFORT_LABELS, REASONING_EFFORT_SELECT_VALUES } from '../../../../common/reasoning-effort.js';
 
 interface ModelData {
     alias: string;
@@ -10,15 +11,6 @@ interface ModelData {
     model_name: string;
     reasoning_effort?: string;
 }
-
-const REASONING_EFFORT_OPTIONS = ['', 'none', 'low', 'medium', 'high'];
-const REASONING_EFFORT_LABELS: Record<string, string> = {
-    '': '默认',
-    none: '无推理',
-    low: '简洁推理',
-    medium: '推理适中',
-    high: '推理深入'
-};
 
 /**
  * 模型配置页面。
@@ -51,7 +43,7 @@ export class ModelConfigPage implements Component {
             { value: '__add__', label: chalk.green('+ 添加模型') },
             ...models.map((m: ModelData, i: number) => {
                 const effortTag = m.reasoning_effort
-                    ? chalk.yellow(`[${REASONING_EFFORT_LABELS[m.reasoning_effort] || m.reasoning_effort}]`)
+                    ? chalk.yellow(`[${REASONING_EFFORT_LABELS[m.reasoning_effort] ?? m.reasoning_effort}]`)
                     : '';
                 return {
                     value: String(i),
@@ -118,7 +110,7 @@ export class ModelConfigPage implements Component {
             key: 'reasoning_effort',
             label: '推理模式',
             value: model.reasoning_effort || '',
-            options: REASONING_EFFORT_OPTIONS,
+            options: REASONING_EFFORT_SELECT_VALUES,
             optionLabels: REASONING_EFFORT_LABELS
         });
 

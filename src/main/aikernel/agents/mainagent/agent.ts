@@ -9,12 +9,16 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { AgentDecl, type ModeDecl } from './common';
-import { SkillRegistry } from '../skill';
-import { SoulRegistry } from '../soul/registry';
-import { TASK_MANAGEMENT_PROMPT } from '../planning/prompt';
-import { createDefaultPermissionRules } from '../security/enforcer.js';
-import { createPlanModePermissionRules, createSoloModePermissionRules } from './modes/permissions.js';
+import { AgentDecl, type ModeDecl } from '../common';
+import { SkillRegistry } from '../../skill';
+import { SoulRegistry } from '../../soul/registry';
+import { TASK_MANAGEMENT_PROMPT } from '../../planning/prompt';
+import { createDefaultPermissionRules } from '../../security/enforcer.js';
+import {
+    createPlanModePermissionRules,
+    createSoloModePermissionRules,
+    createUnlimitedModePermissionRules
+} from './permissions.js';
 
 /**
  * Boundary marker separating static (cacheable) content from dynamic content.
@@ -226,11 +230,11 @@ function getPlanModeSubPrompt(workspace: string): string {
 }
 
 /**
- * Standard Mode：默认工作模式，与原来行为一致
+ * standard mode：默认工作模式，与原来行为一致
  */
 export const MAIN_AGENT_STANDARD_MODE: ModeDecl = {
     id: 'standard',
-    name: 'Standard',
+    name: 'standard',
     description: '默认工作模式，在工作空间内自由读写，工作空间外需确认',
     icon: '⚡',
     color: '#FFFFFF',
@@ -238,11 +242,11 @@ export const MAIN_AGENT_STANDARD_MODE: ModeDecl = {
 };
 
 /**
- * Plan Mode：只读规划模式，仅 .plan 目录可写
+ * plan mode：只读规划模式，仅 .plan 目录可写
  */
 export const MAIN_AGENT_PLAN_MODE: ModeDecl = {
     id: 'plan',
-    name: 'Plan',
+    name: 'plan',
     description: '规划模式，只读探索 + .plan 目录可写，先设计后执行',
     icon: '📋',
     color: '#FFAB00',
@@ -252,20 +256,33 @@ export const MAIN_AGENT_PLAN_MODE: ModeDecl = {
 };
 
 /**
- * Solo Mode：全权限无人值守模式，工作空间内外均可读写，敏感路径直接 deny
+ * solo mode：全权限无人值守模式，工作空间内外均可读写，敏感路径直接 deny
  */
 export const MAIN_AGENT_SOLO_MODE: ModeDecl = {
     id: 'solo',
-    name: 'Solo',
+    name: 'solo',
     description: '全权限无人值守模式，敏感路径直接拒绝',
-    icon: '🔓',
+    icon: '🎮',
     color: '#00E676',
     permissionFactory: (_workspace) => createSoloModePermissionRules()
 };
 
+/**
+ * unlimited mode：无限制模式，所有权限全部放通（不限制任何权限）。
+ * 等价于 --allow-everything 参数。
+ */
+export const MAIN_AGENT_UNLIMITED_MODE: ModeDecl = {
+    id: 'unlimited',
+    name: 'unlimited',
+    description: '无限制模式，所有权限全部放通',
+    icon: '🔓',
+    color: '#FF4081',
+    permissionFactory: (_workspace) => createUnlimitedModePermissionRules()
+};
+
 export class MainAgentDecl extends AgentDecl {
     supportedModes(): ModeDecl[] {
-        return [MAIN_AGENT_STANDARD_MODE, MAIN_AGENT_PLAN_MODE, MAIN_AGENT_SOLO_MODE];
+        return [MAIN_AGENT_STANDARD_MODE, MAIN_AGENT_PLAN_MODE, MAIN_AGENT_SOLO_MODE, MAIN_AGENT_UNLIMITED_MODE];
     }
 
     defaultModeId(): string {

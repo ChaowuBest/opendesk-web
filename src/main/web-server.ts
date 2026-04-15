@@ -30,7 +30,7 @@ import http from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
 import { GlobalState } from './aikernel/states/global.js';
 import { BaseToolset } from './aikernel/tool.js';
-import { MainAgentDecl } from './aikernel/agents/mainagent.js';
+import { MainAgentDecl } from './aikernel/agents/mainagent/agent.js';
 import { ApplicationRegistry, initializeRegistry, initializeRegistryWorker } from './applications/registry.js';
 import { Setting } from './utils/setting.js';
 import { logger, useConsoleTransport, LogStream } from './utils/logger.js';

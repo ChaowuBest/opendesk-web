@@ -35,6 +35,16 @@ const ModelSchema = z.object({
 type Provider = z.infer<typeof ProviderSchema>;
 type Model = z.infer<typeof ModelSchema>;
 
+/** 思考区显示模式；兼容旧配置 on/off */
+const ReasonDisplaySchema = z.preprocess(
+    (val: unknown) => {
+        if (val === 'on') return 'full';
+        if (val === 'off') return 'partial';
+        return val;
+    },
+    z.enum(['full', 'partial']).default('partial')
+);
+
 let ApplicationConfigSchema: z.ZodObject<z.ZodRawShape> = z.object({});
 
 function getSettingSchema(): z.ZodObject<z.ZodRawShape> {
@@ -45,6 +55,9 @@ function getSettingSchema(): z.ZodObject<z.ZodRawShape> {
         default_reranker_model: z.string().describe('在检索结果重排序中使用的模型').default(''),
         default_vision_model: z.string().describe('在图片记忆提取中使用的多模态模型').default(''),
         default_workspace: z.string().describe('默认工作空间目录路径(为空时使用临时工作空间)').default(''),
+        reason_display: ReasonDisplaySchema.describe(
+            '思考内容显示模式: full=完整 Markdown, partial=仅显示末尾若干行(流式与结束后一致)'
+        ),
         providers: z.array(ProviderSchema).describe('可用AI模型提供商').default([]),
         models: z.array(ModelSchema).describe('可用AI模型').default([]),
         applications: ApplicationConfigSchema.describe('OpenDesk应用相关配置').default({})

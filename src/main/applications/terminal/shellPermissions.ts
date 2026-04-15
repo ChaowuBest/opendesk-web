@@ -16,10 +16,9 @@
  * 生成 PermissionRequest[] 供权限引擎检查。
  *
  * 设计约束：
- * - **宁漏勿错**：只标记非常确定的文件访问，不做推测性分析
+ * - **安全优先**：对于确定的路径精确声明，对于不确定的动态元素保守声明 execute /
  * - 不会执行命令、不会展开变量、不会展开 glob 通配符
- * - 包含变量引用（$VAR, ${VAR}）、命令替换（$(...)、`...`）、通配符（*、?）的
- *   路径参数被视为"不确定"而跳过
+ * - 包含变量引用、命令替换、.NET 调用等动态元素的命令会触发保守权限声明
  */
 
 import path from 'path';
@@ -357,8 +356,40 @@ const BASH_READ_COMMANDS = new Set([
     'shasum',
     'diff',
     'source',
-    '.'
+    '.',
+    'realpath',
+    'readlink',
+    'basename',
+    'dirname',
+    'xxd',
+    'hexdump',
+    'od',
+    'strings',
+    'rev',
+    'nl',
+    'sort',
+    'uniq',
+    'cut',
+    'paste',
+    'fold',
+    'fmt',
+    'pr',
+    'column',
+    'tac',
+    'shuf',
+    'jq',
+    'yq'
 ]);
+
+/**
+ * 目录浏览/读取类命令：无路径参数时隐含读取 cwd
+ */
+const BASH_DIR_READ_COMMANDS = new Set(['ls', 'du', 'tree']);
+
+/**
+ * 目录切换命令：目标路径视为读取（防止通过 cd+命令 绕过工作区限制）
+ */
+const BASH_CD_COMMANDS = new Set(['cd', 'pushd']);
 
 /**
  * 已知写入类命令：命令的路径参数全部视为写入
@@ -409,10 +440,56 @@ function analyzeSingleBashCommand(tokens: string[], cwd: string): PermissionRequ
     // 过滤掉 flags，得到非 flag 参数
     const nonFlagArgs = args.filter((a) => looksLikePath(unquote(a)));
 
+    // 1.5 目录切换命令 (cd, pushd)：目标路径视为读取
+    if (BASH_CD_COMMANDS.has(cmdName)) {
+        if (nonFlagArgs.length > 0) {
+            addIfValid(results, 'read', nonFlagArgs[0], cwd);
+        }
+        return results;
+    }
+
     // 2. 读取类命令
     if (BASH_READ_COMMANDS.has(cmdName)) {
         for (const arg of nonFlagArgs) {
             addIfValid(results, 'read', arg, cwd);
+        }
+        return results;
+    }
+
+    // 2.5 目录浏览类命令：有路径参数则读取该路径，无路径参数则隐含读取 cwd
+    if (BASH_DIR_READ_COMMANDS.has(cmdName)) {
+        if (nonFlagArgs.length > 0) {
+            for (const arg of nonFlagArgs) {
+                addIfValid(results, 'read', arg, cwd);
+            }
+        } else {
+            results.push({
+                resourceType: 'file',
+                action: 'read',
+                resourcePath: normalizePath('.', cwd)
+            });
+        }
+        return results;
+    }
+
+    // 2.6 find 命令：路径参数出现在第一个 expression（以 - 开头或括号开头）之前
+    if (cmdName === 'find') {
+        const pathArgs: string[] = [];
+        for (const arg of args) {
+            const raw = unquote(arg);
+            if (raw.startsWith('-') || raw.startsWith('(') || raw.startsWith('!')) break;
+            if (looksLikePath(raw)) pathArgs.push(arg);
+        }
+        if (pathArgs.length > 0) {
+            for (const arg of pathArgs) {
+                addIfValid(results, 'read', arg, cwd);
+            }
+        } else {
+            results.push({
+                resourceType: 'file',
+                action: 'read',
+                resourcePath: normalizePath('.', cwd)
+            });
         }
         return results;
     }
@@ -537,7 +614,7 @@ function analyzeSingleBashCommand(tokens: string[], cwd: string): PermissionRequ
         return results;
     }
 
-    // 11. python/node/ruby 等脚本执行器 —— 脚本文件为读取
+    // 11. python/node/ruby 等脚本执行器
     if (
         cmdName === 'python' ||
         cmdName === 'python3' ||
@@ -549,21 +626,48 @@ function analyzeSingleBashCommand(tokens: string[], cwd: string): PermissionRequ
         cmdName === 'sh' ||
         cmdName === 'zsh'
     ) {
-        // 第一个非 flag 参数通常是脚本文件
-        if (nonFlagArgs.length >= 1) {
+        const cIdx = args.indexOf('-c');
+        const eIdx = args.indexOf('-e');
+        const inlineIdx = cIdx !== -1 ? cIdx : eIdx;
+
+        if (inlineIdx !== -1 && inlineIdx + 1 < args.length) {
+            const inlineCode = unquote(args[inlineIdx + 1]);
+            if (cmdName === 'bash' || cmdName === 'sh' || cmdName === 'zsh') {
+                // 对 shell 内联代码递归分析
+                results.push(...analyzeSingleBashCommandChain(inlineCode, cwd));
+            } else {
+                // 非 shell 内联代码无法静态分析，声明对根路径的 execute 权限以触发确认
+                results.push({
+                    resourceType: 'file',
+                    action: 'execute',
+                    resourcePath: '/'
+                });
+            }
+        } else if (nonFlagArgs.length >= 1) {
             const scriptFile = nonFlagArgs[0];
             const raw = unquote(scriptFile);
-            // 排除 -c "code" 情况：如果前一个 arg 是 -c 则不是文件
-            const cIdx = args.indexOf('-c');
-            if (cIdx === -1 || args[cIdx + 1] !== scriptFile) {
-                if (raw.includes('.') || raw.includes('/')) {
-                    addIfValid(results, 'read', scriptFile, cwd);
-                }
+            if (raw.includes('.') || raw.includes('/')) {
+                addIfValid(results, 'read', scriptFile, cwd);
             }
         }
         return results;
     }
 
+    return results;
+}
+
+/**
+ * 分析一段 bash 命令链（可含 ;, &&, ||, |）并返回权限请求。
+ * 供内部递归分析 `bash -c "..."` / `sh -c "..."` 使用。
+ */
+function analyzeSingleBashCommandChain(command: string, cwd: string): PermissionRequest[] {
+    const results: PermissionRequest[] = [];
+    const simpleCommands = splitBashCommands(command);
+    for (const cmd of simpleCommands) {
+        const tokens = tokenizeBashCommand(cmd);
+        if (tokens.length === 0) continue;
+        results.push(...analyzeSingleBashCommand(tokens, cwd));
+    }
     return results;
 }
 
@@ -584,7 +688,30 @@ export function analyzeBashPermissions(command: string, cwd: string): Permission
         results.push(...analyzeSingleBashCommand(tokens, cwd));
     }
 
+    if (bashCommandContainsDynamicElements(command)) {
+        results.push({ resourceType: 'file', action: 'execute', resourcePath: '/' });
+    }
+
     return deduplicatePermissions(results);
+}
+
+/**
+ * 检测 bash 命令是否包含无法静态分析的动态元素。
+ * 任何 shell 变量、命令替换、动态执行都应触发保守权限声明，
+ * 因为它们可以被用于构造任意路径来绕过静态分析。
+ */
+function bashCommandContainsDynamicElements(command: string): boolean {
+    // shell 变量引用 $VAR, ${VAR}, $() — 可被用于构造任意路径
+    if (/\$/.test(command)) return true;
+    // 反引号命令替换
+    if (/`[^`]+`/.test(command)) return true;
+    // eval 命令
+    if (/\beval\b/.test(command)) return true;
+    // awk/gawk（支持 system() 执行任意命令）
+    if (/\b[gm]?awk\b/.test(command)) return true;
+    // xargs（从管道接收路径后执行命令，路径不可预知）
+    if (/\bxargs\b/.test(command)) return true;
+    return false;
 }
 
 // ─── PowerShell 命令分析 ─────────────────────────────────────────────
@@ -844,6 +971,29 @@ function extractPSRedirects(tokens: string[]): {
     return { redirects, rest };
 }
 
+/** PowerShell 目录切换 cmdlet */
+const PS_CD_CMDLETS = new Map<string, true>([
+    ['cd', true],
+    ['set-location', true],
+    ['sl', true],
+    ['push-location', true],
+    ['pushd', true]
+]);
+
+/** PowerShell 动态执行 cmdlet（无法静态分析内容） */
+const PS_DYNAMIC_EXEC_CMDLETS = new Map<string, true>([
+    ['invoke-expression', true],
+    ['iex', true]
+]);
+
+/** PowerShell 子进程执行命令 */
+const PS_SUBPROCESS_CMDLETS = new Map<string, true>([
+    ['powershell', true],
+    ['pwsh', true],
+    ['powershell.exe', true],
+    ['pwsh.exe', true]
+]);
+
 function analyzeSinglePowerShellCommand(tokens: string[], cwd: string): PermissionRequest[] {
     const results: PermissionRequest[] = [];
 
@@ -864,6 +1014,48 @@ function analyzeSinglePowerShellCommand(tokens: string[], cwd: string): Permissi
 
     const cmdToken = rest[0];
     const cmdName = unquote(cmdToken).toLowerCase();
+
+    // 目录切换 cmdlet: 目标路径视为读取
+    if (PS_CD_CMDLETS.has(cmdName)) {
+        const pathParam = getPSPathParam(rest, 0);
+        if (pathParam) {
+            const raw = unquote(pathParam);
+            if (isPSDeterministicPath(pathParam) && looksLikePath(raw)) {
+                results.push({
+                    resourceType: 'file',
+                    action: 'read',
+                    resourcePath: normalizePath(raw, cwd)
+                });
+            }
+        }
+        return results;
+    }
+
+    // 动态执行 cmdlet (Invoke-Expression): 无法静态分析，声明对根路径的 execute 以触发确认
+    if (PS_DYNAMIC_EXEC_CMDLETS.has(cmdName)) {
+        results.push({
+            resourceType: 'file',
+            action: 'execute',
+            resourcePath: '/'
+        });
+        return results;
+    }
+
+    // 子进程执行 (powershell -Command): 递归分析或声明 execute
+    if (PS_SUBPROCESS_CMDLETS.has(cmdName)) {
+        const commandIdx = rest.findIndex((t) => t.toLowerCase() === '-command');
+        if (commandIdx !== -1 && commandIdx + 1 < rest.length) {
+            const inlineCode = unquote(rest[commandIdx + 1]);
+            results.push(...analyzePowerShellCommandChain(inlineCode, cwd));
+        } else {
+            results.push({
+                resourceType: 'file',
+                action: 'execute',
+                resourcePath: '/'
+            });
+        }
+        return results;
+    }
 
     // 读取类 cmdlet
     if (PS_READ_CMDLETS.has(cmdName)) {
@@ -953,6 +1145,21 @@ function analyzeSinglePowerShellCommand(tokens: string[], cwd: string): Permissi
 }
 
 /**
+ * 分析一段 PowerShell 命令链（可含 ; |）并返回权限请求。
+ * 供内部递归分析 `powershell -Command "..."` 使用。
+ */
+function analyzePowerShellCommandChain(command: string, cwd: string): PermissionRequest[] {
+    const results: PermissionRequest[] = [];
+    const simpleCommands = splitPowerShellCommands(command);
+    for (const cmd of simpleCommands) {
+        const tokens = tokenizePowerShell(cmd);
+        if (tokens.length === 0) continue;
+        results.push(...analyzeSinglePowerShellCommand(tokens, cwd));
+    }
+    return results;
+}
+
+/**
  * 分析 PowerShell 命令字符串所需的文件访问权限。
  *
  * @param command 待执行的完整 PowerShell 命令
@@ -969,7 +1176,38 @@ export function analyzePowerShellPermissions(command: string, cwd: string): Perm
         results.push(...analyzeSinglePowerShellCommand(tokens, cwd));
     }
 
+    if (psCommandContainsDynamicElements(command)) {
+        results.push({ resourceType: 'file', action: 'execute', resourcePath: '/' });
+    }
+
     return deduplicatePermissions(results);
+}
+
+/**
+ * 检测 PowerShell 命令是否包含无法静态分析的动态元素。
+ * 任何变量、.NET 调用、外部程序等都应触发保守权限声明。
+ */
+function psCommandContainsDynamicElements(command: string): boolean {
+    const lower = command.toLowerCase();
+    // PowerShell 变量引用（$var, $env:, $PWD 等）— 可用于构造任意路径
+    if (/\$/.test(command)) return true;
+    // .NET 类型调用 [System.IO.*] 或 [IO.*]
+    if (/\[\s*(?:System\.)?IO\./i.test(command)) return true;
+    // scriptblock 创建 [scriptblock]::Create
+    if (/\[scriptblock\]/i.test(command)) return true;
+    // & 调用运算符配合字符串（& 'cmd.exe' 等）
+    if (/&\s*['"]/.test(command)) return true;
+    // cmd.exe / cmd /c 外部程序调用
+    if (/\bcmd(?:\.exe)?\b/i.test(lower)) return true;
+    // Start-Process
+    if (/\bstart-process\b/i.test(lower)) return true;
+    // foreach 循环（可绕过参数分析）
+    if (/\bforeach\b/i.test(lower)) return true;
+    // WMI 查询
+    if (/\[wmi\]/i.test(command)) return true;
+    // 方括号类型加速器 + 双冒号方法调用（.NET 静态方法）
+    if (/\[[A-Za-z][\w.]*\]\s*::/.test(command)) return true;
+    return false;
 }
 
 // ─── 去重 ─────────────────────────────────────────────────────────

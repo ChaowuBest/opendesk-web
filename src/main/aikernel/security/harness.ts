@@ -20,8 +20,7 @@
  */
 
 import type { PermissionEnforcer, PermissionPromptProvider } from './permission.js';
-import { GlobPermissionEnforcer, AllowEverythingEnforcer, createDefaultPermissionRules } from './enforcer.js';
-import { createCriticalPathRules } from '../../utils/permissionRules.js';
+import { GlobPermissionEnforcer, createDefaultPermissionRules } from './enforcer.js';
 import type { ModeDecl } from '../agents/common.js';
 import fs from 'fs';
 import path from 'path';
@@ -64,22 +63,8 @@ export class HarnessContext {
     }
 
     /**
-     * 创建全放通模式的 HarnessContext（--allow-everything）。
-     * 除关键路径（如 ~/.ssh）外，其他权限检查自动通过。
-     * 关键路径保护不受工作空间限制。
-     */
-    static createAllowEverything(workspace: string): HarnessContext {
-        const ctx = new HarnessContext();
-        ctx.workspace = workspace;
-        const criticalRules = createCriticalPathRules();
-        ctx.permission = new AllowEverythingEnforcer(criticalRules);
-        return ctx;
-    }
-
-    /**
      * 根据 ModeDecl 创建 HarnessContext。
-     * - permissionFactory 返回 PermissionRule[] → 使用 GlobPermissionEnforcer
-     * - permissionFactory 返回 null → 使用 AllowEverythingEnforcer（仅关键路径保护）
+     * 使用 Mode 的 permissionFactory 返回的规则创建 GlobPermissionEnforcer。
      *
      * 对于 Plan Mode，自动创建 .plan 目录（计划文件的输出位置）。
      */
@@ -88,12 +73,7 @@ export class HarnessContext {
         ctx.workspace = workspace;
 
         const rules = mode.permissionFactory(workspace);
-        if (rules === null) {
-            const criticalRules = createCriticalPathRules();
-            ctx.permission = new AllowEverythingEnforcer(criticalRules);
-        } else {
-            ctx.permission = await GlobPermissionEnforcer.create(rules);
-        }
+        ctx.permission = await GlobPermissionEnforcer.create(rules);
 
         // Plan Mode 时自动创建 .plan 目录
         if (mode.id === 'plan') {

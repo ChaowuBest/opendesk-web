@@ -24,7 +24,7 @@ import { program as prog } from 'commander';
 import { listInstalledPlugins, loadPlugins } from './aikernel/plugins/index.js';
 import { ChannelMgrApplication } from './applications/channelmgr/app.js';
 import { ChannelMessageRouter } from './applications/channelmgr/router.js';
-import { MainAgentDecl } from './aikernel/agents/mainagent.js';
+import { MainAgentDecl } from './aikernel/agents/mainagent/agent.js';
 import { NotificationManager } from './utils/notificationmgr.js';
 import { registerPluginsCommand } from './tui/subcommands/plugins.js';
 import { registerToolsCommand } from './tui/subcommands/tools.js';
@@ -46,8 +46,8 @@ function parseCommandLineArgs() {
     prog.option('--dump-log <path>', 'dump all log output to specified file', (v) => v);
     prog.option('--headless', 'run in headless mode (no TUI, requires -c)');
     prog.option('--profile <path>', 'write performance profile to specified JSON file', (v) => v);
-    prog.option('--allow-everything', 'bypass all permission checks (auto-allow everything)');
-    prog.option('--mode <mode>', 'agent mode to use (standard, plan, solo)', (v) => v);
+    prog.option('--allow-everything', 'no permission check, every operation is allowed');
+    prog.option('--mode <mode>', 'agent mode to use (standard, plan, solo, unlimited)', (v) => v);
     prog.option(
         '--config-directory <path>',
         `specify custom config directory (default: ${getDefaultAppDirectory()})`,
@@ -173,7 +173,8 @@ function parseCommandLineArgs() {
             headless: !!kwargs.headless,
             profile: kwargs.profile,
             allowEverything: !!kwargs.allowEverything,
-            mode: kwargs.mode
+            // --allow-everything 等价于 --mode unlimited
+            mode: kwargs.allowEverything ? 'unlimited' : kwargs.mode
         });
     });
 
