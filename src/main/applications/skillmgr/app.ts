@@ -18,7 +18,7 @@ import { BaseToolset } from '../../aikernel/tool.js';
 import SkillsWorker from './service/worker.js';
 import { MANAGE_SKILLS_SKILL } from './skills.js';
 import {
-    AddSkillFromPathTool,
+    AddSkillFromDirectoryTool,
     AddSkillFromUrlTool,
     AddSkillFromGitHubUrlTool,
     ListSkillsTool,
@@ -31,7 +31,13 @@ import type { Command } from 'commander';
 import { useCliTransport, useConsoleTransport } from '../../utils/logger.js';
 import path from 'path';
 import fs from 'fs';
-import { RegistryAdapters } from './registry-adapters.js';
+import {
+    installSkillFromDirectory,
+    installSkillFromLocalZip,
+    installSkillFromUrl,
+    installSkillFromGitHubUrl,
+    installFromRegistryInstallUrl
+} from './util.js';
 
 export class SkillMgrApplication extends BaseApplication {
     /** 静态回调列表：refresh 后通知订阅方（如 TUI 自动补全）*/
@@ -84,10 +90,10 @@ export class SkillMgrApplication extends BaseApplication {
                     const stat = fs.statSync(resolved);
                     if (stat.isDirectory()) {
                         console.log(`正在从本地目录安装技能: ${resolved}`);
-                        result = SkillRegistry.addSkillFromPath(resolved);
+                        result = installSkillFromDirectory(resolved);
                     } else if (stat.isFile() && resolved.toLowerCase().endsWith('.zip')) {
                         console.log(`正在从本地 zip 文件安装技能: ${resolved}`);
-                        result = SkillRegistry.addSkillFromZipPath(resolved);
+                        result = installSkillFromLocalZip(resolved);
                     } else {
                         console.error('✗ 本地文件必须是目录或 .zip 格式');
                         process.exit(1);
@@ -96,10 +102,10 @@ export class SkillMgrApplication extends BaseApplication {
                 } else if (source.startsWith('http://') || source.startsWith('https://')) {
                     if (source.includes('github.com') && source.includes('/tree/')) {
                         console.log(`正在从 GitHub URL 安装技能: ${source}`);
-                        result = await SkillRegistry.addSkillFromGitHubUrl(source);
+                        result = await installSkillFromGitHubUrl(source);
                     } else {
                         console.log(`正在从 URL 下载并安装技能: ${source}`);
-                        result = await SkillRegistry.addSkillFromUrl(source);
+                        result = await installSkillFromUrl(source);
                     }
                 } else {
                     console.error(`✗ 无法识别来源: ${source}`);
@@ -230,7 +236,7 @@ export class SkillMgrApplication extends BaseApplication {
         const manageSkillsSkill = Skill.parseMd(MANAGE_SKILLS_SKILL);
         const manageSkillsToolset = new BaseToolset('manage-skills');
 
-        manageSkillsToolset.addTool(new AddSkillFromPathTool(this));
+        manageSkillsToolset.addTool(new AddSkillFromDirectoryTool(this));
         manageSkillsToolset.addTool(new AddSkillFromUrlTool(this));
         manageSkillsToolset.addTool(new AddSkillFromGitHubUrlTool(this));
         manageSkillsToolset.addTool(new ListSkillsTool(this));
@@ -282,7 +288,7 @@ export class SkillMgrApplication extends BaseApplication {
      * 从 zip 文件路径安装技能，供渲染进程调用
      */
     installSkillFromZip(zipPath: string) {
-        const result = SkillRegistry.addSkillFromZipPath(zipPath);
+        const result = installSkillFromLocalZip(zipPath);
         if (result.success) {
             SkillRegistry.refresh();
             SkillMgrApplication.notifySkillsChanged(this.bundleName);
@@ -290,8 +296,8 @@ export class SkillMgrApplication extends BaseApplication {
         return result;
     }
 
-    addSkillFromPath(sourcePath: string) {
-        const result = SkillRegistry.addSkillFromPath(sourcePath);
+    addSkillFromDirectory(sourceDirectory: string) {
+        const result = installSkillFromDirectory(sourceDirectory);
         if (result.success) {
             SkillMgrApplication.notifySkillsChanged(this.bundleName);
         }
@@ -299,7 +305,7 @@ export class SkillMgrApplication extends BaseApplication {
     }
 
     addSkillFromUrl(url: string) {
-        return SkillRegistry.addSkillFromUrl(url).then((result) => {
+        return installSkillFromUrl(url).then((result) => {
             if (result.success) {
                 SkillMgrApplication.notifySkillsChanged(this.bundleName);
             }
@@ -308,7 +314,7 @@ export class SkillMgrApplication extends BaseApplication {
     }
 
     addSkillFromGitHubUrl(githubUrl: string) {
-        return SkillRegistry.addSkillFromGitHubUrl(githubUrl).then((result) => {
+        return installSkillFromGitHubUrl(githubUrl).then((result) => {
             if (result.success) {
                 SkillMgrApplication.notifySkillsChanged(this.bundleName);
             }
@@ -317,24 +323,12 @@ export class SkillMgrApplication extends BaseApplication {
     }
 
     async installFromRegistry(installUrl: string) {
-        const method = RegistryAdapters.getInstallMethod(installUrl);
-        let result;
-        if (method === 'clawhub') {
-            const parsed = RegistryAdapters.parseClawHubInstallUrl(installUrl);
-            if (!parsed) {
-                throw new Error('无效的 ClawHub installUrl');
-            }
-            result = await SkillRegistry.addSkillFromClawHubSlug(parsed.slug, parsed.version);
-        } else if (method === 'github') {
-            result = await SkillRegistry.addSkillFromGitHubUrl(installUrl);
-        } else {
-            result = await SkillRegistry.addSkillFromUrl(installUrl);
-        }
+        const result = await installFromRegistryInstallUrl(installUrl);
         if (!result.success) {
             throw new Error(result.error);
         }
         SkillMgrApplication.notifySkillsChanged(this.bundleName);
-        return { name: result.name };
+        return { name: result.name ?? '' };
     }
 
     deleteSkill(skillId: string) {

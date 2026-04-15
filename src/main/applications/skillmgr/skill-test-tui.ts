@@ -22,6 +22,7 @@ import {
 } from '@mariozechner/pi-tui';
 import chalk from 'chalk';
 import { defaultSelectListTheme } from '../../tui/theme';
+import { SelectTable, type SelectRow } from '../../tui/components/selecttable';
 import { OpenDeskTUI } from '../../tui/entry';
 import { SkillTestFramework, type TestSuiteResult } from './skill-test.js';
 import { SkillRegistry } from './skillregistry.js';
@@ -32,7 +33,7 @@ export class SkillTestOverlay implements Component {
     private openDeskTUI: OpenDeskTUI;
     private box: Box;
     private header: Text;
-    private list?: SelectList;
+    private list?: SelectList | SelectTable;
     private input?: Input;
     private state: TestViewState = 'main';
     private message: { text: string; isError: boolean } | null = null;
@@ -120,17 +121,19 @@ export class SkillTestOverlay implements Component {
             const items = [{ value: 'back', label: chalk.gray('没有可测试的技能，按 Enter 返回') }];
             this.list = new SelectList(items, 1, defaultSelectListTheme);
         } else {
-            const items = this.testableSkills.map((skillId) => {
+            const rows: SelectRow[] = this.testableSkills.map((skillId) => {
                 const skill = SkillRegistry.getSkillBody(skillId);
-                const name = skill?.frontmatter?.name || skillId;
-                const desc = skill?.frontmatter?.description || '';
-                const truncatedDesc = truncateToWidth(desc, 30, '...', false);
+                const name = this.normalizeInlineText(skill?.frontmatter?.name || skillId);
+                const desc = this.normalizeInlineText(skill?.frontmatter?.description || '无描述');
                 return {
                     value: skillId,
-                    label: `${chalk.bold(name)} ${chalk.dim('·')} ${chalk.dim(truncatedDesc)}`
+                    labels: [name, skillId, desc]
                 };
             });
-            this.list = new SelectList(items, Math.min(items.length, 10), defaultSelectListTheme);
+            const table = new SelectTable(rows, Math.min(rows.length, 10), defaultSelectListTheme);
+            table.setColumnStrechFactors([3, 3, 8]);
+            table.setAlignments(['left', 'left', 'left']);
+            this.list = table;
         }
 
         this.setupListHandlers();
@@ -377,6 +380,25 @@ export class SkillTestOverlay implements Component {
     }
 
     /** 清洗进程输出用于 TUI 显示：统一换行、去除 ANSI、替换控制字符，避免乱码与 \r 导致只显示末尾 */
+    private normalizeInlineText(value: unknown): string {
+        return String(value ?? '')
+            .replace(/\n/g, ' ')
+            .split('\r')
+            .join(' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+    }
+
+    private resolveSelectionValue(itemOrValue: any): string | undefined {
+        if (typeof itemOrValue === 'string') {
+            return itemOrValue;
+        }
+        if (itemOrValue && typeof itemOrValue.value === 'string') {
+            return itemOrValue.value;
+        }
+        return undefined;
+    }
+
     private sanitizeForDisplay(raw: string): string {
         if (!raw || typeof raw !== 'string') return '';
         let s = raw.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
@@ -548,13 +570,15 @@ export class SkillTestOverlay implements Component {
     private setupListHandlers() {
         if (!this.list) return;
 
-        this.list.onSelect = (item: any) => {
+        this.list.onSelect = (itemOrValue: any) => {
+            const value = this.resolveSelectionValue(itemOrValue);
+            if (!value) return;
             switch (this.state) {
                 case 'main':
-                    this.handleMainSelection(item.value);
+                    this.handleMainSelection(value);
                     break;
                 case 'select-skill':
-                    this.handleSkillSelection(item.value);
+                    this.handleSkillSelection(value);
                     break;
             }
         };
