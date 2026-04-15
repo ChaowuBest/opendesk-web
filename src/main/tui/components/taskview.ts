@@ -1,4 +1,12 @@
-import { Component, Markdown, Box, type TUI, visibleWidth, truncateToWidth } from '@mariozechner/pi-tui';
+import {
+    Component,
+    Markdown,
+    Box,
+    type TUI,
+    visibleWidth,
+    truncateToWidth,
+    wrapTextWithAnsi
+} from '@mariozechner/pi-tui';
 import type {
     TaskState,
     TaskUpdateChunk,
@@ -95,8 +103,26 @@ export class TextMessagePartView implements Component {
 const REASONING_SPINNER_FRAMES = ['◐', '◓', '◑', '◒'];
 const REASONING_SPINNER_MS = 120;
 
-/** partial 模式下保留的 reasoning 行数（从尾部算起；流式与结束后一致，避免结束后改为一行导致闪动） */
+/** partial 模式下保留的 reasoning 行数（从尾部算起，按卡片内容区换行后的可视行计；流式与结束后一致） */
 export const REASONING_TAIL_LINES = 10;
+
+/** 将原始按换行符分行的思考文本展开为内容区宽度下的可视行（与 Card 内 truncateToWidth 使用同一宽度基准） */
+function wrapReasoningLinesForPartial(rawLines: string[], contentWidth: number): string[] {
+    const out: string[] = [];
+    for (const line of rawLines) {
+        if (line.length === 0) {
+            out.push('');
+            continue;
+        }
+        const wrapped = wrapTextWithAnsi(line, contentWidth);
+        if (wrapped.length === 0) {
+            out.push('');
+        } else {
+            out.push(...wrapped);
+        }
+    }
+    return out;
+}
 
 /** 尾部截断时提示用户可切换为完整思考显示 */
 const REASONING_PARTIAL_OMIT_HINT = chalk.dim.italic('…… (使用 /reason display full 来显示完整思考内容)');
@@ -194,12 +220,14 @@ export class ReasoningMessagePartView implements Component {
             });
             this.cachedOutput = card.render(width);
         } else {
-            // partial：流式与结束后同一套尾部视图，避免结束后缩成一行造成布局跳动
-            const lines = this._content.split('\n');
-            const hasMoreAbove = lines.length > REASONING_TAIL_LINES;
-            const tailLines = lines.slice(-REASONING_TAIL_LINES).map((line) => chalk.italic(line));
-            const bodyLines = hasMoreAbove ? [REASONING_PARTIAL_OMIT_HINT, ...tailLines] : tailLines;
-            const maxBodyLines = hasMoreAbove ? REASONING_TAIL_LINES + 1 : REASONING_TAIL_LINES;
+            // partial：流式与结束后同一套尾部视图；先按内容区宽度换行，再按换行后的可视行取尾部
+            const contentWidth = Math.max(1, width - 4);
+            const wrappedLines = wrapReasoningLinesForPartial(this._content.split('\n'), contentWidth);
+            const hasMoreAbove = wrappedLines.length > REASONING_TAIL_LINES;
+            const tailLines = wrappedLines.slice(-REASONING_TAIL_LINES).map((line) => chalk.italic(line));
+            const hintLines = hasMoreAbove ? wrapTextWithAnsi(REASONING_PARTIAL_OMIT_HINT, contentWidth) : [];
+            const bodyLines = hasMoreAbove ? [...hintLines, ...tailLines] : tailLines;
+            const maxBodyLines = hasMoreAbove ? hintLines.length + REASONING_TAIL_LINES : REASONING_TAIL_LINES;
             const card = new Card({
                 icon: this._streaming ? this.getStreamingIcon() : chalk.dim('◆'),
                 title: '思考',
