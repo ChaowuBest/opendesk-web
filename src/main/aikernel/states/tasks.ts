@@ -695,6 +695,7 @@ export class TaskState {
                     logger.info(`Auto-compacting context for task ${this.task_id}`);
                 },
                 enableToolResultBudget: true,
+                enableMicrocompact: true,
                 taskId: this.task_id,
                 toolResultReplacementState: this.tool_result_replacement_state
             });
@@ -713,7 +714,49 @@ export class TaskState {
                 );
             }
 
-            if (preparation.compacted || preparation.toolResultStateChanged) {
+            if (preparation.microcompactStats) {
+                const stats = preparation.microcompactStats;
+                const skippedSummary = Object.entries(stats.skippedByReason)
+                    .sort(([leftReason], [rightReason]) => leftReason.localeCompare(rightReason))
+                    .map(([reason, count]) => `${reason}=${count}`)
+                    .join(', ');
+                logger.info(
+                    `[Compact Step5A] microcompact analysis: scanned=${stats.scannedToolCallCount}, ` +
+                        `candidates=${stats.candidateCount}, skipped=${stats.skippedCount}, ` +
+                        `tailProtected=${stats.tailProtectedCount}, totalCandidateChars=${stats.totalCandidateChars}, ` +
+                        `tailAssistantMessages=${stats.tailAssistantMessages}` +
+                        (skippedSummary.length > 0 ? `, skippedByReason={${skippedSummary}}` : '')
+                );
+
+                const topCandidates = [...(preparation.microcompactAnalysis?.candidates ?? [])]
+                    .sort((left, right) => right.sizeChars - left.sizeChars)
+                    .slice(0, 3);
+                for (const candidate of topCandidates) {
+                    logger.info(
+                        `[Compact Step5A] candidate tool=${candidate.toolName}, chars=${candidate.sizeChars}, ` +
+                            `lines=${candidate.sizeLines}, chatIndex=${candidate.chatContextMessageIndex}, ` +
+                            `part=${candidate.toolCallPartIndex}, call=${candidate.toolCallIndex}, ` +
+                            `resultId=${candidate.resultId}, hasStorage=${candidate.hasResultStorage}`
+                    );
+                }
+                logger.info(
+                    `[Compact Step5B] local microcompact: applied=${stats.appliedCount}, ` +
+                        `skippedByOverride=${stats.skippedByOverrideCount}, ` +
+                        `unshrinkable=${stats.unshrinkableCount}, ` +
+                        `charsBefore=${stats.totalCharsBefore}, charsAfter=${stats.totalCharsAfter}`
+                );
+
+                for (const candidate of preparation.microcompactAppliedCandidates.slice(0, 3)) {
+                    logger.info(
+                        `[Compact Step5B] applied tool=${candidate.toolName}, chars=${candidate.sizeChars}, ` +
+                            `lines=${candidate.sizeLines}, chatIndex=${candidate.chatContextMessageIndex}, ` +
+                            `part=${candidate.toolCallPartIndex}, call=${candidate.toolCallIndex}, ` +
+                            `resultId=${candidate.resultId}`
+                    );
+                }
+            }
+
+            if (preparation.compacted || preparation.toolResultStateChanged || preparation.microcompactStateChanged) {
                 this.task_manager_state.save();
             }
 
