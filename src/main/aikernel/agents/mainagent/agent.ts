@@ -96,10 +96,9 @@ function getToneAndStyleSection(soulName: string, soulUid: string, soulContent: 
 
 用户当前指定你使用名为 '${soulName}', uid为 ${soulUid} 的人设，你应该在扮演好这个人设的同时，完成用户指定的任务。
 如果用户希望改变你的性格，说话语气等设定内容，你应当使用manage-souls技能来修改或者添加新的人设。
+你的回复语言应当与用户给你发消息使用的语言保持一致。
 
-当前人设内容如下：
-
-${soulContent}`;
+当前人设内容如下：${soulContent}`;
 }
 
 // ─── Section 7: Output Efficiency ─────────────────────────────────
