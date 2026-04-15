@@ -109,6 +109,9 @@ export class OpenDeskTUI {
 
     public activeTaskId?: string;
 
+    /** 所有任务共享的权限确认 provider（内含请求队列，确保同时只弹一个弹窗） */
+    private sharedPermissionPrompt: TUIPermissionPromptProvider;
+
     /** 跟踪是否有 overlay 打开 */
     hasOpenOverlay = false;
 
@@ -177,6 +180,7 @@ export class OpenDeskTUI {
         this.todoList = new TodoList();
         this.inputArea = new AgentInputArea(this);
         this.dashboardBar = new DashboardBar(() => this.tui.requestRender());
+        this.sharedPermissionPrompt = new TUIPermissionPromptProvider(this);
         this.workspace = args.workspace;
         this.model = args.model;
         this.singleShot = !!args.command;
@@ -1254,7 +1258,7 @@ export class OpenDeskTUI {
     private async initTaskHarness(task: TaskState): Promise<void> {
         try {
             task.harnessContext = await HarnessContext.createForMode(this.workspace, this._activeMode);
-            task.harnessContext.permissionPrompt = new TUIPermissionPromptProvider(this);
+            task.harnessContext.permissionPrompt = this.sharedPermissionPrompt;
             task.activeModeId = this._activeMode.id;
         } catch (err) {
             logger.warn(`Failed to init task harness, using empty context: ${err}`);

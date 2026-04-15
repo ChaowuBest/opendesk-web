@@ -262,7 +262,7 @@ export const MAIN_AGENT_SOLO_MODE: ModeDecl = {
     id: 'solo',
     name: 'solo',
     description: '全权限无人值守模式，敏感路径直接拒绝',
-    icon: '🔓',
+    icon: '🎮',
     color: '#00E676',
     permissionFactory: (_workspace) => createSoloModePermissionRules()
 };
@@ -275,7 +275,7 @@ export const MAIN_AGENT_UNLIMITED_MODE: ModeDecl = {
     id: 'unlimited',
     name: 'unlimited',
     description: '无限制模式，所有权限全部放通',
-    icon: '🎮',
+    icon: '🔓',
     color: '#FF4081',
     permissionFactory: (_workspace) => createUnlimitedModePermissionRules()
 };

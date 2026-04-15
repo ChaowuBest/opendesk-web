@@ -293,6 +293,14 @@ export interface PermissionEnforcer {
 export type PermissionDenyReason = 'user_denied' | 'timeout' | 'no_prompt_provider';
 
 /**
+ * 权限请求的任务上下文信息，用于在 UI 中标识请求来源。
+ */
+export interface PermissionTaskInfo {
+    taskId: string;
+    taskName: string | null;
+}
+
+/**
  * 用户对权限 ask 请求做出的响应
  */
 export interface PermissionUserResponse {
@@ -328,11 +336,13 @@ export interface PermissionPromptProvider {
      * @param requests 被询问的权限请求列表（同一 resourceType + action）
      * @param toolName 触发此权限请求的工具名称
      * @param prefixOptions 所有请求路径的共同前缀选项（用于让用户选择授权范围）
+     * @param taskInfo 可选的任务上下文信息，用于标识请求来源
      * @returns 用户的响应
      */
     prompt(
         requests: PermissionRequest[],
         toolName: string,
-        prefixOptions: { label: string; pattern: string }[]
+        prefixOptions: { label: string; pattern: string }[],
+        taskInfo?: PermissionTaskInfo
     ): Promise<PermissionUserResponse>;
 }

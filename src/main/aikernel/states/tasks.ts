@@ -1099,8 +1099,10 @@ export class TaskState {
             return { decision: 'deny', rememberScope: 'none', denyReason: 'no_prompt_provider' };
         }
 
+        const taskInfo = { taskId: this.task_id, taskName: this.task_name };
+
         try {
-            return await promptProvider.prompt(requests, toolName, prefixOptions);
+            return await promptProvider.prompt(requests, toolName, prefixOptions, taskInfo);
         } catch (err) {
             logger.error(`permission prompt failed: ${err}`);
             return { decision: 'deny', rememberScope: 'none' };
