@@ -492,7 +492,20 @@ export class OpenDeskTUI {
         // 订阅 Skill 刷新事件，让 /skillName 自动补全的名称和描述跟着更新
         SkillMgrApplication.onSkillsRefreshed(() => {
             this.inputArea.refreshAutocomplete();
+            void this.refreshActiveTaskSystemPrompt();
         });
+    }
+
+    private async refreshActiveTaskSystemPrompt(): Promise<void> {
+        if (!this.activeTaskId) return;
+        const task = this.taskManagerState.getTask(this.activeTaskId);
+        if (!task) return;
+        try {
+            const systemPrompt = await this.agentDecl.createSystemPrompt(this._activeMode);
+            task.setSystemPrompt(systemPrompt);
+        } catch (err) {
+            logger.warn(`Failed to refresh active task system prompt after skill update: ${err}`);
+        }
     }
 
     showNotificationCenter() {

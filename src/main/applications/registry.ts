@@ -358,6 +358,13 @@ export function initializeRegistryWorker() {
                 }
                 break;
             }
+            case 'skillsRegistryChanged': {
+                const skillApp = ApplicationRegistry.getApplication('skillmgr');
+                if (skillApp && typeof (skillApp as any).refresh === 'function') {
+                    (skillApp as any).refresh();
+                }
+                break;
+            }
             default: {
                 console.info(event);
                 break;

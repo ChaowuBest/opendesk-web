@@ -54,7 +54,7 @@ export class AddSkillFromUrlTool extends BaseTool<typeof AddSkillFromUrlArgsSche
     }
 
     private async add(args: z.output<typeof AddSkillFromUrlArgsSchema>): Promise<string> {
-        const result = this.skillApp.addSkillFromUrl(args.url);
+        const result = await this.skillApp.addSkillFromUrl(args.url);
         return JSON.stringify(result);
     }
 }
@@ -77,7 +77,7 @@ export class AddSkillFromGitHubUrlTool extends BaseTool<typeof AddSkillFromGitHu
     }
 
     private async add(args: z.output<typeof AddSkillFromGitHubUrlArgsSchema>): Promise<string> {
-        const result = this.skillApp.addSkillFromGitHubUrl(args.githubUrl);
+        const result = await this.skillApp.addSkillFromGitHubUrl(args.githubUrl);
         return JSON.stringify(result);
     }
 }

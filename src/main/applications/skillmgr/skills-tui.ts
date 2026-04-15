@@ -29,6 +29,7 @@ import { OpenDeskTUI } from '../../tui/entry';
 import { SkillRegistry } from './skillregistry.js';
 import { RegistryAdapters } from './registry-adapters.js';
 import { Setting } from '../../utils/setting.js';
+import { SkillMgrApplication } from './app.js';
 
 interface RegistrySkill {
     id: string;
@@ -310,6 +311,7 @@ export class SkillsOverlay implements Component {
         try {
             const result = SkillRegistry.addSkillFromPath(path);
             if (result.success) {
+                SkillMgrApplication.notifySkillsChanged();
                 this.showMessage(`成功添加技能: ${result.name}`, false, 'main');
                 await this.loadInstalledSkills();
                 this.showMain();
@@ -354,6 +356,7 @@ export class SkillsOverlay implements Component {
         try {
             const result = SkillRegistry.addSkillFromZipPath(path);
             if (result.success) {
+                SkillMgrApplication.notifySkillsChanged();
                 this.showMessage(`成功添加技能: ${result.name}`, false, 'main');
                 await this.loadInstalledSkills();
                 this.showMain();
@@ -404,6 +407,7 @@ export class SkillsOverlay implements Component {
                 result = await SkillRegistry.addSkillFromUrl(url);
             }
             if (result.success) {
+                SkillMgrApplication.notifySkillsChanged();
                 this.showMessage(`成功添加技能: ${result.name}`, false, 'main');
                 await this.loadInstalledSkills();
                 this.showMain();
@@ -448,6 +452,7 @@ export class SkillsOverlay implements Component {
         try {
             const result = await SkillRegistry.addSkillFromClawHubSlug(slug);
             if (result.success) {
+                SkillMgrApplication.notifySkillsChanged();
                 this.showMessage(`成功添加技能: ${result.name}`, false, 'main');
                 await this.loadInstalledSkills();
                 this.showMain();
@@ -713,6 +718,7 @@ export class SkillsOverlay implements Component {
         try {
             const result = SkillRegistry.deleteSkill(skillId);
             if (result.success) {
+                SkillMgrApplication.notifySkillsChanged();
                 this.showMessage(`成功删除技能: ${skillId}`, false, 'view-installed');
                 await this.loadInstalledSkills();
                 this.showViewInstalled();
@@ -823,6 +829,7 @@ export class SkillsOverlay implements Component {
             }
 
             if (result?.success) {
+                SkillMgrApplication.notifySkillsChanged();
                 this.showMessage(`成功安装技能: ${result.name}`, false, 'main');
                 await this.loadInstalledSkills();
                 this.showMain();

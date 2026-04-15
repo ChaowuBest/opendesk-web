@@ -51,6 +51,16 @@ export class SkillMgrApplication extends BaseApplication {
         }
     }
 
+    /**
+     * 技能安装/删除后触发运行时热更新：
+     * - 清理 AI SkillRegistry 缓存（影响 system prompt 的 skills 段）
+     * - 通知订阅者（自动补全、当前任务 prompt 刷新等）
+     */
+    static notifySkillsChanged(bundleName: string = 'skillmgr'): void {
+        AISkillRegistry.getInstance().clearCache(bundleName);
+        SkillMgrApplication.notifyRefreshListeners();
+    }
+
     constructor() {
         super('skillmgr', 'Skills');
     }
@@ -239,7 +249,7 @@ export class SkillMgrApplication extends BaseApplication {
         logger.info('[skillmgr] config changed, refreshing skills...');
         if (this.getConfig()?.enabled === true) {
             SkillRegistry.refresh();
-            SkillMgrApplication.notifyRefreshListeners();
+            SkillMgrApplication.notifySkillsChanged(this.bundleName);
         }
     }
 
@@ -275,22 +285,35 @@ export class SkillMgrApplication extends BaseApplication {
         const result = SkillRegistry.addSkillFromZipPath(zipPath);
         if (result.success) {
             SkillRegistry.refresh();
-            AISkillRegistry.getInstance().clearCache(this.bundleName);
-            SkillMgrApplication.notifyRefreshListeners();
+            SkillMgrApplication.notifySkillsChanged(this.bundleName);
         }
         return result;
     }
 
     addSkillFromPath(sourcePath: string) {
-        return SkillRegistry.addSkillFromPath(sourcePath);
+        const result = SkillRegistry.addSkillFromPath(sourcePath);
+        if (result.success) {
+            SkillMgrApplication.notifySkillsChanged(this.bundleName);
+        }
+        return result;
     }
 
     addSkillFromUrl(url: string) {
-        return SkillRegistry.addSkillFromUrl(url);
+        return SkillRegistry.addSkillFromUrl(url).then((result) => {
+            if (result.success) {
+                SkillMgrApplication.notifySkillsChanged(this.bundleName);
+            }
+            return result;
+        });
     }
 
     addSkillFromGitHubUrl(githubUrl: string) {
-        return SkillRegistry.addSkillFromGitHubUrl(githubUrl);
+        return SkillRegistry.addSkillFromGitHubUrl(githubUrl).then((result) => {
+            if (result.success) {
+                SkillMgrApplication.notifySkillsChanged(this.bundleName);
+            }
+            return result;
+        });
     }
 
     async installFromRegistry(installUrl: string) {
@@ -310,20 +333,23 @@ export class SkillMgrApplication extends BaseApplication {
         if (!result.success) {
             throw new Error(result.error);
         }
+        SkillMgrApplication.notifySkillsChanged(this.bundleName);
         return { name: result.name };
     }
 
     deleteSkill(skillId: string) {
-        return SkillRegistry.deleteSkill(skillId);
+        const result = SkillRegistry.deleteSkill(skillId);
+        if (result.success) {
+            SkillMgrApplication.notifySkillsChanged(this.bundleName);
+        }
+        return result;
     }
 
     clearSkills() {}
 
     refresh() {
         const { toolsets, errors } = SkillRegistry.refresh();
-        // 清除 AI SkillRegistry 的缓存，确保后续读取拿到最新数据
-        AISkillRegistry.getInstance().clearCache(this.bundleName);
-        SkillMgrApplication.notifyRefreshListeners();
+        SkillMgrApplication.notifySkillsChanged(this.bundleName);
         return { count: toolsets.length, errors };
     }
 
