@@ -9,19 +9,21 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { BaseWorker } from "../../base";
-import { A2ARegistryClient } from "./client.js";
-import { LLM } from "../../../aikernel/llm.js";
-import { ChatContext, UserMessage, AssistantMessage, FileMessagePart } from "../../../aikernel/messages";
-import { logger } from "../../../utils/logger.js";
-import { z } from "zod";
-import { ClientFactory } from "@a2a-js/sdk/client";
-import { randomUUID } from "crypto";
-import { A2UIToHTMLConverter} from '../../../services/a2ui/a2ui-to-html.js'
-import { isJSON, jsonToHTML } from '../../../services/a2ui/json-to-html.js'
+import { BaseWorker } from '../../base';
+import { A2ARegistryClient } from './client.js';
+import fs from 'fs';
+import { LLM } from '../../../aikernel/llm.js';
+import { ChatContext, UserMessage, AssistantMessage, FileMessagePart } from '../../../aikernel/messages';
+import { logger } from '../../../utils/logger.js';
+import { z } from 'zod';
+import { ClientFactory } from '@a2a-js/sdk/client';
+import { randomUUID } from 'crypto';
+import { A2UIToHTMLConverter } from '../../../services/a2ui/a2ui-to-html.js';
+import { isJSON, jsonToHTML } from '../../../services/a2ui/json-to-html.js';
+import { Setting } from '../../../utils/setting.js';
 
 // 硬编码的服务器地址
-const GATEWAY_URL = "http://1.92.70.52:8080";
+const GATEWAY_URL = 'http://1.92.70.52:8080';
 
 class A2AWorker extends BaseWorker {
     constructor(bundleName, appDataDirectory) {
@@ -45,7 +47,6 @@ class A2AWorker extends BaseWorker {
             return null;
         }
 
-        const { Setting } = await import('../../../utils/setting.js');
         const modelInstance = Setting.getInstance().getModelInstance(this.config.default_a2a_model.trim());
 
         if (!modelInstance) {
@@ -111,50 +112,50 @@ class A2AWorker extends BaseWorker {
         }
 
         // 构建 agent cards 的详细描述
-        const agentsDescription = agentCards.map((entry, index) => {
-            const agentName = entry.name || '';
-            const agentId = agentName.includes('/')
-                ? agentName.split('/').pop()
-                : agentName;
-            const card = entry.card || {};
-            const skills = card.skills || [];
-            const supportedInterfaces = card.supportedInterfaces || [];
+        const agentsDescription = agentCards
+            .map((entry, index) => {
+                const agentName = entry.name || '';
+                const agentId = agentName.includes('/') ? agentName.split('/').pop() : agentName;
+                const card = entry.card || {};
+                const skills = card.skills || [];
+                const supportedInterfaces = card.supportedInterfaces || [];
 
-            let description = `\n## Agent ${index + 1}: ${card.name || agentId}\n`;
-            description += `- Agent ID: ${agentId}\n`;
-            if (card.version) {
-                description += `- 版本: ${card.version}\n`;
-            }
-            if (card.description) {
-                description += `- 描述: ${card.description}\n`;
-            }
+                let description = `\n## Agent ${index + 1}: ${card.name || agentId}\n`;
+                description += `- Agent ID: ${agentId}\n`;
+                if (card.version) {
+                    description += `- 版本: ${card.version}\n`;
+                }
+                if (card.description) {
+                    description += `- 描述: ${card.description}\n`;
+                }
 
-            if (skills.length > 0) {
-                description += `- 支持的技能 (${skills.length} 个):\n`;
-                skills.forEach((skill, skillIndex) => {
-                    description += `  ${skillIndex + 1}. ${skill.name || skill.id || 'N/A'}`;
-                    if (skill.description) {
-                        description += `: ${skill.description}`;
-                    }
-                    if (skill.tags && skill.tags.length > 0) {
-                        description += ` [标签: ${skill.tags.join(', ')}]`;
-                    }
-                    if (skill.examples && skill.examples.length > 0) {
-                        description += ` [示例: ${skill.examples.join(', ')}]`;
-                    }
-                    description += '\n';
-                });
-            }
+                if (skills.length > 0) {
+                    description += `- 支持的技能 (${skills.length} 个):\n`;
+                    skills.forEach((skill, skillIndex) => {
+                        description += `  ${skillIndex + 1}. ${skill.name || skill.id || 'N/A'}`;
+                        if (skill.description) {
+                            description += `: ${skill.description}`;
+                        }
+                        if (skill.tags && skill.tags.length > 0) {
+                            description += ` [标签: ${skill.tags.join(', ')}]`;
+                        }
+                        if (skill.examples && skill.examples.length > 0) {
+                            description += ` [示例: ${skill.examples.join(', ')}]`;
+                        }
+                        description += '\n';
+                    });
+                }
 
-            if (supportedInterfaces.length > 0) {
-                description += `- 支持的接口:\n`;
-                supportedInterfaces.forEach((iface, ifaceIndex) => {
-                    description += `  ${ifaceIndex + 1}. ${iface.url || 'N/A'} (${iface.protocolBinding || 'N/A'})\n`;
-                });
-            }
+                if (supportedInterfaces.length > 0) {
+                    description += `- 支持的接口:\n`;
+                    supportedInterfaces.forEach((iface, ifaceIndex) => {
+                        description += `  ${ifaceIndex + 1}. ${iface.url || 'N/A'} (${iface.protocolBinding || 'N/A'})\n`;
+                    });
+                }
 
-            return description;
-        }).join('\n');
+                return description;
+            })
+            .join('\n');
 
         // 构建 prompt
         const prompt = `你是一个智能 agent 选择助手。根据用户的需求，从提供的 agent 列表中选择最合适的 agent 和 skill。
@@ -189,12 +190,12 @@ ${agentsDescription}
 
         // 定义返回的 Zod schema
         const selectionSchema = z.object({
-            agentId: z.string().describe("选中的 agent ID（从 agent name 中提取）"),
-            agentName: z.string().describe("选中的 agent 完整名称（entry.name）"),
-            skillId: z.string().optional().describe("选中的 skill ID 或名称（从 agent 的 skills 列表中选择）"),
-            skillName: z.string().optional().describe("选中的 skill 名称"),
-            confidence: z.number().min(0).max(1).describe("匹配度置信度 (0-1)"),
-            reason: z.string().describe("选择该 agent 和 skill 的原因")
+            agentId: z.string().describe('选中的 agent ID（从 agent name 中提取）'),
+            agentName: z.string().describe('选中的 agent 完整名称（entry.name）'),
+            skillId: z.string().optional().describe('选中的 skill ID 或名称（从 agent 的 skills 列表中选择）'),
+            skillName: z.string().optional().describe('选中的 skill 名称'),
+            confidence: z.number().min(0).max(1).describe('匹配度置信度 (0-1)'),
+            reason: z.string().describe('选择该 agent 和 skill 的原因')
         });
 
         try {
@@ -264,12 +265,36 @@ ${agentsDescription}
                         }
                     });
                 } else if (attachment.type === 'file') {
-                    // 对于文件，可以发送文件路径或转换为文本描述
-                    // 这里先发送文件路径，如果 agent 需要读取文件内容，可以通过其他方式
-                    parts.push({
-                        kind: 'text',
-                        text: `[文件附件: ${attachment.name}${attachment.filePath ? ` (路径: ${attachment.filePath})` : ''}]`
-                    });
+                    let base64Data = attachment.data;
+
+                    if (!base64Data && attachment.filePath) {
+                        try {
+                            const fileBuffer = fs.readFileSync(attachment.filePath);
+                            base64Data = fileBuffer.toString('base64');
+                        } catch (err) {
+                            logger.error(`暴力读取本地文件失败: ${err.message}`);
+                        }
+                    }
+
+                    if (base64Data) {
+                        // 处理前缀
+                        if (base64Data.startsWith('data:')) {
+                            const base64Match = base64Data.match(/^data:[^;]+;base64,(.+)$/);
+                            if (base64Match) base64Data = base64Match[1];
+                        }
+                        parts.push({
+                            kind: 'file',
+                            file: {
+                                bytes: base64Data,
+                                mimeType: attachment.mimeType || 'text/plain'
+                            }
+                        });
+                    } else {
+                        parts.push({
+                            kind: 'text',
+                            text: `[文件附件: ${attachment.name}]`
+                        });
+                    }
                 }
             }
 
@@ -278,8 +303,8 @@ ${agentsDescription}
                     messageId: randomUUID(),
                     role: 'user',
                     parts: parts,
-                    kind: 'message',
-                },
+                    kind: 'message'
+                }
             };
 
             const response = await client.sendMessage(sendParams);
@@ -287,8 +312,8 @@ ${agentsDescription}
             // 提取响应文本
             if (response && response.parts && response.parts.length > 0) {
                 const textParts = response.parts
-                    .filter(part => part.kind === 'text')
-                    .map(part => part.text)
+                    .filter((part) => part.kind === 'text')
+                    .map((part) => part.text)
                     .join('');
 
                 // 检测是否是 JSON 格式，如果是则转换为 HTML
@@ -332,7 +357,7 @@ ${agentsDescription}
      * @param {string | {text: string, attachments: Array}} message - 用户消息（字符串或消息对象）
      * @returns {AsyncGenerator<object>}
      */
-    async* sendChatMessage(conversationId, message) {
+    async *sendChatMessage(conversationId, message) {
         if (!this.conversations.has(conversationId)) {
             throw new Error(`Conversation ${conversationId} not found`);
         }
@@ -355,11 +380,13 @@ ${agentsDescription}
         // 构建用于 agent 选择的提示文本（包含文本和附件描述）
         let agentSelectionPrompt = textContent;
         if (attachments.length > 0) {
-            const attachmentDescriptions = attachments.map(att => {
-                if (att.type === 'image') return '图片';
-                if (att.type === 'audio') return '音频';
-                return '文件';
-            }).join('、');
+            const attachmentDescriptions = attachments
+                .map((att) => {
+                    if (att.type === 'image') return '图片';
+                    if (att.type === 'audio') return '音频';
+                    return '文件';
+                })
+                .join('、');
             agentSelectionPrompt = `${textContent} [包含${attachments.length}个附件: ${attachmentDescriptions}]`.trim();
         }
 
@@ -375,10 +402,10 @@ ${agentsDescription}
                 if (targetAgentId) {
                     logger.info(`[Sticky Routing] 前端指定了 Agent: ${targetAgentId}`);
                     // 在现有列表中查找该 Agent
-                    const foundEntry = agentCards.find(entry => {
-                         const name = entry.name || '';
-                         const id = name.includes('/') ? name.split('/').pop() : name;
-                         return id === targetAgentId;
+                    const foundEntry = agentCards.find((entry) => {
+                        const name = entry.name || '';
+                        const id = name.includes('/') ? name.split('/').pop() : name;
+                        return id === targetAgentId;
                     });
 
                     if (foundEntry) {
@@ -401,11 +428,9 @@ ${agentsDescription}
                 //const selectedAgent = await this.selectAgent(agentSelectionPrompt, agentCards);
 
                 // 找到对应的 agent entry
-                selectedAgentEntry = agentCards.find(entry => {
+                selectedAgentEntry = agentCards.find((entry) => {
                     const agentName = entry.name || '';
-                    const agentId = agentName.includes('/')
-                        ? agentName.split('/').pop()
-                        : agentName;
+                    const agentId = agentName.includes('/') ? agentName.split('/').pop() : agentName;
                     return agentId === selectedAgent.agentId || agentName === selectedAgent.agentName;
                 });
 
@@ -420,10 +445,11 @@ ${agentsDescription}
                         const skills = card.skills || [];
                         let selectedSkill = null;
                         if (selectedAgent.skillId && skills.length > 0) {
-                            selectedSkill = skills.find(skill =>
-                                (skill.id === selectedAgent.skillId) ||
-                                (skill.name === selectedAgent.skillId) ||
-                                (skill.name === selectedAgent.skillName)
+                            selectedSkill = skills.find(
+                                (skill) =>
+                                    skill.id === selectedAgent.skillId ||
+                                    skill.name === selectedAgent.skillId ||
+                                    skill.name === selectedAgent.skillName
                             );
                         }
 
@@ -431,7 +457,8 @@ ${agentsDescription}
                         const agentDisplayName = card.name || selectedAgent.agentId;
                         let selectionMessage = `已选择 Agent: **${agentDisplayName}**`;
                         if (selectedSkill) {
-                            const skillDisplayName = selectedSkill.name || selectedAgent.skillName || selectedAgent.skillId;
+                            const skillDisplayName =
+                                selectedSkill.name || selectedAgent.skillName || selectedAgent.skillId;
                             selectionMessage += `，Skill: **${skillDisplayName}**`;
                         } else if (selectedAgent.skillName) {
                             selectionMessage += `，Skill: **${selectedAgent.skillName}**`;
@@ -446,16 +473,18 @@ ${agentsDescription}
                             conversationId: conversationId,
                             agentName: agentDisplayName,
                             agentId: selectedAgent.agentId,
-                            skillName: selectedSkill ? (selectedSkill.name || selectedAgent.skillName) : (selectedAgent.skillName || ''),
-                            skillId: selectedSkill ? (selectedSkill.id || selectedAgent.skillId) : (selectedAgent.skillId || ''),
+                            skillName: selectedSkill
+                                ? selectedSkill.name || selectedAgent.skillName
+                                : selectedAgent.skillName || '',
+                            skillId: selectedSkill
+                                ? selectedSkill.id || selectedAgent.skillId
+                                : selectedAgent.skillId || '',
                             reason: selectedAgent.reason || '',
                             message: selectionMessage
                         };
 
                         // 使用 A2A 协议调用 agent（传递完整的消息对象）
-                        const messageData = typeof message === 'string'
-                            ? { text: message, attachments: [] }
-                            : message;
+                        const messageData = typeof message === 'string' ? { text: message, attachments: [] } : message;
                         const agentResponse = await this.callAgentViaA2A(providerUrl, messageData);
 
                         // A2A 已返回完整响应，直接整段发送，无需模拟流式（避免人为延迟）
@@ -476,25 +505,31 @@ ${agentsDescription}
                             success: true
                         };
 
-                        // 保存对话历史
-                        const userMessage = new UserMessage(textContent);
-                        // 如果有附件，添加到消息中
-                        if (attachments.length > 0) {
-                            for (const attachment of attachments) {
-                                if (attachment.type === 'image') {
-                                    userMessage.appendImageURL(attachment.data);
-                                } else if (attachment.type === 'file') {
-                                    // FileMessagePart 需要文件路径和内容，这里先只添加路径
-                                    // 如果需要提取内容，可以在这里处理
-                                    userMessage.content.push(new FileMessagePart(attachment.filePath || attachment.name, ''));
+                        try {
+                            // 保存对话历史
+                            const userMessage = new UserMessage(textContent);
+                            // 如果有附件，添加到消息中
+                            if (attachments.length > 0) {
+                                for (const attachment of attachments) {
+                                    if (attachment.type === 'image') {
+                                        userMessage.appendImageURL(attachment.data);
+                                    } else if (attachment.type === 'file') {
+                                        // FileMessagePart 需要文件路径和内容，这里先只添加路径
+                                        // 如果需要提取内容，可以在这里处理
+                                        userMessage.content.push(
+                                            new FileMessagePart(attachment.filePath || attachment.name, '')
+                                        );
+                                    }
                                 }
-                                // audio 类型暂时作为文本描述处理
                             }
+                            chatContext.appendMessage(userMessage);
+
+                            const assistantMessage = new AssistantMessage();
+                            assistantMessage.content = [{ type: 'text', text: responseText }];
+                            chatContext.appendMessage(assistantMessage);
+                        } catch (histErr) {
+                            logger.error(`保存历史记录异常 (已安全拦截): ${histErr.message}`);
                         }
-                        chatContext.appendMessage(userMessage);
-                        const assistantMessage = new AssistantMessage();
-                        assistantMessage.content = [{ type: 'text', text: responseText }];
-                        chatContext.appendMessage(assistantMessage);
 
                         return { success: true };
                     } else {
@@ -508,7 +543,12 @@ ${agentsDescription}
             }
         } catch (error) {
             logger.error(`Error selecting/calling agent: ${error.message}`);
-            // 如果 A2A 调用失败，回退到 LLM
+            yield {
+                type: 'stream_error',
+                conversationId: conversationId,
+                error: `Agent 调用失败: ${error.message}`
+            };
+            return { success: false };
         }
 
         // 回退方案：使用 LLM 生成响应
@@ -542,12 +582,14 @@ ${agentsDescription}
                     type: 'stream_chunk',
                     conversationId: conversationId,
                     chunk: {
-                        content: assistantMessage.content.map(part => {
-                            if (part.type === 'text') {
-                                return { type: 'text', text: part.text };
-                            }
-                            return null;
-                        }).filter(p => p !== null),
+                        content: assistantMessage.content
+                            .map((part) => {
+                                if (part.type === 'text') {
+                                    return { type: 'text', text: part.text };
+                                }
+                                return null;
+                            })
+                            .filter((p) => p !== null),
                         finishReason: chunkResponse.finish_reason
                     }
                 };
@@ -592,12 +634,12 @@ ${agentsDescription}
             if (msg instanceof UserMessage) {
                 history.push({
                     role: 'user',
-                    content: msg.content.map(part => part.text).join('')
+                    content: msg.content.map((part) => part.text).join('')
                 });
             } else if (msg instanceof AssistantMessage) {
                 const textParts = msg.content
-                    .filter(part => part.type === 'text')
-                    .map(part => part.text)
+                    .filter((part) => part.type === 'text')
+                    .map((part) => part.text)
                     .join('');
                 history.push({
                     role: 'assistant',

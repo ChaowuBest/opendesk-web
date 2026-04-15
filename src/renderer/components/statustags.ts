@@ -35,7 +35,7 @@ class TaskStatusTag extends HTMLElement {
                 <span class="absolute inset-0 w-full h-full bg-gradient-to-r from-transparent via-white/40 to-transparent -translate-x-full animate-[shimmer_2s_infinite]"></span>
             </span>
         </div>
-        `
+        `;
     }
 }
 

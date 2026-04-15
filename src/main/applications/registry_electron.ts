@@ -14,16 +14,15 @@
  * 其他标准功能（可以在CLI版本中复用的仍然在registry.ts中实现）
  */
 
-import { ApplicationRegistry } from "./registry.js";
+import { ApplicationRegistry } from './registry.js';
 import { app, protocol } from 'electron';
-import { logger } from "../utils/logger.js";
-import crypto from "crypto";
-
+import { logger } from '../utils/logger.js';
+import crypto from 'crypto';
 
 export function initializeRegistryProtocols() {
     // 收集协议配置并注册 schemes（必须在 app.whenReady() 之前）
     const protocolConfigs = ApplicationRegistry.collectProtocolHandlerEntries();
-    const schemes = protocolConfigs.map(config => ({
+    const schemes = protocolConfigs.map((config) => ({
         scheme: config.scheme,
         privileges: config.privileges || { standard: true, secure: true, supportFetchAPI: true }
     }));
@@ -39,34 +38,37 @@ export function initializeRegistryProtocols() {
 export function registerApplicationRegistryHandlers(ipcMain: Electron.IpcMain) {
     ipcMain.handle('applicationRegistry:getApplicationList', async (event) => {
         return { status: 'ok', data: ApplicationRegistry.getApplicationList() };
-    })
+    });
     ipcMain.handle('applicationRegistry:call', async (event, bundleName, methodName, ...args) => {
         return ApplicationRegistry.callWorker(bundleName, methodName, ...args);
-    })
+    });
     ipcMain.handle('applicationRegistry:callMainWorld', async (event, bundleName, methodName, ...args) => {
         const application = ApplicationRegistry.getApplication(bundleName);
         if (application === undefined) {
-            return { status: 'error', message: `application ${bundleName} not found` }
+            return { status: 'error', message: `application ${bundleName} not found` };
         }
         if (typeof application[methodName] !== 'function') {
-            return { status: 'error', message: `method ${methodName} not found in application ${bundleName}` }
+            return {
+                status: 'error',
+                message: `method ${methodName} not found in application ${bundleName}`
+            };
         }
         return { status: 'ok', data: await application[methodName](...args) };
-    })
+    });
     ipcMain.handle('applicationRegistry:streamCall', async (event, bundleName, methodName, ...args) => {
         const application = ApplicationRegistry.getApplication(bundleName);
         const requestId = crypto.randomUUID();
 
         if (application === undefined) {
-            return { status: 'error', message: `application ${bundleName} not found` }
+            return { status: 'error', message: `application ${bundleName} not found` };
         } else if (!ApplicationRegistry.hasGlobalWorker()) {
-            return { status: 'error', message: 'global worker not initialized yet' }
+            return { status: 'error', message: 'global worker not initialized yet' };
         }
 
         try {
             const callback = (chunk) => {
                 event.senderFrame?.send?.(`applicationRegistry:streamChunk:${requestId}`, chunk);
-            }
+            };
             ApplicationRegistry.pendingStreamRequests.set(requestId, callback);
 
             ApplicationRegistry.getGlobalWorker().postMessage({
@@ -74,24 +76,27 @@ export function registerApplicationRegistryHandlers(ipcMain: Electron.IpcMain) {
                 requestId: requestId,
                 methodName: methodName,
                 args: args,
-                stream: true,
-            })
+                stream: true
+            });
 
             return { status: 'ok', requestId: requestId };
         } catch (error) {
             return { status: 'error', message: error.message };
         }
-    })
+    });
     ipcMain.handle('applicationRegistry:streamCallMainWorld', async (event, bundleName, methodName, ...args) => {
         const application = ApplicationRegistry.getApplication(bundleName);
         const requestId = crypto.randomUUID();
 
         if (application === undefined) {
-            return { status: 'error', message: `application ${bundleName} not found` }
+            return { status: 'error', message: `application ${bundleName} not found` };
         }
         const method = application[methodName];
         if (method === undefined) {
-            return { status: 'error', message: `method ${methodName} not found in application ${bundleName}` }
+            return {
+                status: 'error',
+                message: `method ${methodName} not found in application ${bundleName}`
+            };
         }
 
         const send = (chunk: any) => {
@@ -111,7 +116,7 @@ export function registerApplicationRegistryHandlers(ipcMain: Electron.IpcMain) {
         })();
 
         return { status: 'ok', requestId };
-    })
+    });
     ipcMain.handle('applicationRegistry:subscribe', async (event, bundleName, eventName) => {
         const application = ApplicationRegistry.getApplication(bundleName);
         if (application === undefined) {
@@ -119,7 +124,7 @@ export function registerApplicationRegistryHandlers(ipcMain: Electron.IpcMain) {
         }
         application.addSubscriber(eventName, event.senderFrame);
         return { status: 'ok' };
-    })
+    });
     ipcMain.handle('applicationRegistry:unsubscribe', async (event, bundleName, eventName) => {
         const application = ApplicationRegistry.getApplication(bundleName);
         if (application === undefined) {
@@ -127,7 +132,7 @@ export function registerApplicationRegistryHandlers(ipcMain: Electron.IpcMain) {
         }
         application.removeSubscriber(eventName, event.senderFrame);
         return { status: 'ok' };
-    })
+    });
 }
 
 /**

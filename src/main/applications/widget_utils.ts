@@ -11,8 +11,7 @@
 
 import { BaseTool, BaseToolset } from '../aikernel/tool';
 import { z } from 'zod';
-import type { TaskState } from '../states/tasks';
-
+import type { TaskState } from '../aikernel/states/tasks';
 
 export class AgentOperableHTMLElement extends HTMLElement {
     constructor() {
@@ -38,7 +37,6 @@ export class AgentOperableHTMLElement extends HTMLElement {
  * 运行在渲染进程的工具，可以通过后端的Agent调用
  */
 export class RendererTool<T extends z.ZodType> extends BaseTool<T> {
-
     /**
      * 设置工具的执行器。
      */

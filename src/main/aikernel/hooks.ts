@@ -9,9 +9,8 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import type { TaskState } from "./states/tasks";
-import type { ToolCall } from "./messages.js";
-
+import type { TaskState } from './states/tasks';
+import type { ToolCall } from './messages.js';
 
 /******************************************************************************
  * Finish Turn Callbacks
@@ -37,14 +36,11 @@ import type { ToolCall } from "./messages.js";
  * 3. 所以我们允许在全局或任务中挂载 beforeToolCall 和 afterToolCall 两种钩子
  ******************************************************************************/
 
-type FinishTurnFeedback =
-      { operation: 'finish' }
-    | { operation: 'reject', message: string }
-;
+type FinishTurnFeedback = { operation: 'finish' } | { operation: 'reject'; message: string };
 
-type BeforeFinishTurnCallback = ((task: TaskState) => Promise<FinishTurnFeedback>);
+type BeforeFinishTurnCallback = (task: TaskState) => Promise<FinishTurnFeedback>;
 
-type AfterFinishTurnCallback = ((task: TaskState) => void | Promise<void>);
+type AfterFinishTurnCallback = (task: TaskState) => void | Promise<void>;
 
 type BeforeToolCallCallback = (task: TaskState, tool_call: ToolCall) => void | Promise<void>;
 
@@ -103,13 +99,12 @@ export class HookRegistry {
 }
 
 export class TaskHooks {
-
     beforeFinishTurnCallbacks: BeforeFinishTurnCallback[] = [];
     afterFinishTurnCallbacks: AfterFinishTurnCallback[] = [];
     beforeToolCallCallbacks: BeforeToolCallCallback[] = [];
     afterToolCallCallbacks: AfterToolCallCallback[] = [];
 
-    constructor() { }
+    constructor() {}
 
     /**
      * 注册一个在轮次结束前需要执行的回调函数

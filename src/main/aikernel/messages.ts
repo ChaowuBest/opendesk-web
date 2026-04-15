@@ -19,7 +19,6 @@ import hljs from 'highlight.js';
 import path from 'path';
 import fs from 'fs';
 
-
 /**
  * 检查工具调用的 args_string 是否为合法 JSON。
  * 空字符串视为合法（部分模型对无参数工具返回空串）。
@@ -39,17 +38,19 @@ export const marked = new Marked(
         emptyLangClass: 'hljs',
         langPrefix: 'hljs language-',
         highlight(code, lang, info) {
-        const language = hljs.getLanguage(lang) ? lang : 'plaintext';
-        return hljs.highlight(code, { language }).value;
+            const language = hljs.getLanguage(lang) ? lang : 'plaintext';
+            return hljs.highlight(code, { language }).value;
         }
     })
 );
 
-marked.use(markedKatex({
-    throwOnError: false,
-    displayMode: true,
-    nonStandard: true
-}));
+marked.use(
+    markedKatex({
+        throwOnError: false,
+        displayMode: true,
+        nonStandard: true
+    })
+);
 
 /**
  * This is NOT an OpenAI message part, but a message part for our own message system.
@@ -61,13 +62,30 @@ export class ReasoningMessagePart {
     source: 'reasoning_content' | 'think_tag';
     /** cached render result of the reasoning */
     rendered?: string;
+    private _frozen!: boolean;
 
-    constructor (content: string, source: 'reasoning_content' | 'think_tag') {
+    constructor(content: string, source: 'reasoning_content' | 'think_tag') {
         this.content = content;
         this.source = source;
+        Object.defineProperty(this, '_frozen', { value: false, writable: true, enumerable: false });
+    }
+
+    /** 流式追加内容时调用，清除已缓存的渲染结果 */
+    invalidateRender(): void {
+        if (!this._frozen) {
+            this.rendered = undefined;
+        }
+    }
+
+    /** 冻结渲染缓存 */
+    freezeRender(): void {
+        this._frozen = true;
     }
 
     async render() {
+        if (this.rendered !== undefined) {
+            return this.rendered;
+        }
         this.rendered = this.content;
     }
 
@@ -78,19 +96,51 @@ export class ReasoningMessagePart {
      * @param reasoning_message_part_obj - The object to assign the prototype to
      * @returns The assigned reasoning message part
      */
+    toRenderJSON(): object {
+        return {
+            type: this.type,
+            rendered: this.rendered,
+            contentLength: this.content.length
+        };
+    }
+
     static assign(reasoning_message_part_obj: object): ReasoningMessagePart {
         Object.setPrototypeOf(reasoning_message_part_obj, ReasoningMessagePart.prototype);
-        return reasoning_message_part_obj as ReasoningMessagePart;
+        const part = reasoning_message_part_obj as ReasoningMessagePart;
+        Object.defineProperty(part, '_frozen', { value: false, writable: true, enumerable: false });
+        return part;
     }
 }
 
 /** 当压缩后的工具参数长度超过此阈值时，参数本身也会被替换为压缩占位 */
 const LARGE_ARGS_THRESHOLD = 500;
 
-export class ToolCall {
+export const TOOL_RESULT_STORAGE_VERSION = 1;
+export const TOOL_CALL_MICROCOMPACT_VERSION = 1;
 
+export interface ToolResultStorageMetadata {
+    result_id: string;
+    storage_version: number;
+    relative_path?: string;
+    original_chars?: number;
+    original_lines?: number;
+    persisted_at?: string;
+    replacement_text?: string;
+}
+
+export interface ToolCallMicrocompactMetadata {
+    version: number;
+    strategy: 'local_clear';
+    cleared_at: string;
+    original_chars?: number;
+    original_lines?: number;
+    replacement_text?: string;
+    artifact_path_hint?: string;
+}
+
+export class ToolCall {
     index: number;
-    id: string
+    id: string;
     tool_name: string;
     args_string: string;
     args_object: any = {};
@@ -101,6 +151,10 @@ export class ToolCall {
     tool?: BaseTool<any>;
     /** undefined = 未压缩；非空 UUID = 已被上下文压缩 */
     compress_id?: string;
+    /** 大工具结果落盘后的稳定引用信息 */
+    result_storage?: ToolResultStorageMetadata;
+    /** 本地 microcompact 后的持久化元数据 */
+    microcompact?: ToolCallMicrocompactMetadata;
 
     constructor(index: number, id: string, tool_name: string, args_string: string) {
         this.index = index;
@@ -108,7 +162,12 @@ export class ToolCall {
         this.tool_name = tool_name;
         this.args_string = args_string;
 
-        Object.defineProperty(this, 'tool', { value: undefined, writable: true, enumerable: false, configurable: true });
+        Object.defineProperty(this, 'tool', {
+            value: undefined,
+            writable: true,
+            enumerable: false,
+            configurable: true
+        });
     }
 
     toOpenAIMessagePart(): object {
@@ -117,7 +176,7 @@ export class ToolCall {
             id: this.id,
             index: this.index,
             tool_name: this.tool_name,
-            args_string: this.args_string || "",
+            args_string: this.args_string || ''
         };
     }
 
@@ -125,6 +184,158 @@ export class ToolCall {
     toJSON(): object {
         const { tool, ...rest } = this as ToolCall & { tool?: BaseTool<any> };
         return rest;
+    }
+
+    /** 仅包含前端渲染所需的字段，排除 args_string / result 等大字段 */
+    toRenderJSON(): object {
+        return {
+            index: this.index,
+            id: this.id,
+            tool_name: this.tool_name,
+            status: this.status,
+            rendered: this.rendered
+        };
+    }
+
+    static normalizeResultStorage(
+        metadata?: Partial<ToolResultStorageMetadata> | null
+    ): ToolResultStorageMetadata | undefined {
+        if (metadata === undefined || metadata === null || typeof metadata !== 'object') {
+            return undefined;
+        }
+
+        const resultId =
+            typeof metadata.result_id === 'string' && metadata.result_id.trim().length > 0
+                ? metadata.result_id
+                : undefined;
+        if (resultId === undefined) {
+            return undefined;
+        }
+
+        const normalized: ToolResultStorageMetadata = {
+            result_id: resultId,
+            storage_version:
+                typeof metadata.storage_version === 'number' &&
+                Number.isInteger(metadata.storage_version) &&
+                metadata.storage_version > 0
+                    ? metadata.storage_version
+                    : TOOL_RESULT_STORAGE_VERSION
+        };
+
+        if (typeof metadata.relative_path === 'string' && metadata.relative_path.trim().length > 0) {
+            normalized.relative_path = metadata.relative_path;
+        }
+
+        if (
+            typeof metadata.original_chars === 'number' &&
+            Number.isInteger(metadata.original_chars) &&
+            metadata.original_chars >= 0
+        ) {
+            normalized.original_chars = metadata.original_chars;
+        }
+
+        if (
+            typeof metadata.original_lines === 'number' &&
+            Number.isInteger(metadata.original_lines) &&
+            metadata.original_lines >= 0
+        ) {
+            normalized.original_lines = metadata.original_lines;
+        }
+
+        if (typeof metadata.persisted_at === 'string' && metadata.persisted_at.trim().length > 0) {
+            normalized.persisted_at = metadata.persisted_at;
+        }
+
+        if (typeof metadata.replacement_text === 'string' && metadata.replacement_text.length > 0) {
+            normalized.replacement_text = metadata.replacement_text;
+        }
+
+        return normalized;
+    }
+
+    static normalizeMicrocompact(
+        metadata?: Partial<ToolCallMicrocompactMetadata> | null
+    ): ToolCallMicrocompactMetadata | undefined {
+        if (metadata === undefined || metadata === null || typeof metadata !== 'object') {
+            return undefined;
+        }
+
+        const strategy = metadata.strategy === 'local_clear' ? metadata.strategy : 'local_clear';
+        const normalized: ToolCallMicrocompactMetadata = {
+            version:
+                typeof metadata.version === 'number' && Number.isInteger(metadata.version) && metadata.version > 0
+                    ? metadata.version
+                    : TOOL_CALL_MICROCOMPACT_VERSION,
+            strategy,
+            cleared_at:
+                typeof metadata.cleared_at === 'string' && metadata.cleared_at.trim().length > 0
+                    ? metadata.cleared_at
+                    : new Date().toISOString()
+        };
+
+        if (
+            typeof metadata.original_chars === 'number' &&
+            Number.isInteger(metadata.original_chars) &&
+            metadata.original_chars >= 0
+        ) {
+            normalized.original_chars = metadata.original_chars;
+        }
+
+        if (
+            typeof metadata.original_lines === 'number' &&
+            Number.isInteger(metadata.original_lines) &&
+            metadata.original_lines >= 0
+        ) {
+            normalized.original_lines = metadata.original_lines;
+        }
+
+        if (typeof metadata.replacement_text === 'string' && metadata.replacement_text.length > 0) {
+            normalized.replacement_text = metadata.replacement_text;
+        }
+
+        if (typeof metadata.artifact_path_hint === 'string' && metadata.artifact_path_hint.trim().length > 0) {
+            normalized.artifact_path_hint = metadata.artifact_path_hint;
+        }
+
+        return normalized;
+    }
+
+    ensureResultStorage(metadata: Partial<ToolResultStorageMetadata> = {}): ToolResultStorageMetadata {
+        const normalized = ToolCall.normalizeResultStorage({
+            ...this.result_storage,
+            ...metadata,
+            result_id:
+                typeof metadata.result_id === 'string' && metadata.result_id.trim().length > 0
+                    ? metadata.result_id
+                    : (this.result_storage?.result_id ?? crypto.randomUUID())
+        });
+
+        if (normalized === undefined) {
+            throw new Error('failed to normalize tool result storage metadata');
+        }
+
+        this.result_storage = normalized;
+        return normalized;
+    }
+
+    setResultStorage(metadata?: Partial<ToolResultStorageMetadata> | null): ToolResultStorageMetadata | undefined {
+        const normalized = ToolCall.normalizeResultStorage(metadata);
+        this.result_storage = normalized;
+        return normalized;
+    }
+
+    clearResultStorage(): void {
+        this.result_storage = undefined;
+    }
+
+    setMicrocompact(metadata?: Partial<ToolCallMicrocompactMetadata> | null): ToolCallMicrocompactMetadata | undefined {
+        const normalized = ToolCall.normalizeMicrocompact(metadata);
+        this.microcompact = normalized;
+        return normalized;
+    }
+
+    clearMicrocompact(): void {
+        this.microcompact = undefined;
     }
 
     setTool(tool: BaseTool<any>) {
@@ -146,7 +357,7 @@ export class ToolCall {
 
         /* 如果工具自定义了渲染函数，则使用工具的渲染函数（需确认为 BaseTool 实例，反序列化后可能为纯对象） */
         if (this.tool !== undefined && typeof (this.tool as any).renderToolCall === 'function') {
-            let rendered = await this.tool.renderToolCall(this);
+            const rendered = await this.tool.renderToolCall(this);
             if (rendered !== undefined) {
                 return rendered;
             }
@@ -154,50 +365,42 @@ export class ToolCall {
 
         if (this.status === 'running') {
             return `
-            <div class="flex mt-3 mb-3 text-sm items-center space-x-4 bg-white/80 backdrop-blur-md border border-slate-200 py-2 px-4 rounded-full shadow-sm w-fit">
-                <span class="ml-2 font-semibold text-slate-600">工具调用</span>
+            <div class="flex mt-1.5 mb-1.5 text-xs items-center gap-2 bg-white/80 border border-slate-200 py-1 px-3 rounded-full shadow-sm w-fit">
+                <span class="font-medium text-slate-500">工具调用</span>
                 <div class="h-1 w-1 rounded-full bg-slate-300"></div>
-                <!-- 状态：进行中 (呼吸灯效果) -->
                 <div class="flex items-center">
-                    <div class="h-2 w-2 rounded-full bg-blue-500 animate-pulse ring-4 ring-blue-100/50"></div>
-                    <span class="ml-2 font-semibold text-slate-800">${this.tool_name}</span>
+                    <div class="h-1.5 w-1.5 rounded-full bg-blue-500 animate-pulse ring-2 ring-blue-100/50"></div>
+                    <span class="ml-1.5 font-medium text-slate-700">${this.tool_name}</span>
                 </div>
             </div>
-            `
+            `;
         } else if (this.status === 'success') {
             return `
-            <div class="flex mt-3 mb-3 text-sm items-center space-x-4 bg-white/80 backdrop-blur-md border border-slate-200 py-2 px-4 rounded-full shadow-sm w-fit">
-                <span class="ml-2 font-semibold text-slate-600">工具调用</span>
+            <div class="flex mt-1.5 mb-1.5 text-xs items-center gap-2 bg-white/80 border border-slate-200 py-1 px-3 rounded-full shadow-sm w-fit">
+                <span class="font-medium text-slate-500">工具调用</span>
                 <div class="h-1 w-1 rounded-full bg-slate-300"></div>
-                <div class="flex items-center group cursor-help relative">
-                    <div class="h-2 w-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.6)]"></div>
-                    <span class="ml-2 font-medium text-slate-600">${this.tool_name}</span>
+                <div class="flex items-center">
+                    <div class="h-1.5 w-1.5 rounded-full bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.5)]"></div>
+                    <span class="ml-1.5 font-medium text-slate-600">${this.tool_name}</span>
                 </div>
             </div>
-            `
+            `;
         } else if (this.status === 'error') {
             return `
-            <div class="flex mt-3 mb-3 text-sm items-center space-x-4 bg-white/80 backdrop-blur-md border border-slate-200 py-2 px-4 rounded-full shadow-sm w-fit">
-                <span class="ml-2 font-semibold text-slate-600">工具调用</span>
+            <div class="flex mt-1.5 mb-1.5 text-xs items-center gap-2 bg-white/80 border border-slate-200 py-1 px-3 rounded-full shadow-sm w-fit">
+                <span class="font-medium text-slate-500">工具调用</span>
                 <div class="h-1 w-1 rounded-full bg-slate-300"></div>
-                <div class="flex items-center cursor-pointer group relative animate-[shake_0.5s_ease-in-out]">
-                    <!-- 错误光晕效果 -->
-                    <div class="h-2.5 w-2.5 rounded-full bg-rose-500 shadow-[0_0_10px_rgba(244,63,94,0.6)] flex items-center justify-center">
-                        <!-- 小感叹号图标 -->
-                        <svg class="h-1.5 w-1.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="5">
+                <div class="flex items-center cursor-pointer group relative">
+                    <div class="h-2 w-2 rounded-full bg-rose-500 shadow-[0_0_6px_rgba(244,63,94,0.5)] flex items-center justify-center">
+                        <svg class="h-1 w-1 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="5">
                             <path d="M12 8v4m0 4h.01" />
                         </svg>
                     </div>
-
-                    <!-- 错误文字 -->
-                    <span class="ml-2 text-[13px] font-semibold text-rose-600">${this.tool_name} Failed</span>
-
-                    <!-- 悬浮弹窗 (Error Tooltip) -->
-                    <div class="absolute bottom-full mb-3 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-all pointer-events-none">
-                        <div class="bg-white border border-slate-200 shadow-xl rounded-xl p-3 w-48 text-xs text-slate-600">
-                            <p class="font-bold text-slate-800 mb-1">Execution Error</p>
-                            <p class="font-mono text-[10px] leading-relaxed text-rose-500 bg-rose-50 p-1.5 rounded">${this.result}</p>
-                            <!-- 小箭头 -->
+                    <span class="ml-1.5 font-semibold text-rose-600">${this.tool_name} Failed</span>
+                    <div class="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-all pointer-events-none z-10">
+                        <div class="bg-white border border-slate-200 shadow-xl rounded-lg p-2 w-44 text-[11px] text-slate-600">
+                            <p class="font-bold text-slate-800 mb-0.5">Execution Error</p>
+                            <p class="font-mono text-[10px] leading-relaxed text-rose-500 bg-rose-50 p-1 rounded">${this.result}</p>
                             <div class="absolute -bottom-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-white border-b border-r border-slate-200 rotate-45"></div>
                         </div>
                     </div>
@@ -206,11 +409,11 @@ export class ToolCall {
             `;
         } else {
             return `
-            <div class="flex mt-3 mb-3 text-sm items-center space-x-4 bg-white/80 backdrop-blur-md border border-slate-200 py-2 px-4 rounded-full shadow-sm w-fit">
-                <span class="ml-2 font-semibold text-slate-600">工具调用</span>
+            <div class="flex mt-1.5 mb-1.5 text-xs items-center gap-2 bg-white/80 border border-slate-200 py-1 px-3 rounded-full shadow-sm w-fit">
+                <span class="font-medium text-slate-500">工具调用</span>
                 <div class="flex items-center opacity-40">
-                    <div class="h-2 w-2 rounded-full bg-slate-400"></div>
-                    <span class="ml-2 font-medium text-slate-500">${this.tool_name}</span>
+                    <div class="h-1.5 w-1.5 rounded-full bg-slate-400"></div>
+                    <span class="ml-1.5 font-medium text-slate-500">${this.tool_name}</span>
                 </div>
             </div>
             `;
@@ -223,7 +426,14 @@ export class ToolCall {
         if ('tool' in tc) {
             delete (tc as any).tool;
         }
-        Object.defineProperty(tc, 'tool', { value: undefined, writable: true, enumerable: false, configurable: true });
+        Object.defineProperty(tc, 'tool', {
+            value: undefined,
+            writable: true,
+            enumerable: false,
+            configurable: true
+        });
+        tc.result_storage = ToolCall.normalizeResultStorage(tc.result_storage);
+        tc.microcompact = ToolCall.normalizeMicrocompact(tc.microcompact);
         return tc;
     }
 }
@@ -238,14 +448,14 @@ export class ToolCallMessagePart {
      * 需要注意，我们特意设计成不允许在构造函数中传递toolcalls，这是因为如果模型直接输出
      * 了多个ToolCall（但实际上是同一个TC的多个流式组件的话，直接初始化会造成它们无法自动合并
      */
-    constructor() { }
+    constructor() {}
 
     push(toolcall: ToolCall) {
         const hasValidId = typeof toolcall.id === 'string' && toolcall.id.trim().length > 0;
         if (hasValidId) {
             this.toolcalls.push(toolcall);
         } else {
-            const target = this.toolcalls.find(tc => tc.index === toolcall.index);
+            const target = this.toolcalls.find((tc) => tc.index === toolcall.index);
             if (target === undefined) {
                 this.toolcalls.push(toolcall);
             } else {
@@ -258,8 +468,8 @@ export class ToolCallMessagePart {
     }
 
     extend(tool_call_message_part: ToolCallMessagePart) {
-        for (let toolcall of tool_call_message_part.toolcalls) {
-            this.push(toolcall)
+        for (const toolcall of tool_call_message_part.toolcalls) {
+            this.push(toolcall);
         }
     }
 
@@ -268,17 +478,17 @@ export class ToolCallMessagePart {
      */
     toOpenAIToolCalls(): object[] {
         return this.toolcalls
-            .filter(toolcall => {
+            .filter((toolcall) => {
                 if (!isValidToolCallArgs(toolcall.args_string)) {
                     logger.warn(
                         `Dropping tool call "${toolcall.tool_name}" (id=${toolcall.id}) from OpenAI tool_calls: ` +
-                        `args_string is not valid JSON. Raw args: ${toolcall.args_string?.substring(0, 200)}`
+                            `args_string is not valid JSON. Raw args: ${toolcall.args_string?.substring(0, 200)}`
                     );
                     return false;
                 }
                 return true;
             })
-            .map(toolcall => ({
+            .map((toolcall) => ({
                 id: toolcall.id,
                 type: 'function',
                 function: {
@@ -292,9 +502,7 @@ export class ToolCallMessagePart {
      * 用来生成OpenAI工具调用的Response消息
      */
     toOpenAIMessagePart(): object[] {
-        return [
-            ...this.toolcalls.map(toolcall => toolcall.toOpenAIMessagePart())
-        ];
+        return [...this.toolcalls.map((toolcall) => toolcall.toOpenAIMessagePart())];
     }
 
     async render(): Promise<string> {
@@ -305,10 +513,18 @@ export class ToolCallMessagePart {
         return this.rendered;
     }
 
+    toRenderJSON(): object {
+        return {
+            type: this.type,
+            rendered: this.rendered,
+            toolcalls: this.toolcalls.map((tc) => tc.toRenderJSON())
+        };
+    }
+
     static assign(tool_call_message_part_obj: any) {
         Object.setPrototypeOf(tool_call_message_part_obj, ToolCallMessagePart.prototype);
-        for (let toolcall of tool_call_message_part_obj.toolcalls) {
-            ToolCall.assign(toolcall)
+        for (const toolcall of tool_call_message_part_obj.toolcalls) {
+            ToolCall.assign(toolcall);
         }
         return tool_call_message_part_obj;
     }
@@ -329,10 +545,13 @@ export class FileMessagePart {
         return {
             type: 'text',
             text: `用户添加了文件附件: ${this.path}，其内容以文本形式提取如下，供你参考: <content>${this.content}</content>`
-        }
+        };
     }
 
     async render(): Promise<string> {
+        if (this.rendered !== undefined) {
+            return this.rendered;
+        }
         this.rendered = `
         <div class="flex items-center group cursor-pointer w-fit min-w-[280px] max-w-sm
             bg-white/70 backdrop-blur-xl
@@ -374,6 +593,14 @@ export class FileMessagePart {
         return this.rendered;
     }
 
+    toRenderJSON(): object {
+        return {
+            type: this.type,
+            path: this.path,
+            rendered: this.rendered
+        };
+    }
+
     static assign(file_message_part_obj: object): FileMessagePart {
         Object.setPrototypeOf(file_message_part_obj, FileMessagePart.prototype);
         return file_message_part_obj as FileMessagePart;
@@ -384,23 +611,50 @@ export class TextMessagePart {
     type: 'text' = 'text';
     text: string;
     rendered?: string;
+    /** 标记 rendered 是否已冻结（流式结束后冻结，避免重复渲染） */
+    private _frozen!: boolean;
 
-    constructor (text: string) {
+    constructor(text: string) {
         this.text = text;
+        Object.defineProperty(this, '_frozen', { value: false, writable: true, enumerable: false });
     }
 
     toOpenAIMessagePart(): object {
-        return { type: 'text', text: this.text }
+        return { type: 'text', text: this.text };
     }
 
     static assign(text_message_part_obj: object): TextMessagePart {
         Object.setPrototypeOf(text_message_part_obj, TextMessagePart.prototype);
-        return text_message_part_obj as TextMessagePart;
+        const part = text_message_part_obj as TextMessagePart;
+        Object.defineProperty(part, '_frozen', { value: false, writable: true, enumerable: false });
+        return part;
+    }
+
+    /** 流式追加文本时调用，清除已缓存的渲染结果以便下次 render() 重新生成 */
+    invalidateRender(): void {
+        if (!this._frozen) {
+            this.rendered = undefined;
+        }
+    }
+
+    /** 冻结渲染缓存，流式结束后调用以启用永久缓存 */
+    freezeRender(): void {
+        this._frozen = true;
     }
 
     async render(): Promise<string> {
-        this.rendered = await marked.parse(this.text)
+        if (this.rendered !== undefined) {
+            return this.rendered;
+        }
+        this.rendered = await marked.parse(this.text);
         return this.rendered;
+    }
+
+    toRenderJSON(): object {
+        return {
+            type: this.type,
+            rendered: this.rendered
+        };
     }
 }
 
@@ -420,15 +674,25 @@ export class ErrorMessagePart {
     }
 
     async render(): Promise<string> {
+        if (this.rendered !== undefined) {
+            return this.rendered;
+        }
         this.rendered = `
-        <div class="flex flex-col mt-3 mb-3 text-sm bg-rose-50/80 backdrop-blur-md border border-rose-200 py-3 px-4 rounded-2xl shadow-sm w-fit min-w-[280px] max-w-2xl">
-            <div class="flex items-center space-x-2 mb-2">
-                <span class="text-base">🔴</span>
+        <div class="flex flex-col mt-1.5 mb-1.5 text-xs bg-rose-50/80 border border-rose-200 py-2 px-3 rounded-xl shadow-sm w-fit min-w-[240px] max-w-2xl">
+            <div class="flex items-center gap-1.5 mb-1">
+                <span class="text-xs">🔴</span>
                 <span class="font-semibold text-rose-600">${this.title}</span>
             </div>
-            <div class="text-xs text-slate-600 whitespace-pre-wrap">${this.message}</div>
+            <div class="text-[11px] text-slate-600 whitespace-pre-wrap">${this.message}</div>
         </div>`;
         return this.rendered;
+    }
+
+    toRenderJSON(): object {
+        return {
+            type: this.type,
+            rendered: this.rendered
+        };
     }
 
     static assign(obj: object): ErrorMessagePart {
@@ -442,7 +706,7 @@ export class ImageMessagePart {
     image_url: { url: string };
     rendered?: string;
 
-    constructor (image_url: string) {
+    constructor(image_url: string) {
         this.image_url = { url: image_url };
     }
 
@@ -451,8 +715,18 @@ export class ImageMessagePart {
     }
 
     async render(): Promise<string> {
+        if (this.rendered !== undefined) {
+            return this.rendered;
+        }
         this.rendered = `<img src="${this.image_url.url}" alt="image" />`;
         return this.rendered;
+    }
+
+    toRenderJSON(): object {
+        return {
+            type: this.type,
+            rendered: this.rendered
+        };
     }
 
     static assign(image_message_part_obj: object): ImageMessagePart {
@@ -460,7 +734,6 @@ export class ImageMessagePart {
         return image_message_part_obj as ImageMessagePart;
     }
 }
-
 
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp']);
 
@@ -481,7 +754,9 @@ export function extractImagePaths(text: string): string[] {
             if (fs.existsSync(resolved)) {
                 foundPaths.add(resolved);
             }
-        } catch { /* 无效路径，跳过 */ }
+        } catch {
+            /* 无效路径，跳过 */
+        }
     };
 
     // Phase 1: extract paths wrapped in quotes (e.g. "C:\xxx.png" or 'C:\xxx.png')
@@ -493,11 +768,11 @@ export function extractImagePaths(text: string): string[] {
 
     // Phase 2: unquoted path patterns
     const patterns = [
-        /(?<![<"'\w])([A-Za-z]:[\\\/][^\s<>"'|*?]+\.\w{2,5})(?!["\w])/g,
+        /(?<![<"'\w])([A-Za-z]:[\\/][^\s<>"'|*?]+\.\w{2,5})(?!["\w])/g,
         /(?<![<"'\w])(\/(?:[^\s<>"'|*?]+)\/[^\s<>"'|*?]+\.\w{2,5})(?!["\w])/g,
-        /(?<![<"'\w])(\.\.?[\\\/][^\s<>"'|*?]+\.\w{2,5})(?!["\w])/g,
-        /(?<![<"'\w])(~[\\\/][^\s<>"'|*?]+\.\w{2,5})(?!["\w])/g,
-        /(?<![<"'\\\/\w])(\w[^\s<>"'|*?]*[\\\/][^\s<>"'|*?]+\.\w{2,5})(?!["\w])/g,
+        /(?<![<"'\w])(\.\.?[\\/][^\s<>"'|*?]+\.\w{2,5})(?!["\w])/g,
+        /(?<![<"'\w])(~[\\/][^\s<>"'|*?]+\.\w{2,5})(?!["\w])/g,
+        /(?<![<"'\\/]\w)(\w[^\s<>"'|*?]*[\\/][^\s<>"'|*?]+\.\w{2,5})(?!["\w])/g
     ];
     for (const pattern of patterns) {
         let match: RegExpExecArray | null;
@@ -507,7 +782,7 @@ export function extractImagePaths(text: string): string[] {
     }
 
     // Phase 3: bare filenames (e.g. "test.png")
-    const bareFilenamePattern = /(?<![<"'\\\/\w])([A-Za-z0-9_\-][A-Za-z0-9_\-. ]*\.(png|jpe?g|gif|webp|bmp))(?!["\w])/gi;
+    const bareFilenamePattern = /(?<![<"'\\/]\w)([A-Za-z0-9_-][A-Za-z0-9_\-. ]*\.(png|jpe?g|gif|webp|bmp))(?!["\w])/gi;
     let match: RegExpExecArray | null;
     while ((match = bareFilenamePattern.exec(text)) !== null) {
         tryAdd(match[1].trim());
@@ -518,12 +793,22 @@ export function extractImagePaths(text: string): string[] {
 
 function detectImageMimeFromBuffer(buf: Buffer): string | null {
     if (!buf || buf.length < 4) return null;
-    if (buf[0] === 0xFF && buf[1] === 0xD8) return 'image/jpeg';
-    if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47) return 'image/png';
+    if (buf[0] === 0xff && buf[1] === 0xd8) return 'image/jpeg';
+    if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return 'image/png';
     if (buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46) return 'image/gif';
-    if (buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46
-        && buf.length > 11 && buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50) return 'image/webp';
-    if (buf[0] === 0x42 && buf[1] === 0x4D) return 'image/bmp';
+    if (
+        buf[0] === 0x52 &&
+        buf[1] === 0x49 &&
+        buf[2] === 0x46 &&
+        buf[3] === 0x46 &&
+        buf.length > 11 &&
+        buf[8] === 0x57 &&
+        buf[9] === 0x45 &&
+        buf[10] === 0x42 &&
+        buf[11] === 0x50
+    )
+        return 'image/webp';
+    if (buf[0] === 0x42 && buf[1] === 0x4d) return 'image/bmp';
     return null;
 }
 
@@ -538,7 +823,7 @@ export function imageToDataUri(imagePath: string): string {
         '.jpeg': 'image/jpeg',
         '.gif': 'image/gif',
         '.webp': 'image/webp',
-        '.bmp': 'image/bmp',
+        '.bmp': 'image/bmp'
     };
     const data = fs.readFileSync(imagePath);
     const mime = mimeMap[ext] || detectImageMimeFromBuffer(data) || 'image/png';
@@ -580,7 +865,7 @@ export class SystemMessage {
         return {
             role: this.role,
             content: this.content
-        }
+        };
     }
 }
 
@@ -597,10 +882,14 @@ export class UserMessage {
      */
     internal?: boolean;
 
-    constructor (content?: string) {
+    constructor(content?: string) {
         if (content) {
             this.content.push(new TextMessagePart(content));
         }
+    }
+
+    getPlainText(): string {
+        return this.content.map((part) => (part.type === 'text' ? part.text : '')).join('\n');
     }
 
     /**
@@ -612,6 +901,7 @@ export class UserMessage {
         const last_part = this.content[this.content.length - 1];
         if (last_part && last_part.type === 'text') {
             last_part.text += text;
+            last_part.invalidateRender();
         } else {
             this.content.push(new TextMessagePart(text));
         }
@@ -648,7 +938,7 @@ export class UserMessage {
             user_message.message_id = crypto.randomUUID();
         }
         if (user_message.content !== undefined) {
-            for (let part of user_message.content) {
+            for (const part of user_message.content) {
                 if (part.type === 'text') {
                     TextMessagePart.assign(part);
                 } else if (part.type === 'file') {
@@ -664,26 +954,33 @@ export class UserMessage {
     }
 
     async render(): Promise<void> {
-        for (let part of this.content) {
+        for (const part of this.content) {
             await part.render();
         }
     }
 
+    toRenderJSON(): object {
+        return {
+            role: this.role,
+            message_id: this.message_id,
+            internal: this.internal,
+            content: this.content.map((part) => part.toRenderJSON())
+        };
+    }
+
     toOpenAIMessage(supportsVision: boolean = true): object {
-        const parts = supportsVision
-            ? this.content
-            : this.content.filter(part => part.type !== 'image_url');
+        const parts = supportsVision ? this.content : this.content.filter((part) => part.type !== 'image_url');
 
         if (parts.length === 1 && parts[0].type === 'text') {
             return {
                 role: this.role,
                 content: parts[0].text
-            }
+            };
         }
         return {
             role: this.role,
-            content: parts.map(part => part.toOpenAIMessagePart())
-        }
+            content: parts.map((part) => part.toOpenAIMessagePart())
+        };
     }
 }
 
@@ -696,9 +993,13 @@ export class AssistantMessage {
     usage?: Usage;
     private _insideThinkTag: boolean = false;
 
-    constructor (content: Array<AssistantMessagePart> = []) {
+    constructor(content: Array<AssistantMessagePart> = []) {
         this.content = content;
-        Object.defineProperty(this, '_insideThinkTag', { value: false, writable: true, enumerable: false });
+        Object.defineProperty(this, '_insideThinkTag', {
+            value: false,
+            writable: true,
+            enumerable: false
+        });
     }
 
     /**
@@ -706,10 +1007,14 @@ export class AssistantMessage {
      */
     static assign(raw_obj: object): AssistantMessage {
         Object.setPrototypeOf(raw_obj, AssistantMessage.prototype);
-        let assistant_message = raw_obj as AssistantMessage;
-        Object.defineProperty(assistant_message, '_insideThinkTag', { value: false, writable: true, enumerable: false });
+        const assistant_message = raw_obj as AssistantMessage;
+        Object.defineProperty(assistant_message, '_insideThinkTag', {
+            value: false,
+            writable: true,
+            enumerable: false
+        });
         if (assistant_message.content !== undefined) {
-            for (let part of assistant_message.content) {
+            for (const part of assistant_message.content) {
                 if (part.type === 'text') {
                     TextMessagePart.assign(part);
                 } else if (part.type === 'reasoning') {
@@ -725,22 +1030,33 @@ export class AssistantMessage {
     }
 
     async render(): Promise<void> {
-        for (let part of this.content) {
+        for (const part of this.content) {
             await part.render();
         }
+    }
+
+    toRenderJSON(): object {
+        return {
+            role: this.role,
+            message_id: this.message_id,
+            usage: this.usage,
+            content: this.content.map((part) => part.toRenderJSON())
+        };
     }
 
     /**
      * Merges the give message to this message and returns itself
      */
     mergeChunk(chunk: AssistantMessage): AssistantMessage {
-        for (var part of chunk.content) {
+        for (const part of chunk.content) {
             this.appendPart(part);
         }
         return this;
     }
 
-    appendPart(part: TextMessagePart | ReasoningMessagePart | ToolCallMessagePart | ErrorMessagePart): AssistantMessage {
+    appendPart(
+        part: TextMessagePart | ReasoningMessagePart | ToolCallMessagePart | ErrorMessagePart
+    ): AssistantMessage {
         if (part.type === 'text') {
             this.appendText(part.text);
         } else if (part.type === 'reasoning') {
@@ -758,10 +1074,14 @@ export class AssistantMessage {
         return this;
     }
 
-    appendReasoningContent(content: string, source: 'reasoning_content' | 'think_tag' = 'reasoning_content'): AssistantMessage {
+    appendReasoningContent(
+        content: string,
+        source: 'reasoning_content' | 'think_tag' = 'reasoning_content'
+    ): AssistantMessage {
         const last_part = this.content[this.content.length - 1];
         if (last_part && last_part.type === 'reasoning' && last_part.source === source) {
             last_part.content += content;
+            last_part.invalidateRender();
         } else {
             this.content.push(new ReasoningMessagePart(content, source));
         }
@@ -789,6 +1109,7 @@ export class AssistantMessage {
         const last_part = this.content[this.content.length - 1];
         if (last_part && last_part.type === 'text') {
             last_part.text += text;
+            last_part.invalidateRender();
         } else {
             this.content.push(new TextMessagePart(text));
         }
@@ -798,6 +1119,7 @@ export class AssistantMessage {
         const last_part = this.content[this.content.length - 1];
         if (last_part && last_part.type === 'reasoning') {
             last_part.content += text;
+            last_part.invalidateRender();
         } else {
             this.content.push(new ReasoningMessagePart(text, 'think_tag'));
         }
@@ -819,6 +1141,7 @@ export class AssistantMessage {
 
         if (beforeThink.trim().length > 0) {
             last_part.text = beforeThink;
+            last_part.invalidateRender();
         } else {
             this.content.pop();
         }
@@ -846,6 +1169,7 @@ export class AssistantMessage {
         const afterClose = last_part.content.substring(closeIdx + '</think>'.length);
 
         last_part.content = reasoningText;
+        last_part.invalidateRender();
         this._insideThinkTag = false;
 
         if (afterClose.trim().length > 0) {
@@ -878,7 +1202,43 @@ export class AssistantMessage {
      *
      * @returns OpenAI 消息数组
      */
-    toOpenAIMessages(): object[] {
+    private static resolveToolCallOverrideContent(
+        toolcall: ToolCall,
+        toolResultOverrides?: Map<string, string>
+    ): string | undefined {
+        const resultId = toolcall.result_storage?.result_id;
+        if (!resultId) {
+            return undefined;
+        }
+        const overrideContent = toolResultOverrides?.get(resultId);
+        if (typeof overrideContent === 'string' && overrideContent.length > 0) {
+            return overrideContent;
+        }
+        return undefined;
+    }
+
+    private static buildOpenAIToolResultContent(toolcall: ToolCall, toolResultOverrides?: Map<string, string>): string {
+        if (toolcall.compress_id) {
+            return `工具返回结果已被压缩，数据ID为 ${toolcall.compress_id}`;
+        }
+
+        const overrideContent = AssistantMessage.resolveToolCallOverrideContent(toolcall, toolResultOverrides);
+        if (overrideContent !== undefined) {
+            return overrideContent;
+        }
+
+        if (toolcall.status === 'error') {
+            return `Toolcall failed: ${toolcall.result ?? ''}`;
+        }
+
+        if (toolcall.status === 'success') {
+            return toolcall.result ?? '工具调用成功完成';
+        }
+
+        return 'Toolcall failed: unfinished tool call';
+    }
+
+    toOpenAIMessages(toolResultOverrides?: Map<string, string>): object[] {
         const messages: object[] = [];
 
         let currentReasoning = '';
@@ -890,20 +1250,20 @@ export class AssistantMessage {
             if (currentText.length === 0 && currentReasoning.length === 0) {
                 return;
             }
-            var message: any = { 'role': 'assistant' };
+            const message: any = { role: 'assistant' };
             if (currentReasoning.length > 0) {
                 message.reasoning_content = currentReasoning;
             }
             if (currentText.length > 0) {
-                message.content = [{ type: 'text', text: currentText }]
+                message.content = [{ type: 'text', text: currentText }];
             } else {
                 // 确保 content 字段始终存在，即使为空字符串
-                message.content = "";
+                message.content = '';
             }
             currentReasoning = '';
             currentText = '';
             messages.push(message);
-        }
+        };
 
         for (const part of this.content) {
             switch (part.type) {
@@ -919,23 +1279,23 @@ export class AssistantMessage {
                     processCurrentMessage();
                     const validToolcalls: ToolCall[] = [];
                     for (const tc of part.toolcalls) {
-                        const argsToCheck = (tc.compress_id && tc.args_string && tc.args_string.length > LARGE_ARGS_THRESHOLD)
-                            ? `{"compressed":"placeholder"}`
-                            : (tc.args_string || "");
+                        const argsToCheck =
+                            tc.compress_id && tc.args_string && tc.args_string.length > LARGE_ARGS_THRESHOLD
+                                ? `{"compressed":"placeholder"}`
+                                : tc.args_string || '';
                         if (!isValidToolCallArgs(argsToCheck)) {
                             logger.warn(
                                 `Dropping tool call "${tc.tool_name}" (id=${tc.id}) from OpenAI context: ` +
-                                `args_string is not valid JSON. Raw args: ${tc.args_string?.substring(0, 200)}`
+                                    `args_string is not valid JSON. Raw args: ${tc.args_string?.substring(0, 200)}`
                             );
                             continue;
                         }
                         validToolcalls.push(tc);
                     }
                     if (validToolcalls.length > 0) {
-                        const toolCallObjects = validToolcalls.map(tc => {
-                            const shouldCompressArgs = tc.compress_id
-                                && tc.args_string
-                                && tc.args_string.length > LARGE_ARGS_THRESHOLD;
+                        const toolCallObjects = validToolcalls.map((tc) => {
+                            const shouldCompressArgs =
+                                tc.compress_id && tc.args_string && tc.args_string.length > LARGE_ARGS_THRESHOLD;
                             return {
                                 id: tc.id,
                                 type: 'function',
@@ -943,22 +1303,17 @@ export class AssistantMessage {
                                     name: tc.tool_name,
                                     arguments: shouldCompressArgs
                                         ? `{"compressed":"工具参数已被压缩，数据ID为 ${tc.compress_id}"}`
-                                        : (tc.args_string || "")
+                                        : tc.args_string || ''
                                 }
                             };
                         });
                         messages.push({ role: 'assistant', tool_calls: toolCallObjects });
                         for (const toolcall of validToolcalls) {
-                            let toolCallMsg: any = { 'role': 'tool', tool_call_id: toolcall.id };
-                            if (toolcall.compress_id) {
-                                toolCallMsg.content = `工具返回结果已被压缩，数据ID为 ${toolcall.compress_id}`;
-                            } else if (toolcall.status === 'error') {
-                                toolCallMsg.content = `Toolcall failed: ${toolcall.result}`;
-                            } else if (toolcall.status === 'success') {
-                                toolCallMsg.content = toolcall.result ?? '工具调用成功完成';
-                            } else {
-                                toolCallMsg.content = `Toolcall failed: unfinished tool call`;
-                            }
+                            const toolCallMsg: any = { role: 'tool', tool_call_id: toolcall.id };
+                            toolCallMsg.content = AssistantMessage.buildOpenAIToolResultContent(
+                                toolcall,
+                                toolResultOverrides
+                            );
                             messages.push(toolCallMsg);
                         }
                     }
@@ -980,46 +1335,39 @@ export class AssistantMessage {
         return messages;
     }
 
-    getOpenAIToolMessages(): object[] {
-        var messages: object[] = [];
-        var tool_call_parts = this.content.filter(part => part.type === 'tool_call');
-        for (let part of tool_call_parts) {
-            for (let toolcall of part.toolcalls) {
+    getOpenAIToolMessages(toolResultOverrides?: Map<string, string>): object[] {
+        const messages: object[] = [];
+        const tool_call_parts = this.content.filter((part) => part.type === 'tool_call');
+        for (const part of tool_call_parts) {
+            for (const toolcall of part.toolcalls) {
                 if (!isValidToolCallArgs(toolcall.args_string)) {
                     logger.warn(
                         `Skipping tool response for "${toolcall.tool_name}" (id=${toolcall.id}): ` +
-                        `original tool call had invalid JSON args`
+                            `original tool call had invalid JSON args`
                     );
                     continue;
                 }
-                if (toolcall.compress_id) {
-                    messages.push({
-                        role: 'tool',
-                        tool_call_id: toolcall.id,
-                        content: `工具返回结果已被压缩，数据ID为 ${toolcall.compress_id}`
-                    });
-                } else if (toolcall.status === 'error') {
-                    messages.push({
-                        role: 'tool',
-                        tool_call_id: toolcall.id,
-                        content: `Toolcall failed: ${toolcall.result ?? ''}`
-                    });
-                } else if (toolcall.status === 'success') {
-                    messages.push({
-                        role: 'tool',
-                        tool_call_id: toolcall.id,
-                        content: toolcall.result ?? '工具调用成功完成'
-                    });
-                } else {
+                const overrideContent = AssistantMessage.resolveToolCallOverrideContent(toolcall, toolResultOverrides);
+                if (
+                    !toolcall.compress_id &&
+                    overrideContent === undefined &&
+                    toolcall.status !== 'success' &&
+                    toolcall.status !== 'error'
+                ) {
                     throw new Error(`unfinished toolcall status ${toolcall.status}`);
                 }
+                messages.push({
+                    role: 'tool',
+                    tool_call_id: toolcall.id,
+                    content: AssistantMessage.buildOpenAIToolResultContent(toolcall, toolResultOverrides)
+                });
             }
         }
         return messages;
     }
 
     static parseOpenAIMessage(openai_message: any): AssistantMessage {
-        var message = new AssistantMessage();
+        const message = new AssistantMessage();
 
         const reasoning_content = openai_message['reasoning_content'];
         if (reasoning_content) {
@@ -1028,9 +1376,9 @@ export class AssistantMessage {
 
         const tool_calls = openai_message['tool_calls'];
         if (tool_calls) {
-            let part = new ToolCallMessagePart()
-            for (let tool_call of tool_calls) {
-                let tc = new ToolCall(
+            const part = new ToolCallMessagePart();
+            for (const tool_call of tool_calls) {
+                const tc = new ToolCall(
                     tool_call['index'],
                     tool_call['id'],
                     tool_call['function']['name'],
@@ -1057,17 +1405,17 @@ export class AssistantResponse {
     finish_reason: 'stop' | 'error' | 'tool_calls' | null;
     usage?: Usage;
 
-    constructor (content: AssistantMessage, finish_reason: 'stop' | 'error' | 'tool_calls' | null = null) {
+    constructor(content: AssistantMessage, finish_reason: 'stop' | 'error' | 'tool_calls' | null = null) {
         this.content = content;
         this.finish_reason = finish_reason;
     }
 
     static richError(title: string, reason: string, ...attachments: string[]) {
-        var response = new AssistantResponse(new AssistantMessage(), 'error');
+        const response = new AssistantResponse(new AssistantMessage(), 'error');
         let message = reason;
         if (getDebugMode()) {
             for (const attachment of attachments) {
-                message += "\n```\n" + attachment + "\n```\n";
+                message += '\n```\n' + attachment + '\n```\n';
             }
         }
         response.content.appendError(title, message);
@@ -1075,7 +1423,7 @@ export class AssistantResponse {
     }
 
     static error(reason: string): AssistantResponse {
-        var response = new AssistantResponse(new AssistantMessage(), 'error');
+        const response = new AssistantResponse(new AssistantMessage(), 'error');
         response.content.appendError('Error', reason);
         return response;
     }
@@ -1100,11 +1448,7 @@ export class AssistantResponse {
 
         const usage = openai_response['usage'];
         if (usage) {
-            response.usage = new Usage(
-                usage['prompt_tokens'],
-                usage['completion_tokens'],
-                usage['total_tokens']
-            );
+            response.usage = new Usage(usage['prompt_tokens'], usage['completion_tokens'], usage['total_tokens']);
         }
         return response;
     }
@@ -1115,30 +1459,139 @@ export class AssistantResponse {
  * 消息历史中最多出现一次，其前面的消息在构建 OpenAI 上下文时会被跳过，
  * 由 summary 字段中的结构化快照替代。
  */
+export interface CompactSummarizedRange {
+    start_index: number;
+    end_index_exclusive: number;
+    message_count: number;
+    user_messages: number;
+    assistant_messages: number;
+    tool_calls: number;
+}
+
+export interface CompactBoundaryMetadata {
+    boundary_id: string;
+    summary_version: number;
+    created_at: string;
+    summarized_range?: CompactSummarizedRange;
+    previous_boundary_id?: string;
+}
+
+export const COMPACT_SUMMARY_VERSION = 1;
+
 export class CompactSeparatorMessage {
     role: 'compact_separator' = 'compact_separator';
     summary: string;
+    metadata: CompactBoundaryMetadata;
 
-    constructor(summary: string) {
+    constructor(summary: string, metadata: Partial<CompactBoundaryMetadata> = {}) {
         this.summary = summary;
+        this.metadata = CompactSeparatorMessage.normalizeMetadata(metadata);
     }
 
-    static assign(obj: object): CompactSeparatorMessage {
+    private static normalizeMetadata(metadata?: Partial<CompactBoundaryMetadata>): CompactBoundaryMetadata {
+        const normalized: CompactBoundaryMetadata = {
+            boundary_id:
+                typeof metadata?.boundary_id === 'string' && metadata.boundary_id.trim().length > 0
+                    ? metadata.boundary_id
+                    : crypto.randomUUID(),
+            summary_version:
+                typeof metadata?.summary_version === 'number' && Number.isInteger(metadata.summary_version)
+                    ? metadata.summary_version
+                    : COMPACT_SUMMARY_VERSION,
+            created_at:
+                typeof metadata?.created_at === 'string' && metadata.created_at.trim().length > 0
+                    ? metadata.created_at
+                    : new Date().toISOString()
+        };
+
+        const summarizedRange = CompactSeparatorMessage.normalizeSummarizedRange(metadata?.summarized_range);
+        if (summarizedRange !== undefined) {
+            normalized.summarized_range = summarizedRange;
+        }
+
+        if (typeof metadata?.previous_boundary_id === 'string' && metadata.previous_boundary_id.trim().length > 0) {
+            normalized.previous_boundary_id = metadata.previous_boundary_id;
+        }
+
+        return normalized;
+    }
+
+    private static normalizeSummarizedRange(
+        range?: Partial<CompactSummarizedRange>
+    ): CompactSummarizedRange | undefined {
+        if (range === undefined || range === null || typeof range !== 'object') {
+            return undefined;
+        }
+
+        const fields = [
+            'start_index',
+            'end_index_exclusive',
+            'message_count',
+            'user_messages',
+            'assistant_messages',
+            'tool_calls'
+        ] as const;
+
+        for (const field of fields) {
+            const value = range[field];
+            if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) {
+                return undefined;
+            }
+        }
+
+        return {
+            start_index: range.start_index!,
+            end_index_exclusive: range.end_index_exclusive!,
+            message_count: range.message_count!,
+            user_messages: range.user_messages!,
+            assistant_messages: range.assistant_messages!,
+            tool_calls: range.tool_calls!
+        };
+    }
+
+    static assign(obj: any): CompactSeparatorMessage {
         Object.setPrototypeOf(obj, CompactSeparatorMessage.prototype);
+        const legacyMetadata =
+            obj.metadata && typeof obj.metadata === 'object'
+                ? obj.metadata
+                : {
+                      boundary_id: obj.boundary_id,
+                      summary_version: obj.summary_version,
+                      created_at: obj.created_at,
+                      summarized_range: obj.summarized_range,
+                      previous_boundary_id: obj.previous_boundary_id
+                  };
+        obj.metadata = CompactSeparatorMessage.normalizeMetadata(legacyMetadata);
         return obj as CompactSeparatorMessage;
     }
 
     toOpenAIMessage(): object {
         return {
             role: 'user',
-            content: [{
-                type: 'text',
-                text: `[上下文压缩通知] 以下是对之前对话历史的结构化总结。此前的消息已被压缩并省略，请基于以下总结继续对话：\n\n${this.summary}`
-            }]
+            content: [
+                {
+                    type: 'text',
+                    text: `[上下文压缩通知] 以下是对之前对话历史的结构化总结。此前的消息已被压缩并省略，请基于以下总结继续对话：\n\n${this.summary}`
+                }
+            ]
         };
     }
 
-    async render(): Promise<void> { /* 渲染在 TUI/GUI 层处理 */ }
+    async render(): Promise<void> {
+        /* 渲染在 TUI/GUI 层处理 */
+    }
+
+    toRenderJSON(): object {
+        return {
+            role: this.role
+        };
+    }
+}
+
+export function isCompactBoundaryMessage(message: unknown): message is CompactSeparatorMessage {
+    return (
+        typeof message === 'object' && message !== null && (message as { role?: string }).role === 'compact_separator'
+    );
 }
 
 export type ChatMessage = UserMessage | AssistantMessage | CompactSeparatorMessage;
@@ -1155,20 +1608,20 @@ export class ChatContext {
      * Attach multiple toolsets to the chat context
      */
     attachToolsets(...toolsets: BaseToolset[]) {
-        for (let toolset of toolsets) {
+        for (const toolset of toolsets) {
             this.toolsets.set(toolset.name, toolset);
         }
     }
 
     getTool(name: string): BaseTool<any> | undefined {
-        let tools = this.getTools()
+        const tools = this.getTools();
         return tools.get(name);
     }
 
     getTools(): Map<string, BaseTool<any>> {
-        let tools: Map<string, BaseTool<any>> = new Map();
-        for (let toolset of this.toolsets.values()) {
-            for (let tool of toolset.tools.values()) {
+        const tools: Map<string, BaseTool<any>> = new Map();
+        for (const toolset of this.toolsets.values()) {
+            for (const tool of toolset.tools.values()) {
                 tools.set(`${toolset.name}-${tool.name}`, tool);
             }
         }
@@ -1179,38 +1632,68 @@ export class ChatContext {
         return {
             system_prompt: this.system_prompt,
             messages: this.messages
-        }
+        };
+    }
+
+    toRenderJSON(): object {
+        return {
+            messages: this.messages.map((m) => m.toRenderJSON())
+        };
     }
 
     appendMessage(message: ChatMessage): void {
         this.messages.push(message);
     }
 
+    lastUserMessage(): UserMessage | undefined {
+        for (let i = this.messages.length - 1; i >= 0; i--) {
+            if (this.messages[i].role === 'user') {
+                return this.messages[i] as UserMessage;
+            }
+        }
+        return undefined;
+    }
+
     lastMessage(): ChatMessage | undefined {
         return this.messages[this.messages.length - 1];
     }
 
-    /** 查找最后一条 CompactSeparatorMessage 的位置（从末尾搜索，确保多条时取最新的） */
-    findCompactSeparator(): { index: number; message: CompactSeparatorMessage } | undefined {
+    /** 查找最后一条 compact boundary 的位置（从末尾搜索，确保多条时取最新的） */
+    findCompactBoundary(): { index: number; message: CompactSeparatorMessage } | undefined {
         for (let i = this.messages.length - 1; i >= 0; i--) {
-            if ((this.messages[i] as any).role === 'compact_separator') {
+            if (isCompactBoundaryMessage(this.messages[i])) {
                 return { index: i, message: this.messages[i] as CompactSeparatorMessage };
             }
         }
         return undefined;
     }
 
-    /** 移除已有的分隔符并在指定位置插入新的 CompactSeparatorMessage */
-    insertCompactSeparator(separator: CompactSeparatorMessage, position: number): void {
-        this.messages = this.messages.filter(m => (m as any).role !== 'compact_separator');
-        this.messages.splice(position, 0, separator);
+    /** 兼容旧命名：查找最后一条 CompactSeparatorMessage 的位置 */
+    findCompactSeparator(): { index: number; message: CompactSeparatorMessage } | undefined {
+        return this.findCompactBoundary();
     }
 
-    /** 确保最多只有一条 CompactSeparatorMessage，保留最后一条 */
-    deduplicateSeparators(): void {
+    /** 移除所有 compact boundary */
+    clearCompactBoundaries(): void {
+        this.messages = this.messages.filter((message) => !isCompactBoundaryMessage(message));
+    }
+
+    /** 移除已有的 compact boundary 并在指定位置插入新的 boundary */
+    replaceCompactBoundary(boundary: CompactSeparatorMessage, position: number): void {
+        this.clearCompactBoundaries();
+        this.messages.splice(position, 0, boundary);
+    }
+
+    /** 兼容旧命名：移除已有的分隔符并在指定位置插入新的 CompactSeparatorMessage */
+    insertCompactSeparator(separator: CompactSeparatorMessage, position: number): void {
+        this.replaceCompactBoundary(separator, position);
+    }
+
+    /** 确保最多只有一条 compact boundary，保留最后一条 */
+    deduplicateCompactBoundaries(): void {
         let lastIdx = -1;
         for (let i = this.messages.length - 1; i >= 0; i--) {
-            if ((this.messages[i] as any).role === 'compact_separator') {
+            if (isCompactBoundaryMessage(this.messages[i])) {
                 if (lastIdx === -1) {
                     lastIdx = i;
                 } else {
@@ -1220,11 +1703,16 @@ export class ChatContext {
         }
     }
 
+    /** 兼容旧命名：确保最多只有一条 CompactSeparatorMessage，保留最后一条 */
+    deduplicateSeparators(): void {
+        this.deduplicateCompactBoundaries();
+    }
+
     /**
      * Assign the prototype of the given object to the ChatContext prototype
      */
     static assign(chat_context_obj: any): ChatContext {
-        let ctx = new ChatContext();
+        const ctx = new ChatContext();
         const system_prompt = chat_context_obj['system_prompt'];
         if (system_prompt !== undefined) {
             ctx.system_prompt = SystemMessage.assign(system_prompt);
@@ -1232,17 +1720,17 @@ export class ChatContext {
 
         const messages = chat_context_obj['messages'];
         if (messages !== undefined) {
-            for (let message of messages) {
+            for (const message of messages) {
                 if (message.role === 'user') {
                     ctx.messages.push(UserMessage.assign(message));
                 } else if (message.role === 'assistant') {
                     ctx.messages.push(AssistantMessage.assign(message));
-                } else if (message.role === 'compact_separator') {
+                } else if (isCompactBoundaryMessage(message)) {
                     ctx.messages.push(CompactSeparatorMessage.assign(message));
                 }
             }
         }
-        ctx.deduplicateSeparators();
+        ctx.deduplicateCompactBoundaries();
         // we cannot load any toolset from the saved chat context
         return ctx;
     }

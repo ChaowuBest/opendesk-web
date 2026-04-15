@@ -1,4 +1,4 @@
-import { type TUI, matchesKey, type KeyId } from "@mariozechner/pi-tui";
+import { type TUI, matchesKey, type KeyId } from '@mariozechner/pi-tui';
 
 export interface ShortcutEntry {
     key: KeyId;

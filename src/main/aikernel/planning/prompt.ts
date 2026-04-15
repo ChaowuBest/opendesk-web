@@ -9,14 +9,14 @@
  * See the Mulan PSL v2 for more details.
  */
 
-
 export const TASK_MANAGEMENT_PROMPT = `
-<task_management>
-## 待办事项管理 (规划)
+# 任务规划与执行
 
-当任务较为复杂，需要多个步骤组合完成，或者用户指定了多个任务的情况下，你应该使用 TodoWrite 工具先做好规划，再按步骤执行。
+使用 TodoWrite 工具来拆分和管理较为复杂的任务。该工具有助于规划工作并帮助用户追踪进度。
+完成一个任务后立即标记为完成，不要攒着一批任务才标记。
 
-TodoWrite 工具使用说明：
+## TodoWrite 工具使用说明
+
 - 该工具用于管理当前任务内的待办列表（会话级，不跨会话保存）
 - 每次调用该工具时，必须传入完整的待办列表（这将替换当前所有待办）
 - 状态：pending（待处理）、in_progress（进行中）、completed（已完成）
@@ -50,80 +50,6 @@ TodoWrite 工具使用说明：
 - 场景示例 3：大文件分析，如在上千行的日志信息里面寻找有价值的错误根因或标志信息等
     * 适用原因：大文件分析过程中，需要将大量文件信息放进上下文，其中绝大多数是无意义的；
 
-## 对话轮次/回合的完成 (最重要)
-
-**这是你每轮对话必须执行的最后一步。无论是简单的聊天还是复杂的任务，结束当前对话轮次/回合时都必须调用 planning-attemptCompletion。**
-
-### 调用时机
-
-你**必须**在以下任何一种情况调用 planning-attemptCompletion：
-- 回答完用户的问题（即使是简单问题）或者完成打招呼，测试等简单对话时
-- 执行完用户请求的任务（无论大小）
-- 执行完一系列工具操作后
-- 无法完成任务需要说明原因时
-- 需要向用户提问、请求补充信息或确认方案时
-
-**你绝对不能在没有调用 planning-attemptCompletion 的情况下结束当前回合。**
-
-### 调用格式
-
-成功完成时：
-planning-attemptCompletion(type="success")
-
-无法完成时：
-planning-attemptCompletion(type="fail", message="无法完成的原因和给用户的建议")
-
-需要向用户提问或请求补充信息时：
-planning-attemptCompletion(type="ask", message="需要补充的信息或问题描述")
-
-### 关键要求
-
-1. **message 必须自然流畅**：如果任务成功完成，message 可以留空；如果任务失败，message 的内容应该与前面的对话内容形成完整连贯的句子
-2. **先检查待办事项**：调用前确保所有待办事项都已标记为 completed
-3. **不要解释工具调用**：直接调用工具，不要用文字说明"我将调用..."
-4. **这是强制要求**：不调用会导致系统问题，影响后续任务执行
-5. **向用户提问也要调用**：当你需要更多信息才能继续时，在文本中说明你的问题，然后用 type="ask" 调用 attemptCompletion 结束轮次
-
-### 示例
-
-示例 1 - 聊天
-
-用户：你好
-助手：你好呀，有什么可以帮你的吗？
-planning-attemptCompletion(type="success")
-
-示例 2 - 简单问题回答：
-用户：2 + 2 等于多少？
-助手：2 + 2 等于 4。
-planning-attemptCompletion(type="success")
-
-示例 3 - 代码修改任务：
-用户：帮我把这个函数的返回值改成布尔类型
-助手：[使用 Edit 工具修改代码]
-函数返回值已经修改为布尔类型，现在当条件满足时返回 true，否则返回 false。
-planning-attemptCompletion(type="success")
-
-示例 4 - 多步骤任务：
-用户：创建一个新的 React 组件并添加测试
-助手：[创建 TodoWrite 规划 → 创建组件文件 → 创建测试文件 → 更新待办状态]
-已完成 React 组件的创建和测试用例编写，组件位于 src/components/NewComponent.tsx，测试文件位于 src/components/NewComponent.test.tsx。
-planning-attemptCompletion(type="success")
-
-示例 5 - 任务失败：
-用户：帮我连接到不存在的数据库
-助手：[尝试连接后失败]
-[详细解释失败的原因]
-planning-attemptCompletion(type="fail", message="我无法完成这个任务，请检查数据库服务是否启动以及连接配置是否正确。")
-
-示例 6 - 需要向用户提问：
-用户：帮我重构这个模块
-助手：[使用各种工具探索代码库]
-我看了一下这个模块的代码，有几个方向可以重构，想先跟你确认一下：
-1. 是否需要保持向后兼容？
-2. 你更倾向于拆分成多个小模块，还是在现有结构上优化？
-planning-attemptCompletion(type="ask", message="需要确认重构方向：1. 是否保持向后兼容；2. 拆分小模块还是现有结构优化")
-
-</task_management>
 `.trim();
 
 export const SUBTASK_SYSTEM_PROMPT = `

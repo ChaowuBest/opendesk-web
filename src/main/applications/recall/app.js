@@ -9,11 +9,10 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { BaseApplication } from "../base";
+import { BaseApplication } from '../base';
 import { z } from 'zod';
 import { fileSystemService } from './service/fileSystemService.js';
-import RecallWorker from "./service/worker";
-
+import RecallWorker from './service/worker';
 
 class RecallApplication extends BaseApplication {
     constructor() {
@@ -25,9 +24,7 @@ class RecallApplication extends BaseApplication {
     }
 
     static getConfigSchema() {
-        return z.object({
-
-        });
+        return z.object({});
     }
 
     /**
@@ -69,7 +66,6 @@ class RecallApplication extends BaseApplication {
     async showFileInFolder(filePath) {
         return await fileSystemService.showFileInFolder(filePath);
     }
-
 }
 
 export { RecallApplication };

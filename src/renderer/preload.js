@@ -9,15 +9,15 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { contextBridge, ipcRenderer, webUtils } from 'electron';
+import { contextBridge, ipcRenderer, webUtils, clipboard } from 'electron';
 
 function exposeTaskManagerAPI() {
     /** @type {Map<string, Map<string, (toolName: string, args: any) => Promise<string>>>} */
-    var taskwiseToolsetCallbacks = new Map();
+    const taskwiseToolsetCallbacks = new Map();
 
     contextBridge.exposeInMainWorld('taskManagerAPI', {
-        createTask: async () => {
-            const result = await ipcRenderer.invoke('taskManager:createTask');
+        createTask: async (modeId) => {
+            const result = await ipcRenderer.invoke('taskManager:createTask', modeId);
             if (result.status === 'ok') {
                 return result.data;
             } else {
@@ -31,6 +31,15 @@ function exposeTaskManagerAPI() {
                 return result.data;
             } else {
                 console.error('removing task failed', result.message);
+                throw new Error(result.message);
+            }
+        },
+        forkTask: async (taskId) => {
+            const result = await ipcRenderer.invoke('taskManager:forkTask', taskId);
+            if (result.status === 'ok') {
+                return result.data;
+            } else {
+                console.error('forking task failed', result.message);
                 throw new Error(result.message);
             }
         },
@@ -65,10 +74,10 @@ function exposeTaskManagerAPI() {
                 throw new Error(result.message);
             }
             const subscriptionId = result.data;
-            console.info('task update subscribed for task', taskId, subscriptionId)
+            console.info('task update subscribed for task', taskId, subscriptionId);
             ipcRenderer.on(`taskManager:taskUpdate:${subscriptionId}`, (event, ...args) => {
-                callback(...args)
-            })
+                callback(...args);
+            });
             return subscriptionId;
         },
         unsubscribeTaskUpdate: async (taskId, subscriptionId) => {
@@ -95,8 +104,8 @@ function exposeTaskManagerAPI() {
                 throw new Error(result.message);
             }
             ipcRenderer.on('taskManager:taskListUpdate', (event, ...args) => {
-                callback(...args)
-            })
+                callback(...args);
+            });
         },
         attachToolset: async (taskId, toolset, toolsetCallback) => {
             const result = await ipcRenderer.invoke('taskManager:attachToolset', taskId, toolset);
@@ -132,18 +141,18 @@ function exposeTaskManagerAPI() {
     });
 
     ipcRenderer.on('taskManager:callTool', async (event, taskId, toolCallId, toolsetName, toolName, args) => {
-        let result = "";
+        let result = '';
         if (!taskwiseToolsetCallbacks.has(taskId)) {
-            result = "错误: 当前任务没有在前端注册";
+            result = '错误: 当前任务没有在前端注册';
         } else {
             const toolsetCallback = taskwiseToolsetCallbacks.get(taskId).get(toolsetName);
             if (toolsetCallback === undefined) {
-                result = "错误: 当前工具集没有在前端注册";
+                result = '错误: 当前工具集没有在前端注册';
             } else {
                 try {
                     result = await toolsetCallback(toolName, args);
                 } catch (error) {
-                    result = "错误: 执行工具失败, 错误信息为: " + error.message;
+                    result = '错误: 执行工具失败, 错误信息为: ' + error.message;
                     console.error('error executing tool', error);
                 }
             }
@@ -155,7 +164,12 @@ function exposeTaskManagerAPI() {
 function exposeFSAPI() {
     contextBridge.exposeInMainWorld('fsAPI', {
         searchFilesByKeyword: async (keyword) => {
-            const result = await ipcRenderer.invoke('applicationRegistry:call', 'filemgr', 'searchFilesByKeyword', keyword);
+            const result = await ipcRenderer.invoke(
+                'applicationRegistry:call',
+                'filemgr',
+                'searchFilesByKeyword',
+                keyword
+            );
             if (result.status !== 'ok') {
                 console.error('searching files by keyword failed', result.message);
                 throw new Error(result.message);
@@ -164,7 +178,12 @@ function exposeFSAPI() {
             return result.data;
         },
         searchFilesByNameSimilarity: async (query) => {
-            const result = await ipcRenderer.invoke('applicationRegistry:call', 'filemgr', 'searchFilesByNameSimilarity', query);
+            const result = await ipcRenderer.invoke(
+                'applicationRegistry:call',
+                'filemgr',
+                'searchFilesByNameSimilarity',
+                query
+            );
             if (result.status !== 'ok') {
                 console.error('searching files by name similarity failed', result.message);
                 throw new Error(result.message);
@@ -172,7 +191,12 @@ function exposeFSAPI() {
             return result.data;
         },
         openPath: async (filePath) => {
-            const result = await ipcRenderer.invoke('applicationRegistry:callMainWorld', 'filemgr', 'openPath', filePath);
+            const result = await ipcRenderer.invoke(
+                'applicationRegistry:callMainWorld',
+                'filemgr',
+                'openPath',
+                filePath
+            );
             if (result.status !== 'ok') {
                 console.error('opening file failed', result.message);
                 throw new Error(result.message);
@@ -206,7 +230,7 @@ function exposeFSAPI() {
             // 统一为跨平台路径，始终返回如 c:/xxx 格式
             let p = webUtils.getPathForFile(file);
             // 将所有反斜杠替换为正斜杠，以统一为 URI 风格
-            if (typeof p === "string") {
+            if (typeof p === 'string') {
                 p = p.replace(/\\/g, '/');
             }
             return p;
@@ -220,12 +244,12 @@ function exposeFSAPI() {
 
             return result.data;
         }
-    })
+    });
 }
 
 if (window.self !== window.top) {
     /** @type {string | null} */
-    var applicationBundleName = null;
+    let applicationBundleName = null;
 
     contextBridge.exposeInMainWorld('applicationAPI', {
         setApplicationBundleName: async (bundleName) => {
@@ -236,7 +260,12 @@ if (window.self !== window.top) {
                 console.error('application bundle name is not set');
                 throw new Error('application bundle name is not set');
             }
-            const result = await ipcRenderer.invoke('applicationRegistry:call', applicationBundleName, methodName, ...args);
+            const result = await ipcRenderer.invoke(
+                'applicationRegistry:call',
+                applicationBundleName,
+                methodName,
+                ...args
+            );
             if (result.status !== 'ok') {
                 console.error('calling application failed', methodName, result.message);
                 throw new Error(result.message);
@@ -248,7 +277,12 @@ if (window.self !== window.top) {
                 console.error('application bundle name is not set');
                 throw new Error('application bundle name is not set');
             }
-            const result = await ipcRenderer.invoke('applicationRegistry:callMainWorld', applicationBundleName, methodName, ...args);
+            const result = await ipcRenderer.invoke(
+                'applicationRegistry:callMainWorld',
+                applicationBundleName,
+                methodName,
+                ...args
+            );
             if (result.status !== 'ok') {
                 console.error('calling application failed', methodName, result.message);
                 throw new Error(result.message);
@@ -260,7 +294,12 @@ if (window.self !== window.top) {
                 console.error('application bundle name is not set');
                 throw new Error('application bundle name is not set');
             }
-            const result = await ipcRenderer.invoke('applicationRegistry:streamCall', applicationBundleName, methodName, ...args);
+            const result = await ipcRenderer.invoke(
+                'applicationRegistry:streamCall',
+                applicationBundleName,
+                methodName,
+                ...args
+            );
             if (result.status !== 'ok') {
                 console.error('calling application failed', methodName, result.message);
                 throw new Error(result.message);
@@ -283,7 +322,12 @@ if (window.self !== window.top) {
                 console.error('application bundle name is not set');
                 throw new Error('application bundle name is not set');
             }
-            const result = await ipcRenderer.invoke('applicationRegistry:streamCallMainWorld', applicationBundleName, methodName, ...args);
+            const result = await ipcRenderer.invoke(
+                'applicationRegistry:streamCallMainWorld',
+                applicationBundleName,
+                methodName,
+                ...args
+            );
             if (result.status !== 'ok') {
                 console.error('calling application failed', methodName, result.message);
                 throw new Error(result.message);
@@ -308,12 +352,16 @@ if (window.self !== window.top) {
                 throw new Error(result.message);
             }
             ipcRenderer.on(`applicationRegistry:event:${eventName}`, (event, ...args) => {
-                callback(...args)
-            })
+                callback(...args);
+            });
             return result.data;
         },
         unsubscribe: async (eventName) => {
-            const result = await ipcRenderer.invoke('applicationRegistry:unsubscribe', applicationBundleName, eventName);
+            const result = await ipcRenderer.invoke(
+                'applicationRegistry:unsubscribe',
+                applicationBundleName,
+                eventName
+            );
             if (result.status !== 'ok') {
                 console.error('unsubscribing event failed', eventName, result.message);
                 throw new Error(result.message);
@@ -321,7 +369,7 @@ if (window.self !== window.top) {
             ipcRenderer.removeAllListeners(`applicationRegistry:event:${eventName}`);
             return result.data;
         }
-    })
+    });
 
     exposeTaskManagerAPI();
     exposeFSAPI();
@@ -332,8 +380,8 @@ if (window.self !== window.top) {
     contextBridge.exposeInMainWorld('settingAPI', {
         registerCommandCallback: (command, callback) => {
             ipcRenderer.on(`command:${command}`, (event, ...args) => {
-                callback(...args)
-            })
+                callback(...args);
+            });
         },
         loadSettingSchema: async () => {
             const result = await ipcRenderer.invoke('setting:loadSettingSchema');
@@ -369,8 +417,8 @@ if (window.self !== window.top) {
         },
         subscribeLogContentUpdate: (callback) => {
             ipcRenderer.on('setting:logContentUpdate', (event, ...args) => {
-                callback(...args)
-            })
+                callback(...args);
+            });
         },
         closeMainWindow: () => ipcRenderer.invoke('setting:closeMainWindow'),
         minimizeMainWindow: () => ipcRenderer.invoke('setting:minimizeMainWindow'),
@@ -381,8 +429,71 @@ if (window.self !== window.top) {
                 return false;
             }
             return result.data;
+        }
+    });
+
+    contextBridge.exposeInMainWorld('modeAPI', {
+        getSupportedModes: async () => {
+            const result = await ipcRenderer.invoke('mode:getSupportedModes');
+            if (result.status !== 'ok') {
+                console.error('getting supported modes failed', result.message);
+                throw new Error(result.message);
+            }
+            return result.data;
         },
-    })
+        setCurrentMode: async (modeId) => {
+            const result = await ipcRenderer.invoke('mode:setCurrentMode', modeId);
+            if (result.status !== 'ok') {
+                console.error('setting current mode failed', result.message);
+                throw new Error(result.message);
+            }
+            return result.data;
+        }
+    });
+
+    contextBridge.exposeInMainWorld('workspaceAPI', {
+        getEffectiveWorkspace: async () => {
+            const result = await ipcRenderer.invoke('workspace:getEffectiveWorkspace');
+            if (result.status !== 'ok') {
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
+        openWorkspaceDirectory: async () => {
+            const result = await ipcRenderer.invoke('workspace:openWorkspaceDirectory');
+            if (result.status !== 'ok') {
+                throw new Error(result.message);
+            }
+        },
+        selectWorkspaceDirectory: async () => {
+            const result = await ipcRenderer.invoke('workspace:selectWorkspaceDirectory');
+            if (result.status !== 'ok') {
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
+        copyWorkspacePath: async () => {
+            const result = await ipcRenderer.invoke('workspace:getEffectiveWorkspace');
+            if (result.status !== 'ok') {
+                throw new Error(result.message);
+            }
+            clipboard.writeText(result.data);
+        }
+    });
+
+    contextBridge.exposeInMainWorld('quickpassAPI', {
+        isQuickPass: async (text) => {
+            const result = await ipcRenderer.invoke('quickpass:isQuickPass', text);
+            return result.status === 'ok' ? result.data : false;
+        },
+        importQuickPass: async (quickpass) => {
+            const result = await ipcRenderer.invoke('quickpass:import', quickpass);
+            if (result.status !== 'ok') {
+                throw new Error(result.message);
+            }
+            return result.data;
+        }
+    });
 
     contextBridge.exposeInMainWorld('notificationAPI', {
         sendNotification: async (...args) => {
@@ -398,19 +509,37 @@ if (window.self !== window.top) {
             ipcRenderer.removeAllListeners('notification:notificationReceived');
             await ipcRenderer.invoke('notification:subscribeNotification');
             ipcRenderer.on('notification:notificationReceived', (event, ...args) => {
-                callback(...args)
-            })
+                callback(...args);
+            });
         }
-    })
+    });
 
     contextBridge.exposeInMainWorld('floatWindowAPI', {
         hideFloatWindow: () => ipcRenderer.invoke('floatWindow:hideFloatWindow'),
         subscribeIntentsUpdate: (callback) => {
             ipcRenderer.on('floatWindow:intentsUpdate', (event, ...args) => {
-                callback(...args)
-            })
+                callback(...args);
+            });
         }
-    })
+    });
+
+    contextBridge.exposeInMainWorld('permissionAPI', {
+        onPermissionRequest: (callback) => {
+            ipcRenderer.removeAllListeners('permission:request');
+            ipcRenderer.on('permission:request', (event, requestId, data) => {
+                callback(requestId, data);
+            });
+        },
+        onPermissionDismiss: (callback) => {
+            ipcRenderer.removeAllListeners('permission:dismiss');
+            ipcRenderer.on('permission:dismiss', (event, requestId) => {
+                callback(requestId);
+            });
+        },
+        respondPermission: (requestId, response) => {
+            ipcRenderer.send('permission:response', requestId, response);
+        }
+    });
 
     contextBridge.exposeInMainWorld('applicationRegistryAPI', {
         getApplicationGUIConfig: async (bundleName) => {
@@ -438,7 +567,12 @@ if (window.self !== window.top) {
             return result.data;
         },
         callMainWorld: async (bundleName, methodName, ...args) => {
-            const result = await ipcRenderer.invoke('applicationRegistry:callMainWorld', bundleName, methodName, ...args);
+            const result = await ipcRenderer.invoke(
+                'applicationRegistry:callMainWorld',
+                bundleName,
+                methodName,
+                ...args
+            );
             if (result.status !== 'ok') {
                 console.error('calling application failed', bundleName, methodName, result.message);
                 throw new Error(result.message);

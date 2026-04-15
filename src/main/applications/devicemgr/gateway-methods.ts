@@ -20,7 +20,7 @@ import { logger } from '../../utils/logger.js';
 import type { DeviceGateway, GatewayMethodHandler, ConnectionState } from './gateway.js';
 import type { TaskManagerState, TaskState, TaskUpdateChunk } from '../../aikernel/states/tasks.js';
 import { BaseTaskUpdateSubscriber } from '../../aikernel/states/tasks.js';
-import { ShellAgentDecl } from '../../aikernel/agents/shellagent.js';
+import { MainAgentDecl } from '../../aikernel/agents/mainagent/agent.js';
 
 const TAG = '[devicemgr:gateway-methods]';
 
@@ -46,12 +46,7 @@ function sessionTaskKey(connId: string, sessionKey: string): string {
 /**
  * 将 TaskUpdateChunk 转换为 OpenClaw chat 事件 payload。
  */
-function chunkToEventPayload(
-    runId: string,
-    sessionKey: string,
-    chunk: TaskUpdateChunk,
-    seq: number,
-): object | null {
+function chunkToEventPayload(runId: string, sessionKey: string, chunk: TaskUpdateChunk, seq: number): object | null {
     if (chunk.type === 'assistant') {
         const part = chunk.last_part;
         if (part.type === 'text') {
@@ -62,8 +57,8 @@ function chunkToEventPayload(
                 state: chunk.task_status === 'running' ? 'delta' : 'final',
                 message: {
                     role: 'assistant',
-                    content: [{ type: 'text', text: part.text }],
-                },
+                    content: [{ type: 'text', text: part.text }]
+                }
             };
         }
         if (part.type === 'reasoning') {
@@ -72,24 +67,22 @@ function chunkToEventPayload(
                 sessionKey,
                 seq,
                 state: 'delta',
-                thinking: part.content,
+                thinking: part.content
             };
         }
         if (part.type === 'tool_call') {
-            const calls = part.toolcalls.map(tc => ({
+            const calls = part.toolcalls.map((tc) => ({
                 name: tc.tool_name,
                 status: tc.status,
                 args: tc.args_string,
-                result: typeof tc.result === 'string'
-                    ? tc.result.slice(0, 500)
-                    : undefined,
+                result: typeof tc.result === 'string' ? tc.result.slice(0, 500) : undefined
             }));
             return {
                 runId,
                 sessionKey,
                 seq,
                 state: 'delta',
-                toolCalls: calls,
+                toolCalls: calls
             };
         }
         if (part.type === 'error') {
@@ -98,7 +91,7 @@ function chunkToEventPayload(
                 sessionKey,
                 seq,
                 state: 'error',
-                errorMessage: part.message,
+                errorMessage: part.message
             };
         }
     }
@@ -112,8 +105,8 @@ function chunkToEventPayload(
  */
 export function registerOpenClawMethods(gateway: DeviceGateway, ctx?: GatewayMethodContext): void {
     const handlers: Record<string, GatewayMethodHandler> = {
-        'health': handleHealth,
-        'status': handleStatus,
+        health: handleHealth,
+        status: handleStatus,
         'chat.send': ctx ? makeChatSendHandler(gateway, ctx) : handleChatSendStub,
         'chat.history': ctx ? makeChatHistoryHandler(ctx) : handleChatHistoryStub,
         'chat.abort': ctx ? makeChatAbortHandler(ctx) : handleChatAbortStub,
@@ -141,8 +134,8 @@ export function registerOpenClawMethods(gateway: DeviceGateway, ctx?: GatewayMet
         'config.apply': handleStub('config.apply'),
         'config.patch': handleStub('config.patch'),
         'config.schema': handleStub('config.schema'),
-        'send': handleSend,
-        'agent': handleStub('agent'),
+        send: handleSend,
+        agent: handleStub('agent'),
         'agent.identity.get': handleAgentIdentityGet,
         'gateway.identity.get': handleGatewayIdentityGet(gateway),
         'system-presence': handleSystemPresence(gateway),
@@ -155,7 +148,7 @@ export function registerOpenClawMethods(gateway: DeviceGateway, ctx?: GatewayMet
         'logs.tail': handleStub('logs.tail'),
         'last-heartbeat': handleLastHeartbeat,
         'set-heartbeats': handleStub('set-heartbeats'),
-        'wake': handleWake,
+        wake: handleWake
     };
 
     gateway.registerMethods(handlers);
@@ -168,7 +161,7 @@ const handleHealth: GatewayMethodHandler = (_conn, _frame, _params, respond) => 
     respond(true, {
         ok: true,
         version: '1.0.0',
-        uptime: process.uptime(),
+        uptime: process.uptime()
     });
 };
 
@@ -176,7 +169,7 @@ const handleStatus: GatewayMethodHandler = (_conn, _frame, _params, respond) => 
     respond(true, {
         version: '1.0.0',
         platform: process.platform,
-        uptime: process.uptime(),
+        uptime: process.uptime()
     });
 };
 
@@ -187,7 +180,7 @@ const handleStatus: GatewayMethodHandler = (_conn, _frame, _params, respond) => 
  * 流程与 CLI 一致：创建/复用 task → submitUserMessage → 订阅更新 → 流式推送 chat 事件。
  */
 function makeChatSendHandler(gateway: DeviceGateway, ctx: GatewayMethodContext): GatewayMethodHandler {
-    const agentDecl = new ShellAgentDecl({ workspace: ctx.workspace });
+    const agentDecl = new MainAgentDecl({ workspace: ctx.workspace });
 
     return async (conn: ConnectionState, _frame, params, respond) => {
         const sessionKey: string = params?.sessionKey ?? 'main';
@@ -197,7 +190,7 @@ function makeChatSendHandler(gateway: DeviceGateway, ctx: GatewayMethodContext):
         if (!message || (typeof message === 'string' && !message.trim())) {
             respond(false, undefined, {
                 code: 'INVALID_REQUEST',
-                message: 'message is required',
+                message: 'message is required'
             });
             return;
         }
@@ -216,16 +209,13 @@ function makeChatSendHandler(gateway: DeviceGateway, ctx: GatewayMethodContext):
             let seq = 0;
 
             // 订阅任务更新，流式推送到客户端
-            const subscriber = new GatewayTaskSubscriber(
-                conn.connId,
-                (chunk: TaskUpdateChunk) => {
-                    seq++;
-                    const payload = chunkToEventPayload(runId, sessionKey, chunk, seq);
-                    if (payload) {
-                        gateway.sendEventToConnection(conn.connId, 'chat', payload);
-                    }
-                },
-            );
+            const subscriber = new GatewayTaskSubscriber(conn.connId, (chunk: TaskUpdateChunk) => {
+                seq++;
+                const payload = chunkToEventPayload(runId, sessionKey, chunk, seq);
+                if (payload) {
+                    gateway.sendEventToConnection(conn.connId, 'chat', payload);
+                }
+            });
             task.addSubscriber(subscriber);
 
             // 提交用户消息——与 CLI 完全一致
@@ -245,11 +235,13 @@ function makeChatSendHandler(gateway: DeviceGateway, ctx: GatewayMethodContext):
                 sessionKey,
                 seq,
                 state: 'final',
-                message: finalText ? {
-                    role: 'assistant',
-                    content: [{ type: 'text', text: finalText }],
-                    timestamp: Date.now(),
-                } : undefined,
+                message: finalText
+                    ? {
+                          role: 'assistant',
+                          content: [{ type: 'text', text: finalText }],
+                          timestamp: Date.now()
+                      }
+                    : undefined
             });
         } catch (err: any) {
             logger.error(`${TAG} chat.send 处理失败: ${err?.message || err}`);
@@ -258,7 +250,7 @@ function makeChatSendHandler(gateway: DeviceGateway, ctx: GatewayMethodContext):
                 sessionKey,
                 seq: 1,
                 state: 'error',
-                errorMessage: err?.message || String(err),
+                errorMessage: err?.message || String(err)
             });
         }
     };
@@ -269,9 +261,9 @@ function makeChatSendHandler(gateway: DeviceGateway, ctx: GatewayMethodContext):
  */
 async function resolveOrCreateTask(
     ctx: GatewayMethodContext,
-    agentDecl: ShellAgentDecl,
+    agentDecl: MainAgentDecl,
     connId: string,
-    sessionKey: string,
+    sessionKey: string
 ): Promise<TaskState> {
     const key = sessionTaskKey(connId, sessionKey);
     const entry = sessionTaskMap.get(key);
@@ -362,13 +354,11 @@ function makeChatHistoryHandler(ctx: GatewayMethodContext): GatewayMethodHandler
         const messages: object[] = [];
         for (const msg of task.chat_context.messages) {
             if (msg.role === 'user') {
-                const textParts = msg.content
-                    .filter((p: any) => p.type === 'text')
-                    .map((p: any) => p.text);
+                const textParts = msg.content.filter((p: any) => p.type === 'text').map((p: any) => p.text);
                 if (textParts.length > 0) {
                     messages.push({
                         role: 'user',
-                        content: textParts.join('\n'),
+                        content: textParts.join('\n')
                     });
                 }
             } else if (msg.role === 'assistant') {
@@ -378,7 +368,7 @@ function makeChatHistoryHandler(ctx: GatewayMethodContext): GatewayMethodHandler
                 if (textParts.length > 0) {
                     messages.push({
                         role: 'assistant',
-                        content: [{ type: 'text', text: textParts.join('\n') }],
+                        content: [{ type: 'text', text: textParts.join('\n') }]
                     });
                 }
             }
@@ -432,7 +422,7 @@ function makeSessionsListHandler(ctx: GatewayMethodContext): GatewayMethodHandle
             sessionId: t.task_id,
             title: t.task_name || '未命名',
             createdAt: t.started_at,
-            updatedAt: t.finished_at || t.started_at,
+            updatedAt: t.finished_at || t.started_at
         }));
         respond(true, { sessions });
     };
@@ -447,7 +437,7 @@ const handleSessionsCreate: GatewayMethodHandler = (_conn, _frame, params, respo
     respond(true, {
         sessionKey,
         sessionId: randomUUID(),
-        created: true,
+        created: true
     });
 };
 
@@ -477,13 +467,13 @@ const handleSend: GatewayMethodHandler = (_conn, _frame, params, respond) => {
     if (!params?.to || !params?.message) {
         respond(false, undefined, {
             code: 'INVALID_REQUEST',
-            message: 'to and message are required',
+            message: 'to and message are required'
         });
         return;
     }
     respond(true, {
         runId: params?.idempotencyKey ?? randomUUID(),
-        status: 'sent',
+        status: 'sent'
     });
 };
 
@@ -492,7 +482,7 @@ const handleSend: GatewayMethodHandler = (_conn, _frame, params, respond) => {
 const handleAgentIdentityGet: GatewayMethodHandler = (_conn, _frame, _params, respond) => {
     respond(true, {
         agentId: 'default',
-        displayName: 'OpenDesk Agent',
+        displayName: 'OpenDesk Agent'
     });
 };
 
@@ -508,13 +498,13 @@ function handleGatewayIdentityGet(gateway: DeviceGateway): GatewayMethodHandler 
 function handleSystemPresence(gateway: DeviceGateway): GatewayMethodHandler {
     return (_conn, _frame, _params, respond) => {
         const connected = gateway.getNodeRegistry().listConnected();
-        const entries = connected.map(n => ({
+        const entries = connected.map((n) => ({
             key: n.nodeId,
             host: n.displayName ?? n.nodeId,
             platform: n.platform,
             version: n.version,
             mode: 'node',
-            deviceId: n.nodeId,
+            deviceId: n.nodeId
         }));
         respond(true, { entries });
     };

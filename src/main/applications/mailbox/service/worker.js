@@ -9,10 +9,10 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { EmailHeader, EmailProfileSchema, MailboxConfigSchema, EmailContent, EmailAttachment } from "../common.js";
-import { BaseWorker } from "../../base";
+import { EmailHeader, EmailProfileSchema, MailboxConfigSchema, EmailContent, EmailAttachment } from '../common.js';
+import { BaseWorker } from '../../base';
 import { logger } from '../../../utils/logger.js';
-import { NotificationManager } from "../../../utils/notificationmgr.js";
+import { NotificationManager } from '../../../utils/notificationmgr.js';
 
 import Pop3Command from 'node-pop3';
 import Imap from 'node-imap';
@@ -21,9 +21,9 @@ import fs from 'fs';
 import nedb from 'nedb-promises';
 import path from 'path';
 import pMap from 'p-map';
-import { simpleParser } from "mailparser";
+import { simpleParser } from 'mailparser';
 
-var mailboxDataDirectory = null;
+const mailboxDataDirectory = null;
 
 /**
  * 为Promise添加超时机制
@@ -41,8 +41,6 @@ async function withTimeout(promise, timeoutMs, operation = 'operation') {
     return Promise.race([promise, timeoutPromise]);
 }
 
-
-
 class EmailContentHelper {
     extractFilenameFromContentDisposition(contentDisposition) {
         if (!contentDisposition) return null;
@@ -58,9 +56,9 @@ class EmailContentHelper {
                     const decoded = decodeURIComponent(encoded);
                     const buffer = Buffer.from(decoded, 'latin1');
                     const charsetMap = {
-                        'gb2312': 'gbk',
-                        'gb_2312': 'gbk',
-                        'x-gbk': 'gbk',
+                        gb2312: 'gbk',
+                        gb_2312: 'gbk',
+                        'x-gbk': 'gbk'
                     };
                     const normalizedCharset = charsetMap[charset?.toLowerCase()] || charset?.toLowerCase() || 'utf-8';
                     try {
@@ -109,7 +107,7 @@ class EmailContentHelper {
             'application/vnd.ms-powerpoint': '.ppt',
             'application/vnd.openxmlformats-officedocument.presentationml.presentation': '.pptx',
             'message/rfc822': '.eml',
-            'message/rfc822-headers': '.eml',
+            'message/rfc822-headers': '.eml'
         };
 
         const mainType = contentType.split(';')[0].trim().toLowerCase();
@@ -154,21 +152,25 @@ class EmailContentHelper {
                 if (encodingUpper === 'B') {
                     const buffer = Buffer.from(encoded, 'base64');
                     const charsetMap = {
-                        'gb2312': 'utf-8',  // Node.js 不支持 GBK，先尝试 utf-8
-                        'gb_2312': 'utf-8',
+                        gb2312: 'utf-8', // Node.js 不支持 GBK，先尝试 utf-8
+                        gb_2312: 'utf-8',
                         'x-gbk': 'utf-8',
-                        'gbk': 'utf-8',
-                        'gb18030': 'utf-8',
+                        gbk: 'utf-8',
+                        gb18030: 'utf-8',
                         'windows-1252': 'latin1',
                         'iso-8859-1': 'latin1',
-                        'cp936': 'utf-8',
+                        cp936: 'utf-8'
                     };
                     const normalizedCharset = charsetMap[charsetLower] || charsetLower;
 
                     try {
                         if (['utf8', 'utf-8', 'utf16le', 'latin1', 'ascii'].includes(normalizedCharset)) {
                             decoded = buffer.toString(normalizedCharset);
-                        } else if (charsetLower.includes('gb') || charsetLower.includes('gbk') || charsetLower.includes('gb2312')) {
+                        } else if (
+                            charsetLower.includes('gb') ||
+                            charsetLower.includes('gbk') ||
+                            charsetLower.includes('gb2312')
+                        ) {
                             decoded = buffer.toString('utf-8', 'replace');
                             if (decoded.includes('')) {
                                 try {
@@ -212,14 +214,14 @@ class EmailContentHelper {
 
                     const buffer = Buffer.from(bytes);
                     const charsetMap = {
-                        'gb2312': 'utf-8',
-                        'gb_2312': 'utf-8',
+                        gb2312: 'utf-8',
+                        gb_2312: 'utf-8',
                         'x-gbk': 'utf-8',
-                        'gbk': 'utf-8',
-                        'gb18030': 'utf-8',
+                        gbk: 'utf-8',
+                        gb18030: 'utf-8',
                         'windows-1252': 'latin1',
                         'iso-8859-1': 'latin1',
-                        'cp936': 'utf-8',
+                        cp936: 'utf-8'
                     };
                     const normalizedCharset = charsetMap[charsetLower] || charsetLower;
                     try {
@@ -239,7 +241,9 @@ class EmailContentHelper {
 
                 return decoded;
             } catch (error) {
-                logger.warn(`Failed to decode RFC 2047: charset=${charset}, encoding=${encoding}, error=${error.message}`);
+                logger.warn(
+                    `Failed to decode RFC 2047: charset=${charset}, encoding=${encoding}, error=${error.message}`
+                );
                 return match;
             }
         });
@@ -264,9 +268,7 @@ class EmailContentHelper {
             const contentStr = contentBuffer.toString('utf-8', 'replace');
             const subjectMatch = contentStr.match(/^Subject:\s*((?:.|\r?\n(?:\s|\t).*)*)/im);
             if (subjectMatch && subjectMatch[1]) {
-                let subject = subjectMatch[1]
-                    .replace(/\r?\n[\s\t]+/g, ' ')
-                    .trim();
+                let subject = subjectMatch[1].replace(/\r?\n[\s\t]+/g, ' ').trim();
                 subject = this.decodeRfc2047(subject);
                 return subject || null;
             }
@@ -274,14 +276,10 @@ class EmailContentHelper {
             logger.warn(`Failed to extract subject from RFC822 attachment: ${error.message}`);
             // 如果解析失败，尝试简单的字符串提取作为备用
             try {
-                const contentStr = Buffer.isBuffer(content)
-                    ? content.toString('utf-8', 'replace')
-                    : String(content);
+                const contentStr = Buffer.isBuffer(content) ? content.toString('utf-8', 'replace') : String(content);
                 const subjectMatch = contentStr.match(/^Subject:\s*((?:.|\r?\n(?:\s|\t).*)*)/im);
                 if (subjectMatch && subjectMatch[1]) {
-                    let subject = subjectMatch[1]
-                        .replace(/\r?\n[\s\t]+/g, ' ')
-                        .trim();
+                    let subject = subjectMatch[1].replace(/\r?\n[\s\t]+/g, ' ').trim();
                     subject = this.decodeRfc2047(subject);
                     return subject || null;
                 }
@@ -326,10 +324,10 @@ class EmailContentHelper {
         }
 
         const emailAttachmentDir = path.join(attachmentDirectory, uid);
-        let result = [];
+        const result = [];
         if (!fs.existsSync(emailAttachmentDir)) {
             fs.mkdirSync(emailAttachmentDir, { recursive: true });
-       }
+        }
 
         for (let i = 0; i < attachments.length; i++) {
             const attachment = attachments[i];
@@ -385,7 +383,6 @@ class EmailContentHelper {
 }
 
 class POP3EmailClient extends EmailContentHelper {
-
     constructor(usr, pwd, tls, host, port) {
         super();
         this.usr = usr;
@@ -396,7 +393,13 @@ class POP3EmailClient extends EmailContentHelper {
     }
 
     pop3() {
-        return new Pop3Command({ user: this.usr, password: this.pwd, host: this.host, port: this.port, tls: this.tls });
+        return new Pop3Command({
+            user: this.usr,
+            password: this.pwd,
+            host: this.host,
+            port: this.port,
+            tls: this.tls
+        });
     }
 
     async getEmail(uid, attachmentDirectory) {
@@ -404,11 +407,7 @@ class POP3EmailClient extends EmailContentHelper {
         const operationTimeout = 60000; // 单个操作超时60秒（获取完整邮件可能需要更长时间）
         try {
             // 为UIDL操作添加超时
-            const uidlist = await withTimeout(
-                pop3.UIDL(),
-                operationTimeout,
-                `UIDL(${uid})`
-            );
+            const uidlist = await withTimeout(pop3.UIDL(), operationTimeout, `UIDL(${uid})`);
             const uidmapping = new Map(uidlist.map(([index, uid]) => [uid, index]));
             const index = uidmapping.get(uid);
             if (index === undefined) {
@@ -416,11 +415,7 @@ class POP3EmailClient extends EmailContentHelper {
                 return null;
             }
             // 为RETR操作添加超时
-            const email = await withTimeout(
-                pop3.RETR(index),
-                operationTimeout,
-                `RETR(${index}, ${uid})`
-            );
+            const email = await withTimeout(pop3.RETR(index), operationTimeout, `RETR(${index}, ${uid})`);
             const parsed = await simpleParser(email);
 
             const attachments = await this.prepareAttachments(uid, parsed.attachments, attachmentDirectory);
@@ -428,17 +423,19 @@ class POP3EmailClient extends EmailContentHelper {
             const header = new EmailHeader(
                 uid,
                 parsed.subject,
-                parsed.from?.value, parsed.to?.value,
-                parsed.cc?.value, parsed.bcc?.value,
+                parsed.from?.value,
+                parsed.to?.value,
+                parsed.cc?.value,
+                parsed.bcc?.value,
                 parsed.date?.getTime()
             );
             header.protocol = 'pop3';
             return { header, content };
-        }
-        catch (error) {
+        } catch (error) {
             // 处理 AggregateError，记录所有错误信息
             if (error instanceof AggregateError) {
-                const errorMessages = error.errors?.map(err => err.message || String(err)).join('; ') || error.message;
+                const errorMessages =
+                    error.errors?.map((err) => err.message || String(err)).join('; ') || error.message;
                 logger.error(`error getting email content: ${uid}: AggregateError - ${errorMessages}`);
                 if (error.errors && error.errors.length > 0) {
                     error.errors.forEach((err, idx) => {
@@ -455,11 +452,7 @@ class POP3EmailClient extends EmailContentHelper {
         } finally {
             try {
                 // 为QUIT操作添加较短的超时
-                await withTimeout(
-                    pop3.QUIT(),
-                    5000,
-                    `QUIT(${uid})`
-                );
+                await withTimeout(pop3.QUIT(), 5000, `QUIT(${uid})`);
             } catch (quitError) {
                 // 忽略 QUIT 操作的错误，避免掩盖原始错误
                 logger.warn(`error during POP3 QUIT for ${uid}: ${quitError.message || String(quitError)}`);
@@ -479,7 +472,6 @@ class POP3EmailClient extends EmailContentHelper {
 }
 
 class IMAPEmailClient extends EmailContentHelper {
-
     constructor(usr, pwd, tls, host, port) {
         super();
         this.usr = usr;
@@ -524,15 +516,15 @@ class IMAPEmailClient extends EmailContentHelper {
 
     static findBoxByAttrib(flatBoxes, attrib) {
         if (!flatBoxes || flatBoxes.length === 0) return null;
-        const match = flatBoxes.find(box => box.attribs?.some(a => a.toLowerCase() === attrib.toLowerCase()));
+        const match = flatBoxes.find((box) => box.attribs?.some((a) => a.toLowerCase() === attrib.toLowerCase()));
         return match?.path || null;
     }
 
     static findBoxByName(flatBoxes, keywords) {
         if (!flatBoxes || flatBoxes.length === 0) return null;
-        const lowered = flatBoxes.map(box => ({ path: box.path, name: box.path.toLowerCase() }));
+        const lowered = flatBoxes.map((box) => ({ path: box.path, name: box.path.toLowerCase() }));
         for (const keyword of keywords) {
-            const match = lowered.find(box => box.name.includes(keyword));
+            const match = lowered.find((box) => box.name.includes(keyword));
             if (match) return match.path;
         }
         return null;
@@ -540,10 +532,10 @@ class IMAPEmailClient extends EmailContentHelper {
 
     static buildImapIdInfo(host) {
         return {
-            name: 'FillipDesk',
-            version: '0.1.4',
-            vendor: 'FillipDesk',
-            'support-email': 'support@fillipdesk.local'
+            name: 'OpenDesk',
+            version: '0.2.0',
+            vendor: 'OpenDesk',
+            'support-email': 'support@opendesk.local'
         };
     }
 
@@ -566,7 +558,7 @@ class IMAPEmailClient extends EmailContentHelper {
     static sanitizeRecipientField(value) {
         if (!value) return null;
         if (Array.isArray(value)) {
-            const cleaned = value.map(v => String(v).trim()).filter(Boolean);
+            const cleaned = value.map((v) => String(v).trim()).filter(Boolean);
             return cleaned.length > 0 ? cleaned : null;
         }
         if (typeof value === 'string') {
@@ -577,9 +569,9 @@ class IMAPEmailClient extends EmailContentHelper {
     }
 
     static applyDraftEnvelope(mailOptions, fallbackAddress) {
-        let to = IMAPEmailClient.sanitizeRecipientField(mailOptions.to);
-        let cc = IMAPEmailClient.sanitizeRecipientField(mailOptions.cc);
-        let bcc = IMAPEmailClient.sanitizeRecipientField(mailOptions.bcc);
+        const to = IMAPEmailClient.sanitizeRecipientField(mailOptions.to);
+        const cc = IMAPEmailClient.sanitizeRecipientField(mailOptions.cc);
+        const bcc = IMAPEmailClient.sanitizeRecipientField(mailOptions.bcc);
 
         if (to === null) delete mailOptions.to;
         else mailOptions.to = to;
@@ -608,7 +600,9 @@ class IMAPEmailClient extends EmailContentHelper {
         if (typeof boxName === 'object' && boxName.path) {
             boxName = boxName.path;
         }
-        return String(boxName).replace(/[\r\n\0]/g, '').trim();
+        return String(boxName)
+            .replace(/[\r\n\0]/g, '')
+            .trim();
     }
 
     createImap() {
@@ -642,7 +636,9 @@ class IMAPEmailClient extends EmailContentHelper {
                 // 连接成功后，注册一个持久的 error 监听器，防止后续 socket 错误
                 // （如 ECONNRESET）变成未捕获异常导致进程崩溃
                 imap.on('error', (err) => {
-                    logger.warn(`IMAP socket error after connect${context ? ` (${context})` : ''}: ${err.message || err}`);
+                    logger.warn(
+                        `IMAP socket error after connect${context ? ` (${context})` : ''}: ${err.message || err}`
+                    );
                 });
                 const idInfo = this.getImapIdInfo();
                 if (idInfo && imap.serverSupports && imap.serverSupports('ID')) {
@@ -817,25 +813,53 @@ class IMAPEmailClient extends EmailContentHelper {
         try {
             if (!localImap) {
                 localImap = this.createImap();
-                await withTimeout(this.connect(localImap, 'IMAP connect (resolve boxes)'), 30000, 'IMAP connect (resolve boxes)');
+                await withTimeout(
+                    this.connect(localImap, 'IMAP connect (resolve boxes)'),
+                    30000,
+                    'IMAP connect (resolve boxes)'
+                );
                 shouldClose = true;
             }
 
             const boxes = await withTimeout(this.getBoxes(localImap), 30000, 'IMAP getBoxes');
             const flat = IMAPEmailClient.flattenBoxes(boxes);
 
-            const inboxBox = flat.find(box => box.path.toUpperCase() === 'INBOX')?.path
-                || IMAPEmailClient.findBoxByAttrib(flat, '\\Inbox')
-                || 'INBOX';
+            const inboxBox =
+                flat.find((box) => box.path.toUpperCase() === 'INBOX')?.path ||
+                IMAPEmailClient.findBoxByAttrib(flat, '\\Inbox') ||
+                'INBOX';
 
-            const sentBox = IMAPEmailClient.findBoxByAttrib(flat, '\\Sent')
-                || IMAPEmailClient.findBoxByName(flat, ['sent items', 'sent mail', 'sent', '已发送', '已發送', '发件箱', '已寄', '已送']);
+            const sentBox =
+                IMAPEmailClient.findBoxByAttrib(flat, '\\Sent') ||
+                IMAPEmailClient.findBoxByName(flat, [
+                    'sent items',
+                    'sent mail',
+                    'sent',
+                    '已发送',
+                    '已發送',
+                    '发件箱',
+                    '已寄',
+                    '已送'
+                ]);
 
-            const draftsBox = IMAPEmailClient.findBoxByAttrib(flat, '\\Drafts')
-                || IMAPEmailClient.findBoxByName(flat, ['drafts', 'draft', '草稿箱', '草稿']);
+            const draftsBox =
+                IMAPEmailClient.findBoxByAttrib(flat, '\\Drafts') ||
+                IMAPEmailClient.findBoxByName(flat, ['drafts', 'draft', '草稿箱', '草稿']);
 
-            const trashBox = IMAPEmailClient.findBoxByAttrib(flat, '\\Trash')
-                || IMAPEmailClient.findBoxByName(flat, ['trash', 'deleted', 'bin', 'junk', '垃圾箱', '已删除', '已刪除', '回收站', '废纸篓', '已删除邮件']);
+            const trashBox =
+                IMAPEmailClient.findBoxByAttrib(flat, '\\Trash') ||
+                IMAPEmailClient.findBoxByName(flat, [
+                    'trash',
+                    'deleted',
+                    'bin',
+                    'junk',
+                    '垃圾箱',
+                    '已删除',
+                    '已刪除',
+                    '回收站',
+                    '废纸篓',
+                    '已删除邮件'
+                ]);
 
             const map = {
                 inbox: inboxBox,
@@ -890,17 +914,19 @@ class IMAPEmailClient extends EmailContentHelper {
         await this.openBox(imap, boxName, true);
 
         const serverUids = await this.search(imap, ['ALL']);
-        const unreadUids = type === 'inbox'
-            ? new Set(await this.search(imap, ['UNSEEN']))
-            : new Set();
+        const unreadUids = type === 'inbox' ? new Set(await this.search(imap, ['UNSEEN'])) : new Set();
 
         const localMeta = await storage.getImapMetaByBox(boxName);
-        const localImapUidSet = new Set(localMeta.map(doc => doc.imapUid));
+        const localImapUidSet = new Set(localMeta.map((doc) => doc.imapUid));
 
-        const newUids = serverUids.filter(uid => !localImapUidSet.has(uid));
+        const newUids = serverUids.filter((uid) => !localImapUidSet.has(uid));
         if (type === 'inbox' && newUids.length > 0) {
             logger.info(`IMAP syncing inbox for ${this.usr}, new emails: ${newUids.length}`);
-            NotificationManager.getInstance().info('邮箱', '收取新邮件', `即将从${this.usr}收取 ${newUids.length} 封新邮件`);
+            NotificationManager.getInstance().info(
+                '邮箱',
+                '收取新邮件',
+                `即将从${this.usr}收取 ${newUids.length} 封新邮件`
+            );
         }
         if (newUids.length > 0) {
             const fetched = await this.fetchHeaders(imap, newUids);
@@ -924,8 +950,10 @@ class IMAPEmailClient extends EmailContentHelper {
                         const header = new EmailHeader(
                             localUid,
                             parsed.subject,
-                            parsed.from?.value, parsed.to?.value,
-                            parsed.cc?.value, parsed.bcc?.value,
+                            parsed.from?.value,
+                            parsed.to?.value,
+                            parsed.cc?.value,
+                            parsed.bcc?.value,
                             parsed.date?.getTime(),
                             type === 'inbox' ? unreadUids.has(item.uid) : false,
                             item.flags?.includes('\\Flagged') || false,
@@ -956,7 +984,7 @@ class IMAPEmailClient extends EmailContentHelper {
         }
 
         try {
-            const serverLocalUidSet = new Set(serverUids.map(uid => IMAPEmailClient.buildLocalUid(boxName, uid)));
+            const serverLocalUidSet = new Set(serverUids.map((uid) => IMAPEmailClient.buildLocalUid(boxName, uid)));
             const cleanedCount = await storage.pruneExpiredEmailsByBox(boxName, serverLocalUidSet);
             if (cleanedCount > 0) {
                 logger.info(`[IMAP Sync] Physically removed ${cleanedCount} expired emails in ${boxName}.`);
@@ -995,14 +1023,14 @@ class IMAPEmailClient extends EmailContentHelper {
                     return totalNew;
                 } catch (error) {
                     lastError = error;
-                    const retryable = typeof isRetryableError === 'function'
-                        ? isRetryableError(error)
-                        : false;
+                    const retryable = typeof isRetryableError === 'function' ? isRetryableError(error) : false;
                     const shouldRetry = attempt < maxRetries - 1 && retryable;
                     if (shouldRetry) {
                         const delay = (attempt + 1) * 1000;
-                        logger.warn(`retrying syncIMAPInbox, attempt ${attempt + 1}/${maxRetries}, delay ${delay}ms, error: ${error.message}`);
-                        await new Promise(resolve => setTimeout(resolve, delay));
+                        logger.warn(
+                            `retrying syncIMAPInbox, attempt ${attempt + 1}/${maxRetries}, delay ${delay}ms, error: ${error.message}`
+                        );
+                        await new Promise((resolve) => setTimeout(resolve, delay));
                     } else {
                         break;
                     }
@@ -1012,7 +1040,9 @@ class IMAPEmailClient extends EmailContentHelper {
                     }
                 }
             }
-            logger.error(`failed to sync IMAP inbox after ${maxRetries} attempts: ${lastError?.message || 'unknown error'}`);
+            logger.error(
+                `failed to sync IMAP inbox after ${maxRetries} attempts: ${lastError?.message || 'unknown error'}`
+            );
             throw lastError || new Error('同步邮件失败');
         })();
 
@@ -1052,7 +1082,7 @@ class IMAPEmailClient extends EmailContentHelper {
             logger.warn(`skip IMAP append: empty raw message for ${normalizedBox}`);
             return false;
         }
-        const safeFlags = Array.isArray(flags) ? flags.filter(Boolean) : (flags ? [flags] : []);
+        const safeFlags = Array.isArray(flags) ? flags.filter(Boolean) : flags ? [flags] : [];
         const imap = this.createImap();
         try {
             await withTimeout(this.connect(imap, 'IMAP connect (append)'), 30000, 'IMAP connect (append)');
@@ -1061,11 +1091,7 @@ class IMAPEmailClient extends EmailContentHelper {
                 if (safeFlags.length > 0) {
                     options.flags = safeFlags;
                 }
-                await withTimeout(
-                    this.append(imap, rawMessage, options),
-                    30000,
-                    `IMAP append ${normalizedBox}`
-                );
+                await withTimeout(this.append(imap, rawMessage, options), 30000, `IMAP append ${normalizedBox}`);
                 return true;
             } catch (error) {
                 logger.warn(`failed to append to IMAP ${normalizedBox}: ${error.message}`);
@@ -1080,7 +1106,9 @@ class IMAPEmailClient extends EmailContentHelper {
                         try {
                             await withTimeout(this.addBox(imap, normalizedBox), 30000, `IMAP add ${normalizedBox}`);
                         } catch (addError) {
-                            logger.warn(`failed to create IMAP mailbox ${normalizedBox}: ${addError.message || addError}`);
+                            logger.warn(
+                                `failed to create IMAP mailbox ${normalizedBox}: ${addError.message || addError}`
+                            );
                         }
                     }
                 }
@@ -1161,8 +1189,10 @@ class IMAPEmailClient extends EmailContentHelper {
             const header = new EmailHeader(
                 localUid,
                 parsed.subject,
-                parsed.from?.value, parsed.to?.value,
-                parsed.cc?.value, parsed.bcc?.value,
+                parsed.from?.value,
+                parsed.to?.value,
+                parsed.cc?.value,
+                parsed.bcc?.value,
                 parsed.date?.getTime()
             );
             header.messageId = parsed.messageId || null;
@@ -1234,23 +1264,22 @@ class SmtpEmailClient {
             },
             // 增加连接和发送超时设置
             connectionTimeout: 5 * 60 * 1000, // 5分钟
-            socketTimeout: 5 * 60 * 1000, // 5分钟
-        })
+            socketTimeout: 5 * 60 * 1000 // 5分钟
+        });
 
         try {
             await transport.sendMail(mailOptions);
-            NotificationManager.getInstance().info('邮箱', '发送成功', '邮件发送成功')
+            NotificationManager.getInstance().info('邮箱', '发送成功', '邮件发送成功');
             return true;
         } catch (error) {
             logger.error(`SMTP send error: ${error.message}`);
-            NotificationManager.getInstance().error(error, '邮箱', '发送失败', '邮件发送失败')
+            NotificationManager.getInstance().error(error, '邮箱', '发送失败', '邮件发送失败');
             return false;
         }
     }
 }
 
 class MailboxStorage {
-
     constructor(dbPath) {
         /** @type {nedb} */
         this.dbPath = dbPath;
@@ -1269,38 +1298,51 @@ class MailboxStorage {
         const rawFile = this.dbPath + '_raw.db';
         const contentFile = this.dbPath + '_content.db';
 
-        await this.db.load().catch(err => {
-            logger.error(`error loading mailbox_header_storage.db: ${err}`);
-            fs.rmSync(dbFile, { force: true });
-            this.db = new nedb({ filename: dbFile, autoload: true });
-            NotificationManager.getInstance().error('邮箱', '收取新邮件', `邮箱数据库(db)损坏，已删除并重新创建`);
-        }).finally(() => {
-            this.db.ensureIndex({ fieldName: 'uid', unique: true, sparse: true });
-        })
-        await this.rawdb.load().catch(err => {
-            logger.error(`error loading mailbox_header_storage.db.raw: ${err}`);
-            fs.rmSync(rawFile, { force: true });
-            this.rawdb = new nedb({ filename: rawFile, autoload: true });
-            NotificationManager.getInstance().error('邮箱', '收取新邮件', `邮箱数据库(rawdb)损坏，已删除并重新创建`);
-        }).finally(() => {
-            this.rawdb.ensureIndex({ fieldName: 'uid', unique: true, sparse: true });
-        })
-        await this.contentdb.load().catch(err => {
-            logger.error(`error loading mailbox_header_storage.db.content: ${err}`);
-            fs.rmSync(contentFile, { force: true });
-            this.contentdb = new nedb({ filename: contentFile, autoload: true });
-            NotificationManager.getInstance().error('邮箱', '收取新邮件', `邮箱数据库(contentdb)损坏，已删除并重新创建`);
-        }).finally(() => {
-            this.contentdb.ensureIndex({ fieldName: 'uid', unique: true, sparse: true });
-        })
+        await this.db
+            .load()
+            .catch((err) => {
+                logger.error(`error loading mailbox_header_storage.db: ${err}`);
+                fs.rmSync(dbFile, { force: true });
+                this.db = new nedb({ filename: dbFile, autoload: true });
+                NotificationManager.getInstance().error('邮箱', '收取新邮件', `邮箱数据库(db)损坏，已删除并重新创建`);
+            })
+            .finally(() => {
+                this.db.ensureIndex({ fieldName: 'uid', unique: true, sparse: true });
+            });
+        await this.rawdb
+            .load()
+            .catch((err) => {
+                logger.error(`error loading mailbox_header_storage.db.raw: ${err}`);
+                fs.rmSync(rawFile, { force: true });
+                this.rawdb = new nedb({ filename: rawFile, autoload: true });
+                NotificationManager.getInstance().error(
+                    '邮箱',
+                    '收取新邮件',
+                    `邮箱数据库(rawdb)损坏，已删除并重新创建`
+                );
+            })
+            .finally(() => {
+                this.rawdb.ensureIndex({ fieldName: 'uid', unique: true, sparse: true });
+            });
+        await this.contentdb
+            .load()
+            .catch((err) => {
+                logger.error(`error loading mailbox_header_storage.db.content: ${err}`);
+                fs.rmSync(contentFile, { force: true });
+                this.contentdb = new nedb({ filename: contentFile, autoload: true });
+                NotificationManager.getInstance().error(
+                    '邮箱',
+                    '收取新邮件',
+                    `邮箱数据库(contentdb)损坏，已删除并重新创建`
+                );
+            })
+            .finally(() => {
+                this.contentdb.ensureIndex({ fieldName: 'uid', unique: true, sparse: true });
+            });
     }
 
     async saveRawEmailHeader(uid, header) {
-        await this.rawdb.update(
-            { uid: uid },
-            { $set: { uid: uid, header: header } },
-            { upsert: true }
-        )
+        await this.rawdb.update({ uid: uid }, { $set: { uid: uid, header: header } }, { upsert: true });
     }
 
     async getRawEmailHeader(uid) {
@@ -1326,26 +1368,17 @@ class MailboxStorage {
 
     async markEmailAsRead(uid) {
         logger.info(`marking email as read: ${uid}`);
-        await this.db.update(
-            { uid: uid },
-            { $set: { unread: false } }
-        )
+        await this.db.update({ uid: uid }, { $set: { unread: false } });
     }
 
     async markEmailAsUnread(uid) {
         logger.info(`marking email as unread: ${uid}`);
-        await this.db.update(
-            { uid: uid },
-            { $set: { unread: true } }
-        )
+        await this.db.update({ uid: uid }, { $set: { unread: true } });
     }
 
     async deleteEmail(uid) {
         logger.info(`deleting email: ${uid}`);
-        await this.db.update(
-            { uid: uid },
-            { $set: { deleted: true } }
-        )
+        await this.db.update({ uid: uid }, { $set: { deleted: true } });
     }
 
     async getEmailContent(uid) {
@@ -1358,19 +1391,23 @@ class MailboxStorage {
 
     async starEmail(uid, starred) {
         logger.info(`starring email: ${uid}: ${starred}`);
-        await this.db.update(
-            { uid: uid },
-            { $set: { starred: starred } }
-        )
+        await this.db.update({ uid: uid }, { $set: { starred: starred } });
     }
 
     async saveEmailContent(uid, content) {
         try {
             await this.contentdb.update(
                 { uid: uid },
-                { $set: { uid: uid, htmlContent: content.htmlContent, textContent: content.textContent, attachments: content.attachments } },
+                {
+                    $set: {
+                        uid: uid,
+                        htmlContent: content.htmlContent,
+                        textContent: content.textContent,
+                        attachments: content.attachments
+                    }
+                },
                 { upsert: true }
-            )
+            );
         } catch (error) {
             logger.error(`error saving email content: ${uid}: ${error}`);
         }
@@ -1385,8 +1422,10 @@ class MailboxStorage {
                     const header = new EmailHeader(
                         uid,
                         parsed.subject,
-                        parsed.from?.value, parsed.to?.value,
-                        parsed.cc?.value, parsed.bcc?.value,
+                        parsed.from?.value,
+                        parsed.to?.value,
+                        parsed.cc?.value,
+                        parsed.bcc?.value,
                         parsed.date?.getTime()
                     );
                     header.protocol = protocol;
@@ -1398,7 +1437,7 @@ class MailboxStorage {
             },
             { concurrency: 16 }
         );
-        await this.saveEmailHeaders(...headers.filter(header => header !== null));
+        await this.saveEmailHeaders(...headers.filter((header) => header !== null));
     }
 
     async saveEmailHeader(header) {
@@ -1408,11 +1447,7 @@ class MailboxStorage {
     async saveEmailHeaders(...emails) {
         for (const email of emails) {
             try {
-                await this.db.update(
-                    { uid: email.uid },
-                    { $set: email },
-                    { upsert: true }
-                )
+                await this.db.update({ uid: email.uid }, { $set: email }, { upsert: true });
             } catch (error) {
                 logger.error(`error saving email: ${email.uid}: ${error}`);
             }
@@ -1421,27 +1456,35 @@ class MailboxStorage {
 
     async getUIDSet() {
         const docs = await this.db.find({});
-        const set = new Set(docs.map(doc => doc.uid));
+        const set = new Set(docs.map((doc) => doc.uid));
         return set;
     }
 
     async getEmailHeaderList(protocol, offset = 0, pageSize = 20) {
         const dbQuery = {
             deleted: { $ne: true },
-            $and: [
-                { type: { $ne: 'draft' } },
-                { type: { $ne: 'sent' } }
-            ]
+            $and: [{ type: { $ne: 'draft' } }, { type: { $ne: 'sent' } }]
         };
         if (protocol) {
             dbQuery.protocol = protocol;
         }
         const docs = await this.db.find(dbQuery).sort({ date: -1 }).skip(offset).limit(pageSize);
-        return docs.map(doc => new EmailHeader(
-            doc.uid, doc.subject,
-            doc.from, doc.to, doc.cc, doc.bcc,
-            doc.date, doc.unread, doc.starred, doc.deleted, doc.type || 'inbox'
-        ));
+        return docs.map(
+            (doc) =>
+                new EmailHeader(
+                    doc.uid,
+                    doc.subject,
+                    doc.from,
+                    doc.to,
+                    doc.cc,
+                    doc.bcc,
+                    doc.date,
+                    doc.unread,
+                    doc.starred,
+                    doc.deleted,
+                    doc.type || 'inbox'
+                )
+        );
     }
 
     async getDraftList(protocol, offset = 0, pageSize = 20) {
@@ -1450,11 +1493,22 @@ class MailboxStorage {
             dbQuery.protocol = protocol;
         }
         const docs = await this.db.find(dbQuery).sort({ date: -1 }).skip(offset).limit(pageSize);
-        return docs.map(doc => new EmailHeader(
-            doc.uid, doc.subject,
-            doc.from, doc.to, doc.cc, doc.bcc,
-            doc.date, doc.unread, doc.starred, doc.deleted, doc.type
-        ));
+        return docs.map(
+            (doc) =>
+                new EmailHeader(
+                    doc.uid,
+                    doc.subject,
+                    doc.from,
+                    doc.to,
+                    doc.cc,
+                    doc.bcc,
+                    doc.date,
+                    doc.unread,
+                    doc.starred,
+                    doc.deleted,
+                    doc.type
+                )
+        );
     }
 
     async getSentList(protocol, offset = 0, pageSize = 20) {
@@ -1463,11 +1517,22 @@ class MailboxStorage {
             dbQuery.protocol = protocol;
         }
         const docs = await this.db.find(dbQuery).sort({ date: -1 }).skip(offset).limit(pageSize);
-        return docs.map(doc => new EmailHeader(
-            doc.uid, doc.subject,
-            doc.from, doc.to, doc.cc, doc.bcc,
-            doc.date, doc.unread, doc.starred, doc.deleted, doc.type
-        ));
+        return docs.map(
+            (doc) =>
+                new EmailHeader(
+                    doc.uid,
+                    doc.subject,
+                    doc.from,
+                    doc.to,
+                    doc.cc,
+                    doc.bcc,
+                    doc.date,
+                    doc.unread,
+                    doc.starred,
+                    doc.deleted,
+                    doc.type
+                )
+        );
     }
 
     async saveDraft(uid, emailHeader, emailContent, protocol = null) {
@@ -1491,7 +1556,14 @@ class MailboxStorage {
         await this.db.update({ uid: uid }, { $set: draftData }, { upsert: true });
         await this.contentdb.update(
             { uid: uid },
-            { $set: { uid: uid, htmlContent: emailContent.htmlContent, textContent: emailContent.textContent, attachments: emailContent.attachments || [] } },
+            {
+                $set: {
+                    uid: uid,
+                    htmlContent: emailContent.htmlContent,
+                    textContent: emailContent.textContent,
+                    attachments: emailContent.attachments || []
+                }
+            },
             { upsert: true }
         );
     }
@@ -1522,7 +1594,14 @@ class MailboxStorage {
         await this.db.update({ uid: uid }, { $set: sentData }, { upsert: true });
         await this.contentdb.update(
             { uid: uid },
-            { $set: { uid: uid, htmlContent: emailContent.htmlContent, textContent: emailContent.textContent, attachments: emailContent.attachments || [] } },
+            {
+                $set: {
+                    uid: uid,
+                    htmlContent: emailContent.htmlContent,
+                    textContent: emailContent.textContent,
+                    attachments: emailContent.attachments || []
+                }
+            },
             { upsert: true }
         );
     }
@@ -1540,7 +1619,7 @@ class MailboxStorage {
             for (const doc of subjectDocs) matchingUids.add(doc.uid);
 
             const fromQuery = {
-                $or: [ { 'from.address': { $regex: generalRegex } }, { 'from.name': { $regex: generalRegex } } ]
+                $or: [{ 'from.address': { $regex: generalRegex } }, { 'from.name': { $regex: generalRegex } }]
             };
             if (protocol) fromQuery.protocol = protocol;
             const fromDocs = await this.db.find(fromQuery);
@@ -1548,7 +1627,7 @@ class MailboxStorage {
 
             const bodyRegex = new RegExp(query.general, 'i');
             const contentDocs = await this.contentdb.find({
-                $or: [ { htmlContent: { $regex: bodyRegex } }, { textContent: { $regex: bodyRegex } } ]
+                $or: [{ htmlContent: { $regex: bodyRegex } }, { textContent: { $regex: bodyRegex } }]
             });
             for (const contentDoc of contentDocs) matchingUids.add(contentDoc.uid);
 
@@ -1611,24 +1690,24 @@ class MailboxStorage {
             const bodyRegex = new RegExp(query.body, 'i');
             const matchingUids = new Set();
             const contentDocs = await this.contentdb.find({
-                $or: [ { htmlContent: { $regex: bodyRegex } }, { textContent: { $regex: bodyRegex } } ]
+                $or: [{ htmlContent: { $regex: bodyRegex } }, { textContent: { $regex: bodyRegex } }]
             });
             for (const contentDoc of contentDocs) matchingUids.add(contentDoc.uid);
-            docs = docs.filter(doc => matchingUids.has(doc.uid));
+            docs = docs.filter((doc) => matchingUids.has(doc.uid));
         }
 
         if (query.attachmentName) {
             const attachRegex = new RegExp(query.attachmentName, 'i');
-            const docUids = docs.map(doc => doc.uid);
+            const docUids = docs.map((doc) => doc.uid);
             const contentDocs = await this.contentdb.find({ uid: { $in: docUids } });
             const matchingUids = new Set();
             for (const contentDoc of contentDocs) {
                 const attachments = contentDoc.attachments || [];
-                if (attachments.some(a => a.filename && attachRegex.test(a.filename))) {
+                if (attachments.some((a) => a.filename && attachRegex.test(a.filename))) {
                     matchingUids.add(contentDoc.uid);
                 }
             }
-            docs = docs.filter(doc => matchingUids.has(doc.uid));
+            docs = docs.filter((doc) => matchingUids.has(doc.uid));
         }
 
         // Apply limit and offset for pagination (after all filtering)
@@ -1639,11 +1718,22 @@ class MailboxStorage {
             docs = docs.slice(0, query.limit);
         }
 
-        return docs.map(doc => new EmailHeader(
-            doc.uid, doc.subject,
-            doc.from, doc.to, doc.cc, doc.bcc,
-            doc.date, doc.unread, doc.starred, doc.deleted, doc.type || 'inbox'
-        ));
+        return docs.map(
+            (doc) =>
+                new EmailHeader(
+                    doc.uid,
+                    doc.subject,
+                    doc.from,
+                    doc.to,
+                    doc.cc,
+                    doc.bcc,
+                    doc.date,
+                    doc.unread,
+                    doc.starred,
+                    doc.deleted,
+                    doc.type || 'inbox'
+                )
+        );
     }
 
     /**
@@ -1659,7 +1749,6 @@ class MailboxStorage {
         for (const doc of localActiveDocs) {
             // 2. 如果本地 UID 不在服务器列表中
             if (!serverUidSet.has(doc.uid)) {
-
                 // 3. 再次确认本地没有正文内容 (防止误删已归档邮件)
                 const contentCount = await this.contentdb.count({ uid: doc.uid });
 
@@ -1709,17 +1798,12 @@ class MailboxStorage {
                 { multi: true }
             );
         } else {
-            await this.db.update(
-                { imapBox: imapBox },
-                { $set: { unread: false } },
-                { multi: true }
-            );
+            await this.db.update({ imapBox: imapBox }, { $set: { unread: false } }, { multi: true });
         }
     }
 }
 
 class MailboxWorker extends BaseWorker {
-
     constructor(bundleName, appDataDirectory) {
         super(bundleName, appDataDirectory);
         this.appDataDirectory = appDataDirectory;
@@ -1772,21 +1856,18 @@ class MailboxWorker extends BaseWorker {
             for (let attempt = 0; attempt < maxRetries; attempt++) {
                 try {
                     // 为UIDL操作添加超时
-                    const allList = await withTimeout(
-                        pop3.UIDL(),
-                        operationTimeout,
-                        'UIDL'
-                    );
+                    const allList = await withTimeout(pop3.UIDL(), operationTimeout, 'UIDL');
                     // 1. 构建服务器 UID 集合
                     const serverUidSet = new Set(allList.map(([_, uid]) => uid));
 
                     // 2. 执行物理清理
                     try {
-
                         const cleanedCount = await storage.pruneExpiredEmails(serverUidSet);
 
                         if (cleanedCount > 0) {
-                            logger.info(`[Sync] Physically removed ${cleanedCount} expired emails (header & raw) without content.`);
+                            logger.info(
+                                `[Sync] Physically removed ${cleanedCount} expired emails (header & raw) without content.`
+                            );
                         }
                     } catch (e) {
                         logger.warn(`[Sync] Failed to prune expired emails: ${e.message}`);
@@ -1794,9 +1875,13 @@ class MailboxWorker extends BaseWorker {
                     const uidSet = await storage.getUIDSet();
                     const newList = allList.filter(([_, uid]) => !uidSet.has(uid)).reverse();
 
-                    var pendingHeaders = [];
+                    let pendingHeaders = [];
                     if (newList.length > 0) {
-                        NotificationManager.getInstance().info('邮箱', '收取新邮件', `即将从${username}收取 ${newList.length} 封新邮件`);
+                        NotificationManager.getInstance().info(
+                            '邮箱',
+                            '收取新邮件',
+                            `即将从${username}收取 ${newList.length} 封新邮件`
+                        );
                     }
 
                     for (const [i, [index, uid]] of newList.entries()) {
@@ -1815,7 +1900,9 @@ class MailboxWorker extends BaseWorker {
                                 await storage.saveRawEmailHeader(uid, rawEmailHeader);
                             } catch (topError) {
                                 // 单个邮件头获取失败，记录错误但继续处理其他邮件
-                                logger.warn(`failed to get email header for ${uid}, index ${index}: ${topError.message}`);
+                                logger.warn(
+                                    `failed to get email header for ${uid}, index ${index}: ${topError.message}`
+                                );
                                 // 如果是超时或网络错误，且重试次数未用完，则重新抛出以触发外层重试
                                 if (attempt < maxRetries - 1 && this.isRetryableError(topError)) {
                                     throw topError;
@@ -1844,11 +1931,7 @@ class MailboxWorker extends BaseWorker {
 
                     // 尝试关闭连接，但不让QUIT的错误影响整体结果
                     try {
-                        await withTimeout(
-                            pop3.QUIT(),
-                            operationTimeout,
-                            'QUIT'
-                        );
+                        await withTimeout(pop3.QUIT(), operationTimeout, 'QUIT');
                     } catch (quitError) {
                         logger.warn(`error during POP3 QUIT: ${quitError.message}`);
                         // QUIT失败不影响同步结果，忽略错误
@@ -1862,8 +1945,10 @@ class MailboxWorker extends BaseWorker {
 
                     if (shouldRetry) {
                         const delay = (attempt + 1) * 1000; // 递增延迟：1s, 2s
-                        logger.warn(`retrying syncPOP3Inbox, attempt ${attempt + 1}/${maxRetries}, delay ${delay}ms, error: ${error.message}`);
-                        await new Promise(resolve => setTimeout(resolve, delay));
+                        logger.warn(
+                            `retrying syncPOP3Inbox, attempt ${attempt + 1}/${maxRetries}, delay ${delay}ms, error: ${error.message}`
+                        );
+                        await new Promise((resolve) => setTimeout(resolve, delay));
                     } else {
                         // 不应该重试或已达到最大重试次数
                         break;
@@ -1885,17 +1970,15 @@ class MailboxWorker extends BaseWorker {
             }
 
             // 所有重试都失败了
-            logger.error(`failed to sync POP3 inbox after ${maxRetries} attempts: ${lastError?.message || 'unknown error'}`);
+            logger.error(
+                `failed to sync POP3 inbox after ${maxRetries} attempts: ${lastError?.message || 'unknown error'}`
+            );
             throw lastError || new Error('同步邮件失败');
         })();
 
         // 为整个同步过程添加超时
         try {
-            return await withTimeout(
-                syncPromise,
-                overallTimeout,
-                'syncPOP3Inbox'
-            );
+            return await withTimeout(syncPromise, overallTimeout, 'syncPOP3Inbox');
         } catch (error) {
             if (error.message?.includes('超时')) {
                 logger.error(`syncPOP3Inbox overall timeout after ${overallTimeout}ms`);
@@ -1960,7 +2043,7 @@ class MailboxWorker extends BaseWorker {
             'aggregateerror'
         ];
 
-        return retryablePatterns.some(pattern => errorMessage.includes(pattern));
+        return retryablePatterns.some((pattern) => errorMessage.includes(pattern));
     }
 
     notifyEmailListUpdated(profileId) {
@@ -1997,7 +2080,11 @@ class MailboxWorker extends BaseWorker {
                             profile.inbox.imap.host,
                             profile.inbox.imap.port
                         );
-                        newEmailCount = await imapClient.syncAll(storage, this.imapBoxCache, this.isRetryableError.bind(this));
+                        newEmailCount = await imapClient.syncAll(
+                            storage,
+                            this.imapBoxCache,
+                            this.isRetryableError.bind(this)
+                        );
                     } else if (protocol === 'pop3') {
                         newEmailCount = await this.syncPOP3Inbox(profile, storage);
                     } else {
@@ -2005,7 +2092,7 @@ class MailboxWorker extends BaseWorker {
                     }
                     if (newEmailCount > 0) {
                         // 只有当 isMailboxOpened 为true且currentProfileId = id 时，才认为用户正在查看该账号，不增加计数
-                        const isViewingThisAccount = (this.isMailboxOpened === true && this.currentProfileId === id);
+                        const isViewingThisAccount = this.isMailboxOpened === true && this.currentProfileId === id;
                         if (!isViewingThisAccount) {
                             const currentNewCount = this.newEmailCounts.get(id) || 0;
                             this.newEmailCounts.set(id, currentNewCount + newEmailCount);
@@ -2015,7 +2102,11 @@ class MailboxWorker extends BaseWorker {
                     }
                 } catch (accError) {
                     logger.error(`error syncing profile ${id}: ${accError.message}`);
-                    NotificationManager.getInstance().error('邮箱', '收取新邮件', `账号 ${id} 同步失败: ${accError.message}`);
+                    NotificationManager.getInstance().error(
+                        '邮箱',
+                        '收取新邮件',
+                        `账号 ${id} 同步失败: ${accError.message}`
+                    );
                 }
             }
             logger.info('all mailboxes sync completed');
@@ -2137,7 +2228,9 @@ class MailboxWorker extends BaseWorker {
         }
 
         this.emitEvent('accountsUpdated', await this.getAccountList());
-        logger.info(`mailbox initialized/reloaded with ${this.profileMap.size} profiles. Current: ${this.currentProfileId}`);
+        logger.info(
+            `mailbox initialized/reloaded with ${this.profileMap.size} profiles. Current: ${this.currentProfileId}`
+        );
     }
 
     async initialize() {
@@ -2146,9 +2239,12 @@ class MailboxWorker extends BaseWorker {
         });
         setTimeout(async () => {
             await this.trySync();
-            setInterval(async () => {
-                await this.trySync();
-            }, 1000 * 60 * 5);
+            setInterval(
+                async () => {
+                    await this.trySync();
+                },
+                1000 * 60 * 5
+            );
         }, 1000 * 5);
     }
 
@@ -2166,9 +2262,9 @@ class MailboxWorker extends BaseWorker {
         if (!storage || !profile) return [];
 
         const protocol = this.resolveInboxProtocol(profile);
-        let startTime = Date.now();
+        const startTime = Date.now();
         const result = await storage.getEmailHeaderList(protocol, offset, pageSize);
-        let cost = (Date.now() - startTime) / 1000;
+        const cost = (Date.now() - startTime) / 1000;
         logger.info(`get email list cost: ${cost.toFixed(2)}s`);
         return result;
     }
@@ -2179,9 +2275,9 @@ class MailboxWorker extends BaseWorker {
         if (!storage || !profile) return [];
 
         const protocol = this.resolveInboxProtocol(profile);
-        let startTime = Date.now();
+        const startTime = Date.now();
         const result = await storage.searchEmails(protocol, query);
-        let cost = (Date.now() - startTime) / 1000;
+        const cost = (Date.now() - startTime) / 1000;
         logger.info(`search emails cost: ${cost.toFixed(2)}s, found ${result.length} results`);
         return result;
     }
@@ -2288,7 +2384,8 @@ class MailboxWorker extends BaseWorker {
             for (let attempt = 0; attempt <= maxRetries; attempt++) {
                 try {
                     const imapClient = new IMAPEmailClient(
-                        profile.username, profile.password,
+                        profile.username,
+                        profile.password,
                         profile.inbox.imap.tls,
                         profile.inbox.imap.host,
                         profile.inbox.imap.port
@@ -2312,8 +2409,10 @@ class MailboxWorker extends BaseWorker {
                     const shouldRetry = attempt < maxRetries && this.isRetryableError(error);
                     if (shouldRetry) {
                         const delay = (attempt + 1) * 1000;
-                        logger.warn(`retrying getEmailContent(IMAP) for ${uid}, attempt ${attempt + 1}/${maxRetries + 1}, delay ${delay}ms`);
-                        await new Promise(resolve => setTimeout(resolve, delay));
+                        logger.warn(
+                            `retrying getEmailContent(IMAP) for ${uid}, attempt ${attempt + 1}/${maxRetries + 1}, delay ${delay}ms`
+                        );
+                        await new Promise((resolve) => setTimeout(resolve, delay));
                     } else {
                         break;
                     }
@@ -2330,7 +2429,8 @@ class MailboxWorker extends BaseWorker {
             for (let attempt = 0; attempt <= maxRetries; attempt++) {
                 try {
                     const pop3 = new POP3EmailClient(
-                        profile.username, profile.password,
+                        profile.username,
+                        profile.password,
                         profile.inbox.pop3.tls,
                         profile.inbox.pop3.host,
                         profile.inbox.pop3.port
@@ -2354,20 +2454,22 @@ class MailboxWorker extends BaseWorker {
                 } catch (error) {
                     lastError = error;
                     // 判断是否应该重试：网络错误、超时错误、AggregateError 等
-                    const shouldRetry = attempt < maxRetries && (
-                        error instanceof AggregateError ||
-                        error.message?.includes('timeout') ||
-                        error.message?.includes('ECONNRESET') ||
-                        error.message?.includes('ETIMEDOUT') ||
-                        error.message?.includes('ENOTFOUND') ||
-                        error.message?.includes('网络') ||
-                        error.message?.includes('连接')
-                    );
+                    const shouldRetry =
+                        attempt < maxRetries &&
+                        (error instanceof AggregateError ||
+                            error.message?.includes('timeout') ||
+                            error.message?.includes('ECONNRESET') ||
+                            error.message?.includes('ETIMEDOUT') ||
+                            error.message?.includes('ENOTFOUND') ||
+                            error.message?.includes('网络') ||
+                            error.message?.includes('连接'));
 
                     if (shouldRetry) {
                         const delay = (attempt + 1) * 1000; // 递增延迟：1s, 2s
-                        logger.warn(`retrying getEmailContent for ${uid}, attempt ${attempt + 1}/${maxRetries + 1}, delay ${delay}ms`);
-                        await new Promise(resolve => setTimeout(resolve, delay));
+                        logger.warn(
+                            `retrying getEmailContent for ${uid}, attempt ${attempt + 1}/${maxRetries + 1}, delay ${delay}ms`
+                        );
+                        await new Promise((resolve) => setTimeout(resolve, delay));
                     } else {
                         // 不应该重试或已达到最大重试次数
                         break;
@@ -2395,8 +2497,11 @@ class MailboxWorker extends BaseWorker {
 
         if (protocol === 'imap' && meta?.imapUid && meta?.imapBox) {
             const imapClient = new IMAPEmailClient(
-                profile.username, profile.password,
-                profile.inbox.imap.tls, profile.inbox.imap.host, profile.inbox.imap.port
+                profile.username,
+                profile.password,
+                profile.inbox.imap.tls,
+                profile.inbox.imap.host,
+                profile.inbox.imap.port
             );
             const attachmentDir = this.getCurrentAttachmentDir();
             const result = await imapClient.getEmail(uid, meta.imapBox, meta.imapUid, attachmentDir);
@@ -2407,8 +2512,11 @@ class MailboxWorker extends BaseWorker {
             return content;
         } else if (protocol === 'pop3') {
             const pop3 = new POP3EmailClient(
-                profile.username, profile.password,
-                profile.inbox.pop3.tls, profile.inbox.pop3.host, profile.inbox.pop3.port
+                profile.username,
+                profile.password,
+                profile.inbox.pop3.tls,
+                profile.inbox.pop3.host,
+                profile.inbox.pop3.port
             );
             const attachmentDir = this.getCurrentAttachmentDir();
             const { header, content } = await pop3.getEmail(uid, attachmentDir);
@@ -2426,7 +2534,7 @@ class MailboxWorker extends BaseWorker {
     }
 
     async sendEmail(sendEmailSchema) {
-        logger.info(`sendEmail to ${sendEmailSchema.to}`)
+        logger.info(`sendEmail to ${sendEmailSchema.to}`);
         const profile = this.getCurrentProfile();
         const storage = this.getCurrentStorage();
         if (!profile) throw new Error('No active profile');
@@ -2443,12 +2551,19 @@ class MailboxWorker extends BaseWorker {
             }
             const smtp = new SmtpEmailClient(
                 smtpAccount,
-                profile.username, profile.password, profile.name,
-                profile.outbox.smtp.host, profile.outbox.smtp.port, profile.outbox.smtp.tls
+                profile.username,
+                profile.password,
+                profile.name,
+                profile.outbox.smtp.host,
+                profile.outbox.smtp.port,
+                profile.outbox.smtp.tls
             );
             const sentUid = `sent_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-            const draftUid = sendEmailSchema.draftUid || `draft_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-            const messageId = sendEmailSchema.messageId || `<fillipdesk-${Date.now()}-${Math.random().toString(36).slice(2)}@fillipdesk>`;
+            const draftUid =
+                sendEmailSchema.draftUid || `draft_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+            const messageId =
+                sendEmailSchema.messageId ||
+                `<fillipdesk-${Date.now()}-${Math.random().toString(36).slice(2)}@fillipdesk>`;
 
             const sentHeaders = { 'X-Fillipdesk-UID': sentUid };
             const sentMailOptions = {
@@ -2474,9 +2589,19 @@ class MailboxWorker extends BaseWorker {
                 const emailHeader = {
                     subject: sendEmailSchema.subject,
                     from: [{ name: profile.name, address: profile.username }],
-                    to: Array.isArray(sendEmailSchema.to) ? sendEmailSchema.to.map(addr => ({ name: '', address: addr })) : [{ name: '', address: sendEmailSchema.to }],
-                    cc: Array.isArray(sendEmailSchema.cc) ? sendEmailSchema.cc.map(addr => ({ name: '', address: addr })) : (sendEmailSchema.cc ? [{ name: '', address: sendEmailSchema.cc }] : []),
-                    bcc: Array.isArray(sendEmailSchema.bcc) ? sendEmailSchema.bcc.map(addr => ({ name: '', address: addr })) : (sendEmailSchema.bcc ? [{ name: '', address: sendEmailSchema.bcc }] : [])
+                    to: Array.isArray(sendEmailSchema.to)
+                        ? sendEmailSchema.to.map((addr) => ({ name: '', address: addr }))
+                        : [{ name: '', address: sendEmailSchema.to }],
+                    cc: Array.isArray(sendEmailSchema.cc)
+                        ? sendEmailSchema.cc.map((addr) => ({ name: '', address: addr }))
+                        : sendEmailSchema.cc
+                          ? [{ name: '', address: sendEmailSchema.cc }]
+                          : [],
+                    bcc: Array.isArray(sendEmailSchema.bcc)
+                        ? sendEmailSchema.bcc.map((addr) => ({ name: '', address: addr }))
+                        : sendEmailSchema.bcc
+                          ? [{ name: '', address: sendEmailSchema.bcc }]
+                          : []
                 };
                 emailHeader.messageId = messageId;
                 const emailContent = {
@@ -2505,16 +2630,27 @@ class MailboxWorker extends BaseWorker {
                         logger.warn(`failed to append sent mail to IMAP: ${e.message}`);
                     }
                 }
-
             } else if (!result && storage) {
                 // 发送失败，保存到草稿箱
                 const draftHeaders = { 'X-Fillipdesk-UID': draftUid };
                 const emailHeader = {
                     subject: sendEmailSchema.subject,
                     from: [{ name: profile.name, address: profile.username }],
-                    to: Array.isArray(sendEmailSchema.to) ? sendEmailSchema.to.map(addr => ({ name: '', address: addr })) : (sendEmailSchema.to ? [{ name: '', address: sendEmailSchema.to }] : []),
-                    cc: Array.isArray(sendEmailSchema.cc) ? sendEmailSchema.cc.map(addr => ({ name: '', address: addr })) : (sendEmailSchema.cc ? [{ name: '', address: sendEmailSchema.cc }] : []),
-                    bcc: Array.isArray(sendEmailSchema.bcc) ? sendEmailSchema.bcc.map(addr => ({ name: '', address: addr })) : (sendEmailSchema.bcc ? [{ name: '', address: sendEmailSchema.bcc }] : [])
+                    to: Array.isArray(sendEmailSchema.to)
+                        ? sendEmailSchema.to.map((addr) => ({ name: '', address: addr }))
+                        : sendEmailSchema.to
+                          ? [{ name: '', address: sendEmailSchema.to }]
+                          : [],
+                    cc: Array.isArray(sendEmailSchema.cc)
+                        ? sendEmailSchema.cc.map((addr) => ({ name: '', address: addr }))
+                        : sendEmailSchema.cc
+                          ? [{ name: '', address: sendEmailSchema.cc }]
+                          : [],
+                    bcc: Array.isArray(sendEmailSchema.bcc)
+                        ? sendEmailSchema.bcc.map((addr) => ({ name: '', address: addr }))
+                        : sendEmailSchema.bcc
+                          ? [{ name: '', address: sendEmailSchema.bcc }]
+                          : []
                 };
                 emailHeader.messageId = messageId;
                 const emailContent = {
@@ -2569,9 +2705,21 @@ class MailboxWorker extends BaseWorker {
         const emailHeader = {
             subject: draftSchema.subject,
             from: [{ name: profile.name, address: profile.username }],
-            to: Array.isArray(draftSchema.to) ? draftSchema.to.map(addr => ({ name: '', address: addr })) : (draftSchema.to ? [{ name: '', address: draftSchema.to }] : []),
-            cc: Array.isArray(draftSchema.cc) ? draftSchema.cc.map(addr => ({ name: '', address: addr })) : (draftSchema.cc ? [{ name: '', address: draftSchema.cc }] : []),
-            bcc: Array.isArray(draftSchema.bcc) ? draftSchema.bcc.map(addr => ({ name: '', address: addr })) : (draftSchema.bcc ? [{ name: '', address: draftSchema.bcc }] : [])
+            to: Array.isArray(draftSchema.to)
+                ? draftSchema.to.map((addr) => ({ name: '', address: addr }))
+                : draftSchema.to
+                  ? [{ name: '', address: draftSchema.to }]
+                  : [],
+            cc: Array.isArray(draftSchema.cc)
+                ? draftSchema.cc.map((addr) => ({ name: '', address: addr }))
+                : draftSchema.cc
+                  ? [{ name: '', address: draftSchema.cc }]
+                  : [],
+            bcc: Array.isArray(draftSchema.bcc)
+                ? draftSchema.bcc.map((addr) => ({ name: '', address: addr }))
+                : draftSchema.bcc
+                  ? [{ name: '', address: draftSchema.bcc }]
+                  : []
         };
         emailHeader.messageId = messageId;
         const emailContent = {

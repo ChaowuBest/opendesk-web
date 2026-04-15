@@ -36,26 +36,25 @@ class AgentFilesView extends HTMLElement {
      */
     startSearch(query) {
         const startTime = Date.now();
-        Promise.all([
-            window.fsAPI.searchFilesByKeyword(query),
-            window.fsAPI.searchFilesByNameSimilarity(query)
-        ]).then(([keywordFiles, similarityFiles]) => {
-            // 合并两个结果，去重（假设 path 唯一）
-            const files = [];
-            const seenPaths = new Set();
-            for (const file of [...keywordFiles, ...similarityFiles]) {
-                if (!file?.path || seenPaths.has(file.path)) {
-                    continue;
+        Promise.all([window.fsAPI.searchFilesByKeyword(query), window.fsAPI.searchFilesByNameSimilarity(query)])
+            .then(([keywordFiles, similarityFiles]) => {
+                // 合并两个结果，去重（假设 path 唯一）
+                const files = [];
+                const seenPaths = new Set();
+                for (const file of [...keywordFiles, ...similarityFiles]) {
+                    if (!file?.path || seenPaths.has(file.path)) {
+                        continue;
+                    }
+                    seenPaths.add(file.path);
+                    files.push(file);
                 }
-                seenPaths.add(file.path);
-                files.push(file);
-            }
-            this.search_time = (Date.now() - startTime) / 1000;
-            this.setFiles(files);
-        }).catch(error => {
-            console.error('searching files failed', error);
-            this.clearSearchResults();
-        });
+                this.search_time = (Date.now() - startTime) / 1000;
+                this.setFiles(files);
+            })
+            .catch((error) => {
+                console.error('searching files failed', error);
+                this.clearSearchResults();
+            });
     }
 
     setFiles(files) {
@@ -92,21 +91,23 @@ class AgentFilesView extends HTMLElement {
     }
 
     renderPagination() {
-        let pages = [];
-        let npages = Math.ceil(this.files.length / this.page_size);
+        const pages = [];
+        const npages = Math.ceil(this.files.length / this.page_size);
 
         if (npages <= 1) return ''; // No need for pagination
 
         // 上一页
         if (this.current_page > 1) {
-            pages.push(`<button data-page="${this.current_page - 1}" class="btn-page-goto px-3 py-1 border border-gray-300 rounded-xl hover:bg-gray-50 transition">上一页</button>`);
+            pages.push(
+                `<button data-page="${this.current_page - 1}" class="btn-page-goto px-3 py-1 border border-gray-300 rounded-xl hover:bg-gray-50 transition">上一页</button>`
+            );
         }
 
         // page button factory
         const makeBtn = (i) => {
-            let page_class = "px-3 py-1 border border-gray-300 rounded-full hover:bg-gray-50 transition";
+            let page_class = 'px-3 py-1 border border-gray-300 rounded-full hover:bg-gray-50 transition';
             if (i === this.current_page) {
-                page_class = "px-3 py-1 bg-[#C94C40] text-white rounded-full";
+                page_class = 'px-3 py-1 bg-[#C94C40] text-white rounded-full';
             }
             return `<button data-page="${i}" class="btn-page-goto ${page_class}">${i}</button>`;
         };
@@ -124,9 +125,11 @@ class AgentFilesView extends HTMLElement {
             }
 
             // 需要省略号的位置
-            let showLeftEllipsis = false, showRightEllipsis = false;
+            let showLeftEllipsis = false,
+                showRightEllipsis = false;
             // 当前页前后要显示
-            let before = this.current_page - 1, after = this.current_page + 1;
+            const before = this.current_page - 1,
+                after = this.current_page + 1;
 
             // 当前页为5及以后，显示省略号
             if (this.current_page > 4) {
@@ -143,8 +146,8 @@ class AgentFilesView extends HTMLElement {
             }
 
             // 当前页前后显示
-            let startMid = Math.max(3, before); // mid from 3 or当前页-1
-            let endMid = Math.min(npages - 2, after); // mid 到倒数第2前后
+            const startMid = Math.max(3, before); // mid from 3 or当前页-1
+            const endMid = Math.min(npages - 2, after); // mid 到倒数第2前后
 
             for (let i = startMid; i <= endMid; i++) {
                 // 前2、后2已经显示过，跳过
@@ -167,15 +170,20 @@ class AgentFilesView extends HTMLElement {
 
         // 下一页
         if (this.current_page < npages) {
-            pages.push(`<button data-page="${this.current_page + 1}" class="btn-page-goto px-3 py-1 border border-gray-300 rounded-xl hover:bg-gray-50 transition">下一页</button>`);
+            pages.push(
+                `<button data-page="${this.current_page + 1}" class="btn-page-goto px-3 py-1 border border-gray-300 rounded-xl hover:bg-gray-50 transition">下一页</button>`
+            );
         }
 
         return pages.join('');
     }
 
     render() {
-        const current_files = this.files.slice((this.current_page - 1) * this.page_size, this.current_page * this.page_size);
-        const file_items = current_files.map(file => this.renderFileItem(file)).join('');
+        const current_files = this.files.slice(
+            (this.current_page - 1) * this.page_size,
+            this.current_page * this.page_size
+        );
+        const file_items = current_files.map((file) => this.renderFileItem(file)).join('');
 
         if (this.files.length > 0) {
             this.innerHTML = `
@@ -205,20 +213,20 @@ class AgentFilesView extends HTMLElement {
             this.innerHTML = ``;
         }
 
-        this.querySelectorAll('.btn-page-goto').forEach(btn => {
+        this.querySelectorAll('.btn-page-goto').forEach((btn) => {
             btn.addEventListener('click', (event) => {
                 this.current_page = parseInt(event.currentTarget.dataset.page);
                 this.render();
             });
         });
-        this.querySelectorAll('.btn-open-file').forEach(btn => {
+        this.querySelectorAll('.btn-open-file').forEach((btn) => {
             btn.addEventListener('click', (event) => {
                 const file_path = event.currentTarget.dataset.file_path;
                 console.info('open file', file_path);
                 window.fsAPI.openPath(file_path);
             });
         });
-        this.querySelectorAll('.btn-add-file-to-session').forEach(btn => {
+        this.querySelectorAll('.btn-add-file-to-session').forEach((btn) => {
             btn.addEventListener('click', (event) => {
                 const file_path = event.currentTarget.dataset.file_path;
                 this.dispatchEvent(new CustomEvent('addFileToSession', { detail: { file_path } }));

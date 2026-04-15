@@ -10,290 +10,312 @@
  */
 
 function getPathFromFile(file) {
-  if (!file) return null;
-  const path = window.fsAPI.getFilePath(file);
-  return path ? String(path).replace(/\\/g, '/') : null;
+    if (!file) return null;
+    const path = window.fsAPI.getFilePath(file);
+    return path ? String(path).replace(/\\/g, '/') : null;
 }
 
 /**
  * Skills 子应用：与其它应用统一，走 applicationAPI.call（Worker）
  */
 function getSkillsAPI() {
-  if (typeof window.applicationAPI === 'undefined') return null;
-  return {
-    list: () => window.applicationAPI.call('list'),
-    refresh: () => window.applicationAPI.call('refresh'),
-    getSkillsDirectory: () => window.applicationAPI.call('getSkillsDirectory'),
-    addFromPath: (sourcePath) => window.applicationAPI.call('addFromPath', sourcePath),
-    addFromZip: (zipPath, skillRelPath) => window.applicationAPI.call('addFromZip', zipPath, skillRelPath),
-    delete: (skillId) => window.applicationAPI.call('delete', skillId),
-    searchRegistry: (registryId, query, page, limit) =>
-      window.applicationAPI.call('searchRegistry', registryId, query, page, limit),
-    installFromRegistry: (installUrl) => window.applicationAPI.call('installFromRegistry', installUrl)
-  };
+    if (typeof window.applicationAPI === 'undefined') return null;
+    return {
+        list: () => window.applicationAPI.call('list'),
+        refresh: () => window.applicationAPI.call('refresh'),
+        getSkillsDirectory: () => window.applicationAPI.call('getSkillsDirectory'),
+        addFromDirectory: (sourceDirectory) => window.applicationAPI.call('addFromDirectory', sourceDirectory),
+        addFromZip: (zipPath, skillRelPath) => window.applicationAPI.call('addFromZip', zipPath, skillRelPath),
+        delete: (skillId) => window.applicationAPI.call('delete', skillId),
+        searchRegistry: (registryId, query, page, limit) =>
+            window.applicationAPI.call('searchRegistry', registryId, query, page, limit),
+        installFromRegistry: (installUrl) => window.applicationAPI.call('installFromRegistry', installUrl)
+    };
 }
 
 class SkillMgrEntryWidget extends HTMLElement {
-  constructor() {
-    super();
-    this.skills = [];
-    this.skillsDir = '';
-    this.loading = false;
-    this.error = null;
-    this.showAddPanel = true;
-    this.addUrl = '';
-    this.addingFromPath = false;
-    this.addingFromZip = false;
-    this.addingFromUrl = false;
-    this.message = null;
-    this.deletingId = null;
-    this.registrySelected = 'skill0';
-    this.registryQuery = '';
-    this.registryResults = [];
-    this.registryPage = 1;
-    this.registryTotal = 0;
-    this.registrySearching = false;
-    this.registryHasSearched = false;
-    this.registryMessage = null;
-    this.installingRegistryId = null;
-    this.clawhubSlug = '';
-    this.installingClawhubSlug = false;
-    this.attachShadow({ mode: 'open' });
-  }
-
-  async connectedCallback() {
-    this.render();
-    await this.loadSkills();
-  }
-
-  async loadSkills() {
-    const api = getSkillsAPI();
-    if (!api) {
-      this.error = '无法连接技能服务（请在主窗口打开应用）';
-      this.render();
-      return;
+    constructor() {
+        super();
+        this.skills = [];
+        this.skillsDir = '';
+        this.loading = false;
+        this.error = null;
+        this.showAddPanel = true;
+        this.addUrl = '';
+        this.addingFromPath = false;
+        this.addingFromZip = false;
+        this.addingFromUrl = false;
+        this.message = null;
+        this.deletingId = null;
+        this.registrySelected = 'skill0';
+        this.registryQuery = '';
+        this.registryResults = [];
+        this.registryPage = 1;
+        this.registryTotal = 0;
+        this.registrySearching = false;
+        this.registryHasSearched = false;
+        this.registryMessage = null;
+        this.installingRegistryId = null;
+        this.clawhubSlug = '';
+        this.installingClawhubSlug = false;
+        this.matrixSlug = '';
+        this.installingMatrixSlug = false;
+        this.attachShadow({ mode: 'open' });
     }
-    this.loading = true;
-    this.error = null;
-    this.render();
-    try {
-      this.skills = await api.list();
-      if (!Array.isArray(this.skills)) this.skills = [];
-      const dir = await api.getSkillsDirectory();
-      if (dir) this.skillsDir = dir;
-    } catch (e) {
-      this.error = e?.message || '加载失败';
-      this.skills = [];
-    } finally {
-      this.loading = false;
-      this.render();
+
+    async connectedCallback() {
+        this.render();
+        await this.loadSkills();
     }
-  }
 
-  setMessage(text, isError = false) {
-    this.message = { text, isError };
-    this.render();
-  }
-
-  clearMessage() {
-    this.message = null;
-    this.render();
-  }
-
-  async refresh() {
-    const api = getSkillsAPI();
-    if (!api) return;
-    this.loading = true;
-    this.error = null;
-    this.render();
-    try {
-      await api.refresh();
-      await this.loadSkills();
-    } catch (e) {
-      this.error = e?.message || '刷新失败';
-      this.render();
-    } finally {
-      this.loading = false;
-      this.render();
+    async loadSkills() {
+        const api = getSkillsAPI();
+        if (!api) {
+            this.error = '无法连接技能服务（请在主窗口打开应用）';
+            this.render();
+            return;
+        }
+        this.loading = true;
+        this.error = null;
+        this.render();
+        try {
+            this.skills = await api.list();
+            if (!Array.isArray(this.skills)) this.skills = [];
+            const dir = await api.getSkillsDirectory();
+            if (dir) this.skillsDir = dir;
+        } catch (e) {
+            this.error = e?.message || '加载失败';
+            this.skills = [];
+        } finally {
+            this.loading = false;
+            this.render();
+        }
     }
-  }
 
-  toggleAddPanel() {
-    this.showAddPanel = !this.showAddPanel;
-    this.render();
-  }
-
-  async searchRegistry() {
-    const api = getSkillsAPI();
-    if (!api?.searchRegistry) {
-      this.registryMessage = { text: '无法连接技能服务，请确认应用已加载', isError: true };
-      this.render();
-      return;
+    setMessage(text, isError = false) {
+        this.message = { text, isError };
+        this.render();
     }
-    this.registrySearching = true;
-    this.registryMessage = null;
-    this.registryResults = [];
-    this.render();
-    const timeoutMs = 20000;
-    const searchPromise = api.searchRegistry(this.registrySelected, this.registryQuery, 1, 20);
-    const timeoutPromise = new Promise((_, reject) => {
-      setTimeout(() => reject(new Error('搜索超时，请检查网络或稍后重试')), timeoutMs);
-    });
-    try {
-      const res = await Promise.race([searchPromise, timeoutPromise]);
-      this.registryResults = res?.skills ?? [];
-      this.registryTotal = res?.total ?? this.registryResults.length;
-      this.registryPage = 1;
-      if (res?.error) {
-        this.registryMessage = { text: res.error, isError: true };
-      } else if (res?.message) {
-        this.registryMessage = { text: res.message, isError: false };
-      }
-    } catch (e) {
-      const msg = e?.message || '搜索失败';
-      this.registryMessage = { text: msg, isError: true };
-      this.registryResults = [];
-    } finally {
-      this.registrySearching = false;
-      this.registryHasSearched = true;
-      this.render();
-    }
-  }
 
-  async installFromClawHubSlug() {
-    const api = getSkillsAPI();
-    const slug = (this.clawhubSlug || '').trim();
-    if (!api?.installFromRegistry || !slug) return;
-    this.installingClawhubSlug = true;
-    this.render();
-    try {
-      const installUrl = slug.startsWith('clawhub:') ? slug : `clawhub:${slug}`;
-      const addRes = await api.installFromRegistry(installUrl);
-      this.setMessage(`已添加技能：${addRes?.name ?? ''}`);
-      this.clawhubSlug = '';
-      await this.loadSkills();
-    } catch (e) {
-      this.setMessage(e?.message || '安装失败', true);
-    } finally {
-      this.installingClawhubSlug = false;
-      this.render();
+    clearMessage() {
+        this.message = null;
+        this.render();
     }
-  }
 
-  async installFromRegistry(installUrl, skillId) {
-    const api = getSkillsAPI();
-    if (!installUrl || !api?.installFromRegistry) return;
-    this.installingRegistryId = skillId;
-    this.render();
-    try {
-      const addRes = await api.installFromRegistry(installUrl);
-      this.setMessage(`已添加技能：${addRes?.name ?? ''}`);
-      await this.loadSkills();
-    } catch (e) {
-      this.setMessage(e?.message || '安装失败', true);
-    } finally {
-      this.installingRegistryId = null;
-      this.render();
+    async refresh() {
+        const api = getSkillsAPI();
+        if (!api) return;
+        this.loading = true;
+        this.error = null;
+        this.render();
+        try {
+            await api.refresh();
+            await this.loadSkills();
+        } catch (e) {
+            this.error = e?.message || '刷新失败';
+            this.render();
+        } finally {
+            this.loading = false;
+            this.render();
+        }
     }
-  }
 
-  async onPathPicked(file) {
-    const filePath = getPathFromFile(file);
-    if (!filePath) return;
-    // 目录选择器返回的是目录内某个文件的路径，需改为目录路径（主进程要求传目录）
-    const dirPath = filePath.replace(/[/\\][^/\\]*$/, '');
-    if (!dirPath) return;
-    const api = getSkillsAPI();
-    if (!api?.addFromPath) return;
-    this.addingFromPath = true;
-    this.render();
-    try {
-      const addRes = await api.addFromPath(dirPath);
-      this.setMessage(`已添加技能：${addRes?.name ?? ''}`);
-      await this.loadSkills();
-    } catch (e) {
-      this.setMessage(e?.message || '添加失败', true);
-    } finally {
-      this.addingFromPath = false;
-      this.render();
+    toggleAddPanel() {
+        this.showAddPanel = !this.showAddPanel;
+        this.render();
     }
-  }
 
-  async onZipPicked(file) {
-    const path = getPathFromFile(file);
-    if (!path) return;
-    const api = getSkillsAPI();
-    if (!api?.addFromZip) return;
-    this.addingFromZip = true;
-    this.render();
-    try {
-      const addRes = await api.addFromZip(path);
-      this.setMessage(`已添加技能：${addRes?.name ?? ''}`);
-      await this.loadSkills();
-    } catch (e) {
-      this.setMessage(e?.message || '添加失败', true);
-    } finally {
-      this.addingFromZip = false;
-      this.render();
+    async searchRegistry() {
+        const api = getSkillsAPI();
+        if (!api?.searchRegistry) {
+            this.registryMessage = { text: '无法连接技能服务，请确认应用已加载', isError: true };
+            this.render();
+            return;
+        }
+        this.registrySearching = true;
+        this.registryMessage = null;
+        this.registryResults = [];
+        this.render();
+        const timeoutMs = 20000;
+        const searchPromise = api.searchRegistry(this.registrySelected, this.registryQuery, 1, 20);
+        const timeoutPromise = new Promise((_, reject) => {
+            setTimeout(() => reject(new Error('搜索超时，请检查网络或稍后重试')), timeoutMs);
+        });
+        try {
+            const res = await Promise.race([searchPromise, timeoutPromise]);
+            this.registryResults = res?.skills ?? [];
+            this.registryTotal = res?.total ?? this.registryResults.length;
+            this.registryPage = 1;
+            if (res?.error) {
+                this.registryMessage = { text: res.error, isError: true };
+            } else if (res?.message) {
+                this.registryMessage = { text: res.message, isError: false };
+            }
+        } catch (e) {
+            const msg = e?.message || '搜索失败';
+            this.registryMessage = { text: msg, isError: true };
+            this.registryResults = [];
+        } finally {
+            this.registrySearching = false;
+            this.registryHasSearched = true;
+            this.render();
+        }
     }
-  }
 
-  async addFromUrl() {
-    const api = getSkillsAPI();
-    if (!api?.installFromRegistry || !this.addUrl.trim()) {
-      this.setMessage('请输入 URL', true);
-      return;
+    async installFromClawHubSlug() {
+        const api = getSkillsAPI();
+        const slug = (this.clawhubSlug || '').trim();
+        if (!api?.installFromRegistry || !slug) return;
+        this.installingClawhubSlug = true;
+        this.render();
+        try {
+            const installUrl = slug.startsWith('clawhub:') ? slug : `clawhub:${slug}`;
+            const addRes = await api.installFromRegistry(installUrl);
+            this.setMessage(`已添加技能：${addRes?.name ?? ''}`);
+            this.clawhubSlug = '';
+            await this.loadSkills();
+        } catch (e) {
+            this.setMessage(e?.message || '安装失败', true);
+        } finally {
+            this.installingClawhubSlug = false;
+            this.render();
+        }
     }
-    this.addingFromUrl = true;
-    this.render();
-    try {
-      const addRes = await api.installFromRegistry(this.addUrl.trim());
-      this.setMessage(`已添加技能：${addRes?.name ?? ''}`);
-      this.addUrl = '';
-      await this.loadSkills();
-    } catch (e) {
-      this.setMessage(e?.message || '添加失败', true);
-    } finally {
-      this.addingFromUrl = false;
-      this.render();
+
+    async installFromMatrixSlug() {
+        const api = getSkillsAPI();
+        const slug = (this.matrixSlug || '').trim();
+        if (!api?.installFromRegistry || !slug) return;
+        this.installingMatrixSlug = true;
+        this.render();
+        try {
+            const installUrl = slug.startsWith('matrix:') ? slug : `matrix:${slug}`;
+            const addRes = await api.installFromRegistry(installUrl);
+            this.setMessage(`已添加技能：${addRes?.name ?? ''}`);
+            this.matrixSlug = '';
+            await this.loadSkills();
+        } catch (e) {
+            this.setMessage(e?.message || '安装失败', true);
+        } finally {
+            this.installingMatrixSlug = false;
+            this.render();
+        }
     }
-  }
 
-  async deleteSkill(skillId) {
-    const api = getSkillsAPI();
-    if (!api?.delete) return;
-    if (!confirm(`确定要删除技能「${skillId}」吗？`)) return;
-    this.deletingId = skillId;
-    this.render();
-    try {
-      await api.delete(skillId);
-      this.setMessage('已删除');
-      await this.loadSkills();
-    } catch (e) {
-      this.setMessage(e?.message || '删除失败', true);
-    } finally {
-      this.deletingId = null;
-      this.render();
+    async installFromRegistry(installUrl, skillId) {
+        const api = getSkillsAPI();
+        if (!installUrl || !api?.installFromRegistry) return;
+        this.installingRegistryId = skillId;
+        this.render();
+        try {
+            const addRes = await api.installFromRegistry(installUrl);
+            this.setMessage(`已添加技能：${addRes?.name ?? ''}`);
+            await this.loadSkills();
+        } catch (e) {
+            this.setMessage(e?.message || '安装失败', true);
+        } finally {
+            this.installingRegistryId = null;
+            this.render();
+        }
     }
-  }
 
-  render() {
-    // 保存所有可滚动区域的滚动位置
-    const scrollArea = this.shadowRoot.querySelector('.scroll-area');
-    const addPanelBody = this.shadowRoot.querySelector('.add-panel-body');
-    const registryResults = this.shadowRoot.querySelector('.registry-results');
-    const savedScroll = {
-      scrollArea: scrollArea ? scrollArea.scrollTop : 0,
-      addPanelBody: addPanelBody ? addPanelBody.scrollTop : 0,
-      registryResults: registryResults ? registryResults.scrollTop : 0,
-    };
+    async onPathPicked(file) {
+        const filePath = getPathFromFile(file);
+        if (!filePath) return;
+        // 目录选择器返回的是目录内某个文件的路径，需改为目录路径（主进程要求传目录）
+        const dirPath = filePath.replace(/[/\\][^/\\]*$/, '');
+        if (!dirPath) return;
+        const api = getSkillsAPI();
+        if (!api?.addFromDirectory) return;
+        this.addingFromPath = true;
+        this.render();
+        try {
+            const addRes = await api.addFromDirectory(dirPath);
+            this.setMessage(`已添加技能：${addRes?.name ?? ''}`);
+            await this.loadSkills();
+        } catch (e) {
+            this.setMessage(e?.message || '添加失败', true);
+        } finally {
+            this.addingFromPath = false;
+            this.render();
+        }
+    }
 
-    const listHtml = this.loading
-      ? '<div class="empty loading">加载中…</div>'
-      : this.error
-        ? `<div class="empty error">${escapeHtml(this.error)}</div>`
-        : this.skills.length === 0
-          ? `
+    async onZipPicked(file) {
+        const path = getPathFromFile(file);
+        if (!path) return;
+        const api = getSkillsAPI();
+        if (!api?.addFromZip) return;
+        this.addingFromZip = true;
+        this.render();
+        try {
+            const addRes = await api.addFromZip(path);
+            this.setMessage(`已添加技能：${addRes?.name ?? ''}`);
+            await this.loadSkills();
+        } catch (e) {
+            this.setMessage(e?.message || '添加失败', true);
+        } finally {
+            this.addingFromZip = false;
+            this.render();
+        }
+    }
+
+    async addFromUrl() {
+        const api = getSkillsAPI();
+        if (!api?.installFromRegistry || !this.addUrl.trim()) {
+            this.setMessage('请输入 URL', true);
+            return;
+        }
+        this.addingFromUrl = true;
+        this.render();
+        try {
+            const addRes = await api.installFromRegistry(this.addUrl.trim());
+            this.setMessage(`已添加技能：${addRes?.name ?? ''}`);
+            this.addUrl = '';
+            await this.loadSkills();
+        } catch (e) {
+            this.setMessage(e?.message || '添加失败', true);
+        } finally {
+            this.addingFromUrl = false;
+            this.render();
+        }
+    }
+
+    async deleteSkill(skillId) {
+        const api = getSkillsAPI();
+        if (!api?.delete) return;
+        if (!confirm(`确定要删除技能「${skillId}」吗？`)) return;
+        this.deletingId = skillId;
+        this.render();
+        try {
+            await api.delete(skillId);
+            this.setMessage('已删除');
+            await this.loadSkills();
+        } catch (e) {
+            this.setMessage(e?.message || '删除失败', true);
+        } finally {
+            this.deletingId = null;
+            this.render();
+        }
+    }
+
+    render() {
+        // 保存所有可滚动区域的滚动位置
+        const scrollArea = this.shadowRoot.querySelector('.scroll-area');
+        const addPanelBody = this.shadowRoot.querySelector('.add-panel-body');
+        const registryResults = this.shadowRoot.querySelector('.registry-results');
+        const savedScroll = {
+            scrollArea: scrollArea ? scrollArea.scrollTop : 0,
+            addPanelBody: addPanelBody ? addPanelBody.scrollTop : 0,
+            registryResults: registryResults ? registryResults.scrollTop : 0
+        };
+
+        const listHtml = this.loading
+            ? '<div class="empty loading">加载中…</div>'
+            : this.error
+              ? `<div class="empty error">${escapeHtml(this.error)}</div>`
+              : this.skills.length === 0
+                ? `
             <div class="empty-state">
               <p class="empty-title">暂无技能</p>
               <p class="empty-hint">点击「添加」从本地目录、zip 压缩包或 URL 添加技能，或将技能目录复制到下方路径后点击「刷新」：</p>
@@ -301,7 +323,9 @@ class SkillMgrEntryWidget extends HTMLElement {
               <p class="empty-doc">技能格式见 <a href="https://agentskills.io/specification" target="_blank" rel="noopener">Anthropic Agent Skills</a>。</p>
             </div>
           `
-          : this.skills.map(s => `
+                : this.skills
+                      .map(
+                          (s) => `
             <div class="skill-card" data-skill-id="${escapeHtml(s.id)}">
               <div class="skill-body">
                 <div class="skill-name">${escapeHtml(s.name || s.id || '')}</div>
@@ -309,16 +333,18 @@ class SkillMgrEntryWidget extends HTMLElement {
               </div>
               <button type="button" class="btn btn-danger btn-sm" data-delete="${escapeHtml(s.id)}" ${this.deletingId === s.id ? 'disabled' : ''}>${this.deletingId === s.id ? '删除中…' : '删除'}</button>
             </div>
-          `).join('');
+          `
+                      )
+                      .join('');
 
-    const msgHtml = this.message
-      ? `<div class="message ${this.message.isError ? 'error' : 'success'}">
+        const msgHtml = this.message
+            ? `<div class="message ${this.message.isError ? 'error' : 'success'}">
           <span class="message-text">${escapeHtml(this.message.text)}</span>
           <button type="button" class="message-close" id="message-close-btn" title="关闭">×</button>
         </div>`
-      : '';
+            : '';
 
-    const addPanelHtml = `
+        const addPanelHtml = `
       <div class="add-panel ${this.showAddPanel ? '' : 'add-panel-collapsed'}">
         <div class="add-panel-header">
           <span>添加技能</span>
@@ -349,26 +375,40 @@ class SkillMgrEntryWidget extends HTMLElement {
           </div>
           <div class="add-section registry-section">
             <label>从 Registry 搜索</label>
-            <p class="add-hint">${this.registrySelected === 'clawhub' ? 'ClawHub：按 slug 安装，需已安装 clawhub CLI（npm i -g clawhub）' : '搜索 skill0、SkillsMP 等平台的技能'}</p>
+            <p class="add-hint">${this.registrySelected === 'clawhub' ? 'ClawHub：按 slug 安装，使用 npx clawhub@latest' : this.registrySelected === 'matrix' ? 'Matrix Skill：按英文名称安装，使用 npx @matrixopenharmony/matrix-cli' : '搜索 skill0、SkillsMP 等平台的技能'}</p>
             <div class="registry-row">
               <select class="registry-select" id="registry-select">
+                <option value="matrix" ${this.registrySelected === 'matrix' ? 'selected' : ''}>Matrix Skill</option>
+                <option value="clawhub" ${this.registrySelected === 'clawhub' ? 'selected' : ''}>ClawHub</option>
                 <option value="skill0" ${this.registrySelected === 'skill0' ? 'selected' : ''}>skill0.io</option>
                 <option value="skillsmp" ${this.registrySelected === 'skillsmp' ? 'selected' : ''}>SkillsMP</option>
-                <option value="clawhub" ${this.registrySelected === 'clawhub' ? 'selected' : ''}>ClawHub</option>
               </select>
-              ${this.registrySelected === 'clawhub'
-                ? `<input type="text" class="registry-search-input" id="clawhub-slug-input" placeholder="输入技能 slug，如 my-skill 或 my-skill@1.2.3" value="${escapeHtml(this.clawhubSlug)}" ${this.installingClawhubSlug ? 'disabled' : ''} />
+              ${
+                  this.registrySelected === 'clawhub'
+                      ? `<input type="text" class="registry-search-input" id="clawhub-slug-input" placeholder="输入技能 slug，如 my-skill 或 my-skill@1.2.3" value="${escapeHtml(this.clawhubSlug)}" ${this.installingClawhubSlug ? 'disabled' : ''} />
                   <button type="button" class="btn" id="clawhub-slug-install-btn" ${this.installingClawhubSlug || !this.clawhubSlug.trim() ? 'disabled' : ''}>${this.installingClawhubSlug ? '安装中…' : '安装'}</button>`
-                : `<input type="text" class="registry-search-input" id="registry-search-input" placeholder="输入关键词搜索…" value="${escapeHtml(this.registryQuery)}" ${this.registrySearching ? 'disabled' : ''} />
+                      : this.registrySelected === 'matrix'
+                        ? `<input type="text" class="registry-search-input" id="matrix-slug-input" placeholder="输入技能英文名称，如 test-master" value="${escapeHtml(this.matrixSlug)}" ${this.installingMatrixSlug ? 'disabled' : ''} />
+                  <button type="button" class="btn" id="matrix-slug-install-btn" ${this.installingMatrixSlug || !this.matrixSlug.trim() ? 'disabled' : ''}>${this.installingMatrixSlug ? '安装中…' : '安装'}</button>`
+                        : `<input type="text" class="registry-search-input" id="registry-search-input" placeholder="输入关键词搜索…" value="${escapeHtml(this.registryQuery)}" ${this.registrySearching ? 'disabled' : ''} />
                   <button type="button" class="btn" id="registry-search-btn" ${this.registrySearching ? 'disabled' : ''}>${this.registrySearching ? '搜索中…' : '搜索'}</button>`
               }
             </div>
             ${this.registrySelected === 'skillsmp' ? '<p class="registry-msg registry-hint">使用 SkillsMP 需在「设置」→ 应用配置 → Skills 中填写 SkillsMP API Key，保存后搜索即可生效。</p>' : ''}
             ${this.registryMessage ? `<p class="registry-msg ${this.registryMessage.isError ? 'error' : ''}">${escapeHtml(this.registryMessage.text)}</p>` : ''}
-            ${this.registrySelected !== 'clawhub' && this.registryHasSearched && !this.registrySearching ? `
+            ${
+                this.registrySelected !== 'clawhub' &&
+                this.registrySelected !== 'matrix' &&
+                this.registryHasSearched &&
+                !this.registrySearching
+                    ? `
               <div class="registry-results">
                 <p class="registry-count">共 ${this.registryTotal} 个结果${this.registryResults.length === 0 ? '，可换个关键词试试' : ''}</p>
-                ${this.registryResults.length > 0 ? this.registryResults.map(s => `
+                ${
+                    this.registryResults.length > 0
+                        ? this.registryResults
+                              .map(
+                                  (s) => `
                   <div class="registry-card">
                     <div class="registry-card-body">
                       <div class="registry-card-name">${escapeHtml(s.name || s.id || '')} ${s.author ? `<span class="registry-author">@${escapeHtml(s.author)}</span>` : ''}</div>
@@ -377,15 +417,21 @@ class SkillMgrEntryWidget extends HTMLElement {
                     </div>
                     <button type="button" class="btn btn-sm registry-install-btn" data-install-url="${escapeHtml(s.installUrl || '')}" data-skill-id="${escapeHtml(s.id || '')}" ${!s.canInstall || this.installingRegistryId === s.id ? 'disabled' : ''}>${this.installingRegistryId === s.id ? '安装中…' : s.canInstall ? '安装' : '不可安装'}</button>
                   </div>
-                `).join('') : ''}
+                `
+                              )
+                              .join('')
+                        : ''
+                }
               </div>
-            ` : ''}
+            `
+                    : ''
+            }
           </div>
         </div>
       </div>
     `;
 
-    this.shadowRoot.innerHTML = `
+        this.shadowRoot.innerHTML = `
       <style>
         :host {
           display: flex; flex-direction: column; height: 100%; font-size: 14px; box-sizing: border-box;
@@ -553,127 +599,153 @@ class SkillMgrEntryWidget extends HTMLElement {
       </div>
     `;
 
-    this.shadowRoot.getElementById('refresh-btn')?.addEventListener('click', () => this.refresh());
-    this.shadowRoot.getElementById('message-close-btn')?.addEventListener('click', () => this.clearMessage());
-    this.shadowRoot.getElementById('add-panel-toggle')?.addEventListener('click', () => this.toggleAddPanel());
-    const pathInput = this.shadowRoot.getElementById('add-from-path-input');
-    if (pathInput) {
-      pathInput.addEventListener('change', (e) => {
-        const file = e.target.files?.[0];
-        if (file) this.onPathPicked(file);
-        e.target.value = '';
-      });
-    }
-    const zipInput = this.shadowRoot.getElementById('add-from-zip-input');
-    if (zipInput) {
-      zipInput.addEventListener('change', (e) => {
-        const file = e.target.files?.[0];
-        if (file) this.onZipPicked(file);
-        e.target.value = '';
-      });
-    }
-    this.shadowRoot.getElementById('add-from-url-btn')?.addEventListener('click', () => this.addFromUrl());
-    const urlInput = this.shadowRoot.getElementById('add-url-input');
-    if (urlInput) {
-      urlInput.value = this.addUrl;
-      urlInput.addEventListener('input', (e) => { this.addUrl = e.target.value; });
-    }
-    const regSelect = this.shadowRoot.getElementById('registry-select');
-    if (regSelect) regSelect.addEventListener('change', (e) => {
-      this.registrySelected = e.target.value;
-      // 切换 registry（如 skill0.io / SkillsMP）时清空下方搜索结果
-      this.registryResults = [];
-      this.registryTotal = 0;
-      this.registryHasSearched = false;
-      this.registryMessage = null;
-      this.registryPage = 1;
-      this.render();
-    });
-    const regSearchInput = this.shadowRoot.getElementById('registry-search-input');
-    if (regSearchInput) {
-      regSearchInput.value = this.registryQuery;
-      regSearchInput.addEventListener('input', (e) => { this.registryQuery = e.target.value; });
-      regSearchInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') this.searchRegistry(); });
-    }
-    this.shadowRoot.getElementById('registry-search-btn')?.addEventListener('click', () => this.searchRegistry());
-    const clawhubSlugInput = this.shadowRoot.getElementById('clawhub-slug-input');
-    if (clawhubSlugInput) {
-      clawhubSlugInput.value = this.clawhubSlug;
-      clawhubSlugInput.addEventListener('input', (e) => {
-        this.clawhubSlug = e.target.value;
-        const btn = this.shadowRoot.getElementById('clawhub-slug-install-btn');
-        if (btn) btn.disabled = !this.clawhubSlug.trim() || this.installingClawhubSlug;
-      });
-      clawhubSlugInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') this.installFromClawHubSlug(); });
-    }
-    this.shadowRoot.getElementById('clawhub-slug-install-btn')?.addEventListener('click', () => this.installFromClawHubSlug());
-    this.shadowRoot.querySelectorAll('.registry-install-btn').forEach(el => {
-      const installUrl = el.getAttribute('data-install-url');
-      const skillId = el.getAttribute('data-skill-id');
-      if (installUrl && el.getAttribute('disabled') !== 'disabled') {
-        el.addEventListener('click', () => this.installFromRegistry(installUrl, skillId));
-      }
-    });
-    this.shadowRoot.querySelectorAll('[data-delete]').forEach(el => {
-      el.addEventListener('click', () => this.deleteSkill(el.getAttribute('data-delete')));
-    });
-
-    // 恢复所有可滚动区域的滚动位置
-    const newScrollArea = this.shadowRoot.querySelector('.scroll-area');
-    const newAddPanelBody = this.shadowRoot.querySelector('.add-panel-body');
-    const newRegistryResults = this.shadowRoot.querySelector('.registry-results');
-    if (newScrollArea) newScrollArea.scrollTop = savedScroll.scrollArea;
-    if (newAddPanelBody) newAddPanelBody.scrollTop = savedScroll.addPanelBody;
-    if (newRegistryResults) newRegistryResults.scrollTop = savedScroll.registryResults;
-
-    // 为 description 添加悬停提示功能
-    const descElements = this.shadowRoot.querySelectorAll('.registry-card-desc');
-    let tooltip = null;
-
-    descElements.forEach(desc => {
-      desc.addEventListener('mouseenter', (e) => {
-        const description = desc.getAttribute('data-description');
-        if (!description) return;
-
-        // 创建或获取 tooltip 元素
-        if (!tooltip) {
-          tooltip = document.createElement('div');
-          tooltip.className = 'description-tooltip';
-          this.shadowRoot.appendChild(tooltip);
+        this.shadowRoot.getElementById('refresh-btn')?.addEventListener('click', () => this.refresh());
+        this.shadowRoot.getElementById('message-close-btn')?.addEventListener('click', () => this.clearMessage());
+        this.shadowRoot.getElementById('add-panel-toggle')?.addEventListener('click', () => this.toggleAddPanel());
+        const pathInput = this.shadowRoot.getElementById('add-from-path-input');
+        if (pathInput) {
+            pathInput.addEventListener('change', (e) => {
+                const file = e.target.files?.[0];
+                if (file) this.onPathPicked(file);
+                e.target.value = '';
+            });
         }
-
-        // 设置 tooltip 内容
-        tooltip.textContent = description;
-
-        // 计算位置
-        const rect = desc.getBoundingClientRect();
-        const scrollLeft = window.pageXOffset || document.documentElement.scrollLeft;
-        const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
-
-        // 设置 tooltip 位置（在鼠标下方）
-        tooltip.style.left = `${rect.left + scrollLeft}px`;
-        tooltip.style.top = `${rect.bottom + scrollTop + 8}px`;
-
-        // 显示 tooltip
-        requestAnimationFrame(() => {
-          tooltip.classList.add('visible');
+        const zipInput = this.shadowRoot.getElementById('add-from-zip-input');
+        if (zipInput) {
+            zipInput.addEventListener('change', (e) => {
+                const file = e.target.files?.[0];
+                if (file) this.onZipPicked(file);
+                e.target.value = '';
+            });
+        }
+        this.shadowRoot.getElementById('add-from-url-btn')?.addEventListener('click', () => this.addFromUrl());
+        const urlInput = this.shadowRoot.getElementById('add-url-input');
+        if (urlInput) {
+            urlInput.value = this.addUrl;
+            urlInput.addEventListener('input', (e) => {
+                this.addUrl = e.target.value;
+            });
+        }
+        const regSelect = this.shadowRoot.getElementById('registry-select');
+        if (regSelect)
+            regSelect.addEventListener('change', (e) => {
+                this.registrySelected = e.target.value;
+                // 切换 registry（如 skill0.io / SkillsMP）时清空下方搜索结果
+                this.registryResults = [];
+                this.registryTotal = 0;
+                this.registryHasSearched = false;
+                this.registryMessage = null;
+                this.registryPage = 1;
+                this.render();
+            });
+        const regSearchInput = this.shadowRoot.getElementById('registry-search-input');
+        if (regSearchInput) {
+            regSearchInput.value = this.registryQuery;
+            regSearchInput.addEventListener('input', (e) => {
+                this.registryQuery = e.target.value;
+            });
+            regSearchInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') this.searchRegistry();
+            });
+        }
+        this.shadowRoot.getElementById('registry-search-btn')?.addEventListener('click', () => this.searchRegistry());
+        const clawhubSlugInput = this.shadowRoot.getElementById('clawhub-slug-input');
+        if (clawhubSlugInput) {
+            clawhubSlugInput.value = this.clawhubSlug;
+            clawhubSlugInput.addEventListener('input', (e) => {
+                this.clawhubSlug = e.target.value;
+                const btn = this.shadowRoot.getElementById('clawhub-slug-install-btn');
+                if (btn) btn.disabled = !this.clawhubSlug.trim() || this.installingClawhubSlug;
+            });
+            clawhubSlugInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') this.installFromClawHubSlug();
+            });
+        }
+        this.shadowRoot
+            .getElementById('clawhub-slug-install-btn')
+            ?.addEventListener('click', () => this.installFromClawHubSlug());
+        const matrixSlugInput = this.shadowRoot.getElementById('matrix-slug-input');
+        if (matrixSlugInput) {
+            matrixSlugInput.value = this.matrixSlug;
+            matrixSlugInput.addEventListener('input', (e) => {
+                this.matrixSlug = e.target.value;
+                const btn = this.shadowRoot.getElementById('matrix-slug-install-btn');
+                if (btn) btn.disabled = !this.matrixSlug.trim() || this.installingMatrixSlug;
+            });
+            matrixSlugInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') this.installFromMatrixSlug();
+            });
+        }
+        this.shadowRoot
+            .getElementById('matrix-slug-install-btn')
+            ?.addEventListener('click', () => this.installFromMatrixSlug());
+        this.shadowRoot.querySelectorAll('.registry-install-btn').forEach((el) => {
+            const installUrl = el.getAttribute('data-install-url');
+            const skillId = el.getAttribute('data-skill-id');
+            if (installUrl && el.getAttribute('disabled') !== 'disabled') {
+                el.addEventListener('click', () => this.installFromRegistry(installUrl, skillId));
+            }
         });
-      });
+        this.shadowRoot.querySelectorAll('[data-delete]').forEach((el) => {
+            el.addEventListener('click', () => this.deleteSkill(el.getAttribute('data-delete')));
+        });
 
-      desc.addEventListener('mouseleave', () => {
-        if (tooltip) {
-          tooltip.classList.remove('visible');
-        }
-      });
-    });
-  }
+        // 恢复所有可滚动区域的滚动位置
+        const newScrollArea = this.shadowRoot.querySelector('.scroll-area');
+        const newAddPanelBody = this.shadowRoot.querySelector('.add-panel-body');
+        const newRegistryResults = this.shadowRoot.querySelector('.registry-results');
+        if (newScrollArea) newScrollArea.scrollTop = savedScroll.scrollArea;
+        if (newAddPanelBody) newAddPanelBody.scrollTop = savedScroll.addPanelBody;
+        if (newRegistryResults) newRegistryResults.scrollTop = savedScroll.registryResults;
+
+        // 为 description 添加悬停提示功能
+        const descElements = this.shadowRoot.querySelectorAll('.registry-card-desc');
+        let tooltip = null;
+
+        descElements.forEach((desc) => {
+            desc.addEventListener('mouseenter', (e) => {
+                const description = desc.getAttribute('data-description');
+                if (!description) return;
+
+                // 创建或获取 tooltip 元素
+                if (!tooltip) {
+                    tooltip = document.createElement('div');
+                    tooltip.className = 'description-tooltip';
+                    this.shadowRoot.appendChild(tooltip);
+                }
+
+                // 设置 tooltip 内容
+                tooltip.textContent = description;
+
+                // 计算位置
+                const rect = desc.getBoundingClientRect();
+                const scrollLeft = window.pageXOffset || document.documentElement.scrollLeft;
+                const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
+
+                // 设置 tooltip 位置（在鼠标下方）
+                tooltip.style.left = `${rect.left + scrollLeft}px`;
+                tooltip.style.top = `${rect.bottom + scrollTop + 8}px`;
+
+                // 显示 tooltip
+                requestAnimationFrame(() => {
+                    tooltip.classList.add('visible');
+                });
+            });
+
+            desc.addEventListener('mouseleave', () => {
+                if (tooltip) {
+                    tooltip.classList.remove('visible');
+                }
+            });
+        });
+    }
 }
 
 function escapeHtml(s) {
-  if (s == null) return '';
-  const div = document.createElement('div');
-  div.textContent = String(s);
-  return div.innerHTML;
+    if (s == null) return '';
+    const div = document.createElement('div');
+    div.textContent = String(s);
+    return div.innerHTML;
 }
 
 customElements.define('skillmgr-entry-widget', SkillMgrEntryWidget);

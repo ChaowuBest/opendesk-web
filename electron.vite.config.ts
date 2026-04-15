@@ -1,7 +1,6 @@
-import { defineConfig, loadEnv } from 'electron-vite'
-import tailwindcss from '@tailwindcss/vite'
-import path from 'path'
-
+import { defineConfig, loadEnv } from 'electron-vite';
+import tailwindcss from '@tailwindcss/vite';
+import path from 'path';
 
 export default defineConfig(({ mode }) => {
     return {
@@ -14,6 +13,12 @@ export default defineConfig(({ mode }) => {
                     input: {
                         main: path.join(__dirname, 'src', 'main', 'main.js'),
                         worker: path.join(__dirname, 'src', 'main', 'worker.ts')
+                    },
+                    onwarn(warning, warn) {
+                        if (warning.code === 'DYNAMIC_IMPORT_WILL_NOT_MOVE') {
+                            throw new Error(warning.message);
+                        }
+                        warn(warning);
                     }
                 },
                 sourcemap: true
@@ -28,8 +33,8 @@ export default defineConfig(({ mode }) => {
                         index: path.join(__dirname, 'src', 'renderer', 'preload.js')
                     },
                     output: {
-                        format: "cjs",
-                        entryFileNames: "[name].js",
+                        format: 'cjs',
+                        entryFileNames: '[name].js'
                     }
                 },
                 sourcemap: true

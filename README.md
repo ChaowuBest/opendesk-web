@@ -11,7 +11,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/平台-Windows%20%7C%20macOS%20%7C%20OpenHarmony-blue?style=for-the-badge" alt="Platform">
   <img src="https://img.shields.io/badge/Intelli%20OS-子项目-orange?style=for-the-badge" alt="Subproject">
-  <img src="https://img.shields.io/badge/版本-0.1.4-green?style=for-the-badge" alt="Version">
+  <img src="https://img.shields.io/badge/版本-0.2.0-green?style=for-the-badge" alt="Version">
 </p>
 
 <p align="center">
@@ -31,12 +31,14 @@ Fillip Desk 采用模块化的应用架构，每个功能模块都是独立的�
 ## ✨ 核心功能
 
 ### 🤖 AI 智能体中心（A2A）
+
 - 多智能体对话系统，支持创建和管理多个对话会话
 - 集成 OpenAI API，支持流式响应
 - 智能体可调用工具集，实现复杂任务自动化
 - 支持对话历史管理和上下文保持
 
 ### 📧 智能邮箱
+
 - 支持 POP3 邮件协议（IMAP、SMTP、Exchange 开发中）
 - 邮件列表展示和内容查看
 - 邮件标记已读功能
@@ -44,41 +46,49 @@ Fillip Desk 采用模块化的应用架构，每个功能模块都是独立的�
 - 邮件附件可接入 AI 文件系统
 
 ### 📰 新闻快讯
+
 - 实时新闻聚合和展示
 - 支持 Hacker News 等新闻源
 - 快速浏览和阅读体验
 
 ### 🎥 快速记录（Recall）
+
 - 屏幕活动录制和回放
 - 活动历史管理
 - 窗口选择和多窗口支持
 - 缩略图预览功能
 
 ### 📁 文件管理
+
 - 智能文件浏览和管理
 - 文件快速搜索
 
 ### 📅 日历管理
+
 - 日程安排和事件管理
 - 与邮件系统集成
 
 ### 🔍 统一搜索
+
 - AI 驱动的智能搜索
 - 跨应用内容搜索
 
 ### 🧠 AI 文件系统服务
+
 - 基于向量数据库的智能文件索引
 - 支持语义搜索和相似度匹配
 - 文件标题和内容嵌入
 - 支持多种文件格式（PDF、Office 文档等，开发中）
 
 ### 📋 任务管理系统
+
 - 多任务并行处理
 - 任务状态实时同步
 - 任务工具集动态绑定
 - 支持文件附件和上下文管理
 
 ### 🎯 意图解析服务
+
 - 自然语言意图理解
 - 快速启动应用和功能
 
@@ -93,24 +103,28 @@ Fillip Desk 采用模块化的应用架构，每个功能模块都是独立的�
 ## 🎯 核心特性
 
 ### 模块化应用架构
+
 - 每个功能模块都是独立的应用程序
 - 通过应用注册机制统一管理
 - 支持应用间通信和资源共享
 - 易于扩展和维护
 
 ### IPC 通信机制
+
 - 安全的进程间通信
 - 通过 `preload.js` 暴露 API
 - 支持订阅/发布模式
 - 流式数据传输支持
 
 ### 系统集成
+
 - 系统托盘支持
 - 全局快捷键（Alt+Space / Option+Space）
 - 通知系统
 - 单实例运行
 
 ### 开发友好
+
 - 轻量级前端框架，易于 AI 辅助开发
 - 清晰的代码结构
 - 完善的日志系统
@@ -127,12 +141,14 @@ Fillip Desk 采用模块化的应用架构，每个功能模块都是独立的�
 ## 🔮 未来规划
 
 ### 近期计划
+
 - [ ] 完善邮件功能（IMAP、SMTP、Exchange 支持）
 - [ ] AI 文件系统内容分块嵌入
 - [ ] 聊天界面功能增强（图片支持、费用统计）
 - [ ] 邮件搜索和高级管理功能
 
 ### 长期目标
+
 - [ ] DeepResearch 智能体
 - [ ] AI 统一搜索
 - [ ] 会议录制和自动摘要
@@ -144,7 +160,7 @@ Fillip Desk 采用模块化的应用架构，每个功能模块都是独立的�
 
 ## 📄 许可证
 
-本项目采用 [BSD-3-Clause](./LICENSE) 许可证。
+本项目采用 [MulanPSL-2.0](./LICENSE) 许可证。
 
 ---
 
@@ -159,7 +175,7 @@ Fillip Desk 采用模块化的应用架构，每个功能模块都是独立的�
 - [中文版本](./README.md) | [English Version](./README_EN.md)
 - [Intelli OS 项目](https://github.com/intelli-os)（如适用）
 - [开发指南](./docs/devguide.md)
-- [OpenHarmony 版本说明](./docs/FillipDesk-oh.md)
+- [OpenHarmony 版本说明](./docs/platforms/openharmony.md)
 
 ---
 

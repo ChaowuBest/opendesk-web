@@ -18,8 +18,7 @@ import { z } from 'zod';
 import { fetch } from 'undici';
 import { parseStringPromise } from 'xml2js';
 
-
-const FETCH_TIMEOUT_MS = 30000;
+const FETCH_TIMEOUT_MS = 10000;
 const DEFAULT_RESULT_COUNT = 10;
 const ARXIV_API_URL = 'http://export.arxiv.org/api/query';
 const MAX_RETRIES = 3;
@@ -37,11 +36,23 @@ interface ArxivSearchResult {
 }
 
 const ArxivSearchArgsSchema = z.object({
-    query: z.string().describe('搜索关键词，可以使用arxiv的搜索语法，如标题搜索：ti:keyword，摘要搜索：abs:keyword，作者搜索：au:name，分类搜索：cat:cs.AI等'),
+    query: z
+        .string()
+        .describe(
+            '搜索关键词，可以使用arxiv的搜索语法，如标题搜索：ti:keyword，摘要搜索：abs:keyword，作者搜索：au:name，分类搜索：cat:cs.AI等'
+        ),
     count: z.number().optional().describe('期望返回的搜索结果数量，默认为10'),
     start: z.number().optional().describe('搜索结果的起始偏移量，用于分页，默认为0'),
-    sort_by: z.enum(['relevance', 'lastUpdatedDate', 'submittedDate']).optional().describe('排序方式：relevance（相关性）、lastUpdatedDate（最后更新日期）、submittedDate（提交日期），默认为relevance'),
-    sort_order: z.enum(['ascending', 'descending']).optional().describe('排序顺序：ascending（升序）、descending（降序），默认为descending'),
+    sort_by: z
+        .enum(['relevance', 'lastUpdatedDate', 'submittedDate'])
+        .optional()
+        .describe(
+            '排序方式：relevance（相关性）、lastUpdatedDate（最后更新日期）、submittedDate（提交日期），默认为relevance'
+        ),
+    sort_order: z
+        .enum(['ascending', 'descending'])
+        .optional()
+        .describe('排序顺序：ascending（升序）、descending（降序），默认为descending')
 });
 
 export class ArxivSearchTool extends BaseTool<typeof ArxivSearchArgsSchema> {
@@ -49,7 +60,7 @@ export class ArxivSearchTool extends BaseTool<typeof ArxivSearchArgsSchema> {
         super(
             'arxivSearch',
             '使用arXiv API搜索学术论文，返回论文的标题、作者、摘要、发布日期等信息。无需API密钥，支持多种搜索语法。',
-            ArxivSearchArgsSchema,
+            ArxivSearchArgsSchema
         );
 
         this.setExecutor(this.search.bind(this));
@@ -74,7 +85,12 @@ export class ArxivSearchTool extends BaseTool<typeof ArxivSearchArgsSchema> {
             body.push(chalk.redBright('  ' + truncText(toolcall.result, width - 10)));
         }
 
-        return new Card({ icon: '📄', title: 'arXiv论文搜索', status: statusDisplay(toolcall.status), body }).render(width);
+        return new Card({
+            icon: '📄',
+            title: 'arXiv论文搜索',
+            status: statusDisplay(toolcall.status),
+            body
+        }).render(width);
     }
 
     // ───────────────────── 主入口 ─────────────────────
@@ -107,7 +123,7 @@ export class ArxivSearchTool extends BaseTool<typeof ArxivSearchArgsSchema> {
         maxResults: number,
         start: number,
         sortBy: string,
-        sortOrder: string,
+        sortOrder: string
     ): Promise<string> {
         const url = new URL(ARXIV_API_URL);
         url.searchParams.set('search_query', query);
@@ -126,7 +142,7 @@ export class ArxivSearchTool extends BaseTool<typeof ArxivSearchArgsSchema> {
                 const response = await fetch(url.toString(), {
                     method: 'GET',
                     redirect: 'follow',
-                    signal: controller.signal,
+                    signal: controller.signal
                 });
 
                 if (!response.ok) {
@@ -141,8 +157,11 @@ export class ArxivSearchTool extends BaseTool<typeof ArxivSearchArgsSchema> {
                 lastError = err;
 
                 if (attempt < MAX_RETRIES - 1) {
-                    console.warn(`arXiv 请求失败 (尝试 ${attempt + 1}/${MAX_RETRIES})，${RETRY_DELAY_MS / 1000}秒后重试:`, err.message);
-                    await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS));
+                    console.warn(
+                        `arXiv 请求失败 (尝试 ${attempt + 1}/${MAX_RETRIES})，${RETRY_DELAY_MS / 1000}秒后重试:`,
+                        err.message
+                    );
+                    await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
                 }
             }
         }
@@ -178,7 +197,7 @@ export class ArxivSearchTool extends BaseTool<typeof ArxivSearchArgsSchema> {
                     link: entry.id || '',
                     categories: Array.isArray(entry.category)
                         ? entry.category.map((c: any) => c.$?.term || '').filter(Boolean)
-                        : [entry.category?.$?.term || ''].filter(Boolean),
+                        : [entry.category?.$?.term || ''].filter(Boolean)
                 };
 
                 if (result.title && result.link) {

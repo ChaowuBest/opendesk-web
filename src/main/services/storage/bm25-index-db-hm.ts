@@ -12,109 +12,9 @@
 
 import path from 'path';
 import fs from 'fs';
-import { createRequire } from 'module';
-import { fileURLToPath } from 'url';
 import { ColumnSchema } from './abstract-storage.js';
+import { loadJiebaAddon, loadSqliteAddon, type HmSqliteAddon, type JiebaInstance } from './hm-addon-loader.js';
 import type { BM25Record, BM25SearchOptions, BM25SearchResult, IBM25IndexDB } from './bm25-indexer.js';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const require = createRequire(import.meta.url);
-const projectRoot = path.resolve(__dirname, '../../../../');
-const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
-
-type HmSqliteAddon = {
-    open: (filename: string) => unknown;
-    close: (db: unknown) => void;
-    exec: (db: unknown, sql: string) => Promise<any[]>;
-    beginTransaction: (db: unknown) => Promise<void>;
-    commitTransaction: (db: unknown) => Promise<void>;
-    rollbackTransaction: (db: unknown) => Promise<void>;
-    prepare: (db: unknown, sql: string) => Promise<unknown>;
-    run: (stmt: unknown, params: any[]) => Promise<void>;
-};
-
-type JiebaInstance = {
-    cut: (text: string, hmm?: boolean) => string[];
-};
-
-type JiebaAddon = {
-    Jieba: {
-        withEmbeddedDict?: () => JiebaInstance;
-    };
-};
-
-const ARCH_CANDIDATES = [
-    process.arch,
-    process.arch === 'arm64' ? 'aarch64' : undefined,
-    process.arch === 'x64' ? 'x86_64' : undefined,
-].filter(Boolean) as string[];
-
-const SQLITE_ADDON_CANDIDATES = [
-    process.env.HM_SQLITE_ADDON_PATH,
-    ...(resourcesPath
-        ? ARCH_CANDIDATES.map((arch) =>
-            path.resolve(resourcesPath, 'native', 'openharmony', arch, 'hm_sqlite_addon.node')
-        )
-        : []),
-    ...ARCH_CANDIDATES.map((arch) =>
-        path.resolve(projectRoot, 'native', 'openharmony', arch, 'hm_sqlite_addon.node')
-    ),
-].filter(Boolean) as string[];
-
-function unique(items: string[]): string[] {
-    return [...new Set(items)];
-}
-
-function loadSqliteAddon(): HmSqliteAddon {
-    for (const addonPath of unique(SQLITE_ADDON_CANDIDATES)) {
-        if (!fs.existsSync(addonPath)) continue;
-        return require(addonPath) as HmSqliteAddon;
-    }
-    throw new Error(`hm_sqlite_addon not found. Tried: ${SQLITE_ADDON_CANDIDATES.join(', ')}`);
-}
-
-function loadJieba(): JiebaInstance {
-    const jiebaEnvPath = process.env.HM_JIEBA_ADDON_PATH;
-
-    const jiebaNameCandidates = ARCH_CANDIDATES.flatMap((arch) => [
-        `jieba.${arch}-unknown-linux-musl.node`,
-        `jieba.${arch}.node`,
-    ]).concat([
-        'hm_jieba_addon.node',
-        'jieba.node',
-    ]);
-
-    const baseDirs = [
-        ...(resourcesPath ? ARCH_CANDIDATES.map((arch) => path.resolve(resourcesPath, 'native', 'openharmony', arch)) : []),
-        ...ARCH_CANDIDATES.map((arch) => path.resolve(projectRoot, 'native', 'openharmony', arch)),
-    ];
-
-    const jiebaCandidates = [
-        jiebaEnvPath,
-        ...baseDirs.flatMap((dir) => jiebaNameCandidates.map((name) => path.resolve(dir, name))),
-    ].filter(Boolean) as string[];
-
-    let jiebaAddon: JiebaAddon | null = null;
-    for (const addonPath of unique(jiebaCandidates)) {
-        if (!fs.existsSync(addonPath)) continue;
-        jiebaAddon = require(addonPath) as JiebaAddon;
-        break;
-    }
-
-    if (!jiebaAddon) {
-        throw new Error(`hm jieba addon not found. Tried: ${jiebaCandidates.join(', ')}`);
-    }
-
-    if (!jiebaAddon.Jieba?.withEmbeddedDict) {
-        throw new Error(
-            'hm jieba addon does not support Jieba.withEmbeddedDict(). ' +
-            'Please rebuild native addon with embedded dict.'
-        );
-    }
-
-    return jiebaAddon.Jieba.withEmbeddedDict();
-}
 
 function literal(value: any): string {
     if (value === null || value === undefined) return 'NULL';
@@ -181,7 +81,7 @@ export class BM25IndexDBHm implements IBM25IndexDB {
         this.schema = schema;
         this.dbPath = dbPath;
         this.addon = loadSqliteAddon();
-        this.jieba = loadJieba();
+        this.jieba = loadJiebaAddon();
 
         const dir = path.dirname(dbPath);
         if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
@@ -235,9 +135,7 @@ export class BM25IndexDBHm implements IBM25IndexDB {
         const tokens = this.tokenize(query);
         if (tokens.length === 0) return '';
 
-        return tokens
-            .map((token) => `"${token.replace(/"/g, '""')}"`)
-            .join(' AND ');
+        return tokens.map((token) => `"${token.replace(/"/g, '""')}"`).join(' AND ');
     }
 
     async initialize(): Promise<void> {
@@ -273,7 +171,7 @@ export class BM25IndexDBHm implements IBM25IndexDB {
         if (!matchExpr) return [];
 
         const topK = Math.max(1, Math.trunc(Number(options?.topK)) || 10);
-        const rows = await this.querySql(
+        const rows = (await this.querySql(
             `
             SELECT item_id, item_type, text, bm25(${this.tableName}) AS rank
             FROM ${this.tableName}
@@ -282,13 +180,13 @@ export class BM25IndexDBHm implements IBM25IndexDB {
             LIMIT ?
             `,
             [columnName, matchExpr, topK * 2]
-        ) as Array<{ item_id: string; item_type: string; text: string; rank: number }>;
+        )) as Array<{ item_id: string; item_type: string; text: string; rank: number }>;
 
         return rows.map((row) => ({
             item_id: row.item_id,
             item_type: row.item_type,
             text: row.text,
-            score: -(row.rank ?? 0),
+            score: -(row.rank ?? 0)
         }));
     }
 
@@ -298,6 +196,10 @@ export class BM25IndexDBHm implements IBM25IndexDB {
 
         await this.runTransaction(async () => {
             for (const record of records) {
+                await this.runSql(`DELETE FROM ${this.tableName} WHERE item_id = ? AND item_type = ?`, [
+                    record.item_id,
+                    record.item_type
+                ]);
                 const tokenized = this.tokenize(record.text).join(' ');
                 await this.runSql(
                     `INSERT INTO ${this.tableName}(bm25_id, item_id, item_type, text) VALUES (?, ?, ?, ?)`,
@@ -305,6 +207,7 @@ export class BM25IndexDBHm implements IBM25IndexDB {
                 );
             }
         });
+        await this.flush();
     }
 
     async delete(itemIds: string[]): Promise<void> {
@@ -316,6 +219,7 @@ export class BM25IndexDBHm implements IBM25IndexDB {
                 await this.runSql(`DELETE FROM ${this.tableName} WHERE item_id = ?`, [itemId]);
             }
         });
+        await this.flush();
     }
 
     async update(records: BM25Record[]): Promise<void> {
@@ -324,10 +228,10 @@ export class BM25IndexDBHm implements IBM25IndexDB {
 
         await this.runTransaction(async () => {
             for (const record of records) {
-                await this.runSql(
-                    `DELETE FROM ${this.tableName} WHERE item_id = ? AND item_type = ?`,
-                    [record.item_id, record.item_type]
-                );
+                await this.runSql(`DELETE FROM ${this.tableName} WHERE item_id = ? AND item_type = ?`, [
+                    record.item_id,
+                    record.item_type
+                ]);
                 const tokenized = this.tokenize(record.text).join(' ');
                 await this.runSql(
                     `INSERT INTO ${this.tableName}(bm25_id, item_id, item_type, text) VALUES (?, ?, ?, ?)`,
@@ -335,15 +239,46 @@ export class BM25IndexDBHm implements IBM25IndexDB {
                 );
             }
         });
+        await this.flush();
     }
 
-    async flush(): Promise<void> {
+    private async flush(): Promise<void> {
         await this.ensureInitialized();
     }
 
-    async deleteAll(): Promise<void> {
+    async clear(): Promise<void> {
         await this.ensureInitialized();
         await this.runSql(`DELETE FROM ${this.tableName}`);
+    }
+
+    async existingItemIds(ids: string[]): Promise<Set<string>> {
+        await this.ensureInitialized();
+        if (ids.length === 0) return new Set();
+        const rows = (await this.querySql(
+            `SELECT DISTINCT item_id FROM ${this.tableName} WHERE item_id IN (${ids.map(() => '?').join(', ')})`,
+            ids
+        )) as { item_id: string }[];
+        return new Set(rows.map((r) => r.item_id));
+    }
+
+    async deleteByKeys(keys: Array<{ item_id: string; item_type: string }>): Promise<void> {
+        await this.ensureInitialized();
+        if (keys.length === 0) return;
+        await this.runTransaction(async () => {
+            for (const key of keys) {
+                await this.runSql(`DELETE FROM ${this.tableName} WHERE item_id = ? AND item_type = ?`, [
+                    key.item_id,
+                    key.item_type
+                ]);
+            }
+        });
+        await this.flush();
+    }
+
+    async count(): Promise<number> {
+        await this.ensureInitialized();
+        const rows = await this.execSql(`SELECT COUNT(*) as count FROM ${this.tableName}`);
+        return (rows[0] as { count?: number })?.count ?? 0;
     }
 
     close(): void {

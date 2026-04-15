@@ -17,10 +17,10 @@ import { BaseToolset } from '../aikernel/tool.js';
 import { Skill } from '../aikernel/skill.js';
 import type { SlashCommandHandler } from '../tui/commands/index.js';
 import type { ApplicationRegistry } from './registry.js';
+import type { Command } from 'commander';
 import path from 'path';
 import fs from 'fs';
 import PQueue from 'p-queue';
-
 
 export interface EventDecl {
     eventName: string;
@@ -28,7 +28,6 @@ export interface EventDecl {
 }
 
 export class BaseWorker {
-
     bundleName: string;
     config: object;
     appDataDirectory: string;
@@ -45,15 +44,15 @@ export class BaseWorker {
      * 消息处理封装，由上级Worker统一接收消息并调用
      */
     async handleMessage(methodName: string, ...args: any[]): Promise<any> {
-        if (typeof (this as any)[methodName] === "function") {
+        if (typeof (this as any)[methodName] === 'function') {
             return await (this as any)[methodName](...args);
         } else {
             throw new Error(`unknown message ${methodName}, implement this method in the worker class`);
         }
     }
 
-    async * handleStreamMessage(methodName: string, ...args: any[]): AsyncGenerator<any> {
-        if (typeof (this as any)[methodName] === "function") {
+    async *handleStreamMessage(methodName: string, ...args: any[]): AsyncGenerator<any> {
+        if (typeof (this as any)[methodName] === 'function') {
             yield* (this as any)[methodName](...args);
         } else {
             throw new Error(`unknown message ${methodName}, implement this method in the worker class`);
@@ -63,9 +62,9 @@ export class BaseWorker {
     /**
      * 初始化工作，各个应用的Worker需要自己继承并实现
      */
-    async initialize(): Promise<void> { }
+    async initialize(): Promise<void> {}
 
-    async finalize(): Promise<void> { }
+    async finalize(): Promise<void> {}
 
     async applicationConfigChanged(config: object): Promise<void> {
         this.config = config;
@@ -76,7 +75,7 @@ export class BaseWorker {
             type: 'emitEvent',
             bundleName: this.bundleName,
             eventName: eventName,
-            args: args,
+            args: args
         });
     }
 
@@ -95,7 +94,6 @@ export interface ProtocolHandlerConfig {
 }
 
 export abstract class BaseApplication {
-
     bundleName: string;
     name: string;
     /** 是否在侧边栏应用列表中显示图标，仅提供工具不提供界面的应用可设为 false */
@@ -103,7 +101,7 @@ export abstract class BaseApplication {
     eventSubscribers: Map<string, Set<Electron.WebFrameMain>>;
     registry?: typeof ApplicationRegistry;
 
-    constructor(bundleName: string, name: string = "未命名应用", showIcon: boolean = true) {
+    constructor(bundleName: string, name: string = '未命名应用', showIcon: boolean = true) {
         this.bundleName = bundleName;
         this.name = name;
         this.showIcon = showIcon;
@@ -122,7 +120,7 @@ export abstract class BaseApplication {
         return {
             bundleName: this.bundleName,
             name: this.name,
-            showIcon: this.showIcon,
+            showIcon: this.showIcon
         };
     }
 
@@ -184,7 +182,7 @@ export abstract class BaseApplication {
             return this._declaredEventsCache;
         }
         const events = await this.getSupportedEvents();
-        this._declaredEventsCache = new Set(events.map(e => e.eventName));
+        this._declaredEventsCache = new Set(events.map((e) => e.eventName));
         return this._declaredEventsCache;
     }
 
@@ -205,7 +203,7 @@ export abstract class BaseApplication {
         if (!declaredEvents.has(eventName)) {
             logger.warn(
                 `Event "${eventName}" is not declared in getSupportedEvents() for application "${this.bundleName}". ` +
-                `Please add it to the getSupportedEvents() return value.`
+                    `Please add it to the getSupportedEvents() return value.`
             );
             return false;
         }
@@ -236,6 +234,12 @@ export abstract class BaseApplication {
     setRegistry(registry: typeof ApplicationRegistry): void {
         this.registry = registry;
     }
+
+    /**
+     * 注册应用提供的 CLI 子命令（如 `skill install`、`skill list` 等）。
+     * 在 commander 解析命令行参数之前调用，应用可重写此静态方法来扩展 CLI。
+     */
+    static registerCliSubcommands(_prog: Command): void {}
 
     /**
      * 返回应用的配置 schema，用于在设置界面中显示和编辑配置。如果不需要配置，则返回空对象。
@@ -298,8 +302,32 @@ export abstract class BaseApplication {
         return [];
     }
 
+    /**
+     * 返回在 TUI DashboardBar 上显示的单行状态字符串（可含 ANSI 着色）。
+     * 返回 null 表示该应用当前无需在底栏展示信息（例如未配置、无新消息等）。
+     * 子类按需重写。
+     */
+    async getTUIStatusBlock(): Promise<string | null> {
+        return null;
+    }
+
+    /** DashboardBar 刷新回调，由 DashboardBar 注入 */
+    private _tuiStatusUpdateCallback?: () => void;
+
+    /** 由 DashboardBar 调用，注入刷新回调 */
+    setTUIStatusUpdateCallback(cb: () => void): void {
+        this._tuiStatusUpdateCallback = cb;
+    }
+
+    /**
+     * 应用内部状态发生变化时调用，通知 DashboardBar 重新拉取状态并刷新。
+     */
+    noticeTUIStatusUpdate(): void {
+        this._tuiStatusUpdateCallback?.();
+    }
+
     getDataDirectory(): string {
-        let data_directory = path.join(getAppDirectory(), 'apps', this.bundleName);
+        const data_directory = path.join(getAppDirectory(), 'apps', this.bundleName);
         if (!fs.existsSync(data_directory)) {
             fs.mkdirSync(data_directory, { recursive: true });
         }

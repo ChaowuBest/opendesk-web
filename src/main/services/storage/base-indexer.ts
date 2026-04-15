@@ -11,8 +11,16 @@
 
 import path from 'path';
 import { Indexer, IndexerSearchOptions as BaseIndexerSearchOptions, IndexerSearchResult } from './indexer.js';
-import { createBaseIndexDB } from './base-index-db.js';
-import { ColumnSchema, validateColumnSchema, QueryOperator, FilterCondition, Item, ItemType, ScalarOperator } from './abstract-storage.js';
+import { createBaseIndexDB } from './base-index-db-factory.js';
+import {
+    ColumnSchema,
+    validateColumnSchema,
+    QueryOperator,
+    FilterCondition,
+    Item,
+    ItemType,
+    ScalarOperator
+} from './abstract-storage.js';
 
 // BaseIndexDB 支持的操作符（从 abstract-storage 导入，保持类型别名以兼容）
 export type BaseQueryOperator = ScalarOperator;
@@ -42,14 +50,19 @@ export interface IBaseIndexDB {
     insert(record: Record<string, any>): Promise<boolean>;
     insertMany(records: Record<string, any>[]): Promise<number>;
     upsert(record: Record<string, any>): Promise<boolean>;
+    upsertMany(records: Record<string, any>[]): Promise<number>;
     delete(itemId: string): Promise<boolean>;
     deleteMany(itemIds: string[]): Promise<number>;
     deleteByConditions(conditions: BaseQueryCondition[]): Promise<number>;
     update(itemId: string, data: Record<string, any>): Promise<boolean>;
+    updateMany(records: Record<string, any>[]): Promise<number>;
     findById(itemId: string): Promise<Record<string, any> | undefined>;
     findByIds(itemIds: string[]): Promise<Record<string, any>[]>;
     findAll(options?: BaseQueryOptions): Promise<Record<string, any>[]>;
-    query(conditions: BaseQueryCondition[], options?: Omit<BaseQueryOptions, 'conditions'>): Promise<Record<string, any>[]>;
+    search(
+        conditions: BaseQueryCondition[],
+        options?: Omit<BaseQueryOptions, 'conditions'>
+    ): Promise<Record<string, any>[]>;
     count(conditions?: BaseQueryCondition[]): Promise<number>;
     exists(itemId: string): Promise<boolean>;
     clear(): Promise<number>;
@@ -74,9 +87,18 @@ export interface IBaseIndexDB {
 export class BaseIndexer extends Indexer {
     readonly name = 'BaseIndexer';
     readonly supportedOperators: QueryOperator[] = [
-        '=', '!=', '>', '<', '>=', '<=',
-        'like', 'notlike', 'in', 'notin',
-        'between', 'notbetween'
+        '=',
+        '!=',
+        '>',
+        '<',
+        '>=',
+        '<=',
+        'like',
+        'notlike',
+        'in',
+        'notin',
+        'between',
+        'notbetween'
     ];
 
     private _supportedFields: string[] = [];
@@ -112,6 +134,18 @@ export class BaseIndexer extends Indexer {
         return this.db;
     }
 
+    private buildRecords(items: Item[]): Record<string, any>[] {
+        return items.map((item) => {
+            const record: Record<string, any> = {};
+            for (const field of this._supportedFields) {
+                if (item[field] !== undefined) {
+                    record[field] = item[field];
+                }
+            }
+            return record;
+        });
+    }
+
     /**
      * 验证字段是否支持
      */
@@ -119,7 +153,7 @@ export class BaseIndexer extends Indexer {
         if (!this._supportedFields.includes(field)) {
             throw new Error(
                 `BaseIndexer does not support field: ${field}. ` +
-                `Supported fields: ${this._supportedFields.join(', ')}`
+                    `Supported fields: ${this._supportedFields.join(', ')}`
             );
         }
     }
@@ -131,7 +165,7 @@ export class BaseIndexer extends Indexer {
         if (!this.supportsOperator(operator)) {
             throw new Error(
                 `BaseIndexer does not support operator: ${operator}. ` +
-                `Supported operators: ${this.supportedOperators.join(', ')}`
+                    `Supported operators: ${this.supportedOperators.join(', ')}`
             );
         }
     }
@@ -146,52 +180,49 @@ export class BaseIndexer extends Indexer {
         return {
             field: cond.field,
             operator: cond.operator as BaseQueryOperator,
-            value: cond.value,
+            value: cond.value
         };
     }
 
     /**
      * 搜索匹配条件的 Item
      */
-    async search(
-        conditions: FilterCondition[],
-        options?: BaseIndexerSearchOptions
-    ): Promise<IndexerSearchResult> {
+    async search(conditions: FilterCondition[], options?: BaseIndexerSearchOptions): Promise<IndexerSearchResult> {
         // 转换条件
         const queryConditions = conditions
-            .filter(c => c.indexer === 'BaseIndexer')
-            .map(c => this.toQueryCondition(c));
+            .filter((c) => c.indexer === 'BaseIndexer')
+            .map((c) => this.toQueryCondition(c));
 
         // Join 过滤：限制在已有结果集的 item_id 范围内
         if (options?.existingResults && options.existingResults.length > 0) {
             queryConditions.push({
                 field: 'item_id',
                 operator: 'in',
-                value: options.existingResults.map(r => r.item_id),
+                value: options.existingResults.map((r) => r.item_id)
             });
         }
 
         // 执行查询
-        const records = await this.ensureDB().query(queryConditions, {
+        const records = await this.ensureDB().search(queryConditions, {
             limit: options?.limit,
             offset: options?.offset,
-            orderBy: options?.orderBy ? {
-                field: options.orderBy.field,
-                direction: options.orderBy.direction,
-            } : undefined,
+            orderBy: options?.orderBy
+                ? {
+                      field: options.orderBy.field,
+                      direction: options.orderBy.direction
+                  }
+                : undefined
         });
 
         // 如果有 existingResults，从中获取完整的元数据
-        const existingMap = new Map(
-            options?.existingResults?.map(r => [r.item_id, r])
-        );
+        const existingMap = new Map(options?.existingResults?.map((r) => [r.item_id, r]));
 
         // 转换记录为 Item
-        const items: Item[] = records.map(record => {
+        const items: Item[] = records.map((record) => {
             const existing = existingMap.get(record.item_id);
             const item: Item = {
                 item_id: record.item_id,
-                item_type: record.item_type as ItemType,
+                item_type: record.item_type as ItemType
             };
 
             // 动态复制 schema 中定义的字段
@@ -217,18 +248,7 @@ export class BaseIndexer extends Indexer {
      */
     async insert(items: Item[]): Promise<void> {
         if (items.length === 0) return;
-
-        const records = items.map(item => {
-            const record: Record<string, any> = {};
-            for (const field of this._supportedFields) {
-                if (item[field] !== undefined) {
-                    record[field] = item[field];
-                }
-            }
-            return record;
-        });
-
-        await this.ensureDB().insertMany(records);
+        await this.ensureDB().insertMany(this.buildRecords(items));
     }
 
     /**
@@ -245,16 +265,12 @@ export class BaseIndexer extends Indexer {
      */
     async update(items: Item[]): Promise<void> {
         if (items.length === 0) return;
+        await this.ensureDB().updateMany(this.buildRecords(items));
+    }
 
-        for (const item of items) {
-            const record: Record<string, any> = {};
-            for (const field of this._supportedFields) {
-                if (item[field] !== undefined) {
-                    record[field] = item[field];
-                }
-            }
-            await this.ensureDB().upsert(record);
-        }
+    async upsert(items: Item[]): Promise<void> {
+        if (items.length === 0) return;
+        await this.ensureDB().upsertMany(this.buildRecords(items));
     }
 
     /**
@@ -262,6 +278,15 @@ export class BaseIndexer extends Indexer {
      */
     close(): void {
         this.db?.close();
+    }
+
+    async clear(): Promise<void> {
+        await this.ensureDB().clear();
+    }
+
+    async getInfo(): Promise<Record<string, any>> {
+        const size = await this.ensureDB().count();
+        return { size };
     }
 
     /**
@@ -276,12 +301,5 @@ export class BaseIndexer extends Indexer {
      */
     getSchema(): ColumnSchema {
         return this.schema;
-    }
-
-    /**
-     * 获取底层数据库实例
-     */
-    getDB(): IBaseIndexDB {
-        return this.ensureDB();
     }
 }

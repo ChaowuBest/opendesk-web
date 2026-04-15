@@ -1,11 +1,10 @@
-import type { OpenDeskTUI } from "../entry.js";
-import { logger } from "../../utils/logger.js";
-
+import type { OpenDeskTUI } from '../entry.js';
+import { logger } from '../../utils/logger.js';
 
 export function registerRenameCommand(tui: OpenDeskTUI): void {
     tui.commandRegistry.register({
-        name: "rename",
-        description: "重命名当前任务，用法：/rename <新名称>",
+        name: 'rename',
+        description: '重命名当前任务，用法：/rename <新名称>',
         execute: async (args: string) => {
             if (!tui.activeTaskId) {
                 logger.warn('没有活跃的任务');
@@ -27,6 +26,6 @@ export function registerRenameCommand(tui: OpenDeskTUI): void {
             currentTask.rename(newName);
             logger.info(`任务已重命名为: ${newName}`);
             tui.tui.requestRender();
-        },
+        }
     });
 }

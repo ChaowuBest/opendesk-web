@@ -24,16 +24,8 @@ import type {
     PluginLogger,
     OpenClawPluginApi,
     InboundChannelMessage,
+    PairingProvider
 } from '../types.js';
-import {
-    getApprovedUserIds,
-    isUserApproved,
-    upsertPairingRequest,
-    removePairingRequest,
-    getPendingRequests,
-    approveUser,
-    revokeUser,
-} from '../../../applications/channelmgr/pairing.js';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
@@ -42,11 +34,22 @@ import { PAIRING_REPLY_TEMPLATE } from './shim.js';
 
 function detectMimeFromBuffer(buf: Buffer): string {
     if (!buf || buf.length < 4) return 'application/octet-stream';
-    if (buf[0] === 0xFF && buf[1] === 0xD8) return 'image/jpeg';
-    if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47) return 'image/png';
+    if (buf[0] === 0xff && buf[1] === 0xd8) return 'image/jpeg';
+    if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return 'image/png';
     if (buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46) return 'image/gif';
-    if (buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46 && buf.length > 11 && buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50) return 'image/webp';
-    if (buf[0] === 0x42 && buf[1] === 0x4D) return 'image/bmp';
+    if (
+        buf[0] === 0x52 &&
+        buf[1] === 0x49 &&
+        buf[2] === 0x46 &&
+        buf[3] === 0x46 &&
+        buf.length > 11 &&
+        buf[8] === 0x57 &&
+        buf[9] === 0x45 &&
+        buf[10] === 0x42 &&
+        buf[11] === 0x50
+    )
+        return 'image/webp';
+    if (buf[0] === 0x42 && buf[1] === 0x4d) return 'image/bmp';
     if (buf[0] === 0x25 && buf[1] === 0x50 && buf[2] === 0x44 && buf[3] === 0x46) return 'application/pdf';
     return 'application/octet-stream';
 }
@@ -54,11 +57,16 @@ function detectMimeFromBuffer(buf: Buffer): string {
 // Winston only uses the first argument as info.message; extra args are dropped.
 // Stringify all args into a single string so nothing is lost.
 function fmtArgs(...args: any[]): string {
-    return args.map(a => {
-        if (typeof a === 'string') return a;
-        try { return JSON.stringify(a, null, 2) ?? String(a); }
-        catch { return String(a); }
-    }).join(' ');
+    return args
+        .map((a) => {
+            if (typeof a === 'string') return a;
+            try {
+                return JSON.stringify(a, null, 2) ?? String(a);
+            } catch {
+                return String(a);
+            }
+        })
+        .join(' ');
 }
 
 // ── Channel Dispatch Bridge ──────────────────────────────────────────────────
@@ -69,10 +77,28 @@ function fmtArgs(...args: any[]): string {
 
 const channelDispatchers = new Map<string, (msg: InboundChannelMessage) => Promise<void>>();
 
+// ── Pairing Provider (injected by applications layer) ────────────────────────
+
+const NO_OP_PAIRING: PairingProvider = {
+    getApprovedUserIds: () => [],
+    isUserApproved: () => false,
+    upsertPairingRequest: () => ({ code: '', created: false }),
+    removePairingRequest: () => false,
+    getPendingRequests: () => [],
+    approveUser: () => {},
+    revokeUser: () => false
+};
+
+let pairingProvider: PairingProvider = NO_OP_PAIRING;
+
+export function setPairingProvider(provider: PairingProvider): void {
+    pairingProvider = provider;
+}
+
 export function registerChannelDispatch(
     channelId: string,
     accountId: string,
-    dispatch: (msg: InboundChannelMessage) => Promise<void>,
+    dispatch: (msg: InboundChannelMessage) => Promise<void>
 ): void {
     channelDispatchers.set(`${channelId}:${accountId}`, dispatch);
 }
@@ -117,7 +143,7 @@ function createInboundDebouncer<T>(opts: {
                 const timer = setTimeout(() => flush(key), debounceMs);
                 pending.set(key, { entries: [event], timer });
             }
-        },
+        }
     };
 }
 
@@ -169,7 +195,7 @@ const API_ERROR_PATTERNS = [
     /permission.{0,10}violation/i,
     /access.{0,10}denied/i,
     /scope.{0,10}required/i,
-    /open\.feishu\.cn\/app\/.+\/auth/,
+    /open\.feishu\.cn\/app\/.+\/auth/
 ];
 
 function detectAndCaptureApiError(text: string, channelKey?: string) {
@@ -188,7 +214,7 @@ function drainCapturedErrors(channelKey?: string): CapturedError[] {
     pruneOldErrors();
     if (capturedErrors.length === 0) return [];
     const matching = channelKey
-        ? capturedErrors.filter(e => !e.channelKey || e.channelKey === channelKey)
+        ? capturedErrors.filter((e) => !e.channelKey || e.channelKey === channelKey)
         : [...capturedErrors];
     for (const e of matching) {
         const idx = capturedErrors.indexOf(e);
@@ -229,12 +255,10 @@ function buildPluginRuntime() {
             debounce: {
                 resolveInboundDebounceMs: (params: { cfg?: any; channel?: string }) => {
                     const channelId = params.channel;
-                    const channelCfg = channelId
-                        ? params.cfg?.channels?.[channelId]
-                        : undefined;
+                    const channelCfg = channelId ? params.cfg?.channels?.[channelId] : undefined;
                     return channelCfg?.debounceMs ?? DEFAULT_INBOUND_DEBOUNCE_MS;
                 },
-                createInboundDebouncer,
+                createInboundDebouncer
             },
 
             // ── text ─────────────────────────────────────────────────────
@@ -246,15 +270,15 @@ function buildPluginRuntime() {
                 },
                 resolveMarkdownTableMode: (_opts?: any) => 'native' as const,
                 convertMarkdownTables: (text: string, _mode?: string) => text,
-                chunkMarkdownText: (text: string, limit?: number) =>
-                    chunkText(text, limit || 4000),
-                chunkTextWithMode: (text: string, limit?: number, _mode?: string) =>
-                    chunkText(text, limit || 4000),
+                chunkMarkdownText: (text: string, limit?: number) => chunkText(text, limit || 4000),
+                chunkTextWithMode: (text: string, limit?: number, _mode?: string) => chunkText(text, limit || 4000),
                 resolveTextChunkLimit: (
-                    _cfg?: any, _channel?: string, _accountId?: string,
-                    opts?: { fallbackLimit?: number },
+                    _cfg?: any,
+                    _channel?: string,
+                    _accountId?: string,
+                    opts?: { fallbackLimit?: number }
                 ) => opts?.fallbackLimit ?? 4000,
-                resolveChunkMode: () => 'text' as const,
+                resolveChunkMode: () => 'text' as const
             },
 
             // ── commands ─────────────────────────────────────────────────
@@ -264,7 +288,7 @@ function buildPluginRuntime() {
                     const trimmed = text.trim();
                     return trimmed.startsWith('/') || trimmed.startsWith('!');
                 },
-                resolveCommandAuthorizedFromAuthorizers: (_params?: any) => true,
+                resolveCommandAuthorizedFromAuthorizers: (_params?: any) => true
             },
 
             // ── routing ──────────────────────────────────────────────────
@@ -273,8 +297,8 @@ function buildPluginRuntime() {
                     sessionKey: `${params.channel || 'unknown'}:${params.accountId || 'default'}:${params.peer?.id || 'default'}`,
                     agentId: params.accountId || 'default',
                     accountId: params.accountId || 'default',
-                    matchedBy: 'default',
-                }),
+                    matchedBy: 'default'
+                })
             },
 
             // ── pairing (delegates to persistent storage) ────────────────
@@ -287,32 +311,34 @@ function buildPluginRuntime() {
                     format(PAIRING_REPLY_TEMPLATE, {
                         idLine: params.idLine || '',
                         code: params.code || '',
-                        codeSuffix: params.code ? String(params.code).slice(-4) : '',
+                        codeSuffix: params.code ? String(params.code).slice(-4) : ''
                     }),
                 readAllowFromStore: (params: any) =>
-                    getApprovedUserIds(params?.channel || '', params?.accountId || 'default'),
+                    pairingProvider.getApprovedUserIds(params?.channel || '', params?.accountId || 'default'),
                 upsertPairingRequest: (params: any) =>
-                    upsertPairingRequest(
-                        params?.channel || '', params?.accountId || 'default',
-                        params?.id || '', params?.meta,
+                    pairingProvider.upsertPairingRequest(
+                        params?.channel || '',
+                        params?.accountId || 'default',
+                        params?.id || '',
+                        params?.meta
                     ),
                 isUserApproved: (channel: string, accountId: string, userId: string) =>
-                    isUserApproved(channel, accountId, userId),
+                    pairingProvider.isUserApproved(channel, accountId, userId),
                 removePairingRequest: (channel: string, accountId: string, userId: string) =>
-                    removePairingRequest(channel, accountId, userId),
+                    pairingProvider.removePairingRequest(channel, accountId, userId),
                 listPairingRequests: (channel?: string, accountId?: string) =>
-                    getPendingRequests(channel, accountId),
+                    pairingProvider.getPendingRequests(channel, accountId),
                 approveUser: (channel: string, accountId: string, userId: string, meta?: any) =>
-                    approveUser(channel, accountId, userId, meta),
+                    pairingProvider.approveUser(channel, accountId, userId, meta),
                 revokeUser: (channel: string, accountId: string, userId: string) =>
-                    revokeUser(channel, accountId, userId),
+                    pairingProvider.revokeUser(channel, accountId, userId)
             },
 
             // ── reply (bridges to OpenDesk dispatch) ─────────────────────
             reply: {
                 resolveEnvelopeFormatOptions: (_cfg?: any) => ({
                     includeTimestamp: false,
-                    includeChannel: false,
+                    includeChannel: false
                 }),
 
                 formatAgentEnvelope: (params: any) => params.body || '',
@@ -322,7 +348,7 @@ function buildPluginRuntime() {
                 resolveHumanDelayConfig: (_cfg?: any, _agentId?: string) => ({
                     enabled: false,
                     minMs: 0,
-                    maxMs: 0,
+                    maxMs: 0
                 }),
 
                 createReplyDispatcherWithTyping: (params: any) => {
@@ -331,13 +357,13 @@ function buildPluginRuntime() {
                         dispatcher: {
                             deliver,
                             onIdle: params.onIdle,
-                            onCleanup: params.onCleanup,
+                            onCleanup: params.onCleanup
                         },
                         replyOptions: {},
                         markDispatchIdle: () => {
                             params.onIdle?.();
                             params.onCleanup?.();
-                        },
+                        }
                     };
                 },
 
@@ -369,9 +395,7 @@ function buildPluginRuntime() {
 
                     const recentErrors = drainCapturedErrors(key);
                     if (recentErrors.length > 0) {
-                        const errorSummary = recentErrors
-                            .map(e => e.message)
-                            .join('\n');
+                        const errorSummary = recentErrors.map((e) => e.message).join('\n');
                         body += `\n\n[System: The channel plugin encountered API errors that may affect functionality. Please inform the user and suggest corrective actions.\n${errorSummary}]`;
                     }
 
@@ -389,17 +413,22 @@ function buildPluginRuntime() {
                     }
                     const media = mediaPaths.map((p: string, i: number) => ({
                         path: p,
-                        contentType: mediaTypes[i] || undefined,
+                        contentType: mediaTypes[i] || undefined
                     }));
 
                     if (media.length > 0) {
-                        logger.info(`[runtime] dispatch media: ${JSON.stringify(media.map(m => ({ path: m.path, contentType: m.contentType })))}`);
+                        logger.info(
+                            `[runtime] dispatch media: ${JSON.stringify(media.map((m) => ({ path: m.path, contentType: m.contentType })))}`
+                        );
                     }
 
                     // If the body is just a raw media JSON payload (e.g. {"image_key":"..."}),
                     // replace with a human-readable placeholder when media was resolved
                     if (media.length > 0) {
-                        const stripped = body.replace(/\[message_id:[^\]]*\]\n?/g, '').replace(/^[^:]*:\s*/, '').trim();
+                        const stripped = body
+                            .replace(/\[message_id:[^\]]*\]\n?/g, '')
+                            .replace(/^[^:]*:\s*/, '')
+                            .trim();
                         if (/^\{[^}]*"(?:image_key|file_key)":/i.test(stripped)) {
                             body = body.replace(stripped, '[图片]');
                         }
@@ -417,11 +446,11 @@ function buildPluginRuntime() {
                         messageId: ctx.MessageSid,
                         replyToMessageId: ctx.ReplyToId,
                         media: media.length > 0 ? media : undefined,
-                        raw: ctx,
+                        raw: ctx
                     };
 
                     await dispatch(message);
-                },
+                }
             },
 
             // ── session ────────────────────────────────────────────────────
@@ -429,14 +458,17 @@ function buildPluginRuntime() {
                 resolveStorePath: (sessionCfg: any, opts: any) => {
                     return `${opts?.agentId || 'default'}`;
                 },
-                recordInboundSession: async (_params: any) => {},
+                recordInboundSession: async (_params: any) => {}
             },
 
             // ── media ────────────────────────────────────────────────────
             media: {
                 saveMediaBuffer: async (
-                    buffer: Buffer, contentType: string,
-                    _dir?: string, _maxBytes?: number, fileName?: string,
+                    buffer: Buffer,
+                    contentType: string,
+                    _dir?: string,
+                    _maxBytes?: number,
+                    fileName?: string
                 ) => {
                     let resolvedType = contentType;
                     if (!resolvedType || resolvedType === 'application/octet-stream') {
@@ -448,9 +480,12 @@ function buildPluginRuntime() {
                     if (!fs.existsSync(mediaDir)) fs.mkdirSync(mediaDir, { recursive: true });
                     const filePath = path.join(mediaDir, name);
                     fs.writeFileSync(filePath, buffer);
-                    return { path: filePath, contentType: resolvedType || 'application/octet-stream' };
-                },
-            },
+                    return {
+                        path: filePath,
+                        contentType: resolvedType || 'application/octet-stream'
+                    };
+                }
+            }
         },
 
         // ── top-level media utilities ────────────────────────────────────
@@ -458,7 +493,7 @@ function buildPluginRuntime() {
             detectMime: async (params: any) => {
                 const buffer = params?.buffer;
                 if (!buffer || buffer.length < 4) return 'application/octet-stream';
-                if (buffer[0] === 0xFF && buffer[1] === 0xD8) return 'image/jpeg';
+                if (buffer[0] === 0xff && buffer[1] === 0xd8) return 'image/jpeg';
                 if (buffer[0] === 0x89 && buffer[1] === 0x50) return 'image/png';
                 if (buffer[0] === 0x47 && buffer[1] === 0x49) return 'image/gif';
                 if (buffer[0] === 0x52 && buffer[1] === 0x49) return 'image/webp';
@@ -467,25 +502,34 @@ function buildPluginRuntime() {
             },
             loadWebMedia: async (mediaUrl: string, maxBytesOrOpts?: number | Record<string, any>) => {
                 if (!mediaUrl) return null;
-                const resolvedMax = typeof maxBytesOrOpts === 'number'
-                    ? maxBytesOrOpts
-                    : (maxBytesOrOpts?.maxBytes ?? 50 * 1024 * 1024);
-                const localRoots: string[] | undefined = typeof maxBytesOrOpts === 'object'
-                    ? maxBytesOrOpts?.localRoots
-                    : undefined;
+                const resolvedMax =
+                    typeof maxBytesOrOpts === 'number'
+                        ? maxBytesOrOpts
+                        : (maxBytesOrOpts?.maxBytes ?? 50 * 1024 * 1024);
+                const localRoots: string[] | undefined =
+                    typeof maxBytesOrOpts === 'object' ? maxBytesOrOpts?.localRoots : undefined;
 
                 const mimeFromExt = (fp: string) => {
                     const ext = path.extname(fp).slice(1).toLowerCase();
                     const mimeMap: Record<string, string> = {
-                        jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png',
-                        gif: 'image/gif', webp: 'image/webp', bmp: 'image/bmp',
-                        pdf: 'application/pdf', mp4: 'video/mp4', mp3: 'audio/mpeg',
-                        wav: 'audio/wav', doc: 'application/msword',
+                        jpg: 'image/jpeg',
+                        jpeg: 'image/jpeg',
+                        png: 'image/png',
+                        gif: 'image/gif',
+                        webp: 'image/webp',
+                        bmp: 'image/bmp',
+                        pdf: 'application/pdf',
+                        mp4: 'video/mp4',
+                        mp3: 'audio/mpeg',
+                        wav: 'audio/wav',
+                        doc: 'application/msword',
                         docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
                         xls: 'application/vnd.ms-excel',
                         xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
                         pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-                        zip: 'application/zip', txt: 'text/plain', csv: 'text/csv',
+                        zip: 'application/zip',
+                        txt: 'text/plain',
+                        csv: 'text/csv'
                     };
                     return mimeMap[ext] || 'application/octet-stream';
                 };
@@ -500,14 +544,23 @@ function buildPluginRuntime() {
                 const readLocal = (fp: string) => {
                     if (localRoots?.length) {
                         const resolved = path.resolve(fp);
-                        const allowed = localRoots.some(root => resolved.startsWith(path.resolve(root) + path.sep) || resolved === path.resolve(root));
+                        const allowed = localRoots.some(
+                            (root) =>
+                                resolved.startsWith(path.resolve(root) + path.sep) || resolved === path.resolve(root)
+                        );
                         if (!allowed) throw new Error(`File path not under allowed roots: ${fp}`);
                     }
                     if (!fs.existsSync(fp)) throw new Error(`File not found: ${fp}`);
                     const buffer = fs.readFileSync(fp);
-                    if (buffer.length > resolvedMax) throw new Error(`File too large: ${buffer.length} > ${resolvedMax}`);
+                    if (buffer.length > resolvedMax)
+                        throw new Error(`File too large: ${buffer.length} > ${resolvedMax}`);
                     const contentType = mimeFromExt(fp);
-                    return { buffer, contentType, fileName: path.basename(fp), kind: kindFromMime(contentType) };
+                    return {
+                        buffer,
+                        contentType,
+                        fileName: path.basename(fp),
+                        kind: kindFromMime(contentType)
+                    };
                 };
 
                 try {
@@ -534,18 +587,18 @@ function buildPluginRuntime() {
                     logger.error(`[openclaw-api] loadWebMedia failed for ${mediaUrl}: ${err?.message || err}`);
                     throw err;
                 }
-            },
+            }
         },
 
         // ── logging ──────────────────────────────────────────────────────
         logging: {
-            shouldLogVerbose: () => false,
+            shouldLogVerbose: () => false
         },
 
         // ── config ───────────────────────────────────────────────────────
         config: {
-            writeConfigFile: async () => {},
-        },
+            writeConfigFile: async () => {}
+        }
     };
 }
 
@@ -555,13 +608,13 @@ function buildPluginRuntime() {
  */
 export function createPluginApi(
     entry: PluginEntry,
-    onChannelRegistered: (cp: ChannelPlugin) => void,
+    onChannelRegistered: (cp: ChannelPlugin) => void
 ): OpenClawPluginApi {
     const pluginLogger: PluginLogger = {
         info: (...args: any[]) => logger.info(`[plugin:${entry.id}] ${fmtArgs(...args)}`),
         warn: (...args: any[]) => logger.warn(`[plugin:${entry.id}] ${fmtArgs(...args)}`),
         error: (...args: any[]) => logger.error(`[plugin:${entry.id}] ${fmtArgs(...args)}`),
-        debug: (...args: any[]) => logger.info(`[plugin:${entry.id}][debug] ${fmtArgs(...args)}`),
+        debug: (...args: any[]) => logger.info(`[plugin:${entry.id}][debug] ${fmtArgs(...args)}`)
     };
 
     return {
@@ -623,6 +676,6 @@ export function createPluginApi(
 
         on: (_hookName: string, _handler: any, _opts?: any) => {
             pluginLogger.debug(`on(${_hookName}) (skipped in OpenDesk)`);
-        },
+        }
     };
 }

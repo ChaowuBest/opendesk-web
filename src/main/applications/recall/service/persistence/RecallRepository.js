@@ -127,11 +127,9 @@ export class RecallRepository {
     async saveActivity(activity) {
         try {
             const dbData = RecallMapper.activityToDb(activity);
-            await this.activityDb.update(
-                { activityId: activity.activityId },
-                dbData,
-                { upsert: true }
-            );
+            await this.activityDb.update({ activityId: activity.activityId }, dbData, {
+                upsert: true
+            });
             return activity;
         } catch (error) {
             logger.error(`Failed to save activity ${activity.activityId}:`, error);
@@ -162,12 +160,14 @@ export class RecallRepository {
      */
     async findActivitiesByTimeRange(startTime, endTime) {
         try {
-            const rawList = await this.activityDb.find({
-                activityId: { $ne: null },
-                startTime: { $gte: startTime, $lte: endTime }
-            }).sort({ startTime: -1 });
+            const rawList = await this.activityDb
+                .find({
+                    activityId: { $ne: null },
+                    startTime: { $gte: startTime, $lte: endTime }
+                })
+                .sort({ startTime: -1 });
 
-            return rawList.map(raw => RecallMapper.activityFromDb(raw));
+            return rawList.map((raw) => RecallMapper.activityFromDb(raw));
         } catch (error) {
             logger.error(`Failed to find activities in time range [${startTime}, ${endTime}]:`, error);
             throw error;
@@ -184,12 +184,14 @@ export class RecallRepository {
         try {
             // 1. 先查询所有关联的 Capture IDs 和 Snapshot IDs（在删除之前）
             const captures = await this.captureDb.find({ activityId });
-            const captureIds = captures.map(c => c.captureId);
+            const captureIds = captures.map((c) => c.captureId);
 
             const snapshots = await this.snapshotDb.find({ activityId });
-            const snapshotIds = snapshots.map(s => s.snapshotId);
+            const snapshotIds = snapshots.map((s) => s.snapshotId);
 
-            logger.debug(`Found ${captureIds.length} captures and ${snapshotIds.length} snapshots for activity ${activityId}`);
+            logger.debug(
+                `Found ${captureIds.length} captures and ${snapshotIds.length} snapshots for activity ${activityId}`
+            );
 
             // 2. 删除 Snapshot 级别的 Taggings
             let snapshotTaggingCount = 0;
@@ -246,10 +248,7 @@ export class RecallRepository {
      */
     async updateActivityMetadata(activityId, metadata) {
         try {
-            await this.activityDb.update(
-                { activityId },
-                { $set: { metadata, updatedAt: Date.now() } }
-            );
+            await this.activityDb.update({ activityId }, { $set: { metadata, updatedAt: Date.now() } });
         } catch (error) {
             logger.error(`Failed to update activity metadata for ${activityId}:`, error);
             throw error;
@@ -270,10 +269,7 @@ export class RecallRepository {
                 updatedAt: Date.now()
             };
 
-            await this.activityDb.update(
-                { activityId },
-                { $set: setUpdates }
-            );
+            await this.activityDb.update({ activityId }, { $set: setUpdates });
         } catch (error) {
             logger.error(`Failed to update activity fields for ${activityId}:`, error);
             throw error;
@@ -290,7 +286,7 @@ export class RecallRepository {
             const rawList = await this.activityDb.find({
                 activityId: { $in: activityIds }
             });
-            return rawList.map(raw => RecallMapper.activityFromDb(raw));
+            return rawList.map((raw) => RecallMapper.activityFromDb(raw));
         } catch (error) {
             logger.error(`Failed to find activities by IDs:`, error);
             throw error;
@@ -323,7 +319,7 @@ export class RecallRepository {
     async findSnapshotsByActivity(activityId) {
         try {
             const rawList = await this.snapshotDb.find({ activityId }).sort({ createdAt: 1 });
-            return rawList.map(raw => RecallMapper.snapshotFromDb(raw));
+            return rawList.map((raw) => RecallMapper.snapshotFromDb(raw));
         } catch (error) {
             logger.error(`Failed to find snapshots for activity ${activityId}:`, error);
             throw error;
@@ -337,12 +333,14 @@ export class RecallRepository {
      */
     async findKeyframesByActivity(activityId) {
         try {
-            const rawList = await this.snapshotDb.find({
-                activityId,
-                isKeyframe: true
-            }).sort({ createdAt: 1 });
+            const rawList = await this.snapshotDb
+                .find({
+                    activityId,
+                    isKeyframe: true
+                })
+                .sort({ createdAt: 1 });
 
-            return rawList.map(raw => RecallMapper.snapshotFromDb(raw));
+            return rawList.map((raw) => RecallMapper.snapshotFromDb(raw));
         } catch (error) {
             logger.error(`Failed to find keyframes for activity ${activityId}:`, error);
             throw error;
@@ -357,10 +355,7 @@ export class RecallRepository {
      */
     async updateSnapshotMark(snapshotId, isMarked) {
         try {
-            await this.snapshotDb.update(
-                { snapshotId },
-                { $set: { isMarked: isMarked ? 1 : 0 } }
-            );
+            await this.snapshotDb.update({ snapshotId }, { $set: { isMarked: isMarked ? 1 : 0 } });
         } catch (error) {
             logger.error(`Failed to update snapshot mark for ${snapshotId}:`, error);
             throw error;
@@ -372,7 +367,7 @@ export class RecallRepository {
             const rawList = await this.snapshotDb.find({
                 snapshotId: { $in: snapshotIds }
             });
-            return rawList.map(raw => RecallMapper.snapshotFromDb(raw));
+            return rawList.map((raw) => RecallMapper.snapshotFromDb(raw));
         } catch (error) {
             logger.error(`Failed to find snapshots by IDs:`, error);
             throw error;
@@ -402,7 +397,7 @@ export class RecallRepository {
             }
 
             const rawList = await cursor;
-            return rawList.map(raw => RecallMapper.snapshotFromDb(raw));
+            return rawList.map((raw) => RecallMapper.snapshotFromDb(raw));
         } catch (error) {
             logger.error(`Failed to find snapshots by query:`, error);
             throw error;
@@ -417,10 +412,7 @@ export class RecallRepository {
      */
     async updateSnapshotFields(snapshotId, updates) {
         try {
-            await this.snapshotDb.update(
-                { snapshotId },
-                { $set: updates }
-            );
+            await this.snapshotDb.update({ snapshotId }, { $set: updates });
         } catch (error) {
             logger.error(`Failed to update snapshot fields for ${snapshotId}:`, error);
             throw error;
@@ -453,7 +445,7 @@ export class RecallRepository {
     async findCapturesByActivity(activityId) {
         try {
             const rawList = await this.captureDb.find({ activityId }).sort({ captureTime: 1 });
-            return rawList.map(raw => RecallMapper.captureFromDb(raw));
+            return rawList.map((raw) => RecallMapper.captureFromDb(raw));
         } catch (error) {
             logger.error(`Failed to find captures for activity ${activityId}:`, error);
             throw error;
@@ -470,7 +462,7 @@ export class RecallRepository {
             const rawList = await this.captureDb.find({
                 activityId: { $in: activityIds }
             });
-            return rawList.map(raw => RecallMapper.captureFromDb(raw));
+            return rawList.map((raw) => RecallMapper.captureFromDb(raw));
         } catch (error) {
             logger.error(`Failed to find captures by activity IDs:`, error);
             throw error;
@@ -503,7 +495,7 @@ export class RecallRepository {
     async findExtractionsBySnapshot(snapshotId) {
         try {
             const rawList = await this.extractionDb.find({ snapshotId });
-            return rawList.map(raw => RecallMapper.extractionFromDb(raw));
+            return rawList.map((raw) => RecallMapper.extractionFromDb(raw));
         } catch (error) {
             logger.error(`Failed to find extractions for snapshot ${snapshotId}:`, error);
             throw error;
@@ -584,10 +576,7 @@ export class RecallRepository {
      */
     async incrementTagUsageCount(tagId, increment = 1) {
         try {
-            await this.tagDb.update(
-                { tagId },
-                { $inc: { usageCount: increment }, $set: { updatedAt: Date.now() } }
-            );
+            await this.tagDb.update({ tagId }, { $inc: { usageCount: increment }, $set: { updatedAt: Date.now() } });
         } catch (error) {
             logger.error(`Failed to increment tag usage count for ${tagId}:`, error);
             throw error;
@@ -612,7 +601,7 @@ export class RecallRepository {
             }
 
             const rawList = await cursor;
-            return rawList.map(raw => RecallMapper.tagFromDb(raw));
+            return rawList.map((raw) => RecallMapper.tagFromDb(raw));
         } catch (error) {
             logger.error(`Failed to find all tags:`, error);
             throw error;
@@ -629,7 +618,7 @@ export class RecallRepository {
             const rawList = await this.tagDb.find({
                 tagId: { $in: tagIds }
             });
-            return rawList.map(raw => RecallMapper.tagFromDb(raw));
+            return rawList.map((raw) => RecallMapper.tagFromDb(raw));
         } catch (error) {
             logger.error(`Failed to find tags by IDs:`, error);
             throw error;
@@ -670,7 +659,7 @@ export class RecallRepository {
             }
 
             const rawList = await cursor;
-            return rawList.map(raw => RecallMapper.taggingFromDb(raw));
+            return rawList.map((raw) => RecallMapper.taggingFromDb(raw));
         } catch (error) {
             logger.error(`Failed to find taggings:`, error);
             throw error;
@@ -688,7 +677,7 @@ export class RecallRepository {
                 entityType: 'activity',
                 entityId: { $in: activityIds }
             });
-            return rawList.map(raw => RecallMapper.taggingFromDb(raw));
+            return rawList.map((raw) => RecallMapper.taggingFromDb(raw));
         } catch (error) {
             logger.error(`Failed to find taggings by activity IDs:`, error);
             throw error;
@@ -709,7 +698,7 @@ export class RecallRepository {
             const rawList = await this.taggingDb.find({
                 $or: entityQueries
             });
-            return rawList.map(raw => RecallMapper.taggingFromDb(raw));
+            return rawList.map((raw) => RecallMapper.taggingFromDb(raw));
         } catch (error) {
             logger.error(`Failed to find taggings by entity queries:`, error);
             throw error;

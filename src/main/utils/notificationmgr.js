@@ -12,7 +12,6 @@
 import { logger } from './logger.js';
 import { isMainThread, parentPort } from 'worker_threads';
 
-
 class NotificationManager {
     /**
      * The singleton instance of the NotificationManager
@@ -61,13 +60,16 @@ class NotificationManager {
     addCliCallback(callback) {
         this.cliCallbacks.push(callback);
         return () => {
-            this.cliCallbacks = this.cliCallbacks.filter(cb => cb !== callback);
+            this.cliCallbacks = this.cliCallbacks.filter((cb) => cb !== callback);
         };
     }
 
     sendNotification(type, source, title, message) {
         if (!isMainThread) {
-            parentPort.postMessage({ type: 'notification', payload: { type, source, title, message } });
+            parentPort.postMessage({
+                type: 'notification',
+                payload: { type, source, title, message }
+            });
         } else {
             // Electron renderer 订阅者
             for (const subscriber of this.subscribers) {
@@ -98,9 +100,8 @@ class NotificationManager {
     }
 
     removeNotification(notification) {
-        this.notifications = this.notifications.filter(n => n !== notification);
+        this.notifications = this.notifications.filter((n) => n !== notification);
     }
 }
-
 
 export { NotificationManager };

@@ -14,13 +14,12 @@ import { ToolCall } from '../../aikernel/messages';
 import { Card, type BorderConfig } from '../../tui/components/card';
 import { statusDisplay, truncText } from '../../tui/components/toolcall';
 import { z } from 'zod';
-import type { TaskTodo } from './common';
+import { type TaskTodo, getOrInitTaskTodos, setTaskTodos, deleteTaskTodos } from '../../aikernel/todos/task-todos';
 import type { TaskState } from '../../aikernel/states/tasks';
 import { escapeHtml } from '../../utils/escape';
 import { type TodoMgrApplication } from './app';
 import { describeCron } from '../../utils/cron';
 import chalk from 'chalk';
-
 
 const GetCurrentTimeArgsSchema = z.object({});
 
@@ -29,7 +28,7 @@ export class GetCurrentTimeTool extends BaseTool<typeof GetCurrentTimeArgsSchema
         super(
             'getCurrentTime',
             '获取当前精确的日期和时间。返回包含 UTC 时间、本地时间和时区信息',
-            GetCurrentTimeArgsSchema,
+            GetCurrentTimeArgsSchema
         );
         this.setExecutor(this.handleExecute.bind(this));
     }
@@ -55,7 +54,7 @@ export class GetCurrentTimeTool extends BaseTool<typeof GetCurrentTimeArgsSchema
             `- **UTC 时间**: ${iso}`,
             `- **当地时间**: ${locale}`,
             `- **时区**: ${timezone}`,
-            `- **时间戳**: ${now.getTime()}`,
+            `- **时间戳**: ${now.getTime()}`
         ].join('\n');
     }
 }
@@ -65,25 +64,26 @@ export class GetCurrentTimeTool extends BaseTool<typeof GetCurrentTimeArgsSchema
 const EventTriggerSchema = z.object({
     type: z.literal('event'),
     bundleName: z.string().describe('触发事件的应用标识，如 "mailbox", "mcpmgr"'),
-    eventName: z.string().describe('事件名称，如 "newEmailCountsUpdated"'),
+    eventName: z.string().describe('事件名称，如 "newEmailCountsUpdated"')
 });
 
 const ScheduledTriggerSchema = z.object({
     type: z.literal('scheduled'),
-    triggerAt: z.string()
-        .describe('任务触发时间，必须使用UTC时间（ISO8601格式，以Z结尾），请先调用getCurrentTime工具获取当前UTC时间为基准进行计算'),
+    triggerAt: z
+        .string()
+        .describe(
+            '任务触发时间，必须使用UTC时间（ISO8601格式，以Z结尾），请先调用getCurrentTime工具获取当前UTC时间为基准进行计算'
+        )
 });
 
 const CronTriggerSchema = z.object({
     type: z.literal('cron'),
-    cronExpression: z.string().describe('crontab 表达式: "分 时 日 月 周"，如 "0 9 * * 1-5" 表示工作日每天9点, "*/30 * * * *" 表示每30分钟'),
+    cronExpression: z
+        .string()
+        .describe('crontab 表达式: "分 时 日 月 周"，如 "0 9 * * 1-5" 表示工作日每天9点, "*/30 * * * *" 表示每30分钟')
 });
 
-const TriggerSchema = z.discriminatedUnion('type', [
-    EventTriggerSchema,
-    ScheduledTriggerSchema,
-    CronTriggerSchema,
-]);
+const TriggerSchema = z.discriminatedUnion('type', [EventTriggerSchema, ScheduledTriggerSchema, CronTriggerSchema]);
 
 /**
  * 解析 trigger 字段，处理大模型可能将整个 trigger 对象作为字符串传递的情况
@@ -138,7 +138,7 @@ function validateAndNormalizeTrigger(trigger: unknown): z.output<typeof TriggerS
     if (!result.success) {
         throw new Error(
             `无效的 trigger 格式: ${result.error.message}。` +
-            `trigger 应为对象格式，如: {"type": "scheduled", "triggerAt": "2026-03-01T01:00:00Z"}`
+                `trigger 应为对象格式，如: {"type": "scheduled", "triggerAt": "2026-03-01T01:00:00Z"}`
         );
     }
 
@@ -169,27 +169,19 @@ function formatDeliverDisplay(deliver: any): string {
 const TodoWriteTodoSchema = z.object({
     id: z.string().optional().describe('待办项ID，更新或删除时必填'),
     title: z.string().describe('待办标题（简短描述，用于列表展示）'),
-    content: z.string().describe('待办内容（详细描述，发送给 Agent 执行。Agent 有能力调用工具访问文件、执行命令等，因此具体需求应明确写在 content 中）'),
-    status: z.enum(['pending', 'in_progress', 'completed']).describe('状态：pending[待定], in_progress[进行中], completed[已完成]'),
+    content: z
+        .string()
+        .describe(
+            '待办内容（详细描述，发送给 Agent 执行。Agent 有能力调用工具访问文件、执行命令等，因此具体需求应明确写在 content 中）'
+        ),
+    status: z
+        .enum(['pending', 'in_progress', 'completed'])
+        .describe('状态：pending[待定], in_progress[进行中], completed[已完成]')
 });
 
 const TodoWriteArgsSchema = z.object({
-    todos: z.array(TodoWriteTodoSchema).describe('完整的待办事项列表（替换当前所有待办）'),
+    todos: z.array(TodoWriteTodoSchema).describe('完整的待办事项列表（替换当前所有待办）')
 });
-
-const taskTodosMap = new Map<string, TaskTodo[]>();
-
-/**
- * Get todos for a specific task (for display purposes)
- * @param taskId - The task ID to get todos for
- * @returns Array of todos for the task
- */
-export function getTaskTodosForDisplay(taskId: string): TaskTodo[] {
-    if (!taskTodosMap.has(taskId)) {
-        return [];
-    }
-    return taskTodosMap.get(taskId)!;
-}
 
 export class TodoWriteTool extends BaseTool<typeof TodoWriteArgsSchema> {
     private todoMgrApp: TodoMgrApplication;
@@ -198,21 +190,18 @@ export class TodoWriteTool extends BaseTool<typeof TodoWriteArgsSchema> {
         super(
             'TodoWrite',
             '管理任务级待办事项。每次调用传入完整的待办列表来替换当前所有待办。任务级待办仅在当前任务会话中有效，严格按列表顺序执行',
-            TodoWriteArgsSchema,
+            TodoWriteArgsSchema
         );
         this.todoMgrApp = todoMgrApp;
         this.setExecutor(this.handleExecute.bind(this));
     }
 
     private getTaskTodos(taskId: string): TaskTodo[] {
-        if (!taskTodosMap.has(taskId)) {
-            taskTodosMap.set(taskId, []);
-        }
-        return taskTodosMap.get(taskId)!;
+        return getOrInitTaskTodos(taskId);
     }
 
     private setTaskTodos(taskId: string, todos: TaskTodo[]): void {
-        taskTodosMap.set(taskId, todos);
+        setTaskTodos(taskId, todos);
     }
 
     renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
@@ -253,9 +242,9 @@ export class TodoWriteTool extends BaseTool<typeof TodoWriteArgsSchema> {
         const todos = Array.isArray(args?.['todos']) ? args['todos'] : [];
 
         const total = todos.length;
-        const completed = todos.filter(t => t.status === 'completed').length;
-        const inProgress = todos.filter(t => t.status === 'in_progress').length;
-        const pending = todos.filter(t => t.status === 'pending').length;
+        const completed = todos.filter((t) => t.status === 'completed').length;
+        const inProgress = todos.filter((t) => t.status === 'in_progress').length;
+        const pending = todos.filter((t) => t.status === 'pending').length;
 
         // 如果所有任务都已完成，显示完整列表
         if (total > 0 && completed === total) {
@@ -270,16 +259,14 @@ export class TodoWriteTool extends BaseTool<typeof TodoWriteArgsSchema> {
             if (pending > 0) summary += ` · 待处理 ${pending}`;
         }
 
-        return [
-            `📋 ${summary}`,
-        ];
+        return [`📋 ${summary}`];
     }
 
     private renderCompletedTodosCli(todos: any[], width: number): string[] {
         const accentColor = chalk.hex('#F96850');
         const borderConfig: BorderConfig = {
             style: 'square',
-            colorFn: accentColor,
+            colorFn: accentColor
         };
 
         // Build body lines
@@ -294,7 +281,7 @@ export class TodoWriteTool extends BaseTool<typeof TodoWriteArgsSchema> {
             icon: '✅',
             title: '所有待办已完成!',
             body: bodyLines,
-            border: borderConfig,
+            border: borderConfig
         });
 
         return card.render(width);
@@ -302,9 +289,9 @@ export class TodoWriteTool extends BaseTool<typeof TodoWriteArgsSchema> {
 
     private getStatusIcon(status: string): string {
         const map: Record<string, string> = {
-            'pending': '⭕',
-            'in_progress': '🔄',
-            'completed': '✅',
+            pending: '⭕',
+            in_progress: '🔄',
+            completed: '✅'
         };
         return map[status] || '⭕';
     }
@@ -315,7 +302,7 @@ export class TodoWriteTool extends BaseTool<typeof TodoWriteArgsSchema> {
         let currentTodos = this.getTaskTodos(taskId);
 
         currentTodos = todos.map((todoParam) => {
-            const existingTodo = todoParam.id ? currentTodos.find(t => t.id === todoParam.id) : undefined;
+            const existingTodo = todoParam.id ? currentTodos.find((t) => t.id === todoParam.id) : undefined;
             return {
                 id: todoParam.id || `task_todo_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
                 task_id: taskId,
@@ -324,14 +311,17 @@ export class TodoWriteTool extends BaseTool<typeof TodoWriteArgsSchema> {
                 status: todoParam.status,
                 created_at: existingTodo?.created_at || new Date().toISOString(),
                 updated_at: new Date().toISOString(),
-                completed_at: todoParam.status === 'completed' ? (existingTodo?.completed_at || new Date().toISOString()) : undefined,
+                completed_at:
+                    todoParam.status === 'completed'
+                        ? existingTodo?.completed_at || new Date().toISOString()
+                        : undefined
             };
         });
 
         // 如果所有任务都已完成，清空待办列表（不再保留）
-        const allCompleted = currentTodos.length > 0 && currentTodos.every(t => t.status === 'completed');
+        const allCompleted = currentTodos.length > 0 && currentTodos.every((t) => t.status === 'completed');
         if (allCompleted) {
-            taskTodosMap.delete(taskId);
+            deleteTaskTodos(taskId);
         } else {
             this.setTaskTodos(taskId, currentTodos);
         }
@@ -354,8 +344,8 @@ function validateScheduledTrigger(trigger?: z.output<typeof TriggerSchema>): voi
     if (!triggerAt.endsWith('Z')) {
         throw new Error(
             `scheduled trigger 的 triggerAt 必须使用 UTC 时间（以 Z 结尾），当前值："${triggerAt}"。` +
-            `请使用 getCurrentTime 工具获取当前 UTC 时间，并根据需要计算目标时间。` +
-            `例如：当地时间 2026-03-01 09:00 (UTC+8) 应转换为 "2026-03-01T01:00:00Z"`
+                `请使用 getCurrentTime 工具获取当前 UTC 时间，并根据需要计算目标时间。` +
+                `例如：当地时间 2026-03-01 09:00 (UTC+8) 应转换为 "2026-03-01T01:00:00Z"`
         );
     }
 
@@ -368,10 +358,20 @@ function validateScheduledTrigger(trigger?: z.output<typeof TriggerSchema>): voi
 
 const AddGlobalTodoArgsSchema = z.object({
     title: z.string().describe('待办标题（简短描述，用于列表展示）'),
-    content: z.string().describe('待办内容（详细描述，发送给 Agent 执行。Agent 有能力调用工具访问文件、执行命令等，因此具体需求应明确写在 content 中）'),
-    priority: z.enum(['low', 'medium', 'high']).optional().default('medium').describe('优先级：low[低], medium[中], high[高]'),
+    content: z
+        .string()
+        .describe(
+            '待办内容（详细描述，发送给 Agent 执行。Agent 有能力调用工具访问文件、执行命令等，因此具体需求应明确写在 content 中）'
+        ),
+    priority: z
+        .enum(['low', 'medium', 'high'])
+        .optional()
+        .default('medium')
+        .describe('优先级：low[低], medium[中], high[高]'),
     category: z.string().optional().describe('分类标签，如 "bug", "feature", "idea"'),
-    trigger: TriggerSchema.optional().describe('触发器配置。event: 事件触发; scheduled: 定时一次性触发 (**必须使用 UTC 时间**); cron: crontab 重复触发。不指定则为手动模式。'),
+    trigger: TriggerSchema.optional().describe(
+        '触发器配置。event: 事件触发; scheduled: 定时一次性触发 (**必须使用 UTC 时间**); cron: crontab 重复触发。不指定则为手动模式。'
+    )
 });
 
 export class AddGlobalTodoTool extends BaseTool<typeof AddGlobalTodoArgsSchema> {
@@ -381,7 +381,7 @@ export class AddGlobalTodoTool extends BaseTool<typeof AddGlobalTodoArgsSchema> 
         super(
             'addGlobalTodo',
             '添加全局待办事项，跨所有任务持久保存。可选配置触发器实现自动执行：event(事件触发)、scheduled(定时一次性)、cron(crontab重复)。注意：content 是发送给 Agent 执行的详细指令，Agent 有能力调用工具访问文件、执行命令等，因此具体需求应明确写在 content 中。',
-            AddGlobalTodoArgsSchema,
+            AddGlobalTodoArgsSchema
         );
         this.todoMgrApp = todoMgrApp;
         this.setExecutor(this.handleExecute.bind(this));
@@ -398,11 +398,15 @@ export class AddGlobalTodoTool extends BaseTool<typeof AddGlobalTodoArgsSchema> 
         let html = '<div style="padding: 12px;">';
         html += '<div style="font-weight: 600; margin-bottom: 8px;">🌍 添加全局待办</div>';
 
-        if (title) html += `<div style="margin-bottom: 4px;"><span style="color: #6b7280;">标题:</span> ${escapeHtml(String(title))}</div>`;
-        if (content) html += `<div style="margin-bottom: 4px;"><span style="color: #6b7280;">内容:</span> ${escapeHtml(String(content))}</div>`;
+        if (title)
+            html += `<div style="margin-bottom: 4px;"><span style="color: #6b7280;">标题:</span> ${escapeHtml(String(title))}</div>`;
+        if (content)
+            html += `<div style="margin-bottom: 4px;"><span style="color: #6b7280;">内容:</span> ${escapeHtml(String(content))}</div>`;
         html += `<div style="margin-bottom: 4px;"><span style="color: #6b7280;">优先级:</span> ${escapeHtml(String(priority).toUpperCase())}</div>`;
-        if (category) html += `<div style="margin-bottom: 4px;"><span style="color: #6b7280;">分类:</span> ${escapeHtml(String(category))}</div>`;
-        if (trigger) html += `<div style="margin-bottom: 4px;"><span style="color: #6b7280;">触发器:</span> ${escapeHtml(formatTriggerDisplay(trigger))}</div>`;
+        if (category)
+            html += `<div style="margin-bottom: 4px;"><span style="color: #6b7280;">分类:</span> ${escapeHtml(String(category))}</div>`;
+        if (trigger)
+            html += `<div style="margin-bottom: 4px;"><span style="color: #6b7280;">触发器:</span> ${escapeHtml(formatTriggerDisplay(trigger))}</div>`;
 
         if (toolcall.status === 'success' && toolcall.result) {
             try {
@@ -462,19 +466,27 @@ export class AddGlobalTodoTool extends BaseTool<typeof AddGlobalTodoArgsSchema> 
             body.push(chalk.redBright('  ' + truncText(String(toolcall.result), width - 10)));
         }
 
-        return new Card({ icon: '🌍', title: '添加全局待办', status: statusDisplay(toolcall.status), body }).render(width);
+        return new Card({
+            icon: '🌍',
+            title: '添加全局待办',
+            status: statusDisplay(toolcall.status),
+            body
+        }).render(width);
     }
 
     private getPriorityColor(priority: string): (s: string) => string {
         const map: Record<string, (s: string) => string> = {
-            'low': chalk.blue,
-            'medium': chalk.yellow,
-            'high': chalk.red,
+            low: chalk.blue,
+            medium: chalk.yellow,
+            high: chalk.red
         };
         return map[priority] || chalk.yellow;
     }
 
-    private async handleExecute(args: z.output<typeof AddGlobalTodoArgsSchema>, taskState?: TaskState): Promise<string> {
+    private async handleExecute(
+        args: z.output<typeof AddGlobalTodoArgsSchema>,
+        taskState?: TaskState
+    ): Promise<string> {
         // 解析并验证 trigger 字段（处理大模型可能传入字符串形式的情况）
         const normalizedTrigger = validateAndNormalizeTrigger(args.trigger);
 
@@ -484,7 +496,15 @@ export class AddGlobalTodoTool extends BaseTool<typeof AddGlobalTodoArgsSchema> 
         // 从当前任务的 origin 继承 deliver（如飞书发起的会话，待办也投递到飞书）
         const deliver = taskState?.origin;
 
-        const result = await this.todoMgrApp.callWorker('addGlobalTodo', args.title, args.content, args.priority, args.category, normalizedTrigger, deliver);
+        const result = await this.todoMgrApp.callWorker(
+            'addGlobalTodo',
+            args.title,
+            args.content,
+            args.priority,
+            args.category,
+            normalizedTrigger,
+            deliver
+        );
         const todo = result?.data ?? result;
         return JSON.stringify({ success: true, id: todo.id, todo });
     }
@@ -500,7 +520,7 @@ const UpdateGlobalTodoArgsSchema = z.object({
     priority: z.enum(['low', 'medium', 'high']).optional().describe('新优先级'),
     category: z.string().optional().describe('新分类标签'),
     trigger: TriggerSchema.optional().describe('新的触发器配置'),
-    removeTrigger: z.boolean().optional().describe('设为 true 时移除当前触发器'),
+    removeTrigger: z.boolean().optional().describe('设为 true 时移除当前触发器')
 });
 
 export class UpdateGlobalTodoTool extends BaseTool<typeof UpdateGlobalTodoArgsSchema> {
@@ -510,7 +530,7 @@ export class UpdateGlobalTodoTool extends BaseTool<typeof UpdateGlobalTodoArgsSc
         super(
             'updateGlobalTodo',
             '更新全局待办事项的标题、内容、状态、优先级、分类或触发器。设 removeTrigger 为 true 可移除触发器。**注意**: 1. 设置 scheduled 触发器时，triggerAt 必须使用 UTC 时间（如 "2026-03-01T01:00:00Z"）；2. cron 类型的待办是周期性任务，不允许标记为 completed 状态；3. content 是发送给 Agent 执行的详细指令，Agent 有能力调用工具访问文件、执行命令等。',
-            UpdateGlobalTodoArgsSchema,
+            UpdateGlobalTodoArgsSchema
         );
         this.todoMgrApp = todoMgrApp;
         this.setExecutor(this.handleExecute.bind(this));
@@ -542,10 +562,18 @@ export class UpdateGlobalTodoTool extends BaseTool<typeof UpdateGlobalTodoArgsSc
             body.push(chalk.redBright('  ' + truncText(String(toolcall.result), width - 10)));
         }
 
-        return new Card({ icon: '🔄', title: '更新全局待办', status: statusDisplay(toolcall.status), body }).render(width);
+        return new Card({
+            icon: '🔄',
+            title: '更新全局待办',
+            status: statusDisplay(toolcall.status),
+            body
+        }).render(width);
     }
 
-    private async handleExecute(args: z.output<typeof UpdateGlobalTodoArgsSchema>, taskState?: TaskState): Promise<string> {
+    private async handleExecute(
+        args: z.output<typeof UpdateGlobalTodoArgsSchema>,
+        taskState?: TaskState
+    ): Promise<string> {
         // 解析并验证 trigger 字段（处理大模型可能传入字符串形式的情况）
         const normalizedTrigger = validateAndNormalizeTrigger(args.trigger);
 
@@ -559,7 +587,7 @@ export class UpdateGlobalTodoTool extends BaseTool<typeof UpdateGlobalTodoArgsSc
         const updateArgs = {
             ...args,
             trigger: normalizedTrigger,
-            deliver,
+            deliver
         };
 
         const result = await this.todoMgrApp.callWorker('updateGlobalTodo', args.id, updateArgs);
@@ -573,18 +601,14 @@ export class UpdateGlobalTodoTool extends BaseTool<typeof UpdateGlobalTodoArgsSc
 const ListGlobalTodosArgsSchema = z.object({
     status: z.enum(['pending', 'in_progress', 'completed', 'all']).optional().default('all').describe('状态筛选'),
     category: z.string().optional().describe('分类筛选'),
-    priority: z.enum(['low', 'medium', 'high']).optional().describe('优先级筛选'),
+    priority: z.enum(['low', 'medium', 'high']).optional().describe('优先级筛选')
 });
 
 export class ListGlobalTodosTool extends BaseTool<typeof ListGlobalTodosArgsSchema> {
     private todoMgrApp: TodoMgrApplication;
 
     constructor(todoMgrApp: TodoMgrApplication) {
-        super(
-            'listGlobalTodos',
-            '列出所有全局待办事项，支持按状态、分类和优先级筛选。',
-            ListGlobalTodosArgsSchema,
-        );
+        super('listGlobalTodos', '列出所有全局待办事项，支持按状态、分类和优先级筛选。', ListGlobalTodosArgsSchema);
         this.todoMgrApp = todoMgrApp;
         this.setExecutor(this.handleExecute.bind(this));
     }
@@ -605,13 +629,22 @@ export class ListGlobalTodosTool extends BaseTool<typeof ListGlobalTodosArgsSche
                     for (const todo of todos.slice(0, 5)) {
                         const todoStatus = String(todo.status || 'pending');
                         const statusIcon = todoStatus === 'completed' ? '✓' : todoStatus === 'in_progress' ? '●' : '○';
-                        const statusColor = todoStatus === 'completed' ? chalk.green : todoStatus === 'in_progress' ? chalk.blue : chalk.gray;
+                        const statusColor =
+                            todoStatus === 'completed'
+                                ? chalk.green
+                                : todoStatus === 'in_progress'
+                                  ? chalk.blue
+                                  : chalk.gray;
                         const priority = String(todo.priority || 'medium');
                         const priorityColor = this.getPriorityColor(priority);
                         const triggerInfo = todo.trigger ? ' ' + chalk.dim(formatTriggerDisplay(todo.trigger)) : '';
-                        const deliverInfo = todo.deliver ? ' ' + chalk.dim('📨 ' + formatDeliverDisplay(todo.deliver)) : '';
+                        const deliverInfo = todo.deliver
+                            ? ' ' + chalk.dim('📨 ' + formatDeliverDisplay(todo.deliver))
+                            : '';
                         const displayText = todo.title || todo.content;
-                        body.push(`    ${statusColor(statusIcon)} ${priorityColor('[' + priority.toUpperCase() + ']')} ${truncText(String(displayText), width - 40)}${triggerInfo}${deliverInfo}`);
+                        body.push(
+                            `    ${statusColor(statusIcon)} ${priorityColor('[' + priority.toUpperCase() + ']')} ${truncText(String(displayText), width - 40)}${triggerInfo}${deliverInfo}`
+                        );
                     }
                     if (todos.length > 5) {
                         body.push(chalk.dim(`    ... 还有 ${todos.length - 5} 个`));
@@ -624,14 +657,19 @@ export class ListGlobalTodosTool extends BaseTool<typeof ListGlobalTodosArgsSche
             body.push(chalk.redBright('  ' + truncText(String(toolcall.result), width - 10)));
         }
 
-        return new Card({ icon: '📋', title: '全局待办列表', status: statusDisplay(toolcall.status), body }).render(width);
+        return new Card({
+            icon: '📋',
+            title: '全局待办列表',
+            status: statusDisplay(toolcall.status),
+            body
+        }).render(width);
     }
 
     private getPriorityColor(priority: string): (s: string) => string {
         const map: Record<string, (s: string) => string> = {
-            'low': chalk.blue,
-            'medium': chalk.yellow,
-            'high': chalk.red,
+            low: chalk.blue,
+            medium: chalk.yellow,
+            high: chalk.red
         };
         return map[priority] || chalk.yellow;
     }
@@ -646,18 +684,14 @@ export class ListGlobalTodosTool extends BaseTool<typeof ListGlobalTodosArgsSche
 // ========== deleteGlobalTodo 工具 ==========
 
 const DeleteGlobalTodoArgsSchema = z.object({
-    id: z.string().describe('待办项ID'),
+    id: z.string().describe('待办项ID')
 });
 
 export class DeleteGlobalTodoTool extends BaseTool<typeof DeleteGlobalTodoArgsSchema> {
     private todoMgrApp: TodoMgrApplication;
 
     constructor(todoMgrApp: TodoMgrApplication) {
-        super(
-            'deleteGlobalTodo',
-            '删除指定的全局待办事项。',
-            DeleteGlobalTodoArgsSchema,
-        );
+        super('deleteGlobalTodo', '删除指定的全局待办事项。', DeleteGlobalTodoArgsSchema);
         this.todoMgrApp = todoMgrApp;
         this.setExecutor(this.handleExecute.bind(this));
     }
@@ -677,7 +711,12 @@ export class DeleteGlobalTodoTool extends BaseTool<typeof DeleteGlobalTodoArgsSc
             body.push(chalk.redBright('  ' + truncText(String(toolcall.result), width - 10)));
         }
 
-        return new Card({ icon: '🗑', title: '删除全局待办', status: statusDisplay(toolcall.status), body }).render(width);
+        return new Card({
+            icon: '🗑',
+            title: '删除全局待办',
+            status: statusDisplay(toolcall.status),
+            body
+        }).render(width);
     }
 
     private async handleExecute(args: z.output<typeof DeleteGlobalTodoArgsSchema>): Promise<string> {
@@ -692,13 +731,13 @@ export class DeleteGlobalTodoTool extends BaseTool<typeof DeleteGlobalTodoArgsSc
 const GetSupportedEventsArgsSchema = z.object({});
 
 export class GetSupportedEventsTool extends BaseTool<typeof GetSupportedEventsArgsSchema> {
-    private todoMgrApp: TodoMgrApplication
+    private todoMgrApp: TodoMgrApplication;
 
     constructor(todoMgrApp: TodoMgrApplication) {
         super(
             'getSupportedEvents',
             '获取所有应用已注册的事件清单。返回一个列表，包含每个应用声明的事件名称和描述，用于创建事件触发型待办事项时选择合适的触发事件。',
-            GetSupportedEventsArgsSchema,
+            GetSupportedEventsArgsSchema
         );
         this.setExecutor(this.handleExecute.bind(this));
         this.todoMgrApp = todoMgrApp;
@@ -711,7 +750,7 @@ export class GetSupportedEventsTool extends BaseTool<typeof GetSupportedEventsAr
     private async handleExecute(): Promise<string> {
         const applicationRegistry = this.todoMgrApp.registry;
         if (!applicationRegistry) {
-            return "错误：未找到ApplicationRegistry，无法获取可用事件"
+            return '错误：未找到ApplicationRegistry，无法获取可用事件';
         }
         const eventsMap = await applicationRegistry.getAllSupportedEvents();
 
@@ -721,7 +760,7 @@ export class GetSupportedEventsTool extends BaseTool<typeof GetSupportedEventsAr
                 result.push({
                     bundleName,
                     eventName: event.eventName,
-                    eventDescription: event.eventDescription,
+                    eventDescription: event.eventDescription
                 });
             }
         }

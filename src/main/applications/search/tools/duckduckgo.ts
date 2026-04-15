@@ -18,7 +18,6 @@ import { z } from 'zod';
 import { fetch, ProxyAgent, type Dispatcher } from 'undici';
 import { parseHTML } from 'linkedom';
 
-
 const FETCH_TIMEOUT_MS = 30000;
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 const DEFAULT_RESULT_COUNT = 15;
@@ -28,11 +27,10 @@ const DUCKDUCKGO_HTML_URL = 'https://html.duckduckgo.com/html/';
 const DUCKDUCKGO_HEADERS: Record<string, string> = {
     'User-Agent':
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-    'Accept':
-        'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+    Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
     'Accept-Language': 'en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7',
     'Accept-Encoding': 'gzip, deflate, br',
-    'Connection': 'keep-alive',
+    Connection: 'keep-alive',
     'Upgrade-Insecure-Requests': '1',
     'Sec-Fetch-Dest': 'document',
     'Sec-Fetch-Mode': 'navigate',
@@ -41,7 +39,7 @@ const DUCKDUCKGO_HEADERS: Record<string, string> = {
     'sec-ch-ua': '"Chromium";v="131", "Not_A Brand";v="24"',
     'sec-ch-ua-mobile': '?0',
     'sec-ch-ua-platform': '"Windows"',
-    'Cache-Control': 'max-age=0',
+    'Cache-Control': 'max-age=0'
 };
 
 interface DuckDuckGoSearchResult {
@@ -52,10 +50,13 @@ interface DuckDuckGoSearchResult {
 
 const DuckDuckGoSearchArgsSchema = z.object({
     query: z.string().describe('搜索关键词'),
-    region: z.enum(['cn-zh', 'us-en', 'uk-en', 'de-de', 'fr-fr', 'jp-jp'])
+    region: z
+        .enum(['cn-zh', 'us-en', 'uk-en', 'de-de', 'fr-fr', 'jp-jp'])
         .optional()
-        .describe('搜索区域/语言，默认为us-en。可选值：cn-zh(中国中文)、us-en(美国英文)、uk-en(英国英文)、de-de(德国德文)、fr-fr(法国法文)、jp-jp(日本日文)'),
-    count: z.number().optional().describe('期望返回的搜索结果数量，默认为15'),
+        .describe(
+            '搜索区域/语言，默认为us-en。可选值：cn-zh(中国中文)、us-en(美国英文)、uk-en(英国英文)、de-de(德国德文)、fr-fr(法国法文)、jp-jp(日本日文)'
+        ),
+    count: z.number().optional().describe('期望返回的搜索结果数量，默认为15')
 });
 
 export class DuckDuckGoSearchTool extends BaseTool<typeof DuckDuckGoSearchArgsSchema> {
@@ -63,7 +64,7 @@ export class DuckDuckGoSearchTool extends BaseTool<typeof DuckDuckGoSearchArgsSc
         super(
             'duckduckgoSearch',
             '使用DuckDuckGo搜索引擎搜索网页信息，返回搜索结果的标题、URL和摘要。无需API密钥，注重隐私保护，适合作为后备搜索方案',
-            DuckDuckGoSearchArgsSchema,
+            DuckDuckGoSearchArgsSchema
         );
 
         this.setExecutor(this.search.bind(this));
@@ -93,7 +94,12 @@ export class DuckDuckGoSearchTool extends BaseTool<typeof DuckDuckGoSearchArgsSc
             body.push(chalk.redBright('  ' + truncText(toolcall.result, width - 10)));
         }
 
-        return new Card({ icon: '🔍', title: '搜索 (DuckDuckGo)', status: statusDisplay(toolcall.status), body }).render(width);
+        return new Card({
+            icon: '🔍',
+            title: '搜索 (DuckDuckGo)',
+            status: statusDisplay(toolcall.status),
+            body
+        }).render(width);
     }
 
     // ───────────────────── 主入口 ─────────────────────
@@ -113,7 +119,7 @@ export class DuckDuckGoSearchTool extends BaseTool<typeof DuckDuckGoSearchArgsSc
             const challengeDetected = this.isChallengeOrError(html);
             if (challengeDetected) {
                 throw new Error(
-                    'DuckDuckGo 返回了验证页面，无法获取搜索结果。这可能是由于请求频率过高导致的，请稍后重试。',
+                    'DuckDuckGo 返回了验证页面，无法获取搜索结果。这可能是由于请求频率过高导致的，请稍后重试。'
                 );
             }
             return `未找到与 "${query}" 相关的搜索结果。`;
@@ -144,11 +150,12 @@ export class DuckDuckGoSearchTool extends BaseTool<typeof DuckDuckGoSearchArgsSc
             } = {
                 method: 'GET',
                 headers: DUCKDUCKGO_HEADERS,
-                signal: controller.signal,
+                signal: controller.signal
             };
 
             // 支持代理 - 优先使用环境变量，其次尝试常见本地代理端口
-            let proxyUrl: string | undefined = process.env.HTTPS_PROXY || process.env.https_proxy || process.env.HTTP_PROXY || process.env.http_proxy;
+            const proxyUrl: string | undefined =
+                process.env.HTTPS_PROXY || process.env.https_proxy || process.env.HTTP_PROXY || process.env.http_proxy;
             if (proxyUrl) {
                 fetchOptions.dispatcher = new ProxyAgent(proxyUrl);
             }
@@ -170,9 +177,7 @@ export class DuckDuckGoSearchTool extends BaseTool<typeof DuckDuckGoSearchArgsSc
         }
     }
 
-    private async readResponseBody(
-        response: Awaited<ReturnType<typeof fetch>>,
-    ): Promise<string> {
+    private async readResponseBody(response: Awaited<ReturnType<typeof fetch>>): Promise<string> {
         const reader = response.body?.getReader();
         if (!reader) return '';
 
@@ -283,9 +288,9 @@ export class DuckDuckGoSearchTool extends BaseTool<typeof DuckDuckGoSearchArgsSc
             'sorry, we need to make sure',
             'type the characters you see',
             'rate limited',
-            'too many requests',
+            'too many requests'
         ];
-        return indicators.some(s => lower.includes(s));
+        return indicators.some((s) => lower.includes(s));
     }
 
     // ───────────────────── 结果格式化 ─────────────────────

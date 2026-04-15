@@ -11,7 +11,6 @@
 
 import { TaskManagerState } from './tasks.js';
 
-
 class GlobalState {
     private static instance: GlobalState | null = null;
     taskManagerState: TaskManagerState;

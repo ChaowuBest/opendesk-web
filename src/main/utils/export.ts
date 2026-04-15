@@ -11,8 +11,16 @@
 
 import fs from 'fs';
 import path from 'path';
-import type { TaskState } from '../states/tasks';
-import { UserMessage, AssistantMessage, TextMessagePart, ToolCallMessagePart, FileMessagePart, ReasoningMessagePart, ErrorMessagePart } from '../aikernel/messages';
+import type { TaskState } from '../aikernel/states/tasks';
+import type {
+    UserMessage,
+    AssistantMessage,
+    TextMessagePart,
+    ToolCallMessagePart,
+    FileMessagePart,
+    ReasoningMessagePart,
+    ErrorMessagePart
+} from '../aikernel/messages';
 import { escapeHtml } from './escape';
 
 const HIGHLIGHT_JS_CSS_LIGHT = `
@@ -134,7 +142,7 @@ pre, code {
         color: #60a5fa;
     }
 }
-`
+`;
 
 export async function exportTaskToHtml(task: TaskState, filePath: string): Promise<void> {
     const html = await generateTaskHtml(task);
@@ -146,25 +154,20 @@ export async function exportTaskToHtml(task: TaskState, filePath: string): Promi
     fs.writeFileSync(filePath, html, 'utf-8');
 }
 
-
 export async function generateTaskHtml(task: TaskState): Promise<string> {
     await task.render();
 
     const messagesHtml = await renderMessages(task);
-    return generateHtmlTemplate(
-        task.task_name || '未命名任务',
-        task.task_id,
-        messagesHtml
-    );
+    return generateHtmlTemplate(task.task_name || '未命名任务', task.task_id, messagesHtml);
 }
 
 async function renderMessages(task: TaskState): Promise<string> {
     let html = '';
 
     for (const message of task.chat_context.messages) {
-        if (message instanceof UserMessage) {
+        if (message.role === 'user') {
             html += await renderUserMessage(message);
-        } else if (message instanceof AssistantMessage) {
+        } else if (message.role === 'assistant') {
             html += await renderAssistantMessage(message);
         }
     }
@@ -186,9 +189,9 @@ async function renderUserMessage(message: UserMessage): Promise<string> {
     }
 
     for (const part of message.content) {
-        if (part instanceof TextMessagePart) {
+        if (part.type === 'text') {
             contentHtml += `<div class="prose prose-slate max-w-none">${await part.render()}</div>`;
-        } else if (part instanceof FileMessagePart) {
+        } else if (part.type === 'file') {
             contentHtml += await part.render();
         }
     }
@@ -217,11 +220,11 @@ async function renderUserMessage(message: UserMessage): Promise<string> {
 async function renderAssistantMessage(message: AssistantMessage): Promise<string> {
     let contentHtml = '';
     for (const part of message.content) {
-        if (part instanceof TextMessagePart) {
+        if (part.type === 'text') {
             contentHtml += `<div class="prose prose-slate max-w-none">${await part.render()}</div>`;
-        } else if (part instanceof ToolCallMessagePart) {
+        } else if (part.type === 'tool_call') {
             contentHtml += await part.render();
-        } else if (part instanceof ReasoningMessagePart) {
+        } else if (part.type === 'reasoning') {
             contentHtml += `
             <div class="reasoning-box bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 rounded-xl p-4 mb-4">
                 <div class="flex items-center gap-2 reasoning-title text-amber-800 font-medium mb-2">
@@ -233,7 +236,7 @@ async function renderAssistantMessage(message: AssistantMessage): Promise<string
                 <div class="reasoning-content text-amber-900 text-sm font-mono whitespace-pre-wrap">${escapeHtml(part.content)}</div>
             </div>
             `;
-        } else if (part instanceof ErrorMessagePart) {
+        } else if (part.type === 'error') {
             contentHtml += `
             <div class="bg-rose-50 border border-rose-200 rounded-xl p-4 mb-4">
                 <div class="flex items-center gap-2 text-rose-700 font-medium mb-2">
@@ -262,7 +265,6 @@ async function renderAssistantMessage(message: AssistantMessage): Promise<string
     </div>
     `;
 }
-
 
 function generateHtmlTemplate(title: string, taskId: string, messagesHtml: string): string {
     const now = new Date().toLocaleString('zh-CN', {

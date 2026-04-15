@@ -9,14 +9,13 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { BaseApplication } from "../base";
-import { logger } from "../../utils/logger.js";
-import https from "https";
-
+import { BaseApplication } from '../base';
+import { logger } from '../../utils/logger.js';
+import https from 'https';
 
 class NewsApplication extends BaseApplication {
     constructor() {
-        super("news", "新闻聚合");
+        super('news', '新闻聚合');
     }
 
     /**
@@ -36,7 +35,7 @@ class NewsApplication extends BaseApplication {
                         return;
                     }
                     let rawData = '';
-                    res.on('data', (chunk) => rawData += chunk.toString('utf-8'));
+                    res.on('data', (chunk) => (rawData += chunk.toString('utf-8')));
                     res.on('end', () => {
                         try {
                             resolve(JSON.parse(rawData));

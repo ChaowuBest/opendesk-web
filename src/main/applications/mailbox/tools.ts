@@ -13,11 +13,13 @@ import { BaseTool } from '../../aikernel/tool';
 import { ToolCall } from '../../aikernel/messages';
 import { Card } from '../../tui/components/card';
 import { statusDisplay, truncText } from '../../tui/components/toolcall';
+import { ApplicationRegistry } from '../registry';
 import { logger } from '../../utils/logger.js';
 import chalk from 'chalk';
 import { z } from 'zod';
+import fs from 'fs';
+import nodePath from 'path';
 import type { MailboxApplication } from './app';
-
 
 // ============================================================
 // 常见邮箱服务商预设配置
@@ -41,70 +43,70 @@ const MAIL_PROVIDER_PRESETS: MailProviderPreset[] = [
         domains: ['qq.com', 'foxmail.com'],
         imap: { host: 'imap.qq.com', port: 993, tls: true },
         pop3: { host: 'pop.qq.com', port: 995, tls: true },
-        smtp: { host: 'smtp.qq.com', port: 465, tls: true },
+        smtp: { host: 'smtp.qq.com', port: 465, tls: true }
     },
     {
         name: '163邮箱',
         domains: ['163.com'],
         imap: { host: 'imap.163.com', port: 993, tls: true },
         pop3: { host: 'pop.163.com', port: 995, tls: true },
-        smtp: { host: 'smtp.163.com', port: 465, tls: true },
+        smtp: { host: 'smtp.163.com', port: 465, tls: true }
     },
     {
         name: '126邮箱',
         domains: ['126.com'],
         imap: { host: 'imap.126.com', port: 993, tls: true },
         pop3: { host: 'pop.126.com', port: 995, tls: true },
-        smtp: { host: 'smtp.126.com', port: 465, tls: true },
+        smtp: { host: 'smtp.126.com', port: 465, tls: true }
     },
     {
         name: 'yeah.net邮箱',
         domains: ['yeah.net'],
         imap: { host: 'imap.yeah.net', port: 993, tls: true },
         pop3: { host: 'pop.yeah.net', port: 995, tls: true },
-        smtp: { host: 'smtp.yeah.net', port: 465, tls: true },
+        smtp: { host: 'smtp.yeah.net', port: 465, tls: true }
     },
     {
         name: 'Outlook',
         domains: ['outlook.com', 'hotmail.com', 'live.com', 'live.cn'],
         imap: { host: 'outlook.office365.com', port: 993, tls: true },
         pop3: { host: 'outlook.office365.com', port: 995, tls: true },
-        smtp: { host: 'smtp.office365.com', port: 587, tls: true },
+        smtp: { host: 'smtp.office365.com', port: 587, tls: true }
     },
     {
         name: 'Gmail',
         domains: ['gmail.com', 'googlemail.com'],
         imap: { host: 'imap.gmail.com', port: 993, tls: true },
         pop3: { host: 'pop.gmail.com', port: 995, tls: true },
-        smtp: { host: 'smtp.gmail.com', port: 465, tls: true },
+        smtp: { host: 'smtp.gmail.com', port: 465, tls: true }
     },
     {
         name: '139邮箱',
         domains: ['139.com'],
         imap: { host: 'imap.139.com', port: 993, tls: true },
         pop3: { host: 'pop.139.com', port: 995, tls: true },
-        smtp: { host: 'smtp.139.com', port: 465, tls: true },
+        smtp: { host: 'smtp.139.com', port: 465, tls: true }
     },
     {
         name: '新浪邮箱',
         domains: ['sina.com', 'sina.cn'],
         imap: { host: 'imap.sina.com', port: 993, tls: true },
         pop3: { host: 'pop.sina.com', port: 995, tls: true },
-        smtp: { host: 'smtp.sina.com', port: 465, tls: true },
+        smtp: { host: 'smtp.sina.com', port: 465, tls: true }
     },
     {
         name: '搜狐邮箱',
         domains: ['sohu.com'],
         imap: { host: 'imap.sohu.com', port: 993, tls: true },
         pop3: { host: 'pop3.sohu.com', port: 995, tls: true },
-        smtp: { host: 'smtp.sohu.com', port: 465, tls: true },
+        smtp: { host: 'smtp.sohu.com', port: 465, tls: true }
     },
     {
         name: '阿里邮箱',
         domains: ['aliyun.com'],
         imap: { host: 'imap.aliyun.com', port: 993, tls: true },
         pop3: { host: 'pop3.aliyun.com', port: 995, tls: true },
-        smtp: { host: 'smtp.aliyun.com', port: 465, tls: true },
+        smtp: { host: 'smtp.aliyun.com', port: 465, tls: true }
     },
     {
         name: '华为邮箱',
@@ -113,8 +115,8 @@ const MAIL_PROVIDER_PRESETS: MailProviderPreset[] = [
         pop3: { host: 'popscn.huawei.com', port: 110, tls: false },
         smtp: { host: 'smtpscn.huawei.com', port: 25, tls: false },
         requireAuthUsername: true,
-        authUsernameHint: '华为邮箱收信需要使用单独的用户名（格式：姓名首字母 + 8位工号，例如 z00123456），请向用户询问',
-    },
+        authUsernameHint: '华为邮箱收信需要使用单独的用户名（格式：姓名首字母 + 8位工号，例如 z00123456），请向用户询问'
+    }
 ];
 
 /**
@@ -123,9 +125,8 @@ const MAIL_PROVIDER_PRESETS: MailProviderPreset[] = [
 function matchPreset(email: string): MailProviderPreset | undefined {
     const domain = email.split('@')[1]?.toLowerCase();
     if (!domain) return undefined;
-    return MAIL_PROVIDER_PRESETS.find(p => p.domains.includes(domain));
+    return MAIL_PROVIDER_PRESETS.find((p) => p.domains.includes(domain));
 }
-
 
 // ============================================================
 // AddMailAccount Tool
@@ -133,10 +134,18 @@ function matchPreset(email: string): MailProviderPreset | undefined {
 
 const AddMailAccountArgsSchema = z.object({
     email: z.string().describe('邮箱地址，例如 "user@qq.com"'),
-    password: z.string().min(1, '密码/授权码不能为空，必须向用户询问后才能调用此工具').describe('邮箱密码或授权码（必填，不能为空）'),
+    password: z
+        .string()
+        .min(1, '密码/授权码不能为空，必须向用户询问后才能调用此工具')
+        .describe('邮箱密码或授权码（必填，不能为空）'),
     protocol: z.enum(['imap', 'pop3']).describe('收信协议，imap 或 pop3，需要询问用户选择'),
     name: z.string().optional().describe('账号显示名称（可选）。如不确定可不填，默认使用邮箱地址'),
-    authUsername: z.string().optional().describe('收信认证用户名（可选）。某些邮箱服务商（如华为邮箱）要求使用与邮箱地址不同的用户名进行 IMAP/POP3 认证。华为邮箱格式为：姓名首字母+8位工号（如 zhangsan00123456）。如果服务商不要求则不需要填写。'),
+    authUsername: z
+        .string()
+        .optional()
+        .describe(
+            '收信认证用户名（可选）。某些邮箱服务商（如华为邮箱）要求使用与邮箱地址不同的用户名进行 IMAP/POP3 认证。华为邮箱格式为：姓名首字母+8位工号（如 zhangsan00123456）。如果服务商不要求则不需要填写。'
+        ),
     // ── 自定义服务器配置（仅当邮箱不在预设服务商列表中时需要提供） ──
     imapHost: z.string().optional().describe('IMAP 服务器地址（当邮箱不在预设服务商列表中且收信协议选择 imap 时必填）'),
     imapPort: z.number().optional().describe('IMAP 服务器端口（可选，默认: TLS开启时993，关闭时143）'),
@@ -146,7 +155,7 @@ const AddMailAccountArgsSchema = z.object({
     pop3Tls: z.boolean().optional().describe('POP3 是否启用 TLS（可选，默认 true）'),
     smtpHost: z.string().optional().describe('SMTP 发信服务器地址（当邮箱不在预设服务商列表中时必填）'),
     smtpPort: z.number().optional().describe('SMTP 发信服务器端口（可选，默认: TLS开启时465，关闭时25）'),
-    smtpTls: z.boolean().optional().describe('SMTP 是否启用 TLS（可选，默认 true）'),
+    smtpTls: z.boolean().optional().describe('SMTP 是否启用 TLS（可选，默认 true）')
 });
 
 export class AddMailAccountTool extends BaseTool<typeof AddMailAccountArgsSchema> {
@@ -156,7 +165,7 @@ export class AddMailAccountTool extends BaseTool<typeof AddMailAccountArgsSchema
         super(
             'addMailAccount',
             '添加邮箱账号。内置常见邮箱服务商（QQ、163、126、Outlook、Gmail等）的服务器预设，只需提供邮箱地址、密码/授权码和收信协议（imap或pop3）即可完成配置。对于不在预设列表中的邮箱（如企业邮箱、自建邮箱），需要额外提供收信服务器地址（imapHost/pop3Host）和SMTP发信服务器地址（smtpHost），端口和TLS可选（有合理默认值）。',
-            AddMailAccountArgsSchema,
+            AddMailAccountArgsSchema
         );
         this.mailApp = mailApp;
         this.executor = this.addAccount.bind(this);
@@ -192,13 +201,31 @@ export class AddMailAccountTool extends BaseTool<typeof AddMailAccountArgsSchema
         // 展示自定义服务器信息
         if (email && !matchPreset(String(email))) {
             if (protocol === 'imap' && args?.['imapHost']) {
-                body.push(chalk.dim('IMAP: ') + chalk.white(`${args['imapHost']}:${args['imapPort'] ?? (args['imapTls'] !== false ? 993 : 143)}`) + chalk.dim(args['imapTls'] !== false ? ' (TLS)' : ''));
+                body.push(
+                    chalk.dim('IMAP: ') +
+                        chalk.white(
+                            `${args['imapHost']}:${args['imapPort'] ?? (args['imapTls'] !== false ? 993 : 143)}`
+                        ) +
+                        chalk.dim(args['imapTls'] !== false ? ' (TLS)' : '')
+                );
             }
             if (protocol === 'pop3' && args?.['pop3Host']) {
-                body.push(chalk.dim('POP3: ') + chalk.white(`${args['pop3Host']}:${args['pop3Port'] ?? (args['pop3Tls'] !== false ? 995 : 110)}`) + chalk.dim(args['pop3Tls'] !== false ? ' (TLS)' : ''));
+                body.push(
+                    chalk.dim('POP3: ') +
+                        chalk.white(
+                            `${args['pop3Host']}:${args['pop3Port'] ?? (args['pop3Tls'] !== false ? 995 : 110)}`
+                        ) +
+                        chalk.dim(args['pop3Tls'] !== false ? ' (TLS)' : '')
+                );
             }
             if (args?.['smtpHost']) {
-                body.push(chalk.dim('SMTP: ') + chalk.white(`${args['smtpHost']}:${args['smtpPort'] ?? (args['smtpTls'] !== false ? 465 : 25)}`) + chalk.dim(args['smtpTls'] !== false ? ' (TLS)' : ''));
+                body.push(
+                    chalk.dim('SMTP: ') +
+                        chalk.white(
+                            `${args['smtpHost']}:${args['smtpPort'] ?? (args['smtpTls'] !== false ? 465 : 25)}`
+                        ) +
+                        chalk.dim(args['smtpTls'] !== false ? ' (TLS)' : '')
+                );
             }
         }
 
@@ -215,7 +242,12 @@ export class AddMailAccountTool extends BaseTool<typeof AddMailAccountArgsSchema
             body.push(chalk.redBright('  ' + truncText(toolcall.result, width - 10)));
         }
 
-        return new Card({ icon: '📧', title: '添加邮箱账号', status: statusDisplay(toolcall.status), body }).render(width);
+        return new Card({
+            icon: '📧',
+            title: '添加邮箱账号',
+            status: statusDisplay(toolcall.status),
+            body
+        }).render(width);
     }
 
     private async addAccount(args: z.output<typeof AddMailAccountArgsSchema>): Promise<string> {
@@ -247,7 +279,7 @@ export class AddMailAccountTool extends BaseTool<typeof AddMailAccountArgsSchema
         if (preset?.requireAuthUsername && !authUsername) {
             throw new Error(
                 `${preset.authUsernameHint || `${preset.name}需要提供单独的认证用户名（authUsername 参数）`}。` +
-                `\n该用户名用于 IMAP/POP3 收信认证，与邮箱地址不同，请务必向用户询问后再调用此工具。`
+                    `\n该用户名用于 IMAP/POP3 收信认证，与邮箱地址不同，请务必向用户询问后再调用此工具。`
             );
         }
 
@@ -271,14 +303,14 @@ export class AddMailAccountTool extends BaseTool<typeof AddMailAccountArgsSchema
                 if (!args.imapHost) {
                     throw new Error(
                         `邮箱 "${email}" 不在预设服务商列表中，选择了 IMAP 协议，需要提供 IMAP 服务器地址（imapHost 参数）。` +
-                        `\n请向用户询问 IMAP 服务器地址、端口、是否启用 TLS，以及 SMTP 发信服务器地址。`
+                            `\n请向用户询问 IMAP 服务器地址、端口、是否启用 TLS，以及 SMTP 发信服务器地址。`
                     );
                 }
             } else {
                 if (!args.pop3Host) {
                     throw new Error(
                         `邮箱 "${email}" 不在预设服务商列表中，选择了 POP3 协议，需要提供 POP3 服务器地址（pop3Host 参数）。` +
-                        `\n请向用户询问 POP3 服务器地址、端口、是否启用 TLS，以及 SMTP 发信服务器地址。`
+                            `\n请向用户询问 POP3 服务器地址、端口、是否启用 TLS，以及 SMTP 发信服务器地址。`
                     );
                 }
             }
@@ -286,7 +318,7 @@ export class AddMailAccountTool extends BaseTool<typeof AddMailAccountArgsSchema
             if (!args.smtpHost) {
                 throw new Error(
                     `邮箱 "${email}" 不在预设服务商列表中，需要提供 SMTP 发信服务器地址（smtpHost 参数）。` +
-                    `\n请向用户询问 SMTP 服务器地址、端口和是否启用 TLS。`
+                        `\n请向用户询问 SMTP 服务器地址、端口和是否启用 TLS。`
                 );
             }
 
@@ -297,17 +329,17 @@ export class AddMailAccountTool extends BaseTool<typeof AddMailAccountArgsSchema
             imapConfig = {
                 host: args.imapHost ?? '',
                 port: args.imapPort ?? (imapTls ? 993 : 143),
-                tls: imapTls,
+                tls: imapTls
             };
             pop3Config = {
                 host: args.pop3Host ?? '',
                 port: args.pop3Port ?? (pop3Tls ? 995 : 110),
-                tls: pop3Tls,
+                tls: pop3Tls
             };
             smtpConfig = {
                 host: args.smtpHost,
                 port: args.smtpPort ?? (smtpTls ? 465 : 25),
-                tls: smtpTls,
+                tls: smtpTls
             };
         }
 
@@ -323,7 +355,7 @@ export class AddMailAccountTool extends BaseTool<typeof AddMailAccountArgsSchema
                 message: `邮箱账号 "${email}" 已存在，无需重复添加`,
                 email,
                 provider: providerName,
-                alreadyExists: true,
+                alreadyExists: true
             });
         }
 
@@ -341,22 +373,22 @@ export class AddMailAccountTool extends BaseTool<typeof AddMailAccountArgsSchema
                 imap: {
                     host: imapConfig.host,
                     tls: imapConfig.tls,
-                    port: imapConfig.port,
+                    port: imapConfig.port
                 },
                 pop3: {
                     host: pop3Config.host,
                     tls: pop3Config.tls,
-                    port: pop3Config.port,
-                },
+                    port: pop3Config.port
+                }
             },
             outbox: {
                 smtp: {
                     account: email,
                     host: smtpConfig.host,
                     tls: smtpConfig.tls,
-                    port: smtpConfig.port,
-                },
-            },
+                    port: smtpConfig.port
+                }
+            }
         };
 
         // 保存配置
@@ -384,7 +416,7 @@ export class AddMailAccountTool extends BaseTool<typeof AddMailAccountArgsSchema
             protocol,
             displayName,
             authUsername: authUsername || undefined,
-            isCustom: !preset,
+            isCustom: !preset
         });
     }
 
@@ -399,7 +431,6 @@ export class AddMailAccountTool extends BaseTool<typeof AddMailAccountArgsSchema
     }
 }
 
-
 // ============================================================
 // ListMailAccounts Tool
 // ============================================================
@@ -410,11 +441,7 @@ export class ListMailAccountsTool extends BaseTool<typeof ListMailAccountsArgsSc
     private mailApp: MailboxApplication;
 
     constructor(mailApp: MailboxApplication) {
-        super(
-            'listMailAccounts',
-            '列出当前已配置的所有邮箱账号',
-            ListMailAccountsArgsSchema,
-        );
+        super('listMailAccounts', '列出当前已配置的所有邮箱账号', ListMailAccountsArgsSchema);
         this.mailApp = mailApp;
         this.executor = this.listAccounts.bind(this);
     }
@@ -435,7 +462,9 @@ export class ListMailAccountsTool extends BaseTool<typeof ListMailAccountsArgsSc
                     for (const account of accounts) {
                         const isCurrent = account.isCurrent ? chalk.yellow(' [当前]') : '';
                         const provider = account.provider ? chalk.dim(` (${account.provider})`) : '';
-                        const protocol = account.protocol ? chalk.blue(` [${String(account.protocol).toUpperCase()}]`) : '';
+                        const protocol = account.protocol
+                            ? chalk.blue(` [${String(account.protocol).toUpperCase()}]`)
+                            : '';
                         body.push(`    📧 ${chalk.cyan(String(account.email))}${provider}${protocol}${isCurrent}`);
                     }
                 }
@@ -446,7 +475,12 @@ export class ListMailAccountsTool extends BaseTool<typeof ListMailAccountsArgsSc
             body.push(chalk.redBright('  ' + truncText(toolcall.result, width - 10)));
         }
 
-        return new Card({ icon: '📋', title: '邮箱账号列表', status: statusDisplay(toolcall.status), body }).render(width);
+        return new Card({
+            icon: '📋',
+            title: '邮箱账号列表',
+            status: statusDisplay(toolcall.status),
+            body
+        }).render(width);
     }
 
     private async listAccounts(): Promise<string> {
@@ -464,35 +498,30 @@ export class ListMailAccountsTool extends BaseTool<typeof ListMailAccountsArgsSc
                 provider: preset?.name ?? '未知',
                 protocol: p.inbox?.protocol ?? '未配置',
                 isCurrent: p.username === currentProfileId,
-                hasAuthUsername: p.username !== emailAddr ? p.username : undefined,
+                hasAuthUsername: p.username !== emailAddr ? p.username : undefined
             };
         });
 
         return JSON.stringify({
             accounts,
-            total: accounts.length,
+            total: accounts.length
         });
     }
 }
-
 
 // ============================================================
 // RemoveMailAccount Tool
 // ============================================================
 
 const RemoveMailAccountArgsSchema = z.object({
-    email: z.string().describe('要删除的邮箱地址'),
+    email: z.string().describe('要删除的邮箱地址')
 });
 
 export class RemoveMailAccountTool extends BaseTool<typeof RemoveMailAccountArgsSchema> {
     private mailApp: MailboxApplication;
 
     constructor(mailApp: MailboxApplication) {
-        super(
-            'removeMailAccount',
-            '删除已配置的邮箱账号',
-            RemoveMailAccountArgsSchema,
-        );
+        super('removeMailAccount', '删除已配置的邮箱账号', RemoveMailAccountArgsSchema);
         this.mailApp = mailApp;
         this.executor = this.removeAccount.bind(this);
     }
@@ -519,7 +548,12 @@ export class RemoveMailAccountTool extends BaseTool<typeof RemoveMailAccountArgs
             body.push(chalk.redBright('  ' + truncText(toolcall.result, width - 10)));
         }
 
-        return new Card({ icon: '🗑️', title: '删除邮箱账号', status: statusDisplay(toolcall.status), body }).render(width);
+        return new Card({
+            icon: '🗑️',
+            title: '删除邮箱账号',
+            status: statusDisplay(toolcall.status),
+            body
+        }).render(width);
     }
 
     private async removeAccount(args: z.output<typeof RemoveMailAccountArgsSchema>): Promise<string> {
@@ -552,7 +586,7 @@ export class RemoveMailAccountTool extends BaseTool<typeof RemoveMailAccountArgs
             success: true,
             message: `邮箱账号 "${email}" 已删除`,
             email: removed.username,
-            name: removed.name,
+            name: removed.name
         });
     }
 
@@ -567,13 +601,12 @@ export class RemoveMailAccountTool extends BaseTool<typeof RemoveMailAccountArgs
     }
 }
 
-
 // ============================================================
 // SwitchMailAccount Tool
 // ============================================================
 
 const SwitchMailAccountArgsSchema = z.object({
-    email: z.string().describe('要切换到的邮箱地址'),
+    email: z.string().describe('要切换到的邮箱地址')
 });
 
 export class SwitchMailAccountTool extends BaseTool<typeof SwitchMailAccountArgsSchema> {
@@ -583,7 +616,7 @@ export class SwitchMailAccountTool extends BaseTool<typeof SwitchMailAccountArgs
         super(
             'switchMailAccount',
             '切换当前使用的邮箱账号。切换后，后续的邮件收发操作将使用该账号。',
-            SwitchMailAccountArgsSchema,
+            SwitchMailAccountArgsSchema
         );
         this.mailApp = mailApp;
         this.executor = this.switchAccount.bind(this);
@@ -611,7 +644,12 @@ export class SwitchMailAccountTool extends BaseTool<typeof SwitchMailAccountArgs
             body.push(chalk.redBright('  ' + truncText(toolcall.result, width - 10)));
         }
 
-        return new Card({ icon: '🔄', title: '切换邮箱账号', status: statusDisplay(toolcall.status), body }).render(width);
+        return new Card({
+            icon: '🔄',
+            title: '切换邮箱账号',
+            status: statusDisplay(toolcall.status),
+            body
+        }).render(width);
     }
 
     private async switchAccount(args: z.output<typeof SwitchMailAccountArgsSchema>): Promise<string> {
@@ -627,7 +665,7 @@ export class SwitchMailAccountTool extends BaseTool<typeof SwitchMailAccountArgs
             const available = profiles.map((p: any) => p.email || p.username).join(', ');
             throw new Error(
                 `未找到邮箱账号 "${email}"。` +
-                (available ? `当前已配置的账号: ${available}` : '当前没有已配置的邮箱账号，请先添加账号。')
+                    (available ? `当前已配置的账号: ${available}` : '当前没有已配置的邮箱账号，请先添加账号。')
             );
         }
 
@@ -640,7 +678,7 @@ export class SwitchMailAccountTool extends BaseTool<typeof SwitchMailAccountArgs
                 success: true,
                 message: `"${email}" 已经是当前使用的邮箱账号，无需切换`,
                 email,
-                alreadyCurrent: true,
+                alreadyCurrent: true
             });
         }
 
@@ -659,7 +697,7 @@ export class SwitchMailAccountTool extends BaseTool<typeof SwitchMailAccountArgs
             message: `已切换到邮箱账号 "${targetEmail}"` + (preset ? ` (${preset.name})` : ''),
             email: targetEmail,
             provider: preset?.name,
-            previousEmail,
+            previousEmail
         });
     }
 
@@ -670,6 +708,591 @@ export class SwitchMailAccountTool extends BaseTool<typeof SwitchMailAccountArgs
         const config = this.mailApp.getConfig();
         this.mailApp.callWorker('applicationConfigChanged', config).catch((err: any) => {
             logger.warn(`failed to notify mailbox worker of config change: ${err?.message ?? err}`);
+        });
+    }
+}
+
+// ============================================================
+// 邮件操作：辅助函数 + Schema + Executor + 工具类
+// 供 operate-mailbox Skill 对外暴露，也供 tui.ts 直接实例化
+// ============================================================
+
+export async function callMailWorker(method: string, ...args: any[]): Promise<any> {
+    const result = await ApplicationRegistry.callWorker('mailbox', method, ...args);
+    if (result?.status === 'error') throw new Error(result.message || `mailbox.${method} failed`);
+    return result?.data;
+}
+
+export function formatSender(from: Array<{ name: string; address: string }> | undefined): string {
+    if (!from || from.length === 0) return '未知';
+    return from[0].name || from[0].address || '未知';
+}
+
+export function formatAddresses(addrs: Array<{ name: string; address: string }> | undefined): string {
+    if (!addrs || addrs.length === 0) return '未知';
+    return addrs.map((a) => (a.name ? `${a.name} <${a.address}>` : a.address)).join(', ');
+}
+
+export function stripHtml(html: string): string {
+    return html
+        .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+        .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+        .replace(/<br\s*\/?>/gi, '\n')
+        .replace(/<\/p>/gi, '\n\n')
+        .replace(/<\/div>/gi, '\n')
+        .replace(/<\/li>/gi, '\n')
+        .replace(/<\/tr>/gi, '\n')
+        .replace(/<\/h[1-6]>/gi, '\n\n')
+        .replace(/<[^>]+>/g, '')
+        .replace(/&nbsp;/gi, ' ')
+        .replace(/&amp;/gi, '&')
+        .replace(/&lt;/gi, '<')
+        .replace(/&gt;/gi, '>')
+        .replace(/&quot;/gi, '"')
+        .replace(/&#39;/gi, "'")
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
+}
+
+function normalizeRecipients(raw: any): string[] {
+    if (!raw) return [];
+    if (typeof raw === 'string') return [raw];
+    if (Array.isArray(raw)) {
+        return raw.map((item: any) => (typeof item === 'string' ? item : item.address)).filter(Boolean);
+    }
+    return [];
+}
+
+function mapEmailHeaders(emails: any[]) {
+    return emails.map((e) => ({
+        uid: e.uid,
+        subject: e.subject || '(无主题)',
+        from: formatSender(e.from),
+        date: new Date(e.date).toISOString(),
+        unread: e.unread,
+        starred: e.starred,
+        type: e.type
+    }));
+}
+
+// ── Schema ──
+
+const GetEmailListSchema = z.object({
+    offset: z.number().optional().describe('从第几条开始，默认 0'),
+    limit: z.number().optional().describe('最多返回条数，默认 20')
+});
+
+const GetEmailContentSchema = z.object({
+    uid: z.string().describe('邮件唯一标识 uid，从 getEmailList 或 searchEmails 结果中获取')
+});
+
+const SearchEmailsSchema = z.object({
+    subject: z.string().optional().describe('按主题关键词搜索（模糊匹配）'),
+    from: z.string().optional().describe('按发件人搜索（支持姓名或邮箱地址，模糊匹配）'),
+    to: z.string().optional().describe('按收件人搜索（支持姓名或邮箱地址，模糊匹配）'),
+    body: z.string().optional().describe('按正文内容搜索（模糊匹配）'),
+    general: z
+        .string()
+        .optional()
+        .describe('在主题、发件人、正文中同时搜索的通用关键词（与 subject/from/body 互斥，用于简单搜索场景）'),
+    dateFrom: z.string().optional().describe('搜索起始日期（含），格式 YYYY-MM-DD'),
+    dateTo: z.string().optional().describe('搜索结束日期（含），格式 YYYY-MM-DD'),
+    unread: z.boolean().optional().describe('筛选已读/未读状态：true=仅未读，false=仅已读，不传=不限'),
+    starred: z.boolean().optional().describe('筛选收藏状态：true=仅收藏，false=仅非收藏，不传=不限'),
+    attachmentName: z.string().optional().describe('按附件文件名搜索（模糊匹配）'),
+    limit: z.number().optional().describe('最多返回条数，默认 50'),
+    offset: z.number().optional().describe('跳过前 N 条')
+});
+
+const SendEmailSchema = z.object({
+    to: z
+        .union([
+            z.string().describe('收件人邮箱地址'),
+            z.array(z.string()).describe('多个收件人邮箱地址数组'),
+            z
+                .array(
+                    z.object({
+                        name: z.string().optional().describe('收件人姓名'),
+                        address: z.string().describe('收件人邮箱地址')
+                    })
+                )
+                .describe('收件人对象列表')
+        ])
+        .describe('收件人'),
+    cc: z
+        .union([
+            z.string().describe('抄送邮箱地址'),
+            z.array(z.string()).describe('多个抄送邮箱地址数组'),
+            z
+                .array(
+                    z.object({
+                        name: z.string().optional().describe('抄送收件人姓名'),
+                        address: z.string().describe('抄送收件人邮箱地址')
+                    })
+                )
+                .describe('抄送对象列表')
+        ])
+        .optional()
+        .describe('抄送'),
+    bcc: z
+        .union([
+            z.string().describe('密送邮箱地址'),
+            z.array(z.string()).describe('多个密送邮箱地址数组'),
+            z
+                .array(
+                    z.object({
+                        name: z.string().optional().describe('密送收件人姓名'),
+                        address: z.string().describe('密送收件人邮箱地址')
+                    })
+                )
+                .describe('密送对象列表')
+        ])
+        .optional()
+        .describe('密送'),
+    subject: z.string().describe('邮件主题'),
+    content: z.string().describe('邮件内容'),
+    attachments: z.array(z.string()).optional().describe('附件文件路径列表，每个元素是本地文件的绝对路径')
+});
+
+const ReplyEmailSchema = z.object({
+    uid: z.string().describe('要回复的邮件唯一标识 uid'),
+    content: z.string().describe('回复内容'),
+    replyAll: z.boolean().optional().describe('是否回复所有人，默认 false')
+});
+
+const MarkEmailReadSchema = z.object({
+    uid: z.string().describe('邮件唯一标识 uid'),
+    read: z.boolean().describe('是否标记为已读：true=标记为已读，false=标记为未读')
+});
+
+const StarEmailSchema = z.object({
+    uid: z.string().describe('邮件 uid'),
+    starred: z.boolean().describe('是否收藏：true=收藏，false=取消收藏')
+});
+
+const DeleteEmailSchema = z.object({
+    uid: z.string().describe('邮件唯一标识 uid')
+});
+
+// ── 回复邮件引用格式（与 Electron 前端一致） ──
+
+export function buildQuotedText(
+    email: { from?: any; to?: any; cc?: any; date?: any; subject?: string },
+    content: { textContent?: string; htmlContent?: string }
+): string {
+    const sender = formatAddresses(email.from);
+    const sendTime = new Date(email.date).toLocaleString();
+    const receivers = formatAddresses(email.to);
+    const ccText = email.cc?.length > 0 ? formatAddresses(email.cc) : '';
+    const subject = email.subject || '(无主题)';
+
+    let originalBody = '';
+    if (content.textContent?.trim()) originalBody = content.textContent.trim();
+    else if (content.htmlContent) originalBody = stripHtml(content.htmlContent);
+
+    const quotedBody = originalBody
+        .split('\n')
+        .map((line) => `> ${line}`)
+        .join('\n');
+
+    const lines = [
+        '---------- 原始邮件 ----------',
+        `发件人: ${sender}`,
+        `发送时间: ${sendTime}`,
+        `收件人: ${receivers}`
+    ];
+    if (ccText) lines.push(`抄送: ${ccText}`);
+    lines.push(`主题: ${subject}`);
+    lines.push('');
+    lines.push(quotedBody);
+    return lines.join('\n');
+}
+
+export function buildReplyHtml(
+    replyBody: string,
+    email: { from?: any; to?: any; cc?: any; date?: any; subject?: string },
+    content: { textContent?: string; htmlContent?: string }
+): string {
+    const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const userHtml = esc(replyBody).replace(/\n/g, '<br>');
+
+    const sender = formatAddresses(email.from);
+    const sendTime = new Date(email.date).toLocaleString();
+    const receivers = formatAddresses(email.to);
+    const ccText = email.cc?.length > 0 ? formatAddresses(email.cc) : '';
+    const subject = email.subject || '(无主题)';
+
+    const originContent = content.htmlContent
+        ? content.htmlContent
+        : esc(content.textContent || '').replace(/\n/g, '<br>');
+
+    return `<div>${userHtml}</div>
+<br><br>
+<hr style="border: 0; border-top: 1px solid #e5e7eb; margin: 20px 0;">
+<div style="background-color: #f3f4f6; padding: 16px; border-radius: 8px; font-size: 13px; color: #374151; margin-bottom: 20px;">
+  <div style="font-weight: bold; font-size: 14px; margin-bottom: 12px; color: #111827; border-bottom: 1px solid #e5e7eb; padding-bottom: 8px;">
+    ----- 原始邮件 -----
+  </div>
+  <div style="margin-bottom: 6px;"><span style="color: #6b7280; font-weight: bold;">发件人:</span> ${esc(sender)}</div>
+  <div style="margin-bottom: 6px;"><span style="color: #6b7280; font-weight: bold;">发送时间:</span> ${esc(sendTime)}</div>
+  <div style="margin-bottom: 6px;"><span style="color: #6b7280; font-weight: bold;">收件人:</span> ${esc(receivers)}</div>
+  ${ccText ? `<div style="margin-bottom: 6px;"><span style="color: #6b7280; font-weight: bold;">抄送:</span> ${esc(ccText)}</div>` : ''}
+  <div><span style="color: #6b7280; font-weight: bold;">主题:</span> ${esc(subject)}</div>
+</div>
+<div style="font-size: 14px; line-height: 1.6;">${originContent}</div>`;
+}
+
+// ── 工具类 ──
+
+export class GetEmailListTool extends BaseTool<typeof GetEmailListSchema> {
+    constructor() {
+        super('getEmailList', '获取当前邮箱的邮件列表，返回 uid、主题、发件人、日期、已读状态等。', GetEmailListSchema);
+        this.setExecutor(async (args) => {
+            const data = await callMailWorker('getEmailHeaderList', args.offset ?? 0, args.limit ?? 20);
+            const emails: any[] = Array.isArray(data) ? data : [];
+            if (emails.length === 0) return JSON.stringify({ total: 0, emails: [], message: '暂无邮件' });
+            return JSON.stringify({ total: emails.length, emails: mapEmailHeaders(emails) });
+        });
+    }
+}
+
+export class GetEmailContentTool extends BaseTool<typeof GetEmailContentSchema> {
+    constructor() {
+        super('getEmailContent', '获取指定 uid 邮件的完整正文（纯文本），用于查看详情或摘要。', GetEmailContentSchema);
+        this.setExecutor(async (args) => {
+            const content = await callMailWorker('getEmailContent', args.uid);
+            if (!content) return JSON.stringify({ error: '未找到该邮件' });
+            const text = content.textContent?.trim() || stripHtml(content.htmlContent || '');
+            return JSON.stringify({
+                uid: args.uid,
+                textContent: text.slice(0, 5000),
+                fullLength: text.length
+            });
+        });
+    }
+}
+
+export class SearchEmailsTool extends BaseTool<typeof SearchEmailsSchema> {
+    constructor() {
+        super(
+            'searchEmails',
+            '按条件搜索邮件，支持主题/发件人/收件人/正文/日期/已读/收藏/附件名等组合搜索。',
+            SearchEmailsSchema
+        );
+        this.setExecutor(async (args) => {
+            const q: any = { limit: args.limit ?? 50, offset: args.offset ?? 0 };
+            if (args.subject) q.subject = args.subject;
+            if (args.from) q.from = args.from;
+            if (args.to) q.to = args.to;
+            if (args.body) q.body = args.body;
+            if (args.general) q.general = args.general;
+            if (args.dateFrom) q.startDate = args.dateFrom;
+            if (args.dateTo) q.endDate = args.dateTo;
+            if (args.unread !== undefined) q.unread = args.unread;
+            if (args.starred !== undefined) q.starred = args.starred;
+            if (args.attachmentName) q.attachmentName = args.attachmentName;
+            const data = await callMailWorker('searchEmails', q);
+            const emails: any[] = Array.isArray(data) ? data : [];
+            return JSON.stringify({ total: emails.length, emails: mapEmailHeaders(emails) });
+        });
+    }
+}
+
+export class SendEmailTool extends BaseTool<typeof SendEmailSchema> {
+    constructor() {
+        super('sendEmail', '发送邮件，需提供收件人、主题和内容，可选抄送、密送和附件。', SendEmailSchema);
+        this.setExecutor(async (args) => {
+            try {
+                const to = normalizeRecipients(args.to);
+                const cc = normalizeRecipients(args.cc);
+                const bcc = normalizeRecipients(args.bcc);
+                const attachments: Array<{ filename: string; path: string }> = [];
+                if (args.attachments?.length) {
+                    for (const fp of args.attachments) {
+                        const resolved = nodePath.resolve(fp);
+                        if (!fs.existsSync(resolved))
+                            return JSON.stringify({
+                                success: false,
+                                error: `附件文件不存在: ${fp}`
+                            });
+                        attachments.push({ filename: nodePath.basename(resolved), path: resolved });
+                    }
+                }
+                const result = await callMailWorker('sendEmail', {
+                    to,
+                    cc: cc.length > 0 ? cc : undefined,
+                    bcc: bcc.length > 0 ? bcc : undefined,
+                    subject: args.subject,
+                    text: args.content,
+                    html: args.content.replace(/\n/g, '<br>'),
+                    attachments
+                });
+                return JSON.stringify({ success: true, message: '邮件发送成功', data: result });
+            } catch (error: any) {
+                return JSON.stringify({ success: false, error: error.message || '邮件发送失败' });
+            }
+        });
+    }
+}
+
+export class ReplyEmailTool extends BaseTool<typeof ReplyEmailSchema> {
+    constructor() {
+        super('replyEmail', '回复邮件，需提供原邮件 uid 和回复内容。', ReplyEmailSchema);
+        this.setExecutor(async (args) => {
+            try {
+                const emailMeta = await callMailWorker('getEmailMeta', args.uid);
+                if (!emailMeta) return JSON.stringify({ success: false, error: '未找到该邮件' });
+                const emailContent = await callMailWorker('getEmailContent', args.uid);
+
+                const to = [...normalizeRecipients(emailMeta.from)];
+                const cc: string[] = [];
+                if (args.replyAll) {
+                    const seen = new Set(to);
+                    for (const addr of normalizeRecipients(emailMeta.to)) {
+                        if (!seen.has(addr)) {
+                            to.push(addr);
+                            seen.add(addr);
+                        }
+                    }
+                    for (const addr of normalizeRecipients(emailMeta.cc)) {
+                        if (!seen.has(addr)) {
+                            cc.push(addr);
+                            seen.add(addr);
+                        }
+                    }
+                }
+
+                const originalSubject = emailMeta.subject || '';
+                const subject = originalSubject.startsWith('Re:') ? originalSubject : `Re: ${originalSubject}`;
+                const quotedText = buildQuotedText(emailMeta, emailContent || {});
+                const fullText = args.content + '\n\n' + quotedText;
+                const html = buildReplyHtml(args.content, emailMeta, emailContent || {});
+
+                const result = await callMailWorker('sendEmail', {
+                    to,
+                    cc: cc.length > 0 ? cc : undefined,
+                    subject,
+                    text: fullText,
+                    html,
+                    attachments: []
+                });
+                return JSON.stringify({ success: true, message: '邮件回复成功', data: result });
+            } catch (error: any) {
+                return JSON.stringify({ success: false, error: error.message || '邮件回复失败' });
+            }
+        });
+    }
+}
+
+export class MarkEmailReadTool extends BaseTool<typeof MarkEmailReadSchema> {
+    constructor() {
+        super('markEmailReadStatus', '标记邮件已读/未读。', MarkEmailReadSchema);
+        this.setExecutor(async (args) => {
+            try {
+                if (args.read) await callMailWorker('markEmailAsRead', args.uid);
+                else await callMailWorker('markEmailAsUnread', args.uid);
+                return JSON.stringify({
+                    success: true,
+                    message: `邮件已${args.read ? '标记为已读' : '标记为未读'}`
+                });
+            } catch (error: any) {
+                return JSON.stringify({
+                    success: false,
+                    error: error.message || '标记邮件状态失败'
+                });
+            }
+        });
+    }
+}
+
+export class StarEmailTool extends BaseTool<typeof StarEmailSchema> {
+    constructor() {
+        super('starEmail', '收藏或取消收藏邮件。', StarEmailSchema);
+        this.setExecutor(async (args) => {
+            try {
+                await callMailWorker('starEmail', { uid: args.uid, starred: args.starred });
+                return JSON.stringify({
+                    success: true,
+                    message: `邮件已${args.starred ? '收藏' : '取消收藏'}`
+                });
+            } catch (error: any) {
+                return JSON.stringify({
+                    success: false,
+                    error: error.message || '操作邮件收藏状态失败'
+                });
+            }
+        });
+    }
+}
+
+export class DeleteEmailTool extends BaseTool<typeof DeleteEmailSchema> {
+    constructor() {
+        super('deleteEmail', '删除指定邮件。', DeleteEmailSchema);
+        this.setExecutor(async (args) => {
+            try {
+                await callMailWorker('deleteEmail', args.uid);
+                return JSON.stringify({ success: true, message: '邮件删除成功' });
+            } catch (error: any) {
+                return JSON.stringify({ success: false, error: error.message || '删除邮件失败' });
+            }
+        });
+    }
+}
+
+// ============================================================
+// 跨应用联动工具：日历 & 时间
+// ============================================================
+
+const GetCalendarItemsSchema = z.object({
+    dateString: z.string().describe('日期字符串，格式为 YYYY-MM-DD。例如 "2026-03-05"')
+});
+export class GetCalendarItemsTool extends BaseTool<typeof GetCalendarItemsSchema> {
+    constructor() {
+        super(
+            'getCalendarItems',
+            '获取指定日期的日程/会议列表。当用户想查看某天的安排、检查时间冲突，或需要将邮件中的会议信息与日历比对时使用。',
+            GetCalendarItemsSchema
+        );
+        this.setExecutor(async (args) => {
+            const result = await ApplicationRegistry.callWorker('calendar', 'getCalendarItems', args.dateString);
+            if (result?.status !== 'ok')
+                return JSON.stringify({ error: `无法获取日程: ${result?.message || '未知错误'}` });
+            const items = result.data || [];
+            if (items.length === 0)
+                return JSON.stringify({
+                    total: 0,
+                    items: [],
+                    message: `${args.dateString} 暂无日程安排`
+                });
+            const mapped = items.map((item: any) => ({
+                uid: item.uid,
+                subject: item.subject,
+                startTime: new Date(item.startTime).toLocaleString(),
+                endTime: new Date(item.endTime).toLocaleString(),
+                location: item.location || ''
+            }));
+            return JSON.stringify({ total: mapped.length, items: mapped });
+        });
+    }
+}
+
+const AddCalendarItemSchema = z.object({
+    subject: z.string().describe('日程标题'),
+    dateString: z.string().describe('日期，格式为 YYYY-MM-DD'),
+    startTime: z.string().describe('开始时间，格式为 HH:MM（24小时制）'),
+    endTime: z.string().describe('结束时间，格式为 HH:MM（24小时制）'),
+    location: z.string().optional().describe('地点（可选）'),
+    isAllDay: z.boolean().optional().default(false).describe('是否为全天事件')
+});
+export class AddCalendarItemTool extends BaseTool<typeof AddCalendarItemSchema> {
+    constructor() {
+        super(
+            'addCalendarItem',
+            '添加新日程/会议。当用户要求根据邮件内容创建日程、安排会议、或设置提醒时使用。',
+            AddCalendarItemSchema
+        );
+        this.setExecutor(async (args) => {
+            const { subject, dateString, startTime, endTime, location, isAllDay } = args;
+            const dateParts = dateString.replace(/-/g, '/');
+            let startTs: number, endTs: number;
+            if (isAllDay) {
+                startTs = new Date(dateParts).getTime();
+                endTs = startTs + 86400000;
+            } else {
+                startTs = new Date(`${dateParts} ${startTime}`).getTime();
+                endTs = new Date(`${dateParts} ${endTime}`).getTime();
+            }
+            if (isNaN(startTs) || isNaN(endTs))
+                return JSON.stringify({ error: '日期或时间格式无效，请使用 YYYY-MM-DD 和 HH:MM' });
+            if (endTs <= startTs) return JSON.stringify({ error: '结束时间必须晚于开始时间' });
+
+            try {
+                const existing = await ApplicationRegistry.callWorker('calendar', 'getCalendarItems', dateString);
+                if (existing?.status === 'ok' && Array.isArray(existing.data)) {
+                    const subjectLower = subject.trim().toLowerCase();
+                    const dup = existing.data.find((item: any) => {
+                        const iSubj = (item.subject || '').trim().toLowerCase();
+                        const iStart = new Date(item.startTime).getTime();
+                        if (iSubj === subjectLower && iStart === startTs) return true;
+                        const iEnd = new Date(item.endTime).getTime();
+                        return (
+                            (iSubj.includes(subjectLower) || subjectLower.includes(iSubj)) &&
+                            startTs < iEnd &&
+                            endTs > iStart
+                        );
+                    });
+                    if (dup)
+                        return JSON.stringify({
+                            skipped: true,
+                            reason: '已存在相同或相似的日程，无需重复添加',
+                            existing: {
+                                uid: dup.uid,
+                                subject: dup.subject,
+                                startTime: new Date(dup.startTime).toLocaleString(),
+                                endTime: new Date(dup.endTime).toLocaleString()
+                            }
+                        });
+                }
+            } catch {
+                /* 去重检查失败不阻塞 */
+            }
+
+            const result = await ApplicationRegistry.callWorker('calendar', 'addCalendarItem', {
+                subject,
+                startTime: startTs,
+                endTime: endTs,
+                location: location || '',
+                isAllDay
+            });
+            if (result?.status !== 'ok')
+                return JSON.stringify({ error: `添加日程失败: ${result?.message || '未知错误'}` });
+            const item = result.data ?? result;
+            return JSON.stringify({
+                success: true,
+                uid: item.uid,
+                subject,
+                dateString,
+                startTime,
+                endTime
+            });
+        });
+    }
+}
+
+const DeleteCalendarItemSchema = z.object({
+    uid: z.string().describe('要删除的日程项的唯一标识符（uid），可通过 getCalendarItems 获取')
+});
+export class DeleteCalendarItemTool extends BaseTool<typeof DeleteCalendarItemSchema> {
+    constructor() {
+        super('deleteCalendarItem', '删除指定的日程项。当用户要求取消某个日程、会议时使用。', DeleteCalendarItemSchema);
+        this.setExecutor(async (args) => {
+            const result = await ApplicationRegistry.callWorker('calendar', 'deleteCalendarItem', args.uid);
+            if (result?.status !== 'ok')
+                return JSON.stringify({ error: `删除日程失败: ${result?.message || '未知错误'}` });
+            const data = result.data ?? result;
+            return JSON.stringify({ success: true, uid: args.uid, ...data });
+        });
+    }
+}
+
+const GetCurrentTimeSchema = z.object({});
+export class GetCurrentTimeTool extends BaseTool<typeof GetCurrentTimeSchema> {
+    constructor() {
+        super(
+            'getCurrentTime',
+            '获取当前精确的日期和时间。在需要知道"今天"、"明天"等相对日期时使用。',
+            GetCurrentTimeSchema
+        );
+        this.setExecutor(async () => {
+            const now = new Date();
+            const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+            const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+            return JSON.stringify({
+                date: dateStr,
+                time: timeStr,
+                datetime: now.toLocaleString(),
+                dayOfWeek: ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][now.getDay()]
+            });
         });
     }
 }

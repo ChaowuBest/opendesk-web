@@ -22,19 +22,18 @@ import AdmZip from 'adm-zip';
 import path from 'path';
 import fs from 'fs';
 
-
 interface PPTResult {
-    name: string
-    ppt_url: string
-    zip_url: string
-    abstract: string
+    name: string;
+    ppt_url: string;
+    zip_url: string;
+    abstract: string;
 }
 
 export class PPTAgent {
-    instanceId: string
-    result?: PPTResult
+    instanceId: string;
+    result?: PPTResult;
 
-    static serviceUrl?: string
+    static serviceUrl?: string;
 
     constructor() {
         this.instanceId = '';
@@ -47,7 +46,7 @@ export class PPTAgent {
 
     getServiceUrl(): string {
         if (!PPTAgent.serviceUrl) {
-            throw new Error('错误：PPT制作服务地址未设置')
+            throw new Error('错误：PPT制作服务地址未设置');
         }
         return PPTAgent.serviceUrl;
     }
@@ -58,9 +57,9 @@ export class PPTAgent {
     }
 
     async initializeFromRequest(request: string) {
-        var response = await fetch(this.getServiceUrl() + "/create_pptagent", { method: 'POST' })
+        let response = await fetch(this.getServiceUrl() + '/create_pptagent', { method: 'POST' });
         if (!response.ok) {
-            throw new Error('错误：无法创建PPT智能体')
+            throw new Error('错误：无法创建PPT智能体');
         }
 
         this.instanceId = await response.text();
@@ -68,35 +67,35 @@ export class PPTAgent {
         this.instanceId = this.instanceId.slice(1, -1);
         logger.info(`PPT智能体分配成功，实例ID: ${this.instanceId}`);
 
-        response = await fetch(this.getServiceUrl() + "/ainvoke", {
+        response = await fetch(this.getServiceUrl() + '/ainvoke', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 instance_id: this.instanceId,
                 message: request
             })
-        })
+        });
 
         if (!response.ok || !response.body) {
-            throw new Error('错误：无法创建PPT')
+            throw new Error('错误：无法创建PPT');
         }
     }
 
-    async* fetchPPTTask(): AsyncIterable<string> {
+    async *fetchPPTTask(): AsyncIterable<string> {
         if (!this.instanceId) {
-            throw new Error('错误：PPT智能体未初始化')
+            throw new Error('错误：PPT智能体未初始化');
         }
 
-        const response = await fetch(this.getServiceUrl() + "/aresume", {
+        const response = await fetch(this.getServiceUrl() + '/aresume', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                instance_id: this.instanceId,
+                instance_id: this.instanceId
             })
-        })
+        });
 
         if (!response.ok || !response.body) {
-            throw new Error('错误：无法获取PPT任务状态')
+            throw new Error('错误：无法获取PPT任务状态');
         }
 
         const reader = response.body.getReader();
@@ -109,7 +108,7 @@ export class PPTAgent {
             }
 
             const textChunk = decoder.decode(value, { stream: true });
-            for (const line of textChunk.split('\n').filter(line => line.trim() !== '')) {
+            for (const line of textChunk.split('\n').filter((line) => line.trim() !== '')) {
                 try {
                     const chunk = JSON.parse(line);
                     if (chunk.text) {
@@ -121,8 +120,8 @@ export class PPTAgent {
                             name: chunk.sources.name,
                             ppt_url: chunk.sources.url,
                             zip_url: chunk.sources.zip_url,
-                            abstract: chunk.sources.abstract,
-                        }
+                            abstract: chunk.sources.abstract
+                        };
                     }
                 } catch (error) {
                     logger.error(`Error parsing JSON chunk: ${line}, error: ${error}`);
@@ -134,10 +133,10 @@ export class PPTAgent {
 
 const CreatePPTSchema = z.object({
     request: z.string().describe('制作PPT的要求')
-})
+});
 
 export class CreatePPTTool extends BaseTool<typeof CreatePPTSchema> {
-    appDataDirectory: string
+    appDataDirectory: string;
 
     constructor(appDataDirectory: string) {
         super('CreatePPT', '根据指定的需求创建PPT', CreatePPTSchema);
@@ -163,19 +162,24 @@ export class CreatePPTTool extends BaseTool<typeof CreatePPTSchema> {
             body.push(chalk.greenBright('  ✨ PPT 制作完成'));
         }
 
-        return new Card({ icon: '📊', title: '制作 PPT', status: statusDisplay(toolcall.status), body }).render(width);
+        return new Card({
+            icon: '📊',
+            title: '制作 PPT',
+            status: statusDisplay(toolcall.status),
+            body
+        }).render(width);
     }
 
     async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
-        const md = toolcall.result !== undefined ? (await marked.parse(toolcall.result)) : 'PPT制作中...';
-        var result = `<div class="max-w-2xl h-full overflow-auto p-2 flex flex-col space-y-2 items-start justify-center">${md}</div>`
+        const md = toolcall.result !== undefined ? await marked.parse(toolcall.result) : 'PPT制作中...';
+        let result = `<div class="max-w-2xl h-full overflow-auto p-2 flex flex-col space-y-2 items-start justify-center">${md}</div>`;
         if (toolcall.status === 'success') {
             const instanceId = toolcall.result_object?.['instanceId'];
             result += `
             <div class="max-w-3xl h-full overflow-auto p-2 flex items-start justify-center">
                 <ppt-container class="block w-full" data-id="${instanceId}"></ppt-container>
             </div>
-            `
+            `;
         } else {
             result += `
             <div class="max-w-md flex gap-4 items-center p-3 bg-slate-50 rounded-xl border border-slate-100 transform transition-all hover:scale-[1.01] hover:bg-white hover:shadow-sm">
@@ -187,7 +191,7 @@ export class CreatePPTTool extends BaseTool<typeof CreatePPTSchema> {
                     <div class="h-2 bg-slate-100 rounded w-3/4 skeleton-shimmer rounded-full"></div>
                 </div>
             </div>
-`
+`;
         }
         return result;
     }
@@ -225,10 +229,13 @@ export class CreatePPTTool extends BaseTool<typeof CreatePPTSchema> {
             console.info(`PPT压缩包下载成功，解压到: ${targetDir}`);
 
             const manifestPath = path.join(targetDir, 'manifest.json');
-            fs.writeFileSync(manifestPath, JSON.stringify({
-                name: pptAgent.result?.name || '未命名PPT',
-                abstract: pptAgent.result?.abstract || '系统未生成摘要',
-            }));
+            fs.writeFileSync(
+                manifestPath,
+                JSON.stringify({
+                    name: pptAgent.result?.name || '未命名PPT',
+                    abstract: pptAgent.result?.abstract || '系统未生成摘要'
+                })
+            );
         }
 
         result.updateResultObject({ instanceId: instanceId });

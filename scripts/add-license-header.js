@@ -23,17 +23,17 @@ const HEADER = `/**
 const COPYRIGHT_MARKER = 'Copyright (c) 2026 The OpenDesk Team';
 
 function* walk(dir, extList) {
-  const entries = fs.readdirSync(dir, { withFileTypes: true });
-  for (const e of entries) {
-    const full = path.join(dir, e.name);
-    if (e.isDirectory()) {
-      if (e.name !== 'node_modules') {
-        yield* walk(full, extList);
-      }
-    } else if (extList.some(ext => e.name.endsWith(ext))) {
-      yield full;
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    for (const e of entries) {
+        const full = path.join(dir, e.name);
+        if (e.isDirectory()) {
+            if (e.name !== 'node_modules') {
+                yield* walk(full, extList);
+            }
+        } else if (extList.some((ext) => e.name.endsWith(ext))) {
+            yield full;
+        }
     }
-  }
 }
 
 const exts = ['.js', '.ts', '.tsx', '.mjs', '.cjs', '.d.ts'];
@@ -42,15 +42,15 @@ let added = 0;
 let skipped = 0;
 
 for (const file of files) {
-  const content = fs.readFileSync(file, 'utf8');
-  if (content.includes(COPYRIGHT_MARKER)) {
-    skipped++;
-    continue;
-  }
-  const newContent = HEADER + (content.startsWith('\n') ? '' : '\n') + content;
-  fs.writeFileSync(file, newContent, 'utf8');
-  added++;
-  console.log('Added header:', path.relative(SRC, file));
+    const content = fs.readFileSync(file, 'utf8');
+    if (content.includes(COPYRIGHT_MARKER)) {
+        skipped++;
+        continue;
+    }
+    const newContent = HEADER + (content.startsWith('\n') ? '' : '\n') + content;
+    fs.writeFileSync(file, newContent, 'utf8');
+    added++;
+    console.log('Added header:', path.relative(SRC, file));
 }
 
 console.log('\nDone. Added:', added, 'Skipped (already had header):', skipped);

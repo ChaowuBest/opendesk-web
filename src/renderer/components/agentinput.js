@@ -9,38 +9,162 @@
  * See the Mulan PSL v2 for more details.
  */
 
-const supportedFileExtensions = [
-    'pdf',
-    'docx',
-    'doc',
-    'xls',
-    'xlsx',
-    'ppt',
-    'pptx',
-]
+import { REASONING_EFFORT_UI_OPTIONS as REASONING_EFFORT_OPTIONS } from '../../common/reasoning-effort.ts';
+
+const supportedFileExtensions = ['pdf', 'docx', 'doc', 'xls', 'xlsx', 'ppt', 'pptx'];
+
+/**
+ * 更新系统设置中的 default_model 和指定模型的 reasoning_effort。
+ * 只修改需要变更的字段，其余保持不变。
+ */
+async function updateSettingForModelChange(modelAlias, reasoningEffort) {
+    try {
+        if (!window.settingAPI?.saveSettingObject || !window.settingAPI?.loadSettingObject) return;
+        const settingObj = await window.settingAPI.loadSettingObject();
+        let changed = false;
+        if (modelAlias && settingObj.default_model !== modelAlias) {
+            settingObj.default_model = modelAlias;
+            changed = true;
+        }
+        if (modelAlias && reasoningEffort !== undefined) {
+            const model = (settingObj.models || []).find((m) => m.alias === modelAlias);
+            if (model && model.reasoning_effort !== reasoningEffort) {
+                model.reasoning_effort = reasoningEffort;
+                changed = true;
+            }
+        }
+        if (changed) {
+            await window.settingAPI.saveSettingObject(settingObj);
+        }
+    } catch (err) {
+        console.warn('Failed to persist model/effort setting:', err);
+    }
+}
 
 class AgentInput extends HTMLElement {
-
     constructor() {
         super();
         this.attachedFilePaths = [];
         this.isDisabled = false;
         this.showStopButton = false;
         this.onStopCallback = null;
+        /** @type {{ alias: string, model_name: string }[]} */
+        this.availableModels = [];
+        this.selectedModel = '';
+        this.selectedReasoningEffort = '';
+        this.defaultModelAlias = '';
+        /** @type {{ id: string, name: string, description: string, icon: string, color: string }[]} */
+        this.availableModes = [];
+        this.selectedModeId = '';
+        this.defaultModeId = '';
+        /** @type {{ id: string, name: string, description: string }[]} */
+        this.availableSkills = [];
+        this.skillPanelOpen = false;
+        this.skillSearchQuery = '';
     }
 
     connectedCallback() {
-        this.render();
+        Promise.all([this.loadModels(), this.loadModes(), this.loadSkills()]).then(() => this.render());
     }
 
-    disconnectedCallback() {
-
+    async loadModels() {
+        try {
+            if (!window.settingAPI?.loadSettingObject) return;
+            const settingObj = await window.settingAPI.loadSettingObject();
+            this.availableModels = settingObj.models || [];
+            this.defaultModelAlias = settingObj.default_model || '';
+            if (!this.selectedModel) {
+                this.selectedModel = this.defaultModelAlias;
+            }
+            const currentModel = this.availableModels.find((m) => m.alias === this.selectedModel);
+            if (currentModel && currentModel.reasoning_effort !== undefined && !this.selectedReasoningEffort) {
+                this.selectedReasoningEffort = currentModel.reasoning_effort;
+            }
+        } catch (err) {
+            console.warn('Failed to load models for agent-input:', err);
+        }
     }
+
+    async loadModes() {
+        try {
+            if (!window.modeAPI?.getSupportedModes) return;
+            const data = await window.modeAPI.getSupportedModes();
+            this.availableModes = data.modes || [];
+            this.defaultModeId = data.defaultModeId || '';
+            if (!this.selectedModeId) {
+                this.selectedModeId = data.currentModeId || this.defaultModeId;
+            }
+        } catch (err) {
+            console.warn('Failed to load modes for agent-input:', err);
+        }
+    }
+
+    /**
+     * 外部设置当前模式（同时通知主进程）
+     */
+    setMode(modeId) {
+        this.selectedModeId = modeId;
+        const modeSelect = this.querySelector('#agent-input-mode-select');
+        if (modeSelect) modeSelect.value = modeId;
+        this.updateModeIndicator();
+        if (window.modeAPI?.setCurrentMode) {
+            window.modeAPI.setCurrentMode(modeId).catch((err) => {
+                console.warn('Failed to set mode:', err);
+            });
+        }
+    }
+
+    /**
+     * 更新模式指示器（预留扩展点，目前不改变边框颜色）
+     */
+    updateModeIndicator() {
+        // 当前不做视觉变化，保持边框颜色固定
+    }
+
+    async loadSkills() {
+        try {
+            if (!window.applicationRegistryAPI?.callMainWorld) return;
+            const skills = await window.applicationRegistryAPI.callMainWorld('skillmgr', 'getAllUserInvocableSkills');
+            this.availableSkills = (skills || []).map((s) => ({
+                name: s.name,
+                description: s.description || '',
+                bundleName: s.bundleName || ''
+            }));
+        } catch (err) {
+            console.warn('Failed to load skills for agent-input:', err);
+            this.availableSkills = [];
+        }
+    }
+
+    /**
+     * 外部设置当前模型（不写入系统设置，仅更新 UI 状态）
+     */
+    setModel(modelAlias) {
+        this.selectedModel = modelAlias;
+        const modelSelect = this.querySelector('#agent-input-model-select');
+        if (modelSelect) modelSelect.value = modelAlias;
+    }
+
+    /**
+     * 外部设置当前 reasoning effort（不写入系统设置，仅更新 UI 状态）
+     */
+    setReasoningEffort(effort) {
+        this.selectedReasoningEffort = effort || '';
+        const effortSelect = this.querySelector('#agent-input-effort-select');
+        if (effortSelect) effortSelect.value = this.selectedReasoningEffort;
+    }
+
+    disconnectedCallback() {}
 
     attachFilePath(filePath) {
         const extname = filePath.split('.').pop();
         if (!supportedFileExtensions.includes(extname)) {
-            window.notificationAPI.sendNotification('error', '文件管理', '不支持的文件类型', `当前还不支持在对话中使用${extname} 文件`);
+            window.notificationAPI.sendNotification(
+                'error',
+                '文件管理',
+                '不支持的文件类型',
+                `当前还不支持在对话中使用${extname} 文件`
+            );
             return;
         }
         this.attachedFilePaths.push(filePath);
@@ -48,7 +172,7 @@ class AgentInput extends HTMLElement {
     }
 
     removeFilePath(filePath) {
-        this.attachedFilePaths = this.attachedFilePaths.filter(p => p !== filePath);
+        this.attachedFilePaths = this.attachedFilePaths.filter((p) => p !== filePath);
         this.render();
     }
 
@@ -103,90 +227,360 @@ class AgentInput extends HTMLElement {
     }
 
     render() {
-        let fileItems = this.attachedFilePaths.map(filePath => {
-            let fileName = filePath.split('/').pop();
-            return `
-            <div class="px-3 py-1 bg-blue-50 text-blue-700 hover:text-gray-600 hover:bg-blue-20 rounded-full border border-blue-100 transition-all shadow-sm text-xs cursor-pointer flex items-center">
-                <i class="fas fa-paperclip mr-1"></i>
-                <span class="max-w-[120px] truncate whitespace-nowrap overflow-hidden" style="display:inline-block;">${fileName}</span>
+        let fileItems = this.attachedFilePaths
+            .map((filePath) => {
+                const fileName = filePath.split('/').pop();
+                return `
+            <div class="px-2 py-0.5 bg-blue-50 text-blue-700 hover:text-gray-600 rounded-full border border-blue-100 transition-all text-xs cursor-pointer flex items-center">
+                <i class="fas fa-paperclip mr-1 text-[10px]"></i>
+                <span class="max-w-[100px] truncate whitespace-nowrap overflow-hidden" style="display:inline-block;">${fileName}</span>
                 <button data-file_path="${filePath}" class="agent-input-remove-file-btn hover:text-red-500 leading-none">
-                    <i class="fas fa-times ml-1"></i>
+                    <i class="fas fa-times ml-1 text-[10px]"></i>
                 </button>
             </div>
             `;
-        }).join('');
+            })
+            .join('');
 
         if (this.attachedFilePaths.length === 0) {
             fileItems = `
-            <div class="flex items-center justify-center text-sm text-gray-400 py-2">
-                <i class="fas fa-file-upload m-2"></i>
-                <span>你可以将文件拖拽到这里~</span>
+            <div class="flex items-center text-xs text-gray-400 py-0.5">
+                <i class="fas fa-paperclip mr-1.5"></i>
+                <span>拖拽文件到此处</span>
             </div>
             `;
         }
 
+        const modelOptions = this.availableModels
+            .map((m) => {
+                const selected = m.alias === this.selectedModel ? 'selected' : '';
+                return `<option value="${m.alias}" ${selected}>${m.alias}</option>`;
+            })
+            .join('');
+
+        const effortOptions = REASONING_EFFORT_OPTIONS.map((o) => {
+            const selected = o.value === this.selectedReasoningEffort ? 'selected' : '';
+            return `<option value="${o.value}" ${selected}>${o.label}</option>`;
+        }).join('');
+
+        const modeOptions = this.availableModes
+            .map((m) => {
+                const selected = m.id === this.selectedModeId ? 'selected' : '';
+                return `<option value="${m.id}" ${selected}>${m.icon} ${m.name}</option>`;
+            })
+            .join('');
+
         this.innerHTML = `
-        <div id="agent-input-container" class="w-full p-1.5 rounded-[28px] bg-white/40 border border-gray-300/60 shadow-[0_10px_40px_-15px_rgba(0,0,0,0.08)]">
-            <div class="bg-white rounded-[22px] p-1 shadow-sm border border-gray-100/40">
+        <div id="agent-input-container" class="w-full p-1 rounded-[24px] bg-white/40 border border-gray-300/60 shadow-[0_8px_30px_-12px_rgba(0,0,0,0.07)]">
+            <div class="bg-white rounded-[18px] shadow-sm border border-gray-100/40 overflow-hidden">
                 <!-- 主要输入区域 -->
-                <div class="p-3">
+                <div class="px-3.5 pt-2.5 pb-1">
                     <textarea
                         id="agent-input-textarea"
                         placeholder="在这里输入消息，按 Ctrl+Enter 发送"
-                        class="w-full h-15 resize-none border-none outline-none placeholder-gray-400 text-gray-700"
+                        class="w-full h-14 resize-none border-none outline-none placeholder-gray-400 text-gray-700 text-[13px] leading-relaxed"
                     ></textarea>
                 </div>
 
                 <!-- 工具栏 -->
-                <div class="flex items-start justify-between p-2 border-t border-gray-100">
-                    <!-- 左侧工具按钮 -->
-                    <div class="flex items-center space-x-3">
-                        <!-- 附件 -->
+                <div class="flex items-center justify-between px-2.5 py-1.5 border-t border-gray-100">
+                    <!-- 左侧：模型选择 + 推理模式 + 技能 + 附件 -->
+                    <div class="flex items-center gap-1.5 flex-wrap" style="row-gap: 0.2rem;">
+                        ${
+                            this.availableModels.length > 0
+                                ? `
+                        <select id="agent-input-model-select"
+                            class="agent-input-toolbar-control text-xs bg-gray-50 border border-gray-200 rounded-full px-2 py-0.5 text-gray-600 outline-none hover:border-gray-400 transition-colors cursor-pointer"
+                            style="max-width: 130px;">
+                            ${modelOptions}
+                        </select>
+                        <select id="agent-input-effort-select"
+                            class="agent-input-toolbar-control text-xs bg-gray-50 border border-gray-200 rounded-full px-2 py-0.5 text-gray-600 outline-none hover:border-gray-400 transition-colors cursor-pointer">
+                            ${effortOptions}
+                        </select>
+                        `
+                                : ''
+                        }
+                        ${
+                            this.availableModes.length > 1
+                                ? `
+                        <select id="agent-input-mode-select"
+                            class="agent-input-toolbar-control text-xs bg-gray-50 border border-gray-200 rounded-full px-2 py-0.5 text-gray-600 outline-none hover:border-gray-400 transition-colors cursor-pointer"
+                            style="max-width: 120px;">
+                            ${modeOptions}
+                        </select>
+                        `
+                                : ''
+                        }
+                        <!-- 技能选择按钮 -->
+                        <div class="relative">
+                            <button id="agent-input-skill-btn" class="agent-input-toolbar-control flex items-center justify-center gap-1 text-xs bg-gray-50 border border-gray-200 rounded-full px-2 py-0.5 text-gray-600 outline-none hover:border-purple-400 hover:text-purple-600 transition-colors cursor-pointer">
+                                <i class="fas fa-wand-magic-sparkles text-[10px]"></i>
+                                <span>技能</span>
+                            </button>
+                            <!-- 技能选择面板 -->
+                            <div id="agent-input-skill-panel" class="skill-panel-hidden">
+                                <div class="skill-panel-search">
+                                    <i class="fas fa-search text-gray-400 text-xs"></i>
+                                    <input id="agent-input-skill-search" type="text" placeholder="搜索技能" class="skill-panel-search-input" />
+                                </div>
+                                <div id="agent-input-skill-list" class="skill-panel-list"></div>
+                                <div class="skill-panel-footer">
+                                    <button id="agent-input-skill-install-btn" class="skill-panel-install-btn">
+                                        <i class="fas fa-plus text-[10px]"></i>
+                                        <span>安装技能</span>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
                         <div
                             id="agent-input-attached-file-list"
-                            class="flex flex-wrap items-center gap-1 w-full"
-                            style="row-gap: 0.3rem; overflow-x: auto;"
+                            class="flex flex-wrap items-center gap-1"
+                            style="row-gap: 0.2rem; overflow-x: auto;"
                         >
                             ${fileItems}
                         </div>
                     </div>
 
                     <!-- 右侧按钮 -->
-                    <div class="flex items-center space-x-2 mt-1">
+                    <div class="flex items-center gap-1.5">
                         <!-- 发送按钮 -->
-                        <button id="agent-input-submit-btn" class="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-50 rounded-full transition-colors">
-                            <i class="fas fa-arrow-up text-lg"></i>
+                        <button id="agent-input-submit-btn" class="p-1 text-gray-400 hover:text-blue-500 rounded-full transition-colors">
+                            <i class="fas fa-paper-plane text-sm"></i>
                         </button>
                         <!-- 停止按钮 -->
-                        <button id="agent-input-stop-btn" class="p-1.5 bg-red-500 hover:bg-red-600 text-white rounded-full px-4 transition-colors text-sm hidden">
-                            <i class="fas fa-stop"></i>
-                            <span class="ml-1">停止任务</span>
+                        <button id="agent-input-stop-btn" class="py-1 px-3 bg-red-500 hover:bg-red-600 text-white rounded-full transition-colors text-xs hidden">
+                            <i class="fas fa-stop text-[10px]"></i>
+                            <span class="ml-1">停止</span>
                         </button>
                     </div>
                 </div>
             </div>
         </div>
-        `
+        ${this.getAttribute('hide-disclaimer') !== null ? '' : '<p class="text-center text-[11px] text-gray-400 mt-1.5 select-none">内容由 AI 生成，请核实重要信息。</p>'}
+        `;
 
         this.setUpEventListeners();
         this.updateInputState();
+        this.updateModeIndicator();
+    }
+
+    toggleSkillPanel(forceClose = false) {
+        const panel = this.querySelector('#agent-input-skill-panel');
+        if (!panel) return;
+        if (forceClose || panel.classList.contains('skill-panel-visible')) {
+            panel.classList.remove('skill-panel-visible');
+            panel.classList.add('skill-panel-hidden');
+            this.skillPanelOpen = false;
+        } else {
+            this.loadSkills().then(() => {
+                this.renderSkillList();
+                panel.classList.remove('skill-panel-hidden');
+                panel.classList.add('skill-panel-visible');
+                this.skillPanelOpen = true;
+
+                const btn = this.querySelector('#agent-input-skill-btn');
+                if (btn) {
+                    const rect = btn.getBoundingClientRect();
+                    const panelHeight = Math.min(320, panel.scrollHeight);
+                    let left = rect.left;
+                    if (left + 280 > window.innerWidth) {
+                        left = window.innerWidth - 280 - 8;
+                    }
+                    panel.style.top = rect.top - panelHeight - 8 + 'px';
+                    panel.style.left = left + 'px';
+                }
+
+                const searchInput = this.querySelector('#agent-input-skill-search');
+                if (searchInput) {
+                    searchInput.value = '';
+                    searchInput.focus();
+                }
+            });
+        }
+    }
+
+    renderSkillList(filter = '') {
+        const listEl = this.querySelector('#agent-input-skill-list');
+        if (!listEl) return;
+        const lowerFilter = filter.toLowerCase();
+        const filtered = lowerFilter
+            ? this.availableSkills.filter(
+                  (s) => s.name.toLowerCase().includes(lowerFilter) || s.description.toLowerCase().includes(lowerFilter)
+              )
+            : this.availableSkills;
+
+        if (filtered.length === 0) {
+            listEl.innerHTML = `<div class="skill-panel-empty">${filter ? '未找到匹配的技能' : '暂无已安装的技能'}</div>`;
+        } else {
+            listEl.innerHTML = filtered
+                .map(
+                    (s) => `
+                <button class="skill-panel-item" data-skill-name="${s.name}">
+                    <div class="skill-panel-item-icon">
+                        <i class="fas fa-bolt text-purple-500 text-xs"></i>
+                    </div>
+                    <div class="skill-panel-item-info">
+                        <div class="skill-panel-item-name">${s.name}</div>
+                        <div class="skill-panel-item-desc">${s.description}</div>
+                    </div>
+                </button>
+            `
+                )
+                .join('');
+        }
+        this.bindSkillItemEvents();
+    }
+
+    bindSkillItemEvents() {
+        const items = this.querySelectorAll('.skill-panel-item');
+        const textarea = this.querySelector('#agent-input-textarea');
+        items.forEach((item) => {
+            item.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const skillName = item.dataset.skillName;
+                if (!skillName || !textarea) return;
+                const prefix = `/${skillName} `;
+                const cursorPos = textarea.selectionStart;
+                const textBefore = textarea.value.substring(0, cursorPos);
+                const textAfter = textarea.value.substring(cursorPos);
+                textarea.value = textBefore + prefix + textAfter;
+                const newPos = cursorPos + prefix.length;
+                textarea.setSelectionRange(newPos, newPos);
+                textarea.focus();
+                textarea.dispatchEvent(new Event('input', { bubbles: true }));
+                this.toggleSkillPanel(true);
+            });
+        });
+    }
+
+    async handleInstallSkill() {
+        try {
+            if (!window.fsAPI?.selectFile) return;
+            const filePaths = await window.fsAPI.selectFile();
+            if (!filePaths || filePaths.length === 0) return;
+
+            const zipPath = filePaths[0];
+            if (!zipPath.toLowerCase().endsWith('.zip')) {
+                window.notificationAPI?.sendNotification(
+                    'error',
+                    '技能管理',
+                    '文件格式错误',
+                    '请选择 .zip 格式的技能包'
+                );
+                return;
+            }
+
+            const result = await window.applicationRegistryAPI.callMainWorld(
+                'skillmgr',
+                'installSkillFromZip',
+                zipPath
+            );
+            if (result.success) {
+                window.notificationAPI?.sendNotification(
+                    'success',
+                    '技能管理',
+                    '安装成功',
+                    `技能 ${result.name} 已安装`
+                );
+                await this.loadSkills();
+                this.renderSkillList(this.querySelector('#agent-input-skill-search')?.value || '');
+            } else {
+                window.notificationAPI?.sendNotification('error', '技能管理', '安装失败', result.error || '未知错误');
+            }
+        } catch (err) {
+            console.error('Failed to install skill:', err);
+            window.notificationAPI?.sendNotification('error', '技能管理', '安装失败', err.message || '未知错误');
+        }
     }
 
     setUpEventListeners() {
-        const container = this.querySelector('#agent-input-container')
-        const textarea = this.querySelector('#agent-input-textarea')
-        const submitBtn = this.querySelector('#agent-input-submit-btn')
-        const stopBtn = this.querySelector('#agent-input-stop-btn')
-        const removeFileBtns = this.querySelectorAll('.agent-input-remove-file-btn')
+        const container = this.querySelector('#agent-input-container');
+        const textarea = this.querySelector('#agent-input-textarea');
+        const submitBtn = this.querySelector('#agent-input-submit-btn');
+        const stopBtn = this.querySelector('#agent-input-stop-btn');
+        const removeFileBtns = this.querySelectorAll('.agent-input-remove-file-btn');
+        const modelSelect = this.querySelector('#agent-input-model-select');
+        const effortSelect = this.querySelector('#agent-input-effort-select');
+        const modeSelect = this.querySelector('#agent-input-mode-select');
+
+        if (modelSelect) {
+            modelSelect.addEventListener('change', async () => {
+                this.selectedModel = modelSelect.value;
+                const currentModel = this.availableModels.find((m) => m.alias === this.selectedModel);
+                if (currentModel) {
+                    this.selectedReasoningEffort = currentModel.reasoning_effort || '';
+                    if (effortSelect) effortSelect.value = this.selectedReasoningEffort;
+                }
+                await updateSettingForModelChange(this.selectedModel, undefined);
+            });
+        }
+        if (effortSelect) {
+            effortSelect.addEventListener('change', async () => {
+                this.selectedReasoningEffort = effortSelect.value;
+                await updateSettingForModelChange(this.selectedModel, this.selectedReasoningEffort);
+            });
+        }
+        if (modeSelect) {
+            modeSelect.addEventListener('change', async () => {
+                this.setMode(modeSelect.value);
+            });
+        }
+
+        // 技能选择面板
+        const skillBtn = this.querySelector('#agent-input-skill-btn');
+        const skillSearch = this.querySelector('#agent-input-skill-search');
+
+        if (skillBtn) {
+            skillBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.toggleSkillPanel();
+            });
+        }
+        if (skillSearch) {
+            skillSearch.addEventListener('input', (e) => {
+                this.renderSkillList(e.target.value);
+            });
+            skillSearch.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape') {
+                    this.toggleSkillPanel(true);
+                    textarea.focus();
+                }
+                e.stopPropagation();
+            });
+            skillSearch.addEventListener('click', (e) => e.stopPropagation());
+        }
+
+        const skillInstallBtn = this.querySelector('#agent-input-skill-install-btn');
+        if (skillInstallBtn) {
+            skillInstallBtn.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                await this.handleInstallSkill();
+            });
+        }
+
+        if (!this._skillPanelDocClickBound) {
+            this._skillPanelDocClickBound = true;
+            document.addEventListener('click', (e) => {
+                if (this.skillPanelOpen) {
+                    const panel = this.querySelector('#agent-input-skill-panel');
+                    const btn = this.querySelector('#agent-input-skill-btn');
+                    if (panel && !panel.contains(e.target) && e.target !== btn && !btn?.contains(e.target)) {
+                        this.toggleSkillPanel(true);
+                    }
+                }
+            });
+        }
+
+        this.bindSkillItemEvents();
 
         // 提交消息的函数
         const handleSubmit = () => {
-            // 如果输入框被禁用，不允许提交
             if (this.isDisabled) {
                 return;
             }
 
-            const message = textarea.value.trim()
+            const message = textarea.value.trim();
             if (message === '') {
                 return;
             }
@@ -194,7 +588,9 @@ class AgentInput extends HTMLElement {
             const submitEvent = new CustomEvent('submit', {
                 detail: {
                     message: message,
-                    attachedFilePaths: this.attachedFilePaths
+                    attachedFilePaths: this.attachedFilePaths,
+                    selectedModel: this.selectedModel || undefined,
+                    reasoningEffort: this.selectedReasoningEffort || undefined
                 },
                 bubbles: true
             });
@@ -202,9 +598,9 @@ class AgentInput extends HTMLElement {
 
             textarea.value = '';
             this.clearAttachedFilePaths();
-        }
+        };
 
-        submitBtn.addEventListener('click', handleSubmit)
+        submitBtn.addEventListener('click', handleSubmit);
 
         // 停止按钮事件
         if (stopBtn) {
@@ -215,7 +611,7 @@ class AgentInput extends HTMLElement {
             });
         }
 
-        removeFileBtns.forEach(btn => {
+        removeFileBtns.forEach((btn) => {
             btn.addEventListener('click', (e) => {
                 this.removeFilePath(btn.dataset.file_path);
             });
@@ -224,7 +620,7 @@ class AgentInput extends HTMLElement {
         container.addEventListener('dragover', (e) => {
             e.preventDefault();
             e.stopPropagation();
-        })
+        });
 
         container.addEventListener('drop', async (e) => {
             e.preventDefault();
@@ -254,7 +650,7 @@ class AgentInput extends HTMLElement {
                 }
                 // 如果pathType为null（路径不存在），则不执行任何操作
             }
-        })
+        });
 
         // Ctrl+Enter 快捷键
         textarea.addEventListener('keydown', (e) => {
@@ -268,21 +664,22 @@ class AgentInput extends HTMLElement {
                 e.preventDefault();
                 handleSubmit();
             }
-        })
+        });
 
         textarea.addEventListener('input', (e) => {
-            this.dispatchEvent(new CustomEvent('contentChanged', {
-                detail: {
-                    value: e.target.value
-                },
-                bubbles: true
-            }));
-        })
+            this.dispatchEvent(
+                new CustomEvent('contentChanged', {
+                    detail: {
+                        value: e.target.value
+                    },
+                    bubbles: true
+                })
+            );
+        });
     }
 }
 
 class ApplicationAgentInput extends HTMLElement {
-
     /**
      * 这个组件用于显示嵌入在应用之中的悬浮AI输入框
      */
@@ -426,7 +823,7 @@ class ApplicationAgentInput extends HTMLElement {
 
             </div>
         </div>
-        `
+        `;
 
         const textarea = this.querySelector('#application-agent-input-textarea');
         const container = this.querySelector('#input-container');
@@ -512,9 +909,7 @@ class ApplicationAgentInput extends HTMLElement {
         // 初始化显示状态
         this.updateDisplay();
     }
-
 }
-
 
 customElements.define('agent-input', AgentInput);
 customElements.define('application-agent-input', ApplicationAgentInput);

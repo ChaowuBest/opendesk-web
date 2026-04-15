@@ -32,18 +32,14 @@ interface ExaSearchResponse {
 }
 
 const ExaSearchArgsSchema = z.object({
-    query: z.string().describe('搜索关键词'),
+    query: z.string().describe('搜索关键词')
 });
 
 export class ExaSearchTool extends BaseTool<typeof ExaSearchArgsSchema> {
     private apiKey: string;
 
     constructor(apiKey: string) {
-        super(
-            'ExaSearch',
-            '使用Exa搜索引擎搜索网页信息，返回搜索结果的标题、URL和摘要',
-            ExaSearchArgsSchema,
-        );
+        super('ExaSearch', '使用Exa搜索引擎搜索网页信息，返回搜索结果的标题、URL和摘要', ExaSearchArgsSchema);
         this.apiKey = apiKey;
         this.setExecutor(this.search.bind(this));
     }
@@ -67,7 +63,12 @@ export class ExaSearchTool extends BaseTool<typeof ExaSearchArgsSchema> {
             body.push(chalk.redBright('  ' + truncText(toolcall.result, width - 10)));
         }
 
-        return new Card({ icon: '🔍', title: '搜索 (Exa)', status: statusDisplay(toolcall.status), body }).render(width);
+        return new Card({
+            icon: '🔍',
+            title: '搜索 (Exa)',
+            status: statusDisplay(toolcall.status),
+            body
+        }).render(width);
     }
 
     private async search(args: z.output<typeof ExaSearchArgsSchema>): Promise<string> {
@@ -91,22 +92,29 @@ export class ExaSearchTool extends BaseTool<typeof ExaSearchArgsSchema> {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
-        const fetchOptions: { method: string; headers: Record<string, string>; body: string; signal: AbortSignal; dispatcher?: Dispatcher } = {
+        const fetchOptions: {
+            method: string;
+            headers: Record<string, string>;
+            body: string;
+            signal: AbortSignal;
+            dispatcher?: Dispatcher;
+        } = {
             method: 'POST',
             headers: {
                 'x-api-key': this.apiKey,
-                'Content-Type': 'application/json',
+                'Content-Type': 'application/json'
             },
             body: JSON.stringify({
                 query,
                 numResults: DEFAULT_RESULT_COUNT,
                 type: 'auto',
-                contents: { summary: true },
+                contents: { summary: true }
             }),
-            signal: controller.signal,
+            signal: controller.signal
         };
 
-        const proxyUrl = process.env.HTTPS_PROXY || process.env.https_proxy || process.env.HTTP_PROXY || process.env.http_proxy;
+        const proxyUrl =
+            process.env.HTTPS_PROXY || process.env.https_proxy || process.env.HTTP_PROXY || process.env.http_proxy;
         if (proxyUrl) {
             fetchOptions.dispatcher = new ProxyAgent(proxyUrl);
         }
@@ -115,7 +123,7 @@ export class ExaSearchTool extends BaseTool<typeof ExaSearchArgsSchema> {
             const response = await fetch(EXA_API_URL, fetchOptions);
 
             if (!response.ok) {
-                const errorData = await response.json().catch(() => ({})) as Record<string, string>;
+                const errorData = (await response.json().catch(() => ({}))) as Record<string, string>;
                 const msg = errorData.message || errorData.error || response.statusText;
                 throw new Error(`Exa API 请求失败，HTTP ${response.status}: ${msg}`);
             }

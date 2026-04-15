@@ -21,7 +21,7 @@ description: 介绍Skills的管理：添加、删除、查询和刷新等方法
 
 ## Skill 添加
 
-当前我们支持使用本Skill内置的addSkillFromPath工具从本地目录添加Skill。
+当前我们支持使用本Skill内置的addSkillFromDirectory工具从本地目录添加Skill。
 你也可以使用addSkillFromUrl工具从URL下载并安装Skill。
 对于GitHub上的Skill，可以使用addSkillFromGitHubUrl工具直接从GitHub仓库安装。
 
@@ -29,7 +29,7 @@ description: 介绍Skills的管理：添加、删除、查询和刷新等方法
 
 ### Skill 添加方式
 
-1. **从本地目录添加**：使用addSkillFromPath工具，指定包含SKILL.md的本地目录路径
+1. **从本地目录添加**：使用addSkillFromDirectory工具，指定包含SKILL.md的本地目录路径
 2. **从URL下载**：使用addSkillFromUrl工具，指定Skill的下载URL
 3. **从GitHub安装**：使用addSkillFromGitHubUrl工具，指定GitHub仓库URL
 4. **从Registry搜索安装**（TUI模式）：使用/skills命令打开管理界面，支持从skill0、SkillsMP、ClawHub等平台搜索和安装技能
@@ -59,7 +59,7 @@ license: MIT
 
 ## Skill 删除
 
-使用本Skill内置的deleteSkill工具可以删除已经安装的Skill。
+使用本Skill内置的deleteSkills工具可以批量删除已经安装的Skill。你可以传入一个或多个skillId。
 
 ## Skill 刷新
 
@@ -75,4 +75,4 @@ license: MIT
 如果用户请求在当前会话中测试你添加或更新的Skill的话，你应当提醒他们通过\`/new\`命令
 或者\`Ctrl+N\`快捷键来打开新的对话来测试。这是因为在已有的对话中修改工具的定义会导致上下文
 缓存失效，因此我们不会在已有的对话上下文中调整工具的定义。
-`
+`;

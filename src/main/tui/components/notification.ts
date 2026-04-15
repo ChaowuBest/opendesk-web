@@ -1,10 +1,10 @@
-import { type Component, type OverlayHandle, Box, Text, matchesKey, Key } from "@mariozechner/pi-tui";
-import { defaultSelectListTheme } from "../theme";
-import type { OpenDeskTUI } from "../entry";
-import chalk from "chalk";
-import { visibleWidth } from "@mariozechner/pi-tui";
-import { InfoOverlay } from "./notice";
-import { SelectTable, type SelectRow } from "./selecttable";
+import { type Component, type OverlayHandle, Box, Text, matchesKey, Key } from '@mariozechner/pi-tui';
+import { defaultSelectListTheme } from '../theme';
+import type { OpenDeskTUI } from '../entry';
+import chalk from 'chalk';
+import { visibleWidth } from '@mariozechner/pi-tui';
+import { InfoOverlay } from './notice';
+import { SelectTable, type SelectRow } from './selecttable';
 
 // ─── Notification Types & Store ──────────────────────────────
 
@@ -55,10 +55,16 @@ export class NotificationStore {
     /**
      * 添加一条通知
      */
-    push(type: NotificationType, source: string, title: string, message: string, options?: {
-        priority?: NotificationPriority;
-        group?: string;
-    }): NotificationItem {
+    push(
+        type: NotificationType,
+        source: string,
+        title: string,
+        message: string,
+        options?: {
+            priority?: NotificationPriority;
+            group?: string;
+        }
+    ): NotificationItem {
         const item: NotificationItem = {
             id: crypto.randomUUID(),
             type,
@@ -68,7 +74,7 @@ export class NotificationStore {
             message,
             timestamp: Date.now(),
             read: false,
-            group: options?.group,
+            group: options?.group
         };
 
         this.items.push(item);
@@ -89,7 +95,7 @@ export class NotificationStore {
     onNotification(listener: NotificationListener): () => void {
         this.listeners.push(listener);
         return () => {
-            this.listeners = this.listeners.filter(l => l !== listener);
+            this.listeners = this.listeners.filter((l) => l !== listener);
         };
     }
 
@@ -99,13 +105,17 @@ export class NotificationStore {
     onChange(listener: () => void): () => void {
         this.changeListeners.push(listener);
         return () => {
-            this.changeListeners = this.changeListeners.filter(l => l !== listener);
+            this.changeListeners = this.changeListeners.filter((l) => l !== listener);
         };
     }
 
     private notifyChange(): void {
         for (const listener of this.changeListeners) {
-            try { listener(); } catch { /* ignore */ }
+            try {
+                listener();
+            } catch {
+                /* ignore */
+            }
         }
     }
 
@@ -120,14 +130,19 @@ export class NotificationStore {
      * 未读通知数
      */
     getUnreadCount(): number {
-        return this.items.filter(i => !i.read).length;
+        return this.items.filter((i) => !i.read).length;
     }
 
     /**
      * 按优先级获取未读数
      */
     getUnreadCountByPriority(): Record<NotificationPriority, number> {
-        const counts: Record<NotificationPriority, number> = { low: 0, normal: 0, high: 0, urgent: 0 };
+        const counts: Record<NotificationPriority, number> = {
+            low: 0,
+            normal: 0,
+            high: 0,
+            urgent: 0
+        };
         for (const item of this.items) {
             if (!item.read) {
                 counts[item.priority]++;
@@ -140,7 +155,7 @@ export class NotificationStore {
      * 标记单条为已读
      */
     markRead(id: string): void {
-        const item = this.items.find(i => i.id === id);
+        const item = this.items.find((i) => i.id === id);
         if (item) {
             item.read = true;
             this.notifyChange();
@@ -161,7 +176,7 @@ export class NotificationStore {
      * 删除单条通知
      */
     remove(id: string): void {
-        this.items = this.items.filter(i => i.id !== id);
+        this.items = this.items.filter((i) => i.id !== id);
         this.notifyChange();
     }
 
@@ -180,8 +195,8 @@ export class NotificationStore {
         if (this.items.length <= this.maxItems) return;
 
         // 先删已读
-        const readItems = this.items.filter(i => i.read);
-        const unreadItems = this.items.filter(i => !i.read);
+        const readItems = this.items.filter((i) => i.read);
+        const unreadItems = this.items.filter((i) => !i.read);
 
         if (unreadItems.length >= this.maxItems) {
             // 未读都满了，只保留最新的 maxItems 条
@@ -201,20 +216,20 @@ export class NotificationStore {
 const ICON_MAP: Record<NotificationType, string> = {
     info: '✅',
     warning: '⚠️',
-    error: '❌',
+    error: '❌'
 };
 
 const COLOR_MAP: Record<NotificationType, (text: string) => string> = {
     info: (t: string) => chalk.green(t),
     warning: (t: string) => chalk.yellow(t),
-    error: (t: string) => chalk.red(t),
+    error: (t: string) => chalk.red(t)
 };
 
 const PRIORITY_BADGE: Record<NotificationPriority, string> = {
     low: '',
     normal: '',
     high: chalk.bgYellow.black(' ! '),
-    urgent: chalk.bgRed.white(' ‼ '),
+    urgent: chalk.bgRed.white(' ‼ ')
 };
 
 /**
@@ -227,7 +242,9 @@ class ToastComponent implements Component {
         this.item = item;
     }
 
-    invalidate(): void { /* noop */ }
+    invalidate(): void {
+        /* noop */
+    }
 
     render(width: number): string[] {
         const { type, source, title, message, priority } = this.item;
@@ -345,7 +362,7 @@ export class ToastManager {
         const termWidth = this.openDeskTUI.tui.terminal.columns;
         const toastWidth = Math.min(50, termWidth - 4);
 
-        const offsetY = this.activeToasts.length * 6
+        const offsetY = this.activeToasts.length * 6;
 
         // showOverlay 会自动将焦点转移到 overlay 组件，需要先保存当前焦点
         const previousFocus = this.openDeskTUI.tui['focusedComponent'] as Component | null;
@@ -355,7 +372,7 @@ export class ToastManager {
             maxHeight: 8,
             anchor: 'top-left',
             offsetX: 0,
-            offsetY: offsetY,
+            offsetY: offsetY
         });
 
         // Toast 是纯展示型组件，不应抢占焦点，立即恢复之前的焦点
@@ -368,7 +385,7 @@ export class ToastManager {
             low: 2000,
             normal: 3000,
             high: 5000,
-            urgent: 8000,
+            urgent: 8000
         };
 
         const timer = setTimeout(() => {
@@ -380,7 +397,7 @@ export class ToastManager {
     }
 
     private removeToast(id: string): void {
-        const index = this.activeToasts.findIndex(t => t.item.id === id);
+        const index = this.activeToasts.findIndex((t) => t.item.id === id);
         if (index !== -1) {
             const toast = this.activeToasts[index];
             clearTimeout(toast.timer);
@@ -394,7 +411,9 @@ export class ToastManager {
 // ─── Notification Center Overlay (通知中心) ─────────────────
 
 class Splitter implements Component {
-    invalidate(): void { /* noop */ }
+    invalidate(): void {
+        /* noop */
+    }
     render(width: number): string[] {
         return [chalk.hex('#b6b6b6')('━'.repeat(width))];
     }
@@ -442,10 +461,10 @@ export class NotificationCenterOverlay implements Component {
         const FILTER_LABELS: Record<typeof this.filter, string> = {
             all: '全部',
             unread: '未读',
-            read: '已读',
+            read: '已读'
         };
         const filterLabel = chalk.dim(` [${FILTER_LABELS[this.filter]}]`);
-        return chalk.bold(`🔔 通知中心`) + chalk.dim(` (${unreadCount}/${total})`) + filterLabel;
+        return chalk.bold(`🪧 通知中心`) + chalk.dim(` (${unreadCount}/${total})`) + filterLabel;
     }
 
     private rebuildBox(): void {
@@ -465,19 +484,18 @@ export class NotificationCenterOverlay implements Component {
 
         // 按筛选条件过滤
         if (this.filter === 'unread') {
-            notifications = notifications.filter(n => !n.read);
+            notifications = notifications.filter((n) => !n.read);
         } else if (this.filter === 'read') {
-            notifications = notifications.filter(n => n.read);
+            notifications = notifications.filter((n) => n.read);
         }
 
         if (notifications.length === 0) {
-            const hint = this.filter === 'unread' ? '暂无未读通知'
-                       : this.filter === 'read' ? '暂无已读通知'
-                       : '暂无通知';
+            const hint =
+                this.filter === 'unread' ? '暂无未读通知' : this.filter === 'read' ? '暂无已读通知' : '暂无通知';
             return [{ value: '__empty__', labels: ['', '', chalk.dim(hint), ''] }];
         }
 
-        return notifications.map(item => {
+        return notifications.map((item) => {
             const icon = ICON_MAP[item.type];
             const readMark = item.read ? '○' : '●';
             const priorityMark = item.priority === 'urgent' ? ' ‼' : item.priority === 'high' ? ' !' : '';
@@ -485,7 +503,7 @@ export class NotificationCenterOverlay implements Component {
             const desc = `@${item.source}  ${item.message.slice(0, 60)}${item.message.length > 60 ? '...' : ''}`;
             return {
                 value: item.id,
-                labels: [`${readMark} ${icon}`, titleCol, desc, formatRelativeTime(item.timestamp)],
+                labels: [`${readMark} ${icon}`, titleCol, desc, formatRelativeTime(item.timestamp)]
             };
         });
     }
@@ -524,7 +542,7 @@ export class NotificationCenterOverlay implements Component {
         if (matchesKey(keyData, Key.enter)) {
             const selected = this.table.innerList.getSelectedItem();
             if (selected && selected.value !== '__empty__') {
-                const notification = store.getAll().find(n => n.id === selected.value);
+                const notification = store.getAll().find((n) => n.id === selected.value);
                 if (notification) {
                     store.markRead(notification.id);
                     this.refreshList();
@@ -537,9 +555,11 @@ export class NotificationCenterOverlay implements Component {
                             `来源: ${notification.source}`,
                             `优先级: ${notification.priority}`,
                             `时间: ${new Date(notification.timestamp).toLocaleString()}`,
-                            notification.group ? `分组: ${notification.group}` : '',
-                        ].filter(Boolean).join('\n'),
-                        closeLabel: "确定"
+                            notification.group ? `分组: ${notification.group}` : ''
+                        ]
+                            .filter(Boolean)
+                            .join('\n'),
+                        closeLabel: '确定'
                     });
                     info.show(() => {
                         // InfoOverlay 关闭后，将焦点还给通知中心
@@ -578,7 +598,7 @@ export class NotificationCenterOverlay implements Component {
             const cycle: Record<typeof this.filter, typeof this.filter> = {
                 all: 'unread',
                 unread: 'read',
-                read: 'all',
+                read: 'all'
             };
             this.filter = cycle[this.filter];
             this.refreshList();
@@ -610,7 +630,7 @@ export class NotificationCenterOverlay implements Component {
         this.overlayHandle = this.openDeskTUI.tui.showOverlay(this, {
             width: overlayWidth,
             maxHeight: overlayMaxHeight,
-            anchor: 'center',
+            anchor: 'center'
         });
 
         this.openDeskTUI.hasOpenOverlay = true;
@@ -632,12 +652,12 @@ export function getNotificationBadge(): string {
 
     const byPriority = store.getUnreadCountByPriority();
     if (byPriority.urgent > 0) {
-        return chalk.bgRed.white(` 🔔 ${unread} `);
+        return chalk.bgRed.white(` 🪧 ${unread} `);
     }
     if (byPriority.high > 0) {
-        return chalk.bgYellow.black(` 🔔 ${unread} `);
+        return chalk.bgYellow.black(` 🪧 ${unread} `);
     }
-    return chalk.hex('#d4d4d4')(` 🔔 ${unread} `);
+    return chalk.hex('#d4d4d4')(` 🪧 ${unread} `);
 }
 
 // ─── Utility functions ──────────────────────────────────────
@@ -656,9 +676,12 @@ function wrapText(text: string, maxWidth: number): string[] {
         let currentWidth = 0;
         for (let i = 0; i < remaining.length; i++) {
             const charCode = remaining.charCodeAt(i);
-            const charWidth = (charCode >= 0x4e00 && charCode <= 0x9fff) ||
-                              (charCode >= 0x3000 && charCode <= 0x303f) ||
-                              (charCode >= 0xff00 && charCode <= 0xffef) ? 2 : 1;
+            const charWidth =
+                (charCode >= 0x4e00 && charCode <= 0x9fff) ||
+                (charCode >= 0x3000 && charCode <= 0x303f) ||
+                (charCode >= 0xff00 && charCode <= 0xffef)
+                    ? 2
+                    : 1;
             if (currentWidth + charWidth > maxWidth) break;
             currentWidth += charWidth;
             cutPoint = i + 1;

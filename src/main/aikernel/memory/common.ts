@@ -9,21 +9,15 @@
  * See the Mulan PSL v2 for more details.
  */
 
-
 export type MemoryScope = 'global' | 'workspace';
 
-export type MemoryCategory =
-    | 'user_preference'
-    | 'important_fact'
-    | 'key_decision'
-    | 'useful_context'
-    | string;
+export type MemoryCategory = 'user_preference' | 'important_fact' | 'key_decision' | 'useful_context' | string;
 
 export const MEMORY_CATEGORY_LABELS: Record<string, string> = {
-    'user_preference': '用户偏好',
-    'important_fact': '重要事实',
-    'key_decision': '关键决策',
-    'useful_context': '有用上下文',
+    user_preference: '用户偏好',
+    important_fact: '重要事实',
+    key_decision: '关键决策',
+    useful_context: '有用上下文'
 };
 
 export interface MemoryMeta {

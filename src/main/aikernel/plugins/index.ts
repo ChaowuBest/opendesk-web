@@ -23,7 +23,7 @@ export {
     loadPlugins,
     resetOpenClawShim,
     getExtensionsDir,
-    invalidatePluginRequireCache,
+    invalidatePluginRequireCache
 } from './manager.js';
 
 // Types
@@ -51,7 +51,7 @@ export type {
     ChannelMessagingAdapter,
     ChannelPlugin,
     PluginLogger,
-    OpenClawPluginApi,
+    OpenClawPluginApi
 } from './types.js';
 
 // OpenClaw compatibility layer

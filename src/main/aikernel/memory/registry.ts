@@ -16,13 +16,7 @@ import { getAppDirectory } from '../../utils/setting.js';
 import { logger } from '../../utils/logger.js';
 import { LLM } from '../llm.js';
 import { UserMessage } from '../messages.js';
-import {
-    type MemoryMeta,
-    type MemoryIndex,
-    type MemoryScope,
-    createEmptyIndex,
-} from './common.js';
-
+import { type MemoryMeta, type MemoryIndex, type MemoryScope, createEmptyIndex } from './common.js';
 
 // ─── LLM response schemas ──────────────────────────
 
@@ -33,25 +27,25 @@ const DeduplicateResultSchema = z.object({
     merged_name: z.string().optional(),
     merged_keywords: z.array(z.string()).optional(),
     merged_summary: z.string().optional(),
-    reason: z.string(),
+    reason: z.string()
 });
 
 const SearchRerankSchema = z.object({
-    results: z.array(z.object({
-        uid: z.string(),
-        relevance: z.number().min(0).max(10),
-        reason: z.string(),
-    })),
+    results: z.array(
+        z.object({
+            uid: z.string(),
+            relevance: z.number().min(0).max(10),
+            reason: z.string()
+        })
+    )
 });
 
 type DeduplicateResult = z.infer<typeof DeduplicateResultSchema>;
 type SearchRerankResult = z.infer<typeof SearchRerankSchema>;
 
-
 export type MemoryOpType = 'add' | 'search' | 'forget';
 
 export class MemoryRegistry {
-
     private static instance: MemoryRegistry | null = null;
     private workspace: string;
     private globalDirOverride?: string;
@@ -62,9 +56,15 @@ export class MemoryRegistry {
     /** 当前批量操作中新增/更新的记忆计数 */
     private _opCounter = 0;
 
-    get busyOp(): MemoryOpType | null { return this._busyOp; }
-    get opCounter(): number { return this._opCounter; }
-    resetOpCounter() { this._opCounter = 0; }
+    get busyOp(): MemoryOpType | null {
+        return this._busyOp;
+    }
+    get opCounter(): number {
+        return this._opCounter;
+    }
+    resetOpCounter() {
+        this._opCounter = 0;
+    }
 
     acquireLock(op: MemoryOpType): boolean {
         if (this._busyOp) return false;
@@ -154,19 +154,20 @@ export class MemoryRegistry {
      */
     putMemory(
         scope: MemoryScope,
-        meta: Omit<MemoryMeta, 'created_at' | 'updated_at'> & { created_at?: string; updated_at?: string },
-        content: string,
+        meta: Omit<MemoryMeta, 'created_at' | 'updated_at'> & {
+            created_at?: string;
+            updated_at?: string;
+        },
+        content: string
     ): MemoryMeta {
         const index = this.loadIndex(scope);
         const now = new Date().toISOString();
 
-        const existingIdx = index.memories.findIndex(m => m.uid === meta.uid);
+        const existingIdx = index.memories.findIndex((m) => m.uid === meta.uid);
         const fullMeta: MemoryMeta = {
             ...meta,
-            created_at: existingIdx >= 0
-                ? index.memories[existingIdx].created_at
-                : (meta.created_at ?? now),
-            updated_at: now,
+            created_at: existingIdx >= 0 ? index.memories[existingIdx].created_at : (meta.created_at ?? now),
+            updated_at: now
         };
 
         if (existingIdx >= 0) {
@@ -183,7 +184,7 @@ export class MemoryRegistry {
     getMemory(uid: string): { meta: MemoryMeta; content: string; scope: MemoryScope } | undefined {
         for (const scope of ['workspace', 'global'] as MemoryScope[]) {
             const index = this.loadIndex(scope);
-            const meta = index.memories.find(m => m.uid === uid);
+            const meta = index.memories.find((m) => m.uid === uid);
             if (meta) {
                 const contentPath = this.getContentPath(scope, uid);
                 const content = fs.existsSync(contentPath) ? fs.readFileSync(contentPath, 'utf-8') : '';
@@ -196,7 +197,7 @@ export class MemoryRegistry {
     deleteMemory(uid: string): boolean {
         for (const scope of ['workspace', 'global'] as MemoryScope[]) {
             const index = this.loadIndex(scope);
-            const idx = index.memories.findIndex(m => m.uid === uid);
+            const idx = index.memories.findIndex((m) => m.uid === uid);
             if (idx >= 0) {
                 index.memories.splice(idx, 1);
                 this.saveIndex(scope, index);
@@ -239,7 +240,7 @@ export class MemoryRegistry {
                 let score = 0;
                 for (const token of queryTokens) {
                     if (meta.name.toLowerCase().includes(token)) score += 3;
-                    if (meta.keywords.some(k => k.toLowerCase().includes(token))) score += 2;
+                    if (meta.keywords.some((k) => k.toLowerCase().includes(token))) score += 2;
                     if (meta.summary.toLowerCase().includes(token)) score += 1;
                     if (meta.category.toLowerCase().includes(token)) score += 1;
                 }
@@ -263,7 +264,7 @@ export class MemoryRegistry {
 
         // 关键词无结果时，使用全部记忆作为候选
         if (candidates.length === 0) {
-            candidates = this.listAllMemories().map(m => ({ ...m, score: 0 }));
+            candidates = this.listAllMemories().map((m) => ({ ...m, score: 0 }));
         }
 
         if (candidates.length === 0) {
@@ -273,9 +274,12 @@ export class MemoryRegistry {
         // 取前20条交给 LLM 重排
         const topCandidates = candidates.slice(0, 20);
 
-        const candidateDescriptions = topCandidates.map((c, i) =>
-            `[${i}] uid=${c.meta.uid} | 名称: ${c.meta.name} | 分类: ${c.meta.category} | 关键词: ${c.meta.keywords.join(',')} | 摘要: ${c.meta.summary}`
-        ).join('\n');
+        const candidateDescriptions = topCandidates
+            .map(
+                (c, i) =>
+                    `[${i}] uid=${c.meta.uid} | 名称: ${c.meta.name} | 分类: ${c.meta.category} | 关键词: ${c.meta.keywords.join(',')} | 摘要: ${c.meta.summary}`
+            )
+            .join('\n');
 
         const prompt = `你是一个记忆检索助手。用户正在搜索相关记忆，请根据语义相关性对以下候选记忆进行评分。
 
@@ -303,16 +307,16 @@ ${candidateDescriptions}
 只返回 relevance >= 3 的记忆。`;
 
         try {
-            const response = await LLM.askForObjectWithSchema(
+            const response = (await LLM.askForObjectWithSchema(
                 new UserMessage(prompt),
-                SearchRerankSchema,
-            ) as SearchRerankResult;
+                SearchRerankSchema
+            )) as SearchRerankResult;
 
-            const uidToCandidate = new Map(topCandidates.map(c => [c.meta.uid, c]));
+            const uidToCandidate = new Map(topCandidates.map((c) => [c.meta.uid, c]));
             return response.results
-                .filter(r => r.relevance >= 3)
+                .filter((r) => r.relevance >= 3)
                 .sort((a, b) => b.relevance - a.relevance)
-                .map(r => {
+                .map((r) => {
                     const c = uidToCandidate.get(r.uid);
                     if (!c) return null;
                     return { scope: c.scope, meta: c.meta, relevance: r.relevance };
@@ -320,10 +324,10 @@ ${candidateDescriptions}
                 .filter((r): r is NonNullable<typeof r> => r !== null);
         } catch (err) {
             logger.warn(`LLM rerank failed, falling back to keyword search: ${err}`);
-            return candidates.slice(0, 10).map(c => ({
+            return candidates.slice(0, 10).map((c) => ({
                 scope: c.scope,
                 meta: c.meta,
-                relevance: Math.min(10, c.score),
+                relevance: Math.min(10, c.score)
             }));
         }
     }
@@ -339,8 +343,8 @@ ${candidateDescriptions}
      */
     private keywordSimilarity(a: string[], b: string[]): number {
         if (a.length === 0 && b.length === 0) return 0;
-        const setA = new Set(a.map(k => k.toLowerCase()));
-        const setB = new Set(b.map(k => k.toLowerCase()));
+        const setA = new Set(a.map((k) => k.toLowerCase()));
+        const setB = new Set(b.map((k) => k.toLowerCase()));
         let intersection = 0;
         for (const k of setA) {
             if (setB.has(k)) intersection++;
@@ -367,7 +371,7 @@ ${candidateDescriptions}
         keywords: string[],
         summary: string,
         category: string,
-        sourceTaskId?: string,
+        sourceTaskId?: string
     ): Promise<{ action: 'created' | 'updated' | 'skipped'; uid: string; name: string }> {
         const result = await this._smartAddInner(scope, name, content, keywords, summary, category, sourceTaskId);
         if (result.action !== 'skipped') {
@@ -383,7 +387,7 @@ ${candidateDescriptions}
         keywords: string[],
         summary: string,
         category: string,
-        sourceTaskId?: string,
+        sourceTaskId?: string
     ): Promise<{ action: 'created' | 'updated' | 'skipped'; uid: string; name: string }> {
         const existingMemories = this.listMemories(scope);
 
@@ -395,14 +399,11 @@ ${candidateDescriptions}
 
         // 快速预筛选：只挑出与新记忆有关键词或名称重叠的候选项
         const candidates = existingMemories
-            .map(m => ({
+            .map((m) => ({
                 meta: m,
-                score: Math.max(
-                    this.keywordSimilarity(keywords, m.keywords),
-                    this.nameSimilarity(name, m.name),
-                ),
+                score: Math.max(this.keywordSimilarity(keywords, m.keywords), this.nameSimilarity(name, m.name))
             }))
-            .filter(c => c.score > 0.15)
+            .filter((c) => c.score > 0.15)
             .sort((a, b) => b.score - a.score)
             .slice(0, 5);
 
@@ -414,12 +415,15 @@ ${candidateDescriptions}
         }
 
         // 只把候选项（而非全量记忆）发给 LLM 做精确判重
-        const existingDescriptions = candidates.map(c => {
-            const m = c.meta;
-            const existingContent = this.loadMemoryContent(m.uid) ?? '';
-            const contentPreview = existingContent.length > 200 ? existingContent.slice(0, 200) + '...' : existingContent;
-            return `- uid=${m.uid} | 名称: ${m.name} | 关键词: ${m.keywords.join(',')} | 摘要: ${m.summary}\n  内容摘要: ${contentPreview}`;
-        }).join('\n');
+        const existingDescriptions = candidates
+            .map((c) => {
+                const m = c.meta;
+                const existingContent = this.loadMemoryContent(m.uid) ?? '';
+                const contentPreview =
+                    existingContent.length > 200 ? existingContent.slice(0, 200) + '...' : existingContent;
+                return `- uid=${m.uid} | 名称: ${m.name} | 关键词: ${m.keywords.join(',')} | 摘要: ${m.summary}\n  内容摘要: ${contentPreview}`;
+            })
+            .join('\n');
 
         const prompt = `你是一个记忆管理助手。现在要添加一条新记忆，请判断它与现有记忆的关系。
 
@@ -453,27 +457,42 @@ ${existingDescriptions}
 \`\`\``;
 
         try {
-            const result = await LLM.askForObjectWithSchema(
+            const result = (await LLM.askForObjectWithSchema(
                 new UserMessage(prompt),
-                DeduplicateResultSchema,
-            ) as DeduplicateResult;
+                DeduplicateResultSchema
+            )) as DeduplicateResult;
 
             switch (result.action) {
                 case 'update': {
                     const targetUid = result.target_uid;
                     if (!targetUid) {
                         const uid = this.generateUid();
-                        this.putMemory(scope, { uid, name, keywords, summary, category, source_task_id: sourceTaskId }, content);
+                        this.putMemory(
+                            scope,
+                            {
+                                uid,
+                                name,
+                                keywords,
+                                summary,
+                                category,
+                                source_task_id: sourceTaskId
+                            },
+                            content
+                        );
                         return { action: 'created', uid, name };
                     }
-                    this.putMemory(scope, {
-                        uid: targetUid,
-                        name: result.merged_name ?? name,
-                        keywords: result.merged_keywords ?? keywords,
-                        summary: result.merged_summary ?? summary,
-                        category,
-                        source_task_id: sourceTaskId,
-                    }, result.merged_content ?? content);
+                    this.putMemory(
+                        scope,
+                        {
+                            uid: targetUid,
+                            name: result.merged_name ?? name,
+                            keywords: result.merged_keywords ?? keywords,
+                            summary: result.merged_summary ?? summary,
+                            category,
+                            source_task_id: sourceTaskId
+                        },
+                        result.merged_content ?? content
+                    );
                     return { action: 'updated', uid: targetUid, name: result.merged_name ?? name };
                 }
                 case 'skip':
@@ -481,7 +500,11 @@ ${existingDescriptions}
                 case 'create':
                 default: {
                     const uid = this.generateUid();
-                    this.putMemory(scope, { uid, name, keywords, summary, category, source_task_id: sourceTaskId }, content);
+                    this.putMemory(
+                        scope,
+                        { uid, name, keywords, summary, category, source_task_id: sourceTaskId },
+                        content
+                    );
                     return { action: 'created', uid, name };
                 }
             }
@@ -504,9 +527,11 @@ ${existingDescriptions}
             return { deleted: [] };
         }
 
-        const memDescriptions = allMemories.map((m, i) =>
-            `[${i}] uid=${m.meta.uid} | 范围: ${m.scope} | 名称: ${m.meta.name} | 摘要: ${m.meta.summary}`
-        ).join('\n');
+        const memDescriptions = allMemories
+            .map(
+                (m, i) => `[${i}] uid=${m.meta.uid} | 范围: ${m.scope} | 名称: ${m.meta.name} | 摘要: ${m.meta.summary}`
+            )
+            .join('\n');
 
         const prompt = `你是一个记忆管理助手。用户想要删除一些记忆。
 
@@ -527,14 +552,14 @@ ${memDescriptions}
 只返回确实匹配用户删除意图的记忆（relevance >= 7）。如果没有匹配的，返回空 results 数组。`;
 
         try {
-            const response = await LLM.askForObjectWithSchema(
+            const response = (await LLM.askForObjectWithSchema(
                 new UserMessage(prompt),
-                SearchRerankSchema,
-            ) as SearchRerankResult;
+                SearchRerankSchema
+            )) as SearchRerankResult;
 
             const deleted: { uid: string; name: string; scope: MemoryScope }[] = [];
-            for (const r of response.results.filter(r => r.relevance >= 7)) {
-                const mem = allMemories.find(m => m.meta.uid === r.uid);
+            for (const r of response.results.filter((r) => r.relevance >= 7)) {
+                const mem = allMemories.find((m) => m.meta.uid === r.uid);
                 if (mem && this.deleteMemory(r.uid)) {
                     deleted.push({ uid: r.uid, name: mem.meta.name, scope: mem.scope });
                 }

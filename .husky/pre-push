@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+
+echo "Running pre-push checks..."
+
+npm run build || {
+  echo "Build failed"
+  exit 1
+}
+
+npm run check:architecture || {
+  echo "Architecture check failed"
+  exit 1
+}
+
+echo "Pre-push checks passed"

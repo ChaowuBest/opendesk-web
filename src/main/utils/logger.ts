@@ -17,8 +17,7 @@ import path from 'path';
 import winston from 'winston';
 import Transport from 'winston-transport';
 
-
-var debugMode: boolean = false;
+let debugMode: boolean = false;
 
 export function setDebugMode(_debugMode: boolean) {
     debugMode = _debugMode;
@@ -33,10 +32,7 @@ const logFormat = winston.format.combine(
     winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
     winston.format.errors({ stack: true }),
     winston.format.colorize(),
-    winston.format.printf(
-        (info) =>
-            `[${info.timestamp} | ${info.level}] ${info.stack || info.message}`
-    )
+    winston.format.printf((info) => `[${info.timestamp} | ${info.level}] ${info.stack || info.message}`)
 );
 
 class CliLogTransport extends Transport {
@@ -65,7 +61,6 @@ class CliLogTransport extends Transport {
 }
 
 class LogStream extends Writable {
-
     content: string = '';
     static globalStream: LogStream | null = null;
 
@@ -137,23 +132,52 @@ export function addConsoleInterceptHook(hook: ConsoleInterceptHook) {
 
 export function interceptConsole() {
     const stringify = (...args: any[]) =>
-        args.map(a => {
-            if (typeof a === 'string') return a;
-            try { return JSON.stringify(a, null, 2) ?? String(a); }
-            catch { return String(a); }
-        }).join(' ');
+        args
+            .map((a) => {
+                if (typeof a === 'string') return a;
+                try {
+                    return JSON.stringify(a, null, 2) ?? String(a);
+                } catch {
+                    return String(a);
+                }
+            })
+            .join(' ');
 
     const notifyHooks = (level: string, msg: string) => {
         for (const hook of consoleInterceptHooks) {
-            try { hook(level, msg); } catch { /* ignore hook errors */ }
+            try {
+                hook(level, msg);
+            } catch {
+                /* ignore hook errors */
+            }
         }
     };
 
-    console.log = (...args: any[]) => { const m = stringify(...args); logger.info(m); notifyHooks('info', m); };
-    console.warn = (...args: any[]) => { const m = stringify(...args); logger.warn(m); notifyHooks('warn', m); };
-    console.error = (...args: any[]) => { const m = stringify(...args); logger.error(m); notifyHooks('error', m); };
-    console.debug = (...args: any[]) => { const m = `[debug] ${stringify(...args)}`; logger.info(m); notifyHooks('debug', m); };
-    console.info = (...args: any[]) => { const m = stringify(...args); logger.info(m); notifyHooks('info', m); };
+    console.log = (...args: any[]) => {
+        const m = stringify(...args);
+        logger.info(m);
+        notifyHooks('info', m);
+    };
+    console.warn = (...args: any[]) => {
+        const m = stringify(...args);
+        logger.warn(m);
+        notifyHooks('warn', m);
+    };
+    console.error = (...args: any[]) => {
+        const m = stringify(...args);
+        logger.error(m);
+        notifyHooks('error', m);
+    };
+    console.debug = (...args: any[]) => {
+        const m = `[debug] ${stringify(...args)}`;
+        logger.info(m);
+        notifyHooks('debug', m);
+    };
+    console.info = (...args: any[]) => {
+        const m = stringify(...args);
+        logger.info(m);
+        notifyHooks('info', m);
+    };
 }
 
 export function useConsoleTransport() {
@@ -164,15 +188,17 @@ export function useConsoleTransport() {
 
 export function useDumpLogTransport(filePath: string) {
     if (loggerInstance) {
-        loggerInstance.add(new winston.transports.File({
-            filename: filePath,
-            options: { flags: 'w' },
-        }));
+        loggerInstance.add(
+            new winston.transports.File({
+                filename: filePath,
+                options: { flags: 'w' }
+            })
+        );
     }
 }
 
 function createLogger() {
-    var transports: Transport[] = [];
+    const transports: Transport[] = [];
     transports.push(new winston.transports.File({ filename: path.join(getLogDirectory(), 'app.log') }));
 
     if (!isMainThread) {

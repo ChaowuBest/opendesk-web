@@ -12,8 +12,12 @@
 import type { Command } from 'commander';
 import { useCliTransport, useConsoleTransport } from '../../utils/logger.js';
 import {
-    installPlugin, uninstallPlugin, listInstalledPlugins,
-    setPluginEnabled, resetOpenClawShim, loadPlugins,
+    installPlugin,
+    uninstallPlugin,
+    listInstalledPlugins,
+    setPluginEnabled,
+    resetOpenClawShim,
+    loadPlugins
 } from '../../aikernel/plugins/index.js';
 import process from 'process';
 

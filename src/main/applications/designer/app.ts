@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { BaseApplication } from "../base";
+import { BaseApplication } from '../base';
 
 export class DesignerApplication extends BaseApplication {
     constructor() {

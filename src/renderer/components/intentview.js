@@ -9,8 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-class IntentView extends HTMLElement {
-}
+class IntentView extends HTMLElement {}
 
 class IntentListView extends HTMLElement {
     constructor() {
@@ -35,7 +34,7 @@ class IntentListView extends HTMLElement {
         }
 
         let intent_items = '';
-        for (let intent of this.intents) {
+        for (const intent of this.intents) {
             intent_items += `
             <div class="flex items-center rounded-xl p-4 hover:bg-gray-50 cursor-pointer transition-colors">
                 <!-- 左侧图标 -->

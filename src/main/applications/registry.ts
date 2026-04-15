@@ -9,19 +9,18 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { BaseToolset } from "../aikernel/tool.js";
-import { BaseApplication } from "./base";
-import { Setting, getAppDirectory } from "../utils/setting.js";
-import { logger, LogStream } from "../utils/logger.js";
-import { addLine as addCliLogLine } from "../utils/cliLogStore.js";
-import { NotificationManager } from "../utils/notificationmgr.js";
-import { getPlatform } from "../../platforms/base.js";
-import { Worker } from "worker_threads";
-import { SkillRegistry } from "../aikernel/skill.js";
+import { BaseToolset } from '../aikernel/tool.js';
+import { BaseApplication } from './base';
+import { Setting, getAppDirectory } from '../utils/setting.js';
+import { logger, LogStream } from '../utils/logger.js';
+import { addLine as addCliLogLine } from '../utils/cliLogStore.js';
+import { NotificationManager } from '../utils/notificationmgr.js';
+import { getPlatform } from '../../platforms/base.js';
+import { Worker } from 'worker_threads';
+import { SkillRegistry } from '../aikernel/skill.js';
 import { type Privileges, type ProtocolRequest } from 'electron';
-import type { TodoTrigger } from "./todomgr/common.js";
-import type { Participant } from "../aikernel/plugins/types.js";
-
+import type { TodoTrigger } from './todomgr/common.js';
+import type { Participant } from '../aikernel/plugins/types.js';
 
 export type ProtocolHandlerEntry = {
     scheme: string;
@@ -29,14 +28,15 @@ export type ProtocolHandlerEntry = {
     handler: (request: ProtocolRequest) => Response | Promise<Response>;
 };
 
-
 export class ApplicationRegistry {
-
     static applications: Map<string, BaseApplication> = new Map();
-    static pendingRequests: Map<string, {
-        resolve: (value: any) => void,
-        reject: (reason?: any) => void
-    }> = new Map();
+    static pendingRequests: Map<
+        string,
+        {
+            resolve: (value: any) => void;
+            reject: (reason?: any) => void;
+        }
+    > = new Map();
     static pendingStreamRequests: Map<string, (chunk: any) => void> = new Map();
     static globalWorker: Worker | null = null;
 
@@ -49,7 +49,13 @@ export class ApplicationRegistry {
     /**
      * 当触发器触发待办任务时的回调（由 TUI 或 Electron 主进程设置）
      */
-    static onTriggerTask?: (todoId: string, todoTitle: string, todoContent: string, trigger: TodoTrigger, deliver?: Participant) => void;
+    static onTriggerTask?: (
+        todoId: string,
+        todoTitle: string,
+        todoContent: string,
+        trigger: TodoTrigger,
+        deliver?: Participant
+    ) => void;
 
     /**
      * 注册就绪回调。如果应用注册表已就绪，则立即执行；否则加入队列等待。
@@ -109,13 +115,13 @@ export class ApplicationRegistry {
             this.globalWorker?.postMessage({
                 bundleName: application.bundleName,
                 methodName: 'applicationConfigChanged',
-                args: [application.getConfig()],
-            })
+                args: [application.getConfig()]
+            });
         });
     }
 
     static collectProtocolHandlerEntries(): ProtocolHandlerEntry[] {
-        let entries: ProtocolHandlerEntry[] = [];
+        const entries: ProtocolHandlerEntry[] = [];
         for (const application of this.applications.values()) {
             entries.push(...application.getProtocolHandlers());
         }
@@ -123,7 +129,7 @@ export class ApplicationRegistry {
     }
 
     static getApplicationList(): object[] {
-        return Array.from(this.applications.values()).map(application => application.toJSON());
+        return Array.from(this.applications.values()).map((application) => application.toJSON());
     }
 
     static getApplication(bundleName: string): BaseApplication | undefined {
@@ -131,7 +137,7 @@ export class ApplicationRegistry {
     }
 
     static async listAvailableToolsets(): Promise<BaseToolset[]> {
-        let result: BaseToolset[] = [];
+        const result: BaseToolset[] = [];
         for (const application of this.applications.values()) {
             result.push(...(await application.getToolsets()));
         }
@@ -154,7 +160,7 @@ export class ApplicationRegistry {
                 bundleName: 'todomgr',
                 requestId: crypto.randomUUID(),
                 methodName: 'handleApplicationEvent',
-                args: [bundleName, eventName, args],
+                args: [bundleName, eventName, args]
             });
         }
     }
@@ -181,7 +187,7 @@ export class ApplicationRegistry {
                 bundleName: 'todomgr',
                 requestId: crypto.randomUUID(),
                 methodName: 'handleApplicationEvent',
-                args: [bundleName, eventName, args],
+                args: [bundleName, eventName, args]
             });
         }
     }
@@ -210,13 +216,13 @@ export class ApplicationRegistry {
         const requestId = crypto.randomUUID();
 
         if (application === undefined) {
-            return { status: 'error', message: `application ${bundleName} not found` }
+            return { status: 'error', message: `application ${bundleName} not found` };
         } else if (!ApplicationRegistry.hasGlobalWorker()) {
-            return { status: 'error', message: 'global worker not initialized yet' }
+            return { status: 'error', message: 'global worker not initialized yet' };
         }
 
         try {
-            let promise = new Promise((resolve, reject) => {
+            const promise = new Promise((resolve, reject) => {
                 ApplicationRegistry.pendingRequests.set(requestId, { resolve, reject });
             });
 
@@ -224,8 +230,8 @@ export class ApplicationRegistry {
                 bundleName: bundleName,
                 requestId: requestId,
                 methodName: methodName,
-                args: args,
-            })
+                args: args
+            });
 
             const data = await promise;
             ApplicationRegistry.pendingRequests.delete(requestId);
@@ -234,7 +240,7 @@ export class ApplicationRegistry {
             return { status: 'error', message: String(error) };
         }
     }
-};
+}
 
 /**
  * 通知 Worker 线程更新全局设置
@@ -249,7 +255,7 @@ export function notifyWorkerSettingUpdate(settingData: object) {
         bundleName: '__system',
         requestId: crypto.randomUUID(),
         methodName: '__updateGlobalSetting',
-        args: [settingData],
+        args: [settingData]
     });
 }
 
@@ -280,16 +286,13 @@ export function initializeRegistry() {
  */
 export function initializeRegistryWorker() {
     // 创建 Worker（需要在 app.whenReady() 之后，因为需要 app.getAppPath()）
-    ApplicationRegistry.globalWorker = new Worker(
-        getPlatform().getWorkerPath(),
-        {
-            workerData: {
-                paths: { appDirectory: getAppDirectory() },
-                setting: Setting.getInstance().getData()
-            },
-            execArgv: ['tsx']
-        }
-    );
+    ApplicationRegistry.globalWorker = new Worker(getPlatform().getWorkerPath(), {
+        workerData: {
+            paths: { appDirectory: getAppDirectory() },
+            setting: Setting.getInstance().getData()
+        },
+        execArgv: ['tsx']
+    });
 
     ApplicationRegistry.globalWorker.on('message', (event) => {
         // 处理来自 worker 的日志消息
@@ -346,8 +349,19 @@ export function initializeRegistryWorker() {
             }
             case 'emailListUpdated': {
                 const application = ApplicationRegistry.getApplication(event.bundleName);
-                if (application && 'onEmailListUpdated' in application && typeof (application as any).onEmailListUpdated === 'function') {
+                if (
+                    application &&
+                    'onEmailListUpdated' in application &&
+                    typeof (application as any).onEmailListUpdated === 'function'
+                ) {
                     (application as any).onEmailListUpdated();
+                }
+                break;
+            }
+            case 'skillsRegistryChanged': {
+                const skillApp = ApplicationRegistry.getApplication('skillmgr');
+                if (skillApp && typeof (skillApp as any).refresh === 'function') {
+                    (skillApp as any).refresh();
                 }
                 break;
             }

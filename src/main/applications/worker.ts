@@ -19,9 +19,9 @@
  * 并在本文件中import这些Worker类，并注册到appWorkers中统一进行初始化和任务分发操作。
  */
 
-import { logger } from "../utils/logger";
-import { BaseWorker } from "../applications/base";
-import { getAppDirectory, Setting } from "../utils/setting";
+import { logger } from '../utils/logger';
+import { BaseWorker } from '../applications/base';
+import { getAppDirectory, Setting } from '../utils/setting';
 import { getPlatform } from '../../platforms/base';
 
 import { parentPort, workerData } from 'worker_threads';
@@ -54,7 +54,7 @@ export function initializeAppWorkers() {
         appWorker.appDataDirectory = appDataDirectory;
         appWorker.applicationConfigChanged(setting['applications'][name]);
         // 将初始化Promise存储到Map中
-        const initPromise = appWorker.initialize().catch(error => {
+        const initPromise = appWorker.initialize().catch((error) => {
             logger.error(`worker ${name} initialization failed: ${error}`);
             throw error;
         });
@@ -85,20 +85,39 @@ export function initializeAppWorkers() {
 
                 if (stream) {
                     for await (const chunk of appWorker.handleStreamMessage(methodName, ...args)) {
-                        parentPort?.postMessage({ type: 'response_chunk', id: requestId, chunk: chunk });
+                        parentPort?.postMessage({
+                            type: 'response_chunk',
+                            id: requestId,
+                            chunk: chunk
+                        });
                     }
                     parentPort?.postMessage({ type: 'response_complete', id: requestId });
                 } else {
                     const result = await appWorker.handleMessage(methodName, ...args);
-                    parentPort?.postMessage({ type: 'response', id: requestId, status: 'ok', data: result });
+                    parentPort?.postMessage({
+                        type: 'response',
+                        id: requestId,
+                        status: 'ok',
+                        data: result
+                    });
                 }
             } catch (error) {
                 logger.error(`error calling worker ${bundleName} method ${methodName}: ${error}`);
-                parentPort?.postMessage({ type: 'response', id: requestId, status: 'error', message: error.message });
+                parentPort?.postMessage({
+                    type: 'response',
+                    id: requestId,
+                    status: 'error',
+                    message: error.message
+                });
             }
         } else {
             logger.error(`worker ${bundleName} not found`);
-            parentPort?.postMessage({ type: 'response', id: requestId, status: 'error', message: `worker ${bundleName} not found` });
+            parentPort?.postMessage({
+                type: 'response',
+                id: requestId,
+                status: 'error',
+                message: `worker ${bundleName} not found`
+            });
         }
     });
 

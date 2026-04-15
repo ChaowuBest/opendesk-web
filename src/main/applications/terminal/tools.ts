@@ -9,39 +9,37 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { spawn, execSync, type ChildProcess } from "child_process";
-import { BaseTool, ToolResult } from "../../aikernel/tool";
-import { ToolCall } from "../../aikernel/messages";
-import { escapeHtml } from "../../utils/escape";
-import { Card } from "../../tui/components/card";
-import { statusDisplay, truncText } from "../../tui/components/toolcall";
+import { spawn, type ChildProcess } from 'child_process';
+import { BaseTool, ToolResult } from '../../aikernel/tool';
+import { ToolCall } from '../../aikernel/messages';
+import { escapeHtml } from '../../utils/escape';
+import { Card } from '../../tui/components/card';
+import { statusDisplay, truncText } from '../../tui/components/toolcall';
 import { z } from 'zod';
 import fs from 'fs';
 import path from 'path';
-import chalk from "chalk";
-
+import chalk from 'chalk';
+import type { PermissionRequest } from '../../aikernel/security/permission';
+import type { TaskState } from '../../aikernel/states/tasks';
+import {
+    BackgroundProcessManager,
+    killProcessTree,
+    installTimeoutBackgrounding,
+    type BackgroundProcessStatus
+} from './background';
+import { analyzeBashPermissions, analyzePowerShellPermissions } from './shellPermissions';
 
 const MAX_CLI_OUTPUT_LINES = 10;
 const LIVE_UPDATE_INTERVAL_MS = 200;
 
 /**
- * 杀死进程及其整个子进程树。
- * Windows: 使用 taskkill /F /T 强制终止进程树
- * Unix:    向进程组发送 SIGTERM，若无进程组则直接 kill
+ * 构建子进程的环境变量：系统 env + task 的 harnessContext.environ（skill .env 合并而来）
  */
-function killProcessTree(proc: ChildProcess): void {
-    if (!proc.pid) return;
-    try {
-        if (process.platform === 'win32') {
-            execSync(`taskkill /F /T /PID ${proc.pid}`, { stdio: 'ignore' });
-        } else {
-            try {
-                process.kill(-proc.pid, 'SIGTERM');
-            } catch {
-                proc.kill('SIGTERM');
-            }
-        }
-    } catch { /* process already dead */ }
+function buildSpawnEnv(taskState?: TaskState): NodeJS.ProcessEnv | undefined {
+    if (!taskState || Object.keys(taskState.harnessContext.environ).length === 0) {
+        return undefined;
+    }
+    return { ...process.env, ...taskState.harnessContext.environ };
 }
 
 /**
@@ -116,13 +114,14 @@ function renderTerminalToolCallCli(shellLabel: string, toolcall: ToolCall, width
         body.push(chalk.dim('  ⏳ 命令执行中…'));
     }
 
-    const isInterrupted = toolcall.status !== 'running' &&
+    const isInterrupted =
+        toolcall.status !== 'running' &&
         (toolcall.result?.startsWith('[超时]') || toolcall.result?.startsWith('[中断]'));
     return new Card({
         icon: '🖥',
         title: shellLabel,
         status: isInterrupted ? statusDisplay('interrupted') : statusDisplay(toolcall.status),
-        body,
+        body
     }).render(width);
 }
 
@@ -153,23 +152,19 @@ function renderTerminalToolCall(cmdName: string, toolcall: ToolCall): string | u
 
             <!-- 过程记录 -->
             <div class="space-y-1 mb-4 border-l-2 border-gray-200 pl-4 ml-1">
-                ${toolcall.result === undefined
-            ? `<div class="flex items-center gap-2 text-gray-400 animate-pulse h-7">
+                ${
+                    toolcall.result === undefined
+                        ? `<div class="flex items-center gap-2 text-gray-400 animate-pulse h-7">
                             <svg class="w-5 h-5 animate-spin text-blue-400" viewBox="0 0 24 24" fill="none"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/></svg>
                             <span>命令执行中，请稍候…</span>
                         </div>`
-            : `<pre>${escapeHtml(toolcall.result)}</pre>`}
+                        : `<pre>${escapeHtml(toolcall.result)}</pre>`
+                }
             </div>
         </div>
     </div>
-    `
+    `;
 }
-
-const ExecutePowerShellArgsSchema = z.object({
-    command: z.string().describe('要执行的PowerShell命令'),
-    workingDirectory: z.string().optional().describe('执行命令的工作目录，如果不指定则使用系统默认目录'),
-    timeout: z.number().optional().describe('命令执行超时时间（毫秒），默认 30000ms（30秒）').default(30000)
-});
 
 /**
  * 解析命令中的 "cd path; rest" 或 "Set-Location path; rest"，提取工作目录与剩余命令
@@ -188,6 +183,95 @@ function parseCdAndCommand(command: string): { cwd?: string; command: string } {
     return { command: t };
 }
 
+// ── Shell 执行核心逻辑 ──────────────────────────────────────────────────────
+
+/**
+ * 通用的 shell 命令执行逻辑，被三种 shell 工具共用。
+ * 负责 spawn 子进程、实时输出更新、超时后台化、用户 stop 中断。
+ */
+async function executeShellCommand(opts: {
+    shellPath: string;
+    shellArgs: string[];
+    command: string;
+    cwd?: string;
+    timeout: number;
+    result: ToolResult;
+    taskState?: TaskState;
+    runningProcesses: Set<ChildProcess>;
+    stopPromises: Map<ChildProcess, Promise<void>>;
+    isKilledByStop: () => boolean;
+}): Promise<void> {
+    const {
+        shellPath,
+        shellArgs,
+        command,
+        cwd,
+        timeout,
+        result,
+        taskState,
+        runningProcesses,
+        stopPromises,
+        isKilledByStop
+    } = opts;
+
+    const env = buildSpawnEnv(taskState);
+    const startTime = Date.now();
+    const proc = spawn(shellPath, shellArgs, { cwd, env });
+    runningProcesses.add(proc);
+
+    let output = '';
+    const stdoutListener = (data: Buffer) => {
+        output += data.toString();
+    };
+    const stderrListener = (data: Buffer) => {
+        output += data.toString();
+    };
+    proc.stdout.on('data', stdoutListener);
+    proc.stderr.on('data', stderrListener);
+
+    const updateTimer = setInterval(() => {
+        if (output) result.updateResult(output);
+    }, LIVE_UPDATE_INTERVAL_MS);
+
+    let resolveStopPromise: (() => void) | undefined;
+    stopPromises.set(
+        proc,
+        new Promise<void>((r) => {
+            resolveStopPromise = r;
+        })
+    );
+
+    await installTimeoutBackgrounding({
+        handle: {
+            proc,
+            detachListeners: () => {
+                proc.stdout.removeListener('data', stdoutListener);
+                proc.stderr.removeListener('data', stderrListener);
+            }
+        },
+        command,
+        startTime,
+        timeout,
+        getOutput: () => output,
+        result,
+        isKilledByStop,
+        onFinish: () => {
+            clearInterval(updateTimer);
+            runningProcesses.delete(proc);
+            stopPromises.delete(proc);
+            resolveStopPromise?.();
+        }
+    });
+}
+
+// ── PowerShell ──────────────────────────────────────────────────────────────
+
+const ExecutePowerShellArgsSchema = z.object({
+    command: z.string().describe('要执行的PowerShell命令'),
+    workingDirectory: z.string().optional().describe('执行命令的工作目录，如果不指定则使用系统默认目录'),
+    timeout: z.number().optional().describe('命令执行超时时间（毫秒），默认 30000ms（30秒）').default(30000)
+});
+
 export class ExecutePowerShellTool extends BaseTool<typeof ExecutePowerShellArgsSchema> {
     private runningProcesses: Set<ChildProcess> = new Set();
     private _killedByStop = false;
@@ -201,6 +285,16 @@ export class ExecutePowerShellTool extends BaseTool<typeof ExecutePowerShellArgs
         );
 
         this.setUniversalExecutor(this.executeCommand.bind(this));
+    }
+
+    getDeclaredPermissions(
+        args: z.output<typeof ExecutePowerShellArgsSchema>,
+        taskState?: TaskState
+    ): PermissionRequest[] {
+        const command = args.command;
+        if (!command || typeof command !== 'string') return [];
+        const cwd = args.workingDirectory || taskState?.harnessContext?.workspace || process.cwd();
+        return analyzePowerShellPermissions(command, cwd);
     }
 
     async stop(): Promise<void> {
@@ -221,7 +315,11 @@ export class ExecutePowerShellTool extends BaseTool<typeof ExecutePowerShellArgs
         return renderTerminalToolCallCli('PowerShell', toolcall, width);
     }
 
-    async executeCommand(args: z.output<typeof ExecutePowerShellArgsSchema>, result: ToolResult): Promise<void> {
+    async executeCommand(
+        args: z.output<typeof ExecutePowerShellArgsSchema>,
+        result: ToolResult,
+        taskState?: TaskState
+    ): Promise<void> {
         let command: string = args.command;
         let workingDirectory: string | undefined = args.workingDirectory;
         const timeout: number = args.timeout ?? 30000;
@@ -240,69 +338,33 @@ export class ExecutePowerShellTool extends BaseTool<typeof ExecutePowerShellArgs
         let cwd: string | undefined = undefined;
         if (workingDirectory && typeof workingDirectory === 'string' && fs.existsSync(workingDirectory)) {
             cwd = workingDirectory;
+        } else if (taskState?.harnessContext?.workspace) {
+            cwd = taskState.harnessContext.workspace;
         }
 
         const utf8Command = `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ${command}`;
-        const proc = spawn('powershell.exe', ['-NoProfile', '-Command', utf8Command], { cwd });
-        this.runningProcesses.add(proc);
-
-        let output = '';
-        let timedOut = false;
-        let stopped = false;
-        let timeoutId: NodeJS.Timeout | undefined;
-
-        if (timeout > 0) {
-            timeoutId = setTimeout(() => {
-                timedOut = true;
-                killProcessTree(proc);
-            }, timeout);
-        }
-
-        proc.stdout.on('data', (data: Buffer) => { output += data.toString('utf8'); });
-        proc.stderr.on('data', (data: Buffer) => { output += data.toString('utf8'); });
-
-        const updateTimer = setInterval(() => {
-            if (output) result.updateResult(output);
-        }, LIVE_UPDATE_INTERVAL_MS);
-
-        let resolveStopPromise: (() => void) | undefined;
-        this._stopPromises.set(proc, new Promise<void>(r => { resolveStopPromise = r; }));
-
-        return new Promise<void>((resolve) => {
-            const finish = (): boolean => {
-                if (stopped) return false;
-                stopped = true;
-                clearInterval(updateTimer);
-                if (timeoutId) clearTimeout(timeoutId);
-                this.runningProcesses.delete(proc);
-                this._stopPromises.delete(proc);
-                resolveStopPromise?.();
-                return true;
-            };
-
-            proc.on('close', (code: number | null) => {
-                if (!finish()) return;
-                if (timedOut) output = `[超时] 命令执行超时（${timeout}ms），已被强制终止。\n` + output;
-                else if (this._killedByStop) output = `[中断] 命令被用户终止。\n` + output;
-                result.updateResult(output.trim() || `进程退出，代码 ${code ?? 'killed'}`);
-                resolve();
-            });
-
-            proc.on('error', (err: Error) => {
-                if (!finish()) return;
-                result.updateResult(`执行命令时出错: ${err.message}`);
-                resolve();
-            });
+        await executeShellCommand({
+            shellPath: 'powershell.exe',
+            shellArgs: ['-NoProfile', '-Command', utf8Command],
+            command,
+            cwd,
+            timeout,
+            result,
+            taskState,
+            runningProcesses: this.runningProcesses,
+            stopPromises: this._stopPromises,
+            isKilledByStop: () => this._killedByStop
         });
     }
 }
+
+// ── Bash ────────────────────────────────────────────────────────────────────
 
 const ExecuteBashArgsSchema = z.object({
     command: z.string().describe('要执行的BASH命令'),
     workingDirectory: z.string().optional().describe('执行命令的工作目录，如果不指定则使用系统默认目录'),
     timeout: z.number().optional().describe('命令执行超时时间（毫秒），默认 30000ms（30秒）').default(30000)
 });
-
 
 export class ExecuteBashTool extends BaseTool<typeof ExecuteBashArgsSchema> {
     private bashPath: string;
@@ -326,6 +388,13 @@ export class ExecuteBashTool extends BaseTool<typeof ExecuteBashArgsSchema> {
         this.setUniversalExecutor(this.executeCommand.bind(this));
     }
 
+    getDeclaredPermissions(args: z.output<typeof ExecuteBashArgsSchema>, taskState?: TaskState): PermissionRequest[] {
+        const command = args.command;
+        if (!command || typeof command !== 'string') return [];
+        const cwd = args.workingDirectory || taskState?.harnessContext?.workspace || process.cwd();
+        return analyzeBashPermissions(command, cwd);
+    }
+
     async stop(): Promise<void> {
         this._killedByStop = true;
         const processes = Array.from(this.runningProcesses);
@@ -336,9 +405,13 @@ export class ExecuteBashTool extends BaseTool<typeof ExecuteBashArgsSchema> {
         this._killedByStop = false;
     }
 
-    async executeCommand(args: z.output<typeof ExecuteBashArgsSchema>, result: ToolResult): Promise<void> {
-        let command: string = args.command;
-        let workingDirectory: string | undefined = args.workingDirectory;
+    async executeCommand(
+        args: z.output<typeof ExecuteBashArgsSchema>,
+        result: ToolResult,
+        taskState?: TaskState
+    ): Promise<void> {
+        const command: string = args.command;
+        const workingDirectory: string | undefined = args.workingDirectory;
         const timeout: number = args.timeout ?? 30000;
 
         if (!command || typeof command !== 'string') {
@@ -349,58 +422,21 @@ export class ExecuteBashTool extends BaseTool<typeof ExecuteBashArgsSchema> {
         let cwd: string | undefined = undefined;
         if (workingDirectory && typeof workingDirectory === 'string' && fs.existsSync(workingDirectory)) {
             cwd = workingDirectory;
+        } else if (taskState?.harnessContext?.workspace) {
+            cwd = taskState.harnessContext.workspace;
         }
 
-        const proc = spawn(this.bashPath, ['-c', command], { cwd });
-        this.runningProcesses.add(proc);
-
-        let output = '';
-        let timedOut = false;
-        let stopped = false;
-        let timeoutId: NodeJS.Timeout | undefined;
-
-        if (timeout > 0) {
-            timeoutId = setTimeout(() => {
-                timedOut = true;
-                killProcessTree(proc);
-            }, timeout);
-        }
-
-        proc.stdout.on('data', (data: Buffer) => { output += data.toString(); });
-        proc.stderr.on('data', (data: Buffer) => { output += data.toString(); });
-
-        const updateTimer = setInterval(() => {
-            if (output) result.updateResult(output);
-        }, LIVE_UPDATE_INTERVAL_MS);
-
-        let resolveStopPromise: (() => void) | undefined;
-        this._stopPromises.set(proc, new Promise<void>(r => { resolveStopPromise = r; }));
-
-        return new Promise<void>((resolve) => {
-            const finish = (): boolean => {
-                if (stopped) return false;
-                stopped = true;
-                clearInterval(updateTimer);
-                if (timeoutId) clearTimeout(timeoutId);
-                this.runningProcesses.delete(proc);
-                this._stopPromises.delete(proc);
-                resolveStopPromise?.();
-                return true;
-            };
-
-            proc.on('close', (code: number | null) => {
-                if (!finish()) return;
-                if (timedOut) output = `[超时] 命令执行超时（${timeout}ms），已被强制终止。\n` + output;
-                else if (this._killedByStop) output = `[中断] 命令被用户终止。\n` + output;
-                result.updateResult(output.trim() || `进程退出，代码 ${code ?? 'killed'}`);
-                resolve();
-            });
-
-            proc.on('error', (err: Error) => {
-                if (!finish()) return;
-                result.updateResult(`执行命令时出错: ${err.message}`);
-                resolve();
-            });
+        await executeShellCommand({
+            shellPath: this.bashPath,
+            shellArgs: ['-c', command],
+            command,
+            cwd,
+            timeout,
+            result,
+            taskState,
+            runningProcesses: this.runningProcesses,
+            stopPromises: this._stopPromises,
+            isKilledByStop: () => this._killedByStop
         });
     }
 
@@ -412,6 +448,8 @@ export class ExecuteBashTool extends BaseTool<typeof ExecuteBashArgsSchema> {
         return renderTerminalToolCallCli('Bash', toolcall, width);
     }
 }
+
+// ── Zsh ────────────────────────────────────────────────────────────────────
 
 const ExecuteZshArgsSchema = z.object({
     command: z.string().describe('要执行的ZSH命令'),
@@ -425,13 +463,16 @@ export class ExecuteZshTool extends BaseTool<typeof ExecuteZshArgsSchema> {
     private _stopPromises: Map<ChildProcess, Promise<void>> = new Map();
 
     constructor() {
-        super(
-            'executeZsh',
-            '执行 zsh 命令。可以执行任何有效的ZSH 命令，如 ls、cd、cat、echo 等',
-            ExecuteZshArgsSchema
-        );
+        super('executeZsh', '执行 zsh 命令。可以执行任何有效的ZSH 命令，如 ls、cd、cat、echo 等', ExecuteZshArgsSchema);
 
         this.setUniversalExecutor(this.executeCommand.bind(this));
+    }
+
+    getDeclaredPermissions(args: z.output<typeof ExecuteZshArgsSchema>, taskState?: TaskState): PermissionRequest[] {
+        const command = args.command;
+        if (!command || typeof command !== 'string') return [];
+        const cwd = args.workingDirectory || taskState?.harnessContext?.workspace || process.cwd();
+        return analyzeBashPermissions(command, cwd);
     }
 
     async stop(): Promise<void> {
@@ -444,9 +485,13 @@ export class ExecuteZshTool extends BaseTool<typeof ExecuteZshArgsSchema> {
         this._killedByStop = false;
     }
 
-    async executeCommand(args: z.output<typeof ExecuteZshArgsSchema>, result: ToolResult): Promise<void> {
-        let command: string = args.command;
-        let workingDirectory: string | undefined = args.workingDirectory;
+    async executeCommand(
+        args: z.output<typeof ExecuteZshArgsSchema>,
+        result: ToolResult,
+        taskState?: TaskState
+    ): Promise<void> {
+        const command: string = args.command;
+        const workingDirectory: string | undefined = args.workingDirectory;
         const timeout: number = args.timeout ?? 30000;
 
         if (!command || typeof command !== 'string') {
@@ -463,58 +508,21 @@ export class ExecuteZshTool extends BaseTool<typeof ExecuteZshArgsSchema> {
         let cwd: string | undefined = undefined;
         if (workingDirectory && typeof workingDirectory === 'string' && fs.existsSync(workingDirectory)) {
             cwd = workingDirectory;
+        } else if (taskState?.harnessContext?.workspace) {
+            cwd = taskState.harnessContext.workspace;
         }
 
-        const proc = spawn(zshPath, ['-c', command], { cwd });
-        this.runningProcesses.add(proc);
-
-        let output = '';
-        let timedOut = false;
-        let stopped = false;
-        let timeoutId: NodeJS.Timeout | undefined;
-
-        if (timeout > 0) {
-            timeoutId = setTimeout(() => {
-                timedOut = true;
-                killProcessTree(proc);
-            }, timeout);
-        }
-
-        proc.stdout.on('data', (data: Buffer) => { output += data.toString(); });
-        proc.stderr.on('data', (data: Buffer) => { output += data.toString(); });
-
-        const updateTimer = setInterval(() => {
-            if (output) result.updateResult(output);
-        }, LIVE_UPDATE_INTERVAL_MS);
-
-        let resolveStopPromise: (() => void) | undefined;
-        this._stopPromises.set(proc, new Promise<void>(r => { resolveStopPromise = r; }));
-
-        return new Promise<void>((resolve) => {
-            const finish = (): boolean => {
-                if (stopped) return false;
-                stopped = true;
-                clearInterval(updateTimer);
-                if (timeoutId) clearTimeout(timeoutId);
-                this.runningProcesses.delete(proc);
-                this._stopPromises.delete(proc);
-                resolveStopPromise?.();
-                return true;
-            };
-
-            proc.on('close', (code: number | null) => {
-                if (!finish()) return;
-                if (timedOut) output = `[超时] 命令执行超时（${timeout}ms），已被强制终止。\n` + output;
-                else if (this._killedByStop) output = `[中断] 命令被用户终止。\n` + output;
-                result.updateResult(output.trim() || `进程退出，代码 ${code ?? 'killed'}`);
-                resolve();
-            });
-
-            proc.on('error', (err: Error) => {
-                if (!finish()) return;
-                result.updateResult(`执行命令时出错: ${err.message}`);
-                resolve();
-            });
+        await executeShellCommand({
+            shellPath: zshPath,
+            shellArgs: ['-c', command],
+            command,
+            cwd,
+            timeout,
+            result,
+            taskState,
+            runningProcesses: this.runningProcesses,
+            stopPromises: this._stopPromises,
+            isKilledByStop: () => this._killedByStop
         });
     }
 
@@ -524,5 +532,103 @@ export class ExecuteZshTool extends BaseTool<typeof ExecuteZshArgsSchema> {
 
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
         return renderTerminalToolCallCli('Zsh', toolcall, width);
+    }
+}
+
+// ── checkShellStatus 工具 ──────────────────────────────────────────────────
+
+const CheckShellStatusArgsSchema = z.object({
+    pid: z.number().describe('要检查的后台 shell 进程的 PID'),
+    kill: z.boolean().optional().describe('如果设为 true，则强制终止该后台进程').default(false)
+});
+
+export class CheckShellStatusTool extends BaseTool<typeof CheckShellStatusArgsSchema> {
+    constructor() {
+        super(
+            'checkShellStatus',
+            '检查后台 shell 进程的执行状态。当 executeBash / executePowerShell / executeZsh 等命令因超时被放到后台继续执行时，可以通过此工具传入对应的 PID 查询进程是否已完成、返回码以及完整的输出内容。也可以通过 kill 参数强制终止卡住的后台进程。此工具是非阻塞的，会立即返回当前状态。',
+            CheckShellStatusArgsSchema
+        );
+
+        this.setUniversalExecutor(this.executeCheck.bind(this));
+    }
+
+    async executeCheck(args: z.output<typeof CheckShellStatusArgsSchema>, result: ToolResult): Promise<void> {
+        const { pid, kill } = args;
+        const mgr = BackgroundProcessManager.getInstance();
+
+        if (kill) {
+            const killed = mgr.killProcess(pid);
+            if (!killed) {
+                result.updateResult(`PID ${pid} 对应的进程未找到或已经结束，无法终止。`);
+                return;
+            }
+            await mgr.waitForFinish(pid, 3000);
+        }
+
+        const status: BackgroundProcessStatus = mgr.getStatus(pid);
+
+        if (!status.found) {
+            result.updateResult(
+                `未找到 PID ${pid} 对应的后台进程。可能该进程不是因超时被放到后台的，或者 PID 输入有误。`
+            );
+            return;
+        }
+
+        const elapsedSec = (status.elapsedMs / 1000).toFixed(1);
+
+        if (status.finished) {
+            const lines = [
+                `进程状态: 已完成`,
+                `PID: ${pid}`,
+                `命令: ${status.command}`,
+                `返回码: ${status.exitCode ?? 'unknown'}`,
+                `总耗时: ${elapsedSec}s`,
+                '---',
+                status.output.trim() || '(无输出)'
+            ];
+            result.updateResult(lines.join('\n'));
+        } else {
+            const lines = [
+                `进程状态: 仍在执行中`,
+                `PID: ${pid}`,
+                `命令: ${status.command}`,
+                `已运行: ${elapsedSec}s`,
+                '提示: 进程仍在运行，可以稍后再次检查，或使用 kill=true 来终止它。',
+                '---',
+                status.output.trim() || '(暂无输出)'
+            ];
+            result.updateResult(lines.join('\n'));
+        }
+    }
+
+    renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
+        const pid = toolcall.args_object?.['pid'];
+        const body: string[] = [];
+
+        if (pid) {
+            body.push(chalk.blueBright('PID: ') + chalk.white(String(pid)));
+        }
+
+        if (toolcall.result) {
+            body.push(chalk.dim('─'.repeat(Math.min(40, Math.max(4, width - 8)))));
+            const rawLines = toolcall.result.replace(/\r/g, '').split('\n');
+            if (rawLines.length > MAX_CLI_OUTPUT_LINES) {
+                body.push(chalk.dim.italic(`  … 共 ${rawLines.length} 行，显示最后 ${MAX_CLI_OUTPUT_LINES} 行`));
+            }
+            const displayLines = rawLines.slice(-MAX_CLI_OUTPUT_LINES);
+            for (const line of displayLines) {
+                body.push('  ' + chalk.dim(truncText(line, width - 10)));
+            }
+        } else if (toolcall.status === 'running') {
+            body.push(chalk.dim('  ⏳ 正在查询…'));
+        }
+
+        return new Card({
+            icon: '🔍',
+            title: 'Shell 状态检查',
+            status: statusDisplay(toolcall.status),
+            body
+        }).render(width);
     }
 }

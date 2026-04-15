@@ -9,18 +9,47 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { BaseApplication } from "../base";
-import { BaseToolset } from "../../aikernel/tool";
-import { Skill } from "../../aikernel/skill.js";
+import { BaseApplication } from '../base';
+import { BaseToolset } from '../../aikernel/tool';
+import { Skill } from '../../aikernel/skill.js';
 import { z } from 'zod';
-import { TodoWriteTool, AddGlobalTodoTool, UpdateGlobalTodoTool, ListGlobalTodosTool, DeleteGlobalTodoTool, GetCurrentTimeTool, GetSupportedEventsTool } from './tools';
-import TodoMgrWorker from "./worker";
-import { MANAGE_GLOBAL_TODOS_SKILL } from "./skills.js";
-
+import {
+    TodoWriteTool,
+    AddGlobalTodoTool,
+    UpdateGlobalTodoTool,
+    ListGlobalTodosTool,
+    DeleteGlobalTodoTool,
+    GetCurrentTimeTool,
+    GetSupportedEventsTool
+} from './tools';
+import { getAdaptiveGreen } from '../../tui/theme.js';
+import TodoMgrWorker from './worker';
+import { MANAGE_GLOBAL_TODOS_SKILL } from './skills.js';
+import chalk from 'chalk';
 
 export class TodoMgrApplication extends BaseApplication {
     constructor() {
         super('todomgr', '待办事项', false);
+    }
+
+    async getTUIStatusBlock(): Promise<string | null> {
+        try {
+            const res = await this.callWorker('listGlobalTodos', 'all');
+            if (res?.status === 'ok' && Array.isArray(res.data)) {
+                const todos = res.data;
+                const pending = todos.filter((t: any) => t.status === 'pending' || t.status === 'in_progress').length;
+                const completed = todos.filter((t: any) => t.status === 'completed').length;
+                const total = pending + completed;
+                if (total === 0) return null;
+                const filled = Math.round((completed / total) * 8);
+                const bar =
+                    chalk.hex(getAdaptiveGreen())('█'.repeat(filled)) + chalk.hex('#4a4a4a')('░'.repeat(8 - filled));
+                return `📋 ${bar} ${completed}/${total}`;
+            }
+            return null;
+        } catch {
+            return null;
+        }
     }
 
     static getWorkerClass() {
@@ -62,8 +91,8 @@ export class TodoMgrApplication extends BaseApplication {
         return [
             {
                 eventName: 'globalTodosUpdated',
-                eventDescription: '全局待办列表更新事件，当添加、删除、更新待办事项时触发',
-            },
+                eventDescription: '全局待办列表更新事件，当添加、删除、更新待办事项时触发'
+            }
         ];
     }
 }

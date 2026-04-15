@@ -9,10 +9,9 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { BaseApplication } from "../base";
+import { BaseApplication } from '../base';
 import { z } from 'zod';
-import A2AWorker from "./service/worker";
-
+import A2AWorker from './service/worker';
 
 class A2AApplication extends BaseApplication {
     constructor() {
@@ -25,12 +24,12 @@ class A2AApplication extends BaseApplication {
 
     static getConfigSchema() {
         return z.object({
-            default_a2a_model: z.string()
+            default_a2a_model: z
+                .string()
                 .describe('在 A2A Agent 选择中使用的专用模型（留空则使用默认模型）')
                 .default('')
         });
     }
-
 }
 
 export { A2AApplication };

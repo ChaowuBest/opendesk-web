@@ -1,18 +1,19 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="zh-CN">
     <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Flipper Desk | 一站式办公生活空间</title>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>OpenDesk | 一站式办公生活空间</title>
 
-        <link rel="stylesheet" href="./styles/common.css">
+        <link rel="stylesheet" href="./styles/common.css" />
 
         <script type="module" src="./scripts/application.js"></script>
 
         <style>
-            html, body {
+            html,
+            body {
                 height: 100%; /* 关键：让html继承窗口高度 */
-                margin: 0;    /* 移除默认外边距，防止出现滚动条 */
+                margin: 0; /* 移除默认外边距，防止出现滚动条 */
                 padding: 0;
                 overflow: hidden; /* 可选：如果你不希望内部出现滚动条 */
             }
@@ -22,9 +23,7 @@
         </style>
     </head>
     <body x-data="{ showFloatingChatPanel: false, isMaximized: false }">
-        <div id="application-container" class="flex w-full h-full">
-
-        </div>
+        <div id="application-container" class="flex w-full h-full"></div>
 
         <div
             id="floating-ai-chat-panel"
@@ -45,17 +44,17 @@
             x-transition:leave-start="translate-y-0"
             x-transition:leave-end="translate-y-full"
         >
-            <div id="floating-ai-task-view-container"
+            <div
+                id="floating-ai-task-view-container"
                 class="w-full h-full bg-white/60 backdrop-blur-md shadow-xl rounded-3xl border border-gray-200 pb-14 pt-1 flex flex-col overflow-hidden pointer-events-auto"
-            >
-            </div>
+            ></div>
         </div>
 
         <div
             class="fixed bottom-3 left-1/2 -translate-x-1/2 w-full max-w-2xl px-4 z-50 pointer-events-none"
             x-ref="agentInput"
         >
-            <application-agent-input id="application-agent-input" style="pointer-events:none"/>
+            <application-agent-input id="application-agent-input" style="pointer-events: none" />
         </div>
 
         <script type="module">
@@ -123,7 +122,8 @@
                 if (currentToolset) {
                     console.info('attaching toolset', currentToolset.toJSON());
                     await window.taskManagerAPI.attachToolset(
-                        currentTaskId, currentToolset.toJSON(),
+                        currentTaskId,
+                        currentToolset.toJSON(),
                         currentToolset.callTool.bind(currentToolset)
                     );
                     console.info('attached toolset finished');
@@ -156,14 +156,15 @@
                 const entryName = `${applicationBundleName}-entry-widget`;
 
                 window.aiBarAPI = {
-                    submitRequest: (request) => submitRequest({message: request}),
+                    submitRequest: (request) => submitRequest({ message: request }),
                     submitRequestInNewTask: async (request) => {
                         await clearTask();
-                        await submitRequest({message: request});
+                        await submitRequest({ message: request });
                     }
-                }
+                };
 
-                document.querySelector('#application-container').innerHTML = `<${entryName} id='application-entry-widget' class="w-full h-full"/>`
+                document.querySelector('#application-container').innerHTML =
+                    `<${entryName} id='application-entry-widget' class="w-full h-full"/>`;
                 document.querySelector('#application-agent-input').addEventListener('focus', () => {
                     // 如果用户激活了聊天输入浮窗，且当前有任务，则显示浮动聊天面板
                     if (currentTaskId !== null) {
@@ -173,7 +174,7 @@
                 document.querySelector('#application-agent-input').addEventListener('submit', (e) => {
                     submitRequest(e.detail);
                 });
-            })()
+            })();
         </script>
     </body>
 </html>

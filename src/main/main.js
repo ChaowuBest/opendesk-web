@@ -9,29 +9,67 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { app, BrowserWindow, Tray, globalShortcut, nativeImage, ipcMain, shell, Menu, dialog, protocol } from 'electron'
-import { Setting, getAppDirectory } from './utils/setting.js'
-import { GlobalState } from './aikernel/states/global.js'
+import {
+    app,
+    BrowserWindow,
+    Tray,
+    globalShortcut,
+    nativeImage,
+    ipcMain,
+    shell,
+    Menu,
+    dialog,
+    protocol
+} from 'electron';
+import { Setting, getAppDirectory } from './utils/setting.js';
+import { QuickPassHelper } from './utils/quickpass.js';
+import { GlobalState } from './aikernel/states/global.js';
 import { BaseToolset } from './aikernel/tool';
 import { is } from '@electron-toolkit/utils';
 import { z } from 'zod';
 import { NotificationManager } from './utils/notificationmgr.js';
-import { LogStream, logger, useConsoleTransport } from './utils/logger.js'
+import { LogStream, logger, useConsoleTransport } from './utils/logger.js';
 import { SkillRegistry } from './applications/skillmgr/skillregistry.js';
-import { initializeRegistry, initializeRegistryWorker, notifyWorkerSettingUpdate, ApplicationRegistry } from './applications/registry';
-import { initializeRegistryProtocols, initializeProtocolHandlers, registerApplicationRegistryHandlers } from './applications/registry_electron.js';
+import {
+    initializeRegistry,
+    initializeRegistryWorker,
+    notifyWorkerSettingUpdate,
+    ApplicationRegistry
+} from './applications/registry';
+import {
+    initializeRegistryProtocols,
+    initializeProtocolHandlers,
+    registerApplicationRegistryHandlers
+} from './applications/registry_electron.js';
 import { UpdateClient } from '../updater/client.js';
 import { setPlatform } from '../platforms/base.js';
-import { ElectronTaskUpdateSubscriber, ElectronPlatform, ElectronTaskManagerUpdateSubscriber } from '../platforms/electron.js';
+import {
+    ElectronTaskUpdateSubscriber,
+    ElectronPlatform,
+    ElectronTaskManagerUpdateSubscriber
+} from '../platforms/electron.js';
 import { exportTaskToHtml, generateTaskHtml } from './utils/export';
-import { MainAgentDecl } from './aikernel/agents/mainagent.js';
+import { MainAgentDecl } from './aikernel/agents/mainagent/agent.js';
+import { HarnessContext } from './aikernel/security/harness.js';
+import { ElectronPermissionPromptProvider } from './aikernel/security/electronPrompt.js';
+
+/** 全局 agentDecl 实例（延迟初始化），用于获取 mode 等元信息 */
+let _globalAgentDecl = null;
+function getGlobalAgentDecl() {
+    if (!_globalAgentDecl) {
+        const workspace = Setting.getInstance().getEffectiveWorkspace();
+        _globalAgentDecl = new MainAgentDecl({ workspace });
+    }
+    return _globalAgentDecl;
+}
+/** 当前在 Electron GUI 中选择的 modeId */
+let _currentElectronModeId = null;
 
 import Convert from 'ansi-to-html';
 import path from 'path';
 import fs from 'fs';
 
-import appIcon from '../../resources/main/images/icon_round.png?asset'
-
+import appIcon from '../../resources/main/images/icon_round.png?asset';
 
 setPlatform(new ElectronPlatform(app));
 useConsoleTransport();
@@ -40,28 +78,28 @@ const __dirname = import.meta.dirname;
 const converter = new Convert();
 
 /** @type {BrowserWindow | null} */
-var globalMainWindow = null;
+let globalMainWindow = null;
 /** @type {Tray | null} */
-var globalTray = null;
+let globalTray = null;
 /** @type {boolean} */
-var isAppQuitting = false;
+let isAppQuitting = false;
 
 /**
  * 解析内置 skills 目录：优先用 SkillRegistry，再尝试 main 进程侧路径（开发/打包均可用）
  */
 function resolveBundledSkillsDir() {
-  const fromRegistry = SkillRegistry.getBundledSkillsDirectory();
-  if (fs.existsSync(fromRegistry)) return fromRegistry;
-  const appPath = app.getAppPath();
-  const candidates = [
-    path.join(__dirname, 'applications', 'skills', 'resources'),
-    path.join(appPath, 'applications', 'skills', 'resources'),
-    path.join(appPath, 'src', 'main', 'applications', 'skills', 'resources')
-  ];
-  for (const dir of candidates) {
-    if (fs.existsSync(dir)) return dir;
-  }
-  return null;
+    const fromRegistry = SkillRegistry.getBundledSkillsDirectory();
+    if (fs.existsSync(fromRegistry)) return fromRegistry;
+    const appPath = app.getAppPath();
+    const candidates = [
+        path.join(__dirname, 'applications', 'skills', 'resources'),
+        path.join(appPath, 'applications', 'skills', 'resources'),
+        path.join(appPath, 'src', 'main', 'applications', 'skills', 'resources')
+    ];
+    for (const dir of candidates) {
+        if (fs.existsSync(dir)) return dir;
+    }
+    return null;
 }
 
 /**
@@ -70,42 +108,42 @@ function resolveBundledSkillsDir() {
  * - 支持 npm 调试（dev）和打包运行，多路径回退定位内置目录
  */
 async function installBundledSkillsIfNeeded() {
-  try {
-    const appDir = getAppDirectory();
-    const userSkillsDirPath = path.join(appDir, 'apps', 'skills', 'resources');
-    if (fs.existsSync(userSkillsDirPath)) {
-      return;
-    }
-
-    const bundledSkillsDir = resolveBundledSkillsDir();
-    if (!bundledSkillsDir) {
-      logger.warn('installBundledSkillsIfNeeded: 未找到内置 skills 目录，跳过拷贝');
-      return;
-    }
-
-    const userSkillsDir = SkillRegistry.getSkillsDirectory();
-
-    const copyRecursive = (src, dest) => {
-      const stat = fs.statSync(src);
-      if (stat.isDirectory()) {
-        fs.mkdirSync(dest, { recursive: true });
-        for (const child of fs.readdirSync(src)) {
-          copyRecursive(path.join(src, child), path.join(dest, child));
+    try {
+        const appDir = getAppDirectory();
+        const userSkillsDirPath = path.join(appDir, 'apps', 'skills', 'resources');
+        if (fs.existsSync(userSkillsDirPath)) {
+            return;
         }
-      } else {
-        fs.copyFileSync(src, dest);
-      }
-    };
 
-    const entries = fs.readdirSync(bundledSkillsDir, { withFileTypes: true });
-    for (const ent of entries) {
-      const srcPath = path.join(bundledSkillsDir, ent.name);
-      const destPath = path.join(userSkillsDir, ent.name);
-      copyRecursive(srcPath, destPath);
+        const bundledSkillsDir = resolveBundledSkillsDir();
+        if (!bundledSkillsDir) {
+            logger.warn('installBundledSkillsIfNeeded: 未找到内置 skills 目录，跳过拷贝');
+            return;
+        }
+
+        const userSkillsDir = SkillRegistry.getSkillsDirectory();
+
+        const copyRecursive = (src, dest) => {
+            const stat = fs.statSync(src);
+            if (stat.isDirectory()) {
+                fs.mkdirSync(dest, { recursive: true });
+                for (const child of fs.readdirSync(src)) {
+                    copyRecursive(path.join(src, child), path.join(dest, child));
+                }
+            } else {
+                fs.copyFileSync(src, dest);
+            }
+        };
+
+        const entries = fs.readdirSync(bundledSkillsDir, { withFileTypes: true });
+        for (const ent of entries) {
+            const srcPath = path.join(bundledSkillsDir, ent.name);
+            const destPath = path.join(userSkillsDir, ent.name);
+            copyRecursive(srcPath, destPath);
+        }
+    } catch (error) {
+        console.error('installBundledSkillsIfNeeded failed', error);
     }
-  } catch (error) {
-    console.error('installBundledSkillsIfNeeded failed', error);
-  }
 }
 
 const createWindow = () => {
@@ -120,13 +158,13 @@ const createWindow = () => {
             contextIsolation: true,
             preload: path.join(__dirname, '..', 'preload', 'index.js')
         }
-    })
+    });
 
-    mainWindow.setMenu(null)
+    mainWindow.setMenu(null);
     if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
-        mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
+        mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL']);
     } else {
-        mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'))
+        mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
     }
 
     mainWindow.on('close', (event) => {
@@ -142,12 +180,16 @@ const createWindow = () => {
     const inAppSchemePrefixes = protocolConfigs.map((c) => c.scheme + '://');
     const openLink = (url) => {
         console.log(`openLink: ${url}`);
-        if (url.startsWith('file://') || url.startsWith('http://localhost') || inAppSchemePrefixes.some((p) => url.startsWith(p))) {
+        if (
+            url.startsWith('file://') ||
+            url.startsWith('http://localhost') ||
+            inAppSchemePrefixes.some((p) => url.startsWith(p))
+        ) {
             return false;
         }
         shell.openExternal(url);
         return true;
-    }
+    };
 
     mainWindow.webContents.on('context-menu', (_event, params) => {
         const menuItems = [];
@@ -190,83 +232,153 @@ const createWindow = () => {
     });
 
     globalMainWindow = mainWindow;
-}
+};
+
+const registerModeAPIHandlers = () => {
+    ipcMain.handle('mode:getSupportedModes', () => {
+        try {
+            const agentDecl = getGlobalAgentDecl();
+            const modes = agentDecl.supportedModes();
+            const defaultId = agentDecl.defaultModeId();
+            const currentId = _currentElectronModeId || defaultId;
+            return {
+                status: 'ok',
+                data: {
+                    modes: modes.map((m) => ({
+                        id: m.id,
+                        name: m.name,
+                        description: m.description,
+                        icon: m.icon,
+                        color: m.color
+                    })),
+                    defaultModeId: defaultId,
+                    currentModeId: currentId
+                }
+            };
+        } catch (err) {
+            return { status: 'error', message: String(err) };
+        }
+    });
+
+    ipcMain.handle('mode:setCurrentMode', (event, modeId) => {
+        try {
+            const agentDecl = getGlobalAgentDecl();
+            const modes = agentDecl.supportedModes();
+            const target = modes.find((m) => m.id === modeId);
+            if (!target) {
+                return { status: 'error', message: `unknown mode: ${modeId}` };
+            }
+            _currentElectronModeId = modeId;
+            return { status: 'ok', data: modeId };
+        } catch (err) {
+            return { status: 'error', message: String(err) };
+        }
+    });
+};
 
 const registerTaskManagerAPIHandlers = () => {
     const globalState = GlobalState.getInstance();
 
-    ipcMain.handle('taskManager:createTask', async () => {
-        var task = globalState.taskManagerState.createTask();
-        const agentDecl = new MainAgentDecl();
-        task.setSystemPrompt(await agentDecl.createSystemPrompt())
+    ipcMain.handle('taskManager:createTask', async (event, modeId) => {
+        const task = globalState.taskManagerState.createTask();
+        const workspace = Setting.getInstance().getEffectiveWorkspace();
+        const agentDecl = getGlobalAgentDecl();
+        const modes = agentDecl.supportedModes();
+        const resolvedModeId = modeId || _currentElectronModeId || agentDecl.defaultModeId();
+        const activeMode = modes.find((m) => m.id === resolvedModeId) ?? modes[0];
+
+        agentDecl
+            .createSystemPrompt(activeMode)
+            .then((prompt) => {
+                task.setSystemPrompt(prompt);
+            })
+            .catch((err) => {
+                logger.error('failed to create system prompt', err);
+            });
+        try {
+            task.harnessContext = await HarnessContext.createForMode(workspace, activeMode);
+            task.harnessContext.permissionPrompt = new ElectronPermissionPromptProvider();
+            task.activeModeId = activeMode.id;
+        } catch (err) {
+            logger.warn(`Failed to init task harness in Electron, using empty context: ${err}`);
+            task.harnessContext = HarnessContext.createEmpty();
+        }
         return { status: 'ok', data: task.task_id };
     });
     ipcMain.handle('taskManager:removeTask', (event, taskId) => {
-        var task = globalState.taskManagerState.getTask(taskId);
+        const task = globalState.taskManagerState.getTask(taskId);
         if (task === undefined) {
-            return { status: 'error', message: `task ${taskId} not found` }
+            return { status: 'error', message: `task ${taskId} not found` };
         }
 
         globalState.taskManagerState.removeTask(taskId);
         return { status: 'ok', data: task.task_id };
-    })
+    });
+    ipcMain.handle('taskManager:forkTask', (event, taskId) => {
+        const task = globalState.taskManagerState.getTask(taskId);
+        if (task === undefined) {
+            return { status: 'error', message: `task ${taskId} not found` };
+        }
+        const forkedTask = task.fork();
+        return { status: 'ok', data: forkedTask.task_id };
+    });
     ipcMain.handle('taskManager:clearAllTasks', () => {
         globalState.taskManagerState.clearAllTasks();
         return { status: 'ok' };
-    })
+    });
     ipcMain.handle('taskManager:getFullTask', async (event, taskId) => {
-        var task = globalState.taskManagerState.getTask(taskId);
+        const task = globalState.taskManagerState.getTask(taskId);
         if (task === undefined) {
-            return { status: 'error', message: `task ${taskId} not found` }
+            return { status: 'error', message: `task ${taskId} not found` };
         }
 
         await task.render();
-        return { status: 'ok', data: task.toJSON() };
-    })
+        return { status: 'ok', data: task.toRenderJSON() };
+    });
     ipcMain.handle('taskManager:subscribeTaskUpdate', (event, taskId) => {
-        var task = globalState.taskManagerState.getTask(taskId);
+        const task = globalState.taskManagerState.getTask(taskId);
         if (task === undefined) {
-            return { status: 'error', message: `task ${taskId} not found` }
+            return { status: 'error', message: `task ${taskId} not found` };
         }
 
         if (!event.senderFrame) {
-            return { status: 'error', message: 'sender frame not found' }
+            return { status: 'error', message: 'sender frame not found' };
         }
 
         const subscriber = new ElectronTaskUpdateSubscriber(event.senderFrame);
         return { status: 'ok', data: task.addSubscriber(subscriber) };
-    })
+    });
     ipcMain.handle('taskManager:unsubscribeTaskUpdate', (event, taskId, subscriptionId) => {
-        var task = globalState.taskManagerState.getTask(taskId);
+        const task = globalState.taskManagerState.getTask(taskId);
         if (task === undefined) {
-            return { status: 'error', message: `task ${taskId} not found` }
+            return { status: 'error', message: `task ${taskId} not found` };
         }
 
         return { status: 'ok', data: task.removeSubscriber(subscriptionId) };
-    })
+    });
 
     ipcMain.handle('taskManager:getTaskList', (event) => {
         return { status: 'ok', data: globalState.taskManagerState.getTaskList() };
-    })
+    });
     ipcMain.handle('taskManager:subscribeTaskListUpdate', (event) => {
         if (!event.senderFrame) {
-            return { status: 'error', message: 'sender frame not found' }
+            return { status: 'error', message: 'sender frame not found' };
         }
         const subscriber = new ElectronTaskManagerUpdateSubscriber(event.senderFrame);
         return { status: 'ok', data: globalState.taskManagerState.addSubscriber(subscriber) };
-    })
+    });
     ipcMain.handle('taskManager:attachToolset', async (event, taskId, toolsetObject) => {
         const task = globalState.taskManagerState.getTask(taskId);
         if (task === undefined) {
-            return { status: 'error', message: `task ${taskId} not found` }
+            return { status: 'error', message: `task ${taskId} not found` };
         }
 
         const toolset = BaseToolset.fromJSON(toolsetObject);
-        for (let tool of toolset.tools.values()) {
+        for (const tool of toolset.tools.values()) {
             tool.setExecutor(async (args) => {
-                let toolCallId = crypto.randomUUID();
+                const toolCallId = crypto.randomUUID();
 
-                let result = new Promise((resolve, reject) => {
+                const result = new Promise((resolve, reject) => {
                     ipcMain.once(`taskManager:reportToolCallResult:${toolCallId}`, (event, result) => {
                         resolve(result);
                     });
@@ -279,31 +391,38 @@ const registerTaskManagerAPIHandlers = () => {
 
         await task.attachToolset(toolset);
         return { status: 'ok' };
-    })
+    });
     ipcMain.handle('taskManager:setSystemPrompt', (event, taskId, prompt) => {
         const task = globalState.taskManagerState.getTask(taskId);
         if (task === undefined) {
-            return { status: 'error', message: `task ${taskId} not found` }
+            return { status: 'error', message: `task ${taskId} not found` };
         }
         task.setSystemPrompt(prompt);
-    })
+    });
     ipcMain.handle('taskManager:submitMessage', async (event, taskId, details) => {
         const task = globalState.taskManagerState.getTask(taskId);
         if (task === undefined) {
-            return { status: 'error', message: `task ${taskId} not found` }
+            return { status: 'error', message: `task ${taskId} not found` };
         }
         if (details.attachedFilePaths) {
             await task.attachFiles(details.attachedFilePaths);
         }
+        if (details.selectedModel) {
+            task.model = details.selectedModel;
+        }
+        if (details.reasoningEffort !== undefined) {
+            task.reasoningEffort = details.reasoningEffort || undefined;
+        }
 
-        task.submitUserMessage(details.message)
-            .catch(err => logger.error(`submitUserMessage failed for task ${taskId}:`, err));
+        task.submitUserMessage(details.message).catch((err) =>
+            logger.error(`submitUserMessage failed for task ${taskId}:`, err)
+        );
         return { status: 'ok' };
     });
     ipcMain.handle('taskManager:stopTask', (event, taskId) => {
         const task = globalState.taskManagerState.getTask(taskId);
         if (task === undefined) {
-            return { status: 'error', message: `task ${taskId} not found` }
+            return { status: 'error', message: `task ${taskId} not found` };
         }
         task.stop();
         return { status: 'ok' };
@@ -331,7 +450,7 @@ const registerTaskManagerAPIHandlers = () => {
     ipcMain.handle('taskManager:exportTask', async (event, taskId, filePath) => {
         const task = globalState.taskManagerState.getTask(taskId);
         if (task === undefined) {
-            return { status: 'error', message: `task ${taskId} not found` }
+            return { status: 'error', message: `task ${taskId} not found` };
         }
         try {
             await task.render();
@@ -345,7 +464,7 @@ const registerTaskManagerAPIHandlers = () => {
     ipcMain.handle('taskManager:exportTaskToHtml', async (event, taskId) => {
         const task = globalState.taskManagerState.getTask(taskId);
         if (task === undefined) {
-            return { status: 'error', message: `task ${taskId} not found` }
+            return { status: 'error', message: `task ${taskId} not found` };
         }
         try {
             await task.render();
@@ -357,10 +476,10 @@ const registerTaskManagerAPIHandlers = () => {
             return { status: 'error', message: error.message };
         }
     });
-}
+};
 
 const registerFSAPIHandlers = () => {
-    ipcMain.handle('fs:searchFilesByKeyword', async (event, keyword) => {
+    (ipcMain.handle('fs:searchFilesByKeyword', async (event, keyword) => {
         try {
             const result = await FSService.searchFilesByKeyword(keyword);
             return { status: 'ok', data: result };
@@ -378,11 +497,11 @@ const registerFSAPIHandlers = () => {
         }),
         ipcMain.handle('fs:openFile', async (event, filePath) => {
             if (!filePath) {
-                return { status: 'error', message: `file path is required, ${filePath} given` }
+                return { status: 'error', message: `file path is required, ${filePath} given` };
             }
             shell.openPath(filePath);
             return { status: 'ok' };
-        })
+        }));
     ipcMain.handle('fs:dialog-open', async () => {
         const { canceled, filePaths } = await dialog.showOpenDialog({
             title: '选择附件',
@@ -393,9 +512,9 @@ const registerFSAPIHandlers = () => {
             return []; // 用户取消，返回空数组
         } else {
             // 将 Windows 路径的反斜杠统一替换为正斜杠，保持前后端一致
-            return filePaths.map(p => p.replace(/\\/g, '/'));
+            return filePaths.map((p) => p.replace(/\\/g, '/'));
         }
-    })
+    });
     ipcMain.handle('fs:getPathType', async (event, filePath) => {
         try {
             // 将正斜杠路径转换回系统路径格式（Windows需要反斜杠）
@@ -415,8 +534,8 @@ const registerFSAPIHandlers = () => {
             }
             return { status: 'error', message: error.message };
         }
-    })
-}
+    });
+};
 
 const registerSettingAPIHandlers = () => {
     ipcMain.handle('setting:loadSettingSchema', () => {
@@ -425,13 +544,13 @@ const registerSettingAPIHandlers = () => {
             return { status: 'ok', data: z.toJSONSchema(schema) };
         } catch (error) {
             logger.error(`error loading setting schema`, error);
-            logger.error(error.stack)
+            logger.error(error.stack);
             return { status: 'error', message: error.message };
         }
-    })
+    });
     ipcMain.handle('setting:loadSettingObject', () => {
         return { status: 'ok', data: Setting.getInstance().getData() };
-    })
+    });
     ipcMain.handle('setting:saveSettingObject', (event, settingObject) => {
         try {
             Setting.getInstance().setData(settingObject);
@@ -441,34 +560,86 @@ const registerSettingAPIHandlers = () => {
         } catch (error) {
             return { status: 'error', message: error.message };
         }
-    })
-    ipcMain.handle('setting:openDevTools', () => {
+    });
+    ipcMain.handle('quickpass:import', (event, quickpass) => {
+        try {
+            const cleaned = quickpass.trim().replace(/[\r\n]+/g, '');
+            const result = QuickPassHelper.importConfig(cleaned);
+            notifyWorkerSettingUpdate(Setting.getInstance().getData());
+            return { status: 'ok', data: result };
+        } catch (error) {
+            return { status: 'error', message: error.message };
+        }
+    });
+    ipcMain.handle('quickpass:isQuickPass', (event, text) => {
+        try {
+            return { status: 'ok', data: QuickPassHelper.isQuickPass(text) };
+        } catch {
+            return { status: 'ok', data: false };
+        }
+    });
+    ipcMain.handle('workspace:getEffectiveWorkspace', () => {
+        try {
+            const workspace = Setting.getInstance().getEffectiveWorkspace();
+            return { status: 'ok', data: workspace };
+        } catch (error) {
+            return { status: 'error', message: error.message };
+        }
+    });
+    ipcMain.handle('workspace:openWorkspaceDirectory', async () => {
+        try {
+            const workspace = Setting.getInstance().getEffectiveWorkspace();
+            await shell.openPath(workspace);
+            return { status: 'ok' };
+        } catch (error) {
+            return { status: 'error', message: error.message };
+        }
+    });
+    ipcMain.handle('workspace:selectWorkspaceDirectory', async () => {
+        try {
+            const result = await dialog.showOpenDialog(globalMainWindow, {
+                title: '选择工作空间目录',
+                properties: ['openDirectory']
+            });
+            if (result.canceled || result.filePaths.length === 0) {
+                return { status: 'ok', data: null };
+            }
+            const selectedPath = result.filePaths[0].replace(/\\/g, '/');
+            const currentData = Setting.getInstance().getData();
+            Setting.getInstance().setData({ ...currentData, default_workspace: selectedPath });
+            notifyWorkerSettingUpdate(Setting.getInstance().getData());
+            return { status: 'ok', data: selectedPath };
+        } catch (error) {
+            return { status: 'error', message: error.message };
+        }
+    });
+    (ipcMain.handle('setting:openDevTools', () => {
         if (globalMainWindow === null) {
-            return { status: 'error', message: 'main window not found' }
+            return { status: 'error', message: 'main window not found' };
         }
         globalMainWindow.webContents.openDevTools();
         return { status: 'ok' };
     }),
         ipcMain.handle('setting:getLogContent', () => {
             return { status: 'ok', data: converter.toHtml(LogStream.getStream().getContent()) };
-        })
-    ipcMain.handle('setting:closeMainWindow', () => {
+        }));
+    (ipcMain.handle('setting:closeMainWindow', () => {
         if (globalMainWindow === null) {
-            return { status: 'error', message: 'main window not found' }
+            return { status: 'error', message: 'main window not found' };
         }
         globalMainWindow.close();
         return { status: 'ok' };
     }),
         ipcMain.handle('setting:minimizeMainWindow', () => {
             if (globalMainWindow === null) {
-                return { status: 'error', message: 'main window not found' }
+                return { status: 'error', message: 'main window not found' };
             }
             globalMainWindow.minimize();
             return { status: 'ok' };
         }),
         ipcMain.handle('setting:maximizeMainWindow', () => {
             if (globalMainWindow === null) {
-                return { status: 'error', message: 'main window not found' }
+                return { status: 'error', message: 'main window not found' };
             }
             if (globalMainWindow.isMaximized()) {
                 globalMainWindow.unmaximize();
@@ -479,15 +650,14 @@ const registerSettingAPIHandlers = () => {
         }),
         ipcMain.handle('setting:isMaximized', () => {
             if (globalMainWindow === null) {
-                return { status: 'error', message: 'main window not found' }
+                return { status: 'error', message: 'main window not found' };
             }
             return { status: 'ok', data: globalMainWindow.isMaximized() };
-        })
-
-}
+        }));
+};
 
 const registerNotificationAPIHandlers = () => {
-    ipcMain.handle('notification:sendNotification', (event, ...args) => {
+    (ipcMain.handle('notification:sendNotification', (event, ...args) => {
         try {
             NotificationManager.getInstance().sendNotification(...args);
             return { status: 'ok' };
@@ -498,11 +668,11 @@ const registerNotificationAPIHandlers = () => {
         ipcMain.handle('notification:subscribeNotification', (event) => {
             NotificationManager.getInstance().addSubscriber(event.sender);
             return { status: 'ok' };
-        })
-}
+        }));
+};
 
 const registerHotKeys = () => {
-    var hotkey = 'Alt+Space';
+    let hotkey = 'Alt+Space';
     if (process.platform === 'darwin') {
         hotkey = 'Option+Space';
     }
@@ -510,31 +680,51 @@ const registerHotKeys = () => {
         // todo: 意图理解还没成熟，先显示主窗口
         // openFloatWindow();
         globalMainWindow.show();
-        globalMainWindow.webContents.send('command:openHomePage')
-    })
+        globalMainWindow.webContents.send('command:openHomePage');
+    });
     if (!ret) {
-        console.log(`hotkey ${hotkey} register failed, possibly because the hot key is already in use`)
+        console.log(`hotkey ${hotkey} register failed, possibly because the hot key is already in use`);
     }
-}
+};
 
 const registerTray = () => {
-    var icon = nativeImage.createFromPath(appIcon);
+    let icon = nativeImage.createFromPath(appIcon);
     icon = icon.resize({ width: 22, height: 22 });
     const menu = Menu.buildFromTemplate([
-        { label: '打开主窗口', click: () => { globalMainWindow.show(); } },
-        { label: '录制用户活动', click: () => { recallApplication.requestCaptureActivity(); } },
-        { label: '打开开发者工具', click: () => { globalMainWindow.webContents.openDevTools(); } },
+        {
+            label: '打开主窗口',
+            click: () => {
+                globalMainWindow.show();
+            }
+        },
+        {
+            label: '录制用户活动',
+            click: () => {
+                recallApplication.requestCaptureActivity();
+            }
+        },
+        {
+            label: '打开开发者工具',
+            click: () => {
+                globalMainWindow.webContents.openDevTools();
+            }
+        },
         { type: 'separator' },
-        { label: '退出', click: () => { app.quit(); } }
-    ])
+        {
+            label: '退出',
+            click: () => {
+                app.quit();
+            }
+        }
+    ]);
 
     globalTray = new Tray(icon);
-    globalTray.setToolTip('Fillip Desk | 弹指神通');
+    globalTray.setToolTip('OpenDesk | 一站式智慧办公空间');
     globalTray.setContextMenu(menu);
     globalTray.on('click', () => {
         globalMainWindow.show();
-    })
-}
+    });
+};
 
 // 初始化自动更新客户端
 let updateClient = null;
@@ -554,7 +744,7 @@ const initializeUpdater = () => {
         updateClient = new UpdateClient({
             serverUrls: updateServerUrls,
             currentVersion: app.getVersion(),
-            checkInterval: 3600000, // 每小时检查一次
+            checkInterval: 3600000 // 每小时检查一次
         });
 
         // 延迟检查更新，避免影响应用启动速度
@@ -564,7 +754,7 @@ const initializeUpdater = () => {
             });
         }, 3000); // 3秒后检查
     }
-}
+};
 
 function startApplication() {
     if (app.requestSingleInstanceLock()) {
@@ -572,7 +762,7 @@ function startApplication() {
             if (globalMainWindow) {
                 globalMainWindow.show();
             }
-        })
+        });
     } else {
         app.quit();
         process.exit(1);
@@ -599,16 +789,20 @@ function startApplication() {
 
     app.whenReady().then(async () => {
         GlobalState.initialize();
+        GlobalState.getInstance().taskManagerState.toolsetProvider = {
+            listAvailableToolsets: () => ApplicationRegistry.listAvailableToolsets()
+        };
         createWindow();
 
         // 将内置 skills（applications/skills/resources）自动同步到用户 skills 目录（先完成再注册，确保首次对话能发现技能）
         try {
-        await installBundledSkillsIfNeeded();
+            await installBundledSkillsIfNeeded();
         } catch (err) {
-        console.error('installBundledSkillsIfNeeded error', err);
+            console.error('installBundledSkillsIfNeeded error', err);
         }
 
         registerTaskManagerAPIHandlers();
+        registerModeAPIHandlers();
         registerFSAPIHandlers();
         registerSettingAPIHandlers();
         registerApplicationRegistryHandlers(ipcMain);
@@ -618,15 +812,15 @@ function startApplication() {
         initializeRegistryWorker();
         initializeProtocolHandlers();
         initializeUpdater();
-    })
+    });
 
     app.on('will-quit', async () => {
-        globalShortcut.unregisterAll()
+        globalShortcut.unregisterAll();
         // 停止自动更新检查
         if (updateClient) {
             updateClient.stopAutoCheck();
         }
-    })
+    });
 }
 
 startApplication();

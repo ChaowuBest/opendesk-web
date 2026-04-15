@@ -14,7 +14,6 @@
  * 负责：启动/停止录制、窗口选择、实时预览、历史活动展示
  */
 class RecordingPage extends HTMLElement {
-
     constructor() {
         super();
 
@@ -24,9 +23,9 @@ class RecordingPage extends HTMLElement {
         this.currentActivity = null;
         /** @type {NodeJS.Timeout | null} */
         this.reloadThumbnailInterval = null;
-        /** @type {number} */	 
-         this.reloadThumbnailIntervalMs = 2000;
-        
+        /** @type {number} */
+        this.reloadThumbnailIntervalMs = 2000;
+
         /** @type {Object[]} 预录制窗口配置 */
         this.preRecordingWindowConfigs = [];
         /** @type {Object[]} 缓存的窗口列表 */
@@ -49,9 +48,9 @@ class RecordingPage extends HTMLElement {
     // ------ 窗口相关api ------
     async updateWindowSelect() {
         const windows = await window.applicationAPI.call('getWindowList');
-        const displayCount = await window.applicationAPI.call('getDisplayCount') || 1;
+        const displayCount = (await window.applicationAPI.call('getDisplayCount')) || 1;
         const displayConfigsResult = await window.applicationAPI.call('getDisplayConfigs');
-        
+
         // 如果API调用失败（例如未开始录制），使用默认配置
         let displayConfigs = [];
         if (displayConfigsResult?.success && displayConfigsResult.displayConfigs) {
@@ -64,32 +63,39 @@ class RecordingPage extends HTMLElement {
                 targetId: null
             }));
         }
-        
+
         const windowSelectContainer = this.querySelector('#window-select-container');
         if (!windowSelectContainer) {
             console.warn('[RecordingPage] window-select-container not found');
             return;
         }
-        
+
         // 为每个显示器创建选择器
         let selectorsHtml = '';
-        
+
         for (let i = 0; i < displayCount; i++) {
-            const config = displayConfigs[i] || { displayIndex: i, captureMode: 'monitor', targetId: null };
-            
+            const config = displayConfigs[i] || {
+                displayIndex: i,
+                captureMode: 'monitor',
+                targetId: null
+            };
+
             // 过滤出该显示器上的窗口
-            const windowsOnDisplay = windows.filter(w => w.displayIndex === i);
-            
+            const windowsOnDisplay = windows.filter((w) => w.displayIndex === i);
+
             // 确定当前选择的文本
             let selectedText = `显示器 ${i + 1}`;
             if (config.captureMode === 'window' && config.targetId) {
-                const window = windows.find(w => w.windowId.toString() === config.targetId);
+                const window = windows.find((w) => w.windowId.toString() === config.targetId);
                 if (window) {
-                    const title = window.windowTitle.length > 20 ? window.windowTitle.substring(0, 20) + '...' : window.windowTitle;
+                    const title =
+                        window.windowTitle.length > 20
+                            ? window.windowTitle.substring(0, 20) + '...'
+                            : window.windowTitle;
                     selectedText = `${window.windowId} - ${title}`;
                 }
             }
-            
+
             selectorsHtml += `
                 <div class="display-selector mb-2">
                     <label class="block text-xs text-gray-600 mb-1 font-medium">
@@ -108,63 +114,78 @@ class RecordingPage extends HTMLElement {
                                 ${config.captureMode === 'monitor' ? '<i class="fa-solid fa-check ml-auto text-blue-600"></i>' : ''}
                             </div>
                             <div class="border-t border-gray-200 my-1"></div>
-                            ${windowsOnDisplay.length > 0 ? windowsOnDisplay.map(window => {
-                                const selected = config.captureMode === 'window' && config.targetId === window.windowId.toString();
-                                const title = window.windowTitle.length > 30 ? window.windowTitle.substring(0, 30) + '...' : window.windowTitle;
-                                const displayText = `${window.windowId} - ${title}`;
-                                
-                                return `
+                            ${
+                                windowsOnDisplay.length > 0
+                                    ? windowsOnDisplay
+                                          .map((window) => {
+                                              const selected =
+                                                  config.captureMode === 'window' &&
+                                                  config.targetId === window.windowId.toString();
+                                              const title =
+                                                  window.windowTitle.length > 30
+                                                      ? window.windowTitle.substring(0, 30) + '...'
+                                                      : window.windowTitle;
+                                              const displayText = `${window.windowId} - ${title}`;
+
+                                              return `
                                     <div class="window-option px-3 py-2.5 hover:bg-blue-50 cursor-pointer text-xs flex items-center gap-2 transition-colors ${selected ? 'bg-blue-100 text-blue-700 font-medium' : 'text-gray-700'}" data-value="${window.windowId}" data-display="${i}" title="${window.windowTitle}">
                                         <i class="fa-solid fa-window-maximize text-xs ${selected ? 'text-blue-600' : 'text-gray-400'}"></i>
                                         <span class="truncate flex-1">${displayText}</span>
                                         ${selected ? '<i class="fa-solid fa-check ml-auto text-blue-600"></i>' : ''}
                                     </div>
                                 `;
-                            }).join('') : '<div class="px-3 py-2 text-xs text-gray-400 text-center">该显示器上没有窗口</div>'}
+                                          })
+                                          .join('')
+                                    : '<div class="px-3 py-2 text-xs text-gray-400 text-center">该显示器上没有窗口</div>'
+                            }
                         </div>
                     </div>
                 </div>
             `;
         }
-        
+
         windowSelectContainer.innerHTML = selectorsHtml;
-        
+
         // 设置所有选择器的事件监听
-        windowSelectContainer.querySelectorAll('.window-select-btn').forEach(btn => {
+        windowSelectContainer.querySelectorAll('.window-select-btn').forEach((btn) => {
             btn.onclick = async (e) => {
                 e.stopPropagation();
                 const displayIndex = parseInt(btn.dataset.display);
-                const dropdown = windowSelectContainer.querySelector(`.window-dropdown[data-display="${displayIndex}"]`);
-                
+                const dropdown = windowSelectContainer.querySelector(
+                    `.window-dropdown[data-display="${displayIndex}"]`
+                );
+
                 // 关闭其他下拉框
-                windowSelectContainer.querySelectorAll('.window-dropdown').forEach(d => {
+                windowSelectContainer.querySelectorAll('.window-dropdown').forEach((d) => {
                     if (d !== dropdown) d.classList.add('hidden');
                 });
-                
+
                 // 如果要打开下拉框，先刷新窗口列表
                 if (dropdown.classList.contains('hidden')) {
                     await this.refreshRecordingDropdown(displayIndex);
                 }
-                
+
                 dropdown.classList.toggle('hidden');
             };
         });
-        
+
         // 设置所有选项的点击事件
-        windowSelectContainer.querySelectorAll('.window-option').forEach(option => {
+        windowSelectContainer.querySelectorAll('.window-option').forEach((option) => {
             option.onclick = async (e) => {
                 e.stopPropagation();
                 const displayIndex = parseInt(option.dataset.display);
                 const value = option.dataset.value;
-                
+
                 // 更新按钮文本
                 const btn = windowSelectContainer.querySelector(`.window-select-btn[data-display="${displayIndex}"]`);
                 btn.querySelector('span').textContent = option.querySelector('span').textContent;
-                
+
                 // 关闭下拉框
-                const dropdown = windowSelectContainer.querySelector(`.window-dropdown[data-display="${displayIndex}"]`);
+                const dropdown = windowSelectContainer.querySelector(
+                    `.window-dropdown[data-display="${displayIndex}"]`
+                );
                 dropdown.classList.add('hidden');
-                
+
                 // 调用新的API更新配置
                 if (value === 'monitor') {
                     await window.applicationAPI.call('changeDisplayConfig', displayIndex, {
@@ -177,15 +198,15 @@ class RecordingPage extends HTMLElement {
                         targetId: value
                     });
                 }
-                
+
                 // 重新加载选择器以更新UI
                 this.updateWindowSelect();
             };
         });
-        
+
         // 点击外部关闭所有下拉框
         document.addEventListener('click', () => {
-            windowSelectContainer.querySelectorAll('.window-dropdown').forEach(d => d.classList.add('hidden'));
+            windowSelectContainer.querySelectorAll('.window-dropdown').forEach((d) => d.classList.add('hidden'));
         });
     }
 
@@ -196,16 +217,16 @@ class RecordingPage extends HTMLElement {
         // 获取最新窗口列表
         const windows = await window.applicationAPI.call('getWindowList');
         const displayConfigsResult = await window.applicationAPI.call('getDisplayConfigs');
-        
+
         if (!displayConfigsResult?.success) return;
-        
+
         const config = displayConfigsResult.displayConfigs[displayIndex];
-        const windowsOnDisplay = windows.filter(w => w.displayIndex === displayIndex);
-        
+        const windowsOnDisplay = windows.filter((w) => w.displayIndex === displayIndex);
+
         // 找到下拉框容器
         const dropdown = this.querySelector(`.window-dropdown[data-display="${displayIndex}"]`);
         if (!dropdown) return;
-        
+
         // 重新生成选项HTML
         let optionsHtml = `
             <div class="window-option px-3 py-2.5 hover:bg-blue-50 cursor-pointer text-xs flex items-center gap-2 transition-colors ${config.captureMode === 'monitor' ? 'bg-blue-100 text-blue-700 font-medium' : 'text-gray-700'}" data-value="monitor" data-display="${displayIndex}">
@@ -215,13 +236,14 @@ class RecordingPage extends HTMLElement {
             </div>
             <div class="border-t border-gray-200 my-1"></div>
         `;
-        
+
         if (windowsOnDisplay.length > 0) {
-            windowsOnDisplay.forEach(window => {
+            windowsOnDisplay.forEach((window) => {
                 const selected = config.captureMode === 'window' && config.targetId === window.windowId.toString();
-                const title = window.windowTitle.length > 30 ? window.windowTitle.substring(0, 30) + '...' : window.windowTitle;
+                const title =
+                    window.windowTitle.length > 30 ? window.windowTitle.substring(0, 30) + '...' : window.windowTitle;
                 const displayText = `${window.windowId} - ${title}`;
-                
+
                 optionsHtml += `
                     <div class="window-option px-3 py-2.5 hover:bg-blue-50 cursor-pointer text-xs flex items-center gap-2 transition-colors ${selected ? 'bg-blue-100 text-blue-700 font-medium' : 'text-gray-700'}" data-value="${window.windowId}" data-display="${displayIndex}" title="${window.windowTitle}">
                         <i class="fa-solid fa-window-maximize text-xs ${selected ? 'text-blue-600' : 'text-gray-400'}"></i>
@@ -233,24 +255,24 @@ class RecordingPage extends HTMLElement {
         } else {
             optionsHtml += '<div class="px-3 py-2 text-xs text-gray-400 text-center">该显示器上没有窗口</div>';
         }
-        
+
         dropdown.innerHTML = optionsHtml;
-        
+
         // 重新绑定选项点击事件
         const windowSelectContainer = this.querySelector('#window-select-container');
-        dropdown.querySelectorAll('.window-option').forEach(option => {
+        dropdown.querySelectorAll('.window-option').forEach((option) => {
             option.onclick = async (e) => {
                 e.stopPropagation();
                 const displayIdx = parseInt(option.dataset.display);
                 const value = option.dataset.value;
-                
+
                 // 更新按钮文本
                 const btn = windowSelectContainer.querySelector(`.window-select-btn[data-display="${displayIdx}"]`);
                 btn.querySelector('span').textContent = option.querySelector('span').textContent;
-                
+
                 // 关闭下拉框
                 dropdown.classList.add('hidden');
-                
+
                 // 调用API更新配置
                 if (value === 'monitor') {
                     await window.applicationAPI.call('changeDisplayConfig', displayIdx, {
@@ -263,7 +285,7 @@ class RecordingPage extends HTMLElement {
                         targetId: value
                     });
                 }
-                
+
                 // 重新加载选择器以更新UI
                 this.updateWindowSelect();
             };
@@ -271,54 +293,54 @@ class RecordingPage extends HTMLElement {
     }
 
     // ------ 准备录制窗口选择 ------
-    
+
     /**
      * 初始化准备录制界面的窗口选择器
      */
     async setupPreRecordingWindowSelectors() {
         const container = this.querySelector('#pre-recording-window-container');
         if (!container) return;
-        
+
         // 获取显示器数量
-        const displayCount = await window.applicationAPI.call('getDisplayCount') || 1;
-        
+        const displayCount = (await window.applicationAPI.call('getDisplayCount')) || 1;
+
         // 初始化配置数组（默认全部选择"捕获显示器"）
         this.preRecordingWindowConfigs = Array.from({ length: displayCount }, (_, i) => ({
             displayIndex: i,
             captureMode: 'monitor',
             targetId: null
         }));
-        
+
         // 渲染选择器
         await this.renderPreRecordingWindowContainer(displayCount);
-        
+
         // 绑定事件
         this.bindPreRecordingWindowEvents();
-        
+
         // 初始加载窗口数量
         await this.updatePreRecordingWindowCounts();
     }
-    
+
     /**
      * 渲染准备录制窗口选择器容器
      */
     async renderPreRecordingWindowContainer(displayCount) {
         const container = this.querySelector('#pre-recording-window-container');
         if (!container) return;
-        
+
         // 决定网格列数：1-2个显示器用1列，3+用2列
-        let gridClass = displayCount <= 2 ? 'grid-cols-1' : 'grid-cols-2';
+        const gridClass = displayCount <= 2 ? 'grid-cols-1' : 'grid-cols-2';
         container.className = `grid gap-2 ${gridClass}`;
-        
+
         // 生成HTML
         let html = '';
         for (let i = 0; i < displayCount; i++) {
             html += this.getDisplaySelectorHtml(i);
         }
-        
+
         container.innerHTML = html;
     }
-    
+
     /**
      * 生成单个显示器选择器HTML
      */
@@ -362,42 +384,42 @@ class RecordingPage extends HTMLElement {
             </div>
         `;
     }
-    
+
     /**
      * 刷新准备录制下拉框
      */
     async refreshPreRecordingDropdown(displayIndex) {
         // 1. 获取最新窗口列表
         this.cachedWindowList = await window.applicationAPI.call('getWindowList');
-        
+
         // 2. 过滤该显示器的窗口
-        const windowsOnDisplay = this.cachedWindowList.filter(w => w.displayIndex === displayIndex);
-        
+        const windowsOnDisplay = this.cachedWindowList.filter((w) => w.displayIndex === displayIndex);
+
         // 3. 更新窗口数量显示
         const countSpan = this.querySelector(`[data-window-count="${displayIndex}"]`);
         if (countSpan) {
             countSpan.textContent = `${windowsOnDisplay.length}个窗口`;
         }
-        
+
         // 4. 获取当前配置
         const config = this.preRecordingWindowConfigs[displayIndex];
-        
+
         // 5. 渲染选项HTML
         const optionsContainer = this.querySelector(`.window-options-container[data-display="${displayIndex}"]`);
         if (!optionsContainer) return;
-        
+
         optionsContainer.innerHTML = this.getWindowOptionsHtml(displayIndex, windowsOnDisplay, config);
-        
+
         // 6. 绑定选项点击事件
         this.bindOptionClickEvents(displayIndex);
     }
-    
+
     /**
      * 生成窗口选项HTML
      */
     getWindowOptionsHtml(displayIndex, windows, config) {
         const monitorSelected = config.captureMode === 'monitor';
-        
+
         let html = `
             <div class="window-option px-3 py-2.5 hover:bg-purple-50 cursor-pointer text-xs flex items-center gap-2 transition-colors ${monitorSelected ? 'bg-purple-100 text-purple-700 font-medium' : 'text-gray-700'}" 
                  data-value="monitor" 
@@ -408,14 +430,14 @@ class RecordingPage extends HTMLElement {
                 ${monitorSelected ? '<i class="fa-solid fa-check ml-auto text-purple-600"></i>' : ''}
             </div>
         `;
-        
+
         if (windows.length > 0) {
             html += '<div class="border-t border-gray-200"></div>';
-            
-            windows.forEach(win => {
+
+            windows.forEach((win) => {
                 const selected = config.captureMode === 'window' && config.targetId === win.windowId.toString();
                 const title = win.windowTitle || '未命名窗口';
-                
+
                 html += `
                     <div class="window-option px-3 py-2.5 hover:bg-purple-50 cursor-pointer text-xs flex items-center gap-2 transition-colors ${selected ? 'bg-purple-100 text-purple-700 font-medium' : 'text-gray-700'}" 
                          data-value="${win.windowId}" 
@@ -432,44 +454,44 @@ class RecordingPage extends HTMLElement {
                 `;
             });
         }
-        
+
         html += `
             <div class="no-results hidden px-3 py-4 text-xs text-gray-400 text-center">
                 <i class="fa-solid fa-search mb-2 text-lg"></i>
                 <div>未找到匹配的窗口</div>
             </div>
         `;
-        
+
         return html;
     }
-    
+
     /**
      * 处理窗口搜索
      */
     handlePreRecordingWindowSearch(displayIndex, searchText) {
         const container = this.querySelector(`.window-options-container[data-display="${displayIndex}"]`);
         if (!container) return;
-        
+
         const options = container.querySelectorAll('.window-option');
         const noResults = container.querySelector('.no-results');
-        
+
         let visibleCount = 0;
         const search = searchText.toLowerCase().trim();
-        
-        options.forEach(option => {
+
+        options.forEach((option) => {
             const searchableText = option.dataset.searchText?.toLowerCase() || '';
             const isMatch = !search || searchableText.includes(search);
-            
+
             option.style.display = isMatch ? 'flex' : 'none';
             if (isMatch) visibleCount++;
         });
-        
+
         // 显示/隐藏无结果提示
         if (noResults) {
             noResults.classList.toggle('hidden', visibleCount > 0);
         }
     }
-    
+
     /**
      * 选择窗口
      */
@@ -488,17 +510,17 @@ class RecordingPage extends HTMLElement {
                 targetId: value
             };
         }
-        
+
         // 2. 更新按钮文本
         const btn = this.querySelector(`.pre-window-select-btn[data-display="${displayIndex}"]`);
         if (btn) {
             const textSpan = btn.querySelector('span');
             textSpan.textContent = titleText;
         }
-        
+
         // 3. 关闭下拉框
         this.closeAllPreRecordingDropdowns();
-        
+
         // 4. 重置搜索
         const dropdown = this.querySelector(`.pre-window-dropdown[data-display="${displayIndex}"]`);
         if (dropdown) {
@@ -509,35 +531,35 @@ class RecordingPage extends HTMLElement {
             }
         }
     }
-    
+
     /**
      * 绑定准备录制窗口选择事件
      */
     bindPreRecordingWindowEvents() {
         const container = this.querySelector('#pre-recording-window-container');
         if (!container) return;
-        
+
         // 按钮点击事件
-        container.querySelectorAll('.pre-window-select-btn').forEach(btn => {
+        container.querySelectorAll('.pre-window-select-btn').forEach((btn) => {
             btn.onclick = async (e) => {
                 e.stopPropagation();
                 const displayIndex = parseInt(btn.dataset.display);
                 const dropdown = this.querySelector(`.pre-window-dropdown[data-display="${displayIndex}"]`);
                 const chevron = btn.querySelector(`[data-chevron="${displayIndex}"]`);
-                
+
                 // 关闭其他下拉框
                 this.closeAllPreRecordingDropdowns();
-                
+
                 // 刷新并打开
                 if (dropdown && dropdown.classList.contains('hidden')) {
                     await this.refreshPreRecordingDropdown(displayIndex);
-                    
+
                     // 计算下拉框位置（fixed定位）
                     const rect = btn.getBoundingClientRect();
                     dropdown.style.top = `${rect.bottom + 4}px`;
                     dropdown.style.left = `${rect.left}px`;
                     dropdown.style.width = `${Math.max(rect.width, 280)}px`;
-                    
+
                     dropdown.classList.remove('hidden');
                     if (chevron) chevron.classList.add('rotate-180');
                 } else if (dropdown) {
@@ -546,42 +568,42 @@ class RecordingPage extends HTMLElement {
                 }
             };
         });
-        
+
         // 搜索输入事件
-        container.querySelectorAll('.window-search-input').forEach(input => {
+        container.querySelectorAll('.window-search-input').forEach((input) => {
             input.oninput = (e) => {
                 const displayIndex = parseInt(input.dataset.display);
                 this.handlePreRecordingWindowSearch(displayIndex, e.target.value);
             };
-            
+
             // 阻止点击搜索框时关闭下拉框
             input.onclick = (e) => e.stopPropagation();
         });
-        
+
         // 阻止下拉框内点击冒泡
-        container.querySelectorAll('.pre-window-dropdown').forEach(dropdown => {
+        container.querySelectorAll('.pre-window-dropdown').forEach((dropdown) => {
             dropdown.onclick = (e) => e.stopPropagation();
         });
-        
+
         // 点击外部关闭所有准备录制下拉框
         document.addEventListener('click', () => {
             this.closeAllPreRecordingDropdowns();
         });
     }
-    
+
     /**
      * 绑定选项点击事件
      */
     bindOptionClickEvents(displayIndex) {
         const container = this.querySelector(`.window-options-container[data-display="${displayIndex}"]`);
         if (!container) return;
-        
-        container.querySelectorAll('.window-option').forEach(option => {
+
+        container.querySelectorAll('.window-option').forEach((option) => {
             option.onclick = (e) => {
                 e.stopPropagation();
                 const value = option.dataset.value;
                 const displayIdx = parseInt(option.dataset.display);
-                
+
                 let titleText;
                 if (value === 'monitor') {
                     titleText = `捕获显示器 ${displayIdx + 1}`;
@@ -590,40 +612,39 @@ class RecordingPage extends HTMLElement {
                     const shortTitle = title.length > 20 ? title.substring(0, 20) + '...' : title;
                     titleText = `${value} - ${shortTitle}`;
                 }
-                
+
                 this.selectPreRecordingWindow(displayIdx, value, titleText);
             };
         });
     }
-    
+
     /**
      * 关闭所有准备录制下拉框
      */
     closeAllPreRecordingDropdowns() {
-        this.querySelectorAll('.pre-window-dropdown').forEach(dropdown => {
+        this.querySelectorAll('.pre-window-dropdown').forEach((dropdown) => {
             dropdown.classList.add('hidden');
         });
-        this.querySelectorAll('[data-chevron]').forEach(chevron => {
+        this.querySelectorAll('[data-chevron]').forEach((chevron) => {
             chevron.classList.remove('rotate-180');
         });
     }
-    
+
     /**
      * 更新准备录制窗口数量显示
      */
     async updatePreRecordingWindowCounts() {
         const windows = await window.applicationAPI.call('getWindowList');
         const displayCount = this.preRecordingWindowConfigs.length;
-        
+
         for (let i = 0; i < displayCount; i++) {
-            const windowsOnDisplay = windows.filter(w => w.displayIndex === i);
+            const windowsOnDisplay = windows.filter((w) => w.displayIndex === i);
             const countSpan = this.querySelector(`[data-window-count="${i}"]`);
             if (countSpan) {
                 countSpan.textContent = `${windowsOnDisplay.length}个窗口`;
             }
         }
     }
-
 
     // ------ 主页面显示 ------
     async reloadPreviewArea() {
@@ -655,7 +676,7 @@ class RecordingPage extends HTMLElement {
             this.querySelector('#recall-current-activity').innerHTML = this.getIdleHtml();
 
             // --- 闭包内的局部变量状态 ---
-            let tags = [];
+            const tags = [];
 
             // DOM 引用
             const tagInput = this.querySelector('#tag-input');
@@ -677,7 +698,7 @@ class RecordingPage extends HTMLElement {
                 const activityName = activityNameInput.value.trim();
                 this.executeStartCapture(activityName, tags);
             };
-            
+
             // 初始化窗口选择器
             this.setupPreRecordingWindowSelectors();
         });
@@ -713,25 +734,24 @@ class RecordingPage extends HTMLElement {
         this.startRecallCapture(finalName, tags);
     }
 
-
     async startRecallCapture(activityName, tags = []) {
         const options = {};
         if (tags.length > 0) {
             options.tags = tags;
         }
-        
+
         // 传递窗口配置
         if (this.preRecordingWindowConfigs && this.preRecordingWindowConfigs.length > 0) {
             // 检查是否所有显示器都使用默认的"捕获显示器"模式
-            const allDefault = this.preRecordingWindowConfigs.every(c => c.captureMode === 'monitor');
-            
+            const allDefault = this.preRecordingWindowConfigs.every((c) => c.captureMode === 'monitor');
+
             if (!allDefault) {
                 // 有自定义窗口选择，传递详细配置
                 options.displayConfigs = this.preRecordingWindowConfigs;
             }
             // 如果全部默认，不需要传递配置（后端会使用默认行为）
         }
-        
+
         const recallStatus = await window.applicationAPI.call('startRecallCapture', activityName, options);
         await this.reloadPreviewArea();
         await this.reloadHistoryActivities();
@@ -768,7 +788,7 @@ class RecordingPage extends HTMLElement {
                 this.handleRecordingEnd();
             }
         };
-        
+
         // 录制界面中无法更新窗口选项
         updatePreview();
         this.reloadThumbnailInterval = setInterval(updatePreview, this.reloadThumbnailIntervalMs);
@@ -794,7 +814,7 @@ class RecordingPage extends HTMLElement {
         const recallStatus = await window.applicationAPI.call('getRecallStatus');
         return recallStatus;
     }
-    
+
     /**
      * 录制结束或出错时的清理
      */
@@ -815,23 +835,27 @@ class RecordingPage extends HTMLElement {
         const now = new Date();
         const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0).getTime();
         const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999).getTime();
-        
-        const historyActivities = await window.applicationAPI.call('getHistoryActivities', todayStart, todayEnd);
-        const historyActivitiesHtml = historyActivities.map(activity => {
-            // 使用 Base64 data URL 替代 file:// URL
-            const coverPath = activity.coverDataURL || '';
-            const defaultImage = 'https://images.unsplash.com/photo-1555066931-4365d14bab8c?auto=format&fit=crop&q=40&w=300';
-            // 计算时长
-            const durationMinutes = activity.duration ? Math.floor(activity.duration / 1000 / 60) : 0;
-            // 格式化时间
-            const startTimeStr = activity.startTime ? new Date(activity.startTime).toLocaleString('zh-CN', {
-                month: '2-digit',
-                day: '2-digit',
-                hour: '2-digit',
-                minute: '2-digit'
-            }) : '--';
 
-            return `
+        const historyActivities = await window.applicationAPI.call('getHistoryActivities', todayStart, todayEnd);
+        const historyActivitiesHtml = historyActivities
+            .map((activity) => {
+                // 使用 Base64 data URL 替代 file:// URL
+                const coverPath = activity.coverDataURL || '';
+                const defaultImage =
+                    'https://images.unsplash.com/photo-1555066931-4365d14bab8c?auto=format&fit=crop&q=40&w=300';
+                // 计算时长
+                const durationMinutes = activity.duration ? Math.floor(activity.duration / 1000 / 60) : 0;
+                // 格式化时间
+                const startTimeStr = activity.startTime
+                    ? new Date(activity.startTime).toLocaleString('zh-CN', {
+                          month: '2-digit',
+                          day: '2-digit',
+                          hour: '2-digit',
+                          minute: '2-digit'
+                      })
+                    : '--';
+
+                return `
         <div class="history-activity-item flex-none w-36 group cursor-pointer" data-activity_id="${activity.activityId}">
             <div class="relative aspect-video rounded-md overflow-hidden border border-zinc-200 group-hover:border-blue-400 transition-colors shadow-sm bg-white">
                 <img src="${coverPath || defaultImage}" class="w-full h-full object-cover opacity-90 group-hover:opacity-100 transition-opacity" onerror="this.src='${defaultImage}'">
@@ -861,10 +885,11 @@ class RecordingPage extends HTMLElement {
             </div>
         </div>
         `;
-        }).join('');
+            })
+            .join('');
 
         document.querySelector('#recall-history-activity-list').innerHTML = historyActivitiesHtml;
-        document.querySelectorAll('.delete-history-activity-btn').forEach(btn => {
+        document.querySelectorAll('.delete-history-activity-btn').forEach((btn) => {
             btn.onclick = async (event) => {
                 event.stopPropagation(); // 阻止事件冒泡
                 const activityId = btn.dataset.activity_id;
@@ -874,9 +899,9 @@ class RecordingPage extends HTMLElement {
                 }
                 await window.applicationAPI.call('deleteHistoryActivity', activityId);
                 this.reloadHistoryActivities();
-            }
+            };
         });
-        document.querySelectorAll('.history-activity-item').forEach(item => {
+        document.querySelectorAll('.history-activity-item').forEach((item) => {
             item.onclick = async () => {
                 const activityId = item.dataset.activity_id;
                 try {
@@ -889,7 +914,7 @@ class RecordingPage extends HTMLElement {
                 } catch (error) {
                     console.error('Error while fetching activity data:', error);
                 }
-            }
+            };
         });
     }
 
@@ -899,14 +924,18 @@ class RecordingPage extends HTMLElement {
             return;
         }
 
-        let durationMs = Date.now() - this.currentActivity.startTime;
-        let durationHours = Math.floor(durationMs / 3600000);
-        let durationMinutes = Math.floor((durationMs % 3600000) / 60000);
-        let durationSeconds = Math.floor((durationMs % 60000) / 1000);
+        const durationMs = Date.now() - this.currentActivity.startTime;
+        const durationHours = Math.floor(durationMs / 3600000);
+        const durationMinutes = Math.floor((durationMs % 3600000) / 60000);
+        const durationSeconds = Math.floor((durationMs % 60000) / 1000);
 
-        let durationString = `${durationSeconds}秒`
-        if (durationMinutes > 0) { durationString = `${durationMinutes}分钟` + durationString; }
-        if (durationHours > 0) { durationString = `${durationHours}小时` + durationString; }
+        let durationString = `${durationSeconds}秒`;
+        if (durationMinutes > 0) {
+            durationString = `${durationMinutes}分钟` + durationString;
+        }
+        if (durationHours > 0) {
+            durationString = `${durationHours}小时` + durationString;
+        }
 
         const durationEl = document.querySelector('#recall-recording-duration');
         if (durationEl) {
@@ -925,7 +954,12 @@ class RecordingPage extends HTMLElement {
         if (!previewEl) return;
 
         // 检查返回数据是否有效
-        if (!latestThumbnail || latestThumbnail.success === false || !latestThumbnail.thumbnails || !Array.isArray(latestThumbnail.thumbnails)) {
+        if (
+            !latestThumbnail ||
+            latestThumbnail.success === false ||
+            !latestThumbnail.thumbnails ||
+            !Array.isArray(latestThumbnail.thumbnails)
+        ) {
             // 录制已停止（正常情况，如窗口消失或用户主动停止），直接返回false让调用者处理
             return false;
         }
@@ -953,8 +987,9 @@ class RecordingPage extends HTMLElement {
             // 两个显示器：并排布局
             previewEl.innerHTML = `
                 <div class="flex gap-2 w-full h-full p-2">
-                    ${latestThumbnail.thumbnails.map(
-                        (src, idx) => `
+                    ${latestThumbnail.thumbnails
+                        .map(
+                            (src, idx) => `
                         <div class="flex-1 relative flex items-center justify-center bg-black/20 rounded-lg overflow-hidden border border-white/10">
                             <img src="${src}" alt="显示器 ${idx + 1}" class="w-full h-full object-contain" />
                             <div class="absolute bottom-2 left-1/2 -translate-x-1/2 bg-black/70 backdrop-blur-sm text-white text-xs px-2 py-1 rounded-md font-medium flex items-center gap-1">
@@ -963,7 +998,8 @@ class RecordingPage extends HTMLElement {
                             </div>
                         </div>
                         `
-                    ).join('')}
+                        )
+                        .join('')}
                 </div>
             `;
         } else if (latestThumbnail.thumbnails.length === 3) {
@@ -978,8 +1014,10 @@ class RecordingPage extends HTMLElement {
                         </div>
                     </div>
                     <div class="flex-1 flex gap-2">
-                        ${latestThumbnail.thumbnails.slice(1).map(
-                            (src, idx) => `
+                        ${latestThumbnail.thumbnails
+                            .slice(1)
+                            .map(
+                                (src, idx) => `
                             <div class="flex-1 relative flex items-center justify-center bg-black/20 rounded-lg overflow-hidden border border-white/10">
                                 <img src="${src}" alt="显示器 ${idx + 2}" class="w-full h-full object-contain" />
                                 <div class="absolute bottom-2 left-1/2 -translate-x-1/2 bg-black/70 backdrop-blur-sm text-white text-xs px-2 py-1 rounded-md font-medium flex items-center gap-1">
@@ -988,7 +1026,8 @@ class RecordingPage extends HTMLElement {
                                 </div>
                             </div>
                             `
-                        ).join('')}
+                            )
+                            .join('')}
                     </div>
                 </div>
             `;
@@ -996,8 +1035,9 @@ class RecordingPage extends HTMLElement {
             // 4个或更多显示器：2x2网格布局
             previewEl.innerHTML = `
                 <div class="grid grid-cols-2 gap-2 w-full h-full p-2">
-                    ${latestThumbnail.thumbnails.map(
-                        (src, idx) => `
+                    ${latestThumbnail.thumbnails
+                        .map(
+                            (src, idx) => `
                         <div class="relative flex items-center justify-center bg-black/20 rounded-lg overflow-hidden border border-white/10">
                             <img src="${src}" alt="显示器 ${idx + 1}" class="w-full h-full object-contain" />
                             <div class="absolute bottom-2 left-1/2 -translate-x-1/2 bg-black/70 backdrop-blur-sm text-white text-xs px-2 py-1 rounded-md font-medium flex items-center gap-1">
@@ -1006,7 +1046,8 @@ class RecordingPage extends HTMLElement {
                             </div>
                         </div>
                         `
-                    ).join('')}
+                        )
+                        .join('')}
                 </div>
             `;
         }
@@ -1017,13 +1058,48 @@ class RecordingPage extends HTMLElement {
 
     renderTags(tags, container) {
         const colors = [
-            { bg: 'bg-blue-100', text: 'text-blue-800', border: 'border-blue-300', hover: 'hover:text-blue-900' },
-            { bg: 'bg-green-100', text: 'text-green-800', border: 'border-green-300', hover: 'hover:text-green-900' },
-            { bg: 'bg-indigo-100', text: 'text-indigo-800', border: 'border-indigo-300', hover: 'hover:text-indigo-900' },
-            { bg: 'bg-orange-100', text: 'text-orange-800', border: 'border-orange-300', hover: 'hover:text-orange-900' },
-            { bg: 'bg-teal-100', text: 'text-teal-800', border: 'border-teal-300', hover: 'hover:text-teal-900' },
-            { bg: 'bg-cyan-100', text: 'text-cyan-800', border: 'border-cyan-300', hover: 'hover:text-cyan-900' },
-            { bg: 'bg-pink-100', text: 'text-pink-800', border: 'border-pink-300', hover: 'hover:text-pink-900' }
+            {
+                bg: 'bg-blue-100',
+                text: 'text-blue-800',
+                border: 'border-blue-300',
+                hover: 'hover:text-blue-900'
+            },
+            {
+                bg: 'bg-green-100',
+                text: 'text-green-800',
+                border: 'border-green-300',
+                hover: 'hover:text-green-900'
+            },
+            {
+                bg: 'bg-indigo-100',
+                text: 'text-indigo-800',
+                border: 'border-indigo-300',
+                hover: 'hover:text-indigo-900'
+            },
+            {
+                bg: 'bg-orange-100',
+                text: 'text-orange-800',
+                border: 'border-orange-300',
+                hover: 'hover:text-orange-900'
+            },
+            {
+                bg: 'bg-teal-100',
+                text: 'text-teal-800',
+                border: 'border-teal-300',
+                hover: 'hover:text-teal-900'
+            },
+            {
+                bg: 'bg-cyan-100',
+                text: 'text-cyan-800',
+                border: 'border-cyan-300',
+                hover: 'hover:text-cyan-900'
+            },
+            {
+                bg: 'bg-pink-100',
+                text: 'text-pink-800',
+                border: 'border-pink-300',
+                hover: 'hover:text-pink-900'
+            }
         ];
 
         const getTagColor = (str) => {
@@ -1034,12 +1110,13 @@ class RecordingPage extends HTMLElement {
             return colors[Math.abs(hash) % colors.length];
         };
 
-        container.innerHTML = tags.map(tag => {
-            const color = getTagColor(tag);
-            const colorClass = `${color.bg} ${color.text} border ${color.border}`;
-            const hoverClass = color.hover;
+        container.innerHTML = tags
+            .map((tag) => {
+                const color = getTagColor(tag);
+                const colorClass = `${color.bg} ${color.text} border ${color.border}`;
+                const hoverClass = color.hover;
 
-            return `
+                return `
                 <span class="inline-flex items-center gap-1.5 px-3 py-1.5 ${colorClass} text-xs font-medium rounded-lg shadow-sm whitespace-nowrap">
                     <i class="fa-solid fa-tag text-xs"></i>
                     <span class="font-semibold">${tag}</span>
@@ -1048,18 +1125,19 @@ class RecordingPage extends HTMLElement {
                     </button>
                 </span>
             `;
-        }).join('');
+            })
+            .join('');
 
         // 添加删除标签的处理逻辑
         container.querySelectorAll('.delete-tag-btn').forEach((btn, index) => {
             btn.onclick = (e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                
+
                 const tagEl = btn.closest('span');
                 const tagText = tagEl.querySelector('span.font-semibold').textContent;
                 const tagIndex = tags.indexOf(tagText);
-                
+
                 if (tagIndex > -1) {
                     tags.splice(tagIndex, 1);
                     this.renderTags(tags, container);
@@ -1067,7 +1145,7 @@ class RecordingPage extends HTMLElement {
             };
         });
     }
-    
+
     render() {
         this.innerHTML = `
         <div class='w-full h-full flex flex-col overflow-hidden pb-6'>
@@ -1120,13 +1198,13 @@ class RecordingPage extends HTMLElement {
         const scrollContainer = this.querySelector('#recall-history-activity-list');
         const leftBtn = this.querySelector('#recall-history-scroll-left');
         const rightBtn = this.querySelector('#recall-history-scroll-right');
-        
+
         if (leftBtn && scrollContainer) {
             leftBtn.onclick = () => {
                 scrollContainer.scrollBy({ left: -300, behavior: 'smooth' });
             };
         }
-        
+
         if (rightBtn && scrollContainer) {
             rightBtn.onclick = () => {
                 scrollContainer.scrollBy({ left: 300, behavior: 'smooth' });
@@ -1139,8 +1217,6 @@ class RecordingPage extends HTMLElement {
      * @param {Array} tags 标签数组
      * @param {HTMLElement} container 容器元素
      */
-
-
 
     // --- HTML 模板库 ---
     getIdleHtml() {

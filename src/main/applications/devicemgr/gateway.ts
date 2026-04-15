@@ -27,7 +27,7 @@ import {
     buildDeviceAuthPayloadV3,
     buildDeviceAuthPayloadV2,
     base64UrlEncode,
-    generatePairingToken,
+    generatePairingToken
 } from './device-identity.js';
 import type {
     RequestFrame,
@@ -35,7 +35,7 @@ import type {
     EventFrame,
     ConnectParams,
     GatewayIdentity,
-    DeviceMgrConfig,
+    DeviceMgrConfig
 } from './common.js';
 import {
     PROTOCOL_VERSION,
@@ -43,7 +43,7 @@ import {
     TICK_INTERVAL_MS,
     SIGNATURE_SKEW_MS,
     GATEWAY_METHODS,
-    GATEWAY_EVENTS,
+    GATEWAY_EVENTS
 } from './common.js';
 
 const TAG = '[devicemgr:gateway]';
@@ -70,11 +70,10 @@ export type GatewayMethodHandler = (
     conn: ConnectionState,
     frame: RequestFrame,
     params: any,
-    respond: (ok: boolean, payload?: unknown, error?: { code: string; message: string; details?: unknown }) => void,
+    respond: (ok: boolean, payload?: unknown, error?: { code: string; message: string; details?: unknown }) => void
 ) => void | Promise<void>;
 
 export class DeviceGateway {
-
     private wss: WebSocketServer | null = null;
     private identity!: GatewayIdentity;
     private nodeRegistry = new NodeRegistry();
@@ -204,14 +203,14 @@ export class DeviceGateway {
             remoteIp,
             handshakeState: 'pending',
             challengeNonce: nonce,
-            challengeTs: Date.now(),
+            challengeTs: Date.now()
         };
         this.connections.set(connId, conn);
 
         // Send challenge immediately
         this.sendEvent(socket, 'connect.challenge', {
             nonce,
-            ts: conn.challengeTs,
+            ts: conn.challengeTs
         });
 
         // Handshake timeout
@@ -271,7 +270,7 @@ export class DeviceGateway {
             } else {
                 this.sendResponse(conn.socket, frame.id, false, undefined, {
                     code: 'NOT_AUTHENTICATED',
-                    message: 'must send connect request first',
+                    message: 'must send connect request first'
                 });
             }
             return;
@@ -283,7 +282,11 @@ export class DeviceGateway {
     private routeMethod(conn: ConnectionState, frame: RequestFrame): void {
         const method = frame.method;
         const params = frame.params as any;
-        const respond = (ok: boolean, payload?: unknown, error?: { code: string; message: string; details?: unknown }) => {
+        const respond = (
+            ok: boolean,
+            payload?: unknown,
+            error?: { code: string; message: string; details?: unknown }
+        ) => {
             this.sendResponse(conn.socket, frame.id, ok, payload, error);
         };
 
@@ -296,14 +299,14 @@ export class DeviceGateway {
                     result.catch((err: any) => {
                         respond(false, undefined, {
                             code: 'INTERNAL_ERROR',
-                            message: err?.message || 'handler error',
+                            message: err?.message || 'handler error'
                         });
                     });
                 }
             } catch (err: any) {
                 respond(false, undefined, {
                     code: 'INTERNAL_ERROR',
-                    message: err?.message || 'handler error',
+                    message: err?.message || 'handler error'
                 });
             }
             return;
@@ -353,7 +356,7 @@ export class DeviceGateway {
             default:
                 respond(false, undefined, {
                     code: 'METHOD_NOT_FOUND',
-                    message: `unknown method: ${method}`,
+                    message: `unknown method: ${method}`
                 });
         }
     }
@@ -365,7 +368,7 @@ export class DeviceGateway {
         if (!params) {
             this.sendResponse(conn.socket, frame.id, false, undefined, {
                 code: 'INVALID_PARAMS',
-                message: 'connect params required',
+                message: 'connect params required'
             });
             return;
         }
@@ -376,7 +379,7 @@ export class DeviceGateway {
         if (PROTOCOL_VERSION < minP || PROTOCOL_VERSION > maxP) {
             this.sendResponse(conn.socket, frame.id, false, undefined, {
                 code: 'PROTOCOL_MISMATCH',
-                message: `server protocol ${PROTOCOL_VERSION} not in client range [${minP}, ${maxP}]`,
+                message: `server protocol ${PROTOCOL_VERSION} not in client range [${minP}, ${maxP}]`
             });
             conn.socket.close(4002, 'protocol mismatch');
             return;
@@ -388,7 +391,7 @@ export class DeviceGateway {
             this.sendResponse(conn.socket, frame.id, false, undefined, {
                 code: authResult.code!,
                 message: authResult.message!,
-                details: authResult.details,
+                details: authResult.details
             });
             if (authResult.closeConnection) {
                 conn.handshakeState = 'failed';
@@ -421,14 +424,14 @@ export class DeviceGateway {
                 deviceFamily: params.client.deviceFamily,
                 caps: session.caps,
                 commands: session.commands,
-                remoteIp: conn.remoteIp,
+                remoteIp: conn.remoteIp
             });
 
             deviceToken = generatePairingToken();
             this.emitGatewayEvent('device:connected', {
                 nodeId: session.nodeId,
                 displayName: session.displayName,
-                platform: session.platform,
+                platform: session.platform
             });
         }
 
@@ -445,30 +448,33 @@ export class DeviceGateway {
             protocol: PROTOCOL_VERSION,
             server: {
                 version: '1.0.0',
-                connId: conn.connId,
+                connId: conn.connId
             },
             features: {
                 methods: GATEWAY_METHODS,
-                events: GATEWAY_EVENTS,
+                events: GATEWAY_EVENTS
             },
             auth: {
                 deviceToken,
                 role: params.role ?? 'node',
                 scopes: params.scopes ?? [],
-                issuedAtMs: Date.now(),
+                issuedAtMs: Date.now()
             },
             policy: {
                 maxPayload: 1_048_576,
                 maxBufferedBytes: 10_485_760,
-                tickIntervalMs: TICK_INTERVAL_MS,
-            },
+                tickIntervalMs: TICK_INTERVAL_MS
+            }
         });
     }
 
     /**
      * 验证连接认证：设备签名 + token。
      */
-    private verifyAuth(conn: ConnectionState, params: ConnectParams): {
+    private verifyAuth(
+        conn: ConnectionState,
+        params: ConnectParams
+    ): {
         ok: boolean;
         code?: string;
         message?: string;
@@ -490,7 +496,7 @@ export class DeviceGateway {
                 ok: false,
                 code: 'DEVICE_AUTH_NONCE_REQUIRED',
                 message: 'device nonce required',
-                closeConnection: true,
+                closeConnection: true
             };
         }
 
@@ -499,7 +505,7 @@ export class DeviceGateway {
                 ok: false,
                 code: 'DEVICE_AUTH_NONCE_MISMATCH',
                 message: 'device nonce mismatch',
-                closeConnection: true,
+                closeConnection: true
             };
         }
 
@@ -511,7 +517,7 @@ export class DeviceGateway {
                     ok: false,
                     code: 'DEVICE_AUTH_DEVICE_ID_MISMATCH',
                     message: 'device identity mismatch',
-                    closeConnection: true,
+                    closeConnection: true
                 };
             }
         }
@@ -524,7 +530,7 @@ export class DeviceGateway {
                     ok: false,
                     code: 'DEVICE_AUTH_SIGNATURE_EXPIRED',
                     message: 'device signature expired',
-                    closeConnection: true,
+                    closeConnection: true
                 };
             }
         }
@@ -546,7 +552,7 @@ export class DeviceGateway {
                 token,
                 nonce: device.nonce,
                 platform: params.client.platform,
-                deviceFamily: params.client.deviceFamily,
+                deviceFamily: params.client.deviceFamily
             });
 
             let valid = verifyDeviceSignature(device.publicKey, payloadV3, device.signature);
@@ -560,7 +566,7 @@ export class DeviceGateway {
                     scopes,
                     signedAtMs: device.signedAt,
                     token,
-                    nonce: device.nonce,
+                    nonce: device.nonce
                 });
                 valid = verifyDeviceSignature(device.publicKey, payloadV2, device.signature);
             }
@@ -570,7 +576,7 @@ export class DeviceGateway {
                     ok: false,
                     code: 'DEVICE_AUTH_SIGNATURE_INVALID',
                     message: 'device signature invalid',
-                    closeConnection: true,
+                    closeConnection: true
                 };
             }
         }
@@ -601,15 +607,11 @@ export class DeviceGateway {
                 caps: params.caps,
                 commands: params.commands,
                 remoteIp: conn.remoteIp,
-                silent: params.silent,
+                silent: params.silent
             });
 
             // Auto-approve local connections if configured
-            if (
-                result.created &&
-                this.config.autoApproveLocal &&
-                this.isLocalConnection(conn.remoteIp)
-            ) {
+            if (result.created && this.config.autoApproveLocal && this.isLocalConnection(conn.remoteIp)) {
                 const approveResult = this.pairingStore.approve(result.request.requestId);
                 if (approveResult) {
                     logger.info(`${TAG} 自动审批本地配对: ${approveResult.node.nodeId}`);
@@ -618,14 +620,14 @@ export class DeviceGateway {
                         request: result.request,
                         node: {
                             nodeId: approveResult.node.nodeId,
-                            token: approveResult.node.token,
+                            token: approveResult.node.token
                         },
-                        created: true,
+                        created: true
                     });
                     this.broadcastToOperators('node.pair.resolved', {
                         requestId: result.request.requestId,
                         nodeId: approveResult.node.nodeId,
-                        action: 'approved',
+                        action: 'approved'
                     });
                     return;
                 }
@@ -638,14 +640,14 @@ export class DeviceGateway {
                     requestId: result.request.requestId,
                     nodeId: result.request.nodeId,
                     displayName: result.request.displayName,
-                    platform: result.request.platform,
+                    platform: result.request.platform
                 });
                 this.broadcastToOperators('node.pair.requested', result.request);
             }
         } catch (err: any) {
             this.sendResponse(conn.socket, frame.id, false, undefined, {
                 code: 'PAIRING_ERROR',
-                message: err?.message || 'pairing request failed',
+                message: err?.message || 'pairing request failed'
             });
         }
     }
@@ -655,7 +657,7 @@ export class DeviceGateway {
         // Strip tokens from paired list for security
         const sanitized = {
             pending: list.pending,
-            paired: list.paired.map(n => ({
+            paired: list.paired.map((n) => ({
                 nodeId: n.nodeId,
                 displayName: n.displayName,
                 platform: n.platform,
@@ -664,8 +666,8 @@ export class DeviceGateway {
                 caps: n.caps,
                 commands: n.commands,
                 approvedAtMs: n.approvedAtMs,
-                lastConnectedAtMs: n.lastConnectedAtMs,
-            })),
+                lastConnectedAtMs: n.lastConnectedAtMs
+            }))
         };
         this.sendResponse(conn.socket, frame.id, true, sanitized);
     }
@@ -675,7 +677,7 @@ export class DeviceGateway {
         if (!result) {
             this.sendResponse(conn.socket, frame.id, false, undefined, {
                 code: 'NOT_FOUND',
-                message: 'pending request not found',
+                message: 'pending request not found'
             });
             return;
         }
@@ -683,7 +685,7 @@ export class DeviceGateway {
         this.broadcastToOperators('node.pair.resolved', {
             requestId: result.requestId,
             nodeId: result.node.nodeId,
-            action: 'approved',
+            action: 'approved'
         });
     }
 
@@ -692,7 +694,7 @@ export class DeviceGateway {
         if (!result) {
             this.sendResponse(conn.socket, frame.id, false, undefined, {
                 code: 'NOT_FOUND',
-                message: 'pending request not found',
+                message: 'pending request not found'
             });
             return;
         }
@@ -700,7 +702,7 @@ export class DeviceGateway {
         this.broadcastToOperators('node.pair.resolved', {
             requestId: result.requestId,
             nodeId: result.nodeId,
-            action: 'rejected',
+            action: 'rejected'
         });
     }
 
@@ -708,11 +710,13 @@ export class DeviceGateway {
         const result = this.pairingStore.verifyToken(params.nodeId, params.token);
         this.sendResponse(conn.socket, frame.id, true, {
             ok: result.ok,
-            node: result.node ? {
-                nodeId: result.node.nodeId,
-                displayName: result.node.displayName,
-                platform: result.node.platform,
-            } : undefined,
+            node: result.node
+                ? {
+                      nodeId: result.node.nodeId,
+                      displayName: result.node.displayName,
+                      platform: result.node.platform
+                  }
+                : undefined
         });
     }
 
@@ -720,7 +724,7 @@ export class DeviceGateway {
 
     private handleNodeList(conn: ConnectionState, frame: RequestFrame): void {
         const connected = this.nodeRegistry.listConnected();
-        const nodes = connected.map(n => ({
+        const nodes = connected.map((n) => ({
             nodeId: n.nodeId,
             displayName: n.displayName,
             platform: n.platform,
@@ -729,7 +733,7 @@ export class DeviceGateway {
             modelIdentifier: n.modelIdentifier,
             caps: n.caps,
             commands: n.commands,
-            connectedAtMs: n.connectedAtMs,
+            connectedAtMs: n.connectedAtMs
         }));
         this.sendResponse(conn.socket, frame.id, true, { nodes });
     }
@@ -742,13 +746,13 @@ export class DeviceGateway {
                 this.sendResponse(conn.socket, frame.id, true, {
                     ...paired,
                     token: undefined,
-                    connected: false,
+                    connected: false
                 });
                 return;
             }
             this.sendResponse(conn.socket, frame.id, false, undefined, {
                 code: 'NOT_FOUND',
-                message: 'node not found',
+                message: 'node not found'
             });
             return;
         }
@@ -764,7 +768,7 @@ export class DeviceGateway {
             permissions: session.permissions,
             remoteIp: session.remoteIp,
             connectedAtMs: session.connectedAtMs,
-            connected: true,
+            connected: true
         });
     }
 
@@ -773,13 +777,13 @@ export class DeviceGateway {
         if (!result) {
             this.sendResponse(conn.socket, frame.id, false, undefined, {
                 code: 'NOT_FOUND',
-                message: 'paired node not found',
+                message: 'paired node not found'
             });
             return;
         }
         this.sendResponse(conn.socket, frame.id, true, {
             nodeId: result.nodeId,
-            displayName: result.displayName,
+            displayName: result.displayName
         });
     }
 
@@ -792,7 +796,7 @@ export class DeviceGateway {
                 command: params.command,
                 params: params.params,
                 timeoutMs: params.timeoutMs,
-                idempotencyKey: params.idempotencyKey,
+                idempotencyKey: params.idempotencyKey
             });
 
             this.sendResponse(conn.socket, frame.id, true, result);
@@ -800,12 +804,12 @@ export class DeviceGateway {
             this.emitGatewayEvent('device:command-result', {
                 nodeId: params.nodeId,
                 command: params.command,
-                ok: result.ok,
+                ok: result.ok
             });
         } catch (err: any) {
             this.sendResponse(conn.socket, frame.id, false, undefined, {
                 code: 'INVOKE_ERROR',
-                message: err?.message || 'invoke failed',
+                message: err?.message || 'invoke failed'
             });
         }
     }
@@ -817,7 +821,7 @@ export class DeviceGateway {
             ok: params.ok,
             payload: params.payload,
             payloadJSON: params.payloadJSON,
-            error: params.error,
+            error: params.error
         });
         this.sendResponse(conn.socket, frame.id, true, { handled });
     }
@@ -835,7 +839,7 @@ export class DeviceGateway {
         id: string,
         ok: boolean,
         payload?: unknown,
-        error?: { code: string; message: string; details?: unknown },
+        error?: { code: string; message: string; details?: unknown }
     ): void {
         const frame: ResponseFrame = { type: 'res', id, ok };
         if (ok) frame.payload = payload;
@@ -893,8 +897,11 @@ export class DeviceGateway {
 
     private emitGatewayEvent(event: string, payload: unknown): void {
         if (this.eventCallback) {
-            try { this.eventCallback(event, payload); }
-            catch { /* ignore callback errors */ }
+            try {
+                this.eventCallback(event, payload);
+            } catch {
+                /* ignore callback errors */
+            }
         }
     }
 }

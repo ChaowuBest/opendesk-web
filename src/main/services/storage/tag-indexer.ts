@@ -18,7 +18,7 @@
 
 import { Indexer, IndexerSearchOptions, IndexerSearchResult } from './indexer.js';
 import { Item, FilterCondition, ScalarOperator, QueryOperator, ItemType, ColumnSchema } from './abstract-storage.js';
-import { createTagIndexDB } from './tag-index-db.js';
+import { createTagIndexDB } from './tag-index-db-factory.js';
 
 // TagIndexDB 支持的操作符（从 abstract-storage 导入，保持类型别名以兼容）
 export type TagQueryOperator = ScalarOperator;
@@ -61,14 +61,16 @@ export interface ITagIndexDB {
     insert(record: TagIndexRecord): Promise<boolean>;
     insertMany(records: TagIndexRecord[]): Promise<number>;
     upsert(record: TagIndexRecord): Promise<boolean>;
+    upsertMany(records: TagIndexRecord[]): Promise<number>;
     delete(itemId: string): Promise<boolean>;
     deleteByConditions(conditions: QueryCondition[]): Promise<number>;
     deleteMany(itemIds: string[]): Promise<number>;
     update(itemId: string, data: UpdateData): Promise<boolean>;
+    updateMany(records: TagIndexRecord[]): Promise<number>;
     updateByConditions(conditions: QueryCondition[], data: UpdateData): Promise<number>;
     findById(itemId: string): Promise<TagIndexRecord | undefined>;
     findAll(options?: QueryOptions): Promise<TagIndexRecord[]>;
-    query(conditions: QueryCondition[], options?: Omit<QueryOptions, 'conditions'>): Promise<TagIndexRecord[]>;
+    search(conditions: QueryCondition[], options?: Omit<QueryOptions, 'conditions'>): Promise<TagIndexRecord[]>;
     count(conditions?: QueryCondition[]): Promise<number>;
     exists(itemId: string): Promise<boolean>;
     clear(): Promise<number>;
@@ -85,9 +87,7 @@ export interface ITagIndexDB {
 export class TagIndexer extends Indexer {
     readonly name = 'TagIndexer';
     readonly supportedFields = ['item_id', 'item_type', 'tag'];
-    readonly supportedOperators: QueryOperator[] = [
-        '=', '!=', '>', '<', '>=', '<=', 'like', 'in'
-    ];
+    readonly supportedOperators: QueryOperator[] = ['=', '!=', '>', '<', '>=', '<=', 'like', 'in'];
     private columnName;
 
     private db: ITagIndexDB | null = null;
@@ -96,8 +96,8 @@ export class TagIndexer extends Indexer {
 
     constructor(schema: ColumnSchema, dbPath: string) {
         super();
-        this.columnName = Object.keys(schema.needIndexers).find(
-            key => schema.needIndexers[key].includes(this.name)
+        this.columnName = Object.keys(schema.needIndexers).find((key) =>
+            schema.needIndexers[key].some((b) => b.indexer === this.name)
         );
         this._dbPath = dbPath;
     }
@@ -124,7 +124,7 @@ export class TagIndexer extends Indexer {
         if (!this.supportsOperator(operator)) {
             throw new Error(
                 `TagIndexer does not support operator: ${operator}. ` +
-                `Supported operators: ${this.supportedOperators.join(', ')}`
+                    `Supported operators: ${this.supportedOperators.join(', ')}`
             );
         }
     }
@@ -135,8 +135,7 @@ export class TagIndexer extends Indexer {
     private validateField(field: string): void {
         if (!this.supportsField(field)) {
             throw new Error(
-                `TagIndexer does not support field: ${field}. ` +
-                `Supported fields: ${this.supportedFields.join(', ')}`
+                `TagIndexer does not support field: ${field}. ` + `Supported fields: ${this.supportedFields.join(', ')}`
             );
         }
     }
@@ -152,7 +151,7 @@ export class TagIndexer extends Indexer {
         return {
             field: cond.field as keyof TagIndexRecord,
             operator: cond.operator as ScalarOperator,
-            value: cond.value,
+            value: cond.value
         };
     }
 
@@ -163,11 +162,11 @@ export class TagIndexer extends Indexer {
      * 如果有 existingResults，从中获取完整元数据
      */
     private recordToItem(record: TagIndexRecord, metadata?: Partial<Item>): Item {
-        const item: Item = {
+        const item = {
             item_id: record.item_id,
             item_type: record.item_type as ItemType,
-            tag: record.tag,
-        };
+            tag: record.tag
+        } as Item;
         // 从 metadata 复制额外字段
         if (metadata) {
             for (const [key, value] of Object.entries(metadata)) {
@@ -175,8 +174,24 @@ export class TagIndexer extends Indexer {
                     item[key] = value;
                 }
             }
+            if (metadata.item_type !== undefined) {
+                item.item_type = metadata.item_type;
+            }
         }
         return item;
+    }
+
+    private buildRecords(items: Item[]): TagIndexRecord[] {
+        const records: TagIndexRecord[] = [];
+        for (const item of items) {
+            const col = item.indexer_columns?.[this.name]?.find((c) => c.column === this.columnName);
+            if (!col) continue;
+            if (typeof col.content !== 'string') {
+                throw new Error(`[TagIndexer] Item ${item.item_id} tag content must be string`);
+            }
+            records.push(this.itemToRecord(item, col.content));
+        }
+        return records;
     }
 
     /**
@@ -185,47 +200,44 @@ export class TagIndexer extends Indexer {
     private itemToRecord(item: Item, tag: string): TagIndexRecord {
         return {
             item_id: item.item_id,
-            item_type: item.item_type,
-            tag: tag,
+            item_type: this.columnName ?? '',
+            tag: tag
         };
     }
 
     /**
      * 搜索匹配条件的 Item
      */
-    async search(
-        conditions: FilterCondition[],
-        options?: IndexerSearchOptions
-    ): Promise<IndexerSearchResult> {
+    async search(conditions: FilterCondition[], options?: IndexerSearchOptions): Promise<IndexerSearchResult> {
         // 转换条件
-        const queryConditions = conditions.map(c => this.toQueryCondition(c));
+        const queryConditions = conditions.map((c) => this.toQueryCondition(c));
 
         // Join 过滤：限制在已有结果集的 item_id 范围内
         if (options?.existingResults && options.existingResults.length > 0) {
             queryConditions.push({
                 field: 'item_id',
                 operator: 'in',
-                value: options.existingResults.map(r => r.item_id),
+                value: options.existingResults.map((r) => r.item_id)
             });
         }
 
         // 执行查询
-        const records = await this.ensureDB().query(queryConditions, {
+        const records = await this.ensureDB().search(queryConditions, {
             limit: options?.limit,
             offset: options?.offset,
-            orderBy: options?.orderBy ? {
-                field: options.orderBy.field as keyof TagIndexRecord,
-                direction: options.orderBy.direction,
-            } : undefined,
+            orderBy: options?.orderBy
+                ? {
+                      field: options.orderBy.field as keyof TagIndexRecord,
+                      direction: options.orderBy.direction
+                  }
+                : undefined
         });
 
         // 如果有 existingResults，从中获取完整的 Item 元数据
-        const existingMap = new Map(
-            options?.existingResults?.map(i => [i.item_id, i])
-        );
+        const existingMap = new Map(options?.existingResults?.map((i) => [i.item_id, i]));
 
         // 转换记录为 Item
-        const items = records.map(r => this.recordToItem(r, existingMap.get(r.item_id)));
+        const items = records.map((r) => this.recordToItem(r, existingMap.get(r.item_id)));
 
         // 获取总数
         const totalCount = await this.ensureDB().count(queryConditions);
@@ -237,17 +249,8 @@ export class TagIndexer extends Indexer {
      * 向索引中插入 Item
      */
     async insert(items: Item[]): Promise<void> {
-        const records: TagIndexRecord[] = [];
-
-        for (const item of items) {
-            const col = item.indexer_columns?.[this.name]?.find(c => c.column === this.columnName);
-            const record = this.itemToRecord(item, col?.content as string);
-            if (record) {
-                records.push(record);
-            }
-        }
-
-        await this.ensureDB().insertMany(records);
+        const records = this.buildRecords(items);
+        if (records.length > 0) await this.ensureDB().insertMany(records);
     }
 
     /**
@@ -261,11 +264,13 @@ export class TagIndexer extends Indexer {
      * 更新索引中的 Item
      */
     async update(items: Item[]): Promise<void> {
-        for (const item of items) {
-            const col = item.indexer_columns?.[this.name]?.find(c => c.column === this.columnName);
-            const record = this.itemToRecord(item, col?.content as string);
-            await this.ensureDB().upsert(record);
-        }
+        const records = this.buildRecords(items);
+        if (records.length > 0) await this.ensureDB().updateMany(records);
+    }
+
+    async upsert(items: Item[]): Promise<void> {
+        const records = this.buildRecords(items);
+        if (records.length > 0) await this.ensureDB().upsertMany(records);
     }
 
     /**
@@ -275,11 +280,13 @@ export class TagIndexer extends Indexer {
         this.db?.close();
     }
 
-    /**
-     * 获取底层 TagIndexDB 实例（用于高级操作）
-     */
-    getDB(): ITagIndexDB {
-        return this.ensureDB();
+    async clear(): Promise<void> {
+        await this.ensureDB().clear();
+    }
+
+    async getInfo(): Promise<Record<string, any>> {
+        const size = await this.ensureDB().count();
+        return { size };
     }
 }
 

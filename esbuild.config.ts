@@ -35,10 +35,12 @@ function createRequireShimPlugin(outputPath: string): esbuild.Plugin {
                 }
 
                 // 替换 Dynamic require 错误为使用 __createRequire
-                const originalPattern = /if\s*\(typeof require\s*(?:!==\s*"undefined"|<"u")\s*\)\s*return require\.apply\(this,\s*arguments\)\s*;\s*throw\s+Error\(\s*'Dynamic require of "'\s*\+\s*(\w+)\s*\+\s*'" is not supported'\s*\)/g;
+                const originalPattern =
+                    /if\s*\(typeof require\s*(?:!==\s*"undefined"|<"u")\s*\)\s*return require\.apply\(this,\s*arguments\)\s*;\s*throw\s+Error\(\s*'Dynamic require of "'\s*\+\s*(\w+)\s*\+\s*'" is not supported'\s*\)/g;
 
                 // 替换为使用 __createRequire
-                const replacement = 'if (typeof require !== "undefined") return require.apply(this, arguments); return __createRequire($1)';
+                const replacement =
+                    'if (typeof require !== "undefined") return require.apply(this, arguments); return __createRequire($1)';
 
                 const replaced = jsText.replace(originalPattern, replacement);
                 if (replaced !== jsText) {
@@ -46,7 +48,7 @@ function createRequireShimPlugin(outputPath: string): esbuild.Plugin {
                     writeFileSync(outputPath, jsText, 'utf8');
                 }
             });
-        },
+        }
     };
 }
 
@@ -61,8 +63,8 @@ const prodConfig: esbuild.BuildOptions = {
     treeShaking: true,
     sourcemap: false,
     banner: { js: BANNER },
-    external: ['node-screenshots', 'vectra', 'number-to-alphabet', 'esbuild'],
-    plugins: [createRequireShimPlugin(outfile)],
+    external: ['node-screenshots', 'vectra', 'number-to-alphabet', 'esbuild', 'unpdf'],
+    plugins: [createRequireShimPlugin(outfile)]
 };
 
 const debugConfig: esbuild.BuildOptions = {
@@ -77,15 +79,12 @@ const debugConfig: esbuild.BuildOptions = {
     sourcemap: 'inline',
     sourcesContent: true,
     banner: { js: BANNER },
-    external: ['node-screenshots', 'vectra', 'number-to-alphabet', 'esbuild'],
-    plugins: [createRequireShimPlugin(outfileDebug)],
+    external: ['node-screenshots', 'vectra', 'number-to-alphabet', 'esbuild', 'unpdf'],
+    plugins: [createRequireShimPlugin(outfileDebug)]
 };
 
 async function build() {
-    await Promise.all([
-        esbuild.build(prodConfig),
-        esbuild.build(debugConfig)
-    ]);
+    await Promise.all([esbuild.build(prodConfig), esbuild.build(debugConfig)]);
     console.log('Built both production and debug versions:');
     console.log(`  - ${outfile} (minified, no sourcemap)`);
     console.log(`  - ${outfileDebug} (unminified, with inline sourcemap)`);

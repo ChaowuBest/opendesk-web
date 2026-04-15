@@ -1,41 +1,55 @@
-
-import { Box, Component, Text, Editor, TUI, CombinedAutocompleteProvider, Markdown, type AutocompleteProvider, type AutocompleteItem } from "@mariozechner/pi-tui";
-import { defaultEditorTheme, defaultMarkdownTheme } from "../theme";
-import { SlashCommandRegistry } from "../commands";
-import type { OpenDeskTUI } from "../entry";
-import chalk from "chalk";
-import { visibleWidth, truncateToWidth } from "@mariozechner/pi-tui";
-import { getNotificationBadge } from "./notification";
-import { getFileCompletions, extractAtQuery, FILE_COMPLETION_MAX_RESULTS } from "./file-completions";
-import { getShellCompletions, executeShellCommand } from "./shell";
-import { spawnSync } from "child_process";
-import process from "process";
-import { SkillRegistry as AISkillRegistry } from "../../aikernel/skill";
+import {
+    Box,
+    Component,
+    Text,
+    Editor,
+    TUI,
+    CombinedAutocompleteProvider,
+    Markdown,
+    type AutocompleteProvider,
+    type AutocompleteItem
+} from '@mariozechner/pi-tui';
+import { defaultEditorTheme, defaultMarkdownTheme, getStatusBarColors } from '../theme';
+import { SlashCommandRegistry } from '../commands';
+import type { OpenDeskTUI } from '../entry';
+import type { PermissionPromptWidget } from './permission';
+import chalk from 'chalk';
+import { visibleWidth, truncateToWidth } from '@mariozechner/pi-tui';
+import { getFileCompletions, extractAtQuery, FILE_COMPLETION_MAX_RESULTS } from './file-completions';
+import { getShellCompletions, executeShellCommand } from './shell';
+import { spawnSync } from 'child_process';
+import process from 'process';
+import { SkillRegistry as AISkillRegistry } from '../../aikernel/skill';
 
 type AgentInputStatus = 'idle' | 'running';
 
-export interface ChannelStatusEntry {
-    label: string;
-    online: boolean;
-}
-
-export interface StatusBarData {
+export interface TaskStatusBarData {
     elapsedMs: number;
     totalTokens: number;
     contextSize: number;
     modelName: string;
-    channelStates?: ChannelStatusEntry[];
     shellMode?: boolean;
+    /** 当前模式的显示文本 (如 "⚡ Standard") */
+    modeDisplay?: string;
+    /** 当前模式的颜色 (如 '#00E5FF') */
+    modeColor?: string;
 }
 
 /**
- * 底部状态栏：灰色背景，显示任务执行时间、token 用量及上下文占比。
- * 计时器跟踪的是任务内所有 agent 执行时间的累计总和。
+ * 任务级状态栏（TaskStatusBar）：灰色背景，仅显示当前任务相关的信息——
+ * 执行计时、token 用量、上下文占比、当前模型。
+ * 所有不涉及任务的全局状态（文件扫描配置、消息插件连接等）请放到 DashboardBar 中。
+ * 宽度不足时使用 ResponsiveBar 从右到左逐个隐藏。
  */
-export class StatusBar implements Component {
+export class TaskStatusBar implements Component {
     private static readonly SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
-    private data: StatusBarData = { elapsedMs: 0, totalTokens: 0, contextSize: 0, modelName: '' };
+    private data: TaskStatusBarData = {
+        elapsedMs: 0,
+        totalTokens: 0,
+        contextSize: 0,
+        modelName: ''
+    };
     private timerStarted = false;
     private timerStart: number = 0;
     private accumulatedMs: number = 0;
@@ -59,7 +73,7 @@ export class StatusBar implements Component {
         this.spinnerFrame = 0;
         this.timerInterval = setInterval(() => {
             this.data.elapsedMs = this.accumulatedMs + (Date.now() - this.timerStart);
-            this.spinnerFrame = (this.spinnerFrame + 1) % StatusBar.SPINNER.length;
+            this.spinnerFrame = (this.spinnerFrame + 1) % TaskStatusBar.SPINNER.length;
             this.invalidated = true;
             this.tui?.requestRender();
         }, 200);
@@ -100,7 +114,7 @@ export class StatusBar implements Component {
         return this.accumulatedMs;
     }
 
-    update(partial: Partial<StatusBarData>) {
+    update(partial: Partial<TaskStatusBarData>) {
         Object.assign(this.data, partial);
         this.invalidated = true;
         if (this.timerStarted) {
@@ -125,44 +139,40 @@ export class StatusBar implements Component {
             return this.cachedOutput;
         }
         this.lastWidth = width;
-        const { elapsedMs, totalTokens, contextSize, modelName, channelStates, shellMode } = this.data;
+        const { elapsedMs, totalTokens, contextSize, modelName, shellMode, modeDisplay, modeColor } = this.data;
+        const colors = getStatusBarColors();
 
-        const parts: string[] = [];
+        // 构建左侧 cells（任务级信息）
+        const leftCells: { text: string }[] = [];
+
+        // 模式指示器始终显示在最左侧
+        if (modeDisplay) {
+            const colorFn = modeColor ? chalk.hex(modeColor) : chalk.hex(colors.fg);
+            leftCells.push({ text: colorFn(modeDisplay) });
+        }
+
         if (shellMode) {
-            parts.push(chalk.cyan('📟 Shell 命令模式'));
+            leftCells.push({ text: chalk.cyan('📟 Shell 命令模式') });
         } else {
             if (this.timerStarted) {
-                const icon = StatusBar.SPINNER[this.spinnerFrame];
-                parts.push(chalk.greenBright(`${icon} ${this.formatElapsed(elapsedMs)}`));
+                const icon = TaskStatusBar.SPINNER[this.spinnerFrame];
+                leftCells.push({ text: chalk.hex(colors.fgAccent)(`${icon} ${this.formatElapsed(elapsedMs)}`) });
             } else if (elapsedMs > 0) {
-                parts.push(chalk.hex('#d4d4d4')(`⏱ ${this.formatElapsed(elapsedMs)}`));
+                leftCells.push({ text: chalk.hex(colors.fgDim)(`⏱ ${this.formatElapsed(elapsedMs)}`) });
             }
             if (totalTokens > 0) {
                 const pct = contextSize > 0 ? ((totalTokens / contextSize) * 100).toFixed(1) : '—';
-                parts.push(`Tokens: ${totalTokens}/${contextSize} (${pct}%)`);
+                leftCells.push({ text: `Tokens: ${totalTokens}/${contextSize} (${pct}%)` });
             }
             if (modelName) {
-                parts.push(modelName);
+                leftCells.push({ text: modelName });
             }
         }
 
-        const leftContent = parts.length > 0 ? ` ${parts.join('  │  ')}` : '';
+        const leftContent = leftCells.length > 0 ? ` ${leftCells.map((c) => c.text).join('  │  ')}` : '';
 
-        const rightParts: string[] = [];
-        if (channelStates && channelStates.length > 0) {
-            const channelLabels = channelStates.map(ch =>
-                ch.online
-                    ? chalk.greenBright(`● ${ch.label}`)
-                    : chalk.hex('#666666')(`○ ${ch.label}`)
-            );
-            rightParts.push(channelLabels.join('  '));
-        }
-        const badge = getNotificationBadge();
-        if (badge) {
-            rightParts.push(badge);
-        }
-        rightParts.push(chalk.hex('#d4d4d4')('/help 帮助'));
-        const rightHint = rightParts.join(chalk.hex('#d4d4d4')('  │  ')) + ' ';
+        // 右侧固定区域：帮助提示（含模式切换提示）
+        const rightHint = chalk.hex(colors.fgDim)('Shift+Tab 切换模式  /help 帮助') + ' ';
 
         let leftW = visibleWidth(leftContent);
         const rightW = visibleWidth(rightHint);
@@ -176,8 +186,8 @@ export class StatusBar implements Component {
         }
 
         const gap = Math.max(1, width - leftW - rightW);
-        const line = chalk.bgHex('#3a3a3a')(
-            chalk.hex('#d4d4d4')(finalLeft) + ' '.repeat(gap) + rightHint
+        const line = chalk.bgHex(colors.bg)(
+            chalk.hex(colors.fg)(finalLeft) + ' '.repeat(gap) + chalk.hex(colors.fg)(rightHint)
         );
         this.cachedOutput = [line];
         this.invalidated = false;
@@ -191,20 +201,21 @@ let _cachedFdPath: string | null | undefined;
 
 function detectFd(): string | null {
     if (_cachedFdPath !== undefined) return _cachedFdPath;
-    for (const bin of ["fd", "fdfind"]) {
+    for (const bin of ['fd', 'fdfind']) {
         try {
-            const cmd = process.platform === "win32" ? "where" : "which";
-            const r = spawnSync(cmd, [bin], { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] });
+            const cmd = process.platform === 'win32' ? 'where' : 'which';
+            const r = spawnSync(cmd, [bin], { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] });
             if (r.status === 0 && r.stdout.trim()) {
                 _cachedFdPath = r.stdout.trim().split(/\r?\n/)[0]!;
                 return _cachedFdPath;
             }
-        } catch { /* ignore */ }
+        } catch {
+            /* ignore */
+        }
     }
     _cachedFdPath = null;
     return null;
 }
-
 
 /** 缓存的 user-invocable skill 列表（name -> description），用于同步的自动补全 */
 interface CachedSkillInfo {
@@ -227,7 +238,7 @@ async function refreshSkillCache() {
             name: skill.frontmatter.name,
             description: skill.frontmatter.description || '',
             bundleName,
-            argumentHint: skill.frontmatter['argument-hint'],
+            argumentHint: skill.frontmatter['argument-hint']
         }));
     } catch {
         // 初始阶段 registry 可能还没就绪，静默忽略
@@ -249,7 +260,7 @@ class FileAwareAutocompleteProvider implements AutocompleteProvider {
     constructor(
         private inner: CombinedAutocompleteProvider,
         private basePath: string,
-        commandNames: string[],
+        commandNames: string[]
     ) {
         this.commandNames = new Set(commandNames);
     }
@@ -279,7 +290,7 @@ class FileAwareAutocompleteProvider implements AutocompleteProvider {
                 items.push({
                     value: skill.name,
                     label: skill.name,
-                    description: `[skill] ${skill.description.slice(0, 60)}`,
+                    description: `[skill] ${skill.description.slice(0, 60)}`
                 });
             }
         }
@@ -288,7 +299,7 @@ class FileAwareAutocompleteProvider implements AutocompleteProvider {
     }
 
     getSuggestions(lines: string[], cursorLine: number, cursorCol: number) {
-        const currentLine = lines[cursorLine] || "";
+        const currentLine = lines[cursorLine] || '';
         const textBeforeCursor = currentLine.slice(0, cursorCol);
         const trimmedFull = currentLine.trimStart();
 
@@ -323,7 +334,7 @@ class FileAwareAutocompleteProvider implements AutocompleteProvider {
                     skillItems.push({
                         value: skill.name,
                         label: skill.name,
-                        description: `[skill] ${skill.description.slice(0, 60)}`,
+                        description: `[skill] ${skill.description.slice(0, 60)}`
                     });
                 }
             }
@@ -352,7 +363,7 @@ class FileAwareAutocompleteProvider implements AutocompleteProvider {
         if (atMatch) {
             const items = getFileCompletions(this.basePath, atMatch.query, {
                 atPrefix: true,
-                maxResults: FILE_COMPLETION_MAX_RESULTS,
+                maxResults: FILE_COMPLETION_MAX_RESULTS
             });
             if (items.length > 0) {
                 return { items, prefix: atMatch.fullPrefix };
@@ -362,12 +373,9 @@ class FileAwareAutocompleteProvider implements AutocompleteProvider {
         return result;
     }
 
-    applyCompletion(
-        lines: string[], cursorLine: number, cursorCol: number,
-        item: AutocompleteItem, prefix: string,
-    ) {
+    applyCompletion(lines: string[], cursorLine: number, cursorCol: number, item: AutocompleteItem, prefix: string) {
         // For shell mode completions, handle insertion manually
-        const currentLine = lines[cursorLine] || "";
+        const currentLine = lines[cursorLine] || '';
         const trimmedFull = currentLine.trimStart();
         if (trimmedFull.startsWith('!')) {
             const before = currentLine.slice(0, cursorCol);
@@ -448,7 +456,7 @@ export class InlineResultPanel implements Component {
         this.scrollOffset = Math.min(max, this.scrollOffset + n);
     }
 
-    invalidate(): void { }
+    invalidate(): void {}
 
     render(width: number): string[] {
         if (!this.visible || this.lines.length === 0) return [];
@@ -496,9 +504,9 @@ export type ShellResultPanel = InlineResultPanel;
  * 任务运行期间用户仍可输入，新消息入队，当前回复完成后自动发送。
  */
 export class AgentInputArea implements Component {
-
     input: Editor;
-    statusBar: StatusBar = new StatusBar();
+    /** 任务级状态栏，仅展示当前任务相关信息（计时、token、模型）。 */
+    statusBar: TaskStatusBar = new TaskStatusBar();
     shellResultPanel: InlineResultPanel = new InlineResultPanel((s) => chalk.cyan(s));
     btwResultPanel: InlineResultPanel = new InlineResultPanel((s) => chalk.magenta(s));
 
@@ -515,6 +523,7 @@ export class AgentInputArea implements Component {
     private quickPassHandler?: (text: string) => boolean;
     private shellCommandMode = false;
     private defaultBorderColor: (str: string) => string;
+    private permissionWidget: PermissionPromptWidget | null = null;
 
     constructor(openDeskTUI: OpenDeskTUI) {
         this.openDeskTUI = openDeskTUI;
@@ -618,7 +627,7 @@ export class AgentInputArea implements Component {
             },
             requestRender: () => {
                 this.openDeskTUI.tui.requestRender();
-            },
+            }
         });
     }
 
@@ -638,8 +647,14 @@ export class AgentInputArea implements Component {
 
     dismissAllInlinePanels() {
         let changed = false;
-        if (this.shellResultPanel.isVisible()) { this.shellResultPanel.hide(); changed = true; }
-        if (this.btwResultPanel.isVisible()) { this.btwResultPanel.hide(); changed = true; }
+        if (this.shellResultPanel.isVisible()) {
+            this.shellResultPanel.hide();
+            changed = true;
+        }
+        if (this.btwResultPanel.isVisible()) {
+            this.btwResultPanel.hide();
+            changed = true;
+        }
         if (changed) this.openDeskTUI.tui.requestRender();
     }
 
@@ -666,12 +681,8 @@ export class AgentInputArea implements Component {
         const basePath = this.openDeskTUI.workspace;
         const fdPath = detectFd();
         const commands = this.commandRegistry.toPiTuiSlashCommands();
-        const commandNames = this.commandRegistry.getAll().map(c => c.name);
-        const inner = new CombinedAutocompleteProvider(
-            commands,
-            basePath,
-            fdPath,
-        );
+        const commandNames = this.commandRegistry.getAll().map((c) => c.name);
+        const inner = new CombinedAutocompleteProvider(commands, basePath, fdPath);
         const provider = new FileAwareAutocompleteProvider(inner, basePath, commandNames);
         this.input.setAutocompleteProvider(provider);
         // 异步刷新 skill 缓存
@@ -782,9 +793,8 @@ export class AgentInputArea implements Component {
         if (len === 0) {
             this.hintText.setText('');
         } else if (len === 1) {
-            const preview = this.messageQueue[0].length > 60
-                ? this.messageQueue[0].slice(0, 57) + '...'
-                : this.messageQueue[0];
+            const preview =
+                this.messageQueue[0].length > 60 ? this.messageQueue[0].slice(0, 57) + '...' : this.messageQueue[0];
             this.hintText.setText(chalk.yellow(`📨 待发送: ${preview} (输入 /cancel 撤销)`));
         } else {
             this.hintText.setText(chalk.yellow(`📨 ${len} 条消息待发送 (输入 /cancel 撤销)`));
@@ -839,6 +849,29 @@ export class AgentInputArea implements Component {
         this.currentTaskId = undefined;
         this.messageQueue = [];
         this.updateQueueHint();
+    }
+
+    /**
+     * 显示权限确认 widget，临时替换掉 Editor 输入框。
+     */
+    showPermissionPrompt(widget: PermissionPromptWidget) {
+        this.permissionWidget = widget;
+        this.layout.removeChild(this.input);
+        this.layout.removeChild(this.statusBar);
+        this.layout.addChild(widget);
+        this.layout.addChild(this.statusBar);
+    }
+
+    /**
+     * 隐藏权限确认 widget，恢复 Editor 输入框。
+     */
+    hidePermissionPrompt() {
+        if (!this.permissionWidget) return;
+        this.layout.removeChild(this.permissionWidget);
+        this.layout.removeChild(this.statusBar);
+        this.layout.addChild(this.input);
+        this.layout.addChild(this.statusBar);
+        this.permissionWidget = null;
     }
 
     invalidate() {

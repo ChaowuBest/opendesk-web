@@ -15,27 +15,28 @@ import { Skill } from '../../aikernel/skill';
 import { z } from 'zod';
 import { KnowledgeBaseProvider } from './base';
 import { ZhipuKnowledgeBaseProvider } from './providers/zhipu';
-import { MANAGE_KNOWLEDGEBASE_SKILL } from './skills';
+import { MANAGE_KNOWLEDGEBASE_SKILL, OPERATE_KNOWLEDGEBASE_SKILL } from './skills';
 import {
     ListLibraryProvidersTool,
     ConfigureLibraryProviderTool,
     ToggleLibraryProviderTool,
     CreateKnowledgeBaseTool,
-    DeleteKnowledgeBaseTool,
+    DeleteKnowledgeBaseTool
 } from './tools/manage';
 import {
     ListKnowledgeBasesTool,
     RetrieveFromKnowledgeBaseTool,
     AskKnowledgeBaseTool,
-    AddFilesToKnowledgeBaseTool,
+    AddFilesToKnowledgeBaseTool
 } from './tools/knowledge';
 
-
 const KnowledgeBaseApplicationConfigSchema = z.object({
-    zhipu: z.object({
-        api_key: z.string().default('').describe('智谱AI API密钥'),
-        enabled: z.boolean().default(false).describe('是否启用智谱AI知识库'),
-    }).optional(),
+    zhipu: z
+        .object({
+            api_key: z.string().default('').describe('智谱AI API密钥'),
+            enabled: z.boolean().default(false).describe('是否启用智谱AI知识库')
+        })
+        .optional()
 });
 
 type KnowledgeBaseConfig = z.output<typeof KnowledgeBaseApplicationConfigSchema>;
@@ -82,17 +83,31 @@ export class KnowledgeBaseApplication extends BaseApplication {
         return result;
     }
 
-    getProviderStatusList(): { id: string; name: string; description: string; enabled: boolean; has_api_key: boolean }[] {
+    getProviderStatusList(): {
+        id: string;
+        name: string;
+        description: string;
+        enabled: boolean;
+        has_api_key: boolean;
+    }[] {
         const config = this.getConfig() as KnowledgeBaseConfig | undefined;
-        const result: { id: string; name: string; description: string; enabled: boolean; has_api_key: boolean }[] = [];
+        const result: {
+            id: string;
+            name: string;
+            description: string;
+            enabled: boolean;
+            has_api_key: boolean;
+        }[] = [];
         for (const [id, provider] of this.providers) {
-            const providerConfig = config?.[id as keyof KnowledgeBaseConfig] as { enabled?: boolean; api_key?: string } | undefined;
+            const providerConfig = config?.[id as keyof KnowledgeBaseConfig] as
+                | { enabled?: boolean; api_key?: string }
+                | undefined;
             result.push({
                 id: provider.id,
                 name: provider.name,
                 description: provider.description,
                 enabled: !!providerConfig?.enabled,
-                has_api_key: !!(providerConfig?.api_key && providerConfig.api_key.length > 0),
+                has_api_key: !!(providerConfig?.api_key && providerConfig.api_key.length > 0)
             });
         }
         return result;
@@ -120,31 +135,24 @@ export class KnowledgeBaseApplication extends BaseApplication {
         return super.getConfig() as KnowledgeBaseConfig | undefined;
     }
 
-    async getToolsets(): Promise<BaseToolset[]> {
-        const enabledProviders = this.getEnabledProviders();
-        if (enabledProviders.length === 0) {
-            return [];
-        }
-
-        const toolset = new BaseToolset('knowledgebase');
-        toolset.addTool(new ListKnowledgeBasesTool(this));
-        toolset.addTool(new RetrieveFromKnowledgeBaseTool(this));
-        toolset.addTool(new AskKnowledgeBaseTool(this));
-        toolset.addTool(new AddFilesToKnowledgeBaseTool(this));
-        return [toolset];
-    }
-
     async getSkills(): Promise<Skill[]> {
-        const skill = Skill.parseMd(MANAGE_KNOWLEDGEBASE_SKILL);
+        const manageSkill = Skill.parseMd(MANAGE_KNOWLEDGEBASE_SKILL);
         const manageToolset = new BaseToolset('knowledgebase-manage');
-
         manageToolset.addTool(new ListLibraryProvidersTool(this));
         manageToolset.addTool(new ConfigureLibraryProviderTool(this));
         manageToolset.addTool(new ToggleLibraryProviderTool(this));
         manageToolset.addTool(new CreateKnowledgeBaseTool(this));
         manageToolset.addTool(new DeleteKnowledgeBaseTool(this));
-        skill.toolsets = [manageToolset];
+        manageSkill.toolsets = [manageToolset];
 
-        return [skill];
+        const operateSkill = Skill.parseMd(OPERATE_KNOWLEDGEBASE_SKILL);
+        const operateToolset = new BaseToolset('knowledgebase-operate');
+        operateToolset.addTool(new ListKnowledgeBasesTool(this));
+        operateToolset.addTool(new RetrieveFromKnowledgeBaseTool(this));
+        operateToolset.addTool(new AskKnowledgeBaseTool(this));
+        operateToolset.addTool(new AddFilesToKnowledgeBaseTool(this));
+        operateSkill.toolsets = [operateToolset];
+
+        return [manageSkill, operateSkill];
     }
 }

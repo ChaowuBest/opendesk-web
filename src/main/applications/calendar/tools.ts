@@ -19,7 +19,7 @@ import { z } from 'zod';
 // ========== getCalendarItems 工具 ==========
 
 const GetCalendarItemsArgsSchema = z.object({
-    dateString: z.string().describe('日期字符串，格式为YYYY-MM-DD'),
+    dateString: z.string().describe('日期字符串，格式为YYYY-MM-DD')
 });
 
 export class GetCalendarItemsTool extends BaseTool<typeof GetCalendarItemsArgsSchema> {
@@ -29,7 +29,7 @@ export class GetCalendarItemsTool extends BaseTool<typeof GetCalendarItemsArgsSc
         super(
             'getCalendarItems',
             '获取指定日期的日程安排和会议列表（注：交流，研讨，培训等各种广义的日程安排也包含在内）',
-            GetCalendarItemsArgsSchema,
+            GetCalendarItemsArgsSchema
         );
         this.calendarApp = calendarApp;
         this.setExecutor(this.handleExecute.bind(this));
@@ -47,7 +47,7 @@ export class GetCalendarItemsTool extends BaseTool<typeof GetCalendarItemsArgsSc
         if (toolcall.status === 'running') {
             body.push(chalk.dim('  ⏳ 正在获取日程…'));
         } else if (toolcall.status === 'success' && toolcall.result) {
-            const lines = toolcall.result.split('\n').filter(l => l.startsWith('- '));
+            const lines = toolcall.result.split('\n').filter((l) => l.startsWith('- '));
             if (lines.length === 0) {
                 body.push(chalk.dim('  ∅ 当日暂无日程'));
             } else {
@@ -63,7 +63,12 @@ export class GetCalendarItemsTool extends BaseTool<typeof GetCalendarItemsArgsSc
             body.push(chalk.redBright('  ' + truncText(String(toolcall.result), width - 10)));
         }
 
-        return new Card({ icon: '📅', title: '查询日程', status: statusDisplay(toolcall.status), body }).render(width);
+        return new Card({
+            icon: '📅',
+            title: '查询日程',
+            status: statusDisplay(toolcall.status),
+            body
+        }).render(width);
     }
 
     private async handleExecute(args: z.output<typeof GetCalendarItemsArgsSchema>): Promise<string> {
@@ -74,7 +79,7 @@ export class GetCalendarItemsTool extends BaseTool<typeof GetCalendarItemsArgsSc
 
         let result = `在${args.dateString}的日程安排列表为: \n`;
         for (const item of items.data) {
-            result += `- ${item.subject}\n`;
+            result += `- ${item.subject} (uid: ${item.uid})\n`;
             result += `  - 开始时间: ${new Date(item.startTime).toLocaleString()}\n`;
             result += `  - 结束时间: ${new Date(item.endTime).toLocaleString()}\n`;
             if (item.location) {
@@ -93,7 +98,7 @@ const AddCalendarItemArgsSchema = z.object({
     startTime: z.string().describe('开始时间，格式为HH:MM（24小时制）'),
     endTime: z.string().describe('结束时间，格式为HH:MM（24小时制）'),
     location: z.string().optional().describe('地点'),
-    isAllDay: z.boolean().optional().default(false).describe('是否为全天事件'),
+    isAllDay: z.boolean().optional().default(false).describe('是否为全天事件')
 });
 
 export class AddCalendarItemTool extends BaseTool<typeof AddCalendarItemArgsSchema> {
@@ -103,7 +108,7 @@ export class AddCalendarItemTool extends BaseTool<typeof AddCalendarItemArgsSche
         super(
             'addCalendarItem',
             '添加一个新的日程项（会议、约会、活动等），需要指定日期、时间和标题',
-            AddCalendarItemArgsSchema,
+            AddCalendarItemArgsSchema
         );
         this.calendarApp = calendarApp;
         this.setExecutor(this.handleExecute.bind(this));
@@ -139,7 +144,12 @@ export class AddCalendarItemTool extends BaseTool<typeof AddCalendarItemArgsSche
             body.push(chalk.redBright('  ' + truncText(String(toolcall.result), width - 10)));
         }
 
-        return new Card({ icon: '📝', title: '添加日程', status: statusDisplay(toolcall.status), body }).render(width);
+        return new Card({
+            icon: '📝',
+            title: '添加日程',
+            status: statusDisplay(toolcall.status),
+            body
+        }).render(width);
     }
 
     private async handleExecute(args: z.output<typeof AddCalendarItemArgsSchema>): Promise<string> {
@@ -170,7 +180,7 @@ export class AddCalendarItemTool extends BaseTool<typeof AddCalendarItemArgsSche
             startTime: startTimestamp,
             endTime: endTimestamp,
             location: location || '',
-            isAllDay,
+            isAllDay
         });
 
         const item = result?.data ?? result;
@@ -181,7 +191,7 @@ export class AddCalendarItemTool extends BaseTool<typeof AddCalendarItemArgsSche
 // ========== deleteCalendarItem 工具 ==========
 
 const DeleteCalendarItemArgsSchema = z.object({
-    uid: z.string().describe('要删除的日程项的唯一标识符（uid）'),
+    uid: z.string().describe('要删除的日程项的唯一标识符（uid）')
 });
 
 export class DeleteCalendarItemTool extends BaseTool<typeof DeleteCalendarItemArgsSchema> {
@@ -191,7 +201,7 @@ export class DeleteCalendarItemTool extends BaseTool<typeof DeleteCalendarItemAr
         super(
             'deleteCalendarItem',
             '删除指定的日程项，需要提供日程项的uid（可通过getCalendarItems获取）',
-            DeleteCalendarItemArgsSchema,
+            DeleteCalendarItemArgsSchema
         );
         this.calendarApp = calendarApp;
         this.setExecutor(this.handleExecute.bind(this));
@@ -212,7 +222,12 @@ export class DeleteCalendarItemTool extends BaseTool<typeof DeleteCalendarItemAr
             body.push(chalk.redBright('  ' + truncText(String(toolcall.result), width - 10)));
         }
 
-        return new Card({ icon: '🗑', title: '删除日程', status: statusDisplay(toolcall.status), body }).render(width);
+        return new Card({
+            icon: '🗑',
+            title: '删除日程',
+            status: statusDisplay(toolcall.status),
+            body
+        }).render(width);
     }
 
     private async handleExecute(args: z.output<typeof DeleteCalendarItemArgsSchema>): Promise<string> {

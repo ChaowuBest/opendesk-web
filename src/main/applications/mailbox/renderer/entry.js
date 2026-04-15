@@ -134,30 +134,30 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
 
         // 【核心修改】订阅账号列表更新事件
         window.applicationAPI.subscribe('accountsUpdated', async () => {
-             console.log("配置更新检测到，正在强制重载...");
+            console.log('配置更新检测到，正在强制重载...');
 
-             // 1. 重新获取最新的账号列表
-             await this.loadAccounts();
-             this.updateAccountSelectorUI();
+            // 1. 重新获取最新的账号列表
+            await this.loadAccounts();
+            this.updateAccountSelectorUI();
 
-             // 2. 无论之前是否有数据，配置变了必须强制刷新
-             if (this.currentAccount) {
-                 // 清空本地缓存的数据
-                 this.emailHeaderList.clear();
-                 this.currentOffset = 0;
-                 this.hasMoreEmails = true;
+            // 2. 无论之前是否有数据，配置变了必须强制刷新
+            if (this.currentAccount) {
+                // 清空本地缓存的数据
+                this.emailHeaderList.clear();
+                this.currentOffset = 0;
+                this.hasMoreEmails = true;
 
-                 // 清空视图
-                 this.reloadEmailList();
+                // 清空视图
+                this.reloadEmailList();
 
-                 // 重新从后端拉取数据
-                 await this.loadEmailList();
-             } else {
-                 // 如果配置全删了，没账号了，清空列表显示提示
-                 const list = this.querySelector('#email-list');
-                 if (list) list.innerHTML = '<div class="text-gray-500 text-center py-4">暂无可用账号</div>';
-                 this.emailHeaderList.clear();
-             }
+                // 重新从后端拉取数据
+                await this.loadEmailList();
+            } else {
+                // 如果配置全删了，没账号了，清空列表显示提示
+                const list = this.querySelector('#email-list');
+                if (list) list.innerHTML = '<div class="text-gray-500 text-center py-4">暂无可用账号</div>';
+                this.emailHeaderList.clear();
+            }
         });
     }
 
@@ -169,7 +169,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             this.accounts = await window.applicationAPI.call('getAccountList');
             if (this.accounts && this.accounts.length > 0) {
                 // 找到当前活跃的账号，如果没有则默认第一个
-                this.currentAccount = this.accounts.find(a => a.active) || this.accounts[0];
+                this.currentAccount = this.accounts.find((a) => a.active) || this.accounts[0];
                 // 无论后端是否有 active 账号，都调用 switchAccount 来确保状态同步
                 // 这样可以确保 currentProfileId 被设置，并清除新邮件标记
                 await this.switchAccount(this.currentAccount.email);
@@ -192,8 +192,8 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             await window.applicationAPI.call('switchAccount', email);
 
             // 更新本地状态
-            this.currentAccount = this.accounts.find(a => a.email === email);
-            this.accounts.forEach(a => a.active = (a.email === email));
+            this.currentAccount = this.accounts.find((a) => a.email === email);
+            this.accounts.forEach((a) => (a.active = a.email === email));
 
             // 重置所有列表状态
             this.currentOffset = 0;
@@ -217,7 +217,6 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             // 重新加载邮件
             this.reloadEmailList(); // 先清空视图
             await this.loadEmailList(); // 再请求数据
-
         } catch (error) {
             console.error('Switch account failed:', error);
             Swal.fire({
@@ -238,15 +237,15 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         // 节流函数，优化滚动事件处理
         const throttle = (func, delay) => {
             let inThrottle;
-            return function() {
+            return function () {
                 const args = arguments;
                 const context = this;
                 if (!inThrottle) {
                     func.apply(context, args);
                     inThrottle = true;
-                    setTimeout(() => inThrottle = false, delay);
+                    setTimeout(() => (inThrottle = false), delay);
                 }
-            }
+            };
         };
 
         // 滚动事件处理函数
@@ -399,9 +398,13 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
     }
 
     getToolset() {
-        let toolset = new RendererToolset('mailbox');
+        const toolset = new RendererToolset('mailbox');
         if (this.selectedEmailUid !== null) {
-            let getSelectedEmailTool = new RendererTool('getSelectedEmail', '获取用户当前正在浏览的邮件内容', z.object({}));
+            const getSelectedEmailTool = new RendererTool(
+                'getSelectedEmail',
+                '获取用户当前正在浏览的邮件内容',
+                z.object({})
+            );
             getSelectedEmailTool.setExecutor(async (args) => {
                 let result = '当前用户正在浏览的邮件内容为: \n';
                 result += `主题: ${this.selectedEmailHeader.subject}\n`;
@@ -413,7 +416,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             toolset.addTool(getSelectedEmailTool);
         }
 
-        let getEmailListTool = new RendererTool('getEmailList', '获取完整的邮件列表', z.object({}));
+        const getEmailListTool = new RendererTool('getEmailList', '获取完整的邮件列表', z.object({}));
         getEmailListTool.setExecutor(async (args) => {
             let result = '';
             for (const email of this.emailHeaderList.values()) {
@@ -427,16 +430,20 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             return result;
         });
 
-        let getEmailContentTool = new RendererTool('getEmailContent', '打开指定id的邮件并获取其内容', z.object({
-            uid: z.string().describe("邮件的ID")
-        }));
+        const getEmailContentTool = new RendererTool(
+            'getEmailContent',
+            '打开指定id的邮件并获取其内容',
+            z.object({
+                uid: z.string().describe('邮件的ID')
+            })
+        );
         getEmailContentTool.setExecutor(async (args) => {
             let result = '';
             try {
                 await this.openEmailByUid(args.uid);
-                let content = this.selectedEmailContent;
+                const content = this.selectedEmailContent;
                 result = `邮件内容为: <content>${content.textContent || content.htmlContent}</content>\n`;
-                await new Promise(resolve => setTimeout(resolve, 1000));
+                await new Promise((resolve) => setTimeout(resolve, 1000));
                 return result;
             } catch (error) {
                 result = `获取邮件内容失败: ${error}\n`;
@@ -444,9 +451,13 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             }
         });
 
-        let markEmailAsReadTool = new RendererTool('markEmailAsRead', '标记多个指定id的邮件为已读', z.object({
-            uids: z.array(z.string()).describe("邮件的ID列表")
-        }));
+        const markEmailAsReadTool = new RendererTool(
+            'markEmailAsRead',
+            '标记多个指定id的邮件为已读',
+            z.object({
+                uids: z.array(z.string()).describe('邮件的ID列表')
+            })
+        );
         markEmailAsReadTool.setExecutor(async (args) => {
             for (const uid of args.uids) {
                 await this.markEmailAsRead(uid);
@@ -454,69 +465,96 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             return `已标记邮件为已读: ${args.uids.join(', ')}`;
         });
 
-        let writeEmailTool = new RendererTool('writeEmail', '撰写邮件,邮件正文内容由你自动生成', z.object({
-            to: z.array(z.string()).describe("收件人列表"),
-            cc: z.array(z.string()).describe("抄送人列表"),
-            bcc: z.array(z.string()).describe("密送人列表"),
-            subject: z.string().describe("主题"),
-            content: z.string().describe("邮件正文内容,html格式")
-        }));
+        const writeEmailTool = new RendererTool(
+            'writeEmail',
+            '撰写邮件,邮件正文内容由你自动生成',
+            z.object({
+                to: z.array(z.string()).describe('收件人列表'),
+                cc: z.array(z.string()).describe('抄送人列表'),
+                bcc: z.array(z.string()).describe('密送人列表'),
+                subject: z.string().describe('主题'),
+                content: z.string().describe('邮件正文内容,html格式')
+            })
+        );
         writeEmailTool.setExecutor(async (args) => {
-            let to = [];
-            let cc = [];
-            let bcc = [];
+            const to = [];
+            const cc = [];
+            const bcc = [];
             if (args.to) {
-                args.to.map(item => {
-                    to.push({name: '', address: item});
-                })
+                args.to.map((item) => {
+                    to.push({ name: '', address: item });
+                });
             }
             if (args.cc) {
-                args.cc.map(item => {
-                    cc.push({name: '', address: item});
-                })
+                args.cc.map((item) => {
+                    cc.push({ name: '', address: item });
+                });
             }
             if (args.bcc) {
-                args.bcc.map(item => {
-                    bcc.push({name: '', address: item});
-                })
+                args.bcc.map((item) => {
+                    bcc.push({ name: '', address: item });
+                });
             }
-            let mailHeader = {subject: args.subject, to: to, cc: cc, bcc: bcc};
-            let mailContent = {htmlContent: args.content, textContent: args.content};
+            const mailHeader = { subject: args.subject, to: to, cc: cc, bcc: bcc };
+            const mailContent = { htmlContent: args.content, textContent: args.content };
             this.createNewEmail(MailOperations.SEND, mailHeader, mailContent);
-            return "邮件已撰写完成";
-        })
+            return '邮件已撰写完成';
+        });
 
-        let replyEmailTool = new RendererTool('replyEmail', '回复邮件,回复内容由你根据指定邮件内容自动生成', z.object({
-            replyContent: z.string().describe("回复内容,html格式")
-        }));
+        const replyEmailTool = new RendererTool(
+            'replyEmail',
+            '回复邮件,回复内容由你根据指定邮件内容自动生成',
+            z.object({
+                replyContent: z.string().describe('回复内容,html格式')
+            })
+        );
         replyEmailTool.setExecutor(async (args) => {
             if (!this.selectedEmailUid) {
-                return "请选择一封具体的邮件让我回复";
+                return '请选择一封具体的邮件让我回复';
             }
-            this.createNewEmail(MailOperations.REPLY, this.selectedEmailHeader, this.selectedEmailContent, args.replyContent);
-            return "邮件回复完成";
-        })
+            this.createNewEmail(
+                MailOperations.REPLY,
+                this.selectedEmailHeader,
+                this.selectedEmailContent,
+                args.replyContent
+            );
+            return '邮件回复完成';
+        });
 
-        let getEditEmailTool = new RendererTool('getEditEmail', '获取当前正在编辑的邮件内容', z.object({}));
+        const getEditEmailTool = new RendererTool('getEditEmail', '获取当前正在编辑的邮件内容', z.object({}));
         getEditEmailTool.setExecutor(async (args) => {
             const editor = document.querySelector('#editor');
             const mailElement = await editor.getMailContent();
             return mailElement.html;
         });
 
-        let PolishEmailTool = new RendererTool('polishEmail', '邮件校对和润色', z.object({
-            content: z.string().describe("校对润色后的邮件正文内容,html格式")
-        }));
-        PolishEmailTool.setParams(z.object({
-            content: z.string().describe("校对润色后的邮件正文内容,html格式")
-        }))
+        const PolishEmailTool = new RendererTool(
+            'polishEmail',
+            '邮件校对和润色',
+            z.object({
+                content: z.string().describe('校对润色后的邮件正文内容,html格式')
+            })
+        );
+        PolishEmailTool.setParams(
+            z.object({
+                content: z.string().describe('校对润色后的邮件正文内容,html格式')
+            })
+        );
         PolishEmailTool.setExecutor(async (args) => {
             const editor = document.querySelector('#editor');
-            await editor.setMailContent(MailOperations.POLISH, {}, args.content)
+            await editor.setMailContent(MailOperations.POLISH, {}, args.content);
             return `已完成邮件润色`;
         });
 
-        toolset.addTools(getEmailListTool, getEmailContentTool, markEmailAsReadTool, writeEmailTool, replyEmailTool, getEditEmailTool, PolishEmailTool);
+        toolset.addTools(
+            getEmailListTool,
+            getEmailContentTool,
+            markEmailAsReadTool,
+            writeEmailTool,
+            replyEmailTool,
+            getEditEmailTool,
+            PolishEmailTool
+        );
         return toolset;
     }
 
@@ -541,16 +579,16 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
      */
     renderEmailItem(email) {
         const isSelected = email.uid === this.selectedEmailUid;
-        var classes = "email-item p-3 border-b cursor-pointer border-gray-200 border-l-4 ";
+        let classes = 'email-item p-3 border-b cursor-pointer border-gray-200 border-l-4 ';
         if (isSelected) {
-            classes += "bg-indigo-50/50 relative border-l-indigo-600";
+            classes += 'bg-indigo-50/50 relative border-l-indigo-600';
         } else {
-            classes += "hover:bg-gray-50 transition-colors border-l-transparent";
+            classes += 'hover:bg-gray-50 transition-colors border-l-transparent';
         }
 
-        var subject_classes = "font-medium text-gray-500";
+        let subject_classes = 'font-medium text-gray-500';
         if (email.unread) {
-            subject_classes = "font-bold text-gray-800";
+            subject_classes = 'font-bold text-gray-800';
         }
 
         // 根据邮件类型显示不同的图标
@@ -565,15 +603,13 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         let infoLine = '';
         if (email.type === 'sent' || email.type === 'draft') {
             // 已发送和草稿显示收件人
-            const toAddresses = email.to && email.to.length > 0
-                ? email.to.map(t => t.name || t.address).join(', ')
-                : '无收件人';
+            const toAddresses =
+                email.to && email.to.length > 0 ? email.to.map((t) => t.name || t.address).join(', ') : '无收件人';
             infoLine = `<p class="text-gray-500 text-xs truncate mb-1">收件人: ${toAddresses}</p>`;
         } else {
             // 收件箱显示发件人
-            const fromAddress = email.from && email.from.length > 0
-                ? (email.from[0].name || email.from[0].address)
-                : '未知发件人';
+            const fromAddress =
+                email.from && email.from.length > 0 ? email.from[0].name || email.from[0].address : '未知发件人';
             infoLine = `<p class="text-gray-500 text-xs truncate mb-1">发件人: ${fromAddress}</p>`;
         }
 
@@ -586,7 +622,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             ${infoLine}
             <p class="text-gray-400 text-xs">${new Date(email.date).toLocaleString()}</p>
         </div>
-        `
+        `;
     }
 
     createEmailItemElement(email) {
@@ -707,7 +743,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         }
 
         // 过滤出应该显示的邮件
-        const emailsToShow = Array.from(emailList.values()).filter(email => this.shouldShowEmail(email));
+        const emailsToShow = Array.from(emailList.values()).filter((email) => this.shouldShowEmail(email));
 
         if (emailsToShow.length === 0) {
             if (forceFullReload || emailListContainer.children.length === 0) {
@@ -727,8 +763,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         } else {
             // 增量更新：只更新变化的邮件项
             const existingUids = new Set(
-                Array.from(emailListContainer.querySelectorAll('.email-item'))
-                    .map(item => item.dataset.uid)
+                Array.from(emailListContainer.querySelectorAll('.email-item')).map((item) => item.dataset.uid)
             );
 
             // 更新已存在的邮件项
@@ -792,7 +827,13 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         } else if (this.loadingError) {
             // HTML 转义错误信息
             const escapedError = this.loadingError.replace(/[&<>"']/g, (char) => {
-                const entities = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+                const entities = {
+                    '&': '&amp;',
+                    '<': '&lt;',
+                    '>': '&gt;',
+                    '"': '&quot;',
+                    "'": '&#39;'
+                };
                 return entities[char];
             });
             content = `
@@ -900,10 +941,10 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
 
     async starEmail(uid, starred = true) {
         console.info('star email', uid, starred);
-        let starOptions = {
+        const starOptions = {
             uid: uid,
             starred: starred
-        }
+        };
         await window.applicationAPI.call('starEmail', starOptions);
         const email = this.emailHeaderList.get(uid);
         if (email) {
@@ -936,13 +977,13 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
 
         // 添加旋转动画
         if (syncButton && icon) {
-             icon.classList.add('fa-spin');
-             syncButton.disabled = true;
+            icon.classList.add('fa-spin');
+            syncButton.disabled = true;
         }
 
         try {
             await window.applicationAPI.call('syncEmails');
-            await new Promise(resolve => setTimeout(resolve, 1000));
+            await new Promise((resolve) => setTimeout(resolve, 1000));
             await this.loadEmailList();
         } catch (error) {
             console.error('同步邮件失败:', error);
@@ -1016,11 +1057,15 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             <div class="flex items-center ${bgColor} border ${borderColor} rounded px-1.5 py-0.5 text-xs ${textColor}">
                 <span class="font-medium">${address.name}</span>
                 <span class="ml-1 text-gray-400 italic font-normal">&lt;${address.address}&gt;</span>
-                ${type === 'from' ? `
+                ${
+                    type === 'from'
+                        ? `
                 <button class="ml-1 text-gray-400 hover:text-gray-600">
                     <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" /></svg>
                 </button>
-                ` : ''}
+                `
+                        : ''
+                }
             </div>
             `;
         };
@@ -1028,16 +1073,15 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         // 检查是否需要显示展开/收起按钮，计算收件人和抄送人的数量
         const needsExpandButton = () => {
             const totalAddresses =
-                (this.selectedEmailHeader.to?.length || 0) +
-                (this.selectedEmailHeader.cc?.length || 0);
+                (this.selectedEmailHeader.to?.length || 0) + (this.selectedEmailHeader.cc?.length || 0);
             return totalAddresses > 3;
         };
 
-        var addresses = '';
+        let addresses = '';
 
         // 渲染发件人，右侧添加展开/收起按钮
         if (this.selectedEmailHeader.from && this.selectedEmailHeader.from.length > 0) {
-            const senderHtml = this.selectedEmailHeader.from.map(addr => renderEmailAddress(addr, 'from')).join('');
+            const senderHtml = this.selectedEmailHeader.from.map((addr) => renderEmailAddress(addr, 'from')).join('');
 
             let expandButton = '';
             if (needsExpandButton()) {
@@ -1075,13 +1119,13 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
 
             if (shouldShowAll) {
                 // 展开状态，显示所有收件人
-                toHtml = this.selectedEmailHeader.to.map(addr => renderEmailAddress(addr, 'to')).join('');
+                toHtml = this.selectedEmailHeader.to.map((addr) => renderEmailAddress(addr, 'to')).join('');
             } else {
                 // 未展开状态，计算显示的收件人数
                 const maxTotalVisible = 3;
                 const toVisibleCount = Math.min(toCount, maxTotalVisible);
                 const displayTos = this.selectedEmailHeader.to.slice(0, toVisibleCount);
-                toHtml = displayTos.map(addr => renderEmailAddress(addr, 'to')).join('');
+                toHtml = displayTos.map((addr) => renderEmailAddress(addr, 'to')).join('');
             }
 
             addresses += `
@@ -1101,7 +1145,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
 
             if (shouldShowAll) {
                 // 展开状态，显示所有抄送人
-                ccHtml = this.selectedEmailHeader.cc.map(addr => renderEmailAddress(addr, 'cc')).join('');
+                ccHtml = this.selectedEmailHeader.cc.map((addr) => renderEmailAddress(addr, 'cc')).join('');
             } else {
                 // 未展开状态，显示部分抄送人
                 const maxTotalVisible = 3;
@@ -1110,7 +1154,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
 
                 if (ccVisibleCount > 0) {
                     const displayCcs = this.selectedEmailHeader.cc.slice(0, ccVisibleCount);
-                    ccHtml = displayCcs.map(addr => renderEmailAddress(addr, 'cc')).join('');
+                    ccHtml = displayCcs.map((addr) => renderEmailAddress(addr, 'cc')).join('');
                 }
             }
 
@@ -1128,7 +1172,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
 
         // 渲染密送，总地址数 <= 3 或展开时显示
         if (this.selectedEmailHeader.bcc && this.selectedEmailHeader.bcc.length > 0 && shouldShowAll) {
-            const bccHtml = this.selectedEmailHeader.bcc.map(addr => renderEmailAddress(addr, 'bcc')).join('');
+            const bccHtml = this.selectedEmailHeader.bcc.map((addr) => renderEmailAddress(addr, 'bcc')).join('');
             addresses += ` <!-- 密送行 -->
                 <div class="group flex items-start px-1 py-1 hover:bg-gray-50 transition-colors">
                 <label class="w-12 text-xs text-gray-400 font-medium pt-0.5">密送</label>
@@ -1139,7 +1183,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             `;
         }
 
-        var attachments = '';
+        let attachments = '';
         if (this.selectedEmailContent && this.selectedEmailContent.attachments) {
             for (const attachment of this.selectedEmailContent.attachments) {
                 attachments += `
@@ -1158,7 +1202,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
                         </span>
                     </div>
                 </div>
-                `
+                `;
             }
         }
 
@@ -1170,10 +1214,10 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
                     ${attachments}
                 </div>
             </div>
-            `
+            `;
         }
 
-        var fullHeader = `
+        const fullHeader = `
         <div class="mb-2">
             <div class="flex flex-col items-center justify-between">
                 <div class="flex flex-col items-left w-full">
@@ -1186,7 +1230,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
                 </div>
             </div>
         </div>
-        `
+        `;
 
         return fullHeader;
     }
@@ -1201,9 +1245,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
     async createNewEmail(operation, mailHeader, mailContent, replyContent) {
         // 这里可以直接 new 一个邮件编辑控件并赋值给 #email-content
         const emailContent = this.querySelector('#email-content');
-        const editor = new MailEditorWidget(
-
-        );
+        const editor = new MailEditorWidget();
         // 与阅读界面一致：flex flex-col 让工具栏固定顶部、内容区单独滚动；min-h-0 使内部 overflow 生效；不加 overflow-y-auto 避免整块（含工具栏）一起滚动
         editor.classList.add('flex-1', 'flex', 'flex-col', 'min-h-0', 'bg-white', 'w-full');
         editor.id = 'editor';
@@ -1212,7 +1254,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         editor.addEventListener('cancel', () => {
             this.reloadCurrentEmailContent();
         });
-        editor.addEventListener('send', async() => {
+        editor.addEventListener('send', async () => {
             const mailSchema = await editor.getMailContent();
             // 先关闭编辑器
             this.reloadCurrentEmailContent();
@@ -1220,11 +1262,11 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             await this.sendEmail(mailSchema);
         });
 
-        editor.addEventListener('saveDraft', async() => {
+        editor.addEventListener('saveDraft', async () => {
             const mailSchema = await editor.getMailContent();
             await this.saveDraft(mailSchema);
         });
-        editor.setMailContent(operation, mailHeader, mailContent, replyContent, this.currentAccount)
+        editor.setMailContent(operation, mailHeader, mailContent, replyContent, this.currentAccount);
     }
 
     async saveDraft(draftSchema) {
@@ -1312,41 +1354,116 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         if (this.selectedEmailHeader.type === 'draft') {
             // 草稿：编辑、删除
             topButtons = [
-                { id: 'mailbox-edit-draft-button', icon: 'fa-edit', label: '编辑', action: () => this.editDraft(this.selectedEmailUid) },
-                { id: 'mailbox-delete-draft-button', icon: 'fa-trash-alt', label: '删除', action: () => this.handleDeleteDraft(this.selectedEmailUid) },
+                {
+                    id: 'mailbox-edit-draft-button',
+                    icon: 'fa-edit',
+                    label: '编辑',
+                    action: () => this.editDraft(this.selectedEmailUid)
+                },
+                {
+                    id: 'mailbox-delete-draft-button',
+                    icon: 'fa-trash-alt',
+                    label: '删除',
+                    action: () => this.handleDeleteDraft(this.selectedEmailUid)
+                }
             ];
         } else if (this.selectedEmailHeader.type === 'sent') {
             // 已发送：转发、删除
             topButtons = [
-                { id: 'mailbox-forward-button', icon: 'fa-share', label: '转发', action: () => this.createNewEmail(MailOperations.FORWARD, this.selectedEmailHeader, this.selectedEmailContent) },
-                { id: 'mailbox-trash-button', icon: 'fa-trash-alt', label: '删除', action: () => this.handleDelete(this.selectedEmailUid) },
-                { id: 'mailbox-star-button', icon: 'fa-star', label: '收藏', action: () => this.starEmail(this.selectedEmailUid, !this.selectedEmailHeader.starred) },
+                {
+                    id: 'mailbox-forward-button',
+                    icon: 'fa-share',
+                    label: '转发',
+                    action: () =>
+                        this.createNewEmail(MailOperations.FORWARD, this.selectedEmailHeader, this.selectedEmailContent)
+                },
+                {
+                    id: 'mailbox-trash-button',
+                    icon: 'fa-trash-alt',
+                    label: '删除',
+                    action: () => this.handleDelete(this.selectedEmailUid)
+                },
+                {
+                    id: 'mailbox-star-button',
+                    icon: 'fa-star',
+                    label: '收藏',
+                    action: () => this.starEmail(this.selectedEmailUid, !this.selectedEmailHeader.starred)
+                }
             ];
         } else {
             // 收件箱：回复、转发、删除等
             const readUnreadButton = this.selectedEmailHeader.unread
-                ? { id: 'mailbox-mark-read-button', icon: 'fa-envelope-open', label: '标为已读', action: () => this.markEmailAsRead(this.selectedEmailUid) }
-                : { id: 'mailbox-mark-unread-button', icon: 'fa-envelope', label: '标为未读', action: () => this.markEmailAsUnread(this.selectedEmailUid) };
+                ? {
+                      id: 'mailbox-mark-read-button',
+                      icon: 'fa-envelope-open',
+                      label: '标为已读',
+                      action: () => this.markEmailAsRead(this.selectedEmailUid)
+                  }
+                : {
+                      id: 'mailbox-mark-unread-button',
+                      icon: 'fa-envelope',
+                      label: '标为未读',
+                      action: () => this.markEmailAsUnread(this.selectedEmailUid)
+                  };
 
             topButtons = [
-                { id: 'mailbox-reply-button', icon: 'fa-reply', label: '回复', action: () => this.createNewEmail(MailOperations.REPLY, this.selectedEmailHeader, this.selectedEmailContent) },
-                { id: 'mailbox-reply-all-button', icon: 'fa-reply-all', label: '回复全部', action: () => this.createNewEmail(MailOperations.REPLYALL, this.selectedEmailHeader, this.selectedEmailContent) },
-                { id: 'mailbox-forward-button', icon: 'fa-share', label: '转发', action: () => this.createNewEmail(MailOperations.FORWARD, this.selectedEmailHeader, this.selectedEmailContent) },
-                { id: 'mailbox-reload-button', icon: 'fa-redo-alt', label: '重新下载', action: () => this.openEmailByUid(this.selectedEmailUid, true) },
-                { id: 'mailbox-trash-button', icon: 'fa-trash-alt', label: '删除', action: () => this.handleDelete(this.selectedEmailUid) },
-                { id: 'mailbox-star-button', icon: 'fa-star', label: '收藏', action: () => this.starEmail(this.selectedEmailUid, !this.selectedEmailHeader.starred) },
-                readUnreadButton,
+                {
+                    id: 'mailbox-reply-button',
+                    icon: 'fa-reply',
+                    label: '回复',
+                    action: () =>
+                        this.createNewEmail(MailOperations.REPLY, this.selectedEmailHeader, this.selectedEmailContent)
+                },
+                {
+                    id: 'mailbox-reply-all-button',
+                    icon: 'fa-reply-all',
+                    label: '回复全部',
+                    action: () =>
+                        this.createNewEmail(
+                            MailOperations.REPLYALL,
+                            this.selectedEmailHeader,
+                            this.selectedEmailContent
+                        )
+                },
+                {
+                    id: 'mailbox-forward-button',
+                    icon: 'fa-share',
+                    label: '转发',
+                    action: () =>
+                        this.createNewEmail(MailOperations.FORWARD, this.selectedEmailHeader, this.selectedEmailContent)
+                },
+                {
+                    id: 'mailbox-reload-button',
+                    icon: 'fa-redo-alt',
+                    label: '重新下载',
+                    action: () => this.openEmailByUid(this.selectedEmailUid, true)
+                },
+                {
+                    id: 'mailbox-trash-button',
+                    icon: 'fa-trash-alt',
+                    label: '删除',
+                    action: () => this.handleDelete(this.selectedEmailUid)
+                },
+                {
+                    id: 'mailbox-star-button',
+                    icon: 'fa-star',
+                    label: '收藏',
+                    action: () => this.starEmail(this.selectedEmailUid, !this.selectedEmailHeader.starred)
+                },
+                readUnreadButton
             ];
         }
 
         const toolbar = new ElasticToolbarWidget(topButtons);
-        toolbar.classList.add('pl-3', 'pr-16')
+        toolbar.classList.add('pl-3', 'pr-16');
 
         this.querySelector('#email-content').innerHTML = '';
         this.querySelector('#email-content').appendChild(toolbar);
 
         /* 不要直接操作innerHTML，因为可能会导致样式错乱 */
-        this.querySelector('#email-content').insertAdjacentHTML('beforeend', `
+        this.querySelector('#email-content').insertAdjacentHTML(
+            'beforeend',
+            `
         <!-- 邮件阅读区 -->
         <div class="flex-1 overflow-y-auto p-4 bg-white">
             <div class="max-w-4xl mx-auto">
@@ -1357,7 +1474,8 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
                 </div>
             </div>
         </div>
-        `);
+        `
+        );
 
         document.querySelector('#email-body-content').attachShadow({ mode: 'open' });
         if (this.selectedEmailContent.htmlContent) {
@@ -1370,7 +1488,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             document.querySelector('#email-body-content').shadowRoot.innerHTML = '';
         }
 
-        document.querySelectorAll('.mailbox-open-attachment-item').forEach(item => {
+        document.querySelectorAll('.mailbox-open-attachment-item').forEach((item) => {
             item.addEventListener('click', (event) => {
                 const filePath = item.dataset.attachment_path;
                 if (!filePath) {
@@ -1416,7 +1534,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             this.reloadCurrentEmailContent();
         });
 
-        editor.addEventListener('send', async() => {
+        editor.addEventListener('send', async () => {
             const mailSchema = await editor.getMailContent();
             mailSchema.draftUid = uid;
             // 先关闭编辑器
@@ -1426,7 +1544,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             this.deleteEmail(uid);
         });
 
-        editor.addEventListener('saveDraft', async() => {
+        editor.addEventListener('saveDraft', async () => {
             const mailSchema = await editor.getMailContent();
             mailSchema.uid = uid; // 更新现有草稿
             await this.saveDraft(mailSchema);
@@ -1439,7 +1557,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
     async handleDeleteDraft(uid) {
         const result = await Swal.fire({
             title: '确定要删除这个草稿吗？',
-            text: "此操作无法撤销",
+            text: '此操作无法撤销',
             icon: 'warning',
             showCancelButton: true,
             confirmButtonColor: '#d33',
@@ -1448,7 +1566,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             cancelButtonText: '取消',
             didOpen: (popup) => {
                 popup.style.fontSize = '0.8rem';
-            },
+            }
         });
 
         if (result.isConfirmed) {
@@ -1502,12 +1620,11 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         this.reloadEmailList(this.emailHeaderList, false);
     }
 
-
     async handleDelete(uid, redownload = false) {
-    // 1. 弹出询问框（UI 逻辑）
+        // 1. 弹出询问框（UI 逻辑）
         const result = await Swal.fire({
             title: '确定要删除这封邮件吗？',
-            text: "此操作无法撤销",
+            text: '此操作无法撤销',
             icon: 'warning',
             showCancelButton: true,
             confirmButtonColor: '#d33',
@@ -1516,7 +1633,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             cancelButtonText: '取消',
             didOpen: (popup) => {
                 popup.style.fontSize = '0.8rem'; // 设置为原大小的 80%
-            },
+            }
         });
         // 2. 判断用户选择
         if (result.isConfirmed) {
@@ -1559,19 +1676,23 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
     }
 
     render() {
-        const accountName = this.currentAccount ? (this.currentAccount.name || this.currentAccount.email) : '未配置账号';
+        const accountName = this.currentAccount ? this.currentAccount.name || this.currentAccount.email : '未配置账号';
 
         // 生成账号列表项 HTML，包含空值保护
-        const accountListHtml = (this.accounts || []).map(acc => `
-            <div class="account-selector-item px-3 py-2 hover:bg-gray-100 cursor-pointer text-sm flex items-center gap-2 ${acc.email === (this.currentAccount?.email) ? 'bg-indigo-50 text-indigo-600' : 'text-gray-700'}"
+        const accountListHtml = (this.accounts || [])
+            .map(
+                (acc) => `
+            <div class="account-selector-item px-3 py-2 hover:bg-gray-100 cursor-pointer text-sm flex items-center gap-2 ${acc.email === this.currentAccount?.email ? 'bg-indigo-50 text-indigo-600' : 'text-gray-700'}"
                  data-email="${acc.email}">
-                 <div class="w-2 h-2 rounded-full ${acc.email === (this.currentAccount?.email) ? 'bg-indigo-600' : 'bg-transparent'}"></div>
+                 <div class="w-2 h-2 rounded-full ${acc.email === this.currentAccount?.email ? 'bg-indigo-600' : 'bg-transparent'}"></div>
                  <div class="flex flex-col overflow-hidden">
                     <span class="font-medium truncate">${acc.name || acc.email}</span>
                     <span class="text-xs text-gray-400 truncate">${acc.email}</span>
                  </div>
             </div>
-        `).join('');
+        `
+            )
+            .join('');
 
         this.innerHTML = `
         <splitter-widget class="w-full h-full flex">
@@ -1640,7 +1761,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             <!-- 右侧栏：邮件内容 -->
             <main id='email-content' slot="right" class="flex-1 bg-white flex flex-col overflow-auto"></main>
         </splitter-widget>
-        `
+        `;
 
         this.setupTabListeners();
         this.setupActionListeners();
@@ -1668,7 +1789,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
 
         // 账号点击事件
         const items = menu.querySelectorAll('.account-selector-item');
-        items.forEach(item => {
+        items.forEach((item) => {
             item.addEventListener('click', (e) => {
                 const email = item.dataset.email;
                 if (email) {
@@ -1685,23 +1806,29 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         // 1. 更新顶部按钮的标题
         const titleEl = this.querySelector('#account-selector-btn h1');
         if (titleEl) {
-            titleEl.textContent = this.currentAccount ? (this.currentAccount.name || this.currentAccount.email) : '未配置账号';
+            titleEl.textContent = this.currentAccount
+                ? this.currentAccount.name || this.currentAccount.email
+                : '未配置账号';
         }
 
         // 2. 重新生成账号列表的 HTML
         const menu = this.querySelector('#account-selector-menu');
         if (!menu) return;
 
-        const accountListHtml = (this.accounts || []).map(acc => `
-            <div class="account-selector-item px-3 py-2 hover:bg-gray-100 cursor-pointer text-sm flex items-center gap-2 ${acc.email === (this.currentAccount?.email) ? 'bg-indigo-50 text-indigo-600' : 'text-gray-700'}"
+        const accountListHtml = (this.accounts || [])
+            .map(
+                (acc) => `
+            <div class="account-selector-item px-3 py-2 hover:bg-gray-100 cursor-pointer text-sm flex items-center gap-2 ${acc.email === this.currentAccount?.email ? 'bg-indigo-50 text-indigo-600' : 'text-gray-700'}"
                  data-email="${acc.email}">
-                 <div class="w-2 h-2 rounded-full ${acc.email === (this.currentAccount?.email) ? 'bg-indigo-600' : 'bg-transparent'}"></div>
+                 <div class="w-2 h-2 rounded-full ${acc.email === this.currentAccount?.email ? 'bg-indigo-600' : 'bg-transparent'}"></div>
                  <div class="flex flex-col overflow-hidden">
                     <span class="font-medium truncate">${acc.name || acc.email}</span>
                     <span class="text-xs text-gray-400 truncate">${acc.email}</span>
                  </div>
             </div>
-        `).join('');
+        `
+            )
+            .join('');
 
         // 3. 将新生成的 HTML 注入到菜单中
         // 保留顶部的 "切换账号" 标题栏，只替换列表部分
@@ -1712,7 +1839,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
 
         // 4. 【关键】因为 DOM 被重写了，必须重新绑定点击事件
         const items = menu.querySelectorAll('.account-selector-item');
-        items.forEach(item => {
+        items.forEach((item) => {
             item.addEventListener('click', (e) => {
                 const email = item.dataset.email;
                 if (email) {
@@ -1729,11 +1856,12 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         if (!tabsContainer) return;
 
         const tabButtons = tabsContainer.querySelectorAll('button');
-        tabsContainer.addEventListener('click', function(e) {
+        tabsContainer.addEventListener('click', function (e) {
             if (e.target.tagName === 'BUTTON') {
                 // 重置所有按钮样式
-                tabButtons.forEach(btn => {
-                    btn.className = 'whitespace-nowrap px-3 py-1.5 bg-gray-100 text-gray-600 hover:bg-gray-200 rounded-lg font-medium';
+                tabButtons.forEach((btn) => {
+                    btn.className =
+                        'whitespace-nowrap px-3 py-1.5 bg-gray-100 text-gray-600 hover:bg-gray-200 rounded-lg font-medium';
                 });
                 // 设置当前按钮为激活状态
                 e.target.className = 'whitespace-nowrap px-3 py-1.5 bg-gray-900 text-white rounded-lg active';
@@ -1742,10 +1870,18 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
 
         // 绑定具体功能
         document.getElementById('mailbox-all-email-button')?.addEventListener('click', () => this.handleFilter('all'));
-        document.getElementById('mailbox-unread-email-button')?.addEventListener('click', () => this.handleFilter('unread'));
-        document.getElementById('mailbox-star-email-button')?.addEventListener('click', () => this.handleFilter('starred'));
-        document.getElementById('mailbox-draft-email-button')?.addEventListener('click', () => this.handleFilter('draft'));
-        document.getElementById('mailbox-sent-email-button')?.addEventListener('click', () => this.handleFilter('sent'));
+        document
+            .getElementById('mailbox-unread-email-button')
+            ?.addEventListener('click', () => this.handleFilter('unread'));
+        document
+            .getElementById('mailbox-star-email-button')
+            ?.addEventListener('click', () => this.handleFilter('starred'));
+        document
+            .getElementById('mailbox-draft-email-button')
+            ?.addEventListener('click', () => this.handleFilter('draft'));
+        document
+            .getElementById('mailbox-sent-email-button')
+            ?.addEventListener('click', () => this.handleFilter('sent'));
     }
 
     // 辅助方法：设置动作按钮事件
@@ -1805,7 +1941,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             { key: 'to', regex: /to:([^\s]+)/i },
             { key: 'subject', regex: /subject:([^\s]+)/i },
             { key: 'body', regex: /body:([^\s]+)/i },
-            { key: 'date', regex: /date:([^\s]+)/i },
+            { key: 'date', regex: /date:([^\s]+)/i }
         ];
 
         let remainingQuery = queryString;
@@ -1842,7 +1978,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         if (query.date) {
             // 支持单个日期或日期范围
             if (query.date.includes('~')) {
-                const [startDate, endDate] = query.date.split('~').map(d => d.trim());
+                const [startDate, endDate] = query.date.split('~').map((d) => d.trim());
                 query.startDate = startDate;
                 query.endDate = endDate || startDate;
             } else {
@@ -1888,7 +2024,7 @@ class MailEditorWidget extends AgentOperableHTMLElement {
         }
         const tags = tagifyInstance.value || [];
         console.log(`Getting tags for ${inputId}:`, tags);
-        return tags.map(tag => typeof tag === 'string' ? tag : tag.value);
+        return tags.map((tag) => (typeof tag === 'string' ? tag : tag.value));
     }
 
     /**
@@ -1906,41 +2042,42 @@ class MailEditorWidget extends AgentOperableHTMLElement {
 
         container.classList.remove('hidden');
 
-        const attachmentsHTML = this.attachments.map((attachment, index) => {
-            const ext = attachment.filename.split('.').pop().toLowerCase();
-            let iconClass = 'fa-file';
-            let iconColor = 'text-gray-500';
+        const attachmentsHTML = this.attachments
+            .map((attachment, index) => {
+                const ext = attachment.filename.split('.').pop().toLowerCase();
+                let iconClass = 'fa-file';
+                let iconColor = 'text-gray-500';
 
-            if (['jpg', 'jpeg', 'png', 'gif', 'bmp', 'svg', 'webp'].includes(ext)) {
-                iconClass = 'fa-file-image';
-                iconColor = 'text-blue-500';
-            } else if (['pdf'].includes(ext)) {
-                iconClass = 'fa-file-pdf';
-                iconColor = 'text-red-500';
-            } else if (['doc', 'docx'].includes(ext)) {
-                iconClass = 'fa-file-word';
-                iconColor = 'text-blue-600';
-            } else if (['xls', 'xlsx'].includes(ext)) {
-                iconClass = 'fa-file-excel';
-                iconColor = 'text-green-600';
-            } else if (['ppt', 'pptx'].includes(ext)) {
-                iconClass = 'fa-file-powerpoint';
-                iconColor = 'text-orange-500';
-            } else if (['zip', 'rar', '7z', 'tar', 'gz'].includes(ext)) {
-                iconClass = 'fa-file-archive';
-                iconColor = 'text-yellow-600';
-            } else if (['txt', 'md'].includes(ext)) {
-                iconClass = 'fa-file-alt';
-                iconColor = 'text-gray-600';
-            } else if (['mp4', 'avi', 'mov', 'wmv', 'flv'].includes(ext)) {
-                iconClass = 'fa-file-video';
-                iconColor = 'text-purple-500';
-            } else if (['mp3', 'wav', 'flac', 'aac'].includes(ext)) {
-                iconClass = 'fa-file-audio';
-                iconColor = 'text-pink-500';
-            }
+                if (['jpg', 'jpeg', 'png', 'gif', 'bmp', 'svg', 'webp'].includes(ext)) {
+                    iconClass = 'fa-file-image';
+                    iconColor = 'text-blue-500';
+                } else if (['pdf'].includes(ext)) {
+                    iconClass = 'fa-file-pdf';
+                    iconColor = 'text-red-500';
+                } else if (['doc', 'docx'].includes(ext)) {
+                    iconClass = 'fa-file-word';
+                    iconColor = 'text-blue-600';
+                } else if (['xls', 'xlsx'].includes(ext)) {
+                    iconClass = 'fa-file-excel';
+                    iconColor = 'text-green-600';
+                } else if (['ppt', 'pptx'].includes(ext)) {
+                    iconClass = 'fa-file-powerpoint';
+                    iconColor = 'text-orange-500';
+                } else if (['zip', 'rar', '7z', 'tar', 'gz'].includes(ext)) {
+                    iconClass = 'fa-file-archive';
+                    iconColor = 'text-yellow-600';
+                } else if (['txt', 'md'].includes(ext)) {
+                    iconClass = 'fa-file-alt';
+                    iconColor = 'text-gray-600';
+                } else if (['mp4', 'avi', 'mov', 'wmv', 'flv'].includes(ext)) {
+                    iconClass = 'fa-file-video';
+                    iconColor = 'text-purple-500';
+                } else if (['mp3', 'wav', 'flac', 'aac'].includes(ext)) {
+                    iconClass = 'fa-file-audio';
+                    iconColor = 'text-pink-500';
+                }
 
-            return `
+                return `
                 <div class="attachment-item group flex items-center gap-3 px-3 py-2.5
                             bg-gradient-to-r from-gray-50 to-white
                             border border-gray-200 rounded-lg
@@ -1977,7 +2114,8 @@ class MailEditorWidget extends AgentOperableHTMLElement {
                     </button>
                 </div>
             `;
-        }).join('');
+            })
+            .join('');
 
         container.innerHTML = `
             <div class="px-4 py-2 bg-gray-50 border-t border-gray-200">
@@ -1992,7 +2130,7 @@ class MailEditorWidget extends AgentOperableHTMLElement {
         `;
 
         // 绑定删除按钮事件
-        container.querySelectorAll('.remove-attachment').forEach(btn => {
+        container.querySelectorAll('.remove-attachment').forEach((btn) => {
             btn.addEventListener('click', (e) => {
                 e.stopPropagation();
                 const index = parseInt(btn.dataset.index);
@@ -2012,6 +2150,16 @@ class MailEditorWidget extends AgentOperableHTMLElement {
 
     connectedCallback() {
         this.render();
+        this.addEventListener('focusin', () => {
+            try {
+                const Alpine = window.Alpine;
+                if (Alpine && Alpine.$data) {
+                    Alpine.$data(document.body).showFloatingChatPanel = false;
+                }
+            } catch (_) {
+                /* ignore */
+            }
+        });
     }
 
     async cancel() {
@@ -2032,7 +2180,7 @@ class MailEditorWidget extends AgentOperableHTMLElement {
             cancelButtonText: '继续编辑',
             didOpen: (popup) => {
                 popup.style.fontSize = '0.9rem';
-            },
+            }
         });
 
         if (result.isConfirmed) {
@@ -2051,12 +2199,16 @@ class MailEditorWidget extends AgentOperableHTMLElement {
     }
 
     composeContent(selectedEmailHeader, originEmailContent, replyContent) {
-        const sender = selectedEmailHeader.from && selectedEmailHeader.from[0] ? selectedEmailHeader.from[0].address : '未知发件人';
+        const sender =
+            selectedEmailHeader.from && selectedEmailHeader.from[0]
+                ? selectedEmailHeader.from[0].address
+                : '未知发件人';
         const sendTime = new Date(selectedEmailHeader.date).toLocaleString();
-        const receivers = selectedEmailHeader.to ? selectedEmailHeader.to.map(t => t.address).join(', ') : '';
-        const ccReceivers = selectedEmailHeader.cc && selectedEmailHeader.cc.length > 0
-            ? selectedEmailHeader.cc.map(c => c.address).join(', ')
-            : null;
+        const receivers = selectedEmailHeader.to ? selectedEmailHeader.to.map((t) => t.address).join(', ') : '';
+        const ccReceivers =
+            selectedEmailHeader.cc && selectedEmailHeader.cc.length > 0
+                ? selectedEmailHeader.cc.map((c) => c.address).join(', ')
+                : null;
         const htmlTemplate = `
             ${replyContent ? `<div>${replyContent}</div>` : ''}
 
@@ -2085,12 +2237,16 @@ class MailEditorWidget extends AgentOperableHTMLElement {
                     <span style="color: #374151;">${receivers}</span>
                 </div>
 
-                ${ccReceivers ? `
+                ${
+                    ccReceivers
+                        ? `
                 <div style="margin-bottom: 6px;">
                     <span style="color: #6b7280; font-weight: bold; display: inline-block; width: 70px;">抄送:</span>
                     <span style="color: #374151;">${ccReceivers}</span>
                 </div>
-                ` : ''}
+                `
+                        : ''
+                }
 
                 <div>
                     <span style="color: #6b7280; font-weight: bold; display: inline-block; width: 70px;">主题:</span>
@@ -2115,7 +2271,14 @@ class MailEditorWidget extends AgentOperableHTMLElement {
         const editor = await this.editorReady;
         const content = editor.getContent();
         const attachments = this.attachments;
-        const sendEmailSchema = {to: to, cc: ccList, bcc: bccList, subject: subject, html: content, attachments: attachments};
+        const sendEmailSchema = {
+            to: to,
+            cc: ccList,
+            bcc: bccList,
+            subject: subject,
+            html: content,
+            attachments: attachments
+        };
         return sendEmailSchema;
     }
 
@@ -2125,59 +2288,84 @@ class MailEditorWidget extends AgentOperableHTMLElement {
         }
         const editor = await this.editorReady;
         if (operation == MailOperations.POLISH) {
-            editor.setContent(mailContent)
+            editor.setContent(mailContent);
             return;
         }
         if (operation == MailOperations.REPLY) {
             document.getElementById('to').value = mailHeader.from[0].address;
             document.getElementById('subject').value = '答复:' + mailHeader.subject;
         } else if (operation == MailOperations.REPLYALL) {
-            const filteredTo = mailHeader.to.filter(to => to.address != currentAccount?.email);
+            const filteredTo = mailHeader.to.filter((to) => to.address != currentAccount?.email);
             document.getElementById('to').value = mailHeader.from[0].address;
-            document.getElementById('to').value += ',' + filteredTo.map(to => to.address).join(',');
+            document.getElementById('to').value += ',' + filteredTo.map((to) => to.address).join(',');
             document.getElementById('subject').value = '答复全部:' + mailHeader.subject;
             if (mailHeader.cc && mailHeader.cc.length > 0) {
-                document.getElementById('cc').value = mailHeader.cc.map(cc => cc.address).join(',');
+                document.getElementById('cc').value = mailHeader.cc.map((cc) => cc.address).join(',');
             }
             if (mailHeader.bcc && mailHeader.bcc.length > 0) {
-                document.getElementById('bcc').value = mailHeader.bcc.map(bcc => bcc.address).join(',');
+                document.getElementById('bcc').value = mailHeader.bcc.map((bcc) => bcc.address).join(',');
             }
         } else if (operation == MailOperations.FORWARD) {
             document.getElementById('subject').value = '转发:' + mailHeader.subject;
         } else if (operation == MailOperations.SEND) {
             document.getElementById('subject').value = mailHeader.subject;
-            document.getElementById('to').value = mailHeader.to.map(to => to.address).join(',')
-            document.getElementById('cc').value = mailHeader.cc.map(cc => cc.address).join(',')
-            document.getElementById('bcc').value = mailHeader.bcc.map(bcc => bcc.address).join(',')
+            document.getElementById('to').value = mailHeader.to.map((to) => to.address).join(',');
+            document.getElementById('cc').value = mailHeader.cc.map((cc) => cc.address).join(',');
+            document.getElementById('bcc').value = mailHeader.bcc.map((bcc) => bcc.address).join(',');
         }
 
-        let originContent = mailContent.htmlContent ? mailContent.htmlContent : mailContent.textContent.replace(/\n/g, '<br>')
+        const originContent = mailContent.htmlContent
+            ? mailContent.htmlContent
+            : mailContent.textContent.replace(/\n/g, '<br>');
         if (operation == MailOperations.SEND) {
-            editor.setContent(originContent)
+            editor.setContent(originContent);
         } else {
-            let combileContent = this.composeContent(mailHeader, originContent, replyContent)
-            editor.setContent(combileContent)
+            const combileContent = this.composeContent(mailHeader, originContent, replyContent);
+            editor.setContent(combileContent);
         }
     }
 
     async magicWrite() {
-        window.aiBarAPI.submitRequestInNewTask("帮我回复一下当前打开的这封邮件");
+        window.aiBarAPI.submitRequestInNewTask('帮我回复一下当前打开的这封邮件');
     }
 
     render() {
         const buttons = [
-            { id: 'send-email-cancel-button', icon: 'fa-circle-arrow-left', label: '取消', action: () => this.cancel() },
-            { id: 'send-email-save-draft-button', icon: 'fa-save', label: '保存草稿', action: () => this.saveDraft() },
-            { id: 'send-email-send-button', icon: 'fa-paper-plane', label: '发送', action: () => this.send() },
-            { id: 'send-email-magic-write-button', icon: 'fa-wand-sparkles', label: '帮我写', labelStayVisible: true, action: () => this.magicWrite() },
-        ]
+            {
+                id: 'send-email-cancel-button',
+                icon: 'fa-circle-arrow-left',
+                label: '取消',
+                action: () => this.cancel()
+            },
+            {
+                id: 'send-email-save-draft-button',
+                icon: 'fa-save',
+                label: '保存草稿',
+                action: () => this.saveDraft()
+            },
+            {
+                id: 'send-email-send-button',
+                icon: 'fa-paper-plane',
+                label: '发送',
+                action: () => this.send()
+            },
+            {
+                id: 'send-email-magic-write-button',
+                icon: 'fa-wand-sparkles',
+                label: '帮我写',
+                labelStayVisible: true,
+                action: () => this.magicWrite()
+            }
+        ];
         const headerToolbar = new ElasticToolbarWidget(buttons);
         headerToolbar.classList.add('pl-3', 'pr-16');
 
         this.innerHTML = '';
         this.appendChild(headerToolbar);
 
-        this.insertAdjacentHTML('beforeend', `
+        this.insertAdjacentHTML(
+            'beforeend',
+            `
         <!-- 邮件编辑区（布局与阅读界面一致：工具栏固定顶部，此处 flex-1 min-h-0 使内容区单独滚动） -->
         <div class="flex-1 min-h-0 overflow-y-auto p-4 bg-white flex flex-col">
             <div class="w-full max-w-5xl mx-auto flex-1 flex flex-col">
@@ -2288,12 +2476,13 @@ class MailEditorWidget extends AgentOperableHTMLElement {
             color: #9ca3af !important;
         }
         </style>
-        `);
+        `
+        );
 
         // 初始化 Tagify
         const commonConfig = {
             pattern: /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
-            delimiters: ",|;| ",
+            delimiters: ',|;| ',
             keepInvalidTags: false,
             dropdown: { enabled: 0 },
             trim: true
@@ -2304,7 +2493,7 @@ class MailEditorWidget extends AgentOperableHTMLElement {
             this.tagifyInstances.to = new Tagify(inputTo, commonConfig);
         }
 
-        ['cc', 'bcc'].forEach(type => {
+        ['cc', 'bcc'].forEach((type) => {
             const inputEl = document.getElementById(type);
             if (inputEl) {
                 this.tagifyInstances[type] = new Tagify(inputEl, commonConfig);
@@ -2322,26 +2511,44 @@ class MailEditorWidget extends AgentOperableHTMLElement {
             branding: false,
             statusbar: false,
             resize: true,
-            language: 'zh_CN',  // 设置中文语言
+            language: 'zh_CN', // 设置中文语言
 
             // 【关键配置】TinyMCE 7.x 需要的配置
-            skin: false,  // 不动态加载皮肤（已在顶部 import）
-            content_css: false,  // 不动态加载内容样式（已在顶部 import）
-            license_key: 'gpl',  // 声明为 GPL 开源使用（避免弹窗）
+            skin: false, // 不动态加载皮肤（已在顶部 import）
+            content_css: false, // 不动态加载内容样式（已在顶部 import）
+            license_key: 'gpl', // 声明为 GPL 开源使用（避免弹窗）
             highlight_on_focus: false,
 
             plugins: [
-                'advlist', 'autolink', 'lists', 'link', 'image', 'charmap', 'preview',
-                'anchor', 'searchreplace', 'visualblocks', 'code', 'fullscreen',
-                'insertdatetime', 'media', 'table', 'wordcount'
+                'advlist',
+                'autolink',
+                'lists',
+                'link',
+                'image',
+                'charmap',
+                'preview',
+                'anchor',
+                'searchreplace',
+                'visualblocks',
+                'code',
+                'fullscreen',
+                'insertdatetime',
+                'media',
+                'table',
+                'wordcount'
             ],
-            toolbar: 'addAttachment | fontfamily fontsize | bold italic underline strikethrough | forecolor backcolor | bullist numlist | alignleft aligncenter alignright alignjustify | removeformat lineheight hr blockquote code',
+            toolbar:
+                'addAttachment | fontfamily fontsize | bold italic underline strikethrough | forecolor backcolor | bullist numlist | alignleft aligncenter alignright alignjustify | removeformat lineheight hr blockquote code',
             toolbar_mode: 'sliding',
             line_height_formats: '1 1.2 1.4 1.5 2 3',
-            font_family_formats: '微软雅黑=Microsoft YaHei,Helvetica Neue,PingFang SC,sans-serif;苹果苹方=PingFang SC,Microsoft YaHei,sans-serif;宋体=simsun,serif;Arial=arial,helvetica,sans-serif;',
+            font_family_formats:
+                '微软雅黑=Microsoft YaHei,Helvetica Neue,PingFang SC,sans-serif;苹果苹方=PingFang SC,Microsoft YaHei,sans-serif;宋体=simsun,serif;Arial=arial,helvetica,sans-serif;',
             font_size_formats: '12px 14px 16px 18px 24px 36px 48px',
             setup: (editor) => {
-                editor.ui.registry.addIcon('paperclip', '<svg width="24" height="24" viewBox="0 0 24 24"><path d="M16.5 6v11.5c0 2.21-1.79 4-4 4s-4-1.79-4-4V5a2.5 2.5 0 0 1 5 0v10.5c0 .55-.45 1-1 1s-1-.45-1-1V6H10v9.5a2.5 2.5 0 0 0 5 0V5c0-2.21-1.79-4-4-4S7 2.79 7 5v12.5c0 3.04 2.46 5.5 5.5 5.5s5.5-2.46 5.5-5.5V6h-1.5z" fill="currentColor"/></svg>');
+                editor.ui.registry.addIcon(
+                    'paperclip',
+                    '<svg width="24" height="24" viewBox="0 0 24 24"><path d="M16.5 6v11.5c0 2.21-1.79 4-4 4s-4-1.79-4-4V5a2.5 2.5 0 0 1 5 0v10.5c0 .55-.45 1-1 1s-1-.45-1-1V6H10v9.5a2.5 2.5 0 0 0 5 0V5c0-2.21-1.79-4-4-4S7 2.79 7 5v12.5c0 3.04 2.46 5.5 5.5 5.5s5.5-2.46 5.5-5.5V6h-1.5z" fill="currentColor"/></svg>'
+                );
                 const self = this;
                 editor.ui.registry.addButton('addAttachment', {
                     icon: 'paperclip',
@@ -2350,7 +2557,7 @@ class MailEditorWidget extends AgentOperableHTMLElement {
                         try {
                             const paths = await window.fsAPI.selectFile();
                             if (paths && paths.length > 0) {
-                                paths.forEach(fullPath => {
+                                paths.forEach((fullPath) => {
                                     const filename = fullPath.split(/[/\\]/).pop();
                                     self.attachments.push({
                                         filename: filename,
@@ -2369,19 +2576,28 @@ class MailEditorWidget extends AgentOperableHTMLElement {
 
             // 回调
             init_instance_callback: (editor) => {
-                console.log("编辑器加载完成！");
+                console.log('编辑器加载完成！');
+                editor.on('focus', () => {
+                    try {
+                        const Alpine = window.Alpine;
+                        if (Alpine && Alpine.$data) {
+                            Alpine.$data(document.body).showFloatingChatPanel = false;
+                        }
+                    } catch (_) {
+                        /* ignore */
+                    }
+                });
                 this.resolveEditor(editor);
             }
         });
-        window.toggleRow = function(type) {
-
+        window.toggleRow = function (type) {
             const row = document.getElementById('row-' + type);
             const btn = document.getElementById('btn-' + type);
 
             if (row) row.classList.remove('hidden');
             if (btn) btn.style.display = 'none';
         };
-        window.closeRow = function(type) {
+        window.closeRow = function (type) {
             const row = document.getElementById('row-' + type);
             const btn = document.getElementById('btn-' + type);
             const input = document.getElementById(type);
@@ -2394,7 +2610,7 @@ class MailEditorWidget extends AgentOperableHTMLElement {
         };
         window.tagifyInstances = this.tagifyInstances;
 
-        console.log("Tagify (To, Cc, Bcc) 初始化完成！");
+        console.log('Tagify (To, Cc, Bcc) 初始化完成！');
     }
 
     saveDraft() {

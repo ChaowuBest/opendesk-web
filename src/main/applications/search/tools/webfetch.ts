@@ -30,18 +30,16 @@ const MIN_EXTRACTION_RATIO = 0.01;
  * 域名黑名单：匹配到的域名将直接拒绝抓取，避免在反爬严格的站点上浪费时间。
  * 匹配逻辑：URL 的 hostname 以列表中的某项结尾即命中（支持子域名）。
  */
-const BLOCKED_DOMAINS: string[] = [
-    'zhihu.com',
-];
+const BLOCKED_DOMAINS: string[] = ['zhihu.com'];
 
 const DEFAULT_USER_AGENT =
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 
 const BROWSER_HEADERS: Record<string, string> = {
     'User-Agent': DEFAULT_USER_AGENT,
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+    Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
     'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-    'Connection': 'keep-alive',
+    Connection: 'keep-alive',
     'Upgrade-Insecure-Requests': '1',
     'Sec-Fetch-Dest': 'document',
     'Sec-Fetch-Mode': 'navigate',
@@ -50,11 +48,11 @@ const BROWSER_HEADERS: Record<string, string> = {
     'sec-ch-ua': '"Chromium";v="131", "Not_A Brand";v="24"',
     'sec-ch-ua-mobile': '?0',
     'sec-ch-ua-platform': '"Windows"',
-    'Cache-Control': 'max-age=0',
+    'Cache-Control': 'max-age=0'
 };
 
 const WebFetchArgsSchema = z.object({
-    url: z.string().describe('要获取内容的网页URL地址'),
+    url: z.string().describe('要获取内容的网页URL地址')
 });
 
 /**
@@ -74,7 +72,7 @@ export class WebFetchTool extends BaseTool<typeof WebFetchArgsSchema> {
         super(
             'webFetch',
             '从指定URL获取网页内容，并将其转换为结构化的Markdown格式返回。适用于阅读网页文章、文档、博客等场景',
-            WebFetchArgsSchema,
+            WebFetchArgsSchema
         );
 
         this.turndownService = this.createTurndownService();
@@ -104,7 +102,12 @@ export class WebFetchTool extends BaseTool<typeof WebFetchArgsSchema> {
             body.push(chalk.redBright('  ' + truncText(toolcall.result, width - 10)));
         }
 
-        return new Card({ icon: '🌐', title: '网页获取', status: statusDisplay(toolcall.status), body }).render(width);
+        return new Card({
+            icon: '🌐',
+            title: '网页获取',
+            status: statusDisplay(toolcall.status),
+            body
+        }).render(width);
     }
 
     // ───────────────────── Turndown 配置 ─────────────────────
@@ -115,7 +118,7 @@ export class WebFetchTool extends BaseTool<typeof WebFetchArgsSchema> {
             codeBlockStyle: 'fenced',
             bulletListMarker: '-',
             strongDelimiter: '**',
-            emDelimiter: '_',
+            emDelimiter: '_'
         });
 
         service.remove(['script', 'style', 'noscript', 'iframe', 'object', 'embed']);
@@ -129,7 +132,7 @@ export class WebFetchTool extends BaseTool<typeof WebFetchArgsSchema> {
                 const src = el.getAttribute('src') || '';
                 if (!src) return '';
                 return `![${alt}](${src})`;
-            },
+            }
         });
 
         service.addRule('cleanLink', {
@@ -141,7 +144,7 @@ export class WebFetchTool extends BaseTool<typeof WebFetchArgsSchema> {
                 if (!href || !trimmed) return trimmed;
                 if (href.startsWith('javascript:') || href === '#') return trimmed;
                 return `[${trimmed}](${href})`;
-            },
+            }
         });
 
         return service;
@@ -164,14 +167,12 @@ export class WebFetchTool extends BaseTool<typeof WebFetchArgsSchema> {
         }
 
         const hostname = parsedUrl.hostname.toLowerCase();
-        const blockedDomain = BLOCKED_DOMAINS.find(
-            d => hostname === d || hostname.endsWith('.' + d),
-        );
+        const blockedDomain = BLOCKED_DOMAINS.find((d) => hostname === d || hostname.endsWith('.' + d));
         if (blockedDomain) {
             throw new Error(
                 `域名 ${blockedDomain} 在黑名单中，不支持对该网站进行抓取。` +
-                '该网站具有严格的反爬虫策略，抓取将无法获取有效内容。' +
-                '请尝试从其他来源获取相关信息。',
+                    '该网站具有严格的反爬虫策略，抓取将无法获取有效内容。' +
+                    '请尝试从其他来源获取相关信息。'
             );
         }
 
@@ -203,12 +204,11 @@ export class WebFetchTool extends BaseTool<typeof WebFetchArgsSchema> {
         reasons.push(
             '网站可能使用了反爬虫保护（如 Cloudflare JS 验证）',
             '页面内容可能完全由 JavaScript 动态渲染',
-            '网站可能需要登录或特殊授权',
+            '网站可能需要登录或特殊授权'
         );
 
         throw new Error(
-            `无法获取 ${url} 的有效内容。可能的原因：\n` +
-            reasons.map((r, i) => `${i + 1}. ${r}`).join('\n'),
+            `无法获取 ${url} 的有效内容。可能的原因：\n` + reasons.map((r, i) => `${i + 1}. ${r}`).join('\n')
         );
     }
 
@@ -220,7 +220,8 @@ export class WebFetchTool extends BaseTool<typeof WebFetchArgsSchema> {
             this.lastHttpStatus = response.status;
 
             const contentType = response.headers.get('content-type') || '';
-            const isTextLike = contentType.includes('text/') ||
+            const isTextLike =
+                contentType.includes('text/') ||
                 contentType.includes('application/json') ||
                 contentType.includes('application/xml');
             const isHtml = contentType.includes('text/html') || contentType.includes('application/xhtml');
@@ -240,7 +241,11 @@ export class WebFetchTool extends BaseTool<typeof WebFetchArgsSchema> {
                 }
 
                 if (contentType.includes('text/markdown')) {
-                    return { content: this.truncate(body), strategy: 'Markdown by server', httpStatus: response.status };
+                    return {
+                        content: this.truncate(body),
+                        strategy: 'Markdown by server',
+                        httpStatus: response.status
+                    };
                 }
 
                 const strategy = response.ok ? '文本内容' : `文本内容 (HTTP ${response.status})`;
@@ -287,8 +292,8 @@ export class WebFetchTool extends BaseTool<typeof WebFetchArgsSchema> {
         try {
             const jinaUrl = `https://r.jina.ai/${url}`;
             const response = await this.doFetch(jinaUrl, {
-                'Accept': 'text/markdown',
-                'User-Agent': DEFAULT_USER_AGENT,
+                Accept: 'text/markdown',
+                'User-Agent': DEFAULT_USER_AGENT
             });
 
             if (!response.ok) {
@@ -312,7 +317,11 @@ export class WebFetchTool extends BaseTool<typeof WebFetchArgsSchema> {
                 const markdownMatch = text.match(/Markdown Content:\s*([\s\S]*)/);
                 const content = markdownMatch ? markdownMatch[1].trim() : text;
                 if (content.length > 0) {
-                    return { content: this.truncate(content), strategy: `Jina Reader (HTTP ${status})`, httpStatus: status };
+                    return {
+                        content: this.truncate(content),
+                        strategy: `Jina Reader (HTTP ${status})`,
+                        httpStatus: status
+                    };
                 }
                 return null;
             }
@@ -341,14 +350,10 @@ export class WebFetchTool extends BaseTool<typeof WebFetchArgsSchema> {
             const { document } = parseHTML(body);
             const info: string[] = [];
 
-            const title =
-                this.getMeta(document, 'og:title') ||
-                document.querySelector('title')?.textContent?.trim();
+            const title = this.getMeta(document, 'og:title') || document.querySelector('title')?.textContent?.trim();
             if (title && !this.isAntiBotTitle(title)) info.push(`# ${title}`);
 
-            const desc =
-                this.getMeta(document, 'og:description') ||
-                this.getMetaByName(document, 'description');
+            const desc = this.getMeta(document, 'og:description') || this.getMetaByName(document, 'description');
             if (desc) info.push(desc);
 
             const siteName = this.getMeta(document, 'og:site_name');
@@ -362,7 +367,9 @@ export class WebFetchTool extends BaseTool<typeof WebFetchArgsSchema> {
 
             if (info.length === 0) return null;
 
-            const content = info.join('\n\n') + '\n\n---\n_注意：仅从页面 meta 标签中提取到上述有限信息，页面的完整内容无法通过纯 HTTP 请求获取。_';
+            const content =
+                info.join('\n\n') +
+                '\n\n---\n_注意：仅从页面 meta 标签中提取到上述有限信息，页面的完整内容无法通过纯 HTTP 请求获取。_';
             return { content, strategy: 'Meta 标签提取' };
         } catch {
             return null;
@@ -371,17 +378,21 @@ export class WebFetchTool extends BaseTool<typeof WebFetchArgsSchema> {
 
     // ───────────────────── HTTP 请求 ─────────────────────
 
-    private async doFetch(url: string, headers: Record<string, string>, maxRetries = 2): Promise<Awaited<ReturnType<typeof fetch>>> {
+    private async doFetch(
+        url: string,
+        headers: Record<string, string>,
+        maxRetries = 2
+    ): Promise<Awaited<ReturnType<typeof fetch>>> {
         let lastError: Error | undefined;
 
         // 支持系统代理
-        const proxyUrl = process.env.HTTPS_PROXY || process.env.https_proxy ||
-                         process.env.HTTP_PROXY || process.env.http_proxy;
+        const proxyUrl =
+            process.env.HTTPS_PROXY || process.env.https_proxy || process.env.HTTP_PROXY || process.env.http_proxy;
         const dispatcher = proxyUrl ? new ProxyAgent(proxyUrl) : undefined;
 
         for (let attempt = 0; attempt <= maxRetries; attempt++) {
             if (attempt > 0) {
-                await new Promise(r => setTimeout(r, 1000 * attempt));
+                await new Promise((r) => setTimeout(r, 1000 * attempt));
             }
 
             const controller = new AbortController();
@@ -393,7 +404,7 @@ export class WebFetchTool extends BaseTool<typeof WebFetchArgsSchema> {
                     redirect: 'follow',
                     headers,
                     signal: controller.signal,
-                    dispatcher,
+                    dispatcher
                 });
             } catch (err: any) {
                 clearTimeout(timer);
@@ -452,17 +463,17 @@ export class WebFetchTool extends BaseTool<typeof WebFetchArgsSchema> {
             'cf-browser-verification',
             'ddos-guard',
             'sucuri',
-            'incapsula',
+            'incapsula'
         ];
         // 弱指标：常出现在正常页面的 Cloudflare CDN/分析脚本中，单独命中不足以判定反爬
         const weakIndicators = [
-            'cf_chl_opt',         // Cloudflare 挑战页专用变量
+            'cf_chl_opt', // Cloudflare 挑战页专用变量
             'managed_checking_msg', // Cloudflare 挑战页提示文本
-            '_cf_chl_tk',         // Cloudflare 挑战 token
+            '_cf_chl_tk' // Cloudflare 挑战 token
         ];
 
-        const strongHits = strongIndicators.filter(s => lower.includes(s)).length;
-        const weakHits = weakIndicators.filter(s => lower.includes(s)).length;
+        const strongHits = strongIndicators.filter((s) => lower.includes(s)).length;
+        const weakHits = weakIndicators.filter((s) => lower.includes(s)).length;
 
         // 需要至少 2 个强指标，或 1 个强指标 + 1 个弱指标
         return strongHits >= 2 || (strongHits >= 1 && weakHits >= 1);
@@ -471,11 +482,16 @@ export class WebFetchTool extends BaseTool<typeof WebFetchArgsSchema> {
     private isAntiBotTitle(title: string): boolean {
         const lower = title.toLowerCase();
         const bogus = [
-            'just a moment', 'checking your browser', 'please wait',
-            'attention required', 'access denied', 'security check',
-            'one more step', 'verify you are human',
+            'just a moment',
+            'checking your browser',
+            'please wait',
+            'attention required',
+            'access denied',
+            'security check',
+            'one more step',
+            'verify you are human'
         ];
-        return bogus.some(s => lower.includes(s));
+        return bogus.some((s) => lower.includes(s));
     }
 
     // ───────────────────── HTML → Markdown ─────────────────────
@@ -489,7 +505,7 @@ export class WebFetchTool extends BaseTool<typeof WebFetchArgsSchema> {
         }
 
         const reader = new Readability(document as unknown as Document, {
-            charThreshold: 100,
+            charThreshold: 100
         });
         const article = reader.parse();
 
@@ -543,14 +559,21 @@ export class WebFetchTool extends BaseTool<typeof WebFetchArgsSchema> {
         }
 
         const adSelectors = [
-            '.sidebar', '.advertisement', '.ads', '.ad',
-            '.cookie-banner', '.popup', '.modal',
-            '[role="complementary"]',
+            '.sidebar',
+            '.advertisement',
+            '.ads',
+            '.ad',
+            '.cookie-banner',
+            '.popup',
+            '.modal',
+            '[role="complementary"]'
         ];
         for (const sel of adSelectors) {
             try {
                 document.querySelectorAll(sel).forEach((el: Element) => el.remove());
-            } catch { /* linkedom 可能不支持某些选择器 */ }
+            } catch {
+                /* linkedom 可能不支持某些选择器 */
+            }
         }
 
         const mainEl =

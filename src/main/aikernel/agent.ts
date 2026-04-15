@@ -9,16 +9,5 @@
  * See the Mulan PSL v2 for more details.
  */
 
-export interface AgentEnvironment {
-    workspace: string;
-}
-
-export abstract class AgentDecl {
-    protected environment: AgentEnvironment;
-
-    constructor(environment: AgentEnvironment) {
-        this.environment = environment;
-    }
-
-    abstract createSystemPrompt(): Promise<string>;
-}
+// Re-export from canonical location for backward compatibility
+export { AgentEnvironment, AgentDecl, type ModeDecl, type ModePermissionFactory } from './agents/common';

@@ -1,18 +1,37 @@
-
-import { Component, Markdown, Box, type TUI, visibleWidth, truncateToWidth } from "@mariozechner/pi-tui";
-import type { TaskState, TaskUpdateChunk, TaskUpdateUserChunk, TaskUpdateAssistantChunk } from "../../aikernel/states/tasks";
 import {
-    AssistantMessage, ReasoningMessagePart, TextMessagePart,
-    ToolCallMessagePart, ErrorMessagePart, UserMessage, ToolCall
-} from "../../aikernel/messages";
-import { shouldCompact, compactContext } from "../../aikernel/compact";
-import { logger, getDebugMode } from "../../utils/logger.js";
-import { defaultMarkdownTheme } from "../theme";
-import { DefaultToolCallView } from "./toolcall";
-import { Card } from "./card";
-import chalk from "chalk";
-import type { StatusBarData } from "./input";
-
+    Component,
+    Markdown,
+    Box,
+    type TUI,
+    visibleWidth,
+    truncateToWidth,
+    wrapTextWithAnsi
+} from '@mariozechner/pi-tui';
+import type {
+    TaskState,
+    TaskUpdateChunk,
+    TaskUpdateUserChunk,
+    TaskUpdateAssistantChunk
+} from '../../aikernel/states/tasks';
+import {
+    AssistantMessage,
+    ReasoningMessagePart,
+    TextMessagePart,
+    ToolCallMessagePart,
+    ErrorMessagePart,
+    UserMessage,
+    isCompactBoundaryMessage,
+    ToolCall
+} from '../../aikernel/messages';
+import { compactContext } from '../../aikernel/compact';
+import { prepareContextForModel } from '../../aikernel/compaction/pipeline.js';
+import { logger, getDebugMode } from '../../utils/logger.js';
+import { Setting } from '../../utils/setting.js';
+import { defaultMarkdownTheme } from '../theme';
+import { DefaultToolCallView } from './toolcall';
+import { Card } from './card';
+import chalk from 'chalk';
+import type { TaskStatusBarData } from './input';
 
 /**
  * 流式输出时 Markdown 渲染的最小间隔（毫秒）。
@@ -20,7 +39,6 @@ import type { StatusBarData } from "./input";
  * 调整此值可在渲染实时性和 UI 流畅度之间取得平衡。
  */
 export const MD_RENDER_THROTTLE_MS = 150;
-
 
 export class TextMessagePartView implements Component {
     text: Markdown = new Markdown('', 0, 0, defaultMarkdownTheme);
@@ -85,32 +103,54 @@ export class TextMessagePartView implements Component {
 const REASONING_SPINNER_FRAMES = ['◐', '◓', '◑', '◒'];
 const REASONING_SPINNER_MS = 120;
 
-/** 思考/推理内容用卡片展示，内容始终完整显示（不设 maxLines） */
+/** partial 模式下保留的 reasoning 行数（从尾部算起，按卡片内容区换行后的可视行计；流式与结束后一致） */
+export const REASONING_TAIL_LINES = 10;
+
+/** 将原始按换行符分行的思考文本展开为内容区宽度下的可视行（与 Card 内 truncateToWidth 使用同一宽度基准） */
+function wrapReasoningLinesForPartial(rawLines: string[], contentWidth: number): string[] {
+    const out: string[] = [];
+    for (const line of rawLines) {
+        if (line.length === 0) {
+            out.push('');
+            continue;
+        }
+        const wrapped = wrapTextWithAnsi(line, contentWidth);
+        if (wrapped.length === 0) {
+            out.push('');
+        } else {
+            out.push(...wrapped);
+        }
+    }
+    return out;
+}
+
+/** 尾部截断时提示用户可切换为完整思考显示 */
+const REASONING_PARTIAL_OMIT_HINT = chalk.dim.italic('…… (使用 /reason display full 来显示完整思考内容)');
+
+/** 思考/推理内容用卡片展示：
+ * - reason_display = 'partial'：只显示最后 REASONING_TAIL_LINES 行；超出时首行省略号 + 切换 full 提示
+ * - reason_display = 'full'：完整 Markdown 渲染
+ * - 正文均为斜体
+ */
 export class ReasoningMessagePartView implements Component {
-    private text: Markdown = new Markdown('', 0, 0, defaultMarkdownTheme);
-    /** 是否正在流式输出思考内容，用于显示旋转图标 */
+    /** 原始思考文本内容 */
+    private _content = '';
+    /** 是否正在流式输出思考内容 */
     private _streaming = false;
+    /** Markdown 渲染实例（完整显示模式使用） */
+    private _markdown: Markdown = new Markdown('', 0, 0, defaultMarkdownTheme);
     private invalidated = true;
     private lastWidth?: number;
     private cachedOutput?: string[];
     private _lastRenderMs = 0;
     private _dirty = false;
-    private _cachedBodyLines?: string[];
 
-    constructor(text?: string) {
-        if (text) {
-            this.text.setText(text);
-        }
-    }
-
-    setMarkdown(markdown: string) {
-        try {
-            this.text.setText(markdown);
-            this._dirty = true;
-            this.invalidated = true;
-        } catch {
-            // ignore
-        }
+    setContent(content: string) {
+        this._content = content;
+        // 同时更新 Markdown 内容（完整显示模式需要）
+        this._markdown.setText(content);
+        this._dirty = true;
+        this.invalidated = true;
     }
 
     setStreaming(streaming: boolean) {
@@ -119,13 +159,12 @@ export class ReasoningMessagePartView implements Component {
     }
 
     /**
-     * 清除内部 MD 渲染节流状态，使下一次 render() 一定执行完整的 Markdown 解析。
-     * 在流式输出结束时调用，确保最后一批思考内容不会因节流而显示旧缓存。
+     * 清除内部状态，使下一次 render() 一定重新渲染。
+     * 在流式输出结束时调用。
      */
     clearThrottle() {
         this._dirty = false;
         this._lastRenderMs = 0;
-        this._cachedBodyLines = undefined;
         this.invalidated = true;
     }
 
@@ -133,61 +172,78 @@ export class ReasoningMessagePartView implements Component {
         this.invalidated = true;
     }
 
-    private getIcon(): string {
-        if (!this._streaming) {
-            return chalk.dim('◆');
-        }
+    private getStreamingIcon(): string {
         const idx = Math.floor(Date.now() / REASONING_SPINNER_MS) % REASONING_SPINNER_FRAMES.length;
         return chalk.blueBright(REASONING_SPINNER_FRAMES[idx]);
     }
 
+    /** 判断是否应该完整显示思考内容 */
+    private shouldDisplayFull(): boolean {
+        const setting = Setting.getInstance();
+        return setting.data.reason_display === 'full';
+    }
+
     render(width: number): string[] {
-        if (this._streaming) {
-            const contentWidth = Math.max(1, width - 4);
-
-            const now = Date.now();
-            const skipMdRender = this._dirty
-                && this.cachedOutput
-                && (now - this._lastRenderMs < MD_RENDER_THROTTLE_MS);
-
-            let bodyLines: string[];
-            if (skipMdRender) {
-                bodyLines = this._cachedBodyLines ?? this.text.render(contentWidth);
-            } else {
-                bodyLines = this.text.render(contentWidth);
-                this._cachedBodyLines = bodyLines;
-                this._lastRenderMs = Date.now();
-                this._dirty = false;
-            }
-
-            const card = new Card({
-                icon: this.getIcon(),
-                title: '思考',
-                body: bodyLines,
-            });
-            return card.render(width);
-        }
-
         if (!this.invalidated && this.lastWidth === width && this.cachedOutput) {
             return this.cachedOutput;
         }
 
+        const displayFull = this.shouldDisplayFull();
+
+        // 须在清空 cachedOutput 之前判断：否则流式节流永远拿不到上一帧
+        if (
+            displayFull &&
+            this._streaming &&
+            this._dirty &&
+            this.lastWidth === width &&
+            this.cachedOutput &&
+            this.cachedOutput.length > 0 &&
+            Date.now() - this._lastRenderMs < MD_RENDER_THROTTLE_MS
+        ) {
+            return this.cachedOutput;
+        }
+
         this.lastWidth = width;
-        const contentWidth = Math.max(1, width - 4);
-        const bodyLines = this.text.render(contentWidth);
-        const card = new Card({
-            icon: this.getIcon(),
-            title: '思考',
-            body: bodyLines,
-        });
-        this.cachedOutput = card.render(width);
+        this.cachedOutput = [];
+
+        if (displayFull) {
+            const contentWidth = Math.max(1, width - 4);
+
+            const bodyLines = this._markdown.render(contentWidth).map((line) => chalk.italic(line));
+            this._lastRenderMs = Date.now();
+            this._dirty = false;
+
+            const card = new Card({
+                icon: this._streaming ? this.getStreamingIcon() : chalk.dim('◆'),
+                title: '思考',
+                body: bodyLines
+            });
+            this.cachedOutput = card.render(width);
+        } else {
+            // partial：流式与结束后同一套尾部视图；先按内容区宽度换行，再按换行后的可视行取尾部
+            const contentWidth = Math.max(1, width - 4);
+            const wrappedLines = wrapReasoningLinesForPartial(this._content.split('\n'), contentWidth);
+            const hasMoreAbove = wrappedLines.length > REASONING_TAIL_LINES;
+            const tailLines = wrappedLines.slice(-REASONING_TAIL_LINES).map((line) => chalk.italic(line));
+            const hintLines = hasMoreAbove ? wrapTextWithAnsi(REASONING_PARTIAL_OMIT_HINT, contentWidth) : [];
+            const bodyLines = hasMoreAbove ? [...hintLines, ...tailLines] : tailLines;
+            const maxBodyLines = hasMoreAbove ? hintLines.length + REASONING_TAIL_LINES : REASONING_TAIL_LINES;
+            const card = new Card({
+                icon: this._streaming ? this.getStreamingIcon() : chalk.dim('◆'),
+                title: '思考',
+                body: bodyLines,
+                maxLines: maxBodyLines,
+                truncateStrategy: 'tail'
+            });
+            this.cachedOutput = card.render(width);
+        }
+
         this.invalidated = false;
         return this.cachedOutput;
     }
 }
 
 export class ToolCallView implements Component {
-
     private toolCall: ToolCall;
     private defaultView: DefaultToolCallView;
     private invalidated = true;
@@ -232,7 +288,6 @@ export class ToolCallView implements Component {
 }
 
 export class ToolCallMessagePartView implements Component {
-
     private box: Box = new Box(0, 0);
     private invalidated = true;
     private lastWidth?: number;
@@ -301,7 +356,9 @@ export class ErrorMessagePartView implements Component {
         this.invalidated = true;
     }
 
-    invalidate() { this.invalidated = true; }
+    invalidate() {
+        this.invalidated = true;
+    }
 
     render(width: number): string[] {
         if (!this.invalidated && this.lastWidth === width && this.cachedOutput) {
@@ -318,7 +375,7 @@ export class ErrorMessagePartView implements Component {
         this.cachedOutput = new Card({
             icon: chalk.redBright('⚠'),
             title: chalk.redBright(this.title),
-            body,
+            body
         }).render(width);
 
         this.invalidated = false;
@@ -330,11 +387,11 @@ const COMPACT_SPINNER_FRAMES = ['◐', '◓', '◑', '◒'];
 const COMPACT_SPINNER_MS = 120;
 
 /**
- * 上下文压缩分隔线视图。
+ * 上下文压缩 boundary 视图。
  * - 静态模式：渲染为一条带 ✂ 的水平分隔线
  * - loading 模式：渲染为带旋转动画的"正在压缩…"提示
  */
-export class CompactSeparatorView implements Component {
+export class CompactBoundaryView implements Component {
     private _loading = false;
     private invalidated = true;
     private lastWidth?: number;
@@ -345,7 +402,9 @@ export class CompactSeparatorView implements Component {
         this.invalidated = true;
     }
 
-    invalidate() { this.invalidated = true; }
+    invalidate() {
+        this.invalidated = true;
+    }
 
     private buildLine(label: string, width: number): string {
         const labelW = visibleWidth(label);
@@ -373,6 +432,8 @@ export class CompactSeparatorView implements Component {
     }
 }
 
+export { CompactBoundaryView as CompactSeparatorView };
+
 export class UserMessageView implements Component {
     message: UserMessage;
     box: Box = new Box(1, 1);
@@ -381,7 +442,7 @@ export class UserMessageView implements Component {
     private cachedOutput?: string[];
 
     constructor(message: UserMessage) {
-        this.box.setBgFn((text: string) => chalk.white.bgGrey((text)));
+        this.box.setBgFn((text: string) => chalk.white.bgGrey(text));
         this.message = message;
         for (const part of message.content) {
             if (part.type === 'text') {
@@ -428,7 +489,6 @@ export class UserMessageView implements Component {
 }
 
 export class AssistantMessageView implements Component {
-
     box: Box = new Box(0, 1);
     parts: Array<ReasoningMessagePartView | TextMessagePartView | ToolCallMessagePartView | ErrorMessagePartView> = [];
     private invalidated = true;
@@ -446,7 +506,7 @@ export class AssistantMessageView implements Component {
 
         const existingPartView = this.parts[index];
         if (!(existingPartView instanceof TextMessagePartView)) {
-            throw new Error(`part type mismatch`)
+            throw new Error(`part type mismatch`);
         }
 
         existingPartView.setMarkdown(textPart.text);
@@ -462,11 +522,11 @@ export class AssistantMessageView implements Component {
 
         const existingPartView = this.parts[index];
         if (!(existingPartView instanceof ReasoningMessagePartView)) {
-            throw new Error(`part type mismatch`)
+            throw new Error(`part type mismatch`);
         }
 
         existingPartView.setStreaming(true);
-        existingPartView.setMarkdown(reasoningPart.content);
+        existingPartView.setContent(reasoningPart.content);
         this.invalidated = true;
     }
 
@@ -492,7 +552,7 @@ export class AssistantMessageView implements Component {
 
         const existingPartView = this.parts[index];
         if (!(existingPartView instanceof ToolCallMessagePartView)) {
-            throw new Error(`part type mismatch`)
+            throw new Error(`part type mismatch`);
         }
 
         existingPartView.setToolcalls(toolCallPart.toolcalls);
@@ -579,12 +639,11 @@ export class AssistantMessageView implements Component {
  * 用于显示任务的对话历史
  */
 export class TaskView implements Component {
-
     taskState?: TaskState;
-    messages: Array<UserMessageView | AssistantMessageView | CompactSeparatorView> = [];
+    messages: Array<UserMessageView | AssistantMessageView | CompactBoundaryView> = [];
 
-    /** 用于向外部回传 StatusBar 数据 */
-    onStatusBarUpdate?: (data: Partial<StatusBarData>) => void;
+    /** 用于向外部回传 TaskStatusBar 数据 */
+    onStatusBarUpdate?: (data: Partial<TaskStatusBarData>) => void;
 
     /** 当前任务的ID，用于判断是否仍为活跃任务 */
     private currentTaskId?: string;
@@ -605,7 +664,9 @@ export class TaskView implements Component {
     private _lastStreamRenderMs = 0;
     private static readonly STREAM_RENDER_INTERVAL_MS = 100;
 
-    get isCompacting() { return this._compacting; }
+    get isCompacting() {
+        return this._compacting;
+    }
 
     constructor(tui: TUI) {
         this.tui = tui;
@@ -653,7 +714,7 @@ export class TaskView implements Component {
         if (!this.taskState || this._compacting) return;
         this._compacting = true;
 
-        const indicatorView = new CompactSeparatorView();
+        const indicatorView = new CompactBoundaryView();
         indicatorView.setLoading(true);
         this.messageLayout.addChild(indicatorView);
         this.invalidated = true;
@@ -697,16 +758,24 @@ export class TaskView implements Component {
 
         // 在提交新消息前检查是否需要压缩上下文（TUI 层负责展示动画）
         try {
-            if (await shouldCompact(this.taskState.chat_context, this.taskState.model)) {
-                logger.info(`Auto-compacting context for task ${this.taskState.task_id}`);
-                await this.performCompactWithAnimation();
+            const preparation = await prepareContextForModel(this.taskState.chat_context, this.taskState.model, {
+                beforeCompact: () => {
+                    logger.info(`Auto-compacting context for task ${this.taskState!.task_id}`);
+                },
+                executeCompact: async () => {
+                    await this.performCompactWithAnimation();
+                }
+            });
+            if (preparation.compacted) {
                 // 压缩重建后重新添加用户消息视图（此时尚未入 chat_context）
                 this.clearMessages();
                 this.rebuildFromHistory();
                 this.messageLayout.addChild(userView);
                 this.invalidated = true;
             }
-        } catch { /* shouldCompact 失败不影响正常流程 */ }
+        } catch {
+            /* shouldCompact 失败不影响正常流程 */
+        }
 
         await this.taskState.submitUserMessage(text);
         const renderInterval = setInterval(() => {
@@ -778,8 +847,8 @@ export class TaskView implements Component {
         this.messageIdToAssistantView.clear();
 
         for (const msg of this.taskState.chat_context.messages) {
-            if ((msg as any).role === 'compact_separator') {
-                const view = new CompactSeparatorView();
+            if (isCompactBoundaryMessage(msg)) {
+                const view = new CompactBoundaryView();
                 this.messages.push(view);
                 this.messageLayout.addChild(view);
             } else if (msg instanceof UserMessage) {
@@ -834,7 +903,7 @@ export class TaskView implements Component {
     }
 
     invalidate() {
-        this.messages.forEach(message => message.invalidate());
+        this.messages.forEach((message) => message.invalidate());
         this.invalidated = true;
     }
 

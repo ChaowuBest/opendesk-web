@@ -45,17 +45,18 @@ import { Indexer, IndexerSearchOptions as BaseIndexerSearchOptions, IndexerSearc
 import { BM25Indexer } from './bm25-indexer.js';
 import { VectorIndexer } from './vector-indexer.js';
 import { TagIndexer } from './tag-indexer.js';
-import {BaseIndexer} from './base-indexer.js';
+import { BaseIndexer } from './base-indexer.js';
+import { ChunkIndexer } from './chunk-indexer.js';
 
 export type ItemType = 'file' | 'mail' | 'memory';
 
 export interface Item {
     item_id: string;
     item_type: ItemType;
-    [key: string]: any;  // 支持动态字段，用于传递列名
+    [key: string]: any; // 支持动态字段，用于传递列名
     // key代表indexer，array的string代表列名，
     indexer_columns?: {
-        [indexer: string]: Array<{ column: string; content: string | number[] }>;
+        [indexer: string]: Array<{ column: string; content: string | number[]; id?: string; text?: string }>;
     };
 }
 
@@ -65,6 +66,8 @@ export interface SearchItem {
     VecScore?: number;
     BM25Score?: number;
     ChunkScore?: number;
+    chunk_id?: string; // 新增：匹配的 chunk 标识符
+    chunk_text?: string; // 新增：匹配的 chunk 原文
 }
 
 /**
@@ -86,6 +89,11 @@ export interface ColumnConstraint {
  */
 export const REQUIRED_COLUMNS = ['item_id', 'item_type'];
 
+export interface IndexerBinding {
+    indexer: string; // 'BaseIndexer' | 'BM25Indexer' | 'VectorIndexer' | 'TagIndexer'
+    options?: Record<string, any>;
+}
+
 /**
  * ColumnSchema 接口
  */
@@ -96,7 +104,7 @@ export interface ColumnSchema {
     };
     // column 代表列名，value代表索引
     needIndexers: {
-        [column: string]: string[];
+        [column: string]: IndexerBinding[];
     };
 }
 
@@ -104,9 +112,22 @@ export interface ColumnSchema {
  * Schema 验证错误
  */
 export class SchemaValidationError extends Error {
-    constructor(message: string, public invalidColumns?: string[]) {
+    constructor(
+        message: string,
+        public invalidColumns?: string[]
+    ) {
         super(message);
         this.name = 'SchemaValidationError';
+    }
+}
+
+export class DimMismatchError extends Error {
+    constructor(
+        public readonly storedDim: number,
+        public readonly configuredDim: number
+    ) {
+        super(`Vector dimension mismatch: stored=${storedDim}, configured=${configuredDim}`);
+        this.name = 'DimMismatchError';
     }
 }
 
@@ -132,20 +153,43 @@ export function validateColumnSchema(schema: ColumnSchema): void {
     }
 
     // 4. 检查 indexer 名称是否有效
-    const validIndexers = ['BaseIndexer', 'BM25Indexer', 'VectorIndexer', 'TagIndexer'];
-    for (const [column, indexers] of Object.entries(schema.needIndexers)) {
-        for (const indexer of indexers) {
-            if (!validIndexers.includes(indexer)) {
-                errors.push(`Invalid indexer "${indexer}" for column "${column}"`);
+    const validIndexers = ['BaseIndexer', 'BM25Indexer', 'VectorIndexer', 'TagIndexer', 'ChunkIndexer'];
+    for (const [column, bindings] of Object.entries(schema.needIndexers)) {
+        for (const binding of bindings) {
+            if (!validIndexers.includes(binding.indexer)) {
+                errors.push(`Invalid indexer "${binding.indexer}" for column "${column}"`);
             }
         }
     }
 
+    // 5. 检查所有 VectorIndexer 绑定的 dim 是否全局一致（隐式 dim 视为默认值 1024）
+    const allVecBindings = Object.values(schema.needIndexers)
+        .flat()
+        .filter((b) => b.indexer === 'VectorIndexer');
+    if (allVecBindings.length > 1) {
+        const dims = allVecBindings.map((b) => (typeof b.options?.dim === 'number' ? b.options.dim : 1024));
+        if (!dims.every((d) => d === dims[0])) {
+            errors.push(
+                `VectorIndexer dim must be consistent across all columns, got: [${[...new Set(dims)].join(', ')}]`
+            );
+        }
+    }
+
+    // 6. 检查所有 ChunkIndexer 绑定的 dim 是否全局一致（隐式 dim 视为默认值 1024）
+    const allChunkBindings = Object.values(schema.needIndexers)
+        .flat()
+        .filter((b) => b.indexer === 'ChunkIndexer');
+    if (allChunkBindings.length > 1) {
+        const dims = allChunkBindings.map((b) => (typeof b.options?.dim === 'number' ? b.options.dim : 1024));
+        if (!dims.every((d) => d === dims[0])) {
+            errors.push(
+                `ChunkIndexer dim must be consistent across all columns, got: [${[...new Set(dims)].join(', ')}]`
+            );
+        }
+    }
+
     if (errors.length > 0) {
-        throw new SchemaValidationError(
-            `Schema validation failed:\n${errors.join('\n')}`,
-            invalidColumns
-        );
+        throw new SchemaValidationError(`Schema validation failed:\n${errors.join('\n')}`, invalidColumns);
     }
 }
 
@@ -181,7 +225,19 @@ export interface VectorQuery {
 }
 
 // 标量操作符
-export type ScalarOperator = '=' | '!=' | '>' | '<' | '>=' | '<=' | 'like' | 'notlike' | 'in' | 'notin' | 'between' | 'notbetween';
+export type ScalarOperator =
+    | '='
+    | '!='
+    | '>'
+    | '<'
+    | '>='
+    | '<='
+    | 'like'
+    | 'notlike'
+    | 'in'
+    | 'notin'
+    | 'between'
+    | 'notbetween';
 
 // 向量操作符
 export type VectorOperator = 'vector_similarity' | 'vector_near' | 'vector_not_similar' | 'vector_range';
@@ -206,7 +262,6 @@ export interface FilterCondition {
     vectorQuery?: VectorQuery;
 }
 
-
 // ============================================================================
 // BaseStorage - 多索引器协调存储
 // ============================================================================
@@ -215,9 +270,10 @@ export interface FilterCondition {
  * BaseStorage - 协调多个 Indexer 的统一存储接口
  */
 export class BaseStorage {
-    private bm25Indexer: Indexer;
-    private vectorIndexer: Indexer;
-    private tagIndexer: Indexer;
+    private bm25Indexer: Indexer | null = null;
+    private vectorIndexer: Indexer | null = null;
+    private tagIndexer: Indexer | null = null;
+    private chunkIndexer: ChunkIndexer | null = null;
     private baseIndexer: BaseIndexer;
     private name: string;
     private schema: ColumnSchema;
@@ -234,28 +290,68 @@ export class BaseStorage {
         // 初始化 BaseIndexer（使用动态 schema）
         this.baseIndexer = new BaseIndexer(schema, path.join(this.dbBasePath, 'base-index.db'));
 
-        // 初始化其他 indexer
-        this.bm25Indexer = new BM25Indexer(schema, path.join(this.dbBasePath, 'bm25-index.db'));
-        this.vectorIndexer = new VectorIndexer(schema, path.join(this.dbBasePath, 'vector-index.db'));
-        this.tagIndexer = new TagIndexer(schema, path.join(this.dbBasePath, 'tag-index.db'));
+        // 按需初始化其他 indexer
+        const allBindings = Object.values(schema.needIndexers).flat();
+
+        if (allBindings.some((b) => b.indexer === 'BM25Indexer')) {
+            this.bm25Indexer = new BM25Indexer(schema, path.join(this.dbBasePath, 'bm25-index.db'));
+        }
+        if (allBindings.some((b) => b.indexer === 'VectorIndexer')) {
+            const vecBinding = allBindings.find((b) => b.indexer === 'VectorIndexer');
+            this.vectorIndexer = new VectorIndexer(
+                schema,
+                path.join(this.dbBasePath, 'vector-index.db'),
+                vecBinding?.options
+            );
+        }
+        if (allBindings.some((b) => b.indexer === 'TagIndexer')) {
+            this.tagIndexer = new TagIndexer(schema, path.join(this.dbBasePath, 'tag-index.db'));
+        }
+        if (allBindings.some((b) => b.indexer === 'ChunkIndexer')) {
+            const chunkBinding = allBindings.find((b) => b.indexer === 'ChunkIndexer');
+            this.chunkIndexer = new ChunkIndexer(
+                schema,
+                path.join(this.dbBasePath, 'chunk-index.db'),
+                chunkBinding?.options
+            );
+        }
     }
 
     /**
      * 初始化所有 indexer
      */
     async initialize(): Promise<void> {
-        await Promise.all([
-            this.baseIndexer.initialize(),
-            this.bm25Indexer.initialize(),
-            this.vectorIndexer.initialize(),
-            this.tagIndexer.initialize(),
+        // VectorIndexer first (may throw DimMismatchError — caller decides whether to wipe and reinit)
+        if (this.vectorIndexer) await this.vectorIndexer.initialize();
+        await this.baseIndexer.initialize();
+        if (this.bm25Indexer) await this.bm25Indexer.initialize();
+        if (this.tagIndexer) await this.tagIndexer.initialize();
+        if (this.chunkIndexer) await this.chunkIndexer.initialize();
+    }
+
+    private async getExistingItemIds(itemIds: string[]): Promise<Set<string>> {
+        if (itemIds.length === 0) return new Set();
+        const result = await this.baseIndexer.search([
+            {
+                indexer: 'BaseIndexer',
+                field: 'item_id',
+                operator: 'in',
+                value: itemIds
+            }
         ]);
+        return new Set(result.items.map((item) => item.item_id));
     }
 
     /**
-     * 搜索方法 - 返回 SearchItem[]
+     * 搜索方法 - 返回 { items, totalCount }
      */
-    async search(_query: string[], filterConditions: FilterCondition[]): Promise<SearchItem[]> {
+    async search(filterConditions: FilterCondition[]): Promise<{ items: SearchItem[]; totalCount: number }> {
+        // 检测是否包含 ChunkIndexer 条件，走专用路径
+        const hasChunkCondition = filterConditions.some((c) => c.indexer === 'ChunkIndexer');
+        if (hasChunkCondition) {
+            return this.searchWithChunkIndexer(filterConditions);
+        }
+
         let results: SearchItem[] = [];
         let hasInitialData = false;
 
@@ -273,8 +369,7 @@ export class BaseStorage {
 
         for (const indexerName of indexerOrder) {
             let conditions = conditionsByIndexer[indexerName];
-            if ( ( !conditions || conditions.length === 0 ) 
-                && (indexerName != 'BaseIndexer') ) continue;
+            if ((!conditions || conditions.length === 0) && indexerName != 'BaseIndexer') continue;
             if (typeof conditions === 'undefined') {
                 conditions = [];
             }
@@ -288,20 +383,23 @@ export class BaseStorage {
                 hasInitialData = true;
             } else {
                 // 后续 indexer，基于已有结果进行 join
-                const existingItems = results.map(r => r.item);
+                const existingItems = results.map((r) => r.item);
                 const searchResult = await indexer.search(conditions, {
-                    existingResults: existingItems,
+                    existingResults: existingItems
                 });
                 results = this.mergeSearchResults(results, searchResult.items, searchResult.scores, indexerName);
             }
 
             // 提前退出：如果结果为空
             if (results.length === 0) {
-                return [];
+                return { items: [], totalCount: 0 };
             }
         }
 
-        return results;
+        return {
+            items: results,
+            totalCount: results.length
+        };
     }
 
     /**
@@ -309,60 +407,33 @@ export class BaseStorage {
      */
     async insert(items: Item[]): Promise<void> {
         if (items.length === 0) return;
+        const existingIds = await this.getExistingItemIds(items.map((item) => item.item_id));
+        const newItems = items.filter((item) => !existingIds.has(item.item_id));
+        if (newItems.length === 0) return;
 
-
-        // 检查 items 内的每个 item，其 key 是否对应 schema 中的定义，不对应时直接 return
-        for (const item of items) {
-            for (const [col, indexers] of Object.entries(this.schema.needIndexers)) {
-            // 检查当前 item 的 indexer_columns 是否包含对应的 indexer 和 column
-                for (const ind of indexers) {
-                    if (!item.indexer_columns ||
-                        !item.indexer_columns[ind] ||
-                        !item.indexer_columns[ind].some(colObj => colObj.column === col)) {
-                            console.error(`[BaseStorage] Item ${item.item_id} does not contain the required column ${col} for indexer ${ind}`);
-                            return;
-                        }
-                }
-            }
-        }
-
-        // 根据 schema.needIndexers 确定每个字段需要哪些 indexer
-        const indexersToUse = new Set<string>();
-
-        for (const column of Object.keys(this.schema.needIndexers)) {
-            const indexers = this.schema.needIndexers[column];
-            for (const indexer of indexers) {
-                indexersToUse.add(indexer);
-            }
-        }
-
-        // 并行插入到各个 indexer
-        const insertPromises: Promise<void>[] = [];
-
-        // BaseIndexer 总是需要插入
-        insertPromises.push(this.baseIndexer.insert(items));
-
-        for (const indexerName of indexersToUse) {
-            if (indexerName === 'BaseIndexer') continue;
-            insertPromises.push(this.getIndexerByName(indexerName).insert(items));
-        }
-
-        await Promise.all(insertPromises);
+        await Promise.all([
+            this.baseIndexer.insert(newItems),
+            this.bm25Indexer ? this.bm25Indexer.insert(newItems) : Promise.resolve(),
+            this.vectorIndexer ? this.vectorIndexer.insert(newItems) : Promise.resolve(),
+            this.tagIndexer ? this.tagIndexer.insert(newItems) : Promise.resolve(),
+            this.chunkIndexer ? this.chunkIndexer.insert(newItems) : Promise.resolve()
+        ]);
     }
 
     /**
      * 删除数据
      */
-    async delete(items: Item[]): Promise<void> {
-        if (items.length === 0) return;
-
-        const itemIds = items.map(i => i.item_id);
+    async delete(itemsOrIds: Item[] | string[]): Promise<void> {
+        if (itemsOrIds.length === 0) return;
+        const itemIds =
+            typeof itemsOrIds[0] === 'string' ? (itemsOrIds as string[]) : (itemsOrIds as Item[]).map((i) => i.item_id);
 
         await Promise.all([
             this.baseIndexer.delete(itemIds),
-            this.bm25Indexer.delete(itemIds),
-            this.vectorIndexer.delete(itemIds),
-            this.tagIndexer.delete(itemIds),
+            this.bm25Indexer ? this.bm25Indexer.delete(itemIds) : Promise.resolve(),
+            this.vectorIndexer ? this.vectorIndexer.delete(itemIds) : Promise.resolve(),
+            this.tagIndexer ? this.tagIndexer.delete(itemIds) : Promise.resolve(),
+            this.chunkIndexer ? this.chunkIndexer.delete(itemIds) : Promise.resolve()
         ]);
     }
 
@@ -374,10 +445,58 @@ export class BaseStorage {
 
         await Promise.all([
             this.baseIndexer.update(items),
-            this.bm25Indexer.update(items),
-            this.vectorIndexer.update(items),
-            this.tagIndexer.update(items),
+            this.bm25Indexer ? this.bm25Indexer.update(items) : Promise.resolve(),
+            this.vectorIndexer ? this.vectorIndexer.update(items) : Promise.resolve(),
+            this.tagIndexer ? this.tagIndexer.update(items) : Promise.resolve(),
+            this.chunkIndexer ? this.chunkIndexer.update(items) : Promise.resolve()
         ]);
+    }
+
+    /**
+     * 插入或更新数据（存在则更新，不存在则插入）
+     */
+    async upsert(items: Item[]): Promise<void> {
+        if (items.length === 0) return;
+        await Promise.all([
+            this.baseIndexer.upsert(items),
+            this.bm25Indexer ? this.bm25Indexer.upsert(items) : Promise.resolve(),
+            this.vectorIndexer ? this.vectorIndexer.upsert(items) : Promise.resolve(),
+            this.tagIndexer ? this.tagIndexer.upsert(items) : Promise.resolve(),
+            this.chunkIndexer ? this.chunkIndexer.upsert(items) : Promise.resolve()
+        ]);
+    }
+
+    /**
+     * 清空所有 indexer 数据
+     */
+    async clear(): Promise<void> {
+        await Promise.all([
+            this.baseIndexer.clear(),
+            this.bm25Indexer ? this.bm25Indexer.clear() : Promise.resolve(),
+            this.vectorIndexer ? this.vectorIndexer.clear() : Promise.resolve(),
+            this.tagIndexer ? this.tagIndexer.clear() : Promise.resolve(),
+            this.chunkIndexer ? this.chunkIndexer.clear() : Promise.resolve()
+        ]);
+    }
+
+    /**
+     * 获取所有 indexer 状态信息
+     */
+    async getStatus(): Promise<Record<string, Record<string, any>>> {
+        const [baseInfo, bm25Info, vectorInfo, tagInfo, chunkInfo] = await Promise.all([
+            this.baseIndexer.getInfo(),
+            this.bm25Indexer ? this.bm25Indexer.getInfo() : Promise.resolve({}),
+            this.vectorIndexer ? this.vectorIndexer.getInfo() : Promise.resolve({}),
+            this.tagIndexer ? this.tagIndexer.getInfo() : Promise.resolve({}),
+            this.chunkIndexer ? this.chunkIndexer.getInfo() : Promise.resolve({})
+        ]);
+        return {
+            BaseIndexer: baseInfo,
+            ...(this.bm25Indexer && { BM25Indexer: bm25Info }),
+            ...(this.vectorIndexer && { VectorIndexer: vectorInfo }),
+            ...(this.tagIndexer && { TagIndexer: tagInfo }),
+            ...(this.chunkIndexer && { ChunkIndexer: chunkInfo })
+        };
     }
 
     /**
@@ -385,16 +504,10 @@ export class BaseStorage {
      */
     close(): void {
         this.baseIndexer.close();
-        this.bm25Indexer.close();
-        this.vectorIndexer.close();
-        this.tagIndexer.close();
-    }
-
-    /**
-     * 获取 BaseIndexer 实例
-     */
-    getBaseIndexer(): BaseIndexer {
-        return this.baseIndexer;
+        this.bm25Indexer?.close();
+        this.vectorIndexer?.close();
+        this.tagIndexer?.close();
+        this.chunkIndexer?.close();
     }
 
     /**
@@ -407,33 +520,107 @@ export class BaseStorage {
     private getIndexerByName(name: string): Indexer {
         switch (name) {
             case 'BM25Indexer':
+                if (!this.bm25Indexer) throw new Error('BM25Indexer not initialized for this schema');
                 return this.bm25Indexer;
             case 'VectorIndexer':
+                if (!this.vectorIndexer) throw new Error('VectorIndexer not initialized for this schema');
                 return this.vectorIndexer;
             case 'TagIndexer':
+                if (!this.tagIndexer) throw new Error('TagIndexer not initialized for this schema');
                 return this.tagIndexer;
             case 'BaseIndexer':
                 return this.baseIndexer;
+            case 'ChunkIndexer':
+                if (!this.chunkIndexer) throw new Error('ChunkIndexer not initialized for this schema');
+                return this.chunkIndexer;
             default:
                 throw new Error(`Indexer ${name} not found`);
         }
     }
 
     /**
+     * ChunkIndexer 专用搜索路径：
+     * 1. 仅允许 ChunkIndexer + BaseIndexer 条件组合
+     * 2. 先做 chunk 向量召回
+     * 3. 再用 BaseIndexer 在命中的 item_id 子集上做元数据过滤
+     * 4. 按 chunk 命中展开结果，不去重 item_id
+     */
+    private async searchWithChunkIndexer(
+        filterConditions: FilterCondition[]
+    ): Promise<{ items: SearchItem[]; totalCount: number }> {
+        if (!this.chunkIndexer) {
+            throw new Error('ChunkIndexer not initialized for this schema');
+        }
+
+        const chunkConditions = filterConditions.filter((c) => c.indexer === 'ChunkIndexer');
+        const baseConditions = filterConditions.filter((c) => c.indexer === 'BaseIndexer');
+        const invalidConditions = filterConditions.filter(
+            (c) => c.indexer !== 'ChunkIndexer' && c.indexer !== 'BaseIndexer'
+        );
+
+        if (invalidConditions.length > 0) {
+            const invalidIndexers = [...new Set(invalidConditions.map((c) => c.indexer))];
+            throw new Error(
+                `ChunkIndexer search only supports BaseIndexer filters; got incompatible indexers: ${invalidIndexers.join(', ')}`
+            );
+        }
+
+        if (chunkConditions.length !== 1) {
+            throw new Error(
+                `ChunkIndexer search requires exactly one ChunkIndexer condition, got ${chunkConditions.length}`
+            );
+        }
+
+        const chunkCondition = chunkConditions[0];
+        const chunkResults = await this.chunkIndexer.searchChunks(
+            chunkCondition.value,
+            chunkCondition.vectorQuery || { threshold: 0.5 }
+        );
+
+        if (chunkResults.length === 0) {
+            return { items: [], totalCount: 0 };
+        }
+
+        const existingItems: Item[] = chunkResults.map((result) => ({
+            item_id: result.item_id,
+            item_type: 'file'
+        }));
+
+        const baseResult = await this.baseIndexer.search(baseConditions, {
+            existingResults: existingItems
+        });
+        const baseItemsById = new Map(baseResult.items.map((item) => [item.item_id, item]));
+
+        const expandedResults: SearchItem[] = [];
+        for (const chunkResult of chunkResults) {
+            const baseItem = baseItemsById.get(chunkResult.item_id);
+            if (!baseItem) continue;
+            expandedResults.push({
+                item: baseItem,
+                tags: baseItem.tag,
+                ChunkScore: chunkResult.similarity,
+                chunk_id: chunkResult.chunk_id,
+                chunk_text: chunkResult.chunk_text
+            });
+        }
+
+        return {
+            items: expandedResults,
+            totalCount: expandedResults.length
+        };
+    }
+
+    /**
      * 将 Item[] 转换为 SearchItem[]
      */
-    private itemsToSearchItems(
-        items: Item[],
-        scores?: Map<string, number>,
-        indexerName?: string
-    ): SearchItem[] {
-        return items.map(item => {
+    private itemsToSearchItems(items: Item[], scores?: Map<string, number>, indexerName?: string): SearchItem[] {
+        return items.map((item) => {
             const score = scores?.get(item.item_id);
             return {
                 item,
                 tags: item.tag,
                 BM25Score: indexerName === 'BM25Indexer' ? score : undefined,
-                VecScore: indexerName === 'VectorIndexer' ? score : undefined,
+                VecScore: indexerName === 'VectorIndexer' ? score : undefined
             };
         });
     }
@@ -447,21 +634,17 @@ export class BaseStorage {
         scores?: Map<string, number>,
         indexerName?: string
     ): SearchItem[] {
-        const existingMap = new Map(existing.map(r => [r.item.item_id, r]));
+        const existingMap = new Map(existing.map((r) => [r.item.item_id, r]));
 
-        return newItems.map(item => {
+        return newItems.map((item) => {
             const existingResult = existingMap.get(item.item_id);
             const score = scores?.get(item.item_id);
             return {
                 item,
                 tags: existingResult?.tags ?? item.tag,
-                BM25Score: indexerName === 'BM25Indexer'
-                    ? score
-                    : existingResult?.BM25Score,
+                BM25Score: indexerName === 'BM25Indexer' ? score : existingResult?.BM25Score,
                 ChunkScore: existingResult?.ChunkScore,
-                VecScore: indexerName === 'VectorIndexer'
-                    ? score
-                    : existingResult?.VecScore,
+                VecScore: indexerName === 'VectorIndexer' ? score : existingResult?.VecScore
             };
         });
     }

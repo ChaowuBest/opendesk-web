@@ -25,27 +25,41 @@ const ProviderSchema = z.object({
 const ModelSchema = z.object({
     alias: z.string().default('model_alias').describe('模型别名(在本地配置中使用的名称)'),
     provider_name: z.string().default('openrouter').describe('模型提供商'),
-    model_name: z.string().default('google/gemini-2.5-flash').describe('模型名称(在提供商一侧的名称)')
+    model_name: z.string().default('google/gemini-2.5-flash').describe('模型名称(在提供商一侧的名称)'),
+    reasoning_effort: z
+        .enum(['', 'none', 'low', 'medium', 'high'])
+        .default('')
+        .describe('模型默认推理模式(空字符串表示默认)')
 });
 
 type Provider = z.infer<typeof ProviderSchema>;
 type Model = z.infer<typeof ModelSchema>;
 
+/** 思考区显示模式；兼容旧配置 on/off */
+const ReasonDisplaySchema = z.preprocess(
+    (val: unknown) => {
+        if (val === 'on') return 'full';
+        if (val === 'off') return 'partial';
+        return val;
+    },
+    z.enum(['full', 'partial']).default('partial')
+);
+
 let ApplicationConfigSchema: z.ZodObject<z.ZodRawShape> = z.object({});
 
 function getSettingSchema(): z.ZodObject<z.ZodRawShape> {
     return z.object({
-        default_model: z.string()
-            .describe('在对话等场景中使用的默认模型')
-            .default(''),
+        default_model: z.string().describe('在对话等场景中使用的默认模型').default(''),
         default_intent_parsing_model: z.string().describe('在意图解析中使用的多模态模型').default(''),
         default_embedding_model: z.string().describe('知识库，检索使用的中使用的向量嵌入模型').default(''),
         default_reranker_model: z.string().describe('在检索结果重排序中使用的模型').default(''),
         default_vision_model: z.string().describe('在图片记忆提取中使用的多模态模型').default(''),
+        default_workspace: z.string().describe('默认工作空间目录路径(为空时使用临时工作空间)').default(''),
+        reason_display: ReasonDisplaySchema.describe(
+            '思考内容显示模式: full=完整 Markdown, partial=仅显示末尾若干行(流式与结束后一致)'
+        ),
         providers: z.array(ProviderSchema).describe('可用AI模型提供商').default([]),
-        models: z.array(ModelSchema)
-            .describe('可用AI模型')
-            .default([]),
+        models: z.array(ModelSchema).describe('可用AI模型').default([]),
         applications: ApplicationConfigSchema.describe('OpenDesk应用相关配置').default({})
     });
 }
@@ -73,7 +87,6 @@ export class ModelInstance {
 }
 
 export class Setting {
-
     static instance: Setting | null = null;
     static applicationConfigChangedCallbacks = new Map<string, () => void>();
 
@@ -155,7 +168,9 @@ export class Setting {
      * @param configChangedCallback - 配置变更时的回调
      */
     static registerApplicationSettings(application: BaseApplication, configChangedCallback: () => void): void {
-        const applicationConfigSchema = (Object.getPrototypeOf(application).constructor as typeof BaseApplication).getConfigSchema();
+        const applicationConfigSchema = (
+            Object.getPrototypeOf(application).constructor as typeof BaseApplication
+        ).getConfigSchema();
         ApplicationConfigSchema = ApplicationConfigSchema.extend({
             [application.bundleName]: applicationConfigSchema.optional()
         }) as z.ZodObject<z.ZodRawShape>;
@@ -258,6 +273,48 @@ export class Setting {
         }
         return model;
     }
+
+    /**
+     * 获取当前有效的工作空间路径。
+     * 如果默认工作空间为空或目录不存在，则使用临时工作空间。
+     */
+    getEffectiveWorkspace(): string {
+        const configuredPath = this.data.default_workspace as string;
+        if (configuredPath && fs.existsSync(configuredPath)) {
+            try {
+                const stat = fs.statSync(configuredPath);
+                if (stat.isDirectory()) {
+                    return configuredPath;
+                }
+            } catch {
+                // fall through to temp workspace
+            }
+        }
+        return getTempWorkspaceDirectory();
+    }
+}
+
+/** 用户通过 --config-directory 指定的自定义配置目录（主线程生效） */
+let customAppDirectory: string | undefined;
+
+/**
+ * 设置自定义应用数据目录（由 CLI --config-directory 选项调用）
+ */
+function setCustomAppDirectory(dir: string): void {
+    customAppDirectory = path.resolve(dir);
+}
+
+/**
+ * 获取默认的应用数据目录路径（不创建目录），供 CLI help 提示使用
+ */
+function getDefaultAppDirectory(): string {
+    if (process.env.APPDATA) {
+        return path.join(process.env.APPDATA, 'opendesk');
+    } else if (process.env.HOME) {
+        return path.join(process.env.HOME, '.opendesk');
+    } else {
+        return '<unknown>';
+    }
 }
 
 /**
@@ -269,7 +326,9 @@ function getAppDirectory(): string {
     }
 
     let userDataPath = '';
-    if (process.env.APPDATA) {
+    if (customAppDirectory) {
+        userDataPath = customAppDirectory;
+    } else if (process.env.APPDATA) {
         userDataPath = path.join(process.env.APPDATA, 'opendesk');
     } else if (process.env.HOME) {
         userDataPath = path.join(process.env.HOME, '.opendesk');
@@ -288,43 +347,91 @@ function getAppDirectory(): string {
 /**
  * 获取应用日志目录
  */
-function getLogDirectory(): string {
-    const appDirectory = getAppDirectory();
-    const logDirectory = path.join(appDirectory, 'logs');
-    if (!fs.existsSync(logDirectory)) {
-        fs.mkdirSync(logDirectory, { recursive: true });
+function ensureDirectoryExists(directory: string): string {
+    if (!fs.existsSync(directory)) {
+        fs.mkdirSync(directory, { recursive: true });
     }
-    return logDirectory;
+    return directory;
+}
+
+/**
+ * 获取临时工作空间目录。
+ * - Windows: $USERPROFILE/opendesk
+ * - 类 Unix: $HOME/.opendesk/workspace
+ */
+function getTempWorkspaceDirectory(): string {
+    let workspacePath: string;
+    if (process.platform === 'win32') {
+        const userProfile = process.env.USERPROFILE || process.env.HOME || '';
+        workspacePath = path.join(userProfile, 'opendesk');
+    } else {
+        workspacePath = path.join(getAppDirectory(), 'workspace');
+    }
+    return ensureDirectoryExists(workspacePath);
+}
+
+function resolveArtifactDirectory(): string {
+    return path.join(getAppDirectory(), 'artifacts');
+}
+
+function getLogDirectory(): string {
+    return ensureDirectoryExists(path.join(getAppDirectory(), 'logs'));
 }
 
 /**
  * 获取应用任务目录
  */
 function getTaskDirectory(): string {
-    const appDirectory = getAppDirectory();
-    const taskDirectory = path.join(appDirectory, 'tasks');
-    if (!fs.existsSync(taskDirectory)) {
-        fs.mkdirSync(taskDirectory, { recursive: true });
-    }
-    return taskDirectory;
+    return ensureDirectoryExists(path.join(getAppDirectory(), 'tasks'));
 }
 
 /**
  * 获取应用产物目录
  */
 function getArtifactDirectory(): string {
-    const appDirectory = getAppDirectory();
-    const artifactDirectory = path.join(appDirectory, 'artifacts');
-    if (!fs.existsSync(artifactDirectory)) {
-        fs.mkdirSync(artifactDirectory, { recursive: true });
+    return ensureDirectoryExists(resolveArtifactDirectory());
+}
+
+/**
+ * 获取任务级产物目录。
+ * 默认在访问时创建 `artifacts/<taskId>/`，清理等仅读场景可显式关闭创建。
+ */
+function getTaskArtifactDirectory(taskId: string, ensureExists: boolean = true): string {
+    const artifactDirectory = resolveArtifactDirectory();
+    const taskArtifactDirectory = path.join(artifactDirectory, taskId);
+
+    if (ensureExists) {
+        ensureDirectoryExists(artifactDirectory);
+        ensureDirectoryExists(taskArtifactDirectory);
     }
-    return artifactDirectory;
+
+    return taskArtifactDirectory;
+}
+
+/**
+ * 获取任务级工具结果目录 `artifacts/<taskId>/tool-results/`。
+ * 默认在访问时创建目录，仅读场景可显式关闭创建。
+ */
+function getTaskToolResultDirectory(taskId: string, ensureExists: boolean = true): string {
+    const taskArtifactDirectory = getTaskArtifactDirectory(taskId, ensureExists);
+    const toolResultDirectory = path.join(taskArtifactDirectory, 'tool-results');
+
+    if (ensureExists) {
+        ensureDirectoryExists(toolResultDirectory);
+    }
+
+    return toolResultDirectory;
 }
 
 export {
     getAppDirectory,
+    getDefaultAppDirectory,
+    setCustomAppDirectory,
     getLogDirectory,
     getTaskDirectory,
     getArtifactDirectory,
+    getTaskArtifactDirectory,
+    getTaskToolResultDirectory,
+    getTempWorkspaceDirectory,
     getSettingSchema
 };

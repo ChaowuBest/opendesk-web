@@ -37,7 +37,7 @@ async function getNpmInstallInfo(): Promise<{ version: string | null; isInstalle
     try {
         // 方法1：通过 npm root 获取全局目录，直接读取 package.json
         const { stdout: globalRoot } = await execAsync('npm root -g', {
-            timeout: 5000,
+            timeout: 5000
         });
         const packageJsonPath = `${globalRoot.trim()}/${PACKAGE_NAME}/package.json`;
 
@@ -46,7 +46,7 @@ async function getNpmInstallInfo(): Promise<{ version: string | null; isInstalle
             const pkg = JSON.parse(content);
             return {
                 version: pkg.version || null,
-                isInstalled: true,
+                isInstalled: true
             };
         }
         return { version: null, isInstalled: false };
@@ -54,13 +54,13 @@ async function getNpmInstallInfo(): Promise<{ version: string | null; isInstalle
         // 方法2：回退到 npm list（较慢但可靠）
         try {
             const { stdout } = await execAsync(`npm list -g ${PACKAGE_NAME} --depth=0 --json`, {
-                timeout: 15000,
+                timeout: 15000
             });
             const result = JSON.parse(stdout);
             if (result && result.dependencies && result.dependencies[PACKAGE_NAME]) {
                 return {
                     version: result.dependencies[PACKAGE_NAME].version || null,
-                    isInstalled: true,
+                    isInstalled: true
                 };
             }
         } catch {
@@ -97,22 +97,28 @@ export async function getCurrentVersion(): Promise<string | null> {
  */
 function fetchNpmRegistry(url: string, timeout: number = 15000): Promise<Record<string, any> | null> {
     return new Promise((resolve) => {
-        const req = https.get(url, {
-            headers: {
-                'Accept': 'application/json',
-                'User-Agent': 'OpenDesk-CLI',
-            },
-        }, (res) => {
-            let data = '';
-            res.on('data', (chunk) => { data += chunk; });
-            res.on('end', () => {
-                try {
-                    resolve(JSON.parse(data));
-                } catch {
-                    resolve(null);
+        const req = https.get(
+            url,
+            {
+                headers: {
+                    Accept: 'application/json',
+                    'User-Agent': 'OpenDesk-CLI'
                 }
-            });
-        });
+            },
+            (res) => {
+                let data = '';
+                res.on('data', (chunk) => {
+                    data += chunk;
+                });
+                res.on('end', () => {
+                    try {
+                        resolve(JSON.parse(data));
+                    } catch {
+                        resolve(null);
+                    }
+                });
+            }
+        );
 
         req.on('error', () => resolve(null));
         req.setTimeout(timeout, () => {
@@ -152,7 +158,7 @@ export async function getNpmVersion(packageName: string, tag: string = 'latest')
         // 回退到 npm view 命令
         try {
             const { stdout } = await execAsync(`npm view ${packageName} version --tag ${tag}`, {
-                timeout: 30000,
+                timeout: 30000
             });
             return stdout.trim() || null;
         } catch {
@@ -173,25 +179,30 @@ const VERSION_CACHE_TTL = 5 * 60 * 1000; // 5 分钟缓存
  * @param forceRefresh 是否强制刷新缓存
  * @returns 版本信息
  */
-export async function getVersionInfo(tag: 'latest' | 'nightly' = 'latest', forceRefresh: boolean = false): Promise<VersionInfo> {
+export async function getVersionInfo(
+    tag: 'latest' | 'nightly' = 'latest',
+    forceRefresh: boolean = false
+): Promise<VersionInfo> {
     const now = Date.now();
 
     // 检查缓存是否有效
-    if (!forceRefresh && cachedVersionInfo && cachedVersionInfoTag === tag && (now - cachedVersionInfoTime) < VERSION_CACHE_TTL) {
+    if (
+        !forceRefresh &&
+        cachedVersionInfo &&
+        cachedVersionInfoTag === tag &&
+        now - cachedVersionInfoTime < VERSION_CACHE_TTL
+    ) {
         return cachedVersionInfo;
     }
 
     // 并行执行所有查询，提升性能
-    const [installInfo, latest] = await Promise.all([
-        getNpmInstallInfo(),
-        getNpmVersion(PACKAGE_NAME, tag),
-    ]);
+    const [installInfo, latest] = await Promise.all([getNpmInstallInfo(), getNpmVersion(PACKAGE_NAME, tag)]);
 
     cachedVersionInfo = {
         current: installInfo.version,
         latest,
         needsUpdate: latest !== null && installInfo.version !== null && installInfo.version !== latest,
-        isNpmInstalled: installInfo.isInstalled,
+        isNpmInstalled: installInfo.isInstalled
     };
     cachedVersionInfoTag = tag;
     cachedVersionInfoTime = now;
@@ -207,7 +218,7 @@ export function compareVersions(a: string, b: string): number {
     const parseVersion = (v: string): number[] => {
         // 移除 nightly 后缀等
         const cleanV = v.split('-')[0];
-        return cleanV.split('.').map(n => parseInt(n, 10) || 0);
+        return cleanV.split('.').map((n) => parseInt(n, 10) || 0);
     };
 
     const partsA = parseVersion(a);
@@ -244,12 +255,18 @@ export function compareVersions(a: string, b: string): number {
  * @param tag npm tag ('latest' 或 'nightly')
  * @returns 是否安装成功
  */
-export async function installVersion(tag: 'latest' | 'nightly' = 'latest'): Promise<{ success: boolean; message: string }> {
+export async function installVersion(
+    tag: 'latest' | 'nightly' = 'latest'
+): Promise<{ success: boolean; message: string }> {
     try {
         const versionInfo = await getVersionInfo(tag);
 
         if (!versionInfo.isNpmInstalled || versionInfo.current === null) {
-            return { success: false, message: '当前 OpenDesk 未通过 npm 全局安装，无法使用自动升级功能。\n请使用 npm install -g @bitclub.ai/opendesk-cli 安装。' };
+            return {
+                success: false,
+                message:
+                    '当前 OpenDesk 未通过 npm 全局安装，无法使用自动升级功能。\n请使用 npm install -g @bitclub.ai/opendesk-cli 安装。'
+            };
         }
 
         if (!versionInfo.latest) {
@@ -263,7 +280,7 @@ export async function installVersion(tag: 'latest' | 'nightly' = 'latest'): Prom
         // 执行全局安装
         const installCmd = `npm install -g ${PACKAGE_NAME}@${tag}`;
         await execAsync(installCmd, {
-            timeout: 120000, // 2 分钟超时
+            timeout: 120000 // 2 分钟超时
         });
 
         // 检查安装是否成功
@@ -307,10 +324,11 @@ export async function performUpgrade(tag: 'latest' | 'nightly'): Promise<Upgrade
     if (!versionInfo.isNpmInstalled || versionInfo.current === null) {
         return {
             success: false,
-            message: '当前 OpenDesk 未通过 npm 全局安装，无法使用自动升级功能。\n请使用 npm install -g @bitclub.ai/opendesk-cli 安装。',
+            message:
+                '当前 OpenDesk 未通过 npm 全局安装，无法使用自动升级功能。\n请使用 npm install -g @bitclub.ai/opendesk-cli 安装。',
             currentVersion: versionInfo.current,
             latestVersion: versionInfo.latest,
-            isNpmInstalled: false,
+            isNpmInstalled: false
         };
     }
 
@@ -319,7 +337,7 @@ export async function performUpgrade(tag: 'latest' | 'nightly'): Promise<Upgrade
             success: false,
             message: `无法从 npm 获取 ${tag} 版本信息，请检查网络连接`,
             currentVersion: versionInfo.current,
-            latestVersion: versionInfo.latest,
+            latestVersion: versionInfo.latest
         };
     }
 
@@ -329,7 +347,7 @@ export async function performUpgrade(tag: 'latest' | 'nightly'): Promise<Upgrade
             message: `当前已是最新 ${tag} 版本`,
             currentVersion: versionInfo.current,
             latestVersion: versionInfo.latest,
-            needsUpdate: false,
+            needsUpdate: false
         };
     }
 
@@ -340,7 +358,7 @@ export async function performUpgrade(tag: 'latest' | 'nightly'): Promise<Upgrade
         message: result.message,
         currentVersion: versionInfo.current,
         latestVersion: versionInfo.latest,
-        needsUpdate: true,
+        needsUpdate: true
     };
 }
 
@@ -358,6 +376,6 @@ export async function checkForUpdate(tag: 'latest' | 'nightly'): Promise<Upgrade
         currentVersion: versionInfo.current,
         latestVersion: versionInfo.latest,
         needsUpdate: versionInfo.needsUpdate,
-        isNpmInstalled: versionInfo.isNpmInstalled,
+        isNpmInstalled: versionInfo.isNpmInstalled
     };
 }

@@ -9,12 +9,11 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import path from "path";
-import fs from "fs";
-import { BaseWorker } from "../base";
-import type { Slides } from "./common";
-import { logger } from "../../utils/logger";
-
+import path from 'path';
+import fs from 'fs';
+import { BaseWorker } from '../base';
+import type { Slides } from './common';
+import { logger } from '../../utils/logger';
 
 export default class PPTWorker extends BaseWorker {
     constructor(bundleName: string, appDataDirectory: string) {
@@ -39,10 +38,10 @@ export default class PPTWorker extends BaseWorker {
             name: manifest.name,
             abstract: manifest.abstract,
             pages: [],
-            images: {},
+            images: {}
         };
 
-        for (var i = 0;; i ++) {
+        for (let i = 0; ; i++) {
             const pagePath = path.join(dataDir, `${i}.html`);
             if (fs.existsSync(pagePath)) {
                 const pageContent = fs.readFileSync(pagePath, 'utf-8');
@@ -60,7 +59,9 @@ export default class PPTWorker extends BaseWorker {
             }
         }
 
-        logger.info(`slides for ${uid} loaded with ${slides.pages.length} pages and ${Object.keys(slides.images).length} images`);
+        logger.info(
+            `slides for ${uid} loaded with ${slides.pages.length} pages and ${Object.keys(slides.images).length} images`
+        );
         return slides;
     }
 }

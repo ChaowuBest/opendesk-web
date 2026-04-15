@@ -18,8 +18,6 @@ import path from 'path';
 import fs from 'fs';
 import { pathToFileURL } from 'url';
 import { spawn } from 'child_process';
-import os from 'os';
-import AdmZip from 'adm-zip';
 import { getAppDirectory } from '../../utils/setting.js';
 import { BaseTool, BaseToolset } from '../../aikernel/tool.js';
 import { parseAndValidateSkillMd, SKILL_MD_FILENAME } from './skill-schema.js';
@@ -29,31 +27,6 @@ const SKILLS_DIR_NAME = 'skills';
 const REFERENCES_DIR = 'references';
 const SCRIPTS_DIR = 'scripts';
 const ASSETS_DIR = 'assets';
-
-/** zip 解压体积上限：500MB，防止 zip 炸弹或过大技能包 */
-const ZIP_MAX_UNCOMPRESSED_BYTES = 500 * 1024 * 1024;
-
-/**
- * 计算 zip 内所有文件的解压后体积之和（不含目录条目），超限或无法解析时返回 error
- * @param {InstanceType<typeof AdmZip>} zip - AdmZip 实例
- * @returns {{ total: number, error?: string }}
- */
-function getZipUncompressedSize(zip) {
-    const entries = zip.getEntries();
-    let total = 0;
-    for (const e of entries) {
-        if (e.isDirectory) continue;
-        const size = e.header && typeof e.header.size === 'number' ? e.header.size : null;
-        if (size == null || size < 0) {
-            return { total: 0, error: '压缩包包含无法解析体积的条目，拒绝解压' };
-        }
-        total += size;
-        if (total > ZIP_MAX_UNCOMPRESSED_BYTES) {
-            return { total, error: `解压后体积超过限制（${(ZIP_MAX_UNCOMPRESSED_BYTES / 1024 / 1024).toFixed(0)}MB），当前约 ${(total / 1024 / 1024).toFixed(1)}MB` };
-        }
-    }
-    return { total };
-}
 
 /** @type {Map<string, { frontmatter: object, body: string, skillDir: string }>} */
 const skillsCache = new Map();
@@ -93,7 +66,7 @@ function readResourcesFromDir(resolvedDir, intoRefs, intoScripts, intoAssets) {
             const content = safeReadFile(path.join(resolvedDir, e.name));
             if (content) intoRefs.push({ name: e.name, content });
         }
-    } catch (_) { }
+    } catch (_) {}
 
     const refDir = path.join(resolvedDir, REFERENCES_DIR);
     if (fs.existsSync(refDir) && fs.statSync(refDir).isDirectory()) {
@@ -106,7 +79,7 @@ function readResourcesFromDir(resolvedDir, intoRefs, intoScripts, intoAssets) {
                     if (content) intoRefs.push({ name: `${REFERENCES_DIR}/${e.name}`, content });
                 }
             }
-        } catch (_) { }
+        } catch (_) {}
     }
 
     const scriptsDir = path.join(resolvedDir, SCRIPTS_DIR);
@@ -114,7 +87,7 @@ function readResourcesFromDir(resolvedDir, intoRefs, intoScripts, intoAssets) {
         try {
             const list = fs.readdirSync(scriptsDir);
             intoScripts.push(...list.map((name) => `${SCRIPTS_DIR}/${name}`));
-        } catch (_) { }
+        } catch (_) {}
     }
 
     const assetsDirPath = path.join(resolvedDir, ASSETS_DIR);
@@ -122,7 +95,7 @@ function readResourcesFromDir(resolvedDir, intoRefs, intoScripts, intoAssets) {
         try {
             const list = fs.readdirSync(assetsDirPath);
             intoAssets.push(...list.map((name) => `${ASSETS_DIR}/${name}`));
-        } catch (_) { }
+        } catch (_) {}
     }
 }
 
@@ -146,7 +119,9 @@ function loadSkillResources(skillDir, skillName) {
         }
     }
 
-    logger.info(`SkillRegistry: 渐进式加载 [${skillName}] 参考文档=${referencesSections.length} 脚本=${scriptsList.length} 资源=${assetsList.length}`);
+    logger.info(
+        `SkillRegistry: 渐进式加载 [${skillName}] 参考文档=${referencesSections.length} 脚本=${scriptsList.length} 资源=${assetsList.length}`
+    );
     return { referencesSections, scriptsList, assetsList };
 }
 
@@ -171,10 +146,12 @@ function formatProgressiveSkillContent(body, resources, usageContext) {
     if (usageContext && (hasScripts || hasRefs)) {
         parts.push(
             '## 如何实际使用本技能\n\n' +
-            '上述参考文档与脚本为**可执行能力**，请根据本技能的说明与参考文档，在用户提出相关需求时：\n' +
-            '1. **执行脚本**：以本技能目录为工作目录（cwd）运行 `scripts/` 中对应脚本，按脚本约定传入参数或 stdin。\n' +
-            '2. **或按说明执行代码/命令**：根据技能说明与参考文档，在终端中编写并执行相应代码或命令，完成用户任务并返回结果。\n' +
-            (usageContext.skillDir ? `\n**技能目录（执行脚本或命令时请设为此 cwd）**: \`${usageContext.skillDir}\`\n` : '')
+                '上述参考文档与脚本为**可执行能力**，请根据本技能的说明与参考文档，在用户提出相关需求时：\n' +
+                '1. **执行脚本**：以本技能目录为工作目录（cwd）运行 `scripts/` 中对应脚本，按脚本约定传入参数或 stdin。\n' +
+                '2. **或按说明执行代码/命令**：根据技能说明与参考文档，在终端中编写并执行相应代码或命令，完成用户任务并返回结果。\n' +
+                (usageContext.skillDir
+                    ? `\n**技能目录（执行脚本或命令时请设为此 cwd）**: \`${usageContext.skillDir}\`\n`
+                    : '')
         );
         parts.push('');
     }
@@ -237,7 +214,10 @@ function loadSkillFromDir(skillDir) {
         }
     } else {
         paramsSchema.properties = {
-            input: { type: 'string', description: '可选：当前任务或用户输入摘要，供技能执行时参考' }
+            input: {
+                type: 'string',
+                description: '可选：当前任务或用户输入摘要，供技能执行时参考'
+            }
         };
         paramsSchema.required = [];
     }
@@ -321,7 +301,12 @@ function createExecutor(skillName, skillDir, body, frontmatter, handler) {
                 const res = await fetch(h.url, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ skill: skillName, input, arguments: args, skillContext })
+                    body: JSON.stringify({
+                        skill: skillName,
+                        input,
+                        arguments: args,
+                        skillContext
+                    })
                 });
                 const text = await res.text();
                 if (!res.ok) return `远程调用失败 (${res.status}): ${text}`;
@@ -351,8 +336,12 @@ function runScript(scriptPath, skillDir, input) {
         });
         let stdout = '';
         let stderr = '';
-        child.stdout?.on('data', (ch) => { stdout += ch; });
-        child.stderr?.on('data', (ch) => { stderr += ch; });
+        child.stdout?.on('data', (ch) => {
+            stdout += ch;
+        });
+        child.stderr?.on('data', (ch) => {
+            stderr += ch;
+        });
         child.on('error', (err) => reject(err));
         child.on('close', (code) => {
             if (code !== 0) {
@@ -428,7 +417,7 @@ function listSkills() {
                 const stat = fs.statSync(dirPath);
                 addedAt = (stat.birthtimeMs != null ? stat.birthtimeMs : stat.mtimeMs) || 0;
             }
-        } catch (_) { }
+        } catch (_) {}
         return {
             id,
             name: s.frontmatter.name,
@@ -440,7 +429,7 @@ function listSkills() {
             addedAt
         };
     });
-    list.sort((a, b) => (b.addedAt - a.addedAt));
+    list.sort((a, b) => b.addedAt - a.addedAt);
     return list.map(({ addedAt, ...rest }) => rest);
 }
 
@@ -502,49 +491,18 @@ function rmRecursive(p) {
     if (!fs.existsSync(p)) return;
     try {
         if (typeof fs.rmSync === 'function') {
-            fs.rmSync(p, { recursive: true, force: true });
+            fs.rmSync(p, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
             return;
         }
-    } catch (_) { }
-    if (fs.statSync(p).isDirectory()) {
-        for (const name of fs.readdirSync(p)) rmRecursive(path.join(p, name));
-        fs.rmdirSync(p);
-    } else {
-        fs.unlinkSync(p);
-    }
-}
-
-/**
- * 在目录内递归查找包含 SKILL.md 的子目录（优先匹配 relPath 相对路径）
- * @param {string} rootDir - 解压根目录（如 skills-main）
- * @param {string} [relPath] - 可选，GitHub 中的相对路径（如 skills/pdf）
- * @returns {string|null}
- */
-function findSkillRootInDir(rootDir, relPath) {
-    const skillMdAt = path.join(rootDir, SKILL_MD_FILENAME);
-    if (fs.existsSync(skillMdAt) && fs.statSync(skillMdAt).isFile()) {
-        return rootDir;
-    }
-    if (relPath && typeof relPath === 'string') {
-        const parts = relPath.split('/').filter(Boolean);
-        if (parts.length > 0) {
-            const candidate = path.join(rootDir, ...parts);
-            if (fs.existsSync(candidate) && fs.statSync(candidate).isDirectory()) {
-                const md = path.join(candidate, SKILL_MD_FILENAME);
-                if (fs.existsSync(md)) return candidate;
-            }
-        }
-    }
+    } catch (_) {}
     try {
-        const entries = fs.readdirSync(rootDir, { withFileTypes: true });
-        for (const e of entries) {
-            if (!e.isDirectory()) continue;
-            const sub = path.join(rootDir, e.name);
-            const found = findSkillRootInDir(sub, null);
-            if (found) return found;
+        if (fs.statSync(p).isDirectory()) {
+            for (const name of fs.readdirSync(p)) rmRecursive(path.join(p, name));
+            fs.rmdirSync(p);
+        } else {
+            fs.unlinkSync(p);
         }
-    } catch (_) { }
-    return null;
+    } catch (_) {}
 }
 
 /**
@@ -552,7 +510,7 @@ function findSkillRootInDir(rootDir, relPath) {
  * @param {string} sourceDir - 源目录（须含 SKILL.md，目录名可与 name 不一致，以 frontmatter name 为准）
  * @returns {{ success: boolean, name?: string, error?: string }}
  */
-function addSkillFromPath(sourceDir) {
+function addSkillFromDirectory(sourceDir) {
     const resolved = path.resolve(sourceDir);
     if (!fs.existsSync(resolved) || !fs.statSync(resolved).isDirectory()) {
         return { success: false, error: '源路径不存在或不是目录' };
@@ -571,243 +529,6 @@ function addSkillFromPath(sourceDir) {
     } catch (e) {
         rmRecursive(destDir);
         return { success: false, error: `复制失败: ${e.message}` };
-    }
-}
-
-/**
- * 从本地 zip 文件添加技能：解压到临时目录，查找含 SKILL.md 的根后复制到用户技能目录
- * @param {string} zipPath - 本地 .zip 文件路径
- * @param {{ skillRelPath?: string }} [opts] - 可选，GitHub 安装时传入技能相对路径（如 skills/canvas-design），用于在整仓 zip 中定位
- * @returns {{ success: boolean, name?: string, error?: string }}
- */
-function addSkillFromZipPath(zipPath, opts = {}) {
-    if (!zipPath || typeof zipPath !== 'string') {
-        return { success: false, error: '请选择有效的 zip 文件' };
-    }
-    const resolved = path.resolve(zipPath);
-    if (!fs.existsSync(resolved) || !fs.statSync(resolved).isFile()) {
-        return { success: false, error: '文件不存在或不是文件' };
-    }
-    const ext = path.extname(resolved).toLowerCase();
-    if (ext !== '.zip') {
-        return { success: false, error: '请选择 .zip 格式的压缩包' };
-    }
-    const tmpDir = path.join(os.tmpdir(), `skill-zip-${Date.now()}`);
-    const skillRelPath = opts.skillRelPath && typeof opts.skillRelPath === 'string' ? opts.skillRelPath.trim() : null;
-    try {
-        fs.mkdirSync(tmpDir, { recursive: true });
-        const zip = new AdmZip(resolved);
-        const uncompressedSize = getZipUncompressedSize(zip);
-        if (uncompressedSize.error) {
-            return { success: false, error: uncompressedSize.error };
-        }
-        zip.extractAllTo(tmpDir, true);
-        const entries = fs.readdirSync(tmpDir, { withFileTypes: true });
-        const extractRoot = entries.length === 1 && entries[0].isDirectory()
-            ? path.join(tmpDir, entries[0].name)
-            : tmpDir;
-        let skillRoot = skillRelPath
-            ? findSkillRootInDir(extractRoot, skillRelPath)
-            : (fs.existsSync(path.join(tmpDir, SKILL_MD_FILENAME)) ? tmpDir : findSkillRootInDir(tmpDir, null));
-        if (!skillRoot && skillRelPath) {
-            const anySkill = findSkillRootInDir(extractRoot, null);
-            if (anySkill) {
-                return { success: false, error: `压缩包内路径 "${skillRelPath}" 未找到技能，但发现其它技能目录。请检查 URL` };
-            }
-        }
-        if (!skillRoot) {
-            return { success: false, error: '压缩包内未找到含 SKILL.md 的技能目录' };
-        }
-        return addSkillFromPath(skillRoot);
-    } catch (e) {
-        return { success: false, error: e.message || '解压或添加失败' };
-    } finally {
-        if (fs.existsSync(tmpDir)) rmRecursive(tmpDir);
-    }
-}
-
-/**
- * 解析 GitHub 树形 URL 为 { owner, repo, branch, path }
- * 如 https://github.com/anthropics/skills/tree/main/skills/pdf -> { owner, repo, branch, path: 'skills/pdf' }
- * @param {string} githubUrl - GitHub tree 或 blob URL
- * @returns {{ owner: string, repo: string, branch: string, path: string } | null}
- */
-function parseGitHubTreeUrl(githubUrl) {
-    if (!githubUrl || typeof githubUrl !== 'string') return null;
-    const m = githubUrl.trim().match(/github\.com\/([^/]+)\/([^/]+)\/tree\/([^/]+)\/(.*)/i);
-    if (!m) return null;
-    const [, owner, repo, branch, relPath] = m;
-    const pathPart = (relPath || '').replace(/\/+$/, '');
-    if (!owner || !repo || !branch) return null;
-    return { owner, repo, branch, path: pathPart };
-}
-
-/**
- * 从 GitHub 树形 URL 添加技能：下载仓库 zip，解压后定位到技能目录并安装
- * @param {string} githubUrl - 如 https://github.com/anthropics/skills/tree/main/skills/pdf
- * @returns {Promise<{ success: boolean, name?: string, error?: string }>}
- */
-const GITHUB_ZIP_TIMEOUT_MS = 60000;
-
-async function fetchWithFallback(zipUrl) {
-    const opts = () => ({ redirect: 'follow', signal: AbortSignal.timeout(GITHUB_ZIP_TIMEOUT_MS) });
-    try {
-        return await fetch(zipUrl, opts());
-    } catch (e) {
-        const msg = e?.message || String(e);
-        if (msg.includes('fetch failed') || msg.includes('ECONNREFUSED') || msg.includes('ENOTFOUND') || msg.includes('ETIMEDOUT') || msg.includes('network')) {
-            const mirrorUrl = `https://ghproxy.com/${zipUrl}`;
-            logger.info(`SkillRegistry: 直连 GitHub 失败，尝试镜像 ${mirrorUrl}`);
-            try {
-                return await fetch(mirrorUrl, opts());
-            } catch (e2) {
-                throw new Error(`直连与镜像均失败。直连: ${msg}；镜像: ${e2?.message || e2}`);
-            }
-        }
-        throw e;
-    }
-}
-
-async function addSkillFromGitHubUrl(githubUrl) {
-    const parsed = parseGitHubTreeUrl(githubUrl);
-    if (!parsed) {
-        return { success: false, error: '无效的 GitHub 技能 URL，需为 tree 格式：https://github.com/owner/repo/tree/branch/path' };
-    }
-    const { owner, repo, branch, path: relPath } = parsed;
-    if (!relPath || !relPath.trim()) {
-        return { success: false, error: 'GitHub URL 须包含技能路径，如 .../tree/main/skills/pdf。当前 URL 可能缺少路径：' + githubUrl };
-    }
-    const zipUrl = `https://github.com/${owner}/${repo}/archive/refs/heads/${branch}.zip`;
-    const tmpDir = path.join(os.tmpdir(), `skill-github-${Date.now()}`);
-    try {
-        fs.mkdirSync(tmpDir, { recursive: true });
-        const res = await fetchWithFallback(zipUrl);
-        if (!res.ok) {
-            return { success: false, error: `下载失败: ${res.status} ${res.statusText}` };
-        }
-        const buf = Buffer.from(await res.arrayBuffer());
-        const zip = new AdmZip(buf);
-        const uncompressedSize = getZipUncompressedSize(zip);
-        if (uncompressedSize.error) {
-            return { success: false, error: uncompressedSize.error };
-        }
-        zip.extractAllTo(tmpDir, true);
-        const entries = fs.readdirSync(tmpDir, { withFileTypes: true });
-        const extractRoot = entries.length === 1 && entries[0].isDirectory()
-            ? path.join(tmpDir, entries[0].name)
-            : tmpDir;
-        let skillRoot = findSkillRootInDir(extractRoot, relPath);
-        if (!skillRoot && relPath) {
-            const anySkill = findSkillRootInDir(extractRoot, null);
-            if (anySkill) {
-                return { success: false, error: `仓库内路径 "${relPath}" 未找到技能，但发现其它技能目录。请检查 skill0 返回的 URL 是否正确：${githubUrl}` };
-            }
-        }
-        if (!skillRoot && !relPath) {
-            skillRoot = findSkillRootInDir(extractRoot, null);
-        }
-        if (!skillRoot) {
-            return { success: false, error: '仓库内未找到含 SKILL.md 的技能目录' };
-        }
-        return addSkillFromPath(skillRoot);
-    } catch (e) {
-        return { success: false, error: e.message || '下载或解压失败' };
-    } finally {
-        if (fs.existsSync(tmpDir)) rmRecursive(tmpDir);
-    }
-}
-
-/**
- * 从 URL 添加技能：下载 zip 并解压，查找含 SKILL.md 的根后复制到用户技能目录
- * @param {string} url - 技能包 zip 的 URL
- * @returns {Promise<{ success: boolean, name?: string, error?: string }>}
- */
-async function addSkillFromUrl(url) {
-    if (!url || typeof url !== 'string') {
-        return { success: false, error: '请提供有效的 URL' };
-    }
-    const trimmed = url.trim();
-    if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) {
-        return { success: false, error: 'URL 须以 http:// 或 https:// 开头' };
-    }
-    const tmpDir = path.join(os.tmpdir(), `skill-download-${Date.now()}`);
-    try {
-        fs.mkdirSync(tmpDir, { recursive: true });
-        const res = await fetch(trimmed, { redirect: 'follow' });
-        if (!res.ok) {
-            return { success: false, error: `下载失败: ${res.status} ${res.statusText}` };
-        }
-        const buf = Buffer.from(await res.arrayBuffer());
-        const zip = new AdmZip(buf);
-        const uncompressedSize = getZipUncompressedSize(zip);
-        if (uncompressedSize.error) {
-            return { success: false, error: uncompressedSize.error };
-        }
-        zip.extractAllTo(tmpDir, true);
-        let skillRoot = fs.existsSync(path.join(tmpDir, SKILL_MD_FILENAME)) ? tmpDir : findSkillRootInDir(tmpDir, null);
-        if (!skillRoot) {
-            return { success: false, error: '压缩包内未找到含 SKILL.md 的技能目录' };
-        }
-        const addResult = addSkillFromPath(skillRoot);
-        return addResult;
-    } catch (e) {
-        return { success: false, error: e.message || '下载或解压失败' };
-    } finally {
-        if (fs.existsSync(tmpDir)) rmRecursive(tmpDir);
-    }
-}
-
-/**
- * 通过 ClawHub CLI 按 slug（及可选版本）安装技能，参考 clawhub install my-skill [--version 1.2.3]
- * 需已安装 clawhub：npm i -g clawhub。在临时目录执行 npx clawhub install，再从输出目录查找 SKILL.md 并复制到用户技能目录。
- * @param {string} slug - 技能 slug（如 my-skill）
- * @param {string} [version] - 可选版本号
- * @returns {Promise<{ success: boolean, name?: string, error?: string }>}
- */
-async function addSkillFromClawHubSlug(slug, version) {
-    if (!slug || typeof slug !== 'string' || !slug.trim()) {
-        return { success: false, error: '请提供 ClawHub 技能 slug（如 my-skill）' };
-    }
-    const safeSlug = slug.trim();
-    const tmpDir = path.join(os.tmpdir(), `skill-clawhub-${Date.now()}`);
-    try {
-        fs.mkdirSync(tmpDir, { recursive: true });
-        const args = ['clawhub', 'install', safeSlug];
-        if (version && String(version).trim()) args.push('--version', String(version).trim());
-        const run = () =>
-            new Promise((resolve, reject) => {
-                const child = spawn('npx', args, {
-                    cwd: tmpDir,
-                    shell: process.platform === 'win32',
-                    stdio: ['ignore', 'pipe', 'pipe']
-                });
-                let stdout = '';
-                let stderr = '';
-                child.stdout?.on('data', (ch) => { stdout += ch; });
-                child.stderr?.on('data', (ch) => { stderr += ch; });
-                child.on('error', (err) => reject(err));
-                child.on('close', (code) => resolve({ code, stdout, stderr }));
-            });
-        const timeoutMs = 120000;
-        const race = Promise.race([
-            run(),
-            new Promise((_, rej) => setTimeout(() => rej(new Error('ClawHub 安装超时（2 分钟）')), timeoutMs))
-        ]);
-        const { code, stderr } = await race;
-        if (code !== 0) {
-            const msg = (stderr || '').trim() || `退出码 ${code}`;
-            return { success: false, error: `ClawHub 安装失败: ${msg}` };
-        }
-        const skillRoot = findSkillRootInDir(tmpDir, null);
-        if (!skillRoot) {
-            return { success: false, error: 'ClawHub 安装后未在输出目录中找到 SKILL.md，请确认 slug 正确且已安装 clawhub（npm i -g clawhub）' };
-        }
-        const addResult = addSkillFromPath(skillRoot);
-        return addResult;
-    } catch (e) {
-        return { success: false, error: e.message || 'ClawHub 安装异常' };
-    } finally {
-        if (fs.existsSync(tmpDir)) rmRecursive(tmpDir);
     }
 }
 
@@ -852,12 +573,7 @@ export const SkillRegistry = {
     getToolsets,
     refresh,
     listSkills,
-    addSkillFromPath,
-    addSkillFromZipPath,
-    addSkillFromUrl,
-    addSkillFromGitHubUrl,
-    addSkillFromClawHubSlug,
-    parseGitHubTreeUrl,
+    addSkillFromDirectory,
     deleteSkill,
     getSkillBody,
     getSkillDetail

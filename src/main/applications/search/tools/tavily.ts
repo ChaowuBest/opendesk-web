@@ -17,7 +17,6 @@ import chalk from 'chalk';
 import { z } from 'zod';
 import { fetch, ProxyAgent, type Dispatcher } from 'undici';
 
-
 const TAVILY_SEARCH_URL = 'https://api.tavily.com/search';
 const FETCH_TIMEOUT_MS = 30000;
 const DEFAULT_RESULT_COUNT = 10;
@@ -46,18 +45,9 @@ const TavilySearchArgsSchema = z.object({
         .enum(['basic', 'advanced'])
         .optional()
         .describe('搜索深度: basic=基础搜索(更快), advanced=深度搜索(更全面)'),
-    include_raw_content: z
-        .boolean()
-        .optional()
-        .describe('是否包含原始页面内容，默认false'),
-    include_images: z
-        .boolean()
-        .optional()
-        .describe('是否在结果中包含相关图片链接，默认false'),
-    include_answer: z
-        .boolean()
-        .optional()
-        .describe('是否生成问题的简短答案，默认false'),
+    include_raw_content: z.boolean().optional().describe('是否包含原始页面内容，默认false'),
+    include_images: z.boolean().optional().describe('是否在结果中包含相关图片链接，默认false'),
+    include_answer: z.boolean().optional().describe('是否生成问题的简短答案，默认false')
 });
 
 export class TavilySearchTool extends BaseTool<typeof TavilySearchArgsSchema> {
@@ -67,7 +57,7 @@ export class TavilySearchTool extends BaseTool<typeof TavilySearchArgsSchema> {
         super(
             'tavilySearch',
             '使用Tavily搜索引擎搜索网页信息，专为AI设计的搜索API，返回优化过的搜索结果。支持深度搜索和答案生成功能',
-            TavilySearchArgsSchema,
+            TavilySearchArgsSchema
         );
         this.apiKey = apiKey;
         this.setExecutor(this.search.bind(this));
@@ -92,7 +82,12 @@ export class TavilySearchTool extends BaseTool<typeof TavilySearchArgsSchema> {
             body.push(chalk.redBright('  ' + truncText(toolcall.result, width - 10)));
         }
 
-        return new Card({ icon: '🔍', title: '搜索 (Tavily)', status: statusDisplay(toolcall.status), body }).render(width);
+        return new Card({
+            icon: '🔍',
+            title: '搜索 (Tavily)',
+            status: statusDisplay(toolcall.status),
+            body
+        }).render(width);
     }
 
     private async search(args: z.output<typeof TavilySearchArgsSchema>): Promise<string> {
@@ -103,7 +98,14 @@ export class TavilySearchTool extends BaseTool<typeof TavilySearchArgsSchema> {
             throw new Error('搜索关键词不能为空');
         }
 
-        const data = await this.fetchTavilyApi(query, maxResults, search_depth, include_raw_content, include_images, include_answer);
+        const data = await this.fetchTavilyApi(
+            query,
+            maxResults,
+            search_depth,
+            include_raw_content,
+            include_images,
+            include_answer
+        );
         const results = data.results ?? [];
 
         if (results.length === 0) {
@@ -119,7 +121,7 @@ export class TavilySearchTool extends BaseTool<typeof TavilySearchArgsSchema> {
         search_depth?: 'basic' | 'advanced',
         include_raw_content?: boolean,
         include_images?: boolean,
-        include_answer?: boolean,
+        include_answer?: boolean
     ): Promise<TavilySearchResponse> {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
@@ -130,20 +132,27 @@ export class TavilySearchTool extends BaseTool<typeof TavilySearchArgsSchema> {
             search_depth: search_depth ?? 'basic',
             include_raw_content: include_raw_content ?? false,
             include_images: include_images ?? false,
-            include_answer: include_answer ?? false,
+            include_answer: include_answer ?? false
         };
 
-        const fetchOptions: { method: string; headers: Record<string, string>; body: string; signal: AbortSignal; dispatcher?: Dispatcher } = {
+        const fetchOptions: {
+            method: string;
+            headers: Record<string, string>;
+            body: string;
+            signal: AbortSignal;
+            dispatcher?: Dispatcher;
+        } = {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${this.apiKey}`,
+                Authorization: `Bearer ${this.apiKey}`
             },
             body: JSON.stringify(requestBody),
-            signal: controller.signal,
+            signal: controller.signal
         };
 
-        const proxyUrl = process.env.HTTPS_PROXY || process.env.https_proxy || process.env.HTTP_PROXY || process.env.http_proxy;
+        const proxyUrl =
+            process.env.HTTPS_PROXY || process.env.https_proxy || process.env.HTTP_PROXY || process.env.http_proxy;
         if (proxyUrl) {
             fetchOptions.dispatcher = new ProxyAgent(proxyUrl);
         }
@@ -154,7 +163,7 @@ export class TavilySearchTool extends BaseTool<typeof TavilySearchArgsSchema> {
             if (!response.ok) {
                 const errorText = await response.text().catch(() => '');
                 throw new Error(
-                    `Tavily Search API 请求失败，HTTP ${response.status}: ${errorText || response.statusText}`,
+                    `Tavily Search API 请求失败，HTTP ${response.status}: ${errorText || response.statusText}`
                 );
             }
 
@@ -186,9 +195,8 @@ export class TavilySearchTool extends BaseTool<typeof TavilySearchArgsSchema> {
             }
             if (item.raw_content) {
                 // 限制原始内容长度，避免输出过长
-                const truncatedRaw = item.raw_content.length > 500
-                    ? item.raw_content.substring(0, 500) + '...'
-                    : item.raw_content;
+                const truncatedRaw =
+                    item.raw_content.length > 500 ? item.raw_content.substring(0, 500) + '...' : item.raw_content;
                 output += `  - 原始内容: <raw>${truncatedRaw}</raw>\n`;
             }
             output += `  - 相关度: ${(item.score * 100).toFixed(1)}%\n`;

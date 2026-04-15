@@ -54,14 +54,14 @@ class LoadingView extends HTMLElement {
                 </div>
             </div>
         </div>
-        `
+        `;
     }
 }
 
 class ContentLoadingView extends HTMLElement {
     constructor() {
         super();
-        this.type = this.dataset.type || 'tb'
+        this.type = this.dataset.type || 'tb';
     }
 
     connectedCallback() {
@@ -89,7 +89,7 @@ class ContentLoadingView extends HTMLElement {
                     <div class="mt-6 text-gray-400 text-sm font-light uppercase tracking-[0.3em]">${this.dataset.message}</div>
                 </div>
             </div>
-            `
+            `;
         } else if (this.type === 'lr') {
             this.innerHTML = `
             <div class="w-full h-full flex items-center justify-center">
@@ -98,7 +98,7 @@ class ContentLoadingView extends HTMLElement {
                     <div class="ml-6 text-gray-400 text-sm font-light uppercase tracking-[0.3em]">${this.dataset.message}</div>
                 </div>
             </div>
-            `
+            `;
         }
     }
 }

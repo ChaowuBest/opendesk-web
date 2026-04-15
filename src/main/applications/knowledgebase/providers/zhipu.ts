@@ -13,15 +13,18 @@ import { fetch } from 'undici';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
-import { KnowledgeBase, KnowledgeBaseProvider, type KnowledgeBaseInfo, type RetrieveResult, type AskResult } from '../base';
+import {
+    KnowledgeBase,
+    KnowledgeBaseProvider,
+    type KnowledgeBaseInfo,
+    type RetrieveResult,
+    type AskResult
+} from '../base';
 import { logger } from '../../../utils/logger';
 
 const ZHIPU_API_BASE = 'https://open.bigmodel.cn/api/llm-application/open';
 
-const SUPPORTED_FILE_TYPES = [
-    '.txt', '.doc', '.docx', '.pdf', '.ppt', '.pptx', '.md',
-    '.xls', '.xlsx', '.csv',
-];
+const SUPPORTED_FILE_TYPES = ['.txt', '.doc', '.docx', '.pdf', '.ppt', '.pptx', '.md', '.xls', '.xlsx', '.csv'];
 
 const REQUEST_TIMEOUT_MS = 60000;
 const MAX_RETRIES = 2;
@@ -33,7 +36,10 @@ async function zhipuFetch(url: string, options: Parameters<typeof fetch>[1]): Pr
             const controller = new AbortController();
             const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
             try {
-                return await fetch(url, { ...options, signal: controller.signal }) as unknown as Response;
+                return (await fetch(url, {
+                    ...options,
+                    signal: controller.signal
+                })) as unknown as Response;
             } finally {
                 clearTimeout(timer);
             }
@@ -41,22 +47,17 @@ async function zhipuFetch(url: string, options: Parameters<typeof fetch>[1]): Pr
             lastError = err;
             if (attempt < MAX_RETRIES) {
                 logger.warn(`智谱API请求失败(第${attempt + 1}次), 重试中: ${err.message}`);
-                await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
+                await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
             }
         }
     }
     throw lastError!;
 }
 
-async function zhipuRequest(
-    apiKey: string,
-    method: string,
-    endpoint: string,
-    body?: object,
-): Promise<any> {
+async function zhipuRequest(apiKey: string, method: string, endpoint: string, body?: object): Promise<any> {
     const url = `${ZHIPU_API_BASE}${endpoint}`;
     const headers: Record<string, string> = {
-        'Authorization': `Bearer ${apiKey}`,
+        Authorization: `Bearer ${apiKey}`
     };
     if (body) {
         headers['Content-Type'] = 'application/json';
@@ -65,7 +66,7 @@ async function zhipuRequest(
     const resp = await zhipuFetch(url, {
         method,
         headers,
-        body: body ? JSON.stringify(body) : undefined,
+        body: body ? JSON.stringify(body) : undefined
     });
 
     const json: any = await (resp as any).json();
@@ -77,55 +78,60 @@ async function zhipuRequest(
 
 function buildMultipartBody(
     fields: { name: string; value: string }[],
-    file: { fieldName: string; fileName: string; content: Buffer },
+    file: { fieldName: string; fileName: string; content: Buffer }
 ): { body: Buffer; contentType: string } {
     const boundary = '----OpenDeskBoundary' + crypto.randomUUID().replace(/-/g, '');
     const parts: Buffer[] = [];
 
-    parts.push(Buffer.from(
-        `--${boundary}\r\n` +
-        `Content-Disposition: form-data; name="${file.fieldName}"; filename="${file.fileName}"\r\n` +
-        `Content-Type: application/octet-stream\r\n\r\n`
-    ));
+    parts.push(
+        Buffer.from(
+            `--${boundary}\r\n` +
+                `Content-Disposition: form-data; name="${file.fieldName}"; filename="${file.fileName}"\r\n` +
+                `Content-Type: application/octet-stream\r\n\r\n`
+        )
+    );
     parts.push(file.content);
     parts.push(Buffer.from('\r\n'));
 
     for (const field of fields) {
-        parts.push(Buffer.from(
-            `--${boundary}\r\n` +
-            `Content-Disposition: form-data; name="${field.name}"\r\n\r\n` +
-            `${field.value}\r\n`
-        ));
+        parts.push(
+            Buffer.from(
+                `--${boundary}\r\n` +
+                    `Content-Disposition: form-data; name="${field.name}"\r\n\r\n` +
+                    `${field.value}\r\n`
+            )
+        );
     }
 
     parts.push(Buffer.from(`--${boundary}--\r\n`));
     return {
         body: Buffer.concat(parts),
-        contentType: `multipart/form-data; boundary=${boundary}`,
+        contentType: `multipart/form-data; boundary=${boundary}`
     };
 }
 
 async function zhipuUploadFile(
     apiKey: string,
     knowledgeBaseId: string,
-    filePath: string,
+    filePath: string
 ): Promise<{ documentId: string; fileName: string }> {
     const url = `${ZHIPU_API_BASE}/document/upload_document/${knowledgeBaseId}`;
     const fileName = path.basename(filePath);
     const fileBuffer = fs.readFileSync(filePath);
 
-    const { body, contentType } = buildMultipartBody(
-        [{ name: 'knowledge_type', value: '1' }],
-        { fieldName: 'files', fileName, content: fileBuffer },
-    );
+    const { body, contentType } = buildMultipartBody([{ name: 'knowledge_type', value: '1' }], {
+        fieldName: 'files',
+        fileName,
+        content: fileBuffer
+    });
 
     const resp = await zhipuFetch(url, {
         method: 'POST',
         headers: {
-            'Authorization': `Bearer ${apiKey}`,
-            'Content-Type': contentType,
+            Authorization: `Bearer ${apiKey}`,
+            'Content-Type': contentType
         },
-        body,
+        body
     });
 
     const json: any = await (resp as any).json();
@@ -143,10 +149,9 @@ async function zhipuUploadFile(
 
     return {
         documentId: data.successInfos[0].documentId,
-        fileName: data.successInfos[0].fileName,
+        fileName: data.successInfos[0].fileName
     };
 }
-
 
 export class ZhipuKnowledgeBase extends KnowledgeBase {
     private apiKey: string;
@@ -178,7 +183,7 @@ export class ZhipuKnowledgeBase extends KnowledgeBase {
             top_k: topK,
             top_n: topK * 2,
             recall_method: 'mixed',
-            recall_ratio: 80,
+            recall_ratio: 80
         });
 
         if (!Array.isArray(data)) {
@@ -188,7 +193,7 @@ export class ZhipuKnowledgeBase extends KnowledgeBase {
         return data.map((item: any) => ({
             text: item.text,
             score: item.score,
-            metadata: item.metadata,
+            metadata: item.metadata
         }));
     }
 
@@ -205,13 +210,13 @@ export class ZhipuKnowledgeBase extends KnowledgeBase {
             const resp = await zhipuFetch('https://open.bigmodel.cn/api/paas/v4/chat/completions', {
                 method: 'POST',
                 headers: {
-                    'Authorization': `Bearer ${this.apiKey}`,
-                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${this.apiKey}`,
+                    'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({
                     model: 'glm-4-flash',
-                    messages: [{ role: 'user', content: prompt }],
-                }),
+                    messages: [{ role: 'user', content: prompt }]
+                })
             });
 
             const json: any = await (resp as any).json();
@@ -221,12 +226,11 @@ export class ZhipuKnowledgeBase extends KnowledgeBase {
             logger.error(`智谱对话API调用失败: ${err}`);
             return {
                 answer: `基于检索到的内容:\n\n${context}`,
-                references: results,
+                references: results
             };
         }
     }
 }
-
 
 export class ZhipuKnowledgeBaseProvider extends KnowledgeBaseProvider {
     private apiKey: string;
@@ -255,7 +259,7 @@ export class ZhipuKnowledgeBaseProvider extends KnowledgeBaseProvider {
             name,
             description: description || '',
             background: 'blue',
-            icon: 'book',
+            icon: 'book'
         });
         return new ZhipuKnowledgeBase(data.id, name, description || '', this.apiKey);
     }
@@ -276,7 +280,7 @@ export class ZhipuKnowledgeBaseProvider extends KnowledgeBaseProvider {
             name: item.name,
             description: item.description || '',
             documentCount: item.document_size,
-            wordCount: item.word_num,
+            wordCount: item.word_num
         }));
     }
 
@@ -285,12 +289,7 @@ export class ZhipuKnowledgeBaseProvider extends KnowledgeBaseProvider {
         try {
             const data = await zhipuRequest(this.apiKey, 'GET', `/knowledge/${knowledgeBaseId}`);
             if (!data) return undefined;
-            return new ZhipuKnowledgeBase(
-                data.id,
-                data.name,
-                data.description || '',
-                this.apiKey,
-            );
+            return new ZhipuKnowledgeBase(data.id, data.name, data.description || '', this.apiKey);
         } catch {
             return undefined;
         }

@@ -27,11 +27,10 @@ const BING_SEARCH_URL = 'https://www.bing.com/search';
 const BING_HEADERS: Record<string, string> = {
     'User-Agent':
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0',
-    'Accept':
-        'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+    Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
     'Accept-Language': 'en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7',
     'Accept-Encoding': 'gzip, deflate, br',
-    'Connection': 'keep-alive',
+    Connection: 'keep-alive',
     'Upgrade-Insecure-Requests': '1',
     'Sec-Fetch-Dest': 'document',
     'Sec-Fetch-Mode': 'navigate',
@@ -40,7 +39,7 @@ const BING_HEADERS: Record<string, string> = {
     'sec-ch-ua': '"Chromium";v="131", "Not_A Brand";v="24", "Microsoft Edge";v="131"',
     'sec-ch-ua-mobile': '?0',
     'sec-ch-ua-platform': '"Windows"',
-    'Cache-Control': 'max-age=0',
+    'Cache-Control': 'max-age=0'
 };
 
 interface BingSearchResult {
@@ -51,10 +50,11 @@ interface BingSearchResult {
 
 const BingSearchArgsSchema = z.object({
     query: z.string().describe('搜索关键词'),
-    lang: z.enum(['zh', 'en'])
+    lang: z
+        .enum(['zh', 'en'])
         .optional()
         .describe('搜索语言：(zh=中文，en=英文)，默认为zh。如果指定为en则使用Bing全球版，搜索结果将以英文为主'),
-    count: z.number().optional().describe('期望返回的搜索结果数量，默认为15'),
+    count: z.number().optional().describe('期望返回的搜索结果数量，默认为15')
 });
 
 export class BingSearchTool extends BaseTool<typeof BingSearchArgsSchema> {
@@ -62,7 +62,7 @@ export class BingSearchTool extends BaseTool<typeof BingSearchArgsSchema> {
         super(
             'bingSearch',
             '使用Bing搜索引擎搜索网页信息，返回搜索结果的标题、URL和摘要。无需API密钥，适合作为后备搜索方案',
-            BingSearchArgsSchema,
+            BingSearchArgsSchema
         );
 
         this.setExecutor(this.search.bind(this));
@@ -91,7 +91,12 @@ export class BingSearchTool extends BaseTool<typeof BingSearchArgsSchema> {
         if (toolcall.args_object?.['lang'] === 'en') {
             title = '搜索 (Bing 全球版)';
         }
-        return new Card({ icon: '🔍', title: title, status: statusDisplay(toolcall.status), body }).render(width);
+        return new Card({
+            icon: '🔍',
+            title: title,
+            status: statusDisplay(toolcall.status),
+            body
+        }).render(width);
     }
 
     // ───────────────────── 主入口 ─────────────────────
@@ -110,9 +115,7 @@ export class BingSearchTool extends BaseTool<typeof BingSearchArgsSchema> {
         if (results.length === 0) {
             const challengeDetected = this.isChallengeOrError(html);
             if (challengeDetected) {
-                throw new Error(
-                    'Bing 返回了验证页面，无法获取搜索结果。这可能是由于请求频率过高导致的，请稍后重试。',
-                );
+                throw new Error('Bing 返回了验证页面，无法获取搜索结果。这可能是由于请求频率过高导致的，请稍后重试。');
             }
             return `未找到与 "${query}" 相关的搜索结果。`;
         }
@@ -140,7 +143,7 @@ export class BingSearchTool extends BaseTool<typeof BingSearchArgsSchema> {
                 method: 'GET',
                 redirect: 'follow',
                 headers: BING_HEADERS,
-                signal: controller.signal,
+                signal: controller.signal
             });
 
             if (!response.ok) {
@@ -158,9 +161,7 @@ export class BingSearchTool extends BaseTool<typeof BingSearchArgsSchema> {
         }
     }
 
-    private async readResponseBody(
-        response: Awaited<ReturnType<typeof fetch>>,
-    ): Promise<string> {
+    private async readResponseBody(response: Awaited<ReturnType<typeof fetch>>): Promise<string> {
         const reader = response.body?.getReader();
         if (!reader) return '';
 
@@ -230,14 +231,7 @@ export class BingSearchTool extends BaseTool<typeof BingSearchArgsSchema> {
      * Bing 的 HTML 结构可能随时间变化，因此按优先级尝试多个选择器。
      */
     private extractSnippet(element: any): string {
-        const selectors = [
-            'p.b_lineclamp2',
-            'p.b_lineclamp3',
-            'p.b_lineclamp4',
-            '.b_caption p',
-            '.b_algoSlug',
-            'p',
-        ];
+        const selectors = ['p.b_lineclamp2', 'p.b_lineclamp3', 'p.b_lineclamp4', '.b_caption p', '.b_algoSlug', 'p'];
 
         for (const selector of selectors) {
             const el = element.querySelector(selector);
@@ -262,9 +256,9 @@ export class BingSearchTool extends BaseTool<typeof BingSearchArgsSchema> {
             'automated requests',
             'blocked',
             'sorry, we need to make sure',
-            'type the characters you see',
+            'type the characters you see'
         ];
-        return indicators.some(s => lower.includes(s));
+        return indicators.some((s) => lower.includes(s));
     }
 
     // ───────────────────── 结果格式化 ─────────────────────

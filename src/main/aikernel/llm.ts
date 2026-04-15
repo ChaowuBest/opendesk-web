@@ -10,15 +10,21 @@
  */
 
 import { OpenAI } from 'openai';
-import { ChatContext, AssistantResponse, UserMessage, AssistantMessage, CompactSeparatorMessage } from './messages';
+import { ChatContext, AssistantResponse, UserMessage, AssistantMessage, isCompactBoundaryMessage } from './messages';
 import { Setting, ModelInstance } from '../utils/setting.js';
+import { buildActiveContextView } from './compaction/context-view.js';
+import type { ActiveContextView } from './compaction/types.js';
 import { z } from 'zod';
 import { logger } from '../utils/logger.js';
 import { lookupKnownVisionSupport, fetchVisionSupportFromAPI } from '../utils/model-context.js';
+import { withRateLimitRetry, RateLimitDetector } from '../utils/rate-limit-retry.js';
 import type { BaseTool } from './tool';
 
 /** Model 参数支持传入 ModelInstance 对象、模型别名字符串、或 undefined（使用默认模型） */
 type ModelParam = ModelInstance | string | undefined;
+
+/** 控制模型推理深度，undefined 表示使用模型默认值 */
+type ReasoningEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
 
 /**
  * LLM 验证器的返回结果。
@@ -46,10 +52,22 @@ class LLMValidatorResult {
 /** 验证器函数签名：接收 LLM 的原始文本输出，返回验证结果 */
 type ValidatorFn = (content: string) => LLMValidatorResult;
 
+/** LLM 补全请求的通用可选参数 */
+interface LLMRequestOptions {
+    /** 控制模型推理深度，不传则使用模型默认值 */
+    reasoningEffort?: ReasoningEffort;
+}
+
 interface LLMAskOptions {
     question: UserMessage;
     model: ModelParam;
     validator: ValidatorFn | undefined;
+    requestOptions?: LLMRequestOptions;
+}
+
+interface LLMMessageBuildOptions {
+    activeContext?: ActiveContextView;
+    toolResultOverrides?: Map<string, string>;
 }
 
 /** Reranker API 返回的单条结果 */
@@ -63,7 +81,6 @@ interface RerankApiResponse {
 }
 
 class LLM {
-
     private static __visionCache = new Map<string, boolean>();
 
     /**
@@ -93,7 +110,9 @@ class LLM {
                 logger.info(`vision support for ${modelInstance.model_name}: ${apiResult} (from API)`);
                 return apiResult;
             }
-        } catch { /* API 查询失败 */ }
+        } catch {
+            /* API 查询失败 */
+        }
 
         this.__visionCache.set(cacheKey, true);
         logger.info(`vision support for ${modelInstance.model_name}: true (default optimistic)`);
@@ -129,11 +148,11 @@ class LLM {
         const modelInstance = Setting.getInstance().getDefaultEmbeddingModelInstance();
         const client = new OpenAI({
             apiKey: modelInstance.api_key,
-            baseURL: modelInstance.base_url,
+            baseURL: modelInstance.base_url
         });
         const response = await client.embeddings.create({
             model: modelInstance.model_name,
-            input: text,
+            input: text
         });
         return response.data[0].embedding;
     }
@@ -142,7 +161,7 @@ class LLM {
         const modelInstance = Setting.getInstance().getDefaultEmbeddingModelInstance();
         const client = new OpenAI({
             apiKey: modelInstance.api_key,
-            baseURL: modelInstance.base_url,
+            baseURL: modelInstance.base_url
         });
         const embeddings: number[][] = [];
         for (let i = 0; i < texts.length; i += batchSize) {
@@ -150,9 +169,9 @@ class LLM {
             const batch = texts.slice(i, i + batchSize);
             const response = await client.embeddings.create({
                 model: modelInstance.model_name,
-                input: batch,
+                input: batch
             });
-            embeddings.push(...response.data.map(data => data.embedding));
+            embeddings.push(...response.data.sort((a, b) => a.index - b.index).map((data) => data.embedding));
         }
         return embeddings;
     }
@@ -167,7 +186,7 @@ class LLM {
         query: string,
         items: T[],
         stringifier: (item: T) => string,
-        model: ModelParam = undefined,
+        model: ModelParam = undefined
     ): Promise<T[]> {
         if (model === undefined) {
             model = Setting.getInstance().getDefaultRerankerModelInstance();
@@ -179,13 +198,13 @@ class LLM {
             method: 'POST',
             headers: {
                 Authorization: `Bearer ${modelInstance.api_key}`,
-                'Content-Type': 'application/json',
+                'Content-Type': 'application/json'
             },
             body: JSON.stringify({
                 model: modelInstance.model_name,
                 query: query,
-                documents: items.map(item => stringifier(item)),
-            }),
+                documents: items.map((item) => stringifier(item))
+            })
         });
 
         const rerankResult: RerankApiResponse = await response.json();
@@ -231,7 +250,7 @@ class LLM {
         const modelInstance = LLM.__getModelInstance(options.model);
         const client = new OpenAI({
             apiKey: modelInstance.api_key,
-            baseURL: modelInstance.base_url,
+            baseURL: modelInstance.base_url
         });
 
         let finalResponse: string | object | undefined = undefined;
@@ -239,10 +258,15 @@ class LLM {
         const messages: object[] = [options.question.toOpenAIMessage()];
 
         while (finalResponse === undefined && numRetries < 5) {
-            const response = await client.chat.completions.create({
-                model: modelInstance.model_name,
-                messages: messages as OpenAI.ChatCompletionMessageParam[],
-            });
+            const response = await withRateLimitRetry(() =>
+                client.chat.completions.create({
+                    model: modelInstance.model_name,
+                    messages: messages as OpenAI.ChatCompletionMessageParam[],
+                    ...(options.requestOptions?.reasoningEffort
+                        ? { reasoning_effort: options.requestOptions.reasoningEffort }
+                        : {})
+                })
+            );
 
             if (response.choices.length !== 1) {
                 throw new Error('unsupported openai response type');
@@ -281,8 +305,17 @@ class LLM {
         return content.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
     }
 
-    static async ask(question: UserMessage, model: ModelParam = undefined): Promise<string> {
-        const options: LLMAskOptions = { question, model, validator: undefined };
+    static async ask(
+        question: UserMessage | string,
+        model: ModelParam = undefined,
+        requestOptions?: LLMRequestOptions
+    ): Promise<string> {
+        const options: LLMAskOptions = {
+            question: question instanceof UserMessage ? question : new UserMessage(question),
+            model: model,
+            validator: undefined,
+            requestOptions
+        };
         const result = await LLM.__ask(options);
         return typeof result === 'string' ? result : JSON.stringify(result);
     }
@@ -313,11 +346,16 @@ class LLM {
         }
     }
 
-    static async askForObject(question: UserMessage, model: ModelParam = undefined): Promise<object> {
+    static async askForObject(
+        question: UserMessage,
+        model: ModelParam = undefined,
+        requestOptions?: LLMRequestOptions
+    ): Promise<object> {
         const options: LLMAskOptions = {
             question,
             model,
             validator: (content) => LLM.__objectValidator(content),
+            requestOptions
         };
         const result = await LLM.__ask(options);
         if (typeof result === 'object') {
@@ -330,11 +368,13 @@ class LLM {
         question: UserMessage,
         schema: z.ZodSchema,
         model: ModelParam = undefined,
+        requestOptions?: LLMRequestOptions
     ): Promise<object> {
         const options: LLMAskOptions = {
             question,
             model,
             validator: (content) => LLM.__objectValidator(content, schema),
+            requestOptions
         };
         const result = await LLM.__ask(options);
         if (typeof result === 'object') {
@@ -346,13 +386,18 @@ class LLM {
     /**
      * 将 ChatContext 中的消息序列转换为 OpenAI API 所需的 messages 数组。
      *
-     * - 若存在 CompactSeparatorMessage，则跳过其之前的所有消息（system prompt 除外），
-     *   并将 separator 本身作为一条 UserMessage（含结构化总结）插入上下文。
+     * - 模型可见消息统一由 compaction/context-view 决定。
+     * - 若存在 compact boundary，则 active context 从该消息开始，
+     *   并将 boundary 本身作为一条 UserMessage（含结构化总结）插入上下文。
      * - 对于 AssistantMessage，会调用其 toOpenAIMessages() 方法进行拆分，
      *   以保持 reasoning、tool_call、text 的正确顺序。
      * @param supportsVision 当前模型是否支持视觉输入，false 时 UserMessage 中的图像部分会被过滤
      */
-    static buildMessages(chatContext: ChatContext, supportsVision: boolean = true): object[] {
+    static buildMessages(
+        chatContext: ChatContext,
+        supportsVision: boolean = true,
+        options: LLMMessageBuildOptions = {}
+    ): object[] {
         const messages: object[] = [];
 
         // system prompt 始终保留
@@ -360,20 +405,16 @@ class LLM {
             messages.push(chatContext.system_prompt.toOpenAIMessage());
         }
 
-        // 如果存在 CompactSeparatorMessage，从它的位置开始（跳过之前的所有消息）
-        const separator = chatContext.findCompactSeparator();
-        const startIndex = separator ? separator.index : 0;
-
-        for (let i = startIndex; i < chatContext.messages.length; i++) {
-            const message = chatContext.messages[i];
-
-            if ((message as any).role === 'compact_separator') {
-                messages.push((message as CompactSeparatorMessage).toOpenAIMessage());
+        const activeContext = options.activeContext ?? buildActiveContextView(chatContext);
+        const toolResultOverrides = options.toolResultOverrides;
+        for (const message of activeContext.messages) {
+            if (isCompactBoundaryMessage(message)) {
+                messages.push(message.toOpenAIMessage());
             } else if (message instanceof AssistantMessage) {
                 if (message.content.length === 0) {
                     continue;
                 }
-                messages.push(...message.toOpenAIMessages());
+                messages.push(...message.toOpenAIMessages(toolResultOverrides));
             } else if (message instanceof UserMessage) {
                 messages.push(message.toOpenAIMessage(supportsVision));
             } else {
@@ -395,9 +436,9 @@ class LLM {
                     function: {
                         name: toolId,
                         description: tool.description,
-                        parameters: tool.params.toJSONSchema(),
-                    },
-                })),
+                        parameters: tool.params.toJSONSchema()
+                    }
+                }))
             };
         }
         return {};
@@ -406,46 +447,55 @@ class LLM {
     static async complete(
         chatContext: ChatContext,
         model: ModelParam = undefined,
+        options: LLMMessageBuildOptions = {},
+        requestOptions?: LLMRequestOptions
     ): Promise<AssistantResponse> {
         const modelInstance = this.__getModelInstance(model);
         const client = new OpenAI({
             apiKey: modelInstance.api_key,
-            baseURL: modelInstance.base_url,
+            baseURL: modelInstance.base_url
         });
         const visionSupported = await this.supportsVision(model);
-        const messages = this.buildMessages(chatContext, visionSupported);
+        const messages = this.buildMessages(chatContext, visionSupported, options);
         const toolOptions = this.buildToolOptions(chatContext);
 
-        const response = await client.chat.completions.create({
-            model: modelInstance.model_name,
-            messages: messages as OpenAI.ChatCompletionMessageParam[],
-            max_completion_tokens: 16384,
-            ...toolOptions,
-        });
+        const response = await withRateLimitRetry(() =>
+            client.chat.completions.create({
+                model: modelInstance.model_name,
+                messages: messages as OpenAI.ChatCompletionMessageParam[],
+                max_completion_tokens: 16384,
+                ...toolOptions,
+                ...(requestOptions?.reasoningEffort ? { reasoning_effort: requestOptions.reasoningEffort } : {})
+            })
+        );
         return AssistantResponse.parseOpenAIResponse(response);
     }
 
     static async *streamComplete(
         chatContext: ChatContext,
         model: ModelParam = undefined,
+        options: LLMMessageBuildOptions = {},
+        requestOptions?: LLMRequestOptions
     ): AsyncIterable<AssistantResponse> {
         const modelInstance = this.__getModelInstance(model);
         this.__ensureProxy(modelInstance);
 
         const client = new OpenAI({
             apiKey: modelInstance.api_key,
-            baseURL: modelInstance.base_url,
+            baseURL: modelInstance.base_url
         });
         const visionSupported = await this.supportsVision(model);
-        const messages = this.buildMessages(chatContext, visionSupported);
+        const messages = this.buildMessages(chatContext, visionSupported, options);
         const toolOptions = this.buildToolOptions(chatContext);
 
         if (logger) {
-            const hasImages = messages.some((m: any) =>
-                Array.isArray(m.content) && m.content.some((p: any) => p.type === 'image_url')
+            const hasImages = messages.some(
+                (m: any) => Array.isArray(m.content) && m.content.some((p: any) => p.type === 'image_url')
             );
             if (hasImages) {
-                logger.info(`streamComplete: sending ${messages.length} messages with inline images (visionSupported=${visionSupported})`);
+                logger.info(
+                    `streamComplete: sending ${messages.length} messages with inline images (visionSupported=${visionSupported})`
+                );
             }
         }
 
@@ -453,25 +503,32 @@ class LLM {
             // 使用原始流式 API 而非 .stream() 方法
             // 某些模型提供商的流式响应不包含 role 字段，会导致 SDK 的 finalizeChatCompletion 报错
             // 使用 .create() with stream: true 可以绕过 SDK 的严格验证
-            const stream = await client.chat.completions.create({
-                model: modelInstance.model_name,
-                messages: messages as OpenAI.ChatCompletionMessageParam[],
-                max_completion_tokens: 16384,
-                stream: true,
-                stream_options: { include_usage: true },
-                ...toolOptions,
-            });
+            const stream = await withRateLimitRetry(() =>
+                client.chat.completions.create({
+                    model: modelInstance.model_name,
+                    messages: messages as OpenAI.ChatCompletionMessageParam[],
+                    max_completion_tokens: 16384,
+                    stream: true,
+                    stream_options: { include_usage: true },
+                    ...toolOptions,
+                    ...(requestOptions?.reasoningEffort ? { reasoning_effort: requestOptions.reasoningEffort } : {})
+                })
+            );
 
             for await (const chunk of stream) {
                 yield AssistantResponse.parseOpenAIResponse(chunk);
             }
         } catch (err) {
+            if (RateLimitDetector.isRateLimitError(err)) {
+                logger.warn('Rate limit error during stream reading, will be caught by outer retry logic', String(err));
+            }
             yield AssistantResponse.richError(
-                'Stream Completion Failed', String(err),
+                'Stream Completion Failed',
+                String(err),
                 JSON.stringify(messages, undefined, 2)
             );
         }
     }
 }
 
-export { LLM };
+export { LLM, type ReasoningEffort, type LLMRequestOptions };

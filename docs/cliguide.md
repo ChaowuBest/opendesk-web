@@ -1,4 +1,3 @@
-
 # OpenDesk CLI 使用手册
 
 ## 目录
@@ -58,12 +57,17 @@ opendesk [workspace] [选项]
 
 ### 参数说明
 
-| 参数 | 说明 | 默认值 |
-|------|------|--------|
-| `workspace` | 工作区目录路径 | 当前目录 (`.`) |
-| `--model <alias>` | 指定要使用的模型别名 | 配置的默认模型 |
-| `-c, --command <command>` | 一次性执行命令后退出 | 无 |
-| `-v, --version` | 显示版本信息 | 无 |
+| 参数                      | 说明                                            | 默认值         |
+| ------------------------- | ----------------------------------------------- | -------------- |
+| `workspace`               | 工作区目录路径                                  | 当前目录 (`.`) |
+| `--model <alias>`         | 指定要使用的模型别名                            | 配置的默认模型 |
+| `-c, --command <command>` | 一次性执行命令后退出                            | 无             |
+| `--headless`              | 无头模式运行（无 TUI，需配合 `-c`）             | 无             |
+| `--export-html <path>`    | `-c` 任务完成后导出 HTML 会话记录               | 无             |
+| `--export-json <path>`    | `-c` 任务完成后导出 JSON 会话数据               | 无             |
+| `--dump-log <path>`       | 将所有日志输出到指定文件                        | 无             |
+| `--profile <path>`        | 将性能分析报告写入指定 JSON 文件（需配合 `-c`） | 无             |
+| `-v, --version`           | 显示版本信息                                    | 无             |
 
 ### 使用示例
 
@@ -79,6 +83,15 @@ npm run cli -- --model gpt-4
 
 # 一次性执行命令
 npm run cli -- -c "分析当前目录的代码结构"
+
+# 无头模式执行命令并导出会话记录
+npm run cli -- --headless -c "修复 bug" --export-json result.json
+
+# 生成性能分析报告
+npm run cli -- -c "重构代码" --profile profile.json
+
+# 无头模式 + 性能分析 + 日志
+npm run cli -- --headless -c "修复 bug" --profile profile.json --dump-log debug.log
 ```
 
 ---
@@ -98,6 +111,7 @@ OpenDesk CLI 界面包含以下主要组件：
 ### 状态栏信息
 
 输入区域底部的状态栏显示：
+
 - 当前使用的模型名称
 - 上下文窗口大小
 - 本次对话消耗的总 token 数
@@ -111,41 +125,64 @@ OpenDesk CLI 提供了丰富的斜杠命令来增强交互体验。在输入框�
 
 ### 命令列表
 
-| 命令 | 描述 | 用法 |
-|------|------|------|
-| `/new` | 启动新任务并发送消息 | `/new [消息]` |
-| `/switch` | 切换到其他任务 | `/switch` |
-| `/help` | 显示快捷键与指令帮助 | `/help` |
-| `/exit` | 退出 OpenDesk | `/exit` |
-| `/cancel` | 撤销消息队列中的所有待发送消息 | `/cancel` |
-| `/clear` | 删除所有任务历史 | `/clear` |
-| `/export` | 导出当前会话为 HTML 文件 | `/export [文件名]` |
-| `/config` | 打开系统设置 | `/config` |
-| `/log` | 显示日志面板 | `/log [off\|last\|all]` |
-| `/debug` | 调试命令 | `/debug log [on\|off]` 或 `/debug taskid` |
-| `/quickpass` | 导出快捷口令 | `/quickpass config base\|all` |
+| 命令            | 描述                           | 用法                                      |
+| --------------- | ------------------------------ | ----------------------------------------- |
+| `/new`          | 启动新任务并发送消息           | `/new [消息]`                             |
+| `/switch`       | 切换到其他任务                 | `/switch`                                 |
+| `/help`         | 显示快捷键与指令帮助           | `/help`                                   |
+| `/exit`         | 退出 OpenDesk                  | `/exit`                                   |
+| `/quit`         | 退出 OpenDesk（需确认）        | `/quit`                                   |
+| `/cancel`       | 撤销消息队列中的所有待发送消息 | `/cancel`                                 |
+| `/clear`        | 删除所有任务历史               | `/clear`                                  |
+| `/export`       | 导出当前会话为 HTML 文件       | `/export [文件名]`                        |
+| `/import`       | 导入会话数据                   | `/import [文件名]`                        |
+| `/config`       | 打开系统设置                   | `/config`                                 |
+| `/log`          | 显示日志面板                   | `/log [off\|last\|all]`                   |
+| `/debug`        | 调试命令                       | `/debug log [on\|off]` 或 `/debug taskid` |
+| `/quickpass`    | 导出快捷口令                   | `/quickpass config base\|all`             |
+| `/dashboard`    | 打开仪表盘                     | `/dashboard`                              |
+| `/stop`         | 停止当前正在执行的任务         | `/stop`                                   |
+| `/upgrade`      | 检查并升级 OpenDesk            | `/upgrade`                                |
+| `/rename`       | 重命名当前任务                 | `/rename [新名称]`                        |
+| `/fork`         | 复制当前任务为新任务           | `/fork`                                   |
+| `/recover`      | 从任务文件重建任务列表         | `/recover tasks`                          |
+| `/compact`      | 压缩当前会话上下文             | `/compact`                                |
+| `/memory`       | 管理长期记忆                   | `/memory`                                 |
+| `/bookmark`     | 管理书签                       | `/bookmark`                               |
+| `/notification` | 管理通知设置                   | `/notification`                           |
+| `/undo`         | 回退最近 N 条消息（默认1条）   | `/undo [数量]`                            |
+| `/redo`         | 恢复最近回退的消息             | `/redo`                                   |
+| `/btw`          | 顺便提一下（添加补充信息）     | `/btw [补充内容]`                         |
+| `/manual`       | 打开用户手册                   | `/manual`                                 |
 
 ### 命令详细说明
 
 #### `/new` - 新建任务
+
 ```bash
 /new 分析这个项目
 ```
+
 创建一个新任务并可选地立即发送消息。
 
 #### `/switch` - 切换任务
+
 ```bash
 /switch
 ```
+
 打开任务切换器，显示所有历史任务。您可以选择切换到任意任务，也可以使用 `Delete` 或 `Backspace` 键删除选中的任务。面板底部会显示操作提示。
 
 #### `/export` - 导出会话
+
 ```bash
 /export my-session.html
 ```
+
 将当前会话导出为 HTML 文件。如果不指定文件名，将自动生成带时间戳的文件名。
 
 #### `/log` - 日志控制
+
 ```bash
 /log all    # 显示所有日志
 /log last   # 显示最后 10 条日志
@@ -153,6 +190,7 @@ OpenDesk CLI 提供了丰富的斜杠命令来增强交互体验。在输入框�
 ```
 
 #### `/debug` - 调试命令
+
 ```bash
 /debug log on     # 开启调试日志
 /debug log off    # 关闭调试日志
@@ -161,6 +199,7 @@ OpenDesk CLI 提供了丰富的斜杠命令来增强交互体验。在输入框�
 ```
 
 #### `/quickpass` - 快捷口令
+
 ```bash
 /quickpass config base  # 导出基础设置口令（不含应用配置）
 /quickpass config all   # 导出全部设置口令（含应用配置）
@@ -178,14 +217,14 @@ OpenDesk CLI 提供了丰富的斜杠命令来增强交互体验。在输入框�
 
 OpenDesk CLI 支持以下键盘快捷键：
 
-| 快捷键 | 功能 |
-|--------|------|
-| `Ctrl + N` | 新建任务 |
-| `Ctrl + L` | 切换任务 |
+| 快捷键     | 功能                     |
+| ---------- | ------------------------ |
+| `Ctrl + N` | 新建任务                 |
+| `Ctrl + L` | 切换任务                 |
 | `Ctrl + C` | 清空输入框或显示帮助提示 |
-| `Tab` | 自动补全命令 |
-| `Enter` | 提交输入 |
-| `↑` / `↓` | 浏览历史输入 |
+| `Tab`      | 自动补全命令             |
+| `Enter`    | 提交输入                 |
+| `↑` / `↓`  | 浏览历史输入             |
 
 ---
 
@@ -220,6 +259,7 @@ OpenDesk 的配置保存在用户目录下的配置文件中。具体位置取�
 您可以随时切换到历史任务，继续之前的对话。所有任务的状态和待办事项都会被保存。
 
 在任务切换面板（`/switch` 或 `Ctrl+L`）中：
+
 - **Enter** - 切换到选中的任务
 - **Delete / Backspace** - 删除选中的任务（需确认）
 - **Esc** - 关闭面板
@@ -227,6 +267,74 @@ OpenDesk 的配置保存在用户目录下的配置文件中。具体位置取�
 ### 消息插件自动切换
 
 当消息插件收到新消息时，系统会自动将前台任务切换到消息关联的任务（无论是新创建的还是已有的会话任务），并通过通知系统告知用户收到了来自哪个渠道的新消息。
+
+### 性能分析 (--profile)
+
+使用 `--profile <path>` 参数可以在 `-c` 命令执行完成后生成详细的性能分析报告，帮助分析 Agent 执行过程中各环节的耗时。
+
+```bash
+npm run cli -- -c "分析代码结构" --profile profile.json
+```
+
+#### Profile JSON 格式
+
+生成的 JSON 文件包含以下结构：
+
+```json
+{
+    "version": 1,
+    "task_id": "task_abc12345_x7yz",
+    "total_ms": 45230,
+    "llm_total_ms": 30120,
+    "tool_total_ms": 12500,
+    "overhead_ms": 2610,
+    "turns": [
+        {
+            "turn": 0,
+            "llm_ms": 15060,
+            "tool_ms": 8200,
+            "total_ms": 23260,
+            "tool_calls": [
+                { "name": "readFile", "duration_ms": 120 },
+                { "name": "executeCommand", "duration_ms": 8080 }
+            ]
+        }
+    ],
+    "tool_aggregates": [
+        {
+            "tool_name": "executeCommand",
+            "call_count": 3,
+            "total_ms": 10200,
+            "avg_ms": 3400,
+            "min_ms": 1500,
+            "max_ms": 8080
+        }
+    ],
+    "timeline": [
+        {
+            "category": "llm_completion",
+            "name": "streamComplete",
+            "turn": 0,
+            "start_ms": 1712534400000,
+            "end_ms": 1712534415060,
+            "duration_ms": 15060,
+            "meta": { "prompt_tokens": 1200, "completion_tokens": 350 }
+        }
+    ]
+}
+```
+
+#### 字段说明
+
+| 字段              | 说明                                                        |
+| ----------------- | ----------------------------------------------------------- |
+| `total_ms`        | 任务总耗时（从开始到结束）                                  |
+| `llm_total_ms`    | 大模型推理累计耗时                                          |
+| `tool_total_ms`   | 工具执行累计耗时                                            |
+| `overhead_ms`     | 框架开销时间（= total - llm - tool）                        |
+| `turns`           | 按轮次 (turn) 拆分的汇总，每轮包含 LLM 和工具耗时           |
+| `tool_aggregates` | 按工具名聚合的统计（调用次数、总/平均/最小/最大耗时）       |
+| `timeline`        | 完整的时间线事件列表，包含每次 LLM 调用和工具调用的详细计时 |
 
 ---
 
@@ -269,6 +377,7 @@ AbstractPlatform (基类)
 #### CLI 平台实现
 
 [`CliPlatform`](src/platforms/cli.ts) 类提供了 CLI 特定的平台功能：
+
 - 应用注册 - 注册 CLI 可用的应用程序
 - 路径处理 - 处理文件路径操作
 - Worker 路径 - 返回 CLI Worker 的执行路径
@@ -279,16 +388,16 @@ TUI（文本用户界面）位于 [`src/main/tui/`](src/main/tui/) 目录下：
 
 - **入口类** - [`OpenDeskTUI`](src/main/tui/entry.ts) - 主界面控制器
 - **组件目录** - [`src/main/tui/components/`](src/main/tui/components/) - 各种 UI 组件
-  - [`taskview.ts`](src/main/tui/components/taskview.ts) - 任务视图组件
-  - [`input.ts`](src/main/tui/components/input.ts) - 输入区域组件
-  - [`help.ts`](src/main/tui/components/help.ts) - 帮助组件
-  - [`todolist.ts`](src/main/tui/components/todolist.ts) - 待办列表组件
-  - [`config/`](src/main/tui/components/config/) - 配置界面组件
+    - [`taskview.ts`](src/main/tui/components/taskview.ts) - 任务视图组件
+    - [`input.ts`](src/main/tui/components/input.ts) - 输入区域组件
+    - [`help.ts`](src/main/tui/components/help.ts) - 帮助组件
+    - [`todolist.ts`](src/main/tui/components/todolist.ts) - 待办列表组件
+    - [`config/`](src/main/tui/components/config/) - 配置界面组件
 
 #### 核心状态管理
 
-- [`GlobalState`](src/main/states/global.js) - 全局状态管理
-- [`TaskManagerState`](src/main/states/tasks.ts) - 任务状态管理
+- [`GlobalState`](src/main/aikernel/states/global.ts) - 全局状态管理
+- [`TaskManagerState`](src/main/aikernel/states/tasks.ts) - 任务状态管理
 
 ### 与 Electron GUI 的关系
 
@@ -297,18 +406,18 @@ TUI（文本用户界面）位于 [`src/main/tui/`](src/main/tui/) 目录下：
 CLI 和 Electron GUI 版本共享大量核心组件：
 
 1. **AI 内核** - [`src/main/aikernel/`](src/main/aikernel/) 目录下的所有组件
-   - Agent 系统
-   - LLM 集成
-   - 工具调用系统
-   - 技能系统
+    - Agent 系统
+    - LLM 集成
+    - 工具调用系统
+    - 技能系统
 
 2. **应用程序** - 大部分应用在两个平台都可用
-   - 邮箱应用
-   - 文件管理器
-   - 搜索应用
-   - 终端应用
-   - MCP 管理器
-   - 待办事项管理器
+    - 邮箱应用
+    - 文件管理器
+    - 搜索应用
+    - 终端应用
+    - MCP 管理器
+    - 待办事项管理器
 
 3. **状态管理** - 相同的全局状态和任务管理系统
 
@@ -316,12 +425,12 @@ CLI 和 Electron GUI 版本共享大量核心组件：
 
 #### 平台特定组件
 
-| 组件 | CLI | Electron GUI |
-|------|-----|---------------|
-| 界面渲染 | TUI (pi-tui) | Web (HTML/CSS/JS) |
-| 窗口管理 | 终端控制 | Electron BrowserWindow |
-| 应用列表 | 部分应用 | 全部应用 |
-| 通知系统 | 日志输出 | 原生通知 |
+| 组件     | CLI          | Electron GUI           |
+| -------- | ------------ | ---------------------- |
+| 界面渲染 | TUI (pi-tui) | Web (HTML/CSS/JS)      |
+| 窗口管理 | 终端控制     | Electron BrowserWindow |
+| 应用列表 | 部分应用     | 全部应用               |
+| 通知系统 | 日志输出     | 原生通知               |
 
 #### 应用注册差异
 
@@ -356,12 +465,12 @@ CLI 和 Electron GUI 版本共享大量核心组件：
 
 ```typescript
 this.commandRegistry.register({
-    name: "mycommand",
-    description: "我的自定义命令",
-    shortcut: Key.ctrl("m"), // 可选
+    name: 'mycommand',
+    description: '我的自定义命令',
+    shortcut: Key.ctrl('m'), // 可选
     execute: async (args: string) => {
         // 命令实现
-    },
+    }
 });
 ```
 
@@ -411,12 +520,14 @@ ToolCallView 检查
 ```
 
 显示内容包括：
+
 - 状态图标（等待中/执行中/完成/失败）
 - 工具名称（加粗）
 - 连接点线
 - 状态文本
 
 状态使用 `chalk` 进行颜色渲染：
+
 - 等待中：灰色 `○`
 - 执行中：亮蓝色 `●`
 - 完成：亮绿色 `✔`
@@ -436,13 +547,14 @@ class MyCustomTool extends BaseTool {
             '╭───────────────────────────────────────────────╮',
             '│  My Custom Tool                               │',
             '│  参数: ' + JSON.stringify(toolcall.params) + ' │',
-            '╰───────────────────────────────────────────────╯',
+            '╰───────────────────────────────────────────────╯'
         ];
     }
 }
 ```
 
 **方法签名：**
+
 ```typescript
 renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined
 ```
@@ -454,6 +566,7 @@ renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined
 #### 工具调用数据结构
 
 [`ToolCall`](src/main/aikernel/messages.ts) 对象包含：
+
 - `tool_name`: 工具名称
 - `params`: 工具参数
 - `status`: 状态 ('pending' | 'running' | 'success' | 'error')
@@ -465,12 +578,14 @@ renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined
 [`toolcall.ts`](src/main/tui/components/toolcall.ts) 提供了实用的辅助函数：
 
 **`statusDisplay(status)`** - 将状态字符串转换为带样式的显示对象
+
 ```typescript
-statusDisplay('running')
+statusDisplay('running');
 // 返回: { icon: chalk.blueBright('●'), text: chalk.blueBright('执行中…') }
 ```
 
 **`truncText(str, maxWidth)`** - 截断文本以适应指定宽度
+
 - 自动处理 ANSI 颜色代码
 - 自动处理宽字符
 - 超出部分用 `…` 表示
@@ -489,11 +604,13 @@ statusDisplay('running')
 #### 实际示例
 
 查看现有工具的自定义渲染实现可以参考：
+
 - 终端应用工具
 - 文件管理器工具
 - 其他需要特殊展示的工具
 
 实现自定义渲染时，建议：
+
 1. 使用 `chalk` 进行颜色和样式
 2. 考虑终端宽度限制
 3. 保持与整体 TUI 风格一致
@@ -504,12 +621,15 @@ statusDisplay('running')
 ## 常见问题
 
 ### Q: 如何退出 OpenDesk CLI？
+
 A: 输入 `/exit` 命令，或在输入框为空时按 `Ctrl + C` 然后确认退出。
 
 ### Q: 我的配置保存在哪里？
+
 A: 配置保存在您的用户目录下，具体位置取决于操作系统。
 
 ### Q: 可以同时运行多个 CLI 实例吗？
+
 A: 可以，但建议在不同的工作区目录下运行，以避免配置冲突。
 
 ---
@@ -517,10 +637,11 @@ A: 可以，但建议在不同的工作区目录下运行，以避免配置冲�
 ## 获取帮助
 
 如果您需要更多帮助，可以：
+
 1. 在 CLI 中输入 `/help` 查看帮助信息
 2. 访问 OpenDesk 项目文档
 3. 在 GitCode 上提交 Issue
 
 ---
 
-*祝您使用 OpenDesk CLI 愉快！*
+_祝您使用 OpenDesk CLI 愉快！_

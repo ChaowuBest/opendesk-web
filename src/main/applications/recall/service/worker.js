@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { BaseWorker } from "../../base";
+import { BaseWorker } from '../../base';
 import { logger } from '../../../utils/logger.js';
 import { Monitor, Window } from 'node-screenshots';
 import { SnapshotProcessor } from './snapshot/snapshotProcessor.js';
@@ -33,7 +33,6 @@ import {
 } from './entities/index.js';
 import { RecallRepository, RecallMapper } from './persistence/index.js';
 
-
 /**
  * 生成人类可读的时间戳文件夹名
  * @param {number} captureIndex 捕获索引
@@ -48,14 +47,13 @@ function generateCaptureFolderName(captureIndex) {
     const minute = String(now.getMinutes()).padStart(2, '0');
     const second = String(now.getSeconds()).padStart(2, '0');
     const index = String(captureIndex).padStart(3, '0');
-    
+
     return `${year}${month}${day}_${hour}${minute}${second}_${index}`;
 }
 
 // 实体类已移至 entities/ 目录
 
 class RecallWorker extends BaseWorker {
-
     constructor(bundleName, appDataDirectory) {
         super(bundleName, appDataDirectory);
 
@@ -89,7 +87,7 @@ class RecallWorker extends BaseWorker {
         // 这是一个高频调用的方法（entry.js每2秒调用一次），必须快速返回
         if (this.currentActivity === null) {
             const status = {
-                status: 'idle',
+                status: 'idle'
             };
             return status;
         } else {
@@ -110,13 +108,10 @@ class RecallWorker extends BaseWorker {
      */
     async getHistoryActivities(startTimestamp, endTimestamp) {
         // 使用 Repository 查询
-        const activities = await this.repository.findActivitiesByTimeRange(
-            startTimestamp,
-            endTimestamp
-        );
+        const activities = await this.repository.findActivitiesByTimeRange(startTimestamp, endTimestamp);
 
         // Convert cover.webp files to Base64 data URLs
-        const activitiesWithCovers = activities.map(activity => {
+        const activitiesWithCovers = activities.map((activity) => {
             // 转换为数据库格式（前端需要的格式）
             const activityData = RecallMapper.activityToDb(activity);
 
@@ -142,11 +137,11 @@ class RecallWorker extends BaseWorker {
         });
 
         // 批量获取所有活动的标签
-        const activityIds = activities.map(a => a.activityId);
+        const activityIds = activities.map((a) => a.activityId);
         const tagsResult = await this.getActivitiesAggregatedTags(activityIds);
-        
+
         if (tagsResult.success && tagsResult.tagsMap) {
-            activitiesWithCovers.forEach(activity => {
+            activitiesWithCovers.forEach((activity) => {
                 const tags = tagsResult.tagsMap[activity.activityId] || [];
                 const tagObjects = tagsResult.tagObjectsMap[activity.activityId] || [];
                 activity.tags = tags;
@@ -201,39 +196,41 @@ class RecallWorker extends BaseWorker {
      * @returns {Promise<Array>} 窗口列表
      */
     async getWindowList() {
-        let windows = Window.all();
+        const windows = Window.all();
         const monitors = Monitor.all();
-        let result = []
-        
+        const result = [];
+
         for (const window of windows) {
             if (window.width < 200 || window.height < 200) {
                 continue;
             }
-            
+
             // 尝试确定窗口所在的显示器
             let displayIndex = 0; // 默认显示器0
-            
+
             // 通过窗口位置判断所在显示器
             for (let i = 0; i < monitors.length; i++) {
                 const monitor = monitors[i];
                 // 检查窗口中心点是否在该显示器范围内
                 const windowCenterX = window.x + window.width / 2;
                 const windowCenterY = window.y + window.height / 2;
-                
-                if (windowCenterX >= monitor.x && 
+
+                if (
+                    windowCenterX >= monitor.x &&
                     windowCenterX < monitor.x + monitor.width &&
-                    windowCenterY >= monitor.y && 
-                    windowCenterY < monitor.y + monitor.height) {
+                    windowCenterY >= monitor.y &&
+                    windowCenterY < monitor.y + monitor.height
+                ) {
                     displayIndex = i;
                     break;
                 }
             }
-            
+
             result.push({
                 windowId: window.id,
                 windowTitle: window.title,
                 displayIndex: displayIndex // 添加显示器索引
-            })
+            });
         }
         return result;
     }
@@ -252,7 +249,7 @@ class RecallWorker extends BaseWorker {
      * @param {number} displayIndex 显示器索引
      * @param {Object} config 配置 { captureMode: 'monitor'|'window', targetId: string|null }
      */
-    
+
     async changeDisplayConfig(displayIndex, config) {
         const activity = this.currentActivity;
         if (!activity) return { success: false, message: 'recall capture is not running' };
@@ -270,7 +267,7 @@ class RecallWorker extends BaseWorker {
                 targetId: null
             }));
         }
-        
+
         // 2. 更新特定显示器的基础配置
         Object.assign(activity._displayConfigs[displayIndex], {
             captureMode: config.captureMode,
@@ -281,7 +278,7 @@ class RecallWorker extends BaseWorker {
         const allWindows = Window.all();
         activity._captureTargets = activity._displayConfigs.map((cfg, i) => {
             const isWindowMode = cfg.captureMode === 'window' && cfg.targetId;
-            const targetWindow = isWindowMode ? allWindows.find(w => w.id.toString() === cfg.targetId) : null;
+            const targetWindow = isWindowMode ? allWindows.find((w) => w.id.toString() === cfg.targetId) : null;
 
             // 逻辑批判：如果指定了窗口但找不到，必须有 fallback
             if (isWindowMode && !targetWindow) {
@@ -289,19 +286,21 @@ class RecallWorker extends BaseWorker {
             }
 
             // 统一返回对象结构，消除冗余的 push 语句
-            return (isWindowMode && targetWindow) ? {
-                type: 'window',
-                id: cfg.targetId,
-                name: targetWindow.title,
-                displayIndex: i,
-                enabled: true
-            } : {
-                type: 'monitor',
-                id: `monitor-${i}`,
-                name: `Display ${i + 1}`,
-                displayIndex: i,
-                enabled: true
-            };
+            return isWindowMode && targetWindow
+                ? {
+                      type: 'window',
+                      id: cfg.targetId,
+                      name: targetWindow.title,
+                      displayIndex: i,
+                      enabled: true
+                  }
+                : {
+                      type: 'monitor',
+                      id: `monitor-${i}`,
+                      name: `Display ${i + 1}`,
+                      displayIndex: i,
+                      enabled: true
+                  };
         });
         return { success: true, displayConfigs: activity._displayConfigs };
     }
@@ -313,9 +312,9 @@ class RecallWorker extends BaseWorker {
         if (!this.currentActivity) {
             return { success: false, message: 'recall capture is not running' };
         }
-        
+
         const monitors = Monitor.all();
-        
+
         // 如果没有配置，初始化为默认值（所有显示器捕获自身）
         if (!this.currentActivity._displayConfigs) {
             this.currentActivity._displayConfigs = monitors.map((m, idx) => ({
@@ -324,9 +323,9 @@ class RecallWorker extends BaseWorker {
                 targetId: null
             }));
         }
-        
-        return { 
-            success: true, 
+
+        return {
+            success: true,
             displayConfigs: this.currentActivity._displayConfigs,
             totalDisplays: monitors.length
         };
@@ -345,18 +344,18 @@ class RecallWorker extends BaseWorker {
 
         const activityId = crypto.randomUUID();
         const activityPath = path.join(this.appDataDirectory, 'activities', activityId);
-        
+
         // 初始化捕获目标和显示器配置
         const monitors = Monitor.all();
         let captureTargets = [];
         let displayConfigs = [];
-        
+
         // 优先使用 displayConfigs（多显示器配置）
         if (options.displayConfigs && Array.isArray(options.displayConfigs)) {
             // 使用前端传递的详细配置
             displayConfigs = options.displayConfigs;
-            
-            captureTargets = options.displayConfigs.map(config => {
+
+            captureTargets = options.displayConfigs.map((config) => {
                 if (config.captureMode === 'monitor') {
                     return {
                         type: 'monitor',
@@ -367,7 +366,7 @@ class RecallWorker extends BaseWorker {
                     };
                 } else {
                     // captureMode === 'window'
-                    const window = Window.all().find(w => w.id.toString() === config.targetId);
+                    const window = Window.all().find((w) => w.id.toString() === config.targetId);
                     return {
                         type: 'window',
                         id: config.targetId,
@@ -380,7 +379,7 @@ class RecallWorker extends BaseWorker {
         } else {
             // 兼容旧的 selectedWindowId 模式
             const selectedWindowId = options.selectedWindowId || 'all';
-            
+
             if (selectedWindowId === 'all') {
                 // 录制所有显示器
                 captureTargets = monitors.map((monitor, index) => ({
@@ -397,7 +396,7 @@ class RecallWorker extends BaseWorker {
                 }));
             } else {
                 // 录制特定窗口
-                const window = Window.all().find(w => w.id.toString() === selectedWindowId);
+                const window = Window.all().find((w) => w.id.toString() === selectedWindowId);
                 if (window) {
                     // 普通模式：应用到所有显示器
                     captureTargets = monitors.map((monitor, index) => ({
@@ -429,8 +428,8 @@ class RecallWorker extends BaseWorker {
                 }
             }
         }
-    
-        let tags = options.tags || [];
+
+        const tags = options.tags || [];
 
         // 创建当前活动
         this.currentActivity = new RecallActivity(activityId, activityName, activityPath, {
@@ -438,7 +437,7 @@ class RecallWorker extends BaseWorker {
             type: options.type || 'normal',
             metadata: options.metadata || {}
         });
-        
+
         // 保存 Activity 标签到 Tagging 表（异步）
         if (tags.length > 0) {
             this._pendingActivityTags = tags;
@@ -447,7 +446,7 @@ class RecallWorker extends BaseWorker {
         // 保存运行时配置（不持久化到 Activity 表）
         this.currentActivity._captureStrategy = options.captureStrategy || 'monitor';
         this.currentActivity._displayConfigs = displayConfigs;
-        this.currentActivity._captureInterval = (options.captureInterval || 2000);
+        this.currentActivity._captureInterval = options.captureInterval || 2000;
         this.currentActivity._captureTargets = captureTargets;
 
         // 重置录制会话状态
@@ -459,7 +458,7 @@ class RecallWorker extends BaseWorker {
         } catch (error) {
             logger.error(`error in initial screenshot: ${error.message}`, error);
         }
-        
+
         // 设置定时器处理后续截图
         this.currentActivity._interval = setInterval(async () => {
             try {
@@ -500,7 +499,7 @@ class RecallWorker extends BaseWorker {
         await this.saveActivity(this.currentActivity);
 
         const activityId = this.currentActivity.activityId;
-        this._triggerMemoryGeneration(activityId).catch(error => {
+        this._triggerMemoryGeneration(activityId).catch((error) => {
             logger.error(`[RecallWorker] Failed to trigger memory generation: ${error.message}`);
         });
 
@@ -510,8 +509,8 @@ class RecallWorker extends BaseWorker {
 
     /**
      * 异步触发记忆提取
-     * @param {*} activityId 
-     * @returns 
+     * @param {*} activityId
+     * @returns
      */
     async _triggerMemoryGeneration(activityId) {
         try {
@@ -528,7 +527,7 @@ class RecallWorker extends BaseWorker {
             const pendingSnapshots = await this.repository.findSnapshotsByQuery(
                 {
                     activityId,
-                    hasExtraction: { $ne: 1 }  // 未提取或提取失败的快照
+                    hasExtraction: { $ne: 1 } // 未提取或提取失败的快照
                 },
                 { sort: { createdAt: 1 } }
             );
@@ -541,7 +540,7 @@ class RecallWorker extends BaseWorker {
             logger.info(`[RecallWorker] Found ${pendingSnapshots.length} snapshots to process`);
 
             // 准备处理数据
-            const snapshotsToProcess = pendingSnapshots.map(snapshot => ({
+            const snapshotsToProcess = pendingSnapshots.map((snapshot) => ({
                 snapshotId: snapshot.snapshotId,
                 imagePath: path.join(activity.activityPath, snapshot.imagePath),
                 activityId: snapshot.activityId
@@ -552,7 +551,6 @@ class RecallWorker extends BaseWorker {
 
             // 开始批量处理
             await processor.processSnapshotsMemory(snapshotsToProcess, 5);
-
         } catch (error) {
             logger.error(`[RecallWorker] Memory generation failed: ${error.message}`, error);
         }
@@ -567,7 +565,7 @@ class RecallWorker extends BaseWorker {
             const extractions = await this.repository.findExtractionsBySnapshot(snapshotId);
             return {
                 success: true,
-                extractions: extractions.map(e => RecallMapper.extractionToDb(e))
+                extractions: extractions.map((e) => RecallMapper.extractionToDb(e))
             };
         } catch (error) {
             logger.error(`Failed to get snapshot extractions: ${error.message}`);
@@ -590,7 +588,7 @@ class RecallWorker extends BaseWorker {
 
             return {
                 success: true,
-                extractions: allExtractions.map(e => RecallMapper.extractionToDb(e))
+                extractions: allExtractions.map((e) => RecallMapper.extractionToDb(e))
             };
         } catch (error) {
             logger.error(`Failed to get activity extractions: ${error.message}`);
@@ -620,17 +618,14 @@ class RecallWorker extends BaseWorker {
             for (let i = 0; i < snapshots.length; i++) {
                 const snapshot = snapshots[i];
                 const imagePath = path.join(activityPath, snapshot.imagePath);
-                
+
                 if (!fs.existsSync(imagePath)) continue;
-                
+
                 const imageBuffer = fs.readFileSync(imagePath);
                 const dHash = await ImageAnalyzeManager.calculateImageHash(imageBuffer);
 
                 // 使用 SnapshotProcessor 的业务方法判定关键帧
-                const isKeyframe = await processor.isKeyframe(
-                    { hash: dHash, imagePath },
-                    keyframesList
-                );
+                const isKeyframe = await processor.isKeyframe({ hash: dHash, imagePath }, keyframesList);
 
                 if (isKeyframe) {
                     keyframesList.push({ hash: dHash, imagePath });
@@ -658,9 +653,11 @@ class RecallWorker extends BaseWorker {
             }
 
             // 直接使用内存中的关键帧对象，转换为数据库格式
-            const keyframes = keyframeSnapshots.map(s => {
+            const keyframes = keyframeSnapshots.map((s) => {
                 const mapped = RecallMapper.snapshotToDb(s);
-                logger.debug(`[Worker] Keyframe snapshot: ${s.snapshotId}, isKeyframe: ${s.isKeyframe}, mapped.isKeyframe: ${mapped.isKeyframe}`);
+                logger.debug(
+                    `[Worker] Keyframe snapshot: ${s.snapshotId}, isKeyframe: ${s.isKeyframe}, mapped.isKeyframe: ${mapped.isKeyframe}`
+                );
                 return mapped;
             });
 
@@ -675,11 +672,12 @@ class RecallWorker extends BaseWorker {
                     keyframeCount: keyframeSnapshots.length,
                     'metadata.pdf.completedAt': Date.now()
                 });
-                logger.info(`[Worker] PDF generation completed successfully: ${pdfPath}, keyframes: ${keyframeSnapshots.length}`);
+                logger.info(
+                    `[Worker] PDF generation completed successfully: ${pdfPath}, keyframes: ${keyframeSnapshots.length}`
+                );
             } else {
                 throw new Error('PDF generation returned null path');
             }
-
         } catch (error) {
             logger.error(`[Worker] Background PDF generation failed:`, error);
 
@@ -706,7 +704,9 @@ class RecallWorker extends BaseWorker {
 
         return {
             success: true,
-            thumbnails: this.currentActivity._latestThumbnails.map(buffer => `data:image/webp;base64,${buffer.toString('base64')}`)
+            thumbnails: this.currentActivity._latestThumbnails.map(
+                (buffer) => `data:image/webp;base64,${buffer.toString('base64')}`
+            )
         };
     }
 
@@ -727,11 +727,11 @@ class RecallWorker extends BaseWorker {
             }
 
             // 转换为数据库格式（前端需要的格式）
-            const snapshots = snapshotEntities.map(s => RecallMapper.snapshotToDb(s));
+            const snapshots = snapshotEntities.map((s) => RecallMapper.snapshotToDb(s));
             const activity = RecallMapper.activityToDb(activityEntity);
 
             // 转换为前端可用的格式,并将缩略图转换为 Base64
-            const snapshotsWithPaths = snapshots.map(snapshot => {
+            const snapshotsWithPaths = snapshots.map((snapshot) => {
                 const fullImagePath = path.join(activity.activityPath, snapshot.imagePath);
                 const fullThumbnailPath = path.join(activity.activityPath, snapshot.thumbnailPath);
 
@@ -800,16 +800,16 @@ class RecallWorker extends BaseWorker {
             );
 
             // 转换为数据库格式
-            const snapshots = snapshotEntities.map(s => RecallMapper.snapshotToDb(s));
+            const snapshots = snapshotEntities.map((s) => RecallMapper.snapshotToDb(s));
 
             // 获取所有相关活动信息
-            const activityIds = [...new Set(snapshots.map(s => s.activityId))];
+            const activityIds = [...new Set(snapshots.map((s) => s.activityId))];
             const activityEntities = await this.repository.findActivitiesByIds(activityIds);
-            const activities = activityEntities.map(a => RecallMapper.activityToDb(a));
-            const activityMap = new Map(activities.map(a => [a.activityId, a]));
+            const activities = activityEntities.map((a) => RecallMapper.activityToDb(a));
+            const activityMap = new Map(activities.map((a) => [a.activityId, a]));
 
             // 转换为前端可用的格式,并将缩略图转换为 Base64
-            const snapshotsWithPaths = snapshots.map(snapshot => {
+            const snapshotsWithPaths = snapshots.map((snapshot) => {
                 const activity = activityMap.get(snapshot.activityId);
                 if (!activity) return null;
 
@@ -858,7 +858,7 @@ class RecallWorker extends BaseWorker {
                     isMarked: snapshot.isMarked
                 };
             });
-            const filteredSnapshots = snapshotsWithPaths.filter(s => s !== null);
+            const filteredSnapshots = snapshotsWithPaths.filter((s) => s !== null);
 
             return { success: true, snapshots: filteredSnapshots };
         } catch (error) {
@@ -868,18 +868,18 @@ class RecallWorker extends BaseWorker {
     }
 
     async searchSnapshots(query) {
-        let vecResults = await this.vectorStorage.searchMemories(query);
-        let snapshots = await this.repository.findSnapshotsByIds(vecResults.map(r => r.snapshotId));
-        snapshots = snapshots.map(s => RecallMapper.snapshotToDb(s));
+        const vecResults = await this.vectorStorage.searchMemories(query);
+        let snapshots = await this.repository.findSnapshotsByIds(vecResults.map((r) => r.snapshotId));
+        snapshots = snapshots.map((s) => RecallMapper.snapshotToDb(s));
 
         // 获取所有相关活动信息
-        const activityIds = [...new Set(snapshots.map(s => s.activityId))];
+        const activityIds = [...new Set(snapshots.map((s) => s.activityId))];
         const activityEntities = await this.repository.findActivitiesByIds(activityIds);
-        const activities = activityEntities.map(a => RecallMapper.activityToDb(a));
-        const activityMap = new Map(activities.map(a => [a.activityId, a]));
+        const activities = activityEntities.map((a) => RecallMapper.activityToDb(a));
+        const activityMap = new Map(activities.map((a) => [a.activityId, a]));
 
         // 转换为前端可用的格式,并将缩略图转换为 Base64
-        const snapshotsWithPaths = snapshots.map(snapshot => {
+        const snapshotsWithPaths = snapshots.map((snapshot) => {
             const activity = activityMap.get(snapshot.activityId);
             if (!activity) return null;
 
@@ -928,7 +928,7 @@ class RecallWorker extends BaseWorker {
                 isMarked: snapshot.isMarked
             };
         });
-        const filteredSnapshots = snapshotsWithPaths.filter(s => s !== null);
+        const filteredSnapshots = snapshotsWithPaths.filter((s) => s !== null);
 
         return { success: true, snapshots: filteredSnapshots };
     }
@@ -960,10 +960,10 @@ class RecallWorker extends BaseWorker {
         // 创建本次捕获记录
         const captureId = crypto.randomUUID();
         const captureIndex = this.currentActivity.captureCount;
-        
+
         // 生成人类可读的文件夹名
         const captureFolderName = generateCaptureFolderName(captureIndex);
-        
+
         const capture = new RecallCapture(captureId, this.currentActivity.activityId, captureIndex, {
             captureFolderName: captureFolderName,
             triggerType: 'scheduled',
@@ -981,7 +981,7 @@ class RecallWorker extends BaseWorker {
         let sources = [];
         for (const target of this.currentActivity._captureTargets) {
             if (!target.enabled) continue;
-            
+
             if (target.type === 'monitor') {
                 const monitors = Monitor.all();
                 const monitorIndex = parseInt(target.id.split('-')[1]);
@@ -993,7 +993,7 @@ class RecallWorker extends BaseWorker {
                     });
                 }
             } else if (target.type === 'window') {
-                const window = Window.all().find(w => w.id.toString() === target.id);
+                const window = Window.all().find((w) => w.id.toString() === target.id);
                 if (window) {
                     sources.push({
                         source: window,
@@ -1022,7 +1022,7 @@ class RecallWorker extends BaseWorker {
             }));
         }
 
-        let latestThumbnails = [];
+        const latestThumbnails = [];
         let snapshotCount = 0;
         let totalSize = 0;
 
@@ -1039,14 +1039,15 @@ class RecallWorker extends BaseWorker {
                 const thumbnailPath = path.join(captureDir, thumbnailFileName);
 
                 // 保存原图
-                const finalBuffer = await sharp(pngImage)
-                    .webp({ quality: 70, method: 6 })
-                    .toBuffer();
+                const finalBuffer = await sharp(pngImage).webp({ quality: 70, method: 6 }).toBuffer();
                 fs.writeFileSync(filePath, finalBuffer);
 
                 // 保存缩略图
                 const thumbnailBuffer = await sharp(pngImage)
-                    .resize({ width: Math.floor(image.width / 5), height: Math.floor(image.height / 5) })
+                    .resize({
+                        width: Math.floor(image.width / 5),
+                        height: Math.floor(image.height / 5)
+                    })
                     .webp({ quality: 40, method: 6 })
                     .toBuffer();
                 fs.writeFileSync(thumbnailPath, thumbnailBuffer);
@@ -1086,45 +1087,42 @@ class RecallWorker extends BaseWorker {
 
                 // 创建快照记录
                 const snapshotId = crypto.randomUUID();
-                
+
                 // 根据 target 类型设置 sourceName
                 let sourceName = target.name;
-                
+
                 // 如果是窗口模式，使用窗口标题作为 sourceName
                 if (target.type === 'window') {
-                    const window = Window.all().find(w => w.id.toString() === target.id);
+                    const window = Window.all().find((w) => w.id.toString() === target.id);
                     if (window && window.title) {
                         sourceName = window.title;
                     }
                 }
 
-                const snapshot = new RecallSnapshot(
-                    snapshotId,
-                    captureId,
-                    this.currentActivity.activityId,
-                    {
-                        sourceType: target.type,
-                        sourceId: target.id,
-                        sourceName: sourceName,
-                        sourceIndex: index,
-                        imagePath: path.relative(this.currentActivity.activityPath, filePath),
-                        thumbnailPath: path.relative(this.currentActivity.activityPath, thumbnailPath),
-                        imageFormat: 'webp',
-                        imageWidth: image.width,
-                        imageHeight: image.height,
-                        imageSize: finalBuffer.length,
-                        isKeyframe: false,  // 录制时不标记为关键帧
-                        dHash: currentHash,  // 保存hash值
-                        metadata: {}
-                    }
-                );
+                const snapshot = new RecallSnapshot(snapshotId, captureId, this.currentActivity.activityId, {
+                    sourceType: target.type,
+                    sourceId: target.id,
+                    sourceName: sourceName,
+                    sourceIndex: index,
+                    imagePath: path.relative(this.currentActivity.activityPath, filePath),
+                    thumbnailPath: path.relative(this.currentActivity.activityPath, thumbnailPath),
+                    imageFormat: 'webp',
+                    imageWidth: image.width,
+                    imageHeight: image.height,
+                    imageSize: finalBuffer.length,
+                    isKeyframe: false, // 录制时不标记为关键帧
+                    dHash: currentHash, // 保存hash值
+                    metadata: {}
+                });
 
                 // 保存所有snapshot
                 await this.repository.saveSnapshot(snapshot);
                 snapshotCount++;
                 totalSize += finalBuffer.length;
             } catch (error) {
-                logger.error(`failed to take screenshot for source ${index} (${target.type}: ${target.name}): ${error.message}`);
+                logger.error(
+                    `failed to take screenshot for source ${index} (${target.type}: ${target.name}): ${error.message}`
+                );
             }
         }
 
@@ -1149,7 +1147,7 @@ class RecallWorker extends BaseWorker {
             fs.writeFileSync(coverPath, latestThumbnails[0]);
             this.currentActivity.thumbnailPath = path.relative(this.appDataDirectory, coverPath);
         }
-        
+
         await this.saveActivity(this.currentActivity);
 
         return { success: true, captureId: captureId, snapshotCount: snapshotCount };
@@ -1166,8 +1164,8 @@ class RecallWorker extends BaseWorker {
     async createOrGetTag(tagName, options = {}) {
         try {
             // 1. 先尝试查找现有标签
-            let tag = await this.repository.findTagByName(tagName);
-            
+            const tag = await this.repository.findTagByName(tagName);
+
             if (tag) {
                 // 标签已存在，直接返回
                 return { success: true, tag: RecallMapper.tagToDb(tag) };
@@ -1187,12 +1185,12 @@ class RecallWorker extends BaseWorker {
                     '#EF4444', // red
                     '#14B8A6', // teal
                     '#F97316', // orange
-                    '#06B6D4'  // cyan
+                    '#06B6D4' // cyan
                 ];
 
                 let hash = 0;
                 for (let i = 0; i < tagName.length; i++) {
-                    hash = ((hash << 5) - hash) + tagName.charCodeAt(i);
+                    hash = (hash << 5) - hash + tagName.charCodeAt(i);
                     hash = hash & hash;
                 }
                 const colorIndex = Math.abs(hash) % colorPalette.length;
@@ -1229,7 +1227,7 @@ class RecallWorker extends BaseWorker {
             });
 
             // 转换为数据库格式
-            const tags = tagEntities.map(t => RecallMapper.tagToDb(t));
+            const tags = tagEntities.map((t) => RecallMapper.tagToDb(t));
             return { success: true, tags };
         } catch (error) {
             logger.error(`failed to get all tags: ${error.message}`);
@@ -1255,16 +1253,12 @@ class RecallWorker extends BaseWorker {
             const tagData = tagResult.tag;
 
             // 2. 检查是否已存在关联
-            const existingTagging = await this.repository.findTagging(
-                entityType,
-                entityId,
-                tagName
-            );
+            const existingTagging = await this.repository.findTagging(entityType, entityId, tagName);
 
             if (existingTagging) {
                 logger.debug(`Tagging already exists: ${tagName} → ${entityType}:${entityId}`);
-                return { 
-                    success: true, 
+                return {
+                    success: true,
                     tagging: RecallMapper.taggingToDb(existingTagging),
                     alreadyExists: true
                 };
@@ -1272,14 +1266,7 @@ class RecallWorker extends BaseWorker {
 
             // 3. 创建新关联
             const taggingId = `tagging_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-            const tagging = new RecallTagging(
-                taggingId,
-                tagData.tagId,
-                tagData.tagName,
-                entityType,
-                entityId,
-                options
-            );
+            const tagging = new RecallTagging(taggingId, tagData.tagId, tagData.tagName, entityType, entityId, options);
 
             // 4. 保存关联
             await this.repository.insertTagging(tagging);
@@ -1343,7 +1330,7 @@ class RecallWorker extends BaseWorker {
             );
 
             // 转换为数据库格式
-            const taggings = taggingEntities.map(t => RecallMapper.taggingToDb(t));
+            const taggings = taggingEntities.map((t) => RecallMapper.taggingToDb(t));
             return { success: true, tags: taggings };
         } catch (error) {
             logger.error(`failed to get entity tags: ${error.message}`);
@@ -1365,13 +1352,12 @@ class RecallWorker extends BaseWorker {
             }
 
             // 使用 Repository 查询
-            const taggingEntities = await this.repository.findTaggings(
-                query,
-                { sort: { createdAt: -1 } }
-            );
+            const taggingEntities = await this.repository.findTaggings(query, {
+                sort: { createdAt: -1 }
+            });
 
             // 转换为数据库格式
-            const taggings = taggingEntities.map(t => RecallMapper.taggingToDb(t));
+            const taggings = taggingEntities.map((t) => RecallMapper.taggingToDb(t));
             return { success: true, entities: taggings };
         } catch (error) {
             logger.error(`failed to get entities by tag: ${error.message}`);
@@ -1395,7 +1381,7 @@ class RecallWorker extends BaseWorker {
                 results.push(result);
             }
 
-            const successCount = results.filter(r => r.success).length;
+            const successCount = results.filter((r) => r.success).length;
             return {
                 success: true,
                 added: successCount,
@@ -1464,35 +1450,35 @@ class RecallWorker extends BaseWorker {
 
             // 2. 获取该 Activity 下所有 Capture 的 ID
             const captureEntities = await this.repository.findCapturesByActivity(activityId);
-            const captureIds = captureEntities.map(c => c.captureId);
+            const captureIds = captureEntities.map((c) => c.captureId);
 
             // 3. 获取该 Activity 下所有 Snapshot 的 ID
             const snapshotEntities = await this.repository.findSnapshotsByActivity(activityId);
-            const snapshotIds = snapshotEntities.map(s => s.snapshotId);
+            const snapshotIds = snapshotEntities.map((s) => s.snapshotId);
 
             // 4. 查询所有相关的 Capture 和 Snapshot 标签
             const captureSnapshotTaggingEntities = await this.repository.findTaggingsByEntityQueries([
-                ...captureIds.map(id => ({ entityType: 'capture', entityId: id })),
-                ...snapshotIds.map(id => ({ entityType: 'snapshot', entityId: id }))
+                ...captureIds.map((id) => ({ entityType: 'capture', entityId: id })),
+                ...snapshotIds.map((id) => ({ entityType: 'snapshot', entityId: id }))
             ]);
 
             // 合并所有标签，去重
             const allTaggingEntities = [...activityTaggingEntities, ...captureSnapshotTaggingEntities];
-            const allTaggings = allTaggingEntities.map(t => RecallMapper.taggingToDb(t));
-            const uniqueTagIds = [...new Set(allTaggingEntities.map(t => t.tagId))];
+            const allTaggings = allTaggingEntities.map((t) => RecallMapper.taggingToDb(t));
+            const uniqueTagIds = [...new Set(allTaggingEntities.map((t) => t.tagId))];
 
             // 5. 从 Tag 表获取完整的标签定义（包括颜色、图标等）
             const tagEntities = await this.repository.findTagsByIds(uniqueTagIds);
-            const tags = tagEntities.map(t => RecallMapper.tagToDb(t));
+            const tags = tagEntities.map((t) => RecallMapper.tagToDb(t));
 
             // 创建标签名称数组（向后兼容）
-            const tagNames = tags.map(t => t.tagName);
+            const tagNames = tags.map((t) => t.tagName);
 
             return {
                 success: true,
-                tags: tagNames,        // 标签名称数组（向后兼容）
-                tagObjects: tags,      // 完整的标签对象（包含颜色、图标等）
-                taggings: allTaggings  // 关联记录
+                tags: tagNames, // 标签名称数组（向后兼容）
+                tagObjects: tags, // 完整的标签对象（包含颜色、图标等）
+                taggings: allTaggings // 关联记录
             };
         } catch (error) {
             logger.error(`failed to get activity aggregated tags: ${error.message}`);
@@ -1524,68 +1510,68 @@ class RecallWorker extends BaseWorker {
             // 1. 获取所有 Activity 级别的标签（一次查询）
             const t1 = Date.now();
             const activityTaggingEntities = await this.repository.findTaggingsByActivityIds(activityIds);
-            const activityTaggings = activityTaggingEntities.map(t => RecallMapper.taggingToDb(t));
+            const activityTaggings = activityTaggingEntities.map((t) => RecallMapper.taggingToDb(t));
 
             // 2. 获取所有相关的 Capture
             const t2 = Date.now();
             const captureEntities = await this.repository.findCapturesByActivityIds(activityIds);
-            const captures = captureEntities.map(c => RecallMapper.captureToDb(c));
-            const captureIds = captures.map(c => c.captureId);
-            const captureToActivity = new Map(captures.map(c => [c.captureId, c.activityId]));
+            const captures = captureEntities.map((c) => RecallMapper.captureToDb(c));
+            const captureIds = captures.map((c) => c.captureId);
+            const captureToActivity = new Map(captures.map((c) => [c.captureId, c.activityId]));
 
             // 3. 获取所有相关的 Snapshot
             const t3 = Date.now();
             const snapshotEntities = await this.repository.findSnapshotsByQuery({
                 activityId: { $in: activityIds }
             });
-            const snapshots = snapshotEntities.map(s => RecallMapper.snapshotToDb(s));
-            const snapshotIds = snapshots.map(s => s.snapshotId);
-            const snapshotToActivity = new Map(snapshots.map(s => [s.snapshotId, s.activityId]));
+            const snapshots = snapshotEntities.map((s) => RecallMapper.snapshotToDb(s));
+            const snapshotIds = snapshots.map((s) => s.snapshotId);
+            const snapshotToActivity = new Map(snapshots.map((s) => [s.snapshotId, s.activityId]));
 
             // 4. 获取所有 Capture 和 Snapshot 的标签（一次查询）
             const t4 = Date.now();
             let captureSnapshotTaggings = [];
             if (captureIds.length > 0 || snapshotIds.length > 0) {
                 const captureSnapshotTaggingEntities = await this.repository.findTaggingsByEntityQueries([
-                    ...captureIds.map(id => ({ entityType: 'capture', entityId: id })),
-                    ...snapshotIds.map(id => ({ entityType: 'snapshot', entityId: id }))
+                    ...captureIds.map((id) => ({ entityType: 'capture', entityId: id })),
+                    ...snapshotIds.map((id) => ({ entityType: 'snapshot', entityId: id }))
                 ]);
-                captureSnapshotTaggings = captureSnapshotTaggingEntities.map(t => RecallMapper.taggingToDb(t));
+                captureSnapshotTaggings = captureSnapshotTaggingEntities.map((t) => RecallMapper.taggingToDb(t));
             }
 
             // 5. 收集所有唯一的 tagId
             const t5 = Date.now();
             const allTaggings = [...activityTaggings, ...captureSnapshotTaggings];
-            const uniqueTagIds = [...new Set(allTaggings.map(t => t.tagId))];
+            const uniqueTagIds = [...new Set(allTaggings.map((t) => t.tagId))];
 
             // 6. 从 Tag 表获取完整的标签定义（一次查询）
             const t6 = Date.now();
             let tagObjects = [];
             if (uniqueTagIds.length > 0) {
                 const tagEntities = await this.repository.findTagsByIds(uniqueTagIds);
-                tagObjects = tagEntities.map(t => RecallMapper.tagToDb(t));
+                tagObjects = tagEntities.map((t) => RecallMapper.tagToDb(t));
             }
-            const tagIdToObject = new Map(tagObjects.map(t => [t.tagId, t]));
+            const tagIdToObject = new Map(tagObjects.map((t) => [t.tagId, t]));
 
             // 7. 按 activityId 分组标签
-            activityIds.forEach(activityId => {
+            activityIds.forEach((activityId) => {
                 tagsMap[activityId] = new Set();
                 tagObjectsMap[activityId] = [];
             });
 
             // 添加 Activity 级别的标签
-            activityTaggings.forEach(tagging => {
+            activityTaggings.forEach((tagging) => {
                 if (tagsMap[tagging.entityId]) {
                     tagsMap[tagging.entityId].add(tagging.tagName);
                     const tagObj = tagIdToObject.get(tagging.tagId);
-                    if (tagObj && !tagObjectsMap[tagging.entityId].some(t => t.tagId === tagObj.tagId)) {
+                    if (tagObj && !tagObjectsMap[tagging.entityId].some((t) => t.tagId === tagObj.tagId)) {
                         tagObjectsMap[tagging.entityId].push(tagObj);
                     }
                 }
             });
 
             // 添加 Capture 和 Snapshot 的标签
-            captureSnapshotTaggings.forEach(tagging => {
+            captureSnapshotTaggings.forEach((tagging) => {
                 let activityId;
                 if (tagging.entityType === 'capture') {
                     activityId = captureToActivity.get(tagging.entityId);
@@ -1596,7 +1582,7 @@ class RecallWorker extends BaseWorker {
                 if (activityId && tagsMap[activityId]) {
                     tagsMap[activityId].add(tagging.tagName);
                     const tagObj = tagIdToObject.get(tagging.tagId);
-                    if (tagObj && !tagObjectsMap[activityId].some(t => t.tagId === tagObj.tagId)) {
+                    if (tagObj && !tagObjectsMap[activityId].some((t) => t.tagId === tagObj.tagId)) {
                         tagObjectsMap[activityId].push(tagObj);
                     }
                 }
@@ -1605,19 +1591,21 @@ class RecallWorker extends BaseWorker {
             // 转换 Set 为数组
             const resultTagsMap = {};
             const resultTagObjectsMap = {};
-            Object.keys(tagsMap).forEach(activityId => {
+            Object.keys(tagsMap).forEach((activityId) => {
                 resultTagsMap[activityId] = Array.from(tagsMap[activityId]);
                 resultTagObjectsMap[activityId] = tagObjectsMap[activityId];
             });
 
             const totalTime = Date.now() - startTime;
             if (totalTime > 1000) {
-                logger.warn(`[Worker] ⚠️ Slow getActivitiesAggregatedTags: ${totalTime}ms for ${activityIds.length} activities`);
+                logger.warn(
+                    `[Worker] ⚠️ Slow getActivitiesAggregatedTags: ${totalTime}ms for ${activityIds.length} activities`
+                );
             }
 
             return {
                 success: true,
-                tagsMap: resultTagsMap,           // { activityId: [tagName, ...] }
+                tagsMap: resultTagsMap, // { activityId: [tagName, ...] }
                 tagObjectsMap: resultTagObjectsMap // { activityId: [tagObject, ...] }
             };
         } catch (error) {
@@ -1675,10 +1663,10 @@ class RecallWorker extends BaseWorker {
             if (!result.success) {
                 return result;
             }
-            
+
             const { shell } = require('electron');
             await shell.openPath(result.pdfPath);
-            
+
             return { success: true };
         } catch (error) {
             logger.error(`Failed to open activity PDF: ${error.message}`);
@@ -1760,7 +1748,7 @@ class RecallWorker extends BaseWorker {
         }
 
         // 异步执行完整判重+PDF生成
-        this._processSnapshotsAndGeneratePDF(activityId).catch(error => {
+        this._processSnapshotsAndGeneratePDF(activityId).catch((error) => {
             logger.error(`Failed to generate PDF: ${error.message}`);
         });
 
@@ -1772,13 +1760,9 @@ class RecallWorker extends BaseWorker {
 
     // ==================== 服务生命周期 ====================
 
-    async startService() {
+    async startService() {}
 
-    }
-
-    async stopService() {
-
-    }
+    async stopService() {}
 }
 
 export default RecallWorker;

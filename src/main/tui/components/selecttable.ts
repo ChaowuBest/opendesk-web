@@ -9,7 +9,14 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { type Component, SelectList, visibleWidth, truncateToWidth, type SelectItem, SelectListTheme } from "@mariozechner/pi-tui";
+import {
+    type Component,
+    SelectList,
+    visibleWidth,
+    truncateToWidth,
+    type SelectItem,
+    SelectListTheme
+} from '@mariozechner/pi-tui';
 
 /**
  * 清理文本，移除特殊字符和ANSI转义序列
@@ -33,7 +40,6 @@ function sanitizeText(text: string): string {
     return clean.trim();
 }
 
-
 export interface SelectRow {
     /** 每列的显示标签 */
     labels: string[];
@@ -43,12 +49,11 @@ export interface SelectRow {
     description?: string;
 }
 
-interface InnerSelectRow extends SelectRow, SelectItem { };
+interface InnerSelectRow extends SelectRow, SelectItem {}
 
 type Alignment = 'left' | 'right' | 'center';
 
 export class SelectTable implements Component {
-
     /**
      * 一列的stretchFactor如果为0，则说明这一列不能被拉伸，其内容应当始终保持显示。
      * 如果有多列的stretchFactor不为0，则说明如果还有剩余排版空间的话，应该按照stretchFactor
@@ -67,9 +72,15 @@ export class SelectTable implements Component {
     onCancel?: () => void;
 
     constructor(rows: SelectRow[], maxVisible: number, theme: SelectListTheme) {
-        // 初始化 innerRows，label 先设为空字符串，render 时会更新
-        this.innerRows = rows.map(row => ({ ...row, label: '' }));
-        this.innerList = new SelectList(this.innerRows, maxVisible, theme)
+        // 初始化 innerRows，label 先设为空字符串，render 时会更新。
+        // 注意：不要透传 description。SelectList 会把 description 当作附加信息渲染，
+        // 会导致表格视图出现“意外多出一段文本”的显示异常。
+        this.innerRows = rows.map((row) => ({
+            labels: row.labels,
+            value: row.value,
+            label: ''
+        }));
+        this.innerList = new SelectList(this.innerRows, maxVisible, theme);
         this.stretchFactors = Array(rows[0].labels.length).fill(1);
         this.alignments = Array(rows[0].labels.length).fill('left');
 
@@ -91,7 +102,7 @@ export class SelectTable implements Component {
     }
 
     invalidate(): void {
-        this.innerList.invalidate()
+        this.innerList.invalidate();
     }
 
     reloadInnerList(width: number) {
@@ -127,7 +138,7 @@ export class SelectTable implements Component {
 
         // 如果固定列宽度超过可用宽度，需要按比例缩减固定列
         if (fixedWidth > totalAvailable) {
-            return ["..."]
+            return ['...'];
         }
 
         const availableForStretch = totalAvailable - fixedWidth;
@@ -141,7 +152,9 @@ export class SelectTable implements Component {
             } else {
                 // 可拉伸列：按比例分配
                 if (totalStretchFactor > 0 && availableForStretch > 0) {
-                    const stretchWidth = Math.floor(availableForStretch * this.stretchFactors[col] / totalStretchFactor);
+                    const stretchWidth = Math.floor(
+                        (availableForStretch * this.stretchFactors[col]) / totalStretchFactor
+                    );
                     colWidths.push(Math.max(1, stretchWidth));
                 } else {
                     colWidths.push(1);

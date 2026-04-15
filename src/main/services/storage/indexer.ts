@@ -84,10 +84,7 @@ export abstract class Indexer {
      * @param options - 搜索选项，包括用于 join 的已有结果
      * @returns 搜索结果
      */
-    abstract search(
-        conditions: FilterCondition[],
-        options?: IndexerSearchOptions
-    ): Promise<IndexerSearchResult>;
+    abstract search(conditions: FilterCondition[], options?: IndexerSearchOptions): Promise<IndexerSearchResult>;
 
     /**
      * 向索引中插入 Item
@@ -111,9 +108,26 @@ export abstract class Indexer {
     abstract update(items: Item[]): Promise<void>;
 
     /**
+     * 覆盖写入 Item（存在则覆盖，不存在则新建）
+     *
+     * @param items - 要写入的 Item 数组
+     */
+    abstract upsert(items: Item[]): Promise<void>;
+
+    /**
      * 关闭/清理索引器
      */
     abstract close(): void;
+
+    /**
+     * 清空该索引的所有数据
+     */
+    abstract clear(): Promise<void>;
+
+    /**
+     * 返回索引状态信息（至少包含 { size: number }）
+     */
+    abstract getInfo(): Promise<Record<string, any>>;
 
     /**
      * 检查是否支持指定操作符

@@ -12,7 +12,6 @@
 import { AgentOperableHTMLElement } from '../../widget_utils.js';
 import { ElasticToolbarWidget } from '../../../../renderer/components/toolbar.ts';
 
-
 class FileMgrEntryWidget extends AgentOperableHTMLElement {
     constructor() {
         super();
@@ -87,17 +86,19 @@ class FileMgrEntryWidget extends AgentOperableHTMLElement {
 
         const toolbarButtons = [
             {
-                id: 'filemgr-reset-btn', icon: 'fa-redo-alt', label: '重置文件系统',
+                id: 'filemgr-reset-btn',
+                icon: 'fa-redo-alt',
+                label: '重置文件系统',
                 action: async () => {
-                    if (confirm("请确认是否要重置存储系统？这将清空现有的索引")) {
-                        await window.applicationAPI.call("resetFileSystemStorage")
+                    if (confirm('请确认是否要重置存储系统？这将清空现有的索引')) {
+                        await window.applicationAPI.call('resetFileSystemStorage');
                         await this.reloadFileSystemStatus();
                     }
                 }
-            },
+            }
         ];
 
-        this.querySelector("#filemgr-main-toolbar").appendChild(new ElasticToolbarWidget(toolbarButtons));
+        this.querySelector('#filemgr-main-toolbar').appendChild(new ElasticToolbarWidget(toolbarButtons));
 
         this.reloadFileSystemStatus();
         this.reloadInterval = setInterval(() => {
@@ -109,7 +110,7 @@ class FileMgrEntryWidget extends AgentOperableHTMLElement {
         const fileSystemStatusCards = this.querySelector('#file-system-status-cards');
         const fileSystemStatus = await window.applicationAPI.call('getFileSystemStatus');
 
-        var fileSystemStatusHTML = '';
+        let fileSystemStatusHTML = '';
         switch (fileSystemStatus.status) {
             case 'running':
                 fileSystemStatusHTML = `
@@ -175,10 +176,10 @@ class FileMgrEntryWidget extends AgentOperableHTMLElement {
         fileSystemStatusCards.innerHTML = statusHTML;
 
         const sourceList = this.querySelector('#filemgr-source-list');
-        var sourceListHTML = '';
+        let sourceListHTML = '';
         console.info(fileSystemStatus);
         for (const scanner of fileSystemStatus.scanners) {
-            var lastFullScanTime = '--';
+            let lastFullScanTime = '--';
             const now = Date.now();
             const last = scanner.lastFullScan;
             if (last) {

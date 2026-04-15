@@ -14,25 +14,15 @@ import { ToolCall } from '../../aikernel/messages.js';
 import { z } from 'zod';
 import fs from 'fs';
 import pathLib from 'path';
-import {
-    getPendingRequests,
-    getApprovedUsers,
-    approveUser,
-    revokeUser,
-    removePairingRequest,
-} from './pairing.js';
+import { getPendingRequests, getApprovedUsers, approveUser, revokeUser, removePairingRequest } from './pairing.js';
 import type { ChannelMgrApplication } from './app.js';
 import {
     installPlugin,
     uninstallPlugin,
     listInstalledPlugins,
-    setPluginEnabled,
+    setPluginEnabled
 } from '../../aikernel/plugins/index.js';
-import {
-    feishuAuthInit,
-    feishuAuthBegin,
-    feishuAuthPoll,
-} from './feishu-auth.js';
+import { feishuAuthInit, feishuAuthBegin, feishuAuthPoll } from './feishu-auth.js';
 import { logger } from '../../utils/logger.js';
 import chalk from 'chalk';
 import qrcodeTerminal from 'qrcode-terminal';
@@ -40,7 +30,7 @@ import qrcodeTerminal from 'qrcode-terminal';
 // ── List Pairing Requests ───────────────────────────────────────────────────
 
 const ListPairingRequestsSchema = z.object({
-    channel: z.string().optional().describe('Filter by channel name, e.g. "feishu". Omit to show all channels.'),
+    channel: z.string().optional().describe('Filter by channel name, e.g. "feishu". Omit to show all channels.')
 });
 
 export class ListPairingRequestsTool extends BaseTool<typeof ListPairingRequestsSchema> {
@@ -48,7 +38,7 @@ export class ListPairingRequestsTool extends BaseTool<typeof ListPairingRequests
         super(
             'listPairingRequests',
             'List all pending pairing requests from external users. Shows user ID, display name, channel, and pairing code.',
-            ListPairingRequestsSchema,
+            ListPairingRequestsSchema
         );
         this.setExecutor(this.run.bind(this));
     }
@@ -58,8 +48,9 @@ export class ListPairingRequestsTool extends BaseTool<typeof ListPairingRequests
         if (requests.length === 0) {
             return '当前没有待审批的配对请求。';
         }
-        const lines = requests.map((r, i) =>
-            `${i + 1}. 用户ID: ${r.id}\n   名称: ${r.meta?.name || '未知'}\n   渠道: ${r.channel}\n   账户: ${r.accountId}\n   配对码: ${r.code}\n   请求时间: ${r.createdAt}`,
+        const lines = requests.map(
+            (r, i) =>
+                `${i + 1}. 用户ID: ${r.id}\n   名称: ${r.meta?.name || '未知'}\n   渠道: ${r.channel}\n   账户: ${r.accountId}\n   配对码: ${r.code}\n   请求时间: ${r.createdAt}`
         );
         return `共 ${requests.length} 个待审批的配对请求：\n\n${lines.join('\n\n')}`;
     }
@@ -70,7 +61,7 @@ export class ListPairingRequestsTool extends BaseTool<typeof ListPairingRequests
 const ApprovePairingSchema = z.object({
     userId: z.string().describe('The user ID to approve (shown in pairing request list)'),
     channel: z.string().describe('The channel name, e.g. "feishu"'),
-    accountId: z.string().default('default').describe('The account ID, defaults to "default"'),
+    accountId: z.string().default('default').describe('The account ID, defaults to "default"')
 });
 
 export class ApprovePairingTool extends BaseTool<typeof ApprovePairingSchema> {
@@ -78,17 +69,17 @@ export class ApprovePairingTool extends BaseTool<typeof ApprovePairingSchema> {
         super(
             'approvePairing',
             'Approve a pending pairing request. The user will then be able to send messages that are routed to the agent.',
-            ApprovePairingSchema,
+            ApprovePairingSchema
         );
         this.setExecutor(this.run.bind(this));
     }
 
     private async run(args: z.infer<typeof ApprovePairingSchema>): Promise<string> {
         const pending = getPendingRequests(args.channel, args.accountId);
-        const match = pending.find(r => r.id === args.userId);
+        const match = pending.find((r) => r.id === args.userId);
         if (!match) {
             const approved = getApprovedUsers(args.channel, args.accountId);
-            if (approved.some(u => u.id === args.userId)) {
+            if (approved.some((u) => u.id === args.userId)) {
                 return `用户 ${args.userId} 已经是已配对状态，无需重复审批。`;
             }
         }
@@ -103,7 +94,7 @@ export class ApprovePairingTool extends BaseTool<typeof ApprovePairingSchema> {
 const RevokePairingSchema = z.object({
     userId: z.string().describe('The user ID to revoke or reject'),
     channel: z.string().describe('The channel name, e.g. "feishu"'),
-    accountId: z.string().default('default').describe('The account ID, defaults to "default"'),
+    accountId: z.string().default('default').describe('The account ID, defaults to "default"')
 });
 
 export class RevokePairingTool extends BaseTool<typeof RevokePairingSchema> {
@@ -111,7 +102,7 @@ export class RevokePairingTool extends BaseTool<typeof RevokePairingSchema> {
         super(
             'revokePairing',
             'Revoke an approved user or reject a pending pairing request. The user will no longer be able to send messages.',
-            RevokePairingSchema,
+            RevokePairingSchema
         );
         this.setExecutor(this.run.bind(this));
     }
@@ -133,16 +124,12 @@ export class RevokePairingTool extends BaseTool<typeof RevokePairingSchema> {
 // ── List Approved Users ─────────────────────────────────────────────────────
 
 const ListApprovedUsersSchema = z.object({
-    channel: z.string().optional().describe('Filter by channel name. Omit to show all channels.'),
+    channel: z.string().optional().describe('Filter by channel name. Omit to show all channels.')
 });
 
 export class ListApprovedUsersTool extends BaseTool<typeof ListApprovedUsersSchema> {
     constructor() {
-        super(
-            'listApprovedUsers',
-            'List all approved/paired users across all channels.',
-            ListApprovedUsersSchema,
-        );
+        super('listApprovedUsers', 'List all approved/paired users across all channels.', ListApprovedUsersSchema);
         this.setExecutor(this.run.bind(this));
     }
 
@@ -151,8 +138,9 @@ export class ListApprovedUsersTool extends BaseTool<typeof ListApprovedUsersSche
         if (users.length === 0) {
             return '当前没有已配对的用户。';
         }
-        const lines = users.map((u, i) =>
-            `${i + 1}. 用户ID: ${u.id}\n   名称: ${u.meta?.name || '未知'}\n   渠道: ${u.channel}\n   账户: ${u.accountId}\n   批准时间: ${u.approvedAt}`,
+        const lines = users.map(
+            (u, i) =>
+                `${i + 1}. 用户ID: ${u.id}\n   名称: ${u.meta?.name || '未知'}\n   渠道: ${u.channel}\n   账户: ${u.accountId}\n   批准时间: ${u.approvedAt}`
         );
         return `共 ${users.length} 个已配对用户：\n\n${lines.join('\n\n')}`;
     }
@@ -169,7 +157,7 @@ export class ListChannelStatusTool extends BaseTool<typeof ListChannelStatusSche
         super(
             'listChannelStatus',
             'List all channel plugins and their current connection status.',
-            ListChannelStatusSchema,
+            ListChannelStatusSchema
         );
         this.app = app;
         this.setExecutor(this.run.bind(this));
@@ -193,7 +181,7 @@ export class ListChannelStatusTool extends BaseTool<typeof ListChannelStatusSche
 // ── Plugin Management Tools (for configure-channels skill) ──────────────────
 
 const InstallChannelPluginSchema = z.object({
-    spec: z.string().describe('要安装的插件包名或 URL，例如 "@openclaw/feishu" 或 .tgz 文件的下载链接'),
+    spec: z.string().describe('要安装的插件包名或 URL，例如 "@openclaw/feishu" 或 .tgz 文件的下载链接')
 });
 
 export class InstallChannelPluginTool extends BaseTool<typeof InstallChannelPluginSchema> {
@@ -203,7 +191,7 @@ export class InstallChannelPluginTool extends BaseTool<typeof InstallChannelPlug
         super(
             'installChannelPlugin',
             'Install a channel plugin by npm package name or .tgz URL. Example: "@openclaw/feishu"',
-            InstallChannelPluginSchema,
+            InstallChannelPluginSchema
         );
         this.app = app;
         this.setExecutor(this.run.bind(this));
@@ -220,7 +208,7 @@ export class InstallChannelPluginTool extends BaseTool<typeof InstallChannelPlug
 }
 
 const UninstallChannelPluginSchema = z.object({
-    id: z.string().describe('要卸载的插件 ID（可通过 listChannelPlugins 工具获取）'),
+    id: z.string().describe('要卸载的插件 ID（可通过 listChannelPlugins 工具获取）')
 });
 
 export class UninstallChannelPluginTool extends BaseTool<typeof UninstallChannelPluginSchema> {
@@ -230,7 +218,7 @@ export class UninstallChannelPluginTool extends BaseTool<typeof UninstallChannel
         super(
             'uninstallChannelPlugin',
             'Uninstall a previously installed channel plugin by its ID.',
-            UninstallChannelPluginSchema,
+            UninstallChannelPluginSchema
         );
         this.app = app;
         this.setExecutor(this.run.bind(this));
@@ -253,7 +241,7 @@ export class ListChannelPluginsTool extends BaseTool<typeof ListChannelPluginsSc
         super(
             'listChannelPlugins',
             'List all installed channel plugins with their status (enabled/disabled).',
-            ListChannelPluginsSchema,
+            ListChannelPluginsSchema
         );
         this.setExecutor(this.run.bind(this));
     }
@@ -273,7 +261,7 @@ export class ListChannelPluginsTool extends BaseTool<typeof ListChannelPluginsSc
 
 const ToggleChannelPluginSchema = z.object({
     id: z.string().describe('插件 ID'),
-    enabled: z.boolean().describe('true 为启用，false 为禁用'),
+    enabled: z.boolean().describe('true 为启用，false 为禁用')
 });
 
 export class ToggleChannelPluginTool extends BaseTool<typeof ToggleChannelPluginSchema> {
@@ -283,7 +271,7 @@ export class ToggleChannelPluginTool extends BaseTool<typeof ToggleChannelPlugin
         super(
             'toggleChannelPlugin',
             'Enable or disable a channel plugin. Takes effect immediately.',
-            ToggleChannelPluginSchema,
+            ToggleChannelPluginSchema
         );
         this.app = app;
         this.setExecutor(this.run.bind(this));
@@ -302,7 +290,9 @@ export class ToggleChannelPluginTool extends BaseTool<typeof ToggleChannelPlugin
 
 const SetChannelConfigSchema = z.object({
     channelId: z.string().describe('消息渠道的 ID，例如 "feishu"'),
-    config: z.any().describe('要设置的渠道配置 JSON 对象，将写入 settings.json 的 applications.channelmgr.<channelId> 中'),
+    config: z
+        .any()
+        .describe('要设置的渠道配置 JSON 对象，将写入 settings.json 的 applications.channelmgr.<channelId> 中')
 });
 
 export class SetChannelConfigTool extends BaseTool<typeof SetChannelConfigSchema> {
@@ -312,7 +302,7 @@ export class SetChannelConfigTool extends BaseTool<typeof SetChannelConfigSchema
         super(
             'setChannelConfig',
             'Set the configuration for a channel plugin. The config will be saved to settings.json under applications.channelmgr.<channelId>.',
-            SetChannelConfigSchema,
+            SetChannelConfigSchema
         );
         this.app = app;
         this.setExecutor(this.run.bind(this));
@@ -323,7 +313,7 @@ export class SetChannelConfigTool extends BaseTool<typeof SetChannelConfigSchema
             const currentConfig = this.app.getConfig() || {};
             const updatedConfig = {
                 ...currentConfig,
-                [args.channelId]: args.config,
+                [args.channelId]: args.config
             };
             this.app.setConfig(updatedConfig);
             await this.app.reloadChannels();
@@ -335,7 +325,7 @@ export class SetChannelConfigTool extends BaseTool<typeof SetChannelConfigSchema
 }
 
 const GetChannelConfigSchema = z.object({
-    channelId: z.string().describe('消息渠道的 ID，例如 "feishu"'),
+    channelId: z.string().describe('消息渠道的 ID，例如 "feishu"')
 });
 
 export class GetChannelConfigTool extends BaseTool<typeof GetChannelConfigSchema> {
@@ -345,7 +335,7 @@ export class GetChannelConfigTool extends BaseTool<typeof GetChannelConfigSchema
         super(
             'getChannelConfig',
             'Get the configuration JSON for a specific channel plugin. Useful for debugging.',
-            GetChannelConfigSchema,
+            GetChannelConfigSchema
         );
         this.app = app;
         this.setExecutor(this.run.bind(this));
@@ -380,8 +370,12 @@ export interface LoginChannelState {
 }
 
 const LoginChannelSchema = z.object({
-    channelId: z.string().describe('消息渠道的 ID。有效值：\n  - "openclaw-weixin"（微信）\n  - "feishu"（飞书）\n  - "zalouser"（Zalo）\n  - "whatsapp"（WhatsApp）\n注意：微信的 ID 是 "openclaw-weixin"，不是 "weixin" 或 "tencent-weixin"'),
-    accountId: z.string().default('default').describe('账户 ID，默认为 "default"'),
+    channelId: z
+        .string()
+        .describe(
+            '消息渠道的 ID。有效值：\n  - "openclaw-weixin"（微信）\n  - "feishu"（飞书）\n  - "zalouser"（Zalo）\n  - "whatsapp"（WhatsApp）\n注意：微信的 ID 是 "openclaw-weixin"，不是 "weixin" 或 "tencent-weixin"'
+        ),
+    accountId: z.string().default('default').describe('账户 ID，默认为 "default"')
 });
 
 export class LoginChannelTool extends BaseTool<typeof LoginChannelSchema> {
@@ -391,7 +385,7 @@ export class LoginChannelTool extends BaseTool<typeof LoginChannelSchema> {
         super(
             'loginChannel',
             '触发消息渠道的登录流程。支持的 channelId：\n  - "openclaw-weixin"：微信登录（扫码）\n  - "feishu"：飞书登录（扫码创建机器人）\n  - "zalouser"：Zalo 登录（扫码）\n  - "whatsapp"：WhatsApp 登录（扫码）\n登录成功后会返回结果。注意：微信 channelId 必须使用 "openclaw-weixin"。',
-            LoginChannelSchema,
+            LoginChannelSchema
         );
         this.app = app;
         this.setUniversalExecutor(this.run.bind(this));
@@ -414,9 +408,13 @@ export class LoginChannelTool extends BaseTool<typeof LoginChannelSchema> {
                     <div class="h-2 w-2 rounded-full bg-blue-500 animate-pulse ring-4 ring-blue-100/50"></div>
                     ${channelLabel} 扫码登录
                 </div>
-                ${qrImageUrl ? `<div class="flex justify-center p-3 bg-white rounded-xl border border-slate-100">
+                ${
+                    qrImageUrl
+                        ? `<div class="flex justify-center p-3 bg-white rounded-xl border border-slate-100">
                     <img src="${qrImageUrl}" alt="${channelLabel} 二维码" width="200" height="200" style="display: block;" />
-                </div>` : ''}
+                </div>`
+                        : ''
+                }
                 <p class="text-xs text-slate-500 mt-3 text-center">请使用对应 App 扫描上方二维码</p>
                 ${escUrl ? `<a href="${escUrl}" target="_blank" class="block mt-2 text-xs text-blue-500 hover:text-blue-600 text-center break-all">${escUrl}</a>` : ''}
                 <div class="flex items-center justify-center gap-1.5 mt-3">
@@ -440,7 +438,7 @@ export class LoginChannelTool extends BaseTool<typeof LoginChannelSchema> {
                     <div class="h-2.5 w-2.5 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.6)]"></div>
                     登录成功
                 </div>
-                <div class="text-xs text-slate-600 space-y-1">${lines.map(l => `<p>${this.escHtml(l)}</p>`).join('')}</div>
+                <div class="text-xs text-slate-600 space-y-1">${lines.map((l) => `<p>${this.escHtml(l)}</p>`).join('')}</div>
             </div>`;
         }
 
@@ -500,7 +498,11 @@ export class LoginChannelTool extends BaseTool<typeof LoginChannelSchema> {
 
         logger.info(`[loginChannel] channel=${channelId}, account=${accountId}`);
 
-        result.updateResultObject({ phase: 'init', channelId, accountId } satisfies LoginChannelState);
+        result.updateResultObject({
+            phase: 'init',
+            channelId,
+            accountId
+        } satisfies LoginChannelState);
 
         try {
             // 尝试通过 ChannelMgrApplication 执行登录
@@ -513,7 +515,7 @@ export class LoginChannelTool extends BaseTool<typeof LoginChannelSchema> {
                     accountId,
                     message: loginResult.message,
                     appId: loginResult.appId,
-                    appSecret: loginResult.appSecret,
+                    appSecret: loginResult.appSecret
                 } satisfies LoginChannelState);
                 result.updateResult(loginResult.message || `${channelId} 登录成功`);
             } else if (loginResult.phase === 'error') {
@@ -521,7 +523,7 @@ export class LoginChannelTool extends BaseTool<typeof LoginChannelSchema> {
                     phase: 'error',
                     channelId,
                     accountId,
-                    error: loginResult.error,
+                    error: loginResult.error
                 } satisfies LoginChannelState);
                 throw new Error(loginResult.error);
             }
@@ -530,7 +532,7 @@ export class LoginChannelTool extends BaseTool<typeof LoginChannelSchema> {
                 phase: 'error',
                 channelId,
                 accountId,
-                error: err?.message || String(err),
+                error: err?.message || String(err)
             } satisfies LoginChannelState);
             throw err;
         }
@@ -562,7 +564,7 @@ export class CreateFeishuBotTool extends BaseTool<typeof CreateFeishuBotSchema> 
         super(
             'createFeishuBot',
             '通过手机扫码一键创建飞书机器人。会在界面上生成二维码供用户使用飞书 App 扫描，扫码完成后自动创建飞书应用并返回 App ID、App Secret 和用户 Open ID。',
-            CreateFeishuBotSchema,
+            CreateFeishuBotSchema
         );
         this.setUniversalExecutor(this.run.bind(this));
     }
@@ -598,9 +600,7 @@ export class CreateFeishuBotTool extends BaseTool<typeof CreateFeishuBotSchema> 
         }
 
         if (state.phase === 'success') {
-            const masked = state.appSecret
-                ? state.appSecret.slice(0, 6) + '****' + state.appSecret.slice(-4)
-                : '';
+            const masked = state.appSecret ? state.appSecret.slice(0, 6) + '****' + state.appSecret.slice(-4) : '';
             return `
             <div class="mt-3 mb-3 p-5 bg-white/90 backdrop-blur-md border border-emerald-200 rounded-2xl shadow-sm" style="max-width: 320px;">
                 <div class="text-sm font-semibold text-emerald-700 mb-3 flex items-center gap-2">
@@ -661,7 +661,7 @@ export class CreateFeishuBotTool extends BaseTool<typeof CreateFeishuBotSchema> 
                 '  ✅ 飞书机器人创建成功！',
                 `     App ID:     ${state.appId}`,
                 `     App Secret: ${state.appSecret ? state.appSecret.slice(0, 6) + '****' : ''}`,
-                `     Open ID:    ${state.openId || 'N/A'}`,
+                `     Open ID:    ${state.openId || 'N/A'}`
             ];
         }
 
@@ -683,7 +683,10 @@ export class CreateFeishuBotTool extends BaseTool<typeof CreateFeishuBotSchema> 
         logger.info(`[createFeishuBot] init response: ${JSON.stringify(initRes)}`);
 
         if (!initRes.supported_auth_methods?.includes('client_secret')) {
-            const errState: FeishuBotToolState = { phase: 'error', error: '当前飞书环境不支持扫码创建机器人 (client_secret 方式不可用)' };
+            const errState: FeishuBotToolState = {
+                phase: 'error',
+                error: '当前飞书环境不支持扫码创建机器人 (client_secret 方式不可用)'
+            };
             result.updateResultObject(errState);
             throw new Error(errState.error);
         }
@@ -691,12 +694,17 @@ export class CreateFeishuBotTool extends BaseTool<typeof CreateFeishuBotSchema> 
         // Step 2: Begin — get device_code and QR code URL
         logger.info('[createFeishuBot] Step 2: begin');
         const beginRes = await feishuAuthBegin();
-        logger.info(`[createFeishuBot] begin response: device_code=${beginRes.device_code}, interval=${beginRes.interval}, expire_in=${beginRes.expire_in ?? beginRes.expires_in}`);
+        logger.info(
+            `[createFeishuBot] begin response: device_code=${beginRes.device_code}, interval=${beginRes.interval}, expire_in=${beginRes.expire_in ?? beginRes.expires_in}`
+        );
 
         const deviceCode = beginRes.device_code;
         const verificationUrl = beginRes.verification_uri_complete;
         if (!deviceCode || !verificationUrl) {
-            const errState: FeishuBotToolState = { phase: 'error', error: `飞书 begin 返回异常: device_code=${deviceCode}, uri=${verificationUrl}` };
+            const errState: FeishuBotToolState = {
+                phase: 'error',
+                error: `飞书 begin 返回异常: device_code=${deviceCode}, uri=${verificationUrl}`
+            };
             result.updateResultObject(errState);
             throw new Error(errState.error);
         }
@@ -723,7 +731,7 @@ export class CreateFeishuBotTool extends BaseTool<typeof CreateFeishuBotSchema> 
         const qrState: FeishuBotToolState = {
             phase: 'qr_code',
             qr_ascii: qrAscii,
-            verification_url: verificationUrl,
+            verification_url: verificationUrl
         };
         result.updateResultObject(qrState);
 
@@ -734,7 +742,7 @@ export class CreateFeishuBotTool extends BaseTool<typeof CreateFeishuBotSchema> 
         logger.info(`[createFeishuBot] Step 4: polling, interval=${currentInterval}s, deadline=${deadlineMs}ms`);
 
         while (Date.now() - startTime < deadlineMs) {
-            await new Promise(resolve => setTimeout(resolve, currentInterval * 1000));
+            await new Promise((resolve) => setTimeout(resolve, currentInterval * 1000));
 
             let pollRes;
             try {
@@ -751,14 +759,16 @@ export class CreateFeishuBotTool extends BaseTool<typeof CreateFeishuBotSchema> 
                     phase: 'success',
                     appId: pollRes.client_id,
                     appSecret: pollRes.client_secret,
-                    openId: pollRes.user_info?.open_id || '',
+                    openId: pollRes.user_info?.open_id || ''
                 };
                 result.updateResultObject(successState);
-                result.updateResult(JSON.stringify({
-                    appId: successState.appId,
-                    appSecret: successState.appSecret,
-                    openId: successState.openId,
-                }));
+                result.updateResult(
+                    JSON.stringify({
+                        appId: successState.appId,
+                        appSecret: successState.appSecret,
+                        openId: successState.openId
+                    })
+                );
                 logger.info(`[createFeishuBot] 机器人创建成功: ${successState.appId}`);
                 return;
             }
@@ -769,11 +779,17 @@ export class CreateFeishuBotTool extends BaseTool<typeof CreateFeishuBotSchema> 
                 } else if (pollRes.error === 'slow_down') {
                     currentInterval += 5;
                 } else if (pollRes.error === 'access_denied') {
-                    const errState: FeishuBotToolState = { phase: 'error', error: '用户拒绝了授权，机器人未创建。' };
+                    const errState: FeishuBotToolState = {
+                        phase: 'error',
+                        error: '用户拒绝了授权，机器人未创建。'
+                    };
                     result.updateResultObject(errState);
                     throw new Error(errState.error);
                 } else if (pollRes.error === 'expired_token') {
-                    const errState: FeishuBotToolState = { phase: 'error', error: '二维码已过期，请重新调用此工具重试。' };
+                    const errState: FeishuBotToolState = {
+                        phase: 'error',
+                        error: '二维码已过期，请重新调用此工具重试。'
+                    };
                     result.updateResultObject(errState);
                     throw new Error(errState.error);
                 } else {
@@ -786,7 +802,10 @@ export class CreateFeishuBotTool extends BaseTool<typeof CreateFeishuBotSchema> 
         }
 
         // Timeout
-        const errState: FeishuBotToolState = { phase: 'error', error: '等待超时，二维码已过期。请重新调用此工具重试。' };
+        const errState: FeishuBotToolState = {
+            phase: 'error',
+            error: '等待超时，二维码已过期。请重新调用此工具重试。'
+        };
         result.updateResultObject(errState);
         throw new Error(errState.error);
     }
@@ -802,7 +821,7 @@ export const SEND_FILE_TOOL_NAME = 'channel-outbound-SendFile';
 
 const SendFileSchema = z.object({
     filePath: z.string().describe('要发送的文件的绝对路径'),
-    fileName: z.string().optional().describe('可选的文件显示名称，默认使用文件本身的名字'),
+    fileName: z.string().optional().describe('可选的文件显示名称，默认使用文件本身的名字')
 });
 
 export class SendFileTool extends BaseTool<typeof SendFileSchema> {
@@ -810,7 +829,7 @@ export class SendFileTool extends BaseTool<typeof SendFileSchema> {
         super(
             'SendFile',
             '发送文件给用户。在消息渠道中该文件会作为附件发送，而非以文本形式发送文件内容。',
-            SendFileSchema,
+            SendFileSchema
         );
         this.setExecutor(this.run.bind(this));
     }
@@ -854,13 +873,19 @@ export class SendFileTool extends BaseTool<typeof SendFileSchema> {
         const ext = name.includes('.') ? name.split('.').pop()!.toUpperCase() : 'FILE';
 
         if (toolcall.status === 'running') {
-            return [`  ${chalk.blueBright('●')} ${chalk.dim('📤')} ${chalk.bold(name)} ${chalk.dim('·')} ${chalk.dim('发送中...')}`];
+            return [
+                `  ${chalk.blueBright('●')} ${chalk.dim('📤')} ${chalk.bold(name)} ${chalk.dim('·')} ${chalk.dim('发送中...')}`
+            ];
         }
         if (toolcall.status === 'success') {
-            return [`  ${chalk.greenBright('✔')} ${chalk.greenBright('📤')} ${chalk.bold(name)} ${chalk.dim('·')} ${chalk.dim(ext + ' 文件已发送')}`];
+            return [
+                `  ${chalk.greenBright('✔')} ${chalk.greenBright('📤')} ${chalk.bold(name)} ${chalk.dim('·')} ${chalk.dim(ext + ' 文件已发送')}`
+            ];
         }
         if (toolcall.status === 'error') {
-            return [`  ${chalk.redBright('✘')} ${chalk.red('📤')} ${chalk.bold(name)} ${chalk.dim('·')} ${chalk.red('发送失败')}`];
+            return [
+                `  ${chalk.redBright('✘')} ${chalk.red('📤')} ${chalk.bold(name)} ${chalk.dim('·')} ${chalk.red('发送失败')}`
+            ];
         }
         return [`  ${chalk.dim('○')} ${chalk.dim('📤')} ${chalk.bold(name)}`];
     }

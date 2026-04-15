@@ -1,9 +1,10 @@
-import { type Component, SelectList, type TUI } from "@mariozechner/pi-tui";
-import { defaultSelectListTheme } from "../../theme.js";
-import { ProviderConfigPage } from "./providers";
-import { ModelConfigPage } from "./models";
-import { DefaultModelConfigPage } from "./defaultModels";
-import chalk from "chalk";
+import { type Component, SelectList, type TUI } from '@mariozechner/pi-tui';
+import { defaultSelectListTheme } from '../../theme.js';
+import { ProviderConfigPage } from './providers';
+import { ModelConfigPage } from './models';
+import { DefaultModelConfigPage } from './defaultModels';
+import { FileMgrConfigPage } from './filemgrConfig.js';
+import chalk from 'chalk';
 
 interface ConfigSection {
     value: string;
@@ -14,19 +15,24 @@ interface ConfigSection {
 const CONFIG_SECTIONS: ConfigSection[] = [
     {
         value: 'providers',
-        label: `📡  模型服务商配置       ${chalk.dim('管理 API 模型服务商')}`,
-        create: (tui, onBack) => new ProviderConfigPage(tui, onBack),
+        label: `💳  模型服务商配置       ${chalk.dim('管理 API 模型服务商')}`,
+        create: (tui, onBack) => new ProviderConfigPage(tui, onBack)
     },
     {
         value: 'models',
-        label: `🤖  模型配置         ${chalk.dim('管理模型别名')}`,
-        create: (tui, onBack) => new ModelConfigPage(tui, onBack),
+        label: `💰  模型配置         ${chalk.dim('管理模型别名')}`,
+        create: (tui, onBack) => new ModelConfigPage(tui, onBack)
     },
     {
         value: 'default-model',
-        label: `🎯  默认模型配置     ${chalk.dim('选择各场景默认模型')}`,
-        create: (tui, onBack, onConfigChange) => new DefaultModelConfigPage(tui, onBack, onConfigChange),
+        label: `🏆  默认模型配置     ${chalk.dim('选择各场景默认模型')}`,
+        create: (tui, onBack, onConfigChange) => new DefaultModelConfigPage(tui, onBack, onConfigChange)
     },
+    {
+        value: 'filemgr',
+        label: `📦  文件扫描配置       ${chalk.dim('管理文件扫描目录')}`,
+        create: (tui: any, onBack: () => void) => new FileMgrConfigPage(tui, onBack)
+    }
 ];
 
 /**
@@ -53,12 +59,12 @@ export class ConfigMainPage implements Component {
         this.state = 'main';
         this.subPage = undefined;
 
-        const items = CONFIG_SECTIONS.map(s => ({ value: s.value, label: s.label }));
+        const items = CONFIG_SECTIONS.map((s) => ({ value: s.value, label: s.label }));
         this.list = new SelectList(items, items.length, defaultSelectListTheme);
         this.tui.setFocus(this.list);
 
         this.list.onSelect = (item) => {
-            const section = CONFIG_SECTIONS.find(s => s.value === item.value);
+            const section = CONFIG_SECTIONS.find((s) => s.value === item.value);
             if (section) this.enterSection(section);
         };
         this.list.onCancel = () => this.onClose();
@@ -73,7 +79,7 @@ export class ConfigMainPage implements Component {
         this.tui.requestRender();
     }
 
-    invalidate() { }
+    invalidate() {}
 
     render(width: number): string[] {
         if (this.state === 'sub' && this.subPage) {
