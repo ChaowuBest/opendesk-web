@@ -20,6 +20,7 @@ import { ApplicationRegistry } from '../applications/registry';
 import { KeyboardShortcutManager } from './shortcuts';
 import { SlashCommandRegistry, registerAllCommands } from './commands/index.js';
 import { Setting } from '../utils/setting.js';
+import { REASONING_EFFORT_LABELS } from '../../common/reasoning-effort.js';
 import { logger, setDebugMode, getDebugMode } from '../utils/logger.js';
 import { lookupKnownContextSize, fetchContextSizeFromAPI } from '../utils/model-context';
 import { LLM } from '../aikernel/llm.js';
@@ -1049,14 +1050,8 @@ export class OpenDeskTUI {
             const modelCfg = data.models?.find((m: any) => m.alias === aliasToUse);
             const modelName = modelCfg?.model_name ?? aliasToUse;
 
-            const effortLabels: Record<string, string> = {
-                none: '无推理',
-                low: '简洁推理',
-                medium: '推理适中',
-                high: '推理深入'
-            };
             const effortTag = modelCfg?.reasoning_effort
-                ? ` [${effortLabels[modelCfg.reasoning_effort] || modelCfg.reasoning_effort}]`
+                ? ` [${REASONING_EFFORT_LABELS[modelCfg.reasoning_effort] ?? modelCfg.reasoning_effort}]`
                 : '';
 
             this.inputArea.statusBar.update({ modelName: `${aliasToUse}${effortTag}` });

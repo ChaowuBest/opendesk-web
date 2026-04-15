@@ -18,6 +18,7 @@ import {
 import { compactContext } from '../../aikernel/compact';
 import { prepareContextForModel } from '../../aikernel/compaction/pipeline.js';
 import { logger, getDebugMode } from '../../utils/logger.js';
+import { Setting } from '../../utils/setting.js';
 import { defaultMarkdownTheme } from '../theme';
 import { DefaultToolCallView } from './toolcall';
 import { Card } from './card';
@@ -94,32 +95,36 @@ export class TextMessagePartView implements Component {
 const REASONING_SPINNER_FRAMES = ['◐', '◓', '◑', '◒'];
 const REASONING_SPINNER_MS = 120;
 
-/** 思考/推理内容用卡片展示，内容始终完整显示（不设 maxLines） */
+/** partial 模式下保留的 reasoning 行数（从尾部算起；流式与结束后一致，避免结束后改为一行导致闪动） */
+export const REASONING_TAIL_LINES = 10;
+
+/** 尾部截断时提示用户可切换为完整思考显示 */
+const REASONING_PARTIAL_OMIT_HINT = chalk.dim.italic('…… (使用 /reason display full 来显示完整思考内容)');
+
+/** 思考/推理内容用卡片展示：
+ * - reason_display = 'partial'：只显示最后 REASONING_TAIL_LINES 行；超出时首行省略号 + 切换 full 提示
+ * - reason_display = 'full'：完整 Markdown 渲染
+ * - 正文均为斜体
+ */
 export class ReasoningMessagePartView implements Component {
-    private text: Markdown = new Markdown('', 0, 0, defaultMarkdownTheme);
-    /** 是否正在流式输出思考内容，用于显示旋转图标 */
+    /** 原始思考文本内容 */
+    private _content = '';
+    /** 是否正在流式输出思考内容 */
     private _streaming = false;
+    /** Markdown 渲染实例（完整显示模式使用） */
+    private _markdown: Markdown = new Markdown('', 0, 0, defaultMarkdownTheme);
     private invalidated = true;
     private lastWidth?: number;
     private cachedOutput?: string[];
     private _lastRenderMs = 0;
     private _dirty = false;
-    private _cachedBodyLines?: string[];
 
-    constructor(text?: string) {
-        if (text) {
-            this.text.setText(text);
-        }
-    }
-
-    setMarkdown(markdown: string) {
-        try {
-            this.text.setText(markdown);
-            this._dirty = true;
-            this.invalidated = true;
-        } catch {
-            // ignore
-        }
+    setContent(content: string) {
+        this._content = content;
+        // 同时更新 Markdown 内容（完整显示模式需要）
+        this._markdown.setText(content);
+        this._dirty = true;
+        this.invalidated = true;
     }
 
     setStreaming(streaming: boolean) {
@@ -128,13 +133,12 @@ export class ReasoningMessagePartView implements Component {
     }
 
     /**
-     * 清除内部 MD 渲染节流状态，使下一次 render() 一定执行完整的 Markdown 解析。
-     * 在流式输出结束时调用，确保最后一批思考内容不会因节流而显示旧缓存。
+     * 清除内部状态，使下一次 render() 一定重新渲染。
+     * 在流式输出结束时调用。
      */
     clearThrottle() {
         this._dirty = false;
         this._lastRenderMs = 0;
-        this._cachedBodyLines = undefined;
         this.invalidated = true;
     }
 
@@ -142,52 +146,70 @@ export class ReasoningMessagePartView implements Component {
         this.invalidated = true;
     }
 
-    private getIcon(): string {
-        if (!this._streaming) {
-            return chalk.dim('◆');
-        }
+    private getStreamingIcon(): string {
         const idx = Math.floor(Date.now() / REASONING_SPINNER_MS) % REASONING_SPINNER_FRAMES.length;
         return chalk.blueBright(REASONING_SPINNER_FRAMES[idx]);
     }
 
+    /** 判断是否应该完整显示思考内容 */
+    private shouldDisplayFull(): boolean {
+        const setting = Setting.getInstance();
+        return setting.data.reason_display === 'full';
+    }
+
     render(width: number): string[] {
-        if (this._streaming) {
-            const contentWidth = Math.max(1, width - 4);
-
-            const now = Date.now();
-            const skipMdRender = this._dirty && this.cachedOutput && now - this._lastRenderMs < MD_RENDER_THROTTLE_MS;
-
-            let bodyLines: string[];
-            if (skipMdRender) {
-                bodyLines = this._cachedBodyLines ?? this.text.render(contentWidth);
-            } else {
-                bodyLines = this.text.render(contentWidth);
-                this._cachedBodyLines = bodyLines;
-                this._lastRenderMs = Date.now();
-                this._dirty = false;
-            }
-
-            const card = new Card({
-                icon: this.getIcon(),
-                title: '思考',
-                body: bodyLines
-            });
-            return card.render(width);
-        }
-
         if (!this.invalidated && this.lastWidth === width && this.cachedOutput) {
             return this.cachedOutput;
         }
 
+        const displayFull = this.shouldDisplayFull();
+
+        // 须在清空 cachedOutput 之前判断：否则流式节流永远拿不到上一帧
+        if (
+            displayFull &&
+            this._streaming &&
+            this._dirty &&
+            this.lastWidth === width &&
+            this.cachedOutput &&
+            this.cachedOutput.length > 0 &&
+            Date.now() - this._lastRenderMs < MD_RENDER_THROTTLE_MS
+        ) {
+            return this.cachedOutput;
+        }
+
         this.lastWidth = width;
-        const contentWidth = Math.max(1, width - 4);
-        const bodyLines = this.text.render(contentWidth);
-        const card = new Card({
-            icon: this.getIcon(),
-            title: '思考',
-            body: bodyLines
-        });
-        this.cachedOutput = card.render(width);
+        this.cachedOutput = [];
+
+        if (displayFull) {
+            const contentWidth = Math.max(1, width - 4);
+
+            const bodyLines = this._markdown.render(contentWidth).map((line) => chalk.italic(line));
+            this._lastRenderMs = Date.now();
+            this._dirty = false;
+
+            const card = new Card({
+                icon: this._streaming ? this.getStreamingIcon() : chalk.dim('◆'),
+                title: '思考',
+                body: bodyLines
+            });
+            this.cachedOutput = card.render(width);
+        } else {
+            // partial：流式与结束后同一套尾部视图，避免结束后缩成一行造成布局跳动
+            const lines = this._content.split('\n');
+            const hasMoreAbove = lines.length > REASONING_TAIL_LINES;
+            const tailLines = lines.slice(-REASONING_TAIL_LINES).map((line) => chalk.italic(line));
+            const bodyLines = hasMoreAbove ? [REASONING_PARTIAL_OMIT_HINT, ...tailLines] : tailLines;
+            const maxBodyLines = hasMoreAbove ? REASONING_TAIL_LINES + 1 : REASONING_TAIL_LINES;
+            const card = new Card({
+                icon: this._streaming ? this.getStreamingIcon() : chalk.dim('◆'),
+                title: '思考',
+                body: bodyLines,
+                maxLines: maxBodyLines,
+                truncateStrategy: 'tail'
+            });
+            this.cachedOutput = card.render(width);
+        }
+
         this.invalidated = false;
         return this.cachedOutput;
     }
@@ -476,7 +498,7 @@ export class AssistantMessageView implements Component {
         }
 
         existingPartView.setStreaming(true);
-        existingPartView.setMarkdown(reasoningPart.content);
+        existingPartView.setContent(reasoningPart.content);
         this.invalidated = true;
     }
 

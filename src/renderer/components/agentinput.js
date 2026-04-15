@@ -9,15 +9,9 @@
  * See the Mulan PSL v2 for more details.
  */
 
-const supportedFileExtensions = ['pdf', 'docx', 'doc', 'xls', 'xlsx', 'ppt', 'pptx'];
+import { REASONING_EFFORT_UI_OPTIONS as REASONING_EFFORT_OPTIONS } from '../../common/reasoning-effort.ts';
 
-const REASONING_EFFORT_OPTIONS = [
-    { value: '', label: '默认' },
-    { value: 'none', label: '无推理' },
-    { value: 'low', label: '简洁推理' },
-    { value: 'medium', label: '推理适中' },
-    { value: 'high', label: '推理深入' }
-];
+const supportedFileExtensions = ['pdf', 'docx', 'doc', 'xls', 'xlsx', 'ppt', 'pptx'];
 
 /**
  * 更新系统设置中的 default_model 和指定模型的 reasoning_effort。
