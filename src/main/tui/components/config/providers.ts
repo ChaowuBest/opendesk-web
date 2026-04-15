@@ -36,6 +36,16 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
         base_url: 'https://coding.dashscope.aliyuncs.com/v1'
     },
     {
+        name: 'baidubce',
+        displayName: '百度云千帆',
+        base_url: 'https://qianfan.baidubce.com/v2'
+    },
+    {
+        name: 'baidubce-code',
+        displayName: '百度云千帆(CodingPlan)',
+        base_url: 'https://qianfan.baidubce.com/v2/coding'
+    },
+    {
         name: 'volcengine',
         displayName: '火山引擎',
         base_url: 'https://ark.cn-beijing.volces.com/api/v3'
