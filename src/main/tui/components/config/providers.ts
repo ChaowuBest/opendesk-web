@@ -22,9 +22,12 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
         displayName: '智谱开放平台(CodingPlan)',
         base_url: 'https://open.bigmodel.cn/api/coding/paas/v4'
     },
+    {
+        name: 'kimi-code',
+        displayName: 'Kimi(CodingPlan)',
+        base_url: 'https://api.kimi.com/coding/v1'
+    },
     { name: 'minimaxi', displayName: 'MiniMax', base_url: 'https://api.minimaxi.com/v1' },
-    { name: 'local', displayName: 'Ollama', base_url: 'http://127.0.0.1:11434/v1' },
-    { name: 'lmstudio', displayName: 'LM Studio', base_url: 'http://127.0.0.1:1234/v1' },
     {
         name: 'aliyun-cn',
         displayName: '阿里云百炼',
@@ -54,7 +57,9 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
         name: 'volcengine-code',
         displayName: '火山引擎(CodingPlan)',
         base_url: 'https://ark.cn-beijing.volces.com/api/coding/v3'
-    }
+    },
+    { name: 'local', displayName: 'Ollama', base_url: 'http://127.0.0.1:11434/v1' },
+    { name: 'lmstudio', displayName: 'LM Studio', base_url: 'http://127.0.0.1:1234/v1' }
 ];
 
 interface ProviderData {
