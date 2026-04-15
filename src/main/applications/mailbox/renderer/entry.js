@@ -2150,6 +2150,16 @@ class MailEditorWidget extends AgentOperableHTMLElement {
 
     connectedCallback() {
         this.render();
+        this.addEventListener('focusin', () => {
+            try {
+                const Alpine = window.Alpine;
+                if (Alpine && Alpine.$data) {
+                    Alpine.$data(document.body).showFloatingChatPanel = false;
+                }
+            } catch (_) {
+                /* ignore */
+            }
+        });
     }
 
     async cancel() {
@@ -2567,6 +2577,16 @@ class MailEditorWidget extends AgentOperableHTMLElement {
             // 回调
             init_instance_callback: (editor) => {
                 console.log('编辑器加载完成！');
+                editor.on('focus', () => {
+                    try {
+                        const Alpine = window.Alpine;
+                        if (Alpine && Alpine.$data) {
+                            Alpine.$data(document.body).showFloatingChatPanel = false;
+                        }
+                    } catch (_) {
+                        /* ignore */
+                    }
+                });
                 this.resolveEditor(editor);
             }
         });

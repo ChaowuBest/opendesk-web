@@ -1,0 +1,7 @@
+jobs/
+workspaces/
+logs/
+__pycache__/
+*.pyc
+.env
+.node_modules_stub/
