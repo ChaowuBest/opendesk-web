@@ -25,10 +25,13 @@ import {
 } from '@mariozechner/pi-tui';
 import chalk from 'chalk';
 import { defaultSelectListTheme, defaultMarkdownTheme } from '../../tui/theme';
+import { SelectTable, type SelectRow } from '../../tui/components/selecttable';
 import { OpenDeskTUI } from '../../tui/entry';
 import { SkillRegistry } from './skillregistry.js';
 import { RegistryAdapters } from './registry-adapters.js';
 import { Setting } from '../../utils/setting.js';
+import { SkillMgrApplication } from './app.js';
+import { installSkillFromDirectory, installSkillFromLocalZip, installFromRegistryInstallUrl } from './util.js';
 
 interface RegistrySkill {
     id: string;
@@ -66,7 +69,6 @@ type ViewState =
     | 'install-local'
     | 'install-zip'
     | 'install-url'
-    | 'install-clawhub'
     | 'view-installed'
     | 'skill-detail'
     | 'skill-content'
@@ -79,7 +81,7 @@ export class SkillsOverlay implements Component {
     private openDeskTUI: OpenDeskTUI;
     private box: Box;
     private header: Text;
-    private list?: SelectList;
+    private list?: SelectList | SelectTable;
     private input?: Input;
     private state: ViewState = 'main';
     private installedSkills: any[] = [];
@@ -152,7 +154,6 @@ export class SkillsOverlay implements Component {
             { value: 'install-local', label: chalk.green('📁 从本地目录添加') },
             { value: 'install-zip', label: chalk.green('📦 从本地 zip 添加') },
             { value: 'install-url', label: chalk.blue('🌐 从 URL 添加') },
-            { value: 'install-clawhub', label: chalk.yellow('⚡ 从 ClawHub 添加') },
             { value: 'view-installed', label: chalk.white('📋 查看已安装技能') }
         ];
 
@@ -172,9 +173,10 @@ export class SkillsOverlay implements Component {
         this.input = undefined;
 
         const registries = [
+            { value: 'matrix', label: 'Matrix Skill - OpenHarmony 社区' },
+            { value: 'clawhub', label: 'ClawHub - 技能仓库' },
             { value: 'skill0', label: 'skill0.io - 公开技能库' },
-            { value: 'skillsmp', label: 'SkillsMP - 技能市场 (需 API Key)' },
-            { value: 'clawhub', label: 'ClawHub - 技能仓库 (需 CLI)' }
+            { value: 'skillsmp', label: 'SkillsMP - 技能市场 (需 API Key)' }
         ];
 
         this.list = new SelectList(registries, registries.length, defaultSelectListTheme);
@@ -213,7 +215,7 @@ export class SkillsOverlay implements Component {
 
         this.setLoading(true);
         try {
-            const config = Setting.getInstance().getData();
+            const config = Setting.getInstance().getData() as any;
             const apiKey = config.applications?.skillmgr?.skillsmp_api_key || '';
 
             const result = await RegistryAdapters.searchRegistry(this.selectedRegistry, {
@@ -224,15 +226,17 @@ export class SkillsOverlay implements Component {
             });
 
             this.searchResults = result.skills || [];
-            if (result.message) {
-                this.showMessage(result.message, false);
-            }
             if (this.searchResults.length === 0) {
-                if (!result.message) {
+                if ((result as any).message) {
+                    this.showMessage((result as any).message, false);
+                } else {
                     this.showMessage('未找到匹配的技能', true);
+                    this.showSearch();
                 }
-                this.showSearch();
             } else {
+                if ((result as any).message) {
+                    this.showMessage((result as any).message, false);
+                }
                 this.showSearchResults();
             }
         } catch (e: any) {
@@ -251,18 +255,25 @@ export class SkillsOverlay implements Component {
         const registryLabel = this.getRegistryLabel(this.selectedRegistry);
         this.header = new Text(chalk.bold(` 搜索结果 [${registryLabel}]`));
 
-        const items = this.searchResults.map((skill) => {
-            const stars = skill.stars ? chalk.yellow(`★${skill.stars}`) : '';
-            const author = skill.author ? chalk.dim(`@${skill.author}`) : '';
-            const canInstall = skill.canInstall ? chalk.green('✓') : chalk.red('✗');
+        const rows: SelectRow[] = this.searchResults.map((skill) => {
+            const name = this.normalizeInlineText(skill.name || '未命名技能');
+            const scoreNum = Number((skill as any).score);
+            const score = Number.isFinite(scoreNum) ? '(' + scoreNum.toFixed(3) + ')' : '';
+            const stars = skill.stars ? '★' + skill.stars : '';
+            const installIcon = skill.canInstall ? '✓' : '✗';
+            const statusParts = [score, stars, installIcon].filter((p) => p.length > 0);
+            const status = statusParts.join(' ');
+            const desc = this.normalizeInlineText(skill.description || '无描述');
             return {
                 value: skill.id,
-                label: `${chalk.bold(skill.name)} ${author} ${stars} ${canInstall}`,
-                description: skill.description
+                labels: [name, status, desc]
             };
         });
 
-        this.list = new SelectList(items, Math.min(items.length, 10), defaultSelectListTheme);
+        const table = new SelectTable(rows, Math.min(rows.length, 10), defaultSelectListTheme);
+        table.setColumnStrechFactors([0, 0, 1]);
+        table.setAlignments(['left', 'right', 'left']);
+        this.list = table;
         this.setupListHandlers();
         this.renderBox();
         this.openDeskTUI.tui.setFocus(this.list);
@@ -276,6 +287,8 @@ export class SkillsOverlay implements Component {
                 return 'SkillsMP';
             case 'clawhub':
                 return 'ClawHub';
+            case 'matrix':
+                return 'Matrix Skill';
             default:
                 return registry;
         }
@@ -308,8 +321,9 @@ export class SkillsOverlay implements Component {
 
         this.setLoading(true);
         try {
-            const result = SkillRegistry.addSkillFromPath(path);
+            const result = installSkillFromDirectory(path);
             if (result.success) {
+                SkillMgrApplication.notifySkillsChanged();
                 this.showMessage(`成功添加技能: ${result.name}`, false, 'main');
                 await this.loadInstalledSkills();
                 this.showMain();
@@ -352,8 +366,9 @@ export class SkillsOverlay implements Component {
 
         this.setLoading(true);
         try {
-            const result = SkillRegistry.addSkillFromZipPath(path);
+            const result = installSkillFromLocalZip(path);
             if (result.success) {
+                SkillMgrApplication.notifySkillsChanged();
                 this.showMessage(`成功添加技能: ${result.name}`, false, 'main');
                 await this.loadInstalledSkills();
                 this.showMain();
@@ -396,15 +411,10 @@ export class SkillsOverlay implements Component {
 
         this.setLoading(true);
         try {
-            const method = RegistryAdapters.getInstallMethod(url);
-            let result;
-            if (method === 'github') {
-                result = await SkillRegistry.addSkillFromGitHubUrl(url);
-            } else {
-                result = await SkillRegistry.addSkillFromUrl(url);
-            }
+            const result = await installFromRegistryInstallUrl(url);
             if (result.success) {
-                this.showMessage(`成功添加技能: ${result.name}`, false, 'main');
+                SkillMgrApplication.notifySkillsChanged();
+                this.showMessage(`成功添加技能: ${result.name ?? ''}`, false, 'main');
                 await this.loadInstalledSkills();
                 this.showMain();
             } else {
@@ -414,50 +424,6 @@ export class SkillsOverlay implements Component {
         } catch (e: any) {
             this.showMessage(e?.message || '添加失败', true);
             this.showInstallUrl();
-        } finally {
-            this.setLoading(false);
-        }
-    }
-
-    private showInstallClawHub() {
-        this.cleanup();
-        this.state = 'install-clawhub';
-        this.list = undefined;
-
-        this.input = new Input();
-        this.input.setValue(this.selectedInputValue);
-        this.input.onSubmit = () => {
-            this.performInstallClawHub().catch((err) => {
-                console.error('Install ClawHub error:', err);
-            });
-        };
-
-        this.setupInputHandlers();
-        this.renderBox();
-        this.openDeskTUI.tui.setFocus(this.input);
-    }
-
-    private async performInstallClawHub() {
-        const slug = this.input?.getValue().trim() || '';
-        if (!slug) {
-            this.showMessage('请输入技能 slug', true);
-            return;
-        }
-
-        this.setLoading(true);
-        try {
-            const result = await SkillRegistry.addSkillFromClawHubSlug(slug);
-            if (result.success) {
-                this.showMessage(`成功添加技能: ${result.name}`, false, 'main');
-                await this.loadInstalledSkills();
-                this.showMain();
-            } else {
-                this.showMessage(result.error || '添加失败', true);
-                this.showInstallClawHub();
-            }
-        } catch (e: any) {
-            this.showMessage(e?.message || '添加失败', true);
-            this.showInstallClawHub();
         } finally {
             this.setLoading(false);
         }
@@ -473,11 +439,19 @@ export class SkillsOverlay implements Component {
             const items = [{ value: 'back', label: chalk.gray('暂无已安装技能，按 Enter 返回') }];
             this.list = new SelectList(items, 1, defaultSelectListTheme);
         } else {
-            const items = this.installedSkills.map((skill: any) => ({
-                value: skill.id,
-                label: `${chalk.bold(skill.name)} ${chalk.dim('·')} ${skill.description || '无描述'}`
-            }));
-            this.list = new SelectList(items, Math.min(items.length, 10), defaultSelectListTheme);
+            const rows: SelectRow[] = this.installedSkills.map((skill: any) => {
+                const name = this.normalizeInlineText(skill.name || '未命名技能');
+                const id = this.normalizeInlineText(skill.id || '-');
+                const desc = this.normalizeInlineText(skill.description || '无描述');
+                return {
+                    value: skill.id,
+                    labels: [name, id, desc]
+                };
+            });
+            const table = new SelectTable(rows, Math.min(rows.length, 10), defaultSelectListTheme);
+            table.setColumnStrechFactors([0, 0, 1]);
+            table.setAlignments(['left', 'left', 'left']);
+            this.list = table;
         }
 
         this.setupListHandlers();
@@ -603,7 +577,6 @@ export class SkillsOverlay implements Component {
 
         if (this.currentDetailTab === 'info') {
             lines.push(chalk.cyan('基本信息'));
-            lines.push('');
             lines.push(`${indent}${chalk.bold('名称')}: ${detail.name}`);
             lines.push(`${indent}${chalk.bold('ID')}: ${detail.id}`);
             lines.push(`${indent}${chalk.bold('描述')}:`);
@@ -617,14 +590,12 @@ export class SkillsOverlay implements Component {
             if (detail.compatibility) {
                 lines.push(`${indent}${chalk.bold('兼容性')}: ${detail.compatibility}`);
             }
-            lines.push('');
             const dirText = truncateToWidth(detail.skillDir, contentWidth - 8, '...', false);
             lines.push(`${indent}${chalk.bold('目录')}: ${chalk.dim(dirText)}`);
-            lines.push('');
 
             const res = detail.resources;
-            lines.push(chalk.cyan('资源统计'));
             lines.push('');
+            lines.push(chalk.cyan('资源统计'));
             lines.push(
                 `${indent}${chalk.bold('参考文档')}: ${res.references.length > 0 ? chalk.green(res.references.length + ' 个') : chalk.dim('无')}`
             );
@@ -638,7 +609,6 @@ export class SkillsOverlay implements Component {
             if (detail.allowedTools && detail.allowedTools.length > 0) {
                 lines.push('');
                 lines.push(chalk.cyan('预授权工具'));
-                lines.push('');
                 for (const tool of detail.allowedTools) {
                     lines.push(`${indent}• ${tool}`);
                 }
@@ -647,7 +617,6 @@ export class SkillsOverlay implements Component {
             if (detail.metadata && Object.keys(detail.metadata).length > 0) {
                 lines.push('');
                 lines.push(chalk.cyan('元数据'));
-                lines.push('');
                 for (const [key, value] of Object.entries(detail.metadata)) {
                     const valStr = typeof value === 'object' ? JSON.stringify(value) : String(value);
                     const truncatedVal = truncateToWidth(valStr, contentWidth - 10, '...', false);
@@ -656,7 +625,6 @@ export class SkillsOverlay implements Component {
             }
         } else if (this.currentDetailTab === 'body') {
             lines.push(chalk.cyan('SKILL.md 内容'));
-            lines.push('');
             const markdown = new Markdown(detail.body, 0, 0, defaultMarkdownTheme);
             const mdLines = markdown.render(contentWidth - 2);
             for (const mdLine of mdLines) {
@@ -667,7 +635,6 @@ export class SkillsOverlay implements Component {
 
             if (res.references.length > 0) {
                 lines.push(chalk.cyan('参考文档'));
-                lines.push('');
                 for (const ref of res.references) {
                     lines.push(`${indent}${chalk.green('📄')} ${ref.name}`);
                     if (ref.content) {
@@ -683,7 +650,6 @@ export class SkillsOverlay implements Component {
 
             if (res.scripts.length > 0) {
                 lines.push(chalk.cyan('脚本文件'));
-                lines.push('');
                 for (const script of res.scripts) {
                     const ext = script.split('.').pop() || '';
                     const icon = ext === 'js' || ext === 'mjs' ? '🟨' : ext === 'py' ? '🐍' : '📜';
@@ -694,7 +660,6 @@ export class SkillsOverlay implements Component {
 
             if (res.assets.length > 0) {
                 lines.push(chalk.cyan('资源文件'));
-                lines.push('');
                 for (const asset of res.assets) {
                     lines.push(`${indent}📦 ${asset}`);
                 }
@@ -705,7 +670,7 @@ export class SkillsOverlay implements Component {
             }
         }
 
-        return lines;
+        return this.compactEmptyLines(lines, 1);
     }
 
     private async deleteSkill(skillId: string) {
@@ -713,6 +678,7 @@ export class SkillsOverlay implements Component {
         try {
             const result = SkillRegistry.deleteSkill(skillId);
             if (result.success) {
+                SkillMgrApplication.notifySkillsChanged();
                 this.showMessage(`成功删除技能: ${skillId}`, false, 'view-installed');
                 await this.loadInstalledSkills();
                 this.showViewInstalled();
@@ -731,25 +697,27 @@ export class SkillsOverlay implements Component {
     private setupListHandlers() {
         if (!this.list) return;
 
-        this.list.onSelect = (item: any) => {
+        this.list.onSelect = (itemOrValue: any) => {
+            const value = this.resolveSelectionValue(itemOrValue);
+            if (!value) return;
             switch (this.state) {
                 case 'main':
-                    this.handleMainSelection(item.value);
+                    this.handleMainSelection(value);
                     break;
                 case 'select-registry':
-                    this.handleRegistrySelection(item.value);
+                    this.handleRegistrySelection(value);
                     break;
                 case 'search-results':
-                    this.handleSearchResultSelection(item.value);
+                    this.handleSearchResultSelection(value);
                     break;
                 case 'view-installed':
-                    this.handleInstalledSelection(item.value);
+                    this.handleInstalledSelection(value);
                     break;
                 case 'skill-detail':
-                    this.handleDetailSelection(item.value);
+                    this.handleDetailSelection(value);
                     break;
                 case 'confirm-delete':
-                    this.handleDetailSelection(item.value);
+                    this.handleDetailSelection(value);
                     break;
             }
         };
@@ -785,9 +753,6 @@ export class SkillsOverlay implements Component {
             case 'install-url':
                 this.showInstallUrl();
                 break;
-            case 'install-clawhub':
-                this.showInstallClawHub();
-                break;
             case 'view-installed':
                 this.showViewInstalled();
                 break;
@@ -810,20 +775,11 @@ export class SkillsOverlay implements Component {
 
         this.setLoading(true);
         try {
-            let result;
-            if (skill.installUrl.startsWith('clawhub:')) {
-                const parsed = RegistryAdapters.parseClawHubInstallUrl(skill.installUrl);
-                if (parsed) {
-                    result = await SkillRegistry.addSkillFromClawHubSlug(parsed.slug, parsed.version);
-                }
-            } else if (skill.installUrl.includes('github.com') && skill.installUrl.includes('/tree/')) {
-                result = await SkillRegistry.addSkillFromGitHubUrl(skill.installUrl);
-            } else {
-                result = await SkillRegistry.addSkillFromUrl(skill.installUrl);
-            }
+            const result = await installFromRegistryInstallUrl(skill.installUrl);
 
-            if (result?.success) {
-                this.showMessage(`成功安装技能: ${result.name}`, false, 'main');
+            if (result && result.success) {
+                SkillMgrApplication.notifySkillsChanged();
+                this.showMessage(`成功安装技能: ${result.name ?? ''}`, false, 'main');
                 await this.loadInstalledSkills();
                 this.showMain();
             } else {
@@ -873,7 +829,6 @@ export class SkillsOverlay implements Component {
             case 'install-local':
             case 'install-zip':
             case 'install-url':
-            case 'install-clawhub':
             case 'view-installed':
                 this.showMain();
                 break;
@@ -961,7 +916,7 @@ export class SkillsOverlay implements Component {
 
         const detail = this.currentSkillDetail;
         const terminalWidth = this.openDeskTUI.tui.terminal.columns;
-        const overlayWidth = Math.min(80, terminalWidth - 4);
+        const overlayWidth = Math.max(40, terminalWidth - 2);
         const contentWidth = overlayWidth - 4;
 
         const tabs = ['info', 'body', 'resources'] as DetailTab[];
@@ -973,9 +928,9 @@ export class SkillsOverlay implements Component {
             })
             .join(chalk.dim('│'));
 
-        this.box.addChild(new Text(''));
         this.box.addChild(new Text(`  ${tabLine}`));
-        this.box.addChild(new Text(chalk.dim('  ' + '─'.repeat(overlayWidth - 4))));
+        const dividerLen = Math.max(8, overlayWidth - 8);
+        this.box.addChild(new Text(chalk.dim(`  ${'─'.repeat(dividerLen)}`)));
 
         const contentLines = this.formatSkillDetailContent(detail, contentWidth);
         const maxOffset = Math.max(0, contentLines.length - this.detailMaxVisibleLines);
@@ -1009,6 +964,47 @@ export class SkillsOverlay implements Component {
         return line + ' '.repeat(width - visWidth);
     }
 
+    private normalizeInlineText(value: unknown): string {
+        return String(value ?? '')
+            .replace(/\r?\n/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+    }
+
+    private resolveSelectionValue(itemOrValue: any): string | undefined {
+        if (typeof itemOrValue === 'string') {
+            return itemOrValue;
+        }
+        if (itemOrValue && typeof itemOrValue.value === 'string') {
+            return itemOrValue.value;
+        }
+        return undefined;
+    }
+
+    private compactEmptyLines(lines: string[], maxConsecutiveEmpty = 1): string[] {
+        const compacted: string[] = [];
+        let emptyCount = 0;
+        for (const line of lines) {
+            const isEmpty = line.trim().length === 0;
+            if (isEmpty) {
+                if (emptyCount < maxConsecutiveEmpty) {
+                    compacted.push(line);
+                }
+                emptyCount++;
+            } else {
+                compacted.push(line);
+                emptyCount = 0;
+            }
+        }
+        while (compacted.length > 0 && compacted[0].trim().length === 0) {
+            compacted.shift();
+        }
+        while (compacted.length > 0 && compacted[compacted.length - 1].trim().length === 0) {
+            compacted.pop();
+        }
+        return compacted;
+    }
+
     private getInputLabel(): string {
         switch (this.state) {
             case 'search':
@@ -1019,8 +1015,6 @@ export class SkillsOverlay implements Component {
                 return '输入本地 zip 文件路径:';
             case 'install-url':
                 return '输入 URL (zip 或 GitHub tree):';
-            case 'install-clawhub':
-                return '输入 ClawHub slug (如 my-skill 或 my-skill@1.2.3):';
             default:
                 return '';
         }
@@ -1042,8 +1036,6 @@ export class SkillsOverlay implements Component {
                 return '输入本地 zip 文件路径  Enter 添加  Esc 返回';
             case 'install-url':
                 return '输入 URL (zip 或 GitHub tree)  Enter 添加  Esc 返回';
-            case 'install-clawhub':
-                return '输入 ClawHub slug (如 my-skill 或 my-skill@1.2.3)  Enter 添加  Esc 返回';
             case 'view-installed':
                 return '↑↓ 选择  Enter 查看详情  Esc 返回';
             case 'skill-detail':
@@ -1066,7 +1058,7 @@ export class SkillsOverlay implements Component {
     show() {
         const terminalWidth = this.openDeskTUI.tui.terminal.columns;
         const terminalHeight = this.openDeskTUI.tui.terminal.rows;
-        const overlayWidth = Math.min(80, terminalWidth - 4);
+        const overlayWidth = Math.max(40, terminalWidth - 2);
         const overlayMaxHeight = Math.max(10, terminalHeight - 4);
 
         this.overlayHandle = this.openDeskTUI.tui.showOverlay(this, {

@@ -13,25 +13,25 @@ import { BaseTool } from '../../aikernel/tool';
 import { z } from 'zod';
 import type { PermissionRequest } from '../../aikernel/security/permission';
 
-const AddSkillFromPathArgsSchema = z.object({
-    sourcePath: z.string().describe('本地目录路径，该目录必须包含SKILL.md文件')
+const AddSkillFromDirectoryArgsSchema = z.object({
+    sourceDirectory: z.string().describe('本地目录路径，该目录必须包含SKILL.md文件')
 });
 
-export class AddSkillFromPathTool extends BaseTool<typeof AddSkillFromPathArgsSchema> {
+export class AddSkillFromDirectoryTool extends BaseTool<typeof AddSkillFromDirectoryArgsSchema> {
     private skillApp: any;
 
     constructor(skillApp: any) {
         super(
-            'addSkillFromPath',
+            'addSkillFromDirectory',
             '从本地目录添加一个Skill。目录必须包含SKILL.md文件。添加成功后需要刷新才能生效。',
-            AddSkillFromPathArgsSchema
+            AddSkillFromDirectoryArgsSchema
         );
         this.skillApp = skillApp;
         this.executor = this.add.bind(this);
     }
 
-    private async add(args: z.output<typeof AddSkillFromPathArgsSchema>): Promise<string> {
-        const result = this.skillApp.addSkillFromPath(args.sourcePath);
+    private async add(args: z.output<typeof AddSkillFromDirectoryArgsSchema>): Promise<string> {
+        const result = this.skillApp.addSkillFromDirectory(args.sourceDirectory);
         return JSON.stringify(result);
     }
 }
@@ -54,7 +54,7 @@ export class AddSkillFromUrlTool extends BaseTool<typeof AddSkillFromUrlArgsSche
     }
 
     private async add(args: z.output<typeof AddSkillFromUrlArgsSchema>): Promise<string> {
-        const result = this.skillApp.addSkillFromUrl(args.url);
+        const result = await this.skillApp.addSkillFromUrl(args.url);
         return JSON.stringify(result);
     }
 }
@@ -77,7 +77,7 @@ export class AddSkillFromGitHubUrlTool extends BaseTool<typeof AddSkillFromGitHu
     }
 
     private async add(args: z.output<typeof AddSkillFromGitHubUrlArgsSchema>): Promise<string> {
-        const result = this.skillApp.addSkillFromGitHubUrl(args.githubUrl);
+        const result = await this.skillApp.addSkillFromGitHubUrl(args.githubUrl);
         return JSON.stringify(result);
     }
 }

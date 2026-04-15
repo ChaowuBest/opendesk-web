@@ -72,8 +72,14 @@ export class SelectTable implements Component {
     onCancel?: () => void;
 
     constructor(rows: SelectRow[], maxVisible: number, theme: SelectListTheme) {
-        // 初始化 innerRows，label 先设为空字符串，render 时会更新
-        this.innerRows = rows.map((row) => ({ ...row, label: '' }));
+        // 初始化 innerRows，label 先设为空字符串，render 时会更新。
+        // 注意：不要透传 description。SelectList 会把 description 当作附加信息渲染，
+        // 会导致表格视图出现“意外多出一段文本”的显示异常。
+        this.innerRows = rows.map((row) => ({
+            labels: row.labels,
+            value: row.value,
+            label: ''
+        }));
         this.innerList = new SelectList(this.innerRows, maxVisible, theme);
         this.stretchFactors = Array(rows[0].labels.length).fill(1);
         this.alignments = Array(rows[0].labels.length).fill('left');

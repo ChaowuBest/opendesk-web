@@ -10,16 +10,20 @@
  */
 
 /**
- * 第三方 Skill Registry 适配器：skill0、skillsmp、clawhub
+ * 第三方 Skill Registry 适配器：skill0、skillsmp、clawhub、matrix
  * 统一搜索接口，返回 { id, name, description, author, source, installUrl, stars? }
- * installUrl 用于 SkillRegistry.addSkillFromGitHubUrl 或 addSkillFromUrl
+ * installUrl 用于上层安装器统一处理（下载/解压/CLI）后再从目录安装
  */
+
+import { spawn } from 'child_process';
 
 const SKILL0_BASE = 'https://skill0.io';
 const SKILLSMP_BASE = 'https://skillsmp.com';
 const CLAWHUB_BASE = 'https://clawhub.ai';
 /** 通过 slug 安装时的 installUrl 前缀，格式 clawhub:slug 或 clawhub:slug@version */
 const CLAWHUB_INSTALL_PREFIX = 'clawhub:';
+/** 通过 Matrix CLI 安装时的 installUrl 前缀，格式 matrix:enName */
+const MATRIX_INSTALL_PREFIX = 'matrix:';
 
 /**
  * @typedef {Object} RegistrySkill
@@ -27,9 +31,10 @@ const CLAWHUB_INSTALL_PREFIX = 'clawhub:';
  * @property {string} name - 技能名称
  * @property {string} description - 描述
  * @property {string} [author] - 作者
- * @property {string} source - 来源：skill0 | skillsmp | clawhub
- * @property {string} installUrl - 安装用的 URL（GitHub tree 或 zip）
+ * @property {string} source - 来源：skill0 | skillsmp | clawhub | matrix
+ * @property {string} installUrl - 安装用的 URL（GitHub tree 或 zip 或 matrix:enName 等）
  * @property {number} [stars] - 星标数
+ * @property {boolean} canInstall - 是否可直接安装
  */
 
 /**
@@ -165,60 +170,75 @@ async function searchSkillsMP(opts = {}) {
 }
 
 /**
- * ClawHub 搜索：尝试公开 API；若无则返回空并提示。技能安装通过 installUrl = clawhub:slug 或 clawhub:slug@version 由 worker 调 clawhub CLI 安装。
+ * ClawHub 搜索：通过 npx clawhub@latest search <query> --limit <n> 实现。
+ * 输出格式：slug  描述  (分数)
  * @param {Object} opts - { query: string, page?: number, limit?: number }
  * @returns {Promise<{ skills: RegistrySkill[], total?: number, hasMore?: boolean, message?: string }>}
  */
 async function searchClawHub(opts = {}) {
     const { query = '', page = 1, limit = 20 } = opts;
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 12000);
-    try {
-        const params = new URLSearchParams();
-        if (query.trim()) params.set('q', query.trim());
-        params.set('limit', String(limit));
-        params.set('offset', String((page - 1) * limit));
-        const url = `${CLAWHUB_BASE}/api/skills?${params}`;
-        const res = await fetch(url, { signal: controller.signal });
-        clearTimeout(timeoutId);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json();
-        const rawList = Array.isArray(data) ? data : (data.skills ?? data.data ?? data.items ?? []);
-        const skills = rawList.map((s) => {
-            const slug = s.slug ?? s.id ?? s.name ?? '';
-            const version = s.version ?? s.latestVersion;
-            const installUrl = slug
-                ? version
-                    ? `${CLAWHUB_INSTALL_PREFIX}${slug}@${version}`
-                    : `${CLAWHUB_INSTALL_PREFIX}${slug}`
-                : '';
-            return {
-                id: slug || s.id || s.name,
-                name: s.name ?? s.title ?? slug ?? '',
-                description: s.description ?? s.summary ?? '',
-                author: s.author?.name ?? s.author ?? s.owner ?? '',
-                source: 'clawhub',
-                installUrl,
-                stars: s.stars ?? s.stargazersCount ?? 0,
-                canInstall: !!slug
-            };
+    const safeQuery = query.trim() || 'skill';
+
+    const run = () =>
+        new Promise((resolve, reject) => {
+            const child = spawn('npx', ['clawhub@latest', 'search', safeQuery, '--limit', String(limit)], {
+                shell: process.platform === 'win32',
+                stdio: ['ignore', 'pipe', 'pipe']
+            });
+            let stdout = '';
+            let stderr = '';
+            child.stdout?.on('data', (ch) => {
+                stdout += ch;
+            });
+            child.stderr?.on('data', (ch) => {
+                stderr += ch;
+            });
+            child.on('error', (err) => reject(err));
+            child.on('close', (code) => resolve({ code, stdout, stderr }));
         });
-        const total = data.total ?? data.pagination?.total ?? skills.length;
+
+    try {
+        const { code, stdout, stderr } = await run();
+        if (code !== 0) {
+            throw new Error((stderr || '').trim() || `ClawHub CLI 退出码 ${code}`);
+        }
+        const lines = stdout.split(/\r?\n/);
+        const skills = [];
+        for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed || trimmed.startsWith('-') || trimmed.startsWith('*')) continue;
+            // 格式：slug  描述  (分数)
+            const match = trimmed.match(/^([^\s]+)\s+(.+?)\s+\((\d+\.?\d*)\)$/);
+            if (match) {
+                const [, slug, description, scoreStr] = match;
+                skills.push({
+                    id: slug,
+                    name: slug,
+                    description: description.trim(),
+                    author: '',
+                    source: 'clawhub',
+                    installUrl: `${CLAWHUB_INSTALL_PREFIX}${slug}`,
+                    stars: 0,
+                    score: parseFloat(scoreStr) || 0,
+                    canInstall: true
+                });
+            }
+        }
+        const total = skills.length;
         return {
             skills,
             total,
-            hasMore: page * limit < (total ?? 0)
+            hasMore: false,
+            message: skills.length > 0 ? `显示 ${skills.length} / ${skills.length} 个结果` : undefined
         };
-    } catch (_) {
-        clearTimeout(timeoutId);
+    } catch (e) {
+        return {
+            skills: [],
+            total: 0,
+            hasMore: false,
+            message: `ClawHub 搜索失败: ${e.message || '未知错误'}`
+        };
     }
-    return {
-        skills: [],
-        total: 0,
-        hasMore: false,
-        message:
-            'ClawHub 暂未提供公开搜索 API。请在上方输入框中输入技能 slug（如 my-skill）或 my-skill@1.2.3，点击「按 slug 安装」。需已安装 clawhub CLI：npm i -g clawhub'
-    };
 }
 
 /**
@@ -238,8 +258,107 @@ function parseClawHubInstallUrl(installUrl) {
 }
 
 /**
+ * Matrix Skill 搜索：通过 Matrix CLI 搜索并解析表格输出。
+ * @param {Object} opts - { query: string, page?: number, limit?: number }
+ * @returns {Promise<{ skills: RegistrySkill[], total?: number, hasMore?: boolean, message?: string }>}
+ */
+async function searchMatrix(opts = {}) {
+    const { query = '', page = 1, limit = 20 } = opts;
+    const safeQuery = query.trim() || 'skill';
+
+    const run = () =>
+        new Promise((resolve, reject) => {
+            const child = spawn('npx', ['@matrixopenharmony/matrix-cli', 'skill', 'search', safeQuery], {
+                shell: process.platform === 'win32',
+                stdio: ['ignore', 'pipe', 'pipe']
+            });
+            let stdout = '';
+            let stderr = '';
+            child.stdout?.on('data', (ch) => {
+                stdout += ch;
+            });
+            child.stderr?.on('data', (ch) => {
+                stderr += ch;
+            });
+            child.on('error', (err) => reject(err));
+            child.on('close', (code) => resolve({ code, stdout, stderr }));
+        });
+
+    try {
+        const { code, stdout, stderr } = await run();
+        if (code !== 0) {
+            throw new Error((stderr || '').trim() || `Matrix CLI 退出码 ${code}`);
+        }
+        const lines = stdout.split(/\r?\n/);
+        const skills = [];
+        let foundCount = 0;
+        let showedHint = '';
+        for (const line of lines) {
+            const countMatch = line.match(/找到\s+(\d+)\s+个技能/);
+            if (countMatch) {
+                foundCount = parseInt(countMatch[1], 10) || 0;
+            }
+            const hintMatch = line.match(/ℹ\s+显示\s+(\d+)\s+\/\s+(\d+)\s+个结果/);
+            if (hintMatch) {
+                showedHint = `显示 ${hintMatch[1]} / ${hintMatch[2]} 个结果`;
+            }
+            if (!line.includes('|')) continue;
+            const parts = line.split('|').map((s) => s.trim());
+            // 表格行格式：| 英文名称 | 描述 | 标签 |
+            if (parts.length >= 4 && parts[1] && parts[1] !== '英文名称' && !parts[1].startsWith('-')) {
+                const enName = parts[1];
+                const description = parts[2] || '';
+                const tag = parts[3] || '';
+                skills.push({
+                    id: enName,
+                    name: enName,
+                    description,
+                    author: tag,
+                    source: 'matrix',
+                    installUrl: `${MATRIX_INSTALL_PREFIX}${enName}`,
+                    stars: 0,
+                    canInstall: true
+                });
+            }
+        }
+        const total = foundCount || skills.length;
+        const message = showedHint || undefined;
+        // 由于 Matrix CLI 不支持分页参数，只做前端截断模拟分页
+        const start = (page - 1) * limit;
+        const paged = skills.slice(start, start + limit);
+        return {
+            skills: paged,
+            total,
+            hasMore: start + limit < total,
+            message
+        };
+    } catch (e) {
+        return {
+            skills: [],
+            total: 0,
+            hasMore: false,
+            message: `Matrix Skill 搜索失败: ${e.message || '未知错误'}`
+        };
+    }
+}
+
+/**
+ * 解析 matrix:enName 格式的 installUrl
+ * @param {string} installUrl
+ * @returns {{ slug: string } | null}
+ */
+function parseMatrixInstallUrl(installUrl) {
+    if (!installUrl || typeof installUrl !== 'string' || !installUrl.startsWith(MATRIX_INSTALL_PREFIX)) {
+        return null;
+    }
+    const rest = installUrl.slice(MATRIX_INSTALL_PREFIX.length).trim();
+    if (!rest) return null;
+    return { slug: rest };
+}
+
+/**
  * 根据 registryId 调用对应搜索
- * @param {string} registryId - skill0 | skillsmp | clawhub
+ * @param {string} registryId - skill0 | skillsmp | clawhub | matrix
  * @param {Object} opts - { query, page, limit, apiKey? }
  */
 async function searchRegistry(registryId, opts = {}) {
@@ -250,19 +369,22 @@ async function searchRegistry(registryId, opts = {}) {
             return searchSkillsMP(opts);
         case 'clawhub':
             return searchClawHub(opts);
+        case 'matrix':
+            return searchMatrix(opts);
         default:
             throw new Error(`未知 Registry: ${registryId}`);
     }
 }
 
 /**
- * 判断 installUrl 的安装方式：clawhub:slug | github tree | zip
+ * 判断 installUrl 的安装方式：clawhub:slug | matrix:enName | github tree | zip
  * @param {string} installUrl
- * @returns {'clawhub' | 'github' | 'zip'}
+ * @returns {'clawhub' | 'matrix' | 'github' | 'zip'}
  */
 function getInstallMethod(installUrl) {
     if (!installUrl || typeof installUrl !== 'string') return 'zip';
     if (installUrl.startsWith(CLAWHUB_INSTALL_PREFIX)) return 'clawhub';
+    if (installUrl.startsWith(MATRIX_INSTALL_PREFIX)) return 'matrix';
     return installUrl.includes('github.com') && installUrl.includes('/tree/') ? 'github' : 'zip';
 }
 
@@ -270,8 +392,11 @@ export const RegistryAdapters = {
     searchSkill0,
     searchSkillsMP,
     searchClawHub,
+    searchMatrix,
     searchRegistry,
     getInstallMethod,
     parseClawHubInstallUrl,
-    CLAWHUB_INSTALL_PREFIX
+    parseMatrixInstallUrl,
+    CLAWHUB_INSTALL_PREFIX,
+    MATRIX_INSTALL_PREFIX
 };
