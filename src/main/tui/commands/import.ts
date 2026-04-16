@@ -1,7 +1,7 @@
 import type { OpenDeskTUI } from '../entry.js';
 import { InfoOverlay } from '../components/notice.js';
 import { TaskState } from '../../aikernel/states/tasks.js';
-import { getFileCompletions } from '../components/file-completions.js';
+import { getFileCompletions, expandPath } from '../components/file-completions.js';
 import path from 'path';
 import fs from 'fs';
 
@@ -45,7 +45,7 @@ export function registerImportCommand(tui: OpenDeskTUI): void {
                 info.show();
                 return;
             }
-            const jsonPath = path.resolve(jsonPathRaw);
+            const jsonPath = path.resolve(expandPath(jsonPathRaw));
             if (!fs.existsSync(jsonPath)) {
                 const info = new InfoOverlay(tui, {
                     title: '导入失败',

@@ -7,11 +7,12 @@ import { homedir } from 'os';
 export const FILE_COMPLETION_MAX_RESULTS = 30;
 
 /**
- * 展开路径中的 ~/ 和 $VAR_NAME 环境变量前缀。
+ * 展开路径中的 ~、~/、~\ 和 $VAR_NAME 环境变量前缀。
  * 支持 $HOME、$APPDATA、$TEMP、$USERPROFILE 等任意环境变量。
+ * （Node 的 path.resolve 不会展开波浪号，CLI 与补全逻辑需显式处理。）
  */
-function expandPath(p: string): string {
-    if (p === '~' || p.startsWith('~/')) {
+export function expandPath(p: string): string {
+    if (p === '~' || p.startsWith('~/') || p.startsWith('~\\')) {
         return homedir() + p.slice(1);
     }
     const envMatch = p.match(/^\$([A-Za-z_][A-Za-z0-9_]*)(\/.*)?$/);
@@ -25,12 +26,13 @@ function expandPath(p: string): string {
 }
 
 /**
- * 判断查询是否为绝对路径或特殊前缀（~/、$ENV/、../、./、/）。
+ * 判断查询是否为绝对路径或特殊前缀（~/、~\、$ENV/、../、./、/）。
  */
 function isAbsoluteOrSpecial(p: string): boolean {
     return (
         isAbsolute(p) ||
         p.startsWith('~/') ||
+        p.startsWith('~\\') ||
         p === '~' ||
         p.startsWith('$') ||
         p.startsWith('../') ||
