@@ -161,32 +161,43 @@ BLOCK
 #  组装带日志的 PR 评论
 #  comment-with-logs <success|failure|aborted>
 # ────────────────────────────────────────────────────────────
+read_status_file() {
+    local status_file="$1"
+    local default="$2"
+
+    if [[ -f "${status_file}" ]]; then
+        cat "${status_file}"
+    else
+        echo "${default}"
+    fi
+}
+
+status_to_emoji() {
+    local status="$1"
+    case "${status}" in
+        success) echo "✅ 通过" ;;
+        failure) echo "❌ 失败" ;;
+        skipped) echo "⏭️ 跳过" ;;
+        *)       echo "❓ 未知" ;;
+    esac
+}
+
 comment_with_logs() {
     local result="$1"
     local log_dir="${CI_LOG_DIR:-ci-logs}"
     local build_url="${BUILD_URL:-}"
 
-    local header status_build status_test
+    local status_build status_test header
+
+    status_build=$(status_to_emoji "$(read_status_file "${log_dir}/build.status" "unknown")")
+    status_test=$(status_to_emoji "$(read_status_file "${log_dir}/test.status" "unknown")")
+
     case "${result}" in
         success)
             header="## ✅ CI 构建通过"
-            status_build="✅ 通过"
-            status_test="✅ 通过"
             ;;
         failure)
             header="## ❌ CI 构建失败"
-            status_build="❓ 未知"
-            status_test="❓ 未知"
-            if [[ -f "${log_dir}/build.log" && ! -f "${log_dir}/test.log" ]]; then
-                status_build="✅ 通过"
-                status_test="❌ 失败"
-            elif [[ ! -f "${log_dir}/build.log" ]]; then
-                status_build="❌ 失败"
-                status_test="⏭️ 跳过"
-            else
-                status_build="✅ 通过"
-                status_test="❌ 失败"
-            fi
             ;;
         aborted)
             header="## ⚠️ CI 已取消"

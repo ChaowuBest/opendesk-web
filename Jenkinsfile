@@ -79,45 +79,71 @@ node {
                             sh 'bash ci/scripts/gitcode-notify.sh comment "⏳ CI 流水线已启动... [查看进度](${BUILD_URL})"'
                         }
 
+                        def buildStatus = 'success'
+                        def testStatus = 'skipped'
+
                         stage('Build') {
                             echo "=== Stage: Build ==="
 
-                            sh '''
-                                set -euo pipefail
+                            try {
+                                sh '''
+                                    set -euo pipefail
 
-                                if [ -n "${PR_NUMBER:-}" ] && [ -n "${PR_SOURCE_BRANCH:-}" ] && [ -n "${PR_TARGET_BRANCH:-}" ]; then
-                                    echo "PR #${PR_NUMBER}: ${PR_SOURCE_BRANCH} → ${PR_TARGET_BRANCH}"
+                                    if [ -n "${PR_NUMBER:-}" ] && [ -n "${PR_SOURCE_BRANCH:-}" ] && [ -n "${PR_TARGET_BRANCH:-}" ]; then
+                                        echo "PR #${PR_NUMBER}: ${PR_SOURCE_BRANCH} → ${PR_TARGET_BRANCH}"
 
-                                    # 拉取目标分支
-                                    git fetch origin "${PR_TARGET_BRANCH}"
-                                    git checkout -B "ci-merge-${PR_NUMBER}" "origin/${PR_TARGET_BRANCH}"
+                                        # 拉取目标分支
+                                        git fetch origin "${PR_TARGET_BRANCH}"
+                                        git checkout -B "ci-merge-${PR_NUMBER}" "origin/${PR_TARGET_BRANCH}"
 
-                                    # 如果有源仓库 URL（fork 场景），添加为临时 remote
-                                    if [ -n "${PR_SOURCE_REPO_URL:-}" ]; then
-                                        SOURCE_AUTH_URL=$(echo "${PR_SOURCE_REPO_URL}" | sed "s|https://|https://oauth2:${GITCODE_TOKEN}@|")
-                                        git remote remove pr-source 2>/dev/null || true
-                                        git remote add pr-source "${SOURCE_AUTH_URL}"
-                                        git fetch pr-source "${PR_SOURCE_BRANCH}"
-                                        git merge --no-ff "pr-source/${PR_SOURCE_BRANCH}" \
-                                            -m "CI: merge PR #${PR_NUMBER} (${PR_SOURCE_BRANCH}) into ${PR_TARGET_BRANCH}"
+                                        # 如果有源仓库 URL（fork 场景），添加为临时 remote
+                                        if [ -n "${PR_SOURCE_REPO_URL:-}" ]; then
+                                            SOURCE_AUTH_URL=$(echo "${PR_SOURCE_REPO_URL}" | sed "s|https://|https://oauth2:${GITCODE_TOKEN}@|")
+                                            git remote remove pr-source 2>/dev/null || true
+                                            git remote add pr-source "${SOURCE_AUTH_URL}"
+                                            git fetch pr-source "${PR_SOURCE_BRANCH}"
+                                            git merge --no-ff "pr-source/${PR_SOURCE_BRANCH}" \
+                                                -m "CI: merge PR #${PR_NUMBER} (${PR_SOURCE_BRANCH}) into ${PR_TARGET_BRANCH}"
+                                        else
+                                            git fetch origin "${PR_SOURCE_BRANCH}"
+                                            git merge --no-ff "origin/${PR_SOURCE_BRANCH}" \
+                                                -m "CI: merge PR #${PR_NUMBER} (${PR_SOURCE_BRANCH}) into ${PR_TARGET_BRANCH}"
+                                        fi
                                     else
-                                        git fetch origin "${PR_SOURCE_BRANCH}"
-                                        git merge --no-ff "origin/${PR_SOURCE_BRANCH}" \
-                                            -m "CI: merge PR #${PR_NUMBER} (${PR_SOURCE_BRANCH}) into ${PR_TARGET_BRANCH}"
+                                        echo "Webhook 变量不完整，跳过 PR merge，直接在当前分支构建"
                                     fi
-                                else
-                                    echo "Webhook 变量不完整，跳过 PR merge，直接在当前分支构建"
-                                fi
 
-                                rm -rf dist || true
-                                npm install --prefer-offline 2>&1 | tee "${CI_LOG_DIR}/npm-install.log"
-                                npm run build-cli 2>&1 | tee "${CI_LOG_DIR}/build.log"
-                            '''
-                            archiveArtifacts artifacts: 'dist/cli/*', allowEmptyArchive: true, fingerprint: true
+                                    rm -rf dist || true
+                                    npm install --prefer-offline 2>&1 | tee "${CI_LOG_DIR}/npm-install.log"
+                                    npm run build-cli 2>&1 | tee "${CI_LOG_DIR}/build.log"
+
+                                    echo "success" > "${CI_LOG_DIR}/build.status"
+                                '''
+                                archiveArtifacts artifacts: 'dist/cli/*', allowEmptyArchive: true, fingerprint: true
+                            } catch (e) {
+                                buildStatus = 'failure'
+                                sh 'echo "failure" > "${CI_LOG_DIR}/build.status"'
+                                throw e
+                            }
                         }
 
                         stage('Test') {
                             echo "=== Stage: Test ==="
+
+                            if (buildStatus == 'success') {
+                                try {
+                                    testStatus = 'success'
+                                    sh 'echo "success" > "${CI_LOG_DIR}/test.status"'
+                                } catch (e) {
+                                    testStatus = 'failure'
+                                    sh 'echo "failure" > "${CI_LOG_DIR}/test.status"'
+                                    buildResult = 'failure'
+                                    currentBuild.result = 'FAILURE'
+                                }
+                            } else {
+                                testStatus = 'skipped'
+                                sh 'echo "skipped" > "${CI_LOG_DIR}/test.status"'
+                            }
                         }
 
                     } catch (err) {
