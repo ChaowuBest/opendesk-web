@@ -5,6 +5,7 @@ import chalk from 'chalk';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { t } from '../../../../locale/index.js';
 
 type PageState = 'list' | 'add';
 
@@ -47,9 +48,9 @@ export class FileMgrConfigPage implements Component {
         const items = [
             ...roots.map((root, i) => ({
                 value: `delete:${i}`,
-                label: `  ${chalk.white(root)}  ${chalk.dim.red('[删除]')}`
+                label: `  ${chalk.white(root)}  ${chalk.dim.red(t('config.filemgr.delete'))}`
             })),
-            { value: 'add', label: chalk.green('  + 添加新目录') }
+            { value: 'add', label: chalk.green('  ' + t('config.filemgr.add')) }
         ];
 
         this.list = new SelectList(items, items.length, defaultSelectListTheme);
@@ -108,20 +109,20 @@ export class FileMgrConfigPage implements Component {
         try {
             isDir = fs.statSync(root).isDirectory();
         } catch {
-            this.errorMessage = `路径不存在或无权限访问: ${root}`;
+            this.errorMessage = t('config.filemgr.error.not.exist') + ' ' + root;
             this.tui.requestRender();
             return;
         }
 
         if (!isDir) {
-            this.errorMessage = `不是目录: ${root}`;
+            this.errorMessage = t('config.filemgr.error.not.directory') + ' ' + root;
             this.tui.requestRender();
             return;
         }
 
         const existing = this.getCurrentRoots();
         if (existing.includes(root)) {
-            this.errorMessage = '该目录已存在';
+            this.errorMessage = t('config.filemgr.error.already.exists');
             this.tui.requestRender();
             return;
         }
@@ -172,21 +173,21 @@ export class FileMgrConfigPage implements Component {
 
     render(width: number): string[] {
         const lines: string[] = [];
-        lines.push(chalk.bold('  文件扫描配置'));
+        lines.push(chalk.bold('  ' + t('config.filemgr.title')));
         lines.push(chalk.dim('─'.repeat(Math.min(width - 2, 50))));
         lines.push('');
 
         if (this.state === 'list') {
             const roots = this.getCurrentRoots();
             if (roots.length === 0) {
-                lines.push(chalk.dim('  暂无配置目录'));
+                lines.push(chalk.dim('  ' + t('config.filemgr.empty')));
                 lines.push('');
             }
             if (this.list) lines.push(...this.list.render(width));
             lines.push('');
-            lines.push(chalk.dim('  Enter 选择/删除  Esc 返回'));
+            lines.push(chalk.dim('  ' + t('config.main.hint')));
         } else if (this.state === 'add') {
-            lines.push(chalk.cyan('  输入要扫描的目录路径（例: ~/Documents）:'));
+            lines.push(chalk.cyan('  ' + t('config.filemgr.input.prompt')));
             lines.push('');
             if (this.addInput) {
                 for (const line of this.addInput.render(width - 4)) {
@@ -198,7 +199,14 @@ export class FileMgrConfigPage implements Component {
                 lines.push(chalk.red(`  x ${this.errorMessage}`));
             }
             lines.push('');
-            lines.push(chalk.dim('  Enter 确认  Esc 取消'));
+            lines.push(
+                chalk.dim(
+                    '  Enter ' +
+                        t('config.common.save').replace('🆗 ', '') +
+                        '  Esc ' +
+                        t('config.common.cancel').replace('↩  ', '')
+                )
+            );
         }
 
         return lines;

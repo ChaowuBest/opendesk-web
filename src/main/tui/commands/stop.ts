@@ -1,25 +1,26 @@
 import type { OpenDeskTUI } from '../entry.js';
 import { AssistantMessage } from '../../aikernel/messages.js';
 import { logger } from '../../utils/logger.js';
+import { t } from '../../../locale/index.js';
 
 export function registerStopCommand(tui: OpenDeskTUI): void {
     tui.commandRegistry.register({
         name: 'stop',
-        description: '停止当前正在执行的任务',
+        description: t('stop.description'),
         execute: async () => {
             if (!tui.activeTaskId) {
-                logger.warn('没有活跃的任务');
+                logger.warn('No active task');
                 return;
             }
 
             const currentTask = tui.taskManagerState.getTask(tui.activeTaskId);
             if (!currentTask) {
-                logger.warn('未找到当前任务');
+                logger.warn('Current task not found');
                 return;
             }
 
             if (currentTask.task_status !== 'running') {
-                logger.warn('当前任务不在运行中');
+                logger.warn('Current task is not running');
                 return;
             }
 
@@ -32,7 +33,7 @@ export function registerStopCommand(tui: OpenDeskTUI): void {
                                 try {
                                     await tc.tool.stop();
                                 } catch (e) {
-                                    logger.warn(`停止工具 ${tc.tool_name} 失败: ${e}`);
+                                    logger.warn(`Failed to stop tool ${tc.tool_name}: ${e}`);
                                 }
                             }
                         }
@@ -44,7 +45,7 @@ export function registerStopCommand(tui: OpenDeskTUI): void {
             tui.inputArea.statusBar.stopTimer();
             tui.inputArea.setStatus('idle');
             tui.inputArea.clearMessageQueue();
-            logger.info('任务已停止');
+            logger.info('Task stopped');
             tui.tui.requestRender();
         }
     });

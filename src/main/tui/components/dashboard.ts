@@ -21,6 +21,7 @@ import type { GlobalTodo } from '../../applications/todomgr/common';
 import type { TaskState } from '../../aikernel/states/tasks.js';
 import { describeCron } from '../../utils/cron';
 import type { ChannelRuntimeState } from '../../applications/channelmgr/app.js';
+import { t } from '../../../locale/index.js';
 
 // ━━━ 科幻配色 ━━━
 // glow 使用 getter，每次访问时根据终端配色方案动态选择颜色
@@ -609,7 +610,9 @@ export class DashboardBar implements Component {
         const hh = String(now.getHours()).padStart(2, '0');
         const mm = String(now.getMinutes()).padStart(2, '0');
         const weekdays = ['日', '一', '二', '三', '四', '五', '六'];
-        cells.push(`🕐 ${hh}:${mm} 周${weekdays[now.getDay()]} ${now.getMonth() + 1}/${now.getDate()}`);
+        const weekdayKey = `datetime.weekday.${['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'][now.getDay()]}`;
+        const weekdayName = t(weekdayKey);
+        cells.push(`🕐 ${hh}:${mm} ${weekdayName} ${now.getMonth() + 1}/${now.getDate()}`);
 
         // 通知角标
         const badge = getNotificationBadge();

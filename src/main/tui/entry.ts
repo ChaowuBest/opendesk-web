@@ -50,6 +50,7 @@ import { DashboardBar } from './components/dashboard';
 import { HarnessContext } from '../aikernel/security/harness.js';
 import { TUIPermissionPromptProvider } from './components/permission.js';
 import { TaskProfiler } from '../aikernel/profiler.js';
+import { t } from '../../locale/index.js';
 
 import format from 'string-template';
 import path from 'path';
@@ -88,6 +89,7 @@ export interface CommandLineArgs {
     profile?: string;
     allowEverything?: boolean;
     mode?: string;
+    language?: string;
 }
 
 export class OpenDeskTUI {
@@ -256,20 +258,20 @@ export class OpenDeskTUI {
             }
             try {
                 const { name, hasApplications } = QuickPassHelper.importConfig(text);
-                const scope = hasApplications ? '全部设置（含应用配置）' : '基础设置（不含应用配置）';
+                const scope = hasApplications ? t('quickpass.import.range.all') : t('quickpass.import.range.basic');
                 const info = new InfoOverlay(this, {
-                    title: '口令导入成功',
-                    message: `已成功导入口令「${name}」\n导入范围：${scope}`,
-                    closeLabel: '确定'
+                    title: t('quickpass.import.success'),
+                    message: `${t('quickpass.import.success.detail')}${name}」\n${t('quickpass.import.scope')}${scope}`,
+                    closeLabel: t('quickpass.close')
                 });
                 info.show(() => {
                     this.resolveModelInfo();
                 });
             } catch (err: any) {
                 const info = new InfoOverlay(this, {
-                    title: '口令导入失败',
+                    title: t('quickpass.import.fail'),
                     message: `${err?.message ?? err}`,
-                    closeLabel: '确定'
+                    closeLabel: t('quickpass.close')
                 });
                 info.show();
             }
@@ -520,9 +522,9 @@ export class OpenDeskTUI {
         logger.info(`Session exported to: ${absolutePath}`);
 
         const info = new InfoOverlay(this, {
-            title: '导出成功',
-            message: `会话已成功导出到：\n${absolutePath}`,
-            closeLabel: '确定'
+            title: t('export.success'),
+            message: `${t('export.success.detail')}${absolutePath}`,
+            closeLabel: t('common.close')
         });
         info.show();
     }
@@ -872,9 +874,16 @@ export class OpenDeskTUI {
     public acquireMemoryLock(op: 'add' | 'search' | 'forget'): boolean {
         const registry = MemoryRegistry.getInstance();
         if (!registry.acquireLock(op)) {
-            const labels = { add: '添加', search: '搜索', forget: '删除' };
+            const labels = {
+                add: t('memory.add.label'),
+                search: t('memory.search.label'),
+                forget: t('memory.forget.label')
+            };
             const currentOp = labels[registry.busyOp!] ?? registry.busyOp;
-            this.showMemoryResult('操作被忽略', `当前有记忆${currentOp}操作正在进行中，请等待完成后再试。`);
+            this.showMemoryResult(
+                t('memory.operation.ignored'),
+                `${t('memory.operation.in.progress')}${currentOp}${t('memory.operation.in.progress.suffix')}`
+            );
             return false;
         }
         return true;
@@ -911,7 +920,9 @@ export class OpenDeskTUI {
             const elapsed = Math.floor((Date.now() - this.memoryAddStart) / 1000);
             const count = MemoryRegistry.getInstance().opCounter;
             this.inputArea.setExternalHint(
-                chalk.cyan(`${frames[frame]} 正在后台提取记忆... ${elapsed}s · 已提取 ${count} 条`)
+                chalk.cyan(
+                    `${frames[frame]} ${t('memory.extracting')}${elapsed}s · ${t('memory.extracting.progress')}${count}${t('memory.extracting.unit')}`
+                )
             );
             this.tui.requestRender();
         }, 200);
@@ -1122,19 +1133,19 @@ export class OpenDeskTUI {
 
         // 创建提示组件，使用 Text 组件显示多行文本
         const noticeText = [
-            chalk.bold.yellow('⚠️  模型未配置'),
+            chalk.bold.yellow('⚠️  ' + t('model.not.configured')),
             '',
-            chalk.dim('请先配置模型才能使用 OpenDesk'),
+            chalk.dim(t('model.not.configured.hint')),
             '',
-            chalk.cyan('使用方法：'),
+            chalk.cyan(t('model.configure.usage')),
             '',
-            chalk.white('  1. 输入 /config 打开配置菜单'),
-            chalk.white('  2. 选择"模型服务商配置"并添加一个模型模型服务商'),
-            chalk.white('  3. 选择"模型配置"并添加一个模型'),
-            chalk.white('  4. 选择 "默认模型配置", 并选择你要使用的模型'),
-            chalk.white('  5. (可选) 选择 "文件扫描配置", 添加文件搜索目录'),
+            chalk.white('  ' + t('model.configure.step1')),
+            chalk.white('  ' + t('model.configure.step2')),
+            chalk.white('  ' + t('model.configure.step3')),
+            chalk.white('  ' + t('model.configure.step4')),
+            chalk.white('  ' + t('model.configure.step5')),
             '',
-            chalk.dim('然后? 你可以休息了，让我开始工作吧!')
+            chalk.dim(t('model.configure.after'))
         ].join('\n');
 
         this.modelNotConfiguredNotice = new Text(noticeText);
@@ -1455,9 +1466,9 @@ export class OpenDeskTUI {
                 if (currentText.trim() === '') {
                     // 输入框为空，显示提示
                     const info = new InfoOverlay(this, {
-                        title: '提示',
-                        message: '你可以输入 /exit 退出或者输入 /help 查看帮助',
-                        closeLabel: '确定'
+                        title: t('exit.hint.title'),
+                        message: t('exit.hint.message'),
+                        closeLabel: t('common.close')
                     });
                     info.show();
                 } else {

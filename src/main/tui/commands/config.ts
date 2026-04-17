@@ -1,9 +1,10 @@
 import type { OpenDeskTUI } from '../entry.js';
+import { t } from '../../../locale/index.js';
 
 export function registerConfigCommand(tui: OpenDeskTUI): void {
     tui.commandRegistry.register({
         name: 'config',
-        description: '打开系统设置',
+        description: t('config.command.description'),
         execute: async () => {
             tui.enterConfigMode();
         }

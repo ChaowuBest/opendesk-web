@@ -2,11 +2,12 @@ import type { OpenDeskTUI } from '../entry.js';
 import { InfoOverlay } from '../components/notice.js';
 import { BookmarkList } from '../components/bookmarklist.js';
 import { logger } from '../../utils/logger.js';
+import { t } from '../../../locale/index.js';
 
 export function registerBookmarkCommand(tui: OpenDeskTUI): void {
     tui.commandRegistry.register({
         name: 'bookmark',
-        description: '管理任务书签，用法：/bookmark add|list|remove',
+        description: t('bookmark.description'),
         getArgumentCompletions: (argPrefix: string) => {
             const options = ['add', 'list', 'remove'];
             return options
@@ -16,10 +17,10 @@ export function registerBookmarkCommand(tui: OpenDeskTUI): void {
                     label: opt,
                     description:
                         opt === 'add'
-                            ? '将当前任务添加到书签'
+                            ? t('bookmark.add.description')
                             : opt === 'list'
-                              ? '列出所有书签任务'
-                              : '移除当前任务的书签'
+                              ? t('bookmark.list.description')
+                              : t('bookmark.remove.description')
                 }));
         },
         execute: async (args: string) => {
@@ -34,9 +35,9 @@ export function registerBookmarkCommand(tui: OpenDeskTUI): void {
             if (subCommand === 'add') {
                 if (!tui.activeTaskId) {
                     const info = new InfoOverlay(tui, {
-                        title: '添加书签失败',
-                        message: '没有活跃的任务',
-                        closeLabel: '确定'
+                        title: t('bookmark.add.fail'),
+                        message: t('bookmark.add.fail.no.task'),
+                        closeLabel: t('common.close')
                     });
                     info.show();
                     return;
@@ -45,9 +46,9 @@ export function registerBookmarkCommand(tui: OpenDeskTUI): void {
                 const currentTask = tui.taskManagerState.getTask(tui.activeTaskId);
                 if (!currentTask) {
                     const info = new InfoOverlay(tui, {
-                        title: '添加书签失败',
-                        message: '未找到当前任务',
-                        closeLabel: '确定'
+                        title: t('bookmark.add.fail'),
+                        message: t('bookmark.add.fail.not.found'),
+                        closeLabel: t('common.close')
                     });
                     info.show();
                     return;
@@ -55,19 +56,20 @@ export function registerBookmarkCommand(tui: OpenDeskTUI): void {
 
                 if (currentTask.bookmark_path) {
                     const info = new InfoOverlay(tui, {
-                        title: '添加书签失败',
-                        message: '当前任务已在书签中',
-                        closeLabel: '确定'
+                        title: t('bookmark.add.fail'),
+                        message: t('bookmark.add.fail.already.exists'),
+                        closeLabel: t('common.close')
                     });
                     info.show();
                     return;
                 }
 
                 currentTask.setBookmark('/');
+                const taskName = currentTask.task_name || t('bookmark.unnamed.task');
                 const info = new InfoOverlay(tui, {
-                    title: '添加书签成功',
-                    message: `任务"${currentTask.task_name || '未命名任务'}"已添加到书签`,
-                    closeLabel: '确定'
+                    title: t('bookmark.add.success'),
+                    message: `${t('bookmark.add.success.detail')}${taskName}"${t('bookmark.add.success.suffix')}`,
+                    closeLabel: t('common.close')
                 });
                 info.show();
                 return;
@@ -76,9 +78,9 @@ export function registerBookmarkCommand(tui: OpenDeskTUI): void {
             if (subCommand === 'remove') {
                 if (!tui.activeTaskId) {
                     const info = new InfoOverlay(tui, {
-                        title: '移除书签失败',
-                        message: '没有活跃的任务',
-                        closeLabel: '确定'
+                        title: t('bookmark.remove.fail'),
+                        message: t('bookmark.remove.fail.no.task'),
+                        closeLabel: t('common.close')
                     });
                     info.show();
                     return;
@@ -87,9 +89,9 @@ export function registerBookmarkCommand(tui: OpenDeskTUI): void {
                 const currentTask = tui.taskManagerState.getTask(tui.activeTaskId);
                 if (!currentTask) {
                     const info = new InfoOverlay(tui, {
-                        title: '移除书签失败',
-                        message: '未找到当前任务',
-                        closeLabel: '确定'
+                        title: t('bookmark.remove.fail'),
+                        message: t('bookmark.remove.fail.not.found'),
+                        closeLabel: t('common.close')
                     });
                     info.show();
                     return;
@@ -97,26 +99,26 @@ export function registerBookmarkCommand(tui: OpenDeskTUI): void {
 
                 if (!currentTask.bookmark_path) {
                     const info = new InfoOverlay(tui, {
-                        title: '移除书签失败',
-                        message: '当前任务不在书签中',
-                        closeLabel: '确定'
+                        title: t('bookmark.remove.fail'),
+                        message: t('bookmark.remove.fail.not.in'),
+                        closeLabel: t('common.close')
                     });
                     info.show();
                     return;
                 }
 
-                const taskName = currentTask.task_name || '未命名任务';
+                const taskName = currentTask.task_name || t('bookmark.unnamed.task');
                 currentTask.removeBookmark();
                 const info = new InfoOverlay(tui, {
-                    title: '移除书签成功',
-                    message: `任务"${taskName}"已从书签中移除`,
-                    closeLabel: '确定'
+                    title: t('bookmark.remove.success'),
+                    message: `${t('bookmark.remove.success.detail')}${taskName}"${t('bookmark.remove.success.suffix')}`,
+                    closeLabel: t('common.close')
                 });
                 info.show();
                 return;
             }
 
-            logger.warn('用法：/bookmark add|list|remove');
+            logger.warn('Usage: /bookmark add|list|remove');
         }
     });
 }

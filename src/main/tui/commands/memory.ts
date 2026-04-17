@@ -5,6 +5,7 @@ import { MemoryListOverlay } from '../components/memorylist.js';
 import { ChatContext, UserMessage, SystemMessage, AssistantMessage } from '../../aikernel/messages.js';
 import { createMemoryToolset } from '../../aikernel/memory/tools.js';
 import { TaskState } from '../../aikernel/states/tasks.js';
+import { t } from '../../../locale/index.js';
 
 async function handleMemoryAdd(tui: OpenDeskTUI, prompt: string): Promise<void> {
     if (!tui.acquireMemoryLock('add')) return;
@@ -46,20 +47,29 @@ async function handleMemoryAdd(tui: OpenDeskTUI, prompt: string): Promise<void> 
         const elapsed = Math.floor((Date.now() - tui.memoryAddStart) / 1000);
         const count = registry.opCounter;
         if (count > 0) {
-            tui.showMemoryResult('记忆提取完成', `耗时 ${elapsed} 秒，共提取 ${count} 条记忆。`);
+            tui.showMemoryResult(
+                t('memory.extract.complete'),
+                `${t('memory.extract.complete.detail')}${elapsed}${t('memory.extract.complete.seconds')}${count}${t('memory.extract.complete.unit')}`
+            );
         } else {
-            tui.showMemoryResult('记忆提取完成', `耗时 ${elapsed} 秒，未发现需要保存的新记忆。`);
+            tui.showMemoryResult(
+                t('memory.extract.no.new'),
+                `${t('memory.extract.no.new.detail')}${elapsed}${t('memory.extract.no.new.seconds')}`
+            );
         }
     } catch (err: unknown) {
         tui.stopMemorySpinner();
         tui.releaseMemoryLock();
-        tui.showMemoryResult('记忆提取失败', `操作出错：${err instanceof Error ? err.message : String(err)}`);
+        tui.showMemoryResult(
+            t('memory.extract.fail'),
+            `${t('memory.extract.fail.detail')}${err instanceof Error ? err.message : String(err)}`
+        );
     }
 }
 
 async function handleMemorySearch(tui: OpenDeskTUI, query: string): Promise<void> {
     if (!tui.acquireMemoryLock('search')) return;
-    tui.startMemorySpinner('正在搜索相关记忆...');
+    tui.startMemorySpinner(t('memory.searching'));
 
     const registry = MemoryRegistry.getInstance();
     try {
@@ -68,7 +78,10 @@ async function handleMemorySearch(tui: OpenDeskTUI, query: string): Promise<void
         tui.releaseMemoryLock();
 
         if (results.length === 0) {
-            tui.showMemoryResult('记忆搜索', `未找到与「${query}」相关的记忆`);
+            tui.showMemoryResult(
+                t('memory.search.no.result'),
+                `${t('memory.search.no.result.detail')}${query}${t('memory.search.no.result.suffix')}`
+            );
             return;
         }
 
@@ -76,11 +89,13 @@ async function handleMemorySearch(tui: OpenDeskTUI, query: string): Promise<void
         const memoriesForContext = topResults.map((r) => ({ scope: r.scope, meta: r.meta }));
         const formattedContent = registry.formatMemoriesForContext(memoriesForContext);
 
-        const resultLines = topResults.map((r) => `  • ${r.meta.name}（相关度: ${r.relevance}/10）`).join('\n');
+        const resultLines = topResults
+            .map((r) => `  • ${r.meta.name} (${t('memory.relevance')}: ${r.relevance}/10)`)
+            .join('\n');
 
         tui.showMemoryResult(
-            '记忆搜索完成',
-            `找到 ${results.length} 条相关记忆，将前 ${topResults.length} 条注入对话上下文：\n\n${resultLines}`,
+            t('memory.search.complete'),
+            `${t('memory.search.complete.detail')}${results.length}${t('memory.search.complete.results')}${topResults.length}${t('memory.search.complete.top')}${resultLines}`,
             async () => {
                 const searchPrompt = `以下是根据查询"${query}"检索到的相关记忆，请参考这些信息：\n\n${formattedContent}`;
                 await tui.onRequestSubmit(searchPrompt);
@@ -89,13 +104,16 @@ async function handleMemorySearch(tui: OpenDeskTUI, query: string): Promise<void
     } catch (err: unknown) {
         tui.stopMemorySpinner();
         tui.releaseMemoryLock();
-        tui.showMemoryResult('记忆搜索失败', `操作出错：${err instanceof Error ? err.message : String(err)}`);
+        tui.showMemoryResult(
+            t('memory.search.fail'),
+            `${t('memory.search.fail.detail')}${err instanceof Error ? err.message : String(err)}`
+        );
     }
 }
 
 async function handleMemoryForget(tui: OpenDeskTUI, description: string): Promise<void> {
     if (!tui.acquireMemoryLock('forget')) return;
-    tui.startMemorySpinner('正在搜索并删除匹配的记忆...');
+    tui.startMemorySpinner(t('memory.searching.deleting'));
 
     const registry = MemoryRegistry.getInstance();
     try {
@@ -105,14 +123,23 @@ async function handleMemoryForget(tui: OpenDeskTUI, description: string): Promis
 
         if (result.deleted.length > 0) {
             const lines = result.deleted.map((d) => `  • ${d.name}`).join('\n');
-            tui.showMemoryResult('记忆删除完成', `已删除 ${result.deleted.length} 条记忆：\n\n${lines}`);
+            tui.showMemoryResult(
+                t('memory.delete.complete'),
+                `${t('memory.delete.complete.detail')}${result.deleted.length}${t('memory.delete.complete.unit')}${lines}`
+            );
         } else {
-            tui.showMemoryResult('记忆删除', `未找到与「${description}」匹配的记忆`);
+            tui.showMemoryResult(
+                t('memory.delete.no.match'),
+                `${t('memory.delete.no.match.detail')}${description}${t('memory.delete.no.match.suffix')}`
+            );
         }
     } catch (err: unknown) {
         tui.stopMemorySpinner();
         tui.releaseMemoryLock();
-        tui.showMemoryResult('记忆删除失败', `操作出错：${err instanceof Error ? err.message : String(err)}`);
+        tui.showMemoryResult(
+            t('memory.delete.fail'),
+            `${t('memory.delete.fail.detail')}${err instanceof Error ? err.message : String(err)}`
+        );
     }
 }
 
@@ -124,7 +151,7 @@ function handleMemoryList(tui: OpenDeskTUI): void {
 export function registerMemoryCommand(tui: OpenDeskTUI): void {
     tui.commandRegistry.register({
         name: 'memory',
-        description: '记忆管理：/memory add [提示]、/memory search <查询>、/memory forget <描述>、/memory list',
+        description: t('memory.command.description'),
         getArgumentCompletions: (argPrefix: string) => {
             const options = ['add', 'search', 'forget', 'list'];
             const parts = argPrefix.split(/\s+/);
@@ -136,12 +163,12 @@ export function registerMemoryCommand(tui: OpenDeskTUI): void {
                         label: opt,
                         description:
                             opt === 'add'
-                                ? '添加记忆'
+                                ? t('memory.add.label')
                                 : opt === 'search'
-                                  ? '搜索记忆'
+                                  ? t('memory.search.label')
                                   : opt === 'forget'
-                                    ? '删除记忆'
-                                    : '列出所有记忆'
+                                    ? t('memory.forget.label')
+                                    : t('memory.list.label')
                     }));
             }
             return null;
@@ -155,20 +182,22 @@ export function registerMemoryCommand(tui: OpenDeskTUI): void {
                 await handleMemoryAdd(tui, restArgs);
             } else if (subCommand === 'search') {
                 if (!restArgs) {
-                    logger.warn('用法：/memory search <查询关键词>');
+                    logger.warn('Usage: /memory search <query_keywords>');
                     return;
                 }
                 await handleMemorySearch(tui, restArgs);
             } else if (subCommand === 'forget') {
                 if (!restArgs) {
-                    logger.warn('用法：/memory forget <描述要删除的记忆>');
+                    logger.warn('Usage: /memory forget <description_of_memory_to_delete>');
                     return;
                 }
                 await handleMemoryForget(tui, restArgs);
             } else if (subCommand === 'list') {
                 handleMemoryList(tui);
             } else {
-                logger.warn('用法：/memory add [提示] | /memory search <查询> | /memory forget <描述> | /memory list');
+                logger.warn(
+                    'Usage: /memory add [prompt] | /memory search <query> | /memory forget <description> | /memory list'
+                );
             }
         }
     });

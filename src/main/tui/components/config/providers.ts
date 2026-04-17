@@ -3,6 +3,7 @@ import { defaultSelectListTheme } from '../../theme.js';
 import { Setting } from '../../../utils/setting.js';
 import { ConfigForm, type FieldDef, type ActionDef } from './form';
 import chalk from 'chalk';
+import { t } from '../../../../locale/index.js';
 
 export interface ProviderTemplate {
     name: string;
@@ -99,7 +100,7 @@ export class ProviderConfigPage implements Component {
         const providers: ProviderData[] = data.providers ?? [];
 
         const items = [
-            { value: '__add__', label: chalk.green('+ 添加模型服务商') },
+            { value: '__add__', label: chalk.green(t('config.provider.add')) },
             ...providers.map((p: ProviderData, i: number) => ({
                 value: String(i),
                 label: `${p.name}  ${chalk.dim(p.base_url)}`
@@ -127,11 +128,11 @@ export class ProviderConfigPage implements Component {
         this.list = undefined;
 
         const items = [
-            ...PROVIDER_TEMPLATES.map((t) => ({
-                value: t.name,
-                label: `${t.displayName}  ${chalk.dim(t.base_url)}`
+            ...PROVIDER_TEMPLATES.map((template) => ({
+                value: template.name,
+                label: `${template.displayName}  ${chalk.dim(template.base_url)}`
             })),
-            { value: '__custom__', label: chalk.dim('✏️  自定义…') }
+            { value: '__custom__', label: chalk.dim(t('config.provider.template.custom')) }
         ];
 
         this.templateList = new SelectList(items, Math.min(items.length, 15), defaultSelectListTheme);
@@ -158,19 +159,20 @@ export class ProviderConfigPage implements Component {
         this.templateList = undefined;
 
         const fields: FieldDef[] = [
-            { type: 'text', key: 'name', label: '名称', value: provider.name },
-            { type: 'text', key: 'base_url', label: 'API 地址', value: provider.base_url },
-            { type: 'text', key: 'api_key', label: 'API 密钥', value: provider.api_key },
-            { type: 'boolean', key: 'no_proxy', label: '禁用代理', value: provider.no_proxy }
+            { type: 'text', key: 'name', label: t('config.provider.field.name'), value: provider.name },
+            { type: 'text', key: 'base_url', label: t('config.provider.field.base_url'), value: provider.base_url },
+            { type: 'text', key: 'api_key', label: t('config.provider.field.api_key'), value: provider.api_key },
+            { type: 'boolean', key: 'no_proxy', label: t('config.provider.field.no_proxy'), value: provider.no_proxy }
         ];
 
-        const actions: ActionDef[] = [{ key: 'save', label: '🆗 保存', style: 'primary' }];
+        const actions: ActionDef[] = [{ key: 'save', label: t('config.common.save'), style: 'primary' }];
         if (this.editingIndex >= 0) {
-            actions.push({ key: 'delete', label: '🗑️  删除', style: 'danger' });
+            actions.push({ key: 'delete', label: t('config.common.delete'), style: 'danger' });
         }
-        actions.push({ key: 'cancel', label: '↩  返回' });
+        actions.push({ key: 'cancel', label: t('config.common.cancel') });
 
-        const title = this.editingIndex >= 0 ? '编辑模型服务商' : '添加模型服务商';
+        const title =
+            this.editingIndex >= 0 ? t('config.provider.edit.title.edit') : t('config.provider.edit.title.add');
         this.form = new ConfigForm(
             this.tui,
             title,
@@ -233,21 +235,21 @@ export class ProviderConfigPage implements Component {
 
         switch (this.state) {
             case 'list':
-                lines.push(chalk.bold('⚙️  模型服务商配置'));
+                lines.push(chalk.bold('⚙️  ' + t('config.provider.title')));
                 lines.push(chalk.dim('─'.repeat(Math.min(width - 2, 50))));
                 lines.push('');
                 if (this.list) lines.push(...this.list.render(width));
                 lines.push('');
-                lines.push(chalk.dim('  Enter 选择  Esc 返回'));
+                lines.push(chalk.dim('  ' + t('config.main.hint')));
                 break;
 
             case 'template':
-                lines.push(chalk.bold('⚙️  选择模型服务商模板'));
+                lines.push(chalk.bold('⚙️  ' + t('config.provider.template.title')));
                 lines.push(chalk.dim('─'.repeat(Math.min(width - 2, 50))));
                 lines.push('');
                 if (this.templateList) lines.push(...this.templateList.render(width));
                 lines.push('');
-                lines.push(chalk.dim('  Enter 选择  Esc 返回'));
+                lines.push(chalk.dim('  ' + t('config.main.hint')));
                 break;
 
             case 'edit':

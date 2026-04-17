@@ -4,6 +4,7 @@ import { Setting } from '../../../utils/setting.js';
 import { ConfigForm, type FieldDef, type ActionDef } from './form';
 import chalk from 'chalk';
 import { REASONING_EFFORT_LABELS, REASONING_EFFORT_SELECT_VALUES } from '../../../../common/reasoning-effort.js';
+import { t } from '../../../../locale/index.js';
 
 interface ModelData {
     alias: string;
@@ -40,7 +41,7 @@ export class ModelConfigPage implements Component {
         const models: ModelData[] = data.models ?? [];
 
         const items = [
-            { value: '__add__', label: chalk.green('+ 添加模型') },
+            { value: '__add__', label: chalk.green(t('config.model.add')) },
             ...models.map((m: ModelData, i: number) => {
                 const effortTag = m.reasoning_effort
                     ? chalk.yellow(`[${REASONING_EFFORT_LABELS[m.reasoning_effort] ?? m.reasoning_effort}]`)
@@ -76,7 +77,9 @@ export class ModelConfigPage implements Component {
         const data = Setting.getInstance().getData() as any;
         const providerNames: string[] = (data.providers ?? []).map((p: any) => p.name);
 
-        const fields: FieldDef[] = [{ type: 'text', key: 'alias', label: '模型别名', value: model.alias }];
+        const fields: FieldDef[] = [
+            { type: 'text', key: 'alias', label: t('config.model.field.alias'), value: model.alias }
+        ];
 
         if (providerNames.length > 0) {
             const currentProvider = providerNames.includes(model.provider_name)
@@ -85,7 +88,7 @@ export class ModelConfigPage implements Component {
             fields.push({
                 type: 'select',
                 key: 'provider_name',
-                label: '模型服务商',
+                label: t('config.model.field.provider'),
                 value: currentProvider,
                 options: providerNames
             });
@@ -93,7 +96,7 @@ export class ModelConfigPage implements Component {
             fields.push({
                 type: 'text',
                 key: 'provider_name',
-                label: '模型服务商',
+                label: t('config.model.field.provider'),
                 value: model.provider_name
             });
         }
@@ -101,26 +104,26 @@ export class ModelConfigPage implements Component {
         fields.push({
             type: 'text',
             key: 'model_name',
-            label: '模型名称 (提供商侧)',
+            label: t('config.model.field.model_name'),
             value: model.model_name
         });
 
         fields.push({
             type: 'select',
             key: 'reasoning_effort',
-            label: '推理模式',
+            label: t('config.model.field.reasoning_effort'),
             value: model.reasoning_effort || '',
             options: REASONING_EFFORT_SELECT_VALUES,
             optionLabels: REASONING_EFFORT_LABELS
         });
 
-        const actions: ActionDef[] = [{ key: 'save', label: '🆗 保存', style: 'primary' }];
+        const actions: ActionDef[] = [{ key: 'save', label: t('config.common.save'), style: 'primary' }];
         if (this.editingIndex >= 0) {
-            actions.push({ key: 'delete', label: '🗑️  删除', style: 'danger' });
+            actions.push({ key: 'delete', label: t('config.common.delete'), style: 'danger' });
         }
-        actions.push({ key: 'cancel', label: '↩  返回' });
+        actions.push({ key: 'cancel', label: t('config.common.cancel') });
 
-        const title = this.editingIndex >= 0 ? '编辑模型' : '添加模型';
+        const title = this.editingIndex >= 0 ? t('config.model.edit.title.edit') : t('config.model.edit.title.add');
         this.form = new ConfigForm(
             this.tui,
             title,
@@ -183,12 +186,12 @@ export class ModelConfigPage implements Component {
 
         switch (this.state) {
             case 'list':
-                lines.push(chalk.bold('⚙️  模型配置'));
+                lines.push(chalk.bold('⚙️  ' + t('config.model.title')));
                 lines.push(chalk.dim('─'.repeat(Math.min(width - 2, 50))));
                 lines.push('');
                 if (this.list) lines.push(...this.list.render(width));
                 lines.push('');
-                lines.push(chalk.dim('  Enter 选择  Esc 返回'));
+                lines.push(chalk.dim('  ' + t('config.main.hint')));
                 break;
 
             case 'edit':
