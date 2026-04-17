@@ -71,6 +71,7 @@ import {
 import { feishuAuthInit, feishuAuthBegin, feishuAuthPoll } from './feishu-auth.js';
 import { NotificationManager } from '../../utils/notificationmgr.js';
 import { ToolResult } from '../../aikernel/tool.js';
+import { t } from '../../../locale/index.js';
 import qrcodeTerminal from 'qrcode-terminal';
 import chalk from 'chalk';
 import { getAdaptiveGreen } from '../../tui/theme.js';
@@ -149,10 +150,10 @@ export class ChannelMgrApplication extends BaseApplication {
 
     async getSupportedEvents(): Promise<EventDecl[]> {
         return [
-            { eventName: 'channel:connected', eventDescription: '消息插件已连接' },
-            { eventName: 'channel:disconnected', eventDescription: '消息插件已断开' },
-            { eventName: 'channel:message', eventDescription: '收到消息插件消息' },
-            { eventName: 'channel:error', eventDescription: '消息插件发生错误' }
+            { eventName: 'channel:connected', eventDescription: t('channel.event.connected') },
+            { eventName: 'channel:disconnected', eventDescription: t('channel.event.disconnected') },
+            { eventName: 'channel:message', eventDescription: t('channel.event.message') },
+            { eventName: 'channel:error', eventDescription: t('channel.event.error') }
         ];
     }
 
@@ -336,18 +337,22 @@ export class ChannelMgrApplication extends BaseApplication {
                     // then assume the plugin is running.
                     await Promise.race([startPromise, new Promise<void>((resolve) => setTimeout(resolve, 5000))]);
 
-                    state.status = { online: true, statusText: '已连接' };
+                    state.status = { online: true, statusText: t('channel.status.connected') };
                     this.notifyStateChange();
                     this.emitEvent('channel:connected', { channelId, accountId });
-                    NotificationManager.getInstance().info('插件系统', '消息渠道', `${channelId}:${accountId} 已就绪`);
+                    NotificationManager.getInstance().info(
+                        t('plugin.system'),
+                        t('message.channel'),
+                        `${channelId}:${accountId} ${t('channel.ready')}`
+                    );
                 } catch (err: any) {
-                    state.status = { online: false, statusText: '错误', error: err?.message };
+                    state.status = { online: false, statusText: t('channel.status.error'), error: err?.message };
                     this.notifyStateChange();
                     this.emitEvent('channel:error', { channelId, accountId, error: err?.message });
                     logger.error(`消息插件 ${channelId}:${accountId} 启动失败: ${err?.message || err}`);
                 }
             } else {
-                state.status = { online: true, statusText: '就绪' };
+                state.status = { online: true, statusText: t('channel.status.ready') };
                 this.notifyStateChange();
             }
         }
@@ -1196,7 +1201,7 @@ export class ChannelMgrApplication extends BaseApplication {
         switch (subCmd) {
             case 'install': {
                 if (!rest) {
-                    showInfo('用法提示', '/plugins install <npm-spec|url>');
+                    showInfo(t('plugin.usage.hint'), '/plugins install <npm-spec|url>');
                     return;
                 }
                 const progress = new ProgressOverlay(tui, {
@@ -1209,20 +1214,20 @@ export class ChannelMgrApplication extends BaseApplication {
                     if (result.success) {
                         await this.reloadChannels();
                         progress.hide();
-                        showInfo('安装成功', `插件安装成功: ${result.id}\n\n消息渠道已自动重新加载。`);
+                        showInfo(t('plugin.install.success'), t('channel.install.success', { id: result.id }));
                     } else {
                         progress.hide();
-                        showInfo('安装失败', `插件安装失败: ${result.error}`);
+                        showInfo(t('plugin.install.fail'), `插件安装失败: ${result.error}`);
                     }
                 } catch (err: any) {
                     progress.hide();
-                    showInfo('安装失败', `插件安装出错: ${err?.message ?? err}`);
+                    showInfo(t('plugin.install.fail'), `插件安装出错: ${err?.message ?? err}`);
                 }
                 break;
             }
             case 'uninstall': {
                 if (!rest) {
-                    showInfo('用法提示', '/plugins uninstall <plugin-id>');
+                    showInfo(t('plugin.usage.hint'), '/plugins uninstall <plugin-id>');
                     return;
                 }
                 const progress = new ProgressOverlay(tui, {
@@ -1235,14 +1240,14 @@ export class ChannelMgrApplication extends BaseApplication {
                     if (result.success) {
                         await this.reloadChannels();
                         progress.hide();
-                        showInfo('卸载成功', `插件已卸载: ${rest}\n\n消息渠道已自动重新加载。`);
+                        showInfo(t('plugin.uninstall.success'), t('channel.uninstall.success', { id: rest }));
                     } else {
                         progress.hide();
-                        showInfo('卸载失败', `插件卸载失败: ${result.error}`);
+                        showInfo(t('plugin.uninstall.fail'), `插件卸载失败: ${result.error}`);
                     }
                 } catch (err: any) {
                     progress.hide();
-                    showInfo('卸载失败', `插件卸载出错: ${err?.message ?? err}`);
+                    showInfo(t('plugin.uninstall.fail'), `插件卸载出错: ${err?.message ?? err}`);
                 }
                 break;
             }
@@ -1252,32 +1257,32 @@ export class ChannelMgrApplication extends BaseApplication {
             }
             case 'enable': {
                 if (!rest) {
-                    showInfo('用法提示', '/plugins enable <plugin-id>');
+                    showInfo(t('plugin.usage.hint'), '/plugins enable <plugin-id>');
                     return;
                 }
                 if (setPluginEnabled(rest, true)) {
                     await this.reloadChannels();
-                    showInfo('启用成功', `插件已启用: ${rest}\n\n消息渠道已自动重新加载。`);
+                    showInfo(t('plugin.enable.success'), t('channel.enable.success', { id: rest }));
                 } else {
-                    showInfo('启用失败', `未找到插件: ${rest}`);
+                    showInfo(t('plugin.enable.fail'), `未找到插件: ${rest}`);
                 }
                 break;
             }
             case 'disable': {
                 if (!rest) {
-                    showInfo('用法提示', '/plugins disable <plugin-id>');
+                    showInfo(t('plugin.usage.hint'), '/plugins disable <plugin-id>');
                     return;
                 }
                 if (setPluginEnabled(rest, false)) {
                     await this.reloadChannels();
-                    showInfo('禁用成功', `插件已禁用: ${rest}\n\n消息渠道已自动重新加载。`);
+                    showInfo(t('plugin.disable.success'), t('channel.disable.success', { id: rest }));
                 } else {
-                    showInfo('禁用失败', `未找到插件: ${rest}`);
+                    showInfo(t('plugin.disable.fail'), `未找到插件: ${rest}`);
                 }
                 break;
             }
             default:
-                showInfo('用法提示', '用法: /plugins install|uninstall|list|enable|disable');
+                showInfo(t('plugin.usage.hint'), '用法: /plugins install|uninstall|list|enable|disable');
         }
     }
 

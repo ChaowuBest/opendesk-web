@@ -13,6 +13,7 @@ import { Box, Component, Text } from '@mariozechner/pi-tui';
 import { HorizontalLayout } from './components/layout';
 import { CenteredText } from './components/texts';
 import chalk from 'chalk';
+import { t } from '../../locale/index.js';
 
 class Creators {
     static BG_LIGHT = '#404040';
@@ -105,7 +106,7 @@ export class OpenDeskBanner implements Component {
         );
         this.workspace = workspace;
         this.layout.addChild(this.logo);
-        this.layout.addChild(new CenteredText(chalk.dim('当前工作空间为: ') + this.workspace));
+        this.layout.addChild(new CenteredText(chalk.dim(t('banner.workspace')) + this.workspace));
         this.layout.addChild(new CenteredText(''));
     }
 

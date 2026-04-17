@@ -4,11 +4,12 @@ import { fileURLToPath } from 'url';
 import path from 'path';
 import fs from 'fs';
 import open from 'open';
+import { t } from '../../../locale/index.js';
 
 export function registerManualCommand(tui: OpenDeskTUI): void {
     tui.commandRegistry.register({
         name: 'manual',
-        description: '打开使用手册',
+        description: t('manual.description'),
         execute: async () => {
             const __filename = fileURLToPath(import.meta.url);
             const __dirname = path.dirname(__filename);
@@ -32,17 +33,17 @@ export function registerManualCommand(tui: OpenDeskTUI): void {
                     await open(manualPath);
                 } catch (err: unknown) {
                     const info = new InfoOverlay(tui, {
-                        title: '打开失败',
-                        message: `无法打开手册: ${err instanceof Error ? err.message : String(err)}`,
-                        closeLabel: '确定'
+                        title: t('manual.open.fail'),
+                        message: `${t('manual.open.fail.detail')}${err instanceof Error ? err.message : String(err)}`,
+                        closeLabel: t('common.close')
                     });
                     info.show();
                 }
             } else {
                 const info = new InfoOverlay(tui, {
-                    title: '文件未找到',
-                    message: '未找到 manual.html 文件',
-                    closeLabel: '确定'
+                    title: t('manual.file.not.found'),
+                    message: t('manual.file.not.found.detail'),
+                    closeLabel: t('common.close')
                 });
                 info.show();
             }

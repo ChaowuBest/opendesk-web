@@ -18,12 +18,11 @@ import {
     type ChatMessage
 } from './messages.js';
 import { LLM } from './llm.js';
-import { Setting, ModelInstance } from '../utils/setting.js';
-import { lookupKnownContextSize, fetchContextSizeFromAPI } from '../utils/model-context.js';
 import { logger } from '../utils/logger.js';
 import { HookRegistry } from './hooks.js';
 import type { TaskState } from './states/tasks.js';
 import { buildActiveContextView, countNonBoundaryMessages } from './compaction/context-view.js';
+import { getAutoCompactDecision } from './compaction/auto-compact.js';
 import {
     buildToolResultReplacementText,
     getToolResultArtifactPath,
@@ -338,55 +337,20 @@ export async function compactContext(chatContext: ChatContext, model?: string): 
 }
 
 /**
- * 获取模型的上下文窗口大小（先查内置表，再查 API）
- */
-async function getContextSize(model?: string): Promise<number> {
-    try {
-        let modelInstance: ModelInstance;
-        if (typeof model === 'string') {
-            const instance = Setting.getInstance().getModelInstance(model);
-            if (!instance) return 0;
-            modelInstance = instance;
-        } else {
-            modelInstance = Setting.getInstance().getDefaultModelInstance();
-        }
-
-        const knownSize = lookupKnownContextSize(modelInstance.model_name);
-        if (knownSize > 0) return knownSize;
-
-        return await fetchContextSizeFromAPI(modelInstance);
-    } catch {
-        return 0;
-    }
-}
-
-/**
- * 判断当前上下文是否需要压缩（prompt_tokens >= contextSize * 80%）
+ * 判断当前上下文是否需要压缩。
  */
 export async function shouldCompact(chatContext: ChatContext, model?: string): Promise<boolean> {
-    let lastUsage: { prompt_tokens: number } | undefined;
-    for (let i = chatContext.messages.length - 1; i >= 0; i--) {
-        const msg = chatContext.messages[i];
-        if (msg instanceof AssistantMessage && msg.usage) {
-            lastUsage = msg.usage;
-            break;
-        }
-    }
-
-    if (!lastUsage) return false;
-
-    const contextSize = await getContextSize(model);
-    if (contextSize <= 0) return false;
-
-    const threshold = contextSize * 0.8;
-    const needed = lastUsage.prompt_tokens >= threshold;
-    if (needed) {
+    const decision = await getAutoCompactDecision(chatContext, model);
+    if (decision.shouldCompact) {
         logger.info(
-            `[Compact] 自动压缩触发: prompt_tokens=${lastUsage.prompt_tokens}, ` +
-                `阈值=${Math.floor(threshold)} (${contextSize} × 80%)`
+            `[Compact] 自动压缩触发: prompt_tokens=${decision.promptTokens}, ` +
+                `阈值=${Math.floor(decision.autoCompactThreshold)} (` +
+                `contextWindow=${decision.contextWindow}, ` +
+                `reservedSummaryOutput=${decision.reservedSummaryOutput}, ` +
+                `buffer=${decision.buffer})`
         );
     }
-    return needed;
+    return decision.shouldCompact;
 }
 
 // ─── 全局 afterToolCall：超长工具结果落盘并替换为摘要 ─────────────────────────────

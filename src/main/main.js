@@ -74,6 +74,18 @@ import appIcon from '../../resources/main/images/icon_round.png?asset';
 setPlatform(new ElectronPlatform(app));
 useConsoleTransport();
 
+// OpenHarmony 环境下注入 USER_DATA_PATH，确保 setting.ts / skillregistry 等模块能找到可写数据目录
+if (process.platform === 'openharmony' && !process.env.USER_DATA_PATH) {
+    try {
+        const electronUserData = app.getPath('userData');
+        if (electronUserData) {
+            process.env.USER_DATA_PATH = electronUserData;
+        }
+    } catch (_e) {
+        // app.getPath 可能在 OpenHarmony 上不可用，后续 resolveWritableUserDataRoot 会做回退
+    }
+}
+
 const __dirname = import.meta.dirname;
 const converter = new Convert();
 

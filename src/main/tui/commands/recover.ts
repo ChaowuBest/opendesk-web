@@ -2,26 +2,27 @@ import type { OpenDeskTUI } from '../entry.js';
 import { ConfirmOverlay, InfoOverlay, ProgressOverlay } from '../components/notice.js';
 import { TaskManagerState } from '../../aikernel/states/tasks.js';
 import { logger } from '../../utils/logger.js';
+import { t } from '../../../locale/index.js';
 
 export function registerRecoverCommand(tui: OpenDeskTUI): void {
     tui.commandRegistry.register({
         name: 'recover',
-        description: '恢复数据（子命令: tasks）',
+        description: t('recover.description'),
         execute: async (args: string) => {
             const subCommand = args.trim().toLowerCase();
             if (subCommand === 'tasks') {
                 executeRecoverTasks(tui);
             } else {
                 const info = new InfoOverlay(tui, {
-                    title: '用法提示',
-                    message: '可用的子命令:\n\n  /recover tasks  - 从任务文件重建任务列表',
-                    closeLabel: '确定'
+                    title: t('recover.usage.title'),
+                    message: t('recover.usage.message'),
+                    closeLabel: t('common.close')
                 });
                 info.show();
             }
         },
         getArgumentCompletions: (argPrefix: string) => {
-            const subCommands = [{ value: 'tasks', label: 'tasks', description: '从任务文件重建任务列表' }];
+            const subCommands = [{ value: 'tasks', label: 'tasks', description: t('recover.tasks.description') }];
             return subCommands
                 .filter((sc) => sc.value.startsWith(argPrefix))
                 .map((sc) => ({
@@ -35,19 +36,16 @@ export function registerRecoverCommand(tui: OpenDeskTUI): void {
 
 function executeRecoverTasks(tui: OpenDeskTUI): void {
     const confirm = new ConfirmOverlay(tui, {
-        title: '重建任务列表',
-        message:
-            '此操作将基于磁盘上扫描到的所有任务文件重建任务列表。\n' +
-            '当前内存中的任务列表将被覆盖。\n\n' +
-            '确定要继续吗？',
-        confirmLabel: '重建',
-        cancelLabel: '取消'
+        title: t('recover.task.title'),
+        message: t('recover.task.message'),
+        confirmLabel: t('common.rebuild'),
+        cancelLabel: t('common.cancel')
     });
 
     confirm.show(() => {
         const progress = new ProgressOverlay(tui, {
-            title: '重建任务列表',
-            message: '正在扫描任务文件并重建任务列表...'
+            title: t('recover.task.title'),
+            message: t('recover.task.scanning')
         });
         progress.show();
 
@@ -68,16 +66,16 @@ function executeRecoverTasks(tui: OpenDeskTUI): void {
 
                     logger.info(`/recover tasks: ${recovered.tasks.length} task(s) recovered`);
                     const info = new InfoOverlay(tui, {
-                        title: '重建完成',
-                        message: `成功恢复了 ${recovered.tasks.length} 个任务。`,
-                        closeLabel: '确定'
+                        title: 'Rebuild Complete',
+                        message: `Recovered ${recovered.tasks.length} tasks.`,
+                        closeLabel: t('common.close')
                     });
                     info.show();
                 } else {
                     const info = new InfoOverlay(tui, {
-                        title: '重建结果',
-                        message: '未找到任何可恢复的任务文件。',
-                        closeLabel: '确定'
+                        title: 'Rebuild Result',
+                        message: 'No recoverable task files found.',
+                        closeLabel: t('common.close')
                     });
                     info.show();
                 }
@@ -86,9 +84,9 @@ function executeRecoverTasks(tui: OpenDeskTUI): void {
                 const msg = err instanceof Error ? err.message : String(err);
                 logger.error(`/recover tasks failed: ${msg}`);
                 const info = new InfoOverlay(tui, {
-                    title: '重建失败',
-                    message: `重建任务列表时发生错误：${msg}`,
-                    closeLabel: '确定'
+                    title: 'Rebuild Failed',
+                    message: `Error during task list rebuild: ${msg}`,
+                    closeLabel: t('common.close')
                 });
                 info.show();
             }

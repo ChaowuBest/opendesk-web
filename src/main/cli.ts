@@ -29,6 +29,7 @@ import { NotificationManager } from './utils/notificationmgr.js';
 import { registerPluginsCommand } from './tui/subcommands/plugins.js';
 import { registerToolsCommand } from './tui/subcommands/tools.js';
 import { registerQuickpassCommand } from './tui/subcommands/quickpass.js';
+import { setRuntimeLocale } from '../locale/index.js';
 
 import { getCurrentVersion } from './utils/upgrade.js';
 
@@ -48,6 +49,7 @@ function parseCommandLineArgs() {
     prog.option('--profile <path>', 'write performance profile to specified JSON file', (v) => v);
     prog.option('--allow-everything', 'no permission check, every operation is allowed');
     prog.option('--mode <mode>', 'agent mode to use (standard, plan, solo, unlimited)', (v) => v);
+    prog.option('--language <lang>', 'language to use (auto, zh-CN, en-US)', (v) => v);
     prog.option(
         '--config-directory <path>',
         `specify custom config directory (default: ${getDefaultAppDirectory()})`,
@@ -174,7 +176,8 @@ function parseCommandLineArgs() {
             profile: kwargs.profile,
             allowEverything: !!kwargs.allowEverything,
             // --allow-everything 等价于 --mode unlimited
-            mode: kwargs.allowEverything ? 'unlimited' : kwargs.mode
+            mode: kwargs.allowEverything ? 'unlimited' : kwargs.mode,
+            language: kwargs.language
         });
     });
 
@@ -188,6 +191,11 @@ async function main(args: CommandLineArgs) {
         useDumpLogTransport(path.resolve(args.dumpLog));
     }
     interceptConsole();
+
+    // Apply language setting from command line (runtime only, does not modify setting)
+    if (args.language) {
+        setRuntimeLocale(args.language);
+    }
 
     if (!isMainThread) {
         initializeAppWorkers();

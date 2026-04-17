@@ -1,9 +1,10 @@
 import type { OpenDeskTUI } from '../entry.js';
+import { t } from '../../../locale/index.js';
 
 export function registerNotificationCommand(tui: OpenDeskTUI): void {
     tui.commandRegistry.register({
         name: 'notification',
-        description: '打开通知中心，查看所有通知',
+        description: t('notification.description'),
         execute: async () => {
             tui.showNotificationCenter();
         }

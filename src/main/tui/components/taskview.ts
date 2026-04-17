@@ -649,6 +649,7 @@ export class TaskView implements Component {
     private currentTaskId?: string;
     /** 防止 performCompactWithAnimation 重入 */
     private _compacting = false;
+    lastCompactErrorMessage?: string;
     /** message_id -> AssistantMessageView，用于按 message_id 追加而非覆盖 */
     private messageIdToAssistantView: Map<string, AssistantMessageView> = new Map();
 
@@ -710,9 +711,10 @@ export class TaskView implements Component {
      * 执行上下文压缩并在消息列表中展示动画。
      * 内置防重入：如果上一次压缩尚未完成，直接返回。
      */
-    async performCompactWithAnimation(): Promise<void> {
-        if (!this.taskState || this._compacting) return;
+    async performCompactWithAnimation(): Promise<boolean> {
+        if (!this.taskState || this._compacting) return false;
         this._compacting = true;
+        this.lastCompactErrorMessage = undefined;
 
         const indicatorView = new CompactBoundaryView();
         indicatorView.setLoading(true);
@@ -726,8 +728,11 @@ export class TaskView implements Component {
         try {
             await compactContext(this.taskState.chat_context, this.taskState.model);
             this.taskState.markCompacted();
+            return true;
         } catch (err: any) {
             logger.warn(`Context compact failed: ${err?.message ?? err}`);
+            this.lastCompactErrorMessage = err?.message ?? String(err);
+            return false;
         } finally {
             clearInterval(spinnerInterval);
             this.messageLayout.removeChild(indicatorView);
@@ -762,10 +767,17 @@ export class TaskView implements Component {
                 beforeCompact: () => {
                     logger.info(`Auto-compacting context for task ${this.taskState!.task_id}`);
                 },
+                autoCompactState: this.taskState.auto_compact_state,
                 executeCompact: async () => {
-                    await this.performCompactWithAnimation();
+                    const compacted = await this.performCompactWithAnimation();
+                    if (!compacted) {
+                        throw new Error(this.lastCompactErrorMessage ?? 'Context compact failed');
+                    }
                 }
             });
+            if (preparation.autoCompactState) {
+                this.taskState.setAutoCompactState(preparation.autoCompactState);
+            }
             if (preparation.compacted) {
                 // 压缩重建后重新添加用户消息视图（此时尚未入 chat_context）
                 this.clearMessages();

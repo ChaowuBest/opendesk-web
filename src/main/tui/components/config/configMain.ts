@@ -4,7 +4,9 @@ import { ProviderConfigPage } from './providers';
 import { ModelConfigPage } from './models';
 import { DefaultModelConfigPage } from './defaultModels';
 import { FileMgrConfigPage } from './filemgrConfig.js';
+import { LanguageConfigPage } from './languageConfig.js';
 import chalk from 'chalk';
+import { t } from '../../../../locale/index.js';
 
 interface ConfigSection {
     value: string;
@@ -15,23 +17,28 @@ interface ConfigSection {
 const CONFIG_SECTIONS: ConfigSection[] = [
     {
         value: 'providers',
-        label: `💳  模型服务商配置       ${chalk.dim('管理 API 模型服务商')}`,
+        label: `💳  ${t('config.provider.title')}       ${chalk.dim(t('config.provider.title.hint'))}`,
         create: (tui, onBack) => new ProviderConfigPage(tui, onBack)
     },
     {
         value: 'models',
-        label: `💰  模型配置         ${chalk.dim('管理模型别名')}`,
+        label: `💰  ${t('config.model.title')}         ${chalk.dim(t('config.model.title.hint'))}`,
         create: (tui, onBack) => new ModelConfigPage(tui, onBack)
     },
     {
         value: 'default-model',
-        label: `🏆  默认模型配置     ${chalk.dim('选择各场景默认模型')}`,
+        label: `🏆  ${t('config.defaultmodel.title')}     ${chalk.dim(t('config.defaultmodel.title.hint'))}`,
         create: (tui, onBack, onConfigChange) => new DefaultModelConfigPage(tui, onBack, onConfigChange)
     },
     {
         value: 'filemgr',
-        label: `📦  文件扫描配置       ${chalk.dim('管理文件扫描目录')}`,
+        label: `📦  ${t('config.filemgr.title')}       ${chalk.dim(t('config.filemgr.title.hint'))}`,
         create: (tui: any, onBack: () => void) => new FileMgrConfigPage(tui, onBack)
+    },
+    {
+        value: 'language',
+        label: `🌎  ${t('config.language.title')}       ${chalk.dim(t('config.language.title.hint'))}`,
+        create: (tui: any, onBack: () => void) => new LanguageConfigPage(tui, onBack)
     }
 ];
 
@@ -87,12 +94,12 @@ export class ConfigMainPage implements Component {
         }
 
         const lines: string[] = [];
-        lines.push(chalk.bold('⚙️  系统设置'));
+        lines.push(chalk.bold('⚙️  ' + t('config.main.title')));
         lines.push(chalk.dim('─'.repeat(Math.min(width - 2, 50))));
         lines.push('');
         if (this.list) lines.push(...this.list.render(width));
         lines.push('');
-        lines.push(chalk.dim('  Enter 进入  Esc 返回'));
+        lines.push(chalk.dim('  ' + t('config.main.hint')));
         return lines;
     }
 }

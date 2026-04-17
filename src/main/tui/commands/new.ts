@@ -1,10 +1,11 @@
 import type { OpenDeskTUI } from '../entry.js';
 import { Key } from '@mariozechner/pi-tui';
+import { t } from '../../../locale/index.js';
 
 export function registerNewCommand(tui: OpenDeskTUI): void {
     tui.commandRegistry.register({
         name: 'new',
-        description: '启动新任务并发送消息',
+        description: t('new.description'),
         shortcut: Key.ctrl('n'),
         execute: async (args: string) => {
             await tui.createNewTask();
