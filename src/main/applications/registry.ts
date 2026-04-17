@@ -247,7 +247,7 @@ export class ApplicationRegistry {
  * @param settingData - 新的设置数据
  */
 export function notifyWorkerSettingUpdate(settingData: object) {
-    if (ApplicationRegistry.getGlobalWorker() === null) {
+    if (!ApplicationRegistry.hasGlobalWorker()) {
         logger.warn('global worker not initialized, cannot notify setting update');
         return;
     }
@@ -285,14 +285,23 @@ export function initializeRegistry() {
  * 在 app.whenReady() 之后调用
  */
 export function initializeRegistryWorker() {
-    // 创建 Worker（需要在 app.whenReady() 之后，因为需要 app.getAppPath()）
-    ApplicationRegistry.globalWorker = new Worker(getPlatform().getWorkerPath(), {
-        workerData: {
-            paths: { appDirectory: getAppDirectory() },
-            setting: Setting.getInstance().getData()
-        },
-        execArgv: ['tsx']
-    });
+    // 生产环境 worker 已由 electron-vite 编译为 worker.js，不可再传 execArgv: ['tsx']，
+    // 否则子 Node 进程参数非法，在 OpenHarmony 等环境下会导致 Worker 创建失败、globalWorker 一直为 null。
+    let worker: Worker;
+    try {
+        worker = new Worker(getPlatform().getWorkerPath(), {
+            workerData: {
+                paths: { appDirectory: getAppDirectory() },
+                setting: Setting.getInstance().getData()
+            }
+        });
+    } catch (error) {
+        logger.error('initializeRegistryWorker: failed to spawn global worker', error);
+        ApplicationRegistry.globalWorker = null;
+        return;
+    }
+
+    ApplicationRegistry.globalWorker = worker;
 
     ApplicationRegistry.globalWorker.on('message', (event) => {
         // 处理来自 worker 的日志消息
