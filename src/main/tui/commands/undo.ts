@@ -1,18 +1,19 @@
 import type { OpenDeskTUI } from '../entry.js';
 import { InfoOverlay } from '../components/notice.js';
 import { logger } from '../../utils/logger.js';
+import { t } from '../../../locale/index.js';
 
 export function registerUndoCommand(tui: OpenDeskTUI): void {
     tui.commandRegistry.register({
         name: 'undo',
-        description: '回退当前会话中的最近 N 条消息，默认 1 条（可用 /redo 恢复）',
+        description: t('undo.description'),
         getArgumentCompletions: (argPrefix: string) => {
             const prefix = argPrefix.trim();
             if (!prefix) {
                 return [
-                    { value: '1', label: '1', description: '回退最近 1 条消息' },
-                    { value: '2', label: '2', description: '回退最近 2 条消息' },
-                    { value: '3', label: '3', description: '回退最近 3 条消息' }
+                    { value: '1', label: '1', description: t('undo.undomsg', { count: 1 }) },
+                    { value: '2', label: '2', description: t('undo.undomsg', { count: 2 }) },
+                    { value: '3', label: '3', description: t('undo.undomsg', { count: 3 }) }
                 ];
             }
             return null;
@@ -23,8 +24,8 @@ export function registerUndoCommand(tui: OpenDeskTUI): void {
 
             if (isNaN(count) || !Number.isInteger(count)) {
                 const info = new InfoOverlay(tui, {
-                    title: '回退失败',
-                    message: `参数必须是一个整数，例如：/undo 2`
+                    title: t('undo.fail'),
+                    message: t('undo.error.not.integer')
                 });
                 info.show();
                 return;
@@ -32,8 +33,8 @@ export function registerUndoCommand(tui: OpenDeskTUI): void {
 
             if (count < 1) {
                 const info = new InfoOverlay(tui, {
-                    title: '回退失败',
-                    message: `回退数量必须大于 0，当前输入：${count}`
+                    title: t('undo.fail'),
+                    message: t('undo.error.count.zero')
                 });
                 info.show();
                 return;
@@ -41,8 +42,8 @@ export function registerUndoCommand(tui: OpenDeskTUI): void {
 
             if (!tui.activeTaskId) {
                 const info = new InfoOverlay(tui, {
-                    title: '回退失败',
-                    message: '当前没有活跃的会话，请先开始一个对话。'
+                    title: t('undo.fail'),
+                    message: t('undo.error.no.session')
                 });
                 info.show();
                 return;
@@ -51,8 +52,8 @@ export function registerUndoCommand(tui: OpenDeskTUI): void {
             const task = tui.taskManagerState.getTask(tui.activeTaskId);
             if (!task) {
                 const info = new InfoOverlay(tui, {
-                    title: '回退失败',
-                    message: '未找到当前任务。'
+                    title: t('undo.fail'),
+                    message: t('undo.error.task.notfound')
                 });
                 info.show();
                 return;
@@ -61,8 +62,8 @@ export function registerUndoCommand(tui: OpenDeskTUI): void {
             const messages = task.chat_context.messages;
             if (messages.length === 0) {
                 const info = new InfoOverlay(tui, {
-                    title: '回退失败',
-                    message: '当前会话中没有可回退的消息。'
+                    title: t('undo.fail'),
+                    message: t('undo.error.no.messages')
                 });
                 info.show();
                 return;
@@ -87,14 +88,14 @@ export function registerUndoCommand(tui: OpenDeskTUI): void {
             tui.taskView.rebuildFromHistory();
             tui.tui.requestRender();
 
-            const roles = removed.map((m) => ((m as any).role === 'user' ? '用户' : '助手'));
-            logger.info(`/undo: 已回退 ${removed.length} 条消息 (${roles.join(', ')})`);
+            const roles = removed.map((m) => ((m as any).role === 'user' ? 'User' : 'Assistant'));
+            logger.info(`/undo: Undone ${removed.length} messages (${roles.join(', ')})`);
 
             // 如果请求的数量超过可用，显示警告
             if (requestedCount > actualCount) {
                 const info = new InfoOverlay(tui, {
-                    title: '回退数量不足',
-                    message: `请求回退 ${requestedCount} 条，但实际只有 ${actualCount} 条消息可供回退。已回退 ${actualCount} 条。`,
+                    title: t('undo.partial'),
+                    message: t('undo.error.partial', { requested: requestedCount, actual: actualCount }),
                     type: 'warning'
                 });
                 info.show();

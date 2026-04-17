@@ -3,22 +3,23 @@ import { LLM } from '../../aikernel/llm.js';
 import { UserMessage } from '../../aikernel/messages.js';
 import { logger } from '../../utils/logger.js';
 import chalk from 'chalk';
+import { t } from '../../../locale/index.js';
 
 export function registerBtwCommand(tui: OpenDeskTUI): void {
     tui.commandRegistry.register({
         name: 'btw',
-        description: '快速提问 (不使用当前上下文和工具)',
+        description: t('btw.description'),
         execute: async (args: string) => {
             const question = args.trim();
             if (!question) {
-                tui.inputArea.btwResultPanel.show(chalk.magenta('btw'), chalk.dim('用法: /btw <你的问题>'));
+                tui.inputArea.btwResultPanel.show(chalk.magenta('btw'), chalk.dim(t('btw.usage')));
                 tui.tui.requestRender();
                 return;
             }
 
             tui.inputArea.btwResultPanel.show(
                 `${chalk.magenta('btw')} ${chalk.bold(question)}`,
-                chalk.dim('⏳ 正在思考...')
+                chalk.dim('⏳ ' + t('btw.thinking'))
             );
             tui.tui.requestRender();
 
@@ -26,13 +27,13 @@ export function registerBtwCommand(tui: OpenDeskTUI): void {
                 const answer = await LLM.ask(new UserMessage(question));
                 tui.inputArea.btwResultPanel.showMarkdown(
                     `${chalk.magenta('btw')} ${chalk.bold(question)}`,
-                    answer.trim() || '(无回复)'
+                    answer.trim() || t('btw.no.reply')
                 );
             } catch (err: any) {
                 logger.error(`/btw failed: ${err}`);
                 tui.inputArea.btwResultPanel.show(
                     `${chalk.magenta('btw')} ${chalk.bold(question)}`,
-                    chalk.red(`请求失败: ${err?.message ?? err}`)
+                    chalk.red(`${t('btw.request.fail')}${err?.message ?? err}`)
                 );
             }
             tui.tui.requestRender();

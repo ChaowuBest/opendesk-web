@@ -8,17 +8,18 @@ import {
     REASONING_EFFORT_CLI_TOKENS,
     labelForStoredReasoningEffort
 } from '../../../common/reasoning-effort.js';
+import { t } from '../../../locale/index.js';
 
 const DISPLAY_OPTIONS = ['full', 'partial'];
 const DISPLAY_LABELS: Record<string, string> = {
-    full: '完整显示',
-    partial: '尾部预览（末 10 行）'
+    full: t('reason.display.full'),
+    partial: t('reason.display.partial')
 };
 
 export function registerReasonCommand(tui: OpenDeskTUI): void {
     tui.commandRegistry.register({
         name: 'reason',
-        description: '思考配置: /reason effort [default|none|low|medium|high] | display [full|partial]',
+        description: t('reason.description'),
         getArgumentCompletions: (argPrefix: string): AutocompleteItem[] | null => {
             const trimmed = argPrefix.trim();
             const hasTrailingSpace = argPrefix.endsWith(' ');
@@ -34,7 +35,7 @@ export function registerReasonCommand(tui: OpenDeskTUI): void {
                     .map((opt) => ({
                         value: opt,
                         label: opt,
-                        description: opt === 'effort' ? '设置推理深度' : '设置思考内容显示模式'
+                        description: opt === 'effort' ? t('reason.effort.description') : t('reason.display.description')
                     }));
             }
 
@@ -76,21 +77,25 @@ export function registerReasonCommand(tui: OpenDeskTUI): void {
                 const currentEffort = currentModel?.reasoning_effort || '';
 
                 const lines: string[] = [];
-                lines.push(chalk.bold('当前思考配置:'));
-                lines.push(`  显示模式: ${chalk.cyan(DISPLAY_LABELS[currentDisplay] ?? currentDisplay)}`);
+                lines.push(chalk.bold(t('reason.current.title') + ':'));
+                lines.push(
+                    `  ${t('reason.current.displaymode')}: ${chalk.cyan(DISPLAY_LABELS[currentDisplay] ?? currentDisplay)}`
+                );
                 if (currentModel) {
-                    lines.push(`  当前模型: ${chalk.cyan(currentModelAlias)}`);
-                    lines.push(`  推理深度: ${chalk.cyan(labelForStoredReasoningEffort(currentEffort))}`);
+                    lines.push(`  ${t('reason.current.model')}: ${chalk.cyan(currentModelAlias)}`);
+                    lines.push(
+                        `  ${t('reason.current.depth')}: ${chalk.cyan(labelForStoredReasoningEffort(currentEffort))}`
+                    );
                 }
                 lines.push('');
-                lines.push(chalk.dim('用法:'));
+                lines.push(chalk.dim(t('reason.usage.title') + ':'));
                 lines.push(chalk.dim('  /reason effort [default|none|low|medium|high]'));
                 lines.push(chalk.dim('  /reason display [full|partial]'));
 
                 const info = new InfoOverlay(tui, {
-                    title: '思考配置',
+                    title: t('reason.current.title'),
                     message: lines.join('\n'),
-                    closeLabel: '确定'
+                    closeLabel: t('common.close')
                 });
                 info.show();
                 return;
@@ -99,9 +104,9 @@ export function registerReasonCommand(tui: OpenDeskTUI): void {
             if (subCommand === 'effort') {
                 if (!subArg) {
                     const info = new InfoOverlay(tui, {
-                        title: '错误',
-                        message: chalk.red('请指定推理深度: /reason effort [default|none|low|medium|high]'),
-                        closeLabel: '确定'
+                        title: t('common.close'),
+                        message: chalk.red(t('reason.error.specify.effort')),
+                        closeLabel: t('common.close')
                     });
                     info.show();
                     return;
@@ -112,9 +117,9 @@ export function registerReasonCommand(tui: OpenDeskTUI): void {
 
                 if (effortValue === null) {
                     const info = new InfoOverlay(tui, {
-                        title: '错误',
-                        message: chalk.red(`无效的推理深度: ${subArg}\n可选值: default, none, low, medium, high`),
-                        closeLabel: '确定'
+                        title: t('common.close'),
+                        message: chalk.red(t('reason.error.invalid.effort', { value: subArg })),
+                        closeLabel: t('common.close')
                     });
                     info.show();
                     return;
@@ -125,9 +130,9 @@ export function registerReasonCommand(tui: OpenDeskTUI): void {
 
                 if (!modelAlias) {
                     const info = new InfoOverlay(tui, {
-                        title: '错误',
-                        message: chalk.red('当前没有设置默认模型，请先在设置中配置模型'),
-                        closeLabel: '确定'
+                        title: t('common.close'),
+                        message: chalk.red(t('reason.error.no.model')),
+                        closeLabel: t('common.close')
                     });
                     info.show();
                     return;
@@ -136,9 +141,9 @@ export function registerReasonCommand(tui: OpenDeskTUI): void {
                 const modelIndex = setting.data.models.findIndex((m) => m.alias === modelAlias);
                 if (modelIndex === -1) {
                     const info = new InfoOverlay(tui, {
-                        title: '错误',
-                        message: chalk.red(`找不到模型: ${modelAlias}`),
-                        closeLabel: '确定'
+                        title: t('common.close'),
+                        message: chalk.red(`Model not found: ${modelAlias}`),
+                        closeLabel: t('common.close')
                     });
                     info.show();
                     return;
@@ -155,11 +160,9 @@ export function registerReasonCommand(tui: OpenDeskTUI): void {
 
                 const effortLabel = labelForStoredReasoningEffort(effortValue);
                 const info = new InfoOverlay(tui, {
-                    title: '推理深度已更新',
-                    message: chalk.green(
-                        `模型 ${chalk.cyan(modelAlias)} 的推理深度已设置为: ${chalk.cyan(effortLabel)}`
-                    ),
-                    closeLabel: '确定'
+                    title: t('reason.effort.set'),
+                    message: chalk.green(t('reason.effort.set.message', { alias: modelAlias, effort: effortLabel })),
+                    closeLabel: t('common.close')
                 });
                 info.show(() => {
                     // 刷新状态栏显示
@@ -171,9 +174,9 @@ export function registerReasonCommand(tui: OpenDeskTUI): void {
             if (subCommand === 'display') {
                 if (!subArg) {
                     const info = new InfoOverlay(tui, {
-                        title: '错误',
-                        message: chalk.red('请指定显示模式: /reason display [full|partial]'),
-                        closeLabel: '确定'
+                        title: t('common.close'),
+                        message: chalk.red(t('reason.error.specify.display')),
+                        closeLabel: t('common.close')
                     });
                     info.show();
                     return;
@@ -181,9 +184,9 @@ export function registerReasonCommand(tui: OpenDeskTUI): void {
 
                 if (!DISPLAY_OPTIONS.includes(subArg)) {
                     const info = new InfoOverlay(tui, {
-                        title: '错误',
-                        message: chalk.red(`无效的显示模式: ${subArg}\n可选值: full, partial`),
-                        closeLabel: '确定'
+                        title: t('common.close'),
+                        message: chalk.red(t('reason.error.invalid.display', { value: subArg })),
+                        closeLabel: t('common.close')
                     });
                     info.show();
                     return;
@@ -194,9 +197,11 @@ export function registerReasonCommand(tui: OpenDeskTUI): void {
 
                 if (oldDisplay === subArg) {
                     const info = new InfoOverlay(tui, {
-                        title: '显示模式',
-                        message: chalk.dim(`思考内容显示模式已为: ${DISPLAY_LABELS[subArg] ?? subArg}`),
-                        closeLabel: '确定'
+                        title: t('reason.display.already'),
+                        message: chalk.dim(
+                            t('reason.display.already.message', { mode: DISPLAY_LABELS[subArg] ?? subArg })
+                        ),
+                        closeLabel: t('common.close')
                     });
                     info.show();
                     return;
@@ -207,9 +212,9 @@ export function registerReasonCommand(tui: OpenDeskTUI): void {
                 setting.save();
 
                 const info = new InfoOverlay(tui, {
-                    title: '显示模式已更新',
-                    message: chalk.green(`思考内容显示模式已设置为: ${chalk.cyan(DISPLAY_LABELS[subArg])}`),
-                    closeLabel: '确定'
+                    title: t('reason.display.set'),
+                    message: chalk.green(t('reason.display.set.message', { mode: DISPLAY_LABELS[subArg] })),
+                    closeLabel: t('common.close')
                 });
                 info.show(() => {
                     // 刷新当前会话的渲染效果
@@ -220,9 +225,9 @@ export function registerReasonCommand(tui: OpenDeskTUI): void {
             }
 
             const info = new InfoOverlay(tui, {
-                title: '错误',
-                message: chalk.red(`未知的子命令: ${subCommand}\n可用: effort, display`),
-                closeLabel: '确定'
+                title: t('common.close'),
+                message: chalk.red(t('reason.error.unknown', { subcmd: subCommand })),
+                closeLabel: t('common.close')
             });
             info.show();
         }

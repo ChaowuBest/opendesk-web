@@ -103,7 +103,7 @@ export class WebFetchTool extends BaseTool<typeof WebFetchArgsSchema> {
         }
 
         return new Card({
-            icon: '🌐',
+            icon: '🔍',
             title: '网页获取',
             status: statusDisplay(toolcall.status),
             body

@@ -49,6 +49,10 @@ let ApplicationConfigSchema: z.ZodObject<z.ZodRawShape> = z.object({});
 
 function getSettingSchema(): z.ZodObject<z.ZodRawShape> {
     return z.object({
+        locale: z
+            .enum(['auto', 'zh-CN', 'en-US'])
+            .default('auto')
+            .describe('语言设置: auto=跟随系统, zh-CN=中文, en-US=英文'),
         default_model: z.string().describe('在对话等场景中使用的默认模型').default(''),
         default_intent_parsing_model: z.string().describe('在意图解析中使用的多模态模型').default(''),
         default_embedding_model: z.string().describe('知识库，检索使用的中使用的向量嵌入模型').default(''),

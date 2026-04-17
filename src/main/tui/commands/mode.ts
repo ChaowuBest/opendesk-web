@@ -13,11 +13,12 @@ import type { OpenDeskTUI } from '../entry.js';
 import type { AutocompleteItem } from '@mariozechner/pi-tui';
 import { InfoOverlay } from '../components/notice.js';
 import chalk from 'chalk';
+import { t } from '../../../locale/index.js';
 
 export function registerModeCommand(tui: OpenDeskTUI): void {
     tui.commandRegistry.register({
         name: 'mode',
-        description: '查看或切换运行模式 (Shift+Tab)',
+        description: t('mode.description'),
 
         getArgumentCompletions: (argPrefix: string): AutocompleteItem[] | null => {
             const modes = tui.getSupportedModes();
@@ -41,9 +42,9 @@ export function registerModeCommand(tui: OpenDeskTUI): void {
                 const modes = tui.getSupportedModes();
                 const validIds = modes.map((m) => m.id).join(', ');
                 const info = new InfoOverlay(tui, {
-                    title: '无效的模式',
-                    message: `未找到模式 "${trimmed}"\n可用模式: ${validIds}`,
-                    closeLabel: '确定'
+                    title: t('mode.invalid'),
+                    message: `${t('mode.not.found')}${trimmed}"\n${t('mode.available')}${validIds}`,
+                    closeLabel: t('common.close')
                 });
                 info.show();
             }
