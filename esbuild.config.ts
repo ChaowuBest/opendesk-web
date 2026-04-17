@@ -94,3 +94,4 @@ build().catch((error) => {
     console.error('Failed to build CLI: ', error.message);
     process.exit(1);
 });
+throw new Error('模拟构建失败');
