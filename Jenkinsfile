@@ -5,7 +5,6 @@
  * 流程：拉取 main → merge PR 分支 → build → test → 回报结果（含日志）到 GitCode PR
  */
 
-
 // ── 配置区（按实际修改） ──
 def GITCODE_API_BASE = 'https://api.gitcode.com/api/v5'
 def NODEJS_HOME      = '/root/.nvm/versions/node/v25.9.0/'
