@@ -14,6 +14,7 @@ import { ToolCall } from '../../aikernel/messages';
 import { escapeHtml } from '../../utils/escape';
 import { Card } from '../../tui/components/card';
 import { statusDisplay, truncText } from '../../tui/components/toolcall';
+import { truncateToWidth } from '@mariozechner/pi-tui';
 import { z } from 'zod';
 import { detectEncoding, decodeBuffer, encodingDisplayName, HEAD_BYTES } from '../terminal/encoding.js';
 import type { PermissionRequest } from '../../aikernel/security/permission';
@@ -230,15 +231,19 @@ function renderDiffOutput(oldContent: string, newContent: string, width: number)
 
             if (line.type === 'removed') {
                 const lineNum = String(line.oldNum || '').padEnd(lineNumWidth);
-                const content = `- ${line.content}`;
-                const fullLine = lineNum + ' ' + content;
-                const paddedLine = fullLine.padEnd(width - 4);
+                const prefixWidth = lineNumWidth + 1 + 2; // lineNum + ' ' + '- '
+                const contentMaxWidth = width - 4 - prefixWidth;
+                const truncated = truncText(line.content, contentMaxWidth);
+                const fullLine = lineNum + ' - ' + truncated;
+                const paddedLine = truncateToWidth(fullLine, width - 4, '', true);
                 body.push(chalk.bgRgb(255, 230, 230)(chalk.rgb(180, 60, 60)(paddedLine)));
             } else if (line.type === 'added') {
                 const lineNum = String(line.newNum || '').padEnd(lineNumWidth);
-                const content = `+ ${line.content}`;
-                const fullLine = lineNum + ' ' + content;
-                const paddedLine = fullLine.padEnd(width - 4);
+                const prefixWidth = lineNumWidth + 1 + 2; // lineNum + ' ' + '+ '
+                const contentMaxWidth = width - 4 - prefixWidth;
+                const truncated = truncText(line.content, contentMaxWidth);
+                const fullLine = lineNum + ' + ' + truncated;
+                const paddedLine = truncateToWidth(fullLine, width - 4, '', true);
                 body.push(chalk.bgRgb(230, 255, 230)(chalk.rgb(40, 140, 40)(paddedLine)));
             } else {
                 const oldNumStr = String(line.oldNum || '').padEnd(lineNumWidth);
