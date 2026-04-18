@@ -239,7 +239,10 @@ interface GrantedPermission {
 export class TUIPermissionPromptProvider implements PermissionPromptProvider {
     private openDeskTUI: OpenDeskTUI;
     private queue: QueuedPermissionRequest[] = [];
-    private isPrompting = false;
+    /** 弹窗是否正在显示（widget 已显示且用户未完成交互） */
+    private isShowing = false;
+    /** 阻塞状态下请求已入队但未处理 */
+    private isPending = false;
     private grantedPermissions: GrantedPermission[] = [];
 
     constructor(openDeskTUI: OpenDeskTUI) {
@@ -254,8 +257,22 @@ export class TUIPermissionPromptProvider implements PermissionPromptProvider {
     ): Promise<PermissionUserResponse> {
         return new Promise<PermissionUserResponse>((resolve) => {
             this.queue.push({ requests, toolName, prefixOptions, taskInfo, resolve });
+            // 标记有请求待处理，避免 taskview 在此期间渲染 tool card
+            this.isPending = true;
+            // 配置/overlay 模式下不入队显示，等退出后再处理
+            if (this.openDeskTUI.isInputBlocked()) {
+                return;
+            }
             this.processQueue();
         });
+    }
+
+    /**
+     * 尝试处理队列（仅在非阻塞状态下才真正显示弹窗）。
+     * 供外部在退出配置/overlay 模式后调用。
+     */
+    processQueueIfReady(): void {
+        this.processQueue();
     }
 
     /**
@@ -316,7 +333,12 @@ export class TUIPermissionPromptProvider implements PermissionPromptProvider {
     }
 
     private processQueue(): void {
-        if (this.isPrompting || this.queue.length === 0) return;
+        if (this.isShowing || this.queue.length === 0) return;
+
+        // 阻塞状态下不弹窗，等待退出后再处理
+        if (this.openDeskTUI.isInputBlocked()) {
+            return;
+        }
 
         // 自动批准匹配已授权规则的请求，无需弹窗
         while (this.queue.length > 0) {
@@ -332,7 +354,8 @@ export class TUIPermissionPromptProvider implements PermissionPromptProvider {
             return;
         }
 
-        this.isPrompting = true;
+        this.isShowing = true;
+        this.isPending = false;
         const item = this.queue.shift()!;
         const remainingCount = this.queue.length;
 
@@ -346,7 +369,7 @@ export class TUIPermissionPromptProvider implements PermissionPromptProvider {
 
         widget.onDone = (response) => {
             this.openDeskTUI.inputArea.hidePermissionPrompt();
-            this.isPrompting = false;
+            this.isShowing = false;
             this.recordGrant(item, response);
             item.resolve(response);
 

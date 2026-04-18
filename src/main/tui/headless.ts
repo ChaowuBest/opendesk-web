@@ -142,6 +142,7 @@ export class HeadlessRunner {
             task.harnessContext = await HarnessContext.createForMode(this.args.workspace, this.activeMode);
             task.harnessContext.permissionPrompt = new HeadlessPermissionPromptProvider();
             task.activeModeId = this.activeMode.id;
+            task.disabledTools = this.activeMode.disabledTools;
         } catch (err) {
             logger.warn(`Failed to init headless task harness: ${err}`);
         }

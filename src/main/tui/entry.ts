@@ -49,6 +49,8 @@ import { SkillMgrApplication } from '../applications/skillmgr/app.js';
 import { DashboardBar } from './components/dashboard';
 import { HarnessContext } from '../aikernel/security/harness.js';
 import { TUIPermissionPromptProvider } from './components/permission.js';
+import { TUIAskUserProvider } from './components/askUser.js';
+import { createInteractionToolset } from '../aikernel/interaction/tools.js';
 import { TaskProfiler } from '../aikernel/profiler.js';
 import { t } from '../../locale/index.js';
 
@@ -114,8 +116,23 @@ export class OpenDeskTUI {
     /** 所有任务共享的权限确认 provider（内含请求队列，确保同时只弹一个弹窗） */
     private sharedPermissionPrompt: TUIPermissionPromptProvider;
 
-    /** 跟踪是否有 overlay 打开 */
-    hasOpenOverlay = false;
+    /** 主任务专用的 askUser provider */
+    private sharedAskUserProvider: TUIAskUserProvider;
+
+    /** 跟踪是否有 overlay 打开（使用 setter 以在关闭时自动处理积压弹窗） */
+    private _hasOpenOverlay = false;
+
+    get hasOpenOverlay(): boolean {
+        return this._hasOpenOverlay;
+    }
+
+    set hasOpenOverlay(value: boolean) {
+        this._hasOpenOverlay = value;
+        // overlay 关闭后，处理可能积压的权限/askUser 弹窗
+        if (value === false) {
+            this.processPendingPrompts();
+        }
+    }
 
     /** 当前激活的配置页面组件（非 null 时表示处于配置模式） */
     private configComponent?: Component;
@@ -183,6 +200,7 @@ export class OpenDeskTUI {
         this.inputArea = new AgentInputArea(this);
         this.dashboardBar = new DashboardBar(() => this.tui.requestRender());
         this.sharedPermissionPrompt = new TUIPermissionPromptProvider(this);
+        this.sharedAskUserProvider = new TUIAskUserProvider(this);
         this.workspace = args.workspace;
         this.model = args.model;
         this.singleShot = !!args.command;
@@ -659,6 +677,8 @@ export class OpenDeskTUI {
                 setTimeout(() => {
                     this.tui.setFocus(this.inputArea.input);
                     this.tui.requestRender();
+                    // 配置模式退出后（模型未配置状态），处理可能积压的弹窗
+                    this.processPendingPrompts();
                 }, 10);
                 return;
             } else {
@@ -687,6 +707,8 @@ export class OpenDeskTUI {
         setTimeout(() => {
             this.tui.setFocus(this.inputArea.input);
             this.tui.requestRender();
+            // 配置模式退出后，处理可能积压的权限/askUser 弹窗
+            this.processPendingPrompts();
         }, 10);
     }
 
@@ -1276,6 +1298,22 @@ export class OpenDeskTUI {
     }
 
     /**
+     * 检查当前是否处于输入阻塞状态（配置模式或 overlay 打开）。
+     * 处于此状态时，权限弹窗和 askUser 弹窗应该入队等待，而不是立即显示。
+     */
+    isInputBlocked(): boolean {
+        return this.configComponent !== undefined || this.hasOpenOverlay;
+    }
+
+    /**
+     * 处理积压的权限弹窗请求（退出配置/overlay 模式后调用）。
+     */
+    processPendingPrompts(): void {
+        this.sharedPermissionPrompt.processQueueIfReady();
+        this.sharedAskUserProvider.processQueueIfReady();
+    }
+
+    /**
      * 为新创建的任务初始化 harnessContext（权限引擎 + 环境变量 + 权限确认 UI）。
      * 根据当前 activeMode 构建。
      */
@@ -1284,6 +1322,9 @@ export class OpenDeskTUI {
             task.harnessContext = await HarnessContext.createForMode(this.workspace, this._activeMode);
             task.harnessContext.permissionPrompt = this.sharedPermissionPrompt;
             task.activeModeId = this._activeMode.id;
+            task.disabledTools = this._activeMode.disabledTools;
+            // 注入 interaction 工具集（仅主任务）
+            task.interactionToolset = createInteractionToolset(this.sharedAskUserProvider);
         } catch (err) {
             logger.warn(`Failed to init task harness, using empty context: ${err}`);
             task.harnessContext = HarnessContext.createEmpty();
@@ -1368,6 +1409,7 @@ export class OpenDeskTUI {
                     ctx.permissionPrompt = savedPrompt;
                     task.harnessContext = ctx;
                     task.activeModeId = mode.id;
+                    task.disabledTools = mode.disabledTools;
                 })
                 .catch((err) => {
                     logger.warn(`Failed to sync task harness for mode ${mode.id}: ${err}`);
