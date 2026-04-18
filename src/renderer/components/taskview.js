@@ -392,6 +392,9 @@ class TaskView extends HTMLElement {
             <!-- 权限确认浮窗 -->
             <permission-prompt id="task-${this.task_id}-permission" data-task-id="${this.task_id}" class="block px-4"></permission-prompt>
 
+            <!-- 用户提问面板 -->
+            <ask-user-prompt id="task-${this.task_id}-ask-user" data-task-id="${this.task_id}" class="block px-4"></ask-user-prompt>
+
             <!-- 输入区域 -->
             <div class="px-3 pb-3 pt-1">
                 <agent-input id="task-${this.task_id}-input" />

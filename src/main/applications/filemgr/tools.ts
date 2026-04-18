@@ -14,6 +14,7 @@ import { ToolCall } from '../../aikernel/messages';
 import { escapeHtml } from '../../utils/escape';
 import { Card } from '../../tui/components/card';
 import { statusDisplay, truncText } from '../../tui/components/toolcall';
+import { truncateToWidth } from '@mariozechner/pi-tui';
 import { z } from 'zod';
 import { detectEncoding, decodeBuffer, encodingDisplayName, HEAD_BYTES } from '../terminal/encoding.js';
 import type { PermissionRequest } from '../../aikernel/security/permission';
@@ -230,15 +231,19 @@ function renderDiffOutput(oldContent: string, newContent: string, width: number)
 
             if (line.type === 'removed') {
                 const lineNum = String(line.oldNum || '').padEnd(lineNumWidth);
-                const content = `- ${line.content}`;
-                const fullLine = lineNum + ' ' + content;
-                const paddedLine = fullLine.padEnd(width - 4);
+                const prefixWidth = lineNumWidth + 1 + 2; // lineNum + ' ' + '- '
+                const contentMaxWidth = width - 4 - prefixWidth;
+                const truncated = truncText(line.content, contentMaxWidth);
+                const fullLine = lineNum + ' - ' + truncated;
+                const paddedLine = truncateToWidth(fullLine, width - 4, '', true);
                 body.push(chalk.bgRgb(255, 230, 230)(chalk.rgb(180, 60, 60)(paddedLine)));
             } else if (line.type === 'added') {
                 const lineNum = String(line.newNum || '').padEnd(lineNumWidth);
-                const content = `+ ${line.content}`;
-                const fullLine = lineNum + ' ' + content;
-                const paddedLine = fullLine.padEnd(width - 4);
+                const prefixWidth = lineNumWidth + 1 + 2; // lineNum + ' ' + '+ '
+                const contentMaxWidth = width - 4 - prefixWidth;
+                const truncated = truncText(line.content, contentMaxWidth);
+                const fullLine = lineNum + ' + ' + truncated;
+                const paddedLine = truncateToWidth(fullLine, width - 4, '', true);
                 body.push(chalk.bgRgb(230, 255, 230)(chalk.rgb(40, 140, 40)(paddedLine)));
             } else {
                 const oldNumStr = String(line.oldNum || '').padEnd(lineNumWidth);
@@ -1947,12 +1952,24 @@ export class GrepFilesTool extends BaseTool<typeof grepSchema> {
         }
 
         try {
-            const regexFlags = ignoreCase ? 'gi' : 'g';
+            // 预处理 pattern 中的 \uXXXX 字面量转义序列，将其转换为实际的 Unicode 字符
+            // 这样 AI agent 发送的 [\u4e00-\u9fa5] 等 Unicode 范围模式能被正确处理
+            const processedPattern = pattern.replace(/\\u([0-9a-fA-F]{4})/g, (_, hex) =>
+                String.fromCharCode(parseInt(hex, 16))
+            );
+
+            // 优先使用 'u' (unicode) flag 以正确处理 Unicode 字符范围
+            // 如果 unicode 模式不兼容（某些旧式正则语法），回退到非 unicode 模式
+            const baseFlags = ignoreCase ? 'gi' : 'g';
             let regex: RegExp;
             try {
-                regex = new RegExp(pattern, regexFlags);
-            } catch (e: any) {
-                return `错误: 无效的正则表达式 - ${e.message}`;
+                regex = new RegExp(processedPattern, baseFlags + 'u');
+            } catch {
+                try {
+                    regex = new RegExp(processedPattern, baseFlags);
+                } catch (e: any) {
+                    return `错误: 无效的正则表达式 - ${e.message}`;
+                }
             }
 
             const basePath = searchPath ? sanitizePath(searchPath) : workingDir;

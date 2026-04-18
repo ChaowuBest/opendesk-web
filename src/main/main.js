@@ -52,6 +52,8 @@ import { exportTaskToHtml, generateTaskHtml } from './utils/export';
 import { MainAgentDecl } from './aikernel/agents/mainagent/agent.js';
 import { HarnessContext } from './aikernel/security/harness.js';
 import { ElectronPermissionPromptProvider } from './aikernel/security/electronPrompt.js';
+import { ElectronAskUserProvider } from './aikernel/interaction/electronAskUser.js';
+import { createInteractionToolset } from './aikernel/interaction/tools.js';
 
 /** 全局 agentDecl 实例（延迟初始化），用于获取 mode 等元信息 */
 let _globalAgentDecl = null;
@@ -311,6 +313,10 @@ const registerTaskManagerAPIHandlers = () => {
             task.harnessContext = await HarnessContext.createForMode(workspace, activeMode);
             task.harnessContext.permissionPrompt = new ElectronPermissionPromptProvider();
             task.activeModeId = activeMode.id;
+            task.disabledTools = activeMode.disabledTools;
+            // 注入 interaction 工具集（仅主任务，buildToolsets 会自动包含）
+            const askUserProvider = new ElectronAskUserProvider();
+            task.interactionToolset = createInteractionToolset(askUserProvider);
         } catch (err) {
             logger.warn(`Failed to init task harness in Electron, using empty context: ${err}`);
             task.harnessContext = HarnessContext.createEmpty();

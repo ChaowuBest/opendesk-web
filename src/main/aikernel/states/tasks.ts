@@ -142,6 +142,12 @@ export class TaskState {
      */
     activeModeId?: string;
 
+    /**
+     * 当前模式需要排除的工具名列表。
+     * 不参与序列化——Mode 在每次会话时由 TUI/GUI 设定。
+     */
+    disabledTools?: string[];
+
     stop_requested_by_user: boolean = false;
     started_at?: Date;
     finished_at?: Date;
@@ -152,6 +158,13 @@ export class TaskState {
 
     /** 性能分析器，当 CLI --profile 启用时创建 */
     profiler: TaskProfiler | null = null;
+
+    /**
+     * 可选的 interaction 工具集（仅主任务使用）。
+     * 由 TUI/Electron 层在任务创建后注入，包含 askUser 等需要用户交互的工具。
+     * buildToolsets() 会自动将其包含在工具列表中。
+     */
+    interactionToolset: BaseToolset | null = null;
 
     /** 任务钩子，用于在一系列任务控制点中执行回调函数 */
     hooks: TaskHooks = new TaskHooks();
@@ -636,6 +649,7 @@ export class TaskState {
         forkedTask.harnessContext.permissionPrompt = this.harnessContext.permissionPrompt;
         forkedTask.harnessContext.workspace = this.harnessContext.workspace;
         forkedTask.activeModeId = this.activeModeId;
+        forkedTask.disabledTools = this.disabledTools;
 
         // Add to task manager
         this.task_manager_state.tasks.push(forkedTask);
@@ -910,7 +924,23 @@ export class TaskState {
         const all = [...appToolsets, skillToolset, memoryToolset, planningToolset];
         if (this.parent_id === null) {
             all.push(createTaskInfoToolset(this.task_manager_state));
+            if (this.interactionToolset) {
+                all.push(this.interactionToolset);
+            }
         }
+
+        // Apply disabledTools filter if present
+        if (this.disabledTools && this.disabledTools.length > 0) {
+            const disabled = new Set(this.disabledTools);
+            for (const toolset of all) {
+                for (const [name, tool] of toolset.tools.entries()) {
+                    if (disabled.has(name)) {
+                        toolset.tools.delete(name);
+                    }
+                }
+            }
+        }
+
         return all;
     }
 
