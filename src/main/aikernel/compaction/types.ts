@@ -1,5 +1,6 @@
 import type { ChatMessage, CompactSeparatorMessage } from '../messages.js';
 import type { MicrocompactAnalysisResult, MicrocompactCandidate, MicrocompactStats } from './microcompact.js';
+import type { AutoCompactDecision, AutoCompactState } from './auto-compact.js';
 import type {
     ToolResultReplacementState,
     ToolResultPreviewOptions,
@@ -22,6 +23,9 @@ export interface PrepareContextOptions {
     executeCompact?: () => Promise<void> | void;
     enableToolResultBudget?: boolean;
     enableMicrocompact?: boolean;
+    autoCompactState?: AutoCompactState;
+    /** 可选的自动压缩决策注入，主要用于单元测试稳定控制 pipeline 分支。 */
+    autoCompactDecisionOverride?: AutoCompactDecision;
     taskId?: string;
     toolResultReplacementState?: ToolResultReplacementState;
     toolResultBudgetChars?: number;
@@ -33,6 +37,9 @@ export interface PrepareContextOptions {
 
 export interface PreparedContextResult {
     activeContext: ActiveContextView;
+    autoCompactDecision: AutoCompactDecision;
+    autoCompactState?: AutoCompactState;
+    autoCompactStateChanged: boolean;
     shouldCompact: boolean;
     compacted: boolean;
     budgetApplied: boolean;

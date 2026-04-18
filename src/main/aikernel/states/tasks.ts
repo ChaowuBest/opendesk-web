@@ -10,6 +10,7 @@
  */
 
 import { ToolResultReplacementStates, type ToolResultReplacementState } from '../compaction/tool-results.js';
+import { AutoCompactStates, type AutoCompactState } from '../compaction/auto-compact.js';
 import {
     ChatContext,
     UserMessage,
@@ -122,6 +123,8 @@ export class TaskState {
     task_status: TaskStatus = 'waiting';
     chat_context: ChatContext = new ChatContext();
     tool_result_replacement_state: ToolResultReplacementState = ToolResultReplacementStates.create();
+    /** 自动压缩失败熔断状态，随 task JSON 持久化。 */
+    auto_compact_state: AutoCompactState = AutoCompactStates.create();
 
     model?: string;
     reasoningEffort?: ReasoningEffort;
@@ -179,6 +182,9 @@ export class TaskState {
             task_json.tool_result_replacement_state,
             task.chat_context
         );
+        task.auto_compact_state = AutoCompactStates.deserialize(
+            task_json.auto_compact_state ?? task_json.autoCompactState
+        );
         if (task_json.started_at) {
             task.started_at = new Date(task_json.started_at);
         }
@@ -224,6 +230,7 @@ export class TaskState {
             task_status: this.task_status,
             chat_context: this.chat_context.toJSON(),
             tool_result_replacement_state: ToolResultReplacementStates.serialize(toolResultReplacementState),
+            auto_compact_state: AutoCompactStates.serialize(this.auto_compact_state),
             started_at: this.started_at?.toISOString(),
             finished_at: this.finished_at?.toISOString(),
             total_elapsed_ms: this.total_elapsed_ms,
@@ -256,6 +263,46 @@ export class TaskState {
             this.chat_context
         );
         return this.tool_result_replacement_state;
+    }
+
+    getAutoCompactState(): AutoCompactState {
+        return AutoCompactStates.clone(this.auto_compact_state);
+    }
+
+    setAutoCompactState(state: AutoCompactState) {
+        this.auto_compact_state = AutoCompactStates.clone(state);
+    }
+
+    recordAutoCompactAttempt(at: Date = new Date()) {
+        this.auto_compact_state = AutoCompactStates.recordAttempt(this.auto_compact_state, at);
+        return this.auto_compact_state;
+    }
+
+    recordAutoCompactFailure(reason?: string, at: Date = new Date()) {
+        this.auto_compact_state = AutoCompactStates.recordFailure(this.auto_compact_state, at, reason);
+        return this.auto_compact_state;
+    }
+
+    recordAutoCompactSuccess(at: Date = new Date()) {
+        this.auto_compact_state = AutoCompactStates.recordSuccess(this.auto_compact_state, at);
+        return this.auto_compact_state;
+    }
+
+    resetAutoCompactState() {
+        this.auto_compact_state = AutoCompactStates.create();
+        return this.auto_compact_state;
+    }
+
+    isAutoCompactCoolingDown(at: Date = new Date()) {
+        return AutoCompactStates.isCoolingDown(this.auto_compact_state, at);
+    }
+
+    getAutoCompactCooldownRemainingMs(at: Date = new Date()) {
+        return AutoCompactStates.getCooldownRemainingMs(this.auto_compact_state, at);
+    }
+
+    hasAutoCompactReachedFailureThreshold() {
+        return AutoCompactStates.hasReachedFailureThreshold(this.auto_compact_state);
     }
 
     async attachToolset(toolset: BaseToolset) {
@@ -306,11 +353,15 @@ export class TaskState {
             this._compactedBeforeSubmit = false;
         } else {
             try {
-                await prepareContextForModel(this.chat_context, this.model, {
+                const preparation = await prepareContextForModel(this.chat_context, this.model, {
                     beforeCompact: () => {
                         logger.info(`Auto-compacting context for task ${this.task_id}`);
-                    }
+                    },
+                    autoCompactState: this.auto_compact_state
                 });
+                if (preparation.autoCompactState) {
+                    this.setAutoCompactState(preparation.autoCompactState);
+                }
             } catch (err: unknown) {
                 logger.warn(`Auto-compact check failed: ${err instanceof Error ? err.message : err}`);
             }
@@ -563,6 +614,7 @@ export class TaskState {
         // Copy chat context via serialization
         forkedTask.chat_context = ChatContext.assign(this.chat_context.toJSON());
         forkedTask.tool_result_replacement_state = ToolResultReplacementStates.clone(toolResultReplacementState);
+        forkedTask.auto_compact_state = AutoCompactStates.clone(this.auto_compact_state);
 
         // Copy model and reasoning effort
         forkedTask.model = this.model;
@@ -697,11 +749,16 @@ export class TaskState {
                 enableToolResultBudget: true,
                 enableMicrocompact: true,
                 taskId: this.task_id,
-                toolResultReplacementState: this.tool_result_replacement_state
+                toolResultReplacementState: this.tool_result_replacement_state,
+                autoCompactState: this.auto_compact_state
             });
 
             if (preparation.toolResultReplacementState) {
                 this.tool_result_replacement_state = preparation.toolResultReplacementState;
+            }
+
+            if (preparation.autoCompactState) {
+                this.setAutoCompactState(preparation.autoCompactState);
             }
 
             if (preparation.budgetApplied && preparation.toolResultBudgetStats) {
@@ -756,7 +813,12 @@ export class TaskState {
                 }
             }
 
-            if (preparation.compacted || preparation.toolResultStateChanged || preparation.microcompactStateChanged) {
+            if (
+                preparation.compacted ||
+                preparation.toolResultStateChanged ||
+                preparation.microcompactStateChanged ||
+                preparation.autoCompactStateChanged
+            ) {
                 this.task_manager_state.save();
             }
 

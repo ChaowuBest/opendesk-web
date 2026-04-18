@@ -24,7 +24,10 @@ export function registerCompactCommand(tui: OpenDeskTUI): void {
             }
 
             try {
-                await tui.taskView.performCompactWithAnimation();
+                const compacted = await tui.taskView.performCompactWithAnimation();
+                if (!compacted) {
+                    throw new Error(tui.taskView.lastCompactErrorMessage ?? 'Context compact failed');
+                }
                 tui.taskManagerState.save();
 
                 tui.taskView.clearMessages();
