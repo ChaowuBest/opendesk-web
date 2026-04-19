@@ -17,10 +17,26 @@ import { BaseToolset } from '../aikernel/tool.js';
 import { Skill } from '../aikernel/skill.js';
 import type { SlashCommandHandler } from '../tui/commands/index.js';
 import type { ApplicationRegistry } from './registry.js';
-import type { Command } from 'commander';
+import type { Command, Option } from 'commander';
 import path from 'path';
 import fs from 'fs';
 import PQueue from 'p-queue';
+
+/**
+ * CLI 参数选项定义
+ */
+export interface CliOption {
+    /** 参数名称（不含前缀，如 'mount-skill'）*/
+    name: string;
+    /** 参数描述 */
+    description?: string;
+    /** 是否为布尔参数（无值） */
+    boolean?: boolean;
+    /** 参数默认值 */
+    defaultValue?: string | boolean;
+    /** 参数解析函数 */
+    parse?: (value: string) => string | boolean;
+}
 
 export interface EventDecl {
     eventName: string;
@@ -240,6 +256,33 @@ export abstract class BaseApplication {
      * 在 commander 解析命令行参数之前调用，应用可重写此静态方法来扩展 CLI。
      */
     static registerCliSubcommands(_prog: Command): void {}
+
+    /**
+     * 返回应用希望在 CLI 全局层级使用的参数选项（不含前缀）。
+     * 这些参数在 CLI 解析时会被自动加上 `{bundleName}-` 前缀。
+     * 例如 bundleName='skillmgr' 时，'mount-skill' 参数会变成 `--skillmgr-mount-skill`。
+     *
+     * 子类可重写此静态方法来声明自己的 CLI 参数。
+     *
+     * @returns CLI 选项数组
+     */
+    static getCliOptions(): CliOption[] {
+        return [];
+    }
+
+    /**
+     * 获取应用实例级别的 CLI 参数值。
+     * 这些值在 CLI 解析后通过 parseApplicationCliOptions() 填充到实例中。
+     */
+    getCliOptions(): Record<string, string | boolean | undefined> {
+        return {};
+    }
+
+    /**
+     * 设置应用实例级别的 CLI 参数值（由 CLI 解析后调用）。
+     * @param options 解析后的参数值（已带前缀的键名）
+     */
+    setCliOptions(options: Record<string, string | boolean | undefined>): void {}
 
     /**
      * 返回应用的配置 schema，用于在设置界面中显示和编辑配置。如果不需要配置，则返回空对象。

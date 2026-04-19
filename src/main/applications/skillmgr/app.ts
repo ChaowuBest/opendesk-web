@@ -10,6 +10,7 @@
  */
 
 import { BaseApplication, BaseWorker } from '../base.js';
+import type { CliOption } from '../base.js';
 import { z } from 'zod';
 import { logger } from '../../utils/logger.js';
 import { SkillRegistry } from './skillregistry.js';
@@ -43,6 +44,9 @@ export class SkillMgrApplication extends BaseApplication {
     /** 静态回调列表：refresh 后通知订阅方（如 TUI 自动补全）*/
     private static refreshListeners: Array<() => void> = [];
 
+    /** 应用标识（静态属性，供 CLI 参数注册使用） */
+    static bundleName: string = 'skillmgr';
+
     static onSkillsRefreshed(listener: () => void): void {
         SkillMgrApplication.refreshListeners.push(listener);
     }
@@ -69,6 +73,19 @@ export class SkillMgrApplication extends BaseApplication {
 
     constructor() {
         super('skillmgr', 'Skills');
+    }
+
+    /**
+     * 定义 CLI 参数选项（不含前缀）
+     */
+    static getCliOptions(): CliOption[] {
+        return [
+            {
+                name: 'mount-skill',
+                description: '从指定目录加载 skill，可多次指定',
+                parse: (v) => v
+            }
+        ];
     }
 
     /**

@@ -20,7 +20,7 @@ import { FULL_CLEAR } from './tui/components/constants';
 import { OpenDeskTUI, CommandLineArgs } from './tui/entry.js';
 import { HeadlessRunner } from './tui/headless.js';
 import { Setting, getDefaultAppDirectory, setCustomAppDirectory } from './utils/setting';
-import { program as prog } from 'commander';
+import { program as prog, Option } from 'commander';
 import { listInstalledPlugins, loadPlugins } from './aikernel/plugins/index.js';
 import { ChannelMgrApplication } from './applications/channelmgr/app.js';
 import { ChannelMessageRouter } from './applications/channelmgr/router.js';
@@ -30,6 +30,7 @@ import { registerPluginsCommand } from './tui/subcommands/plugins.js';
 import { registerToolsCommand } from './tui/subcommands/tools.js';
 import { registerQuickpassCommand } from './tui/subcommands/quickpass.js';
 import { setRuntimeLocale } from '../locale/index.js';
+import type { BaseApplication } from './applications/base.js';
 
 import { getCurrentVersion } from './utils/upgrade.js';
 
@@ -65,6 +66,51 @@ function parseCommandLineArgs() {
     for (const AppClass of new CliPlatform().getApplicationClasses()) {
         (AppClass as any).registerCliSubcommands(prog);
     }
+
+    // 注册每个应用的 CLI 参数（自动加前缀，在帮助末尾分组显示）
+    // Commander 会将 --skillmgr-mount-skill 转换为驼峰命名
+    const appOptionsMap: Map<string, { name: string; description?: string }[]> = new Map();
+    for (const AppClass of new CliPlatform().getApplicationClasses()) {
+        const bundleName = (AppClass as any).bundleName || (AppClass as any).prototype?.bundleName;
+        if (!bundleName) continue;
+
+        const options = (AppClass as typeof BaseApplication).getCliOptions();
+        if (options.length === 0) continue;
+
+        const appOpts: { name: string; description?: string }[] = [];
+        for (const opt of options) {
+            const prefixedName = `${bundleName}-${opt.name}`;
+            const optDef = new Option(`--${prefixedName} <value>`, opt.description || '').hideHelp();
+            if (opt.boolean) {
+                optDef.booleanNegatable(false);
+            }
+            if (opt.defaultValue !== undefined) {
+                optDef.default(opt.defaultValue);
+            }
+            if (opt.parse) {
+                optDef.argParser(opt.parse as any);
+            }
+            prog.addOption(optDef);
+            appOpts.push({ name: prefixedName, description: opt.description });
+        }
+        if (appOpts.length > 0) {
+            appOptionsMap.set(bundleName, appOpts);
+        }
+    }
+
+    // 自定义帮助输出格式：在末尾按应用分组显示应用级参数
+    prog.addHelpText('after', () => {
+        if (appOptionsMap.size === 0) return '';
+        const lines: string[] = [''];
+        for (const [bundleName, opts] of appOptionsMap) {
+            lines.push(`Options of ${bundleName}:`);
+            for (const { name, description } of opts) {
+                lines.push(`  --${name.padEnd(30)} ${description || ''}`);
+            }
+            lines.push('');
+        }
+        return lines.join('\n');
+    });
 
     // channels subcommand
     const channelsCmd = prog.command('channels').description('消息插件管理');
@@ -129,6 +175,56 @@ function parseCommandLineArgs() {
             setCustomAppDirectory(kwargs.configDirectory);
         }
 
+        // 收集每个应用的 CLI 参数（从 kwargs 中匹配前缀）
+        // Commander 会将 --bundle-name-opt 转换为 camelCase，我们直接匹配带有 bundleName 前缀的 key
+        const appCliOptions: Record<string, Record<string, string | boolean | undefined>> = {};
+        for (const AppClass of new CliPlatform().getApplicationClasses()) {
+            const bundleName = (AppClass as any).bundleName || (AppClass as any).prototype?.bundleName;
+            if (!bundleName) continue;
+
+            const options = (AppClass as typeof BaseApplication).getCliOptions();
+            if (options.length === 0) continue;
+
+            // 构建前缀列表（原始名和可能的 camelCase 变体）
+            const prefixVariants = [`${bundleName}-`, `${bundleName}`];
+            // 同时考虑 Commander 的 camelCase 转换：bundle-name-opt -> bundleNameOpt
+            const camelPrefix = bundleName.replace(/([a-z])([A-Z])/g, '$1-$2').toLowerCase() + '-';
+
+            const appOpts: Record<string, string | boolean | undefined> = {};
+            for (const key of Object.keys(kwargs)) {
+                if (kwargs[key] === undefined) continue;
+
+                // 尝试匹配各个前缀变体
+                let matchedOptName: string | null = null;
+                for (const prefix of prefixVariants) {
+                    if (key.startsWith(prefix)) {
+                        matchedOptName = key.slice(prefix.length);
+                        break;
+                    }
+                }
+                if (!matchedOptName) {
+                    // 尝试 camelCase 前缀变体
+                    if (key.startsWith(camelPrefix)) {
+                        matchedOptName = key.slice(camelPrefix.length);
+                    } else {
+                        continue;
+                    }
+                }
+
+                // 检查是否匹配已知的选项名（支持原始名和 camelCase）
+                for (const opt of options) {
+                    const optNameVariants = [opt.name, opt.name.replace(/-([a-z])/g, (_, c) => c.toUpperCase())];
+                    if (optNameVariants.includes(matchedOptName)) {
+                        appOpts[opt.name] = kwargs[key] as string | boolean;
+                        break;
+                    }
+                }
+            }
+            if (Object.keys(appOpts).length > 0) {
+                appCliOptions[bundleName] = appOpts;
+            }
+        }
+
         const workspacePath = path.resolve(kwargs.workspace ?? '.');
         if (!fs.existsSync(workspacePath)) {
             console.error(`[error] workspace ${workspacePath} does not exist`);
@@ -177,7 +273,8 @@ function parseCommandLineArgs() {
             allowEverything: !!kwargs.allowEverything,
             // --allow-everything 等价于 --mode unlimited
             mode: kwargs.allowEverything ? 'unlimited' : kwargs.mode,
-            language: kwargs.language
+            language: kwargs.language,
+            appCliOptions
         });
     });
 
@@ -195,6 +292,23 @@ async function main(args: CommandLineArgs) {
     // Apply language setting from command line (runtime only, does not modify setting)
     if (args.language) {
         setRuntimeLocale(args.language);
+    }
+
+    // 在 registry 初始化之前处理 app CLI 参数（如 --skillmgr-mount-skill）
+    // 因为 ApplicationRegistry.getApplication() 需要 registry 已初始化
+    if (args.appCliOptions) {
+        for (const [bundleName, options] of Object.entries(args.appCliOptions)) {
+            // 如果是 skillmgr 的 mount-skill，在 registry 初始化前直接添加到 SkillRegistry
+            if (bundleName === 'skillmgr' && options['mount-skill']) {
+                const dirs = Array.isArray(options['mount-skill']) ? options['mount-skill'] : [options['mount-skill']];
+                const { SkillRegistry } = await import('./applications/skillmgr/skillregistry.js');
+                for (const dir of dirs) {
+                    if (typeof dir === 'string') {
+                        SkillRegistry.addMountedDir(dir);
+                    }
+                }
+            }
+        }
     }
 
     if (!isMainThread) {

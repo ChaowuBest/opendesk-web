@@ -93,6 +93,8 @@ export interface CommandLineArgs {
     allowEverything?: boolean;
     mode?: string;
     language?: string;
+    /** 各应用的 CLI 参数（已按 bundleName 分组，参数名不含前缀） */
+    appCliOptions?: Record<string, Record<string, string | boolean | undefined>>;
 }
 
 export class OpenDeskTUI {
