@@ -39,7 +39,7 @@ import fs from 'fs';
 
 function parseCommandLineArgs() {
     prog.name('opendesk');
-    prog.argument('[workspace]', 'the workspace to open', (v) => v, '.');
+    prog.option('--workspace <path>', 'the workspace to open', (v) => v, '.');
     prog.option('--model <alias>', 'model alias to use', (v) => v);
     prog.option('-c, --command <command>', 'the command to execute', (v) => v);
     prog.option('--export-html <path>', 'export session as HTML when -c task completes', (v) => v);
@@ -118,7 +118,7 @@ function parseCommandLineArgs() {
             process.exit(result.errors.length > 0 ? 1 : 0);
         });
 
-    prog.action(async (workspace: string, kwargs: Record<string, string | undefined>) => {
+    prog.action(async (kwargs: Record<string, string | undefined>) => {
         if (kwargs.version) {
             const version = await getCurrentVersion();
             console.log(version ?? 'unknown');
@@ -129,7 +129,7 @@ function parseCommandLineArgs() {
             setCustomAppDirectory(kwargs.configDirectory);
         }
 
-        const workspacePath = path.resolve(workspace);
+        const workspacePath = path.resolve(kwargs.workspace ?? '.');
         if (!fs.existsSync(workspacePath)) {
             console.error(`[error] workspace ${workspacePath} does not exist`);
             process.exit(1);
