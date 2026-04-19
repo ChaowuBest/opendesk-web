@@ -577,9 +577,10 @@ function rmRecursive(p) {
 /**
  * 从本地目录添加技能：校验 SKILL.md 后复制到用户技能目录
  * @param {string} sourceDir - 源目录（须含 SKILL.md，目录名可与 name 不一致，以 frontmatter name 为准）
+ * @param {boolean} force - 是否强制覆盖已存在的同名技能
  * @returns {{ success: boolean, name?: string, error?: string }}
  */
-function addSkillFromDirectory(sourceDir) {
+function addSkillFromDirectory(sourceDir, force = false) {
     const resolved = path.resolve(sourceDir);
     if (!fs.existsSync(resolved) || !fs.statSync(resolved).isDirectory()) {
         return { success: false, error: '源路径不存在或不是目录' };
@@ -589,7 +590,19 @@ function addSkillFromDirectory(sourceDir) {
     const skillsDir = getSkillsDirectory();
     const destDir = path.join(skillsDir, result.name);
     if (fs.existsSync(destDir)) {
-        return { success: false, error: `技能 "${result.name}" 已存在，请先删除或改用其它名称` };
+        if (force) {
+            try {
+                if (typeof fs.rmSync === 'function') {
+                    fs.rmSync(destDir, { recursive: true, force: true });
+                } else {
+                    rmRecursive(destDir);
+                }
+            } catch (e) {
+                return { success: false, error: `删除旧技能失败: ${e.message}` };
+            }
+        } else {
+            return { success: false, error: `技能 "${result.name}" 已存在，请先删除或使用 --force 覆盖` };
+        }
     }
     try {
         copyDirRecursive(resolved, destDir);

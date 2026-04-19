@@ -97,20 +97,22 @@ export class SkillMgrApplication extends BaseApplication {
         skillCmd
             .command('install <source>')
             .description('安装技能（本地目录、本地 zip 文件或远程 zip URL）')
-            .action(async (source: string) => {
+            .option('--force', '强制覆盖已存在的同名技能')
+            .action(async (source: string, opts: { force?: boolean }) => {
                 useCliTransport();
                 useConsoleTransport();
                 const resolved = path.resolve(source);
+                const force = opts.force ?? false;
                 let result: { success: boolean; name?: string; error?: string };
 
                 if (fs.existsSync(resolved)) {
                     const stat = fs.statSync(resolved);
                     if (stat.isDirectory()) {
                         console.log(`正在从本地目录安装技能: ${resolved}`);
-                        result = installSkillFromDirectory(resolved);
+                        result = installSkillFromDirectory(resolved, force);
                     } else if (stat.isFile() && resolved.toLowerCase().endsWith('.zip')) {
                         console.log(`正在从本地 zip 文件安装技能: ${resolved}`);
-                        result = installSkillFromLocalZip(resolved);
+                        result = installSkillFromLocalZip(resolved, undefined, force);
                     } else {
                         console.error('✗ 本地文件必须是目录或 .zip 格式');
                         process.exit(1);
@@ -119,10 +121,10 @@ export class SkillMgrApplication extends BaseApplication {
                 } else if (source.startsWith('http://') || source.startsWith('https://')) {
                     if (source.includes('github.com') && source.includes('/tree/')) {
                         console.log(`正在从 GitHub URL 安装技能: ${source}`);
-                        result = await installSkillFromGitHubUrl(source);
+                        result = await installSkillFromGitHubUrl(source, force);
                     } else {
                         console.log(`正在从 URL 下载并安装技能: ${source}`);
-                        result = await installSkillFromUrl(source);
+                        result = await installSkillFromUrl(source, force);
                     }
                 } else {
                     console.error(`✗ 无法识别来源: ${source}`);
