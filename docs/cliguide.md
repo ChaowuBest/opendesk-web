@@ -4,15 +4,16 @@
 
 1. [简介](#简介)
 2. [快速开始](#快速开始)
-3. [命令行参数](#命令行参数)
+3. [Mode 机制与现有模式](#mode-机制与现有模式)
 4. [交互界面功能](#交互界面功能)
 5. [斜杠命令](#斜杠命令)
 6. [快捷键](#快捷键)
 7. [配置说明](#配置说明)
-8. [高级功能](#高级功能)
-9. [开发介绍](#开发介绍)
-10. [常见问题](#常见问题)
-11. [获取帮助](#获取帮助)
+8. [命令行参数](#命令行参数)
+9. [高级功能](#高级功能)
+10. [开发介绍](#开发介绍)
+11. [常见问题](#常见问题)
+12. [获取帮助](#获取帮助)
 
 ---
 
@@ -39,7 +40,7 @@ npm run cli
 首次启动时，如果您尚未配置模型，会看到配置提示。请按照以下步骤配置：
 
 1. 输入 `/config` 打开配置菜单
-2. 选择"模型服务商配置"并添加一个模型模型服务商
+2. 选择"模型服务商配置"并添加一个模型服务商
 3. 选择"模型配置"并添加一个模型
 4. 选择 "默认模型配置"，并选择您要使用的模型
 
@@ -47,52 +48,31 @@ npm run cli
 
 ---
 
-## 命令行参数
+## Mode 机制与现有模式
 
-OpenDesk CLI 支持以下命令行参数：
+主 Agent 的 **Mode（运行模式）** 决定文件读写、Shell 命令、工具调用等操作的**权限边界**与行为约束。不同模式对应不同的权限规则（`permissionFactory`），用于在「安全默认可用」与「高自主 / 无限制」之间取舍。
 
-```
-opendesk [workspace] [选项]
-```
+### 机制概要
 
-### 参数说明
+- **会话内切换**：在 TUI 中可随时切换当前模式，无需重启。按 **Shift+Tab** 打开模式选择器；或在输入框执行 `/mode <模式id>`（见下文 [斜杠命令](#斜杠命令)）。
+- **启动时指定**：通过命令行 `--mode <mode>` 指定本次进程的初始模式；`--allow-everything` 与 `--mode unlimited` 等价（详见 [命令行参数](#命令行参数)）。
+- **与规划工作流**：**Plan** 模式用于「先只读调研、再在 `.plan` 中写方案」；确认方案后通常需要切换到 **Standard** 或 **Solo** 才能实际修改业务代码（Plan 下会禁用 `editFile`、`writeFile` 等直接改代码的工具）。
+- **默认模式**：未另行指定时，一般为 **standard**（与代码中 `defaultModeId()` 一致）。
 
-| 参数                      | 说明                                            | 默认值         |
-| ------------------------- | ----------------------------------------------- | -------------- |
-| `workspace`               | 工作区目录路径                                  | 当前目录 (`.`) |
-| `--model <alias>`         | 指定要使用的模型别名                            | 配置的默认模型 |
-| `-c, --command <command>` | 一次性执行命令后退出                            | 无             |
-| `--headless`              | 无头模式运行（无 TUI，需配合 `-c`）             | 无             |
-| `--export-html <path>`    | `-c` 任务完成后导出 HTML 会话记录               | 无             |
-| `--export-json <path>`    | `-c` 任务完成后导出 JSON 会话数据               | 无             |
-| `--dump-log <path>`       | 将所有日志输出到指定文件                        | 无             |
-| `--profile <path>`        | 将性能分析报告写入指定 JSON 文件（需配合 `-c`） | 无             |
-| `-v, --version`           | 显示版本信息                                    | 无             |
+### 现有模式一览
 
-### 使用示例
+| 模式 ID     | 标识         | 说明                                                                                                                                      |
+| ----------- | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `standard`  | ⚡ standard  | **默认**。工作区内可自由读写；访问工作区外路径时通常需经用户确认，与常见「本地项目助手」体验一致。                                        |
+| `plan`      | 📋 plan      | **规划**。以只读方式浏览代码与资料，可执行只读类 Shell；**仅 `.plan` 目录可写**，用于输出计划文档。不能直接改项目源码，便于先设计后实施。 |
+| `solo`      | 🎮 solo      | **高自主**。工作区内外均可读写，接近无人值守自动化；仍会对**敏感路径**按策略拒绝，并非完全裸奔。                                          |
+| `unlimited` | 🔓 unlimited | **无限制**。权限规则全部放通，**风险最高**；与命令行 `--allow-everything` 等价。                                                          |
 
-```bash
-# 在当前目录启动
-npm run cli
+### 如何切换与选用建议
 
-# 在指定目录启动
-npm run cli -- /path/to/workspace
-
-# 使用特定模型启动
-npm run cli -- --model gpt-4
-
-# 一次性执行命令
-npm run cli -- -c "分析当前目录的代码结构"
-
-# 无头模式执行命令并导出会话记录
-npm run cli -- --headless -c "修复 bug" --export-json result.json
-
-# 生成性能分析报告
-npm run cli -- -c "重构代码" --profile profile.json
-
-# 无头模式 + 性能分析 + 日志
-npm run cli -- --headless -c "修复 bug" --profile profile.json --dump-log debug.log
-```
+- **TUI**：**Shift+Tab** 选择模式；或 `/mode plan`、`/mode standard` 等。
+- **CLI**：例如 `npm run cli -- --mode plan`；可与 `-c`、`--headless` 等组合。
+- **建议**：日常开发用 `standard`；需要先出方案再动手时用 `plan` → 再切 `standard`/`solo`；仅在充分信任环境与任务时使用 `solo` / `unlimited`。
 
 ---
 
@@ -125,35 +105,37 @@ OpenDesk CLI 提供了丰富的斜杠命令来增强交互体验。在输入框�
 
 ### 命令列表
 
-| 命令            | 描述                           | 用法                                      |
-| --------------- | ------------------------------ | ----------------------------------------- |
-| `/new`          | 启动新任务并发送消息           | `/new [消息]`                             |
-| `/switch`       | 切换到其他任务                 | `/switch`                                 |
-| `/help`         | 显示快捷键与指令帮助           | `/help`                                   |
-| `/exit`         | 退出 OpenDesk                  | `/exit`                                   |
-| `/quit`         | 退出 OpenDesk（需确认）        | `/quit`                                   |
-| `/cancel`       | 撤销消息队列中的所有待发送消息 | `/cancel`                                 |
-| `/clear`        | 删除所有任务历史               | `/clear`                                  |
-| `/export`       | 导出当前会话为 HTML 文件       | `/export [文件名]`                        |
-| `/import`       | 导入会话数据                   | `/import [文件名]`                        |
-| `/config`       | 打开系统设置                   | `/config`                                 |
-| `/log`          | 显示日志面板                   | `/log [off\|last\|all]`                   |
-| `/debug`        | 调试命令                       | `/debug log [on\|off]` 或 `/debug taskid` |
-| `/quickpass`    | 导出快捷口令                   | `/quickpass config base\|all`             |
-| `/dashboard`    | 打开仪表盘                     | `/dashboard`                              |
-| `/stop`         | 停止当前正在执行的任务         | `/stop`                                   |
-| `/upgrade`      | 检查并升级 OpenDesk            | `/upgrade`                                |
-| `/rename`       | 重命名当前任务                 | `/rename [新名称]`                        |
-| `/fork`         | 复制当前任务为新任务           | `/fork`                                   |
-| `/recover`      | 从任务文件重建任务列表         | `/recover tasks`                          |
-| `/compact`      | 压缩当前会话上下文             | `/compact`                                |
-| `/memory`       | 管理长期记忆                   | `/memory`                                 |
-| `/bookmark`     | 管理书签                       | `/bookmark`                               |
-| `/notification` | 管理通知设置                   | `/notification`                           |
-| `/undo`         | 回退最近 N 条消息（默认1条）   | `/undo [数量]`                            |
-| `/redo`         | 恢复最近回退的消息             | `/redo`                                   |
-| `/btw`          | 顺便提一下（添加补充信息）     | `/btw [补充内容]`                         |
-| `/manual`       | 打开用户手册                   | `/manual`                                 |
+| 命令            | 描述                                          | 用法                                                     |
+| --------------- | --------------------------------------------- | -------------------------------------------------------- |
+| `/new`          | 启动新任务并发送消息                          | `/new [消息]`                                            |
+| `/switch`       | 切换到其他任务                                | `/switch`                                                |
+| `/help`         | 显示快捷键与指令帮助                          | `/help`                                                  |
+| `/exit`         | 退出 OpenDesk                                 | `/exit`                                                  |
+| `/quit`         | 退出 OpenDesk（需确认）                       | `/quit`                                                  |
+| `/cancel`       | 撤销消息队列中的所有待发送消息                | `/cancel`                                                |
+| `/clear`        | 删除所有任务历史                              | `/clear`                                                 |
+| `/export`       | 导出当前会话为 HTML 文件                      | `/export [文件名]`                                       |
+| `/import`       | 导入会话数据                                  | `/import [文件名]`                                       |
+| `/config`       | 打开系统设置                                  | `/config`                                                |
+| `/log`          | 显示日志面板                                  | `/log [off\|last\|all]`                                  |
+| `/debug`        | 调试命令                                      | `/debug log [on\|off]` 或 `/debug taskid`                |
+| `/quickpass`    | 导出快捷口令                                  | `/quickpass config base\|all`                            |
+| `/dashboard`    | 打开仪表盘                                    | `/dashboard`                                             |
+| `/stop`         | 停止当前正在执行的任务                        | `/stop`                                                  |
+| `/upgrade`      | 检查并升级 OpenDesk                           | `/upgrade`                                               |
+| `/rename`       | 重命名当前任务                                | `/rename [新名称]`                                       |
+| `/fork`         | 复制当前任务为新任务                          | `/fork`                                                  |
+| `/recover`      | 从任务文件重建任务列表                        | `/recover tasks`                                         |
+| `/compact`      | 压缩当前会话上下文                            | `/compact`                                               |
+| `/memory`       | 管理长期记忆                                  | `/memory`                                                |
+| `/bookmark`     | 管理书签                                      | `/bookmark`                                              |
+| `/notification` | 管理通知设置                                  | `/notification`                                          |
+| `/undo`         | 回退最近 N 条消息（默认1条）                  | `/undo [数量]`                                           |
+| `/redo`         | 恢复最近回退的消息                            | `/redo`                                                  |
+| `/btw`          | 顺便提一下（添加补充信息）                    | `/btw [补充内容]`                                        |
+| `/mode`         | 查看或切换 Agent 运行模式（也可用 Shift+Tab） | `/mode plan`                                             |
+| `/reason`       | 调整思考深度与思考过程展示方式                | `/reason`、`/reason effort high`、`/reason display full` |
+| `/manual`       | 打开用户手册                                  | `/manual`                                                |
 
 ### 命令详细说明
 
@@ -211,6 +193,22 @@ OpenDesk CLI 提供了丰富的斜杠命令来增强交互体验。在输入框�
 
 **导入口令：** 在 TUI 聊天输入框中粘贴完整的口令字符串并按回车提交，系统会自动检测、校验并导入。如果口令仅包含基础设置，会保留当前的应用配置。
 
+#### `/mode` - 运行模式
+
+在输入框执行 `/mode <模式id>` 可切换到 `standard`、`plan`、`solo`、`unlimited`；也可按 **Shift+Tab** 打开模式菜单。**Mode 的设计与各模式差异**见上文 [Mode 机制与现有模式](#mode-机制与现有模式)。
+
+#### `/reason` - 思考（推理）相关设置
+
+不带参数执行 `/reason` 可查看当前默认模型的思考深度、以及思考过程的展示方式。
+
+```bash
+/reason                              # 查看当前配置
+/reason effort default               # 使用模型默认思考深度
+/reason effort none|low|medium|high  # 为当前默认模型设置思考深度
+/reason display full                 # 完整展示思考过程
+/reason display partial              # 仅预览末尾若干行（默认）
+```
+
 ---
 
 ## 快捷键
@@ -234,13 +232,77 @@ OpenDesk CLI 支持以下键盘快捷键：
 
 输入 `/config` 命令进入配置模式，您可以配置：
 
-1. **模型服务商配置** - 添加和管理 AI 模型模型服务商
+1. **模型服务商配置** - 添加和管理 AI 模型服务商
 2. **模型配置** - 添加和管理具体的 AI 模型
 3. **默认模型配置** - 设置默认使用的模型
 
 ### 配置文件
 
 OpenDesk 的配置保存在用户目录下的配置文件中。具体位置取决于您的操作系统。
+
+---
+
+## 命令行参数
+
+OpenDesk CLI 支持以下命令行参数：
+
+```
+opendesk [workspace] [选项]
+```
+
+### 参数说明
+
+| 参数                        | 说明                                                                   | 默认值              |
+| --------------------------- | ---------------------------------------------------------------------- | ------------------- |
+| `workspace`                 | 工作区目录路径                                                         | 当前目录 (`.`)      |
+| `--model <alias>`           | 指定要使用的模型别名                                                   | 配置的默认模型      |
+| `-c, --command <command>`   | 一次性执行命令后退出                                                   | 无                  |
+| `--headless`                | 无头模式运行（无 TUI，需配合 `-c`）                                    | 无                  |
+| `--export-html <path>`      | `-c` 任务完成后导出 HTML 会话记录                                      | 无                  |
+| `--export-json <path>`      | `-c` 任务完成后导出 JSON 会话数据                                      | 无                  |
+| `--dump-log <path>`         | 将所有日志输出到指定文件                                               | 无                  |
+| `--profile <path>`          | 将性能分析报告写入指定 JSON 文件（需配合 `-c`）                        | 无                  |
+| `--allow-everything`        | 不做权限检查，放行所有操作（等价于 `--mode unlimited`）                | 无                  |
+| `--mode <mode>`             | 启动时使用的 Agent 模式：`standard`、`plan`、`solo`、`unlimited`       | 由配置/默认模式决定 |
+| `--language <lang>`         | 界面与提示语言：`auto`、`zh-CN`、`en-US`（仅本次运行，不写入配置文件） | `auto`              |
+| `--config-directory <path>` | 指定配置与数据目录（应用设置、任务等）                                 | 用户默认应用目录    |
+| `-v, --version`             | 显示版本信息                                                           | 无                  |
+
+除上述选项外，还支持若干**顶级子命令**（不进入 TUI），例如 `plugins`（插件管理）、`tools`（工具相关）、`quickpass`（快捷口令导入/导出）、`channels`（消息插件管理）。完整列表与用法请运行 `npm run cli -- --help`（或构建产物 `opendesk --help`）查看。
+
+### 使用示例
+
+```bash
+# 在当前目录启动
+npm run cli
+
+# 在指定目录启动
+npm run cli -- /path/to/workspace
+
+# 使用特定模型启动
+npm run cli -- --model gpt-4
+
+# 一次性执行命令
+npm run cli -- -c "分析当前目录的代码结构"
+
+# 无头模式执行命令并导出会话记录
+npm run cli -- --headless -c "修复 bug" --export-json result.json
+
+# 生成性能分析报告
+npm run cli -- -c "重构代码" --profile profile.json
+
+# 无头模式 + 性能分析 + 日志
+npm run cli -- --headless -c "修复 bug" --profile profile.json --dump-log debug.log
+
+# 指定界面语言（本次运行）
+npm run cli -- --language zh-CN
+
+# 以规划模式启动（可与 -c 等组合使用）
+npm run cli -- --mode plan
+
+# 使用自定义配置目录
+npm run cli -- --config-directory /path/to/config
+```
 
 ---
 
@@ -459,12 +521,12 @@ CLI 和 Electron GUI 版本共享大量核心组件：
 
 ### 扩展开发指南
 
-#### 添加新的 CLI 命令
+#### 添加新的斜杠命令
 
-在 [`OpenDeskTUI.setupCommands()`](src/main/tui/entry.ts) 方法中注册新的斜杠命令：
+在 [`src/main/tui/commands/`](src/main/tui/commands/) 下新增 `registerMycommandCommand` 等模块，并在 [`registerAllCommands()`](src/main/tui/commands/index.ts) 中调用；[`OpenDeskTUI.setupCommands()`](src/main/tui/entry.ts) 会统一装载这些注册函数。注册示例：
 
 ```typescript
-this.commandRegistry.register({
+tui.commandRegistry.register({
     name: 'mycommand',
     description: '我的自定义命令',
     shortcut: Key.ctrl('m'), // 可选
