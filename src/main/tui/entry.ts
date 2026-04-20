@@ -812,6 +812,7 @@ export class OpenDeskTUI {
         const snapshotTaskId = task.task_id;
 
         const subscribeToUpdates = () => {
+            this.taskView.startStreaming();
             task.waitUntilFinished(async (chunkUpdate: TaskUpdateChunk) => {
                 if (this.activeTaskId !== snapshotTaskId) return;
                 await this.taskView.handleChunkUpdate(chunkUpdate);
