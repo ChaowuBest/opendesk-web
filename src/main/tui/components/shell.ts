@@ -187,6 +187,63 @@ export function getShellCompletions(inputCmd: string, cwd: string): Autocomplete
     return items;
 }
 
+// ── ANSI 转义序列清理 ───────────────────────────────────────────────────
+
+/**
+ * 清理 ANSI 转义序列，只保留 SGR（Select Graphic Rendition）颜色/样式代码。
+ *
+ * 原因：curl、git 等命令的 --help 输出包含非 SGR 控制序列，如：
+ * - \x1b[K  清除到行尾（被当作文本显示导致空白）
+ * - \r     回车符（导致覆盖问题）
+ * - \x1b[J 清屏等
+ *
+ * 这些序列被 pi-tui 当作文本显示，导致渲染异常。
+ * 本函数移除这些控制序列，只保留颜色代码以保持可读性。
+ */
+function sanitizeAnsiForTui(text: string): string {
+    // 匹配 ANSI C0 控制字符（C0 control characters）
+    // 包括 \r, \n, \t, \x00-\x1f (除了 \n, \t), \x7f (DEL)
+    // 但保留换行符 \n 和水平制表符 \t
+    let result = text;
+
+    // 处理 \r 回车符：转换为换行（保留内容）或移除（避免覆盖）
+    // curl --help 等命令用 \r 来在同一行覆盖输出，保留 \r 会导致覆盖问题
+    // 转为 \n 更安全
+    result = result.replace(/\r\n?/g, '\n');
+
+    // 移除非 SGR 的 ANSI 转义序列
+    // SGR 序列格式: \x1b[...m
+    // 匹配: \x1b[...m 但排除 SGR (Select Graphic Rendition)
+    // SGR 参数范围: 0-9, 10-29, 30-39, 40-49, 50-69, 70-79, 80-87, 88-89, 90-97, 100-107, 108-109, 110-112, 113-115, 116-119, 120-122, 123-129, 130-135, 137-138, 139, 148-149, 151-153, 154-155, 156, 157-159, 160-255
+    // 简化的 SGR 匹配: \x1b\[[\d;]+m 其中参数为数字，可包含分号
+    // 非 SGR: 光标移动 \x1b[H \x1b[{row};{col}H \x1b[{n}A/B/C/D \x1b[{n}E/F/G \x1b[6n 等
+    //       清屏 \x1b[J \x1b[2J \x1b[3J 等
+    //       擦除 \x1b[K \x1b[0K 等
+    //       保存/恢复光标位置 \x1b[s \x1b[u \x1b7 \x1b8
+    //       模式设置 \x1b[?{n}h \x1b[?{n}l 等
+
+    // 移除 CSI 序列（非 SGR）
+    // CSI 格式: \x1b[...{letter}
+    // SGR 以 'm' 结尾
+    // 匹配 \x1b[ 后跟非 'm' 的内容直到字母结尾
+    result = result.replace(/\x1b\[[\d;]*[ABCDHJKXfhilmnsu]/g, '');
+
+    // 移除 OSC (Operating System Command) 序列: \x1b]...\x07 或 \x1b]...\x1b\\
+    result = result.replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '');
+
+    // 移除其他 escape 序列
+    // \x1b( 字符集设置
+    result = result.replace(/\x1b\([A-Z0-9`#%()*+-./<=>]/g, '');
+
+    // 移除孤立的 \x1b
+    result = result.replace(/\x1b/g, '');
+
+    // 折叠连续的空行（超过2个空行合并为2个）
+    result = result.replace(/\n{3,}/g, '\n\n');
+
+    return result;
+}
+
 // ── Shell 命令执行 ──────────────────────────────────────────────────────
 
 export interface ShellExecCallbacks {
@@ -249,11 +306,15 @@ export function executeShellCommand(cmd: string, cwd: string, callbacks: ShellEx
         const exitLabel = code === 0 ? chalk.green(`exit: ${code}`) : chalk.red(`exit: ${code ?? '?'}`);
         const header = `${chalk.cyan('$')} ${chalk.bold(cmd)}  ${exitLabel}`;
 
-        let displayOutput = stdout;
+        // 清理 ANSI 控制序列，只保留颜色代码
+        const cleanedStdout = sanitizeAnsiForTui(stdout);
+        const cleanedStderr = sanitizeAnsiForTui(stderr);
+
+        let displayOutput = cleanedStdout;
         let cwdChangedMsg = '';
 
-        if (code === 0 && stdout.trim()) {
-            const lines = stdout.trimEnd().split('\n');
+        if (code === 0 && cleanedStdout.trim()) {
+            const lines = cleanedStdout.trimEnd().split('\n');
             let lastLine = lines[lines.length - 1].trim();
             if (isWin) {
                 const msysMatch = lastLine.match(/^\/([a-zA-Z])\/(.*)/);
@@ -274,7 +335,7 @@ export function executeShellCommand(cmd: string, cwd: string, callbacks: ShellEx
         }
 
         const parts: string[] = [];
-        const trimmedOutput = (displayOutput + (stderr ? chalk.red(stderr) : '')).trimEnd();
+        const trimmedOutput = (displayOutput + (cleanedStderr ? chalk.red(cleanedStderr) : '')).trimEnd();
         if (trimmedOutput) parts.push(trimmedOutput);
         if (cwdChangedMsg) parts.push(cwdChangedMsg);
         const finalOutput = parts.length > 0 ? parts.join('\n') : chalk.dim('(无输出)');

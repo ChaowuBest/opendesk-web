@@ -4,6 +4,7 @@ import {
     Text,
     Key,
     matchesKey,
+    isKeyRelease,
     type Component,
     EditorKeybindingsManager,
     setEditorKeybindings
@@ -92,6 +93,8 @@ export interface CommandLineArgs {
     allowEverything?: boolean;
     mode?: string;
     language?: string;
+    /** 各应用的 CLI 参数（已按 bundleName 分组，参数名不含前缀） */
+    appCliOptions?: Record<string, Record<string, string | boolean | undefined>>;
 }
 
 export class OpenDeskTUI {
@@ -1459,7 +1462,8 @@ export class OpenDeskTUI {
         // Attach a direct input listener to TUI FIRST, to hijack Ctrl+C before Editor gets it!
         this.tui.addInputListener((data) => {
             // Shift+Tab 循环切换模式
-            if (matchesKey(data, Key.shift('tab'))) {
+            // 忽略 key release，否则在 Kitty 键盘协议下按一次会触发「按下+松开」两次，导致切换两次
+            if (!isKeyRelease(data) && matchesKey(data, Key.shift('tab'))) {
                 if (!this.hasOpenOverlay && !this.configComponent) {
                     this.cycleMode();
                     return { consume: true };

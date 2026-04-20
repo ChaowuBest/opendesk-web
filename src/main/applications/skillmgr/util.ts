@@ -142,11 +142,15 @@ function runNpx(
     ]);
 }
 
-export function installSkillFromDirectory(sourceDir: string): InstallSkillResult {
-    return SkillRegistry.addSkillFromDirectory(sourceDir);
+export function installSkillFromDirectory(sourceDir: string, force: boolean = false): InstallSkillResult {
+    return SkillRegistry.addSkillFromDirectory(sourceDir, force);
 }
 
-export function installSkillFromLocalZip(zipPath: string, skillRelPath?: string): InstallSkillResult {
+export function installSkillFromLocalZip(
+    zipPath: string,
+    skillRelPath?: string,
+    force: boolean = false
+): InstallSkillResult {
     if (!zipPath || typeof zipPath !== 'string') {
         return { success: false, error: '请选择有效的 zip 文件' };
     }
@@ -177,7 +181,7 @@ export function installSkillFromLocalZip(zipPath: string, skillRelPath?: string)
         if (!skillRoot) {
             return { success: false, error: '压缩包内未找到含 SKILL.md 的技能目录' };
         }
-        return SkillRegistry.addSkillFromDirectory(skillRoot);
+        return SkillRegistry.addSkillFromDirectory(skillRoot, force);
     } catch (e: any) {
         return { success: false, error: e?.message || '解压或添加失败' };
     } finally {
@@ -212,7 +216,10 @@ export async function installSkillFromUrl(url: string): Promise<InstallSkillResu
     }
 }
 
-export async function installSkillFromGitHubUrl(githubUrl: string): Promise<InstallSkillResult> {
+export async function installSkillFromGitHubUrl(
+    githubUrl: string,
+    force: boolean = false
+): Promise<InstallSkillResult> {
     const parsed = parseGitHubTreeUrl(githubUrl);
     if (!parsed) {
         return {
@@ -268,7 +275,7 @@ export async function installSkillFromClawHubSlug(slug: string, version?: string
         if (!skillRoot) {
             return { success: false, error: 'ClawHub 安装后未找到 SKILL.md，请确认 slug 正确' };
         }
-        return SkillRegistry.addSkillFromDirectory(skillRoot);
+        return SkillRegistry.addSkillFromDirectory(skillRoot, force);
     } catch (e: any) {
         return { success: false, error: e?.message || 'ClawHub 安装异常' };
     } finally {
