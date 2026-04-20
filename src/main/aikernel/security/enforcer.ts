@@ -63,7 +63,9 @@ function compileRule(rule: PermissionRule): CompiledRule {
 }
 
 function matchesRule(compiled: CompiledRule, resourceType: string, objNorm: string, action: string): boolean {
-    return compiled.resourceType === resourceType && compiled.action === action && compiled.matcher(objNorm);
+    const typeMatch = compiled.resourceType === '*' || compiled.resourceType === resourceType;
+    const actionMatch = compiled.action === '*' || compiled.action === action;
+    return typeMatch && actionMatch && compiled.matcher(objNorm);
 }
 
 /**

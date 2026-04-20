@@ -15,24 +15,18 @@ import type { ModeDecl } from '../../common.js';
 
 /**
  * Unlimited Mode 权限规则：
- * - 所有文件、网络、技能全部允许（不限制任何权限）
+ * - 所有资源类型、所有操作全部允许（不限制任何权限）
  * - 敏感路径也允许（真正无限制）
  *
  * 这是最宽松的模式，等价于 --allow-everything。
+ * 使用 resourceType='*' + action='*' 通配，新增资源类型时无需修改此文件。
  */
 export function createUnlimitedModePermissionRules(): PermissionRule[] {
     return [
         // 设备节点始终允许
         ...createDeviceNodeRules(),
-        // 所有文件可读可写可执行（包括敏感路径）
-        { resourceType: 'file', action: 'read', pathPattern: '**', effect: 'allow' },
-        { resourceType: 'file', action: 'write', pathPattern: '**', effect: 'allow' },
-        { resourceType: 'file', action: 'execute', pathPattern: '**', effect: 'allow' },
-        // 网络访问允许
-        { resourceType: 'network', action: 'access', pathPattern: '**', effect: 'allow' },
-        // 技能可读可执行
-        { resourceType: 'skill', action: 'read', pathPattern: '**', effect: 'allow' },
-        { resourceType: 'skill', action: 'execute', pathPattern: '**', effect: 'allow' }
+        // 所有资源、所有操作全部放通
+        { resourceType: '*', action: '*', pathPattern: '**', effect: 'allow' }
     ];
 }
 
