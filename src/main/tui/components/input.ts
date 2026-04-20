@@ -787,7 +787,9 @@ export class AgentInputArea implements Component {
     setStatus(status: AgentInputStatus) {
         this.status = status;
         this.refreshHint();
-        if (this.status === 'idle' && !this.openDeskTUI.hasOpenOverlay) {
+        // 配置模式（/config）未设置 hasOpenOverlay，但输入区不在当前布局中；
+        // 若在 idle 时抢焦点会导致焦点落到不可见组件，界面表现为卡死。
+        if (this.status === 'idle' && !this.openDeskTUI.isInputBlocked()) {
             this.openDeskTUI.tui.setFocus(this.input);
         }
     }
