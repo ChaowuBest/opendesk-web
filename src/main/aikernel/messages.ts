@@ -149,7 +149,11 @@ export class ToolCall {
     result_object?: object;
     rendered?: string;
     tool?: BaseTool<any>;
-    /** undefined = 未压缩；非空 UUID = 已被上下文压缩 */
+    /**
+     * @deprecated Legacy L1 compact marker.
+     * Step 7 后 full compact 主路径使用 boundary summary + kept tail，不再新增依赖此字段。
+     * 保留它是为了兼容旧任务和旧工具结果占位。
+     */
     compress_id?: string;
     /** 大工具结果落盘后的稳定引用信息 */
     result_storage?: ToolResultStorageMetadata;
@@ -1468,12 +1472,20 @@ export interface CompactSummarizedRange {
     tool_calls: number;
 }
 
+export type CompactBoundaryTrigger = 'manual' | 'auto';
+export type CompactBoundaryStrategy = 'tail_preserving_full_compact';
+
 export interface CompactBoundaryMetadata {
     boundary_id: string;
     summary_version: number;
     created_at: string;
     summarized_range?: CompactSummarizedRange;
     previous_boundary_id?: string;
+    trigger?: CompactBoundaryTrigger;
+    strategy?: CompactBoundaryStrategy;
+    kept_range?: CompactSummarizedRange;
+    kept_messages?: number;
+    summarized_messages?: number;
 }
 
 export const COMPACT_SUMMARY_VERSION = 1;
@@ -1509,8 +1521,37 @@ export class CompactSeparatorMessage {
             normalized.summarized_range = summarizedRange;
         }
 
+        const keptRange = CompactSeparatorMessage.normalizeSummarizedRange(metadata?.kept_range);
+        if (keptRange !== undefined) {
+            normalized.kept_range = keptRange;
+        }
+
         if (typeof metadata?.previous_boundary_id === 'string' && metadata.previous_boundary_id.trim().length > 0) {
             normalized.previous_boundary_id = metadata.previous_boundary_id;
+        }
+
+        if (metadata?.trigger === 'manual' || metadata?.trigger === 'auto') {
+            normalized.trigger = metadata.trigger;
+        }
+
+        if (metadata?.strategy === 'tail_preserving_full_compact') {
+            normalized.strategy = metadata.strategy;
+        }
+
+        if (
+            typeof metadata?.kept_messages === 'number' &&
+            Number.isInteger(metadata.kept_messages) &&
+            metadata.kept_messages >= 0
+        ) {
+            normalized.kept_messages = metadata.kept_messages;
+        }
+
+        if (
+            typeof metadata?.summarized_messages === 'number' &&
+            Number.isInteger(metadata.summarized_messages) &&
+            metadata.summarized_messages >= 0
+        ) {
+            normalized.summarized_messages = metadata.summarized_messages;
         }
 
         return normalized;
@@ -1559,7 +1600,12 @@ export class CompactSeparatorMessage {
                       summary_version: obj.summary_version,
                       created_at: obj.created_at,
                       summarized_range: obj.summarized_range,
-                      previous_boundary_id: obj.previous_boundary_id
+                      previous_boundary_id: obj.previous_boundary_id,
+                      trigger: obj.trigger,
+                      strategy: obj.strategy,
+                      kept_range: obj.kept_range,
+                      kept_messages: obj.kept_messages,
+                      summarized_messages: obj.summarized_messages
                   };
         obj.metadata = CompactSeparatorMessage.normalizeMetadata(legacyMetadata);
         return obj as CompactSeparatorMessage;

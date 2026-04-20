@@ -137,12 +137,14 @@ export async function prepareContextForModel(
             syncAutoCompactState(AutoCompactStates.recordAttempt(autoCompactState));
         }
 
+        let compactApplied = true;
         try {
             options.beforeCompact?.();
             if (options.executeCompact) {
-                await options.executeCompact();
+                const executeResult = await options.executeCompact();
+                compactApplied = executeResult !== false;
             } else {
-                await compactContext(chatContext, model);
+                compactApplied = await compactContext(chatContext, model, { trigger: 'auto' });
             }
         } catch (err) {
             if (autoCompactState) {
@@ -157,30 +159,35 @@ export async function prepareContextForModel(
             throw err;
         }
 
-        compacted = true;
+        if (compactApplied) {
+            compacted = true;
 
-        if (autoCompactState) {
-            syncAutoCompactState(AutoCompactStates.recordSuccess(autoCompactState));
+            if (autoCompactState) {
+                syncAutoCompactState(AutoCompactStates.recordSuccess(autoCompactState));
+            }
+
+            const rerunOptions: PrepareContextOptions = {
+                ...options,
+                toolResultReplacementState: lightweightResult.toolResultReplacementState,
+                autoCompactState: autoCompactStateTarget ?? autoCompactState
+            };
+            const rerunResult = runLightweightPreparationLayers(chatContext, rerunOptions);
+
+            lightweightResult = {
+                ...rerunResult,
+                budgetApplied: lightweightResult.budgetApplied || rerunResult.budgetApplied,
+                microcompactApplied: lightweightResult.microcompactApplied || rerunResult.microcompactApplied,
+                microcompactAppliedCandidates: [
+                    ...lightweightResult.microcompactAppliedCandidates,
+                    ...rerunResult.microcompactAppliedCandidates
+                ],
+                toolResultStateChanged: lightweightResult.toolResultStateChanged || rerunResult.toolResultStateChanged,
+                microcompactStateChanged:
+                    lightweightResult.microcompactStateChanged || rerunResult.microcompactStateChanged
+            };
+        } else {
+            logger.info('[Compact] auto compact returned no-op; keeping context unchanged');
         }
-
-        const rerunOptions: PrepareContextOptions = {
-            ...options,
-            toolResultReplacementState: lightweightResult.toolResultReplacementState,
-            autoCompactState: autoCompactStateTarget ?? autoCompactState
-        };
-        const rerunResult = runLightweightPreparationLayers(chatContext, rerunOptions);
-
-        lightweightResult = {
-            ...rerunResult,
-            budgetApplied: lightweightResult.budgetApplied || rerunResult.budgetApplied,
-            microcompactApplied: lightweightResult.microcompactApplied || rerunResult.microcompactApplied,
-            microcompactAppliedCandidates: [
-                ...lightweightResult.microcompactAppliedCandidates,
-                ...rerunResult.microcompactAppliedCandidates
-            ],
-            toolResultStateChanged: lightweightResult.toolResultStateChanged || rerunResult.toolResultStateChanged,
-            microcompactStateChanged: lightweightResult.microcompactStateChanged || rerunResult.microcompactStateChanged
-        };
     }
 
     return {
