@@ -256,57 +256,135 @@ def _is_repo_at_commit(repo_dir: Path, commit: str) -> bool:
         return False
 
 
+def _configure_git_for_proxy(repo_dir: Path) -> None:
+    """为 Windows SChannel + 代理场景设置更稳的 http 传输选项。
+    - 强制 HTTP/1.1（HTTP/2 在代理上经常触发 close_notify 异常）
+    - 加大 postBuffer（避免分片引发重放失败）
+    - 关闭低速超时（代理下载时偶发长等待不至于中断）
+    """
+    cfgs = [
+        ["git", "config", "http.version", "HTTP/1.1"],
+        ["git", "config", "http.postBuffer", "524288000"],
+        ["git", "config", "http.lowSpeedLimit", "0"],
+        ["git", "config", "http.lowSpeedTime", "999999"],
+    ]
+    for cmd in cfgs:
+        try:
+            subprocess.run(
+                cmd, cwd=str(repo_dir), check=False,
+                capture_output=True, timeout=10,
+            )
+        except Exception:
+            pass
+
+
+def _git_fetch_with_retry(
+    args: list[str],
+    cwd: Path,
+    timeout: int,
+    attempts: int = 3,
+    tag: str = "",
+) -> bool:
+    """执行 git fetch 并在 SChannel/网络抖动时重试。任一次成功返回 True。"""
+    for i in range(1, attempts + 1):
+        try:
+            subprocess.run(
+                args, cwd=str(cwd), check=True,
+                capture_output=True, text=True,
+                encoding="utf-8", errors="replace", timeout=timeout,
+            )
+            return True
+        except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as e:
+            err = (getattr(e, "stderr", None) or str(e))[:150].replace("\n", " ")
+            if i < attempts:
+                print(f"    [{tag}] fetch 失败 ({i}/{attempts}): {err}，5s 后重试...")
+                time.sleep(5)
+            else:
+                print(f"    [{tag}] fetch 最终失败: {err}")
+    return False
+
+
 def prepare_repo(instance: dict, work_dir: Path) -> Path:
-    """为单个 instance 准备仓库环境（clone + checkout）。
-    如果 repo 已在本地且 commit 正确，会重置到干净状态复用，避免重复 clone。"""
+    """为单个 instance 准备仓库环境：从 github clone + retry，已存在则复用。"""
     repo = instance["repo"]
     base_commit = instance["base_commit"]
     instance_id = instance["instance_id"]
     repo_dir = work_dir / "repo"
 
-    # 如果仓库已存在且 commit 正确，直接复用（重置到干净状态）
     if _is_repo_at_commit(repo_dir, base_commit):
         print(f"  [{instance_id}] 复用已有仓库，重置到 {base_commit[:12]}...")
         subprocess.run(
-            ["git", "checkout", "--", "."],
+            ["git", "reset", "--hard", "HEAD"],
             cwd=str(repo_dir), capture_output=True, text=True, encoding="utf-8",
         )
         subprocess.run(
-            ["git", "clean", "-fd"],
+            ["git", "clean", "-fdx"],
             cwd=str(repo_dir), capture_output=True, text=True, encoding="utf-8",
         )
         return repo_dir
 
-    # 清理残留目录
     _force_rmtree(repo_dir)
 
     repo_url = f"https://github.com/{repo}.git"
-    print(f"  [{instance_id}] Clone {repo}...")
+    print(f"  [{instance_id}] Clone {repo} from github...")
+    # 5 次重试 + 指数退避（10s→30s→60s→120s），耐受代理抖动
+    backoffs = [10, 30, 60, 120]
+    clone_ok = False
+    last_err = ""
+    for attempt in range(1, 6):
+        try:
+            subprocess.run(
+                ["git", "clone", "--depth", "50", repo_url, str(repo_dir)],
+                check=True, capture_output=True, text=True,
+                encoding="utf-8", errors="replace", timeout=600,
+            )
+            clone_ok = True
+            break
+        except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as e:
+            last_err = (getattr(e, "stderr", None) or str(e))[:200].replace("\n", " ")
+            print(f"    [{instance_id}] clone 失败 ({attempt}/5): {last_err}")
+            _force_rmtree(repo_dir)
+            if attempt < 5:
+                wait = backoffs[attempt - 1]
+                print(f"    [{instance_id}] 等 {wait}s 后重试...")
+                time.sleep(wait)
+    if not clone_ok:
+        # 最后一搏：完整 clone（更慢但更稳），失败就 raise 带 stderr 的 error
+        try:
+            subprocess.run(
+                ["git", "clone", repo_url, str(repo_dir)],
+                check=True, capture_output=True, text=True,
+                encoding="utf-8", errors="replace", timeout=1800,
+            )
+        except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as e:
+            final_err = (getattr(e, "stderr", None) or str(e))[:300].replace("\n", " ")
+            raise RuntimeError(
+                f"git clone 5 次重试+全量 clone 均失败: last_shallow={last_err} | full={final_err}"
+            )
 
-    try:
-        subprocess.run(
-            ["git", "clone", "--depth", "50", repo_url, str(repo_dir)],
-            check=True, capture_output=True, text=True, encoding="utf-8", timeout=300,
-        )
-    except (subprocess.TimeoutExpired, subprocess.CalledProcessError):
-        _force_rmtree(repo_dir)
-        subprocess.run(
-            ["git", "clone", repo_url, str(repo_dir)],
-            check=True, capture_output=True, text=True, encoding="utf-8", timeout=600,
-        )
+    # 为代理/SChannel 环境优化 git http 传输
+    _configure_git_for_proxy(repo_dir)
 
-    # checkout base_commit（可能需要 fetch 更深的历史）
+    # checkout base_commit；必要时尝试 fetch 特定 commit，最后回退 --unshallow
     try:
         subprocess.run(
             ["git", "checkout", base_commit],
             cwd=str(repo_dir), check=True, capture_output=True, text=True, encoding="utf-8",
         )
     except subprocess.CalledProcessError:
-        print(f"  [{instance_id}] Commit 不在 shallow clone 中，正在获取完整历史...")
-        subprocess.run(
-            ["git", "fetch", "--unshallow"],
-            cwd=str(repo_dir), check=True, capture_output=True, text=True, encoding="utf-8", timeout=600,
+        print(f"  [{instance_id}] Commit 不在当前历史，尝试 fetch origin {base_commit[:12]}...")
+        fetched = _git_fetch_with_retry(
+            ["git", "fetch", "origin", base_commit],
+            cwd=repo_dir, timeout=600, attempts=3, tag=instance_id,
         )
+        if not fetched:
+            print(f"  [{instance_id}] 回退到 --unshallow...")
+            fetched = _git_fetch_with_retry(
+                ["git", "fetch", "--unshallow"],
+                cwd=repo_dir, timeout=900, attempts=2, tag=instance_id,
+            )
+        if not fetched:
+            raise RuntimeError(f"无法获取 commit {base_commit}")
         subprocess.run(
             ["git", "checkout", base_commit],
             cwd=str(repo_dir), check=True, capture_output=True, text=True, encoding="utf-8",
@@ -393,14 +471,29 @@ def run_opendesk_agent(
 def collect_patch(repo_dir: Path) -> str:
     """收集 agent 产生的代码变更（unified diff）。"""
     try:
-        # 包含 untracked 新文件
+        # 防止 git 向上搜索到父目录的 .git（例如 OpenDesk 项目本身的 .git）
+        env = os.environ.copy()
+        env["GIT_CEILING_DIRECTORIES"] = str(repo_dir.parent)
+
+        top = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=str(repo_dir), capture_output=True, text=True, encoding="utf-8", env=env,
+        )
+        if top.returncode != 0:
+            return ""
+        top_path = Path(top.stdout.strip()).resolve()
+        if top_path != repo_dir.resolve():
+            # repo_dir 不是 git root，说明仓库损坏或 .git 丢失
+            print(f"  [warn] collect_patch: repo_dir {repo_dir} is not git toplevel ({top_path}); skipping")
+            return ""
+
         subprocess.run(
             ["git", "add", "-N", "."],
-            cwd=str(repo_dir), capture_output=True, text=True, encoding="utf-8",
+            cwd=str(repo_dir), capture_output=True, text=True, encoding="utf-8", env=env,
         )
         result = subprocess.run(
             ["git", "diff", "HEAD"],
-            cwd=str(repo_dir), capture_output=True, text=True, encoding="utf-8",
+            cwd=str(repo_dir), capture_output=True, text=True, encoding="utf-8", env=env,
         )
         return result.stdout.strip()
     except Exception:
@@ -471,8 +564,12 @@ def run_single_instance(
 
     except Exception as e:
         result["status"] = "error"
-        result["error"] = str(e)
-        print(f"  [{instance_id}] ✖ 异常: {e}")
+        stderr_extra = getattr(e, "stderr", None)
+        msg = f"{type(e).__name__}: {str(e)[:250]}"
+        if stderr_extra:
+            msg += f" | stderr: {str(stderr_extra)[:300].replace(chr(10), ' ')}"
+        result["error"] = msg
+        print(f"  [{instance_id}] ✖ 异常: {msg}")
 
     result["elapsed_sec"] = round(time.time() - start, 1)
     return result
@@ -729,9 +826,9 @@ def main():
     model_name = args.model or "default"
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     if args.output:
-        output_dir = Path(args.output)
+        output_dir = Path(args.output).resolve()
     else:
-        output_dir = SCRIPT_DIR / "jobs" / f"{model_name}-{timestamp}"
+        output_dir = (SCRIPT_DIR / "jobs" / f"{model_name}-{timestamp}").resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     print(f"[输出] 目录: {output_dir}")
 
