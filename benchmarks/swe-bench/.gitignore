@@ -5,3 +5,14 @@ __pycache__/
 *.pyc
 .env
 .node_modules_stub/
+
+# Local ad-hoc debug scripts (prefixed with underscore)
+_*.py
+
+# Local logs produced by runner
+*.log
+*.err
+
+# Online evaluation reports downloaded by sb-cli
+sb-cli-reports/
+sbcli-reports/
