@@ -202,6 +202,35 @@
         },
         isMaximized: async () => {
             return false;
+        },
+        getProviderTemplates: async () => {
+            const result = await apiGet('/api/setting/getProviderTemplates');
+            if (result.status !== 'ok') throw new Error(result.message);
+            return result.data;
+        }
+    };
+
+    // --- quickpassAPI ---
+    window.quickpassAPI = {
+        isQuickPass: async (text) => {
+            const result = await apiPost('/api/quickpass/isQuickPass', { text });
+            if (result.status !== 'ok') return false;
+            return result.data;
+        },
+        importQuickPass: async (quickpass) => {
+            const result = await apiPost('/api/quickpass/import', { quickpass });
+            if (result.status !== 'ok') throw new Error(result.message);
+            return result.data;
+        },
+        exportBaseConfig: async () => {
+            const result = await apiPost('/api/quickpass/exportBase');
+            if (result.status !== 'ok') throw new Error(result.message);
+            return result.data;
+        },
+        exportAllConfig: async () => {
+            const result = await apiPost('/api/quickpass/exportAll');
+            if (result.status !== 'ok') throw new Error(result.message);
+            return result.data;
         }
     };
 

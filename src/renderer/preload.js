@@ -427,6 +427,13 @@ if (window.self !== window.top) {
                 return false;
             }
             return result.data;
+        },
+        getProviderTemplates: async () => {
+            const result = await ipcRenderer.invoke('setting:getProviderTemplates');
+            if (result.status !== 'ok') {
+                throw new Error(result.message);
+            }
+            return result.data;
         }
     });
 
@@ -486,6 +493,20 @@ if (window.self !== window.top) {
         },
         importQuickPass: async (quickpass) => {
             const result = await ipcRenderer.invoke('quickpass:import', quickpass);
+            if (result.status !== 'ok') {
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
+        exportBaseConfig: async () => {
+            const result = await ipcRenderer.invoke('quickpass:exportBase');
+            if (result.status !== 'ok') {
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
+        exportAllConfig: async () => {
+            const result = await ipcRenderer.invoke('quickpass:exportAll');
             if (result.status !== 'ok') {
                 throw new Error(result.message);
             }

@@ -166,34 +166,39 @@ class SettingEditor extends HTMLElement {
         this.querySelector('#import-setting-btn').addEventListener('click', () => {
             this.importSettingData();
         });
+        this.querySelector('#back-to-setting-panel-btn').addEventListener('click', () => {
+            window.globalControlAPI.openSettingEditor();
+        });
     }
 
     render() {
         this.innerHTML = `
-        <div class="flex flex-col h-full w-full p-5 bg-white">
+        <div class="flex flex-col h-full w-full p-5 bg-gradient-to-br from-slate-50 via-white to-blue-50/30">
             <!-- 标题 -->
-            <div class="mb-4 pr-[120px] flex items-center justify-between">
-                <h2 class="text-2xl font-bold text-gray-800">设置</h2>
-                <!-- 按钮区域在右侧，按钮为浅色背景，hover 时优雅特效 -->
-                <div class="space-x-2 flex text-xs">
+            <div class="mb-4 pr-[140px] flex items-center justify-between">
+                <div class="flex items-center gap-3">
+                    <button id="back-to-setting-panel-btn" class="w-8 h-8 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors" title="返回设置">
+                        <i class="fas fa-arrow-left"></i>
+                    </button>
+                    <h2 class="text-2xl font-bold bg-gradient-to-r from-gray-800 to-gray-600 bg-clip-text text-transparent">高级设置</h2>
+                </div>
+                <div class="flex items-center gap-3 text-xs">
                     <button
                         id="save-setting-btn"
-                        class="px-4 py-2 rounded-full bg-white text-[#C94C40] border border-[#C94C40] shadow-sm hover:bg-[#C94C40] hover:text-white hover:shadow-lg transition-colors duration-200"
-                    >保存设置</button>
+                        class="px-4 py-2 rounded-full bg-white text-gray-600 border border-gray-200 shadow-sm hover:bg-gray-50 hover:shadow-md transition-all duration-200"
+                    ><i class="fas fa-save mr-1"></i>保存设置</button>
                     <button
                         id="export-setting-btn"
-                        class="px-4 py-2 rounded-full bg-white text-[#2D2D2D] border border-[#D1D5DB] shadow-sm hover:bg-[#ECECEC] hover:shadow-md transition-colors duration-200"
-                    >导出设置</button>
+                        class="px-4 py-2 rounded-full bg-white text-gray-600 border border-gray-200 shadow-sm hover:bg-gray-50 hover:shadow-md transition-all duration-200"
+                    ><i class="fas fa-file-export mr-1"></i>导出设置</button>
                     <button
                         id="import-setting-btn"
-                        class="px-4 py-2 rounded-full bg-white text-[#2D2D2D] border border-[#D1D5DB] shadow-sm hover:bg-[#ECECEC] hover:shadow-md transition-colors duration-200"
-                    >导入设置</button>
+                        class="px-4 py-2 rounded-full bg-white text-gray-600 border border-gray-200 shadow-sm hover:bg-gray-50 hover:shadow-md transition-all duration-200"
+                    ><i class="fas fa-file-import mr-1"></i>导入设置</button>
                 </div>
             </div>
             <!-- 主体内容部分 -->
             <div class="flex-1 h-full flex flex-col overflow-y-auto">
-                <div class="flex items-center justify-between p-2">
-                </div>
                 <schema-editor
                     id="setting-schema-editor"
                     class="w-full flex-1"

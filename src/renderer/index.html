@@ -209,6 +209,16 @@
                     ensureSlots();
                     hideAllNonAppChildren();
                     clearNonTaskContent();
+                    var el = document.createElement('setting-panel');
+                    el.style.cssText = 'width:100%;height:100%;';
+                    nonAppSlot.appendChild(el);
+                    currentNonAppContent = 'setting';
+                    showNonApp();
+                },
+                openAdvancedSettingEditor: function () {
+                    ensureSlots();
+                    hideAllNonAppChildren();
+                    clearNonTaskContent();
                     var el = document.createElement('setting-editor');
                     el.style.cssText = 'width:100%;height:100%;';
                     nonAppSlot.appendChild(el);

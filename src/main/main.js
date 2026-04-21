@@ -23,6 +23,7 @@ import {
 } from 'electron';
 import { Setting, getAppDirectory } from './utils/setting.js';
 import { QuickPassHelper } from './utils/quickpass.js';
+import { PROVIDER_TEMPLATES } from './tui/components/config/providers.js';
 import { GlobalState } from './aikernel/states/global.js';
 import { BaseToolset } from './aikernel/tool';
 import { is } from '@electron-toolkit/utils';
@@ -595,6 +596,25 @@ const registerSettingAPIHandlers = () => {
         } catch {
             return { status: 'ok', data: false };
         }
+    });
+    ipcMain.handle('quickpass:exportBase', () => {
+        try {
+            const quickpass = QuickPassHelper.exportBaseConfig();
+            return { status: 'ok', data: quickpass };
+        } catch (error) {
+            return { status: 'error', message: error.message };
+        }
+    });
+    ipcMain.handle('quickpass:exportAll', () => {
+        try {
+            const quickpass = QuickPassHelper.exportAllConfig();
+            return { status: 'ok', data: quickpass };
+        } catch (error) {
+            return { status: 'error', message: error.message };
+        }
+    });
+    ipcMain.handle('setting:getProviderTemplates', () => {
+        return { status: 'ok', data: PROVIDER_TEMPLATES };
     });
     ipcMain.handle('workspace:getEffectiveWorkspace', () => {
         try {
