@@ -34,6 +34,12 @@ import { createSensitivePathRules, createDeviceNodeRules } from '../../utils/per
 
 function normalizePath(p: string): string {
     if (!p) return '';
+    // 截断换行符及之后的内容（防止含换行符的路径绕过 glob 匹配）
+    // 同时处理 Unicode 行/段分隔符 U+2028/U+2029（picomatch ** 不匹配含这些字符的路径）
+    const newlineIdx = p.search(/[\r\n\u2028\u2029]/);
+    if (newlineIdx !== -1) {
+        p = p.slice(0, newlineIdx);
+    }
     return p.replace(/\\/g, '/');
 }
 
@@ -113,6 +119,11 @@ export class GlobPermissionEnforcer implements PermissionEnforcer {
 
     async check(request: PermissionRequest): Promise<PermissionCheckResult> {
         const objNorm = normalizePath(request.resourcePath);
+
+        // 空路径不是合法资源路径，直接 allow（避免 picomatch ** 不匹配空字符串导致隐式 ask）
+        if (!objNorm) {
+            return { effect: 'allow', request };
+        }
 
         // deny 优先
         if (matchesAny(this.denyRules, request.resourceType, objNorm, request.action)) {

@@ -32,13 +32,13 @@ export function registerModeCommand(tui: OpenDeskTUI): void {
             return items.length > 0 ? items : null;
         },
 
-        execute: (args: string) => {
+        execute: async (args: string) => {
             const trimmed = args.trim().toLowerCase();
             if (!trimmed) {
                 return;
             }
 
-            if (!tui.setMode(trimmed)) {
+            if (!(await tui.setMode(trimmed))) {
                 const modes = tui.getSupportedModes();
                 const validIds = modes.map((m) => m.id).join(', ');
                 const info = new InfoOverlay(tui, {

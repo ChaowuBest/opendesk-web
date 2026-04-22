@@ -58,6 +58,10 @@ function normalizePath(rawPath: string, cwd: string): string {
 function isDeterministicPath(token: string): boolean {
     if (!token || token.length === 0) return false;
 
+    // 包含换行符或其他控制字符（不是合法文件路径，可能是多行内容被误识别）
+    // 包括 \r\n、C0 控制字符 \x00-\x1f、Unicode 行/段分隔符 U+2028/U+2029
+    if (/[\r\n\x00-\x1f\u2028\u2029]/.test(token)) return false;
+
     // 包含 shell 变量引用
     if (/\$/.test(token)) return false;
 
@@ -113,7 +117,9 @@ function makePermission(action: PermissionAction, filePath: string, cwd: string)
 
 function addIfValid(results: PermissionRequest[], action: PermissionAction, token: string, cwd: string): void {
     const perm = makePermission(action, token, cwd);
-    if (perm) results.push(perm);
+    if (perm) {
+        results.push(perm);
+    }
 }
 
 // ─── Bash/Zsh 命令分析 ──────────────────────────────────────────────

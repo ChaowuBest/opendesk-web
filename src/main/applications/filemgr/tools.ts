@@ -561,11 +561,13 @@ export class ReadFilesTool extends BaseTool<typeof readFilesSchema> {
 
     getDeclaredPermissions(args: z.output<typeof readFilesSchema>): PermissionRequest[] {
         if (!args.files || !Array.isArray(args.files)) return [];
-        return args.files.map((f: any) => ({
-            resourceType: 'file' as const,
-            action: 'read' as const,
-            resourcePath: sanitizePath(typeof f === 'string' ? f : f.path || '')
-        }));
+        return args.files
+            .map((f: any) => ({
+                resourceType: 'file' as const,
+                action: 'read' as const,
+                resourcePath: sanitizePath(typeof f === 'string' ? f : f.path || '')
+            }))
+            .filter((p) => p.resourcePath !== '');
     }
 
     async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
@@ -794,7 +796,9 @@ export class WriteFileTool extends BaseTool<typeof writeFileSchema> {
     }
 
     getDeclaredPermissions(args: z.output<typeof writeFileSchema>): PermissionRequest[] {
-        return [{ resourceType: 'file', action: 'write', resourcePath: sanitizePath(args.path) }];
+        const p = sanitizePath(args.path);
+        if (!p) return [];
+        return [{ resourceType: 'file', action: 'write', resourcePath: p }];
     }
 
     async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
@@ -935,6 +939,7 @@ export class EditFileTool extends BaseTool<typeof editFileSchema> {
 
     getDeclaredPermissions(args: z.output<typeof editFileSchema>): PermissionRequest[] {
         const p = sanitizePath(args.filePath);
+        if (!p) return [];
         if (args.oldString === '') {
             return [{ resourceType: 'file', action: 'write', resourcePath: p }];
         }
@@ -1144,6 +1149,7 @@ export class SearchReplaceTool extends BaseTool<typeof searchReplaceSchema> {
 
     getDeclaredPermissions(args: z.output<typeof searchReplaceSchema>): PermissionRequest[] {
         const p = sanitizePath(args.filePath);
+        if (!p) return [];
         return [
             { resourceType: 'file', action: 'read', resourcePath: p },
             { resourceType: 'file', action: 'write', resourcePath: p }
@@ -1444,6 +1450,7 @@ export class ApplyPatchTool extends BaseTool<typeof applyPatchSchema> {
         const seen = new Set<string>();
         for (const op of ops) {
             const p = sanitizePath(op.path);
+            if (!p) continue;
             if (op.type === 'update' || op.type === 'delete') {
                 const readKey = `read:${p}`;
                 if (!seen.has(readKey)) {
@@ -1635,6 +1642,7 @@ export class GlobFilesTool extends BaseTool<typeof globSchema> {
 
     getDeclaredPermissions(args: z.output<typeof globSchema>, taskState?: TaskState): PermissionRequest[] {
         const searchPath = args.path ? sanitizePath(args.path) : sanitizePath(getWorkingDirectory(taskState));
+        if (!searchPath) return [];
         return [
             {
                 resourceType: 'file',
@@ -1838,6 +1846,7 @@ export class GrepFilesTool extends BaseTool<typeof grepSchema> {
 
     getDeclaredPermissions(args: z.output<typeof grepSchema>, taskState?: TaskState): PermissionRequest[] {
         const searchPath = args.path ? sanitizePath(args.path) : sanitizePath(getWorkingDirectory(taskState));
+        if (!searchPath) return [];
         return [
             {
                 resourceType: 'file',

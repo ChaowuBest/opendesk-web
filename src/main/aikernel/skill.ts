@@ -328,7 +328,9 @@ class LoadSkillTool extends BaseTool<typeof LoadSkillSchema> {
     }
 
     getDeclaredPermissions(args: z.output<typeof LoadSkillSchema>): PermissionRequest[] {
-        return [{ resourceType: 'skill', action: 'read', resourcePath: `${args.bundleName}/${args.skillName}` }];
+        const resourcePath = `${args.bundleName}/${args.skillName}`;
+        if (/[\r\n\x00-\x1f\u2028\u2029]/.test(resourcePath)) return [];
+        return [{ resourceType: 'skill', action: 'read', resourcePath }];
     }
 
     /**

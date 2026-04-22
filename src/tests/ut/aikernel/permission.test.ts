@@ -304,6 +304,103 @@ describe('GlobPermissionEnforcer', () => {
             });
             expect(r.effect).toBe('allow');
         });
+
+        test('含换行符的路径被截断后仍能匹配 **', async () => {
+            const enforcer = await GlobPermissionEnforcer.create([
+                { resourceType: 'file', action: 'read', pathPattern: '/workspace/**', effect: 'allow' }
+            ]);
+            // \n 后的内容被截断，等价于 /workspace/src/index.ts
+            const r = await enforcer.check({
+                resourceType: 'file',
+                action: 'read',
+                resourcePath: '/workspace/src/index.ts\n/secret/key.pem'
+            });
+            expect(r.effect).toBe('allow');
+        });
+
+        test('含 \\r\\n 的路径被截断后仍能匹配 **', async () => {
+            const enforcer = await GlobPermissionEnforcer.create([
+                { resourceType: 'file', action: 'read', pathPattern: '/workspace/**', effect: 'allow' }
+            ]);
+            const r = await enforcer.check({
+                resourceType: 'file',
+                action: 'read',
+                resourcePath: '/workspace/file.txt\r\n/secret/key.pem'
+            });
+            expect(r.effect).toBe('allow');
+        });
+
+        test('含 Unicode 行分隔符 U+2028 的路径被截断后仍能匹配 **', async () => {
+            const enforcer = await GlobPermissionEnforcer.create([
+                { resourceType: 'file', action: 'read', pathPattern: '/workspace/**', effect: 'allow' }
+            ]);
+            const r = await enforcer.check({
+                resourceType: 'file',
+                action: 'read',
+                resourcePath: '/workspace/file.txt\u2028/secret/key.pem'
+            });
+            expect(r.effect).toBe('allow');
+        });
+
+        test('含 Unicode 段分隔符 U+2029 的路径被截断后仍能匹配 **', async () => {
+            const enforcer = await GlobPermissionEnforcer.create([
+                { resourceType: 'file', action: 'read', pathPattern: '/workspace/**', effect: 'allow' }
+            ]);
+            const r = await enforcer.check({
+                resourceType: 'file',
+                action: 'read',
+                resourcePath: '/workspace/file.txt\u2029/secret/key.pem'
+            });
+            expect(r.effect).toBe('allow');
+        });
+
+        test('含换行符的路径截断后不匹配 deny 规则', async () => {
+            const enforcer = await GlobPermissionEnforcer.create([
+                { resourceType: 'file', action: 'read', pathPattern: '/workspace/**', effect: 'allow' },
+                { resourceType: 'file', action: 'read', pathPattern: '/secret/**', effect: 'deny' }
+            ]);
+            // 换行后的 /secret/key.pem 被截断，实际匹配 /workspace/file.txt
+            const r = await enforcer.check({
+                resourceType: 'file',
+                action: 'read',
+                resourcePath: '/workspace/file.txt\n/secret/key.pem'
+            });
+            expect(r.effect).toBe('allow');
+        });
+
+        test('含特殊字符的路径能匹配 **', async () => {
+            const enforcer = await GlobPermissionEnforcer.create([
+                { resourceType: 'file', action: 'read', pathPattern: '/workspace/**', effect: 'allow' }
+            ]);
+            const specialPaths = [
+                '/workspace/file with spaces.txt',
+                '/workspace/文件名.txt',
+                '/workspace/emoji_😀_file.txt',
+                '/workspace/path with (parens)/file.txt',
+                '/workspace/path-with-dashes/file.txt',
+                '/workspace/path_with_underscores/file.txt'
+            ];
+            for (const p of specialPaths) {
+                const r = await enforcer.check({
+                    resourceType: 'file',
+                    action: 'read',
+                    resourcePath: p
+                });
+                expect(r.effect).toBe('allow');
+            }
+        });
+
+        test('仅换行符的路径被归一化为空字符串后直接 allow', async () => {
+            const enforcer = await GlobPermissionEnforcer.create([
+                { resourceType: 'file', action: 'read', pathPattern: '/workspace/**', effect: 'allow' }
+            ]);
+            const r = await enforcer.check({
+                resourceType: 'file',
+                action: 'read',
+                resourcePath: '\n/secret/key.pem'
+            });
+            expect(r.effect).toBe('allow');
+        });
     });
 
     describe('Windows 路径归一化', () => {
