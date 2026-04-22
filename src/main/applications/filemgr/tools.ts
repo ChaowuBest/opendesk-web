@@ -44,6 +44,19 @@ function getWorkingDirectory(taskState?: TaskState): string {
  * 控制字符（tab、换行、退格、换页、回车），导致路径损坏。
  * 此函数将这些控制字符还原为对应的反斜杠字母组合，然后统一使用正斜杠。
  */
+/**
+ * 将 MSYS2/Git Bash 风格的路径（如 /c/Projects/...）转换为 Windows 原生路径（如 C:/Projects/...）。
+ *
+ * 在 Git Bash (MSYS2) 环境下，process.cwd() 返回 /c/Projects/... 形式的路径。
+ * Node.js 的 path.resolve() 在 Windows 上会将 /c/Projects/... 解释为相对于当前驱动器
+ * 根目录的路径，产生 C:\c\Projects\...（双重前缀），因此需要先转换。
+ */
+function fromMsysPath(p: string): string {
+    if (process.platform !== 'win32') return p;
+    // 匹配 /c/、/d/ 等单字母驱动器前缀（MSYS2 风格）
+    return p.replace(/^\/([a-zA-Z])\//, (_, letter) => `${letter.toUpperCase()}:/`);
+}
+
 function sanitizePath(inputPath: string): string {
     if (!inputPath || typeof inputPath !== 'string') return '';
 
@@ -58,6 +71,9 @@ function sanitizePath(inputPath: string): string {
     if (p === '~' || p.startsWith('~/') || p.startsWith('~\\')) {
         p = os.homedir() + p.slice(1);
     }
+
+    // 将 MSYS2/Git Bash 风格路径转换为 Windows 原生路径，避免 path.resolve 产生双重前缀
+    p = fromMsysPath(p);
 
     // 将相对路径解析为绝对路径，确保权限检查时能与工作空间规则正确匹配
     p = path.resolve(p);
@@ -561,11 +577,13 @@ export class ReadFilesTool extends BaseTool<typeof readFilesSchema> {
 
     getDeclaredPermissions(args: z.output<typeof readFilesSchema>): PermissionRequest[] {
         if (!args.files || !Array.isArray(args.files)) return [];
-        return args.files.map((f: any) => ({
-            resourceType: 'file' as const,
-            action: 'read' as const,
-            resourcePath: sanitizePath(typeof f === 'string' ? f : f.path || '')
-        }));
+        return args.files
+            .map((f: any) => ({
+                resourceType: 'file' as const,
+                action: 'read' as const,
+                resourcePath: sanitizePath(typeof f === 'string' ? f : f.path || '')
+            }))
+            .filter((p) => p.resourcePath !== '');
     }
 
     async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
@@ -794,7 +812,9 @@ export class WriteFileTool extends BaseTool<typeof writeFileSchema> {
     }
 
     getDeclaredPermissions(args: z.output<typeof writeFileSchema>): PermissionRequest[] {
-        return [{ resourceType: 'file', action: 'write', resourcePath: sanitizePath(args.path) }];
+        const p = sanitizePath(args.path);
+        if (!p) return [];
+        return [{ resourceType: 'file', action: 'write', resourcePath: p }];
     }
 
     async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
@@ -935,6 +955,7 @@ export class EditFileTool extends BaseTool<typeof editFileSchema> {
 
     getDeclaredPermissions(args: z.output<typeof editFileSchema>): PermissionRequest[] {
         const p = sanitizePath(args.filePath);
+        if (!p) return [];
         if (args.oldString === '') {
             return [{ resourceType: 'file', action: 'write', resourcePath: p }];
         }
@@ -1144,6 +1165,7 @@ export class SearchReplaceTool extends BaseTool<typeof searchReplaceSchema> {
 
     getDeclaredPermissions(args: z.output<typeof searchReplaceSchema>): PermissionRequest[] {
         const p = sanitizePath(args.filePath);
+        if (!p) return [];
         return [
             { resourceType: 'file', action: 'read', resourcePath: p },
             { resourceType: 'file', action: 'write', resourcePath: p }
@@ -1444,6 +1466,7 @@ export class ApplyPatchTool extends BaseTool<typeof applyPatchSchema> {
         const seen = new Set<string>();
         for (const op of ops) {
             const p = sanitizePath(op.path);
+            if (!p) continue;
             if (op.type === 'update' || op.type === 'delete') {
                 const readKey = `read:${p}`;
                 if (!seen.has(readKey)) {
@@ -1635,6 +1658,7 @@ export class GlobFilesTool extends BaseTool<typeof globSchema> {
 
     getDeclaredPermissions(args: z.output<typeof globSchema>, taskState?: TaskState): PermissionRequest[] {
         const searchPath = args.path ? sanitizePath(args.path) : sanitizePath(getWorkingDirectory(taskState));
+        if (!searchPath) return [];
         return [
             {
                 resourceType: 'file',
@@ -1838,6 +1862,7 @@ export class GrepFilesTool extends BaseTool<typeof grepSchema> {
 
     getDeclaredPermissions(args: z.output<typeof grepSchema>, taskState?: TaskState): PermissionRequest[] {
         const searchPath = args.path ? sanitizePath(args.path) : sanitizePath(getWorkingDirectory(taskState));
+        if (!searchPath) return [];
         return [
             {
                 resourceType: 'file',

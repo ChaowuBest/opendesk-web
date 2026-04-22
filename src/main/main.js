@@ -275,7 +275,7 @@ const registerModeAPIHandlers = () => {
         }
     });
 
-    ipcMain.handle('mode:setCurrentMode', (event, modeId) => {
+    ipcMain.handle('mode:setCurrentMode', async (event, modeId) => {
         try {
             const agentDecl = getGlobalAgentDecl();
             const modes = agentDecl.supportedModes();
@@ -284,6 +284,25 @@ const registerModeAPIHandlers = () => {
                 return { status: 'error', message: `unknown mode: ${modeId}` };
             }
             _currentElectronModeId = modeId;
+
+            // 同步所有已有任务的权限引擎到新模式
+            const globalState = GlobalState.getInstance();
+            const workspace = Setting.getInstance().getEffectiveWorkspace();
+            for (const task of globalState.taskManagerState.tasks) {
+                const savedEnv = task.harnessContext.environ;
+                const savedPrompt = task.harnessContext.permissionPrompt;
+                try {
+                    const ctx = await HarnessContext.createForMode(workspace, target);
+                    ctx.environ = savedEnv;
+                    ctx.permissionPrompt = savedPrompt;
+                    task.harnessContext = ctx;
+                    task.activeModeId = target.id;
+                    task.disabledTools = target.disabledTools;
+                } catch (err) {
+                    logger.warn(`Failed to sync task harness for mode ${modeId}: ${err}`);
+                }
+            }
+
             return { status: 'ok', data: modeId };
         } catch (err) {
             return { status: 'error', message: String(err) };

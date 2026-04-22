@@ -239,6 +239,7 @@ export class OpenDeskTUI {
                     }
                 });
             }
+
             if (args.profile) {
                 const profilePath = path.resolve(args.workspace, args.profile);
                 this.onBeforeExit(async (taskId) => {
@@ -1365,14 +1366,14 @@ export class OpenDeskTUI {
      * 切换到下一个模式（循环切换）。
      * 切换后立即更新当前活跃任务的权限引擎，确保模式变更即时生效。
      */
-    cycleMode(): void {
+    async cycleMode(): Promise<void> {
         const modes = this.agentDecl.supportedModes();
         const currentIndex = modes.findIndex((m) => m.id === this._activeMode.id);
         const nextIndex = (currentIndex + 1) % modes.length;
         this._activeMode = modes[nextIndex];
 
         this.syncModeDisplay();
-        this.syncActiveTaskHarness();
+        await this.syncAllTaskHarnesses();
         this.tui.requestRender();
         logger.info(`Mode switched to: ${this._activeMode.name} (${this._activeMode.id})`);
     }
@@ -1380,46 +1381,40 @@ export class OpenDeskTUI {
     /**
      * 根据 id 切换到指定模式
      */
-    setMode(modeId: string): boolean {
+    async setMode(modeId: string): Promise<boolean> {
         const modes = this.agentDecl.supportedModes();
         const target = modes.find((m) => m.id === modeId);
         if (!target) return false;
         this._activeMode = target;
 
         this.syncModeDisplay();
-        this.syncActiveTaskHarness();
+        await this.syncAllTaskHarnesses();
         this.tui.requestRender();
         logger.info(`Mode set to: ${this._activeMode.name} (${this._activeMode.id})`);
         return true;
     }
 
     /**
-     * 将当前活跃任务的权限引擎同步到最新的 Mode。
+     * 将所有任务的权限引擎同步到最新的 Mode。
      * 保留已有的环境变量和 permissionPrompt，仅替换权限引擎和 activeModeId。
+     * 同时递归更新子任务的 harnessContext，避免子任务持有旧引用。
      */
-    private syncActiveTaskHarness(): void {
-        if (!this.activeTaskId) return;
-        const task = this.taskManagerState.getTask(this.activeTaskId);
-        if (!task) return;
-
+    private async syncAllTaskHarnesses(): Promise<void> {
         const mode = this._activeMode;
-        const savedEnv = task.harnessContext.environ;
-        const savedPrompt = task.harnessContext.permissionPrompt;
+        for (const task of this.taskManagerState.tasks) {
+            const savedEnv = task.harnessContext.environ;
+            const savedPrompt = task.harnessContext.permissionPrompt;
 
-        try {
-            HarnessContext.createForMode(this.workspace, mode)
-                .then((ctx) => {
-                    ctx.environ = savedEnv;
-                    ctx.permissionPrompt = savedPrompt;
-                    task.harnessContext = ctx;
-                    task.activeModeId = mode.id;
-                    task.disabledTools = mode.disabledTools;
-                })
-                .catch((err) => {
-                    logger.warn(`Failed to sync task harness for mode ${mode.id}: ${err}`);
-                });
-        } catch (err) {
-            logger.warn(`Failed to sync task harness for mode ${mode.id}: ${err}`);
+            try {
+                const ctx = await HarnessContext.createForMode(this.workspace, mode);
+                ctx.environ = savedEnv;
+                ctx.permissionPrompt = savedPrompt;
+                task.harnessContext = ctx;
+                task.activeModeId = mode.id;
+                task.disabledTools = mode.disabledTools;
+            } catch (err) {
+                logger.warn(`Failed to sync task harness for mode ${mode.id}: ${err}`);
+            }
         }
     }
 
