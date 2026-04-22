@@ -1,6 +1,6 @@
 import type { Config } from 'jest';
 
-const config: Config = {
+const shared: Config = {
     preset: 'ts-jest/presets/default-esm',
     testEnvironment: 'node',
     extensionsToTreatAsEsm: ['.ts'],
@@ -28,10 +28,26 @@ const config: Config = {
                 }
             }
         ]
-    },
-    testMatch: ['<rootDir>/src/tests/ut/**/*.test.ts'],
-    testPathIgnorePatterns: ['/node_modules/', '/dist/'],
-    roots: ['<rootDir>/src/tests']
+    }
+};
+
+const config: Config = {
+    projects: [
+        {
+            ...shared,
+            displayName: 'unit',
+            roots: ['<rootDir>/src/tests'],
+            testMatch: ['<rootDir>/src/tests/ut/**/*.test.ts'],
+            testPathIgnorePatterns: ['/node_modules/', '/dist/', '/src/tests/ut/search/']
+        },
+        {
+            ...shared,
+            displayName: 'search',
+            roots: ['<rootDir>/src/tests/ut/search'],
+            testMatch: ['<rootDir>/src/tests/ut/search/**/*.test.ts'],
+            testPathIgnorePatterns: ['/node_modules/', '/dist/']
+        }
+    ]
 };
 
 export default config;
