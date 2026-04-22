@@ -9,6 +9,8 @@
  * See the Mulan PSL v2 for more details.
  */
 
+import { ElasticToolbarWidget } from './toolbar.ts';
+
 class SettingPanel extends HTMLElement {
     constructor() {
         super();
@@ -45,15 +47,7 @@ class SettingPanel extends HTMLElement {
                     <span id="save-indicator" class="text-xs text-green-500 opacity-0 transition-opacity duration-300 flex items-center gap-1">
                         <i class="fas fa-check-circle"></i> 已保存
                     </span>
-                    <button id="import-quickpass-btn" class="px-4 py-2 text-xs rounded-full bg-white text-gray-600 border border-gray-200 shadow-sm hover:bg-gray-50 hover:shadow-md transition-all duration-200">
-                        <i class="fas fa-key mr-1"></i> 导入口令
-                    </button>
-                    <button id="export-quickpass-btn" class="px-4 py-2 text-xs rounded-full bg-white text-gray-600 border border-gray-200 shadow-sm hover:bg-gray-50 hover:shadow-md transition-all duration-200">
-                        <i class="fas fa-file-export mr-1"></i> 导出口令
-                    </button>
-                    <button id="advanced-setting-btn" class="px-4 py-2 text-xs rounded-full bg-gradient-to-r from-gray-700 to-gray-600 text-white shadow-sm hover:shadow-md transition-all duration-200">
-                        <i class="fas fa-cog mr-1"></i> 高级设置
-                    </button>
+                    <div id="setting-panel-toolbar"></div>
                 </div>
             </div>
 
@@ -71,6 +65,53 @@ class SettingPanel extends HTMLElement {
             <div id="modal-content" class="pointer-events-auto"></div>
         </div>
         `;
+
+        this._createSettingPanelToolbar();
+    }
+
+    _createSettingPanelToolbar() {
+        const toolbar = new ElasticToolbarWidget([
+            {
+                id: 'import-quickpass-btn',
+                icon: 'fa-key',
+                label: '导入口令',
+                labelStayVisible: true,
+                action: () => this.showImportQuickPassModal()
+            },
+            {
+                id: 'export-quickpass-btn',
+                icon: 'fa-file-export',
+                label: '导出口令',
+                labelStayVisible: true,
+                action: () => this.showExportQuickPassModal()
+            },
+            {
+                id: 'advanced-setting-btn',
+                icon: 'fa-cog',
+                label: '高级设置',
+                labelStayVisible: true,
+                action: () => window.globalControlAPI.openAdvancedSettingEditor()
+            }
+        ]);
+
+        toolbar.classList.add('pill-buttons');
+        const container = this.querySelector('#setting-panel-toolbar');
+        if (container) {
+            container.appendChild(toolbar);
+        }
+
+        // 高级设置按钮使用渐变背景
+        const advancedBtn = toolbar.querySelector(`[id^="advanced-setting-btn"]`);
+        if (advancedBtn) {
+            advancedBtn.classList.remove('bg-transparent', 'hover:bg-gray-100');
+            advancedBtn.classList.add(
+                'bg-gradient-to-r',
+                'from-gray-700',
+                'to-gray-600',
+                'text-white',
+                'hover:shadow-md'
+            );
+        }
     }
 
     renderProvidersSection() {
@@ -277,21 +318,6 @@ class SettingPanel extends HTMLElement {
                 const index = parseInt(e.currentTarget.dataset.index);
                 this.deleteModel(index);
             });
-        });
-
-        // 导入口令
-        this.querySelector('#import-quickpass-btn')?.addEventListener('click', () => {
-            this.showImportQuickPassModal();
-        });
-
-        // 导出口令
-        this.querySelector('#export-quickpass-btn')?.addEventListener('click', () => {
-            this.showExportQuickPassModal();
-        });
-
-        // 高级设置
-        this.querySelector('#advanced-setting-btn')?.addEventListener('click', () => {
-            window.globalControlAPI.openAdvancedSettingEditor();
         });
 
         // 模态框关闭

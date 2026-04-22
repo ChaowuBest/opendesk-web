@@ -9,6 +9,8 @@
  * See the Mulan PSL v2 for more details.
  */
 
+import { ElasticToolbarWidget } from './toolbar.ts';
+
 class SettingEditor extends HTMLElement {
     constructor() {
         super();
@@ -157,15 +159,6 @@ class SettingEditor extends HTMLElement {
     }
 
     setUpEventListeners() {
-        this.querySelector('#save-setting-btn').addEventListener('click', () => {
-            this.saveSettingData();
-        });
-        this.querySelector('#export-setting-btn').addEventListener('click', () => {
-            this.exportSettingData();
-        });
-        this.querySelector('#import-setting-btn').addEventListener('click', () => {
-            this.importSettingData();
-        });
         this.querySelector('#back-to-setting-panel-btn').addEventListener('click', () => {
             window.globalControlAPI.openSettingEditor();
         });
@@ -182,20 +175,7 @@ class SettingEditor extends HTMLElement {
                     </button>
                     <h2 class="text-2xl font-bold bg-gradient-to-r from-gray-800 to-gray-600 bg-clip-text text-transparent">高级设置</h2>
                 </div>
-                <div class="flex items-center gap-3 text-xs">
-                    <button
-                        id="save-setting-btn"
-                        class="px-4 py-2 rounded-full bg-white text-gray-600 border border-gray-200 shadow-sm hover:bg-gray-50 hover:shadow-md transition-all duration-200"
-                    ><i class="fas fa-save mr-1"></i>保存设置</button>
-                    <button
-                        id="export-setting-btn"
-                        class="px-4 py-2 rounded-full bg-white text-gray-600 border border-gray-200 shadow-sm hover:bg-gray-50 hover:shadow-md transition-all duration-200"
-                    ><i class="fas fa-file-export mr-1"></i>导出设置</button>
-                    <button
-                        id="import-setting-btn"
-                        class="px-4 py-2 rounded-full bg-white text-gray-600 border border-gray-200 shadow-sm hover:bg-gray-50 hover:shadow-md transition-all duration-200"
-                    ><i class="fas fa-file-import mr-1"></i>导入设置</button>
-                </div>
+                <div id="setting-editor-toolbar"></div>
             </div>
             <!-- 主体内容部分 -->
             <div class="flex-1 h-full flex flex-col overflow-y-auto">
@@ -208,6 +188,40 @@ class SettingEditor extends HTMLElement {
             <div id="setting-error-msg" class="min-h-[1.5em] text-sm"></div>
         </div>
         `;
+
+        this._createSettingEditorToolbar();
+    }
+
+    _createSettingEditorToolbar() {
+        const toolbar = new ElasticToolbarWidget([
+            {
+                id: 'save-setting-btn',
+                icon: 'fa-save',
+                label: '保存设置',
+                labelStayVisible: true,
+                action: () => this.saveSettingData()
+            },
+            {
+                id: 'export-setting-btn',
+                icon: 'fa-file-export',
+                label: '导出设置',
+                labelStayVisible: true,
+                action: () => this.exportSettingData()
+            },
+            {
+                id: 'import-setting-btn',
+                icon: 'fa-file-import',
+                label: '导入设置',
+                labelStayVisible: true,
+                action: () => this.importSettingData()
+            }
+        ]);
+
+        toolbar.classList.add('pill-buttons');
+        const container = this.querySelector('#setting-editor-toolbar');
+        if (container) {
+            container.appendChild(toolbar);
+        }
     }
 }
 

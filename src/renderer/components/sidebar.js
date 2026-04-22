@@ -10,6 +10,7 @@
  */
 
 import './statustags';
+import { ElasticToolbarWidget } from './toolbar.ts';
 
 const TASK_PAGE_SIZE = 30;
 
@@ -62,21 +63,6 @@ class SideBar extends HTMLElement {
             this.currentTaskId = null;
             window.globalControlAPI.openHomePage();
             this._updateTaskHighlight();
-        });
-        this.querySelector('#open-memory-btn').addEventListener('click', () => {
-            // window.globalControlAPI.openMemory();
-        });
-        this.querySelector('#open-file-system-btn').addEventListener('click', () => {
-            // window.globalControlAPI.openFileSystem();
-        });
-        this.querySelector('#open-setting-editor-btn').addEventListener('click', () => {
-            window.globalControlAPI.openSettingEditor();
-        });
-        this.querySelector('#open-dev-tools-btn').addEventListener('click', () => {
-            window.settingAPI.openDevTools();
-        });
-        this.querySelector('#open-log-view-btn').addEventListener('click', () => {
-            window.globalControlAPI.openLogView();
         });
 
         this._initWorkspaceBar();
@@ -252,33 +238,70 @@ class SideBar extends HTMLElement {
             <div id="task-list-container" class="flex-1 overflow-y-auto py-2 pr-2">
             </div>
 
-            <div class="flex-shrink-0 w-full flex justify-center items-center py-3">
-                <div class="flex justify-center items-center bg-white/40 backdrop-blur-2xl rounded-full border border-white/40 shadow-2xl px-4 py-1">
-                    <button id="open-memory-btn" class="mx-3 text-gray-500 hover:text-blue-600 text-lg focus:outline-none" title="记忆" disabled>
-                        <i class="fa-solid fa-hard-drive"></i>
-                    </button>
-                    <button
-                        id="open-file-system-btn"
-                        class="mx-3 text-gray-500 hover:text-blue-600 text-lg focus:outline-none"
-                        title="文件系统"
-                        onclick="window.globalControlAPI.openApplication('filemgr')"
-                    >
-                        <i class="fa-solid fa-folder-open"></i>
-                    </button>
-                    <button id="open-setting-editor-btn" class="mx-3 text-gray-500 hover:text-blue-600 text-lg focus:outline-none" title="设置">
-                        <i class="fa-solid fa-cog"></i>
-                    </button>
-                    <button id="open-dev-tools-btn" class="mx-3 text-gray-500 hover:text-blue-600 text-lg focus:outline-none" title="开发工具">
-                        <i class="fa-solid fa-terminal"></i>
-                    </button>
-                    <button id="open-log-view-btn" class="mx-3 text-gray-500 hover:text-blue-600 text-lg focus:outline-none" title="日志">
-                        <i class="fa-solid fa-file-lines"></i>
-                    </button>
-                </div>
+            <div id="sidebar-bottom-toolbar" class="flex-shrink-0 w-full flex justify-center items-center py-3">
             </div>
         </div>
         `;
+        this._createBottomToolbar();
         this.reloadApplicationList();
+    }
+
+    _createBottomToolbar() {
+        const toolbar = new ElasticToolbarWidget([
+            {
+                id: 'open-memory-btn',
+                icon: 'fa-hard-drive',
+                label: '记忆',
+                action: () => {
+                    // window.globalControlAPI.openMemory();
+                }
+            },
+            {
+                id: 'open-file-system-btn',
+                icon: 'fa-folder-open',
+                label: '文件系统',
+                action: () => {
+                    window.globalControlAPI.openApplication('filemgr');
+                }
+            },
+            {
+                id: 'open-setting-editor-btn',
+                icon: 'fa-cog',
+                label: '设置',
+                action: () => {
+                    window.globalControlAPI.openSettingEditor();
+                }
+            },
+            {
+                id: 'open-dev-tools-btn',
+                icon: 'fa-terminal',
+                label: '开发工具',
+                action: () => {
+                    window.settingAPI.openDevTools();
+                }
+            },
+            {
+                id: 'open-log-view-btn',
+                icon: 'fa-file-lines',
+                label: '日志',
+                action: () => {
+                    window.globalControlAPI.openLogView();
+                }
+            }
+        ]);
+
+        // 覆盖默认样式以匹配侧边栏毛玻璃风格
+        toolbar.classList.add('sidebar-bottom');
+        const container = this.querySelector('#sidebar-bottom-toolbar');
+        if (container) {
+            container.appendChild(toolbar);
+        }
+
+        // 禁用记忆按钮
+        const memoryBtn = toolbar.querySelector(`[id^="open-memory-btn"]`);
+        if (memoryBtn) {
+            memoryBtn.disabled = true;
+        }
     }
 
     async reloadApplicationList() {
