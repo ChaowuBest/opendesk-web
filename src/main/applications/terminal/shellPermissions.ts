@@ -28,6 +28,18 @@ import type { PermissionRequest, PermissionAction } from '../../aikernel/securit
 // ─── 公共工具函数 ───────────────────────────────────────────────────
 
 /**
+ * 将 MSYS2/Git Bash 风格的路径（如 /c/Projects/...）转换为 Windows 原生路径（如 C:/Projects/...）。
+ *
+ * 在 Git Bash (MSYS2) 环境下，process.cwd() 返回 /c/Projects/... 形式的路径。
+ * Node.js 的 path.resolve() 在 Windows 上会将 /c/Projects/... 解释为相对于当前驱动器
+ * 根目录的路径，产生 C:\c\Projects\...（双重前缀），因此需要先转换。
+ */
+function fromMsysPath(p: string): string {
+    if (process.platform !== 'win32') return p;
+    return p.replace(/^\/([a-zA-Z])\//, (_, letter) => `${letter.toUpperCase()}:/`);
+}
+
+/**
  * 规范化路径：展开 ~、解析为绝对路径、统一使用正斜杠
  */
 function normalizePath(rawPath: string, cwd: string): string {
@@ -38,9 +50,13 @@ function normalizePath(rawPath: string, cwd: string): string {
         p = os.homedir() + p.slice(1);
     }
 
+    // 将 MSYS2/Git Bash 风格路径转换为 Windows 原生路径，避免 path.resolve 产生双重前缀
+    p = fromMsysPath(p);
+    const normalizedCwd = fromMsysPath(cwd);
+
     // 解析为绝对路径（基于 cwd）
     if (!path.isAbsolute(p)) {
-        p = path.resolve(cwd, p);
+        p = path.resolve(normalizedCwd, p);
     }
 
     // 统一使用正斜杠

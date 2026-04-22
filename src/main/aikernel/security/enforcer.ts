@@ -43,6 +43,14 @@ function normalizePath(p: string): string {
     return p.replace(/\\/g, '/');
 }
 
+/**
+ * 将 MSYS2/Git Bash 风格的路径（如 /c/Projects/...）转换为 Windows 原生路径（如 C:/Projects/...）。
+ */
+function fromMsysPath(p: string): string {
+    if (process.platform !== 'win32') return p;
+    return p.replace(/^\/([a-zA-Z])\//, (_, letter) => `${letter.toUpperCase()}:/`);
+}
+
 interface CompiledRule {
     resourceType: string;
     action: string;
@@ -233,7 +241,7 @@ export class GlobPermissionEnforcer implements PermissionEnforcer {
  * - 技能写入 → ask（隐式回退，需用户确认）
  */
 export function createDefaultPermissionRules(workspace: string): PermissionRule[] {
-    const workspaceNorm = normalizePath(path.resolve(workspace));
+    const workspaceNorm = normalizePath(path.resolve(fromMsysPath(workspace)));
 
     return [
         // 设备节点始终允许（/dev/stdin, /dev/null 等）
