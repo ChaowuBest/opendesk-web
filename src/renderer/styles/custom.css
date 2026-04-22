@@ -258,7 +258,7 @@ pre .hljs-regexp {
     transition: background 0.12s;
 }
 .skill-panel-item:hover {
-    background: #f3f0ff;
+    background: #e8f5ed;
 }
 .skill-panel-item-icon {
     flex-shrink: 0;
@@ -267,9 +267,9 @@ pre .hljs-regexp {
     display: flex;
     align-items: center;
     justify-content: center;
-    background: #f5f3ff;
+    background: #c8e6d4;
     border-radius: 8px;
-    border: 1px solid #ede9fe;
+    border: 1px solid #a3d9b5;
 }
 .skill-panel-item-info {
     flex: 1;
@@ -319,9 +319,9 @@ pre .hljs-regexp {
     transition: all 0.15s;
 }
 .skill-panel-install-btn:hover {
-    border-color: #a78bfa;
-    color: #7c3aed;
-    background: #f5f3ff;
+    border-color: #6dbb8a;
+    color: #2e8b57;
+    background: #e8f5ed;
 }
 
 /* =========================================
@@ -400,10 +400,24 @@ pre .hljs-regexp {
     transition: background 0.12s;
 }
 .popup-panel-item:hover {
-    background: #f3f0ff;
+    background: #e8f5ed;
 }
 .popup-panel-item.active {
-    background: #f3f0ff;
+    background: #a3d9b5;
+    position: relative;
+}
+.popup-panel-item.active::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 6px;
+    bottom: 6px;
+    width: 3px;
+    border-radius: 0 2px 2px 0;
+    background: #2e8b57;
+}
+.popup-panel-item.hovered {
+    background: #c8e6d4;
 }
 .popup-panel-item-icon {
     flex-shrink: 0;
@@ -412,9 +426,9 @@ pre .hljs-regexp {
     display: flex;
     align-items: center;
     justify-content: center;
-    background: #f5f3ff;
+    background: #c8e6d4;
     border-radius: 6px;
-    border: 1px solid #ede9fe;
+    border: 1px solid #a3d9b5;
 }
 .popup-panel-item-info {
     flex: 1;
@@ -445,12 +459,57 @@ pre .hljs-regexp {
     display: flex;
     align-items: center;
     justify-content: center;
-    color: #7c3aed;
+    color: #2e8b57;
     font-size: 11px;
 }
 .popup-panel-empty {
     padding: 20px 12px;
     text-align: center;
     color: #9ca3af;
+    font-size: 12px;
+}
+/* Two-level menu: model > reasoning effort (fly-out submenu) */
+.popup-panel-item-arrow {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    margin-left: auto;
+    padding-left: 4px;
+}
+.popup-panel-item.active .popup-panel-item-arrow {
+    display: none;
+}
+.popup-panel-submenu.popup-panel-visible {
+    position: fixed;
+    width: 180px;
+    max-height: 280px;
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+    box-shadow:
+        0 12px 40px -8px rgba(0, 0, 0, 0.12),
+        0 4px 12px -2px rgba(0, 0, 0, 0.06);
+    z-index: 10000;
+    overflow: hidden;
+    animation: popup-submenu-flyout 0.15s ease-out;
+}
+@keyframes popup-submenu-flyout {
+    from {
+        opacity: 0;
+        transform: translateX(-6px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+.popup-panel-submenu .popup-panel-item {
+    padding: 7px 10px;
+}
+.popup-panel-submenu .popup-panel-item .popup-panel-item-icon {
+    width: 24px;
+    height: 24px;
+}
+.popup-panel-submenu .popup-panel-item .popup-panel-item-name {
     font-size: 12px;
 }

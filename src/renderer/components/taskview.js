@@ -10,8 +10,13 @@
  */
 
 import { ElasticToolbarWidget } from './toolbar.ts';
+import './taskrightsidebar.js';
 
 class TaskView extends HTMLElement {
+    // 全局侧边栏状态：跨任务共享
+    static rightSidebarExpanded = false;
+    static rightSidebarWidth = 380;
+
     constructor() {
         super();
 
@@ -225,6 +230,53 @@ class TaskView extends HTMLElement {
         }
     }
 
+    _toggleRightSidebar() {
+        const rightSidebar = this.querySelector(`#task-${this.task_id}-right-sidebar`);
+        const resizer = this.querySelector(`#task-${this.task_id}-resizer`);
+        if (!rightSidebar) return;
+
+        const isExpanded = rightSidebar.style.display !== 'none';
+        if (isExpanded) {
+            // 保存当前宽度到全局状态
+            TaskView.rightSidebarWidth = parseInt(rightSidebar.style.width) || 380;
+            rightSidebar.style.display = 'none';
+            if (resizer) resizer.style.display = 'none';
+            TaskView.rightSidebarExpanded = false;
+        } else {
+            rightSidebar.style.display = '';
+            rightSidebar.style.width = TaskView.rightSidebarWidth + 'px';
+            if (resizer) resizer.style.display = '';
+            TaskView.rightSidebarExpanded = true;
+        }
+        this._updateSidebarToggleIcon(!isExpanded);
+    }
+
+    /** 同步全局侧边栏状态到当前任务视图（切换任务时调用） */
+    syncRightSidebarState() {
+        const rightSidebar = this.querySelector(`#task-${this.task_id}-right-sidebar`);
+        const resizer = this.querySelector(`#task-${this.task_id}-resizer`);
+        if (!rightSidebar) return;
+
+        if (TaskView.rightSidebarExpanded) {
+            rightSidebar.style.display = '';
+            rightSidebar.style.width = TaskView.rightSidebarWidth + 'px';
+            if (resizer) resizer.style.display = '';
+        } else {
+            rightSidebar.style.display = 'none';
+            if (resizer) resizer.style.display = 'none';
+        }
+        this._updateSidebarToggleIcon(TaskView.rightSidebarExpanded);
+    }
+
+    _updateSidebarToggleIcon(isExpanded) {
+        const btn = this.querySelector('#taskview-sidebar-toggle-btn');
+        if (!btn) return;
+        const icon = btn.querySelector('i');
+        if (icon) {
+            icon.className = isExpanded ? 'fa-solid fa-angles-right' : 'fa-solid fa-angles-left';
+        }
+    }
+
     async exportTask() {
         try {
             const timestamp = new Date().toISOString().slice(0, 10);
@@ -275,6 +327,15 @@ class TaskView extends HTMLElement {
                         labelStayVisible: false,
                         action: () => {
                             this.exportTask();
+                        }
+                    },
+                    {
+                        id: 'taskview-sidebar-toggle-btn',
+                        icon: TaskView.rightSidebarExpanded ? 'fa-angles-right' : 'fa-angles-left',
+                        label: '面板',
+                        labelStayVisible: false,
+                        action: () => {
+                            this._toggleRightSidebar();
                         }
                     }
                 ],
@@ -373,34 +434,89 @@ class TaskView extends HTMLElement {
         <div class="bg-gray-30 h-full flex flex-col">
             <header id="taskview-toolbar" class="w-full pt-1"></header>
 
-            <div class="relative flex-1 overflow-y-auto">
-                <!-- 对话历史区域 - 可滚动 -->
-                <div id="taskview-chat-history" class="w-full h-full space-y-2 overflow-y-auto px-3">
+            <div id="task-${this.task_id}-content-row" class="flex-1 flex flex-row min-h-0">
+                <div class="flex-1 flex flex-col min-w-0">
+                    <div class="relative flex-1 overflow-y-auto">
+                        <!-- 对话历史区域 - 可滚动 -->
+                        <div id="taskview-chat-history" class="w-full h-full space-y-2 overflow-y-auto px-3">
+                        </div>
+                        <!-- 滚动到底部按钮, 按需显示 -->
+                        <button
+                            id="taskview-scroll-to-bottom-button"
+                            class="absolute bottom-3 right-8 flex items-center justify-center px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-full shadow transition-all focus:outline-none active:scale-95 text-xs hidden"
+                            style="min-width: unset; height: 2rem;"
+                            title="滚动到底部"
+                        >
+                            <i class="fas fa-arrow-down text-sm"></i>
+                            <span class="ml-1">滚动到底部</span>
+                        </button>
+                    </div>
+
+                    <!-- 权限确认浮窗 -->
+                    <permission-prompt id="task-${this.task_id}-permission" data-task-id="${this.task_id}" class="block px-4"></permission-prompt>
+
+                    <!-- 用户提问面板 -->
+                    <ask-user-prompt id="task-${this.task_id}-ask-user" data-task-id="${this.task_id}" class="block px-4"></ask-user-prompt>
+
+                    <!-- 输入区域 -->
+                    <div class="px-3 pb-3 pt-1">
+                        <agent-input id="task-${this.task_id}-input" />
+                    </div>
                 </div>
-                <!-- 滚动到底部按钮, 按需显示 -->
-                <button
-                    id="taskview-scroll-to-bottom-button"
-                    class="absolute bottom-3 right-8 flex items-center justify-center px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-full shadow transition-all focus:outline-none active:scale-95 text-xs hidden"
-                    style="min-width: unset; height: 2rem;"
-                    title="滚动到底部"
+
+                <!-- 右侧边栏拖拽条 -->
+                <div id="task-${this.task_id}-resizer"
+                    class="w-[4px] relative group transition-all duration-150 shrink-0"
+                    style="background: linear-gradient(to right, transparent 40%, #e0e0e0 50%, transparent 60%); cursor: col-resize; display: ${TaskView.rightSidebarExpanded ? '' : 'none'};"
                 >
-                    <i class="fas fa-arrow-down text-sm"></i>
-                    <span class="ml-1">滚动到底部</span>
-                </button>
-            </div>
+                    <div class="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 pointer-events-none">
+                        <div class="w-[2px] h-12 bg-gray-200 rounded-full opacity-70 group-hover:opacity-100 group-hover:bg-blue-400 transition"></div>
+                    </div>
+                </div>
 
-            <!-- 权限确认浮窗 -->
-            <permission-prompt id="task-${this.task_id}-permission" data-task-id="${this.task_id}" class="block px-4"></permission-prompt>
-
-            <!-- 用户提问面板 -->
-            <ask-user-prompt id="task-${this.task_id}-ask-user" data-task-id="${this.task_id}" class="block px-4"></ask-user-prompt>
-
-            <!-- 输入区域 -->
-            <div class="px-3 pb-3 pt-1">
-                <agent-input id="task-${this.task_id}-input" />
+                <!-- 右侧边栏 -->
+                <task-right-sidebar id="task-${this.task_id}-right-sidebar" style="display: ${TaskView.rightSidebarExpanded ? '' : 'none'}; width: ${TaskView.rightSidebarWidth}px;"></task-right-sidebar>
             </div>
         </div>
         `;
+
+        this._initRightSidebarResize();
+    }
+
+    _initRightSidebarResize() {
+        const resizer = this.querySelector(`#task-${this.task_id}-resizer`);
+        const rightSidebar = this.querySelector(`#task-${this.task_id}-right-sidebar`);
+        if (!resizer || !rightSidebar) return;
+
+        let isResizing = false;
+
+        resizer.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            isResizing = true;
+            document.body.style.cursor = 'col-resize';
+            document.body.style.userSelect = 'none';
+        });
+
+        document.addEventListener('mousemove', (e) => {
+            if (!isResizing) return;
+            const container = this.querySelector(`#task-${this.task_id}-content-row`);
+            if (!container) return;
+            const containerRect = container.getBoundingClientRect();
+            const newWidth = containerRect.right - e.clientX;
+            const minWidth = 200;
+            const maxWidth = containerRect.width * 0.85;
+            if (newWidth < minWidth || newWidth > maxWidth) return;
+            rightSidebar.style.width = newWidth + 'px';
+            TaskView.rightSidebarWidth = newWidth;
+        });
+
+        document.addEventListener('mouseup', () => {
+            if (isResizing) {
+                isResizing = false;
+                document.body.style.cursor = '';
+                document.body.style.userSelect = '';
+            }
+        });
     }
 
     setUpEventListeners() {
@@ -438,7 +554,6 @@ class TaskView extends HTMLElement {
             this.task_status = 'running';
             this.updateStopButtonVisibility();
             await window.taskManagerAPI.submitMessage(this.task_id, event.detail);
-            await this.reload();
         });
         const chatHistory = this.querySelector('#taskview-chat-history');
         chatHistory.addEventListener('scroll', (event) => {
