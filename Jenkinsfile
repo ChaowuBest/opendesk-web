@@ -86,7 +86,7 @@ node {
                             echo "=== Stage: Build ==="
 
                             try {
-                                sh '''
+                                sh '''#!/usr/bin/env bash
                                     set -euo pipefail
 
                                     if [ -n "${PR_NUMBER:-}" ] && [ -n "${PR_SOURCE_BRANCH:-}" ] && [ -n "${PR_TARGET_BRANCH:-}" ]; then
@@ -132,6 +132,14 @@ node {
 
                             if (buildStatus == 'success') {
                                 try {
+                                    sh '''#!/usr/bin/env bash
+                                        set -euo pipefail
+
+                                        npm run test:unit -- \
+                                          --json \
+                                          --outputFile "${CI_LOG_DIR}/jest-unit-results.json" \
+                                          2>&1 | tee "${CI_LOG_DIR}/test.log"
+                                    '''
                                     testStatus = 'success'
                                     sh 'echo "success" > "${CI_LOG_DIR}/test.status"'
                                 } catch (e) {
