@@ -20,6 +20,7 @@ import '../components/toolbar.ts';
 import '../components/taskview.js';
 import '../components/sidebar.js';
 import '../components/setting.js';
+import '../components/settingpanel.js';
 import '../components/logview.js';
 import '../components/fileview.js';
 import '../components/homepage.js';

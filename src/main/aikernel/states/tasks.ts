@@ -395,6 +395,7 @@ export class TaskState {
 
         const assistant_message = new AssistantMessage();
         this.chat_context.appendMessage(user_message);
+        await this.sendSubscriptionFeedback();
         this.chat_context.appendMessage(assistant_message);
 
         const allToolsets = await this.buildToolsets();

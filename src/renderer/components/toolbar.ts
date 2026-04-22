@@ -9,6 +9,8 @@
  * See the Mulan PSL v2 for more details.
  */
 
+import './toolbar.css';
+
 interface Button {
     id: string;
     icon: string;
