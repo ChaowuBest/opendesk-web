@@ -731,7 +731,11 @@ export class TaskView implements Component {
         }, COMPACT_SPINNER_MS);
 
         try {
-            await compactContext(this.taskState.chat_context, this.taskState.model);
+            const compacted = await compactContext(this.taskState.chat_context, this.taskState.model);
+            if (!compacted) {
+                this.lastCompactErrorMessage = 'No compactable context available';
+                return false;
+            }
             this.taskState.markCompacted();
             return true;
         } catch (err: any) {

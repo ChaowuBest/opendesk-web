@@ -3,7 +3,9 @@ import os from 'os';
 import path from 'path';
 import { setCustomAppDirectory } from '../../../main/utils/setting';
 import { AutoCompactStates } from '../../../main/aikernel/compaction/auto-compact';
-import { ChatContext, UserMessage } from '../../../main/aikernel/messages';
+import { FULL_COMPACT_BOUNDARY_STRATEGY } from '../../../main/aikernel/compaction/full-compact';
+import { buildActiveContextView } from '../../../main/aikernel/compaction/context-view';
+import { ChatContext, CompactSeparatorMessage, UserMessage } from '../../../main/aikernel/messages';
 import { TaskManagerState, TaskState } from '../../../main/aikernel/states/tasks';
 
 let tempRootDir: string | undefined;
@@ -174,5 +176,86 @@ describe('任务持久化中的自动压缩状态', () => {
         expect(loadedTask!.getAutoCompactState()).toEqual(legacyState);
         expect(loadedTask!.getAutoCompactState().cooldownUntil).toBe('2026-04-17T02:20:00.000Z');
         expect(loadedTask!.getAutoCompactState().lastFailureReason).toBe('legacy compact failure');
+    });
+
+    test('save 和 load 会保留 full compact boundary metadata', () => {
+        const taskDir = createTempTaskDirectory();
+        const manager = new TaskManagerState();
+        const task = createTask(manager);
+        const boundary = new CompactSeparatorMessage('saved full compact summary', {
+            boundary_id: 'boundary-full-compact',
+            created_at: '2026-04-20T08:00:00.000Z',
+            previous_boundary_id: 'boundary-previous',
+            trigger: 'auto',
+            strategy: FULL_COMPACT_BOUNDARY_STRATEGY,
+            summarized_range: {
+                start_index: 0,
+                end_index_exclusive: 6,
+                message_count: 6,
+                user_messages: 3,
+                assistant_messages: 3,
+                tool_calls: 1
+            },
+            kept_range: {
+                start_index: 6,
+                end_index_exclusive: 8,
+                message_count: 2,
+                user_messages: 1,
+                assistant_messages: 1,
+                tool_calls: 0
+            },
+            kept_messages: 2,
+            summarized_messages: 6
+        });
+
+        task.chat_context = new ChatContext();
+        task.chat_context.appendMessage(new UserMessage('folded raw message'));
+        task.chat_context.appendMessage(boundary);
+        task.chat_context.appendMessage(new UserMessage('kept user message'));
+        manager.tasks.push(task);
+
+        manager.save();
+
+        const savedTaskJson = JSON.parse(fs.readFileSync(path.join(taskDir, 'task-root.json'), 'utf8'));
+        const savedBoundary = savedTaskJson.chat_context.messages.find(
+            (message: { role?: string }) => message.role === 'compact_separator'
+        );
+        expect(savedBoundary.metadata).toMatchObject({
+            boundary_id: 'boundary-full-compact',
+            previous_boundary_id: 'boundary-previous',
+            trigger: 'auto',
+            strategy: FULL_COMPACT_BOUNDARY_STRATEGY,
+            kept_messages: 2,
+            summarized_messages: 6,
+            summarized_range: {
+                start_index: 0,
+                end_index_exclusive: 6,
+                message_count: 6,
+                user_messages: 3,
+                assistant_messages: 3,
+                tool_calls: 1
+            },
+            kept_range: {
+                start_index: 6,
+                end_index_exclusive: 8,
+                message_count: 2,
+                user_messages: 1,
+                assistant_messages: 1,
+                tool_calls: 0
+            }
+        });
+
+        const reloadedManager = TaskManagerState.load();
+        expect(reloadedManager).not.toBeNull();
+        const loadedTask = reloadedManager!.getTask('task-root');
+        expect(loadedTask).toBeDefined();
+
+        const loadedBoundary = loadedTask!.chat_context.findCompactBoundary();
+        expect(loadedBoundary?.message.summary).toBe('saved full compact summary');
+        expect(loadedBoundary?.message.metadata).toMatchObject(savedBoundary.metadata);
+        expect(buildActiveContextView(loadedTask!.chat_context).messages.map((message) => message.role)).toEqual([
+            'compact_separator',
+            'user'
+        ]);
     });
 });

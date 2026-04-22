@@ -20,7 +20,7 @@ export interface ActiveContextView {
 
 export interface PrepareContextOptions {
     beforeCompact?: () => void;
-    executeCompact?: () => Promise<void> | void;
+    executeCompact?: () => Promise<boolean | void> | boolean | void;
     enableToolResultBudget?: boolean;
     enableMicrocompact?: boolean;
     autoCompactState?: AutoCompactState;
