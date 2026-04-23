@@ -19,6 +19,8 @@ export interface TaskTodo {
     status: TodoStatus;
     created_at: string;
     updated_at: string;
+    /** 首次进入 in_progress 的 ISO 时间戳，用于计算执行耗时 */
+    started_at?: string;
     completed_at?: string;
 }
 

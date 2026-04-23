@@ -373,6 +373,15 @@ const registerTaskManagerAPIHandlers = () => {
         await task.render();
         return { status: 'ok', data: task.toRenderJSON() };
     });
+    ipcMain.handle('taskManager:getTaskTodos', async (event, taskId) => {
+        try {
+            const { getTaskTodosForDisplay } = await import('./aikernel/todos/task-todos.js');
+            const todos = getTaskTodosForDisplay(taskId);
+            return { status: 'ok', data: todos };
+        } catch (err) {
+            return { status: 'error', message: err?.message || String(err) };
+        }
+    });
     ipcMain.handle('taskManager:subscribeTaskUpdate', (event, taskId) => {
         const task = globalState.taskManagerState.getTask(taskId);
         if (task === undefined) {

@@ -10,7 +10,7 @@
  */
 
 import { ElasticToolbarWidget } from './toolbar.ts';
-import './taskrightsidebar.js';
+import './taskartifacts.ts';
 
 class TaskView extends HTMLElement {
     // 全局侧边栏状态：跨任务共享
@@ -28,6 +28,14 @@ class TaskView extends HTMLElement {
         this.subscription_id = null;
         this.auto_scrolling_to_bottom = true;
         this.task_status = 'waiting';
+        /** @type {Array} 当前任务级待办 */
+        this._taskTodos = [];
+        /** @type {Array} 全局待办 */
+        this._globalTodos = [];
+        /** @type {Function | null} 取消全局待办订阅 */
+        this._globalTodosUnsubscribe = null;
+        /** @type {Function | null} 取消任务级待办订阅 */
+        this._taskTodosUnsubscribe = null;
     }
 
     static isCompactBoundaryMessage(message) {
@@ -190,6 +198,10 @@ class TaskView extends HTMLElement {
         }
         history_container.innerHTML = htmlParts.join('');
         this.tryScrollToEnd();
+
+        // 刷新任务计划面板数据（不影响侧边栏展开状态）
+        this._refreshTaskTodos();
+        this._refreshGlobalTodos();
     }
 
     static renderCompactBoundary() {
@@ -232,7 +244,7 @@ class TaskView extends HTMLElement {
     }
 
     _toggleRightSidebar() {
-        const rightSidebar = this.querySelector(`#task-${this.task_id}-right-sidebar`);
+        const rightSidebar = this.querySelector(`#task-${this.task_id}-artifacts`);
         const resizer = this.querySelector(`#task-${this.task_id}-resizer`);
         if (!rightSidebar) return;
 
@@ -252,9 +264,123 @@ class TaskView extends HTMLElement {
         this._updateSidebarToggleIcon(!isExpanded);
     }
 
+    /**
+     * 确保右侧边栏处于展开状态。若原本未展开则展开它
+     */
+    _ensureRightSidebarOpen() {
+        const rightSidebar = this.querySelector(`#task-${this.task_id}-artifacts`);
+        const resizer = this.querySelector(`#task-${this.task_id}-resizer`);
+        if (!rightSidebar) return;
+        if (rightSidebar.style.display !== 'none') return;
+
+        rightSidebar.style.display = '';
+        rightSidebar.style.width = TaskView.rightSidebarWidth + 'px';
+        if (resizer) resizer.style.display = '';
+        TaskView.rightSidebarExpanded = true;
+        this._updateSidebarToggleIcon(true);
+    }
+
+    _getRightSidebarEl() {
+        return this.querySelector(`#task-${this.task_id}-artifacts`);
+    }
+
+    /**
+     * 刷新任务级待办。
+     * @param {{autoExpand?: boolean}} opts autoExpand=true 时，若从无待办变为有待办则自动展开侧边栏
+     */
+    async _refreshTaskTodos(opts = {}) {
+        if (!window.taskManagerAPI || !window.taskManagerAPI.getTaskTodos) return;
+        try {
+            const prevHasTodos = this._taskTodos.length > 0;
+            const todos = await window.taskManagerAPI.getTaskTodos(this.task_id);
+            this._taskTodos = Array.isArray(todos) ? todos : [];
+            const sidebar = this._getRightSidebarEl();
+            if (sidebar && typeof sidebar.setTaskTodos === 'function') {
+                sidebar.setTaskTodos(this._taskTodos);
+            }
+            if (opts.autoExpand && !prevHasTodos && this._taskTodos.length > 0) {
+                this._ensureRightSidebarOpen();
+            }
+        } catch (err) {
+            console.warn('refresh task todos failed', err);
+        }
+    }
+
+    async _refreshGlobalTodos() {
+        if (!window.applicationRegistryAPI || !window.applicationRegistryAPI.call) return;
+        try {
+            const todos = await window.applicationRegistryAPI.call('todomgr', 'listGlobalTodos', 'all');
+            this._globalTodos = Array.isArray(todos) ? todos : [];
+            const sidebar = this._getRightSidebarEl();
+            if (sidebar && typeof sidebar.setGlobalTodos === 'function') {
+                sidebar.setGlobalTodos(this._globalTodos);
+            }
+        } catch (err) {
+            // 非致命错误，全局待办模块可能暂时不可用
+            console.warn('refresh global todos failed', err);
+        }
+    }
+
+    async _subscribeGlobalTodos() {
+        if (this._globalTodosUnsubscribe) return;
+        if (!window.applicationRegistryAPI || !window.applicationRegistryAPI.subscribeEvent) return;
+        try {
+            const unsubscribe = await window.applicationRegistryAPI.subscribeEvent(
+                'todomgr',
+                'globalTodosUpdated',
+                (todos) => {
+                    this._globalTodos = Array.isArray(todos) ? todos : [];
+                    const sidebar = this._getRightSidebarEl();
+                    if (sidebar && typeof sidebar.setGlobalTodos === 'function') {
+                        sidebar.setGlobalTodos(this._globalTodos);
+                    }
+                }
+            );
+            if (typeof unsubscribe === 'function') {
+                this._globalTodosUnsubscribe = unsubscribe;
+            }
+        } catch (err) {
+            console.warn('subscribe global todos failed', err);
+        }
+    }
+
+    /**
+     * 订阅任务级待办更新事件。TodoWrite 工具每次写入后会派发 `taskTodosUpdated`，
+     * 事件负载为 { taskId, todos }。只有 taskId 匹配当前任务才刷新面板。
+     */
+    async _subscribeTaskTodos() {
+        if (this._taskTodosUnsubscribe) return;
+        if (!window.applicationRegistryAPI || !window.applicationRegistryAPI.subscribeEvent) return;
+        try {
+            const unsubscribe = await window.applicationRegistryAPI.subscribeEvent(
+                'todomgr',
+                'taskTodosUpdated',
+                (payload) => {
+                    if (!payload || payload.taskId !== this.task_id) return;
+                    const prevHasTodos = this._taskTodos.length > 0;
+                    this._taskTodos = Array.isArray(payload.todos) ? payload.todos : [];
+                    const sidebar = this._getRightSidebarEl();
+                    if (sidebar && typeof sidebar.setTaskTodos === 'function') {
+                        sidebar.setTaskTodos(this._taskTodos);
+                    }
+                    // 仅在从"无任务计划"变为"有任务计划"时自动展开右侧栏，
+                    // 避免每次 TodoWrite 都强制展开，干扰用户手动折叠的偏好
+                    if (!prevHasTodos && this._taskTodos.length > 0) {
+                        this._ensureRightSidebarOpen();
+                    }
+                }
+            );
+            if (typeof unsubscribe === 'function') {
+                this._taskTodosUnsubscribe = unsubscribe;
+            }
+        } catch (err) {
+            console.warn('subscribe task todos failed', err);
+        }
+    }
+
     /** 同步全局侧边栏状态到当前任务视图（切换任务时调用） */
     syncRightSidebarState() {
-        const rightSidebar = this.querySelector(`#task-${this.task_id}-right-sidebar`);
+        const rightSidebar = this.querySelector(`#task-${this.task_id}-artifacts`);
         const resizer = this.querySelector(`#task-${this.task_id}-resizer`);
         if (!rightSidebar) return;
 
@@ -346,6 +472,12 @@ class TaskView extends HTMLElement {
         }
 
         this.setUpEventListeners();
+
+        // 订阅全局待办更新（跨任务共享）
+        this._subscribeGlobalTodos();
+        // 订阅任务级待办更新（仅处理当前任务的事件）
+        this._subscribeTaskTodos();
+
         this.reload().then(async () => {
             this.subscription_id = await window.taskManagerAPI.subscribeTaskUpdate(this.task_id, (progress) => {
                 const history_container = this.getHistoryContainer();
@@ -421,6 +553,10 @@ class TaskView extends HTMLElement {
                             });
                     }
                 }
+
+                // 任务级待办的实时更新已通过 todomgr.taskTodosUpdated 事件单独订阅，
+                // 这里无需再从工具调用进度里反推 TodoWrite 的执行状态。
+
                 this.tryScrollToEnd();
             });
         });
@@ -429,6 +565,22 @@ class TaskView extends HTMLElement {
     disconnectedCallback() {
         window.taskManagerAPI.unsubscribeTaskUpdate(this.task_id, this.subscription_id);
         this.subscription_id = null;
+        if (this._globalTodosUnsubscribe) {
+            try {
+                this._globalTodosUnsubscribe();
+            } catch (err) {
+                console.warn('failed to unsubscribe global todos', err);
+            }
+            this._globalTodosUnsubscribe = null;
+        }
+        if (this._taskTodosUnsubscribe) {
+            try {
+                this._taskTodosUnsubscribe();
+            } catch (err) {
+                console.warn('failed to unsubscribe task todos', err);
+            }
+            this._taskTodosUnsubscribe = null;
+        }
     }
 
     render() {
@@ -476,8 +628,8 @@ class TaskView extends HTMLElement {
                     </div>
                 </div>
 
-                <!-- 右侧边栏 -->
-                <task-right-sidebar id="task-${this.task_id}-right-sidebar" style="display: ${TaskView.rightSidebarExpanded ? '' : 'none'}; width: ${TaskView.rightSidebarWidth}px;"></task-right-sidebar>
+                <!-- 右侧边栏（任务产物 / 任务计划 / 变更） -->
+                <task-artifacts id="task-${this.task_id}-artifacts" style="display: ${TaskView.rightSidebarExpanded ? '' : 'none'}; width: ${TaskView.rightSidebarWidth}px;"></task-artifacts>
             </div>
         </div>
         `;
@@ -487,7 +639,7 @@ class TaskView extends HTMLElement {
 
     _initRightSidebarResize() {
         const resizer = this.querySelector(`#task-${this.task_id}-resizer`);
-        const rightSidebar = this.querySelector(`#task-${this.task_id}-right-sidebar`);
+        const rightSidebar = this.querySelector(`#task-${this.task_id}-artifacts`);
         if (!resizer || !rightSidebar) return;
 
         let isResizing = false;

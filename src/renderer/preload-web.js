@@ -116,6 +116,15 @@
             if (result.status === 'ok') return result.data;
             throw new Error(result.message);
         },
+        getTaskTodos: async (taskId) => {
+            try {
+                const result = await apiPost('/api/taskManager/getTaskTodos', { taskId });
+                if (result.status === 'ok') return result.data;
+                return [];
+            } catch {
+                return [];
+            }
+        },
         subscribeTaskUpdate: async (taskId, callback) => {
             ensureWS();
             return new Promise((resolve) => {

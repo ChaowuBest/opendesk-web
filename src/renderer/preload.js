@@ -67,6 +67,15 @@ function exposeTaskManagerAPI() {
                 throw new Error(result.message);
             }
         },
+        getTaskTodos: async (taskId) => {
+            const result = await ipcRenderer.invoke('taskManager:getTaskTodos', taskId);
+            if (result.status === 'ok') {
+                return result.data;
+            } else {
+                console.error('getting task todos failed', result.message);
+                throw new Error(result.message);
+            }
+        },
         subscribeTaskUpdate: async (taskId, callback) => {
             const result = await ipcRenderer.invoke('taskManager:subscribeTaskUpdate', taskId);
             if (result.status !== 'ok') {
