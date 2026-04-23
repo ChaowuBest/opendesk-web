@@ -67,6 +67,15 @@ function exposeTaskManagerAPI() {
                 throw new Error(result.message);
             }
         },
+        getTaskTodos: async (taskId) => {
+            const result = await ipcRenderer.invoke('taskManager:getTaskTodos', taskId);
+            if (result.status === 'ok') {
+                return result.data;
+            } else {
+                console.error('getting task todos failed', result.message);
+                throw new Error(result.message);
+            }
+        },
         subscribeTaskUpdate: async (taskId, callback) => {
             const result = await ipcRenderer.invoke('taskManager:subscribeTaskUpdate', taskId);
             if (result.status !== 'ok') {
@@ -240,6 +249,22 @@ function exposeFSAPI() {
                 throw new Error(result.message);
             }
 
+            return result.data;
+        },
+        listDirectory: async (dirPath) => {
+            const result = await ipcRenderer.invoke('fs:listDirectory', dirPath);
+            if (result.status !== 'ok') {
+                console.error('listing directory failed', result.message);
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
+        readTextFile: async (filePath, maxBytes) => {
+            const result = await ipcRenderer.invoke('fs:readTextFile', filePath, maxBytes);
+            if (result.status !== 'ok') {
+                console.error('reading text file failed', result.message);
+                throw new Error(result.message);
+            }
             return result.data;
         }
     });
