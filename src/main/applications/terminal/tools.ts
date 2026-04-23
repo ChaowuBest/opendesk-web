@@ -90,6 +90,11 @@ function getZshPath(): string | null {
 function renderTerminalToolCallCli(shellLabel: string, toolcall: ToolCall, width: number): string[] {
     const command = toolcall.args_object?.['command'];
     const cwd = toolcall.args_object?.['workingDirectory'];
+    const description = toolcall.args_object?.['description'];
+    const descriptionText = description ? String(description).trim() : '';
+    const title = descriptionText
+        ? `${shellLabel} (${truncText(descriptionText, Math.max(12, width - 28))})`
+        : shellLabel;
     const body: string[] = [];
 
     if (cwd) {
@@ -119,51 +124,70 @@ function renderTerminalToolCallCli(shellLabel: string, toolcall: ToolCall, width
         (toolcall.result?.startsWith('[超时]') || toolcall.result?.startsWith('[中断]'));
     return new Card({
         icon: '🖥',
-        title: shellLabel,
+        title,
         status: isInterrupted ? statusDisplay('interrupted') : statusDisplay(toolcall.status),
         body
     }).render(width);
 }
 
 function renderTerminalToolCall(cmdName: string, toolcall: ToolCall): string | undefined {
+    const command = toolcall.args_object?.['command'] || '';
+    const description: string | undefined = toolcall.args_object?.['description'];
+    const isRunning = toolcall.result === undefined && toolcall.status !== 'error';
+    const isError = toolcall.status === 'error';
+
+    const headerText = description
+        ? escapeHtml(description)
+        : escapeHtml(command.length > 80 ? command.slice(0, 77) + '…' : command);
+
+    const borderColor = isError ? 'border-red-200' : 'border-gray-200';
+    const iconColor = isError ? 'text-red-400' : 'text-gray-400';
+    const headerTextColor = isError ? 'text-red-600' : 'text-gray-600';
+
+    let bodyContent: string;
+    if (isRunning) {
+        bodyContent = `
+            <div class="px-4 py-2.5 font-mono text-[12px] text-gray-700 leading-relaxed">
+                <span class="text-gray-400 select-none">$ </span>${escapeHtml(command)}
+            </div>
+            <div class="px-4 py-3 flex items-center gap-2 text-gray-400 text-[12px] border-t border-gray-100">
+                <svg class="w-4 h-4 animate-spin text-blue-400" viewBox="0 0 24 24" fill="none">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
+                </svg>
+                <span>命令执行中，请稍候…</span>
+            </div>`;
+    } else {
+        bodyContent = `
+            <div class="px-4 py-2.5 font-mono text-[12px] text-gray-700 leading-relaxed">
+                <span class="text-gray-400 select-none">$ </span>${escapeHtml(command)}
+            </div>`;
+        if (toolcall.result) {
+            const outputColor = isError ? 'text-red-600' : 'text-gray-600';
+            bodyContent += `
+            <div class="px-4 py-2.5 border-t border-gray-100">
+                <pre class="terminal-tool-output ${outputColor}">${escapeHtml(toolcall.result)}</pre>
+            </div>`;
+        }
+    }
+
     return `
-    <!-- 终端主容器 -->
-    <div class="terminal-window w-full max-w-4xl rounded-xl overflow-hidden border border-gray-300 flex flex-col my-2 font-mono">
-        <!-- macOS 顶部标题栏 (浅色渐变) -->
-        <div class="flex items-center justify-between px-4 py-3 bg-gradient-to-b from-gray-100 to-gray-200 border-b border-gray-300">
-            <div class="text-[12px] font-medium text-gray-600 flex items-center gap-2">
-                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
-                OpenDesk Agent -- ${cmdName} Terminal
-            </div>
-            <div class="w-12"></div>
-        </div>
-
-        <!-- 终端内容区域 -->
-        <div class="p-3 text-xs xs:text-base leading-relaxed overflow-y-none custom-scrollbar text-gray-800">
-
-            <!-- 执行脚本 -->
-            <div class="mb-2 flex items-start">
-                <span class="text-blue-500 font-bold mr-2">❯</span>
-                <div>
-                    <span class="text-blue-600">/home</span>
-                    <span class="text-gray-800 ml-1">${toolcall.args_object?.['command']}</span>
-                </div>
-            </div>
-
-            <!-- 过程记录 -->
-            <div class="space-y-1 mb-4 border-l-2 border-gray-200 pl-4 ml-1">
-                ${
-                    toolcall.result === undefined
-                        ? `<div class="flex items-center gap-2 text-gray-400 animate-pulse h-7">
-                            <svg class="w-5 h-5 animate-spin text-blue-400" viewBox="0 0 24 24" fill="none"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/></svg>
-                            <span>命令执行中，请稍候…</span>
-                        </div>`
-                        : `<pre>${escapeHtml(toolcall.result)}</pre>`
-                }
+    <details class="terminal-tool my-1.5 rounded-lg border ${borderColor} bg-white overflow-hidden" open>
+        <summary class="terminal-tool-summary flex items-center gap-2 px-3 py-2 cursor-pointer select-none hover:bg-gray-50/60 transition-colors duration-150">
+            <svg class="w-4 h-4 ${iconColor} shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+                <rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 9l3 3-3 3"/><line x1="14" y1="15" x2="16" y2="15"/>
+            </svg>
+            <span class="text-[12px] ${headerTextColor} font-medium truncate flex-1">${headerText}</span>
+            <svg class="terminal-tool-chevron w-3 h-3 text-gray-400 shrink-0 transition-transform duration-200" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                <path d="M6 9l6 6 6-6"/>
+            </svg>
+        </summary>
+        <div class="border-t border-gray-100 bg-gray-50/40">
+            <div class="max-h-[280px] overflow-y-auto terminal-tool-scroll">
+                ${bodyContent}
             </div>
         </div>
-    </div>
-    `;
+    </details>`;
 }
 
 /**
@@ -268,6 +292,10 @@ async function executeShellCommand(opts: {
 
 const ExecutePowerShellArgsSchema = z.object({
     command: z.string().describe('要执行的PowerShell命令'),
+    description: z
+        .string()
+        .optional()
+        .describe('对该命令意图的简短描述（5-15字），用于在界面中展示，如"检查 PowerShell 版本"'),
     workingDirectory: z.string().optional().describe('执行命令的工作目录，如果不指定则使用系统默认目录'),
     timeout: z.number().optional().describe('命令执行超时时间（毫秒），默认 30000ms（30秒）').default(30000)
 });
@@ -362,6 +390,10 @@ export class ExecutePowerShellTool extends BaseTool<typeof ExecutePowerShellArgs
 
 const ExecuteBashArgsSchema = z.object({
     command: z.string().describe('要执行的BASH命令'),
+    description: z
+        .string()
+        .optional()
+        .describe('对该命令意图的简短描述（5-15字），用于在界面中展示，如"列出当前目录文件"'),
     workingDirectory: z.string().optional().describe('执行命令的工作目录，如果不指定则使用系统默认目录'),
     timeout: z.number().optional().describe('命令执行超时时间（毫秒），默认 30000ms（30秒）').default(30000)
 });
@@ -453,6 +485,10 @@ export class ExecuteBashTool extends BaseTool<typeof ExecuteBashArgsSchema> {
 
 const ExecuteZshArgsSchema = z.object({
     command: z.string().describe('要执行的ZSH命令'),
+    description: z
+        .string()
+        .optional()
+        .describe('对该命令意图的简短描述（5-15字），用于在界面中展示，如"列出当前目录文件"'),
     workingDirectory: z.string().optional().describe('执行命令的工作目录，如果不指定则使用当前目录'),
     timeout: z.number().optional().describe('命令执行超时时间（毫秒），默认 30000ms（30秒）').default(30000)
 });
