@@ -175,6 +175,41 @@ pre .hljs-regexp {
 }
 
 /* =========================================
+   Terminal tool card (collapsible shell output)
+   ========================================= */
+details.terminal-tool > summary {
+    list-style: none;
+}
+details.terminal-tool > summary::-webkit-details-marker {
+    display: none;
+}
+details.terminal-tool[open] > summary .terminal-tool-chevron {
+    transform: rotate(180deg);
+}
+details.terminal-tool .terminal-tool-scroll::-webkit-scrollbar {
+    width: 4px;
+}
+details.terminal-tool .terminal-tool-scroll::-webkit-scrollbar-thumb {
+    background: #d1d5db;
+    border-radius: 2px;
+}
+details.terminal-tool .terminal-tool-scroll::-webkit-scrollbar-track {
+    background: transparent;
+}
+pre.terminal-tool-output {
+    background: transparent !important;
+    border: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    font-size: 12px !important;
+    line-height: 1.6 !important;
+    white-space: pre-wrap !important;
+    word-break: break-all !important;
+    overflow-x: hidden !important;
+    font-family: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', monospace !important;
+}
+
+/* =========================================
    Agent input toolbar controls
    ========================================= */
 .agent-input-toolbar-control {
