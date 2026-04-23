@@ -13,6 +13,7 @@ import { BaseTool, BaseToolset } from '../../aikernel/tool';
 import { ToolCall } from '../../aikernel/messages';
 import { escapeHtml } from '../../utils/escape';
 import { Card } from '../../tui/components/card';
+import { t } from '../../../locale/index.js';
 import { statusDisplay, truncText } from '../../tui/components/toolcall';
 import { truncateToWidth } from '@mariozechner/pi-tui';
 import { z } from 'zod';
@@ -57,7 +58,7 @@ function fromMsysPath(p: string): string {
     return p.replace(/^\/([a-zA-Z])\//, (_, letter) => `${letter.toUpperCase()}:/`);
 }
 
-function sanitizePath(inputPath: string): string {
+function sanitizePath(inputPath: string, basePath?: string): string {
     if (!inputPath || typeof inputPath !== 'string') return '';
 
     let p = inputPath
@@ -76,7 +77,7 @@ function sanitizePath(inputPath: string): string {
     p = fromMsysPath(p);
 
     // 将相对路径解析为绝对路径，确保权限检查时能与工作空间规则正确匹配
-    p = path.resolve(p);
+    p = basePath ? path.resolve(basePath, p) : path.resolve(p);
 
     // 统一使用正斜杠（Node.js 在 Windows 上也接受正斜杠）
     p = p.replace(/\\/g, '/');
@@ -329,6 +330,95 @@ function renderToolCard(opts: {
     </div>`;
 }
 
+/**
+ * 行内工具渲染：图标 + 标题 + 状态点 + 关键信息，紧凑单行风格
+ */
+function renderInlineTool(opts: {
+    icon: string;
+    title: string;
+    status: string;
+    detail?: string;
+    detailTitle?: string;
+    fileList?: string[];
+    body?: string;
+}): string {
+    const statusIcon =
+        opts.status === 'running'
+            ? '<span class="inline-block w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse"></span>'
+            : opts.status === 'error'
+              ? '<span class="inline-block w-1.5 h-1.5 rounded-full bg-rose-500"></span>'
+              : '';
+
+    const detailHtml = opts.detail
+        ? `<span class="truncate text-xs text-slate-600" ${opts.detailTitle ? `title="${escapeHtml(opts.detailTitle)}"` : ''}>${opts.detail}</span>`
+        : '';
+
+    const fileListHtml =
+        opts.fileList && opts.fileList.length > 0
+            ? `<div class="ml-5 mt-0.5 text-xs text-slate-500 space-y-0">${opts.fileList
+                  .slice(0, 12)
+                  .map((f) => `<div class="truncate" title="${escapeHtml(f)}">${escapeHtml(f)}</div>`)
+                  .join(
+                      ''
+                  )}${opts.fileList.length > 12 ? `<div class="text-slate-400">… 共 ${opts.fileList.length} 个文件</div>` : ''}</div>`
+            : '';
+
+    const bodyHtml = opts.body ? `<div class="ml-5 mt-1">${opts.body}</div>` : '';
+
+    return `<div class="my-2">
+        <div class="flex items-center gap-1.5 min-w-0">
+            <i class="${opts.icon} shrink-0 text-slate-400 text-xs"></i>
+            <span class="shrink-0 text-slate-500 text-xs">${escapeHtml(opts.title)}</span>
+            ${statusIcon}
+            ${detailHtml}
+        </div>
+        ${fileListHtml}
+        ${bodyHtml}
+    </div>`;
+}
+
+/**
+ * 将 oldString / newString 渲染为带颜色区分的 HTML diff
+ */
+function renderHtmlDiff(oldStr: string, newStr: string, maxLines: number = 8): string {
+    const oldLines = oldStr.split('\n');
+    const newLines = newStr.split('\n');
+    const lines: string[] = [];
+
+    const diffResult = diff.diffLines(oldStr, newStr);
+    let lineCount = 0;
+    for (const part of diffResult) {
+        if (lineCount >= maxLines) break;
+        const partLines = part.value.replace(/\n$/, '').split('\n');
+        for (const line of partLines) {
+            if (lineCount >= maxLines) break;
+            const escaped = escapeHtml(line);
+            if (part.added) {
+                lines.push(
+                    `<div class="text-emerald-700 bg-emerald-50/80 pl-1 border-l-2 border-emerald-400"><span class="inline-block w-3 text-center">+</span>${escaped}</div>`
+                );
+            } else if (part.removed) {
+                lines.push(
+                    `<div class="text-rose-700 bg-rose-50/80 pl-1 border-l-2 border-rose-400"><span class="inline-block w-3 text-center">-</span>${escaped}</div>`
+                );
+            } else {
+                lines.push(
+                    `<div class="text-slate-500 pl-1 border-l-2 border-transparent"><span class="inline-block w-3 text-center">&nbsp;</span>${escaped}</div>`
+                );
+            }
+            lineCount++;
+        }
+    }
+
+    const totalOld = oldLines.length;
+    const totalNew = newLines.length;
+    const truncated = lineCount >= maxLines && totalOld + totalNew > maxLines;
+    const summary = `<span class="text-rose-500">-${totalOld}</span> <span class="text-emerald-600">+${totalNew}</span>`;
+    const truncNote = truncated ? `<div class="text-slate-400 mt-0.5">…</div>` : '';
+
+    return `<div class="text-xs font-mono space-y-0">${lines.join('')}${truncNote}</div><div class="text-xs text-slate-400 mt-0.5">${summary}</div>`;
+}
+
 function truncateContent(content: string): { text: string; truncated: boolean } {
     const lines = content.split('\n');
     if (content.length <= RENDER_CONTENT_MAX_CHARS && lines.length <= RENDER_CONTENT_MAX_LINES) {
@@ -575,60 +665,42 @@ export class ReadFilesTool extends BaseTool<typeof readFilesSchema> {
         this.setExecutor(this.executeCommand);
     }
 
-    getDeclaredPermissions(args: z.output<typeof readFilesSchema>): PermissionRequest[] {
+    getDeclaredPermissions(args: z.output<typeof readFilesSchema>, taskState?: TaskState): PermissionRequest[] {
         if (!args.files || !Array.isArray(args.files)) return [];
+        const basePath = getWorkingDirectory(taskState);
         return args.files
             .map((f: any) => ({
                 resourceType: 'file' as const,
                 action: 'read' as const,
-                resourcePath: sanitizePath(typeof f === 'string' ? f : f.path || '')
+                resourcePath: sanitizePath(typeof f === 'string' ? f : f.path || '', basePath)
             }))
             .filter((p) => p.resourcePath !== '');
     }
 
     async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
         const files = toolcall.args_object?.['files'] as Array<{ path: string; offsetKB?: number }> | undefined;
-        const fileItems =
+        const filePaths =
             files && Array.isArray(files)
-                ? files
-                      .slice(0, 12)
-                      .map((f) => {
-                          const pRaw = typeof f === 'object' && f && 'path' in f ? f.path : f;
-                          const p = typeof pRaw === 'string' ? pRaw : String(pRaw ?? '');
-                          const off =
-                              typeof f === 'object' && f && 'offsetKB' in f ? (f as { offsetKB?: number }).offsetKB : 0;
-                          const label =
-                              (off ?? 0) > 0
-                                  ? `${escapeHtml(p)} <span class="text-amber-600">(从 ${off} KB 开始)</span>`
-                                  : escapeHtml(p);
-                          return `<li class="mt-0.5 flex items-center gap-1">${openFileButton(p)} <span>${label}</span></li>`;
-                      })
-                      .join('')
-                : '';
-        const listHtml =
-            fileItems.length > 0
-                ? `<ul class="list-none text-slate-600 text-sm mt-1 space-y-0.5">${fileItems}</ul>`
-                : '<p class="text-slate-500 text-sm mt-1">未指定文件</p>';
+                ? files.slice(0, 12).map((f) => {
+                      const pRaw = typeof f === 'object' && f && 'path' in f ? f.path : f;
+                      return typeof pRaw === 'string' ? pRaw : String(pRaw ?? '');
+                  })
+                : [];
 
-        let resultHtml = '';
-        if (toolcall.status === 'success' && toolcall.result) {
-            const { text, truncated } = truncateContent(toolcall.result);
-            const truncNote = truncated
-                ? '<p class="mt-1 text-xs text-amber-600">… 内容已截断，完整内容请点击文件打开查看</p>'
-                : '';
-            resultHtml = `<div class="mt-3 rounded-lg border border-slate-200 bg-slate-50/80 p-3 text-sm overflow-x-auto"><pre class="whitespace-pre-wrap break-words font-mono text-slate-800">${escapeHtml(text)}</pre>${truncNote}</div>`;
-        } else if (toolcall.status === 'running') {
-            resultHtml = '<p class="mt-2 text-slate-400 text-sm animate-pulse">读取中…</p>';
-        } else if (toolcall.status === 'error' && toolcall.result) {
-            resultHtml = `<p class="mt-2 text-rose-600 text-sm">${escapeHtml(toolcall.result)}</p>`;
-        }
+        const detail =
+            filePaths.length === 1
+                ? escapeHtml(filePaths[0])
+                : filePaths.length > 0
+                  ? `${filePaths.length} 个文件`
+                  : '未指定文件';
 
-        return renderToolCard({
-            icon: '📖',
-            title: '读取文件',
+        return renderInlineTool({
+            icon: 'fas fa-file-lines',
+            title: t('filemgr.readFiles.name'),
             status: toolcall.status,
-            headerExtra: `<span class="text-slate-400 text-sm">${files?.length ?? 0} 个文件</span>`,
-            body: `${listHtml}${resultHtml}`
+            detail,
+            detailTitle: filePaths.length > 1 ? filePaths.map((p) => p).join('\n') : undefined,
+            fileList: filePaths.length > 1 ? filePaths : undefined
         });
     }
 
@@ -676,17 +748,18 @@ export class ReadFilesTool extends BaseTool<typeof readFilesSchema> {
 
         return new Card({
             icon: '📖',
-            title: '读取文件',
+            title: t('filemgr.readFiles.name'),
             status: statusDisplay(toolcall.status),
             body
         }).render(width);
     }
 
-    async executeCommand(args: z.output<typeof readFilesSchema>): Promise<string> {
+    async executeCommand(args: z.output<typeof readFilesSchema>, taskState?: TaskState): Promise<string> {
         if (!args.files || !Array.isArray(args.files) || args.files.length === 0) {
             return '请提供要读取的文件列表（files 数组，每项含 path 与可选的 offsetKB）';
         }
 
+        const basePath = getWorkingDirectory(taskState);
         const results: ReadFileResult[] = [];
         for (let i = 0; i < args.files.length; i += READ_FILES_MAX_CONCURRENCY) {
             const batch = args.files.slice(i, i + READ_FILES_MAX_CONCURRENCY);
@@ -694,7 +767,7 @@ export class ReadFilesTool extends BaseTool<typeof readFilesSchema> {
                 batch.map((f: any) => {
                     const rawPath =
                         typeof f === 'string' ? f : typeof f.path === 'string' ? f.path : String(f.path ?? '');
-                    const p = sanitizePath(rawPath);
+                    const p = sanitizePath(rawPath, basePath);
                     const offsetKB = Number(f.offsetKB ?? 0);
                     return readSingleFile(p, offsetKB);
                 })
@@ -811,8 +884,8 @@ export class WriteFileTool extends BaseTool<typeof writeFileSchema> {
         this.setExecutor(this.executeCommand);
     }
 
-    getDeclaredPermissions(args: z.output<typeof writeFileSchema>): PermissionRequest[] {
-        const p = sanitizePath(args.path);
+    getDeclaredPermissions(args: z.output<typeof writeFileSchema>, taskState?: TaskState): PermissionRequest[] {
+        const p = sanitizePath(args.path, getWorkingDirectory(taskState));
         if (!p) return [];
         return [{ resourceType: 'file', action: 'write', resourcePath: p }];
     }
@@ -823,30 +896,23 @@ export class WriteFileTool extends BaseTool<typeof writeFileSchema> {
         const content =
             typeof rawContent === 'string' ? rawContent : rawContent != null ? String(rawContent) : undefined;
         const mode = toolcall.args_object?.['mode'] as string | undefined;
-        const title = '写入文件' + (mode === 'append' ? ' (追加)' : '');
+        const title = t('filemgr.writeFile.name') + (mode === 'append' ? t('filemgr.writeFile.append') : '');
 
-        let bodyHtml = '';
-        if (filePath) {
-            bodyHtml += `<div class="flex items-center gap-1 text-sm text-slate-600">${openFileButton(filePath)} <span class="font-mono">${escapeHtml(filePath)}</span></div>`;
+        let detail = filePath ? escapeHtml(filePath) : '';
+        if (toolcall.status === 'running' && content && content.length > 0) {
+            const info = getWriteFileInfo(toolcall, content);
+            detail += ` · 正在写入 ${info.lineCount} 行`;
+        } else if (toolcall.status === 'success' && content && content.length > 0) {
+            const info = getWriteFileInfo(toolcall, content);
+            detail += ` · ${info.lineCount} 行, ${info.contentLen.toLocaleString()} 字符`;
         }
 
-        if (toolcall.status === 'running') {
-            if (content && content.length > 0) {
-                const info = getWriteFileInfo(toolcall, content);
-                bodyHtml += `<p class="mt-1 text-sm text-slate-400 animate-pulse">✍ 正在写入… ${info.lineCount} 行, ${info.contentLen.toLocaleString()} 字符</p>`;
-            } else {
-                bodyHtml += '<p class="mt-1 text-sm text-slate-400 animate-pulse">⏳ 等待内容…</p>';
-            }
-        } else if (toolcall.status === 'success') {
-            if (content && content.length > 0) {
-                const info = getWriteFileInfo(toolcall, content);
-                bodyHtml += `<p class="mt-1 text-sm text-slate-500">✅ ${info.lineCount} 行, ${info.contentLen.toLocaleString()} 字符</p>`;
-            }
-        } else if (toolcall.status === 'error' && toolcall.result) {
-            bodyHtml += `<p class="mt-1 text-sm text-rose-600">${escapeHtml(toolcall.result)}</p>`;
-        }
-
-        return renderToolCard({ icon: '✏️', title, status: toolcall.status, body: bodyHtml });
+        return renderInlineTool({
+            icon: 'fas fa-pen-to-square',
+            title,
+            status: toolcall.status,
+            detail
+        });
     }
 
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
@@ -884,7 +950,7 @@ export class WriteFileTool extends BaseTool<typeof writeFileSchema> {
         }
 
         const mode = toolcall.args_object?.['mode'];
-        const title = '写入文件' + (mode === 'append' ? ' (追加)' : '');
+        const title = t('filemgr.writeFile.name') + (mode === 'append' ? t('filemgr.writeFile.append') : '');
         return new Card({
             icon: '✏️',
             title: title,
@@ -893,8 +959,8 @@ export class WriteFileTool extends BaseTool<typeof writeFileSchema> {
         }).render(width);
     }
 
-    async executeCommand(args: z.output<typeof writeFileSchema>): Promise<string> {
-        const filePath = sanitizePath(args.path);
+    async executeCommand(args: z.output<typeof writeFileSchema>, taskState?: TaskState): Promise<string> {
+        const filePath = sanitizePath(args.path, getWorkingDirectory(taskState));
         try {
             const dir = path.dirname(filePath);
             if (!fs.existsSync(dir)) {
@@ -953,8 +1019,8 @@ export class EditFileTool extends BaseTool<typeof editFileSchema> {
         this.setExecutor(this.executeCommand);
     }
 
-    getDeclaredPermissions(args: z.output<typeof editFileSchema>): PermissionRequest[] {
-        const p = sanitizePath(args.filePath);
+    getDeclaredPermissions(args: z.output<typeof editFileSchema>, taskState?: TaskState): PermissionRequest[] {
+        const p = sanitizePath(args.filePath, getWorkingDirectory(taskState));
         if (!p) return [];
         if (args.oldString === '') {
             return [{ resourceType: 'file', action: 'write', resourcePath: p }];
@@ -970,31 +1036,30 @@ export class EditFileTool extends BaseTool<typeof editFileSchema> {
         const oldString = toolcall.args_object?.['oldString'] as string | undefined;
         const newString = toolcall.args_object?.['newString'] as string | undefined;
         const isNewFile = oldString === '' || oldString === undefined;
-        const title = isNewFile ? '创建文件' : '编辑文件';
-        const icon = isNewFile ? '📄' : '✂️';
+        const title = isNewFile ? t('filemgr.createFile.name') : t('filemgr.editFile.name');
 
-        let bodyHtml = '';
-        if (filePath) {
-            bodyHtml += `<div class="flex items-center gap-1 text-sm text-slate-600">${openFileButton(filePath)} <span class="font-mono">${escapeHtml(filePath)}</span></div>`;
-        }
-
-        if (toolcall.status === 'running') {
-            bodyHtml += '<p class="mt-1 text-sm text-slate-400 animate-pulse">⏳ 编辑中…</p>';
-        } else if (toolcall.status === 'success') {
-            if (isNewFile) {
-                const charCount = newString?.length ?? 0;
-                bodyHtml += `<p class="mt-1 text-sm text-slate-500">✅ 新文件已创建 (${charCount.toLocaleString()} 字符)</p>`;
-            } else {
-                const expectedReplacements = toolcall.args_object?.['expectedReplacements'] || 1;
-                const removedLines = oldString ? oldString.split('\n').length : 0;
-                const addedLines = newString !== undefined ? newString.split('\n').length : 0;
-                bodyHtml += `<p class="mt-1 text-sm text-slate-500">✅ 已完成 ${expectedReplacements} 处替换 (<span class="text-rose-500">-${removedLines}</span> / <span class="text-emerald-600">+${addedLines}</span> 行)</p>`;
+        let detail = filePath ? escapeHtml(filePath) : '';
+        let body = '';
+        if (isNewFile) {
+            if (toolcall.status === 'success' && newString) {
+                const charCount = newString.length;
+                detail += ` · ${charCount.toLocaleString()} 字符`;
             }
-        } else if (toolcall.status === 'error' && toolcall.result) {
-            bodyHtml += `<p class="mt-1 text-sm text-rose-600">${escapeHtml(toolcall.result)}</p>`;
+        } else if (oldString && newString !== undefined) {
+            const expectedReplacements = toolcall.args_object?.['expectedReplacements'] || 1;
+            detail += ` · ${expectedReplacements} 处替换`;
+            if (toolcall.status === 'success' || toolcall.status === 'running') {
+                body = renderHtmlDiff(oldString, newString);
+            }
         }
 
-        return renderToolCard({ icon, title, status: toolcall.status, body: bodyHtml });
+        return renderInlineTool({
+            icon: isNewFile ? 'fas fa-file-circle-plus' : 'fas fa-scissors',
+            title,
+            status: toolcall.status,
+            detail,
+            body: body || undefined
+        });
     }
 
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
@@ -1027,7 +1092,7 @@ export class EditFileTool extends BaseTool<typeof editFileSchema> {
         }
 
         const isNewFile = oldString === '' || oldString === undefined;
-        const title = isNewFile ? '创建文件' : '编辑文件';
+        const title = isNewFile ? t('filemgr.createFile.name') : t('filemgr.editFile.name');
         return new Card({
             icon: isNewFile ? '📄' : '✂️',
             title: title,
@@ -1036,8 +1101,8 @@ export class EditFileTool extends BaseTool<typeof editFileSchema> {
         }).render(width);
     }
 
-    async executeCommand(args: z.output<typeof editFileSchema>): Promise<string> {
-        const filePath = sanitizePath(args.filePath);
+    async executeCommand(args: z.output<typeof editFileSchema>, taskState?: TaskState): Promise<string> {
+        const filePath = sanitizePath(args.filePath, getWorkingDirectory(taskState));
         const { oldString, newString, expectedReplacements = 1 } = args;
 
         if (oldString === '') {
@@ -1163,8 +1228,8 @@ export class SearchReplaceTool extends BaseTool<typeof searchReplaceSchema> {
         this.setExecutor(this.executeCommand);
     }
 
-    getDeclaredPermissions(args: z.output<typeof searchReplaceSchema>): PermissionRequest[] {
-        const p = sanitizePath(args.filePath);
+    getDeclaredPermissions(args: z.output<typeof searchReplaceSchema>, taskState?: TaskState): PermissionRequest[] {
+        const p = sanitizePath(args.filePath, getWorkingDirectory(taskState));
         if (!p) return [];
         return [
             { resourceType: 'file', action: 'read', resourcePath: p },
@@ -1175,29 +1240,20 @@ export class SearchReplaceTool extends BaseTool<typeof searchReplaceSchema> {
     async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
         const filePath = toolcall.args_object?.['filePath'] as string | undefined;
         const oldString = toolcall.args_object?.['oldString'] as string | undefined;
+        const newString = toolcall.args_object?.['newString'] as string | undefined;
 
-        let bodyHtml = '';
-        if (filePath) {
-            bodyHtml += `<div class="flex items-center gap-1 text-sm text-slate-600">${openFileButton(filePath)} <span class="font-mono">${escapeHtml(filePath)}</span></div>`;
-        }
-        if (oldString) {
-            const preview = oldString.length > 60 ? oldString.slice(0, 60) + '…' : oldString;
-            bodyHtml += `<p class="mt-1 text-xs text-slate-400">搜索: <code class="bg-slate-100 px-1 py-0.5 rounded">${escapeHtml(preview)}</code></p>`;
+        const detail = filePath ? escapeHtml(filePath) : '';
+        let body = '';
+        if (oldString && newString !== undefined && (toolcall.status === 'success' || toolcall.status === 'running')) {
+            body = renderHtmlDiff(oldString, newString);
         }
 
-        if (toolcall.status === 'running') {
-            bodyHtml += '<p class="mt-1 text-sm text-slate-400 animate-pulse">⏳ 执行中…</p>';
-        } else if (toolcall.status === 'success') {
-            bodyHtml += '<p class="mt-1 text-sm text-slate-500">✅ 替换完成</p>';
-        } else if (toolcall.status === 'error' && toolcall.result) {
-            bodyHtml += `<p class="mt-1 text-sm text-rose-600">${escapeHtml(toolcall.result)}</p>`;
-        }
-
-        return renderToolCard({
-            icon: '🔍',
-            title: '搜索替换',
+        return renderInlineTool({
+            icon: 'fas fa-right-left',
+            title: t('filemgr.searchReplace.name'),
             status: toolcall.status,
-            body: bodyHtml
+            detail,
+            body: body || undefined
         });
     }
 
@@ -1232,14 +1288,14 @@ export class SearchReplaceTool extends BaseTool<typeof searchReplaceSchema> {
 
         return new Card({
             icon: '🔍',
-            title: '搜索替换',
+            title: t('filemgr.searchReplace.name'),
             status: statusDisplay(toolcall.status),
             body
         }).render(width);
     }
 
-    async executeCommand(args: z.output<typeof searchReplaceSchema>): Promise<string> {
-        const filePath = sanitizePath(args.filePath);
+    async executeCommand(args: z.output<typeof searchReplaceSchema>, taskState?: TaskState): Promise<string> {
+        const filePath = sanitizePath(args.filePath, getWorkingDirectory(taskState));
         const { oldString, newString } = args;
 
         let content: string;
@@ -1460,12 +1516,13 @@ export class ApplyPatchTool extends BaseTool<typeof applyPatchSchema> {
         this.setExecutor(this.executeCommand);
     }
 
-    getDeclaredPermissions(args: z.output<typeof applyPatchSchema>): PermissionRequest[] {
+    getDeclaredPermissions(args: z.output<typeof applyPatchSchema>, taskState?: TaskState): PermissionRequest[] {
+        const basePath = getWorkingDirectory(taskState);
         const ops = parsePatch(args.patch);
         const permissions: PermissionRequest[] = [];
         const seen = new Set<string>();
         for (const op of ops) {
-            const p = sanitizePath(op.path);
+            const p = sanitizePath(op.path, basePath);
             if (!p) continue;
             if (op.type === 'update' || op.type === 'delete') {
                 const readKey = `read:${p}`;
@@ -1485,46 +1542,67 @@ export class ApplyPatchTool extends BaseTool<typeof applyPatchSchema> {
 
     async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
         const patch = toolcall.args_object?.['patch'] as string | undefined;
-        let bodyHtml = '';
 
+        let detail = '';
+        let fileList: string[] | undefined;
+        let body = '';
         if (patch) {
             const fileCount = (patch.match(/^--- /gm) || []).length;
             const addedLines = (patch.match(/^\+[^+]/gm) || []).length;
             const removedLines = (patch.match(/^-[^-]/gm) || []).length;
+            detail = `${fileCount} 个文件 · -${removedLines}/+${addedLines} 行`;
 
             const fileMatches = patch.match(/^\+\+\+ .+$/gm) || [];
-            const fileList = fileMatches
-                .slice(0, 10)
-                .map((l) => {
-                    const fp = l
-                        .slice(4)
-                        .trim()
-                        .replace(/^[ab]\//, '');
-                    return `<li class="mt-0.5 flex items-center gap-1">${openFileButton(fp)} <span class="font-mono text-sm">${escapeHtml(fp)}</span></li>`;
-                })
-                .join('');
-            if (fileList) {
-                bodyHtml += `<ul class="list-none text-slate-600 mt-1 space-y-0.5">${fileList}</ul>`;
+            fileList = fileMatches.slice(0, 12).map((l) =>
+                l
+                    .slice(4)
+                    .trim()
+                    .replace(/^[ab]\//, '')
+            );
+
+            // 渲染 patch diff
+            if (toolcall.status === 'success' || toolcall.status === 'running') {
+                const patchLines = patch.split('\n');
+                const diffLines: string[] = [];
+                let lineCount = 0;
+                const maxDiffLines = 10;
+                for (const line of patchLines) {
+                    if (lineCount >= maxDiffLines) break;
+                    if (line.startsWith('+++') || line.startsWith('---') || line.startsWith('@@')) continue;
+                    const escaped = escapeHtml(line);
+                    if (line.startsWith('+')) {
+                        diffLines.push(
+                            `<div class="text-emerald-700 bg-emerald-50/80 pl-1 border-l-2 border-emerald-400"><span class="inline-block w-3 text-center">+</span>${escaped.slice(1)}</div>`
+                        );
+                    } else if (line.startsWith('-')) {
+                        diffLines.push(
+                            `<div class="text-rose-700 bg-rose-50/80 pl-1 border-l-2 border-rose-400"><span class="inline-block w-3 text-center">-</span>${escaped.slice(1)}</div>`
+                        );
+                    } else {
+                        diffLines.push(
+                            `<div class="text-slate-500 pl-1 border-l-2 border-transparent"><span class="inline-block w-3 text-center">&nbsp;</span>${escaped}</div>`
+                        );
+                    }
+                    lineCount++;
+                }
+                const truncated = patchLines.length > maxDiffLines + 10;
+                if (diffLines.length > 0) {
+                    body = `<div class="text-xs font-mono space-y-0">${diffLines.join('')}${truncated ? '<div class="text-slate-400 mt-0.5">…</div>' : ''}</div>`;
+                }
             }
-            bodyHtml += `<p class="mt-1 text-xs text-slate-400">${fileCount} 个文件, <span class="text-rose-500">-${removedLines}</span> / <span class="text-emerald-600">+${addedLines}</span> 行</p>`;
         }
 
-        if (toolcall.status === 'running') {
-            bodyHtml += '<p class="mt-1 text-sm text-slate-400 animate-pulse">⏳ 应用补丁中…</p>';
-        } else if (toolcall.status === 'success') {
-            bodyHtml += `<p class="mt-1 text-sm text-slate-500">✅ 补丁已应用</p>`;
-            if (toolcall.result) {
-                bodyHtml += `<pre class="mt-1 text-xs text-slate-500 whitespace-pre-wrap">${escapeHtml(toolcall.result)}</pre>`;
-            }
-        } else if (toolcall.status === 'error' && toolcall.result) {
-            bodyHtml += `<p class="mt-1 text-sm text-rose-600">${escapeHtml(toolcall.result)}</p>`;
+        if (toolcall.status === 'success') {
+            detail += ' · 已应用';
         }
 
-        return renderToolCard({
-            icon: '🩹',
-            title: '应用补丁',
+        return renderInlineTool({
+            icon: 'fas fa-band-aid',
+            title: t('filemgr.applyPatch.name'),
             status: toolcall.status,
-            body: bodyHtml
+            detail: detail || undefined,
+            fileList,
+            body: body || undefined
         });
     }
 
@@ -1552,14 +1630,15 @@ export class ApplyPatchTool extends BaseTool<typeof applyPatchSchema> {
 
         return new Card({
             icon: '🩹',
-            title: '应用补丁',
+            title: t('filemgr.applyPatch.name'),
             status: statusDisplay(toolcall.status),
             body
         }).render(width);
     }
 
-    async executeCommand(args: z.output<typeof applyPatchSchema>): Promise<string> {
+    async executeCommand(args: z.output<typeof applyPatchSchema>, taskState?: TaskState): Promise<string> {
         const { patch } = args;
+        const basePath = getWorkingDirectory(taskState);
 
         const operations = parsePatch(patch);
         if (operations.length === 0) {
@@ -1569,7 +1648,7 @@ export class ApplyPatchTool extends BaseTool<typeof applyPatchSchema> {
         const results: string[] = [];
 
         for (const op of operations) {
-            op.path = sanitizePath(op.path);
+            op.path = sanitizePath(op.path, basePath);
             try {
                 if (op.type === 'create') {
                     const dir = path.dirname(op.path);
@@ -1657,7 +1736,8 @@ export class GlobFilesTool extends BaseTool<typeof globSchema> {
     }
 
     getDeclaredPermissions(args: z.output<typeof globSchema>, taskState?: TaskState): PermissionRequest[] {
-        const searchPath = args.path ? sanitizePath(args.path) : sanitizePath(getWorkingDirectory(taskState));
+        const basePath = getWorkingDirectory(taskState);
+        const searchPath = args.path ? sanitizePath(args.path, basePath) : sanitizePath(basePath);
         if (!searchPath) return [];
         return [
             {
@@ -1708,7 +1788,7 @@ export class GlobFilesTool extends BaseTool<typeof globSchema> {
 
         return new Card({
             icon: '🔍',
-            title: '模式匹配 | Glob',
+            title: t('filemgr.glob.name'),
             status: statusDisplay(toolcall.status),
             body
         }).render(width);
@@ -1718,31 +1798,22 @@ export class GlobFilesTool extends BaseTool<typeof globSchema> {
         const pattern = toolcall.args_object?.['pattern'];
         const searchPath = toolcall.args_object?.['path'];
 
-        let bodyHtml = '';
-        if (pattern) {
-            bodyHtml += `<p class="text-sm text-slate-600">模式: <code class="bg-slate-100 px-2 py-0.5 rounded font-mono">${escapeHtml(String(pattern))}</code></p>`;
-        }
+        let detail = pattern ? escapeHtml(String(pattern)) : '';
         if (searchPath) {
-            bodyHtml += `<p class="mt-1 text-xs text-slate-400">目录: ${escapeHtml(String(searchPath))}</p>`;
+            detail += ` · ${escapeHtml(String(searchPath))}`;
         }
-
-        if (toolcall.status === 'running') {
-            bodyHtml += '<p class="mt-2 text-sm text-slate-400 animate-pulse">🔍 搜索中…</p>';
-        } else if (toolcall.status === 'success' && toolcall.result) {
-            const { text, truncated } = truncateContent(toolcall.result);
-            bodyHtml += `<div class="mt-2 rounded-lg border border-slate-200 bg-slate-50/80 p-3 text-sm overflow-x-auto max-h-64 overflow-y-auto"><pre class="whitespace-pre-wrap break-words font-mono text-slate-800 text-xs">${escapeHtml(text)}</pre></div>`;
-            if (truncated) {
-                bodyHtml += '<p class="mt-1 text-xs text-amber-600">… 结果已截断</p>';
+        if (toolcall.status === 'success' && toolcall.result) {
+            const foundMatch = toolcall.result.match(/找到 (\d+) 个文件/);
+            if (foundMatch) {
+                detail += ` · ${foundMatch[1]} 个文件`;
             }
-        } else if (toolcall.status === 'error' && toolcall.result) {
-            bodyHtml += `<p class="mt-2 text-sm text-rose-600">${escapeHtml(toolcall.result)}</p>`;
         }
 
-        return renderToolCard({
-            icon: '🔍',
-            title: '模式匹配 | Glob',
+        return renderInlineTool({
+            icon: 'fas fa-magnifying-glass',
+            title: t('filemgr.glob.name'),
             status: toolcall.status,
-            body: bodyHtml
+            detail
         });
     }
 
@@ -1755,7 +1826,7 @@ export class GlobFilesTool extends BaseTool<typeof globSchema> {
         }
 
         if (searchPath) {
-            searchPath = sanitizePath(searchPath);
+            searchPath = sanitizePath(searchPath, workingDir);
         }
 
         // 自动为非递归模式添加 **/ 前缀
@@ -1861,7 +1932,8 @@ export class GrepFilesTool extends BaseTool<typeof grepSchema> {
     }
 
     getDeclaredPermissions(args: z.output<typeof grepSchema>, taskState?: TaskState): PermissionRequest[] {
-        const searchPath = args.path ? sanitizePath(args.path) : sanitizePath(getWorkingDirectory(taskState));
+        const basePath = getWorkingDirectory(taskState);
+        const searchPath = args.path ? sanitizePath(args.path, basePath) : sanitizePath(basePath);
         if (!searchPath) return [];
         return [
             {
@@ -1926,7 +1998,7 @@ export class GrepFilesTool extends BaseTool<typeof grepSchema> {
 
         return new Card({
             icon: '🔎',
-            title: '内容搜索 | Grep',
+            title: t('filemgr.grep.name'),
             status: statusDisplay(toolcall.status),
             body
         }).render(width);
@@ -1935,36 +2007,23 @@ export class GrepFilesTool extends BaseTool<typeof grepSchema> {
     async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
         const pattern = toolcall.args_object?.['pattern'];
         const searchPath = toolcall.args_object?.['path'];
-        const filePattern = toolcall.args_object?.['filePattern'];
 
-        let bodyHtml = '';
-        if (pattern) {
-            bodyHtml += `<p class="text-sm text-slate-600">模式: <code class="bg-slate-100 px-2 py-0.5 rounded font-mono">${escapeHtml(String(pattern))}</code></p>`;
-        }
+        let detail = pattern ? escapeHtml(String(pattern)) : '';
         if (searchPath) {
-            bodyHtml += `<p class="mt-1 text-xs text-slate-400">路径: ${escapeHtml(String(searchPath))}</p>`;
+            detail += ` · ${escapeHtml(String(searchPath))}`;
         }
-        if (filePattern) {
-            bodyHtml += `<p class="mt-1 text-xs text-slate-400">文件: ${escapeHtml(String(filePattern))}</p>`;
-        }
-
-        if (toolcall.status === 'running') {
-            bodyHtml += '<p class="mt-2 text-sm text-slate-400 animate-pulse">🔎 搜索中…</p>';
-        } else if (toolcall.status === 'success' && toolcall.result) {
-            const { text, truncated } = truncateContent(toolcall.result);
-            bodyHtml += `<div class="mt-2 rounded-lg border border-slate-200 bg-slate-50/80 p-3 text-sm overflow-x-auto max-h-64 overflow-y-auto"><pre class="whitespace-pre-wrap break-words font-mono text-slate-800 text-xs">${escapeHtml(text)}</pre></div>`;
-            if (truncated) {
-                bodyHtml += '<p class="mt-1 text-xs text-amber-600">… 结果已截断</p>';
+        if (toolcall.status === 'success' && toolcall.result) {
+            const summaryMatch = toolcall.result.match(/在 (\d+) 个文件中找到 (\d+) 处匹配/);
+            if (summaryMatch) {
+                detail += ` · ${summaryMatch[1]} 文件 / ${summaryMatch[2]} 处匹配`;
             }
-        } else if (toolcall.status === 'error' && toolcall.result) {
-            bodyHtml += `<p class="mt-2 text-sm text-rose-600">${escapeHtml(toolcall.result)}</p>`;
         }
 
-        return renderToolCard({
-            icon: '🔎',
-            title: '内容搜索 | Grep',
+        return renderInlineTool({
+            icon: 'fas fa-code',
+            title: t('filemgr.grep.name'),
             status: toolcall.status,
-            body: bodyHtml
+            detail
         });
     }
 
@@ -1997,7 +2056,7 @@ export class GrepFilesTool extends BaseTool<typeof grepSchema> {
                 }
             }
 
-            const basePath = searchPath ? sanitizePath(searchPath) : workingDir;
+            const basePath = searchPath ? sanitizePath(searchPath, workingDir) : workingDir;
 
             // 单文件搜索快速路径
             let filesToSearch: string[];
@@ -2154,7 +2213,7 @@ export function createFileManagerToolset(): BaseToolset {
     toolset.addTool(new WriteFileTool());
     toolset.addTool(new EditFileTool());
     toolset.addTool(new SearchReplaceTool());
-    toolset.addTool(new ApplyPatchTool());
+    // toolset.addTool(new ApplyPatchTool());
     toolset.addTool(new GlobFilesTool());
     toolset.addTool(new GrepFilesTool());
     return toolset;

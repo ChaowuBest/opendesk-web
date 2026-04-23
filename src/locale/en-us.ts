@@ -492,6 +492,17 @@ export const enUs: Record<string, string> = {
     'config.language.option.zh-CN': '简体中文',
     'config.language.option.en-US': 'English',
 
+    // File Manager Tools
+    'filemgr.readFiles.name': 'Read Files',
+    'filemgr.writeFile.name': 'Write File',
+    'filemgr.writeFile.append': ' (Append)',
+    'filemgr.editFile.name': 'Edit File',
+    'filemgr.createFile.name': 'Create File',
+    'filemgr.searchReplace.name': 'Search & Replace',
+    'filemgr.applyPatch.name': 'Apply Patch',
+    'filemgr.glob.name': 'Glob',
+    'filemgr.grep.name': 'Grep',
+
     // Unknown
     'unknown.source': 'Unknown source'
 };

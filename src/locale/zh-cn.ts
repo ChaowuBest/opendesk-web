@@ -486,6 +486,17 @@ export const zhCn: Record<string, string> = {
     'config.language.option.zh-CN': '简体中文',
     'config.language.option.en-US': 'English',
 
+    // File Manager Tools
+    'filemgr.readFiles.name': '读取文件',
+    'filemgr.writeFile.name': '写入文件',
+    'filemgr.writeFile.append': ' (追加)',
+    'filemgr.editFile.name': '编辑文件',
+    'filemgr.createFile.name': '创建文件',
+    'filemgr.searchReplace.name': '搜索替换',
+    'filemgr.applyPatch.name': '应用补丁',
+    'filemgr.glob.name': '模式匹配',
+    'filemgr.grep.name': '内容搜索',
+
     // Unknown
     'unknown.source': '未知来源'
 };
