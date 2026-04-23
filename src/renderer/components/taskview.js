@@ -36,6 +36,8 @@ class TaskView extends HTMLElement {
         this._globalTodosUnsubscribe = null;
         /** @type {Function | null} 取消任务级待办订阅 */
         this._taskTodosUnsubscribe = null;
+        /** @type {Function | null} 取消 workspace-changed 监听 */
+        this._workspaceChangedHandler = null;
     }
 
     static isCompactBoundaryMessage(message) {
@@ -250,7 +252,6 @@ class TaskView extends HTMLElement {
 
         const isExpanded = rightSidebar.style.display !== 'none';
         if (isExpanded) {
-            // 保存当前宽度到全局状态
             TaskView.rightSidebarWidth = parseInt(rightSidebar.style.width) || 380;
             rightSidebar.style.display = 'none';
             if (resizer) resizer.style.display = 'none';
@@ -260,8 +261,17 @@ class TaskView extends HTMLElement {
             rightSidebar.style.width = TaskView.rightSidebarWidth + 'px';
             if (resizer) resizer.style.display = '';
             TaskView.rightSidebarExpanded = true;
+            this._autoSwitchTabIfEmpty(rightSidebar);
         }
         this._updateSidebarToggleIcon(!isExpanded);
+    }
+
+    _autoSwitchTabIfEmpty(sidebar) {
+        if (typeof sidebar.hasAnyTodos === 'function' && !sidebar.hasAnyTodos()) {
+            if (typeof sidebar.switchToTab === 'function') {
+                sidebar.switchToTab('workspace');
+            }
+        }
     }
 
     /**
@@ -388,11 +398,16 @@ class TaskView extends HTMLElement {
             rightSidebar.style.display = '';
             rightSidebar.style.width = TaskView.rightSidebarWidth + 'px';
             if (resizer) resizer.style.display = '';
+            this._autoSwitchTabIfEmpty(rightSidebar);
         } else {
             rightSidebar.style.display = 'none';
             if (resizer) resizer.style.display = 'none';
         }
         this._updateSidebarToggleIcon(TaskView.rightSidebarExpanded);
+
+        if (typeof rightSidebar.refreshWorkspace === 'function') {
+            rightSidebar.refreshWorkspace();
+        }
     }
 
     _updateSidebarToggleIcon(isExpanded) {
@@ -477,6 +492,14 @@ class TaskView extends HTMLElement {
         this._subscribeGlobalTodos();
         // 订阅任务级待办更新（仅处理当前任务的事件）
         this._subscribeTaskTodos();
+
+        this._workspaceChangedHandler = () => {
+            const sidebar = this._getRightSidebarEl();
+            if (sidebar && typeof sidebar.refreshWorkspace === 'function') {
+                sidebar.refreshWorkspace();
+            }
+        };
+        document.addEventListener('workspace-changed', this._workspaceChangedHandler);
 
         this.reload().then(async () => {
             this.subscription_id = await window.taskManagerAPI.subscribeTaskUpdate(this.task_id, (progress) => {
@@ -580,6 +603,10 @@ class TaskView extends HTMLElement {
                 console.warn('failed to unsubscribe task todos', err);
             }
             this._taskTodosUnsubscribe = null;
+        }
+        if (this._workspaceChangedHandler) {
+            document.removeEventListener('workspace-changed', this._workspaceChangedHandler);
+            this._workspaceChangedHandler = null;
         }
     }
 

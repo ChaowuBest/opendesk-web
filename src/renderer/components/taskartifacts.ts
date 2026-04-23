@@ -15,7 +15,8 @@
  * 顶部三个 tab：
  *   - 任务计划：上半 = 当前任务级待办 (TodoWrite 写入)，下半 = 全局待办 (todomgr)。
  *     两者均为空时展示占位；只有任一侧有数据时，只渲染该侧。
- *   - 工作空间 / 变更：占位，后续扩展。
+ *   - 工作空间：文件浏览器（树状 / 网格视图），点击文件可预览文本内容。
+ *   - 变更：占位，后续扩展。
  *
  * 每个待办项会展示执行耗时：
  *   - in_progress：显示 "已执行 xxx"，组件内 1s 刷新一次计时徽章；
@@ -23,10 +24,15 @@
  *   - pending：不展示耗时。
  */
 
+import { FileExplorer, getFileExplorerCSS } from './fileExplorer';
+
+// ============================================================================
+// Types
+// ============================================================================
+
 type TodoStatus = 'pending' | 'in_progress' | 'completed';
 type TodoPriority = 'low' | 'medium' | 'high';
 
-/** 与主进程 TaskTodo 一致的最小字段集；其它字段允许存在但不要求 */
 interface TaskTodoLike {
     id: string;
     title?: string;
@@ -48,6 +54,10 @@ interface TabSpec {
     icon: string;
 }
 
+// ============================================================================
+// Constants
+// ============================================================================
+
 const TABS: TabSpec[] = [
     { id: 'task-plan', label: '任务计划', icon: 'fa-list-check' },
     { id: 'workspace', label: '工作空间', icon: 'fa-folder-open' },
@@ -59,6 +69,10 @@ const PRIORITY_STYLE: Record<TodoPriority, { cls: string; label: string }> = {
     medium: { cls: 'bg-amber-50 text-amber-600 border-amber-100', label: '中' },
     high: { cls: 'bg-red-50 text-red-600 border-red-100', label: '高' }
 };
+
+// ============================================================================
+// Helpers
+// ============================================================================
 
 function escapeHtml(str: unknown): string {
     if (str === undefined || str === null) return '';
@@ -73,18 +87,15 @@ function escapeHtml(str: unknown): string {
 function statusIcon(status: TodoStatus): string {
     switch (status) {
         case 'completed':
-            return '✅';
+            return '\u2705';
         case 'in_progress':
-            return '🔄';
+            return '\uD83D\uDD04';
         case 'pending':
         default:
-            return '⭕';
+            return '\u2B55';
     }
 }
 
-/**
- * 将毫秒格式化成紧凑可读的耗时，例如 "3s"、"1m02s"、"1h02m"。
- */
 function formatDuration(ms: number): string {
     if (!Number.isFinite(ms) || ms < 0) return '';
     const totalSec = Math.floor(ms / 1000);
@@ -104,12 +115,6 @@ function formatDuration(ms: number): string {
     return remMin === 0 ? `${hour}h` : `${hour}h${String(remMin).padStart(2, '0')}m`;
 }
 
-/**
- * 计算单个待办的执行耗时（ms）。
- * - completed：started_at → completed_at；若没有 started_at，退化为 created_at → completed_at。
- * - in_progress：started_at → now；若没有 started_at，退化为 updated_at → now。
- * - 其它：返回 null。
- */
 function computeDurationMs(todo: TaskTodoLike, nowMs: number): number | null {
     if (todo.status === 'completed') {
         const endIso = todo.completed_at || todo.updated_at;
@@ -130,12 +135,49 @@ function computeDurationMs(todo: TaskTodoLike, nowMs: number): number | null {
     return null;
 }
 
+/**
+ * 将主文档中所有含 FontAwesome 相关选择器的 CSS 规则提取为纯文本。
+ * Shadow DOM 隔离了父文档的样式，所以需要把 .fa / .fas 等规则手动注入。
+ * @font-face 会穿透 shadow boundary，但选择器规则不会。
+ */
+function extractFontAwesomeRulesText(): string {
+    const chunks: string[] = [];
+    try {
+        for (const sheet of document.styleSheets) {
+            let rules: CSSRuleList;
+            try {
+                rules = sheet.cssRules;
+            } catch {
+                continue;
+            }
+            for (const rule of rules) {
+                const text = rule.cssText;
+                if (
+                    /\.fa[srb]?\b/.test(text) ||
+                    /font-family:\s*["']?Font\s*Awesome/i.test(text) ||
+                    /\.fa-/.test(text)
+                ) {
+                    chunks.push(text);
+                }
+            }
+        }
+    } catch {
+        // safe to ignore
+    }
+    return chunks.join('\n');
+}
+
+// ============================================================================
+// TaskArtifacts 组件
+// ============================================================================
+
 class TaskArtifacts extends HTMLElement {
     private _activeTab: TabSpec['id'] = 'task-plan';
     private _taskTodos: TaskTodoLike[] = [];
     private _globalTodos: GlobalTodoLike[] = [];
-    /** 进行中项计时刷新定时器 */
     private _tickTimer: number | null = null;
+
+    private _fileExplorer = new FileExplorer();
 
     constructor() {
         super();
@@ -151,14 +193,14 @@ class TaskArtifacts extends HTMLElement {
         this._stopTick();
     }
 
-    /** 更新任务级待办 */
+    // ----- Public API -----
+
     setTaskTodos(todos: TaskTodoLike[] | null | undefined): void {
         this._taskTodos = Array.isArray(todos) ? todos : [];
         this._renderTaskPlanPanel();
         this._scheduleTick();
     }
 
-    /** 更新全局待办 */
     setGlobalTodos(todos: GlobalTodoLike[] | null | undefined): void {
         this._globalTodos = Array.isArray(todos) ? todos : [];
         this._renderTaskPlanPanel();
@@ -173,6 +215,24 @@ class TaskArtifacts extends HTMLElement {
         return this._taskTodos.length > 0;
     }
 
+    /**
+     * 外部调用：当工作空间路径可能已变化时（如用户切换工作空间、切换任务），
+     * 重新拉取 workspace 路径并刷新文件浏览器。
+     */
+    refreshWorkspace(): void {
+        this._fileExplorer.refresh();
+    }
+
+    /**
+     * 外部调用：切换到指定的 tab。
+     * 例如当任务计划为空时自动切到工作空间。
+     */
+    switchToTab(tabId: TabSpec['id']): void {
+        this._switchTab(tabId);
+    }
+
+    // ----- Tab switching -----
+
     private _switchTab(tabId: TabSpec['id']): void {
         this._activeTab = tabId;
         const root = this.shadowRoot;
@@ -183,9 +243,21 @@ class TaskArtifacts extends HTMLElement {
         root.querySelectorAll<HTMLElement>('.tab-content').forEach((panel) => {
             panel.style.display = panel.dataset.tab === tabId ? '' : 'none';
         });
+        if (tabId === 'workspace') {
+            this._mountFileExplorer();
+        }
     }
 
-    /** 如果存在进行中项，则启动 1s 级别的计时刷新；否则停止 */
+    private _mountFileExplorer(): void {
+        const root = this.shadowRoot;
+        if (!root) return;
+        const panel = root.querySelector<HTMLElement>('.tab-content[data-tab="workspace"]');
+        if (!panel) return;
+        this._fileExplorer.mount(panel, root);
+    }
+
+    // ----- Timer (for in_progress durations) -----
+
     private _scheduleTick(): void {
         const hasInProgress =
             this._taskTodos.some((t) => t.status === 'in_progress') ||
@@ -206,9 +278,6 @@ class TaskArtifacts extends HTMLElement {
         }
     }
 
-    /**
-     * 只更新 in_progress 项的耗时徽章文本，避免每秒整块重绘闪烁。
-     */
     private _updateRunningDurations(): void {
         const root = this.shadowRoot;
         if (!root) return;
@@ -223,9 +292,11 @@ class TaskArtifacts extends HTMLElement {
             if (!startIso) return;
             const start = Date.parse(startIso);
             if (Number.isNaN(start)) return;
-            node.textContent = `已执行 ${formatDuration(now - start)}`;
+            node.textContent = `\u5DF2\u6267\u884C ${formatDuration(now - start)}`;
         });
     }
+
+    // ----- Task Plan rendering -----
 
     private _renderTodoItem(todo: TaskTodoLike | GlobalTodoLike, opts: { showPriority?: boolean } = {}): string {
         const isCompleted = todo.status === 'completed';
@@ -246,13 +317,13 @@ class TaskArtifacts extends HTMLElement {
                 const startIso = todo.started_at || todo.updated_at || todo.created_at || '';
                 durationHtml = `<span class="todo-duration todo-duration-running"
                     data-running="1" data-start="${escapeHtml(startIso)}"
-                    title="已执行 ${escapeHtml(formatDuration(durationMs))}">
-                    已执行 ${escapeHtml(formatDuration(durationMs))}
+                    title="\u5DF2\u6267\u884C ${escapeHtml(formatDuration(durationMs))}">
+                    \u5DF2\u6267\u884C ${escapeHtml(formatDuration(durationMs))}
                 </span>`;
             } else if (todo.status === 'completed') {
                 durationHtml = `<span class="todo-duration todo-duration-done"
-                    title="用时 ${escapeHtml(formatDuration(durationMs))}">
-                    用时 ${escapeHtml(formatDuration(durationMs))}
+                    title="\u7528\u65F6 ${escapeHtml(formatDuration(durationMs))}">
+                    \u7528\u65F6 ${escapeHtml(formatDuration(durationMs))}
                 </span>`;
             }
         }
@@ -286,9 +357,9 @@ class TaskArtifacts extends HTMLElement {
             panel.innerHTML = `
             <div class="placeholder-content">
                 <i class="fas fa-list-check placeholder-icon"></i>
-                <p>暂无任务计划</p>
-                <p class="placeholder-hint">当 Agent 调用 <code>TodoWrite</code> 创建任务计划后，
-                    或通过全局待办添加新任务时，将在此展示。</p>
+                <p>\u6682\u65E0\u4EFB\u52A1\u8BA1\u5212</p>
+                <p class="placeholder-hint">\u5F53 Agent \u8C03\u7528 <code>TodoWrite</code> \u521B\u5EFA\u4EFB\u52A1\u8BA1\u5212\u540E\uFF0C
+                    \u6216\u901A\u8FC7\u5168\u5C40\u5F85\u529E\u6DFB\u52A0\u65B0\u4EFB\u52A1\u65F6\uFF0C\u5C06\u5728\u6B64\u5C55\u793A\u3002</p>
             </div>`;
             return;
         }
@@ -302,7 +373,7 @@ class TaskArtifacts extends HTMLElement {
                 <header class="plan-section-header">
                     <span class="plan-section-title">
                         <i class="fas fa-diagram-project"></i>
-                        当前任务待办
+                        \u5F53\u524D\u4EFB\u52A1\u5F85\u529E
                     </span>
                     <span class="plan-section-count">${completed}/${this._taskTodos.length}</span>
                 </header>
@@ -319,7 +390,7 @@ class TaskArtifacts extends HTMLElement {
                 <header class="plan-section-header">
                     <span class="plan-section-title">
                         <i class="fas fa-globe"></i>
-                        全局待办
+                        \u5168\u5C40\u5F85\u529E
                     </span>
                     <span class="plan-section-count">${completed}/${this._globalTodos.length}</span>
                 </header>
@@ -333,6 +404,10 @@ class TaskArtifacts extends HTMLElement {
         panel.innerHTML = html;
     }
 
+    // ========================================================================
+    // Main render
+    // ========================================================================
+
     private render(): void {
         const tabsHTML = TABS.map((tab) => {
             const isActive = tab.id === this._activeTab;
@@ -345,19 +420,28 @@ class TaskArtifacts extends HTMLElement {
         const placeholderHTML = (tab: TabSpec) => `
             <div class="placeholder-content">
                 <i class="fas ${tab.icon} placeholder-icon"></i>
-                <p>${tab.label}内容占位符</p>
+                <p>${tab.label}\u5185\u5BB9\u5360\u4F4D\u7B26</p>
             </div>`;
 
         const contentHTML = TABS.map((tab) => {
             const isActive = tab.id === this._activeTab;
-            const inner = tab.id === 'task-plan' ? '' : placeholderHTML(tab);
+            let inner = '';
+            if (tab.id === 'task-plan' || tab.id === 'workspace') {
+                inner = '';
+            } else {
+                inner = placeholderHTML(tab);
+            }
             return `<div class="tab-content" data-tab="${tab.id}" style="display: ${isActive ? '' : 'none'}">
                 ${inner}
             </div>`;
         }).join('');
 
+        const faRules = extractFontAwesomeRulesText();
+
         this.shadowRoot!.innerHTML = `
         <style>
+            ${faRules}
+
             :host {
                 display: flex;
                 flex-direction: column;
@@ -445,7 +529,7 @@ class TaskArtifacts extends HTMLElement {
                 color: #6b7280;
             }
 
-            /* 任务计划面板 */
+            /* Task plan panel */
             .task-plan-sections {
                 display: flex;
                 flex-direction: column;
@@ -580,6 +664,9 @@ class TaskArtifacts extends HTMLElement {
                 border-radius: 999px;
                 flex-shrink: 0;
             }
+
+            /* File explorer styles (imported from fileExplorer.ts) */
+            ${getFileExplorerCSS()}
         </style>
 
         <div class="tab-bar">
@@ -599,6 +686,10 @@ class TaskArtifacts extends HTMLElement {
         });
 
         this._renderTaskPlanPanel();
+
+        if (this._activeTab === 'workspace') {
+            this._mountFileExplorer();
+        }
     }
 }
 

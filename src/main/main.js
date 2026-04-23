@@ -582,6 +582,99 @@ const registerFSAPIHandlers = () => {
             return { status: 'error', message: error.message };
         }
     });
+
+    // 列出目录内容（仅一层），用于工作空间文件浏览器的按需展开。
+    // 返回条目按：目录在前 + 名称不区分大小写排序。
+    ipcMain.handle('fs:listDirectory', async (event, dirPath) => {
+        try {
+            if (typeof dirPath !== 'string' || dirPath.length === 0) {
+                return { status: 'error', message: 'dirPath is required' };
+            }
+            const systemPath = dirPath.replace(/\//g, path.sep);
+            const dirents = await fs.promises.readdir(systemPath, { withFileTypes: true });
+            const entries = [];
+            for (const d of dirents) {
+                // 跳过一些典型噪声项，避免浏览器崩溃或渲染过慢；
+                // 这里只对无意义的系统快捷方式做过滤，用户自己的点开头目录仍然保留
+                const name = d.name;
+                const abs = path.join(systemPath, name);
+                let isDirectory = d.isDirectory();
+                const isSymbolicLink = d.isSymbolicLink();
+                let size = 0;
+                let modifiedAt = null;
+                try {
+                    const st = await fs.promises.stat(abs);
+                    // 通过 stat 解析 symlink 指向的真实类型，便于前端显示文件夹 / 文件图标
+                    if (isSymbolicLink) {
+                        isDirectory = st.isDirectory();
+                    }
+                    size = st.size;
+                    modifiedAt = st.mtimeMs;
+                } catch {
+                    // 忽略权限/损坏项，仍然列出但不提供尺寸
+                }
+                entries.push({
+                    name,
+                    path: abs.replace(/\\/g, '/'),
+                    isDirectory,
+                    isSymbolicLink,
+                    size,
+                    modifiedAt
+                });
+            }
+            entries.sort((a, b) => {
+                if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1;
+                return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+            });
+            return { status: 'ok', data: entries };
+        } catch (error) {
+            return { status: 'error', message: error.message };
+        }
+    });
+
+    // 读取文本文件内容（带大小限制），用于工作空间预览面板。
+    // 若文件超过 maxBytes 则直接返回 { tooLarge: true }，不读内容，由前端给出提示。
+    ipcMain.handle('fs:readTextFile', async (event, filePath, maxBytes) => {
+        try {
+            if (typeof filePath !== 'string' || filePath.length === 0) {
+                return { status: 'error', message: 'filePath is required' };
+            }
+            const limit = Number.isFinite(maxBytes) && maxBytes > 0 ? Math.floor(maxBytes) : 50 * 1024;
+            const systemPath = filePath.replace(/\//g, path.sep);
+            const st = await fs.promises.stat(systemPath);
+            if (!st.isFile()) {
+                return { status: 'error', message: 'not a file' };
+            }
+            if (st.size > limit) {
+                return {
+                    status: 'ok',
+                    data: { tooLarge: true, size: st.size, limit, content: '', binary: false }
+                };
+            }
+            const buf = await fs.promises.readFile(systemPath);
+            // 粗略判断是否为二进制：包含 NUL 字节即判定为二进制，避免把乱码渲染到预览器
+            let binary = false;
+            const probe = buf.subarray(0, Math.min(buf.length, 8192));
+            for (let i = 0; i < probe.length; i++) {
+                if (probe[i] === 0) {
+                    binary = true;
+                    break;
+                }
+            }
+            return {
+                status: 'ok',
+                data: {
+                    tooLarge: false,
+                    size: st.size,
+                    limit,
+                    content: binary ? '' : buf.toString('utf8'),
+                    binary
+                }
+            };
+        } catch (error) {
+            return { status: 'error', message: error.message };
+        }
+    });
 };
 
 const registerSettingAPIHandlers = () => {
@@ -674,6 +767,26 @@ const registerSettingAPIHandlers = () => {
             const currentData = Setting.getInstance().getData();
             Setting.getInstance().setData({ ...currentData, default_workspace: selectedPath });
             notifyWorkerSettingUpdate(Setting.getInstance().getData());
+
+            // 同步所有已有任务的 harnessContext 到新工作空间
+            const globalState = GlobalState.getInstance();
+            const agentDecl = getGlobalAgentDecl();
+            const modes = agentDecl.supportedModes();
+            for (const task of globalState.taskManagerState.tasks) {
+                const modeId = task.activeModeId || _currentElectronModeId || agentDecl.defaultModeId();
+                const mode = modes.find((m) => m.id === modeId) ?? modes[0];
+                const savedEnv = task.harnessContext.environ;
+                const savedPrompt = task.harnessContext.permissionPrompt;
+                try {
+                    const ctx = await HarnessContext.createForMode(selectedPath, mode);
+                    ctx.environ = savedEnv;
+                    ctx.permissionPrompt = savedPrompt;
+                    task.harnessContext = ctx;
+                } catch (err) {
+                    logger.warn(`Failed to sync task harness for new workspace: ${err}`);
+                }
+            }
+
             return { status: 'ok', data: selectedPath };
         } catch (error) {
             return { status: 'error', message: error.message };

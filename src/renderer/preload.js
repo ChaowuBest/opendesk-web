@@ -250,6 +250,22 @@ function exposeFSAPI() {
             }
 
             return result.data;
+        },
+        listDirectory: async (dirPath) => {
+            const result = await ipcRenderer.invoke('fs:listDirectory', dirPath);
+            if (result.status !== 'ok') {
+                console.error('listing directory failed', result.message);
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
+        readTextFile: async (filePath, maxBytes) => {
+            const result = await ipcRenderer.invoke('fs:readTextFile', filePath, maxBytes);
+            if (result.status !== 'ok') {
+                console.error('reading text file failed', result.message);
+                throw new Error(result.message);
+            }
+            return result.data;
         }
     });
 }

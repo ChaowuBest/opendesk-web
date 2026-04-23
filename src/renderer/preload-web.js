@@ -296,6 +296,14 @@
         },
         getPathType: async (filePath) => {
             return null;
+        },
+        listDirectory: async (dirPath) => {
+            console.warn('[preload-web] listDirectory is not supported in web debug mode');
+            return [];
+        },
+        readTextFile: async (filePath, maxBytes) => {
+            console.warn('[preload-web] readTextFile is not supported in web debug mode');
+            return { tooLarge: false, size: 0, limit: maxBytes || 50 * 1024, content: '', binary: false };
         }
     };
 

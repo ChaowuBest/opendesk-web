@@ -75,6 +75,7 @@ class SideBar extends HTMLElement {
             const newPath = await window.workspaceAPI.selectWorkspaceDirectory();
             if (newPath) {
                 await this._refreshWorkspacePath();
+                document.dispatchEvent(new CustomEvent('workspace-changed'));
             }
         });
 
