@@ -113,11 +113,13 @@ export class DeleteSkillsTool extends BaseTool<typeof DeleteSkillsArgsSchema> {
     }
 
     getDeclaredPermissions(args: z.output<typeof DeleteSkillsArgsSchema>): PermissionRequest[] {
-        return args.skillIds.map((id) => ({
-            resourceType: 'skill' as const,
-            action: 'write' as const,
-            resourcePath: id
-        }));
+        return args.skillIds
+            .filter((id) => id && !/[\r\n\x00-\x1f\u2028\u2029]/.test(id))
+            .map((id) => ({
+                resourceType: 'skill' as const,
+                action: 'write' as const,
+                resourcePath: id
+            }));
     }
 
     private async delete(args: z.output<typeof DeleteSkillsArgsSchema>): Promise<string> {

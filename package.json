@@ -26,6 +26,8 @@
         "cli": "npm run build-cli && node --no-warnings --enable-source-maps dist/cli/opendesk-debug",
         "postinstall": "node scripts/setup-native-modules.cjs",
         "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
+        "test:unit": "node --experimental-vm-modules node_modules/jest/bin/jest.js --selectProjects unit",
+        "test:search": "node --experimental-vm-modules node_modules/jest/bin/jest.js --selectProjects search",
         "lint": "eslint .",
         "lint:fix": "eslint . --fix",
         "format": "prettier --write .",

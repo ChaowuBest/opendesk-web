@@ -19,6 +19,7 @@ import { z } from 'zod';
 import FileManagerWorker from './worker';
 import { logger, getDebugMode } from '../../utils/logger.js';
 import { ApplicationRegistry } from '../registry.js';
+import { t } from '../../../locale/index.js';
 
 class FileMgrApplication extends BaseApplication {
     constructor() {
@@ -31,12 +32,12 @@ class FileMgrApplication extends BaseApplication {
             const filemgrConfig = setting.getData().applications?.filemgr;
             const entries = filemgrConfig?.entries ?? [];
             if (entries.length === 0) {
-                return '⚠ 文件扫描目录未配置';
+                return '⚠ ' + t('filemgr.scan.dir.not.configured');
             }
             try {
                 setting.getDefaultEmbeddingModelInstance();
             } catch {
-                return '⚠ 向量嵌入模型未配置';
+                return '⚠ ' + t('filemgr.embedding.model.not.configured');
             }
             return null;
         } catch {

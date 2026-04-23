@@ -2,19 +2,20 @@ import type { OpenDeskTUI } from '../entry.js';
 import { InfoOverlay } from '../components/notice.js';
 import { QuickPassHelper } from '../../utils/quickpass.js';
 import { logger } from '../../utils/logger.js';
+import { t } from '../../../locale/index.js';
 
 export function registerQuickpassCommand(tui: OpenDeskTUI): void {
     tui.commandRegistry.register({
         name: 'quickpass',
-        description: '导出快捷口令，用法：/quickpass config base|all',
+        description: t('quickpass.description'),
         getArgumentCompletions: (argPrefix: string) => {
             const options = [
                 {
                     value: 'config base',
                     label: 'config base',
-                    description: '导出基础设置口令（不含应用配置）'
+                    description: t('quickpass.config.base.description')
                 },
-                { value: 'config all', label: 'config all', description: '导出全部设置口令' }
+                { value: 'config all', label: 'config all', description: t('quickpass.config.all.description') }
             ];
             const prefix = argPrefix.trimEnd().toLowerCase();
             return options.filter((opt) => opt.value.startsWith(prefix));
@@ -29,16 +30,16 @@ export function registerQuickpassCommand(tui: OpenDeskTUI): void {
                     try {
                         const quickpass = QuickPassHelper.exportBaseConfig();
                         const info = new InfoOverlay(tui, {
-                            title: '基础设置口令',
-                            message: `请复制以下口令并发送给对方：\n\n${quickpass}`,
-                            closeLabel: '确定',
+                            title: t('quickpass.base.title'),
+                            message: `${t('quickpass.base.message')}${quickpass}`,
+                            closeLabel: t('quickpass.close'),
                             fullWidth: true
                         });
                         info.show();
                     } catch (err: unknown) {
                         const info = new InfoOverlay(tui, {
-                            title: '导出失败',
-                            message: `导出基础设置口令失败：${err instanceof Error ? err.message : String(err)}`
+                            title: t('quickpass.base.fail'),
+                            message: `${t('quickpass.base.fail.detail')}${err instanceof Error ? err.message : String(err)}`
                         });
                         info.show();
                     }
@@ -46,24 +47,24 @@ export function registerQuickpassCommand(tui: OpenDeskTUI): void {
                     try {
                         const quickpass = QuickPassHelper.exportAllConfig();
                         const info = new InfoOverlay(tui, {
-                            title: '全部设置口令',
-                            message: `请复制以下口令并发送给对方：\n\n${quickpass}`,
-                            closeLabel: '确定',
+                            title: t('quickpass.all.title'),
+                            message: `${t('quickpass.all.message')}${quickpass}`,
+                            closeLabel: t('quickpass.close'),
                             fullWidth: true
                         });
                         info.show();
                     } catch (err: unknown) {
                         const info = new InfoOverlay(tui, {
-                            title: '导出失败',
-                            message: `导出全部设置口令失败：${err instanceof Error ? err.message : String(err)}`
+                            title: t('quickpass.all.fail'),
+                            message: `${t('quickpass.all.fail.detail')}${err instanceof Error ? err.message : String(err)}`
                         });
                         info.show();
                     }
                 } else {
-                    logger.warn('用法：/quickpass config base|all');
+                    logger.warn('Usage: /quickpass config base|all');
                 }
             } else {
-                logger.warn('用法：/quickpass config base|all');
+                logger.warn('Usage: /quickpass config base|all');
             }
         }
     });

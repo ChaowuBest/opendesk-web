@@ -1,0 +1,107 @@
+/**
+ * Copyright (c) 2026 The OpenDesk Team
+ * OpenDesk is licensed under Mulan PSL v2.
+ * You can use this software according to the terms and conditions of the Mulan PSL v2.
+ * You may obtain a copy of Mulan PSL v2 at: http://license.coscl.org.cn/MulanPSL2
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
+ * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+ * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+ * See the Mulan PSL v2 for more details.
+ */
+
+/* ===== 公共基础：内联模式（去除默认 header 高度和容器样式） ===== */
+elastic-toolbar-widget.inline header {
+    height: auto !important;
+    padding: 0 !important;
+}
+
+elastic-toolbar-widget.inline header > div {
+    background: transparent !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+}
+
+/* ===== 药丸按钮变体：白底圆角药丸形按钮（用于设置面板等） ===== */
+elastic-toolbar-widget.pill-buttons header {
+    height: auto !important;
+    padding: 0 !important;
+}
+
+elastic-toolbar-widget.pill-buttons header > div {
+    background: transparent !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+    gap: 0.5rem !important;
+}
+
+elastic-toolbar-widget.pill-buttons button {
+    font-size: 0.75rem !important;
+    padding: 0.5rem 1rem !important;
+    border-radius: 9999px !important;
+    background: white !important;
+    color: #4b5563 !important;
+    border: 1px solid #e5e7eb !important;
+    box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05) !important;
+}
+
+elastic-toolbar-widget.pill-buttons button:hover {
+    background: #f9fafb !important;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1) !important;
+}
+
+elastic-toolbar-widget.pill-buttons button span {
+    font-size: 0.75rem !important;
+}
+
+/* ===== 侧边栏底部工具栏变体：白色胶囊 + 灰色小胶囊悬停 ===== */
+elastic-toolbar-widget.sidebar-bottom header {
+    height: auto !important;
+    padding: 0 !important;
+    justify-content: center !important;
+}
+
+elastic-toolbar-widget.sidebar-bottom header > div {
+    padding: 0.1875rem 0.625rem !important;
+    gap: 0.125rem !important;
+}
+
+elastic-toolbar-widget.sidebar-bottom button {
+    font-size: 0.9375rem !important;
+    padding: 0.4375rem 0.625rem !important;
+}
+
+elastic-toolbar-widget.sidebar-bottom button span {
+    font-size: 0.75rem !important;
+}
+
+elastic-toolbar-widget.sidebar-bottom button:disabled {
+    opacity: 0.5 !important;
+    cursor: not-allowed !important;
+}
+
+elastic-toolbar-widget.sidebar-bottom button:disabled:hover {
+    background: transparent !important;
+}
+
+/* ===== 邮箱头部工具栏变体：透明悬停效果 ===== */
+elastic-toolbar-widget.mailbox-header header {
+    height: auto !important;
+    padding: 0.75rem 0 0 0 !important;
+}
+
+elastic-toolbar-widget.mailbox-header header > div {
+    background: transparent !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+    gap: 0.5rem !important;
+}
+
+elastic-toolbar-widget.mailbox-header button:hover {
+    background: rgba(255, 255, 255, 0.6) !important;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1) !important;
+}
+
+/* ===== 左对齐变体 ===== */
+elastic-toolbar-widget.align-left header {
+    justify-content: flex-start !important;
+}

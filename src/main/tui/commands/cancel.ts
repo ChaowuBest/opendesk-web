@@ -1,9 +1,10 @@
 import type { OpenDeskTUI } from '../entry.js';
+import { t } from '../../../locale/index.js';
 
 export function registerCancelCommand(tui: OpenDeskTUI): void {
     tui.commandRegistry.register({
         name: 'cancel',
-        description: '撤销消息队列中的所有待发送消息',
+        description: t('cancel.description'),
         execute: async () => {
             tui.inputArea.clearMessageQueue();
             if (tui.activeTaskId) {

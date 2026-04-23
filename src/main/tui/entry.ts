@@ -4,6 +4,7 @@ import {
     Text,
     Key,
     matchesKey,
+    isKeyRelease,
     type Component,
     EditorKeybindingsManager,
     setEditorKeybindings
@@ -49,7 +50,10 @@ import { SkillMgrApplication } from '../applications/skillmgr/app.js';
 import { DashboardBar } from './components/dashboard';
 import { HarnessContext } from '../aikernel/security/harness.js';
 import { TUIPermissionPromptProvider } from './components/permission.js';
+import { TUIAskUserProvider } from './components/askUser.js';
+import { createInteractionToolset } from '../aikernel/interaction/tools.js';
 import { TaskProfiler } from '../aikernel/profiler.js';
+import { t } from '../../locale/index.js';
 
 import format from 'string-template';
 import path from 'path';
@@ -88,6 +92,9 @@ export interface CommandLineArgs {
     profile?: string;
     allowEverything?: boolean;
     mode?: string;
+    language?: string;
+    /** 各应用的 CLI 参数（已按 bundleName 分组，参数名不含前缀） */
+    appCliOptions?: Record<string, Record<string, string | boolean | undefined>>;
 }
 
 export class OpenDeskTUI {
@@ -112,8 +119,23 @@ export class OpenDeskTUI {
     /** 所有任务共享的权限确认 provider（内含请求队列，确保同时只弹一个弹窗） */
     private sharedPermissionPrompt: TUIPermissionPromptProvider;
 
-    /** 跟踪是否有 overlay 打开 */
-    hasOpenOverlay = false;
+    /** 主任务专用的 askUser provider */
+    private sharedAskUserProvider: TUIAskUserProvider;
+
+    /** 跟踪是否有 overlay 打开（使用 setter 以在关闭时自动处理积压弹窗） */
+    private _hasOpenOverlay = false;
+
+    get hasOpenOverlay(): boolean {
+        return this._hasOpenOverlay;
+    }
+
+    set hasOpenOverlay(value: boolean) {
+        this._hasOpenOverlay = value;
+        // overlay 关闭后，处理可能积压的权限/askUser 弹窗
+        if (value === false) {
+            this.processPendingPrompts();
+        }
+    }
 
     /** 当前激活的配置页面组件（非 null 时表示处于配置模式） */
     private configComponent?: Component;
@@ -181,6 +203,7 @@ export class OpenDeskTUI {
         this.inputArea = new AgentInputArea(this);
         this.dashboardBar = new DashboardBar(() => this.tui.requestRender());
         this.sharedPermissionPrompt = new TUIPermissionPromptProvider(this);
+        this.sharedAskUserProvider = new TUIAskUserProvider(this);
         this.workspace = args.workspace;
         this.model = args.model;
         this.singleShot = !!args.command;
@@ -216,6 +239,7 @@ export class OpenDeskTUI {
                     }
                 });
             }
+
             if (args.profile) {
                 const profilePath = path.resolve(args.workspace, args.profile);
                 this.onBeforeExit(async (taskId) => {
@@ -256,20 +280,20 @@ export class OpenDeskTUI {
             }
             try {
                 const { name, hasApplications } = QuickPassHelper.importConfig(text);
-                const scope = hasApplications ? '全部设置（含应用配置）' : '基础设置（不含应用配置）';
+                const scope = hasApplications ? t('quickpass.import.range.all') : t('quickpass.import.range.basic');
                 const info = new InfoOverlay(this, {
-                    title: '口令导入成功',
-                    message: `已成功导入口令「${name}」\n导入范围：${scope}`,
-                    closeLabel: '确定'
+                    title: t('quickpass.import.success'),
+                    message: `${t('quickpass.import.success.detail')}${name}」\n${t('quickpass.import.scope')}${scope}`,
+                    closeLabel: t('quickpass.close')
                 });
                 info.show(() => {
                     this.resolveModelInfo();
                 });
             } catch (err: any) {
                 const info = new InfoOverlay(this, {
-                    title: '口令导入失败',
+                    title: t('quickpass.import.fail'),
                     message: `${err?.message ?? err}`,
-                    closeLabel: '确定'
+                    closeLabel: t('quickpass.close')
                 });
                 info.show();
             }
@@ -520,9 +544,9 @@ export class OpenDeskTUI {
         logger.info(`Session exported to: ${absolutePath}`);
 
         const info = new InfoOverlay(this, {
-            title: '导出成功',
-            message: `会话已成功导出到：\n${absolutePath}`,
-            closeLabel: '确定'
+            title: t('export.success'),
+            message: `${t('export.success.detail')}${absolutePath}`,
+            closeLabel: t('common.close')
         });
         info.show();
     }
@@ -657,6 +681,8 @@ export class OpenDeskTUI {
                 setTimeout(() => {
                     this.tui.setFocus(this.inputArea.input);
                     this.tui.requestRender();
+                    // 配置模式退出后（模型未配置状态），处理可能积压的弹窗
+                    this.processPendingPrompts();
                 }, 10);
                 return;
             } else {
@@ -685,6 +711,8 @@ export class OpenDeskTUI {
         setTimeout(() => {
             this.tui.setFocus(this.inputArea.input);
             this.tui.requestRender();
+            // 配置模式退出后，处理可能积压的权限/askUser 弹窗
+            this.processPendingPrompts();
         }, 10);
     }
 
@@ -785,6 +813,7 @@ export class OpenDeskTUI {
         const snapshotTaskId = task.task_id;
 
         const subscribeToUpdates = () => {
+            this.taskView.startStreaming();
             task.waitUntilFinished(async (chunkUpdate: TaskUpdateChunk) => {
                 if (this.activeTaskId !== snapshotTaskId) return;
                 await this.taskView.handleChunkUpdate(chunkUpdate);
@@ -872,9 +901,16 @@ export class OpenDeskTUI {
     public acquireMemoryLock(op: 'add' | 'search' | 'forget'): boolean {
         const registry = MemoryRegistry.getInstance();
         if (!registry.acquireLock(op)) {
-            const labels = { add: '添加', search: '搜索', forget: '删除' };
+            const labels = {
+                add: t('memory.add.label'),
+                search: t('memory.search.label'),
+                forget: t('memory.forget.label')
+            };
             const currentOp = labels[registry.busyOp!] ?? registry.busyOp;
-            this.showMemoryResult('操作被忽略', `当前有记忆${currentOp}操作正在进行中，请等待完成后再试。`);
+            this.showMemoryResult(
+                t('memory.operation.ignored'),
+                `${t('memory.operation.in.progress')}${currentOp}${t('memory.operation.in.progress.suffix')}`
+            );
             return false;
         }
         return true;
@@ -911,7 +947,9 @@ export class OpenDeskTUI {
             const elapsed = Math.floor((Date.now() - this.memoryAddStart) / 1000);
             const count = MemoryRegistry.getInstance().opCounter;
             this.inputArea.setExternalHint(
-                chalk.cyan(`${frames[frame]} 正在后台提取记忆... ${elapsed}s · 已提取 ${count} 条`)
+                chalk.cyan(
+                    `${frames[frame]} ${t('memory.extracting')}${elapsed}s · ${t('memory.extracting.progress')}${count}${t('memory.extracting.unit')}`
+                )
             );
             this.tui.requestRender();
         }, 200);
@@ -1122,19 +1160,19 @@ export class OpenDeskTUI {
 
         // 创建提示组件，使用 Text 组件显示多行文本
         const noticeText = [
-            chalk.bold.yellow('⚠️  模型未配置'),
+            chalk.bold.yellow('⚠️  ' + t('model.not.configured')),
             '',
-            chalk.dim('请先配置模型才能使用 OpenDesk'),
+            chalk.dim(t('model.not.configured.hint')),
             '',
-            chalk.cyan('使用方法：'),
+            chalk.cyan(t('model.configure.usage')),
             '',
-            chalk.white('  1. 输入 /config 打开配置菜单'),
-            chalk.white('  2. 选择"模型服务商配置"并添加一个模型模型服务商'),
-            chalk.white('  3. 选择"模型配置"并添加一个模型'),
-            chalk.white('  4. 选择 "默认模型配置", 并选择你要使用的模型'),
-            chalk.white('  5. (可选) 选择 "文件扫描配置", 添加文件搜索目录'),
+            chalk.white('  ' + t('model.configure.step1')),
+            chalk.white('  ' + t('model.configure.step2')),
+            chalk.white('  ' + t('model.configure.step3')),
+            chalk.white('  ' + t('model.configure.step4')),
+            chalk.white('  ' + t('model.configure.step5')),
             '',
-            chalk.dim('然后? 你可以休息了，让我开始工作吧!')
+            chalk.dim(t('model.configure.after'))
         ].join('\n');
 
         this.modelNotConfiguredNotice = new Text(noticeText);
@@ -1265,6 +1303,22 @@ export class OpenDeskTUI {
     }
 
     /**
+     * 检查当前是否处于输入阻塞状态（配置模式或 overlay 打开）。
+     * 处于此状态时，权限弹窗和 askUser 弹窗应该入队等待，而不是立即显示。
+     */
+    isInputBlocked(): boolean {
+        return this.configComponent !== undefined || this.hasOpenOverlay;
+    }
+
+    /**
+     * 处理积压的权限弹窗请求（退出配置/overlay 模式后调用）。
+     */
+    processPendingPrompts(): void {
+        this.sharedPermissionPrompt.processQueueIfReady();
+        this.sharedAskUserProvider.processQueueIfReady();
+    }
+
+    /**
      * 为新创建的任务初始化 harnessContext（权限引擎 + 环境变量 + 权限确认 UI）。
      * 根据当前 activeMode 构建。
      */
@@ -1273,6 +1327,9 @@ export class OpenDeskTUI {
             task.harnessContext = await HarnessContext.createForMode(this.workspace, this._activeMode);
             task.harnessContext.permissionPrompt = this.sharedPermissionPrompt;
             task.activeModeId = this._activeMode.id;
+            task.disabledTools = this._activeMode.disabledTools;
+            // 注入 interaction 工具集（仅主任务）
+            task.interactionToolset = createInteractionToolset(this.sharedAskUserProvider);
         } catch (err) {
             logger.warn(`Failed to init task harness, using empty context: ${err}`);
             task.harnessContext = HarnessContext.createEmpty();
@@ -1309,14 +1366,14 @@ export class OpenDeskTUI {
      * 切换到下一个模式（循环切换）。
      * 切换后立即更新当前活跃任务的权限引擎，确保模式变更即时生效。
      */
-    cycleMode(): void {
+    async cycleMode(): Promise<void> {
         const modes = this.agentDecl.supportedModes();
         const currentIndex = modes.findIndex((m) => m.id === this._activeMode.id);
         const nextIndex = (currentIndex + 1) % modes.length;
         this._activeMode = modes[nextIndex];
 
         this.syncModeDisplay();
-        this.syncActiveTaskHarness();
+        await this.syncAllTaskHarnesses();
         this.tui.requestRender();
         logger.info(`Mode switched to: ${this._activeMode.name} (${this._activeMode.id})`);
     }
@@ -1324,45 +1381,40 @@ export class OpenDeskTUI {
     /**
      * 根据 id 切换到指定模式
      */
-    setMode(modeId: string): boolean {
+    async setMode(modeId: string): Promise<boolean> {
         const modes = this.agentDecl.supportedModes();
         const target = modes.find((m) => m.id === modeId);
         if (!target) return false;
         this._activeMode = target;
 
         this.syncModeDisplay();
-        this.syncActiveTaskHarness();
+        await this.syncAllTaskHarnesses();
         this.tui.requestRender();
         logger.info(`Mode set to: ${this._activeMode.name} (${this._activeMode.id})`);
         return true;
     }
 
     /**
-     * 将当前活跃任务的权限引擎同步到最新的 Mode。
+     * 将所有任务的权限引擎同步到最新的 Mode。
      * 保留已有的环境变量和 permissionPrompt，仅替换权限引擎和 activeModeId。
+     * 同时递归更新子任务的 harnessContext，避免子任务持有旧引用。
      */
-    private syncActiveTaskHarness(): void {
-        if (!this.activeTaskId) return;
-        const task = this.taskManagerState.getTask(this.activeTaskId);
-        if (!task) return;
-
+    private async syncAllTaskHarnesses(): Promise<void> {
         const mode = this._activeMode;
-        const savedEnv = task.harnessContext.environ;
-        const savedPrompt = task.harnessContext.permissionPrompt;
+        for (const task of this.taskManagerState.tasks) {
+            const savedEnv = task.harnessContext.environ;
+            const savedPrompt = task.harnessContext.permissionPrompt;
 
-        try {
-            HarnessContext.createForMode(this.workspace, mode)
-                .then((ctx) => {
-                    ctx.environ = savedEnv;
-                    ctx.permissionPrompt = savedPrompt;
-                    task.harnessContext = ctx;
-                    task.activeModeId = mode.id;
-                })
-                .catch((err) => {
-                    logger.warn(`Failed to sync task harness for mode ${mode.id}: ${err}`);
-                });
-        } catch (err) {
-            logger.warn(`Failed to sync task harness for mode ${mode.id}: ${err}`);
+            try {
+                const ctx = await HarnessContext.createForMode(this.workspace, mode);
+                ctx.environ = savedEnv;
+                ctx.permissionPrompt = savedPrompt;
+                task.harnessContext = ctx;
+                task.activeModeId = mode.id;
+                task.disabledTools = mode.disabledTools;
+            } catch (err) {
+                logger.warn(`Failed to sync task harness for mode ${mode.id}: ${err}`);
+            }
         }
     }
 
@@ -1406,7 +1458,8 @@ export class OpenDeskTUI {
         // Attach a direct input listener to TUI FIRST, to hijack Ctrl+C before Editor gets it!
         this.tui.addInputListener((data) => {
             // Shift+Tab 循环切换模式
-            if (matchesKey(data, Key.shift('tab'))) {
+            // 忽略 key release，否则在 Kitty 键盘协议下按一次会触发「按下+松开」两次，导致切换两次
+            if (!isKeyRelease(data) && matchesKey(data, Key.shift('tab'))) {
                 if (!this.hasOpenOverlay && !this.configComponent) {
                     this.cycleMode();
                     return { consume: true };
@@ -1455,9 +1508,9 @@ export class OpenDeskTUI {
                 if (currentText.trim() === '') {
                     // 输入框为空，显示提示
                     const info = new InfoOverlay(this, {
-                        title: '提示',
-                        message: '你可以输入 /exit 退出或者输入 /help 查看帮助',
-                        closeLabel: '确定'
+                        title: t('exit.hint.title'),
+                        message: t('exit.hint.message'),
+                        closeLabel: t('common.close')
                     });
                     info.show();
                 } else {

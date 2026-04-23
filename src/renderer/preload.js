@@ -140,24 +140,22 @@ function exposeTaskManagerAPI() {
         }
     });
 
-    ipcRenderer.on('taskManager:callTool', async (event, taskId, toolCallId, toolsetName, toolName, args) => {
-        let result = '';
-        if (!taskwiseToolsetCallbacks.has(taskId)) {
-            result = '错误: 当前任务没有在前端注册';
-        } else {
-            const toolsetCallback = taskwiseToolsetCallbacks.get(taskId).get(toolsetName);
-            if (toolsetCallback === undefined) {
-                result = '错误: 当前工具集没有在前端注册';
-            } else {
-                try {
-                    result = await toolsetCallback(toolName, args);
-                } catch (error) {
-                    result = '错误: 执行工具失败, 错误信息为: ' + error.message;
-                    console.error('error executing tool', error);
-                }
-            }
+    contextBridge.exposeInMainWorld('askUserAPI', {
+        onAskUserRequest: (callback) => {
+            ipcRenderer.removeAllListeners('askUser:request');
+            ipcRenderer.on('askUser:request', (event, requestId, data) => {
+                callback(requestId, data);
+            });
+        },
+        onAskUserDismiss: (callback) => {
+            ipcRenderer.removeAllListeners('askUser:dismiss');
+            ipcRenderer.on('askUser:dismiss', (event, requestId) => {
+                callback(requestId);
+            });
+        },
+        respondAskUser: (requestId, response) => {
+            ipcRenderer.send('askUser:response', requestId, response);
         }
-        ipcRenderer.send(`taskManager:reportToolCallResult:${toolCallId}`, result);
     });
 }
 
@@ -429,6 +427,13 @@ if (window.self !== window.top) {
                 return false;
             }
             return result.data;
+        },
+        getProviderTemplates: async () => {
+            const result = await ipcRenderer.invoke('setting:getProviderTemplates');
+            if (result.status !== 'ok') {
+                throw new Error(result.message);
+            }
+            return result.data;
         }
     });
 
@@ -488,6 +493,20 @@ if (window.self !== window.top) {
         },
         importQuickPass: async (quickpass) => {
             const result = await ipcRenderer.invoke('quickpass:import', quickpass);
+            if (result.status !== 'ok') {
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
+        exportBaseConfig: async () => {
+            const result = await ipcRenderer.invoke('quickpass:exportBase');
+            if (result.status !== 'ok') {
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
+        exportAllConfig: async () => {
+            const result = await ipcRenderer.invoke('quickpass:exportAll');
             if (result.status !== 'ok') {
                 throw new Error(result.message);
             }

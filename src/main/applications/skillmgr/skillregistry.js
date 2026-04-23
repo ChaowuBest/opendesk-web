@@ -32,6 +32,8 @@ const ASSETS_DIR = 'assets';
 const skillsCache = new Map();
 /** 所有本地技能共用一个 toolset，工具 ID 为 skill-<name>，避免 skill-pdf-pdf 重复 */
 let singleSkillToolset = null;
+/** 通过 --skillmgr-mount-skill 挂载的额外目录 */
+const mountedSkillDirs = new Set();
 
 const __skillsDir = import.meta.dirname;
 
@@ -357,6 +359,33 @@ function runScript(scriptPath, skillDir, input) {
     });
 }
 
+/**
+ * 将 skill 注册到 cache 和 toolset
+ * @param {{ success: boolean, tool: object, name: string, frontmatter: object, body: string, skillDir: string }} result
+ * @param {boolean} skipIfExists - 如果已存在则跳过
+ * @param {string} source - 来源标识（用于日志）
+ * @returns {boolean} 是否成功注册
+ */
+function registerSkill(result, skipIfExists, source) {
+    if (!result.success) return false;
+    if (skipIfExists && skillsCache.has(result.name)) {
+        logger.info(`SkillRegistry: 跳过已存在技能 ${result.name} (${source})`);
+        return false;
+    }
+    if (skillsCache.has(result.name)) {
+        logger.info(`SkillRegistry: 技能 ${result.name} 已存在，跳过 (${source})`);
+        return false;
+    }
+    skillsCache.set(result.name, {
+        frontmatter: result.frontmatter,
+        body: result.body,
+        skillDir: result.skillDir
+    });
+    singleSkillToolset.addTool(result.tool);
+    logger.info(`SkillRegistry: 已加载技能 ${result.name} (${source})`);
+    return true;
+}
+
 function loadAll() {
     logger.info('load all skills from local directory');
     const skillsDir = getSkillsDirectory();
@@ -365,33 +394,73 @@ function loadAll() {
 
     const errors = [];
 
+    // 从用户 skills 目录加载
+    loadSkillsFromDir(skillsDir, errors, false);
+
+    // 从 mount 目录加载（只加载，不覆盖已安装的技能）
+    for (const mountDir of mountedSkillDirs) {
+        const resolved = path.resolve(mountDir);
+        if (!fs.existsSync(resolved)) {
+            errors.push({ id: resolved, error: `mount 目录不存在` });
+            logger.warn(`SkillRegistry: mount 目录不存在: ${resolved}`);
+            continue;
+        }
+        const stat = fs.statSync(resolved);
+        if (!stat.isDirectory()) {
+            errors.push({ id: resolved, error: `mount 路径不是目录` });
+            continue;
+        }
+
+        // 检查目录是否直接包含 SKILL.md（单个 skill 目录）
+        const skillMdPath = path.join(resolved, SKILL_MD_FILENAME);
+        if (fs.existsSync(skillMdPath)) {
+            // 单个 skill 目录
+            logger.info(`SkillRegistry: 从 mount 加载单个技能: ${resolved}`);
+            const result = loadSkillFromDir(resolved);
+            registerSkill(result, true, 'mount');
+            if (!result.success) {
+                errors.push({ id: resolved, error: result.error });
+            }
+        } else {
+            // skills 目录，扫描子目录
+            logger.info(`SkillRegistry: 从 mount 目录加载技能: ${resolved}`);
+            loadSkillsFromDir(resolved, errors, true);
+        }
+    }
+
+    if (errors.length === 0) {
+        return { toolsets: [singleSkillToolset], errors: [] };
+    }
+    return { toolsets: [singleSkillToolset], errors };
+}
+
+/**
+ * 从指定目录加载所有技能
+ * @param {string} dir - 技能目录
+ * @param {Array} errors - 错误数组（会被 push）
+ * @param {boolean} skipIfExists - 如果技能已存在则跳过（用于 mount 目录）
+ */
+function loadSkillsFromDir(dir, errors, skipIfExists = false) {
     let entries = [];
     try {
-        entries = fs.readdirSync(skillsDir, { withFileTypes: true });
+        entries = fs.readdirSync(dir, { withFileTypes: true });
     } catch (e) {
-        logger.error(`SkillRegistry: 无法读取目录 ${skillsDir}: ${e.message}`);
-        return { toolsets: [], errors: [{ id: '', error: e.message }] };
+        logger.error(`SkillRegistry: 无法读取目录 ${dir}: ${e.message}`);
+        errors.push({ id: dir, error: e.message });
+        return;
     }
 
     for (const ent of entries) {
         if (!ent.isDirectory()) continue;
-        const skillDir = path.join(skillsDir, ent.name);
+        const skillDir = path.join(dir, ent.name);
         const result = loadSkillFromDir(skillDir);
         if (result.success) {
-            skillsCache.set(result.name, {
-                frontmatter: result.frontmatter,
-                body: result.body,
-                skillDir: result.skillDir
-            });
-            singleSkillToolset.addTool(result.tool);
-            logger.info(`SkillRegistry: 已加载技能 ${result.name} (Anthropic Agent Skills) 并注册到 aikernel`);
+            registerSkill(result, skipIfExists, dir);
         } else {
             errors.push({ id: ent.name, error: result.error });
             logger.warn(`SkillRegistry: 跳过 ${ent.name} - ${result.error}`);
         }
     }
-
-    return { toolsets: [singleSkillToolset], errors };
 }
 
 function getToolsets() {
@@ -508,9 +577,10 @@ function rmRecursive(p) {
 /**
  * 从本地目录添加技能：校验 SKILL.md 后复制到用户技能目录
  * @param {string} sourceDir - 源目录（须含 SKILL.md，目录名可与 name 不一致，以 frontmatter name 为准）
+ * @param {boolean} force - 是否强制覆盖已存在的同名技能
  * @returns {{ success: boolean, name?: string, error?: string }}
  */
-function addSkillFromDirectory(sourceDir) {
+function addSkillFromDirectory(sourceDir, force = false) {
     const resolved = path.resolve(sourceDir);
     if (!fs.existsSync(resolved) || !fs.statSync(resolved).isDirectory()) {
         return { success: false, error: '源路径不存在或不是目录' };
@@ -520,7 +590,19 @@ function addSkillFromDirectory(sourceDir) {
     const skillsDir = getSkillsDirectory();
     const destDir = path.join(skillsDir, result.name);
     if (fs.existsSync(destDir)) {
-        return { success: false, error: `技能 "${result.name}" 已存在，请先删除或改用其它名称` };
+        if (force) {
+            try {
+                if (typeof fs.rmSync === 'function') {
+                    fs.rmSync(destDir, { recursive: true, force: true });
+                } else {
+                    rmRecursive(destDir);
+                }
+            } catch (e) {
+                return { success: false, error: `删除旧技能失败: ${e.message}` };
+            }
+        } else {
+            return { success: false, error: `技能 "${result.name}" 已存在，请先删除或使用 --force 覆盖` };
+        }
     }
     try {
         copyDirRecursive(resolved, destDir);
@@ -576,5 +658,19 @@ export const SkillRegistry = {
     addSkillFromDirectory,
     deleteSkill,
     getSkillBody,
-    getSkillDetail
+    getSkillDetail,
+    /** 添加 mount 目录（--skillmgr-mount-skill 使用） */
+    addMountedDir(dir) {
+        const resolved = path.resolve(dir);
+        mountedSkillDirs.add(resolved);
+        logger.info(`SkillRegistry: 添加 mount 目录 ${resolved}`);
+    },
+    /** 清除所有 mount 目录 */
+    clearMountedDirs() {
+        mountedSkillDirs.clear();
+    },
+    /** 获取所有 mount 目录 */
+    getMountedDirs() {
+        return Array.from(mountedSkillDirs);
+    }
 };

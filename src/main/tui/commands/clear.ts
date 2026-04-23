@@ -1,16 +1,17 @@
 import type { OpenDeskTUI } from '../entry.js';
 import { ConfirmOverlay } from '../components/notice.js';
+import { t } from '../../../locale/index.js';
 
 export function registerClearCommand(tui: OpenDeskTUI): void {
     tui.commandRegistry.register({
         name: 'clear',
-        description: '删除所有任务历史',
+        description: t('clear.description'),
         execute: async () => {
             const confirm = new ConfirmOverlay(tui, {
-                title: '确认删除',
-                message: '确定要删除所有任务历史吗？此操作不可恢复。',
-                confirmLabel: '删除所有',
-                cancelLabel: '取消'
+                title: t('confirm.delete.title'),
+                message: t('confirm.delete.message'),
+                confirmLabel: t('common.delete.all'),
+                cancelLabel: t('common.cancel')
             });
             confirm.show(() => {
                 tui.taskManagerState.clearAllTasks();

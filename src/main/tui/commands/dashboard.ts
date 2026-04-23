@@ -2,6 +2,7 @@ import { ApplicationRegistry } from '../../applications/registry.js';
 import { DashboardOverlay, type MailAccountInfo } from '../components/dashboard.js';
 import { logger } from '../../utils/logger.js';
 import type { OpenDeskTUI } from '../entry.js';
+import { t } from '../../../locale/index.js';
 
 async function fetchMailAccounts(): Promise<MailAccountInfo[]> {
     try {
@@ -49,13 +50,13 @@ export function registerDashboardCommand(tui: OpenDeskTUI): void {
                 mailAccounts
             }).show();
         } catch (err) {
-            logger.error(`打开仪表盘失败: ${err}`);
+            logger.error(`Failed to open dashboard: ${err}`);
         }
     };
 
     tui.commandRegistry.register({
         name: 'dashboard',
-        description: '打开全屏仪表盘，/dashboard bar 可切换底栏状态条',
+        description: t('dashboard.description'),
         execute: async (args: string) => {
             if (args.trim() === 'bar') {
                 tui.dashboardBar.toggleVisible();
@@ -64,7 +65,7 @@ export function registerDashboardCommand(tui: OpenDeskTUI): void {
             }
         },
         getArgumentCompletions: (prefix: string) => {
-            const opts = [{ value: 'bar', label: 'bar', description: '显示/隐藏底栏状态条' }];
+            const opts = [{ value: 'bar', label: 'bar', description: t('dashboard.bar.description') }];
             return opts.filter((o) => o.value.startsWith(prefix));
         }
     });

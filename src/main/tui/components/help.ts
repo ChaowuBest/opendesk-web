@@ -22,6 +22,7 @@ export class HelpOverlay implements Component {
 
     constructor(openDeskTUI: OpenDeskTUI) {
         this.openDeskTUI = openDeskTUI;
+        const maxVisibleRows = this.getMaxVisibleRows();
 
         // ── 构建 Commands 表格 ──
         const commands = this.openDeskTUI.commandRegistry.getAll();
@@ -37,12 +38,12 @@ export class HelpOverlay implements Component {
             commandRows.push({ labels: ['', '', chalk.dim('暂无命令')], value: '_empty' });
         }
 
-        this.commandTable = new SelectTable(commandRows, commandRows.length, defaultSelectListTheme);
+        this.commandTable = new SelectTable(commandRows, maxVisibleRows, defaultSelectListTheme);
         this.commandTable.setColumnStrechFactors([0, 0, 1]);
 
         // ── 构建 Skills 表格（初始为空，异步填充） ──
         const placeholderRows: SelectRow[] = [{ labels: [chalk.dim('加载中...')], value: '_loading' }];
-        this.skillTable = new SelectTable(placeholderRows, 1, defaultSelectListTheme);
+        this.skillTable = new SelectTable(placeholderRows, maxVisibleRows, defaultSelectListTheme);
         this.skillTable.setColumnStrechFactors([0, 1]);
 
         // 异步加载 skill 列表
@@ -107,7 +108,7 @@ export class HelpOverlay implements Component {
                 });
             }
 
-            this.skillTable = new SelectTable(rows, rows.length, defaultSelectListTheme);
+            this.skillTable = new SelectTable(rows, this.getMaxVisibleRows(), defaultSelectListTheme);
             this.skillTable.setColumnStrechFactors([0, 0, 1]);
             this.setupTableCallbacks(this.skillTable);
 
@@ -119,6 +120,12 @@ export class HelpOverlay implements Component {
         } catch {
             // 加载失败不影响主流程
         }
+    }
+
+    private getMaxVisibleRows(): number {
+        // 预留标题栏和边框空间，避免列表高度超过 overlay 可见区域而被裁剪
+        const available = this.openDeskTUI.tui.terminal.rows - 10;
+        return Math.max(5, Math.min(20, available));
     }
 
     private switchTab(tab: HelpTab) {

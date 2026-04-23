@@ -6,23 +6,24 @@ import AdmZip from 'adm-zip';
 import path from 'path';
 import fs from 'fs';
 import { logger } from '../../utils/logger.js';
+import { t } from '../../../locale/index.js';
 
 export function registerExportCommand(tui: OpenDeskTUI): void {
     tui.commandRegistry.register({
         name: 'export',
-        description: '导出会话或技能：/export html|json <文件名>；/export skill <技能名> <路径.zip>',
+        description: t('export.description'),
         getArgumentCompletions: (argPrefix: string) => {
             const parts = argPrefix.split(/\s+/);
             if (parts.length <= 1 && !argPrefix.includes(' ')) {
                 const prefix = (parts[0] ?? '').toLowerCase();
                 const options = [
-                    { value: 'html', label: 'html', description: '导出为 HTML 文件' },
+                    { value: 'html', label: 'html', description: t('export.html.description') },
                     {
                         value: 'json',
                         label: 'json',
-                        description: '导出为 JSON（可与 /import 兼容）'
+                        description: t('export.json.description')
                     },
-                    { value: 'skill', label: 'skill', description: '将技能导出为 zip 文件' }
+                    { value: 'skill', label: 'skill', description: t('export.skill.description') }
                 ];
                 if (!prefix) return options;
                 return options.filter((o) => o.value.startsWith(prefix));
@@ -94,10 +95,9 @@ export function registerExportCommand(tui: OpenDeskTUI): void {
 
             if (format !== 'html' && format !== 'json') {
                 const info = new InfoOverlay(tui, {
-                    title: '导出',
-                    message:
-                        '用法：/export html <文件名> 或 /export json <文件名.json> 或 /export skill <技能名> <路径.zip>',
-                    closeLabel: '确定'
+                    title: t('export.title'),
+                    message: t('export.usage'),
+                    closeLabel: t('common.close')
                 });
                 info.show();
                 return;
@@ -113,9 +113,9 @@ export function registerExportCommand(tui: OpenDeskTUI): void {
                 });
                 logger.info(`Task exported to JSON: ${absolutePath}`);
                 const info = new InfoOverlay(tui, {
-                    title: '导出成功',
-                    message: `任务已导出为 JSON：\n${absolutePath}`,
-                    closeLabel: '确定'
+                    title: t('export.success.json'),
+                    message: `${t('export.success.json.detail')}${absolutePath}`,
+                    closeLabel: t('common.close')
                 });
                 info.show();
             };
@@ -124,7 +124,7 @@ export function registerExportCommand(tui: OpenDeskTUI): void {
                 if (!filePath) {
                     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
                     filePath = `opendesk-task-${timestamp}.json`;
-                    logger.info(`未指定文件名，将使用自动生成的文件名：${filePath}`);
+                    logger.info(`Filename not specified, using auto-generated: ${filePath}`);
                 }
                 if (!filePath.endsWith('.json')) {
                     filePath += '.json';
@@ -132,10 +132,10 @@ export function registerExportCommand(tui: OpenDeskTUI): void {
                 const absolutePath = path.resolve(tui.workspace, filePath);
                 if (fs.existsSync(absolutePath)) {
                     const confirm = new ConfirmOverlay(tui, {
-                        title: '文件已存在',
-                        message: `文件 ${absolutePath} 已存在。是否覆盖？`,
-                        confirmLabel: '覆盖',
-                        cancelLabel: '取消'
+                        title: t('export.file.exists'),
+                        message: `${t('export.file.exists.detail')}${absolutePath}${t('export.file.exists.suffix')}`,
+                        confirmLabel: t('common.cover'),
+                        cancelLabel: t('common.cancel')
                     });
                     confirm.show(() => {
                         doExportJson(absolutePath);
@@ -150,7 +150,7 @@ export function registerExportCommand(tui: OpenDeskTUI): void {
             if (!filePath) {
                 const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
                 filePath = `opendesk-session-${timestamp}.html`;
-                logger.info(`未指定文件名，将使用自动生成的文件名：${filePath}`);
+                logger.info(`Filename not specified, using auto-generated: ${filePath}`);
             }
             if (!filePath.endsWith('.html')) {
                 filePath += '.html';
@@ -158,10 +158,10 @@ export function registerExportCommand(tui: OpenDeskTUI): void {
             const absolutePath = path.resolve(tui.workspace, filePath);
             if (fs.existsSync(absolutePath)) {
                 const confirm = new ConfirmOverlay(tui, {
-                    title: '文件已存在',
-                    message: `文件 ${absolutePath} 已存在。是否覆盖？`,
-                    confirmLabel: '覆盖',
-                    cancelLabel: '取消'
+                    title: t('export.file.exists'),
+                    message: `${t('export.file.exists.detail')}${absolutePath}${t('export.file.exists.suffix')}`,
+                    confirmLabel: t('common.cover'),
+                    cancelLabel: t('common.cancel')
                 });
                 confirm.show(async () => {
                     await doExportHtml(absolutePath);
@@ -183,9 +183,9 @@ async function handleExportSkill(tui: OpenDeskTUI, restArgs: string): Promise<vo
 
     if (!skillName) {
         const info = new InfoOverlay(tui, {
-            title: '导出技能',
-            message: '用法：/export skill <技能名> <路径.zip>\n例如：/export skill my-skill ./my-skill.zip',
-            closeLabel: '确定'
+            title: t('export.skill.usage').split('：')[0],
+            message: t('export.skill.usage'),
+            closeLabel: t('common.close')
         });
         info.show();
         return;
@@ -195,9 +195,9 @@ async function handleExportSkill(tui: OpenDeskTUI, restArgs: string): Promise<vo
     const skill = skills.find((s: any) => s.name === skillName);
     if (!skill) {
         const info = new InfoOverlay(tui, {
-            title: '导出失败',
-            message: `未找到技能 "${skillName}"。\n已安装的技能：${skills.map((s: any) => s.name).join(', ') || '（无）'}`,
-            closeLabel: '确定'
+            title: t('export.skill.not.found'),
+            message: `${t('export.skill.not.found.detail')}${skillName}"${t('export.skill.not.found.suffix')}${skills.map((s: any) => s.name).join(', ') || '(' + t('common.none') + ')'}`,
+            closeLabel: t('common.close')
         });
         info.show();
         return;
@@ -207,9 +207,9 @@ async function handleExportSkill(tui: OpenDeskTUI, restArgs: string): Promise<vo
     const skillDir = path.join(skillsDir, skill.name);
     if (!fs.existsSync(skillDir)) {
         const info = new InfoOverlay(tui, {
-            title: '导出失败',
-            message: `技能目录不存在：${skillDir}`,
-            closeLabel: '确定'
+            title: t('export.skill.dir.not.exist'),
+            message: `${t('export.skill.dir.not.exist.detail')}${skillDir}`,
+            closeLabel: t('common.close')
         });
         info.show();
         return;
@@ -235,18 +235,18 @@ async function handleExportSkill(tui: OpenDeskTUI, restArgs: string): Promise<vo
             zip.writeZip(absolutePath);
             logger.info(`Skill "${skill.name}" exported to: ${absolutePath}`);
             const info = new InfoOverlay(tui, {
-                title: '导出成功',
-                message: `技能 "${skill.name}" 已导出到：\n${absolutePath}`,
-                closeLabel: '确定'
+                title: t('export.skill.success'),
+                message: `${t('export.skill.success.detail')}${skill.name}${t('export.skill.success.suffix')}${absolutePath}`,
+                closeLabel: t('common.close')
             });
             info.show();
         } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
             logger.error(`Export skill failed: ${message}`);
             const info = new InfoOverlay(tui, {
-                title: '导出失败',
-                message: `导出技能失败：${message}`,
-                closeLabel: '确定'
+                title: t('export.skill.fail'),
+                message: `${t('export.skill.fail.detail')}${message}`,
+                closeLabel: t('common.close')
             });
             info.show();
         }
@@ -254,10 +254,10 @@ async function handleExportSkill(tui: OpenDeskTUI, restArgs: string): Promise<vo
 
     if (fs.existsSync(absolutePath)) {
         const confirm = new ConfirmOverlay(tui, {
-            title: '文件已存在',
-            message: `文件 ${absolutePath} 已存在。是否覆盖？`,
-            confirmLabel: '覆盖',
-            cancelLabel: '取消'
+            title: t('export.file.exists'),
+            message: `${t('export.file.exists.detail')}${absolutePath}${t('export.file.exists.suffix')}`,
+            confirmLabel: t('common.cover'),
+            cancelLabel: t('common.cancel')
         });
         confirm.show(() => {
             doExport();

@@ -23,6 +23,7 @@ import {
 } from 'electron';
 import { Setting, getAppDirectory } from './utils/setting.js';
 import { QuickPassHelper } from './utils/quickpass.js';
+import { PROVIDER_TEMPLATES } from './tui/components/config/providers.js';
 import { GlobalState } from './aikernel/states/global.js';
 import { BaseToolset } from './aikernel/tool';
 import { is } from '@electron-toolkit/utils';
@@ -52,6 +53,8 @@ import { exportTaskToHtml, generateTaskHtml } from './utils/export';
 import { MainAgentDecl } from './aikernel/agents/mainagent/agent.js';
 import { HarnessContext } from './aikernel/security/harness.js';
 import { ElectronPermissionPromptProvider } from './aikernel/security/electronPrompt.js';
+import { ElectronAskUserProvider } from './aikernel/interaction/electronAskUser.js';
+import { createInteractionToolset } from './aikernel/interaction/tools.js';
 
 /** 全局 agentDecl 实例（延迟初始化），用于获取 mode 等元信息 */
 let _globalAgentDecl = null;
@@ -73,6 +76,18 @@ import appIcon from '../../resources/main/images/icon_round.png?asset';
 
 setPlatform(new ElectronPlatform(app));
 useConsoleTransport();
+
+// OpenHarmony 环境下注入 USER_DATA_PATH，确保 setting.ts / skillregistry 等模块能找到可写数据目录
+if (process.platform === 'openharmony' && !process.env.USER_DATA_PATH) {
+    try {
+        const electronUserData = app.getPath('userData');
+        if (electronUserData) {
+            process.env.USER_DATA_PATH = electronUserData;
+        }
+    } catch (_e) {
+        // app.getPath 可能在 OpenHarmony 上不可用，后续 resolveWritableUserDataRoot 会做回退
+    }
+}
 
 const __dirname = import.meta.dirname;
 const converter = new Convert();
@@ -260,7 +275,7 @@ const registerModeAPIHandlers = () => {
         }
     });
 
-    ipcMain.handle('mode:setCurrentMode', (event, modeId) => {
+    ipcMain.handle('mode:setCurrentMode', async (event, modeId) => {
         try {
             const agentDecl = getGlobalAgentDecl();
             const modes = agentDecl.supportedModes();
@@ -269,6 +284,25 @@ const registerModeAPIHandlers = () => {
                 return { status: 'error', message: `unknown mode: ${modeId}` };
             }
             _currentElectronModeId = modeId;
+
+            // 同步所有已有任务的权限引擎到新模式
+            const globalState = GlobalState.getInstance();
+            const workspace = Setting.getInstance().getEffectiveWorkspace();
+            for (const task of globalState.taskManagerState.tasks) {
+                const savedEnv = task.harnessContext.environ;
+                const savedPrompt = task.harnessContext.permissionPrompt;
+                try {
+                    const ctx = await HarnessContext.createForMode(workspace, target);
+                    ctx.environ = savedEnv;
+                    ctx.permissionPrompt = savedPrompt;
+                    task.harnessContext = ctx;
+                    task.activeModeId = target.id;
+                    task.disabledTools = target.disabledTools;
+                } catch (err) {
+                    logger.warn(`Failed to sync task harness for mode ${modeId}: ${err}`);
+                }
+            }
+
             return { status: 'ok', data: modeId };
         } catch (err) {
             return { status: 'error', message: String(err) };
@@ -299,6 +333,10 @@ const registerTaskManagerAPIHandlers = () => {
             task.harnessContext = await HarnessContext.createForMode(workspace, activeMode);
             task.harnessContext.permissionPrompt = new ElectronPermissionPromptProvider();
             task.activeModeId = activeMode.id;
+            task.disabledTools = activeMode.disabledTools;
+            // 注入 interaction 工具集（仅主任务，buildToolsets 会自动包含）
+            const askUserProvider = new ElectronAskUserProvider();
+            task.interactionToolset = createInteractionToolset(askUserProvider);
         } catch (err) {
             logger.warn(`Failed to init task harness in Electron, using empty context: ${err}`);
             task.harnessContext = HarnessContext.createEmpty();
@@ -577,6 +615,25 @@ const registerSettingAPIHandlers = () => {
         } catch {
             return { status: 'ok', data: false };
         }
+    });
+    ipcMain.handle('quickpass:exportBase', () => {
+        try {
+            const quickpass = QuickPassHelper.exportBaseConfig();
+            return { status: 'ok', data: quickpass };
+        } catch (error) {
+            return { status: 'error', message: error.message };
+        }
+    });
+    ipcMain.handle('quickpass:exportAll', () => {
+        try {
+            const quickpass = QuickPassHelper.exportAllConfig();
+            return { status: 'ok', data: quickpass };
+        } catch (error) {
+            return { status: 'error', message: error.message };
+        }
+    });
+    ipcMain.handle('setting:getProviderTemplates', () => {
+        return { status: 'ok', data: PROVIDER_TEMPLATES };
     });
     ipcMain.handle('workspace:getEffectiveWorkspace', () => {
         try {

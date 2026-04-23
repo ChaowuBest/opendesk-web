@@ -14,6 +14,7 @@ import { ToolCall } from '../../aikernel/messages';
 import { escapeHtml } from '../../utils/escape';
 import { Card } from '../../tui/components/card';
 import { statusDisplay, truncText } from '../../tui/components/toolcall';
+import { truncateToWidth } from '@mariozechner/pi-tui';
 import { z } from 'zod';
 import { detectEncoding, decodeBuffer, encodingDisplayName, HEAD_BYTES } from '../terminal/encoding.js';
 import type { PermissionRequest } from '../../aikernel/security/permission';
@@ -43,6 +44,19 @@ function getWorkingDirectory(taskState?: TaskState): string {
  * 控制字符（tab、换行、退格、换页、回车），导致路径损坏。
  * 此函数将这些控制字符还原为对应的反斜杠字母组合，然后统一使用正斜杠。
  */
+/**
+ * 将 MSYS2/Git Bash 风格的路径（如 /c/Projects/...）转换为 Windows 原生路径（如 C:/Projects/...）。
+ *
+ * 在 Git Bash (MSYS2) 环境下，process.cwd() 返回 /c/Projects/... 形式的路径。
+ * Node.js 的 path.resolve() 在 Windows 上会将 /c/Projects/... 解释为相对于当前驱动器
+ * 根目录的路径，产生 C:\c\Projects\...（双重前缀），因此需要先转换。
+ */
+function fromMsysPath(p: string): string {
+    if (process.platform !== 'win32') return p;
+    // 匹配 /c/、/d/ 等单字母驱动器前缀（MSYS2 风格）
+    return p.replace(/^\/([a-zA-Z])\//, (_, letter) => `${letter.toUpperCase()}:/`);
+}
+
 function sanitizePath(inputPath: string): string {
     if (!inputPath || typeof inputPath !== 'string') return '';
 
@@ -57,6 +71,9 @@ function sanitizePath(inputPath: string): string {
     if (p === '~' || p.startsWith('~/') || p.startsWith('~\\')) {
         p = os.homedir() + p.slice(1);
     }
+
+    // 将 MSYS2/Git Bash 风格路径转换为 Windows 原生路径，避免 path.resolve 产生双重前缀
+    p = fromMsysPath(p);
 
     // 将相对路径解析为绝对路径，确保权限检查时能与工作空间规则正确匹配
     p = path.resolve(p);
@@ -230,15 +247,19 @@ function renderDiffOutput(oldContent: string, newContent: string, width: number)
 
             if (line.type === 'removed') {
                 const lineNum = String(line.oldNum || '').padEnd(lineNumWidth);
-                const content = `- ${line.content}`;
-                const fullLine = lineNum + ' ' + content;
-                const paddedLine = fullLine.padEnd(width - 4);
+                const prefixWidth = lineNumWidth + 1 + 2; // lineNum + ' ' + '- '
+                const contentMaxWidth = width - 4 - prefixWidth;
+                const truncated = truncText(line.content, contentMaxWidth);
+                const fullLine = lineNum + ' - ' + truncated;
+                const paddedLine = truncateToWidth(fullLine, width - 4, '', true);
                 body.push(chalk.bgRgb(255, 230, 230)(chalk.rgb(180, 60, 60)(paddedLine)));
             } else if (line.type === 'added') {
                 const lineNum = String(line.newNum || '').padEnd(lineNumWidth);
-                const content = `+ ${line.content}`;
-                const fullLine = lineNum + ' ' + content;
-                const paddedLine = fullLine.padEnd(width - 4);
+                const prefixWidth = lineNumWidth + 1 + 2; // lineNum + ' ' + '+ '
+                const contentMaxWidth = width - 4 - prefixWidth;
+                const truncated = truncText(line.content, contentMaxWidth);
+                const fullLine = lineNum + ' + ' + truncated;
+                const paddedLine = truncateToWidth(fullLine, width - 4, '', true);
                 body.push(chalk.bgRgb(230, 255, 230)(chalk.rgb(40, 140, 40)(paddedLine)));
             } else {
                 const oldNumStr = String(line.oldNum || '').padEnd(lineNumWidth);
@@ -556,11 +577,13 @@ export class ReadFilesTool extends BaseTool<typeof readFilesSchema> {
 
     getDeclaredPermissions(args: z.output<typeof readFilesSchema>): PermissionRequest[] {
         if (!args.files || !Array.isArray(args.files)) return [];
-        return args.files.map((f: any) => ({
-            resourceType: 'file' as const,
-            action: 'read' as const,
-            resourcePath: sanitizePath(typeof f === 'string' ? f : f.path || '')
-        }));
+        return args.files
+            .map((f: any) => ({
+                resourceType: 'file' as const,
+                action: 'read' as const,
+                resourcePath: sanitizePath(typeof f === 'string' ? f : f.path || '')
+            }))
+            .filter((p) => p.resourcePath !== '');
     }
 
     async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
@@ -789,7 +812,9 @@ export class WriteFileTool extends BaseTool<typeof writeFileSchema> {
     }
 
     getDeclaredPermissions(args: z.output<typeof writeFileSchema>): PermissionRequest[] {
-        return [{ resourceType: 'file', action: 'write', resourcePath: sanitizePath(args.path) }];
+        const p = sanitizePath(args.path);
+        if (!p) return [];
+        return [{ resourceType: 'file', action: 'write', resourcePath: p }];
     }
 
     async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
@@ -930,6 +955,7 @@ export class EditFileTool extends BaseTool<typeof editFileSchema> {
 
     getDeclaredPermissions(args: z.output<typeof editFileSchema>): PermissionRequest[] {
         const p = sanitizePath(args.filePath);
+        if (!p) return [];
         if (args.oldString === '') {
             return [{ resourceType: 'file', action: 'write', resourcePath: p }];
         }
@@ -1139,6 +1165,7 @@ export class SearchReplaceTool extends BaseTool<typeof searchReplaceSchema> {
 
     getDeclaredPermissions(args: z.output<typeof searchReplaceSchema>): PermissionRequest[] {
         const p = sanitizePath(args.filePath);
+        if (!p) return [];
         return [
             { resourceType: 'file', action: 'read', resourcePath: p },
             { resourceType: 'file', action: 'write', resourcePath: p }
@@ -1439,6 +1466,7 @@ export class ApplyPatchTool extends BaseTool<typeof applyPatchSchema> {
         const seen = new Set<string>();
         for (const op of ops) {
             const p = sanitizePath(op.path);
+            if (!p) continue;
             if (op.type === 'update' || op.type === 'delete') {
                 const readKey = `read:${p}`;
                 if (!seen.has(readKey)) {
@@ -1630,6 +1658,7 @@ export class GlobFilesTool extends BaseTool<typeof globSchema> {
 
     getDeclaredPermissions(args: z.output<typeof globSchema>, taskState?: TaskState): PermissionRequest[] {
         const searchPath = args.path ? sanitizePath(args.path) : sanitizePath(getWorkingDirectory(taskState));
+        if (!searchPath) return [];
         return [
             {
                 resourceType: 'file',
@@ -1833,6 +1862,7 @@ export class GrepFilesTool extends BaseTool<typeof grepSchema> {
 
     getDeclaredPermissions(args: z.output<typeof grepSchema>, taskState?: TaskState): PermissionRequest[] {
         const searchPath = args.path ? sanitizePath(args.path) : sanitizePath(getWorkingDirectory(taskState));
+        if (!searchPath) return [];
         return [
             {
                 resourceType: 'file',
@@ -1947,12 +1977,24 @@ export class GrepFilesTool extends BaseTool<typeof grepSchema> {
         }
 
         try {
-            const regexFlags = ignoreCase ? 'gi' : 'g';
+            // 预处理 pattern 中的 \uXXXX 字面量转义序列，将其转换为实际的 Unicode 字符
+            // 这样 AI agent 发送的 [\u4e00-\u9fa5] 等 Unicode 范围模式能被正确处理
+            const processedPattern = pattern.replace(/\\u([0-9a-fA-F]{4})/g, (_, hex) =>
+                String.fromCharCode(parseInt(hex, 16))
+            );
+
+            // 优先使用 'u' (unicode) flag 以正确处理 Unicode 字符范围
+            // 如果 unicode 模式不兼容（某些旧式正则语法），回退到非 unicode 模式
+            const baseFlags = ignoreCase ? 'gi' : 'g';
             let regex: RegExp;
             try {
-                regex = new RegExp(pattern, regexFlags);
-            } catch (e: any) {
-                return `错误: 无效的正则表达式 - ${e.message}`;
+                regex = new RegExp(processedPattern, baseFlags + 'u');
+            } catch {
+                try {
+                    regex = new RegExp(processedPattern, baseFlags);
+                } catch (e: any) {
+                    return `错误: 无效的正则表达式 - ${e.message}`;
+                }
             }
 
             const basePath = searchPath ? sanitizePath(searchPath) : workingDir;

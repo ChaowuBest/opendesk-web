@@ -1,9 +1,10 @@
 import type { OpenDeskTUI } from '../entry.js';
+import { t } from '../../../locale/index.js';
 
 export function registerLogCommand(tui: OpenDeskTUI): void {
     tui.commandRegistry.register({
         name: 'log',
-        description: '显示日志面板，用法: /log [off|last|all]',
+        description: t('log.description'),
         getArgumentCompletions: (argPrefix: string) => {
             const options = ['off', 'last', 'all'];
             return options
@@ -11,7 +12,12 @@ export function registerLogCommand(tui: OpenDeskTUI): void {
                 .map((opt) => ({
                     value: opt,
                     label: opt,
-                    description: opt === 'off' ? '不显示' : opt === 'last' ? '最后10条' : '全部'
+                    description:
+                        opt === 'off'
+                            ? t('log.off.description')
+                            : opt === 'last'
+                              ? t('log.last.description')
+                              : t('log.all.description')
                 }));
         },
         execute: async (args: string) => {

@@ -34,7 +34,21 @@ import { createSensitivePathRules, createDeviceNodeRules } from '../../utils/per
 
 function normalizePath(p: string): string {
     if (!p) return '';
+    // 截断换行符及之后的内容（防止含换行符的路径绕过 glob 匹配）
+    // 同时处理 Unicode 行/段分隔符 U+2028/U+2029（picomatch ** 不匹配含这些字符的路径）
+    const newlineIdx = p.search(/[\r\n\u2028\u2029]/);
+    if (newlineIdx !== -1) {
+        p = p.slice(0, newlineIdx);
+    }
     return p.replace(/\\/g, '/');
+}
+
+/**
+ * 将 MSYS2/Git Bash 风格的路径（如 /c/Projects/...）转换为 Windows 原生路径（如 C:/Projects/...）。
+ */
+function fromMsysPath(p: string): string {
+    if (process.platform !== 'win32') return p;
+    return p.replace(/^\/([a-zA-Z])\//, (_, letter) => `${letter.toUpperCase()}:/`);
 }
 
 interface CompiledRule {
@@ -63,7 +77,9 @@ function compileRule(rule: PermissionRule): CompiledRule {
 }
 
 function matchesRule(compiled: CompiledRule, resourceType: string, objNorm: string, action: string): boolean {
-    return compiled.resourceType === resourceType && compiled.action === action && compiled.matcher(objNorm);
+    const typeMatch = compiled.resourceType === '*' || compiled.resourceType === resourceType;
+    const actionMatch = compiled.action === '*' || compiled.action === action;
+    return typeMatch && actionMatch && compiled.matcher(objNorm);
 }
 
 /**
@@ -111,6 +127,11 @@ export class GlobPermissionEnforcer implements PermissionEnforcer {
 
     async check(request: PermissionRequest): Promise<PermissionCheckResult> {
         const objNorm = normalizePath(request.resourcePath);
+
+        // 空路径不是合法资源路径，直接 allow（避免 picomatch ** 不匹配空字符串导致隐式 ask）
+        if (!objNorm) {
+            return { effect: 'allow', request };
+        }
 
         // deny 优先
         if (matchesAny(this.denyRules, request.resourceType, objNorm, request.action)) {
@@ -220,7 +241,7 @@ export class GlobPermissionEnforcer implements PermissionEnforcer {
  * - 技能写入 → ask（隐式回退，需用户确认）
  */
 export function createDefaultPermissionRules(workspace: string): PermissionRule[] {
-    const workspaceNorm = normalizePath(path.resolve(workspace));
+    const workspaceNorm = normalizePath(path.resolve(fromMsysPath(workspace)));
 
     return [
         // 设备节点始终允许（/dev/stdin, /dev/null 等）

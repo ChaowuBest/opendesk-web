@@ -12,8 +12,63 @@
 import { z } from 'zod';
 import path from 'path';
 import fs from 'fs';
+import os from 'os';
+import { createRequire } from 'module';
 import { workerData, isMainThread } from 'worker_threads';
 import type { BaseApplication } from '../applications/base.js';
+
+const require = createRequire(import.meta.url);
+
+function tryElectronUserDataPath(): string | undefined {
+    try {
+        const electron = require('electron') as typeof import('electron');
+        const p = electron.app?.getPath?.('userData');
+        return typeof p === 'string' && p.length > 0 ? p : undefined;
+    } catch {
+        return undefined;
+    }
+}
+
+/**
+ * 解析可写的应用数据根目录（与主进程、Worker 通过 workerData 传入的路径一致）
+ *
+ * OpenHarmony 上 HOME / APPDATA 均不存在，优先使用 USER_DATA_PATH（由 main.js 在启动时
+ * 通过 app.getPath('userData') 注入）。若该环境变量也未设置，则尝试 Electron API、
+ * os.homedir()、os.tmpdir() 等作为回退。
+ */
+function resolveWritableUserDataRoot(): string {
+    if (customAppDirectory) {
+        return customAppDirectory;
+    }
+    if ((process.platform as string) === 'openharmony' && process.env.USER_DATA_PATH) {
+        return process.env.USER_DATA_PATH;
+    }
+    if (process.env.APPDATA) {
+        return path.join(process.env.APPDATA, 'opendesk');
+    }
+    if (process.env.HOME) {
+        return path.join(process.env.HOME, '.opendesk');
+    }
+    const fromElectron = tryElectronUserDataPath();
+    if (fromElectron) {
+        return fromElectron;
+    }
+
+    // OpenHarmony 回退：HOME/APPDATA 不存在时，尝试 os.homedir() 和 os.tmpdir()
+    if ((process.platform as string) === 'openharmony') {
+        try {
+            const home = os.homedir();
+            if (home && home !== '/' && fs.existsSync(home)) {
+                return path.join(home, '.opendesk');
+            }
+        } catch {
+            /* os.homedir() 可能在沙箱环境中不可用 */
+        }
+        return path.join(os.tmpdir(), '.opendesk');
+    }
+
+    return path.join(process.cwd(), '.opendesk');
+}
 
 const ProviderSchema = z.object({
     name: z.string().default('openrouter').describe('模型提供商名称'),
@@ -49,6 +104,10 @@ let ApplicationConfigSchema: z.ZodObject<z.ZodRawShape> = z.object({});
 
 function getSettingSchema(): z.ZodObject<z.ZodRawShape> {
     return z.object({
+        locale: z
+            .enum(['auto', 'zh-CN', 'en-US'])
+            .default('auto')
+            .describe('语言设置: auto=跟随系统, zh-CN=中文, en-US=英文'),
         default_model: z.string().describe('在对话等场景中使用的默认模型').default(''),
         default_intent_parsing_model: z.string().describe('在意图解析中使用的多模态模型').default(''),
         default_embedding_model: z.string().describe('知识库，检索使用的中使用的向量嵌入模型').default(''),
@@ -325,16 +384,7 @@ function getAppDirectory(): string {
         return (workerData as { paths: { appDirectory: string } }).paths.appDirectory;
     }
 
-    let userDataPath = '';
-    if (customAppDirectory) {
-        userDataPath = customAppDirectory;
-    } else if (process.env.APPDATA) {
-        userDataPath = path.join(process.env.APPDATA, 'opendesk');
-    } else if (process.env.HOME) {
-        userDataPath = path.join(process.env.HOME, '.opendesk');
-    } else {
-        throw new Error('user data path not found');
-    }
+    const userDataPath = resolveWritableUserDataRoot();
 
     if (fs.existsSync(userDataPath)) {
         return userDataPath;

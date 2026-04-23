@@ -148,6 +148,17 @@ def run_local_evaluation(
         sys.exit(1)
 
 
+# 友好名 -> sb-cli 原生 subset 名
+SB_CLI_SUBSET_MAP = {
+    "lite": "swe-bench_lite",
+    "verified": "swe-bench_verified",
+    "multimodal": "swe-bench-m",
+    "swe-bench_lite": "swe-bench_lite",
+    "swe-bench_verified": "swe-bench_verified",
+    "swe-bench-m": "swe-bench-m",
+}
+
+
 def run_sb_cli_submit(
     predictions_path: str,
     subset: str,
@@ -155,8 +166,9 @@ def run_sb_cli_submit(
     run_id: str,
 ):
     """使用 sb-cli 上传 predictions 到 SWE-bench API 进行线上评估。"""
+    sb_subset = SB_CLI_SUBSET_MAP.get(subset, subset)
     cmd = [
-        "sb-cli", "submit", subset, split,
+        "sb-cli", "submit", sb_subset, split,
         "--predictions_path", predictions_path,
         "--run_id", run_id,
     ]
@@ -220,8 +232,9 @@ def main():
     parser.add_argument("--use-sb-cli", action="store_true",
                         help="使用 sb-cli 提交官方评估")
     parser.add_argument("--subset", type=str, default="lite",
-                        choices=["lite", "verified", "full", "multimodal"],
-                        help="sb-cli 子集 (默认: lite)")
+                        choices=["lite", "verified", "multimodal",
+                                 "swe-bench_lite", "swe-bench_verified", "swe-bench-m"],
+                        help="sb-cli 子集 (默认: lite -> swe-bench_lite)")
     parser.add_argument("--validate-only", action="store_true",
                         help="仅验证 predictions 格式")
 

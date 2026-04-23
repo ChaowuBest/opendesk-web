@@ -2,13 +2,12 @@ import { type Component, type TUI } from '@mariozechner/pi-tui';
 import { Setting } from '../../../utils/setting';
 import { ConfigForm, type FieldDef, type ActionDef } from './form';
 import chalk from 'chalk';
+import { t } from '../../../../locale/index.js';
 
 const DEFAULT_MODEL_FIELDS = [
-    { key: 'default_model', label: '默认对话模型' },
-    // { key: 'default_intent_parsing_model', label: '意图解析模型' },
-    { key: 'default_embedding_model', label: '向量嵌入模型' },
-    { key: 'default_reranker_model', label: '重排序模型' }
-    // { key: 'default_vision_model', label: '视觉模型' },
+    { key: 'default_model', labelKey: 'config.defaultmodel.field.default_model' },
+    { key: 'default_embedding_model', labelKey: 'config.defaultmodel.field.embedding_model' },
+    { key: 'default_reranker_model', labelKey: 'config.defaultmodel.field.reranker_model' }
 ] as const;
 
 /**
@@ -39,22 +38,22 @@ export class DefaultModelConfigPage implements Component {
                 return {
                     type: 'select' as const,
                     key: f.key,
-                    label: f.label,
+                    label: t(f.labelKey),
                     value: optionsWithEmpty.includes(current) ? current : '',
                     options: optionsWithEmpty
                 };
             }
-            return { type: 'text' as const, key: f.key, label: f.label, value: current };
+            return { type: 'text' as const, key: f.key, label: t(f.labelKey), value: current };
         });
 
         const actions: ActionDef[] = [
-            { key: 'save', label: '🆗 保存', style: 'primary' },
-            { key: 'cancel', label: '↩  返回' }
+            { key: 'save', label: t('config.common.save'), style: 'primary' },
+            { key: 'cancel', label: t('config.common.cancel') }
         ];
 
         this.form = new ConfigForm(
             this.tui,
-            '默认模型配置',
+            t('config.defaultmodel.title'),
             fields,
             actions,
             (actionKey, values) => {
@@ -95,7 +94,7 @@ export class DefaultModelConfigPage implements Component {
 
         const lines: string[] = [];
         if ((Setting.getInstance().getData() as any).models?.length === 0) {
-            lines.push(chalk.yellow('  ⚠ 尚未配置任何模型，请先通过 /config models 添加模型'));
+            lines.push(chalk.yellow('  ⚠ ' + t('config.model.warning.no.models')));
             lines.push('');
         }
         lines.push(...this.form.render(width));

@@ -84,7 +84,8 @@ const debugConfig: esbuild.BuildOptions = {
 };
 
 async function build() {
-    await Promise.all([esbuild.build(prodConfig), esbuild.build(debugConfig)]);
+    await esbuild.build(prodConfig);
+    await esbuild.build(debugConfig);
     console.log('Built both production and debug versions:');
     console.log(`  - ${outfile} (minified, no sourcemap)`);
     console.log(`  - ${outfileDebug} (unminified, with inline sourcemap)`);

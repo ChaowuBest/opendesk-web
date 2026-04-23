@@ -14,11 +14,9 @@
 import os from 'os';
 import path from 'path';
 import { GlobPermissionEnforcer, createDefaultPermissionRules } from '../../../main/aikernel/security/enforcer';
-import {
-    createSoloModePermissionRules,
-    createPlanModePermissionRules,
-    createUnlimitedModePermissionRules
-} from '../../../main/aikernel/agents/mainagent/permissions';
+import { createSoloModePermissionRules } from '../../../main/aikernel/agents/mainagent/modes/solo';
+import { createPlanModePermissionRules } from '../../../main/aikernel/agents/mainagent/modes/plan';
+import { createUnlimitedModePermissionRules } from '../../../main/aikernel/agents/mainagent/modes/unlimited';
 import {
     createSensitivePathRules,
     createCriticalPathRules,
@@ -93,7 +91,110 @@ describe('GlobPermissionEnforcer', () => {
         });
     });
 
-    describe('resourceType 和 action 匹配', () => {
+    describe('resourceType 和 action 通配符匹配', () => {
+        test('resourceType=* 匹配所有资源类型', async () => {
+            const enforcer = await GlobPermissionEnforcer.create([
+                { resourceType: '*', action: 'read', pathPattern: '**', effect: 'allow' }
+            ]);
+            const fileR = await enforcer.check({ resourceType: 'file', action: 'read', resourcePath: '/a.txt' });
+            const netR = await enforcer.check({
+                resourceType: 'network',
+                action: 'read',
+                resourcePath: 'https://x.com'
+            });
+            const skillR = await enforcer.check({ resourceType: 'skill', action: 'read', resourcePath: 'my-skill' });
+            expect(fileR.effect).toBe('allow');
+            expect(netR.effect).toBe('allow');
+            expect(skillR.effect).toBe('allow');
+        });
+
+        test('action=* 匹配所有操作类型', async () => {
+            const enforcer = await GlobPermissionEnforcer.create([
+                { resourceType: 'file', action: '*', pathPattern: '**', effect: 'allow' }
+            ]);
+            const readR = await enforcer.check({ resourceType: 'file', action: 'read', resourcePath: '/a.txt' });
+            const writeR = await enforcer.check({ resourceType: 'file', action: 'write', resourcePath: '/a.txt' });
+            const execR = await enforcer.check({ resourceType: 'file', action: 'execute', resourcePath: '/a.txt' });
+            expect(readR.effect).toBe('allow');
+            expect(writeR.effect).toBe('allow');
+            expect(execR.effect).toBe('allow');
+        });
+
+        test('resourceType=* + action=* 全通配匹配所有请求', async () => {
+            const enforcer = await GlobPermissionEnforcer.create([
+                { resourceType: '*', action: '*', pathPattern: '**', effect: 'allow' }
+            ]);
+            const requests: PermissionRequest[] = [
+                { resourceType: 'file', action: 'read', resourcePath: '/a.txt' },
+                { resourceType: 'file', action: 'write', resourcePath: '/b.txt' },
+                { resourceType: 'file', action: 'execute', resourcePath: '/c.sh' },
+                { resourceType: 'network', action: 'access', resourcePath: 'https://x.com' },
+                { resourceType: 'skill', action: 'read', resourcePath: 's1' },
+                { resourceType: 'skill', action: 'write', resourcePath: 's2' },
+                { resourceType: 'skill', action: 'execute', resourcePath: 's3' }
+            ];
+            for (const req of requests) {
+                const r = await enforcer.check(req);
+                expect(r.effect).toBe('allow');
+            }
+        });
+
+        test('resourceType=* 不匹配 action 不同的请求', async () => {
+            const enforcer = await GlobPermissionEnforcer.create([
+                { resourceType: '*', action: 'read', pathPattern: '**', effect: 'allow' }
+            ]);
+            const readR = await enforcer.check({ resourceType: 'file', action: 'read', resourcePath: '/a.txt' });
+            const writeR = await enforcer.check({ resourceType: 'file', action: 'write', resourcePath: '/a.txt' });
+            expect(readR.effect).toBe('allow');
+            expect(writeR.effect).toBe('ask');
+        });
+
+        test('action=* 不匹配 resourceType 不同的请求', async () => {
+            const enforcer = await GlobPermissionEnforcer.create([
+                { resourceType: 'file', action: '*', pathPattern: '**', effect: 'allow' }
+            ]);
+            const fileR = await enforcer.check({ resourceType: 'file', action: 'write', resourcePath: '/a.txt' });
+            const netR = await enforcer.check({
+                resourceType: 'network',
+                action: 'access',
+                resourcePath: 'https://x.com'
+            });
+            expect(fileR.effect).toBe('allow');
+            expect(netR.effect).toBe('ask');
+        });
+
+        test('通配规则与 deny 规则优先级正常（deny 仍优先）', async () => {
+            const enforcer = await GlobPermissionEnforcer.create([
+                { resourceType: '*', action: '*', pathPattern: '**', effect: 'allow' },
+                { resourceType: 'file', action: 'read', pathPattern: '/secret/**', effect: 'deny' }
+            ]);
+            const normalR = await enforcer.check({ resourceType: 'file', action: 'write', resourcePath: '/tmp/a.txt' });
+            const secretR = await enforcer.check({ resourceType: 'file', action: 'read', resourcePath: '/secret/key' });
+            expect(normalR.effect).toBe('allow');
+            expect(secretR.effect).toBe('deny');
+        });
+
+        test('通配规则与 ask 规则优先级正常（ask 仍优先于 allow）', async () => {
+            const enforcer = await GlobPermissionEnforcer.create([
+                { resourceType: '*', action: '*', pathPattern: '**', effect: 'allow' },
+                { resourceType: 'file', action: 'read', pathPattern: '**/.env', effect: 'ask' }
+            ]);
+            const normalR = await enforcer.check({
+                resourceType: 'file',
+                action: 'read',
+                resourcePath: '/workspace/a.txt'
+            });
+            const envR = await enforcer.check({
+                resourceType: 'file',
+                action: 'read',
+                resourcePath: '/workspace/.env'
+            });
+            expect(normalR.effect).toBe('allow');
+            expect(envR.effect).toBe('ask');
+        });
+    });
+
+    describe('resourceType 和 action 精确匹配', () => {
         test('file allow 规则不匹配 network 请求', async () => {
             const enforcer = await GlobPermissionEnforcer.create([
                 { resourceType: 'file', action: 'read', pathPattern: '**', effect: 'allow' }
@@ -203,6 +304,103 @@ describe('GlobPermissionEnforcer', () => {
             });
             expect(r.effect).toBe('allow');
         });
+
+        test('含换行符的路径被截断后仍能匹配 **', async () => {
+            const enforcer = await GlobPermissionEnforcer.create([
+                { resourceType: 'file', action: 'read', pathPattern: '/workspace/**', effect: 'allow' }
+            ]);
+            // \n 后的内容被截断，等价于 /workspace/src/index.ts
+            const r = await enforcer.check({
+                resourceType: 'file',
+                action: 'read',
+                resourcePath: '/workspace/src/index.ts\n/secret/key.pem'
+            });
+            expect(r.effect).toBe('allow');
+        });
+
+        test('含 \\r\\n 的路径被截断后仍能匹配 **', async () => {
+            const enforcer = await GlobPermissionEnforcer.create([
+                { resourceType: 'file', action: 'read', pathPattern: '/workspace/**', effect: 'allow' }
+            ]);
+            const r = await enforcer.check({
+                resourceType: 'file',
+                action: 'read',
+                resourcePath: '/workspace/file.txt\r\n/secret/key.pem'
+            });
+            expect(r.effect).toBe('allow');
+        });
+
+        test('含 Unicode 行分隔符 U+2028 的路径被截断后仍能匹配 **', async () => {
+            const enforcer = await GlobPermissionEnforcer.create([
+                { resourceType: 'file', action: 'read', pathPattern: '/workspace/**', effect: 'allow' }
+            ]);
+            const r = await enforcer.check({
+                resourceType: 'file',
+                action: 'read',
+                resourcePath: '/workspace/file.txt\u2028/secret/key.pem'
+            });
+            expect(r.effect).toBe('allow');
+        });
+
+        test('含 Unicode 段分隔符 U+2029 的路径被截断后仍能匹配 **', async () => {
+            const enforcer = await GlobPermissionEnforcer.create([
+                { resourceType: 'file', action: 'read', pathPattern: '/workspace/**', effect: 'allow' }
+            ]);
+            const r = await enforcer.check({
+                resourceType: 'file',
+                action: 'read',
+                resourcePath: '/workspace/file.txt\u2029/secret/key.pem'
+            });
+            expect(r.effect).toBe('allow');
+        });
+
+        test('含换行符的路径截断后不匹配 deny 规则', async () => {
+            const enforcer = await GlobPermissionEnforcer.create([
+                { resourceType: 'file', action: 'read', pathPattern: '/workspace/**', effect: 'allow' },
+                { resourceType: 'file', action: 'read', pathPattern: '/secret/**', effect: 'deny' }
+            ]);
+            // 换行后的 /secret/key.pem 被截断，实际匹配 /workspace/file.txt
+            const r = await enforcer.check({
+                resourceType: 'file',
+                action: 'read',
+                resourcePath: '/workspace/file.txt\n/secret/key.pem'
+            });
+            expect(r.effect).toBe('allow');
+        });
+
+        test('含特殊字符的路径能匹配 **', async () => {
+            const enforcer = await GlobPermissionEnforcer.create([
+                { resourceType: 'file', action: 'read', pathPattern: '/workspace/**', effect: 'allow' }
+            ]);
+            const specialPaths = [
+                '/workspace/file with spaces.txt',
+                '/workspace/文件名.txt',
+                '/workspace/emoji_😀_file.txt',
+                '/workspace/path with (parens)/file.txt',
+                '/workspace/path-with-dashes/file.txt',
+                '/workspace/path_with_underscores/file.txt'
+            ];
+            for (const p of specialPaths) {
+                const r = await enforcer.check({
+                    resourceType: 'file',
+                    action: 'read',
+                    resourcePath: p
+                });
+                expect(r.effect).toBe('allow');
+            }
+        });
+
+        test('仅换行符的路径被归一化为空字符串后直接 allow', async () => {
+            const enforcer = await GlobPermissionEnforcer.create([
+                { resourceType: 'file', action: 'read', pathPattern: '/workspace/**', effect: 'allow' }
+            ]);
+            const r = await enforcer.check({
+                resourceType: 'file',
+                action: 'read',
+                resourcePath: '\n/secret/key.pem'
+            });
+            expect(r.effect).toBe('allow');
+        });
     });
 
     describe('Windows 路径归一化', () => {
@@ -256,6 +454,22 @@ describe('GlobPermissionEnforcer', () => {
             await enforcer.addRule({ resourceType: 'file', action: 'read', pathPattern: '/secret/**', effect: 'deny' });
             r = await enforcer.check({ resourceType: 'file', action: 'read', resourcePath: '/secret/data' });
             expect(r.effect).toBe('deny');
+        });
+
+        test('removeRule 可移除通配规则 (*/*)', async () => {
+            const wildcardRule: PermissionRule = {
+                resourceType: '*',
+                action: '*',
+                pathPattern: '**',
+                effect: 'allow'
+            };
+            const enforcer = await GlobPermissionEnforcer.create([wildcardRule]);
+            let r = await enforcer.check({ resourceType: 'file', action: 'read', resourcePath: '/tmp/test.txt' });
+            expect(r.effect).toBe('allow');
+
+            await enforcer.removeRule(wildcardRule);
+            r = await enforcer.check({ resourceType: 'file', action: 'read', resourcePath: '/tmp/test.txt' });
+            expect(r.effect).toBe('ask');
         });
     });
 
@@ -631,6 +845,15 @@ describe('Unlimited Mode 权限规则', () => {
         expect(r.effect).toBe('allow');
     });
 
+    test('技能写入 → allow', async () => {
+        const r = await enforcer.check({
+            resourceType: 'skill',
+            action: 'write',
+            resourcePath: 'any-skill'
+        });
+        expect(r.effect).toBe('allow');
+    });
+
     // Unlimited mode 关键特性：敏感路径也允许
     test('Unlimited: ~/.ssh 目录 → allow（无保护）', async () => {
         const r = await enforcer.check({
@@ -685,6 +908,7 @@ describe('Unlimited Mode 权限规则', () => {
             { resourceType: 'network' as const, action: 'access' as const, resourcePath: 'https://example.com' },
             { resourceType: 'skill' as const, action: 'read' as const, resourcePath: 'test-skill' },
             { resourceType: 'skill' as const, action: 'execute' as const, resourcePath: 'test-skill' },
+            { resourceType: 'skill' as const, action: 'write' as const, resourcePath: 'test-skill' },
             { resourceType: 'file' as const, action: 'read' as const, resourcePath: `${HOME}/.ssh/id_rsa` },
             { resourceType: 'file' as const, action: 'write' as const, resourcePath: `${HOME}/.ssh/config` },
             { resourceType: 'file' as const, action: 'read' as const, resourcePath: '/workspace/.env' },

@@ -1,19 +1,20 @@
 import type { OpenDeskTUI } from '../entry.js';
 import { InfoOverlay } from '../components/notice.js';
 import { TaskState } from '../../aikernel/states/tasks.js';
-import { getFileCompletions } from '../components/file-completions.js';
+import { getFileCompletions, expandPath } from '../components/file-completions.js';
 import path from 'path';
 import fs from 'fs';
+import { t } from '../../../locale/index.js';
 
 export function registerImportCommand(tui: OpenDeskTUI): void {
     tui.commandRegistry.register({
         name: 'import',
-        description: '从 JSON 文件导入任务，用法：/import task <json文件路径>',
+        description: t('import.description'),
         getArgumentCompletions: (argPrefix: string) => {
             const parts = argPrefix.split(/\s+/);
             if (parts.length <= 1 && !argPrefix.includes(' ')) {
                 const prefix = (parts[0] ?? '').toLowerCase();
-                const options = [{ value: 'task', label: 'task', description: '导入任务 JSON 文件' }];
+                const options = [{ value: 'task', label: 'task', description: t('import.task.description') }];
                 if (!prefix) return options;
                 return options.filter((o) => o.value.startsWith(prefix));
             }
@@ -30,8 +31,8 @@ export function registerImportCommand(tui: OpenDeskTUI): void {
             const trimmed = args.trim();
             if (!trimmed.startsWith('task ') && trimmed !== 'task') {
                 const info = new InfoOverlay(tui, {
-                    title: '导入失败',
-                    message: '用法：/import task <json文件路径>\n例如：/import task ./my-task.json'
+                    title: t('import.fail'),
+                    message: t('import.usage')
                 });
                 info.show();
                 return;
@@ -39,17 +40,17 @@ export function registerImportCommand(tui: OpenDeskTUI): void {
             const jsonPathRaw = trimmed.slice(5).trim();
             if (!jsonPathRaw) {
                 const info = new InfoOverlay(tui, {
-                    title: '导入失败',
-                    message: '请指定要导入的 JSON 文件路径。\n用法：/import task <json文件路径>'
+                    title: t('import.fail'),
+                    message: t('import.no.path')
                 });
                 info.show();
                 return;
             }
-            const jsonPath = path.resolve(jsonPathRaw);
+            const jsonPath = path.resolve(expandPath(jsonPathRaw));
             if (!fs.existsSync(jsonPath)) {
                 const info = new InfoOverlay(tui, {
-                    title: '导入失败',
-                    message: `文件不存在：${jsonPath}`
+                    title: t('import.fail'),
+                    message: `${t('import.file.not.exist')}${jsonPath}`
                 });
                 info.show();
                 return;
@@ -64,8 +65,8 @@ export function registerImportCommand(tui: OpenDeskTUI): void {
             } catch (err) {
                 const message = err instanceof Error ? err.message : String(err);
                 const info = new InfoOverlay(tui, {
-                    title: '导入失败',
-                    message: `无法解析或加载任务 JSON：${message}`
+                    title: t('import.fail'),
+                    message: `${t('import.parse.fail')}${message}`
                 });
                 info.show();
             }

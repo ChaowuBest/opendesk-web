@@ -20,6 +20,7 @@ import { getShellCompletions, executeShellCommand } from './shell';
 import { spawnSync } from 'child_process';
 import process from 'process';
 import { SkillRegistry as AISkillRegistry } from '../../aikernel/skill';
+import { t } from '../../../locale/index.js';
 
 type AgentInputStatus = 'idle' | 'running';
 
@@ -172,7 +173,10 @@ export class TaskStatusBar implements Component {
         const leftContent = leftCells.length > 0 ? ` ${leftCells.map((c) => c.text).join('  │  ')}` : '';
 
         // 右侧固定区域：帮助提示（含模式切换提示）
-        const rightHint = chalk.hex(colors.fgDim)('Shift+Tab 切换模式  /help 帮助') + ' ';
+        const rightHint =
+            chalk.hex(colors.fgDim)(
+                `Shift+Tab ${t('input.statusbar.switchmode')}  /${t('help.name')} ${t('input.statusbar.help')}`
+            ) + ' ';
 
         let leftW = visibleWidth(leftContent);
         const rightW = visibleWidth(rightHint);
@@ -783,7 +787,9 @@ export class AgentInputArea implements Component {
     setStatus(status: AgentInputStatus) {
         this.status = status;
         this.refreshHint();
-        if (this.status === 'idle' && !this.openDeskTUI.hasOpenOverlay) {
+        // 配置模式（/config）未设置 hasOpenOverlay，但输入区不在当前布局中；
+        // 若在 idle 时抢焦点会导致焦点落到不可见组件，界面表现为卡死。
+        if (this.status === 'idle' && !this.openDeskTUI.isInputBlocked()) {
             this.openDeskTUI.tui.setFocus(this.input);
         }
     }

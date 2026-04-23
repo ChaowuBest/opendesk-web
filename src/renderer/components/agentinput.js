@@ -61,6 +61,9 @@ class AgentInput extends HTMLElement {
         this.availableSkills = [];
         this.skillPanelOpen = false;
         this.skillSearchQuery = '';
+        this.modelPanelOpen = false;
+        this.modePanelOpen = false;
+        this._docClickBound = false;
     }
 
     connectedCallback() {
@@ -104,8 +107,6 @@ class AgentInput extends HTMLElement {
      */
     setMode(modeId) {
         this.selectedModeId = modeId;
-        const modeSelect = this.querySelector('#agent-input-mode-select');
-        if (modeSelect) modeSelect.value = modeId;
         this.updateModeIndicator();
         if (window.modeAPI?.setCurrentMode) {
             window.modeAPI.setCurrentMode(modeId).catch((err) => {
@@ -141,8 +142,6 @@ class AgentInput extends HTMLElement {
      */
     setModel(modelAlias) {
         this.selectedModel = modelAlias;
-        const modelSelect = this.querySelector('#agent-input-model-select');
-        if (modelSelect) modelSelect.value = modelAlias;
     }
 
     /**
@@ -150,8 +149,6 @@ class AgentInput extends HTMLElement {
      */
     setReasoningEffort(effort) {
         this.selectedReasoningEffort = effort || '';
-        const effortSelect = this.querySelector('#agent-input-effort-select');
-        if (effortSelect) effortSelect.value = this.selectedReasoningEffort;
     }
 
     disconnectedCallback() {}
@@ -251,24 +248,46 @@ class AgentInput extends HTMLElement {
             `;
         }
 
-        const modelOptions = this.availableModels
+        const modelItems = this.availableModels
             .map((m) => {
-                const selected = m.alias === this.selectedModel ? 'selected' : '';
-                return `<option value="${m.alias}" ${selected}>${m.alias}</option>`;
+                const isActive = m.alias === this.selectedModel ? 'active' : '';
+                const checkMark =
+                    m.alias === this.selectedModel
+                        ? '<div class="popup-panel-item-check"><i class="fas fa-check"></i></div>'
+                        : '';
+                return `<button class="popup-panel-item ${isActive}" data-model-alias="${m.alias}">
+                    <div class="popup-panel-item-icon"><i class="fas fa-robot text-emerald-600 text-xs"></i></div>
+                    <div class="popup-panel-item-info">
+                        <div class="popup-panel-item-name">${m.alias}</div>
+                    </div>
+                    ${checkMark}
+                    <div class="popup-panel-item-arrow"><i class="fas fa-chevron-right text-[10px] text-gray-400"></i></div>
+                </button>`;
             })
             .join('');
 
-        const effortOptions = REASONING_EFFORT_OPTIONS.map((o) => {
-            const selected = o.value === this.selectedReasoningEffort ? 'selected' : '';
-            return `<option value="${o.value}" ${selected}>${o.label}</option>`;
-        }).join('');
-
-        const modeOptions = this.availableModes
+        const modeItems = this.availableModes
             .map((m) => {
-                const selected = m.id === this.selectedModeId ? 'selected' : '';
-                return `<option value="${m.id}" ${selected}>${m.icon} ${m.name}</option>`;
+                const isActive = m.id === this.selectedModeId ? 'active' : '';
+                const checkMark =
+                    m.id === this.selectedModeId
+                        ? '<div class="popup-panel-item-check"><i class="fas fa-check"></i></div>'
+                        : '';
+                return `<button class="popup-panel-item ${isActive}" data-mode-id="${m.id}">
+                    <div class="popup-panel-item-icon" style="font-size:14px;font-style:normal;">${m.icon}</div>
+                    <div class="popup-panel-item-info">
+                        <div class="popup-panel-item-name">${m.name}</div>
+                        <div class="popup-panel-item-desc">${m.description || ''}</div>
+                    </div>
+                    ${checkMark}
+                </button>`;
             })
             .join('');
+
+        const currentModelLabel = this.getModelButtonLabel();
+        const currentMode = this.availableModes.find((m) => m.id === this.selectedModeId);
+        const currentModeLabel = currentMode ? `${currentMode.name}` : '模式';
+        const currentModeIcon = currentMode ? currentMode.icon : '';
 
         this.innerHTML = `
         <div id="agent-input-container" class="w-full p-1 rounded-[24px] bg-white/40 border border-gray-300/60 shadow-[0_8px_30px_-12px_rgba(0,0,0,0.07)]">
@@ -284,37 +303,48 @@ class AgentInput extends HTMLElement {
 
                 <!-- 工具栏 -->
                 <div class="flex items-center justify-between px-2.5 py-1.5 border-t border-gray-100">
-                    <!-- 左侧：模型选择 + 推理模式 + 技能 + 附件 -->
+                    <!-- 左侧：模式 + 模型选择 + 技能 + 附件 -->
                     <div class="flex items-center gap-1.5 flex-wrap" style="row-gap: 0.2rem;">
                         ${
-                            this.availableModels.length > 0
+                            this.availableModes.length > 1
                                 ? `
-                        <select id="agent-input-model-select"
-                            class="agent-input-toolbar-control text-xs bg-gray-50 border border-gray-200 rounded-full px-2 py-0.5 text-gray-600 outline-none hover:border-gray-400 transition-colors cursor-pointer"
-                            style="max-width: 130px;">
-                            ${modelOptions}
-                        </select>
-                        <select id="agent-input-effort-select"
-                            class="agent-input-toolbar-control text-xs bg-gray-50 border border-gray-200 rounded-full px-2 py-0.5 text-gray-600 outline-none hover:border-gray-400 transition-colors cursor-pointer">
-                            ${effortOptions}
-                        </select>
+                        <div class="relative">
+                            <button id="agent-input-mode-btn" class="agent-input-toolbar-control flex items-center justify-center gap-1 text-xs bg-gray-50 border border-gray-200 rounded-full px-2 py-0.5 text-gray-600 outline-none hover:border-emerald-400 hover:text-emerald-600 transition-colors cursor-pointer">
+                                <span style="font-size:10px;">${currentModeIcon}</span>
+                                <span>${currentModeLabel}</span>
+                            </button>
+                            <div id="agent-input-mode-panel" class="popup-panel-hidden">
+                                <div id="agent-input-mode-list" class="popup-panel-list">${modeItems}</div>
+                            </div>
+                        </div>
                         `
                                 : ''
                         }
                         ${
-                            this.availableModes.length > 1
+                            this.availableModels.length > 0
                                 ? `
-                        <select id="agent-input-mode-select"
-                            class="agent-input-toolbar-control text-xs bg-gray-50 border border-gray-200 rounded-full px-2 py-0.5 text-gray-600 outline-none hover:border-gray-400 transition-colors cursor-pointer"
-                            style="max-width: 120px;">
-                            ${modeOptions}
-                        </select>
+                        <div class="relative">
+                            <button id="agent-input-model-btn" class="agent-input-toolbar-control flex items-center justify-center gap-1 text-xs bg-gray-50 border border-gray-200 rounded-full px-2 py-0.5 text-gray-600 outline-none hover:border-emerald-400 hover:text-emerald-600 transition-colors cursor-pointer">
+                                <i class="fas fa-robot text-[10px]"></i>
+                                <span>${currentModelLabel}</span>
+                            </button>
+                            <div id="agent-input-model-panel" class="popup-panel-hidden">
+                                <div class="popup-panel-search">
+                                    <i class="fas fa-search text-gray-400 text-xs"></i>
+                                    <input id="agent-input-model-search" type="text" placeholder="搜索模型" class="popup-panel-search-input" />
+                                </div>
+                                <div id="agent-input-model-list" class="popup-panel-list">${modelItems}</div>
+                            </div>
+                            <div id="agent-input-effort-submenu" class="popup-panel-hidden popup-panel-submenu">
+                                <div id="agent-input-effort-submenu-list" class="popup-panel-list"></div>
+                            </div>
+                        </div>
                         `
                                 : ''
                         }
                         <!-- 技能选择按钮 -->
                         <div class="relative">
-                            <button id="agent-input-skill-btn" class="agent-input-toolbar-control flex items-center justify-center gap-1 text-xs bg-gray-50 border border-gray-200 rounded-full px-2 py-0.5 text-gray-600 outline-none hover:border-purple-400 hover:text-purple-600 transition-colors cursor-pointer">
+                            <button id="agent-input-skill-btn" class="agent-input-toolbar-control flex items-center justify-center gap-1 text-xs bg-gray-50 border border-gray-200 rounded-full px-2 py-0.5 text-gray-600 outline-none hover:border-emerald-400 hover:text-emerald-600 transition-colors cursor-pointer">
                                 <i class="fas fa-wand-magic-sparkles text-[10px]"></i>
                                 <span>技能</span>
                             </button>
@@ -365,6 +395,251 @@ class AgentInput extends HTMLElement {
         this.updateModeIndicator();
     }
 
+    /**
+     * 生成模型按钮的显示文字：模型名 (推理配额)，默认时不显示括号
+     */
+    getModelButtonLabel() {
+        const modelName = this.selectedModel || '模型';
+        if (!this.selectedReasoningEffort) return modelName;
+        const effortLabel = REASONING_EFFORT_OPTIONS.find((o) => o.value === this.selectedReasoningEffort)?.label;
+        if (!effortLabel || this.selectedReasoningEffort === '') return modelName;
+        return `${modelName} (${effortLabel})`;
+    }
+
+    /**
+     * 通用弹出面板定位逻辑
+     */
+    positionPanel(btn, panel) {
+        const rect = btn.getBoundingClientRect();
+        const panelHeight = Math.min(280, panel.scrollHeight);
+        let left = rect.left;
+        if (left + 220 > window.innerWidth) {
+            left = window.innerWidth - 220 - 8;
+        }
+        panel.style.top = rect.top - panelHeight - 8 + 'px';
+        panel.style.left = left + 'px';
+    }
+
+    /**
+     * 关闭所有弹出面板
+     */
+    closeAllPanels() {
+        this.closeModelPanel(true);
+        this.closeModePanel(true);
+        this.toggleSkillPanel(true);
+    }
+
+    toggleModelPanel(forceClose = false) {
+        const panel = this.querySelector('#agent-input-model-panel');
+        if (!panel) return;
+        if (forceClose || panel.classList.contains('popup-panel-visible')) {
+            this.closeModelPanel(true);
+        } else {
+            this.closeAllPanels();
+            panel.classList.remove('popup-panel-hidden');
+            panel.classList.add('popup-panel-visible');
+            this.modelPanelOpen = true;
+            const btn = this.querySelector('#agent-input-model-btn');
+            if (btn) this.positionPanel(btn, panel);
+            const searchInput = this.querySelector('#agent-input-model-search');
+            if (searchInput) {
+                searchInput.value = '';
+                searchInput.focus();
+            }
+        }
+    }
+
+    closeModelPanel(force = false) {
+        const panel = this.querySelector('#agent-input-model-panel');
+        if (!panel) return;
+        panel.classList.remove('popup-panel-visible');
+        panel.classList.add('popup-panel-hidden');
+        this.modelPanelOpen = false;
+        this.hideEffortSubmenu();
+    }
+
+    toggleModePanel(forceClose = false) {
+        const panel = this.querySelector('#agent-input-mode-panel');
+        if (!panel) return;
+        if (forceClose || panel.classList.contains('popup-panel-visible')) {
+            this.closeModePanel(true);
+        } else {
+            this.closeAllPanels();
+            panel.classList.remove('popup-panel-hidden');
+            panel.classList.add('popup-panel-visible');
+            this.modePanelOpen = true;
+            const btn = this.querySelector('#agent-input-mode-btn');
+            if (btn) this.positionPanel(btn, panel);
+        }
+    }
+
+    closeModePanel(force = false) {
+        const panel = this.querySelector('#agent-input-mode-panel');
+        if (!panel) return;
+        panel.classList.remove('popup-panel-visible');
+        panel.classList.add('popup-panel-hidden');
+        this.modePanelOpen = false;
+    }
+
+    renderModelList(filter = '') {
+        const listEl = this.querySelector('#agent-input-model-list');
+        if (!listEl) return;
+        const lowerFilter = filter.toLowerCase();
+        const filtered = lowerFilter
+            ? this.availableModels.filter((m) => m.alias.toLowerCase().includes(lowerFilter))
+            : this.availableModels;
+
+        if (filtered.length === 0) {
+            listEl.innerHTML = '<div class="popup-panel-empty">未找到匹配的模型</div>';
+        } else {
+            listEl.innerHTML = filtered
+                .map((m) => {
+                    const isActive = m.alias === this.selectedModel ? 'active' : '';
+                    const checkMark =
+                        m.alias === this.selectedModel
+                            ? '<div class="popup-panel-item-check"><i class="fas fa-check"></i></div>'
+                            : '';
+                    return `<button class="popup-panel-item ${isActive}" data-model-alias="${m.alias}">
+                        <div class="popup-panel-item-icon"><i class="fas fa-robot text-emerald-600 text-xs"></i></div>
+                        <div class="popup-panel-item-info">
+                            <div class="popup-panel-item-name">${m.alias}</div>
+                        </div>
+                        ${checkMark}
+                        <div class="popup-panel-item-arrow"><i class="fas fa-chevron-right text-[10px] text-gray-400"></i></div>
+                    </button>`;
+                })
+                .join('');
+        }
+        this.bindModelItemEvents();
+    }
+
+    bindModelItemEvents() {
+        const modelItems = this.querySelectorAll('#agent-input-model-list .popup-panel-item');
+        modelItems.forEach((item) => {
+            item.addEventListener('mouseenter', () => {
+                const alias = item.dataset.modelAlias;
+                if (!alias) return;
+                // 清除其他模型项的 hovered 状态，给当前项加上
+                this.querySelectorAll('#agent-input-model-list .popup-panel-item.hovered').forEach((el) => {
+                    el.classList.remove('hovered');
+                });
+                item.classList.add('hovered');
+                this.showEffortSubmenu(alias, item);
+            });
+            item.addEventListener('click', (e) => {
+                e.stopPropagation();
+            });
+        });
+    }
+
+    /**
+     * 在模型项右侧弹出 reasoning effort 子菜单
+     */
+    showEffortSubmenu(modelAlias, triggerItem) {
+        const submenu = this.querySelector('#agent-input-effort-submenu');
+        const submenuList = this.querySelector('#agent-input-effort-submenu-list');
+        if (!submenu || !submenuList) return;
+
+        // 记录当前 hover 的模型别名，供子菜单交互时使用
+        this._hoveredModelAlias = modelAlias;
+
+        // 生成子菜单内容
+        submenuList.innerHTML = REASONING_EFFORT_OPTIONS.map((o) => {
+            const isActive =
+                modelAlias === this.selectedModel && o.value === this.selectedReasoningEffort ? 'active' : '';
+            const checkMark = isActive ? '<div class="popup-panel-item-check"><i class="fas fa-check"></i></div>' : '';
+            const icon =
+                o.value === ''
+                    ? 'fa-gauge'
+                    : o.value === 'none'
+                      ? 'fa-ban'
+                      : o.value === 'low'
+                        ? 'fa-gauge-simple'
+                        : o.value === 'medium'
+                          ? 'fa-gauge'
+                          : 'fa-gauge-high';
+            return `<button class="popup-panel-item ${isActive}" data-model-alias="${modelAlias}" data-effort-value="${o.value}">
+                <div class="popup-panel-item-icon"><i class="fas ${icon} text-emerald-600 text-xs"></i></div>
+                <div class="popup-panel-item-info">
+                    <div class="popup-panel-item-name">${o.label}</div>
+                </div>
+                ${checkMark}
+            </button>`;
+        }).join('');
+
+        // 定位：对齐到当前模型项的右侧
+        const modelPanel = this.querySelector('#agent-input-model-panel');
+        if (modelPanel && triggerItem) {
+            const panelRect = modelPanel.getBoundingClientRect();
+            const itemRect = triggerItem.getBoundingClientRect();
+            submenu.style.top = itemRect.top + 'px';
+            submenu.style.left = panelRect.right + 4 + 'px';
+        }
+
+        // 重播弹出动画：先移除再添加 visible 类
+        submenu.classList.remove('popup-panel-visible');
+        submenu.classList.add('popup-panel-hidden');
+        // 强制 reflow 以重启动画
+        void submenu.offsetWidth;
+        submenu.classList.remove('popup-panel-hidden');
+        submenu.classList.add('popup-panel-visible');
+
+        // 绑定子菜单项事件
+        this.bindEffortSubmenuEvents();
+    }
+
+    hideEffortSubmenu() {
+        const submenu = this.querySelector('#agent-input-effort-submenu');
+        if (!submenu) return;
+        submenu.classList.remove('popup-panel-visible');
+        submenu.classList.add('popup-panel-hidden');
+        // 清除模型项的 hovered 状态
+        this.querySelectorAll('#agent-input-model-list .popup-panel-item.hovered').forEach((el) => {
+            el.classList.remove('hovered');
+        });
+        this._hoveredModelAlias = null;
+    }
+
+    bindEffortSubmenuEvents() {
+        const items = this.querySelectorAll('#agent-input-effort-submenu-list .popup-panel-item');
+        items.forEach((item) => {
+            item.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                const alias = item.dataset.modelAlias;
+                const effortValue = item.dataset.effortValue;
+                if (!alias || effortValue === undefined) return;
+                this.selectedModel = alias;
+                this.selectedReasoningEffort = effortValue;
+                await updateSettingForModelChange(this.selectedModel, this.selectedReasoningEffort);
+                this.closeModelPanel();
+                this.hideEffortSubmenu();
+                // 更新按钮文字
+                const modelBtn = this.querySelector('#agent-input-model-btn span');
+                if (modelBtn) modelBtn.textContent = this.getModelButtonLabel();
+            });
+        });
+    }
+
+    bindModeItemEvents() {
+        const items = this.querySelectorAll('#agent-input-mode-list .popup-panel-item');
+        items.forEach((item) => {
+            item.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const modeId = item.dataset.modeId;
+                if (!modeId) return;
+                this.setMode(modeId);
+                this.closeModePanel();
+                const modeBtnIcon = this.querySelector('#agent-input-mode-btn span:first-child');
+                const modeBtnText = this.querySelector('#agent-input-mode-btn span:last-child');
+                const mode = this.availableModes.find((m) => m.id === modeId);
+                if (mode) {
+                    if (modeBtnIcon) modeBtnIcon.textContent = mode.icon;
+                    if (modeBtnText) modeBtnText.textContent = mode.name;
+                }
+            });
+        });
+    }
+
     toggleSkillPanel(forceClose = false) {
         const panel = this.querySelector('#agent-input-skill-panel');
         if (!panel) return;
@@ -373,6 +648,8 @@ class AgentInput extends HTMLElement {
             panel.classList.add('skill-panel-hidden');
             this.skillPanelOpen = false;
         } else {
+            this.closeModelPanel(true);
+            this.closeModePanel(true);
             this.loadSkills().then(() => {
                 this.renderSkillList();
                 panel.classList.remove('skill-panel-hidden');
@@ -418,7 +695,7 @@ class AgentInput extends HTMLElement {
                     (s) => `
                 <button class="skill-panel-item" data-skill-name="${s.name}">
                     <div class="skill-panel-item-icon">
-                        <i class="fas fa-bolt text-purple-500 text-xs"></i>
+                        <i class="fas fa-bolt text-emerald-600 text-xs"></i>
                     </div>
                     <div class="skill-panel-item-info">
                         <div class="skill-panel-item-name">${s.name}</div>
@@ -500,32 +777,41 @@ class AgentInput extends HTMLElement {
         const submitBtn = this.querySelector('#agent-input-submit-btn');
         const stopBtn = this.querySelector('#agent-input-stop-btn');
         const removeFileBtns = this.querySelectorAll('.agent-input-remove-file-btn');
-        const modelSelect = this.querySelector('#agent-input-model-select');
-        const effortSelect = this.querySelector('#agent-input-effort-select');
-        const modeSelect = this.querySelector('#agent-input-mode-select');
 
-        if (modelSelect) {
-            modelSelect.addEventListener('change', async () => {
-                this.selectedModel = modelSelect.value;
-                const currentModel = this.availableModels.find((m) => m.alias === this.selectedModel);
-                if (currentModel) {
-                    this.selectedReasoningEffort = currentModel.reasoning_effort || '';
-                    if (effortSelect) effortSelect.value = this.selectedReasoningEffort;
+        // 模型选择面板
+        const modelBtn = this.querySelector('#agent-input-model-btn');
+        const modelSearch = this.querySelector('#agent-input-model-search');
+
+        if (modelBtn) {
+            modelBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.toggleModelPanel();
+            });
+        }
+        if (modelSearch) {
+            modelSearch.addEventListener('input', (e) => {
+                this.renderModelList(e.target.value);
+            });
+            modelSearch.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape') {
+                    this.toggleModelPanel(true);
+                    textarea.focus();
                 }
-                await updateSettingForModelChange(this.selectedModel, undefined);
+                e.stopPropagation();
+            });
+            modelSearch.addEventListener('click', (e) => e.stopPropagation());
+        }
+        this.bindModelItemEvents();
+
+        // 模式选择面板
+        const modeBtn = this.querySelector('#agent-input-mode-btn');
+        if (modeBtn) {
+            modeBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.toggleModePanel();
             });
         }
-        if (effortSelect) {
-            effortSelect.addEventListener('change', async () => {
-                this.selectedReasoningEffort = effortSelect.value;
-                await updateSettingForModelChange(this.selectedModel, this.selectedReasoningEffort);
-            });
-        }
-        if (modeSelect) {
-            modeSelect.addEventListener('change', async () => {
-                this.setMode(modeSelect.value);
-            });
-        }
+        this.bindModeItemEvents();
 
         // 技能选择面板
         const skillBtn = this.querySelector('#agent-input-skill-btn');
@@ -559,9 +845,29 @@ class AgentInput extends HTMLElement {
             });
         }
 
-        if (!this._skillPanelDocClickBound) {
-            this._skillPanelDocClickBound = true;
+        if (!this._docClickBound) {
+            this._docClickBound = true;
             document.addEventListener('click', (e) => {
+                // 关闭模型面板
+                if (this.modelPanelOpen) {
+                    const panel = this.querySelector('#agent-input-model-panel');
+                    const submenu = this.querySelector('#agent-input-effort-submenu');
+                    const btn = this.querySelector('#agent-input-model-btn');
+                    const clickedPanel = panel && panel.contains(e.target);
+                    const clickedSubmenu = submenu && submenu.contains(e.target);
+                    if (!clickedPanel && !clickedSubmenu && e.target !== btn && !btn?.contains(e.target)) {
+                        this.closeModelPanel();
+                    }
+                }
+                // 关闭模式面板
+                if (this.modePanelOpen) {
+                    const panel = this.querySelector('#agent-input-mode-panel');
+                    const btn = this.querySelector('#agent-input-mode-btn');
+                    if (panel && !panel.contains(e.target) && e.target !== btn && !btn?.contains(e.target)) {
+                        this.closeModePanel();
+                    }
+                }
+                // 关闭技能面板
                 if (this.skillPanelOpen) {
                     const panel = this.querySelector('#agent-input-skill-panel');
                     const btn = this.querySelector('#agent-input-skill-btn');

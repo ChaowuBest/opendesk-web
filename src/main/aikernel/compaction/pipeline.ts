@@ -1,11 +1,16 @@
-import { compactContext, shouldCompact } from '../compact.js';
+import { compactContext } from '../compact.js';
 import { ChatContext } from '../messages.js';
+import { logger } from '../../utils/logger.js';
 import { buildActiveContextView } from './context-view.js';
+import { AutoCompactStates, getAutoCompactDecision, type AutoCompactState } from './auto-compact.js';
 import { analyzeMicrocompactCandidates, applyLocalMicrocompactToChatContext } from './microcompact.js';
 import { buildToolResultBudgetProjectionForChatContext } from './tool-results.js';
 import type { PrepareContextOptions, PreparedContextResult } from './types.js';
 
-type LightweightPreparationResult = Omit<PreparedContextResult, 'shouldCompact' | 'compacted'>;
+type LightweightPreparationResult = Omit<
+    PreparedContextResult,
+    'shouldCompact' | 'compacted' | 'autoCompactDecision' | 'autoCompactState' | 'autoCompactStateChanged'
+>;
 
 function runLightweightPreparationLayers(
     chatContext: ChatContext,
@@ -99,40 +104,98 @@ export async function prepareContextForModel(
     chatContext.deduplicateCompactBoundaries();
 
     let lightweightResult = runLightweightPreparationLayers(chatContext, options);
-    const shouldRunCompact = await shouldCompact(chatContext, model);
+    const autoCompactDecision =
+        options.autoCompactDecisionOverride ?? (await getAutoCompactDecision(chatContext, model));
+    const autoCompactStateTarget = options.autoCompactState;
+    let autoCompactState: AutoCompactState | undefined = autoCompactStateTarget
+        ? AutoCompactStates.clone(autoCompactStateTarget)
+        : undefined;
+    let autoCompactStateChanged = false;
+    const cooldownRemainingMs = autoCompactState ? AutoCompactStates.getCooldownRemainingMs(autoCompactState) : 0;
+    const shouldRunCompact = autoCompactDecision.shouldCompact && cooldownRemainingMs <= 0;
     let compacted = false;
 
-    if (shouldRunCompact) {
-        options.beforeCompact?.();
-        if (options.executeCompact) {
-            await options.executeCompact();
-        } else {
-            await compactContext(chatContext, model);
+    if (autoCompactDecision.shouldCompact && cooldownRemainingMs > 0) {
+        logger.info(
+            `[Compact] auto-compact cooldown active: remaining=${cooldownRemainingMs}ms, ` +
+                `failures=${autoCompactState?.consecutiveFailures ?? 0}, ` +
+                `threshold=${autoCompactState?.failureThreshold ?? 0}, ` +
+                `lastFailureReason=${autoCompactState?.lastFailureReason ?? 'unknown'}`
+        );
+    }
+
+    const syncAutoCompactState = (nextState: AutoCompactState) => {
+        autoCompactState = nextState;
+        autoCompactStateChanged = true;
+        if (autoCompactStateTarget) {
+            Object.assign(autoCompactStateTarget, nextState);
         }
-        compacted = true;
+    };
 
-        const rerunOptions: PrepareContextOptions = {
-            ...options,
-            toolResultReplacementState: lightweightResult.toolResultReplacementState
-        };
-        const rerunResult = runLightweightPreparationLayers(chatContext, rerunOptions);
+    if (shouldRunCompact) {
+        if (autoCompactState) {
+            syncAutoCompactState(AutoCompactStates.recordAttempt(autoCompactState));
+        }
 
-        lightweightResult = {
-            ...rerunResult,
-            budgetApplied: lightweightResult.budgetApplied || rerunResult.budgetApplied,
-            microcompactApplied: lightweightResult.microcompactApplied || rerunResult.microcompactApplied,
-            microcompactAppliedCandidates: [
-                ...lightweightResult.microcompactAppliedCandidates,
-                ...rerunResult.microcompactAppliedCandidates
-            ],
-            toolResultStateChanged: lightweightResult.toolResultStateChanged || rerunResult.toolResultStateChanged,
-            microcompactStateChanged: lightweightResult.microcompactStateChanged || rerunResult.microcompactStateChanged
-        };
+        let compactApplied = true;
+        try {
+            options.beforeCompact?.();
+            if (options.executeCompact) {
+                const executeResult = await options.executeCompact();
+                compactApplied = executeResult !== false;
+            } else {
+                compactApplied = await compactContext(chatContext, model, { trigger: 'auto' });
+            }
+        } catch (err) {
+            if (autoCompactState) {
+                syncAutoCompactState(
+                    AutoCompactStates.recordFailure(
+                        autoCompactState,
+                        new Date(),
+                        err instanceof Error ? err.message : String(err)
+                    )
+                );
+            }
+            throw err;
+        }
+
+        if (compactApplied) {
+            compacted = true;
+
+            if (autoCompactState) {
+                syncAutoCompactState(AutoCompactStates.recordSuccess(autoCompactState));
+            }
+
+            const rerunOptions: PrepareContextOptions = {
+                ...options,
+                toolResultReplacementState: lightweightResult.toolResultReplacementState,
+                autoCompactState: autoCompactStateTarget ?? autoCompactState
+            };
+            const rerunResult = runLightweightPreparationLayers(chatContext, rerunOptions);
+
+            lightweightResult = {
+                ...rerunResult,
+                budgetApplied: lightweightResult.budgetApplied || rerunResult.budgetApplied,
+                microcompactApplied: lightweightResult.microcompactApplied || rerunResult.microcompactApplied,
+                microcompactAppliedCandidates: [
+                    ...lightweightResult.microcompactAppliedCandidates,
+                    ...rerunResult.microcompactAppliedCandidates
+                ],
+                toolResultStateChanged: lightweightResult.toolResultStateChanged || rerunResult.toolResultStateChanged,
+                microcompactStateChanged:
+                    lightweightResult.microcompactStateChanged || rerunResult.microcompactStateChanged
+            };
+        } else {
+            logger.info('[Compact] auto compact returned no-op; keeping context unchanged');
+        }
     }
 
     return {
         ...lightweightResult,
         shouldCompact: shouldRunCompact,
-        compacted
+        compacted,
+        autoCompactDecision,
+        autoCompactState: autoCompactStateTarget ?? autoCompactState,
+        autoCompactStateChanged
     };
 }

@@ -53,6 +53,110 @@ function padBgLine(line: string, width: number, bgFn: (s: string) => string): st
 }
 
 /**
+ * 从左边截断文本，省略号在左边，保留右边的路径/信息完整。
+ * 适用于文件路径等场景：用户更关心路径的尾部（文件名和最近目录），
+ * 而非路径的头部（根目录和上层目录）。
+ *
+ * 正确处理 ANSI 转义码（不计入可见宽度）和宽字符（如中文）。
+ * 不添加 reset 码，避免破坏外层样式（如背景色）。
+ */
+function truncateToWidthFromLeft(text: string, maxWidth: number, ellipsis: string = '...'): string {
+    const textVisibleWidth = visibleWidth(text);
+    if (textVisibleWidth <= maxWidth) {
+        return text;
+    }
+    const ellipsisWidth = visibleWidth(ellipsis);
+    const targetWidth = maxWidth - ellipsisWidth;
+    if (targetWidth <= 0) {
+        return ellipsis.substring(0, maxWidth);
+    }
+
+    // 使用 Intl.Segmenter 逐 grapheme 从右向左扫描
+    const segmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+    const segments: { type: 'ansi' | 'grapheme'; value: string; width: number }[] = [];
+
+    // 先分离 ANSI 码和可见字符
+    let i = 0;
+    while (i < text.length) {
+        const code = text.charCodeAt(i);
+        // 检测 ANSI 转义序列
+        if (code === 0x1b && i + 1 < text.length) {
+            const next = text[i + 1];
+            let end = i + 2;
+            if (next === '[') {
+                while (end < text.length && !/[mGKHJ]/.test(text[end])) end++;
+                if (end < text.length) end++;
+            } else if (next === ']' || next === '_') {
+                while (end < text.length) {
+                    if (text[end] === '\x07') {
+                        end++;
+                        break;
+                    }
+                    if (text[end] === '\x1b' && text[end + 1] === '\\') {
+                        end += 2;
+                        break;
+                    }
+                    end++;
+                }
+            } else {
+                segments.push({ type: 'grapheme', value: text[i], width: visibleWidth(text[i]) });
+                i++;
+                continue;
+            }
+            segments.push({ type: 'ansi', value: text.slice(i, end), width: 0 });
+            i = end;
+        } else {
+            // 找到下一个 ANSI 码或字符串结尾
+            let textEnd = i;
+            while (textEnd < text.length && text.charCodeAt(textEnd) !== 0x1b) textEnd++;
+            for (const seg of segmenter.segment(text.slice(i, textEnd))) {
+                segments.push({ type: 'grapheme', value: seg.segment, width: visibleWidth(seg.segment) });
+            }
+            i = textEnd;
+        }
+    }
+
+    // 从右向左收集 grapheme，直到达到 targetWidth
+    // 同时收集这些 grapheme 之前的 ANSI 码（保持样式连续性）
+    let accumulatedWidth = 0;
+    let cutIndex = segments.length; // 从哪个位置开始保留
+    for (let j = segments.length - 1; j >= 0; j--) {
+        const seg = segments[j];
+        if (seg.type === 'ansi') continue;
+        if (accumulatedWidth + seg.width > targetWidth) {
+            cutIndex = j + 1;
+            break;
+        }
+        accumulatedWidth += seg.width;
+        cutIndex = j;
+    }
+
+    // 向前扫描，将截断点之前的连续 ANSI 码也包含进来，保持颜色样式
+    while (cutIndex > 0 && segments[cutIndex - 1].type === 'ansi') {
+        cutIndex--;
+    }
+
+    // 从 cutIndex 开始收集所有 segment（包括 ANSI 码）
+    let result = '';
+    for (let j = cutIndex; j < segments.length; j++) {
+        result += segments[j].value;
+    }
+
+    return ellipsis + result;
+}
+
+/**
+ * 根据选项类型为标签文本着色。
+ * 与构造函数中原来的颜色逻辑一致：allow=绿色，prefix/allow_type=亮蓝色，deny=红色。
+ */
+function colorizeOptionLabel(value: string, text: string, c: typeof permissionColors): string {
+    if (value === 'allow') return c.allow(text);
+    if (value === 'deny') return c.deny(text);
+    // prefix:* 和 allow_type
+    return c.allowBright(text);
+}
+
+/**
  * 权限确认框配色——不区分深浅主题，选用在黑底和白底下都有良好可读性的中性色值。
  * 背景使用 ANSI 256 色中的深灰蓝 (#2e3440)，在浅色终端上有足够区分度，
  * 在深色终端上也不会与纯黑背景混为一体。
@@ -118,20 +222,44 @@ export class PermissionPromptWidget implements Component {
         this.questionText = c.question(`  ${toolName} 请求${typeActionLabel}，是否允许？`);
 
         const items: { value: string; label: string }[] = [];
-        items.push({ value: 'allow', label: c.allow('本次允许') });
+        items.push({ value: 'allow', label: '本次允许' });
 
         for (let i = 0; i < Math.min(prefixOptions.length, 4); i++) {
             const opt = prefixOptions[i];
             items.push({
                 value: `prefix:${opt.pattern}`,
-                label: c.allowBright(`始终允许 ${opt.label} 的${typeActionLabel}`)
+                label: `始终允许 ${opt.label} 的${typeActionLabel}`
             });
         }
 
-        items.push({ value: 'allow_type', label: c.allowBright(`始终允许所有${typeActionLabel}操作`) });
-        items.push({ value: 'deny', label: c.deny('拒绝') });
+        items.push({ value: 'allow_type', label: `始终允许所有${typeActionLabel}操作` });
+        items.push({ value: 'deny', label: '拒绝' });
 
-        this.list = new SelectList(items, items.length, defaultSelectListTheme);
+        this.list = new SelectList(items, items.length, defaultSelectListTheme, {
+            maxPrimaryColumnWidth: 999,
+            truncatePrimary: (ctx) => {
+                const text = ctx.text;
+                if (visibleWidth(text) <= ctx.maxWidth) {
+                    return colorizeOptionLabel(ctx.item.value, text, c);
+                }
+                // 对"始终允许 <路径> 的XXX"格式的选项，保留前缀后缀，只截断中间路径
+                const prefixStr = '始终允许 ';
+                const suffixPattern = ` 的${typeActionLabel}`;
+                if (text.startsWith(prefixStr) && text.includes(suffixPattern)) {
+                    const suffixStart = text.lastIndexOf(suffixPattern);
+                    const pathPart = text.slice(prefixStr.length, suffixStart);
+                    const prefixWidth = visibleWidth(prefixStr);
+                    const suffixWidth = visibleWidth(suffixPattern);
+                    const maxPathWidth = ctx.maxWidth - prefixWidth - suffixWidth;
+                    if (maxPathWidth > 5) {
+                        const truncatedPath = truncateToWidthFromLeft(pathPart, maxPathWidth);
+                        return colorizeOptionLabel(ctx.item.value, prefixStr + truncatedPath + suffixPattern, c);
+                    }
+                }
+                // 其他情况：从左边截断
+                return colorizeOptionLabel(ctx.item.value, truncateToWidthFromLeft(text, ctx.maxWidth), c);
+            }
+        });
 
         this.hintLine = new Text(c.hint('Esc 取消'));
 
@@ -183,7 +311,8 @@ export class PermissionPromptWidget implements Component {
         }
         for (const rawPath of this.rawPaths) {
             const coloredPath = c.path(rawPath);
-            const wrapped = wrapTextWithAnsi(coloredPath, pathWidth);
+            // 右边留出与左边 indent 相同的 padding，避免换行后文字紧贴右边界
+            const wrapped = wrapTextWithAnsi(coloredPath, pathWidth - visibleWidth(indent));
             for (const wrappedLine of wrapped) {
                 lines.push(padBgLine(indent + wrappedLine, width, bgFn));
             }
@@ -239,7 +368,10 @@ interface GrantedPermission {
 export class TUIPermissionPromptProvider implements PermissionPromptProvider {
     private openDeskTUI: OpenDeskTUI;
     private queue: QueuedPermissionRequest[] = [];
-    private isPrompting = false;
+    /** 弹窗是否正在显示（widget 已显示且用户未完成交互） */
+    private isShowing = false;
+    /** 阻塞状态下请求已入队但未处理 */
+    private isPending = false;
     private grantedPermissions: GrantedPermission[] = [];
 
     constructor(openDeskTUI: OpenDeskTUI) {
@@ -254,8 +386,22 @@ export class TUIPermissionPromptProvider implements PermissionPromptProvider {
     ): Promise<PermissionUserResponse> {
         return new Promise<PermissionUserResponse>((resolve) => {
             this.queue.push({ requests, toolName, prefixOptions, taskInfo, resolve });
+            // 标记有请求待处理，避免 taskview 在此期间渲染 tool card
+            this.isPending = true;
+            // 配置/overlay 模式下不入队显示，等退出后再处理
+            if (this.openDeskTUI.isInputBlocked()) {
+                return;
+            }
             this.processQueue();
         });
+    }
+
+    /**
+     * 尝试处理队列（仅在非阻塞状态下才真正显示弹窗）。
+     * 供外部在退出配置/overlay 模式后调用。
+     */
+    processQueueIfReady(): void {
+        this.processQueue();
     }
 
     /**
@@ -316,7 +462,12 @@ export class TUIPermissionPromptProvider implements PermissionPromptProvider {
     }
 
     private processQueue(): void {
-        if (this.isPrompting || this.queue.length === 0) return;
+        if (this.isShowing || this.queue.length === 0) return;
+
+        // 阻塞状态下不弹窗，等待退出后再处理
+        if (this.openDeskTUI.isInputBlocked()) {
+            return;
+        }
 
         // 自动批准匹配已授权规则的请求，无需弹窗
         while (this.queue.length > 0) {
@@ -332,7 +483,8 @@ export class TUIPermissionPromptProvider implements PermissionPromptProvider {
             return;
         }
 
-        this.isPrompting = true;
+        this.isShowing = true;
+        this.isPending = false;
         const item = this.queue.shift()!;
         const remainingCount = this.queue.length;
 
@@ -346,7 +498,7 @@ export class TUIPermissionPromptProvider implements PermissionPromptProvider {
 
         widget.onDone = (response) => {
             this.openDeskTUI.inputArea.hidePermissionPrompt();
-            this.isPrompting = false;
+            this.isShowing = false;
             this.recordGrant(item, response);
             item.resolve(response);
 

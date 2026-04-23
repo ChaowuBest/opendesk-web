@@ -18,12 +18,12 @@ import {
     type ChatMessage
 } from './messages.js';
 import { LLM } from './llm.js';
-import { Setting, ModelInstance } from '../utils/setting.js';
-import { lookupKnownContextSize, fetchContextSizeFromAPI } from '../utils/model-context.js';
 import { logger } from '../utils/logger.js';
 import { HookRegistry } from './hooks.js';
 import type { TaskState } from './states/tasks.js';
 import { buildActiveContextView, countNonBoundaryMessages } from './compaction/context-view.js';
+import { getAutoCompactDecision } from './compaction/auto-compact.js';
+import { compactFullContext, type FullCompactRunOptions } from './compaction/full-compact.js';
 import {
     buildToolResultReplacementText,
     getToolResultArtifactPath,
@@ -33,9 +33,9 @@ import {
 } from './compaction/tool-results.js';
 
 /**
- * 构建结构化总结所使用的 system prompt
- * 最早的结构化总结Prompt基本使用了Gemini Cli的版本
- * appreciation: @Gemini Cli
+ * @deprecated Legacy separator compact prompt.
+ * Step 7 的主路径已迁移到 compaction/full-compact.ts 的 tail-preserving full compact。
+ * 当前仅为旧 helper 保留，后续清理 compress_id / midpoint separator 路径时再移除。
  */
 function getCompressionPrompt(): string {
     return `你是对话历史压缩器，负责将完整的对话记录提炼为结构化状态快照。
@@ -102,8 +102,9 @@ function collectActiveToolCalls(chatContext: ChatContext): ToolCall[] {
 }
 
 /**
- * Level 1：压缩活跃上下文中的旧工具调用。
+ * @deprecated Legacy Level 1：压缩活跃上下文中的旧工具调用。
  * 保留最近 30%（但不低于 10 次）的工具调用不压缩，其余标记 compress_id。
+ * Step 7 后不再作为 compactContext() 主路径，保留用于兼容旧任务/后续清理。
  *
  * @returns 本次新压缩的工具调用数量
  */
@@ -141,7 +142,7 @@ export function compressToolCalls(chatContext: ChatContext): number {
     return newlyCompressed;
 }
 
-/** 将消息列表序列化为可供 LLM 总结的纯文本 */
+/** @deprecated Legacy midpoint separator summary input builder. */
 function buildMessagesText(messages: ChatMessage[]): string {
     const parts: string[] = [];
 
@@ -187,9 +188,7 @@ function buildMessagesText(messages: ChatMessage[]): string {
     return parts.join('\n\n');
 }
 
-/**
- * 调用 LLM 生成对话历史的结构化总结
- */
+/** @deprecated Legacy midpoint separator summary generator. */
 async function generateSummary(messages: ChatMessage[], model?: string): Promise<string> {
     const messagesText = buildMessagesText(messages);
     const question = new UserMessage();
@@ -225,11 +224,13 @@ function countMessageStats(messages: ChatMessage[]): {
 const MIN_KEPT_MESSAGES = 4;
 
 /**
- * Level 2：插入或渐进式前移 compact boundary。
+ * @deprecated Legacy Level 2：插入或渐进式前移 compact boundary。
  *
  * - 首次：separator 放在总消息数的 50% 位置。
  * - 再次：separator 前移到"旧位置 ↔ 末尾"的中点，每次砍掉剩余消息的一半。
  * - 保底：separator 后至少保留 MIN_KEPT_MESSAGES 条消息，否则视为已压缩到极限。
+ *
+ * Step 7 后 compactContext() 已改为 summary + kept tail，不再调用这个中点算法。
  */
 async function compressWithSeparator(chatContext: ChatContext, model?: string): Promise<void> {
     const existingBoundary = chatContext.findCompactBoundary();
@@ -312,81 +313,57 @@ async function compressWithSeparator(chatContext: ChatContext, model?: string): 
 }
 
 /**
- * 上下文压缩主入口：先尝试 Level 1，无效果则触发 Level 2。
+ * 上下文压缩主入口：使用 tail-preserving full compact。
  *
- * @returns 是否执行了压缩操作
+ * Legacy 的 compressToolCalls()/compressWithSeparator() 暂时保留，方便回滚和后续清理，
+ * 但不再作为主路径调用。
+ *
+ * @returns 是否实际执行了压缩操作
  */
-export async function compactContext(chatContext: ChatContext, model?: string): Promise<boolean> {
+export async function compactContext(
+    chatContext: ChatContext,
+    model?: string,
+    options: FullCompactRunOptions = {}
+): Promise<boolean> {
     chatContext.deduplicateCompactBoundaries();
     const totalMessages = countNonBoundaryMessages(chatContext);
-    logger.info(`[Compact] 开始压缩, 当前消息数: ${totalMessages}`);
+    const trigger = options.trigger ?? 'manual';
+    logger.info(`[Compact] 开始 tail-preserving full compact, 当前消息数: ${totalMessages}, trigger=${trigger}`);
 
-    const newlyCompressed = compressToolCalls(chatContext);
+    const runResult = await compactFullContext(chatContext, model, {
+        ...options,
+        trigger
+    });
 
-    if (newlyCompressed === 0) {
-        logger.info('[Compact] Level 1 无新增效果, 升级到 Level 2');
-        await compressWithSeparator(chatContext, model);
-    } else {
-        // Level 1 有效果，但如果 separator 还不存在且消息数较多，也主动启动 Level 2
-        const hasBoundary = chatContext.findCompactBoundary() !== undefined;
-        if (!hasBoundary && totalMessages > MIN_KEPT_MESSAGES * 2) {
-            logger.info('[Compact] Level 1 完成, 消息数仍较多且无 separator, 同时执行 Level 2');
-            await compressWithSeparator(chatContext, model);
-        }
+    if (!runResult.compacted || !runResult.plan) {
+        logger.info(`[Compact] 当前上下文不满足 full compact 条件，跳过`);
+        return false;
     }
+
+    logger.info(
+        `[Compact] tail-preserving full compact 完成, ` +
+            `summary=${runResult.summary?.length ?? 0} 字符, ` +
+            `折叠=${runResult.plan.messagesToSummarize.length} 条, ` +
+            `保留=${runResult.plan.messagesToKeep.length} 条`
+    );
     return true;
 }
 
 /**
- * 获取模型的上下文窗口大小（先查内置表，再查 API）
- */
-async function getContextSize(model?: string): Promise<number> {
-    try {
-        let modelInstance: ModelInstance;
-        if (typeof model === 'string') {
-            const instance = Setting.getInstance().getModelInstance(model);
-            if (!instance) return 0;
-            modelInstance = instance;
-        } else {
-            modelInstance = Setting.getInstance().getDefaultModelInstance();
-        }
-
-        const knownSize = lookupKnownContextSize(modelInstance.model_name);
-        if (knownSize > 0) return knownSize;
-
-        return await fetchContextSizeFromAPI(modelInstance);
-    } catch {
-        return 0;
-    }
-}
-
-/**
- * 判断当前上下文是否需要压缩（prompt_tokens >= contextSize * 80%）
+ * 判断当前上下文是否需要压缩。
  */
 export async function shouldCompact(chatContext: ChatContext, model?: string): Promise<boolean> {
-    let lastUsage: { prompt_tokens: number } | undefined;
-    for (let i = chatContext.messages.length - 1; i >= 0; i--) {
-        const msg = chatContext.messages[i];
-        if (msg instanceof AssistantMessage && msg.usage) {
-            lastUsage = msg.usage;
-            break;
-        }
-    }
-
-    if (!lastUsage) return false;
-
-    const contextSize = await getContextSize(model);
-    if (contextSize <= 0) return false;
-
-    const threshold = contextSize * 0.8;
-    const needed = lastUsage.prompt_tokens >= threshold;
-    if (needed) {
+    const decision = await getAutoCompactDecision(chatContext, model);
+    if (decision.shouldCompact) {
         logger.info(
-            `[Compact] 自动压缩触发: prompt_tokens=${lastUsage.prompt_tokens}, ` +
-                `阈值=${Math.floor(threshold)} (${contextSize} × 80%)`
+            `[Compact] 自动压缩触发: prompt_tokens=${decision.promptTokens}, ` +
+                `阈值=${Math.floor(decision.autoCompactThreshold)} (` +
+                `contextWindow=${decision.contextWindow}, ` +
+                `reservedSummaryOutput=${decision.reservedSummaryOutput}, ` +
+                `buffer=${decision.buffer})`
         );
     }
-    return needed;
+    return decision.shouldCompact;
 }
 
 // ─── 全局 afterToolCall：超长工具结果落盘并替换为摘要 ─────────────────────────────

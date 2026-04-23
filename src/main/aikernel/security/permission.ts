@@ -20,11 +20,11 @@
 /** 权限判定结果 */
 export type PermissionEffect = 'allow' | 'deny' | 'ask';
 
-/** 权限资源类别 */
-export type PermissionResourceType = 'file' | 'network' | 'skill';
+/** 权限资源类别，'*' 表示匹配所有资源类型 */
+export type PermissionResourceType = 'file' | 'network' | 'skill' | '*';
 
-/** 权限操作类型 */
-export type PermissionAction = 'read' | 'write' | 'execute' | 'access';
+/** 权限操作类型，'*' 表示匹配所有操作 */
+export type PermissionAction = 'read' | 'write' | 'execute' | 'access' | '*';
 
 // ─── ResourcePath：统一的权限客体路径抽象 ────────────────────────
 

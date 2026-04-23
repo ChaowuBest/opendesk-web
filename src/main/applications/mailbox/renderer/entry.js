@@ -972,8 +972,9 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
      * 立即同步邮件
      */
     async syncEmails() {
-        const syncButton = document.querySelector('#mailbox-sync-email-button');
-        const icon = syncButton.querySelector('i');
+        // ElasticToolbarWidget 会给 ID 添加 uid 后缀，使用前缀匹配查找
+        const syncButton = this.querySelector('[id^="mailbox-sync-email-button"]');
+        const icon = syncButton?.querySelector('i');
 
         // 添加旋转动画
         if (syncButton && icon) {
@@ -1455,7 +1456,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         }
 
         const toolbar = new ElasticToolbarWidget(topButtons);
-        toolbar.classList.add('pl-3', 'pr-16');
+        toolbar.classList.add('pl-3', 'pr-16', 'align-left', 'mailbox-header');
 
         this.querySelector('#email-content').innerHTML = '';
         this.querySelector('#email-content').appendChild(toolbar);
@@ -1698,9 +1699,9 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         <splitter-widget class="w-full h-full flex">
             <aside slot="left" class="w-full bg-white flex flex-col flex-shrink-0" style="height: 100%; min-height: 0; overflow: hidden;">
 
-                <div class="p-3 space-y-3">
+                <div class="px-3 space-y-3">
                     <div class="flex items-center justify-between">
-                        <div class="relative z-20">
+                        <div class="relative z-20 pt-3">
                             <button id="account-selector-btn" class="flex items-center gap-2 px-2 py-1 -ml-2 rounded-lg hover:bg-gray-100 transition-colors group">
                                 <h1 class="text-xl font-bold tracking-tight text-gray-900 group-hover:text-indigo-600 transition-colors truncate max-w-[180px]">
                                     ${accountName}
@@ -1714,31 +1715,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
                             </div>
                         </div>
 
-                        <div class="flex items-center gap-2">
-                            <button id='mailbox-sync-email-button' class="group flex items-center px-2 py-2 rounded-full
-                                        bg-transparent hover:bg-white/60 hover:shadow-md
-                                        transition-all duration-500 ease-[cubic-bezier(0.23,1,0.32,1)]
-                                        text-gray-700 hover:text-blue-600" title="同步邮件">
-                                <i class="fa-solid fa-sync-alt"></i>
-                                <span class="max-w-0 overflow-hidden opacity-0
-                                            group-hover:max-w-[120px] group-hover:opacity-100
-                                            group-hover:ml-2 transition-all duration-500 ease-in-out
-                                            whitespace-nowrap font-medium tracking-tight text-sm">
-                                    同步
-                                </span>
-                            </button>
-                            <button id='mailbox-new-email-button' class="group flex items-center px-2 py-2 rounded-full
-                                        bg-transparent hover:bg-white/60 hover:shadow-md
-                                        transition-all duration-500 ease-[cubic-bezier(0.23,1,0.32,1)]
-                                        text-gray-700 hover:text-blue-600">
-                                <i class="fa-solid fa-plus"></i>
-                                <span class="max-w-0 overflow-hidden opacity-0
-                                            group-hover:max-w-[120px] group-hover:opacity-100
-                                            group-hover:ml-2 transition-all duration-500 ease-in-out
-                                            whitespace-nowrap font-medium tracking-tight text-sm">
-                                    写邮件
-                                </span>
-                            </button>
+                        <div id="mailbox-header-toolbar" class="flex items-center gap-2">
                         </div>
                     </div>
                     <!-- 搜索框 -->
@@ -1763,9 +1740,32 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         </splitter-widget>
         `;
 
+        this._createHeaderToolbar();
         this.setupTabListeners();
-        this.setupActionListeners();
         this.setupSearchListeners();
+    }
+
+    _createHeaderToolbar() {
+        const toolbar = new ElasticToolbarWidget([
+            {
+                id: 'mailbox-sync-email-button',
+                icon: 'fa-sync-alt',
+                label: '同步',
+                action: () => this.syncEmails()
+            },
+            {
+                id: 'mailbox-new-email-button',
+                icon: 'fa-plus',
+                label: '写邮件',
+                action: () => this.createNewEmail(MailOperations.SEND)
+            }
+        ]);
+
+        toolbar.classList.add('mailbox-header');
+        const container = this.querySelector('#mailbox-header-toolbar');
+        if (container) {
+            container.appendChild(toolbar);
+        }
     }
 
     // 辅助方法：设置账号切换器的事件监听
@@ -1882,16 +1882,6 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         document
             .getElementById('mailbox-sent-email-button')
             ?.addEventListener('click', () => this.handleFilter('sent'));
-    }
-
-    // 辅助方法：设置动作按钮事件
-    setupActionListeners() {
-        document.querySelector('#mailbox-new-email-button')?.addEventListener('click', () => {
-            this.createNewEmail(MailOperations.SEND);
-        });
-        document.querySelector('#mailbox-sync-email-button')?.addEventListener('click', () => {
-            this.syncEmails();
-        });
     }
 
     // 辅助方法：设置搜索事件
@@ -2358,7 +2348,7 @@ class MailEditorWidget extends AgentOperableHTMLElement {
             }
         ];
         const headerToolbar = new ElasticToolbarWidget(buttons);
-        headerToolbar.classList.add('pl-3', 'pr-16');
+        headerToolbar.classList.add('pl-3', 'pr-16', 'align-left', 'mailbox-header');
 
         this.innerHTML = '';
         this.appendChild(headerToolbar);

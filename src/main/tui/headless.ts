@@ -50,20 +50,22 @@ import { TaskProfiler } from '../aikernel/profiler.js';
 import chalk from 'chalk';
 import path from 'path';
 import fs from 'fs';
+import { t } from '../../locale/index.js';
 
 const RENDER_WIDTH = 80;
 
-const HEADLESS_ACTION_LABELS: Record<string, string> = {
-    read: '读取',
-    write: '编辑',
-    execute: '执行',
-    access: '访问'
-};
-const HEADLESS_RESOURCE_LABELS: Record<string, string> = {
-    file: '文件',
-    network: '网络',
-    skill: '技能'
-};
+// Use functions instead of constants to avoid caching translations at module load time
+const HEADLESS_ACTION_LABELS = () => ({
+    read: t('headless.action.read'),
+    write: t('headless.action.write'),
+    execute: t('headless.action.execute'),
+    access: t('headless.action.access')
+});
+const HEADLESS_RESOURCE_LABELS = () => ({
+    file: t('headless.resource.file'),
+    network: t('headless.resource.network'),
+    skill: t('headless.resource.skill')
+});
 
 /**
  * Headless 模式下的权限确认：无交互能力，直接拒绝 ask 请求并输出日志。
@@ -75,11 +77,14 @@ class HeadlessPermissionPromptProvider implements PermissionPromptProvider {
         _prefixOptions: { label: string; pattern: string }[]
     ): Promise<PermissionUserResponse> {
         const first = requests[0];
-        const action = HEADLESS_ACTION_LABELS[first.action] || first.action;
-        const resType = HEADLESS_RESOURCE_LABELS[first.resourceType] || first.resourceType;
+        const action = HEADLESS_ACTION_LABELS()[first.action] || first.action;
+        const resType = HEADLESS_RESOURCE_LABELS()[first.resourceType] || first.resourceType;
         const paths = requests.map((r) => r.resourcePath).join(', ');
-        process.stdout.write(chalk.bold.yellow('[权限] ') + `${toolName} 工具请求${action}${resType}资源: ${paths}\n`);
-        process.stdout.write(chalk.bold.red('[权限] ') + `headless 模式下无法交互确认，已自动拒绝\n`);
+        process.stdout.write(
+            chalk.bold.yellow('[Permission] ') +
+                `${toolName}${t('headless.permission.request')}${action}${resType}: ${paths}\n`
+        );
+        process.stdout.write(chalk.bold.red('[Permission] ') + `${t('headless.permission.denied')}\n`);
         return { decision: 'deny', rememberScope: 'none', denyReason: 'no_prompt_provider' };
     }
 }
@@ -120,7 +125,9 @@ export class HeadlessRunner {
         const startTime = Date.now();
 
         process.stdout.write(
-            chalk.dim(`[模式] ${this.activeMode.icon} ${this.activeMode.name} - ${this.activeMode.description}`) + '\n'
+            chalk.dim(
+                `[${t('headless.mode.label')}] ${this.activeMode.icon} ${this.activeMode.name} - ${this.activeMode.description}`
+            ) + '\n'
         );
 
         const task = this.taskManagerState.createTask(this.args.model);
@@ -135,6 +142,7 @@ export class HeadlessRunner {
             task.harnessContext = await HarnessContext.createForMode(this.args.workspace, this.activeMode);
             task.harnessContext.permissionPrompt = new HeadlessPermissionPromptProvider();
             task.activeModeId = this.activeMode.id;
+            task.disabledTools = this.activeMode.disabledTools;
         } catch (err) {
             logger.warn(`Failed to init headless task harness: ${err}`);
         }
@@ -219,10 +227,12 @@ export class HeadlessRunner {
 
         process.stdout.write('\n');
         process.stdout.write(chalk.dim('─'.repeat(RENDER_WIDTH)) + '\n');
-        process.stdout.write(chalk.bold('任务完成') + '\n');
-        process.stdout.write(chalk.dim(`  执行时间: ${this.formatDuration(elapsed)}`) + '\n');
+        process.stdout.write(chalk.bold(t('headless.task.complete')) + '\n');
+        process.stdout.write(chalk.dim(`  ${t('headless.execution.time')}${this.formatDuration(elapsed)}`) + '\n');
         process.stdout.write(
-            chalk.dim(`  Token 消耗: ${totalTokens} (prompt: ${promptTokens}, completion: ${completionTokens})`) + '\n'
+            chalk.dim(
+                `  ${t('headless.token.usage')}${totalTokens} (prompt: ${promptTokens}, completion: ${completionTokens})`
+            ) + '\n'
         );
         process.stdout.write(chalk.dim('─'.repeat(RENDER_WIDTH)) + '\n');
 
@@ -272,7 +282,7 @@ export class HeadlessRunner {
 
     private printUserMessage(text: string): void {
         if (!text.trim()) return;
-        process.stdout.write(chalk.bold.cyan('[用户] ') + text + '\n');
+        process.stdout.write(chalk.bold.cyan(`[${t('headless.user')}] `) + text + '\n');
     }
 
     /**
@@ -297,13 +307,13 @@ export class HeadlessRunner {
             case 'reasoning': {
                 const content = (part as ReasoningMessagePart).content.trim();
                 if (!content) break;
-                process.stdout.write(chalk.dim('[思考] ' + content) + '\n');
+                process.stdout.write(chalk.dim(`[${t('headless.thinking')}] ` + content) + '\n');
                 break;
             }
             case 'text': {
                 const text = (part as TextMessagePart).text.trim();
                 if (!text) break;
-                process.stdout.write(chalk.bold.green('[助手] ') + text + '\n');
+                process.stdout.write(chalk.bold.green(`[${t('headless.assistant')}] `) + text + '\n');
                 break;
             }
             case 'tool_call': {
@@ -326,7 +336,9 @@ export class HeadlessRunner {
             }
             case 'error': {
                 const errPart = part as ErrorMessagePart;
-                process.stdout.write(chalk.bold.red('[错误] ') + errPart.title + ': ' + errPart.message + '\n');
+                process.stdout.write(
+                    chalk.bold.red(`[${t('headless.error')}] `) + errPart.title + ': ' + errPart.message + '\n'
+                );
                 break;
             }
         }
