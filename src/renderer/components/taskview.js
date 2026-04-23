@@ -180,6 +180,7 @@ class TaskView extends HTMLElement {
         const htmlParts = [];
         for (const message of task_state.chat_context.messages) {
             if (message.role === 'user') {
+                if (message.internal) continue;
                 htmlParts.push(this.renderUserMessage(message));
             } else if (message.role === 'assistant') {
                 htmlParts.push(this.renderAssistantMessage(message));
@@ -350,6 +351,7 @@ class TaskView extends HTMLElement {
                 const history_container = this.getHistoryContainer();
 
                 if (progress.type === 'user') {
+                    if (progress.internal) return;
                     const userMsg = {
                         content: [
                             {
@@ -719,6 +721,7 @@ class EmbeddedTaskView extends HTMLElement {
         const htmlParts = [];
         for (const message of task_state.chat_context.messages) {
             if (message.role === 'user') {
+                if (message.internal) continue;
                 htmlParts.push(this.renderUserMessage(message));
             } else if (message.role === 'assistant') {
                 htmlParts.push(this.renderAssistantMessage(message));
@@ -746,6 +749,7 @@ class EmbeddedTaskView extends HTMLElement {
                 const history_container = this.getHistoryContainer();
 
                 if (progress.type === 'user') {
+                    if (progress.internal) return;
                     const userMsg = {
                         content: [
                             {
