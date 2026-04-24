@@ -473,6 +473,28 @@ function getTaskToolResultDirectory(taskId: string, ensureExists: boolean = true
     return toolResultDirectory;
 }
 
+/**
+ * 获取任务级 session memory 目录 `artifacts/<taskId>/session-memory/`。
+ * 默认在访问时创建目录，仅读场景可显式关闭创建。
+ */
+function getTaskSessionMemoryDirectory(taskId: string, ensureExists: boolean = true): string {
+    const taskArtifactDirectory = getTaskArtifactDirectory(taskId, ensureExists);
+    const sessionMemoryDirectory = path.join(taskArtifactDirectory, 'session-memory');
+
+    if (ensureExists) {
+        ensureDirectoryExists(sessionMemoryDirectory);
+    }
+
+    return sessionMemoryDirectory;
+}
+
+/**
+ * 获取任务级 session memory 文件路径 `artifacts/<taskId>/session-memory/session-memory.md`。
+ */
+function getTaskSessionMemoryPath(taskId: string, ensureExists: boolean = true): string {
+    return path.join(getTaskSessionMemoryDirectory(taskId, ensureExists), 'session-memory.md');
+}
+
 export {
     getAppDirectory,
     getDefaultAppDirectory,
@@ -482,6 +504,8 @@ export {
     getArtifactDirectory,
     getTaskArtifactDirectory,
     getTaskToolResultDirectory,
+    getTaskSessionMemoryDirectory,
+    getTaskSessionMemoryPath,
     getTempWorkspaceDirectory,
     getSettingSchema
 };

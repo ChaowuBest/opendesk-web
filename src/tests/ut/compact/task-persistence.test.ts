@@ -3,6 +3,7 @@ import os from 'os';
 import path from 'path';
 import { setCustomAppDirectory } from '../../../main/utils/setting';
 import { AutoCompactStates } from '../../../main/aikernel/compaction/auto-compact';
+import { SessionMemoryStates } from '../../../main/aikernel/compaction/session-memory-compact';
 import { FULL_COMPACT_BOUNDARY_STRATEGY } from '../../../main/aikernel/compaction/full-compact';
 import { buildActiveContextView } from '../../../main/aikernel/compaction/context-view';
 import { ChatContext, CompactSeparatorMessage, UserMessage } from '../../../main/aikernel/messages';
@@ -176,6 +177,46 @@ describe('任务持久化中的自动压缩状态', () => {
         expect(loadedTask!.getAutoCompactState()).toEqual(legacyState);
         expect(loadedTask!.getAutoCompactState().cooldownUntil).toBe('2026-04-17T02:20:00.000Z');
         expect(loadedTask!.getAutoCompactState().lastFailureReason).toBe('legacy compact failure');
+        expect(loadedTask!.getSessionMemoryState()).toEqual(SessionMemoryStates.create());
+    });
+
+    test('save 和 load 会保留 session_memory_state，fork 会重置 session memory 状态', () => {
+        const taskDir = createTempTaskDirectory();
+        const manager = new TaskManagerState();
+        const task = createTask(manager);
+        const sessionMemoryState = SessionMemoryStates.deserialize({
+            version: 1,
+            initialized: true,
+            relative_path: 'artifacts/task-root/session-memory/session-memory.md',
+            last_extracted_at: '2026-04-23T02:00:00.000Z',
+            last_summarized_message_id: 'message-session-memory',
+            tokens_at_last_extraction: 12000,
+            extraction_in_progress: false
+        });
+        task.setSessionMemoryState(sessionMemoryState);
+        manager.tasks.push(task);
+
+        manager.save();
+
+        const savedTaskJson = JSON.parse(fs.readFileSync(path.join(taskDir, 'task-root.json'), 'utf8'));
+        expect(savedTaskJson.session_memory_state).toMatchObject({
+            version: 1,
+            initialized: true,
+            relative_path: 'artifacts/task-root/session-memory/session-memory.md',
+            last_extracted_at: '2026-04-23T02:00:00.000Z',
+            last_summarized_message_id: 'message-session-memory',
+            tokens_at_last_extraction: 12000,
+            extraction_in_progress: false
+        });
+
+        const reloadedManager = TaskManagerState.load();
+        expect(reloadedManager).not.toBeNull();
+        const loadedTask = reloadedManager!.getTask('task-root');
+        expect(loadedTask).toBeDefined();
+        expect(loadedTask!.getSessionMemoryState()).toEqual(sessionMemoryState);
+
+        const forked = loadedTask!.fork();
+        expect(forked.getSessionMemoryState()).toEqual(SessionMemoryStates.create());
     });
 
     test('save 和 load 会保留 full compact boundary metadata', () => {

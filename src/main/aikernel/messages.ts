@@ -1473,7 +1473,7 @@ export interface CompactSummarizedRange {
 }
 
 export type CompactBoundaryTrigger = 'manual' | 'auto';
-export type CompactBoundaryStrategy = 'tail_preserving_full_compact';
+export type CompactBoundaryStrategy = 'tail_preserving_full_compact' | 'session_memory_compact';
 
 export interface CompactBoundaryMetadata {
     boundary_id: string;
@@ -1534,7 +1534,7 @@ export class CompactSeparatorMessage {
             normalized.trigger = metadata.trigger;
         }
 
-        if (metadata?.strategy === 'tail_preserving_full_compact') {
+        if (metadata?.strategy === 'tail_preserving_full_compact' || metadata?.strategy === 'session_memory_compact') {
             normalized.strategy = metadata.strategy;
         }
 
