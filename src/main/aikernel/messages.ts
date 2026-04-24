@@ -367,61 +367,38 @@ export class ToolCall {
             }
         }
 
-        if (this.status === 'running') {
-            return `
-            <div class="flex mt-1.5 mb-1.5 text-xs items-center gap-2 bg-white/80 border border-slate-200 py-1 px-3 rounded-full shadow-sm w-fit">
-                <span class="font-medium text-slate-500">工具调用</span>
-                <div class="h-1 w-1 rounded-full bg-slate-300"></div>
-                <div class="flex items-center">
-                    <div class="h-1.5 w-1.5 rounded-full bg-blue-500 animate-pulse ring-2 ring-blue-100/50"></div>
-                    <span class="ml-1.5 font-medium text-slate-700">${this.tool_name}</span>
-                </div>
-            </div>
-            `;
-        } else if (this.status === 'success') {
-            return `
-            <div class="flex mt-1.5 mb-1.5 text-xs items-center gap-2 bg-white/80 border border-slate-200 py-1 px-3 rounded-full shadow-sm w-fit">
-                <span class="font-medium text-slate-500">工具调用</span>
-                <div class="h-1 w-1 rounded-full bg-slate-300"></div>
-                <div class="flex items-center">
-                    <div class="h-1.5 w-1.5 rounded-full bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.5)]"></div>
-                    <span class="ml-1.5 font-medium text-slate-600">${this.tool_name}</span>
-                </div>
-            </div>
-            `;
-        } else if (this.status === 'error') {
-            return `
-            <div class="flex mt-1.5 mb-1.5 text-xs items-center gap-2 bg-white/80 border border-slate-200 py-1 px-3 rounded-full shadow-sm w-fit">
-                <span class="font-medium text-slate-500">工具调用</span>
-                <div class="h-1 w-1 rounded-full bg-slate-300"></div>
-                <div class="flex items-center cursor-pointer group relative">
-                    <div class="h-2 w-2 rounded-full bg-rose-500 shadow-[0_0_6px_rgba(244,63,94,0.5)] flex items-center justify-center">
-                        <svg class="h-1 w-1 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="5">
-                            <path d="M12 8v4m0 4h.01" />
-                        </svg>
-                    </div>
-                    <span class="ml-1.5 font-semibold text-rose-600">${this.tool_name} Failed</span>
-                    <div class="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-all pointer-events-none z-10">
-                        <div class="bg-white border border-slate-200 shadow-xl rounded-lg p-2 w-44 text-[11px] text-slate-600">
-                            <p class="font-bold text-slate-800 mb-0.5">Execution Error</p>
-                            <p class="font-mono text-[10px] leading-relaxed text-rose-500 bg-rose-50 p-1 rounded">${this.result}</p>
-                            <div class="absolute -bottom-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-white border-b border-r border-slate-200 rotate-45"></div>
+        const statusIcon =
+            this.status === 'running'
+                ? '<span class="inline-block w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse"></span>'
+                : this.status === 'error'
+                  ? '<span class="inline-block w-1.5 h-1.5 rounded-full bg-rose-500"></span>'
+                  : '';
+
+        const displayName = this.tool_name;
+
+        if (this.status === 'error') {
+            return `<div class="my-2">
+                <div class="flex items-center gap-1.5 min-w-0 group relative">
+                    <i class="fas fa-wrench shrink-0 text-slate-400 text-xs"></i>
+                    <span class="shrink-0 text-slate-500 text-xs">${displayName}</span>
+                    ${statusIcon}
+                    <span class="text-xs text-rose-500">失败</span>
+                    <div class="absolute bottom-full mb-2 left-0 opacity-0 group-hover:opacity-100 transition-all pointer-events-none z-10">
+                        <div class="bg-white border border-slate-200 shadow-xl rounded-lg p-2 max-w-xs text-[11px] text-slate-600">
+                            <p class="font-mono text-[10px] leading-relaxed text-rose-500 bg-rose-50 p-1 rounded break-all">${this.result || ''}</p>
                         </div>
                     </div>
                 </div>
-            </div>
-            `;
-        } else {
-            return `
-            <div class="flex mt-1.5 mb-1.5 text-xs items-center gap-2 bg-white/80 border border-slate-200 py-1 px-3 rounded-full shadow-sm w-fit">
-                <span class="font-medium text-slate-500">工具调用</span>
-                <div class="flex items-center opacity-40">
-                    <div class="h-1.5 w-1.5 rounded-full bg-slate-400"></div>
-                    <span class="ml-1.5 font-medium text-slate-500">${this.tool_name}</span>
-                </div>
-            </div>
-            `;
+            </div>`;
         }
+
+        return `<div class="my-2">
+            <div class="flex items-center gap-1.5 min-w-0">
+                <i class="fas fa-wrench shrink-0 text-slate-400 text-xs"></i>
+                <span class="shrink-0 text-slate-500 text-xs">${displayName}</span>
+                ${statusIcon}
+            </div>
+        </div>`;
     }
 
     static assign(tool_call_obj: object): ToolCall {
