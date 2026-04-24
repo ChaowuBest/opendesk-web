@@ -4,12 +4,21 @@ import { logger } from '../../utils/logger.js';
 import { buildActiveContextView } from './context-view.js';
 import { AutoCompactStates, getAutoCompactDecision, type AutoCompactState } from './auto-compact.js';
 import { analyzeMicrocompactCandidates, applyLocalMicrocompactToChatContext } from './microcompact.js';
+import { trySessionMemoryCompaction } from './session-memory-compact.js';
 import { buildToolResultBudgetProjectionForChatContext } from './tool-results.js';
 import type { PrepareContextOptions, PreparedContextResult } from './types.js';
 
 type LightweightPreparationResult = Omit<
     PreparedContextResult,
-    'shouldCompact' | 'compacted' | 'autoCompactDecision' | 'autoCompactState' | 'autoCompactStateChanged'
+    | 'shouldCompact'
+    | 'compacted'
+    | 'sessionMemoryCompacted'
+    | 'sessionMemoryCompactResult'
+    | 'sessionMemoryState'
+    | 'sessionMemoryStateChanged'
+    | 'autoCompactDecision'
+    | 'autoCompactState'
+    | 'autoCompactStateChanged'
 >;
 
 function runLightweightPreparationLayers(
@@ -114,6 +123,10 @@ export async function prepareContextForModel(
     const cooldownRemainingMs = autoCompactState ? AutoCompactStates.getCooldownRemainingMs(autoCompactState) : 0;
     const shouldRunCompact = autoCompactDecision.shouldCompact && cooldownRemainingMs <= 0;
     let compacted = false;
+    let sessionMemoryCompacted = false;
+    let sessionMemoryCompactResult: PreparedContextResult['sessionMemoryCompactResult'] = undefined;
+    const sessionMemoryState = options.sessionMemoryState;
+    const sessionMemoryStateChanged = false;
 
     if (autoCompactDecision.shouldCompact && cooldownRemainingMs > 0) {
         logger.info(
@@ -144,7 +157,44 @@ export async function prepareContextForModel(
                 const executeResult = await options.executeCompact();
                 compactApplied = executeResult !== false;
             } else {
-                compactApplied = await compactContext(chatContext, model, { trigger: 'auto' });
+                compactApplied = false;
+
+                if (options.enableSessionMemoryCompact) {
+                    try {
+                        const sessionMemoryResult = await trySessionMemoryCompaction(
+                            chatContext,
+                            options.taskId,
+                            sessionMemoryState,
+                            autoCompactDecision,
+                            options.sessionMemoryCompactOptions
+                        );
+                        sessionMemoryCompactResult = sessionMemoryResult;
+                        if (sessionMemoryResult.compacted) {
+                            compactApplied = true;
+                            sessionMemoryCompacted = true;
+                            logger.info(
+                                `[Compact Step8E] session memory compact applied: ` +
+                                    `kept=${sessionMemoryResult.plan?.messagesToKeep.length ?? 0}, ` +
+                                    `postTokens=${sessionMemoryResult.postCompactTokens ?? 'unknown'}, ` +
+                                    `threshold=${sessionMemoryResult.autoCompactThreshold ?? 'unknown'}`
+                            );
+                        } else {
+                            logger.info(
+                                `[Compact Step8E] session memory compact no-op: ` +
+                                    `${sessionMemoryResult.noopReason ?? 'unknown'}`
+                            );
+                        }
+                    } catch (sessionMemoryError) {
+                        logger.warn(
+                            `[Compact Step8E] session memory compact failed, falling back to full compact: ` +
+                                `${sessionMemoryError instanceof Error ? sessionMemoryError.message : sessionMemoryError}`
+                        );
+                    }
+                }
+
+                if (!compactApplied) {
+                    compactApplied = await compactContext(chatContext, model, { trigger: 'auto' });
+                }
             }
         } catch (err) {
             if (autoCompactState) {
@@ -194,6 +244,10 @@ export async function prepareContextForModel(
         ...lightweightResult,
         shouldCompact: shouldRunCompact,
         compacted,
+        sessionMemoryCompacted,
+        sessionMemoryCompactResult,
+        sessionMemoryState,
+        sessionMemoryStateChanged,
         autoCompactDecision,
         autoCompactState: autoCompactStateTarget ?? autoCompactState,
         autoCompactStateChanged
