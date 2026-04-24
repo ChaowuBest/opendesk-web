@@ -741,7 +741,7 @@ class AgentInput extends HTMLElement {
             if (!zipPath.toLowerCase().endsWith('.zip')) {
                 window.notificationAPI?.sendNotification(
                     'error',
-                    '技能管理',
+                    '技能中心',
                     '文件格式错误',
                     '请选择 .zip 格式的技能包'
                 );
@@ -756,18 +756,18 @@ class AgentInput extends HTMLElement {
             if (result.success) {
                 window.notificationAPI?.sendNotification(
                     'success',
-                    '技能管理',
+                    '技能中心',
                     '安装成功',
                     `技能 ${result.name} 已安装`
                 );
                 await this.loadSkills();
                 this.renderSkillList(this.querySelector('#agent-input-skill-search')?.value || '');
             } else {
-                window.notificationAPI?.sendNotification('error', '技能管理', '安装失败', result.error || '未知错误');
+                window.notificationAPI?.sendNotification('error', '技能中心', '安装失败', result.error || '未知错误');
             }
         } catch (err) {
             console.error('Failed to install skill:', err);
-            window.notificationAPI?.sendNotification('error', '技能管理', '安装失败', err.message || '未知错误');
+            window.notificationAPI?.sendNotification('error', '技能中心', '安装失败', err.message || '未知错误');
         }
     }
 

@@ -187,14 +187,26 @@ async function searchClawHub(opts = {}) {
             });
             let stdout = '';
             let stderr = '';
+            const timer = setTimeout(() => {
+                try {
+                    child.kill();
+                } catch {}
+                reject(new Error('ClawHub 搜索超时（60秒），npx 可能正在首次下载 clawhub 包，请稍后重试'));
+            }, 60000);
             child.stdout?.on('data', (ch) => {
                 stdout += ch;
             });
             child.stderr?.on('data', (ch) => {
                 stderr += ch;
             });
-            child.on('error', (err) => reject(err));
-            child.on('close', (code) => resolve({ code, stdout, stderr }));
+            child.on('error', (err) => {
+                clearTimeout(timer);
+                reject(err);
+            });
+            child.on('close', (code) => {
+                clearTimeout(timer);
+                resolve({ code, stdout, stderr });
+            });
         });
 
     try {
@@ -274,14 +286,26 @@ async function searchMatrix(opts = {}) {
             });
             let stdout = '';
             let stderr = '';
+            const timer = setTimeout(() => {
+                try {
+                    child.kill();
+                } catch {}
+                reject(new Error('Matrix 搜索超时（60秒），npx 可能正在首次下载 matrix-cli 包，请稍后重试'));
+            }, 60000);
             child.stdout?.on('data', (ch) => {
                 stdout += ch;
             });
             child.stderr?.on('data', (ch) => {
                 stderr += ch;
             });
-            child.on('error', (err) => reject(err));
-            child.on('close', (code) => resolve({ code, stdout, stderr }));
+            child.on('error', (err) => {
+                clearTimeout(timer);
+                reject(err);
+            });
+            child.on('close', (code) => {
+                clearTimeout(timer);
+                resolve({ code, stdout, stderr });
+            });
         });
 
     try {

@@ -25,7 +25,7 @@ description: 介绍Skills的管理：添加、删除、查询和刷新等方法
 你也可以使用addSkillFromUrl工具从URL下载并安装Skill。
 对于GitHub上的Skill，可以使用addSkillFromGitHubUrl工具直接从GitHub仓库安装。
 
-在TUI模式下，你可以使用/skills命令打开技能管理界面，支持从Registry平台搜索和安装技能。
+在TUI模式下，你可以使用/skills命令打开技能中心，支持从Registry平台搜索和安装技能。
 
 ### Skill 添加方式
 

@@ -648,6 +648,24 @@ function deleteSkill(skillId) {
     }
 }
 
+/**
+ * 检查指定名称的技能是否已安装（先按 skillsDir 目录存在性判断，再回退到 cache）
+ * @param {string} skillName - 技能名称
+ * @returns {boolean}
+ */
+function skillExists(skillName) {
+    if (!skillName || typeof skillName !== 'string') return false;
+    const safeName = path.basename(skillName).replace(/[/\\]/g, '');
+    if (!safeName) return false;
+    const skillsDir = getSkillsDirectory();
+    const targetDir = path.join(skillsDir, safeName);
+    if (fs.existsSync(targetDir) && fs.statSync(targetDir).isDirectory()) {
+        return true;
+    }
+    if (skillsCache.size === 0) loadAll();
+    return skillsCache.has(safeName);
+}
+
 export const SkillRegistry = {
     getSkillsDirectory,
     getBundledSkillsDirectory,
@@ -659,6 +677,7 @@ export const SkillRegistry = {
     deleteSkill,
     getSkillBody,
     getSkillDetail,
+    skillExists,
     /** 添加 mount 目录（--skillmgr-mount-skill 使用） */
     addMountedDir(dir) {
         const resolved = path.resolve(dir);

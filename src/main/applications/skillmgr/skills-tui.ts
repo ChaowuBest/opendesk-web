@@ -101,7 +101,7 @@ export class SkillsOverlay implements Component {
 
     constructor(openDeskTUI: OpenDeskTUI) {
         this.openDeskTUI = openDeskTUI;
-        this.header = new Text(chalk.bold(' 技能管理'));
+        this.header = new Text(chalk.bold(' 技能中心'));
         this.box = new Box(1, 1);
         this.box.setBgFn((text: string) => chalk.bgHex('#2d2d2d').hex('#e0e0e0')(text));
         this.box.addChild(this.header);
@@ -147,7 +147,7 @@ export class SkillsOverlay implements Component {
         this.cleanup();
         this.state = 'main';
         this.input = undefined;
-        this.header = new Text(chalk.bold(' 技能管理'));
+        this.header = new Text(chalk.bold(' 技能中心'));
 
         const items = [
             { value: 'search', label: chalk.cyan('🔍 从 Registry 搜索技能') },
