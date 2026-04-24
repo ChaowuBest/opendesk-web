@@ -559,6 +559,127 @@ export class FileExplorer {
         this._renderPreview();
     }
 
+    // ----- context menu -----
+
+    private _ctxMenuEl: HTMLElement | null = null;
+    private _ctxDismissHandler: ((ev: MouseEvent) => void) | null = null;
+
+    private _showContextMenu(ev: MouseEvent, filePath: string, isDirectory: boolean): void {
+        ev.preventDefault();
+        ev.stopPropagation();
+        this._dismissContextMenu();
+
+        const menu = document.createElement('div');
+        Object.assign(menu.style, {
+            position: 'fixed',
+            zIndex: '9999',
+            minWidth: '180px',
+            padding: '4px',
+            borderRadius: '10px',
+            background: 'rgba(255, 255, 255, 0.88)',
+            backdropFilter: 'blur(40px) saturate(1.8)',
+            WebkitBackdropFilter: 'blur(40px) saturate(1.8)',
+            border: '0.5px solid rgba(0, 0, 0, 0.08)',
+            boxShadow:
+                '0 12px 40px -8px rgba(0,0,0,0.15), 0 0 0 0.5px rgba(0,0,0,0.04), inset 0 0.5px 0 rgba(255,255,255,0.5)',
+            animation: 'ws-ctx-appear 0.12s ease-out',
+            fontFamily: 'system-ui, -apple-system, sans-serif'
+        });
+
+        const items: { icon: string; label: string; action: string }[] = [];
+        if (!isDirectory) {
+            items.push({ icon: 'fa-eye', label: '预览', action: 'preview' });
+        }
+        items.push({ icon: 'fa-arrow-up-right-from-square', label: '用默认应用打开', action: 'open-default' });
+        items.push({ icon: 'fa-folder-open', label: '在文件夹中显示', action: 'reveal' });
+        items.push({ icon: 'fa-link', label: '复制路径', action: 'copy-path' });
+
+        const btnStyle = `
+            display:flex; align-items:center; gap:8px; width:100%;
+            padding:6px 10px; border:none; border-radius:6px;
+            background:transparent; font-size:12px; color:#1f2937;
+            cursor:pointer; text-align:left; transition:background 0.1s;
+        `.trim();
+        const iconStyle = 'width:16px; text-align:center; font-size:12px; color:#6b7280; flex-shrink:0;';
+
+        menu.innerHTML = items
+            .map(
+                (it, i) =>
+                    `${i > 0 && it.action === 'copy-path' ? '<div style="height:1px; margin:3px 8px; background:rgba(0,0,0,0.06);"></div>' : ''}` +
+                    `<button data-ctx-action="${it.action}" style="${btnStyle}">` +
+                    `<i class="fas ${it.icon}" style="${iconStyle}"></i><span>${it.label}</span></button>`
+            )
+            .join('');
+
+        menu.style.left = `${ev.clientX}px`;
+        menu.style.top = `${ev.clientY}px`;
+        document.body.appendChild(menu);
+
+        const rect = menu.getBoundingClientRect();
+        if (rect.right > window.innerWidth) {
+            menu.style.left = `${window.innerWidth - rect.width - 8}px`;
+        }
+        if (rect.bottom > window.innerHeight) {
+            menu.style.top = `${window.innerHeight - rect.height - 8}px`;
+        }
+
+        this._ctxMenuEl = menu;
+
+        menu.querySelectorAll<HTMLElement>('[data-ctx-action]').forEach((btn) => {
+            btn.addEventListener('mouseenter', () => {
+                btn.style.background = '#3b82f6';
+                btn.style.color = 'white';
+                const icon = btn.querySelector('i');
+                if (icon) (icon as HTMLElement).style.color = 'white';
+            });
+            btn.addEventListener('mouseleave', () => {
+                btn.style.background = 'transparent';
+                btn.style.color = '#1f2937';
+                const icon = btn.querySelector('i');
+                if (icon) (icon as HTMLElement).style.color = '#6b7280';
+            });
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const action = btn.dataset.ctxAction;
+                this._dismissContextMenu();
+                switch (action) {
+                    case 'preview':
+                        this._selectFile(filePath);
+                        break;
+                    case 'open-default':
+                        window.fsAPI?.openPath?.(filePath);
+                        break;
+                    case 'reveal': {
+                        const parentDir = isDirectory ? filePath : this._parentOf(filePath);
+                        window.fsAPI?.openPath?.(parentDir);
+                        break;
+                    }
+                    case 'copy-path':
+                        navigator.clipboard.writeText(filePath).catch(() => {});
+                        break;
+                }
+            });
+        });
+
+        this._ctxDismissHandler = () => this._dismissContextMenu();
+        setTimeout(() => {
+            document.addEventListener('click', this._ctxDismissHandler!, { once: true });
+            document.addEventListener('contextmenu', this._ctxDismissHandler!, { once: true });
+        }, 0);
+    }
+
+    private _dismissContextMenu(): void {
+        if (this._ctxMenuEl) {
+            this._ctxMenuEl.remove();
+            this._ctxMenuEl = null;
+        }
+        if (this._ctxDismissHandler) {
+            document.removeEventListener('click', this._ctxDismissHandler);
+            document.removeEventListener('contextmenu', this._ctxDismissHandler);
+            this._ctxDismissHandler = null;
+        }
+    }
+
     // ----- event delegation -----
 
     private _handleBrowserClick(ev: MouseEvent): void {
@@ -655,6 +776,16 @@ export class FileExplorer {
         const browser = panel.querySelector<HTMLElement>('.ws-browser-body');
         if (browser) {
             browser.addEventListener('click', (ev) => this._handleBrowserClick(ev));
+            browser.addEventListener('contextmenu', (ev) => {
+                const target = ev.target as HTMLElement | null;
+                if (!target) return;
+                const row = target.closest<HTMLElement>('[data-path]');
+                if (!row) return;
+                const p = row.dataset.path;
+                if (!p) return;
+                const isDir = !!row.closest('.ws-tree-dir, .ws-grid-dir');
+                this._showContextMenu(ev, p, isDir);
+            });
         }
 
         const previewEl = panel.querySelector<HTMLElement>('[data-preview-root]');

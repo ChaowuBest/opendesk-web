@@ -23,6 +23,7 @@ import '../components/setting.js';
 import '../components/settingpanel.js';
 import '../components/logview.js';
 import '../components/fileview.js';
+import '../components/recommendation.ts';
 import '../components/homepage.js';
 import '../components/schemaeditor.js';
 import '../../main/applications/ppt/renderer/pptcontainer.js';

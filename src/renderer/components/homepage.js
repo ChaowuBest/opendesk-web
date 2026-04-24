@@ -79,6 +79,19 @@ class HomePage extends HTMLElement {
     setUpEventListeners() {
         const agentInput = this.querySelector('#agent-input-main');
         const fileListView = this.querySelector('#home-file-list');
+        const recommendation = this.querySelector('#home-recommendation');
+
+        recommendation?.addEventListener('select', (event) => {
+            const { item } = event.detail;
+            if (item?.prompt) {
+                const textarea = agentInput?.querySelector('#agent-input-textarea');
+                if (textarea) {
+                    textarea.value = item.prompt;
+                    textarea.focus();
+                    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+                }
+            }
+        });
 
         agentInput.addEventListener('submit', async (event) => {
             const message = event.detail.message;
@@ -150,56 +163,9 @@ class HomePage extends HTMLElement {
                 <agent-files-view id="home-file-list"></agent-files-view>
             </div>
 
-            <!-- 功能按钮区域 -->
+            <!-- 推荐场景 -->
             <div class="w-full max-w-4xl">
-                <div class="flex flex-wrap justify-center gap-2">
-
-                    <!-- 收件箱 -->
-                    <button class="flex items-center gap-1.5 px-2.5 py-1 bg-white rounded-full shadow-sm hover:shadow-md border border-gray-200 transition-all relative"
-                        onclick="window.globalControlAPI.openApplication('mailbox')">
-                        <i class="fas fa-inbox text-indigo-500 text-xs"></i>
-                        <span class="text-xs text-gray-700">收件箱</span>
-                    </button>
-
-                    <!-- 快速记录 -->
-                    <button class="flex items-center gap-1.5 px-2.5 py-1 bg-white rounded-full shadow-sm hover:shadow-md border border-gray-200 transition-all"
-                        onclick="window.globalControlAPI.openApplication('recall')">
-                        <i class="fas fa-video text-red-500 text-xs"></i>
-                        <span class="text-xs text-gray-700">快速记录</span>
-                    </button>
-
-                    <!-- A2A -->
-                    <button class="flex items-center gap-1.5 px-2.5 py-1 bg-white rounded-full shadow-sm hover:shadow-md border border-gray-200 transition-all"
-                        onclick="window.globalControlAPI.openApplication('a2a')">
-                        <i class="fas fa-comments text-purple-500 text-xs"></i>
-                        <span class="text-xs text-gray-700">A2A</span>
-                    </button>
-
-                    <!-- 编程 -->
-                    <button class="flex items-center gap-1.5 px-2.5 py-1 bg-gray-100 rounded-full shadow-none border border-gray-100 cursor-not-allowed opacity-50" disabled>
-                        <i class="fas fa-code text-orange-300 text-xs"></i>
-                        <span class="text-xs text-gray-400">编程</span>
-                    </button>
-
-                    <!-- 图像生成 -->
-                    <button class="flex items-center gap-1.5 px-2.5 py-1 bg-gray-100 rounded-full shadow-none border border-gray-100 cursor-not-allowed opacity-50" disabled>
-                        <i class="fas fa-image text-yellow-300 text-xs"></i>
-                        <span class="text-xs text-gray-400">图像生成</span>
-                    </button>
-
-                    <!-- 帮我写作 -->
-                    <button class="flex items-center gap-1.5 px-2.5 py-1 bg-gray-100 rounded-full shadow-none border border-gray-100 cursor-not-allowed opacity-50" disabled>
-                        <i class="fas fa-check text-green-300 text-xs"></i>
-                        <span class="text-xs text-gray-400">帮我写作</span>
-                    </button>
-
-                    <!-- 深入研究 -->
-                    <button class="flex items-center gap-1.5 px-2.5 py-1 bg-gray-100 rounded-full shadow-none border border-gray-100 cursor-not-allowed opacity-50" disabled>
-                        <i class="fas fa-search text-blue-300 text-xs"></i>
-                        <span class="text-xs text-gray-400">深入研究</span>
-                    </button>
-
-                </div>
+                <recommendation-panel id="home-recommendation"></recommendation-panel>
             </div>
         </div>
         `;
