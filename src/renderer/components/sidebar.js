@@ -52,6 +52,7 @@ class SideBar extends HTMLElement {
             console.info('task list updated', taskList);
             this.taskList = taskList;
             this.reloadTaskList();
+            document.dispatchEvent(new CustomEvent('task-list-updated', { detail: taskList }));
         });
         this.querySelector('#create-task-btn').addEventListener('click', async () => {
             const taskId = await window.taskManagerAPI.createTask();

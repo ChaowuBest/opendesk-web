@@ -38,6 +38,10 @@ class TaskView extends HTMLElement {
         this._taskTodosUnsubscribe = null;
         /** @type {Function | null} 取消 workspace-changed 监听 */
         this._workspaceChangedHandler = null;
+        /** @type {import('./toolbar.ts').ElasticToolbarWidget | null} */
+        this._toolbar = null;
+        /** @type {Function | null} */
+        this._taskListUpdateHandler = null;
     }
 
     static isCompactBoundaryMessage(message) {
@@ -176,6 +180,10 @@ class TaskView extends HTMLElement {
         this.task_status = task_state.task_status || 'waiting';
         this.updateStopButtonVisibility();
 
+        if (this._toolbar && task_state.task_name) {
+            this._toolbar.setToolbarTitle(task_state.task_name);
+        }
+
         const input_widget = this.querySelector(`#task-${this.task_id}-input`);
         if (input_widget) {
             if (task_state.model) {
@@ -252,18 +260,77 @@ class TaskView extends HTMLElement {
 
         const isExpanded = rightSidebar.style.display !== 'none';
         if (isExpanded) {
-            TaskView.rightSidebarWidth = parseInt(rightSidebar.style.width) || 380;
-            rightSidebar.style.display = 'none';
-            if (resizer) resizer.style.display = 'none';
-            TaskView.rightSidebarExpanded = false;
+            this._collapseRightSidebar(rightSidebar, resizer);
         } else {
-            rightSidebar.style.display = '';
-            rightSidebar.style.width = TaskView.rightSidebarWidth + 'px';
-            if (resizer) resizer.style.display = '';
-            TaskView.rightSidebarExpanded = true;
-            this._autoSwitchTabIfEmpty(rightSidebar);
+            this._expandRightSidebar(rightSidebar, resizer);
         }
         this._updateSidebarToggleIcon(!isExpanded);
+    }
+
+    _expandRightSidebar(rightSidebar, resizer) {
+        const targetWidth = TaskView.rightSidebarWidth || 380;
+        rightSidebar.style.display = '';
+        rightSidebar.style.width = '0px';
+        rightSidebar.style.opacity = '0';
+        rightSidebar.style.overflow = 'hidden';
+        rightSidebar.style.transition =
+            'width 280ms cubic-bezier(0.4, 0, 0.2, 1), opacity 280ms cubic-bezier(0.4, 0, 0.2, 1)';
+        if (resizer) {
+            resizer.style.display = '';
+            resizer.style.opacity = '0';
+            resizer.style.transition = 'opacity 280ms ease';
+        }
+
+        requestAnimationFrame(() => {
+            rightSidebar.style.width = targetWidth + 'px';
+            rightSidebar.style.opacity = '1';
+            if (resizer) resizer.style.opacity = '1';
+        });
+
+        const onEnd = (e) => {
+            if (e.propertyName !== 'width') return;
+            rightSidebar.removeEventListener('transitionend', onEnd);
+            rightSidebar.style.overflow = '';
+            rightSidebar.style.transition = '';
+            if (resizer) resizer.style.transition = '';
+        };
+        rightSidebar.addEventListener('transitionend', onEnd);
+
+        TaskView.rightSidebarExpanded = true;
+        this._autoSwitchTabIfEmpty(rightSidebar);
+    }
+
+    _collapseRightSidebar(rightSidebar, resizer) {
+        TaskView.rightSidebarWidth = parseInt(rightSidebar.style.width) || 380;
+        rightSidebar.style.overflow = 'hidden';
+        rightSidebar.style.transition =
+            'width 280ms cubic-bezier(0.4, 0, 0.2, 1), opacity 280ms cubic-bezier(0.4, 0, 0.2, 1)';
+        if (resizer) {
+            resizer.style.transition = 'opacity 200ms ease';
+            resizer.style.opacity = '0';
+        }
+
+        requestAnimationFrame(() => {
+            rightSidebar.style.width = '0px';
+            rightSidebar.style.opacity = '0';
+        });
+
+        const onEnd = (e) => {
+            if (e.propertyName !== 'width') return;
+            rightSidebar.removeEventListener('transitionend', onEnd);
+            rightSidebar.style.display = 'none';
+            rightSidebar.style.overflow = '';
+            rightSidebar.style.transition = '';
+            rightSidebar.style.opacity = '';
+            if (resizer) {
+                resizer.style.display = 'none';
+                resizer.style.transition = '';
+                resizer.style.opacity = '';
+            }
+        };
+        rightSidebar.addEventListener('transitionend', onEnd);
+
+        TaskView.rightSidebarExpanded = false;
     }
 
     _autoSwitchTabIfEmpty(sidebar) {
@@ -283,10 +350,7 @@ class TaskView extends HTMLElement {
         if (!rightSidebar) return;
         if (rightSidebar.style.display !== 'none') return;
 
-        rightSidebar.style.display = '';
-        rightSidebar.style.width = TaskView.rightSidebarWidth + 'px';
-        if (resizer) resizer.style.display = '';
-        TaskView.rightSidebarExpanded = true;
+        this._expandRightSidebar(rightSidebar, resizer);
         this._updateSidebarToggleIcon(true);
     }
 
@@ -411,11 +475,13 @@ class TaskView extends HTMLElement {
     }
 
     _updateSidebarToggleIcon(isExpanded) {
-        const btn = this.querySelector('#taskview-sidebar-toggle-btn');
+        const btn = this.querySelector(`[id^="taskview-sidebar-toggle-btn"]`);
         if (!btn) return;
         const icon = btn.querySelector('i');
         if (icon) {
-            icon.className = isExpanded ? 'fa-solid fa-angles-right' : 'fa-solid fa-angles-left';
+            icon.className = isExpanded
+                ? 'fa-solid fa-table-columns text-sm text-blue-600'
+                : 'fa-solid fa-table-columns text-sm';
         }
     }
 
@@ -457,7 +523,7 @@ class TaskView extends HTMLElement {
 
         this.render();
 
-        // Initialize toolbar
+        // Initialize toolbar with spread layout
         const toolbarContainer = this.querySelector('#taskview-toolbar');
         if (toolbarContainer) {
             const toolbar = new ElasticToolbarWidget(
@@ -466,24 +532,24 @@ class TaskView extends HTMLElement {
                         id: 'taskview-export-btn',
                         icon: 'fa-download',
                         label: '导出',
-                        labelStayVisible: false,
                         action: () => {
                             this.exportTask();
                         }
                     },
                     {
                         id: 'taskview-sidebar-toggle-btn',
-                        icon: TaskView.rightSidebarExpanded ? 'fa-angles-right' : 'fa-angles-left',
+                        icon: TaskView.rightSidebarExpanded ? 'fa-table-columns' : 'fa-table-columns',
                         label: '面板',
-                        labelStayVisible: false,
                         action: () => {
                             this._toggleRightSidebar();
                         }
                     }
                 ],
-                '智能体对话'
+                '智能体对话',
+                'spread'
             );
             toolbarContainer.appendChild(toolbar);
+            this._toolbar = toolbar;
         }
 
         this.setUpEventListeners();
@@ -500,6 +566,17 @@ class TaskView extends HTMLElement {
             }
         };
         document.addEventListener('workspace-changed', this._workspaceChangedHandler);
+
+        this._taskListUpdateHandler = (event) => {
+            if (!this._toolbar) return;
+            const taskList = event.detail;
+            if (!Array.isArray(taskList)) return;
+            const myTask = taskList.find((t) => t.task_id === this.task_id);
+            if (myTask && myTask.task_name) {
+                this._toolbar.setToolbarTitle(myTask.task_name);
+            }
+        };
+        document.addEventListener('task-list-updated', this._taskListUpdateHandler);
 
         this.reload().then(async () => {
             this.subscription_id = await window.taskManagerAPI.subscribeTaskUpdate(this.task_id, (progress) => {
@@ -608,18 +685,22 @@ class TaskView extends HTMLElement {
             document.removeEventListener('workspace-changed', this._workspaceChangedHandler);
             this._workspaceChangedHandler = null;
         }
+        if (this._taskListUpdateHandler) {
+            document.removeEventListener('task-list-updated', this._taskListUpdateHandler);
+            this._taskListUpdateHandler = null;
+        }
     }
 
     render() {
         this.innerHTML = `
         <div class="bg-gray-30 h-full flex flex-col">
-            <header id="taskview-toolbar" class="w-full pt-1"></header>
+            <header id="taskview-toolbar" class="w-full"></header>
 
             <div id="task-${this.task_id}-content-row" class="flex-1 flex flex-row min-h-0">
                 <div class="flex-1 flex flex-col min-w-0">
                     <div class="relative flex-1 overflow-y-auto">
                         <!-- 对话历史区域 - 可滚动 -->
-                        <div id="taskview-chat-history" class="w-full h-full space-y-2 overflow-y-auto px-3">
+                        <div id="taskview-chat-history" class="w-full h-full space-y-2 overflow-y-auto px-3 pt-4">
                         </div>
                         <!-- 滚动到底部按钮, 按需显示 -->
                         <button
@@ -676,6 +757,12 @@ class TaskView extends HTMLElement {
             isResizing = true;
             document.body.style.cursor = 'col-resize';
             document.body.style.userSelect = 'none';
+        });
+
+        resizer.addEventListener('dblclick', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            this._toggleRightSidebar();
         });
 
         document.addEventListener('mousemove', (e) => {
