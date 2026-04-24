@@ -332,6 +332,37 @@ export async function installSkillFromMatrixSlug(slug: string, force: boolean = 
     }
 }
 
+const SKILLHUB_DOWNLOAD_URL = 'https://api.skillhub.tencent.com/api/v1/download';
+const CLAWHUB_DOWNLOAD_URL = 'https://wry-manatee-359.convex.site/api/v1/download';
+
+export async function installSkillFromSkillHubSlug(slug: string, force: boolean = false): Promise<InstallSkillResult> {
+    if (!slug || typeof slug !== 'string' || !slug.trim()) {
+        return { success: false, error: '请提供 SkillHub 技能 slug' };
+    }
+    const downloadUrl = `${SKILLHUB_DOWNLOAD_URL}?slug=${encodeURIComponent(slug.trim())}`;
+    return installSkillFromUrl(downloadUrl, force);
+}
+
+export async function installSkillFromModelScopeSlug(
+    slug: string,
+    force: boolean = false
+): Promise<InstallSkillResult> {
+    if (!slug || typeof slug !== 'string' || !slug.trim()) {
+        return { success: false, error: '请提供 ModelScope 技能名称' };
+    }
+    const safeSlug = slug.trim();
+
+    const skillhubUrl = `${SKILLHUB_DOWNLOAD_URL}?slug=${encodeURIComponent(safeSlug)}`;
+    let result = await installSkillFromUrl(skillhubUrl, force);
+    if (result.success) return result;
+
+    const clawhubUrl = `${CLAWHUB_DOWNLOAD_URL}?slug=${encodeURIComponent(safeSlug)}`;
+    result = await installSkillFromUrl(clawhubUrl, force);
+    if (result.success) return result;
+
+    return { success: false, error: `ModelScope 技能「${safeSlug}」安装失败：所有下载源均不可用` };
+}
+
 export async function installFromRegistryInstallUrl(
     installUrl: string,
     force: boolean = false
@@ -346,6 +377,16 @@ export async function installFromRegistryInstallUrl(
         const parsed = RegistryAdapters.parseMatrixInstallUrl(installUrl);
         if (!parsed) return { success: false, error: '无效的 Matrix Skill installUrl' };
         return installSkillFromMatrixSlug(parsed.slug, force);
+    }
+    if (method === 'modelscope') {
+        const parsed = RegistryAdapters.parseModelScopeInstallUrl(installUrl);
+        if (!parsed) return { success: false, error: '无效的 ModelScope installUrl' };
+        return installSkillFromModelScopeSlug(parsed.slug, force);
+    }
+    if (method === 'skillhub') {
+        const parsed = RegistryAdapters.parseSkillHubInstallUrl(installUrl);
+        if (!parsed) return { success: false, error: '无效的 SkillHub installUrl' };
+        return installSkillFromSkillHubSlug(parsed.slug, force);
     }
     if (method === 'github') {
         return installSkillFromGitHubUrl(installUrl, force);

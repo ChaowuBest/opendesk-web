@@ -175,6 +175,8 @@ export class SkillsOverlay implements Component {
         const registries = [
             { value: 'matrix', label: 'Matrix Skill - OpenHarmony 社区' },
             { value: 'clawhub', label: 'ClawHub - 技能仓库' },
+            { value: 'modelscope', label: 'ModelScope - 魔搭技能' },
+            { value: 'skillhub', label: 'SkillHub - 腾讯技能中心' },
             { value: 'skill0', label: 'skill0.io - 公开技能库' },
             { value: 'skillsmp', label: 'SkillsMP - 技能市场 (需 API Key)' }
         ];
@@ -289,6 +291,10 @@ export class SkillsOverlay implements Component {
                 return 'ClawHub';
             case 'matrix':
                 return 'Matrix Skill';
+            case 'modelscope':
+                return 'ModelScope';
+            case 'skillhub':
+                return 'SkillHub';
             default:
                 return registry;
         }

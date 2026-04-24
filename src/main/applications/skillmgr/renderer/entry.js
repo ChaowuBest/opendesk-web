@@ -369,6 +369,8 @@ const STYLE = `
 }
 .registry-card .r-icon.clawhub { background: #e0f7fa; color: #00838f; }
 .registry-card .r-icon.matrix { background: #fce4ec; color: #c62828; }
+.registry-card .r-icon.modelscope { background: #e8eaf6; color: #283593; }
+.registry-card .r-icon.skillhub { background: #e0f2f1; color: #00695c; }
 .registry-card .r-body { flex: 1; min-width: 0; }
 .registry-card .r-name {
     font-size: 13px; font-weight: 600; color: #1d1d1f; line-height: 1.3; margin-bottom: 2px;
@@ -803,7 +805,16 @@ class SkillMgrEntryWidget extends HTMLElement {
 
         const skillCount = this.skills.length;
         const category = this.exploreCategory;
-        const categoryLabel = category === 'clawhub' ? 'ClawHub' : 'OpenHarmony Matrix';
+        const categoryLabel =
+            category === 'clawhub'
+                ? 'ClawHub'
+                : category === 'matrix'
+                  ? 'OpenHarmony Matrix'
+                  : category === 'modelscope'
+                    ? 'ModelScope'
+                    : category === 'skillhub'
+                      ? 'SkillHub'
+                      : category;
 
         const installedHtml = this.loading
             ? `<div class="loading-state"><div class="loading-spinner"></div><span>加载中…</span></div>`
@@ -838,10 +849,20 @@ class SkillMgrEntryWidget extends HTMLElement {
               ? `<div class="registry-grid">${this.registryResults
                     .map((s) => {
                         const isInstalling = this.installingRegistryIds.has(s.id);
-                        const iconClass = category === 'clawhub' ? 'clawhub' : 'matrix';
+                        const iconClass = category;
+                        const iconEmoji =
+                            category === 'clawhub'
+                                ? '🐾'
+                                : category === 'matrix'
+                                  ? '🔷'
+                                  : category === 'modelscope'
+                                    ? '🔮'
+                                    : category === 'skillhub'
+                                      ? '💎'
+                                      : '📦';
                         return `
                     <div class="registry-card" data-skill-id="${escapeHtml(s.id)}">
-                      <div class="r-icon ${iconClass}">${category === 'clawhub' ? '🐾' : '🔷'}</div>
+                      <div class="r-icon ${iconClass}">${iconEmoji}</div>
                       <div class="r-body">
                         <div class="r-name">${escapeHtml(s.name || s.id)}</div>
                         ${s.author ? `<div class="r-author">@${escapeHtml(s.author)}</div>` : ''}
@@ -862,7 +883,7 @@ class SkillMgrEntryWidget extends HTMLElement {
                     .join('')}</div>`
               : this.registryHasSearched
                 ? `<div class="empty-state"><div class="empty-icon">🔍</div><div class="empty-title">未找到结果</div><div class="empty-hint">换个关键词试试</div></div>`
-                : `<div class="empty-state"><div class="empty-icon">${category === 'clawhub' ? '🐾' : '🔷'}</div><div class="empty-title">${categoryLabel}</div><div class="empty-hint">输入关键词搜索高质量技能</div></div>`;
+                : `<div class="empty-state"><div class="empty-icon">${category === 'clawhub' ? '🐾' : category === 'matrix' ? '🔷' : category === 'modelscope' ? '🔮' : category === 'skillhub' ? '💎' : '📦'}</div><div class="empty-title">${categoryLabel}</div><div class="empty-hint">输入关键词搜索高质量技能</div></div>`;
 
         const regMsgHtml = this.registryMessage
             ? `<div class="registry-msg ${this.registryMessage.isError ? 'error' : ''}">${escapeHtml(this.registryMessage.text)}</div>`
@@ -914,6 +935,8 @@ class SkillMgrEntryWidget extends HTMLElement {
             <div class="category-tabs">
               <button type="button" class="category-tab ${category === 'clawhub' ? 'active' : ''}" data-category="clawhub">🐾 ClawHub</button>
               <button type="button" class="category-tab ${category === 'matrix' ? 'active' : ''}" data-category="matrix">🔷 OpenHarmony Matrix</button>
+              <button type="button" class="category-tab ${category === 'modelscope' ? 'active' : ''}" data-category="modelscope">🔮 ModelScope</button>
+              <button type="button" class="category-tab ${category === 'skillhub' ? 'active' : ''}" data-category="skillhub">💎 SkillHub</button>
             </div>
             <div class="search-card">
               <div class="search-label">搜索 ${categoryLabel} 中的技能</div>
