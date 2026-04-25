@@ -639,4 +639,63 @@ if (window.self !== window.top) {
             };
         }
     });
+
+    contextBridge.exposeInMainWorld('browserAPI', {
+        navigate: async (taskId, url) => {
+            const result = await ipcRenderer.invoke('browser:navigate', taskId, url);
+            if (result.status !== 'ok') {
+                console.error('browser navigation failed', result.message);
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
+        getCDPPort: async () => {
+            const result = await ipcRenderer.invoke('browser:getCDPPort');
+            if (result.status !== 'ok') {
+                console.error('getting CDP port failed', result.message);
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
+        getState: async (taskId) => {
+            const result = await ipcRenderer.invoke('browser:getState', taskId);
+            if (result.status !== 'ok') {
+                console.error('getting browser state failed', result.message);
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
+        executeScript: async (taskId, script) => {
+            const result = await ipcRenderer.invoke('browser:executeScript', taskId, script);
+            if (result.status !== 'ok') {
+                console.error('executing script failed', result.message);
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
+        goBack: async (taskId) => {
+            const result = await ipcRenderer.invoke('browser:goBack', taskId);
+            if (result.status !== 'ok') {
+                console.error('browser goBack failed', result.message);
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
+        goForward: async (taskId) => {
+            const result = await ipcRenderer.invoke('browser:goForward', taskId);
+            if (result.status !== 'ok') {
+                console.error('browser goForward failed', result.message);
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
+        refresh: async (taskId) => {
+            const result = await ipcRenderer.invoke('browser:refresh', taskId);
+            if (result.status !== 'ok') {
+                console.error('browser refresh failed', result.message);
+                throw new Error(result.message);
+            }
+            return result.data;
+        }
+    });
 }
