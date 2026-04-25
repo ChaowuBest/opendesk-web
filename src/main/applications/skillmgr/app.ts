@@ -16,6 +16,7 @@ import { logger } from '../../utils/logger.js';
 import { SkillRegistry } from './skillregistry.js';
 import { Skill, SkillRegistry as AISkillRegistry } from '../../aikernel/skill.js';
 import { BaseToolset } from '../../aikernel/tool.js';
+import { ReadableDirectoryRegistry } from '../../aikernel/security/enforcer.js';
 import SkillsWorker from './service/worker.js';
 import { MANAGE_SKILLS_SKILL } from './skills.js';
 import {
@@ -73,6 +74,14 @@ export class SkillMgrApplication extends BaseApplication {
 
     constructor() {
         super('skillmgr', '技能中心');
+
+        // 将 skill 目录注册为全局可读，确保所有模式下 agent 都能读取 skill 文件
+        const readableRegistry = ReadableDirectoryRegistry.getInstance();
+        readableRegistry.register(SkillRegistry.getSkillsDirectory());
+        readableRegistry.register(SkillRegistry.getBundledSkillsDirectory());
+        for (const dir of SkillRegistry.getMountedDirs()) {
+            readableRegistry.register(dir);
+        }
     }
 
     /**

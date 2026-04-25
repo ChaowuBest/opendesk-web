@@ -20,7 +20,7 @@
  */
 
 import type { PermissionEnforcer, PermissionPromptProvider } from './permission.js';
-import { GlobPermissionEnforcer, createDefaultPermissionRules } from './enforcer.js';
+import { GlobPermissionEnforcer, createDefaultPermissionRules, ReadableDirectoryRegistry } from './enforcer.js';
 import type { ModeDecl } from '../agents/common.js';
 import fs from 'fs';
 import path from 'path';
@@ -59,6 +59,11 @@ export class HarnessContext {
         const rules = createDefaultPermissionRules(workspace);
         ctx.permission = await GlobPermissionEnforcer.create(rules);
 
+        // 追加外部注册的可读目录规则（如 skill 目录）
+        for (const rule of ReadableDirectoryRegistry.getInstance().getReadRules()) {
+            await ctx.permission.addRule(rule);
+        }
+
         return ctx;
     }
 
@@ -74,6 +79,11 @@ export class HarnessContext {
 
         const rules = mode.permissionFactory(workspace);
         ctx.permission = await GlobPermissionEnforcer.create(rules);
+
+        // 追加外部注册的可读目录规则（如 skill 目录）
+        for (const rule of ReadableDirectoryRegistry.getInstance().getReadRules()) {
+            await ctx.permission.addRule(rule);
+        }
 
         // Plan Mode 时自动创建 .plan 目录
         if (mode.id === 'plan') {

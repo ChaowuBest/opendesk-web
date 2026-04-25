@@ -101,6 +101,63 @@ function matchesAny(rules: CompiledRule[], resourceType: string, objNorm: string
     return false;
 }
 
+/**
+ * 可读目录注册表（单例）。
+ *
+ * 应用层（如 skillmgr）在初始化时将自身管理的目录注册进来，
+ * HarnessContext 创建权限引擎后会自动追加这些目录的 file:read allow 规则，
+ * 从而在所有模式（包括 Plan Mode 等只读模式）下保持对这些目录的读取权限。
+ *
+ * 这一设计使 aikernel 不需要引用任何 application 模块。
+ */
+export class ReadableDirectoryRegistry {
+    private static instance: ReadableDirectoryRegistry | null = null;
+    private directories: Set<string> = new Set();
+
+    static getInstance(): ReadableDirectoryRegistry {
+        if (!ReadableDirectoryRegistry.instance) {
+            ReadableDirectoryRegistry.instance = new ReadableDirectoryRegistry();
+        }
+        return ReadableDirectoryRegistry.instance;
+    }
+
+    /**
+     * 注册一个可读目录（自动规范化为正斜杠路径）
+     */
+    register(dirPath: string): void {
+        const norm = normalizePath(path.resolve(dirPath));
+        this.directories.add(norm);
+        logger.info(`readable directory registered: ${norm}`);
+    }
+
+    /**
+     * 取消注册一个可读目录
+     */
+    unregister(dirPath: string): void {
+        const norm = normalizePath(path.resolve(dirPath));
+        this.directories.delete(norm);
+        logger.info(`readable directory unregistered: ${norm}`);
+    }
+
+    /**
+     * 返回所有已注册目录的 file:read allow 权限规则
+     */
+    getReadRules(): PermissionRule[] {
+        const rules: PermissionRule[] = [];
+        for (const dir of this.directories) {
+            rules.push({ resourceType: 'file', action: 'read', pathPattern: `${dir}/**`, effect: 'allow' });
+        }
+        return rules;
+    }
+
+    /**
+     * 返回已注册目录列表（用于调试）
+     */
+    getRegisteredDirectories(): string[] {
+        return Array.from(this.directories);
+    }
+}
+
 export class GlobPermissionEnforcer implements PermissionEnforcer {
     private allowRules: CompiledRule[] = [];
     private denyRules: CompiledRule[] = [];

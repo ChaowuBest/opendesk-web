@@ -64,6 +64,16 @@ class AgentInput extends HTMLElement {
         this.modelPanelOpen = false;
         this.modePanelOpen = false;
         this._docClickBound = false;
+        /** @type {{ value: string, label: string, description: string, icon: string, iconClass: string }[]} */
+        this.autocompleteItems = [];
+        this.autocompleteSelectedIndex = 0;
+        this.autocompleteOpen = false;
+        /** @type {'skill' | 'file' | null} */
+        this.autocompleteMode = null;
+        /** 当前文件补全的工作区根目录 */
+        this._workspacePath = '';
+        /** 防抖定时器 */
+        this._fileCompleteTimer = null;
     }
 
     connectedCallback() {
@@ -387,6 +397,10 @@ class AgentInput extends HTMLElement {
                 </div>
             </div>
         </div>
+        <!-- 内联补全面板 -->
+        <div id="agent-input-autocomplete" class="autocomplete-panel-hidden">
+            <div id="agent-input-autocomplete-list" class="autocomplete-panel-list"></div>
+        </div>
         ${this.getAttribute('hide-disclaimer') !== null ? '' : '<p class="text-center text-[11px] text-gray-400 mt-1.5 select-none">内容由 AI 生成，请核实重要信息。</p>'}
         `;
 
@@ -407,16 +421,35 @@ class AgentInput extends HTMLElement {
     }
 
     /**
-     * 通用弹出面板定位逻辑
+     * 通用弹出面板定位逻辑：优先向上弹出，空间不足时向下弹出并限制高度
      */
-    positionPanel(btn, panel) {
+    positionPanel(btn, panel, panelWidth = 220, maxHeight = 280) {
         const rect = btn.getBoundingClientRect();
-        const panelHeight = Math.min(280, panel.scrollHeight);
+        const panelHeight = Math.min(maxHeight, panel.scrollHeight);
         let left = rect.left;
-        if (left + 220 > window.innerWidth) {
-            left = window.innerWidth - 220 - 8;
+        if (left + panelWidth > window.innerWidth) {
+            left = window.innerWidth - panelWidth - 8;
         }
-        panel.style.top = rect.top - panelHeight - 8 + 'px';
+        left = Math.max(8, left);
+
+        const spaceAbove = rect.top;
+        const spaceBelow = window.innerHeight - rect.bottom;
+
+        if (spaceAbove >= panelHeight + 8) {
+            panel.style.top = rect.top - panelHeight - 8 + 'px';
+            panel.style.maxHeight = maxHeight + 'px';
+        } else if (spaceBelow >= panelHeight + 8) {
+            panel.style.top = rect.bottom + 8 + 'px';
+            panel.style.maxHeight = maxHeight + 'px';
+        } else if (spaceAbove >= spaceBelow) {
+            const availHeight = Math.max(120, spaceAbove - 16);
+            panel.style.top = rect.top - availHeight - 8 + 'px';
+            panel.style.maxHeight = availHeight + 'px';
+        } else {
+            const availHeight = Math.max(120, spaceBelow - 16);
+            panel.style.top = rect.bottom + 8 + 'px';
+            panel.style.maxHeight = availHeight + 'px';
+        }
         panel.style.left = left + 'px';
     }
 
@@ -427,6 +460,7 @@ class AgentInput extends HTMLElement {
         this.closeModelPanel(true);
         this.closeModePanel(true);
         this.toggleSkillPanel(true);
+        this.closeAutocompletePanel();
     }
 
     toggleModelPanel(forceClose = false) {
@@ -567,13 +601,22 @@ class AgentInput extends HTMLElement {
             </button>`;
         }).join('');
 
-        // 定位：对齐到当前模型项的右侧
+        // 定位：对齐到当前模型项的右侧，并确保不溢出窗口
         const modelPanel = this.querySelector('#agent-input-model-panel');
         if (modelPanel && triggerItem) {
             const panelRect = modelPanel.getBoundingClientRect();
             const itemRect = triggerItem.getBoundingClientRect();
-            submenu.style.top = itemRect.top + 'px';
-            submenu.style.left = panelRect.right + 4 + 'px';
+            let top = itemRect.top;
+            let left = panelRect.right + 4;
+            const submenuHeight = Math.min(280, submenu.scrollHeight || 200);
+            if (top + submenuHeight > window.innerHeight - 8) {
+                top = Math.max(8, window.innerHeight - submenuHeight - 8);
+            }
+            if (left + 180 > window.innerWidth - 8) {
+                left = panelRect.left - 180 - 4;
+            }
+            submenu.style.top = top + 'px';
+            submenu.style.left = Math.max(8, left) + 'px';
         }
 
         // 重播弹出动画：先移除再添加 visible 类
@@ -658,14 +701,7 @@ class AgentInput extends HTMLElement {
 
                 const btn = this.querySelector('#agent-input-skill-btn');
                 if (btn) {
-                    const rect = btn.getBoundingClientRect();
-                    const panelHeight = Math.min(320, panel.scrollHeight);
-                    let left = rect.left;
-                    if (left + 280 > window.innerWidth) {
-                        left = window.innerWidth - 280 - 8;
-                    }
-                    panel.style.top = rect.top - panelHeight - 8 + 'px';
-                    panel.style.left = left + 'px';
+                    this.positionPanel(btn, panel, 280, 320);
                 }
 
                 const searchInput = this.querySelector('#agent-input-skill-search');
@@ -769,6 +805,295 @@ class AgentInput extends HTMLElement {
             console.error('Failed to install skill:', err);
             window.notificationAPI?.sendNotification('error', '技能中心', '安装失败', err.message || '未知错误');
         }
+    }
+
+    // ── 内联补全面板 ────────────────────────────────────────
+
+    /**
+     * 处理输入变化，检测 / 和 @ 触发补全
+     */
+    handleAutocompleteInput(textarea) {
+        const value = textarea.value;
+        const cursorPos = textarea.selectionStart;
+        const textBefore = value.substring(0, cursorPos);
+
+        // 检测 / 技能补全：行首的 / 或者前面是空白的 /
+        const slashMatch = textBefore.match(/(?:^|\s)(\/[a-z0-9][-a-z0-9]*?)$|(?:^|\s)(\/)$/);
+        if (slashMatch) {
+            const prefix = slashMatch[1] || slashMatch[2];
+            const nameFilter = prefix.slice(1).toLowerCase();
+            const filtered = this.availableSkills.filter(
+                (s) => !nameFilter || s.name.toLowerCase().includes(nameFilter)
+            );
+            if (filtered.length > 0) {
+                this.autocompleteMode = 'skill';
+                this.autocompleteItems = filtered.map((s) => ({
+                    value: s.name,
+                    label: s.name,
+                    description: s.description.slice(0, 80),
+                    icon: 'fa-bolt',
+                    iconClass: 'skill-icon'
+                }));
+                this.autocompleteSelectedIndex = 0;
+                this.showAutocompletePanel(textarea);
+                return;
+            }
+        }
+
+        // 检测 @ 文件补全
+        const atMatch = this.extractAtQuery(textBefore);
+        if (atMatch) {
+            if (this._fileCompleteTimer) clearTimeout(this._fileCompleteTimer);
+            this._fileCompleteTimer = setTimeout(() => {
+                this.loadFileCompletions(atMatch.query, textarea);
+            }, 150);
+            return;
+        }
+
+        this.closeAutocompletePanel();
+    }
+
+    /**
+     * 从文本末尾向前查找 @ 前缀
+     */
+    extractAtQuery(text) {
+        const delimiters = new Set([' ', '\t', '"', "'", '=']);
+        for (let i = text.length - 1; i >= 0; i--) {
+            if (text[i] === '@' && (i === 0 || delimiters.has(text[i - 1]))) {
+                return { fullPrefix: text.slice(i), query: text.slice(i + 1) };
+            }
+        }
+        return null;
+    }
+
+    /**
+     * 通过 IPC 获取文件列表进行补全
+     */
+    async loadFileCompletions(query, textarea) {
+        try {
+            if (!this._workspacePath && window.workspaceAPI?.getEffectiveWorkspace) {
+                this._workspacePath = await window.workspaceAPI.getEffectiveWorkspace();
+            }
+            if (!this._workspacePath || !window.fsAPI?.listDirectory) return;
+
+            const normalizedQuery = query.replace(/\\/g, '/');
+            let searchDir, filter, displayBase;
+
+            if (normalizedQuery.includes('/')) {
+                const lastSlash = normalizedQuery.lastIndexOf('/');
+                displayBase = normalizedQuery.slice(0, lastSlash + 1);
+                filter = normalizedQuery.slice(lastSlash + 1).toLowerCase();
+                const expandedDir = displayBase.startsWith('/') ? displayBase : this._workspacePath + '/' + displayBase;
+                searchDir = expandedDir;
+            } else {
+                searchDir = this._workspacePath;
+                filter = normalizedQuery.toLowerCase();
+                displayBase = '';
+            }
+
+            const entries = await window.fsAPI.listDirectory(searchDir);
+            const items = [];
+            for (const entry of entries) {
+                if (entry.name.startsWith('.')) continue;
+                if (filter && !entry.name.toLowerCase().startsWith(filter)) continue;
+                const relativePath = displayBase ? displayBase + entry.name : entry.name;
+                const displayPath = entry.isDirectory ? relativePath + '/' : relativePath;
+                items.push({
+                    value: '@' + displayPath,
+                    label: entry.name + (entry.isDirectory ? '/' : ''),
+                    description: displayPath,
+                    icon: entry.isDirectory ? 'fa-folder' : 'fa-file',
+                    iconClass: entry.isDirectory ? 'dir-icon' : ''
+                });
+                if (items.length >= 20) break;
+            }
+
+            if (items.length > 0) {
+                this.autocompleteMode = 'file';
+                this.autocompleteItems = items;
+                this.autocompleteSelectedIndex = 0;
+                this.showAutocompletePanel(textarea);
+            } else {
+                this.closeAutocompletePanel();
+            }
+        } catch {
+            this.closeAutocompletePanel();
+        }
+    }
+
+    /**
+     * 显示补全面板并定位到 textarea
+     */
+    showAutocompletePanel(textarea) {
+        const panel = this.querySelector('#agent-input-autocomplete');
+        const listEl = this.querySelector('#agent-input-autocomplete-list');
+        if (!panel || !listEl) return;
+
+        listEl.innerHTML = this.autocompleteItems
+            .map(
+                (item, idx) => `
+            <button class="autocomplete-panel-item${idx === this.autocompleteSelectedIndex ? ' selected' : ''}" data-idx="${idx}">
+                <div class="autocomplete-panel-item-icon ${item.iconClass || ''}">
+                    <i class="fas ${item.icon}"></i>
+                </div>
+                <div class="autocomplete-panel-item-info">
+                    <div class="autocomplete-panel-item-name">${item.label}</div>
+                    ${item.description ? `<div class="autocomplete-panel-item-desc">${item.description}</div>` : ''}
+                </div>
+            </button>
+        `
+            )
+            .join('');
+
+        panel.classList.remove('autocomplete-panel-hidden');
+        panel.classList.add('autocomplete-panel-visible');
+        this.autocompleteOpen = true;
+
+        const textareaRect = textarea.getBoundingClientRect();
+        const panelHeight = Math.min(260, panel.scrollHeight);
+        const spaceAbove = textareaRect.top;
+        const spaceBelow = window.innerHeight - textareaRect.bottom;
+
+        if (spaceAbove >= panelHeight + 8) {
+            panel.style.top = textareaRect.top - panelHeight - 4 + 'px';
+        } else if (spaceBelow >= panelHeight + 8) {
+            panel.style.top = textareaRect.bottom + 4 + 'px';
+        } else if (spaceAbove >= spaceBelow) {
+            const h = Math.max(100, spaceAbove - 12);
+            panel.style.top = textareaRect.top - h - 4 + 'px';
+            panel.style.maxHeight = h + 'px';
+        } else {
+            const h = Math.max(100, spaceBelow - 12);
+            panel.style.top = textareaRect.bottom + 4 + 'px';
+            panel.style.maxHeight = h + 'px';
+        }
+        let left = textareaRect.left;
+        if (left + 300 > window.innerWidth) left = window.innerWidth - 300 - 8;
+        panel.style.left = Math.max(8, left) + 'px';
+
+        this.bindAutocompleteItemEvents();
+    }
+
+    closeAutocompletePanel() {
+        const panel = this.querySelector('#agent-input-autocomplete');
+        if (!panel) return;
+        panel.classList.remove('autocomplete-panel-visible');
+        panel.classList.add('autocomplete-panel-hidden');
+        this.autocompleteOpen = false;
+        this.autocompleteMode = null;
+    }
+
+    bindAutocompleteItemEvents() {
+        const items = this.querySelectorAll('#agent-input-autocomplete-list .autocomplete-panel-item');
+        items.forEach((item) => {
+            item.addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                const idx = parseInt(item.dataset.idx, 10);
+                this.applyAutocomplete(idx);
+            });
+            item.addEventListener('mouseenter', () => {
+                const idx = parseInt(item.dataset.idx, 10);
+                this.autocompleteSelectedIndex = idx;
+                this.updateAutocompleteSelection();
+            });
+        });
+    }
+
+    updateAutocompleteSelection() {
+        const items = this.querySelectorAll('#agent-input-autocomplete-list .autocomplete-panel-item');
+        items.forEach((el, i) => {
+            if (i === this.autocompleteSelectedIndex) {
+                el.classList.add('selected');
+                el.scrollIntoView({ block: 'nearest' });
+            } else {
+                el.classList.remove('selected');
+            }
+        });
+    }
+
+    /**
+     * 应用选中的补全项到 textarea
+     */
+    applyAutocomplete(index) {
+        const textarea = this.querySelector('#agent-input-textarea');
+        if (!textarea || index < 0 || index >= this.autocompleteItems.length) return;
+
+        const item = this.autocompleteItems[index];
+        const cursorPos = textarea.selectionStart;
+        const textBefore = textarea.value.substring(0, cursorPos);
+        const textAfter = textarea.value.substring(cursorPos);
+
+        if (this.autocompleteMode === 'skill') {
+            // 替换 /prefix 为 /skillname + 空格
+            const slashMatch = textBefore.match(/(?:^|\s)(\/[a-z0-9][-a-z0-9]*?)$|(?:^|\s)(\/)$/);
+            if (slashMatch) {
+                const matchStr = slashMatch[1] || slashMatch[2];
+                const matchStart = cursorPos - matchStr.length;
+                const replacement = '/' + item.value + ' ';
+                textarea.value = textBefore.substring(0, matchStart) + replacement + textAfter;
+                const newPos = matchStart + replacement.length;
+                textarea.setSelectionRange(newPos, newPos);
+            }
+        } else if (this.autocompleteMode === 'file') {
+            // 替换 @query 为 @path
+            const atMatch = this.extractAtQuery(textBefore);
+            if (atMatch) {
+                const matchStart = cursorPos - atMatch.fullPrefix.length;
+                const replacement = item.value;
+                // 如果是目录，不加空格（继续补全子路径）
+                const suffix = replacement.endsWith('/') ? '' : ' ';
+                textarea.value = textBefore.substring(0, matchStart) + replacement + suffix + textAfter;
+                const newPos = matchStart + replacement.length + suffix.length;
+                textarea.setSelectionRange(newPos, newPos);
+            }
+        }
+
+        textarea.focus();
+        textarea.dispatchEvent(new Event('input', { bubbles: true }));
+        this.closeAutocompletePanel();
+
+        // 如果选中的是目录，延迟触发下一级补全
+        if (this.autocompleteMode === 'file' && item.value.endsWith('/')) {
+            setTimeout(() => {
+                this.handleAutocompleteInput(textarea);
+            }, 50);
+        }
+    }
+
+    /**
+     * 处理补全面板中的键盘导航
+     * @returns {boolean} 是否消费了按键事件
+     */
+    handleAutocompleteKeydown(e) {
+        if (!this.autocompleteOpen) return false;
+
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            this.autocompleteSelectedIndex = (this.autocompleteSelectedIndex + 1) % this.autocompleteItems.length;
+            this.updateAutocompleteSelection();
+            return true;
+        }
+        if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            this.autocompleteSelectedIndex =
+                (this.autocompleteSelectedIndex - 1 + this.autocompleteItems.length) % this.autocompleteItems.length;
+            this.updateAutocompleteSelection();
+            return true;
+        }
+        if (e.key === 'Tab' || e.key === 'Enter') {
+            // 仅在补全面板打开且不是 Ctrl+Enter 时消费
+            if (e.key === 'Enter' && e.ctrlKey) return false;
+            e.preventDefault();
+            this.applyAutocomplete(this.autocompleteSelectedIndex);
+            return true;
+        }
+        if (e.key === 'Escape') {
+            e.preventDefault();
+            this.closeAutocompletePanel();
+            return true;
+        }
+        return false;
     }
 
     setUpEventListeners() {
@@ -875,6 +1200,14 @@ class AgentInput extends HTMLElement {
                         this.toggleSkillPanel(true);
                     }
                 }
+                // 关闭补全面板
+                if (this.autocompleteOpen) {
+                    const acPanel = this.querySelector('#agent-input-autocomplete');
+                    const ta = this.querySelector('#agent-input-textarea');
+                    if (acPanel && !acPanel.contains(e.target) && e.target !== ta) {
+                        this.closeAutocompletePanel();
+                    }
+                }
             });
         }
 
@@ -958,13 +1291,15 @@ class AgentInput extends HTMLElement {
             }
         });
 
-        // Ctrl+Enter 快捷键
+        // 键盘事件：补全导航 + Ctrl+Enter 发送
         textarea.addEventListener('keydown', (e) => {
-            // 如果输入框被禁用，阻止所有输入
             if (this.isDisabled) {
                 e.preventDefault();
                 return;
             }
+
+            // 补全面板打开时优先处理键盘导航
+            if (this.handleAutocompleteKeydown(e)) return;
 
             if (e.ctrlKey && e.key === 'Enter') {
                 e.preventDefault();
@@ -981,6 +1316,8 @@ class AgentInput extends HTMLElement {
                     bubbles: true
                 })
             );
+            // 检测 / 和 @ 触发补全
+            this.handleAutocompleteInput(textarea);
         });
     }
 }

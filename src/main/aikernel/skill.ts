@@ -464,7 +464,7 @@ class CallSkillTool extends BaseTool<typeof CallSkillToolSchema> {
 
     /**
      * 渲染 CallSkillTool 工具调用的 Electron HTML 界面
-     * 优先使用内部工具的自定义渲染
+     * 优先使用内部工具的自定义渲染，否则展示统一的技能调用卡片
      */
     async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
         const inner = this.resolveInnerTool(toolcall);
@@ -472,7 +472,34 @@ class CallSkillTool extends BaseTool<typeof CallSkillToolSchema> {
             const result = await inner.tool.renderToolCall(inner.toolCall);
             if (result) return result;
         }
-        return undefined;
+
+        const args = toolcall.args_object as z.output<typeof CallSkillToolSchema> | undefined;
+        const skillName = args ? `${args.bundleName}/${args.skillName}` : '';
+        const toolName = args?.toolName || '';
+
+        const statusIcon =
+            toolcall.status === 'running'
+                ? '<span class="inline-block w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse"></span>'
+                : toolcall.status === 'error'
+                  ? '<span class="inline-block w-1.5 h-1.5 rounded-full bg-rose-500"></span>'
+                  : '';
+
+        const detailParts: string[] = [];
+        if (skillName) detailParts.push(escapeHtml(skillName));
+        if (toolName) detailParts.push(escapeHtml(toolName));
+        const detailHtml =
+            detailParts.length > 0
+                ? `<span class="truncate text-xs text-slate-600">${detailParts.join(' / ')}</span>`
+                : '';
+
+        return `<div class="my-2">
+            <div class="flex items-center gap-1.5 min-w-0">
+                <i class="fas fa-bolt shrink-0 text-slate-400 text-xs"></i>
+                <span class="shrink-0 text-slate-500 text-xs">调用技能</span>
+                ${statusIcon}
+                ${detailHtml}
+            </div>
+        </div>`;
     }
 
     /**
