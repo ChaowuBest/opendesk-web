@@ -728,8 +728,8 @@ class TaskView extends HTMLElement {
 
                 <!-- 右侧边栏拖拽条 -->
                 <div id="task-${this.task_id}-resizer"
-                    class="w-[4px] relative group transition-all duration-150 shrink-0"
-                    style="background: linear-gradient(to right, transparent 40%, #e0e0e0 50%, transparent 60%); cursor: col-resize; display: ${TaskView.rightSidebarExpanded ? '' : 'none'};"
+                    class="relative group shrink-0"
+                    style="background: linear-gradient(to right, transparent 40%, #e0e0e0 50%, transparent 60%); width: 4px; cursor: col-resize; display: ${TaskView.rightSidebarExpanded ? '' : 'none'};"
                 >
                     <div class="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 pointer-events-none">
                         <div class="w-[2px] h-12 bg-gray-200 rounded-full opacity-70 group-hover:opacity-100 group-hover:bg-blue-400 transition"></div>
@@ -751,22 +751,9 @@ class TaskView extends HTMLElement {
         if (!resizer || !rightSidebar) return;
 
         let isResizing = false;
-
-        resizer.addEventListener('mousedown', (e) => {
-            e.preventDefault();
-            isResizing = true;
-            document.body.style.cursor = 'col-resize';
-            document.body.style.userSelect = 'none';
-        });
-
-        resizer.addEventListener('dblclick', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            this._toggleRightSidebar();
-        });
-
-        document.addEventListener('mousemove', (e) => {
+        const onMouseMove = (e) => {
             if (!isResizing) return;
+            e.preventDefault();
             const container = this.querySelector(`#task-${this.task_id}-content-row`);
             if (!container) return;
             const containerRect = container.getBoundingClientRect();
@@ -776,14 +763,31 @@ class TaskView extends HTMLElement {
             if (newWidth < minWidth || newWidth > maxWidth) return;
             rightSidebar.style.width = newWidth + 'px';
             TaskView.rightSidebarWidth = newWidth;
+        };
+
+        const onMouseUp = () => {
+            if (!isResizing) return;
+            isResizing = false;
+            document.body.style.cursor = '';
+            document.body.style.userSelect = '';
+            document.removeEventListener('mousemove', onMouseMove);
+            document.removeEventListener('mouseup', onMouseUp);
+        };
+
+        resizer.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            isResizing = true;
+            document.body.style.cursor = 'col-resize';
+            document.body.style.userSelect = 'none';
+            document.addEventListener('mousemove', onMouseMove);
+            document.addEventListener('mouseup', onMouseUp);
         });
 
-        document.addEventListener('mouseup', () => {
-            if (isResizing) {
-                isResizing = false;
-                document.body.style.cursor = '';
-                document.body.style.userSelect = '';
-            }
+        resizer.addEventListener('dblclick', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            this._toggleRightSidebar();
         });
     }
 
