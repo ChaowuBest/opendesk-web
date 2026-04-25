@@ -377,12 +377,125 @@ function renderInlineTool(opts: {
     </div>`;
 }
 
+const FILE_EXT_LABELS: Record<string, { label: string; color: string }> = {
+    ts: { label: 'TS', color: 'bg-blue-500' },
+    tsx: { label: 'TSX', color: 'bg-blue-500' },
+    js: { label: 'JS', color: 'bg-yellow-500' },
+    jsx: { label: 'JSX', color: 'bg-yellow-500' },
+    py: { label: 'PY', color: 'bg-green-600' },
+    rs: { label: 'RS', color: 'bg-orange-600' },
+    go: { label: 'GO', color: 'bg-cyan-600' },
+    java: { label: 'JV', color: 'bg-red-500' },
+    rb: { label: 'RB', color: 'bg-red-600' },
+    css: { label: 'CSS', color: 'bg-purple-500' },
+    scss: { label: 'CSS', color: 'bg-purple-500' },
+    html: { label: 'HTML', color: 'bg-orange-500' },
+    vue: { label: 'VUE', color: 'bg-emerald-500' },
+    svelte: { label: 'SV', color: 'bg-orange-600' },
+    json: { label: 'JSON', color: 'bg-gray-500' },
+    yaml: { label: 'YML', color: 'bg-gray-500' },
+    yml: { label: 'YML', color: 'bg-gray-500' },
+    md: { label: 'MD', color: 'bg-gray-500' },
+    sh: { label: 'SH', color: 'bg-gray-600' },
+    sql: { label: 'SQL', color: 'bg-blue-600' },
+    c: { label: 'C', color: 'bg-blue-700' },
+    cpp: { label: 'C++', color: 'bg-blue-700' },
+    h: { label: 'H', color: 'bg-blue-700' },
+    swift: { label: 'SW', color: 'bg-orange-500' },
+    kt: { label: 'KT', color: 'bg-purple-600' }
+};
+
+function getFileExtBadge(filePath: string): string {
+    const ext = path.extname(filePath).replace('.', '').toLowerCase();
+    const info = FILE_EXT_LABELS[ext];
+    if (info) {
+        return `<span class="${info.color} text-white text-[10px] font-bold px-1.5 py-0.5 rounded leading-none">${info.label}</span>`;
+    }
+    if (ext) {
+        return `<span class="bg-gray-400 text-white text-[10px] font-bold px-1.5 py-0.5 rounded leading-none">${ext.toUpperCase().slice(0, 4)}</span>`;
+    }
+    return '';
+}
+
 /**
- * 将 oldString / newString 渲染为带颜色区分的 HTML diff
+ * 渲染 Cursor 风格的文件编辑 diff 卡片
+ */
+function renderDiffCard(
+    filePath: string,
+    oldStr: string,
+    newStr: string,
+    status: string,
+    maxLines: number = 12
+): string {
+    const diffResult = diff.diffLines(oldStr, newStr);
+
+    let addedCount = 0;
+    let removedCount = 0;
+    const lines: string[] = [];
+    let lineCount = 0;
+    let totalLines = 0;
+
+    for (const part of diffResult) {
+        const partLines = part.value.replace(/\n$/, '').split('\n');
+        totalLines += partLines.length;
+        if (part.added) addedCount += partLines.length;
+        else if (part.removed) removedCount += partLines.length;
+    }
+
+    for (const part of diffResult) {
+        if (lineCount >= maxLines) break;
+        const partLines = part.value.replace(/\n$/, '').split('\n');
+        for (const line of partLines) {
+            if (lineCount >= maxLines) break;
+            const escaped = escapeHtml(line) || '&nbsp;';
+            if (part.added) {
+                lines.push(
+                    `<div class="bg-emerald-50 border-l-3 border-emerald-400 px-2 py-px text-emerald-800"><span class="text-emerald-500 select-none mr-1.5">+</span>${escaped}</div>`
+                );
+            } else if (part.removed) {
+                lines.push(
+                    `<div class="bg-rose-50 border-l-3 border-rose-400 px-2 py-px text-rose-800"><span class="text-rose-400 select-none mr-1.5">-</span>${escaped}</div>`
+                );
+            } else {
+                lines.push(
+                    `<div class="px-2 py-px text-slate-500"><span class="text-slate-300 select-none mr-1.5">&nbsp;</span>${escaped}</div>`
+                );
+            }
+            lineCount++;
+        }
+    }
+
+    const truncated = lineCount < totalLines;
+    const fileName = path.basename(filePath);
+    const extBadge = getFileExtBadge(filePath);
+    const statsHtml = `<span class="text-emerald-600 font-medium">+${addedCount}</span> <span class="text-rose-500 font-medium">-${removedCount}</span>`;
+
+    const statusDot =
+        status === 'running'
+            ? '<span class="inline-block w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse ml-1"></span>'
+            : '';
+
+    const collapseId = `diff-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+
+    return `<div class="my-2 rounded-lg border border-slate-200 overflow-hidden w-full">
+        <div class="flex items-center gap-2 px-3 py-2 bg-slate-50 border-b border-slate-200 cursor-pointer select-none" onclick="(function(el){var body=el.parentElement.querySelector('.diff-body');var chevron=el.querySelector('.diff-chevron');if(body.style.display==='none'){body.style.display='';chevron.style.transform='rotate(0deg)';}else{body.style.display='none';chevron.style.transform='rotate(-90deg)';}})(this)">
+            ${extBadge}
+            <span class="text-xs font-medium text-slate-700 truncate">${escapeHtml(fileName)}</span>
+            ${statusDot}
+            <span class="text-[11px] text-slate-400 ml-auto shrink-0">${statsHtml}</span>
+            <svg class="diff-chevron w-3.5 h-3.5 text-slate-400 shrink-0 transition-transform duration-150" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/></svg>
+        </div>
+        <div class="diff-body text-[11px] font-mono leading-relaxed overflow-x-auto bg-white">
+            ${lines.join('')}
+            ${truncated ? `<div class="text-center py-1.5 text-[10px] text-slate-400 bg-slate-50 border-t border-slate-100">… 共 ${totalLines} 行变更</div>` : ''}
+        </div>
+    </div>`;
+}
+
+/**
+ * 将 oldString / newString 渲染为带颜色区分的 HTML diff（保留向后兼容）
  */
 function renderHtmlDiff(oldStr: string, newStr: string, maxLines: number = 8): string {
-    const oldLines = oldStr.split('\n');
-    const newLines = newStr.split('\n');
     const lines: string[] = [];
 
     const diffResult = diff.diffLines(oldStr, newStr);
@@ -410,6 +523,8 @@ function renderHtmlDiff(oldStr: string, newStr: string, maxLines: number = 8): s
         }
     }
 
+    const oldLines = oldStr.split('\n');
+    const newLines = newStr.split('\n');
     const totalOld = oldLines.length;
     const totalNew = newLines.length;
     const truncated = lineCount >= maxLines && totalOld + totalNew > maxLines;
@@ -1036,10 +1151,15 @@ export class EditFileTool extends BaseTool<typeof editFileSchema> {
         const oldString = toolcall.args_object?.['oldString'] as string | undefined;
         const newString = toolcall.args_object?.['newString'] as string | undefined;
         const isNewFile = oldString === '' || oldString === undefined;
-        const title = isNewFile ? t('filemgr.createFile.name') : t('filemgr.editFile.name');
 
+        if (!isNewFile && oldString && newString !== undefined && filePath) {
+            if (toolcall.status === 'success' || toolcall.status === 'running') {
+                return renderDiffCard(filePath, oldString, newString, toolcall.status);
+            }
+        }
+
+        const title = isNewFile ? t('filemgr.createFile.name') : t('filemgr.editFile.name');
         let detail = filePath ? escapeHtml(filePath) : '';
-        let body = '';
         if (isNewFile) {
             if (toolcall.status === 'success' && newString) {
                 const charCount = newString.length;
@@ -1048,17 +1168,13 @@ export class EditFileTool extends BaseTool<typeof editFileSchema> {
         } else if (oldString && newString !== undefined) {
             const expectedReplacements = toolcall.args_object?.['expectedReplacements'] || 1;
             detail += ` · ${expectedReplacements} 处替换`;
-            if (toolcall.status === 'success' || toolcall.status === 'running') {
-                body = renderHtmlDiff(oldString, newString);
-            }
         }
 
         return renderInlineTool({
             icon: isNewFile ? 'fas fa-file-circle-plus' : 'fas fa-scissors',
             title,
             status: toolcall.status,
-            detail,
-            body: body || undefined
+            detail
         });
     }
 
@@ -1242,18 +1358,21 @@ export class SearchReplaceTool extends BaseTool<typeof searchReplaceSchema> {
         const oldString = toolcall.args_object?.['oldString'] as string | undefined;
         const newString = toolcall.args_object?.['newString'] as string | undefined;
 
-        const detail = filePath ? escapeHtml(filePath) : '';
-        let body = '';
-        if (oldString && newString !== undefined && (toolcall.status === 'success' || toolcall.status === 'running')) {
-            body = renderHtmlDiff(oldString, newString);
+        if (
+            oldString &&
+            newString !== undefined &&
+            filePath &&
+            (toolcall.status === 'success' || toolcall.status === 'running')
+        ) {
+            return renderDiffCard(filePath, oldString, newString, toolcall.status);
         }
 
+        const detail = filePath ? escapeHtml(filePath) : '';
         return renderInlineTool({
             icon: 'fas fa-right-left',
             title: t('filemgr.searchReplace.name'),
             status: toolcall.status,
-            detail,
-            body: body || undefined
+            detail
         });
     }
 

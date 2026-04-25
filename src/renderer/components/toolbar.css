@@ -105,3 +105,26 @@ elastic-toolbar-widget.mailbox-header button:hover {
 elastic-toolbar-widget.align-left header {
     justify-content: flex-start !important;
 }
+
+/* ===== Spread 布局：顶部分栏底线 ===== */
+elastic-toolbar-widget .toolbar-spread-header {
+    border-bottom: 1px solid #f0f0f0;
+}
+
+elastic-toolbar-widget .toolbar-spread-btn {
+    position: relative;
+}
+
+elastic-toolbar-widget .toolbar-spread-btn::after {
+    content: '';
+    position: absolute;
+    inset: 2px;
+    border-radius: 6px;
+    opacity: 0;
+    background: rgba(0, 0, 0, 0.04);
+    transition: opacity 0.15s;
+}
+
+elastic-toolbar-widget .toolbar-spread-btn:hover::after {
+    opacity: 1;
+}

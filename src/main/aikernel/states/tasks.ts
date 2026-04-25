@@ -714,17 +714,18 @@ export class TaskState {
 
                 const fullContent = loadedSkill.getFullContent();
 
+                const qualifiedToolName = 'skill-manager-LoadSkill';
                 const toolCall = new ToolCall(
                     0,
                     `preload_${crypto.randomUUID()}`,
-                    'LoadSkill',
+                    qualifiedToolName,
                     JSON.stringify({ bundleName, skillName: name })
                 );
                 toolCall.args_object = { bundleName, skillName: name };
                 toolCall.status = 'success';
                 toolCall.result = fullContent;
 
-                const loadSkillTool = this.chat_context.getTool('LoadSkill');
+                const loadSkillTool = this.chat_context.getTool(qualifiedToolName);
                 if (loadSkillTool) toolCall.setTool(loadSkillTool);
 
                 const toolCallPart = new ToolCallMessagePart();

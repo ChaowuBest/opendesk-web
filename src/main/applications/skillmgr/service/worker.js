@@ -19,6 +19,7 @@ import { parentPort } from 'worker_threads';
 import { BaseWorker } from '../../base.js';
 import { SkillRegistry } from '../skillregistry.js';
 import { RegistryAdapters } from '../registry-adapters.js';
+import { NotificationManager } from '../../../utils/notificationmgr.js';
 import {
     installSkillFromDirectory,
     installSkillFromLocalZip,
@@ -92,15 +93,27 @@ class SkillsWorker extends BaseWorker {
         return RegistryAdapters.searchRegistry(registryId, opts);
     }
 
+    skillExists(skillName) {
+        return SkillRegistry.skillExists(skillName);
+    }
+
     /** 从 Registry 安装技能（installUrl 为 GitHub tree URL、zip URL、clawhub:slug、clawhub:slug@version 或 matrix:enName） */
-    async installFromRegistry(installUrl) {
+    async installFromRegistry(installUrl, force = false) {
         if (!installUrl || typeof installUrl !== 'string') {
             throw new Error('无效的安装 URL');
         }
-        const result = await installFromRegistryInstallUrl(installUrl);
+        const result = await installFromRegistryInstallUrl(installUrl, force);
         if (!result.success) throw new Error(result.error);
         notifyMainSync();
         return { name: result.name };
+    }
+
+    getSkillDetail(skillId) {
+        return SkillRegistry.getSkillDetail(skillId);
+    }
+
+    sendNotification(type, title, message) {
+        NotificationManager.getInstance().sendNotification(type, '技能中心', title, message);
     }
 }
 

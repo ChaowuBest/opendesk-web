@@ -30,10 +30,11 @@ import { McpMgrApplication } from '../main/applications/mcpmgr/app.js';
 import { TodoMgrApplication } from '../main/applications/todomgr/app.js';
 import { BaseApplication } from '../main/applications/base';
 
-import path from 'path';
 import { ChannelMgrApplication } from '../main/applications/channelmgr/app.js';
 import { KnowledgeBaseApplication } from '../main/applications/knowledgebase/app.js';
 import { DeviceMgrApplication } from '../main/applications/devicemgr/app.js';
+
+import path from 'path';
 
 export class ElectronTaskUpdateSubscriber extends BaseTaskUpdateSubscriber {
     senderFrame: Electron.WebFrameMain;
@@ -100,13 +101,13 @@ export class ElectronPlatform extends AbstractPlatform {
             MailboxApplication,
             FileMgrApplication,
             CalendarApplication,
-            A2AApplication,
-            RecallApplication,
-            SearchApplication,
-            NewsApplication,
+            // A2AApplication,
+            // RecallApplication,
+            // SearchApplication,
+            // NewsApplication,
             TerminalApplication,
-            PPTCreatorApplication,
-            DesignerApplication,
+            // PPTCreatorApplication,
+            // DesignerApplication,
             SkillMgrApplication,
             McpMgrApplication,
             TodoMgrApplication,

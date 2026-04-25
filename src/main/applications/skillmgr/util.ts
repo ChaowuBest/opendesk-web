@@ -115,31 +115,42 @@ function runNpx(
     cwd: string,
     timeoutMs: number
 ): Promise<{ code: number | null; stdout: string; stderr: string }> {
-    const run = () =>
-        new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve, reject) => {
-            const child = spawn('npx', args, {
-                cwd,
-                shell: process.platform === 'win32',
-                stdio: ['ignore', 'pipe', 'pipe']
-            });
-            let stdout = '';
-            let stderr = '';
-            child.stdout?.on('data', (ch) => {
-                stdout += ch;
-            });
-            child.stderr?.on('data', (ch) => {
-                stderr += ch;
-            });
-            child.on('error', (err) => reject(err));
-            child.on('close', (code) => resolve({ code, stdout, stderr }));
+    return new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve, reject) => {
+        const child = spawn('npx', args, {
+            cwd,
+            shell: process.platform === 'win32',
+            stdio: ['ignore', 'pipe', 'pipe']
         });
-
-    return Promise.race([
-        run(),
-        new Promise<never>((_, rej) =>
-            setTimeout(() => rej(new Error(`命令执行超时（${Math.floor(timeoutMs / 1000)} 秒）`)), timeoutMs)
-        )
-    ]);
+        let stdout = '';
+        let stderr = '';
+        let done = false;
+        const timer = setTimeout(() => {
+            if (done) return;
+            done = true;
+            try {
+                child.kill();
+            } catch {}
+            reject(new Error(`命令执行超时（${Math.floor(timeoutMs / 1000)} 秒），npx 可能正在首次下载依赖包`));
+        }, timeoutMs);
+        child.stdout?.on('data', (ch) => {
+            stdout += ch;
+        });
+        child.stderr?.on('data', (ch) => {
+            stderr += ch;
+        });
+        child.on('error', (err) => {
+            if (done) return;
+            done = true;
+            clearTimeout(timer);
+            reject(err);
+        });
+        child.on('close', (code) => {
+            if (done) return;
+            done = true;
+            clearTimeout(timer);
+            resolve({ code, stdout, stderr });
+        });
+    });
 }
 
 export function installSkillFromDirectory(sourceDir: string, force: boolean = false): InstallSkillResult {
@@ -189,7 +200,7 @@ export function installSkillFromLocalZip(
     }
 }
 
-export async function installSkillFromUrl(url: string): Promise<InstallSkillResult> {
+export async function installSkillFromUrl(url: string, force: boolean = false): Promise<InstallSkillResult> {
     if (!url || typeof url !== 'string') {
         return { success: false, error: '请提供有效的 URL' };
     }
@@ -208,7 +219,7 @@ export async function installSkillFromUrl(url: string): Promise<InstallSkillResu
         const zipBuffer = Buffer.from(await res.arrayBuffer());
         const zipPath = path.join(tmpDir, 'download.zip');
         fs.writeFileSync(zipPath, zipBuffer);
-        return installSkillFromLocalZip(zipPath);
+        return installSkillFromLocalZip(zipPath, undefined, force);
     } catch (e: any) {
         return { success: false, error: e?.message || '下载或安装失败' };
     } finally {
@@ -255,7 +266,11 @@ export async function installSkillFromGitHubUrl(
     }
 }
 
-export async function installSkillFromClawHubSlug(slug: string, version?: string): Promise<InstallSkillResult> {
+export async function installSkillFromClawHubSlug(
+    slug: string,
+    version?: string,
+    force: boolean = false
+): Promise<InstallSkillResult> {
     if (!slug || typeof slug !== 'string' || !slug.trim()) {
         return { success: false, error: '请提供 ClawHub 技能 slug（如 my-skill）' };
     }
@@ -283,7 +298,7 @@ export async function installSkillFromClawHubSlug(slug: string, version?: string
     }
 }
 
-export async function installSkillFromMatrixSlug(slug: string): Promise<InstallSkillResult> {
+export async function installSkillFromMatrixSlug(slug: string, force: boolean = false): Promise<InstallSkillResult> {
     if (!slug || typeof slug !== 'string' || !slug.trim()) {
         return { success: false, error: '请提供 Matrix Skill 的英文名称（如 test-master）' };
     }
@@ -309,7 +324,7 @@ export async function installSkillFromMatrixSlug(slug: string): Promise<InstallS
         if (!fs.existsSync(skillRoot) || !fs.statSync(skillRoot).isDirectory()) {
             return { success: false, error: `Matrix Skill 安装后未找到技能目录: ${skillRoot}` };
         }
-        return SkillRegistry.addSkillFromDirectory(skillRoot);
+        return SkillRegistry.addSkillFromDirectory(skillRoot, force);
     } catch (e: any) {
         return { success: false, error: e?.message || 'Matrix Skill 安装异常' };
     } finally {
@@ -317,20 +332,64 @@ export async function installSkillFromMatrixSlug(slug: string): Promise<InstallS
     }
 }
 
-export async function installFromRegistryInstallUrl(installUrl: string): Promise<InstallSkillResult> {
+const SKILLHUB_DOWNLOAD_URL = 'https://api.skillhub.tencent.com/api/v1/download';
+const CLAWHUB_DOWNLOAD_URL = 'https://wry-manatee-359.convex.site/api/v1/download';
+
+export async function installSkillFromSkillHubSlug(slug: string, force: boolean = false): Promise<InstallSkillResult> {
+    if (!slug || typeof slug !== 'string' || !slug.trim()) {
+        return { success: false, error: '请提供 SkillHub 技能 slug' };
+    }
+    const downloadUrl = `${SKILLHUB_DOWNLOAD_URL}?slug=${encodeURIComponent(slug.trim())}`;
+    return installSkillFromUrl(downloadUrl, force);
+}
+
+export async function installSkillFromModelScopeSlug(
+    slug: string,
+    force: boolean = false
+): Promise<InstallSkillResult> {
+    if (!slug || typeof slug !== 'string' || !slug.trim()) {
+        return { success: false, error: '请提供 ModelScope 技能名称' };
+    }
+    const safeSlug = slug.trim();
+
+    const skillhubUrl = `${SKILLHUB_DOWNLOAD_URL}?slug=${encodeURIComponent(safeSlug)}`;
+    let result = await installSkillFromUrl(skillhubUrl, force);
+    if (result.success) return result;
+
+    const clawhubUrl = `${CLAWHUB_DOWNLOAD_URL}?slug=${encodeURIComponent(safeSlug)}`;
+    result = await installSkillFromUrl(clawhubUrl, force);
+    if (result.success) return result;
+
+    return { success: false, error: `ModelScope 技能「${safeSlug}」安装失败：所有下载源均不可用` };
+}
+
+export async function installFromRegistryInstallUrl(
+    installUrl: string,
+    force: boolean = false
+): Promise<InstallSkillResult> {
     const method = RegistryAdapters.getInstallMethod(installUrl);
     if (method === 'clawhub') {
         const parsed = RegistryAdapters.parseClawHubInstallUrl(installUrl);
         if (!parsed) return { success: false, error: '无效的 ClawHub installUrl' };
-        return installSkillFromClawHubSlug(parsed.slug, parsed.version);
+        return installSkillFromClawHubSlug(parsed.slug, parsed.version, force);
     }
     if (method === 'matrix') {
         const parsed = RegistryAdapters.parseMatrixInstallUrl(installUrl);
         if (!parsed) return { success: false, error: '无效的 Matrix Skill installUrl' };
-        return installSkillFromMatrixSlug(parsed.slug);
+        return installSkillFromMatrixSlug(parsed.slug, force);
+    }
+    if (method === 'modelscope') {
+        const parsed = RegistryAdapters.parseModelScopeInstallUrl(installUrl);
+        if (!parsed) return { success: false, error: '无效的 ModelScope installUrl' };
+        return installSkillFromModelScopeSlug(parsed.slug, force);
+    }
+    if (method === 'skillhub') {
+        const parsed = RegistryAdapters.parseSkillHubInstallUrl(installUrl);
+        if (!parsed) return { success: false, error: '无效的 SkillHub installUrl' };
+        return installSkillFromSkillHubSlug(parsed.slug, force);
     }
     if (method === 'github') {
-        return installSkillFromGitHubUrl(installUrl);
+        return installSkillFromGitHubUrl(installUrl, force);
     }
-    return installSkillFromUrl(installUrl);
+    return installSkillFromUrl(installUrl, force);
 }
