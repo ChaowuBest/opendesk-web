@@ -28,7 +28,7 @@ import chalk from 'chalk';
 
 class BrowserApplication extends BaseApplication {
     constructor() {
-        super('browser', '浏览器');
+        super('browser', '浏览器', false);
     }
 
     async getTUIStatusBlock() {
@@ -41,7 +41,7 @@ class BrowserApplication extends BaseApplication {
 
     static getConfigSchema() {
         return z.object({
-            defaultHomepage: z.string().default('https://www.baidu.com').describe('浏览器默认主页'),
+            defaultHomepage: z.string().default('about:blank').describe('浏览器默认主页'),
             enableCDP: z.boolean().default(true).describe('是否启用 Chrome DevTools Protocol'),
             cdpPort: z.number().default(9222).describe('CDP 监听端口')
         });

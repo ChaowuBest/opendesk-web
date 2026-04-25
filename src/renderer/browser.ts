@@ -9,6 +9,10 @@
  * See the Mulan PSL v2 for more details.
  */
 
+import type { WebviewTag } from 'electron';
+
+const HOME_PAGE = 'about:blank';
+
 /**
  * Browser tab component for OpenDesk
  * Each task owns its own browser instance (1:1 binding).
@@ -24,9 +28,9 @@ export interface BrowserState {
 
 export class EmbeddedBrowser {
     private container: HTMLElement | null = null;
-    private webview: Electron.WebviewTag | null = null;
+    private webview: WebviewTag | null = null;
     private urlInput: HTMLInputElement | null = null;
-    private _currentUrl: string = 'https://www.baidu.com';
+    private _currentUrl: string = 'about:blank';
     private _canGoBack: boolean = false;
     private _canGoForward: boolean = false;
     private _isFullscreen: boolean = false;
@@ -115,7 +119,7 @@ export class EmbeddedBrowser {
                 <button class="bw-btn bw-fullscreen-btn" title="全屏"><i class="fas fa-expand"></i></button>
             </div>
             <div class="bw-webview-wrap">
-                <webview class="bw-webview" src="https://www.baidu.com"
+                <webview class="bw-webview" src="${HOME_PAGE}"
                     webpreferences="contextIsolation=yes,nodeIntegration=no"></webview>
             </div>
         </div>`;
@@ -188,14 +192,7 @@ export class EmbeddedBrowser {
 
     public navigateTo(url: string): void {
         if (!this.webview) return;
-        let targetUrl = url.trim();
-        if (!targetUrl.startsWith('http://') && !targetUrl.startsWith('https://')) {
-            if (targetUrl.includes('.') && !targetUrl.includes(' ')) {
-                targetUrl = 'https://' + targetUrl;
-            } else {
-                targetUrl = 'https://www.baidu.com/s?wd=' + encodeURIComponent(targetUrl);
-            }
-        }
+        const targetUrl = url.trim();
         this.webview.src = targetUrl;
     }
 
@@ -215,7 +212,7 @@ export class EmbeddedBrowser {
     }
 
     public goHome(): void {
-        this.navigateTo('https://www.baidu.com');
+        this.navigateTo(HOME_PAGE);
     }
 
     public toggleFullscreen(): void {
