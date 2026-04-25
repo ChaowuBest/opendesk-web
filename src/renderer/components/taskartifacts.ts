@@ -25,6 +25,7 @@
  */
 
 import { FileExplorer, getFileExplorerCSS } from './fileExplorer';
+import { EmbeddedBrowser } from '../browser';
 
 // ============================================================================
 // Types
@@ -49,7 +50,7 @@ interface GlobalTodoLike extends TaskTodoLike {
 }
 
 interface TabSpec {
-    id: 'task-plan' | 'workspace' | 'changes';
+    id: 'task-plan' | 'workspace' | 'browser' | 'changes';
     label: string;
     icon: string;
 }
@@ -61,6 +62,7 @@ interface TabSpec {
 const TABS: TabSpec[] = [
     { id: 'task-plan', label: '任务计划', icon: 'fa-list-check' },
     { id: 'workspace', label: '工作空间', icon: 'fa-folder-open' },
+    { id: 'browser', label: '浏览器', icon: 'fa-globe' },
     { id: 'changes', label: '变更', icon: 'fa-code-compare' }
 ];
 
@@ -178,6 +180,9 @@ class TaskArtifacts extends HTMLElement {
     private _tickTimer: number | null = null;
 
     private _fileExplorer = new FileExplorer();
+    private _browser: EmbeddedBrowser | null = null;
+    private _isBrowserFullscreen = false;
+    private _savedWidthBeforeFullscreen: string = '';
 
     constructor() {
         super();
@@ -245,6 +250,8 @@ class TaskArtifacts extends HTMLElement {
         });
         if (tabId === 'workspace') {
             this._mountFileExplorer();
+        } else if (tabId === 'browser') {
+            this._mountBrowser();
         }
     }
 
@@ -254,6 +261,121 @@ class TaskArtifacts extends HTMLElement {
         const panel = root.querySelector<HTMLElement>('.tab-content[data-tab="workspace"]');
         if (!panel) return;
         this._fileExplorer.mount(panel, root);
+    }
+
+    private _mountBrowser(): void {
+        const root = this.shadowRoot;
+        if (!root) return;
+        const panel = root.querySelector<HTMLElement>('.tab-content[data-tab="browser"]');
+        if (!panel) return;
+
+        if (this._browser) {
+            return;
+        }
+
+        // Initialize browser
+        this._browser = new EmbeddedBrowser(panel);
+
+        // Listen for fullscreen toggle
+        panel.addEventListener('browser-fullscreen-toggle', (e: any) => {
+            this._isBrowserFullscreen = e.detail.isFullscreen;
+            this._handleBrowserFullscreen(e.detail.isFullscreen);
+        });
+    }
+
+    private _handleBrowserFullscreen(isFullscreen: boolean): void {
+        const root = this.shadowRoot;
+        if (!root) return;
+
+        const tabBar = root.querySelector<HTMLElement>('.tab-bar');
+
+        if (isFullscreen) {
+            // Remember current width before going fullscreen
+            this._savedWidthBeforeFullscreen = this.style.width || this.offsetWidth + 'px';
+
+            this.style.position = 'fixed';
+            this.style.top = '0';
+            this.style.left = '0';
+            this.style.width = '100vw';
+            this.style.height = '100vh';
+            this.style.zIndex = '9999';
+
+            if (tabBar) {
+                tabBar.style.display = 'none';
+            }
+        } else {
+            // Restore to previous width
+            this.style.position = '';
+            this.style.top = '';
+            this.style.left = '';
+            this.style.width = this._savedWidthBeforeFullscreen;
+            this.style.height = '';
+            this.style.zIndex = '';
+
+            if (tabBar) {
+                tabBar.style.display = '';
+            }
+        }
+    }
+
+    /**
+     * 外部调用：在浏览器中导航到指定 URL（供 agent 工具通过 IPC 调用）。
+     * 自动切换到浏览器标签并展开侧边栏。
+     */
+    browserNavigate(url: string): void {
+        // Switch to browser tab if not already there
+        if (this._activeTab !== 'browser') {
+            this._switchTab('browser');
+        }
+        // Ensure browser is mounted
+        if (!this._browser) {
+            this._mountBrowser();
+        }
+        if (this._browser) {
+            this._browser.navigateTo(url);
+        }
+        // Dispatch event to ensure sidebar is visible
+        this.dispatchEvent(new CustomEvent('browser-action', { bubbles: true, composed: true }));
+    }
+
+    /**
+     * 外部调用：获取浏览器状态。
+     */
+    browserGetState(): { currentUrl: string; canGoBack: boolean; canGoForward: boolean; active: boolean } {
+        if (!this._browser) {
+            return { currentUrl: '', canGoBack: false, canGoForward: false, active: false };
+        }
+        const s = this._browser.getState();
+        return { currentUrl: s.currentUrl, canGoBack: s.canGoBack, canGoForward: s.canGoForward, active: true };
+    }
+
+    /**
+     * 外部调用：在浏览器中执行 JavaScript。
+     */
+    browserExecuteScript(script: string): Promise<any> {
+        if (!this._browser) return Promise.reject('Browser not initialized');
+        return this._browser.executeJavaScript(script);
+    }
+
+    /**
+     * 外部调用：浏览器后退。
+     */
+    browserGoBack(): void {
+        this._browser?.goBack();
+    }
+
+    /**
+     * 外部调用：浏览器前进。
+     */
+    browserGoForward(): void {
+        this._browser?.goForward();
+    }
+
+    /**
+     * 外部调用：浏览器刷新。
+     */
+    browserRefresh(): void {
+        this._browser?.refresh();
     }
 
     // ----- Timer (for in_progress durations) -----
@@ -426,7 +548,7 @@ class TaskArtifacts extends HTMLElement {
         const contentHTML = TABS.map((tab) => {
             const isActive = tab.id === this._activeTab;
             let inner = '';
-            if (tab.id === 'task-plan' || tab.id === 'workspace') {
+            if (tab.id === 'task-plan' || tab.id === 'workspace' || tab.id === 'browser') {
                 inner = '';
             } else {
                 inner = placeholderHTML(tab);
@@ -494,6 +616,9 @@ class TaskArtifacts extends HTMLElement {
             .tab-content {
                 flex: 1;
                 overflow-y: auto;
+            }
+            .tab-content[data-tab="browser"] {
+                overflow: hidden;
             }
 
             .placeholder-content {

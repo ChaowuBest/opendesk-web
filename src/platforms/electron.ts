@@ -18,6 +18,7 @@ import { AbstractPlatform } from './base.js';
 import { MailboxApplication } from '../main/applications/mailbox/app.js';
 import { FileMgrApplication } from '../main/applications/filemgr/app.js';
 import { CalendarApplication } from '../main/applications/calendar/app.js';
+import { BrowserApplication } from '../main/applications/browser/app';
 import { A2AApplication } from '../main/applications/a2a/app.js';
 import { RecallApplication } from '../main/applications/recall/app.js';
 import { SearchApplication } from '../main/applications/search/app';
@@ -101,6 +102,7 @@ export class ElectronPlatform extends AbstractPlatform {
             MailboxApplication,
             FileMgrApplication,
             CalendarApplication,
+            BrowserApplication,
             // A2AApplication,
             // RecallApplication,
             // SearchApplication,

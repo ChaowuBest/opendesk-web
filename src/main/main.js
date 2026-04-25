@@ -161,6 +161,9 @@ async function installBundledSkillsIfNeeded() {
     }
 }
 
+// Browser management
+const browserCDPPort = 9222;
+
 const createWindow = () => {
     const mainWindow = new BrowserWindow({
         width: 1200,
@@ -171,6 +174,8 @@ const createWindow = () => {
             nodeIntegration: false,
             nodeIntegrationInSubFrames: true,
             contextIsolation: true,
+            webviewTag: true,
+            allowRunningInsecureContent: true,
             preload: path.join(__dirname, '..', 'preload', 'index.js')
         }
     });
@@ -307,6 +312,85 @@ const registerModeAPIHandlers = () => {
         } catch (err) {
             return { status: 'error', message: String(err) };
         }
+    });
+};
+
+const registerBrowserAPIHandlers = () => {
+    /**
+     * Helper: find the <task-artifacts> element for a given taskId in the renderer
+     * and invoke a method on it, returning the result.
+     */
+    const callBrowserOnTask = async (taskId, method, ...args) => {
+        if (!globalMainWindow) {
+            return { status: 'error', message: 'No main window' };
+        }
+        try {
+            const result = await globalMainWindow.webContents.executeJavaScript(
+                `(() => {
+                    const el = document.getElementById('task-${taskId}-artifacts');
+                    if (!el || typeof el.${method} !== 'function') {
+                        return { error: 'Browser not available for task ${taskId}' };
+                    }
+                    const r = el.${method}(${args.map((a) => JSON.stringify(a)).join(',')});
+                    return r instanceof Promise ? null : { result: r };
+                })()`
+            );
+            if (result && result.error) {
+                return { status: 'error', message: result.error };
+            }
+            return { status: 'ok', data: result?.result ?? result };
+        } catch (err) {
+            return { status: 'error', message: String(err) };
+        }
+    };
+
+    ipcMain.handle('browser:navigate', async (event, taskId, url) => {
+        return callBrowserOnTask(taskId, 'browserNavigate', url);
+    });
+
+    ipcMain.handle('browser:getCDPPort', async () => {
+        return { status: 'ok', data: { port: 9222, webSocketDebuggerUrl: 'ws://localhost:9222' } };
+    });
+
+    ipcMain.handle('browser:getState', async (event, taskId) => {
+        return callBrowserOnTask(taskId, 'browserGetState');
+    });
+
+    ipcMain.handle('browser:executeScript', async (event, taskId, script) => {
+        if (!globalMainWindow) {
+            return { status: 'error', message: 'No main window' };
+        }
+        try {
+            const result = await globalMainWindow.webContents.executeJavaScript(
+                `(() => {
+                    const el = document.getElementById('task-${taskId}-artifacts');
+                    if (!el || typeof el.browserExecuteScript !== 'function') {
+                        return { error: 'Browser not available' };
+                    }
+                    return el.browserExecuteScript(${JSON.stringify(script)})
+                        .then(r => ({ result: r }))
+                        .catch(e => ({ error: e.message || String(e) }));
+                })()`
+            );
+            if (result && result.error) {
+                return { status: 'error', message: result.error };
+            }
+            return { status: 'ok', data: result?.result ?? result };
+        } catch (err) {
+            return { status: 'error', message: String(err) };
+        }
+    });
+
+    ipcMain.handle('browser:goBack', async (event, taskId) => {
+        return callBrowserOnTask(taskId, 'browserGoBack');
+    });
+
+    ipcMain.handle('browser:goForward', async (event, taskId) => {
+        return callBrowserOnTask(taskId, 'browserGoForward');
+    });
+
+    ipcMain.handle('browser:refresh', async (event, taskId) => {
+        return callBrowserOnTask(taskId, 'browserRefresh');
     });
 };
 
@@ -936,6 +1020,9 @@ const initializeUpdater = () => {
 };
 
 function startApplication() {
+    // Enable Chrome DevTools Protocol for Playwright automation
+    app.commandLine.appendSwitch('remote-debugging-port', '9222');
+
     if (app.requestSingleInstanceLock()) {
         app.on('second-instance', (event, path) => {
             if (globalMainWindow) {
@@ -980,6 +1067,7 @@ function startApplication() {
             console.error('installBundledSkillsIfNeeded error', err);
         }
 
+        registerBrowserAPIHandlers();
         registerTaskManagerAPIHandlers();
         registerModeAPIHandlers();
         registerFSAPIHandlers();

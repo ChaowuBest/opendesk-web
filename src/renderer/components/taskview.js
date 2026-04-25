@@ -452,6 +452,46 @@ class TaskView extends HTMLElement {
         }
     }
 
+    /** 订阅浏览器应用事件，agent 工具调用时转发到对应任务的浏览器实例 */
+    async _subscribeBrowserEvents() {
+        if (!window.applicationRegistryAPI || !window.applicationRegistryAPI.subscribeEvent) return;
+        this._browserEventUnsubscribes = [];
+
+        const browserEvents = [
+            { name: 'navigate', handler: (taskId, url) => this._handleBrowserEvent('browserNavigate', taskId, url) },
+            { name: 'goBack', handler: (taskId) => this._handleBrowserEvent('browserGoBack', taskId) },
+            { name: 'goForward', handler: (taskId) => this._handleBrowserEvent('browserGoForward', taskId) },
+            { name: 'refresh', handler: (taskId) => this._handleBrowserEvent('browserRefresh', taskId) },
+            {
+                name: 'executeScript',
+                handler: (taskId, script) => this._handleBrowserEvent('browserExecuteScript', taskId, script)
+            }
+        ];
+
+        for (const evt of browserEvents) {
+            try {
+                const unsubscribe = await window.applicationRegistryAPI.subscribeEvent('browser', evt.name, (...args) =>
+                    evt.handler(...args)
+                );
+                if (typeof unsubscribe === 'function') {
+                    this._browserEventUnsubscribes.push(unsubscribe);
+                }
+            } catch (err) {
+                console.warn(`subscribe browser event ${evt.name} failed`, err);
+            }
+        }
+    }
+
+    /** 处理浏览器事件，只处理当前任务的事件 */
+    _handleBrowserEvent(method, taskId, ...args) {
+        if (taskId !== this.task_id) return;
+        const sidebar = this._getRightSidebarEl();
+        if (!sidebar || typeof sidebar[method] !== 'function') return;
+        sidebar[method](...args);
+        // Auto-expand sidebar when browser action is triggered
+        this._ensureRightSidebarOpen();
+    }
+
     /** 同步全局侧边栏状态到当前任务视图（切换任务时调用） */
     syncRightSidebarState() {
         const rightSidebar = this.querySelector(`#task-${this.task_id}-artifacts`);
@@ -558,6 +598,9 @@ class TaskView extends HTMLElement {
         this._subscribeGlobalTodos();
         // 订阅任务级待办更新（仅处理当前任务的事件）
         this._subscribeTaskTodos();
+
+        // 订阅浏览器事件（agent 工具 → main → renderer → 操作浏览器）
+        this._subscribeBrowserEvents();
 
         this._workspaceChangedHandler = () => {
             const sidebar = this._getRightSidebarEl();
@@ -680,6 +723,14 @@ class TaskView extends HTMLElement {
                 console.warn('failed to unsubscribe task todos', err);
             }
             this._taskTodosUnsubscribe = null;
+        }
+        if (this._browserEventUnsubscribes) {
+            for (const unsub of this._browserEventUnsubscribes) {
+                try {
+                    unsub();
+                } catch (_) {}
+            }
+            this._browserEventUnsubscribes = null;
         }
         if (this._workspaceChangedHandler) {
             document.removeEventListener('workspace-changed', this._workspaceChangedHandler);
