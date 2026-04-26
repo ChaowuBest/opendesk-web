@@ -19,7 +19,8 @@ import {
     shell,
     Menu,
     dialog,
-    protocol
+    protocol,
+    session
 } from 'electron';
 import { Setting, getAppDirectory } from './utils/setting.js';
 import { QuickPassHelper } from './utils/quickpass.js';
@@ -161,8 +162,37 @@ async function installBundledSkillsIfNeeded() {
     }
 }
 
-// Browser management
-const browserCDPPort = 9222;
+// Browser management — shared persistent session.
+// The partition 'persist:opendesk-browser' stores data at <appDir>/apps/browser/session
+// via session.fromPath when available, otherwise falls back to Electron default location.
+let browserSessionInstance = null;
+const BROWSER_PARTITION = 'persist:opendesk-browser';
+
+function initBrowserSession() {
+    try {
+        const sessionPath = path.join(getAppDirectory(), 'apps', 'browser', 'session');
+        const fs = require('fs');
+        if (!fs.existsSync(sessionPath)) {
+            fs.mkdirSync(sessionPath, { recursive: true });
+        }
+
+        if (typeof session.fromPath === 'function') {
+            browserSessionInstance = session.fromPath(sessionPath);
+        } else {
+            browserSessionInstance = session.fromPartition(BROWSER_PARTITION);
+        }
+
+        browserSessionInstance.setPermissionRequestHandler((_webContents, permission, callback) => {
+            const allowed = ['clipboard-read', 'clipboard-sanitized-write', 'media', 'geolocation', 'notifications'];
+            callback(allowed.includes(permission));
+        });
+        logger.info(
+            `Browser session initialized, storage: ${browserSessionInstance.storagePath || browserSessionInstance.getStoragePath?.() || sessionPath}`
+        );
+    } catch (err) {
+        logger.error(`Failed to initialize browser session: ${err}`);
+    }
+}
 
 const createWindow = () => {
     const mainWindow = new BrowserWindow({
@@ -227,6 +257,12 @@ const createWindow = () => {
         }
         if (menuItems.length > 0) {
             Menu.buildFromTemplate(menuItems).popup({ window: mainWindow });
+        }
+    });
+
+    mainWindow.webContents.on('will-attach-webview', (_event, webPreferences, _params) => {
+        if (browserSessionInstance) {
+            webPreferences.session = browserSessionInstance;
         }
     });
 
@@ -327,11 +363,13 @@ const registerBrowserAPIHandlers = () => {
         try {
             const result = await globalMainWindow.webContents.executeJavaScript(
                 `(() => {
-                    const el = document.getElementById('task-${taskId}-artifacts');
-                    if (!el || typeof el.${method} !== 'function') {
-                        return { error: 'Browser not available for task ${taskId}' };
-                    }
-                    const r = el.${method}(${args.map((a) => JSON.stringify(a)).join(',')});
+                    var el = document.getElementById('task-${taskId}-artifacts');
+                    if (!el) return { error: 'Browser not available for task ${taskId}' };
+                    var tv = el.closest('task-view');
+                    if (tv && typeof tv._ensureRightSidebarOpen === 'function') tv._ensureRightSidebarOpen();
+                    if (typeof el.ensureBrowserReady === 'function') el.ensureBrowserReady();
+                    if (typeof el.${method} !== 'function') return { error: 'Method ${method} not available' };
+                    var r = el.${method}(${args.map((a) => JSON.stringify(a)).join(',')});
                     return r instanceof Promise ? null : { result: r };
                 })()`
             );
@@ -348,10 +386,6 @@ const registerBrowserAPIHandlers = () => {
         return callBrowserOnTask(taskId, 'browserNavigate', url);
     });
 
-    ipcMain.handle('browser:getCDPPort', async () => {
-        return { status: 'ok', data: { port: 9222, webSocketDebuggerUrl: 'ws://localhost:9222' } };
-    });
-
     ipcMain.handle('browser:getState', async (event, taskId) => {
         return callBrowserOnTask(taskId, 'browserGetState');
     });
@@ -363,10 +397,12 @@ const registerBrowserAPIHandlers = () => {
         try {
             const result = await globalMainWindow.webContents.executeJavaScript(
                 `(() => {
-                    const el = document.getElementById('task-${taskId}-artifacts');
-                    if (!el || typeof el.browserExecuteScript !== 'function') {
-                        return { error: 'Browser not available' };
-                    }
+                    var el = document.getElementById('task-${taskId}-artifacts');
+                    if (!el) return { error: 'Browser not available' };
+                    var tv = el.closest('task-view');
+                    if (tv && typeof tv._ensureRightSidebarOpen === 'function') tv._ensureRightSidebarOpen();
+                    if (typeof el.ensureBrowserReady === 'function') el.ensureBrowserReady();
+                    if (typeof el.browserExecuteScript !== 'function') return { error: 'Browser not initialized' };
                     return el.browserExecuteScript(${JSON.stringify(script)})
                         .then(r => ({ result: r }))
                         .catch(e => ({ error: e.message || String(e) }));
@@ -1020,9 +1056,6 @@ const initializeUpdater = () => {
 };
 
 function startApplication() {
-    // Enable Chrome DevTools Protocol for Playwright automation
-    app.commandLine.appendSwitch('remote-debugging-port', '9222');
-
     if (app.requestSingleInstanceLock()) {
         app.on('second-instance', (event, path) => {
             if (globalMainWindow) {
@@ -1059,6 +1092,7 @@ function startApplication() {
             listAvailableToolsets: () => ApplicationRegistry.listAvailableToolsets()
         };
         createWindow();
+        initBrowserSession();
 
         // 将内置 skills（applications/skills/resources）自动同步到用户 skills 目录（先完成再注册，确保首次对话能发现技能）
         try {

@@ -12,6 +12,31 @@
 import { ElasticToolbarWidget } from './toolbar.ts';
 import './taskartifacts.ts';
 
+const DANGEROUS_TAGS = new Set(['STYLE', 'SCRIPT', 'LINK', 'META', 'IFRAME', 'OBJECT', 'EMBED', 'APPLET', 'BASE']);
+
+function removeDangerousNodes(root) {
+    root.querySelectorAll(Array.from(DANGEROUS_TAGS).join(',')).forEach((el) => el.remove());
+}
+
+function installDOMSanitizer(container) {
+    removeDangerousNodes(container);
+    const observer = new MutationObserver((mutations) => {
+        for (const m of mutations) {
+            for (const node of m.addedNodes) {
+                if (node.nodeType === Node.ELEMENT_NODE) {
+                    if (DANGEROUS_TAGS.has(node.tagName)) {
+                        node.remove();
+                    } else {
+                        removeDangerousNodes(node);
+                    }
+                }
+            }
+        }
+    });
+    observer.observe(container, { childList: true, subtree: true });
+    return observer;
+}
+
 class TaskView extends HTMLElement {
     // 全局侧边栏状态：跨任务共享
     static rightSidebarExpanded = false;
@@ -740,6 +765,10 @@ class TaskView extends HTMLElement {
             document.removeEventListener('task-list-updated', this._taskListUpdateHandler);
             this._taskListUpdateHandler = null;
         }
+        if (this._domSanitizer) {
+            this._domSanitizer.disconnect();
+            this._domSanitizer = null;
+        }
     }
 
     render() {
@@ -794,6 +823,11 @@ class TaskView extends HTMLElement {
         `;
 
         this._initRightSidebarResize();
+
+        const hc = this.getHistoryContainer();
+        if (hc) {
+            this._domSanitizer = installDOMSanitizer(hc);
+        }
     }
 
     _initRightSidebarResize() {
@@ -821,6 +855,7 @@ class TaskView extends HTMLElement {
             isResizing = false;
             document.body.style.cursor = '';
             document.body.style.userSelect = '';
+            rightSidebar.style.pointerEvents = '';
             document.removeEventListener('mousemove', onMouseMove);
             document.removeEventListener('mouseup', onMouseUp);
         };
@@ -831,6 +866,8 @@ class TaskView extends HTMLElement {
             isResizing = true;
             document.body.style.cursor = 'col-resize';
             document.body.style.userSelect = 'none';
+            // Prevent webview from swallowing mouse events during resize
+            rightSidebar.style.pointerEvents = 'none';
             document.addEventListener('mousemove', onMouseMove);
             document.addEventListener('mouseup', onMouseUp);
         });
@@ -1144,6 +1181,10 @@ class EmbeddedTaskView extends HTMLElement {
     disconnectedCallback() {
         window.taskManagerAPI.unsubscribeTaskUpdate(this.task_id, this.subscription_id);
         this.subscription_id = null;
+        if (this._domSanitizer) {
+            this._domSanitizer.disconnect();
+            this._domSanitizer = null;
+        }
     }
 
     setAutoScrollingToBottom(auto_scrolling_to_bottom) {
@@ -1183,6 +1224,11 @@ class EmbeddedTaskView extends HTMLElement {
             const distanceToBottom = Math.abs(event.target.scrollHeight - scrollBottom);
             this.setAutoScrollingToBottom(distanceToBottom < 50);
         });
+
+        const hc = this.getHistoryContainer();
+        if (hc) {
+            this._domSanitizer = installDOMSanitizer(hc);
+        }
     }
 }
 

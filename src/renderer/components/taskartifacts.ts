@@ -319,22 +319,27 @@ class TaskArtifacts extends HTMLElement {
     }
 
     /**
+     * Ensure the browser tab is active and the EmbeddedBrowser is mounted.
+     * Called before any browser operation from tools.
+     */
+    ensureBrowserReady(): void {
+        if (this._activeTab !== 'browser') {
+            this._switchTab('browser');
+        }
+        if (!this._browser) {
+            this._mountBrowser();
+        }
+    }
+
+    /**
      * 外部调用：在浏览器中导航到指定 URL（供 agent 工具通过 IPC 调用）。
      * 自动切换到浏览器标签并展开侧边栏。
      */
     browserNavigate(url: string): void {
-        // Switch to browser tab if not already there
-        if (this._activeTab !== 'browser') {
-            this._switchTab('browser');
-        }
-        // Ensure browser is mounted
-        if (!this._browser) {
-            this._mountBrowser();
-        }
+        this.ensureBrowserReady();
         if (this._browser) {
             this._browser.navigateTo(url);
         }
-        // Dispatch event to ensure sidebar is visible
         this.dispatchEvent(new CustomEvent('browser-action', { bubbles: true, composed: true }));
     }
 
@@ -353,6 +358,7 @@ class TaskArtifacts extends HTMLElement {
      * 外部调用：在浏览器中执行 JavaScript。
      */
     browserExecuteScript(script: string): Promise<any> {
+        this.ensureBrowserReady();
         if (!this._browser) return Promise.reject('Browser not initialized');
         return this._browser.executeJavaScript(script);
     }
@@ -361,6 +367,7 @@ class TaskArtifacts extends HTMLElement {
      * 外部调用：浏览器后退。
      */
     browserGoBack(): void {
+        this.ensureBrowserReady();
         this._browser?.goBack();
     }
 
@@ -368,6 +375,7 @@ class TaskArtifacts extends HTMLElement {
      * 外部调用：浏览器前进。
      */
     browserGoForward(): void {
+        this.ensureBrowserReady();
         this._browser?.goForward();
     }
 
@@ -375,7 +383,42 @@ class TaskArtifacts extends HTMLElement {
      * 外部调用：浏览器刷新。
      */
     browserRefresh(): void {
+        this.ensureBrowserReady();
         this._browser?.refresh();
+    }
+
+    /**
+     * 外部调用：列出所有浏览器标签页。
+     */
+    browserListTabs(): { id: number; title: string; url: string; active: boolean }[] {
+        this.ensureBrowserReady();
+        if (!this._browser) return [];
+        return this._browser.listTabs();
+    }
+
+    /**
+     * 外部调用：切换到指定标签页。
+     */
+    browserSwitchTab(tabId: number): void {
+        this.ensureBrowserReady();
+        this._browser?.switchToTab(tabId);
+    }
+
+    /**
+     * 外部调用：关闭指定标签页。
+     */
+    browserCloseTab(tabId: number): void {
+        this.ensureBrowserReady();
+        this._browser?.closeTab(tabId);
+    }
+
+    /**
+     * 外部调用：新建标签页并导航到指定 URL。
+     */
+    browserAddTab(url: string): number {
+        this.ensureBrowserReady();
+        if (!this._browser) return -1;
+        return this._browser.addTab(url);
     }
 
     // ----- Timer (for in_progress durations) -----

@@ -52,6 +52,18 @@ marked.use(
     })
 );
 
+const DANGEROUS_HTML_RE = /<\s*\/?\s*(style|script|link|meta|iframe|object|embed|applet|form|base)\b[^>]*>/gi;
+
+marked.use({
+    hooks: {
+        postprocess(html: string): string {
+            return html.replace(DANGEROUS_HTML_RE, (match) => {
+                return match.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            });
+        }
+    }
+});
+
 /**
  * This is NOT an OpenAI message part, but a message part for our own message system.
  */

@@ -14,10 +14,10 @@ export function escapeHtml(content: string | undefined | null): string {
         return '';
     }
     const map: Record<string, string> = {
-        '&': '&',
-        '<': '<',
-        '>': '>',
-        '"': '"',
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
         "'": '&#039;'
     };
     return String(content).replace(/[&<>"']/g, function (m: string) {
