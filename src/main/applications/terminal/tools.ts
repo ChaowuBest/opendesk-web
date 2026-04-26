@@ -87,6 +87,10 @@ function getZshPath(): string | null {
     return findExecutableInPath('zsh');
 }
 
+export function hasZsh(): boolean {
+    return getZshPath() !== null;
+}
+
 function renderTerminalToolCallCli(shellLabel: string, toolcall: ToolCall, width: number): string[] {
     const command = toolcall.args_object?.['command'];
     const cwd = toolcall.args_object?.['workingDirectory'];

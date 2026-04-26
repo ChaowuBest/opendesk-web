@@ -87,6 +87,10 @@ const ModelSchema = z.object({
         .describe('模型默认推理模式(空字符串表示默认)')
 });
 
+const DisplaySchema = z.object({
+    scale_factor: z.number().min(0.5).max(2.0).default(1).describe('GUI 缩放系数 (0.5 ~ 2.0)')
+});
+
 type Provider = z.infer<typeof ProviderSchema>;
 type Model = z.infer<typeof ModelSchema>;
 
@@ -119,6 +123,7 @@ function getSettingSchema(): z.ZodObject<z.ZodRawShape> {
         ),
         providers: z.array(ProviderSchema).describe('可用AI模型提供商').default([]),
         models: z.array(ModelSchema).describe('可用AI模型').default([]),
+        display: DisplaySchema.describe('显示设置').default({}),
         applications: ApplicationConfigSchema.describe('OpenDesk应用相关配置').default({})
     });
 }
