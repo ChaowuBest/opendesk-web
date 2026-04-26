@@ -42,10 +42,10 @@ class SplitterWidget extends HTMLElement {
 
         <div id="resizer"
             class="relative group"
-            style="background: linear-gradient(to right, transparent 40%, #e0e0e0 50%, transparent 60%); width: 4px; min-width: 4px; cursor: col-resize; flex-shrink: 0;"
+            style="background: transparent; width: 6px; min-width: 6px; cursor: col-resize; flex-shrink: 0;"
         >
             <div class="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 pointer-events-none">
-                <div class="w-[2px] h-12 bg-gray-200 rounded-full opacity-70 group-hover:opacity-100 group-hover:bg-blue-400 transition"></div>
+                <div class="w-[3px] h-10 rounded-full opacity-0 group-hover:opacity-100 transition" style="background: rgba(0,0,0,0.12);"></div>
             </div>
         </div>
 

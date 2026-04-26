@@ -210,11 +210,190 @@ pre.terminal-tool-output {
 }
 
 /* =========================================
+   Shortcut help panel
+   ========================================= */
+.shortcut-help-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.35);
+    backdrop-filter: blur(4px);
+    z-index: 10000;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+}
+
+.shortcut-help-panel {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%) scale(0.96);
+    z-index: 10001;
+    background: #fff;
+    border-radius: 18px;
+    box-shadow:
+        0 25px 60px -12px rgba(0, 0, 0, 0.2),
+        0 0 0 1px rgba(0, 0, 0, 0.05);
+    width: 680px;
+    max-width: 90vw;
+    max-height: 80vh;
+    display: flex;
+    flex-direction: column;
+    opacity: 0;
+    transition:
+        opacity 0.2s ease,
+        transform 0.2s ease;
+    overflow: hidden;
+}
+
+.shortcut-help-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 18px 24px 14px;
+    border-bottom: 1px solid #f0f0f0;
+}
+
+.shortcut-help-title {
+    font-size: 16px;
+    font-weight: 700;
+    color: #1f2937;
+    margin: 0;
+    display: flex;
+    align-items: center;
+}
+
+.shortcut-help-close-btn {
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+    border: none;
+    background: transparent;
+    color: #9ca3af;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+.shortcut-help-close-btn:hover {
+    background: #f3f4f6;
+    color: #374151;
+}
+
+.shortcut-help-body {
+    display: flex;
+    gap: 32px;
+    padding: 20px 24px;
+    overflow-y: auto;
+    flex: 1;
+}
+
+.shortcut-help-column {
+    flex: 1;
+    min-width: 0;
+}
+
+.shortcut-help-category {
+    margin-bottom: 18px;
+}
+
+.shortcut-help-category-title {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #9ca3af;
+    margin: 0 0 8px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid #f3f4f6;
+}
+
+.shortcut-help-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 5px 0;
+    gap: 12px;
+}
+
+.shortcut-help-label {
+    font-size: 13px;
+    color: #374151;
+    white-space: nowrap;
+}
+
+.shortcut-help-keys {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    flex-shrink: 0;
+}
+
+.shortcut-help-kbd {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 24px;
+    height: 22px;
+    padding: 0 6px;
+    background: #f9fafb;
+    border: 1px solid #e5e7eb;
+    border-radius: 5px;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+    font-size: 11px;
+    font-family: 'Cascadia Code', 'SF Mono', monospace;
+    font-weight: 500;
+    color: #374151;
+    line-height: 1;
+}
+
+.shortcut-help-plus {
+    color: #9ca3af;
+    font-size: 10px;
+    margin: 0 1px;
+}
+
+.shortcut-help-or {
+    color: #d1d5db;
+    font-size: 11px;
+    margin: 0 3px;
+}
+
+.shortcut-help-footer {
+    border-top: 1px solid #f0f0f0;
+    padding: 10px 24px;
+    text-align: center;
+    font-size: 12px;
+    color: #9ca3af;
+}
+
+/* =========================================
+   Notification toast: close button hover reveal (pure CSS, packaging-safe)
+   ========================================= */
+.notification-toast .close-notification-btn {
+    opacity: 0;
+    transition: opacity 0.2s ease;
+}
+.notification-toast:hover .close-notification-btn {
+    opacity: 1;
+}
+
+/* =========================================
    Agent input toolbar controls
    ========================================= */
 .agent-input-toolbar-control {
     min-width: 72px;
     text-align: center;
+    background: rgba(255, 255, 255, 0.85) !important;
+    border-color: rgba(0, 0, 0, 0.08) !important;
+    backdrop-filter: blur(8px);
+    transition: all 0.2s ease !important;
+}
+.agent-input-toolbar-control:hover {
+    background: #f5f5f7 !important;
+    border-color: rgba(0, 0, 0, 0.14) !important;
+    color: #1f2937 !important;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
 }
 
 /* =========================================
@@ -293,7 +472,7 @@ pre.terminal-tool-output {
     transition: background 0.12s;
 }
 .skill-panel-item:hover {
-    background: #e8f5ed;
+    background: #f5f5f7;
 }
 .skill-panel-item-icon {
     flex-shrink: 0;
@@ -302,9 +481,9 @@ pre.terminal-tool-output {
     display: flex;
     align-items: center;
     justify-content: center;
-    background: #c8e6d4;
+    background: #f0f1f5;
     border-radius: 8px;
-    border: 1px solid #a3d9b5;
+    border: 1px solid #e5e7eb;
 }
 .skill-panel-item-info {
     flex: 1;
@@ -354,9 +533,9 @@ pre.terminal-tool-output {
     transition: all 0.15s;
 }
 .skill-panel-install-btn:hover {
-    border-color: #6dbb8a;
-    color: #2e8b57;
-    background: #e8f5ed;
+    border-color: #93a3b8;
+    color: #3b82f6;
+    background: #f0f4ff;
 }
 
 /* =========================================
@@ -435,10 +614,10 @@ pre.terminal-tool-output {
     transition: background 0.12s;
 }
 .popup-panel-item:hover {
-    background: #e8f5ed;
+    background: #f5f5f7;
 }
 .popup-panel-item.active {
-    background: #a3d9b5;
+    background: #e8eaef;
     position: relative;
 }
 .popup-panel-item.active::before {
@@ -449,10 +628,10 @@ pre.terminal-tool-output {
     bottom: 6px;
     width: 3px;
     border-radius: 0 2px 2px 0;
-    background: #2e8b57;
+    background: #007aff;
 }
 .popup-panel-item.hovered {
-    background: #c8e6d4;
+    background: #eef0f4;
 }
 .popup-panel-item-icon {
     flex-shrink: 0;
@@ -461,9 +640,9 @@ pre.terminal-tool-output {
     display: flex;
     align-items: center;
     justify-content: center;
-    background: #c8e6d4;
+    background: #f0f1f5;
     border-radius: 6px;
-    border: 1px solid #a3d9b5;
+    border: 1px solid #e5e7eb;
 }
 .popup-panel-item-info {
     flex: 1;
@@ -494,7 +673,7 @@ pre.terminal-tool-output {
     display: flex;
     align-items: center;
     justify-content: center;
-    color: #2e8b57;
+    color: #007aff;
     font-size: 11px;
 }
 .popup-panel-empty {
@@ -608,7 +787,7 @@ pre.terminal-tool-output {
 }
 .autocomplete-panel-item:hover,
 .autocomplete-panel-item.selected {
-    background: #e8f5ed;
+    background: #f5f5f7;
 }
 .autocomplete-panel-item-icon {
     flex-shrink: 0;
@@ -623,8 +802,8 @@ pre.terminal-tool-output {
     color: #6b7280;
 }
 .autocomplete-panel-item-icon.skill-icon {
-    background: #c8e6d4;
-    color: #2e8b57;
+    background: #ede9fe;
+    color: #7c3aed;
 }
 .autocomplete-panel-item-icon.dir-icon {
     color: #f59e0b;
@@ -656,4 +835,113 @@ pre.terminal-tool-output {
     font-size: 11px;
     color: #9ca3af;
     text-align: center;
+}
+
+/* =========================================
+   Sidebar search bar
+   ========================================= */
+
+/* ---- Search bar v2 ---- */
+.sb-search-v2 {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 6px 0;
+    padding: 8px 12px;
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+    flex-shrink: 0;
+    transition: all 0.2s ease;
+}
+.sb-search-v2:focus-within {
+    border-color: #c4c8d0;
+    box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.04);
+}
+.sb-search-v2-icon {
+    color: #9ca3af;
+    font-size: 13px;
+    flex-shrink: 0;
+}
+.sb-search-v2-input {
+    flex: 1;
+    border: none;
+    outline: none;
+    background: transparent;
+    font-size: 13px;
+    color: #1f2937;
+    min-width: 0;
+}
+.sb-search-v2-input::placeholder {
+    color: #b0b5bf;
+}
+.sb-search-v2-clear {
+    width: 18px;
+    height: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    border: none;
+    background: rgba(0, 0, 0, 0.08);
+    color: #6b7280;
+    font-size: 8px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    flex-shrink: 0;
+    padding: 0;
+}
+.sb-search-v2-clear:hover {
+    background: rgba(0, 0, 0, 0.15);
+    color: #374151;
+}
+.sb-search-v2-kbd {
+    font-size: 10px;
+    color: #b0b5bf;
+    background: #f3f4f6;
+    border: 1px solid #e5e7eb;
+    border-radius: 4px;
+    padding: 1px 5px;
+    font-family: 'Cascadia Code', 'SF Mono', monospace;
+    flex-shrink: 0;
+    line-height: 1.4;
+}
+
+/* ---- Workspace bar (on homepage) ---- */
+.hp-workspace-bar {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 14px;
+    border-radius: 9999px;
+    background: #f3f4f6;
+    border: 1px solid #e5e7eb;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    max-width: 360px;
+}
+.hp-workspace-bar:hover {
+    background: #e8e9ed;
+    border-color: #d1d5db;
+}
+.hp-workspace-bar i {
+    color: #6b7280;
+    font-size: 10px;
+    flex-shrink: 0;
+}
+.hp-workspace-path {
+    font-size: 11px;
+    color: #6b7280;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.hp-workspace-switch {
+    font-size: 10px;
+    color: #9ca3af;
+    flex-shrink: 0;
+    transition: color 0.15s;
+}
+.hp-workspace-bar:hover .hp-workspace-switch {
+    color: #6b7280;
 }

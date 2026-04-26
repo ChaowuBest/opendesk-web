@@ -558,6 +558,34 @@ if (window.self !== window.top) {
         }
     });
 
+    contextBridge.exposeInMainWorld('displayAPI', {
+        getScaleFactor: async () => {
+            const result = await ipcRenderer.invoke('display:getScaleFactor');
+            if (result.status !== 'ok') throw new Error(result.message);
+            return result.data;
+        },
+        setScaleFactor: async (factor) => {
+            const result = await ipcRenderer.invoke('display:setScaleFactor', factor);
+            if (result.status !== 'ok') throw new Error(result.message);
+            return result.data;
+        },
+        adjustScaleFactor: async (delta) => {
+            const result = await ipcRenderer.invoke('display:adjustScaleFactor', delta);
+            if (result.status !== 'ok') throw new Error(result.message);
+            return result.data;
+        }
+    });
+
+    contextBridge.exposeInMainWorld('screenAPI', {
+        getDisplayScaleFactors: async () => {
+            const result = await ipcRenderer.invoke('screen:getDisplayScaleFactors');
+            if (result.status !== 'ok') {
+                throw new Error(result.message);
+            }
+            return result.data;
+        }
+    });
+
     contextBridge.exposeInMainWorld('floatWindowAPI', {
         hideFloatWindow: () => ipcRenderer.invoke('floatWindow:hideFloatWindow'),
         subscribeIntentsUpdate: (callback) => {

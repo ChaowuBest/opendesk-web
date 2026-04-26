@@ -146,14 +146,21 @@ class HomePage extends HTMLElement {
     }
 
     render() {
+        const greeting = this._getGreeting();
         this.innerHTML = `
         <!-- 主内容居中 -->
         <div class="w-full h-full px-8 flex flex-col items-center justify-center min-h-[80vh]">
             <!-- 问候语 -->
-            <div class="mb-12 text-center">
-                <h1 class="text-3xl font-medium text-gray-800 mb-2">
-                    晚上好
+            <div class="mb-4 text-center">
+                <h1 class="text-3xl font-medium text-gray-800 mb-3">
+                    ${greeting}
                 </h1>
+                <button id="hp-workspace-bar" class="hp-workspace-bar" title="点击切换工作空间">
+                    <i class="fa-solid fa-briefcase"></i>
+                    <span class="hp-workspace-path">当前工作空间 </span>
+                    <span id="hp-workspace-path" class="hp-workspace-path">加载中...</span>
+                    <i class="fa-solid fa-chevron-down hp-workspace-switch"></i>
+                </button>
             </div>
 
             <!-- 输入框区域 -->
@@ -169,6 +176,44 @@ class HomePage extends HTMLElement {
             </div>
         </div>
         `;
+        this._initWorkspaceBar();
+    }
+
+    _getGreeting() {
+        const hour = new Date().getHours();
+        if (hour < 6) return '夜深了';
+        if (hour < 12) return '早上好';
+        if (hour < 14) return '中午好';
+        if (hour < 18) return '下午好';
+        return '晚上好';
+    }
+
+    async _initWorkspaceBar() {
+        try {
+            const workspacePath = await window.workspaceAPI.getEffectiveWorkspace();
+            const pathLabel = this.querySelector('#hp-workspace-path');
+            if (pathLabel) {
+                pathLabel.textContent = workspacePath;
+                pathLabel.title = workspacePath;
+            }
+        } catch (error) {
+            console.error('Failed to get workspace path:', error);
+        }
+
+        const wsBar = this.querySelector('#hp-workspace-bar');
+        if (wsBar) {
+            wsBar.addEventListener('click', async () => {
+                const newPath = await window.workspaceAPI.selectWorkspaceDirectory();
+                if (newPath) {
+                    const pathLabel = this.querySelector('#hp-workspace-path');
+                    if (pathLabel) {
+                        pathLabel.textContent = newPath;
+                        pathLabel.title = newPath;
+                    }
+                    document.dispatchEvent(new CustomEvent('workspace-changed'));
+                }
+            });
+        }
     }
 }
 

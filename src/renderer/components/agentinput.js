@@ -266,7 +266,7 @@ class AgentInput extends HTMLElement {
                         ? '<div class="popup-panel-item-check"><i class="fas fa-check"></i></div>'
                         : '';
                 return `<button class="popup-panel-item ${isActive}" data-model-alias="${m.alias}">
-                    <div class="popup-panel-item-icon"><i class="fas fa-robot text-emerald-600 text-xs"></i></div>
+                    <div class="popup-panel-item-icon"><i class="fas fa-robot text-blue-500 text-xs"></i></div>
                     <div class="popup-panel-item-info">
                         <div class="popup-panel-item-name">${m.alias}</div>
                     </div>
@@ -319,7 +319,7 @@ class AgentInput extends HTMLElement {
                             this.availableModes.length > 1
                                 ? `
                         <div class="relative">
-                            <button id="agent-input-mode-btn" class="agent-input-toolbar-control flex items-center justify-center gap-1 text-xs bg-gray-50 border border-gray-200 rounded-full px-2 py-0.5 text-gray-600 outline-none hover:border-emerald-400 hover:text-emerald-600 transition-colors cursor-pointer">
+                            <button id="agent-input-mode-btn" class="agent-input-toolbar-control flex items-center justify-center gap-1 text-xs rounded-full px-2 py-0.5 text-gray-600 outline-none transition-colors cursor-pointer">
                                 <span style="font-size:10px;">${currentModeIcon}</span>
                                 <span>${currentModeLabel}</span>
                             </button>
@@ -334,7 +334,7 @@ class AgentInput extends HTMLElement {
                             this.availableModels.length > 0
                                 ? `
                         <div class="relative">
-                            <button id="agent-input-model-btn" class="agent-input-toolbar-control flex items-center justify-center gap-1 text-xs bg-gray-50 border border-gray-200 rounded-full px-2 py-0.5 text-gray-600 outline-none hover:border-emerald-400 hover:text-emerald-600 transition-colors cursor-pointer">
+                            <button id="agent-input-model-btn" class="agent-input-toolbar-control flex items-center justify-center gap-1 text-xs rounded-full px-2 py-0.5 text-gray-600 outline-none transition-colors cursor-pointer">
                                 <i class="fas fa-robot text-[10px]"></i>
                                 <span>${currentModelLabel}</span>
                             </button>
@@ -354,7 +354,7 @@ class AgentInput extends HTMLElement {
                         }
                         <!-- 技能选择按钮 -->
                         <div class="relative">
-                            <button id="agent-input-skill-btn" class="agent-input-toolbar-control flex items-center justify-center gap-1 text-xs bg-gray-50 border border-gray-200 rounded-full px-2 py-0.5 text-gray-600 outline-none hover:border-emerald-400 hover:text-emerald-600 transition-colors cursor-pointer">
+                            <button id="agent-input-skill-btn" class="agent-input-toolbar-control flex items-center justify-center gap-1 text-xs rounded-full px-2 py-0.5 text-gray-600 outline-none transition-colors cursor-pointer">
                                 <i class="fas fa-wand-magic-sparkles text-[10px]"></i>
                                 <span>技能</span>
                             </button>
@@ -534,7 +534,7 @@ class AgentInput extends HTMLElement {
                             ? '<div class="popup-panel-item-check"><i class="fas fa-check"></i></div>'
                             : '';
                     return `<button class="popup-panel-item ${isActive}" data-model-alias="${m.alias}">
-                        <div class="popup-panel-item-icon"><i class="fas fa-robot text-emerald-600 text-xs"></i></div>
+                        <div class="popup-panel-item-icon"><i class="fas fa-robot text-blue-500 text-xs"></i></div>
                         <div class="popup-panel-item-info">
                             <div class="popup-panel-item-name">${m.alias}</div>
                         </div>
@@ -593,7 +593,7 @@ class AgentInput extends HTMLElement {
                           ? 'fa-gauge'
                           : 'fa-gauge-high';
             return `<button class="popup-panel-item ${isActive}" data-model-alias="${modelAlias}" data-effort-value="${o.value}">
-                <div class="popup-panel-item-icon"><i class="fas ${icon} text-emerald-600 text-xs"></i></div>
+                <div class="popup-panel-item-icon"><i class="fas ${icon} text-blue-500 text-xs"></i></div>
                 <div class="popup-panel-item-info">
                     <div class="popup-panel-item-name">${o.label}</div>
                 </div>
@@ -731,7 +731,7 @@ class AgentInput extends HTMLElement {
                     (s) => `
                 <button class="skill-panel-item" data-skill-name="${s.name}">
                     <div class="skill-panel-item-icon">
-                        <i class="fas fa-bolt text-emerald-600 text-xs"></i>
+                        <i class="fas fa-bolt text-violet-500 text-xs"></i>
                     </div>
                     <div class="skill-panel-item-info">
                         <div class="skill-panel-item-name">${s.name}</div>

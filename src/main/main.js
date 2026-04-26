@@ -19,7 +19,7 @@ import {
     shell,
     Menu,
     dialog,
-    protocol,
+    screen,
     session
 } from 'electron';
 import { Setting, getAppDirectory } from './utils/setting.js';
@@ -955,6 +955,58 @@ const registerSettingAPIHandlers = () => {
         }));
 };
 
+const registerDisplayZoomHandlers = () => {
+    const readCurrentScale = () => {
+        try {
+            const val = Setting.getInstance().getData().display?.scale_factor;
+            return typeof val === 'number' && Number.isFinite(val) ? val : 1;
+        } catch {
+            return 1;
+        }
+    };
+
+    const applyZoom = (factor) => {
+        if (!globalMainWindow) return;
+        if (!Number.isFinite(factor)) factor = 1;
+        const clamped = Math.max(0.5, Math.min(2.0, factor));
+        globalMainWindow.webContents.setZoomFactor(clamped);
+        const currentData = Setting.getInstance().getData();
+        const rounded = Math.round(clamped * 10) / 10;
+        Setting.getInstance().setData({
+            ...currentData,
+            display: { ...(currentData.display || {}), scale_factor: rounded }
+        });
+    };
+
+    ipcMain.handle('display:getScaleFactor', () => {
+        try {
+            return { status: 'ok', data: readCurrentScale() };
+        } catch (error) {
+            return { status: 'error', message: error.message };
+        }
+    });
+
+    ipcMain.handle('display:setScaleFactor', (event, factor) => {
+        try {
+            applyZoom(factor);
+            return { status: 'ok', data: Math.max(0.5, Math.min(2.0, factor)) };
+        } catch (error) {
+            return { status: 'error', message: error.message };
+        }
+    });
+
+    ipcMain.handle('display:adjustScaleFactor', (event, delta) => {
+        try {
+            const current = readCurrentScale();
+            const next = Math.round((current + delta) * 10) / 10;
+            applyZoom(next);
+            return { status: 'ok', data: Math.max(0.5, Math.min(2.0, next)) };
+        } catch (error) {
+            return { status: 'error', message: error.message };
+        }
+    });
+};
+
 const registerNotificationAPIHandlers = () => {
     (ipcMain.handle('notification:sendNotification', (event, ...args) => {
         try {
@@ -968,6 +1020,26 @@ const registerNotificationAPIHandlers = () => {
             NotificationManager.getInstance().addSubscriber(event.sender);
             return { status: 'ok' };
         }));
+};
+
+const registerScreenAPIHandlers = () => {
+    ipcMain.handle('screen:getDisplayScaleFactors', () => {
+        try {
+            const displays = screen.getAllDisplays();
+            const scaleFactors = displays.map((display) => ({
+                id: display.id,
+                scaleFactor: display.scaleFactor,
+                bounds: display.bounds,
+                workArea: display.workArea,
+                rotation: display.rotation,
+                internal: display.internal,
+                touchSupport: display.touchSupport
+            }));
+            return { status: 'ok', data: scaleFactors };
+        } catch (error) {
+            return { status: 'error', message: error.message };
+        }
+    });
 };
 
 const registerHotKeys = () => {
@@ -1055,6 +1127,15 @@ const initializeUpdater = () => {
     }
 };
 
+const initializeScreenAdaption = () => {
+    const scaleFactor = screen.getPrimaryDisplay().scaleFactor;
+    logger.info(`屏幕显示参数: ${scaleFactor}`);
+    screen.on('display-metrics-changed', (event, display, changedMetrics) => {
+        logger.info(`屏幕显示参数已更改: ${display.scaleFactor}`);
+        // 在此处重新计算并调整窗口布局
+    });
+};
+
 function startApplication() {
     if (app.requestSingleInstanceLock()) {
         app.on('second-instance', (event, path) => {
@@ -1101,6 +1182,7 @@ function startApplication() {
             console.error('installBundledSkillsIfNeeded error', err);
         }
 
+        initializeScreenAdaption();
         registerBrowserAPIHandlers();
         registerTaskManagerAPIHandlers();
         registerModeAPIHandlers();
@@ -1108,8 +1190,20 @@ function startApplication() {
         registerSettingAPIHandlers();
         registerApplicationRegistryHandlers(ipcMain);
         registerNotificationAPIHandlers();
+        registerScreenAPIHandlers();
+        registerDisplayZoomHandlers();
         registerHotKeys();
         registerTray();
+
+        // Restore saved zoom level
+        try {
+            const savedScale = Setting.getInstance().getData().display?.scale_factor;
+            if (typeof savedScale === 'number' && Number.isFinite(savedScale) && savedScale !== 1 && globalMainWindow) {
+                globalMainWindow.webContents.setZoomFactor(Math.max(0.5, Math.min(3.0, savedScale)));
+            }
+        } catch (_e) {
+            /* ignore */
+        }
         initializeRegistryWorker();
         initializeProtocolHandlers();
         initializeUpdater();

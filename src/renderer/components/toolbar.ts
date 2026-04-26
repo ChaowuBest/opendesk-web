@@ -108,16 +108,13 @@ export class ElasticToolbarWidget extends HTMLElement {
         const topButtonsHTML = this.buttons
             .map((button) => {
                 const labelStayVisible = !!button.labelStayVisible;
-                const labelSpanClass = labelStayVisible
-                    ? 'max-w-[120px] opacity-100 ml-2 transition-all duration-500 ease-in-out whitespace-nowrap font-medium tracking-tight text-sm'
-                    : 'max-w-0 overflow-hidden opacity-0 group-hover:max-w-[120px] group-hover:opacity-100 group-hover:ml-2 transition-all duration-500 ease-in-out whitespace-nowrap font-medium tracking-tight text-sm';
+                const labelCls = labelStayVisible ? 'elastic-label elastic-label--visible' : 'elastic-label';
                 return `
-            <button id='${button.id}-${this.uid}' class="group flex items-center px-2 py-2 rounded-full
-                        bg-transparent hover:bg-gray-100
-                        transition-all duration-500 ease-[cubic-bezier(0.23,1,0.32,1)]
-                        text-gray-700 hover:text-blue-600">
+            <button id='${button.id}-${this.uid}' class="elastic-capsule-btn flex items-center px-2 py-2 rounded-full
+                        bg-transparent
+                        text-gray-700">
                 <i class="fa-solid ${button.icon}"></i>
-                <span class="${labelSpanClass}">
+                <span class="${labelCls}">
                     ${button.label}
                 </span>
             </button>
