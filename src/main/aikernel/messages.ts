@@ -1231,7 +1231,10 @@ export class AssistantMessage {
         return 'Toolcall failed: unfinished tool call';
     }
 
-    toOpenAIMessages(toolResultOverrides?: Map<string, string>): object[] {
+    private buildOpenAIMessagesFromParts(
+        parts: ReadonlyArray<AssistantMessagePart>,
+        toolResultOverrides?: Map<string, string>
+    ): object[] {
         const messages: object[] = [];
 
         let currentReasoning = '';
@@ -1258,7 +1261,7 @@ export class AssistantMessage {
             messages.push(message);
         };
 
-        for (const part of this.content) {
+        for (const part of parts) {
             switch (part.type) {
                 case 'reasoning': {
                     if (part.source === 'think_tag') {
@@ -1326,6 +1329,32 @@ export class AssistantMessage {
 
         processCurrentMessage();
         return messages;
+    }
+
+    toOpenAIMessages(toolResultOverrides?: Map<string, string>): object[] {
+        return this.buildOpenAIMessagesFromParts(this.content, toolResultOverrides);
+    }
+
+    toOpenAIMessagesFromPartIndex(startPartIndex: number, toolResultOverrides?: Map<string, string>): object[] {
+        if (!Number.isInteger(startPartIndex) || startPartIndex < 0) {
+            throw new Error(`invalid assistant replay startPartIndex: ${startPartIndex}`);
+        }
+        if (startPartIndex >= this.content.length) {
+            return [];
+        }
+        return this.buildOpenAIMessagesFromParts(this.content.slice(startPartIndex), toolResultOverrides);
+    }
+
+    toOpenAIMessagesFromRound(
+        roundRef: { assistantMessageId: string; startPartIndex: number },
+        toolResultOverrides?: Map<string, string>
+    ): object[] {
+        if (roundRef.assistantMessageId !== this.message_id) {
+            throw new Error(
+                `assistant replay roundRef message mismatch: expected ${this.message_id}, got ${roundRef.assistantMessageId}`
+            );
+        }
+        return this.toOpenAIMessagesFromPartIndex(roundRef.startPartIndex, toolResultOverrides);
     }
 
     getOpenAIToolMessages(toolResultOverrides?: Map<string, string>): object[] {
@@ -1475,6 +1504,10 @@ export interface CompactBoundaryMetadata {
     kept_range?: CompactSummarizedRange;
     kept_messages?: number;
     summarized_messages?: number;
+    kept_anchor_message_id?: string;
+    kept_anchor_message_index?: number;
+    kept_anchor_round_index?: number;
+    kept_anchor_start_part_index?: number;
 }
 
 export const COMPACT_SUMMARY_VERSION = 1;
@@ -1543,6 +1576,34 @@ export class CompactSeparatorMessage {
             normalized.summarized_messages = metadata.summarized_messages;
         }
 
+        if (typeof metadata?.kept_anchor_message_id === 'string' && metadata.kept_anchor_message_id.trim().length > 0) {
+            normalized.kept_anchor_message_id = metadata.kept_anchor_message_id;
+        }
+
+        if (
+            typeof metadata?.kept_anchor_message_index === 'number' &&
+            Number.isInteger(metadata.kept_anchor_message_index) &&
+            metadata.kept_anchor_message_index >= 0
+        ) {
+            normalized.kept_anchor_message_index = metadata.kept_anchor_message_index;
+        }
+
+        if (
+            typeof metadata?.kept_anchor_round_index === 'number' &&
+            Number.isInteger(metadata.kept_anchor_round_index) &&
+            metadata.kept_anchor_round_index >= 0
+        ) {
+            normalized.kept_anchor_round_index = metadata.kept_anchor_round_index;
+        }
+
+        if (
+            typeof metadata?.kept_anchor_start_part_index === 'number' &&
+            Number.isInteger(metadata.kept_anchor_start_part_index) &&
+            metadata.kept_anchor_start_part_index >= 0
+        ) {
+            normalized.kept_anchor_start_part_index = metadata.kept_anchor_start_part_index;
+        }
+
         return normalized;
     }
 
@@ -1594,7 +1655,11 @@ export class CompactSeparatorMessage {
                       strategy: obj.strategy,
                       kept_range: obj.kept_range,
                       kept_messages: obj.kept_messages,
-                      summarized_messages: obj.summarized_messages
+                      summarized_messages: obj.summarized_messages,
+                      kept_anchor_message_id: obj.kept_anchor_message_id,
+                      kept_anchor_message_index: obj.kept_anchor_message_index,
+                      kept_anchor_round_index: obj.kept_anchor_round_index,
+                      kept_anchor_start_part_index: obj.kept_anchor_start_part_index
                   };
         obj.metadata = CompactSeparatorMessage.normalizeMetadata(legacyMetadata);
         return obj as CompactSeparatorMessage;

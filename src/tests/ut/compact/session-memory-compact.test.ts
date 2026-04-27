@@ -20,6 +20,8 @@ import {
     AssistantMessage,
     ChatContext,
     CompactSeparatorMessage,
+    ToolCall,
+    ToolCallMessagePart,
     UserMessage,
     isCompactBoundaryMessage,
     type ChatMessage
@@ -99,6 +101,30 @@ function createCompactableChatContext(): ChatContext {
         factory.assistant('a5')
     ]);
     return chatContext;
+}
+
+function appendAssistantRound(message: AssistantMessage, roundLabel: string, resultLines: number): void {
+    message.appendReasoningContent(`reasoning ${roundLabel}`);
+    message.appendText(`visible ${roundLabel}`);
+
+    const toolCall = new ToolCall(0, `tool-call-${roundLabel}`, 'demo_tool', `{"round":"${roundLabel}"}`);
+    toolCall.status = 'success';
+    toolCall.result = Array.from(
+        { length: resultLines },
+        (_, index) => `${roundLabel} tool result line ${index + 1}`
+    ).join('\n');
+
+    const part = new ToolCallMessagePart();
+    part.push(toolCall);
+    message.appendToolCallPart(part);
+}
+
+function createLargeAssistantMessage(): AssistantMessage {
+    const message = new AssistantMessage();
+    appendAssistantRound(message, 'old-round-1', 120);
+    appendAssistantRound(message, 'old-round-2', 120);
+    appendAssistantRound(message, 'recent-round-3', 4);
+    return message;
 }
 
 function validMemory(): string {
@@ -262,6 +288,256 @@ describe('session memory compact planning and apply', () => {
         });
         expect(buildActiveContextView(chatContext).messages).toEqual([result.boundary, keptUser, keptAssistant]);
     });
+    test('step 7 round-aware session memory planner can anchor inside a large assistant', () => {
+        const chatContext = new ChatContext();
+        const olderUser = new UserMessage('older user before the large assistant');
+        const olderAssistant = new AssistantMessage().appendText('older assistant before the large assistant');
+        const bigAssistant = createLargeAssistantMessage();
+        appendMessages(chatContext, [olderUser, olderAssistant, bigAssistant]);
+
+        const state = SessionMemoryStates.deserialize({
+            initialized: true,
+            last_summarized_message_id: 'missing-message-id',
+            tokens_at_last_extraction: 1000
+        });
+
+        const legacyPlan = buildSessionMemoryCompactPlan(chatContext, state, validMemory(), {
+            minTokens: 1,
+            minTextMessages: 1,
+            maxTokens: 300
+        });
+        const roundAwarePlan = buildSessionMemoryCompactPlan(chatContext, state, validMemory(), {
+            minTokens: 1,
+            minTextMessages: 1,
+            maxTokens: 300,
+            enableAssistantRoundBoundary: true
+        });
+
+        expect(legacyPlan).toBeDefined();
+        expect(roundAwarePlan).toBeDefined();
+        expect(legacyPlan!.reason).toBe('resume_without_last_summarized_message');
+        expect(legacyPlan!.keepStartIndex).toBe(2);
+        expect(legacyPlan!.messagesToKeep).toEqual([bigAssistant]);
+
+        expect(roundAwarePlan!.reason).toBe('resume_without_last_summarized_message');
+        expect(roundAwarePlan!.keepStartIndex).toBe(2);
+        expect(roundAwarePlan!.messagesToKeep).toEqual([bigAssistant]);
+        expect(roundAwarePlan!.keepAnchor).toMatchObject({
+            kind: 'assistant_round',
+            messageIndex: 2,
+            messageId: bigAssistant.message_id,
+            startPartIndex: 6,
+            roundRef: {
+                assistantMessageId: bigAssistant.message_id,
+                roundIndex: 2,
+                startPartIndex: 6,
+                endPartIndexExclusive: 9
+            }
+        });
+        expect(roundAwarePlan!.leadingPartialAssistant).toMatchObject({
+            message: bigAssistant,
+            messageIndex: 2,
+            roundRef: {
+                assistantMessageId: bigAssistant.message_id,
+                roundIndex: 2,
+                startPartIndex: 6,
+                endPartIndexExclusive: 9
+            }
+        });
+        expect(roundAwarePlan!.estimatedKeptTokens).toBeLessThan(legacyPlan!.estimatedKeptTokens);
+    });
+
+    test('step 7 round-aware session memory apply keeps only the visible assistant tail', () => {
+        const chatContext = new ChatContext();
+        const olderUser = new UserMessage('older user before the large assistant');
+        const olderAssistant = new AssistantMessage().appendText('older assistant before the large assistant');
+        const bigAssistant = createLargeAssistantMessage();
+        appendMessages(chatContext, [olderUser, olderAssistant, bigAssistant]);
+
+        const plan = buildSessionMemoryCompactPlan(
+            chatContext,
+            SessionMemoryStates.deserialize({
+                initialized: true,
+                last_summarized_message_id: 'missing-message-id',
+                tokens_at_last_extraction: 1000
+            }),
+            validMemory(),
+            {
+                minTokens: 1,
+                minTextMessages: 1,
+                maxTokens: 300,
+                enableAssistantRoundBoundary: true,
+                boundaryId: 'boundary-session-memory-step7'
+            }
+        );
+        expect(plan).toBeDefined();
+
+        const result = buildSessionMemoryCompactResult(plan!, {
+            boundaryId: 'boundary-session-memory-step7',
+            createdAt: '2026-04-27T00:00:00.000Z',
+            enableAssistantRoundBoundary: true
+        });
+        applySessionMemoryCompactResult(chatContext, result);
+
+        expect(chatContext.findCompactBoundary()?.message).toBe(result.boundary);
+        expect(result.boundary.metadata).toMatchObject({
+            boundary_id: 'boundary-session-memory-step7',
+            strategy: SESSION_MEMORY_COMPACT_BOUNDARY_STRATEGY,
+            kept_anchor_message_id: bigAssistant.message_id,
+            kept_anchor_message_index: 2,
+            kept_anchor_round_index: 2,
+            kept_anchor_start_part_index: 6
+        });
+
+        const activeContext = buildActiveContextView(chatContext);
+        expect(activeContext.messages).toEqual([result.boundary, bigAssistant]);
+        expect(activeContext.leadingPartialAssistant).toMatchObject({
+            message: bigAssistant,
+            messageIndex: 3,
+            roundRef: {
+                assistantMessageId: bigAssistant.message_id,
+                roundIndex: 2,
+                startPartIndex: 6,
+                endPartIndexExclusive: 9
+            }
+        });
+
+        const serialized = JSON.stringify(LLM.buildMessages(chatContext, false));
+        expect(serialized).not.toContain('old-round-1');
+        expect(serialized).not.toContain('old-round-2');
+        expect(serialized).toContain('recent-round-3');
+    });
+
+    test('step 7 round-aware session memory planner separates physical keep start from assistant keep anchor for recent user + huge assistant', () => {
+        const chatContext = new ChatContext();
+        const recentUser = new UserMessage('keep watching the build output');
+        const bigAssistant = createLargeAssistantMessage();
+        appendMessages(chatContext, [recentUser, bigAssistant]);
+
+        const plan = buildSessionMemoryCompactPlan(
+            chatContext,
+            SessionMemoryStates.deserialize({
+                initialized: true,
+                last_summarized_message_id: 'missing-message-id',
+                tokens_at_last_extraction: 1000
+            }),
+            validMemory(),
+            {
+                minTokens: 1,
+                minTextMessages: 1,
+                maxTokens: 300,
+                enableAssistantRoundBoundary: true
+            }
+        );
+
+        expect(plan).toBeDefined();
+        expect(plan!.reason).toBe('resume_without_last_summarized_message');
+        expect(plan!.physicalKeepStartIndex).toBe(0);
+        expect(plan!.keepStartIndex).toBe(0);
+        expect(plan!.messagesToKeep).toEqual([recentUser, bigAssistant]);
+        expect(plan!.keepAnchor).toMatchObject({
+            kind: 'assistant_round',
+            messageIndex: 1,
+            messageId: bigAssistant.message_id,
+            roundRef: {
+                assistantMessageId: bigAssistant.message_id,
+                roundIndex: 2,
+                startPartIndex: 6,
+                endPartIndexExclusive: 9
+            }
+        });
+        expect(plan!.leadingPartialAssistant).toMatchObject({
+            message: bigAssistant,
+            messageIndex: 1,
+            roundRef: {
+                assistantMessageId: bigAssistant.message_id,
+                roundIndex: 2,
+                startPartIndex: 6,
+                endPartIndexExclusive: 9
+            }
+        });
+        expect(plan!.projectedItemsToSummarize?.some((item) => item.kind === 'user_message')).toBe(false);
+        expect(plan!.projectedItemsToKeep?.[0]).toMatchObject({
+            kind: 'user_message',
+            messageIndex: 0,
+            messageId: recentUser.message_id,
+            message: recentUser
+        });
+        expect(plan!.projectedItemsToKeep?.[1]).toMatchObject({
+            kind: 'assistant_round',
+            messageIndex: 1,
+            messageId: bigAssistant.message_id,
+            roundRef: {
+                assistantMessageId: bigAssistant.message_id,
+                roundIndex: 2,
+                startPartIndex: 6,
+                endPartIndexExclusive: 9
+            }
+        });
+    });
+
+    test('step 7 round-aware session memory apply supports boundary + recent user + partial assistant', () => {
+        const chatContext = new ChatContext();
+        const recentUser = new UserMessage('keep watching the build output');
+        const bigAssistant = createLargeAssistantMessage();
+        appendMessages(chatContext, [recentUser, bigAssistant]);
+
+        const plan = buildSessionMemoryCompactPlan(
+            chatContext,
+            SessionMemoryStates.deserialize({
+                initialized: true,
+                last_summarized_message_id: 'missing-message-id',
+                tokens_at_last_extraction: 1000
+            }),
+            validMemory(),
+            {
+                minTokens: 1,
+                minTextMessages: 1,
+                maxTokens: 300,
+                enableAssistantRoundBoundary: true,
+                boundaryId: 'boundary-session-memory-step7-recent-user'
+            }
+        );
+        expect(plan).toBeDefined();
+        expect(plan!.physicalKeepStartIndex).toBe(0);
+
+        const result = buildSessionMemoryCompactResult(plan!, {
+            boundaryId: 'boundary-session-memory-step7-recent-user',
+            createdAt: '2026-04-27T00:00:00.000Z',
+            enableAssistantRoundBoundary: true
+        });
+        applySessionMemoryCompactResult(chatContext, result);
+
+        expect(chatContext.findCompactBoundary()?.message).toBe(result.boundary);
+        expect(chatContext.messages).toEqual([result.boundary, recentUser, bigAssistant]);
+        expect(result.boundary.metadata).toMatchObject({
+            boundary_id: 'boundary-session-memory-step7-recent-user',
+            strategy: SESSION_MEMORY_COMPACT_BOUNDARY_STRATEGY,
+            kept_anchor_message_id: bigAssistant.message_id,
+            kept_anchor_message_index: 1,
+            kept_anchor_round_index: 2,
+            kept_anchor_start_part_index: 6
+        });
+
+        const activeContext = buildActiveContextView(chatContext);
+        expect(activeContext.messages).toEqual([result.boundary, recentUser, bigAssistant]);
+        expect(activeContext.leadingPartialAssistant).toMatchObject({
+            message: bigAssistant,
+            messageIndex: 2,
+            roundRef: {
+                assistantMessageId: bigAssistant.message_id,
+                roundIndex: 2,
+                startPartIndex: 6,
+                endPartIndexExclusive: 9
+            }
+        });
+
+        const serialized = JSON.stringify(LLM.buildMessages(chatContext, false));
+        expect(serialized).toContain('keep watching the build output');
+        expect(serialized).not.toContain('old-round-1');
+        expect(serialized).not.toContain('old-round-2');
+        expect(serialized).toContain('recent-round-3');
+    });
 });
 
 describe('session memory compact try/pipeline integration', () => {
@@ -383,5 +659,200 @@ describe('session memory compact try/pipeline integration', () => {
         expect(askSpy).toHaveBeenCalledTimes(1);
         expect(autoCompactState.lastSuccessAt).toBe(now.toISOString());
         expect(chatContext.findCompactBoundary()?.message.metadata.strategy).toBe(FULL_COMPACT_BOUNDARY_STRATEGY);
+    });
+
+    test('step 9 pipeline session memory compact defaults to assistant round boundary', async () => {
+        createTempAppDirectory();
+        const now = new Date('2026-04-27T00:00:00.000Z');
+        jest.setSystemTime(now);
+        const taskId = 'task-pipeline-sm-step7';
+        writeTaskSessionMemory(taskId, validMemory());
+        const chatContext = new ChatContext();
+        const olderUser = new UserMessage('older user before the large assistant');
+        const olderAssistant = new AssistantMessage().appendText('older assistant before the large assistant');
+        const bigAssistant = createLargeAssistantMessage();
+        appendMessages(chatContext, [olderUser, olderAssistant, bigAssistant]);
+
+        const autoCompactState = AutoCompactStates.create();
+        const askSpy = jest.spyOn(LLM, 'ask').mockResolvedValue('full compact should not run');
+
+        const result = await prepareContextForModel(chatContext, 'demo-model', {
+            autoCompactDecisionOverride: createAutoCompactDecision({
+                contextWindow: 1000,
+                promptTokens: 720,
+                reservedSummaryOutput: 100
+            }),
+            autoCompactState,
+            enableSessionMemoryCompact: true,
+            taskId,
+            sessionMemoryState: SessionMemoryStates.create(),
+            sessionMemoryCompactOptions: {
+                minTokens: 1,
+                minTextMessages: 1,
+                maxTokens: 300,
+                boundaryId: 'boundary-session-memory-step7',
+                createdAt: now.toISOString()
+            }
+        });
+
+        expect(result.compacted).toBe(true);
+        expect(result.sessionMemoryCompacted).toBe(true);
+        expect(result.sessionMemoryCompactResult?.compacted).toBe(true);
+        expect(askSpy).not.toHaveBeenCalled();
+        expect(autoCompactState.lastSuccessAt).toBe(now.toISOString());
+        expect(result.activeContext.leadingPartialAssistant).toMatchObject({
+            message: bigAssistant,
+            roundRef: {
+                assistantMessageId: bigAssistant.message_id,
+                roundIndex: 2,
+                startPartIndex: 6,
+                endPartIndexExclusive: 9
+            }
+        });
+
+        const boundary = chatContext.findCompactBoundary();
+        expect(boundary?.message.metadata).toMatchObject({
+            boundary_id: 'boundary-session-memory-step7',
+            trigger: 'auto',
+            strategy: SESSION_MEMORY_COMPACT_BOUNDARY_STRATEGY,
+            kept_anchor_message_id: bigAssistant.message_id,
+            kept_anchor_round_index: 2,
+            kept_anchor_start_part_index: 6
+        });
+
+        const serialized = JSON.stringify(LLM.buildMessages(chatContext, false));
+        expect(serialized).not.toContain('old-round-1');
+        expect(serialized).not.toContain('old-round-2');
+        expect(serialized).toContain('recent-round-3');
+    });
+
+    test('step 7 pipeline prefers session memory compact while keeping the recent user visible and replaying only the assistant tail', async () => {
+        createTempAppDirectory();
+        const now = new Date('2026-04-27T00:00:00.000Z');
+        jest.setSystemTime(now);
+        const taskId = 'task-pipeline-sm-step7-recent-user';
+        writeTaskSessionMemory(taskId, validMemory());
+
+        const chatContext = new ChatContext();
+        const recentUser = new UserMessage('keep watching the build output');
+        const bigAssistant = createLargeAssistantMessage();
+        appendMessages(chatContext, [recentUser, bigAssistant]);
+
+        const autoCompactState = AutoCompactStates.create();
+        const askSpy = jest.spyOn(LLM, 'ask').mockResolvedValue('full compact should not run');
+
+        const result = await prepareContextForModel(chatContext, 'demo-model', {
+            autoCompactDecisionOverride: createAutoCompactDecision({
+                contextWindow: 1000,
+                promptTokens: 720,
+                reservedSummaryOutput: 100
+            }),
+            autoCompactState,
+            enableSessionMemoryCompact: true,
+            taskId,
+            sessionMemoryState: SessionMemoryStates.create(),
+            sessionMemoryCompactOptions: {
+                minTokens: 1,
+                minTextMessages: 1,
+                maxTokens: 300,
+                boundaryId: 'boundary-session-memory-step7-recent-user',
+                createdAt: now.toISOString()
+            }
+        });
+
+        expect(result.compacted).toBe(true);
+        expect(result.sessionMemoryCompacted).toBe(true);
+        expect(result.sessionMemoryCompactResult?.compacted).toBe(true);
+        expect(askSpy).not.toHaveBeenCalled();
+        expect(autoCompactState.lastSuccessAt).toBe(now.toISOString());
+        expect(result.activeContext.messages).toEqual([
+            result.sessionMemoryCompactResult!.boundary!,
+            recentUser,
+            bigAssistant
+        ]);
+        expect(result.activeContext.leadingPartialAssistant).toMatchObject({
+            message: bigAssistant,
+            roundRef: {
+                assistantMessageId: bigAssistant.message_id,
+                roundIndex: 2,
+                startPartIndex: 6,
+                endPartIndexExclusive: 9
+            }
+        });
+
+        const boundary = chatContext.findCompactBoundary();
+        expect(boundary?.message.metadata).toMatchObject({
+            boundary_id: 'boundary-session-memory-step7-recent-user',
+            trigger: 'auto',
+            strategy: SESSION_MEMORY_COMPACT_BOUNDARY_STRATEGY,
+            kept_anchor_message_id: bigAssistant.message_id,
+            kept_anchor_message_index: 1,
+            kept_anchor_round_index: 2,
+            kept_anchor_start_part_index: 6
+        });
+
+        const serialized = JSON.stringify(LLM.buildMessages(chatContext, false));
+        expect(serialized).toContain('keep watching the build output');
+        expect(serialized).not.toContain('old-round-1');
+        expect(serialized).not.toContain('old-round-2');
+        expect(serialized).toContain('recent-round-3');
+    });
+
+    test('step 9 pipeline session memory compact can roll back to message-granularity with false', async () => {
+        createTempAppDirectory();
+        const now = new Date('2026-04-27T00:00:00.000Z');
+        jest.setSystemTime(now);
+        const taskId = 'task-pipeline-sm-step9-rollback';
+        writeTaskSessionMemory(taskId, validMemory());
+        const chatContext = new ChatContext();
+        const olderUser = new UserMessage('older user before the large assistant');
+        const olderAssistant = new AssistantMessage().appendText('older assistant before the large assistant');
+        const bigAssistant = createLargeAssistantMessage();
+        appendMessages(chatContext, [olderUser, olderAssistant, bigAssistant]);
+
+        const autoCompactState = AutoCompactStates.create();
+        const askSpy = jest.spyOn(LLM, 'ask').mockResolvedValue('full compact should not run');
+
+        const result = await prepareContextForModel(chatContext, 'demo-model', {
+            autoCompactDecisionOverride: createAutoCompactDecision({
+                contextWindow: 1000,
+                promptTokens: 720,
+                reservedSummaryOutput: 100
+            }),
+            autoCompactState,
+            enableAssistantRoundBoundary: false,
+            enableSessionMemoryCompact: true,
+            taskId,
+            sessionMemoryState: SessionMemoryStates.create(),
+            sessionMemoryCompactOptions: {
+                minTokens: 1,
+                minTextMessages: 1,
+                maxTokens: 300,
+                autoCompactThreshold: 5000,
+                boundaryId: 'boundary-session-memory-step9-rollback',
+                createdAt: now.toISOString()
+            }
+        });
+
+        expect(result.compacted).toBe(true);
+        expect(result.sessionMemoryCompacted).toBe(true);
+        expect(result.sessionMemoryCompactResult?.compacted).toBe(true);
+        expect(askSpy).not.toHaveBeenCalled();
+        expect(result.activeContext.leadingPartialAssistant).toBeUndefined();
+
+        const boundary = chatContext.findCompactBoundary();
+        expect(boundary?.message.metadata).toMatchObject({
+            boundary_id: 'boundary-session-memory-step9-rollback',
+            trigger: 'auto',
+            strategy: SESSION_MEMORY_COMPACT_BOUNDARY_STRATEGY
+        });
+        expect(boundary?.message.metadata.kept_anchor_message_id).toBeUndefined();
+        expect(boundary?.message.metadata.kept_anchor_round_index).toBeUndefined();
+        expect(boundary?.message.metadata.kept_anchor_start_part_index).toBeUndefined();
+
+        const serialized = JSON.stringify(LLM.buildMessages(chatContext, false));
+        expect(serialized).toContain('old-round-1');
+        expect(serialized).toContain('old-round-2');
+        expect(serialized).toContain('recent-round-3');
     });
 });

@@ -44,7 +44,11 @@ describe('compact smoke: task JSON persistence', () => {
                 trigger: 'manual',
                 strategy: FULL_COMPACT_BOUNDARY_STRATEGY,
                 summarized_messages: 4,
-                kept_messages: 1
+                kept_messages: 1,
+                kept_anchor_message_id: 'assistant-anchor-json-smoke',
+                kept_anchor_message_index: 5,
+                kept_anchor_round_index: 2,
+                kept_anchor_start_part_index: 4
             })
         );
         task.chat_context.appendMessage(new UserMessage('kept tail after reload'));
@@ -70,7 +74,11 @@ describe('compact smoke: task JSON persistence', () => {
             trigger: 'manual',
             strategy: FULL_COMPACT_BOUNDARY_STRATEGY,
             summarized_messages: 4,
-            kept_messages: 1
+            kept_messages: 1,
+            kept_anchor_message_id: 'assistant-anchor-json-smoke',
+            kept_anchor_message_index: 5,
+            kept_anchor_round_index: 2,
+            kept_anchor_start_part_index: 4
         });
         expect(buildActiveContextView(reloadedTask!.chat_context).messages.map((message) => message.role)).toEqual([
             'compact_separator',
