@@ -73,7 +73,21 @@ describe('Step 0 baseline: assistant message boundaries remain message-granular'
         expect(activeContext.messages.filter((message) => message instanceof AssistantMessage)).toEqual([
             largeAssistant
         ]);
-        expect(openAIMessages).toHaveLength(9);
+        expect(openAIMessages).toHaveLength(6);
+        expect(
+            openAIMessages.filter(
+                (message) =>
+                    typeof message === 'object' &&
+                    message !== null &&
+                    (message as { role?: string }).role === 'assistant'
+            )
+        ).toHaveLength(3);
+        expect(
+            openAIMessages.filter(
+                (message) =>
+                    typeof message === 'object' && message !== null && (message as { role?: string }).role === 'tool'
+            )
+        ).toHaveLength(3);
 
         const serialized = JSON.stringify(openAIMessages);
         expect(serialized).toContain('visible old-round-1');

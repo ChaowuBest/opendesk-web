@@ -51,15 +51,17 @@ describe('assistant partial replay', () => {
         const replayedMessages = message.toOpenAIMessagesFromRound(rounds[1].ref);
         const serialized = JSON.stringify(replayedMessages);
 
-        expect(replayedMessages).toHaveLength(4);
+        expect(replayedMessages).toHaveLength(3);
         expect(serialized).not.toContain('round-1');
         expect(serialized).toContain('reasoning round-2');
         expect(serialized).toContain('visible round-2');
         expect(serialized).toContain('result round-2');
         expect(serialized).toContain('reasoning round-3');
         expect(serialized).toContain('visible round-3');
-        expect((replayedMessages[1] as { role: string; tool_calls: object[] }).role).toBe('assistant');
-        expect((replayedMessages[2] as { role: string; tool_call_id: string }).role).toBe('tool');
+        expect((replayedMessages[0] as { role: string; tool_calls: object[] }).role).toBe('assistant');
+        expect((replayedMessages[0] as { tool_calls?: object[] }).tool_calls).toHaveLength(1);
+        expect((replayedMessages[1] as { role: string; tool_call_id: string }).role).toBe('tool');
+        expect((replayedMessages[2] as { role: string }).role).toBe('assistant');
     });
 
     test('toOpenAIMessagesFromPartIndex 仍然支持 tool result override', () => {
