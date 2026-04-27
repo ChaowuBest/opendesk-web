@@ -12,6 +12,7 @@ evaluate.py - 独立评估脚本，对已生成的 predictions.json 运行 SWE-b
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -175,8 +176,11 @@ def run_sb_cli_submit(
     print(f"[sb-cli] 命令: {' '.join(cmd)}")
     print()
 
+    env = os.environ.copy()
+    env["PYTHONUTF8"] = "1"
+
     try:
-        subprocess.run(cmd, check=True)
+        subprocess.run(cmd, check=True, env=env)
         print("\n[sb-cli] 提交完成!")
     except subprocess.CalledProcessError as e:
         print(f"\n[sb-cli] 失败: {e}")
