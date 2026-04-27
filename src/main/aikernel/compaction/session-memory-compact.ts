@@ -13,9 +13,9 @@ import {
 } from '../messages.js';
 import { getTaskSessionMemoryPath } from '../../utils/setting.js';
 import type { AutoCompactDecision } from './auto-compact.js';
-import { buildActiveContextView } from './context-view.js';
+import { buildActiveContextView, buildProjectedActiveContextView } from './context-view.js';
 import { countFullCompactMessageStats, type FullCompactMessageStats } from './full-compact.js';
-import type { ActiveContextView, CompactBoundaryRef } from './types.js';
+import type { ActiveContextView, AssistantRoundRef, CompactBoundaryRef, ProjectedContextItem } from './types.js';
 
 export const SESSION_MEMORY_STATE_VERSION = 1;
 export const SESSION_MEMORY_DIRECTORY_NAME = 'session-memory';
@@ -940,12 +940,32 @@ export interface SessionMemoryCompactOptions {
     boundaryId?: string;
     memoryTemplate?: string;
     autoCompactThreshold?: number;
+    enableAssistantRoundBoundary?: boolean;
+}
+
+export interface SessionMemoryCompactKeepAnchor {
+    kind: 'message_start' | 'assistant_round';
+    messageIndex: number;
+    messageId: string;
+    roundRef?: AssistantRoundRef;
+    startPartIndex?: number;
+}
+
+export interface SessionMemoryCompactLeadingPartialAssistant {
+    message: AssistantMessage;
+    messageIndex: number;
+    roundRef: AssistantRoundRef;
 }
 
 export interface SessionMemoryCompactPlan {
     activeContextStartIndex: number;
+    physicalKeepStartIndex: number;
     keepStartIndex: number;
     messagesToKeep: ChatMessage[];
+    projectedItemsToSummarize?: ProjectedContextItem[];
+    projectedItemsToKeep?: ProjectedContextItem[];
+    keepAnchor?: SessionMemoryCompactKeepAnchor;
+    leadingPartialAssistant?: SessionMemoryCompactLeadingPartialAssistant;
     memoryContent: string;
     reason: SessionMemoryCompactPlanReason;
     previousBoundary?: CompactBoundaryRef;
@@ -982,6 +1002,7 @@ interface NormalizedSessionMemoryCompactOptions {
     boundaryId?: string;
     memoryTemplate: string;
     autoCompactThreshold?: number;
+    enableAssistantRoundBoundary: boolean;
 }
 
 function normalizeOptionalPositiveInteger(value: unknown): number | undefined {
@@ -1017,7 +1038,8 @@ function normalizeCompactOptions(options: SessionMemoryCompactOptions = {}): Nor
         createdAt: options.createdAt,
         boundaryId: options.boundaryId,
         memoryTemplate: options.memoryTemplate ?? DEFAULT_SESSION_MEMORY_TEMPLATE,
-        autoCompactThreshold: normalizeOptionalPositiveInteger(options.autoCompactThreshold)
+        autoCompactThreshold: normalizeOptionalPositiveInteger(options.autoCompactThreshold),
+        enableAssistantRoundBoundary: options.enableAssistantRoundBoundary === true
     };
 }
 
@@ -1067,6 +1089,281 @@ function estimateMessagesTokens(messages: ChatMessage[]): number {
 
 function countTextMessages(messages: ChatMessage[]): number {
     return messages.filter((message) => !isCompactBoundaryMessage(message) && hasTextContent(message)).length;
+}
+
+function assistantRoundHasTextContent(item: Extract<ProjectedContextItem, { kind: 'assistant_round' }>): boolean {
+    return item.round.parts.some((part) => {
+        if (part.type === 'text') {
+            return part.text.trim().length > 0;
+        }
+        if (part.type === 'error') {
+            return part.title.trim().length > 0 || part.message.trim().length > 0;
+        }
+        if (part.type === 'tool_call') {
+            return part.toolcalls.some(
+                (toolCall) =>
+                    toolCall.tool_name.trim().length > 0 ||
+                    toolCall.args_string.trim().length > 0 ||
+                    (toolCall.result?.trim().length ?? 0) > 0
+            );
+        }
+        return false;
+    });
+}
+
+function estimateAssistantRoundTokens(item: Extract<ProjectedContextItem, { kind: 'assistant_round' }>): number {
+    return item.round.parts.reduce((total, part) => {
+        if (part.type === 'text') {
+            return total + estimateTextTokens(part.text);
+        }
+        if (part.type === 'reasoning') {
+            return total + estimateTextTokens(part.content);
+        }
+        if (part.type === 'error') {
+            return total + estimateTextTokens(part.title) + estimateTextTokens(part.message);
+        }
+        if (part.type === 'tool_call') {
+            return total + part.toolcalls.reduce((sum, toolCall) => sum + estimateToolCallTokens(toolCall), 0);
+        }
+        return total;
+    }, 0);
+}
+
+function estimateProjectedItemsTokens(projectedItems: ProjectedContextItem[]): number {
+    return projectedItems.reduce((total, item) => {
+        if (item.kind === 'compact_boundary') {
+            return total + estimateTextTokens(item.message.summary);
+        }
+        if (item.kind === 'user_message') {
+            return total + estimateChatMessageTokensForSessionMemory(item.message);
+        }
+        return total + estimateAssistantRoundTokens(item);
+    }, 0);
+}
+
+function countTextProjectedItems(projectedItems: ProjectedContextItem[]): number {
+    return projectedItems.filter((item) => {
+        if (item.kind === 'compact_boundary') {
+            return false;
+        }
+        if (item.kind === 'user_message') {
+            return hasTextContent(item.message);
+        }
+        return assistantRoundHasTextContent(item);
+    }).length;
+}
+
+function findFirstProjectedItemIndexAtOrAfterMessageIndex(
+    projectedItems: ProjectedContextItem[],
+    messageIndex: number
+): number {
+    for (let index = 0; index < projectedItems.length; index++) {
+        const item = projectedItems[index];
+        if (item.kind !== 'compact_boundary' && item.messageIndex >= messageIndex) {
+            return index;
+        }
+    }
+    return projectedItems.length;
+}
+
+function findFirstProjectedItemIndexAfterMessageIndex(
+    projectedItems: ProjectedContextItem[],
+    messageIndex: number
+): number {
+    for (let index = 0; index < projectedItems.length; index++) {
+        const item = projectedItems[index];
+        if (item.kind !== 'compact_boundary' && item.messageIndex > messageIndex) {
+            return index;
+        }
+    }
+    return projectedItems.length;
+}
+
+function expandKeepStartProjectedItemIndex(
+    projectedItems: ProjectedContextItem[],
+    initialKeepProjectedItemIndex: number,
+    floorProjectedItemIndex: number,
+    options: NormalizedSessionMemoryCompactOptions
+): number {
+    let keepProjectedItemIndex = Math.min(
+        Math.max(initialKeepProjectedItemIndex, floorProjectedItemIndex),
+        projectedItems.length
+    );
+    let keptProjectedItems = projectedItems
+        .slice(keepProjectedItemIndex)
+        .filter((item) => item.kind !== 'compact_boundary');
+    let keptTokens = estimateProjectedItemsTokens(keptProjectedItems);
+    let textMessages = countTextProjectedItems(keptProjectedItems);
+
+    if (keptTokens >= options.maxTokens) {
+        return keepProjectedItemIndex;
+    }
+
+    if (keptTokens >= options.minTokens && textMessages >= options.minTextMessages) {
+        return keepProjectedItemIndex;
+    }
+
+    for (let index = keepProjectedItemIndex - 1; index >= floorProjectedItemIndex; index--) {
+        const item = projectedItems[index];
+        if (item.kind === 'compact_boundary') {
+            continue;
+        }
+
+        const itemTokens =
+            item.kind === 'assistant_round'
+                ? estimateAssistantRoundTokens(item)
+                : estimateChatMessageTokensForSessionMemory(item.message);
+        if (keptProjectedItems.length > 0 && keptTokens + itemTokens > options.maxTokens) {
+            break;
+        }
+
+        keepProjectedItemIndex = index;
+        keptTokens += itemTokens;
+        keptProjectedItems = [item, ...keptProjectedItems];
+        if (item.kind === 'assistant_round' ? assistantRoundHasTextContent(item) : hasTextContent(item.message)) {
+            textMessages++;
+        }
+
+        if (keptTokens >= options.minTokens && textMessages >= options.minTextMessages) {
+            break;
+        }
+    }
+
+    return keepProjectedItemIndex;
+}
+
+function countProjectedItemStats(projectedItems: ProjectedContextItem[]): FullCompactMessageStats {
+    const stats: FullCompactMessageStats = {
+        userMessages: 0,
+        assistantMessages: 0,
+        toolCalls: 0,
+        boundaryMessages: 0
+    };
+    const countedAssistantMessageIds = new Set<string>();
+
+    for (const item of projectedItems) {
+        if (item.kind === 'compact_boundary') {
+            stats.boundaryMessages++;
+            continue;
+        }
+        if (item.kind === 'user_message') {
+            stats.userMessages++;
+            continue;
+        }
+
+        if (!countedAssistantMessageIds.has(item.messageId)) {
+            countedAssistantMessageIds.add(item.messageId);
+            stats.assistantMessages++;
+        }
+        stats.toolCalls += item.round.toolCallCount;
+    }
+
+    return stats;
+}
+
+function buildSessionMemoryKeepAnchor(
+    item: Exclude<ProjectedContextItem, Extract<ProjectedContextItem, { kind: 'compact_boundary' }>>
+): SessionMemoryCompactKeepAnchor {
+    if (item.kind === 'assistant_round') {
+        return {
+            kind: 'assistant_round',
+            messageIndex: item.messageIndex,
+            messageId: item.messageId,
+            roundRef: item.roundRef,
+            startPartIndex: item.roundRef.startPartIndex
+        };
+    }
+
+    return {
+        kind: 'message_start',
+        messageIndex: item.messageIndex,
+        messageId: item.messageId
+    };
+}
+
+interface SessionMemoryRoundAwareKeepSelection {
+    physicalKeepStartProjectedItemIndex: number;
+    keepAnchorProjectedItemIndex: number;
+}
+
+function selectSessionMemoryRoundAwareKeepSelection(
+    projectedItems: ProjectedContextItem[],
+    keepAnchorProjectedItemIndex: number,
+    floorProjectedItemIndex: number
+): SessionMemoryRoundAwareKeepSelection | undefined {
+    const keepAnchorItem = projectedItems[keepAnchorProjectedItemIndex];
+    if (keepAnchorItem === undefined || keepAnchorItem.kind === 'compact_boundary') {
+        return undefined;
+    }
+
+    let physicalKeepStartProjectedItemIndex = keepAnchorProjectedItemIndex;
+    if (keepAnchorItem.kind === 'assistant_round') {
+        let assistantProjectedStartIndex = keepAnchorProjectedItemIndex;
+        while (assistantProjectedStartIndex > floorProjectedItemIndex) {
+            const previousItem = projectedItems[assistantProjectedStartIndex - 1];
+            if (
+                previousItem?.kind !== 'assistant_round' ||
+                previousItem.messageId !== keepAnchorItem.messageId ||
+                previousItem.messageIndex !== keepAnchorItem.messageIndex
+            ) {
+                break;
+            }
+            assistantProjectedStartIndex--;
+        }
+
+        for (let index = assistantProjectedStartIndex - 1; index >= floorProjectedItemIndex; index--) {
+            const item = projectedItems[index];
+            if (item.kind === 'compact_boundary') {
+                continue;
+            }
+            if (item.kind !== 'user_message') {
+                break;
+            }
+            physicalKeepStartProjectedItemIndex = index;
+        }
+    }
+
+    return {
+        physicalKeepStartProjectedItemIndex,
+        keepAnchorProjectedItemIndex
+    };
+}
+
+function buildSessionMemoryProjectedItemsToKeep(
+    projectedItems: ProjectedContextItem[],
+    selection: SessionMemoryRoundAwareKeepSelection
+): ProjectedContextItem[] {
+    const keepIndices = new Set<number>();
+
+    for (
+        let index = selection.physicalKeepStartProjectedItemIndex;
+        index < selection.keepAnchorProjectedItemIndex;
+        index++
+    ) {
+        if (projectedItems[index]?.kind === 'user_message') {
+            keepIndices.add(index);
+        }
+    }
+
+    for (let index = selection.keepAnchorProjectedItemIndex; index < projectedItems.length; index++) {
+        if (projectedItems[index]?.kind !== 'compact_boundary') {
+            keepIndices.add(index);
+        }
+    }
+
+    return projectedItems.filter((_, index) => keepIndices.has(index));
+}
+
+function buildSessionMemoryProjectedItemsToSummarize(
+    projectedItems: ProjectedContextItem[],
+    selection: SessionMemoryRoundAwareKeepSelection
+): ProjectedContextItem[] {
+    const projectedItemsToKeep = buildSessionMemoryProjectedItemsToKeep(projectedItems, selection);
+    const keptItems = new Set(projectedItemsToKeep);
+
+    return projectedItems.filter(
+        (item, index) => index < selection.keepAnchorProjectedItemIndex && !keptItems.has(item)
+    );
 }
 
 function normalizeMemoryContent(memoryContent: string, maxChars: number): string {
@@ -1151,6 +1448,102 @@ export function buildSessionMemoryCompactPlan(
         return undefined;
     }
 
+    if (normalizedOptions.enableAssistantRoundBoundary) {
+        const projectedActiveContext = buildProjectedActiveContextView(chatContext);
+        const previousBoundary = projectedActiveContext.boundary;
+        const floorIndex = previousBoundary ? previousBoundary.index + 1 : projectedActiveContext.startIndex;
+        const floorProjectedItemIndex = findFirstProjectedItemIndexAtOrAfterMessageIndex(
+            projectedActiveContext.projectedItems,
+            floorIndex
+        );
+        const lastSummarizedIndex = findMessageIndexById(
+            chatContext.messages,
+            floorIndex,
+            state.lastSummarizedMessageId
+        );
+        const hasSummarizedAnchor = lastSummarizedIndex >= floorIndex;
+        const reason: SessionMemoryCompactPlanReason = hasSummarizedAnchor
+            ? 'normal'
+            : 'resume_without_last_summarized_message';
+
+        const initialKeepProjectedItemIndex = hasSummarizedAnchor
+            ? findFirstProjectedItemIndexAfterMessageIndex(projectedActiveContext.projectedItems, lastSummarizedIndex)
+            : projectedActiveContext.projectedItems.length;
+        const keepProjectedItemIndex = expandKeepStartProjectedItemIndex(
+            projectedActiveContext.projectedItems,
+            initialKeepProjectedItemIndex,
+            floorProjectedItemIndex,
+            normalizedOptions
+        );
+        const keepSelection = selectSessionMemoryRoundAwareKeepSelection(
+            projectedActiveContext.projectedItems,
+            keepProjectedItemIndex,
+            floorProjectedItemIndex
+        );
+        if (keepSelection === undefined) {
+            return undefined;
+        }
+        const keepProjectedItem = projectedActiveContext.projectedItems[keepSelection.keepAnchorProjectedItemIndex];
+        const physicalKeepStartProjectedItem =
+            projectedActiveContext.projectedItems[keepSelection.physicalKeepStartProjectedItemIndex];
+        if (
+            keepProjectedItem === undefined ||
+            keepProjectedItem.kind === 'compact_boundary' ||
+            physicalKeepStartProjectedItem === undefined ||
+            physicalKeepStartProjectedItem.kind === 'compact_boundary'
+        ) {
+            return undefined;
+        }
+
+        const projectedItemsToKeep = buildSessionMemoryProjectedItemsToKeep(
+            projectedActiveContext.projectedItems,
+            keepSelection
+        );
+        const projectedItemsToSummarize = buildSessionMemoryProjectedItemsToSummarize(
+            projectedActiveContext.projectedItems,
+            keepSelection
+        );
+
+        const hasProjectedItemsToSummarize = projectedItemsToSummarize.some((item) => item.kind !== 'compact_boundary');
+        if (!previousBoundary && !hasProjectedItemsToSummarize) {
+            return undefined;
+        }
+
+        const physicalKeepStartIndex = physicalKeepStartProjectedItem.messageIndex;
+        const keepStartLocalIndex = physicalKeepStartIndex - projectedActiveContext.startIndex;
+        const messagesToKeep = projectedActiveContext.messages
+            .slice(keepStartLocalIndex)
+            .filter((message) => !isCompactBoundaryMessage(message));
+        if (messagesToKeep.length === 0) {
+            return undefined;
+        }
+
+        return {
+            activeContextStartIndex: projectedActiveContext.startIndex,
+            physicalKeepStartIndex,
+            keepStartIndex: physicalKeepStartIndex,
+            messagesToKeep,
+            projectedItemsToSummarize,
+            projectedItemsToKeep,
+            keepAnchor: buildSessionMemoryKeepAnchor(keepProjectedItem),
+            leadingPartialAssistant:
+                keepProjectedItem.kind === 'assistant_round' && keepProjectedItem.roundRef.startPartIndex > 0
+                    ? {
+                          message: keepProjectedItem.message,
+                          messageIndex: keepProjectedItem.messageIndex,
+                          roundRef: keepProjectedItem.roundRef
+                      }
+                    : undefined,
+            memoryContent: normalizedMemory,
+            reason,
+            previousBoundary,
+            lastSummarizedMessageId: state.lastSummarizedMessageId,
+            summarizedStats: countProjectedItemStats(projectedItemsToSummarize),
+            keptStats: countProjectedItemStats(projectedItemsToKeep),
+            estimatedKeptTokens: estimateProjectedItemsTokens(projectedItemsToKeep)
+        };
+    }
+
     const activeContext = buildActiveContextView(chatContext);
     const previousBoundary = activeContext.boundary;
     const floorIndex = previousBoundary ? previousBoundary.index + 1 : activeContext.startIndex;
@@ -1181,6 +1574,7 @@ export function buildSessionMemoryCompactPlan(
     const summarizedMessages = chatContext.messages.slice(activeContext.startIndex, keepStartIndex);
     return {
         activeContextStartIndex: activeContext.startIndex,
+        physicalKeepStartIndex: keepStartIndex,
         keepStartIndex,
         messagesToKeep,
         memoryContent: normalizedMemory,
@@ -1229,7 +1623,11 @@ export function buildSessionMemoryCompactBoundary(
             tool_calls: plan.keptStats.toolCalls
         },
         kept_messages: plan.messagesToKeep.length,
-        summarized_messages: Math.max(plan.keepStartIndex - plan.activeContextStartIndex, 0)
+        summarized_messages: Math.max(plan.keepStartIndex - plan.activeContextStartIndex, 0),
+        kept_anchor_message_id: plan.keepAnchor?.messageId,
+        kept_anchor_message_index: plan.keepAnchor?.messageIndex,
+        kept_anchor_round_index: plan.keepAnchor?.roundRef?.roundIndex,
+        kept_anchor_start_part_index: plan.keepAnchor?.startPartIndex
     });
 }
 
@@ -1244,9 +1642,7 @@ export function buildSessionMemoryCompactResult(
 }
 
 export function estimateSessionMemoryCompactPostTokens(result: SessionMemoryCompactResult): number {
-    return (
-        estimateChatMessageTokensForSessionMemory(result.boundary) + estimateMessagesTokens(result.plan.messagesToKeep)
-    );
+    return estimateChatMessageTokensForSessionMemory(result.boundary) + result.plan.estimatedKeptTokens;
 }
 
 export function applySessionMemoryCompactResult(chatContext: ChatContext, result: SessionMemoryCompactResult): void {

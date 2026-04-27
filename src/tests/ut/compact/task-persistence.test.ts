@@ -246,7 +246,11 @@ describe('任务持久化中的自动压缩状态', () => {
                 tool_calls: 0
             },
             kept_messages: 2,
-            summarized_messages: 6
+            summarized_messages: 6,
+            kept_anchor_message_id: 'assistant-anchor-message',
+            kept_anchor_message_index: 6,
+            kept_anchor_round_index: 1,
+            kept_anchor_start_part_index: 3
         });
 
         task.chat_context = new ChatContext();
@@ -268,6 +272,10 @@ describe('任务持久化中的自动压缩状态', () => {
             strategy: FULL_COMPACT_BOUNDARY_STRATEGY,
             kept_messages: 2,
             summarized_messages: 6,
+            kept_anchor_message_id: 'assistant-anchor-message',
+            kept_anchor_message_index: 6,
+            kept_anchor_round_index: 1,
+            kept_anchor_start_part_index: 3,
             summarized_range: {
                 start_index: 0,
                 end_index_exclusive: 6,

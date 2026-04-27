@@ -3,7 +3,14 @@ import { AutoCompactStates, createAutoCompactDecision } from '../../../main/aike
 import { FULL_COMPACT_BOUNDARY_STRATEGY } from '../../../main/aikernel/compaction/full-compact';
 import { prepareContextForModel } from '../../../main/aikernel/compaction/pipeline';
 import { LLM } from '../../../main/aikernel/llm';
-import { AssistantMessage, ChatContext, UserMessage, isCompactBoundaryMessage } from '../../../main/aikernel/messages';
+import {
+    AssistantMessage,
+    ChatContext,
+    ToolCall,
+    ToolCallMessagePart,
+    UserMessage,
+    isCompactBoundaryMessage
+} from '../../../main/aikernel/messages';
 
 function createChatContext(): ChatContext {
     const chatContext = new ChatContext();
@@ -24,6 +31,28 @@ function createCompactableChatContext(): ChatContext {
         appendAssistantMessage(chatContext, `assistant ${index}`);
     }
     return chatContext;
+}
+
+function appendAssistantRound(message: AssistantMessage, roundLabel: string): void {
+    message.appendReasoningContent(`reasoning ${roundLabel}`);
+    message.appendText(`assistant ${roundLabel}`);
+
+    const toolCall = new ToolCall(0, `tool-${roundLabel}`, 'demo_tool', `{"round":"${roundLabel}"}`);
+    toolCall.status = 'success';
+    toolCall.result = `result ${roundLabel}`;
+
+    const part = new ToolCallMessagePart();
+    part.push(toolCall);
+    message.appendToolCallPart(part);
+}
+
+function createLargeAssistantMessage(): AssistantMessage {
+    const message = new AssistantMessage();
+    appendAssistantRound(message, 'old-round-1');
+    appendAssistantRound(message, 'old-round-2');
+    appendAssistantRound(message, 'old-round-3');
+    appendAssistantRound(message, 'recent-round-4');
+    return message;
 }
 
 describe('压缩 pipeline 的自动压缩状态流', () => {
@@ -244,6 +273,106 @@ describe('压缩 pipeline 的自动压缩状态流', () => {
             (message, index) => index > 0 && isCompactBoundaryMessage(message)
         );
         expect(tailContainsBoundary).toBe(false);
+    });
+
+    test('step 9 pipeline fallback full compact defaults to assistant round boundary', async () => {
+        const now = new Date('2026-04-27T00:00:00.000Z');
+        jest.setSystemTime(now);
+
+        const chatContext = new ChatContext();
+        const bigAssistant = createLargeAssistantMessage();
+        chatContext.appendMessage(new UserMessage('user 0'));
+        appendAssistantMessage(chatContext, 'assistant 0');
+        chatContext.appendMessage(new UserMessage('user 1'));
+        chatContext.appendMessage(bigAssistant);
+        chatContext.appendMessage(new UserMessage('user 2'));
+        appendAssistantMessage(chatContext, 'assistant 2');
+        chatContext.appendMessage(new UserMessage('user 3'));
+        appendAssistantMessage(chatContext, 'assistant 3');
+        chatContext.appendMessage(new UserMessage('user 4'));
+        appendAssistantMessage(chatContext, 'assistant 4');
+
+        const askSpy = jest
+            .spyOn(LLM, 'ask')
+            .mockResolvedValue('<state_snapshot><overall_goal>step9 pipeline default</overall_goal></state_snapshot>');
+
+        const result = await prepareContextForModel(chatContext, 'demo-model', {
+            autoCompactDecisionOverride: createAutoCompactDecision({
+                contextWindow: 1000,
+                promptTokens: 720,
+                reservedSummaryOutput: 100
+            }),
+            autoCompactState: AutoCompactStates.create()
+        });
+
+        expect(askSpy).toHaveBeenCalledTimes(1);
+        expect(result.compacted).toBe(true);
+        expect(result.activeContext.leadingPartialAssistant).toMatchObject({
+            message: bigAssistant,
+            roundRef: {
+                assistantMessageId: bigAssistant.message_id,
+                roundIndex: 1,
+                startPartIndex: 3,
+                endPartIndexExclusive: 6
+            }
+        });
+        expect(chatContext.findCompactBoundary()?.message.metadata).toMatchObject({
+            strategy: FULL_COMPACT_BOUNDARY_STRATEGY,
+            kept_anchor_message_id: bigAssistant.message_id,
+            kept_anchor_round_index: 1,
+            kept_anchor_start_part_index: 3
+        });
+
+        const serialized = JSON.stringify(LLM.buildMessages(chatContext, false));
+        expect(serialized).not.toContain('old-round-1');
+        expect(serialized).toContain('old-round-2');
+        expect(serialized).toContain('old-round-3');
+        expect(serialized).toContain('recent-round-4');
+    });
+
+    test('step 9 pipeline fallback full compact can roll back to message-granularity with false', async () => {
+        const now = new Date('2026-04-27T00:00:00.000Z');
+        jest.setSystemTime(now);
+
+        const chatContext = new ChatContext();
+        const bigAssistant = createLargeAssistantMessage();
+        chatContext.appendMessage(new UserMessage('user 0'));
+        appendAssistantMessage(chatContext, 'assistant 0');
+        chatContext.appendMessage(new UserMessage('user 1'));
+        chatContext.appendMessage(bigAssistant);
+        chatContext.appendMessage(new UserMessage('user 2'));
+        appendAssistantMessage(chatContext, 'assistant 2');
+        chatContext.appendMessage(new UserMessage('user 3'));
+        appendAssistantMessage(chatContext, 'assistant 3');
+        chatContext.appendMessage(new UserMessage('user 4'));
+        appendAssistantMessage(chatContext, 'assistant 4');
+
+        const askSpy = jest
+            .spyOn(LLM, 'ask')
+            .mockResolvedValue('<state_snapshot><overall_goal>step9 pipeline rollback</overall_goal></state_snapshot>');
+
+        const result = await prepareContextForModel(chatContext, 'demo-model', {
+            autoCompactDecisionOverride: createAutoCompactDecision({
+                contextWindow: 1000,
+                promptTokens: 720,
+                reservedSummaryOutput: 100
+            }),
+            autoCompactState: AutoCompactStates.create(),
+            enableAssistantRoundBoundary: false
+        });
+
+        expect(askSpy).toHaveBeenCalledTimes(1);
+        expect(result.compacted).toBe(true);
+        expect(result.activeContext.leadingPartialAssistant).toBeUndefined();
+        expect(chatContext.findCompactBoundary()?.message.metadata.kept_anchor_message_id).toBeUndefined();
+        expect(chatContext.findCompactBoundary()?.message.metadata.kept_anchor_round_index).toBeUndefined();
+        expect(chatContext.findCompactBoundary()?.message.metadata.kept_anchor_start_part_index).toBeUndefined();
+
+        const serialized = JSON.stringify(LLM.buildMessages(chatContext, false));
+        expect(serialized).toContain('old-round-1');
+        expect(serialized).toContain('old-round-2');
+        expect(serialized).toContain('old-round-3');
+        expect(serialized).toContain('recent-round-4');
     });
 
     test('未达到阈值时不会触发自动 compact，也不会改动自动压缩状态', async () => {

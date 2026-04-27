@@ -37,6 +37,11 @@ import {
     imageToDataUri
 } from '../messages.js';
 import { prepareContextForModel } from '../compaction/pipeline.js';
+import {
+    describeActiveContextVariant,
+    describeCompactPlanVariant,
+    logCompactInfo
+} from '../compaction/compact-trace.js';
 import type { ActiveContextView } from '../compaction/types.js';
 import { compactContext } from '../compact.js';
 import { BaseTool, BaseToolset } from '../tool.js';
@@ -368,12 +373,21 @@ export class TaskState {
         initialDecision: SessionMemoryExtractionDecision
     ): Promise<SessionMemoryUpdateResult> {
         try {
-            logger.info(
-                `[Compact Step8F] session memory update starting for task ${this.task_id}: ` +
+            logCompactInfo(this.task_id, {
+                source: 'tasks',
+                event: 'session_memory_update_starting',
+                message:
+                    `[Compact Step8F] session memory update starting for task ${this.task_id}: ` +
                     `reason=${initialDecision.reason}, tokens=${initialDecision.currentTokens}, ` +
                     `delta=${initialDecision.tokensSinceLastExtraction}, ` +
-                    `toolCalls=${initialDecision.toolCallsSinceLastExtraction}`
-            );
+                    `toolCalls=${initialDecision.toolCallsSinceLastExtraction}`,
+                data: {
+                    reason: initialDecision.reason,
+                    currentTokens: initialDecision.currentTokens,
+                    tokensSinceLastExtraction: initialDecision.tokensSinceLastExtraction,
+                    toolCallsSinceLastExtraction: initialDecision.toolCallsSinceLastExtraction
+                }
+            });
 
             const result = await updateSessionMemoryFromChatContext(
                 this.chat_context,
@@ -388,11 +402,20 @@ export class TaskState {
                 this.saveSessionMemoryStateSafely();
             }
 
-            logger.info(
-                `[Compact Step8F] session memory update completed for task ${this.task_id}: ` +
+            logCompactInfo(this.task_id, {
+                source: 'tasks',
+                event: 'session_memory_update_completed',
+                message:
+                    `[Compact Step8F] session memory update completed for task ${this.task_id}: ` +
                     `updated=${result.updated}, skipped=${result.skipped}, ` +
-                    `reason=${result.decision.reason}, error=${result.error ?? 'none'}`
-            );
+                    `reason=${result.decision.reason}, error=${result.error ?? 'none'}`,
+                data: {
+                    updated: result.updated,
+                    skipped: result.skipped,
+                    reason: result.decision.reason,
+                    error: result.error ?? 'none'
+                }
+            });
 
             return result;
         } catch (error) {
@@ -418,18 +441,31 @@ export class TaskState {
         options: UpdateSessionMemoryOptions = {}
     ): Promise<SessionMemoryUpdateResult> {
         if (this._sessionMemoryUpdatePromise) {
-            logger.info(`[Compact Step8F] session memory update already running for task ${this.task_id}`);
+            logCompactInfo(this.task_id, {
+                source: 'tasks',
+                event: 'session_memory_update_already_running',
+                message: `[Compact Step8F] session memory update already running for task ${this.task_id}`
+            });
             return this._sessionMemoryUpdatePromise;
         }
 
         const decision = shouldExtractSessionMemory(this.chat_context, this.session_memory_state, options);
         if (!options.force && !decision.shouldExtract) {
-            logger.info(
-                `[Compact Step8F] session memory update skipped for task ${this.task_id}: ` +
+            logCompactInfo(this.task_id, {
+                source: 'tasks',
+                event: 'session_memory_update_skipped',
+                message:
+                    `[Compact Step8F] session memory update skipped for task ${this.task_id}: ` +
                     `reason=${decision.reason}, tokens=${decision.currentTokens}, ` +
                     `delta=${decision.tokensSinceLastExtraction}, ` +
-                    `toolCalls=${decision.toolCallsSinceLastExtraction}`
-            );
+                    `toolCalls=${decision.toolCallsSinceLastExtraction}`,
+                data: {
+                    reason: decision.reason,
+                    currentTokens: decision.currentTokens,
+                    tokensSinceLastExtraction: decision.tokensSinceLastExtraction,
+                    toolCallsSinceLastExtraction: decision.toolCallsSinceLastExtraction
+                }
+            });
             return Promise.resolve(this.buildSkippedSessionMemoryUpdateResult(decision));
         }
 
@@ -495,7 +531,9 @@ export class TaskState {
     }
 
     async manualCompact(): Promise<boolean> {
-        return await compactContext(this.chat_context, this.model);
+        return await compactContext(this.chat_context, this.model, {
+            taskId: this.task_id
+        });
     }
 
     /**
@@ -515,12 +553,22 @@ export class TaskState {
             try {
                 const preparation = await prepareContextForModel(this.chat_context, this.model, {
                     beforeCompact: () => {
-                        logger.info(`Auto-compacting context for task ${this.task_id}`);
+                        logCompactInfo(this.task_id, {
+                            source: 'tasks',
+                            event: 'auto_compacting_context',
+                            message: `Auto-compacting context for task ${this.task_id}`
+                        });
                     },
-                    autoCompactState: this.auto_compact_state
+                    enableSessionMemoryCompact: true,
+                    autoCompactState: this.auto_compact_state,
+                    sessionMemoryState: this.session_memory_state,
+                    taskId: this.task_id
                 });
                 if (preparation.autoCompactState) {
                     this.setAutoCompactState(preparation.autoCompactState);
+                }
+                if (preparation.sessionMemoryState) {
+                    this.setSessionMemoryState(preparation.sessionMemoryState);
                 }
             } catch (err: unknown) {
                 logger.warn(`Auto-compact check failed: ${err instanceof Error ? err.message : err}`);
@@ -909,7 +957,11 @@ export class TaskState {
         try {
             const preparation = await prepareContextForModel(this.chat_context, this.model, {
                 beforeCompact: () => {
-                    logger.info(`Auto-compacting context for task ${this.task_id}`);
+                    logCompactInfo(this.task_id, {
+                        source: 'tasks',
+                        event: 'auto_compacting_context',
+                        message: `Auto-compacting context for task ${this.task_id}`
+                    });
                 },
                 enableToolResultBudget: true,
                 enableMicrocompact: true,
@@ -933,21 +985,63 @@ export class TaskState {
             }
 
             if (preparation.sessionMemoryCompactResult) {
-                logger.info(
-                    `[Compact Step8E] session memory compact result: compacted=${preparation.sessionMemoryCompacted}, ` +
+                const compactVariant = preparation.sessionMemoryCompactResult.plan
+                    ? describeCompactPlanVariant(preparation.sessionMemoryCompactResult.plan)
+                    : undefined;
+                logCompactInfo(this.task_id, {
+                    source: 'tasks',
+                    event: 'session_memory_compact_result',
+                    message:
+                        `[Compact Step9] session memory compact result: compacted=${preparation.sessionMemoryCompacted}, ` +
+                        (compactVariant ? `variant=${compactVariant.compactVariant}, ` : '') +
                         `reason=${preparation.sessionMemoryCompactResult.noopReason ?? 'applied'}, ` +
-                        `postTokens=${preparation.sessionMemoryCompactResult.postCompactTokens ?? 'unknown'}`
-                );
+                        `postTokens=${preparation.sessionMemoryCompactResult.postCompactTokens ?? 'unknown'}`,
+                    data: {
+                        compacted: preparation.sessionMemoryCompacted,
+                        reason: preparation.sessionMemoryCompactResult.noopReason ?? 'applied',
+                        postTokens: preparation.sessionMemoryCompactResult.postCompactTokens ?? 'unknown',
+                        ...(compactVariant ?? {})
+                    }
+                });
             }
+
+            const activeContextVariant = describeActiveContextVariant(preparation.activeContext);
+            logCompactInfo(this.task_id, {
+                source: 'tasks',
+                event: 'active_context_compact_variant',
+                message:
+                    `[Compact Step9] active context compact variant=${activeContextVariant.compactVariant}, ` +
+                    `recentUserPreserved=${activeContextVariant.recentUserPreserved}, ` +
+                    `startsInsideAssistant=${activeContextVariant.startsInsideAssistant}` +
+                    (activeContextVariant.startsInsideAssistant
+                        ? `, messageId=${activeContextVariant.keepAnchorMessageId}, ` +
+                          `roundIndex=${activeContextVariant.kept_anchor_round_index}, ` +
+                          `startPartIndex=${activeContextVariant.kept_anchor_start_part_index}`
+                        : ''),
+                data: {
+                    ...activeContextVariant
+                }
+            });
 
             if (preparation.budgetApplied && preparation.toolResultBudgetStats) {
                 const stats = preparation.toolResultBudgetStats;
-                logger.info(
-                    `[Compact Step4] query-time tool result budget: groups=${stats.groupCount}, ` +
+                logCompactInfo(this.task_id, {
+                    source: 'tasks',
+                    event: 'tool_result_budget',
+                    message:
+                        `[Compact Step4] query-time tool result budget: groups=${stats.groupCount}, ` +
                         `overrides=${stats.overrideCount}, reapplied=${stats.reappliedCount}, ` +
                         `newlySelected=${stats.newlySelectedCount}, newlySeen=${stats.newlySeenCount}, ` +
-                        `overBudgetGroups=${stats.overBudgetGroupCount}`
-                );
+                        `overBudgetGroups=${stats.overBudgetGroupCount}`,
+                    data: {
+                        groupCount: stats.groupCount,
+                        overrideCount: stats.overrideCount,
+                        reappliedCount: stats.reappliedCount,
+                        newlySelectedCount: stats.newlySelectedCount,
+                        newlySeenCount: stats.newlySeenCount,
+                        overBudgetGroupCount: stats.overBudgetGroupCount
+                    }
+                });
             }
 
             if (preparation.microcompactStats) {
@@ -956,39 +1050,86 @@ export class TaskState {
                     .sort(([leftReason], [rightReason]) => leftReason.localeCompare(rightReason))
                     .map(([reason, count]) => `${reason}=${count}`)
                     .join(', ');
-                logger.info(
-                    `[Compact Step5A] microcompact analysis: scanned=${stats.scannedToolCallCount}, ` +
+                logCompactInfo(this.task_id, {
+                    source: 'tasks',
+                    event: 'microcompact_analysis',
+                    message:
+                        `[Compact Step5A] microcompact analysis: scanned=${stats.scannedToolCallCount}, ` +
                         `candidates=${stats.candidateCount}, skipped=${stats.skippedCount}, ` +
                         `tailProtected=${stats.tailProtectedCount}, totalCandidateChars=${stats.totalCandidateChars}, ` +
                         `tailAssistantMessages=${stats.tailAssistantMessages}` +
-                        (skippedSummary.length > 0 ? `, skippedByReason={${skippedSummary}}` : '')
-                );
+                        (skippedSummary.length > 0 ? `, skippedByReason={${skippedSummary}}` : ''),
+                    data: {
+                        scannedToolCallCount: stats.scannedToolCallCount,
+                        candidateCount: stats.candidateCount,
+                        skippedCount: stats.skippedCount,
+                        tailProtectedCount: stats.tailProtectedCount,
+                        totalCandidateChars: stats.totalCandidateChars,
+                        tailAssistantMessages: stats.tailAssistantMessages,
+                        skippedByReason: stats.skippedByReason
+                    }
+                });
 
                 const topCandidates = [...(preparation.microcompactAnalysis?.candidates ?? [])]
                     .sort((left, right) => right.sizeChars - left.sizeChars)
                     .slice(0, 3);
                 for (const candidate of topCandidates) {
-                    logger.info(
-                        `[Compact Step5A] candidate tool=${candidate.toolName}, chars=${candidate.sizeChars}, ` +
+                    logCompactInfo(this.task_id, {
+                        source: 'tasks',
+                        event: 'microcompact_candidate',
+                        message:
+                            `[Compact Step5A] candidate tool=${candidate.toolName}, chars=${candidate.sizeChars}, ` +
                             `lines=${candidate.sizeLines}, chatIndex=${candidate.chatContextMessageIndex}, ` +
                             `part=${candidate.toolCallPartIndex}, call=${candidate.toolCallIndex}, ` +
-                            `resultId=${candidate.resultId}, hasStorage=${candidate.hasResultStorage}`
-                    );
+                            `resultId=${candidate.resultId}, hasStorage=${candidate.hasResultStorage}`,
+                        data: {
+                            toolName: candidate.toolName,
+                            sizeChars: candidate.sizeChars,
+                            sizeLines: candidate.sizeLines,
+                            chatContextMessageIndex: candidate.chatContextMessageIndex,
+                            toolCallPartIndex: candidate.toolCallPartIndex,
+                            toolCallIndex: candidate.toolCallIndex,
+                            resultId: candidate.resultId,
+                            hasResultStorage: candidate.hasResultStorage
+                        }
+                    });
                 }
-                logger.info(
-                    `[Compact Step5B] local microcompact: applied=${stats.appliedCount}, ` +
+                logCompactInfo(this.task_id, {
+                    source: 'tasks',
+                    event: 'microcompact_applied_summary',
+                    message:
+                        `[Compact Step5B] local microcompact: applied=${stats.appliedCount}, ` +
                         `skippedByOverride=${stats.skippedByOverrideCount}, ` +
                         `unshrinkable=${stats.unshrinkableCount}, ` +
-                        `charsBefore=${stats.totalCharsBefore}, charsAfter=${stats.totalCharsAfter}`
-                );
+                        `charsBefore=${stats.totalCharsBefore}, charsAfter=${stats.totalCharsAfter}`,
+                    data: {
+                        appliedCount: stats.appliedCount,
+                        skippedByOverrideCount: stats.skippedByOverrideCount,
+                        unshrinkableCount: stats.unshrinkableCount,
+                        totalCharsBefore: stats.totalCharsBefore,
+                        totalCharsAfter: stats.totalCharsAfter
+                    }
+                });
 
                 for (const candidate of preparation.microcompactAppliedCandidates.slice(0, 3)) {
-                    logger.info(
-                        `[Compact Step5B] applied tool=${candidate.toolName}, chars=${candidate.sizeChars}, ` +
+                    logCompactInfo(this.task_id, {
+                        source: 'tasks',
+                        event: 'microcompact_applied_candidate',
+                        message:
+                            `[Compact Step5B] applied tool=${candidate.toolName}, chars=${candidate.sizeChars}, ` +
                             `lines=${candidate.sizeLines}, chatIndex=${candidate.chatContextMessageIndex}, ` +
                             `part=${candidate.toolCallPartIndex}, call=${candidate.toolCallIndex}, ` +
-                            `resultId=${candidate.resultId}`
-                    );
+                            `resultId=${candidate.resultId}`,
+                        data: {
+                            toolName: candidate.toolName,
+                            sizeChars: candidate.sizeChars,
+                            sizeLines: candidate.sizeLines,
+                            chatContextMessageIndex: candidate.chatContextMessageIndex,
+                            toolCallPartIndex: candidate.toolCallPartIndex,
+                            toolCallIndex: candidate.toolCallIndex,
+                            resultId: candidate.resultId
+                        }
+                    });
                 }
             }
 

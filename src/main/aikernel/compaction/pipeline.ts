@@ -1,6 +1,7 @@
 import { compactContext } from '../compact.js';
 import { ChatContext } from '../messages.js';
 import { logger } from '../../utils/logger.js';
+import { describeCompactPlanVariant, logCompactInfo } from './compact-trace.js';
 import { buildActiveContextView } from './context-view.js';
 import { AutoCompactStates, getAutoCompactDecision, type AutoCompactState } from './auto-compact.js';
 import { analyzeMicrocompactCandidates, applyLocalMicrocompactToChatContext } from './microcompact.js';
@@ -20,6 +21,10 @@ type LightweightPreparationResult = Omit<
     | 'autoCompactState'
     | 'autoCompactStateChanged'
 >;
+
+function isAssistantRoundBoundaryEnabled(options: PrepareContextOptions): boolean {
+    return options.enableAssistantRoundBoundary !== false;
+}
 
 function runLightweightPreparationLayers(
     chatContext: ChatContext,
@@ -111,6 +116,7 @@ export async function prepareContextForModel(
     options: PrepareContextOptions = {}
 ): Promise<PreparedContextResult> {
     chatContext.deduplicateCompactBoundaries();
+    const assistantRoundBoundaryEnabled = isAssistantRoundBoundaryEnabled(options);
 
     let lightweightResult = runLightweightPreparationLayers(chatContext, options);
     const autoCompactDecision =
@@ -129,12 +135,21 @@ export async function prepareContextForModel(
     const sessionMemoryStateChanged = false;
 
     if (autoCompactDecision.shouldCompact && cooldownRemainingMs > 0) {
-        logger.info(
-            `[Compact] auto-compact cooldown active: remaining=${cooldownRemainingMs}ms, ` +
+        logCompactInfo(options.taskId, {
+            source: 'pipeline',
+            event: 'auto_compact_cooldown_active',
+            message:
+                `[Compact] auto-compact cooldown active: remaining=${cooldownRemainingMs}ms, ` +
                 `failures=${autoCompactState?.consecutiveFailures ?? 0}, ` +
                 `threshold=${autoCompactState?.failureThreshold ?? 0}, ` +
-                `lastFailureReason=${autoCompactState?.lastFailureReason ?? 'unknown'}`
-        );
+                `lastFailureReason=${autoCompactState?.lastFailureReason ?? 'unknown'}`,
+            data: {
+                cooldownRemainingMs,
+                consecutiveFailures: autoCompactState?.consecutiveFailures ?? 0,
+                failureThreshold: autoCompactState?.failureThreshold ?? 0,
+                lastFailureReason: autoCompactState?.lastFailureReason ?? 'unknown'
+            }
+        });
     }
 
     const syncAutoCompactState = (nextState: AutoCompactState) => {
@@ -146,6 +161,22 @@ export async function prepareContextForModel(
     };
 
     if (shouldRunCompact) {
+        const defaultCompactionPath = options.enableSessionMemoryCompact
+            ? 'session_memory_then_full_compact'
+            : 'full_compact_only';
+        logCompactInfo(options.taskId, {
+            source: 'pipeline',
+            event: 'compaction_path_defaults',
+            message:
+                `[Compact Step9] default compaction path=${defaultCompactionPath}, ` +
+                `assistantRoundBoundary=${assistantRoundBoundaryEnabled}`,
+            data: {
+                defaultCompactionPath,
+                enableAssistantRoundBoundary: assistantRoundBoundaryEnabled,
+                enableSessionMemoryCompact: options.enableSessionMemoryCompact === true
+            }
+        });
+
         if (autoCompactState) {
             syncAutoCompactState(AutoCompactStates.recordAttempt(autoCompactState));
         }
@@ -166,23 +197,45 @@ export async function prepareContextForModel(
                             options.taskId,
                             sessionMemoryState,
                             autoCompactDecision,
-                            options.sessionMemoryCompactOptions
+                            {
+                                ...options.sessionMemoryCompactOptions,
+                                enableAssistantRoundBoundary:
+                                    options.sessionMemoryCompactOptions?.enableAssistantRoundBoundary ??
+                                    assistantRoundBoundaryEnabled
+                            }
                         );
                         sessionMemoryCompactResult = sessionMemoryResult;
                         if (sessionMemoryResult.compacted) {
+                            const compactVariant = describeCompactPlanVariant(sessionMemoryResult.plan);
                             compactApplied = true;
                             sessionMemoryCompacted = true;
-                            logger.info(
-                                `[Compact Step8E] session memory compact applied: ` +
+                            logCompactInfo(options.taskId, {
+                                source: 'pipeline',
+                                event: 'session_memory_compact_applied',
+                                message:
+                                    `[Compact Step9] session memory compact applied: ` +
+                                    `variant=${compactVariant.compactVariant}, ` +
                                     `kept=${sessionMemoryResult.plan?.messagesToKeep.length ?? 0}, ` +
                                     `postTokens=${sessionMemoryResult.postCompactTokens ?? 'unknown'}, ` +
-                                    `threshold=${sessionMemoryResult.autoCompactThreshold ?? 'unknown'}`
-                            );
+                                    `threshold=${sessionMemoryResult.autoCompactThreshold ?? 'unknown'}`,
+                                data: {
+                                    keptMessages: sessionMemoryResult.plan?.messagesToKeep.length ?? 0,
+                                    postCompactTokens: sessionMemoryResult.postCompactTokens ?? 'unknown',
+                                    autoCompactThreshold: sessionMemoryResult.autoCompactThreshold ?? 'unknown',
+                                    ...compactVariant
+                                }
+                            });
                         } else {
-                            logger.info(
-                                `[Compact Step8E] session memory compact no-op: ` +
-                                    `${sessionMemoryResult.noopReason ?? 'unknown'}`
-                            );
+                            logCompactInfo(options.taskId, {
+                                source: 'pipeline',
+                                event: 'session_memory_compact_noop',
+                                message:
+                                    `[Compact Step8E] session memory compact no-op: ` +
+                                    `${sessionMemoryResult.noopReason ?? 'unknown'}`,
+                                data: {
+                                    noopReason: sessionMemoryResult.noopReason ?? 'unknown'
+                                }
+                            });
                         }
                     } catch (sessionMemoryError) {
                         logger.warn(
@@ -193,7 +246,11 @@ export async function prepareContextForModel(
                 }
 
                 if (!compactApplied) {
-                    compactApplied = await compactContext(chatContext, model, { trigger: 'auto' });
+                    compactApplied = await compactContext(chatContext, model, {
+                        trigger: 'auto',
+                        taskId: options.taskId,
+                        enableAssistantRoundBoundary: assistantRoundBoundaryEnabled
+                    });
                 }
             }
         } catch (err) {
@@ -236,7 +293,11 @@ export async function prepareContextForModel(
                     lightweightResult.microcompactStateChanged || rerunResult.microcompactStateChanged
             };
         } else {
-            logger.info('[Compact] auto compact returned no-op; keeping context unchanged');
+            logCompactInfo(options.taskId, {
+                source: 'pipeline',
+                event: 'auto_compact_noop',
+                message: '[Compact] auto compact returned no-op; keeping context unchanged'
+            });
         }
     }
 

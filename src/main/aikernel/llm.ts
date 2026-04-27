@@ -13,7 +13,7 @@ import { OpenAI } from 'openai';
 import { ChatContext, AssistantResponse, UserMessage, AssistantMessage, isCompactBoundaryMessage } from './messages';
 import { Setting, ModelInstance, ReasoningEffort } from '../utils/setting.js';
 import { buildActiveContextView } from './compaction/context-view.js';
-import type { ActiveContextView } from './compaction/types.js';
+import type { ActiveContextView, AssistantRoundRef } from './compaction/types.js';
 import { z } from 'zod';
 import { logger } from '../utils/logger.js';
 import { lookupKnownVisionSupport, fetchVisionSupportFromAPI } from '../utils/model-context.js';
@@ -81,6 +81,12 @@ interface LLMAskOptions {
 interface LLMMessageBuildOptions {
     activeContext?: ActiveContextView;
     toolResultOverrides?: Map<string, string>;
+    assistantReplayByMessageId?: Map<string, AssistantReplayInstruction>;
+}
+
+interface AssistantReplayInstruction {
+    startPartIndex?: number;
+    roundRef?: AssistantRoundRef;
 }
 
 /** Reranker API 返回的单条结果 */
@@ -404,6 +410,7 @@ class LLM {
      *   并将 boundary 本身作为一条 UserMessage（含结构化总结）插入上下文。
      * - 对于 AssistantMessage，会调用其 toOpenAIMessages() 方法进行拆分，
      *   以保持 reasoning、tool_call、text 的正确顺序。
+     * - 如显式提供 assistantReplayByMessageId，则可对单条 assistant 仅回放后半段 round / part。
      * @param supportsVision 当前模型是否支持视觉输入，false 时 UserMessage 中的图像部分会被过滤
      */
     static buildMessages(
@@ -420,6 +427,15 @@ class LLM {
 
         const activeContext = options.activeContext ?? buildActiveContextView(chatContext);
         const toolResultOverrides = options.toolResultOverrides;
+        const assistantReplayByMessageId = new Map(options.assistantReplayByMessageId ?? []);
+        if (
+            activeContext.leadingPartialAssistant &&
+            !assistantReplayByMessageId.has(activeContext.leadingPartialAssistant.message.message_id)
+        ) {
+            assistantReplayByMessageId.set(activeContext.leadingPartialAssistant.message.message_id, {
+                roundRef: activeContext.leadingPartialAssistant.roundRef
+            });
+        }
         for (const message of activeContext.messages) {
             if (isCompactBoundaryMessage(message)) {
                 messages.push(message.toOpenAIMessage());
@@ -427,7 +443,18 @@ class LLM {
                 if (message.content.length === 0) {
                     continue;
                 }
-                messages.push(...message.toOpenAIMessages(toolResultOverrides));
+                const replayInstruction = assistantReplayByMessageId.get(message.message_id);
+                if (replayInstruction?.roundRef) {
+                    messages.push(
+                        ...message.toOpenAIMessagesFromRound(replayInstruction.roundRef, toolResultOverrides)
+                    );
+                } else if (typeof replayInstruction?.startPartIndex === 'number') {
+                    messages.push(
+                        ...message.toOpenAIMessagesFromPartIndex(replayInstruction.startPartIndex, toolResultOverrides)
+                    );
+                } else {
+                    messages.push(...message.toOpenAIMessages(toolResultOverrides));
+                }
             } else if (message instanceof UserMessage) {
                 messages.push(message.toOpenAIMessage(supportsVision));
             } else {

@@ -1,6 +1,7 @@
-import { AssistantMessage, ChatContext, ToolCall, ToolCallMessagePart } from '../messages.js';
+import { ChatContext, ToolCall, ToolCallMessagePart } from '../messages.js';
+import { buildVisibleAssistantRounds } from './assistant-rounds.js';
 import { buildActiveContextView } from './context-view.js';
-import type { ActiveContextView } from './types.js';
+import type { ActiveContextView, AssistantRoundRef, VisibleAssistantRound } from './types.js';
 import { countToolResultLines, getToolResultArtifactPath } from './tool-results.js';
 
 export const MICROCOMPACTABLE_TOOL_NAMES = new Set<string>([
@@ -34,6 +35,8 @@ interface MicrocompactBaseRecord {
     assistantMessageIndex: number;
     chatContextMessageIndex: number;
     assistantMessageId: string;
+    roundIndex: number;
+    roundRef: AssistantRoundRef;
     toolCallPartIndex: number;
     toolCallIndex: number;
     hasResultStorage: boolean;
@@ -56,7 +59,9 @@ export interface MicrocompactSkippedCandidate extends MicrocompactBaseRecord {
 
 export interface MicrocompactStats {
     assistantMessagesWithToolCalls: number;
+    assistantRoundsWithToolCalls: number;
     tailAssistantMessages: number;
+    tailAssistantRounds: number;
     tailProtectedCount: number;
     scannedToolCallCount: number;
     candidateCount: number;
@@ -77,9 +82,11 @@ export interface MicrocompactAnalysisResult {
     skipped: MicrocompactSkippedCandidate[];
     stats: MicrocompactStats;
     tailProtectedAssistantMessageIds: string[];
+    tailProtectedAssistantRoundRefs: AssistantRoundRef[];
 }
 
 export interface MicrocompactAnalysisOptions {
+    /** Legacy option name kept for compatibility; the protected tail is now round-aware. */
     tailAssistantMessages?: number;
     skipToolNames?: Iterable<string>;
 }
@@ -121,21 +128,12 @@ function incrementSkipReasonCounter(
     counters[reason] = (counters[reason] ?? 0) + 1;
 }
 
-function collectAssistantMessagesWithToolCalls(activeContext: ActiveContextView): AssistantMessage[] {
-    const assistantMessages: AssistantMessage[] = [];
+function buildRoundKey(roundRef: AssistantRoundRef): string {
+    return `${roundRef.assistantMessageId}:${roundRef.roundIndex}:${roundRef.startPartIndex}:${roundRef.endPartIndexExclusive}`;
+}
 
-    for (const message of activeContext.messages) {
-        if (!(message instanceof AssistantMessage)) {
-            continue;
-        }
-
-        const hasToolCalls = message.content.some((part) => part.type === 'tool_call' && part.toolcalls.length > 0);
-        if (hasToolCalls) {
-            assistantMessages.push(message);
-        }
-    }
-
-    return assistantMessages;
+function collectVisibleAssistantRoundsWithToolCalls(activeContext: ActiveContextView): VisibleAssistantRound[] {
+    return buildVisibleAssistantRounds(activeContext).filter((round) => round.round.toolCallCount > 0);
 }
 
 export function isMicrocompactableToolName(toolName: string): boolean {
@@ -171,46 +169,44 @@ export function analyzeMicrocompactCandidates(
     activeContext: ActiveContextView,
     options: MicrocompactAnalysisOptions = {}
 ): MicrocompactAnalysisResult {
-    const tailAssistantMessages = Math.max(
+    const tailAssistantRounds = Math.max(
         0,
         Math.trunc(options.tailAssistantMessages ?? DEFAULT_MICROCOMPACT_TAIL_ASSISTANT_MESSAGES)
     );
-    const assistantMessagesWithToolCalls = collectAssistantMessagesWithToolCalls(activeContext);
-    const tailProtectedAssistantMessageIds =
-        tailAssistantMessages > 0
-            ? assistantMessagesWithToolCalls.slice(-tailAssistantMessages).map((message) => message.message_id)
-            : [];
-    const tailProtectedAssistantMessageIdSet = new Set(tailProtectedAssistantMessageIds);
+    const assistantRoundsWithToolCalls = collectVisibleAssistantRoundsWithToolCalls(activeContext);
+    const tailProtectedAssistantRounds =
+        tailAssistantRounds > 0 ? assistantRoundsWithToolCalls.slice(-tailAssistantRounds) : [];
+    const tailProtectedAssistantRoundKeySet = new Set(
+        tailProtectedAssistantRounds.map((round) => buildRoundKey(round.roundRef))
+    );
+    const tailProtectedAssistantMessageIds = Array.from(
+        new Set(tailProtectedAssistantRounds.map((round) => round.message.message_id))
+    );
+    const assistantMessagesWithToolCalls = Array.from(
+        new Set(assistantRoundsWithToolCalls.map((round) => round.message.message_id))
+    );
 
     const candidates: MicrocompactCandidate[] = [];
     const skipped: MicrocompactSkippedCandidate[] = [];
     const skippedByReason: Partial<Record<MicrocompactSkipReason, number>> = {};
     let scannedToolCallCount = 0;
 
-    for (
-        let assistantMessageIndex = 0;
-        assistantMessageIndex < activeContext.messages.length;
-        assistantMessageIndex++
-    ) {
-        const message = activeContext.messages[assistantMessageIndex];
-        if (!(message instanceof AssistantMessage)) {
-            continue;
-        }
+    for (const visibleRound of assistantRoundsWithToolCalls) {
+        const isWithinTail = tailProtectedAssistantRoundKeySet.has(buildRoundKey(visibleRound.roundRef));
 
-        const isWithinTail = tailProtectedAssistantMessageIdSet.has(message.message_id);
-
-        for (let toolCallPartIndex = 0; toolCallPartIndex < message.content.length; toolCallPartIndex++) {
-            const part = message.content[toolCallPartIndex];
+        for (let roundPartIndex = 0; roundPartIndex < visibleRound.round.parts.length; roundPartIndex++) {
+            const part = visibleRound.round.parts[roundPartIndex];
             if (part.type !== 'tool_call') {
                 continue;
             }
 
+            const toolCallPartIndex = visibleRound.roundRef.startPartIndex + roundPartIndex;
             for (let toolCallIndex = 0; toolCallIndex < part.toolcalls.length; toolCallIndex++) {
                 const toolCall = part.toolcalls[toolCallIndex];
-                const chatContextMessageIndex = activeContext.startIndex + assistantMessageIndex;
+                const chatContextMessageIndex = visibleRound.messageIndex;
                 const resultId = buildMicrocompactResultId(
                     toolCall,
-                    message.message_id,
+                    visibleRound.message.message_id,
                     toolCallPartIndex,
                     toolCallIndex
                 );
@@ -225,9 +221,11 @@ export function analyzeMicrocompactCandidates(
                 const baseRecord = {
                     resultId,
                     toolName: toolCall.tool_name,
-                    assistantMessageIndex,
+                    assistantMessageIndex: visibleRound.assistantMessageIndex,
                     chatContextMessageIndex,
-                    assistantMessageId: message.message_id,
+                    assistantMessageId: visibleRound.message.message_id,
+                    roundIndex: visibleRound.roundRef.roundIndex,
+                    roundRef: visibleRound.roundRef,
                     toolCallPartIndex,
                     toolCallIndex,
                     hasResultStorage,
@@ -297,7 +295,9 @@ export function analyzeMicrocompactCandidates(
         skipped,
         stats: {
             assistantMessagesWithToolCalls: assistantMessagesWithToolCalls.length,
-            tailAssistantMessages: tailAssistantMessages,
+            assistantRoundsWithToolCalls: assistantRoundsWithToolCalls.length,
+            tailAssistantMessages: tailAssistantRounds,
+            tailAssistantRounds: tailProtectedAssistantRounds.length,
             tailProtectedCount: skippedByReason.tail_protected ?? 0,
             scannedToolCallCount,
             candidateCount: candidates.length,
@@ -311,7 +311,8 @@ export function analyzeMicrocompactCandidates(
             totalCharsAfter: candidates.reduce((total, candidate) => total + candidate.sizeChars, 0),
             skippedByReason
         },
-        tailProtectedAssistantMessageIds
+        tailProtectedAssistantMessageIds,
+        tailProtectedAssistantRoundRefs: tailProtectedAssistantRounds.map((round) => round.roundRef)
     };
 }
 
