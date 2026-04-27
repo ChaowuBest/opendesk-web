@@ -1240,13 +1240,13 @@ export class AssistantMessage {
         let currentReasoning = '';
         let currentText = '';
 
-        const processCurrentMessage = () => {
+        const processCurrentMessage = (additionalFields?: Record<string, any>) => {
             currentReasoning = currentReasoning.trim();
             currentText = currentText.trim();
-            if (currentText.length === 0 && currentReasoning.length === 0) {
+            if (currentText.length === 0 && currentReasoning.length === 0 && additionalFields === undefined) {
                 return;
             }
-            const message: any = { role: 'assistant' };
+            const message: any = { role: 'assistant', ...additionalFields };
             if (currentReasoning.length > 0) {
                 message.reasoning_content = currentReasoning;
             }
@@ -1272,7 +1272,6 @@ export class AssistantMessage {
                     break;
                 }
                 case 'tool_call': {
-                    processCurrentMessage();
                     const validToolcalls: ToolCall[] = [];
                     for (const tc of part.toolcalls) {
                         const argsToCheck =
@@ -1288,31 +1287,38 @@ export class AssistantMessage {
                         }
                         validToolcalls.push(tc);
                     }
-                    if (validToolcalls.length > 0) {
-                        const toolCallObjects = validToolcalls.map((tc) => {
-                            const shouldCompressArgs =
-                                tc.compress_id && tc.args_string && tc.args_string.length > LARGE_ARGS_THRESHOLD;
-                            return {
-                                id: tc.id,
-                                type: 'function',
-                                function: {
-                                    name: tc.tool_name,
-                                    arguments: shouldCompressArgs
-                                        ? `{"compressed":"工具参数已被压缩，数据ID为 ${tc.compress_id}"}`
-                                        : tc.args_string || ''
-                                }
-                            };
-                        });
-                        messages.push({ role: 'assistant', tool_calls: toolCallObjects });
-                        for (const toolcall of validToolcalls) {
-                            const toolCallMsg: any = { role: 'tool', tool_call_id: toolcall.id };
-                            toolCallMsg.content = AssistantMessage.buildOpenAIToolResultContent(
-                                toolcall,
-                                toolResultOverrides
-                            );
-                            messages.push(toolCallMsg);
-                        }
+
+                    if (validToolcalls.length === 0) {
+                        /* 如果当前没有有效的 toolcall，则直接处理下一个 message part 即可,
+                         * 连 processCurrentMessage 都不需要调用 */
+                        break;
                     }
+
+                    const toolCallObjects = validToolcalls.map((tc) => {
+                        const shouldCompressArgs =
+                            tc.compress_id && tc.args_string && tc.args_string.length > LARGE_ARGS_THRESHOLD;
+                        return {
+                            id: tc.id,
+                            type: 'function',
+                            function: {
+                                name: tc.tool_name,
+                                arguments: shouldCompressArgs
+                                    ? `{"compressed":"工具参数已被压缩，数据ID为 ${tc.compress_id}"}`
+                                    : tc.args_string || ''
+                            }
+                        };
+                    });
+
+                    processCurrentMessage({ tool_calls: toolCallObjects });
+                    for (const toolcall of validToolcalls) {
+                        const toolCallMsg: any = { role: 'tool', tool_call_id: toolcall.id };
+                        toolCallMsg.content = AssistantMessage.buildOpenAIToolResultContent(
+                            toolcall,
+                            toolResultOverrides
+                        );
+                        messages.push(toolCallMsg);
+                    }
+
                     break;
                 }
                 case 'text': {

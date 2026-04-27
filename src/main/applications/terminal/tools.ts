@@ -295,7 +295,7 @@ async function executeShellCommand(opts: {
 // ── PowerShell ──────────────────────────────────────────────────────────────
 
 const ExecutePowerShellArgsSchema = z.object({
-    command: z.string().describe('要执行的PowerShell命令'),
+    command: z.string().min(1, '命令不能为空').describe('要执行的PowerShell命令'),
     description: z
         .string()
         .optional()
@@ -362,16 +362,11 @@ export class ExecutePowerShellTool extends BaseTool<typeof ExecutePowerShellArgs
             command = parsed.command;
         }
 
-        if (!command || typeof command !== 'string') {
-            result.updateResult('请输入要执行的 PowerShell 命令。');
-            return;
-        }
-
         let cwd: string | undefined = undefined;
         if (workingDirectory && typeof workingDirectory === 'string' && fs.existsSync(workingDirectory)) {
             cwd = workingDirectory;
         } else if (taskState?.harnessContext?.workspace) {
-            cwd = taskState.harnessContext.workspace;
+            cwd = taskState?.harnessContext?.workspace;
         }
 
         const utf8Command = `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ${command}`;
@@ -393,7 +388,7 @@ export class ExecutePowerShellTool extends BaseTool<typeof ExecutePowerShellArgs
 // ── Bash ────────────────────────────────────────────────────────────────────
 
 const ExecuteBashArgsSchema = z.object({
-    command: z.string().describe('要执行的BASH命令'),
+    command: z.string().min(1, '命令不能为空').describe('要执行的BASH命令'),
     description: z
         .string()
         .optional()
@@ -450,11 +445,6 @@ export class ExecuteBashTool extends BaseTool<typeof ExecuteBashArgsSchema> {
         const workingDirectory: string | undefined = args.workingDirectory;
         const timeout: number = args.timeout ?? 30000;
 
-        if (!command || typeof command !== 'string') {
-            result.updateResult('请输入要执行的 bash 命令。');
-            return;
-        }
-
         let cwd: string | undefined = undefined;
         if (workingDirectory && typeof workingDirectory === 'string' && fs.existsSync(workingDirectory)) {
             cwd = workingDirectory;
@@ -488,7 +478,7 @@ export class ExecuteBashTool extends BaseTool<typeof ExecuteBashArgsSchema> {
 // ── Zsh ────────────────────────────────────────────────────────────────────
 
 const ExecuteZshArgsSchema = z.object({
-    command: z.string().describe('要执行的ZSH命令'),
+    command: z.string().min(1, '命令不能为空').describe('要执行的ZSH命令'),
     description: z
         .string()
         .optional()
@@ -533,11 +523,6 @@ export class ExecuteZshTool extends BaseTool<typeof ExecuteZshArgsSchema> {
         const command: string = args.command;
         const workingDirectory: string | undefined = args.workingDirectory;
         const timeout: number = args.timeout ?? 30000;
-
-        if (!command || typeof command !== 'string') {
-            result.updateResult('请输入要执行的 zsh 命令。');
-            return;
-        }
 
         const zshPath = getZshPath();
         if (!zshPath) {

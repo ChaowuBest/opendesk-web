@@ -550,6 +550,22 @@ class TaskView extends HTMLElement {
         }
     }
 
+    async _initToolbarWorkspace() {
+        if (!this._toolbar || !window.workspaceAPI) return;
+        try {
+            const workspacePath = await window.workspaceAPI.getEffectiveWorkspace();
+            this._toolbar.setToolbarSubtitle(workspacePath, async () => {
+                const newPath = await window.workspaceAPI.selectWorkspaceDirectory();
+                if (newPath) {
+                    this._toolbar.setToolbarSubtitle(newPath, this._toolbar._subtitleClickHandler);
+                    document.dispatchEvent(new CustomEvent('workspace-changed'));
+                }
+            });
+        } catch (error) {
+            console.error('Failed to init toolbar workspace:', error);
+        }
+    }
+
     async exportTask() {
         try {
             const timestamp = new Date().toISOString().slice(0, 10);
@@ -617,6 +633,7 @@ class TaskView extends HTMLElement {
             this._toolbar = toolbar;
         }
 
+        this._initToolbarWorkspace();
         this.setUpEventListeners();
 
         // 订阅全局待办更新（跨任务共享）
@@ -627,10 +644,16 @@ class TaskView extends HTMLElement {
         // 订阅浏览器事件（agent 工具 → main → renderer → 操作浏览器）
         this._subscribeBrowserEvents();
 
-        this._workspaceChangedHandler = () => {
+        this._workspaceChangedHandler = async () => {
             const sidebar = this._getRightSidebarEl();
             if (sidebar && typeof sidebar.refreshWorkspace === 'function') {
                 sidebar.refreshWorkspace();
+            }
+            if (this._toolbar && window.workspaceAPI) {
+                try {
+                    const p = await window.workspaceAPI.getEffectiveWorkspace();
+                    this._toolbar.setToolbarSubtitle(p, this._toolbar._subtitleClickHandler);
+                } catch (_) {}
             }
         };
         document.addEventListener('workspace-changed', this._workspaceChangedHandler);
@@ -775,7 +798,6 @@ class TaskView extends HTMLElement {
         this.innerHTML = `
         <div class="bg-gray-30 h-full flex flex-col">
             <header id="taskview-toolbar" class="w-full"></header>
-
             <div id="task-${this.task_id}-content-row" class="flex-1 flex flex-row min-h-0">
                 <div class="flex-1 flex flex-col min-w-0">
                     <div class="relative flex-1 overflow-y-auto">

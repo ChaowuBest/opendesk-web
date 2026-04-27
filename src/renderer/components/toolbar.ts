@@ -25,7 +25,9 @@ export class ElasticToolbarWidget extends HTMLElement {
     uid: string;
     buttons: Button[];
     toolbarTitle?: string;
+    toolbarSubtitle?: string;
     layout: ToolbarLayout;
+    _subtitleClickHandler?: () => void;
 
     /**
      * 创建一个弹性工具栏组件
@@ -61,6 +63,25 @@ export class ElasticToolbarWidget extends HTMLElement {
         }
     }
 
+    setToolbarSubtitle(subtitle: string, onClick?: () => void) {
+        this.toolbarSubtitle = subtitle;
+        this._subtitleClickHandler = onClick;
+        const subtitleEl = this.querySelector(`#toolbar-subtitle-${this.uid}`) as HTMLElement | null;
+        if (subtitleEl) {
+            const textSpan = subtitleEl.querySelector('span');
+            if (textSpan) textSpan.textContent = subtitle;
+            subtitleEl.setAttribute('title', subtitle);
+            subtitleEl.style.display = subtitle ? '' : 'none';
+            if (onClick) {
+                const clone = subtitleEl.cloneNode(true) as HTMLElement;
+                subtitleEl.replaceWith(clone);
+                clone.addEventListener('click', onClick);
+            }
+        } else {
+            this.render();
+        }
+    }
+
     render() {
         if (this.layout === 'spread') {
             this._renderSpread();
@@ -90,11 +111,24 @@ export class ElasticToolbarWidget extends HTMLElement {
             ? `<span id="toolbar-title-${this.uid}" class="text-[18px] font-bold text-gray-900 truncate" title="${this.toolbarTitle}">${this.toolbarTitle}</span>`
             : '';
 
+        const subtitleHTML = this.toolbarSubtitle
+            ? `<button id="toolbar-subtitle-${this.uid}" class="toolbar-spread-subtitle" title="${this.toolbarSubtitle}">
+                <i class="fa-solid fa-briefcase"></i>
+                <span>${this.toolbarSubtitle}</span>
+                <i class="fa-solid fa-chevron-down" style="font-size: 8px; opacity: 0.5;"></i>
+               </button>`
+            : `<button id="toolbar-subtitle-${this.uid}" class="toolbar-spread-subtitle" style="display:none;" title="">
+                <i class="fa-solid fa-briefcase"></i>
+                <span></span>
+                <i class="fa-solid fa-chevron-down" style="font-size: 8px; opacity: 0.5;"></i>
+               </button>`;
+
         this.innerHTML = `
         <header class="toolbar-spread-header" style="height: 72px; padding: 0 5px 0 16px; display: flex; flex-direction: column; justify-content: flex-end;">
-            <div style="display: flex; align-items: center; justify-content: space-between; padding-bottom: 8px;">
-                <div class="flex items-center gap-2 min-w-0 flex-1">
+            <div style="display: flex; align-items: end; justify-content: space-between; padding-bottom: 4px;">
+                <div class="flex flex-col min-w-0 flex-1 gap-0.5">
                     ${titleHTML}
+                    ${subtitleHTML}
                 </div>
                 <div class="flex items-center gap-1 flex-shrink-0">
                     ${buttonsHTML}
@@ -145,6 +179,12 @@ export class ElasticToolbarWidget extends HTMLElement {
                 });
             }
         });
+        if (this._subtitleClickHandler) {
+            const subtitleEl = this.querySelector(`#toolbar-subtitle-${this.uid}`);
+            if (subtitleEl) {
+                subtitleEl.addEventListener('click', this._subtitleClickHandler);
+            }
+        }
     }
 }
 
