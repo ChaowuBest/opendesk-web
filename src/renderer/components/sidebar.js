@@ -56,16 +56,13 @@ class SideBar extends HTMLElement {
             this.reloadTaskList();
             document.dispatchEvent(new CustomEvent('task-list-updated', { detail: taskList }));
         });
-        this.querySelector('#create-task-btn').addEventListener('click', async () => {
-            const taskId = await window.taskManagerAPI.createTask();
-            window.globalControlAPI.openTask(taskId);
-            this.currentTaskId = taskId;
-            this.reloadTaskList();
-        });
-        this.querySelector('#open-home-btn').addEventListener('click', () => {
+        this.querySelector('#create-task-btn').addEventListener('click', () => {
             this.currentTaskId = null;
             window.globalControlAPI.openHomePage();
             this._updateTaskHighlight();
+        });
+        this.querySelector('#open-skills-btn').addEventListener('click', () => {
+            window.globalControlAPI.openApplication('skillmgr');
         });
 
         const searchInput = this.querySelector('#task-search-input');
@@ -82,17 +79,66 @@ class SideBar extends HTMLElement {
             this.reloadTaskList();
             searchInput.focus();
         });
+
+        const appsBtn = this.querySelector('#open-apps-btn');
+        const popover = this.querySelector('#app-popover');
+        appsBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const isVisible = !popover.classList.contains('sb-app-popover-hidden');
+            if (isVisible) {
+                this._dismissAppPopover();
+            } else {
+                this._showAppPopover();
+            }
+        });
+        this._appPopoverDismissHandler = (e) => {
+            if (!popover.contains(e.target) && !appsBtn.contains(e.target)) {
+                this._dismissAppPopover();
+            }
+        };
+        document.addEventListener('click', this._appPopoverDismissHandler, true);
+    }
+
+    _showAppPopover() {
+        const popover = this.querySelector('#app-popover');
+        const appsBtn = this.querySelector('#open-apps-btn');
+        if (!popover || !appsBtn) return;
+
+        popover.classList.remove('sb-app-popover-hidden');
+        popover.classList.add('sb-app-popover-visible');
+        appsBtn.classList.add('sb-nav-btn-active');
+
+        const btnRect = appsBtn.getBoundingClientRect();
+        popover.style.position = 'fixed';
+        popover.style.left = `${btnRect.left}px`;
+        popover.style.top = `${btnRect.bottom + 4}px`;
+
+        requestAnimationFrame(() => {
+            const popRect = popover.getBoundingClientRect();
+            if (popRect.right > window.innerWidth) {
+                popover.style.left = `${window.innerWidth - popRect.width - 8}px`;
+            }
+            if (popRect.bottom > window.innerHeight) {
+                popover.style.top = `${btnRect.top - popRect.height - 4}px`;
+            }
+        });
+    }
+
+    _dismissAppPopover() {
+        const popover = this.querySelector('#app-popover');
+        const appsBtn = this.querySelector('#open-apps-btn');
+        if (popover) {
+            popover.classList.add('sb-app-popover-hidden');
+            popover.classList.remove('sb-app-popover-visible');
+        }
+        if (appsBtn) {
+            appsBtn.classList.remove('sb-nav-btn-active');
+        }
     }
 
     render() {
         this.innerHTML = `
-        <style>
-            [x-cloak] {
-                display: none !important;
-            }
-        </style>
-
-        <div class="h-full flex flex-col" x-data="{ showApps: false }">
+        <div class="h-full flex flex-col">
             <header class="py-2 px-1 flex flex-row items-start flex-shrink-0">
                 <img src="./images/icon_round.png" alt="OpenDesk Icon" class="w-12 h-12 mr-3"/>
                 <div class="flex flex-col items-start">
@@ -110,44 +156,31 @@ class SideBar extends HTMLElement {
                 </button>
             </div>
 
-            <div class="py-2 flex flex-row gap-2 flex-shrink-0">
+            <div class="sb-nav-row flex flex-row gap-1.5 flex-shrink-0" style="margin: 4px 0; position: relative;">
                 <button
-                    id="open-home-btn"
-                    class="flex-1 flex items-center justify-center gap-1 px-2 py-3 bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-2xl text-gray-700 font-normal text-sm transition-colors duration-200"
+                    id="create-task-btn"
+                    class="sb-nav-btn"
                 >
-                    <i class="fa-solid fa-house"></i>
-                    <span>主页</span>
+                    <i class="fa-solid fa-house" style="font-size: 12px;"></i>
+                    <span>新任务</span>
                 </button>
                 <button
                     id="open-apps-btn"
-                    @click="showApps = !showApps"
-                        :class="showApps ? 'ring-2 ring-orange-400 bg-orange-50' : ''"
-                    class="flex-1 flex items-center justify-center gap-1 px-2 py-3 bg-green-50 hover:bg-green-100 border border-green-200 rounded-2xl text-green-700 font-normal text-sm transition-colors duration-200"
+                    class="sb-nav-btn"
                 >
-                    <i class="fa-solid fa-th-large"></i>
+                    <i class="fa-solid fa-th-large" style="font-size: 12px;"></i>
                     <span>应用</span>
                 </button>
                 <button
-                    id="create-task-btn"
-                    class="flex-1 flex items-center justify-center gap-1 px-2 py-3 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-2xl text-blue-700 font-normal text-sm transition-colors duration-200"
+                    id="open-skills-btn"
+                    class="sb-nav-btn"
                 >
-                    <i class="fa-solid fa-comments"></i>
-                    <span>新任务</span>
+                    <i class="fa-solid fa-wand-magic-sparkles" style="font-size: 12px;"></i>
+                    <span>技能</span>
                 </button>
             </div>
 
-            <div
-                x-cloak
-                x-show="showApps"
-                x-transition:enter="transition ease-out duration-300"
-                x-transition:enter-start="opacity-0 transform translate-y-4"
-                x-transition:enter-end="opacity-100 transform translate-y-0"
-                class="bg-white/90 backdrop-blur-xl rounded-2xl p-4 border border-white/50 shadow-sm my-1"
-            >
-                <div id="app-container" class="flex flex-wrap gap-y-5 gap-x-2 items-center justify-left">
-
-                </div>
-            </div>
+            <div id="app-popover" class="sb-app-popover sb-app-popover-hidden"></div>
 
             <div id="task-list-container" class="flex-1 overflow-y-auto py-2 pr-2">
             </div>
@@ -219,22 +252,36 @@ class SideBar extends HTMLElement {
     }
 
     async reloadApplicationList() {
-        const app_container = this.querySelector('#app-container');
-        app_container.innerHTML = '';
+        const popover = this.querySelector('#app-popover');
+        if (!popover) return;
+        popover.innerHTML = '';
         const appList = await window.applicationRegistryAPI.getApplicationList();
-        for (const app of appList) {
-            if (app.showIcon === false) continue;
+        const visibleApps = appList.filter((app) => app.showIcon !== false);
+
+        let gridHtml = '<div class="sb-app-popover-grid">';
+        for (const app of visibleApps) {
             const isMailbox = app.bundleName === 'mailbox';
-            app_container.innerHTML += `
-            <div class="flex flex-col items-center group cursor-pointer relative" onclick="window.globalControlAPI.openApplication('${app.bundleName}')" data-bundle-name="${app.bundleName}">
-                <div class="rounded-full w-12 h-12 shadow-lg transform transition duration-200 group-hover:brightness-90 group-active:scale-95 flex items-center justify-center relative">
-                    <img src="./applications/${app.bundleName}/icon.png" alt="${app.name}" class="w-full h-full object-cover">
-                    ${isMailbox ? '<span class="mailbox-unread-badge absolute -top-1 -right-1 bg-red-500 text-white text-xs font-bold rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1 hidden">0</span>' : ''}
+            gridHtml += `
+            <div class="sb-app-popover-item" data-bundle-name="${app.bundleName}">
+                <div class="sb-app-popover-icon-wrap">
+                    <img src="./applications/${app.bundleName}/icon.png" alt="${app.name}">
+                    ${isMailbox ? '<span class="mailbox-unread-badge">0</span>' : ''}
                 </div>
-                <span class="mt-2 text-xs font-medium text-gray-800 drop-shadow-sm w-16 text-center truncate">${app.name}</span>
+                <span class="sb-app-popover-label">${app.name}</span>
             </div>
             `;
         }
+        gridHtml += '</div>';
+        popover.innerHTML = gridHtml;
+
+        popover.querySelectorAll('.sb-app-popover-item').forEach((item) => {
+            item.addEventListener('click', () => {
+                const bundleName = item.dataset.bundleName;
+                window.globalControlAPI.openApplication(bundleName);
+                this._dismissAppPopover();
+            });
+        });
+
         this.updateMailboxBadge();
     }
 
@@ -242,20 +289,22 @@ class SideBar extends HTMLElement {
         try {
             const counts = await window.applicationRegistryAPI.call('mailbox', 'getAllNewEmailCounts');
             const total = Object.values(counts || {}).reduce((sum, count) => sum + (count || 0), 0);
-            const mailboxApp = this.querySelector('[data-bundle-name="mailbox"]');
-            if (mailboxApp) {
-                const badge = mailboxApp.querySelector('.mailbox-unread-badge');
-                if (badge) {
-                    if (total > 0) {
-                        badge.textContent = total > 99 ? '99+' : total.toString();
-                        badge.classList.remove('hidden');
-                    } else {
-                        badge.classList.add('hidden');
-                    }
-                }
-            }
+            this._applyMailboxBadge(total);
         } catch (error) {
             console.error('Failed to update mailbox badge:', error);
+        }
+    }
+
+    _applyMailboxBadge(total) {
+        const mailboxApp = this.querySelector('[data-bundle-name="mailbox"]');
+        if (!mailboxApp) return;
+        const badge = mailboxApp.querySelector('.mailbox-unread-badge');
+        if (!badge) return;
+        if (total > 0) {
+            badge.textContent = total > 99 ? '99+' : total.toString();
+            badge.classList.add('visible');
+        } else {
+            badge.classList.remove('visible');
         }
     }
 
@@ -266,18 +315,7 @@ class SideBar extends HTMLElement {
                 'newEmailCountsUpdated',
                 (counts) => {
                     const total = Object.values(counts || {}).reduce((sum, count) => sum + (count || 0), 0);
-                    const mailboxApp = this.querySelector('[data-bundle-name="mailbox"]');
-                    if (mailboxApp) {
-                        const badge = mailboxApp.querySelector('.mailbox-unread-badge');
-                        if (badge) {
-                            if (total > 0) {
-                                badge.textContent = total > 99 ? '99+' : total.toString();
-                                badge.classList.remove('hidden');
-                            } else {
-                                badge.classList.add('hidden');
-                            }
-                        }
-                    }
+                    this._applyMailboxBadge(total);
                 }
             );
             this.updateMailboxBadge();
