@@ -87,6 +87,9 @@ const ModelSchema = z.object({
         .describe('模型默认推理模式(空字符串表示默认)')
 });
 
+/** 控制模型推理深度，空字符串表示使用模型默认值 */
+type ReasoningEffort = '' | 'none' | 'low' | 'medium' | 'high';
+
 const DisplaySchema = z.object({
     scale_factor: z.number().min(0.5).max(2.0).default(1).describe('GUI 缩放系数 (0.5 ~ 2.0)')
 });
@@ -135,18 +138,27 @@ export class ModelInstance {
     base_url: string;
     api_key: string;
     no_proxy: boolean;
+    reasoning_effort: ReasoningEffort;
 
     /**
      * @param model_name 模型名称
      * @param base_url API 地址
      * @param api_key API 密钥
      * @param no_proxy 是否禁用代理
+     * @param reasoning_effort 模型默认推理模式
      */
-    constructor(model_name: string, base_url: string, api_key: string, no_proxy: boolean) {
+    constructor(
+        model_name: string,
+        base_url: string,
+        api_key: string,
+        no_proxy: boolean,
+        reasoning_effort: ReasoningEffort = ''
+    ) {
         this.model_name = model_name;
         this.base_url = base_url;
         this.api_key = api_key;
         this.no_proxy = no_proxy;
+        this.reasoning_effort = reasoning_effort;
     }
 }
 
@@ -285,7 +297,13 @@ export class Setting {
         if (provider === undefined) {
             return null;
         }
-        return new ModelInstance(modelRef.model_name, provider.base_url, provider.api_key, provider.no_proxy);
+        return new ModelInstance(
+            modelRef.model_name,
+            provider.base_url,
+            provider.api_key,
+            provider.no_proxy,
+            modelRef.reasoning_effort
+        );
     }
 
     /**
@@ -512,5 +530,6 @@ export {
     getTaskSessionMemoryDirectory,
     getTaskSessionMemoryPath,
     getTempWorkspaceDirectory,
-    getSettingSchema
+    getSettingSchema,
+    type ReasoningEffort
 };

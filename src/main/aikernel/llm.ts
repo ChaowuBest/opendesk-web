@@ -11,7 +11,7 @@
 
 import { OpenAI } from 'openai';
 import { ChatContext, AssistantResponse, UserMessage, AssistantMessage, isCompactBoundaryMessage } from './messages';
-import { Setting, ModelInstance } from '../utils/setting.js';
+import { Setting, ModelInstance, ReasoningEffort } from '../utils/setting.js';
 import { buildActiveContextView } from './compaction/context-view.js';
 import type { ActiveContextView } from './compaction/types.js';
 import { z } from 'zod';
@@ -23,8 +23,21 @@ import type { BaseTool } from './tool';
 /** Model 参数支持传入 ModelInstance 对象、模型别名字符串、或 undefined（使用默认模型） */
 type ModelParam = ModelInstance | string | undefined;
 
-/** 控制模型推理深度，undefined 表示使用模型默认值 */
-type ReasoningEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
+/**
+ * 根据 reasoningEffort 配置生成 API 请求参数。
+ * - 'none' 时禁用 thinking
+ * - 其他有效值时启用 thinking 并设置 reasoning_effort
+ */
+function mergeReasonOptions(reasoningEffort: ReasoningEffort | undefined): Record<string, any> {
+    const reasonOptions: Record<string, any> = {};
+    if (reasoningEffort === 'none') {
+        reasonOptions.thinking = { type: 'disabled' };
+    } else if (reasoningEffort && reasoningEffort !== '') {
+        reasonOptions.thinking = { type: 'enabled' };
+        reasonOptions.reasoning_effort = reasoningEffort;
+    }
+    return reasonOptions;
+}
 
 /**
  * LLM 验证器的返回结果。
@@ -256,15 +269,15 @@ class LLM {
         let finalResponse: string | object | undefined = undefined;
         let numRetries = 0;
         const messages: object[] = [options.question.toOpenAIMessage()];
+        const reasoningEffort = options.requestOptions?.reasoningEffort ?? modelInstance.reasoning_effort;
+        const reasonOptions = mergeReasonOptions(reasoningEffort);
 
         while (finalResponse === undefined && numRetries < 5) {
             const response = await withRateLimitRetry(() =>
                 client.chat.completions.create({
                     model: modelInstance.model_name,
                     messages: messages as OpenAI.ChatCompletionMessageParam[],
-                    ...(options.requestOptions?.reasoningEffort
-                        ? { reasoning_effort: options.requestOptions.reasoningEffort }
-                        : {})
+                    ...reasonOptions
                 })
             );
 
@@ -458,6 +471,8 @@ class LLM {
         const visionSupported = await this.supportsVision(model);
         const messages = this.buildMessages(chatContext, visionSupported, options);
         const toolOptions = this.buildToolOptions(chatContext);
+        const reasoningEffort = requestOptions?.reasoningEffort ?? modelInstance.reasoning_effort;
+        const reasonOptions = mergeReasonOptions(reasoningEffort);
 
         const response = await withRateLimitRetry(() =>
             client.chat.completions.create({
@@ -465,7 +480,7 @@ class LLM {
                 messages: messages as OpenAI.ChatCompletionMessageParam[],
                 max_completion_tokens: 16384,
                 ...toolOptions,
-                ...(requestOptions?.reasoningEffort ? { reasoning_effort: requestOptions.reasoningEffort } : {})
+                ...reasonOptions
             })
         );
         return AssistantResponse.parseOpenAIResponse(response);
@@ -487,6 +502,8 @@ class LLM {
         const visionSupported = await this.supportsVision(model);
         const messages = this.buildMessages(chatContext, visionSupported, options);
         const toolOptions = this.buildToolOptions(chatContext);
+        const reasoningEffort = requestOptions?.reasoningEffort ?? modelInstance.reasoning_effort;
+        const reasonOptions = mergeReasonOptions(reasoningEffort);
 
         if (logger) {
             const hasImages = messages.some(
@@ -511,7 +528,7 @@ class LLM {
                     stream: true,
                     stream_options: { include_usage: true },
                     ...toolOptions,
-                    ...(requestOptions?.reasoningEffort ? { reasoning_effort: requestOptions.reasoningEffort } : {})
+                    ...reasonOptions
                 })
             );
 
@@ -531,4 +548,4 @@ class LLM {
     }
 }
 
-export { LLM, type ReasoningEffort, type LLMRequestOptions };
+export { LLM, type LLMRequestOptions };
