@@ -452,7 +452,9 @@ export class ToolCallMessagePart {
             if (target === undefined) {
                 this.toolcalls.push(toolcall);
             } else {
-                target.args_string += toolcall.args_string ?? '';
+                // Handle the case where args_string might be the string "null" instead of proper JSON
+                const args_to_append = toolcall.args_string === 'null' ? '' : (toolcall.args_string ?? '');
+                target.args_string += args_to_append;
                 if (toolcall.tool_name && toolcall.tool_name !== 'unknown') {
                     target.tool_name = toolcall.tool_name;
                 }
@@ -1406,11 +1408,14 @@ export class AssistantMessage {
         if (tool_calls) {
             const part = new ToolCallMessagePart();
             for (const tool_call of tool_calls) {
+                const args = tool_call['function']['arguments'];
+                // Some providers return the literal string "null" instead of JSON null
+                const args_string = args === 'null' ? '' : (args ?? '');
                 const tc = new ToolCall(
                     tool_call['index'],
                     tool_call['id'],
                     tool_call['function']['name'],
-                    tool_call['function']['arguments'] ?? ''
+                    args_string
                 );
                 part.push(tc);
             }

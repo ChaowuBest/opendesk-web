@@ -659,6 +659,12 @@ class AgentInput extends HTMLElement {
                 // 更新按钮文字
                 const modelBtn = this.querySelector('#agent-input-model-btn span');
                 if (modelBtn) modelBtn.textContent = this.getModelButtonLabel();
+                this.dispatchEvent(
+                    new CustomEvent('model-changed', {
+                        detail: { model: this.selectedModel },
+                        bubbles: true
+                    })
+                );
             });
         });
     }

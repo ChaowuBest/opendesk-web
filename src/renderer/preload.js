@@ -146,6 +146,20 @@ function exposeTaskManagerAPI() {
                 throw new Error(result.message);
             }
             return result.data;
+        },
+        getSessionMemory: async (taskId) => {
+            const result = await ipcRenderer.invoke('taskManager:getSessionMemory', taskId);
+            if (result.status === 'ok') {
+                return result.data;
+            }
+            return null;
+        },
+        getModelContextSize: async (modelAlias) => {
+            const result = await ipcRenderer.invoke('taskManager:getModelContextSize', modelAlias);
+            if (result.status === 'ok') {
+                return result.data;
+            }
+            return 0;
         }
     });
 
