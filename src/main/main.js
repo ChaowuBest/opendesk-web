@@ -594,6 +594,39 @@ const registerTaskManagerAPIHandlers = () => {
         task.stop();
         return { status: 'ok' };
     });
+    ipcMain.handle('taskManager:getSessionMemory', async (event, taskId) => {
+        try {
+            const { readTaskSessionMemory, isSessionMemoryTemplateOnly } =
+                await import('./aikernel/compaction/session-memory-compact.js');
+            const { marked } = await import('./aikernel/messages.js');
+            const content = readTaskSessionMemory(taskId);
+            if (!content || isSessionMemoryTemplateOnly(content)) {
+                return { status: 'ok', data: null };
+            }
+            const rendered = await marked.parse(content);
+            return { status: 'ok', data: { raw: content, rendered } };
+        } catch (err) {
+            return { status: 'ok', data: null };
+        }
+    });
+    ipcMain.handle('taskManager:getModelContextSize', async (event, modelAlias) => {
+        try {
+            const { lookupKnownContextSize, fetchContextSizeFromAPI } = await import('./utils/model-context.js');
+            const setting = Setting.getInstance();
+            const modelInstance = modelAlias ? setting.getModelInstance(modelAlias) : setting.getDefaultModelInstance();
+            if (!modelInstance) {
+                return { status: 'ok', data: 0 };
+            }
+            const knownSize = lookupKnownContextSize(modelInstance.model_name);
+            if (knownSize > 0) {
+                return { status: 'ok', data: knownSize };
+            }
+            const apiSize = await fetchContextSizeFromAPI(modelInstance);
+            return { status: 'ok', data: apiSize };
+        } catch (err) {
+            return { status: 'ok', data: 0 };
+        }
+    });
     // 检查文件是否存在
     ipcMain.handle('fs:fileExists', async (event, filePath) => {
         try {

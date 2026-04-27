@@ -50,21 +50,21 @@ interface GlobalTodoLike extends TaskTodoLike {
 }
 
 interface TabSpec {
-    id: 'task-plan' | 'workspace' | 'browser' | 'changes';
+    id: 'task-plan' | 'workspace' | 'browser' | 'changes' | 'session-memory';
     label: string;
     icon: string;
+    dynamic?: boolean;
 }
 
 // ============================================================================
 // Constants
 // ============================================================================
 
-const TABS: TabSpec[] = [
-    { id: 'task-plan', label: '任务计划', icon: 'fa-list-check' },
-    { id: 'workspace', label: '工作空间', icon: 'fa-folder-open' },
-    { id: 'browser', label: '浏览器', icon: 'fa-globe' },
-    { id: 'changes', label: '变更', icon: 'fa-code-compare' }
-];
+const TASK_PLAN_TAB: TabSpec = { id: 'task-plan', label: '任务计划', icon: 'fa-list-check', dynamic: true };
+const WORKSPACE_TAB: TabSpec = { id: 'workspace', label: '工作空间', icon: 'fa-folder-open' };
+const BROWSER_TAB: TabSpec = { id: 'browser', label: '浏览器', icon: 'fa-globe', dynamic: true };
+const CHANGES_TAB: TabSpec = { id: 'changes', label: '变更', icon: 'fa-code-compare' };
+const SESSION_MEMORY_TAB: TabSpec = { id: 'session-memory', label: '任务记忆', icon: 'fa-brain', dynamic: true };
 
 const PRIORITY_STYLE: Record<TodoPriority, { cls: string; label: string }> = {
     low: { cls: 'bg-blue-50 text-blue-600 border-blue-100', label: '低' },
@@ -174,7 +174,7 @@ function extractFontAwesomeRulesText(): string {
 // ============================================================================
 
 class TaskArtifacts extends HTMLElement {
-    private _activeTab: TabSpec['id'] = 'task-plan';
+    private _activeTab: TabSpec['id'] = 'workspace';
     private _taskTodos: TaskTodoLike[] = [];
     private _globalTodos: GlobalTodoLike[] = [];
     private _tickTimer: number | null = null;
@@ -184,9 +184,25 @@ class TaskArtifacts extends HTMLElement {
     private _isBrowserFullscreen = false;
     private _savedWidthBeforeFullscreen: string = '';
 
+    private _taskPlanVisible = false;
+    private _browserVisible = false;
+    private _sessionMemoryHtml: string | null = null;
+    private _sessionMemoryVisible = false;
+    private _sessionMemoryRefreshTimer: number | null = null;
+
     constructor() {
         super();
         this.attachShadow({ mode: 'open' });
+    }
+
+    private _getTabs(): TabSpec[] {
+        const tabs: TabSpec[] = [];
+        if (this._taskPlanVisible) tabs.push(TASK_PLAN_TAB);
+        tabs.push(WORKSPACE_TAB);
+        if (this._browserVisible) tabs.push(BROWSER_TAB);
+        tabs.push(CHANGES_TAB);
+        if (this._sessionMemoryVisible) tabs.push(SESSION_MEMORY_TAB);
+        return tabs;
     }
 
     connectedCallback(): void {
@@ -196,20 +212,38 @@ class TaskArtifacts extends HTMLElement {
 
     disconnectedCallback(): void {
         this._stopTick();
+        this._stopSessionMemoryRefresh();
     }
 
     // ----- Public API -----
 
     setTaskTodos(todos: TaskTodoLike[] | null | undefined): void {
         this._taskTodos = Array.isArray(todos) ? todos : [];
+        this._syncTaskPlanVisibility();
         this._renderTaskPlanPanel();
         this._scheduleTick();
     }
 
     setGlobalTodos(todos: GlobalTodoLike[] | null | undefined): void {
         this._globalTodos = Array.isArray(todos) ? todos : [];
+        this._syncTaskPlanVisibility();
         this._renderTaskPlanPanel();
         this._scheduleTick();
+    }
+
+    private _syncTaskPlanVisibility(): void {
+        const hasTodos = this._taskTodos.length > 0 || this._globalTodos.length > 0;
+        if (hasTodos && !this._taskPlanVisible) {
+            this._taskPlanVisible = true;
+            this._rebuildTabBar();
+            this._switchTab('task-plan');
+        } else if (!hasTodos && this._taskPlanVisible) {
+            this._taskPlanVisible = false;
+            if (this._activeTab === 'task-plan') {
+                this._activeTab = 'workspace';
+            }
+            this._rebuildTabBar();
+        }
     }
 
     hasAnyTodos(): boolean {
@@ -226,6 +260,123 @@ class TaskArtifacts extends HTMLElement {
      */
     refreshWorkspace(): void {
         this._fileExplorer.refresh();
+    }
+
+    /**
+     * 外部调用：设置任务 ID，启动 session memory 定期刷新。
+     */
+    setTaskId(taskId: string): void {
+        this._taskId = taskId;
+        this._startSessionMemoryRefresh();
+    }
+
+    private _taskId: string | null = null;
+
+    /**
+     * 外部调用：刷新 session memory 内容。
+     */
+    async refreshSessionMemory(): Promise<void> {
+        if (!this._taskId) return;
+        try {
+            const data = await (window as any).taskManagerAPI.getSessionMemory(this._taskId);
+            if (data && data.rendered) {
+                this._sessionMemoryHtml = data.rendered;
+                if (!this._sessionMemoryVisible) {
+                    this._sessionMemoryVisible = true;
+                    this._rebuildTabBar();
+                }
+                this._renderSessionMemoryPanel();
+            } else if (this._sessionMemoryVisible) {
+                this._sessionMemoryHtml = null;
+                this._sessionMemoryVisible = false;
+                if (this._activeTab === 'session-memory') {
+                    this._switchTab('task-plan');
+                }
+                this._rebuildTabBar();
+            }
+        } catch {
+            // ignore
+        }
+    }
+
+    private _startSessionMemoryRefresh(): void {
+        this._stopSessionMemoryRefresh();
+        this.refreshSessionMemory();
+        this._sessionMemoryRefreshTimer = window.setInterval(() => this.refreshSessionMemory(), 15000);
+    }
+
+    private _stopSessionMemoryRefresh(): void {
+        if (this._sessionMemoryRefreshTimer !== null) {
+            window.clearInterval(this._sessionMemoryRefreshTimer);
+            this._sessionMemoryRefreshTimer = null;
+        }
+    }
+
+    private _renderSessionMemoryPanel(): void {
+        const root = this.shadowRoot;
+        if (!root) return;
+        const panel = root.querySelector<HTMLElement>('.tab-content[data-tab="session-memory"]');
+        if (!panel) return;
+        if (this._sessionMemoryHtml) {
+            panel.innerHTML = `<div class="session-memory-content markdown-body">${this._sessionMemoryHtml}</div>`;
+        } else {
+            panel.innerHTML = `
+            <div class="placeholder-content">
+                <i class="fas fa-brain placeholder-icon"></i>
+                <p>暂无任务记忆</p>
+            </div>`;
+        }
+    }
+
+    private _rebuildTabBar(): void {
+        const root = this.shadowRoot;
+        if (!root) return;
+        const tabBar = root.querySelector<HTMLElement>('.tab-bar');
+        if (!tabBar) return;
+        const tabs = this._getTabs();
+        tabBar.innerHTML = tabs
+            .map((tab) => {
+                const isActive = tab.id === this._activeTab;
+                return `<button class="tab-btn ${isActive ? 'tab-active' : ''}" data-tab="${tab.id}">
+                <i class="fas ${tab.icon} text-xs"></i>
+                <span>${tab.label}</span>
+            </button>`;
+            })
+            .join('');
+        tabBar.querySelectorAll<HTMLButtonElement>('.tab-btn').forEach((btn) => {
+            btn.addEventListener('click', () => {
+                const next = btn.dataset.tab as TabSpec['id'] | undefined;
+                if (next) this._switchTab(next);
+            });
+        });
+        // Ensure tab content elements exist for dynamic tabs
+        const wrapper = root.querySelector<HTMLElement>('.tab-content-wrapper');
+        if (wrapper) {
+            for (const tab of tabs) {
+                if (!root.querySelector(`.tab-content[data-tab="${tab.id}"]`)) {
+                    const div = document.createElement('div');
+                    div.className = 'tab-content';
+                    div.dataset.tab = tab.id;
+                    div.style.display = tab.id === this._activeTab ? '' : 'none';
+                    wrapper.appendChild(div);
+                }
+            }
+            // Remove dynamic tab content panels that are no longer visible
+            const dynamicIds: Array<{ id: string; visible: boolean }> = [
+                { id: 'task-plan', visible: this._taskPlanVisible },
+                { id: 'browser', visible: this._browserVisible },
+                { id: 'session-memory', visible: this._sessionMemoryVisible }
+            ];
+            for (const { id, visible } of dynamicIds) {
+                if (!visible) {
+                    const panel = root.querySelector(`.tab-content[data-tab="${id}"]`);
+                    if (panel) panel.remove();
+                }
+            }
+        }
+
+        // Ensure the active tab's panel is shown
+        this._switchTab(this._activeTab);
     }
 
     /**
@@ -323,6 +474,10 @@ class TaskArtifacts extends HTMLElement {
      * Called before any browser operation from tools.
      */
     ensureBrowserReady(): void {
+        if (!this._browserVisible) {
+            this._browserVisible = true;
+            this._rebuildTabBar();
+        }
         if (this._activeTab !== 'browser') {
             this._switchTab('browser');
         }
@@ -519,13 +674,7 @@ class TaskArtifacts extends HTMLElement {
         const hasGlobal = this._globalTodos.length > 0;
 
         if (!hasTask && !hasGlobal) {
-            panel.innerHTML = `
-            <div class="placeholder-content">
-                <i class="fas fa-list-check placeholder-icon"></i>
-                <p>\u6682\u65E0\u4EFB\u52A1\u8BA1\u5212</p>
-                <p class="placeholder-hint">\u5F53 Agent \u8C03\u7528 <code>TodoWrite</code> \u521B\u5EFA\u4EFB\u52A1\u8BA1\u5212\u540E\uFF0C
-                    \u6216\u901A\u8FC7\u5168\u5C40\u5F85\u529E\u6DFB\u52A0\u65B0\u4EFB\u52A1\u65F6\uFF0C\u5C06\u5728\u6B64\u5C55\u793A\u3002</p>
-            </div>`;
+            panel.innerHTML = '';
             return;
         }
 
@@ -574,13 +723,16 @@ class TaskArtifacts extends HTMLElement {
     // ========================================================================
 
     private render(): void {
-        const tabsHTML = TABS.map((tab) => {
-            const isActive = tab.id === this._activeTab;
-            return `<button class="tab-btn ${isActive ? 'tab-active' : ''}" data-tab="${tab.id}">
+        const tabs = this._getTabs();
+        const tabsHTML = tabs
+            .map((tab) => {
+                const isActive = tab.id === this._activeTab;
+                return `<button class="tab-btn ${isActive ? 'tab-active' : ''}" data-tab="${tab.id}">
                 <i class="fas ${tab.icon} text-xs"></i>
                 <span>${tab.label}</span>
             </button>`;
-        }).join('');
+            })
+            .join('');
 
         const placeholderHTML = (tab: TabSpec) => `
             <div class="placeholder-content">
@@ -588,18 +740,25 @@ class TaskArtifacts extends HTMLElement {
                 <p>${tab.label}\u5185\u5BB9\u5360\u4F4D\u7B26</p>
             </div>`;
 
-        const contentHTML = TABS.map((tab) => {
-            const isActive = tab.id === this._activeTab;
-            let inner = '';
-            if (tab.id === 'task-plan' || tab.id === 'workspace' || tab.id === 'browser') {
-                inner = '';
-            } else {
-                inner = placeholderHTML(tab);
-            }
-            return `<div class="tab-content" data-tab="${tab.id}" style="display: ${isActive ? '' : 'none'}">
+        const contentHTML = tabs
+            .map((tab) => {
+                const isActive = tab.id === this._activeTab;
+                let inner = '';
+                if (
+                    tab.id === 'task-plan' ||
+                    tab.id === 'workspace' ||
+                    tab.id === 'browser' ||
+                    tab.id === 'session-memory'
+                ) {
+                    inner = '';
+                } else {
+                    inner = placeholderHTML(tab);
+                }
+                return `<div class="tab-content" data-tab="${tab.id}" style="display: ${isActive ? '' : 'none'}">
                 ${inner}
             </div>`;
-        }).join('');
+            })
+            .join('');
 
         const faRules = extractFontAwesomeRulesText();
 
@@ -831,6 +990,66 @@ class TaskArtifacts extends HTMLElement {
                 border: 1px solid transparent;
                 border-radius: 999px;
                 flex-shrink: 0;
+            }
+
+            /* Session memory styles */
+            .session-memory-content {
+                padding: 16px;
+                font-size: 13px;
+                line-height: 1.6;
+                color: #1f2937;
+                overflow-wrap: break-word;
+            }
+            .session-memory-content h1 {
+                font-size: 16px;
+                font-weight: 700;
+                margin: 16px 0 8px;
+                padding-bottom: 4px;
+                border-bottom: 1px solid #e5e7eb;
+                color: #111827;
+            }
+            .session-memory-content h1:first-child {
+                margin-top: 0;
+            }
+            .session-memory-content h2 {
+                font-size: 14px;
+                font-weight: 600;
+                margin: 12px 0 6px;
+                color: #1f2937;
+            }
+            .session-memory-content p {
+                margin: 4px 0;
+            }
+            .session-memory-content em {
+                color: #6b7280;
+                font-style: italic;
+            }
+            .session-memory-content ul, .session-memory-content ol {
+                padding-left: 20px;
+                margin: 4px 0;
+            }
+            .session-memory-content li {
+                margin: 2px 0;
+            }
+            .session-memory-content code {
+                background: #f1f5f9;
+                padding: 1px 4px;
+                border-radius: 3px;
+                font-size: 12px;
+                color: #334155;
+            }
+            .session-memory-content pre {
+                background: #f8fafc;
+                border: 1px solid #e2e8f0;
+                border-radius: 6px;
+                padding: 10px 12px;
+                overflow-x: auto;
+                margin: 8px 0;
+                font-size: 12px;
+            }
+            .session-memory-content pre code {
+                background: none;
+                padding: 0;
             }
 
             /* File explorer styles (imported from fileExplorer.ts) */

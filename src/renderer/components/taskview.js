@@ -67,11 +67,21 @@ class TaskView extends HTMLElement {
         this._toolbar = null;
         /** @type {Function | null} */
         this._taskListUpdateHandler = null;
+        /** @type {number} 当前模型上下文窗口大小（tokens） */
+        this._modelContextSize = 0;
+        /** @type {string | null} 当前已加载上下文大小的模型别名 */
+        this._contextSizeModel = null;
+        /** @type {Map<string, HTMLElement>} 缓存活跃的 message container 元素 */
+        this._messageContainerCache = new Map();
+        /** @type {number | null} 节流滚动的 rAF id */
+        this._scrollRafId = null;
     }
 
     static isCompactBoundaryMessage(message) {
         return Boolean(message) && message.role === 'compact_separator';
     }
+
+    _programmaticScrolling = false;
 
     setAutoScrollingToBottom(auto_scrolling_to_bottom) {
         this.auto_scrolling_to_bottom = auto_scrolling_to_bottom;
@@ -126,6 +136,22 @@ class TaskView extends HTMLElement {
         tool_call: ''
     };
 
+    static SPINNER_SVG = `<i class="fa-solid fa-circle-notch fa-spin"></i>`;
+
+    static formatUsageHtml(usage, contextSize, isStreaming = false) {
+        const promptTokens = usage ? usage.prompt_tokens : 0;
+        const completionTokens = usage ? usage.completion_tokens : 0;
+        const totalTokens = usage ? usage.total_tokens : 0;
+        const titleParts = usage ? `输入: ${promptTokens}, 输出: ${completionTokens}, 总计: ${totalTokens}` : '';
+        let ratioText = '';
+        if (contextSize > 0 && totalTokens > 0) {
+            const pct = ((totalTokens / contextSize) * 100).toFixed(1);
+            ratioText = `, 上下文占比 ${pct}%`;
+        }
+        const spinnerDisplay = isStreaming ? '' : 'display:none;';
+        return `<span class="message-usage text-xs text-gray-400 mt-1 flex items-center gap-1" title="${titleParts}" data-prompt-tokens="${promptTokens}" data-completion-tokens="${completionTokens}" data-total-tokens="${totalTokens}" data-streaming="${isStreaming}"><span class="usage-spinner" style="${spinnerDisplay}">${TaskView.SPINNER_SVG}</span><span class="usage-text">已输出 ${completionTokens} 词, 总计 ${totalTokens} 词${ratioText}</span></span>`;
+    }
+
     static createReasoningPartHtml(rendered, isOpen = false) {
         return `
         <div class="reasoning-wrapper">
@@ -143,7 +169,7 @@ class TaskView extends HTMLElement {
         </div>`;
     }
 
-    renderAssistantMessage(assistant_message) {
+    renderAssistantMessage(assistant_message, isLast = false) {
         let content = '';
         for (const part of assistant_message.content) {
             if (part.type === 'reasoning') {
@@ -153,19 +179,14 @@ class TaskView extends HTMLElement {
                 content += `<div class="${TaskView.ASSISTANT_PART_CLASS_MAP[part.type]}">${part.rendered}</div>`;
             }
         }
+        const usageHtml = isLast ? TaskView.formatUsageHtml(assistant_message.usage, this._modelContextSize) : '';
         const html = `
         <div class="flex items-start">
             <div id='message-container-${assistant_message.message_id}' class="p-2 bg-transparent w-full">
                 <div id='message-content-${assistant_message.message_id}'>
                     ${content}
                 </div>
-                <span
-                    class="message-usage text-xs text-gray-400 mt-1 block"
-                    title="${assistant_message.usage ? `输入: ${assistant_message.usage.prompt_tokens}, 输出: ${assistant_message.usage.completion_tokens}, 总计: ${assistant_message.usage.total_tokens}` : ''}"
-                >
-                    已输出 ${assistant_message.usage ? assistant_message.usage.completion_tokens : 0} 词,
-                    总计 ${assistant_message.usage ? assistant_message.usage.total_tokens : 0} 词
-                </span>
+                ${usageHtml}
             </div>
         </div>
         `;
@@ -178,7 +199,7 @@ class TaskView extends HTMLElement {
             <div id='message-container-${message_id}' class="p-2 bg-transparent w-full">
                 <div id='message-content-${message_id}'>
                 </div>
-                <span class="message-usage text-xs text-gray-400 mt-1 block">已输出 0 词, 总计 0 词</span>
+                ${TaskView.formatUsageHtml(null, this._modelContextSize, true)}
             </div>
         </div>
         `;
@@ -188,22 +209,24 @@ class TaskView extends HTMLElement {
         if (!this.auto_scrolling_to_bottom) {
             return;
         }
-        const domElement = this.getHistoryContainer();
-        setTimeout(() => {
-            if (!this.auto_scrolling_to_bottom) {
-                return;
-            }
-            domElement.scroll({
-                top: domElement.scrollHeight,
-                behavior: 'smooth'
+        if (this._scrollRafId !== null) return;
+        this._scrollRafId = requestAnimationFrame(() => {
+            this._scrollRafId = null;
+            if (!this.auto_scrolling_to_bottom) return;
+            const domElement = this.getHistoryContainer();
+            this._programmaticScrolling = true;
+            domElement.scrollTop = domElement.scrollHeight;
+            requestAnimationFrame(() => {
+                this._programmaticScrolling = false;
             });
-        }, 100);
+        });
     }
 
     async reload() {
         const task_state = await window.taskManagerAPI.getFullTask(this.task_id);
         this.task_status = task_state.task_status || 'waiting';
         this.updateStopButtonVisibility();
+        this._messageContainerCache.clear();
 
         if (this._toolbar && task_state.task_name) {
             this._toolbar.setToolbarTitle(task_state.task_name);
@@ -219,24 +242,77 @@ class TaskView extends HTMLElement {
             }
         }
 
+        // 非阻塞获取上下文大小，避免延迟首次渲染
+        this._refreshModelContextSize(task_state.model).then(() => this._updateLastUsageRatio());
+
         const history_container = this.getHistoryContainer();
         const htmlParts = [];
-        for (const message of task_state.chat_context.messages) {
+        const messages = task_state.chat_context.messages;
+        const lastAssistantIdx = (() => {
+            for (let i = messages.length - 1; i >= 0; i--) {
+                if (messages[i].role === 'assistant') return i;
+            }
+            return -1;
+        })();
+        for (let i = 0; i < messages.length; i++) {
+            const message = messages[i];
             if (message.role === 'user') {
                 if (message.internal) continue;
                 htmlParts.push(this.renderUserMessage(message));
             } else if (message.role === 'assistant') {
-                htmlParts.push(this.renderAssistantMessage(message));
+                htmlParts.push(this.renderAssistantMessage(message, i === lastAssistantIdx));
             } else if (TaskView.isCompactBoundaryMessage(message)) {
                 htmlParts.push(TaskView.renderCompactBoundary());
             }
         }
         history_container.innerHTML = htmlParts.join('');
+
+        // 任务正在运行但还没有 assistant 消息时，显示带动画的 usage 面板
+        if (this.task_status === 'running' && lastAssistantIdx === -1) {
+            history_container.insertAdjacentHTML(
+                'beforeend',
+                `
+                <div class="waiting-usage-placeholder flex items-start">
+                    <div class="p-2 bg-transparent w-full">
+                        ${TaskView.formatUsageHtml(null, this._modelContextSize, true)}
+                    </div>
+                </div>
+            `
+            );
+        }
+
         this.tryScrollToEnd();
 
         // 刷新任务计划面板数据（不影响侧边栏展开状态）
         this._refreshTaskTodos();
         this._refreshGlobalTodos();
+    }
+
+    async _refreshModelContextSize(modelAlias) {
+        if (modelAlias && modelAlias === this._contextSizeModel) return;
+        try {
+            const size = await window.taskManagerAPI.getModelContextSize(modelAlias || null);
+            this._modelContextSize = size || 0;
+            this._contextSizeModel = modelAlias || null;
+        } catch {
+            this._modelContextSize = 0;
+        }
+    }
+
+    _updateLastUsageRatio() {
+        const lastUsage = this.getHistoryContainer().querySelector('.message-usage');
+        if (!lastUsage) return;
+        const completionTokens = parseInt(lastUsage.dataset.completionTokens || '0', 10);
+        const totalTokens = parseInt(lastUsage.dataset.totalTokens || '0', 10);
+        let ratioText = '';
+        if (this._modelContextSize > 0 && totalTokens > 0) {
+            const pct = ((totalTokens / this._modelContextSize) * 100).toFixed(1);
+            ratioText = `, 上下文占比 ${pct}%`;
+        }
+        const textEl = lastUsage.querySelector('.usage-text');
+        if (textEl) {
+            textEl.textContent = `已输出 ${completionTokens} 词, 总计 ${totalTokens} 词${ratioText}`;
+        }
     }
 
     static renderCompactBoundary() {
@@ -359,11 +435,7 @@ class TaskView extends HTMLElement {
     }
 
     _autoSwitchTabIfEmpty(sidebar) {
-        if (typeof sidebar.hasAnyTodos === 'function' && !sidebar.hasAnyTodos()) {
-            if (typeof sidebar.switchToTab === 'function') {
-                sidebar.switchToTab('workspace');
-            }
-        }
+        // Tab visibility is now managed dynamically inside TaskArtifacts
     }
 
     /**
@@ -636,6 +708,12 @@ class TaskView extends HTMLElement {
         this._initToolbarWorkspace();
         this.setUpEventListeners();
 
+        // 初始化 session memory 刷新
+        const sidebarEl = this._getRightSidebarEl();
+        if (sidebarEl && typeof sidebarEl.setTaskId === 'function') {
+            sidebarEl.setTaskId(this.task_id);
+        }
+
         // 订阅全局待办更新（跨任务共享）
         this._subscribeGlobalTodos();
         // 订阅任务级待办更新（仅处理当前任务的事件）
@@ -683,17 +761,33 @@ class TaskView extends HTMLElement {
                             }
                         ]
                     };
+                    // 新用户消息出现时，移除上一条 assistant 消息的 usage 行（不再是最后一条了）
+                    const prevUsageEls = history_container.querySelectorAll('.message-usage');
+                    prevUsageEls.forEach((el) => el.remove());
                     history_container.insertAdjacentHTML('beforeend', this.renderUserMessage(userMsg));
                 } else {
-                    let message_container = this.querySelector(`#message-container-${progress.message_id}`);
-                    if (!message_container) {
+                    let message_container =
+                        this._messageContainerCache.get(progress.message_id) ||
+                        this.querySelector(`#message-container-${progress.message_id}`);
+                    const isNewMessage = !message_container;
+                    if (isNewMessage) {
+                        // 移除等待占位容器
+                        const waitingPlaceholder = history_container.querySelector('.waiting-usage-placeholder');
+                        if (waitingPlaceholder) {
+                            waitingPlaceholder.remove();
+                        }
+                        // 新 assistant 消息到来，移除旧的 usage 行
+                        const prevUsageEls = history_container.querySelectorAll('.message-usage');
+                        prevUsageEls.forEach((el) => el.remove());
                         history_container.insertAdjacentHTML(
                             'beforeend',
                             this.createEmptyAssistantContainer(progress.message_id)
                         );
                         message_container = this.querySelector(`#message-container-${progress.message_id}`);
+                        this._messageContainerCache.set(progress.message_id, message_container);
                     }
                     const message_content = message_container.querySelector(`#message-content-${progress.message_id}`);
+
                     if (message_content.children.length <= progress.last_part_index) {
                         if (progress.last_part.type === 'reasoning') {
                             message_content.insertAdjacentHTML('beforeend', TaskView.createReasoningPartHtml('', true));
@@ -720,11 +814,34 @@ class TaskView extends HTMLElement {
                     } else {
                         last_part_element.innerHTML = progress.last_part.rendered || '';
                     }
-                    if (progress.usage) {
-                        const usageEl = message_container.querySelector('.message-usage');
-                        if (usageEl) {
-                            usageEl.title = `输入: ${progress.usage.prompt_tokens}, 输出: ${progress.usage.completion_tokens}, 总计: ${progress.usage.total_tokens}`;
-                            usageEl.innerHTML = `已输出 ${progress.usage.completion_tokens} 词, 总计 ${progress.usage.total_tokens} 词`;
+
+                    const isStreaming = progress.task_status === 'running';
+                    const usageEl = message_container.querySelector('.message-usage');
+                    if (usageEl) {
+                        const usage = progress.usage || null;
+                        const promptTokens = usage ? usage.prompt_tokens : 0;
+                        const completionTokens = usage ? usage.completion_tokens : 0;
+                        const totalTokens = usage ? usage.total_tokens : 0;
+                        const titleParts = usage
+                            ? `输入: ${promptTokens}, 输出: ${completionTokens}, 总计: ${totalTokens}`
+                            : '';
+                        let ratioText = '';
+                        if (this._modelContextSize > 0 && totalTokens > 0) {
+                            const pct = ((totalTokens / this._modelContextSize) * 100).toFixed(1);
+                            ratioText = `, 上下文占比 ${pct}%`;
+                        }
+                        usageEl.title = titleParts;
+                        usageEl.dataset.promptTokens = String(promptTokens);
+                        usageEl.dataset.completionTokens = String(completionTokens);
+                        usageEl.dataset.totalTokens = String(totalTokens);
+                        usageEl.dataset.streaming = String(isStreaming);
+                        const spinnerEl = usageEl.querySelector('.usage-spinner');
+                        if (spinnerEl) {
+                            spinnerEl.style.display = isStreaming ? '' : 'none';
+                        }
+                        const textEl = usageEl.querySelector('.usage-text');
+                        if (textEl) {
+                            textEl.textContent = `已输出 ${completionTokens} 词, 总计 ${totalTokens} 词${ratioText}`;
                         }
                     }
                 }
@@ -733,6 +850,12 @@ class TaskView extends HTMLElement {
                     this.task_status = progress.task_status;
                     this.updateStopButtonVisibility();
                     if (this.task_status !== 'running') {
+                        // 流式结束：移除等待占位，隐藏 spinner
+                        const waitingPlaceholder = history_container.querySelector('.waiting-usage-placeholder');
+                        if (waitingPlaceholder) waitingPlaceholder.remove();
+                        history_container.querySelectorAll('.usage-spinner').forEach((el) => {
+                            el.style.display = 'none';
+                        });
                         this.getHistoryContainer()
                             .querySelectorAll('details.reasoning-block[open]')
                             .forEach((el) => {
@@ -802,7 +925,7 @@ class TaskView extends HTMLElement {
                 <div class="flex-1 flex flex-col min-w-0">
                     <div class="relative flex-1 overflow-y-auto">
                         <!-- 对话历史区域 - 可滚动 -->
-                        <div id="taskview-chat-history" class="w-full h-full space-y-2 overflow-y-auto px-3 pt-4">
+                        <div id="taskview-chat-history" class="w-full h-full space-y-2 overflow-y-auto px-3 pt-4" style="contain: layout style; will-change: transform;">
                         </div>
                         <!-- 滚动到底部按钮, 按需显示 -->
                         <button
@@ -858,23 +981,32 @@ class TaskView extends HTMLElement {
         if (!resizer || !rightSidebar) return;
 
         let isResizing = false;
+        let cachedContainerRect = null;
+        let resizeRafId = null;
         const onMouseMove = (e) => {
             if (!isResizing) return;
             e.preventDefault();
-            const container = this.querySelector(`#task-${this.task_id}-content-row`);
-            if (!container) return;
-            const containerRect = container.getBoundingClientRect();
-            const newWidth = containerRect.right - e.clientX;
-            const minWidth = 200;
-            const maxWidth = containerRect.width * 0.85;
-            if (newWidth < minWidth || newWidth > maxWidth) return;
-            rightSidebar.style.width = newWidth + 'px';
-            TaskView.rightSidebarWidth = newWidth;
+            if (resizeRafId !== null) return;
+            resizeRafId = requestAnimationFrame(() => {
+                resizeRafId = null;
+                if (!isResizing || !cachedContainerRect) return;
+                const newWidth = cachedContainerRect.right - e.clientX;
+                const minWidth = 200;
+                const maxWidth = cachedContainerRect.width * 0.85;
+                if (newWidth < minWidth || newWidth > maxWidth) return;
+                rightSidebar.style.width = newWidth + 'px';
+                TaskView.rightSidebarWidth = newWidth;
+            });
         };
 
         const onMouseUp = () => {
             if (!isResizing) return;
             isResizing = false;
+            cachedContainerRect = null;
+            if (resizeRafId !== null) {
+                cancelAnimationFrame(resizeRafId);
+                resizeRafId = null;
+            }
             document.body.style.cursor = '';
             document.body.style.userSelect = '';
             rightSidebar.style.pointerEvents = '';
@@ -885,10 +1017,12 @@ class TaskView extends HTMLElement {
         resizer.addEventListener('mousedown', (e) => {
             e.preventDefault();
             e.stopPropagation();
+            const container = this.querySelector(`#task-${this.task_id}-content-row`);
+            if (!container) return;
+            cachedContainerRect = container.getBoundingClientRect();
             isResizing = true;
             document.body.style.cursor = 'col-resize';
             document.body.style.userSelect = 'none';
-            // Prevent webview from swallowing mouse events during resize
             rightSidebar.style.pointerEvents = 'none';
             document.addEventListener('mousemove', onMouseMove);
             document.addEventListener('mouseup', onMouseUp);
@@ -904,6 +1038,14 @@ class TaskView extends HTMLElement {
     setUpEventListeners() {
         // 为输入框添加事件监听器
         const input_widget = this.querySelector(`#task-${this.task_id}-input`);
+        input_widget.addEventListener('model-changed', async (event) => {
+            const modelAlias = event.detail?.model;
+            if (modelAlias) {
+                this._contextSizeModel = null;
+                await this._refreshModelContextSize(modelAlias);
+                this._updateLastUsageRatio();
+            }
+        });
         input_widget.addEventListener('submit', async (event) => {
             const message = event.detail.message;
 
@@ -935,10 +1077,31 @@ class TaskView extends HTMLElement {
 
             this.task_status = 'running';
             this.updateStopButtonVisibility();
+
+            // 立即显示带动画图标的 usage 面板
+            const hc = this.getHistoryContainer();
+            const existingPlaceholder = hc.querySelector('.waiting-usage-placeholder');
+            if (!existingPlaceholder) {
+                const prevUsageEls = hc.querySelectorAll('.message-usage');
+                prevUsageEls.forEach((el) => el.remove());
+                hc.insertAdjacentHTML(
+                    'beforeend',
+                    `
+                    <div class="waiting-usage-placeholder flex items-start">
+                        <div class="p-2 bg-transparent w-full">
+                            ${TaskView.formatUsageHtml(null, this._modelContextSize, true)}
+                        </div>
+                    </div>
+                `
+                );
+                this.tryScrollToEnd();
+            }
+
             await window.taskManagerAPI.submitMessage(this.task_id, event.detail);
         });
         const chatHistory = this.querySelector('#taskview-chat-history');
-        chatHistory.addEventListener('scroll', (event) => {
+        chatHistory.addEventListener('scroll', () => {
+            if (this._programmaticScrolling) return;
             const scrollBottom = chatHistory.scrollTop + chatHistory.clientHeight;
             const distanceToBottom = Math.abs(chatHistory.scrollHeight - scrollBottom);
             this.setAutoScrollingToBottom(distanceToBottom < 50);
