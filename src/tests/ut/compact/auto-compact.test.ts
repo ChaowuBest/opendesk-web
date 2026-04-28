@@ -1,74 +1,93 @@
+import { jest } from '@jest/globals';
 import {
+    MAX_RESERVED_SUMMARY_OUTPUT,
     AutoCompactStates,
+    DEFAULT_AUTO_COMPACT_BUFFER,
     DEFAULT_AUTO_COMPACT_COOLDOWN_MS,
     DEFAULT_AUTO_COMPACT_FAILURE_THRESHOLD,
-    createAutoCompactDecision
+    DEFAULT_AUTO_COMPACT_RESERVED_SUMMARY_OUTPUT,
+    createAutoCompactDecision,
+    resolveReservedSummaryOutput
 } from '../../../main/aikernel/compaction/auto-compact';
+import { ModelInstance, Setting } from '../../../main/utils/setting';
+
+afterEach(() => {
+    jest.restoreAllMocks();
+});
 
 describe('自动压缩决策', () => {
-    test('缺少 prompt tokens 时不触发自动压缩，并保留默认阈值计算结果', () => {
+    test('缺少 context tokens 时不触发自动压缩，并保留 Claude 风格默认阈值计算结果', () => {
         const decision = createAutoCompactDecision({
-            contextWindow: 1000,
-            reservedSummaryOutput: 100
+            contextWindow: 50000
         });
 
         expect(decision.shouldCompact).toBe(false);
-        expect(decision.reason).toBe('missing_prompt_tokens');
-        expect(decision.contextWindow).toBe(1000);
-        expect(decision.reservedSummaryOutput).toBe(100);
-        expect(decision.effectiveWindow).toBe(900);
-        expect(decision.buffer).toBe(180);
-        expect(decision.autoCompactThreshold).toBe(720);
+        expect(decision.reason).toBe('missing_context_tokens');
+        expect(decision.contextWindow).toBe(50000);
+        expect(decision.reservedSummaryOutput).toBe(DEFAULT_AUTO_COMPACT_RESERVED_SUMMARY_OUTPUT);
+        expect(decision.effectiveWindow).toBe(50000 - DEFAULT_AUTO_COMPACT_RESERVED_SUMMARY_OUTPUT);
+        expect(decision.buffer).toBe(DEFAULT_AUTO_COMPACT_BUFFER);
+        expect(decision.autoCompactThreshold).toBe(
+            50000 - DEFAULT_AUTO_COMPACT_RESERVED_SUMMARY_OUTPUT - DEFAULT_AUTO_COMPACT_BUFFER
+        );
     });
 
     test('上下文窗口未知时不触发自动压缩', () => {
         const decision = createAutoCompactDecision({
             contextWindow: 0,
-            promptTokens: 500
+            estimatedContextTokens: 500
         });
 
         expect(decision.shouldCompact).toBe(false);
         expect(decision.reason).toBe('unknown_context_window');
-        expect(decision.promptTokens).toBe(500);
+        expect(decision.estimatedContextTokens).toBe(500);
         expect(decision.contextWindow).toBe(0);
         expect(decision.autoCompactThreshold).toBe(0);
         expect(decision.windowUsageRatio).toBeUndefined();
         expect(decision.marginTokens).toBeUndefined();
     });
 
-    test('默认 buffer 下，阈值以下不触发自动压缩', () => {
+    test('默认固定 buffer 下，阈值以下不触发自动压缩', () => {
         const decision = createAutoCompactDecision({
-            contextWindow: 1000,
-            promptTokens: 719,
-            reservedSummaryOutput: 100
+            contextWindow: 100000,
+            estimatedContextTokens: 66999,
+            reservedSummaryOutput: 20000,
+            baseUsageTokens: 64000,
+            tailEstimatedTokens: 2000,
+            assistantInternalTailTokens: 999,
+            tokenEstimateSource: 'usage_plus_tail_estimate'
         });
 
         expect(decision.shouldCompact).toBe(false);
         expect(decision.reason).toBe('below_threshold');
-        expect(decision.effectiveWindow).toBe(900);
-        expect(decision.buffer).toBe(180);
-        expect(decision.autoCompactThreshold).toBe(720);
+        expect(decision.effectiveWindow).toBe(80000);
+        expect(decision.buffer).toBe(DEFAULT_AUTO_COMPACT_BUFFER);
+        expect(decision.autoCompactThreshold).toBe(67000);
         expect(decision.marginTokens).toBe(1);
-        expect(decision.windowUsageRatio).toBeCloseTo(0.719);
+        expect(decision.windowUsageRatio).toBeCloseTo(0.66999);
+        expect(decision.baseUsageTokens).toBe(64000);
+        expect(decision.tailEstimatedTokens).toBe(2000);
+        expect(decision.assistantInternalTailTokens).toBe(999);
+        expect(decision.tokenEstimateSource).toBe('usage_plus_tail_estimate');
     });
 
     test('到达阈值时触发自动压缩', () => {
         const decision = createAutoCompactDecision({
-            contextWindow: 1000,
-            promptTokens: 720,
-            reservedSummaryOutput: 100
+            contextWindow: 100000,
+            estimatedContextTokens: 67000,
+            reservedSummaryOutput: 20000
         });
 
         expect(decision.shouldCompact).toBe(true);
         expect(decision.reason).toBe('at_or_above_threshold');
-        expect(decision.autoCompactThreshold).toBe(720);
+        expect(decision.autoCompactThreshold).toBe(67000);
         expect(decision.marginTokens).toBe(0);
     });
 
     test('自定义 buffer 会覆盖默认 buffer 计算', () => {
         const decision = createAutoCompactDecision({
             contextWindow: 1000,
-            promptTokens: 849,
+            estimatedContextTokens: 849,
             reservedSummaryOutput: 100,
             buffer: 50
         });
@@ -77,6 +96,35 @@ describe('自动压缩决策', () => {
         expect(decision.buffer).toBe(50);
         expect(decision.autoCompactThreshold).toBe(850);
         expect(decision.marginTokens).toBe(1);
+    });
+
+    test('已知模型名会通过最大输出 lookup 推导 reserved summary output', async () => {
+        await expect(resolveReservedSummaryOutput('anthropic/claude-4-sonnet')).resolves.toBe(
+            MAX_RESERVED_SUMMARY_OUTPUT
+        );
+        await expect(resolveReservedSummaryOutput('openai/gpt-4o-2024-11-20')).resolves.toBe(
+            DEFAULT_AUTO_COMPACT_RESERVED_SUMMARY_OUTPUT
+        );
+    });
+
+    test('API 返回的最大输出 token 会在 reserved summary output 中被 capped 到 20k', async () => {
+        jest.spyOn(Setting, 'getInstance').mockReturnValue({
+            getModelInstance: () => new ModelInstance('custom-summary-model', 'https://example.com', 'test-key', false),
+            getDefaultModelInstance: () =>
+                new ModelInstance('custom-summary-model', 'https://example.com', 'test-key', false)
+        } as unknown as Setting);
+        const fetchSpy = jest.spyOn(globalThis, 'fetch').mockResolvedValue({
+            ok: true,
+            json: async () => ({
+                token_limits: {
+                    max_output_tokens: 65536
+                }
+            })
+        } as Response);
+
+        await expect(resolveReservedSummaryOutput('custom-model-alias')).resolves.toBe(MAX_RESERVED_SUMMARY_OUTPUT);
+        expect(fetchSpy).toHaveBeenCalledTimes(1);
+        expect(fetchSpy.mock.calls[0]?.[0]).toBe('https://example.com/models/custom-summary-model');
     });
 });
 

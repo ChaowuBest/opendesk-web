@@ -8,6 +8,7 @@ import {
     type ChatMessage
 } from '../messages.js';
 import { LLM } from '../llm.js';
+import { resolveReservedSummaryOutput } from './auto-compact.js';
 import { buildActiveContextView, buildProjectedActiveContextView } from './context-view.js';
 import type { AssistantRoundRef, CompactBoundaryRef, ProjectedContextItem } from './types.js';
 
@@ -103,6 +104,7 @@ export interface FullCompactSummaryRequest {
     model?: string;
     prompt: string;
     summaryText: string;
+    maxCompletionTokens: number;
 }
 
 export type FullCompactSummaryGenerator = (request: FullCompactSummaryRequest) => Promise<string>;
@@ -110,13 +112,11 @@ export type FullCompactSummaryGenerator = (request: FullCompactSummaryRequest) =
 export interface GenerateFullCompactSummaryOptions extends FullCompactSummaryTextOptions {
     prompt?: string;
     generateSummary?: FullCompactSummaryGenerator;
+    maxCompletionTokens?: number;
 }
 
 export interface FullCompactRunOptions
-    extends FullCompactPlanOptions, FullCompactSummaryTextOptions, FullCompactBoundaryOptions {
-    prompt?: string;
-    generateSummary?: FullCompactSummaryGenerator;
-}
+    extends FullCompactPlanOptions, GenerateFullCompactSummaryOptions, FullCompactBoundaryOptions {}
 
 export interface FullCompactRunResult {
     compacted: boolean;
@@ -891,19 +891,23 @@ export async function generateFullCompactSummary(
 ): Promise<string> {
     const prompt = options.prompt ?? getFullCompactCompressionPrompt();
     const summaryText = buildFullCompactSummaryText(plan, options);
+    const maxCompletionTokens = options.maxCompletionTokens ?? (await resolveReservedSummaryOutput(model));
 
     if (options.generateSummary) {
         return await options.generateSummary({
             plan,
             model,
             prompt,
-            summaryText
+            summaryText,
+            maxCompletionTokens
         });
     }
 
     const question = new UserMessage();
     question.appendText(`${prompt}\n\n---\n\n以下是需要总结的对话历史：\n\n${summaryText}`);
-    return await LLM.ask(question, model);
+    return await LLM.ask(question, model, {
+        maxCompletionTokens
+    });
 }
 
 export function buildFullCompactBoundary(

@@ -7,6 +7,7 @@ import type {
 } from '../messages.js';
 import type { MicrocompactAnalysisResult, MicrocompactCandidate, MicrocompactStats } from './microcompact.js';
 import type { AutoCompactDecision, AutoCompactState } from './auto-compact.js';
+import type { VisibleContextTokenEstimate } from './token-estimation.js';
 import type {
     SessionMemoryCompactOptions,
     SessionMemoryCompactRunResult,
@@ -126,6 +127,8 @@ export interface PrepareContextOptions {
 
 export interface PreparedContextResult {
     activeContext: ActiveContextView;
+    /** Token estimate used to compute the auto-compact decision before any full compact rerun. */
+    contextTokenEstimate: VisibleContextTokenEstimate;
     autoCompactDecision: AutoCompactDecision;
     autoCompactState?: AutoCompactState;
     autoCompactStateChanged: boolean;

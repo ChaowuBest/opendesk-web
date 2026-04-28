@@ -22,6 +22,13 @@ function extractVisionSupport(model: any): boolean | undefined {
     return undefined;
 }
 
+function pickPositiveNumber(candidates: unknown[]): number {
+    for (const val of candidates) {
+        if (typeof val === 'number' && val > 0) return val;
+    }
+    return 0;
+}
+
 /**
  * 从模型对象中提取上下文窗口大小，兼容多种 API 格式：
  * - 火山引擎 Ark: token_limits.context_window
@@ -31,7 +38,7 @@ function extractVisionSupport(model: any): boolean | undefined {
  */
 function extractContextSize(model: any): number {
     if (!model) return 0;
-    const candidates = [
+    return pickPositiveNumber([
         model.token_limits?.context_window,
         model.token_limits?.max_input_token_length,
         model.context_length,
@@ -40,11 +47,27 @@ function extractContextSize(model: any): number {
         model.max_model_len,
         model.model_info?.context_length,
         model.model_info?.context_window
-    ];
-    for (const val of candidates) {
-        if (typeof val === 'number' && val > 0) return val;
-    }
-    return 0;
+    ]);
+}
+
+/**
+ * 从模型对象中提取最大输出 token 数，兼容多种 API 格式：
+ * - OpenAI 兼容: token_limits.max_output_tokens / max_completion_tokens
+ * - 通用: max_output_tokens / max_completion_tokens / output_token_limit
+ * - 扩展: model_info.max_output_tokens / top_provider.max_completion_tokens
+ */
+function extractMaxOutputTokens(model: any): number {
+    if (!model) return 0;
+    return pickPositiveNumber([
+        model.token_limits?.max_output_tokens,
+        model.token_limits?.max_completion_tokens,
+        model.max_output_tokens,
+        model.max_completion_tokens,
+        model.output_token_limit,
+        model.model_info?.max_output_tokens,
+        model.model_info?.max_completion_tokens,
+        model.top_provider?.max_completion_tokens
+    ]);
 }
 
 /**
@@ -112,6 +135,55 @@ export async function fetchContextSizeFromAPI(modelInstance: {
             const match = findModelInList(models, modelName);
             if (match) {
                 const size = extractContextSize(match);
+                if (size > 0) return size;
+            }
+        }
+    } catch {
+        /* 忽略列表端点错误 */
+    }
+
+    return 0;
+}
+
+/**
+ * 尝试通过 OpenAI 兼容 API 的 /models 端点获取模型的最大输出 token 数。
+ * 失败时返回 0 表示未知。
+ */
+export async function fetchMaxOutputTokensFromAPI(modelInstance: {
+    base_url: string;
+    api_key: string;
+    model_name: string;
+}): Promise<number> {
+    const { base_url: baseUrl, api_key: apiKey, model_name: modelName } = modelInstance;
+    const headers: Record<string, string> = {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json'
+    };
+
+    try {
+        const resp = await fetch(`${baseUrl}/models/${encodeURIComponent(modelName)}`, {
+            headers,
+            signal: AbortSignal.timeout(5000)
+        });
+        if (resp.ok) {
+            const size = extractMaxOutputTokens(await resp.json());
+            if (size > 0) return size;
+        }
+    } catch {
+        /* 忽略单模型端点错误 */
+    }
+
+    try {
+        const resp = await fetch(`${baseUrl}/models`, {
+            headers,
+            signal: AbortSignal.timeout(8000)
+        });
+        if (resp.ok) {
+            const body = await resp.json();
+            const models: any[] = body.data ?? body;
+            const match = findModelInList(models, modelName);
+            if (match) {
+                const size = extractMaxOutputTokens(match);
                 if (size > 0) return size;
             }
         }
@@ -417,6 +489,51 @@ const KNOWN_CONTEXT_SIZES: Record<string, number> = {
 };
 
 /**
+ * 常见模型最大输出 token 上限查找表。
+ * 仅在 API 元数据不可用时兜底，用于 summary 输出预留与 max_completion_tokens 默认值。
+ */
+const KNOWN_MAX_OUTPUT_TOKENS: Record<string, number> = {
+    // ── OpenAI ──
+    'gpt-5-2': 128000,
+    'gpt-5-3-codex': 128000,
+    'gpt-5': 128000,
+    'gpt-4o': 16384,
+    'gpt-4o-mini': 16384,
+    'gpt-4-turbo': 4096,
+    'gpt-4': 4096,
+    'gpt-4-32k': 4096,
+    'gpt-3-5-turbo': 4096,
+    'gpt-3-5-turbo-16k': 4096,
+    o1: 100000,
+    'o1-mini': 65536,
+    'o1-pro': 100000,
+    o3: 100000,
+    'o3-mini': 100000,
+    'o4-mini': 100000,
+
+    // ── Claude / Anthropic ──
+    'claude-4-6-opus': 64000,
+    'claude-4-6-sonnet': 64000,
+    'claude-4-opus': 64000,
+    'claude-4-sonnet': 64000,
+    'claude-3-7-sonnet': 64000,
+    'claude-3-5-sonnet': 8192,
+    'claude-3-5-haiku': 8192,
+    'claude-3-opus': 4096,
+    'claude-3-sonnet': 4096,
+    'claude-3-haiku': 4096,
+
+    // ── Gemini / Google ──
+    'gemini-3-pro': 65536,
+    'gemini-3-flash': 65536,
+    'gemini-2-5-flash': 65536,
+    'gemini-2-5-pro': 65536,
+    'gemini-2-0-flash': 8192,
+    'gemini-1-5-pro': 8192,
+    'gemini-1-5-flash': 8192
+};
+
+/**
  * 标准化模型名称：小写 + 分隔符归一化为 `-`
  */
 function normalize(name: string): string {
@@ -492,6 +609,43 @@ export function lookupKnownContextSize(rawModelName: string): number {
         let rBestLen = 0,
             rBestSize = 0;
         for (const [key, size] of Object.entries(KNOWN_CONTEXT_SIZES)) {
+            if (key.startsWith(c) && c.length > rBestLen) {
+                rBestLen = c.length;
+                rBestSize = size;
+            }
+        }
+        if (rBestSize > 0) return rBestSize;
+    }
+
+    return 0;
+}
+
+/**
+ * 在查找表中查找模型的最大输出 token 上限。
+ * 匹配策略与 lookupKnownContextSize 保持一致。
+ */
+export function lookupKnownMaxOutputTokens(rawModelName: string): number {
+    const base = normalize(stripProviderPrefix(rawModelName));
+    const candidates = stripSuffixes(base);
+
+    for (const c of candidates) {
+        if (KNOWN_MAX_OUTPUT_TOKENS[c] !== undefined) return KNOWN_MAX_OUTPUT_TOKENS[c];
+    }
+
+    let bestLen = 0;
+    let bestSize = 0;
+    for (const [key, size] of Object.entries(KNOWN_MAX_OUTPUT_TOKENS)) {
+        if (base.startsWith(key) && key.length > bestLen) {
+            bestLen = key.length;
+            bestSize = size;
+        }
+    }
+    if (bestSize > 0) return bestSize;
+
+    for (const c of candidates) {
+        let rBestLen = 0;
+        let rBestSize = 0;
+        for (const [key, size] of Object.entries(KNOWN_MAX_OUTPUT_TOKENS)) {
             if (key.startsWith(c) && c.length > rBestLen) {
                 rBestLen = c.length;
                 rBestSize = size;

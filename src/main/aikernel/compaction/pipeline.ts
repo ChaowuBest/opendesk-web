@@ -3,7 +3,12 @@ import { ChatContext } from '../messages.js';
 import { logger } from '../../utils/logger.js';
 import { describeCompactPlanVariant, logCompactInfo } from './compact-trace.js';
 import { buildActiveContextView } from './context-view.js';
-import { AutoCompactStates, getAutoCompactDecision, type AutoCompactState } from './auto-compact.js';
+import {
+    AutoCompactStates,
+    estimateAutoCompactContextTokens,
+    getAutoCompactDecision,
+    type AutoCompactState
+} from './auto-compact.js';
 import { analyzeMicrocompactCandidates, applyLocalMicrocompactToChatContext } from './microcompact.js';
 import { trySessionMemoryCompaction } from './session-memory-compact.js';
 import { buildToolResultBudgetProjectionForChatContext } from './tool-results.js';
@@ -20,6 +25,7 @@ type LightweightPreparationResult = Omit<
     | 'autoCompactDecision'
     | 'autoCompactState'
     | 'autoCompactStateChanged'
+    | 'contextTokenEstimate'
 >;
 
 function isAssistantRoundBoundaryEnabled(options: PrepareContextOptions): boolean {
@@ -119,8 +125,19 @@ export async function prepareContextForModel(
     const assistantRoundBoundaryEnabled = isAssistantRoundBoundaryEnabled(options);
 
     let lightweightResult = runLightweightPreparationLayers(chatContext, options);
+    const contextTokenEstimate = estimateAutoCompactContextTokens({
+        activeContext: lightweightResult.activeContext,
+        toolResultOverrides: lightweightResult.toolResultOverrides
+    });
     const autoCompactDecision =
-        options.autoCompactDecisionOverride ?? (await getAutoCompactDecision(chatContext, model));
+        options.autoCompactDecisionOverride ??
+        (await getAutoCompactDecision(
+            {
+                activeContext: lightweightResult.activeContext,
+                toolResultOverrides: lightweightResult.toolResultOverrides
+            },
+            model
+        ));
     const autoCompactStateTarget = options.autoCompactState;
     let autoCompactState: AutoCompactState | undefined = autoCompactStateTarget
         ? AutoCompactStates.clone(autoCompactStateTarget)
@@ -303,6 +320,7 @@ export async function prepareContextForModel(
 
     return {
         ...lightweightResult,
+        contextTokenEstimate,
         shouldCompact: shouldRunCompact,
         compacted,
         sessionMemoryCompacted,
