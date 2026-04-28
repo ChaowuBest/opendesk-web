@@ -1009,6 +1009,7 @@ const registerDisplayZoomHandlers = () => {
             ...currentData,
             display: { ...(currentData.display || {}), scale_factor: rounded }
         });
+        globalMainWindow.webContents.send('display:scaleFactorChanged', rounded);
     };
 
     ipcMain.handle('display:getScaleFactor', () => {

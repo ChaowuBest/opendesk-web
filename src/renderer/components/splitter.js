@@ -37,15 +37,38 @@ class SplitterWidget extends HTMLElement {
                 height: 100%;
                 min-height: 0;
             }
+            .resizer {
+                position: relative;
+                background: transparent;
+                width: 6px;
+                min-width: 6px;
+                cursor: col-resize;
+                flex-shrink: 0;
+            }
+            .resizer-center {
+                position: absolute;
+                top: 50%;
+                left: 50%;
+                transform: translate(-50%, -50%);
+                pointer-events: none;
+            }
+            .resizer-indicator {
+                width: 3px;
+                height: 40px;
+                border-radius: 9999px;
+                background: rgba(0, 0, 0, 0.12);
+                opacity: 0;
+                transition: opacity 0.2s ease;
+            }
+            .resizer:hover .resizer-indicator {
+                opacity: 1;
+            }
         </style>
         <slot id="leftPanel" name="left" style="display: flex; flex-direction: column; width: ${initialWidth}px; height: 100%; flex-shrink: 0; min-height: 0; overflow: visible;"></slot>
 
-        <div id="resizer"
-            class="relative group"
-            style="background: transparent; width: 6px; min-width: 6px; cursor: col-resize; flex-shrink: 0;"
-        >
-            <div class="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 pointer-events-none">
-                <div class="w-[3px] h-10 rounded-full opacity-0 group-hover:opacity-100 transition" style="background: rgba(0,0,0,0.12);"></div>
+        <div id="resizer" class="resizer">
+            <div class="resizer-center">
+                <div class="resizer-indicator"></div>
             </div>
         </div>
 

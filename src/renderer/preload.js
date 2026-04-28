@@ -587,6 +587,11 @@ if (window.self !== window.top) {
             const result = await ipcRenderer.invoke('display:adjustScaleFactor', delta);
             if (result.status !== 'ok') throw new Error(result.message);
             return result.data;
+        },
+        onScaleFactorChanged: (callback) => {
+            const handler = (_event, factor) => callback(factor);
+            ipcRenderer.on('display:scaleFactorChanged', handler);
+            return () => ipcRenderer.removeListener('display:scaleFactorChanged', handler);
         }
     });
 

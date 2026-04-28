@@ -953,11 +953,11 @@ class TaskView extends HTMLElement {
 
                 <!-- 右侧边栏拖拽条 -->
                 <div id="task-${this.task_id}-resizer"
-                    class="relative group shrink-0"
+                    class="resizer-group relative shrink-0"
                     style="background: linear-gradient(to right, transparent 40%, #e0e0e0 50%, transparent 60%); width: 4px; cursor: col-resize; display: ${TaskView.rightSidebarExpanded ? '' : 'none'};"
                 >
                     <div class="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 pointer-events-none">
-                        <div class="w-[2px] h-12 bg-gray-200 rounded-full opacity-70 group-hover:opacity-100 group-hover:bg-blue-400 transition"></div>
+                        <div class="resizer-handle-indicator resizer-blue" style="width: 2px; height: 3rem; border-radius: 9999px; background: #e5e7eb;"></div>
                     </div>
                 </div>
 

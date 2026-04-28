@@ -9,8 +9,6 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { ElasticToolbarWidget } from './toolbar.ts';
-
 class SettingPanel extends HTMLElement {
     constructor() {
         super();
@@ -40,15 +38,15 @@ class SettingPanel extends HTMLElement {
     render() {
         this.innerHTML = `
         <div class="w-full h-full overflow-hidden flex flex-col bg-gradient-to-br from-slate-50 via-white to-blue-50/30">
+            <!-- 固定在右上角的工具栏（窗口控制按钮下方） -->
+            <div id="setting-panel-toolbar" class="sp-fixed-toolbar"></div>
+
             <!-- 顶部标题栏 -->
-            <div class="sticky top-0 z-10 px-6 py-4 pr-[140px] flex items-center justify-between bg-white/60 backdrop-blur-2xl border-b border-gray-100/50">
+            <div class="sticky top-0 z-10 px-6 py-4 flex items-center bg-white/60 backdrop-blur-2xl border-b border-gray-100/50">
                 <h1 class="text-2xl font-bold bg-gradient-to-r from-gray-800 to-gray-600 bg-clip-text text-transparent">设置</h1>
-                <div class="flex items-center gap-3">
-                    <span id="save-indicator" class="text-xs text-green-500 opacity-0 transition-opacity duration-300 flex items-center gap-1">
-                        <i class="fas fa-check-circle"></i> 已保存
-                    </span>
-                    <div id="setting-panel-toolbar"></div>
-                </div>
+                <span id="save-indicator" class="ml-4 text-xs text-green-500 opacity-0 transition-opacity duration-300 flex items-center gap-1">
+                    <i class="fas fa-check-circle"></i> 已保存
+                </span>
             </div>
 
             <!-- 可滚动内容区 -->
@@ -70,48 +68,46 @@ class SettingPanel extends HTMLElement {
     }
 
     _createSettingPanelToolbar() {
-        const toolbar = new ElasticToolbarWidget([
+        const container = this.querySelector('#setting-panel-toolbar');
+        if (!container) return;
+
+        const buttons = [
             {
                 id: 'import-quickpass-btn',
                 icon: 'fa-key',
                 label: '导入口令',
-                labelStayVisible: true,
+                primary: false,
                 action: () => this.showImportQuickPassModal()
             },
             {
                 id: 'export-quickpass-btn',
                 icon: 'fa-file-export',
                 label: '导出口令',
-                labelStayVisible: true,
+                primary: false,
                 action: () => this.showExportQuickPassModal()
             },
             {
                 id: 'advanced-setting-btn',
                 icon: 'fa-cog',
                 label: '高级设置',
-                labelStayVisible: true,
+                primary: true,
                 action: () => window.globalControlAPI.openAdvancedSettingEditor()
             }
-        ]);
+        ];
 
-        toolbar.classList.add('pill-buttons');
-        const container = this.querySelector('#setting-panel-toolbar');
-        if (container) {
-            container.appendChild(toolbar);
+        const wrapper = document.createElement('div');
+        wrapper.className = 'flex items-center gap-2';
+
+        for (const btn of buttons) {
+            const el = document.createElement('button');
+            el.id = btn.id;
+            el.className = btn.primary ? 'sp-toolbar-btn sp-toolbar-primary' : 'sp-toolbar-btn';
+            el.innerHTML = `<i class="fa-solid ${btn.icon}"></i><span>${btn.label}</span>`;
+            el.addEventListener('click', btn.action);
+            wrapper.appendChild(el);
         }
 
-        // 高级设置按钮使用渐变背景
-        const advancedBtn = toolbar.querySelector(`[id^="advanced-setting-btn"]`);
-        if (advancedBtn) {
-            advancedBtn.classList.remove('bg-transparent', 'hover:bg-gray-100');
-            advancedBtn.classList.add(
-                'bg-gradient-to-r',
-                'from-gray-700',
-                'to-gray-600',
-                'text-white',
-                'hover:shadow-md'
-            );
-        }
+        container.appendChild(wrapper);
     }
 
     renderProvidersSection() {
@@ -128,7 +124,7 @@ class SettingPanel extends HTMLElement {
             <div id="provider-list" class="grid grid-cols-1 md:grid-cols-2 gap-3">
                 ${providers.map((p, i) => this.renderProviderCard(p, i)).join('')}
             </div>
-            <button id="add-provider-btn" class="mt-4 w-full py-3 text-sm text-gray-500 rounded-2xl border-2 border-dashed border-gray-200 hover:border-blue-300 hover:text-blue-500 hover:bg-blue-50/50 transition-all duration-200">
+            <button id="add-provider-btn" class="sp-add-btn sp-add-provider mt-4 w-full py-3 text-sm text-gray-500 rounded-2xl border-2 border-dashed border-gray-200">
                 <i class="fas fa-plus mr-2"></i>添加提供商
             </button>
         </section>
@@ -138,7 +134,7 @@ class SettingPanel extends HTMLElement {
     renderProviderCard(provider, index) {
         const maskedKey = this.maskApiKey(provider.api_key);
         return `
-        <div class="group bg-white/70 backdrop-blur-xl rounded-2xl border border-white/50 shadow-lg hover:shadow-xl hover:border-blue-200/50 transition-all duration-300 p-4" data-provider-index="${index}">
+        <div class="sp-card sp-card-provider bg-white/70 backdrop-blur-xl rounded-2xl border border-white/50 shadow-lg p-4" data-provider-index="${index}">
             <div class="flex items-start justify-between">
                 <div class="flex-1 min-w-0">
                     <h3 class="font-semibold text-gray-800 truncate">${this.escapeHtml(provider.name)}</h3>
@@ -146,11 +142,11 @@ class SettingPanel extends HTMLElement {
                     <p class="text-xs text-gray-400 mt-0.5">${maskedKey}</p>
                     ${provider.no_proxy ? '<span class="inline-block mt-2 text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-600">禁用代理</span>' : ''}
                 </div>
-                <div class="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button class="edit-provider-btn w-8 h-8 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors" data-index="${index}">
+                <div class="sp-card-actions flex gap-1">
+                    <button class="edit-provider-btn sp-card-action-btn" data-index="${index}">
                         <i class="fas fa-pen text-xs"></i>
                     </button>
-                    <button class="delete-provider-btn w-8 h-8 rounded-lg hover:bg-red-50 text-gray-400 hover:text-red-500 transition-colors" data-index="${index}">
+                    <button class="delete-provider-btn sp-card-action-btn sp-delete-btn" data-index="${index}">
                         <i class="fas fa-trash text-xs"></i>
                     </button>
                 </div>
@@ -173,7 +169,7 @@ class SettingPanel extends HTMLElement {
             <div id="model-list" class="grid grid-cols-1 md:grid-cols-2 gap-3">
                 ${models.map((m, i) => this.renderModelCard(m, i)).join('')}
             </div>
-            <button id="add-model-btn" class="mt-4 w-full py-3 text-sm text-gray-500 rounded-2xl border-2 border-dashed border-gray-200 hover:border-purple-300 hover:text-purple-500 hover:bg-purple-50/50 transition-all duration-200">
+            <button id="add-model-btn" class="sp-add-btn sp-add-model mt-4 w-full py-3 text-sm text-gray-500 rounded-2xl border-2 border-dashed border-gray-200">
                 <i class="fas fa-plus mr-2"></i>添加模型
             </button>
         </section>
@@ -183,7 +179,7 @@ class SettingPanel extends HTMLElement {
     renderModelCard(model, index) {
         const effortLabel = this.getEffortLabel(model.reasoning_effort);
         return `
-        <div class="group bg-white/70 backdrop-blur-xl rounded-2xl border border-white/50 shadow-lg hover:shadow-xl hover:border-purple-200/50 transition-all duration-300 p-4" data-model-index="${index}">
+        <div class="sp-card sp-card-model bg-white/70 backdrop-blur-xl rounded-2xl border border-white/50 shadow-lg p-4" data-model-index="${index}">
             <div class="flex items-start justify-between">
                 <div class="flex-1 min-w-0">
                     <div class="flex items-center gap-2">
@@ -192,11 +188,11 @@ class SettingPanel extends HTMLElement {
                     </div>
                     <p class="text-xs text-gray-400 mt-1 truncate">${this.escapeHtml(model.provider_name)} / ${this.escapeHtml(model.model_name)}</p>
                 </div>
-                <div class="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button class="edit-model-btn w-8 h-8 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors" data-index="${index}">
+                <div class="sp-card-actions flex gap-1">
+                    <button class="edit-model-btn sp-card-action-btn" data-index="${index}">
                         <i class="fas fa-pen text-xs"></i>
                     </button>
-                    <button class="delete-model-btn w-8 h-8 rounded-lg hover:bg-red-50 text-gray-400 hover:text-red-500 transition-colors" data-index="${index}">
+                    <button class="delete-model-btn sp-card-action-btn sp-delete-btn" data-index="${index}">
                         <i class="fas fa-trash text-xs"></i>
                     </button>
                 </div>
@@ -393,7 +389,7 @@ class SettingPanel extends HTMLElement {
         const templateCards = templates
             .map(
                 (t, i) => `
-            <button class="provider-template-btn flex flex-col items-center justify-center p-4 rounded-xl border border-gray-200 hover:border-blue-300 hover:bg-blue-50/50 transition-all" data-index="${i}">
+            <button class="provider-template-btn sp-template-btn flex flex-col items-center justify-center p-4 rounded-xl border border-gray-200" data-index="${i}">
                 <span class="font-medium text-gray-800">${this.escapeHtml(t.displayName)}</span>
                 <span class="text-xs text-gray-400 mt-1 truncate max-w-full">${this.escapeHtml(t.base_url)}</span>
             </button>
@@ -405,14 +401,14 @@ class SettingPanel extends HTMLElement {
             <div class="bg-white/95 backdrop-blur-2xl rounded-3xl shadow-2xl border border-white/50 w-full max-w-2xl mx-4 overflow-hidden">
                 <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
                     <h3 class="text-lg font-semibold text-gray-800">选择提供商模板</h3>
-                    <button class="modal-close-btn w-8 h-8 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors">
+                    <button class="modal-close-btn sp-modal-close w-8 h-8 rounded-lg text-gray-400">
                         <i class="fas fa-times"></i>
                     </button>
                 </div>
                 <div class="px-6 py-5">
                     <div class="grid grid-cols-2 md:grid-cols-3 gap-3 max-h-[400px] overflow-y-auto">
                         ${templateCards}
-                        <button class="provider-custom-btn flex flex-col items-center justify-center p-4 rounded-xl border border-dashed border-gray-300 hover:border-blue-400 hover:bg-blue-50/50 transition-all">
+                        <button class="provider-custom-btn sp-template-custom-btn flex flex-col items-center justify-center p-4 rounded-xl border border-dashed border-gray-300">
                             <i class="fas fa-plus text-gray-400 mb-1"></i>
                             <span class="text-sm text-gray-500">自定义</span>
                         </button>
@@ -452,7 +448,7 @@ class SettingPanel extends HTMLElement {
             <div class="bg-white/95 backdrop-blur-2xl rounded-3xl shadow-2xl border border-white/50 w-full min-w-[480px] max-w-xl mx-4 overflow-hidden">
                 <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
                     <h3 class="text-lg font-semibold text-gray-800">${isEdit ? '编辑提供商' : '添加提供商'}</h3>
-                    <button class="modal-close-btn w-8 h-8 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors">
+                    <button class="modal-close-btn sp-modal-close w-8 h-8 rounded-lg text-gray-400">
                         <i class="fas fa-times"></i>
                     </button>
                 </div>
@@ -469,7 +465,7 @@ class SettingPanel extends HTMLElement {
                         <label class="block text-sm font-medium text-gray-600 mb-1.5">API 密钥</label>
                         <div class="relative">
                             <input id="provider-key-input" type="password" value="${this.escapeHtml(provider.api_key)}" class="w-full px-4 py-2.5 pr-10 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all" placeholder="sk-...">
-                            <button id="toggle-key-visibility" class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+                            <button id="toggle-key-visibility" class="sp-toggle-key absolute right-3 top-1/2 -translate-y-1/2 text-gray-400">
                                 <i class="fas fa-eye text-xs"></i>
                             </button>
                         </div>
@@ -480,8 +476,8 @@ class SettingPanel extends HTMLElement {
                     </div>
                 </div>
                 <div class="px-6 py-4 border-t border-gray-100 flex justify-end gap-3">
-                    <button class="modal-close-btn px-4 py-2 text-sm text-gray-600 rounded-xl hover:bg-gray-100 transition-colors">取消</button>
-                    <button id="save-provider-btn" class="px-4 py-2 text-sm text-white bg-gradient-to-r from-blue-500 to-blue-600 rounded-xl hover:shadow-lg transition-all">${isEdit ? '保存' : '添加'}</button>
+                    <button class="modal-close-btn sp-modal-cancel px-4 py-2 text-sm text-gray-600 rounded-xl">取消</button>
+                    <button id="save-provider-btn" class="sp-modal-save px-4 py-2 text-sm text-white bg-gradient-to-r from-blue-500 to-blue-600 rounded-xl">${isEdit ? '保存' : '添加'}</button>
                 </div>
             </div>
         `);
@@ -549,7 +545,7 @@ class SettingPanel extends HTMLElement {
             <div class="bg-white/95 backdrop-blur-2xl rounded-3xl shadow-2xl border border-white/50 w-full max-w-md mx-4 overflow-hidden">
                 <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
                     <h3 class="text-lg font-semibold text-gray-800">删除提供商</h3>
-                    <button class="modal-close-btn text-gray-400 hover:text-gray-600 transition-colors">
+                    <button class="modal-close-btn sp-modal-close text-gray-400">
                         <i class="fas fa-times"></i>
                     </button>
                 </div>
@@ -570,8 +566,8 @@ class SettingPanel extends HTMLElement {
                     }
                 </div>
                 <div class="px-6 py-4 border-t border-gray-100 flex justify-end gap-3">
-                    <button class="modal-close-btn px-4 py-2 text-sm text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-xl transition-colors">取消</button>
-                    <button id="confirm-delete-provider-btn" class="px-4 py-2 text-sm text-white bg-red-500 hover:bg-red-600 rounded-xl transition-colors">确认删除</button>
+                    <button class="modal-close-btn sp-modal-cancel px-4 py-2 text-sm text-gray-600 bg-gray-100 rounded-xl">取消</button>
+                    <button id="confirm-delete-provider-btn" class="sp-confirm-delete px-4 py-2 text-sm text-white bg-red-500 rounded-xl">确认删除</button>
                 </div>
             </div>
         `);
@@ -637,7 +633,7 @@ class SettingPanel extends HTMLElement {
             <div class="bg-white/95 backdrop-blur-2xl rounded-3xl shadow-2xl border border-white/50 w-full min-w-[480px] max-w-xl mx-4 overflow-hidden">
                 <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
                     <h3 class="text-lg font-semibold text-gray-800">${isEdit ? '编辑模型' : '添加模型'}</h3>
-                    <button class="modal-close-btn w-8 h-8 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors">
+                    <button class="modal-close-btn sp-modal-close w-8 h-8 rounded-lg text-gray-400">
                         <i class="fas fa-times"></i>
                     </button>
                 </div>
@@ -669,8 +665,8 @@ class SettingPanel extends HTMLElement {
                     </div>
                 </div>
                 <div class="px-6 py-4 border-t border-gray-100 flex justify-end gap-3">
-                    <button class="modal-close-btn px-4 py-2 text-sm text-gray-600 rounded-xl hover:bg-gray-100 transition-colors">取消</button>
-                    <button id="save-model-btn" class="px-4 py-2 text-sm text-white bg-gradient-to-r from-purple-500 to-purple-600 rounded-xl hover:shadow-lg transition-all">${isEdit ? '保存' : '添加'}</button>
+                    <button class="modal-close-btn sp-modal-cancel px-4 py-2 text-sm text-gray-600 rounded-xl">取消</button>
+                    <button id="save-model-btn" class="sp-modal-save px-4 py-2 text-sm text-white bg-gradient-to-r from-purple-500 to-purple-600 rounded-xl">${isEdit ? '保存' : '添加'}</button>
                 </div>
             </div>
         `);
@@ -796,21 +792,21 @@ class SettingPanel extends HTMLElement {
             <div class="bg-white/95 backdrop-blur-2xl rounded-3xl shadow-2xl border border-white/50 w-full min-w-[480px] max-w-lg mx-4 overflow-hidden">
                 <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
                     <h3 class="text-lg font-semibold text-gray-800">导出口令</h3>
-                    <button class="modal-close-btn w-8 h-8 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors">
+                    <button class="modal-close-btn sp-modal-close w-8 h-8 rounded-lg text-gray-400">
                         <i class="fas fa-times"></i>
                     </button>
                 </div>
                 <div class="px-6 py-5 space-y-4">
                     <div class="flex gap-3">
-                        <button id="export-base-btn" class="flex-1 py-3 text-sm text-gray-700 bg-white border border-gray-200 rounded-xl hover:bg-gray-50 hover:border-blue-300 transition-all">
+                        <button id="export-base-btn" class="sp-export-option-btn sp-export-base flex-1 py-3 text-sm text-gray-700 bg-white border border-gray-200 rounded-xl">
                             <i class="fas fa-cog mr-2 text-blue-500"></i>基础设置口令
                         </button>
-                        <button id="export-all-btn" class="flex-1 py-3 text-sm text-gray-700 bg-white border border-gray-200 rounded-xl hover:bg-gray-50 hover:border-purple-300 transition-all">
+                        <button id="export-all-btn" class="sp-export-option-btn sp-export-all flex-1 py-3 text-sm text-gray-700 bg-white border border-gray-200 rounded-xl">
                             <i class="fas fa-box mr-2 text-purple-500"></i>全部设置口令
                         </button>
                     </div>
                     <textarea id="export-result" readonly class="w-full h-32 px-4 py-3 text-xs font-mono bg-gray-50 border border-gray-200 rounded-xl resize-none focus:outline-none" placeholder="点击上方按钮生成口令..."></textarea>
-                    <button id="copy-quickpass-btn" class="w-full py-2.5 text-sm text-white bg-gradient-to-r from-gray-700 to-gray-600 rounded-xl hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed" disabled>
+                    <button id="copy-quickpass-btn" class="sp-modal-save w-full py-2.5 text-sm text-white bg-gradient-to-r from-gray-700 to-gray-600 rounded-xl disabled:opacity-50 disabled:cursor-not-allowed" disabled>
                         <i class="fas fa-copy mr-2"></i>复制到剪贴板
                     </button>
                 </div>
@@ -854,14 +850,14 @@ class SettingPanel extends HTMLElement {
             <div class="bg-white/95 backdrop-blur-2xl rounded-3xl shadow-2xl border border-white/50 w-full min-w-[480px] max-w-lg mx-4 overflow-hidden">
                 <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
                     <h3 class="text-lg font-semibold text-gray-800">导入口令</h3>
-                    <button class="modal-close-btn w-8 h-8 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors">
+                    <button class="modal-close-btn sp-modal-close w-8 h-8 rounded-lg text-gray-400">
                         <i class="fas fa-times"></i>
                     </button>
                 </div>
                 <div class="px-6 py-5 space-y-4">
                     <textarea id="import-input" class="w-full h-32 px-4 py-3 text-xs font-mono bg-white/60 border border-gray-200/60 rounded-xl resize-none focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all" placeholder="粘贴口令..."></textarea>
                     <div id="import-result" class="text-sm"></div>
-                    <button id="import-quickpass-confirm-btn" class="w-full py-2.5 text-sm text-white bg-gradient-to-r from-blue-500 to-blue-600 rounded-xl hover:shadow-lg transition-all">
+                    <button id="import-quickpass-confirm-btn" class="sp-modal-save w-full py-2.5 text-sm text-white bg-gradient-to-r from-blue-500 to-blue-600 rounded-xl">
                         <i class="fas fa-check mr-2"></i>导入
                     </button>
                 </div>
