@@ -40,12 +40,10 @@ function cleanup(dir: string): void {
     if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
 }
 
-function extractSearchItems(
-    result: Awaited<ReturnType<BaseStorage['search']>>,
-): SearchItem[] {
+function extractSearchItems(result: Awaited<ReturnType<BaseStorage['search']>>): SearchItem[] {
     assert(
         result && Array.isArray(result.items) && typeof result.totalCount === 'number',
-        'storage.search() must return { items, totalCount }',
+        'storage.search() must return { items, totalCount }'
     );
     return result.items;
 }
@@ -61,12 +59,12 @@ const fullSchema: ColumnSchema = {
         tag: { type: 'TEXT', nullable: true },
         created_at: { type: 'INTEGER', nullable: true },
         updated_at: { type: 'INTEGER', nullable: true },
-        semi_text: { type: 'TEXT', nullable: true },
+        semi_text: { type: 'TEXT', nullable: true }
     },
     needIndexers: {
         tag: [{ indexer: 'TagIndexer' }],
-        text: [{ indexer: 'VectorIndexer', options: { dim: 1024 } }, { indexer: 'BM25Indexer' }],
-    },
+        text: [{ indexer: 'VectorIndexer', options: { dim: 1024 } }, { indexer: 'BM25Indexer' }]
+    }
 };
 
 function buildTestItems(): Item[] {
@@ -84,8 +82,8 @@ function buildTestItems(): Item[] {
             indexer_columns: {
                 VectorIndexer: [{ column: 'text', content: makeOneHotVector(0) }],
                 TagIndexer: [{ column: 'tag', content: 'todo' }],
-                BM25Indexer: [{ column: 'text', content: '项目计划书 project proposal' }],
-            },
+                BM25Indexer: [{ column: 'text', content: '项目计划书 project proposal' }]
+            }
         },
         {
             item_id: 'item-2',
@@ -99,9 +97,9 @@ function buildTestItems(): Item[] {
             indexer_columns: {
                 VectorIndexer: [{ column: 'text', content: makeOneHotVector(1) }],
                 TagIndexer: [{ column: 'tag', content: 'idea' }],
-                BM25Indexer: [{ column: 'text', content: '会议纪要 meeting notes' }],
-            },
-        },
+                BM25Indexer: [{ column: 'text', content: '会议纪要 meeting notes' }]
+            }
+        }
     ];
 }
 
@@ -110,7 +108,7 @@ function buildTestItems(): Item[] {
 /** 1. Basic CRUD with all four indexers */
 async function testBasicCrudAllIndexers(storage: BaseStorage): Promise<void> {
     const baseResults = extractSearchItems(
-        await storage.search([{ indexer: 'BaseIndexer', field: 'text', operator: 'like', value: 'vector%' }]),
+        await storage.search([{ indexer: 'BaseIndexer', field: 'text', operator: 'like', value: 'vector%' }])
     );
     assert.equal(baseResults.length, 2, 'BaseIndexer like should find 2 items');
 
@@ -121,22 +119,27 @@ async function testBasicCrudAllIndexers(storage: BaseStorage): Promise<void> {
                 field: 'text',
                 operator: 'vector_near',
                 value: makeOneHotVector(0),
-                vectorQuery: { topK: 1, metric: 'cosine', threshold: 0.0 },
-            },
-        ]),
+                vectorQuery: { topK: 1, metric: 'cosine', threshold: 0.0 }
+            }
+        ])
     );
     assert(vecResults.length >= 1, 'VectorIndexer should return at least 1 result');
     assert.equal(vecResults[0].item.item_id, 'item-1');
 
     const tagResults = extractSearchItems(
-        await storage.search([{ indexer: 'TagIndexer', field: 'tag', operator: 'like', value: 'todo' }]),
+        await storage.search([{ indexer: 'TagIndexer', field: 'tag', operator: 'like', value: 'todo' }])
     );
     assert(tagResults.length >= 1, 'TagIndexer should find at least 1 result');
 
     const bm25Results = extractSearchItems(
         await storage.search([
-            { indexer: 'BM25Indexer', field: 'text', operator: 'bm25_match', value: { query: 'project', topK: 10 } as BM25Query },
-        ]),
+            {
+                indexer: 'BM25Indexer',
+                field: 'text',
+                operator: 'bm25_match',
+                value: { query: 'project', topK: 10 } as BM25Query
+            }
+        ])
     );
     assert(bm25Results.length >= 1, 'BM25 English query should return results');
 
@@ -146,9 +149,9 @@ async function testBasicCrudAllIndexers(storage: BaseStorage): Promise<void> {
                 indexer: 'BM25Indexer',
                 field: 'text',
                 operator: 'bm25_match',
-                value: { query: '项目计划书', topK: 10 } as BM25Query,
-            },
-        ]),
+                value: { query: '项目计划书', topK: 10 } as BM25Query
+            }
+        ])
     );
     assert(zhResults.length >= 1 && zhResults[0].item.item_id === 'item-1', 'BM25 Chinese query should hit item-1');
 
@@ -167,9 +170,9 @@ async function testInsertSemantics(storage: BaseStorage): Promise<void> {
             indexer_columns: {
                 BM25Indexer: [{ column: 'text', content: 'original text' }],
                 VectorIndexer: [{ column: 'text', content: new Array(1024).fill(0.1) }],
-                TagIndexer: [{ column: 'tag', content: 'original-tag' }],
-            },
-        },
+                TagIndexer: [{ column: 'tag', content: 'original-tag' }]
+            }
+        }
     ]);
     const statusBefore = await storage.getStatus();
 
@@ -181,27 +184,32 @@ async function testInsertSemantics(storage: BaseStorage): Promise<void> {
             indexer_columns: {
                 BM25Indexer: [{ column: 'text', content: 'overwritten text' }],
                 VectorIndexer: [{ column: 'text', content: new Array(1024).fill(0.3) }],
-                TagIndexer: [{ column: 'tag', content: 'overwritten-tag' }],
-            },
-        },
+                TagIndexer: [{ column: 'tag', content: 'overwritten-tag' }]
+            }
+        }
     ]);
     const statusAfter = await storage.getStatus();
 
     const row = extractSearchItems(
-        await storage.search([{ indexer: 'BaseIndexer', field: 'item_id', operator: '=', value: 'insert-skip' }]),
+        await storage.search([{ indexer: 'BaseIndexer', field: 'item_id', operator: '=', value: 'insert-skip' }])
     )[0]?.item;
     assert.equal(row?.filename, 'original.txt', 'Insert should not overwrite existing row');
     assert.equal(statusAfter.BaseIndexer.size, statusBefore.BaseIndexer.size);
 
     const bm25 = extractSearchItems(
         await storage.search([
-            { indexer: 'BM25Indexer', field: 'text', operator: 'bm25_match', value: { query: 'overwritten', topK: 10 } as BM25Query },
-        ]),
+            {
+                indexer: 'BM25Indexer',
+                field: 'text',
+                operator: 'bm25_match',
+                value: { query: 'overwritten', topK: 10 } as BM25Query
+            }
+        ])
     );
     assert(!bm25.some((r) => r.item.item_id === 'insert-skip'), 'Duplicate insert should not overwrite BM25 data');
 
     const tags = extractSearchItems(
-        await storage.search([{ indexer: 'TagIndexer', field: 'tag', operator: 'like', value: 'overwritten-tag' }]),
+        await storage.search([{ indexer: 'TagIndexer', field: 'tag', operator: 'like', value: 'overwritten-tag' }])
     );
     assert(!tags.some((r) => r.item.item_id === 'insert-skip'), 'Duplicate insert should not overwrite Tag data');
 
@@ -219,14 +227,14 @@ async function testUpdateSemantics(storage: BaseStorage): Promise<void> {
             indexer_columns: {
                 BM25Indexer: [{ column: 'text', content: 'should not exist' }],
                 VectorIndexer: [{ column: 'text', content: new Array(1024).fill(0.5) }],
-                TagIndexer: [{ column: 'tag', content: 'missing-tag' }],
-            },
-        },
+                TagIndexer: [{ column: 'tag', content: 'missing-tag' }]
+            }
+        }
     ]);
     const after = await storage.getStatus();
 
     const results = extractSearchItems(
-        await storage.search([{ indexer: 'BaseIndexer', field: 'item_id', operator: '=', value: 'update-missing' }]),
+        await storage.search([{ indexer: 'BaseIndexer', field: 'item_id', operator: '=', value: 'update-missing' }])
     );
     assert.equal(results.length, 0, 'Update non-existent should create no base row');
     assert.equal(after.BaseIndexer.size, before.BaseIndexer.size);
@@ -241,7 +249,7 @@ async function testDeleteSemantics(storage: BaseStorage): Promise<void> {
     await storage.insert([{ item_id: 'delete-string-id', item_type: 'file', filename: 'del.txt' }]);
     await storage.delete(['delete-string-id']);
     const results = extractSearchItems(
-        await storage.search([{ indexer: 'BaseIndexer', field: 'item_id', operator: '=', value: 'delete-string-id' }]),
+        await storage.search([{ indexer: 'BaseIndexer', field: 'item_id', operator: '=', value: 'delete-string-id' }])
     );
     assert.equal(results.length, 0, 'delete(string[]) should remove item');
 
@@ -252,13 +260,13 @@ async function testDeleteSemantics(storage: BaseStorage): Promise<void> {
 async function testUpsertSemantics(storage: BaseStorage): Promise<void> {
     await storage.upsert([{ item_id: 'upsert-new', item_type: 'file', filename: 'new.txt', indexer_columns: {} }]);
     const r1 = extractSearchItems(
-        await storage.search([{ indexer: 'BaseIndexer', field: 'item_id', operator: '=', value: 'upsert-new' }]),
+        await storage.search([{ indexer: 'BaseIndexer', field: 'item_id', operator: '=', value: 'upsert-new' }])
     );
     assert.equal(r1.length, 1, 'Upsert new item should create it');
 
     await storage.upsert([{ item_id: 'upsert-new', item_type: 'file', filename: 'updated.txt', indexer_columns: {} }]);
     const r2 = extractSearchItems(
-        await storage.search([{ indexer: 'BaseIndexer', field: 'item_id', operator: '=', value: 'upsert-new' }]),
+        await storage.search([{ indexer: 'BaseIndexer', field: 'item_id', operator: '=', value: 'upsert-new' }])
     );
     assert.equal(r2[0]?.item.filename, 'updated.txt', 'Upsert existing should update');
 
@@ -266,10 +274,12 @@ async function testUpsertSemantics(storage: BaseStorage): Promise<void> {
     await storage.upsert([
         { item_id: 'ur-1', item_type: 'file', filename: 'new-1.txt' },
         { item_id: 'ur-2', item_type: 'file', filename: 'updated-2.txt' },
-        { item_id: 'ur-3', item_type: 'file', filename: 'new-3.txt' },
+        { item_id: 'ur-3', item_type: 'file', filename: 'new-3.txt' }
     ]);
     const r3 = extractSearchItems(
-        await storage.search([{ indexer: 'BaseIndexer', field: 'item_id', operator: 'in', value: ['ur-1', 'ur-2', 'ur-3'] }]),
+        await storage.search([
+            { indexer: 'BaseIndexer', field: 'item_id', operator: 'in', value: ['ur-1', 'ur-2', 'ur-3'] }
+        ])
     );
     assert.equal(r3.length, 3, 'Mixed upsert batch should produce 3 items');
     assert.equal(r3.find((r) => r.item.item_id === 'ur-2')?.item.filename, 'updated-2.txt');
@@ -285,12 +295,12 @@ async function testVectorBaseCombo(): Promise<void> {
             item_id: { type: 'TEXT', nullable: false },
             item_type: { type: 'TEXT', nullable: false },
             text: { type: 'TEXT', nullable: true },
-            semi_text: { type: 'TEXT', nullable: true },
+            semi_text: { type: 'TEXT', nullable: true }
         },
         needIndexers: {
             text: [{ indexer: 'VectorIndexer', options: { dim: 1024 } }],
-            semi_text: [{ indexer: 'VectorIndexer', options: { dim: 1024 } }],
-        },
+            semi_text: [{ indexer: 'VectorIndexer', options: { dim: 1024 } }]
+        }
     };
     const storage = new BaseStorage('vec-base', schema, dir);
     await storage.initialize();
@@ -304,9 +314,9 @@ async function testVectorBaseCombo(): Promise<void> {
             indexer_columns: {
                 VectorIndexer: [
                     { column: 'text', content: makeOneHotVector(2) },
-                    { column: 'semi_text', content: makeOneHotVector(3) },
-                ],
-            },
+                    { column: 'semi_text', content: makeOneHotVector(3) }
+                ]
+            }
         },
         {
             item_id: 'vb-2',
@@ -316,10 +326,10 @@ async function testVectorBaseCombo(): Promise<void> {
             indexer_columns: {
                 VectorIndexer: [
                     { column: 'text', content: makeOneHotVector(4) },
-                    { column: 'semi_text', content: makeOneHotVector(5) },
-                ],
-            },
-        },
+                    { column: 'semi_text', content: makeOneHotVector(5) }
+                ]
+            }
+        }
     ]);
 
     const r1 = extractSearchItems(
@@ -329,10 +339,10 @@ async function testVectorBaseCombo(): Promise<void> {
                 field: 'text',
                 operator: 'vector_near',
                 value: makeOneHotVector(2),
-                vectorQuery: { topK: 1, metric: 'cosine', threshold: 0.0 },
+                vectorQuery: { topK: 1, metric: 'cosine', threshold: 0.0 }
             },
-            { indexer: 'BaseIndexer', field: 'text', operator: 'like', value: 'text-%' },
-        ]),
+            { indexer: 'BaseIndexer', field: 'text', operator: 'like', value: 'text-%' }
+        ])
     );
     assert(r1.length >= 1 && r1[0].item.item_id === 'vb-1');
 
@@ -343,9 +353,9 @@ async function testVectorBaseCombo(): Promise<void> {
                 field: 'semi_text',
                 operator: 'vector_near',
                 value: makeOneHotVector(5),
-                vectorQuery: { topK: 1, metric: 'cosine', threshold: 0.0 },
-            },
-        ]),
+                vectorQuery: { topK: 1, metric: 'cosine', threshold: 0.0 }
+            }
+        ])
     );
     assert(r2.length >= 1 && r2[0].item.item_id === 'vb-2');
 
@@ -362,12 +372,12 @@ async function testBM25MultiColumn(): Promise<void> {
             item_id: { type: 'TEXT', nullable: false },
             item_type: { type: 'TEXT', nullable: false },
             text: { type: 'TEXT', nullable: true },
-            semi_text: { type: 'TEXT', nullable: true },
+            semi_text: { type: 'TEXT', nullable: true }
         },
         needIndexers: {
             text: [{ indexer: 'BM25Indexer' }],
-            semi_text: [{ indexer: 'BM25Indexer' }],
-        },
+            semi_text: [{ indexer: 'BM25Indexer' }]
+        }
     };
     const storage = new BaseStorage('bm25-multi', schema, dir);
     await storage.initialize();
@@ -381,9 +391,9 @@ async function testBM25MultiColumn(): Promise<void> {
             indexer_columns: {
                 BM25Indexer: [
                     { column: 'text', content: 'project plan project' },
-                    { column: 'semi_text', content: 'alpha milestones' },
-                ],
-            },
+                    { column: 'semi_text', content: 'alpha milestones' }
+                ]
+            }
         },
         {
             item_id: 'bm-2',
@@ -393,23 +403,33 @@ async function testBM25MultiColumn(): Promise<void> {
             indexer_columns: {
                 BM25Indexer: [
                     { column: 'text', content: 'design review notes' },
-                    { column: 'semi_text', content: 'design feedback' },
-                ],
-            },
-        },
+                    { column: 'semi_text', content: 'design feedback' }
+                ]
+            }
+        }
     ]);
 
     const r1 = extractSearchItems(
         await storage.search([
-            { indexer: 'BM25Indexer', field: 'text', operator: 'bm25_match', value: { query: 'project', topK: 10 } as BM25Query },
-        ]),
+            {
+                indexer: 'BM25Indexer',
+                field: 'text',
+                operator: 'bm25_match',
+                value: { query: 'project', topK: 10 } as BM25Query
+            }
+        ])
     );
     assert(r1.length >= 1, 'BM25 text column search should return results');
 
     const r2 = extractSearchItems(
         await storage.search([
-            { indexer: 'BM25Indexer', field: 'semi_text', operator: 'bm25_match', value: { query: 'design', topK: 10 } as BM25Query },
-        ]),
+            {
+                indexer: 'BM25Indexer',
+                field: 'semi_text',
+                operator: 'bm25_match',
+                value: { query: 'design', topK: 10 } as BM25Query
+            }
+        ])
     );
     assert(r2.length >= 1, 'BM25 semi_text column search should return results');
 
@@ -425,11 +445,11 @@ async function testBM25VectorCombo(): Promise<void> {
         columns: {
             item_id: { type: 'TEXT', nullable: false },
             item_type: { type: 'TEXT', nullable: false },
-            text: { type: 'TEXT', nullable: true },
+            text: { type: 'TEXT', nullable: true }
         },
         needIndexers: {
-            text: [{ indexer: 'BM25Indexer' }, { indexer: 'VectorIndexer', options: { dim: 1024 } }],
-        },
+            text: [{ indexer: 'BM25Indexer' }, { indexer: 'VectorIndexer', options: { dim: 1024 } }]
+        }
     };
     const storage = new BaseStorage('bm25-vec', schema, dir);
     await storage.initialize();
@@ -441,8 +461,8 @@ async function testBM25VectorCombo(): Promise<void> {
             text: '项目计划 project plan',
             indexer_columns: {
                 BM25Indexer: [{ column: 'text', content: '项目计划 project plan' }],
-                VectorIndexer: [{ column: 'text', content: makeOneHotVector(0) }],
-            },
+                VectorIndexer: [{ column: 'text', content: makeOneHotVector(0) }]
+            }
         },
         {
             item_id: 'vs-2',
@@ -450,22 +470,27 @@ async function testBM25VectorCombo(): Promise<void> {
             text: '会议纪要 meeting notes',
             indexer_columns: {
                 BM25Indexer: [{ column: 'text', content: '会议纪要 meeting notes' }],
-                VectorIndexer: [{ column: 'text', content: makeOneHotVector(1) }],
-            },
-        },
+                VectorIndexer: [{ column: 'text', content: makeOneHotVector(1) }]
+            }
+        }
     ]);
 
     const results = extractSearchItems(
         await storage.search([
-            { indexer: 'BM25Indexer', field: 'text', operator: 'bm25_match', value: { query: '项目计划' } as BM25Query },
+            {
+                indexer: 'BM25Indexer',
+                field: 'text',
+                operator: 'bm25_match',
+                value: { query: '项目计划' } as BM25Query
+            },
             {
                 indexer: 'VectorIndexer',
                 field: 'text',
                 operator: 'vector_near',
                 value: makeOneHotVector(0),
-                vectorQuery: { topK: 5, metric: 'cosine', threshold: 0.5 },
-            },
-        ]),
+                vectorQuery: { topK: 5, metric: 'cosine', threshold: 0.5 }
+            }
+        ])
     );
     assert(results.length >= 1 && results[0].item.item_id === 'vs-1');
 
@@ -482,12 +507,12 @@ async function testMultiColumnVectorUpdate(): Promise<void> {
             item_id: { type: 'TEXT', nullable: false },
             item_type: { type: 'TEXT', nullable: false },
             col_a: { type: 'TEXT', nullable: true },
-            col_b: { type: 'TEXT', nullable: true },
+            col_b: { type: 'TEXT', nullable: true }
         },
         needIndexers: {
             col_a: [{ indexer: 'VectorIndexer', options: { dim: 1024 } }],
-            col_b: [{ indexer: 'VectorIndexer', options: { dim: 1024 } }],
-        },
+            col_b: [{ indexer: 'VectorIndexer', options: { dim: 1024 } }]
+        }
     };
     const storage = new BaseStorage('multi-col-vec', schema, dir);
     await storage.initialize();
@@ -501,10 +526,10 @@ async function testMultiColumnVectorUpdate(): Promise<void> {
             indexer_columns: {
                 VectorIndexer: [
                     { column: 'col_a', content: makeOneHotVector(0) },
-                    { column: 'col_b', content: makeOneHotVector(1) },
-                ],
-            },
-        },
+                    { column: 'col_b', content: makeOneHotVector(1) }
+                ]
+            }
+        }
     ]);
 
     await storage.update([
@@ -513,8 +538,8 @@ async function testMultiColumnVectorUpdate(): Promise<void> {
             item_type: 'file',
             col_a: 'a-updated',
             col_b: 'b',
-            indexer_columns: { VectorIndexer: [{ column: 'col_a', content: makeOneHotVector(5) }] },
-        },
+            indexer_columns: { VectorIndexer: [{ column: 'col_a', content: makeOneHotVector(5) }] }
+        }
     ]);
 
     const r = extractSearchItems(
@@ -524,9 +549,9 @@ async function testMultiColumnVectorUpdate(): Promise<void> {
                 field: 'col_b',
                 operator: 'vector_near',
                 value: makeOneHotVector(1),
-                vectorQuery: { topK: 1, metric: 'cosine', threshold: 0.9 },
-            },
-        ]),
+                vectorQuery: { topK: 1, metric: 'cosine', threshold: 0.9 }
+            }
+        ])
     );
     assert(r.length >= 1 && r[0].item.item_id === 'mc-1', 'col_b should still return mc-1 after col_a update');
 
@@ -543,12 +568,12 @@ async function testBM25UpsertSiblingColumns(): Promise<void> {
             item_id: { type: 'TEXT', nullable: false },
             item_type: { type: 'TEXT', nullable: false },
             text: { type: 'TEXT', nullable: true },
-            semi_text: { type: 'TEXT', nullable: true },
+            semi_text: { type: 'TEXT', nullable: true }
         },
         needIndexers: {
             text: [{ indexer: 'BM25Indexer' }],
-            semi_text: [{ indexer: 'BM25Indexer' }],
-        },
+            semi_text: [{ indexer: 'BM25Indexer' }]
+        }
     };
     const storage = new BaseStorage('bm25-sibling', schema, dir);
     await storage.initialize();
@@ -562,10 +587,10 @@ async function testBM25UpsertSiblingColumns(): Promise<void> {
             indexer_columns: {
                 BM25Indexer: [
                     { column: 'text', content: 'project alpha' },
-                    { column: 'semi_text', content: 'release checklist' },
-                ],
-            },
-        },
+                    { column: 'semi_text', content: 'release checklist' }
+                ]
+            }
+        }
     ]);
 
     await storage.upsert([
@@ -574,14 +599,19 @@ async function testBM25UpsertSiblingColumns(): Promise<void> {
             item_type: 'file',
             text: 'project beta',
             semi_text: 'release checklist',
-            indexer_columns: { BM25Indexer: [{ column: 'text', content: 'project beta' }] },
-        },
+            indexer_columns: { BM25Indexer: [{ column: 'text', content: 'project beta' }] }
+        }
     ]);
 
     const textR = extractSearchItems(
         await storage.search([
-            { indexer: 'BM25Indexer', field: 'text', operator: 'bm25_match', value: { query: 'beta', topK: 10 } as BM25Query },
-        ]),
+            {
+                indexer: 'BM25Indexer',
+                field: 'text',
+                operator: 'bm25_match',
+                value: { query: 'beta', topK: 10 } as BM25Query
+            }
+        ])
     );
     assert(textR.length >= 1 && textR[0].item.item_id === 'bm25-sib', 'Updated text should be searchable');
 
@@ -591,9 +621,9 @@ async function testBM25UpsertSiblingColumns(): Promise<void> {
                 indexer: 'BM25Indexer',
                 field: 'semi_text',
                 operator: 'bm25_match',
-                value: { query: 'release', topK: 10 } as BM25Query,
-            },
-        ]),
+                value: { query: 'release', topK: 10 } as BM25Query
+            }
+        ])
     );
     assert(sibR.length >= 1 && sibR[0].item.item_id === 'bm25-sib', 'Sibling BM25 column should not be deleted');
 
@@ -610,12 +640,12 @@ async function testVectorInsertSkipSibling(): Promise<void> {
             item_id: { type: 'TEXT', nullable: false },
             item_type: { type: 'TEXT', nullable: false },
             col_a: { type: 'TEXT', nullable: true },
-            col_b: { type: 'TEXT', nullable: true },
+            col_b: { type: 'TEXT', nullable: true }
         },
         needIndexers: {
             col_a: [{ indexer: 'VectorIndexer', options: { dim: 1024 } }],
-            col_b: [{ indexer: 'VectorIndexer', options: { dim: 1024 } }],
-        },
+            col_b: [{ indexer: 'VectorIndexer', options: { dim: 1024 } }]
+        }
     };
     const storage = new BaseStorage('vec-skip-sib', schema, dir);
     await storage.initialize();
@@ -625,16 +655,16 @@ async function testVectorInsertSkipSibling(): Promise<void> {
             item_id: 'vs',
             item_type: 'file',
             col_a: 'a',
-            indexer_columns: { VectorIndexer: [{ column: 'col_a', content: makeOneHotVector(20) }] },
-        },
+            indexer_columns: { VectorIndexer: [{ column: 'col_a', content: makeOneHotVector(20) }] }
+        }
     ]);
     await storage.insert([
         {
             item_id: 'vs',
             item_type: 'file',
             col_b: 'b',
-            indexer_columns: { VectorIndexer: [{ column: 'col_b', content: makeOneHotVector(21) }] },
-        },
+            indexer_columns: { VectorIndexer: [{ column: 'col_b', content: makeOneHotVector(21) }] }
+        }
     ]);
 
     const rA = extractSearchItems(
@@ -644,9 +674,9 @@ async function testVectorInsertSkipSibling(): Promise<void> {
                 field: 'col_a',
                 operator: 'vector_near',
                 value: makeOneHotVector(20),
-                vectorQuery: { topK: 5, metric: 'cosine', threshold: 0.9 },
-            },
-        ]),
+                vectorQuery: { topK: 5, metric: 'cosine', threshold: 0.9 }
+            }
+        ])
     );
     assert(rA.length >= 1 && rA[0].item.item_id === 'vs', 'Original col_a should remain');
 
@@ -657,9 +687,9 @@ async function testVectorInsertSkipSibling(): Promise<void> {
                 field: 'col_b',
                 operator: 'vector_near',
                 value: makeOneHotVector(21),
-                vectorQuery: { topK: 5, metric: 'cosine', threshold: 0.9 },
-            },
-        ]),
+                vectorQuery: { topK: 5, metric: 'cosine', threshold: 0.9 }
+            }
+        ])
     );
     assert.equal(rB.length, 0, 'Insert should not write sibling vector for existing item');
 
@@ -675,9 +705,9 @@ async function testDimMismatchDetection(): Promise<void> {
         columns: {
             item_id: { type: 'TEXT', nullable: false },
             item_type: { type: 'TEXT', nullable: false },
-            repr: { type: 'BLOB', nullable: true },
+            repr: { type: 'BLOB', nullable: true }
         },
-        needIndexers: { repr: [{ indexer: 'VectorIndexer', options: { dim: 1024 } }] },
+        needIndexers: { repr: [{ indexer: 'VectorIndexer', options: { dim: 1024 } }] }
     };
 
     const s1 = new BaseStorage('dim-test', schema1024, dir);
@@ -686,14 +716,14 @@ async function testDimMismatchDetection(): Promise<void> {
         {
             item_id: 'dm-1',
             item_type: 'file',
-            indexer_columns: { VectorIndexer: [{ column: 'repr', content: makeOneHotVector(0, 1024) }] },
-        },
+            indexer_columns: { VectorIndexer: [{ column: 'repr', content: makeOneHotVector(0, 1024) }] }
+        }
     ]);
     s1.close();
 
     const schema512: ColumnSchema = {
         ...schema1024,
-        needIndexers: { repr: [{ indexer: 'VectorIndexer', options: { dim: 512 } }] },
+        needIndexers: { repr: [{ indexer: 'VectorIndexer', options: { dim: 512 } }] }
     };
     const s2 = new BaseStorage('dim-test-512', schema512, dir);
     let dimError: any = null;
@@ -718,9 +748,9 @@ async function testGetStatus(): Promise<void> {
         columns: {
             item_id: { type: 'TEXT', nullable: false },
             item_type: { type: 'TEXT', nullable: false },
-            repr: { type: 'BLOB', nullable: true },
+            repr: { type: 'BLOB', nullable: true }
         },
-        needIndexers: { repr: [{ indexer: 'VectorIndexer', options: { dim: 1024 } }] },
+        needIndexers: { repr: [{ indexer: 'VectorIndexer', options: { dim: 1024 } }] }
     };
     const storage = new BaseStorage('get-status', schema, dir);
     await storage.initialize();
@@ -729,8 +759,8 @@ async function testGetStatus(): Promise<void> {
         {
             item_id: 'gs-1',
             item_type: 'file',
-            indexer_columns: { VectorIndexer: [{ column: 'repr', content: makeOneHotVector(0) }] },
-        },
+            indexer_columns: { VectorIndexer: [{ column: 'repr', content: makeOneHotVector(0) }] }
+        }
     ]);
 
     const status = await storage.getStatus();
@@ -758,8 +788,13 @@ async function testSearchReturnsItemsAndTotalCount(storage: BaseStorage): Promis
 async function testItemTypeNotPolluted(storage: BaseStorage): Promise<void> {
     const bm25 = extractSearchItems(
         await storage.search([
-            { indexer: 'BM25Indexer', field: 'text', operator: 'bm25_match', value: { query: 'project', topK: 10 } as BM25Query },
-        ]),
+            {
+                indexer: 'BM25Indexer',
+                field: 'text',
+                operator: 'bm25_match',
+                value: { query: 'project', topK: 10 } as BM25Query
+            }
+        ])
     );
     assert.notEqual(bm25[0]?.item.item_type, 'text');
 
@@ -770,14 +805,14 @@ async function testItemTypeNotPolluted(storage: BaseStorage): Promise<void> {
                 field: 'text',
                 operator: 'vector_near',
                 value: makeOneHotVector(0),
-                vectorQuery: { topK: 1, metric: 'cosine', threshold: 0.0 },
-            },
-        ]),
+                vectorQuery: { topK: 1, metric: 'cosine', threshold: 0.0 }
+            }
+        ])
     );
     assert.notEqual(vec[0]?.item.item_type, 'text');
 
     const tag = extractSearchItems(
-        await storage.search([{ indexer: 'TagIndexer', field: 'tag', operator: 'like', value: 'todo' }]),
+        await storage.search([{ indexer: 'TagIndexer', field: 'tag', operator: 'like', value: 'todo' }])
     );
     assert.notEqual(tag[0]?.item.item_type, 'tag');
 
@@ -801,7 +836,7 @@ async function main(): Promise<void> {
         () => testDeleteSemantics(storage),
         () => testUpsertSemantics(storage),
         () => testSearchReturnsItemsAndTotalCount(storage),
-        () => testItemTypeNotPolluted(storage),
+        () => testItemTypeNotPolluted(storage)
     ];
 
     let passed = 0,
@@ -827,6 +862,13 @@ async function main(): Promise<void> {
         testVectorInsertSkipSibling,
         testDimMismatchDetection,
         testGetStatus,
+        testClearChunkIndexerPreservesOthers,
+        testClearVectorIndexerPreservesOthers,
+        testClearBM25IndexerPreservesOthers,
+        testClearTagIndexerPreservesOthers,
+        testClearIndexerNonexistentIsNoop,
+        testClearBaseIndexerThrows,
+        testClearUninitializedIndexerThrows
     ];
 
     for (const test of standaloneTests) {
@@ -841,6 +883,330 @@ async function main(): Promise<void> {
 
     console.log(`\n=== Results: ${passed} passed, ${failed} failed ===`);
     if (failed > 0) process.exit(1);
+}
+
+// ── clearIndexerForItem tests ───────────────────────────────────────
+
+// Custom schema with ChunkIndexer (fullSchema doesn't include it)
+const chunkTestSchema: ColumnSchema = {
+    columns: {
+        item_id: { type: 'TEXT', nullable: false },
+        item_type: { type: 'TEXT', nullable: false },
+        filename: { type: 'TEXT', nullable: true },
+        text: { type: 'TEXT', nullable: true },
+        tag: { type: 'TEXT', nullable: true }
+    },
+    needIndexers: {
+        filename: [{ indexer: 'VectorIndexer', options: { dim: VECTOR_DIM } }],
+        text: [{ indexer: 'ChunkIndexer', options: { dim: VECTOR_DIM } }],
+        tag: [{ indexer: 'TagIndexer' }]
+    }
+};
+
+async function testClearChunkIndexerPreservesOthers() {
+    const dir = tmpDir('clear-chunk-preserves');
+    try {
+        const storage = new BaseStorage('test', chunkTestSchema, dir);
+        await storage.initialize();
+
+        await storage.insert([
+            {
+                item_id: 'file1',
+                item_type: 'file',
+                filename: 'report.pdf',
+                text: null,
+                tag: 'finance',
+                indexer_columns: {
+                    VectorIndexer: [{ column: 'filename', content: makeOneHotVector(0) }],
+                    ChunkIndexer: [
+                        { column: 'text', id: 'c1', text: 'chunk one', content: makeOneHotVector(1) },
+                        { column: 'text', id: 'c2', text: 'chunk two', content: makeOneHotVector(2) }
+                    ],
+                    TagIndexer: [{ column: 'tag', content: 'finance' }]
+                }
+            }
+        ]);
+
+        // Verify chunks exist
+        const before = await storage.search([
+            {
+                indexer: 'ChunkIndexer',
+                field: 'text',
+                operator: 'vector_near',
+                value: makeOneHotVector(1),
+                vectorQuery: { topK: 10 }
+            },
+            { indexer: 'BaseIndexer', field: 'item_id', operator: '=', value: 'file1' }
+        ]);
+        assert(before.items.length > 0, 'chunks should exist before clear');
+
+        // Clear only ChunkIndexer
+        await storage.clearIndexerForItem('file1', 'ChunkIndexer');
+
+        // ChunkIndexer: cleared
+        const afterChunk = await storage.search([
+            {
+                indexer: 'ChunkIndexer',
+                field: 'text',
+                operator: 'vector_near',
+                value: makeOneHotVector(1),
+                vectorQuery: { topK: 10 }
+            },
+            { indexer: 'BaseIndexer', field: 'item_id', operator: '=', value: 'file1' }
+        ]);
+        assert.equal(afterChunk.items.length, 0, 'ChunkIndexer should be cleared');
+
+        // BaseIndexer: preserved
+        const afterBase = await storage.search([
+            { indexer: 'BaseIndexer', field: 'item_id', operator: '=', value: 'file1' }
+        ]);
+        assert.equal(afterBase.items.length, 1, 'BaseIndexer should be preserved');
+
+        // VectorIndexer: preserved
+        const afterVec = await storage.search([
+            {
+                indexer: 'VectorIndexer',
+                field: 'filename',
+                operator: 'vector_near',
+                value: makeOneHotVector(0),
+                vectorQuery: { topK: 10 }
+            }
+        ]);
+        assert(afterVec.items.length > 0, 'VectorIndexer should be preserved');
+
+        // TagIndexer: preserved
+        const afterTag = await storage.search([
+            { indexer: 'TagIndexer', field: 'tag', operator: '=', value: 'finance' }
+        ]);
+        assert(afterTag.items.length > 0, 'TagIndexer should be preserved');
+
+        storage.close();
+        console.log('  ✅ clearIndexerForItem: ChunkIndexer cleared, all others preserved');
+    } finally {
+        cleanup(dir);
+    }
+}
+
+async function testClearVectorIndexerPreservesOthers() {
+    const dir = tmpDir('clear-vec-preserves');
+    try {
+        const storage = new BaseStorage('test', chunkTestSchema, dir);
+        await storage.initialize();
+
+        await storage.insert([
+            {
+                item_id: 'file1',
+                item_type: 'file',
+                filename: 'report.pdf',
+                text: null,
+                tag: 'finance',
+                indexer_columns: {
+                    VectorIndexer: [{ column: 'filename', content: makeOneHotVector(0) }],
+                    ChunkIndexer: [{ column: 'text', id: 'c1', text: 'chunk', content: makeOneHotVector(1) }],
+                    TagIndexer: [{ column: 'tag', content: 'finance' }]
+                }
+            }
+        ]);
+
+        await storage.clearIndexerForItem('file1', 'VectorIndexer');
+
+        // VectorIndexer: cleared
+        const afterVec = await storage.search([
+            {
+                indexer: 'VectorIndexer',
+                field: 'filename',
+                operator: 'vector_near',
+                value: makeOneHotVector(0),
+                vectorQuery: { topK: 10 }
+            }
+        ]);
+        assert.equal(afterVec.items.length, 0, 'VectorIndexer should be cleared');
+
+        // ChunkIndexer: preserved
+        const afterChunk = await storage.search([
+            {
+                indexer: 'ChunkIndexer',
+                field: 'text',
+                operator: 'vector_near',
+                value: makeOneHotVector(1),
+                vectorQuery: { topK: 10 }
+            },
+            { indexer: 'BaseIndexer', field: 'item_id', operator: '=', value: 'file1' }
+        ]);
+        assert(afterChunk.items.length > 0, 'ChunkIndexer should be preserved');
+
+        // BaseIndexer: preserved
+        const afterBase = await storage.search([
+            { indexer: 'BaseIndexer', field: 'item_id', operator: '=', value: 'file1' }
+        ]);
+        assert.equal(afterBase.items.length, 1, 'BaseIndexer should be preserved');
+
+        storage.close();
+        console.log('  ✅ clearIndexerForItem: VectorIndexer cleared, others preserved');
+    } finally {
+        cleanup(dir);
+    }
+}
+
+async function testClearBM25IndexerPreservesOthers() {
+    // Uses fullSchema which has BM25Indexer on 'text' column
+    const dir = tmpDir('clear-bm25-preserves');
+    try {
+        const storage = new BaseStorage('test', fullSchema, dir);
+        await storage.initialize();
+
+        await storage.insert([buildTestItems()[0]]); // item-1 with BM25+Vector+Tag
+
+        await storage.clearIndexerForItem('item-1', 'BM25Indexer');
+
+        // BM25: cleared
+        const afterBM25 = await storage.search([
+            { indexer: 'BM25Indexer', field: 'text', operator: 'bm25_match', value: { query: '项目计划书' } }
+        ]);
+        assert.equal(afterBM25.items.length, 0, 'BM25Indexer should be cleared');
+
+        // BaseIndexer: preserved
+        const afterBase = await storage.search([
+            { indexer: 'BaseIndexer', field: 'item_id', operator: '=', value: 'item-1' }
+        ]);
+        assert.equal(afterBase.items.length, 1, 'BaseIndexer should be preserved');
+
+        // VectorIndexer: preserved
+        const afterVec = await storage.search([
+            {
+                indexer: 'VectorIndexer',
+                field: 'text',
+                operator: 'vector_near',
+                value: makeOneHotVector(0),
+                vectorQuery: { topK: 10 }
+            }
+        ]);
+        assert(afterVec.items.length > 0, 'VectorIndexer should be preserved');
+
+        // TagIndexer: preserved
+        const afterTag = await storage.search([{ indexer: 'TagIndexer', field: 'tag', operator: '=', value: 'todo' }]);
+        assert(afterTag.items.length > 0, 'TagIndexer should be preserved');
+
+        storage.close();
+        console.log('  ✅ clearIndexerForItem: BM25Indexer cleared, others preserved');
+    } finally {
+        cleanup(dir);
+    }
+}
+
+async function testClearTagIndexerPreservesOthers() {
+    const dir = tmpDir('clear-tag-preserves');
+    try {
+        const storage = new BaseStorage('test', fullSchema, dir);
+        await storage.initialize();
+
+        await storage.insert([buildTestItems()[0]]);
+
+        await storage.clearIndexerForItem('item-1', 'TagIndexer');
+
+        // TagIndexer: cleared
+        const afterTag = await storage.search([{ indexer: 'TagIndexer', field: 'tag', operator: '=', value: 'todo' }]);
+        assert.equal(afterTag.items.length, 0, 'TagIndexer should be cleared');
+
+        // BaseIndexer: preserved
+        const afterBase = await storage.search([
+            { indexer: 'BaseIndexer', field: 'item_id', operator: '=', value: 'item-1' }
+        ]);
+        assert.equal(afterBase.items.length, 1, 'BaseIndexer should be preserved');
+
+        // VectorIndexer: preserved
+        const afterVec2 = await storage.search([
+            {
+                indexer: 'VectorIndexer',
+                field: 'text',
+                operator: 'vector_near',
+                value: makeOneHotVector(0),
+                vectorQuery: { topK: 10 }
+            }
+        ]);
+        assert(afterVec2.items.length > 0, 'VectorIndexer should be preserved');
+
+        // BM25Indexer: preserved
+        const afterBM252 = await storage.search([
+            { indexer: 'BM25Indexer', field: 'text', operator: 'bm25_match', value: { query: '项目计划书' } }
+        ]);
+        assert(afterBM252.items.length > 0, 'BM25Indexer should be preserved');
+
+        storage.close();
+        console.log('  ✅ clearIndexerForItem: TagIndexer cleared, others preserved');
+    } finally {
+        cleanup(dir);
+    }
+}
+
+async function testClearIndexerNonexistentIsNoop() {
+    const dir = tmpDir('clear-nonexist');
+    try {
+        const storage = new BaseStorage('test', chunkTestSchema, dir);
+        await storage.initialize();
+
+        // Should not throw
+        await storage.clearIndexerForItem('nonexistent-id', 'ChunkIndexer');
+        await storage.clearIndexerForItem('nonexistent-id', 'VectorIndexer');
+        await storage.clearIndexerForItem('nonexistent-id', 'TagIndexer');
+
+        storage.close();
+        console.log('  ✅ clearIndexerForItem: nonexistent itemId is no-op');
+    } finally {
+        cleanup(dir);
+    }
+}
+
+async function testClearBaseIndexerThrows() {
+    const dir = tmpDir('clear-base-throws');
+    try {
+        const storage = new BaseStorage('test', fullSchema, dir);
+        await storage.initialize();
+
+        let threw = false;
+        try {
+            await storage.clearIndexerForItem('item-1', 'BaseIndexer');
+        } catch (e: any) {
+            threw = true;
+            assert(e.message.includes('BaseIndexer'), 'error should mention BaseIndexer');
+        }
+        assert(threw, 'should throw when clearing BaseIndexer');
+
+        storage.close();
+        console.log('  ✅ clearIndexerForItem: BaseIndexer throws');
+    } finally {
+        cleanup(dir);
+    }
+}
+
+async function testClearUninitializedIndexerThrows() {
+    const dir = tmpDir('clear-uninit');
+    try {
+        // Schema without BM25Indexer
+        const noBm25Schema: ColumnSchema = {
+            columns: {
+                item_id: { type: 'TEXT', nullable: false },
+                item_type: { type: 'TEXT', nullable: false },
+                filename: { type: 'TEXT', nullable: true }
+            },
+            needIndexers: {}
+        };
+        const storage = new BaseStorage('test', noBm25Schema, dir);
+        await storage.initialize();
+
+        let threw = false;
+        try {
+            await storage.clearIndexerForItem('item-1', 'BM25Indexer');
+        } catch {
+            threw = true;
+        }
+        assert(threw, 'should throw when indexer not initialized');
+
+        storage.close();
+        console.log('  ✅ clearIndexerForItem: uninitialized indexer throws');
+    } finally {
+        cleanup(dir);
+    }
 }
 
 main().catch((e) => {

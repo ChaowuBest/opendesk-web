@@ -159,9 +159,9 @@ class FileMgrEntryWidget extends AgentOperableHTMLElement {
             </div>
         </div>
         <div class="bg-white py-6 px-4 rounded-2xl shadow-sm border border-[#F0F0F2]">
-            <p class="text-xs font-semibold text-[#86868B] uppercase tracking-wider">向量缓存</p>
+            <p class="text-xs font-semibold text-[#86868B] uppercase tracking-wider">内容 Chunks</p>
             <div class="mt-2 flex items-baseline">
-                <span class="text-3xl font-bold">${fileSystemStatus?.storage?.veccache_size || '--'}</span>
+                <span class="text-3xl font-bold">${fileSystemStatus?.storage?.chunk_size || '--'}</span>
                 <span class="ml-2 text-xs text-[#86868B]">条</span>
             </div>
         </div>

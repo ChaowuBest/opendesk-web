@@ -63,7 +63,7 @@ const prodConfig: esbuild.BuildOptions = {
     treeShaking: true,
     sourcemap: false,
     banner: { js: BANNER },
-    external: ['node-screenshots', 'vectra', 'number-to-alphabet', 'esbuild', 'unpdf'],
+    external: ['node-screenshots', 'vectra', 'number-to-alphabet', 'esbuild', 'unpdf', 'better-sqlite3', 'sqlite-vec'],
     plugins: [createRequireShimPlugin(outfile)]
 };
 
@@ -79,7 +79,7 @@ const debugConfig: esbuild.BuildOptions = {
     sourcemap: 'inline',
     sourcesContent: true,
     banner: { js: BANNER },
-    external: ['node-screenshots', 'vectra', 'number-to-alphabet', 'esbuild', 'unpdf'],
+    external: ['node-screenshots', 'vectra', 'number-to-alphabet', 'esbuild', 'unpdf', 'better-sqlite3', 'sqlite-vec'],
     plugins: [createRequireShimPlugin(outfileDebug)]
 };
 

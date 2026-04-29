@@ -9,164 +9,179 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { z } from 'zod';
+/**
+ * 关键并发不变式（Concurrency invariant）
+ * ---------------------------------------
+ * 所有"大粒度操作"——scan、applicationConfigChanged、_rebuildAndRestart、
+ * _restartScanners、initialize、finalize、resetFileSystemStorage——都必须通过
+ * `runSequentially`（即 BaseWorker.taskQueue, concurrency=1）排队。
+ *
+ * 这是模块内多个看似 fragile 的设计能成立的唯一原因：
+ *
+ * 1. `scanner.stop()` 只设 `_stopped` 标志位，**不 drain 在跑的 scan**。
+ *    rebuild 删旧 storage 时不会撞上 in-flight scan 写数据，是因为 rebuild
+ *    本身排在 scan 任务之后进队列，必然等 scan 任务交还队列槽位才轮到。
+ *
+ * 2. `storage.saveFiles` 内部 `_indexQueue` 的 drain 逻辑（pause/clear/
+ *    onIdle/start）假设没有并发的 saveFiles 调用。两个 scanner 永远不会
+ *    并发跑 saveFiles，靠的也是外层 taskQueue 串行化。
+ *
+ * 3. 单例 `_indexQueue` 能被多个 scanner 共享、且 embedding API 总并发恒为
+ *    INDEX_CONCURRENCY，同样靠外层串行化保证"任意时刻只有一个 scanner 在跑"。
+ *
+ * 直接调 `scanner.scan()`、`storage.saveFiles()`、`scanner.stop()` 会绕过
+ * 这层串行化保护——仅在测试场景下、明确无并发干扰时使用。
+ */
+
 import { Setting } from '../../utils/setting.js';
-import { FileEntrySchema, FSStorage, FileScannerMetadataSchema } from './storage.js';
-import { NotificationManager } from '../../utils/notificationmgr.js';
+import {
+    FileEntrySchema,
+    FSStorage,
+    EmbeddingNotConfiguredError,
+    RebuildRequiredError,
+    SCAN_INTERVAL_MS,
+    WARNINGS
+} from './storage.js';
 import { logger } from '../../utils/logger.js';
 import { BaseWorker } from '../base';
 import fastGlob from 'fast-glob';
 
+const MAX_RECENT_FAILURES = 20;
+
 class FSScanner {
     /**
-     * @param {FSEntry} entry
+     * @param {object} entry - FSEntry config
+     * @param {FSStorage} storage
+     * @param {string} root
+     * @param {object} state - reference to scannerState.roots[root]
+     * @param {{ onRebuildRequired?: (reason: string) => void }} [callbacks]
      */
-    constructor(entry, storage, task_queue) {
-        /** @type {FSEntry} */
+    constructor(entry, storage, root, state, { onRebuildRequired } = {}) {
         this.entry = entry;
-        /** @type {string} */
-        this.root = entry.root;
-        /** @type {FSStorage} */
+        this.root = root;
         this.storage = storage;
-        /** @type {z.core.output<FileScannerMetadataSchema>} */
-        this.metadata = FileScannerMetadataSchema.parse({ root: this.root });
-        /** @type {NodeJS.Timeout | null} */
-        this._interval = null;
-        /** @type {number} */
-        this._counter = 0;
-        /** @type {PQueue} */
-        this.task_queue = task_queue;
-        /** @type {boolean} */
-        this._stopped = true; // 初始状态为已停止
-        /** @type {NodeJS.Timeout | null} */
+        this.state = state;
+        this._stopped = true;
         this._scheduledTimeout = null;
+        this._counter = 0;
+        this._onRebuildRequired = onRebuildRequired;
+        /** @type {Array<{path: string, error: string}>} */
+        this._recentFailures = [];
     }
 
-    async start() {
-        // 如果已经在运行（有已调度的任务或未停止），先停止
+    isRunning() {
+        return !this._stopped;
+    }
+
+    async start(taskQueue) {
         if (!this._stopped || this._scheduledTimeout !== null) {
-            logger.warn(`scanner for ${this.root} is already running, stopping it first`);
             await this.stop();
         }
 
         this._stopped = false;
-        this.metadata = await this.storage.getFileScannerMetadata(this.root);
         this._counter = 0;
-        logger.info(`starting scanner for ${this.root}, using metadata: ${JSON.stringify(this.metadata)}`);
 
         const scanTask = async () => {
-            // 检查是否已停止
-            if (this._stopped) {
-                logger.info(`scanner ${this.root} is stopped, skipping scan task`);
-                return;
+            if (this._stopped) return;
+
+            try {
+                await this.scan();
+            } catch (err) {
+                if (err instanceof RebuildRequiredError && this._onRebuildRequired) {
+                    // Don't await — _rebuildAndRestart queues on the same taskQueue
+                    // (concurrency=1), awaiting would deadlock
+                    this._onRebuildRequired(err.reason);
+                    return;
+                }
+                logger.error(`[filemgr] scan error for ${this.root}: ${err.message}`, err);
             }
 
-            await this.scan().catch((error) => {
-                logger.error(`scan task error: ${error.message}`, error);
-                NotificationManager.getInstance().error('文件系统', '扫描', `扫描失败: ${error.message}`);
-            });
-
-            // 再次检查是否已停止（可能在扫描过程中被停止）
-            if (this._stopped) {
-                logger.info(`scanner ${this.root} was stopped during scan, not scheduling next task`);
-                return;
-            }
+            if (this._stopped) return;
 
             this._counter++;
-            // 使用实例变量存储timeout，以便可以清除
             this._scheduledTimeout = setTimeout(() => {
                 if (!this._stopped) {
-                    this.task_queue.add(scanTask);
+                    taskQueue.add(scanTask);
                 }
-            }, 15 * 1000);
+            }, SCAN_INTERVAL_MS);
         };
 
-        this.task_queue.add(scanTask);
+        taskQueue.add(scanTask);
     }
 
     async stop() {
-        logger.info(`stopping scanner for ${this.root}`);
         this._stopped = true;
-
-        // 清除已调度的timeout
         if (this._scheduledTimeout) {
             clearTimeout(this._scheduledTimeout);
             this._scheduledTimeout = null;
         }
-
-        // 清除interval（如果存在）
-        if (this._interval) {
-            clearInterval(this._interval);
-            this._interval = null;
-        }
-        logger.info(`scanner for ${this.root} stopped`);
     }
 
-    /**
-     * 根据扫描计数器计算本次扫描的深度
-     * @returns {number | undefined} 扫描深度，undefined表示全量扫描
-     */
     _getScanDepth() {
-        // 在首次成功的全量扫描写入 metadata 之前，持续执行全量扫描。
-        // 这样用户先配置扫描路径、后配置 embedding 时，补齐配置后下一轮即可恢复 metadata。
-        if (this.metadata.last_full_scan === 0) {
+        if (this.state.last_full_scan === 0) {
             return undefined;
         }
-
         const counter = this._counter;
-        // 每32次进行一次全量扫描
-        if (counter % 32 === 0) {
-            return undefined;
-        }
-        // 每16次深度为10
-        if (counter % 16 === 0) {
-            return 10;
-        }
-        // 每8次深度为8
-        if (counter % 8 === 0) {
-            return 8;
-        }
-        // 每4次深度为6
-        if (counter % 4 === 0) {
-            return 6;
-        }
-        // 默认深度为4
+        if (counter % 32 === 0) return undefined;
+        if (counter % 16 === 0) return 10;
+        if (counter % 8 === 0) return 8;
+        if (counter % 4 === 0) return 6;
         return 4;
     }
 
     /**
-     * 将fastGlob的Entry转换为FileEntry
-     * @param {fastGlob.Entry} file
-     * @returns {z.core.output<FileEntrySchema>}
+     * @param {import('fast-glob').Entry} file
+     * @returns {import('zod').infer<typeof FileEntrySchema>}
      */
     _convertToFileEntry(file) {
         return FileEntrySchema.parse({
             path: file.path,
             filename: file.name,
             size: file.stats.size,
-            modified: Math.max(file.stats.ctimeMs, file.stats.mtimeMs),
+            modified: file.stats.mtimeMs,
             created: file.stats.birthtimeMs,
             accessed: file.stats.atimeMs,
             type: file.stats.isDirectory() ? 'directory' : 'file'
         });
     }
 
-    /**
-     * 判断文件是否在最后一次全量扫描后更新过
-     * @param {fastGlob.Entry} file
-     * @param {number} lastScanningTime
-     * @returns {boolean}
-     */
     _isFileUpdated(file, lastScanningTime) {
-        return Math.max(file.stats.ctimeMs, file.stats.mtimeMs) > lastScanningTime;
+        return file.stats.mtimeMs > lastScanningTime;
     }
 
     async scan() {
-        const deep = this._getScanDepth();
-        const lastScanningTime = this.metadata.last_full_scan;
+        // 1. Check deferred state
+        if (this.storage.isDeferred()) {
+            await this.storage.initialize();
+            if (this.storage.isDeferred()) return;
+        }
 
-        /** @type {fastGlob.Options} */
-        const options = {
+        // 2. Check embedding config (Setting only, no API health check)
+        try {
+            this.storage.refreshLatestSetting();
+            Setting.getInstance().getDefaultEmbeddingModelInstance();
+        } catch {
+            return;
+        }
+
+        // 3. Check embedding model runtime change
+        try {
+            const current = Setting.getInstance().getDefaultEmbeddingModelInstance();
+            const stored = this.storage.scannerState.embedding_model;
+            if (stored !== null && stored !== current.model_name) {
+                throw new RebuildRequiredError(`embedding model changed: ${stored} -> ${current.model_name}`);
+            }
+        } catch (err) {
+            if (err instanceof RebuildRequiredError) throw err;
+            // Other errors: fall through to indexFile's defenses
+        }
+
+        // 4. Main scan loop
+        const deep = this._getScanDepth();
+        const isFullScan = deep === undefined;
+        const lastScanningTime = this.state.last_full_scan;
+
+        const stream = fastGlob.stream(this.entry.include_patterns, {
             cwd: this.root,
             deep: deep,
             dot: false,
@@ -177,112 +192,78 @@ class FSScanner {
             absolute: true,
             caseSensitiveMatch: false,
             ignore: this.entry.exclude_patterns
-        };
+        });
 
-        const scanStartTime = Date.now();
-        let allFiles;
-        try {
-            /** @type {fastGlob.Entry[]} */
-            allFiles = await fastGlob(this.entry.include_patterns, options);
-        } catch (error) {
-            logger.error(`fastGlob scan failed for ${this.root}: ${error.message}`, error);
-            throw error;
-        }
-
-        const scanTime = Date.now() - scanStartTime;
-        const totalFiles = allFiles.length;
-
-        // 流式处理：边过滤边转换边保存，避免一次性占用大量内存
-        const BATCH_SIZE = 500; // 减小批次大小，更频繁地释放内存
-        let updatedCount = 0;
+        let batch = [];
+        let totalFiles = 0;
         let savedCount = 0;
-        let indexingSucceeded = true;
-        const debugFiles = []; // 只收集前20个用于日志
+        let failedCount = 0;
+        const BATCH_SIZE = 500;
+        const scannedPaths = isFullScan ? new Set() : null;
 
-        const filterStartTime = Date.now();
-        for (let i = 0; i < allFiles.length; i += BATCH_SIZE) {
-            const batch = allFiles.slice(i, i + BATCH_SIZE);
+        // Clear recent failures at start of every scan, not just full scans (spec §11.3)
+        this._recentFailures = [];
 
-            // 过滤并转换批次
-            const batchStartTime = Date.now();
-            const updatedBatch = [];
-            for (const file of batch) {
-                if (this._isFileUpdated(file, lastScanningTime)) {
-                    updatedBatch.push(file);
-                    updatedCount++;
+        try {
+            for await (const entry of stream) {
+                if (this._stopped) break;
+                totalFiles++;
+                if (scannedPaths) scannedPaths.add(entry.path);
 
-                    // 收集前20个用于调试日志
-                    if (debugFiles.length < 20) {
-                        debugFiles.push(file);
-                    }
+                if (isFullScan || this._isFileUpdated(entry, lastScanningTime)) {
+                    batch.push(this._convertToFileEntry(entry));
+                }
+
+                if (batch.length >= BATCH_SIZE) {
+                    const result = await this.storage.saveFiles(batch, this.root);
+                    savedCount += result.saved;
+                    failedCount += result.failed;
+                    this._collectFailures(result.failures);
+                    batch = [];
                 }
             }
 
-            // 转换文件条目
-            const fileEntries = updatedBatch.map((file) => this._convertToFileEntry(file));
-            const batchProcessTime = Date.now() - batchStartTime;
-
-            // 立即保存批次，释放内存
-            if (fileEntries.length > 0) {
-                try {
-                    const savedThisBatch = await this.storage.saveFiles(fileEntries);
-                    savedCount += savedThisBatch;
-                    if (savedThisBatch < fileEntries.length) {
-                        indexingSucceeded = false;
-                    }
-                } catch (error) {
-                    logger.error(`failed to save batch (${i}-${i + batch.length}) to storage: ${error.message}`, error);
-                    throw error;
-                }
+            if (batch.length > 0) {
+                const result = await this.storage.saveFiles(batch, this.root);
+                savedCount += result.saved;
+                failedCount += result.failed;
+                this._collectFailures(result.failures);
             }
-
-            // 每处理一定数量的文件后记录进度（避免日志过多）
-            if ((i + BATCH_SIZE) % (BATCH_SIZE * 10) === 0 || i + BATCH_SIZE >= allFiles.length) {
-                const progress = (((i + BATCH_SIZE) / allFiles.length) * 100).toFixed(1);
-                logger.debug(
-                    `scan progress: ${progress}% (${i + BATCH_SIZE}/${allFiles.length} files processed, ${updatedCount} updated)`
-                );
-            }
-        }
-
-        const filterTime = Date.now() - filterStartTime;
-        const totalTime = Date.now() - scanStartTime;
-
-        logger.info(
-            `[depth ${deep ?? 'full'}] scanning ${this.root}: ${totalFiles} files found (${updatedCount} updated, ${savedCount} saved), scan: ${scanTime}ms, filter+save: ${filterTime}ms, total: ${totalTime}ms`
-        );
-
-        // 记录前20个更新文件的详细信息
-        if (debugFiles.length > 0) {
-            for (const file of debugFiles) {
-                logger.debug(
-                    `-> updated file: ${file.path} ctime:${file.stats.ctimeMs} mtime:${file.stats.mtimeMs} atime:${file.stats.atimeMs}`
-                );
-            }
-            if (updatedCount > 20) {
-                logger.debug(`... and ${updatedCount - 20} more updated files`);
-            }
-        }
-
-        // 如果是全量扫描，更新元数据
-        if (deep === undefined) {
-            if (!indexingSucceeded) {
-                logger.warn(
-                    `full scan for ${this.root} did not finish indexing successfully, skipping metadata checkpoint update`
-                );
+        } catch (err) {
+            if (err instanceof EmbeddingNotConfiguredError) {
+                logger.warn(`[filemgr] scan paused: embedding model not configured`);
                 return;
             }
+            throw err;
+        }
 
-            const now = Date.now();
-            logger.info(`finished full scan for ${this.root}, setting metadata timestamp to ${now}`);
-            this.metadata.last_full_scan = now;
-            this.metadata.total_files = totalFiles;
-            try {
-                await this.storage.saveFileScannerMetadata(this.metadata);
-            } catch (error) {
-                logger.error(`failed to save scanner metadata: ${error.message}`, error);
-                throw error;
-            }
+        // 5. Full scan: delete detection
+        if (isFullScan && scannedPaths) {
+            await this.storage.removeDeletedFiles(this.root, scannedPaths);
+        }
+
+        // 6. Full scan: unconditional checkpoint
+        if (isFullScan) {
+            this.state.last_full_scan = Date.now();
+            this.state.total_files = totalFiles;
+            this.state.last_failed_count = failedCount;
+            await this.storage.saveScannerState();
+        }
+
+        logger.info(
+            `[filemgr] scan ${this.root}: depth=${deep ?? 'full'}, ` +
+                `total=${totalFiles}, saved=${savedCount}, failed=${failedCount}`
+        );
+    }
+
+    /**
+     * @param {Array<{path: string, error: string}>} failures
+     */
+    _collectFailures(failures) {
+        if (!failures || failures.length === 0) return;
+        this._recentFailures.push(...failures);
+        if (this._recentFailures.length > MAX_RECENT_FAILURES) {
+            this._recentFailures = this._recentFailures.slice(-MAX_RECENT_FAILURES);
         }
     }
 }
@@ -297,85 +278,219 @@ class FileManagerWorker extends BaseWorker {
         this.storage = null;
         /** @type {boolean} */
         this._initializing = false;
-    }
-
-    async getFileSystemStatus() {
-        if (!this.storage) {
-            return { status: 'idle' };
-        }
-        return {
-            status: this.status,
-            scanners: [...this.scanners.values()].map((instance) => {
-                return {
-                    entry: instance.entry,
-                    lastFullScan: instance.metadata.last_full_scan,
-                    totalFiles: instance.metadata.total_files
-                };
-            }),
-            storage: await this.storage.getStatus()
-        };
+        /** @type {object | null} */
+        this._lastConfig = null;
+        /** @type {boolean} */
+        this._rebuildQueued = false;
+        /** @type {Promise | null} */
+        this._currentRebuildPromise = null;
     }
 
     async initialize() {
         this._initializing = true;
         return this.runSequentially(async () => {
             try {
-                this.storage = await FSStorage.getInstance();
+                this.storage = new FSStorage(this.appDataDirectory);
+                await this.storage.initialize();
+
                 const filesystems = this.config?.entries;
-                if (!filesystems) {
-                    logger.warn(`no filesystems configured, skipping initialization`);
+                if (!filesystems || filesystems.length === 0) {
                     this.status = 'idle';
                     return;
                 }
+
+                // Ensure scanner state roots exist for all configured entries
                 for (const fsEntry of filesystems) {
-                    const instance = new FSScanner(fsEntry, this.storage, this.taskQueue);
-                    this.scanners.set(fsEntry.root, instance);
-                    // Wait for scanner metadata to be loaded from DB before exposing status.
-                    await instance.start();
+                    if (!this.storage.scannerState.roots[fsEntry.root]) {
+                        this.storage.scannerState.roots[fsEntry.root] = {
+                            last_full_scan: 0,
+                            total_files: 0,
+                            last_failed_count: 0
+                        };
+                    }
                 }
+                await this.storage.saveScannerState();
+
+                await this._startScanners(filesystems);
                 this.status = 'running';
+                this._lastConfig = this.config;
             } finally {
                 this._initializing = false;
             }
         }).catch((error) => {
             this._initializing = false;
-            logger.error(`initialize error: ${error.message}`, error);
+            logger.error(`[filemgr] initialize error: ${error.message}`, error);
             this.status = 'error';
         });
     }
 
     async finalize() {
         await this.runSequentially(async () => {
-            this.scanners.forEach((instance) => {
-                instance.stop();
-            });
+            for (const scanner of this.scanners.values()) {
+                await scanner.stop();
+            }
             this.scanners.clear();
             this.status = 'idle';
         }).catch((error) => {
-            logger.error(`finalize error: ${error.message}`, error);
+            logger.error(`[filemgr] finalize error: ${error.message}`, error);
         });
     }
 
-    async resetFileSystemStorage() {
-        if (!this.storage) {
-            return { status: 'error', message: 'storage not initialized' };
+    /**
+     * @param {object[]} filesystems
+     */
+    async _startScanners(filesystems) {
+        for (const fsEntry of filesystems) {
+            const root = fsEntry.root;
+            const state = this.storage.scannerState.roots[root];
+
+            const scanner = new FSScanner(fsEntry, this.storage, root, state, {
+                onRebuildRequired: (reason) => this._rebuildAndRestart(reason)
+            });
+            this.scanners.set(root, scanner);
+            await scanner.start(this.taskQueue);
+        }
+    }
+
+    async _restartScanners() {
+        for (const scanner of this.scanners.values()) {
+            await scanner.stop().catch((err) => {
+                logger.error(`[filemgr] stop scanner failed: ${err.message}`);
+            });
+        }
+        this.scanners.clear();
+
+        const filesystems = this.config?.entries;
+        if (!filesystems || filesystems.length === 0) {
+            this.status = 'idle';
+            return;
         }
 
-        return this.runSequentially(async () => {
-            try {
-                // 重置存储
-                await this.storage.reset();
-                logger.info('file system storage reset successfully');
+        await this._startScanners(filesystems);
+        this.status = 'running';
+    }
 
-                // 重置后重启scanners，以便重新开始扫描
+    /**
+     * Returns a Promise (from runSequentially) so callers can optionally await.
+     * - onRebuildRequired callback: does NOT await (fire-and-forget, avoids PQueue deadlock)
+     * - resetFileSystemStorage: DOES await (entry.js needs to wait for completion)
+     *
+     * Dedup: _rebuildQueued flag stays true for the ENTIRE rebuild execution,
+     * preventing overlapping triggers from multiple scanners.
+     */
+    _rebuildAndRestart(reason) {
+        if (this._rebuildQueued) {
+            logger.info(`[filemgr] rebuild already queued, skipping: ${reason}`);
+            return this._currentRebuildPromise ?? Promise.resolve();
+        }
+        this._rebuildQueued = true;
+
+        this._currentRebuildPromise = this.runSequentially(async () => {
+            try {
+                logger.warn(`[filemgr] _rebuildAndRestart: ${reason}`);
+
+                // 1. Stop all scanners
+                for (const scanner of this.scanners.values()) {
+                    await scanner.stop().catch((err) => {
+                        logger.error(`[filemgr] stop scanner failed: ${err.message}`);
+                    });
+                }
+                this.scanners.clear();
+
+                // 2. Rebuild storage (build-then-swap)
+                let rebuildOk = true;
+                try {
+                    await this.storage.rebuildAll(reason);
+                } catch (err) {
+                    rebuildOk = false;
+                    if (err._postSwap) {
+                        // Catastrophic: old storage already deleted, new init failed.
+                        // storage is null. Scanners will see deferred state.
+                        logger.error(`[filemgr] rebuild post-swap failure (storage lost): ${err.message}`);
+                    } else {
+                        // Pre-swap failure (probe or build): old storage preserved.
+                        logger.warn(`[filemgr] rebuild failed (old storage preserved): ${err.message}`);
+                    }
+                }
+
+                // 3. Restart scanners regardless — step 1 already stopped them
                 await this._restartScanners();
 
-                return { status: 'ok' };
-            } catch (error) {
-                logger.error(`resetStorage error: ${error.message}`, error);
-                return { status: 'error', message: error.message };
+                if (rebuildOk) {
+                    logger.info(`[filemgr] rebuild succeeded, scanners restarted`);
+                } else if (!this.storage.isDeferred()) {
+                    logger.warn(`[filemgr] scanners restarted with old storage; ` + `next scan may re-trigger rebuild`);
+                } else {
+                    logger.error(`[filemgr] scanners restarted in deferred state; ` + `will retry on next scan cycle`);
+                }
+            } finally {
+                this._rebuildQueued = false;
+                this._currentRebuildPromise = null;
             }
         });
+        return this._currentRebuildPromise;
+    }
+
+    async applicationConfigChanged(config) {
+        await super.applicationConfigChanged(config);
+        const oldConfig = this._lastConfig;
+        this._lastConfig = config;
+
+        if (this._initializing) return;
+        if (!this.storage || this.status === 'error') return;
+
+        await this.runSequentially(async () => {
+            // 1. Detach removed roots
+            const oldRoots = new Set((oldConfig?.entries ?? []).map((e) => e.root));
+            const newRoots = new Set((config?.entries ?? []).map((e) => e.root));
+
+            for (const removed of oldRoots) {
+                if (!newRoots.has(removed)) {
+                    await this.storage._detachRoot(removed);
+                }
+            }
+
+            // 2. Add new roots to scanner state
+            for (const added of newRoots) {
+                if (!oldRoots.has(added)) {
+                    this.storage.scannerState.roots[added] = {
+                        last_full_scan: 0,
+                        total_files: 0,
+                        last_failed_count: 0
+                    };
+                }
+            }
+            await this.storage.saveScannerState();
+
+            // 3. Restart scanners
+            await this._restartScanners();
+        });
+    }
+
+    // ── Worker API methods ──────────────────────────────────────────
+
+    async getFileSystemStatus() {
+        if (!this.storage) {
+            return { status: 'idle' };
+        }
+
+        const storageStatus = await this.storage.getStatus();
+        const scannerList = [...this.scanners.values()].map((scanner) => ({
+            entry: scanner.entry,
+            root: scanner.root,
+            lastFullScan: scanner.state.last_full_scan,
+            totalFiles: scanner.state.total_files,
+            lastFailedCount: scanner.state.last_failed_count,
+            isRunning: scanner.isRunning(),
+            recentFailures: scanner._recentFailures ?? []
+        }));
+
+        return {
+            status: this.status,
+            scanners: scannerList,
+            storage: storageStatus,
+            isDeferred: this.storage.isDeferred()
+        };
     }
 
     async getStatus() {
@@ -383,101 +498,49 @@ class FileManagerWorker extends BaseWorker {
     }
 
     async searchFilesByKeyword(keyword) {
-        if (!this.storage) {
-            throw new Error('storage not initialized');
+        if (!this.storage || this.storage.isDeferred()) {
+            return [];
         }
-
-        const result = await this.storage.searchFilesByKeyword(keyword);
-        return result;
+        return await this.storage.searchFilesByKeyword(keyword);
     }
 
-    async searchFilesByNameSimilarity(query, topK = 20, threshold = 0.1) {
-        if (!this.storage) {
-            throw new Error('storage not initialized');
+    async searchFileByName(query, topK) {
+        if (!this.storage || this.storage.isDeferred()) {
+            return { query, results: [], totalHits: 0, warning: WARNINGS.DEFERRED };
         }
+        return await this.storage.searchFileByName(query, { topK });
+    }
 
-        const result = await this.storage.searchFilesByNameSimilarity(query, topK, threshold);
-        return result;
+    async searchFileByContent(query, topK) {
+        if (!this.storage || this.storage.isDeferred()) {
+            return { query, results: [], totalHits: 0, warning: WARNINGS.DEFERRED };
+        }
+        return await this.storage.searchFileByContent(query, { topK });
     }
 
     /**
-     * 重启所有scanners
-     * 注意：这个方法可能已经在 runSequentially 内部被调用，所以不再使用 runSequentially
+     * Compat shim — fileview.js:39 + preload.js:171 + preload-web.js:214 call this.
+     * Delegates to searchFileByName, maps result back to flat FileEntry-like array
+     * (fileview.js reads .path for dedup and rendering).
      */
-    async _restartScanners() {
-        logger.info('_restartScanners called', { storage: !!this.storage, status: this.status });
-
-        if (!this.storage) {
-            logger.warn('storage not initialized, cannot restart scanners');
-            return;
+    async searchFilesByNameSimilarity(query, topK = 20) {
+        if (!this.storage || this.storage.isDeferred()) {
+            return [];
         }
+        const result = await this.storage.searchFileByName(query, { topK });
+        return result.results;
+    }
 
+    async resetFileSystemStorage() {
+        if (!this.storage) {
+            return { status: 'error', message: 'storage not initialized' };
+        }
         try {
-            logger.info('restarting scanners');
-
-            // 停止所有现有的scanners
-            const stopPromises = [];
-            for (const scanner of this.scanners.values()) {
-                stopPromises.push(
-                    scanner.stop().catch((error) => {
-                        logger.error(`error stopping scanner ${scanner.root}: ${error.message}`, error);
-                    })
-                );
-            }
-            logger.info(`stopping ${this.scanners.size} scanners`);
-            await Promise.all(stopPromises);
-            this.scanners.clear();
-            logger.info('all scanners stopped');
-
-            // 根据新配置重新创建和启动scanners
-            const filesystems = this.config?.entries;
-            if (!filesystems || filesystems.length === 0) {
-                logger.warn('no filesystems configured, scanners will not be started');
-                this.status = 'idle';
-                return;
-            }
-
-            logger.info(`starting ${filesystems.length} scanners`);
-            for (const fsEntry of filesystems) {
-                try {
-                    const instance = new FSScanner(fsEntry, this.storage, this.taskQueue);
-                    this.scanners.set(fsEntry.root, instance);
-                    // Wait for scanner metadata to be loaded from DB before exposing status.
-                    await instance.start();
-                    logger.info(`started scanner for ${fsEntry.root}`);
-                } catch (error) {
-                    logger.error(`failed to start scanner for ${fsEntry.root}: ${error.message}`, error);
-                }
-            }
-
-            this.status = 'running';
-            logger.info(`restarted ${this.scanners.size} scanners`);
+            await this._rebuildAndRestart('manual reset');
+            return { status: 'ok' };
         } catch (error) {
-            logger.error(`error in _restartScanners: ${error.message}`, error);
-            this.status = 'error';
-            throw error;
-        }
-    }
-
-    /**
-     * 配置更新时调用，重启scanners以应用新配置
-     * @param {object} config
-     */
-    async applicationConfigChanged(config) {
-        await super.applicationConfigChanged(config);
-
-        // 如果正在初始化中，不要重启，避免重复启动
-        // 初始化完成后，如果配置发生变化，initialize()会使用新配置
-        if (this._initializing) {
-            logger.debug('skipping scanner restart during initialization');
-            return;
-        }
-
-        // storage 已初始化就重启 scanners（包括 idle 状态 —— 首次空 entries 启动后添加目录的情况）
-        if (this.storage && this.status !== 'error') {
-            await this.runSequentially(async () => {
-                await this._restartScanners();
-            });
+            logger.error(`[filemgr] resetStorage error: ${error.message}`, error);
+            return { status: 'error', message: error.message };
         }
     }
 }
