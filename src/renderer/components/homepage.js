@@ -79,6 +79,19 @@ class HomePage extends HTMLElement {
     setUpEventListeners() {
         const agentInput = this.querySelector('#agent-input-main');
         const fileListView = this.querySelector('#home-file-list');
+        const recommendation = this.querySelector('#home-recommendation');
+
+        recommendation?.addEventListener('select', (event) => {
+            const { item } = event.detail;
+            if (item?.prompt) {
+                const textarea = agentInput?.querySelector('#agent-input-textarea');
+                if (textarea) {
+                    textarea.value = item.prompt;
+                    textarea.focus();
+                    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+                }
+            }
+        });
 
         agentInput.addEventListener('submit', async (event) => {
             const message = event.detail.message;
@@ -133,14 +146,21 @@ class HomePage extends HTMLElement {
     }
 
     render() {
+        const greeting = this._getGreeting();
         this.innerHTML = `
         <!-- 主内容居中 -->
         <div class="w-full h-full px-8 flex flex-col items-center justify-center min-h-[80vh]">
             <!-- 问候语 -->
-            <div class="mb-12 text-center">
-                <h1 class="text-3xl font-medium text-gray-800 mb-2">
-                    晚上好
+            <div class="mb-4 text-center">
+                <h1 class="text-3xl font-medium text-gray-800 mb-3">
+                    ${greeting}
                 </h1>
+                <button id="hp-workspace-bar" class="hp-workspace-bar" title="点击切换工作空间">
+                    <i class="fa-solid fa-briefcase"></i>
+                    <span class="hp-workspace-path">当前工作空间 </span>
+                    <span id="hp-workspace-path" class="hp-workspace-path">加载中...</span>
+                    <i class="fa-solid fa-chevron-down hp-workspace-switch"></i>
+                </button>
             </div>
 
             <!-- 输入框区域 -->
@@ -150,59 +170,50 @@ class HomePage extends HTMLElement {
                 <agent-files-view id="home-file-list"></agent-files-view>
             </div>
 
-            <!-- 功能按钮区域 -->
+            <!-- 推荐场景 -->
             <div class="w-full max-w-4xl">
-                <div class="flex flex-wrap justify-center gap-2">
-
-                    <!-- 收件箱 -->
-                    <button class="flex items-center gap-1.5 px-2.5 py-1 bg-white rounded-full shadow-sm hover:shadow-md border border-gray-200 transition-all relative"
-                        onclick="window.globalControlAPI.openApplication('mailbox')">
-                        <i class="fas fa-inbox text-indigo-500 text-xs"></i>
-                        <span class="text-xs text-gray-700">收件箱</span>
-                    </button>
-
-                    <!-- 快速记录 -->
-                    <button class="flex items-center gap-1.5 px-2.5 py-1 bg-white rounded-full shadow-sm hover:shadow-md border border-gray-200 transition-all"
-                        onclick="window.globalControlAPI.openApplication('recall')">
-                        <i class="fas fa-video text-red-500 text-xs"></i>
-                        <span class="text-xs text-gray-700">快速记录</span>
-                    </button>
-
-                    <!-- A2A -->
-                    <button class="flex items-center gap-1.5 px-2.5 py-1 bg-white rounded-full shadow-sm hover:shadow-md border border-gray-200 transition-all"
-                        onclick="window.globalControlAPI.openApplication('a2a')">
-                        <i class="fas fa-comments text-purple-500 text-xs"></i>
-                        <span class="text-xs text-gray-700">A2A</span>
-                    </button>
-
-                    <!-- 编程 -->
-                    <button class="flex items-center gap-1.5 px-2.5 py-1 bg-gray-100 rounded-full shadow-none border border-gray-100 cursor-not-allowed opacity-50" disabled>
-                        <i class="fas fa-code text-orange-300 text-xs"></i>
-                        <span class="text-xs text-gray-400">编程</span>
-                    </button>
-
-                    <!-- 图像生成 -->
-                    <button class="flex items-center gap-1.5 px-2.5 py-1 bg-gray-100 rounded-full shadow-none border border-gray-100 cursor-not-allowed opacity-50" disabled>
-                        <i class="fas fa-image text-yellow-300 text-xs"></i>
-                        <span class="text-xs text-gray-400">图像生成</span>
-                    </button>
-
-                    <!-- 帮我写作 -->
-                    <button class="flex items-center gap-1.5 px-2.5 py-1 bg-gray-100 rounded-full shadow-none border border-gray-100 cursor-not-allowed opacity-50" disabled>
-                        <i class="fas fa-check text-green-300 text-xs"></i>
-                        <span class="text-xs text-gray-400">帮我写作</span>
-                    </button>
-
-                    <!-- 深入研究 -->
-                    <button class="flex items-center gap-1.5 px-2.5 py-1 bg-gray-100 rounded-full shadow-none border border-gray-100 cursor-not-allowed opacity-50" disabled>
-                        <i class="fas fa-search text-blue-300 text-xs"></i>
-                        <span class="text-xs text-gray-400">深入研究</span>
-                    </button>
-
-                </div>
+                <recommendation-panel id="home-recommendation"></recommendation-panel>
             </div>
         </div>
         `;
+        this._initWorkspaceBar();
+    }
+
+    _getGreeting() {
+        const hour = new Date().getHours();
+        if (hour < 6) return '夜深了';
+        if (hour < 12) return '早上好';
+        if (hour < 14) return '中午好';
+        if (hour < 18) return '下午好';
+        return '晚上好';
+    }
+
+    async _initWorkspaceBar() {
+        try {
+            const workspacePath = await window.workspaceAPI.getEffectiveWorkspace();
+            const pathLabel = this.querySelector('#hp-workspace-path');
+            if (pathLabel) {
+                pathLabel.textContent = workspacePath;
+                pathLabel.title = workspacePath;
+            }
+        } catch (error) {
+            console.error('Failed to get workspace path:', error);
+        }
+
+        const wsBar = this.querySelector('#hp-workspace-bar');
+        if (wsBar) {
+            wsBar.addEventListener('click', async () => {
+                const newPath = await window.workspaceAPI.selectWorkspaceDirectory();
+                if (newPath) {
+                    const pathLabel = this.querySelector('#hp-workspace-path');
+                    if (pathLabel) {
+                        pathLabel.textContent = newPath;
+                        pathLabel.title = newPath;
+                    }
+                    document.dispatchEvent(new CustomEvent('workspace-changed'));
+                }
+            });
+        }
     }
 }
 

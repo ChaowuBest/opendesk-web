@@ -67,6 +67,15 @@ function exposeTaskManagerAPI() {
                 throw new Error(result.message);
             }
         },
+        getTaskTodos: async (taskId) => {
+            const result = await ipcRenderer.invoke('taskManager:getTaskTodos', taskId);
+            if (result.status === 'ok') {
+                return result.data;
+            } else {
+                console.error('getting task todos failed', result.message);
+                throw new Error(result.message);
+            }
+        },
         subscribeTaskUpdate: async (taskId, callback) => {
             const result = await ipcRenderer.invoke('taskManager:subscribeTaskUpdate', taskId);
             if (result.status !== 'ok') {
@@ -137,6 +146,20 @@ function exposeTaskManagerAPI() {
                 throw new Error(result.message);
             }
             return result.data;
+        },
+        getSessionMemory: async (taskId) => {
+            const result = await ipcRenderer.invoke('taskManager:getSessionMemory', taskId);
+            if (result.status === 'ok') {
+                return result.data;
+            }
+            return null;
+        },
+        getModelContextSize: async (modelAlias) => {
+            const result = await ipcRenderer.invoke('taskManager:getModelContextSize', modelAlias);
+            if (result.status === 'ok') {
+                return result.data;
+            }
+            return 0;
         }
     });
 
@@ -240,6 +263,22 @@ function exposeFSAPI() {
                 throw new Error(result.message);
             }
 
+            return result.data;
+        },
+        listDirectory: async (dirPath) => {
+            const result = await ipcRenderer.invoke('fs:listDirectory', dirPath);
+            if (result.status !== 'ok') {
+                console.error('listing directory failed', result.message);
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
+        readTextFile: async (filePath, maxBytes) => {
+            const result = await ipcRenderer.invoke('fs:readTextFile', filePath, maxBytes);
+            if (result.status !== 'ok') {
+                console.error('reading text file failed', result.message);
+                throw new Error(result.message);
+            }
             return result.data;
         }
     });
@@ -533,6 +572,34 @@ if (window.self !== window.top) {
         }
     });
 
+    contextBridge.exposeInMainWorld('displayAPI', {
+        getScaleFactor: async () => {
+            const result = await ipcRenderer.invoke('display:getScaleFactor');
+            if (result.status !== 'ok') throw new Error(result.message);
+            return result.data;
+        },
+        setScaleFactor: async (factor) => {
+            const result = await ipcRenderer.invoke('display:setScaleFactor', factor);
+            if (result.status !== 'ok') throw new Error(result.message);
+            return result.data;
+        },
+        adjustScaleFactor: async (delta) => {
+            const result = await ipcRenderer.invoke('display:adjustScaleFactor', delta);
+            if (result.status !== 'ok') throw new Error(result.message);
+            return result.data;
+        }
+    });
+
+    contextBridge.exposeInMainWorld('screenAPI', {
+        getDisplayScaleFactors: async () => {
+            const result = await ipcRenderer.invoke('screen:getDisplayScaleFactors');
+            if (result.status !== 'ok') {
+                throw new Error(result.message);
+            }
+            return result.data;
+        }
+    });
+
     contextBridge.exposeInMainWorld('floatWindowAPI', {
         hideFloatWindow: () => ipcRenderer.invoke('floatWindow:hideFloatWindow'),
         subscribeIntentsUpdate: (callback) => {
@@ -612,6 +679,65 @@ if (window.self !== window.top) {
                 ipcRenderer.removeAllListeners(`applicationRegistry:event:${eventName}`);
                 ipcRenderer.invoke('applicationRegistry:unsubscribe', bundleName, eventName);
             };
+        }
+    });
+
+    contextBridge.exposeInMainWorld('browserAPI', {
+        navigate: async (taskId, url) => {
+            const result = await ipcRenderer.invoke('browser:navigate', taskId, url);
+            if (result.status !== 'ok') {
+                console.error('browser navigation failed', result.message);
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
+        getCDPPort: async () => {
+            const result = await ipcRenderer.invoke('browser:getCDPPort');
+            if (result.status !== 'ok') {
+                console.error('getting CDP port failed', result.message);
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
+        getState: async (taskId) => {
+            const result = await ipcRenderer.invoke('browser:getState', taskId);
+            if (result.status !== 'ok') {
+                console.error('getting browser state failed', result.message);
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
+        executeScript: async (taskId, script) => {
+            const result = await ipcRenderer.invoke('browser:executeScript', taskId, script);
+            if (result.status !== 'ok') {
+                console.error('executing script failed', result.message);
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
+        goBack: async (taskId) => {
+            const result = await ipcRenderer.invoke('browser:goBack', taskId);
+            if (result.status !== 'ok') {
+                console.error('browser goBack failed', result.message);
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
+        goForward: async (taskId) => {
+            const result = await ipcRenderer.invoke('browser:goForward', taskId);
+            if (result.status !== 'ok') {
+                console.error('browser goForward failed', result.message);
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
+        refresh: async (taskId) => {
+            const result = await ipcRenderer.invoke('browser:refresh', taskId);
+            if (result.status !== 'ok') {
+                console.error('browser refresh failed', result.message);
+                throw new Error(result.message);
+            }
+            return result.data;
         }
     });
 }

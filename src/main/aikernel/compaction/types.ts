@@ -1,6 +1,17 @@
-import type { ChatMessage, CompactSeparatorMessage } from '../messages.js';
+import type {
+    AssistantMessage,
+    AssistantMessagePart,
+    ChatMessage,
+    CompactSeparatorMessage,
+    UserMessage
+} from '../messages.js';
 import type { MicrocompactAnalysisResult, MicrocompactCandidate, MicrocompactStats } from './microcompact.js';
 import type { AutoCompactDecision, AutoCompactState } from './auto-compact.js';
+import type {
+    SessionMemoryCompactOptions,
+    SessionMemoryCompactRunResult,
+    SessionMemoryState
+} from './session-memory-compact.js';
 import type {
     ToolResultReplacementState,
     ToolResultPreviewOptions,
@@ -16,14 +27,92 @@ export interface ActiveContextView {
     startIndex: number;
     messages: ChatMessage[];
     boundary?: CompactBoundaryRef;
+    leadingPartialAssistant?: ActiveContextLeadingPartialAssistant;
 }
+
+export interface ProjectedActiveContextView extends ActiveContextView {
+    projectedItems: ProjectedContextItem[];
+}
+
+/**
+ * 单条 AssistantMessage 内部某个逻辑 round 的稳定引用。
+ * 当前粒度只到 message.content 的 part 边界，不进入 part 内部。
+ */
+export interface AssistantRoundRef {
+    assistantMessageId: string;
+    roundIndex: number;
+    startPartIndex: number;
+    endPartIndexExclusive: number;
+}
+
+/**
+ * assistant 内部 round 的结束方式：
+ * - tool_call_batch: 以一个 tool_call part 结束
+ * - message_tail: 以消息末尾结束，末尾不包含 tool_call part
+ */
+export type AssistantRoundKind = 'tool_call_batch' | 'message_tail';
+
+export interface AssistantRound {
+    ref: AssistantRoundRef;
+    kind: AssistantRoundKind;
+    parts: AssistantMessagePart[];
+    toolCallCount: number;
+}
+
+export interface ActiveContextLeadingPartialAssistant {
+    message: AssistantMessage;
+    messageIndex: number;
+    roundRef: AssistantRoundRef;
+}
+
+export interface VisibleAssistantRound {
+    message: AssistantMessage;
+    assistantMessageIndex: number;
+    messageIndex: number;
+    round: AssistantRound;
+    roundRef: AssistantRoundRef;
+}
+
+export interface BaseProjectedContextItem {
+    kind: 'compact_boundary' | 'user_message' | 'assistant_round';
+    messageIndex: number;
+    messageId: string;
+}
+
+export interface ProjectedBoundaryContextItem extends BaseProjectedContextItem {
+    kind: 'compact_boundary';
+    boundary: CompactBoundaryRef;
+    message: CompactSeparatorMessage;
+}
+
+export interface ProjectedUserContextItem extends BaseProjectedContextItem {
+    kind: 'user_message';
+    message: UserMessage;
+}
+
+export interface ProjectedAssistantRoundItem extends BaseProjectedContextItem {
+    kind: 'assistant_round';
+    message: AssistantMessage;
+    round: AssistantRound;
+    roundRef: AssistantRoundRef;
+}
+
+export type ProjectedContextItem =
+    | ProjectedBoundaryContextItem
+    | ProjectedUserContextItem
+    | ProjectedAssistantRoundItem;
 
 export interface PrepareContextOptions {
     beforeCompact?: () => void;
     executeCompact?: () => Promise<boolean | void> | boolean | void;
     enableToolResultBudget?: boolean;
     enableMicrocompact?: boolean;
+    /** Defaults to true; set false to roll back pipeline compaction to message-granularity boundaries. */
+    enableAssistantRoundBoundary?: boolean;
+    enableSessionMemoryCompact?: boolean;
     autoCompactState?: AutoCompactState;
+    sessionMemoryState?: SessionMemoryState;
+    sessionMemoryCompactOptions?: SessionMemoryCompactOptions;
     /** 可选的自动压缩决策注入，主要用于单元测试稳定控制 pipeline 分支。 */
     autoCompactDecisionOverride?: AutoCompactDecision;
     taskId?: string;
@@ -42,14 +131,18 @@ export interface PreparedContextResult {
     autoCompactStateChanged: boolean;
     shouldCompact: boolean;
     compacted: boolean;
+    sessionMemoryCompacted: boolean;
     budgetApplied: boolean;
     microcompactApplied: boolean;
     toolResultOverrides: Map<string, string>;
     toolResultReplacementState?: ToolResultReplacementState;
     toolResultBudgetStats?: ToolResultBudgetProjectionStats;
+    sessionMemoryCompactResult?: SessionMemoryCompactRunResult;
+    sessionMemoryState?: SessionMemoryState;
     microcompactAnalysis?: MicrocompactAnalysisResult;
     microcompactAppliedCandidates: MicrocompactCandidate[];
     microcompactStats?: MicrocompactStats;
     toolResultStateChanged: boolean;
     microcompactStateChanged: boolean;
+    sessionMemoryStateChanged: boolean;
 }

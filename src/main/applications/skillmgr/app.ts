@@ -16,6 +16,7 @@ import { logger } from '../../utils/logger.js';
 import { SkillRegistry } from './skillregistry.js';
 import { Skill, SkillRegistry as AISkillRegistry } from '../../aikernel/skill.js';
 import { BaseToolset } from '../../aikernel/tool.js';
+import { ReadableDirectoryRegistry } from '../../aikernel/security/enforcer.js';
 import SkillsWorker from './service/worker.js';
 import { MANAGE_SKILLS_SKILL } from './skills.js';
 import {
@@ -72,7 +73,15 @@ export class SkillMgrApplication extends BaseApplication {
     }
 
     constructor() {
-        super('skillmgr', 'Skills');
+        super('skillmgr', '技能中心');
+
+        // 将 skill 目录注册为全局可读，确保所有模式下 agent 都能读取 skill 文件
+        const readableRegistry = ReadableDirectoryRegistry.getInstance();
+        readableRegistry.register(SkillRegistry.getSkillsDirectory());
+        readableRegistry.register(SkillRegistry.getBundledSkillsDirectory());
+        for (const dir of SkillRegistry.getMountedDirs()) {
+            readableRegistry.register(dir);
+        }
     }
 
     /**
@@ -92,7 +101,7 @@ export class SkillMgrApplication extends BaseApplication {
      * 注册 `skill` CLI 子命令：install / uninstall / list
      */
     static registerCliSubcommands(prog: Command): void {
-        const skillCmd = prog.command('skill').description('技能管理');
+        const skillCmd = prog.command('skill').description('技能中心');
 
         skillCmd
             .command('install <source>')
@@ -341,8 +350,8 @@ export class SkillMgrApplication extends BaseApplication {
         });
     }
 
-    async installFromRegistry(installUrl: string) {
-        const result = await installFromRegistryInstallUrl(installUrl);
+    async installFromRegistry(installUrl: string, force: boolean = false) {
+        const result = await installFromRegistryInstallUrl(installUrl, force);
         if (!result.success) {
             throw new Error(result.error);
         }
@@ -370,7 +379,7 @@ export class SkillMgrApplication extends BaseApplication {
         return [
             {
                 name: 'skills',
-                description: '技能管理 (子命令: test <技能名> - 测试技能)',
+                description: '技能中心 (子命令: test <技能名> - 测试技能)',
                 execute: async (args: string) => {
                     const trimmedArgs = args.trim();
                     const parts = trimmedArgs.split(/\s+/);
@@ -392,7 +401,7 @@ export class SkillMgrApplication extends BaseApplication {
                             const skillsOverlay = new SkillsOverlay(tui);
                             skillsOverlay.show();
                         } catch (err) {
-                            logger.error(`打开技能管理失败: ${err}`);
+                            logger.error(`打开技能中心失败: ${err}`);
                         }
                     }
                 }

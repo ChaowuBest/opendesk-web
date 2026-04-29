@@ -14,7 +14,7 @@ import { ToolCall } from '../../aikernel/messages';
 import { Card, type BorderConfig } from '../../tui/components/card';
 import { statusDisplay, truncText } from '../../tui/components/toolcall';
 import { z } from 'zod';
-import { type TaskTodo, getOrInitTaskTodos, setTaskTodos, deleteTaskTodos } from '../../aikernel/todos/task-todos';
+import { type TaskTodo, getOrInitTaskTodos, setTaskTodos } from '../../aikernel/todos/task-todos';
 import type { TaskState } from '../../aikernel/states/tasks';
 import { escapeHtml } from '../../utils/escape';
 import { type TodoMgrApplication } from './app';
@@ -205,35 +205,41 @@ export class TodoWriteTool extends BaseTool<typeof TodoWriteArgsSchema> {
     }
 
     renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
+        // 聊天界面仅展示一行简洁摘要，风格与 filemgr 的 readFile / writeFile 一致；
+        // 完整的待办清单会展示在右侧"任务计划"面板中。
         const args = toolcall.args_object as any;
-        const todos = args?.['todos'] || [];
+        const todos = Array.isArray(args?.['todos']) ? args['todos'] : [];
+        const total = todos.length;
+        const completed = todos.filter((t: any) => t.status === 'completed').length;
 
-        let html = '<div style="padding: 12px;">';
-        html += '<div style="font-weight: 600; margin-bottom: 8px;">📋 任务待办列表</div>';
-
-        if (todos.length > 0) {
-            html += '<div style="display: flex; flex-direction: column; gap: 8px;">';
-            for (const todo of todos) {
-                const statusIcon = this.getStatusIcon(todo.status);
-                const isCompleted = todo.status === 'completed';
-                const displayText = todo.title || todo.content;
-                html += `
-          <div style="display: flex; align-items: flex-start; gap: 8px; padding: 8px; background: #f9fafb; border-radius: 8px;">
-            <span style="font-size: 16px;">${statusIcon}</span>
-            <div style="flex: 1;">
-              <div style="display: flex; align-items: center; gap: 8px;">
-                <span style="font-weight: 500; ${isCompleted ? 'text-decoration: line-through; opacity: 0.7;' : ''}">${escapeHtml(displayText)}</span>
-              </div>
-            </div>
-          </div>
-        `;
+        let title = '更新任务计划';
+        let detail = '';
+        if (total > 0) {
+            if (completed === total) {
+                title = '任务计划已完成';
+                detail = `${total} 项`;
+            } else {
+                detail = `${completed}/${total}`;
             }
-            html += '</div>';
-        } else {
-            html += '<div style="color: #6b7280;">暂无待办</div>';
         }
 
-        html += '</div>';
+        const statusIcon =
+            toolcall.status === 'running'
+                ? '<span class="inline-block w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse"></span>'
+                : toolcall.status === 'error'
+                  ? '<span class="inline-block w-1.5 h-1.5 rounded-full bg-rose-500"></span>'
+                  : '';
+
+        const detailHtml = detail ? `<span class="truncate text-xs text-slate-600">${escapeHtml(detail)}</span>` : '';
+
+        const html = `<div class="my-2">
+            <div class="flex items-center gap-1.5 min-w-0">
+                <i class="fas fa-list-check shrink-0 text-slate-400 text-xs"></i>
+                <span class="shrink-0 text-slate-500 text-xs">${escapeHtml(title)}</span>
+                ${statusIcon}
+                ${detailHtml}
+            </div>
+        </div>`;
         return Promise.resolve(html);
     }
 
@@ -301,29 +307,63 @@ export class TodoWriteTool extends BaseTool<typeof TodoWriteArgsSchema> {
         const taskId = taskState?.task_id || 'current_task';
         let currentTodos = this.getTaskTodos(taskId);
 
+        // 传入空列表视为"无变更"，避免 Agent 在任务结束时误传 [] 把已完成的计划清掉。
+        // 用户希望计划执行结束后完整保留在"任务计划"面板里以便回看。
+        if (todos.length === 0) {
+            try {
+                await this.todoMgrApp.emitEvent('taskTodosUpdated', { taskId, todos: currentTodos });
+            } catch (err) {
+                console.warn('emit taskTodosUpdated failed', err);
+            }
+            return JSON.stringify({
+                success: true,
+                todos: currentTodos,
+                note: currentTodos.length
+                    ? '传入的待办列表为空，已保留原有任务计划（如需清空请显式传入空数组意图不被采纳）'
+                    : '当前任务无任务计划，传入空列表被视为无操作'
+            });
+        }
+
+        const nowIso = new Date().toISOString();
         currentTodos = todos.map((todoParam) => {
             const existingTodo = todoParam.id ? currentTodos.find((t) => t.id === todoParam.id) : undefined;
+
+            // started_at：首次进入 in_progress 或 completed 时记录一次，后续保持不变。
+            // 这样已完成项能回溯到"最早启动时间"，进行中项也有稳定的计时起点。
+            let started_at = existingTodo?.started_at;
+            if (!started_at && (todoParam.status === 'in_progress' || todoParam.status === 'completed')) {
+                started_at = nowIso;
+            }
+
+            // completed_at：进入 completed 时记录一次，后续保持不变。
+            const completed_at = todoParam.status === 'completed' ? existingTodo?.completed_at || nowIso : undefined;
+
             return {
                 id: todoParam.id || `task_todo_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
                 task_id: taskId,
                 title: todoParam.title,
                 content: todoParam.content,
                 status: todoParam.status,
-                created_at: existingTodo?.created_at || new Date().toISOString(),
-                updated_at: new Date().toISOString(),
-                completed_at:
-                    todoParam.status === 'completed'
-                        ? existingTodo?.completed_at || new Date().toISOString()
-                        : undefined
+                created_at: existingTodo?.created_at || nowIso,
+                updated_at: nowIso,
+                started_at,
+                completed_at
             };
         });
 
-        // 如果所有任务都已完成，清空待办列表（不再保留）
-        const allCompleted = currentTodos.length > 0 && currentTodos.every((t) => t.status === 'completed');
-        if (allCompleted) {
-            deleteTaskTodos(taskId);
-        } else {
-            this.setTaskTodos(taskId, currentTodos);
+        // 即使全部完成也保留在内存中，让任务计划面板继续展示"已完成"的勾选状态，
+        // 方便用户回看整条计划。下一次 TodoWrite 仍会以传入的 todos 整体替换，不会叠加。
+        this.setTaskTodos(taskId, currentTodos);
+
+        // 向订阅者广播任务级待办变更，UI 侧据此实时刷新"任务计划"面板
+        try {
+            await this.todoMgrApp.emitEvent('taskTodosUpdated', {
+                taskId,
+                todos: currentTodos
+            });
+        } catch (err) {
+            // 事件分发失败不影响工具本身的成功返回
+            console.warn('emit taskTodosUpdated failed', err);
         }
 
         return JSON.stringify({ success: true, todos: currentTodos });

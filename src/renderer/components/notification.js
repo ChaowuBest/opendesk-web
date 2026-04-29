@@ -52,7 +52,7 @@ class NotificationPanel extends HTMLElement {
         const notificationHtml = `
         <div
             id="notification-${notificationId}"
-            class="group relative overflow-hidden rounded-[22px] bg-white/70 p-4 shadow-[0_10px_30px_-5px_rgba(0,0,0,0.1)] backdrop-blur-xl ring-1 ring-black/5 transition-all duration-300 hover:bg-gray-50"
+            class="notification-toast relative overflow-hidden rounded-[22px] bg-white/70 p-4 shadow-[0_10px_30px_-5px_rgba(0,0,0,0.1)] backdrop-blur-xl ring-1 ring-black/5 transition-all duration-300 hover:bg-gray-50"
         >
             <div class="flex gap-3 items-center">
                 ${icon}
@@ -61,7 +61,7 @@ class NotificationPanel extends HTMLElement {
                     <p class="text-[13px] leading-tight text-gray-600/90">${message}</p>
                 </div>
                 <button
-                    class="close-notification-btn opacity-0 group-hover:opacity-100 transition-opacity w-8 h-8 flex items-center justify-center rounded-full hover:bg-black/5"
+                    class="close-notification-btn w-8 h-8 flex items-center justify-center rounded-full hover:bg-black/5"
                     data-notification_id="${notificationId}"
                 >
                     <i class="fa fa-times text-gray-400"></i>

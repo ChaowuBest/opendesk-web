@@ -11,9 +11,9 @@
 
 import { OpenAI } from 'openai';
 import { ChatContext, AssistantResponse, UserMessage, AssistantMessage, isCompactBoundaryMessage } from './messages';
-import { Setting, ModelInstance } from '../utils/setting.js';
+import { Setting, ModelInstance, ReasoningEffort } from '../utils/setting.js';
 import { buildActiveContextView } from './compaction/context-view.js';
-import type { ActiveContextView } from './compaction/types.js';
+import type { ActiveContextView, AssistantRoundRef } from './compaction/types.js';
 import { z } from 'zod';
 import { logger } from '../utils/logger.js';
 import { lookupKnownVisionSupport, fetchVisionSupportFromAPI } from '../utils/model-context.js';
@@ -23,8 +23,21 @@ import type { BaseTool } from './tool';
 /** Model 参数支持传入 ModelInstance 对象、模型别名字符串、或 undefined（使用默认模型） */
 type ModelParam = ModelInstance | string | undefined;
 
-/** 控制模型推理深度，undefined 表示使用模型默认值 */
-type ReasoningEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
+/**
+ * 根据 reasoningEffort 配置生成 API 请求参数。
+ * - 'none' 时禁用 thinking
+ * - 其他有效值时启用 thinking 并设置 reasoning_effort
+ */
+function mergeReasonOptions(reasoningEffort: ReasoningEffort | undefined): Record<string, any> {
+    const reasonOptions: Record<string, any> = {};
+    if (reasoningEffort === 'none') {
+        reasonOptions.thinking = { type: 'disabled' };
+    } else if (reasoningEffort && reasoningEffort !== '') {
+        reasonOptions.thinking = { type: 'enabled' };
+        reasonOptions.reasoning_effort = reasoningEffort;
+    }
+    return reasonOptions;
+}
 
 /**
  * LLM 验证器的返回结果。
@@ -68,6 +81,12 @@ interface LLMAskOptions {
 interface LLMMessageBuildOptions {
     activeContext?: ActiveContextView;
     toolResultOverrides?: Map<string, string>;
+    assistantReplayByMessageId?: Map<string, AssistantReplayInstruction>;
+}
+
+interface AssistantReplayInstruction {
+    startPartIndex?: number;
+    roundRef?: AssistantRoundRef;
 }
 
 /** Reranker API 返回的单条结果 */
@@ -256,15 +275,15 @@ class LLM {
         let finalResponse: string | object | undefined = undefined;
         let numRetries = 0;
         const messages: object[] = [options.question.toOpenAIMessage()];
+        const reasoningEffort = options.requestOptions?.reasoningEffort ?? modelInstance.reasoning_effort;
+        const reasonOptions = mergeReasonOptions(reasoningEffort);
 
         while (finalResponse === undefined && numRetries < 5) {
             const response = await withRateLimitRetry(() =>
                 client.chat.completions.create({
                     model: modelInstance.model_name,
                     messages: messages as OpenAI.ChatCompletionMessageParam[],
-                    ...(options.requestOptions?.reasoningEffort
-                        ? { reasoning_effort: options.requestOptions.reasoningEffort }
-                        : {})
+                    ...reasonOptions
                 })
             );
 
@@ -391,6 +410,7 @@ class LLM {
      *   并将 boundary 本身作为一条 UserMessage（含结构化总结）插入上下文。
      * - 对于 AssistantMessage，会调用其 toOpenAIMessages() 方法进行拆分，
      *   以保持 reasoning、tool_call、text 的正确顺序。
+     * - 如显式提供 assistantReplayByMessageId，则可对单条 assistant 仅回放后半段 round / part。
      * @param supportsVision 当前模型是否支持视觉输入，false 时 UserMessage 中的图像部分会被过滤
      */
     static buildMessages(
@@ -407,6 +427,15 @@ class LLM {
 
         const activeContext = options.activeContext ?? buildActiveContextView(chatContext);
         const toolResultOverrides = options.toolResultOverrides;
+        const assistantReplayByMessageId = new Map(options.assistantReplayByMessageId ?? []);
+        if (
+            activeContext.leadingPartialAssistant &&
+            !assistantReplayByMessageId.has(activeContext.leadingPartialAssistant.message.message_id)
+        ) {
+            assistantReplayByMessageId.set(activeContext.leadingPartialAssistant.message.message_id, {
+                roundRef: activeContext.leadingPartialAssistant.roundRef
+            });
+        }
         for (const message of activeContext.messages) {
             if (isCompactBoundaryMessage(message)) {
                 messages.push(message.toOpenAIMessage());
@@ -414,7 +443,18 @@ class LLM {
                 if (message.content.length === 0) {
                     continue;
                 }
-                messages.push(...message.toOpenAIMessages(toolResultOverrides));
+                const replayInstruction = assistantReplayByMessageId.get(message.message_id);
+                if (replayInstruction?.roundRef) {
+                    messages.push(
+                        ...message.toOpenAIMessagesFromRound(replayInstruction.roundRef, toolResultOverrides)
+                    );
+                } else if (typeof replayInstruction?.startPartIndex === 'number') {
+                    messages.push(
+                        ...message.toOpenAIMessagesFromPartIndex(replayInstruction.startPartIndex, toolResultOverrides)
+                    );
+                } else {
+                    messages.push(...message.toOpenAIMessages(toolResultOverrides));
+                }
             } else if (message instanceof UserMessage) {
                 messages.push(message.toOpenAIMessage(supportsVision));
             } else {
@@ -458,6 +498,8 @@ class LLM {
         const visionSupported = await this.supportsVision(model);
         const messages = this.buildMessages(chatContext, visionSupported, options);
         const toolOptions = this.buildToolOptions(chatContext);
+        const reasoningEffort = requestOptions?.reasoningEffort ?? modelInstance.reasoning_effort;
+        const reasonOptions = mergeReasonOptions(reasoningEffort);
 
         const response = await withRateLimitRetry(() =>
             client.chat.completions.create({
@@ -465,7 +507,7 @@ class LLM {
                 messages: messages as OpenAI.ChatCompletionMessageParam[],
                 max_completion_tokens: 16384,
                 ...toolOptions,
-                ...(requestOptions?.reasoningEffort ? { reasoning_effort: requestOptions.reasoningEffort } : {})
+                ...reasonOptions
             })
         );
         return AssistantResponse.parseOpenAIResponse(response);
@@ -487,6 +529,8 @@ class LLM {
         const visionSupported = await this.supportsVision(model);
         const messages = this.buildMessages(chatContext, visionSupported, options);
         const toolOptions = this.buildToolOptions(chatContext);
+        const reasoningEffort = requestOptions?.reasoningEffort ?? modelInstance.reasoning_effort;
+        const reasonOptions = mergeReasonOptions(reasoningEffort);
 
         if (logger) {
             const hasImages = messages.some(
@@ -511,7 +555,7 @@ class LLM {
                     stream: true,
                     stream_options: { include_usage: true },
                     ...toolOptions,
-                    ...(requestOptions?.reasoningEffort ? { reasoning_effort: requestOptions.reasoningEffort } : {})
+                    ...reasonOptions
                 })
             );
 
@@ -531,4 +575,4 @@ class LLM {
     }
 }
 
-export { LLM, type ReasoningEffort, type LLMRequestOptions };
+export { LLM, type LLMRequestOptions };

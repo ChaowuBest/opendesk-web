@@ -8,8 +8,8 @@ import {
     type ChatMessage
 } from '../messages.js';
 import { LLM } from '../llm.js';
-import { buildActiveContextView } from './context-view.js';
-import type { CompactBoundaryRef } from './types.js';
+import { buildActiveContextView, buildProjectedActiveContextView } from './context-view.js';
+import type { AssistantRoundRef, CompactBoundaryRef, ProjectedContextItem } from './types.js';
 
 export const DEFAULT_FULL_COMPACT_TAIL_MESSAGE_COUNT = 8;
 export const DEFAULT_FULL_COMPACT_TAIL_ASSISTANT_TOOL_MESSAGE_COUNT = 3;
@@ -34,6 +34,8 @@ export interface FullCompactPlanOptions {
     tailPlanMessageCount?: number;
     /** 至少需要总结多少条非 boundary 消息，否则认为本次 compact 没有效果。 */
     minMessagesToSummarize?: number;
+    /** 开启 assistant 内部 round-aware planner，仅影响 plan 计算，不改变默认 apply 语义。 */
+    enableAssistantRoundBoundary?: boolean;
 }
 
 export interface FullCompactMessageStats {
@@ -50,13 +52,33 @@ export interface FullCompactPlan {
     summarizeStartIndex: number;
     /** 本次 summary 输入在完整 chatContext.messages 中的结束位置，左闭右开。 */
     summarizeEndIndexExclusive: number;
-    /** kept tail 在完整 chatContext.messages 中的起点。 */
+    /** kept tail 在完整 chatContext.messages 中的物理起点。 */
+    physicalKeepStartIndex: number;
+    /** kept tail 在完整 chatContext.messages 中的起点。兼容旧字段，当前等于 physicalKeepStartIndex。 */
     keepStartIndex: number;
     messagesToSummarize: ChatMessage[];
     messagesToKeep: ChatMessage[];
+    projectedItemsToSummarize?: ProjectedContextItem[];
+    projectedItemsToKeep?: ProjectedContextItem[];
+    keepAnchor?: FullCompactKeepAnchor;
+    leadingPartialAssistant?: FullCompactLeadingPartialAssistant;
     summarizedStats: FullCompactMessageStats;
     keptStats: FullCompactMessageStats;
     previousBoundary?: CompactBoundaryRef;
+}
+
+export interface FullCompactKeepAnchor {
+    kind: 'message_start' | 'assistant_round';
+    messageIndex: number;
+    messageId: string;
+    roundRef?: AssistantRoundRef;
+    startPartIndex?: number;
+}
+
+export interface FullCompactLeadingPartialAssistant {
+    message: AssistantMessage;
+    messageIndex: number;
+    roundRef: AssistantRoundRef;
 }
 
 export interface FullCompactSummaryTextOptions {
@@ -228,9 +250,16 @@ function serializeAssistantMessageForSummary(
     message: AssistantMessage,
     options: Required<FullCompactSummaryTextOptions>
 ): string[] {
+    return serializeAssistantPartsForSummary(message.content, options);
+}
+
+function serializeAssistantPartsForSummary(
+    partsToSerialize: ReadonlyArray<AssistantMessage['content'][number]>,
+    options: Required<FullCompactSummaryTextOptions>
+): string[] {
     const parts: string[] = [];
 
-    for (const part of message.content) {
+    for (const part of partsToSerialize) {
         if (part.type === 'text') {
             parts.push(`[Assistant]: ${part.text}`);
         } else if (part.type === 'reasoning') {
@@ -268,6 +297,21 @@ function serializeMessageForSummary(message: ChatMessage, options: Required<Full
     }
 
     return [];
+}
+
+function serializeProjectedItemForSummary(
+    item: ProjectedContextItem,
+    options: Required<FullCompactSummaryTextOptions>
+): string[] {
+    if (item.kind === 'compact_boundary') {
+        return [`[Previous Compact Summary]:\n${item.message.summary}`];
+    }
+
+    if (item.kind === 'user_message') {
+        return [serializeUserMessageForSummary(item.message)];
+    }
+
+    return serializeAssistantPartsForSummary(item.round.parts, options);
 }
 
 export function getFullCompactCompressionPrompt(): string {
@@ -400,6 +444,288 @@ function selectKeepStartLocalIndex(
     return keepStartIndex < activeMessages.length ? keepStartIndex : undefined;
 }
 
+function assistantRoundHasErrorSignal(item: Extract<ProjectedContextItem, { kind: 'assistant_round' }>): boolean {
+    for (const part of item.round.parts) {
+        if (part.type === 'error') {
+            return true;
+        }
+        if (part.type === 'tool_call' && part.toolcalls.some((toolCall) => toolCall.status === 'error')) {
+            return true;
+        }
+        if (part.type === 'text' && ASSISTANT_ERROR_SIGNAL_PATTERN.test(part.text)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+function assistantRoundHasPlanSignal(item: Extract<ProjectedContextItem, { kind: 'assistant_round' }>): boolean {
+    return item.round.parts.some((part) => part.type === 'text' && ASSISTANT_PLAN_SIGNAL_PATTERN.test(part.text));
+}
+
+function getNonBoundaryProjectedItemIndices(projectedItems: ProjectedContextItem[]): number[] {
+    const indices: number[] = [];
+    for (let index = 0; index < projectedItems.length; index++) {
+        if (projectedItems[index].kind !== 'compact_boundary') {
+            indices.push(index);
+        }
+    }
+    return indices;
+}
+
+function protectRecentAssistantRounds(
+    projectedItems: ProjectedContextItem[],
+    count: number,
+    predicate: (item: Extract<ProjectedContextItem, { kind: 'assistant_round' }>) => boolean,
+    protectedIndices: Set<number>
+): void {
+    if (count <= 0) {
+        return;
+    }
+
+    let matched = 0;
+    for (let index = projectedItems.length - 1; index >= 0 && matched < count; index--) {
+        const item = projectedItems[index];
+        if (item.kind === 'assistant_round' && predicate(item)) {
+            protectedIndices.add(index);
+            matched++;
+        }
+    }
+}
+
+function protectMostRecentProjectedUserMessage(
+    projectedItems: ProjectedContextItem[],
+    protectedIndices: Set<number>
+): void {
+    for (let index = projectedItems.length - 1; index >= 0; index--) {
+        if (projectedItems[index].kind === 'user_message') {
+            protectedIndices.add(index);
+            return;
+        }
+    }
+}
+
+function collectProtectedProjectedItemIndices(
+    projectedItems: ProjectedContextItem[],
+    options: NormalizedFullCompactPlanOptions
+): number[] {
+    const nonBoundaryIndices = getNonBoundaryProjectedItemIndices(projectedItems);
+    if (nonBoundaryIndices.length === 0) {
+        return [];
+    }
+
+    const protectedIndices = new Set<number>();
+    if (options.tailMessageCount > 0) {
+        for (const index of nonBoundaryIndices.slice(-options.tailMessageCount)) {
+            protectedIndices.add(index);
+        }
+    }
+
+    protectRecentAssistantRounds(
+        projectedItems,
+        options.tailAssistantToolMessageCount,
+        (item) => item.round.toolCallCount > 0,
+        protectedIndices
+    );
+    protectRecentAssistantRounds(
+        projectedItems,
+        options.tailAssistantErrorMessageCount,
+        assistantRoundHasErrorSignal,
+        protectedIndices
+    );
+    protectRecentAssistantRounds(
+        projectedItems,
+        options.tailPlanMessageCount,
+        assistantRoundHasPlanSignal,
+        protectedIndices
+    );
+    protectMostRecentProjectedUserMessage(projectedItems, protectedIndices);
+
+    if (protectedIndices.size === 0) {
+        return [];
+    }
+
+    return Array.from(protectedIndices).sort((left, right) => left - right);
+}
+
+function countProjectedItemStats(projectedItems: ProjectedContextItem[]): FullCompactMessageStats {
+    const stats: FullCompactMessageStats = {
+        userMessages: 0,
+        assistantMessages: 0,
+        toolCalls: 0,
+        boundaryMessages: 0
+    };
+    const countedAssistantMessageIds = new Set<string>();
+
+    for (const item of projectedItems) {
+        if (item.kind === 'compact_boundary') {
+            stats.boundaryMessages++;
+            continue;
+        }
+        if (item.kind === 'user_message') {
+            stats.userMessages++;
+            continue;
+        }
+
+        if (!countedAssistantMessageIds.has(item.messageId)) {
+            countedAssistantMessageIds.add(item.messageId);
+            stats.assistantMessages++;
+        }
+        stats.toolCalls += item.round.toolCallCount;
+    }
+
+    return stats;
+}
+
+function countProjectedSummarizeUnits(projectedItems: ProjectedContextItem[]): number {
+    let units = 0;
+
+    for (const item of projectedItems) {
+        if (item.kind === 'user_message' || item.kind === 'assistant_round') {
+            units++;
+        }
+    }
+
+    return units;
+}
+
+function buildRoundAwareKeepAnchor(
+    item: Exclude<ProjectedContextItem, Extract<ProjectedContextItem, { kind: 'compact_boundary' }>>
+): FullCompactKeepAnchor {
+    if (item.kind === 'assistant_round') {
+        return {
+            kind: 'assistant_round',
+            messageIndex: item.messageIndex,
+            messageId: item.messageId,
+            roundRef: item.roundRef,
+            startPartIndex: item.roundRef.startPartIndex
+        };
+    }
+
+    return {
+        kind: 'message_start',
+        messageIndex: item.messageIndex,
+        messageId: item.messageId
+    };
+}
+
+interface RoundAwareKeepSelection {
+    physicalKeepStartProjectedItemIndex: number;
+    keepAnchorProjectedItemIndex: number;
+}
+
+function selectRoundAwareKeepSelection(
+    projectedItems: ProjectedContextItem[],
+    options: NormalizedFullCompactPlanOptions
+): RoundAwareKeepSelection | undefined {
+    const protectedIndices = collectProtectedProjectedItemIndices(projectedItems, options);
+    if (protectedIndices.length === 0) {
+        return undefined;
+    }
+
+    let physicalKeepStartProjectedItemIndex = protectedIndices[0];
+    while (
+        physicalKeepStartProjectedItemIndex < projectedItems.length &&
+        projectedItems[physicalKeepStartProjectedItemIndex].kind === 'compact_boundary'
+    ) {
+        physicalKeepStartProjectedItemIndex++;
+    }
+    if (physicalKeepStartProjectedItemIndex >= projectedItems.length) {
+        return undefined;
+    }
+
+    let keepAnchorProjectedItemIndex = physicalKeepStartProjectedItemIndex;
+    const physicalKeepStartItem = projectedItems[physicalKeepStartProjectedItemIndex];
+    if (physicalKeepStartItem.kind === 'user_message') {
+        const firstProtectedNonUserItemIndex = protectedIndices.find((index) => {
+            if (index <= physicalKeepStartProjectedItemIndex) {
+                return false;
+            }
+            const item = projectedItems[index];
+            return item?.kind !== 'user_message';
+        });
+        if (firstProtectedNonUserItemIndex !== undefined) {
+            const firstProtectedNonUserItem = projectedItems[firstProtectedNonUserItemIndex];
+            if (
+                firstProtectedNonUserItem?.kind === 'assistant_round' &&
+                firstProtectedNonUserItem.roundRef.startPartIndex > 0
+            ) {
+                keepAnchorProjectedItemIndex = firstProtectedNonUserItemIndex;
+            }
+        }
+    }
+
+    const keepAnchorItem = projectedItems[keepAnchorProjectedItemIndex];
+    if (keepAnchorItem === undefined || keepAnchorItem.kind === 'compact_boundary') {
+        return undefined;
+    }
+
+    return {
+        physicalKeepStartProjectedItemIndex,
+        keepAnchorProjectedItemIndex
+    };
+}
+
+function buildRoundAwareProjectedItemsToKeep(
+    projectedItems: ProjectedContextItem[],
+    selection: RoundAwareKeepSelection
+): ProjectedContextItem[] {
+    const keepIndices = new Set<number>();
+
+    for (
+        let index = selection.physicalKeepStartProjectedItemIndex;
+        index < selection.keepAnchorProjectedItemIndex;
+        index++
+    ) {
+        if (projectedItems[index]?.kind === 'user_message') {
+            keepIndices.add(index);
+        }
+    }
+
+    for (let index = selection.keepAnchorProjectedItemIndex; index < projectedItems.length; index++) {
+        if (projectedItems[index]?.kind !== 'compact_boundary') {
+            keepIndices.add(index);
+        }
+    }
+
+    return projectedItems.filter((_, index) => keepIndices.has(index));
+}
+
+function buildRoundAwareProjectedItemsToSummarize(
+    projectedItems: ProjectedContextItem[],
+    selection: RoundAwareKeepSelection
+): ProjectedContextItem[] {
+    const projectedItemsToKeep = buildRoundAwareProjectedItemsToKeep(projectedItems, selection);
+    const keptItems = new Set(projectedItemsToKeep);
+
+    return projectedItems.filter(
+        (item, index) => index < selection.keepAnchorProjectedItemIndex && !keptItems.has(item)
+    );
+}
+
+function buildFullCompactSummaryScopeLine(plan: FullCompactPlan): string {
+    if (plan.projectedItemsToSummarize && plan.keepAnchor?.kind === 'assistant_round') {
+        if (plan.keepAnchor.messageIndex > plan.physicalKeepStartIndex) {
+            return (
+                `[Full Compact Summary Scope]: summarize projected items before assistant message ` +
+                `${plan.keepAnchor.messageIndex} round ${plan.keepAnchor.roundRef?.roundIndex} ` +
+                `(part ${plan.keepAnchor.startPartIndex}); physical kept tail starts at ` +
+                `chat_context.messages[${plan.physicalKeepStartIndex}] and preserved raw-visible messages ` +
+                `before the assistant anchor are intentionally excluded.`
+            );
+        }
+
+        return (
+            `[Full Compact Summary Scope]: summarize projected items before assistant message ` +
+            `${plan.keepAnchor.messageIndex} round ${plan.keepAnchor.roundRef?.roundIndex} ` +
+            `(part ${plan.keepAnchor.startPartIndex}); physical kept tail starts at ` +
+            `chat_context.messages[${plan.physicalKeepStartIndex}] and is intentionally excluded.`
+        );
+    }
+
+    return `[Full Compact Summary Scope]: summarize chat_context.messages[${plan.summarizeStartIndex}:${plan.summarizeEndIndexExclusive}); kept tail starts at ${plan.keepStartIndex} and is intentionally excluded.`;
+}
+
 export function countFullCompactMessageStats(messages: ChatMessage[]): FullCompactMessageStats {
     const stats: FullCompactMessageStats = {
         userMessages: 0,
@@ -427,6 +753,76 @@ export function buildFullCompactPlan(
     options: FullCompactPlanOptions = {}
 ): FullCompactPlan | undefined {
     const normalizedOptions = normalizeOptions(options);
+    if (options.enableAssistantRoundBoundary) {
+        const projectedActiveContext = buildProjectedActiveContextView(chatContext);
+        const keepSelection = selectRoundAwareKeepSelection(projectedActiveContext.projectedItems, normalizedOptions);
+        if (keepSelection === undefined) {
+            return undefined;
+        }
+
+        const physicalKeepStartProjectedItem =
+            projectedActiveContext.projectedItems[keepSelection.physicalKeepStartProjectedItemIndex];
+        const keepProjectedItem = projectedActiveContext.projectedItems[keepSelection.keepAnchorProjectedItemIndex];
+        if (
+            physicalKeepStartProjectedItem === undefined ||
+            physicalKeepStartProjectedItem.kind === 'compact_boundary'
+        ) {
+            return undefined;
+        }
+        if (keepProjectedItem.kind === 'compact_boundary') {
+            return undefined;
+        }
+
+        const physicalKeepStartIndex = physicalKeepStartProjectedItem.messageIndex;
+        const physicalKeepStartLocalIndex = physicalKeepStartIndex - projectedActiveContext.startIndex;
+        const messagesToSummarize = projectedActiveContext.messages.slice(0, physicalKeepStartLocalIndex);
+        const messagesToKeep = projectedActiveContext.messages
+            .slice(physicalKeepStartLocalIndex)
+            .filter((message) => !isCompactBoundaryMessage(message));
+        const projectedItemsToKeep = buildRoundAwareProjectedItemsToKeep(
+            projectedActiveContext.projectedItems,
+            keepSelection
+        );
+        const projectedItemsToSummarize = buildRoundAwareProjectedItemsToSummarize(
+            projectedActiveContext.projectedItems,
+            keepSelection
+        );
+
+        if (messagesToKeep.length === 0) {
+            return undefined;
+        }
+
+        const summarizedStats = countProjectedItemStats(projectedItemsToSummarize);
+        const summarizedProjectedUnits = countProjectedSummarizeUnits(projectedItemsToSummarize);
+        if (summarizedProjectedUnits < normalizedOptions.minMessagesToSummarize) {
+            return undefined;
+        }
+
+        return {
+            activeContextStartIndex: projectedActiveContext.startIndex,
+            summarizeStartIndex: projectedActiveContext.startIndex,
+            summarizeEndIndexExclusive: keepProjectedItem.messageIndex,
+            physicalKeepStartIndex,
+            keepStartIndex: physicalKeepStartIndex,
+            messagesToSummarize,
+            messagesToKeep,
+            projectedItemsToSummarize,
+            projectedItemsToKeep,
+            keepAnchor: buildRoundAwareKeepAnchor(keepProjectedItem),
+            leadingPartialAssistant:
+                keepProjectedItem.kind === 'assistant_round' && keepProjectedItem.roundRef.startPartIndex > 0
+                    ? {
+                          message: keepProjectedItem.message,
+                          messageIndex: keepProjectedItem.messageIndex,
+                          roundRef: keepProjectedItem.roundRef
+                      }
+                    : undefined,
+            summarizedStats,
+            keptStats: countProjectedItemStats(projectedItemsToKeep),
+            previousBoundary: projectedActiveContext.boundary
+        };
+    }
+
     const activeContext = buildActiveContextView(chatContext);
     const keepStartLocalIndex = selectKeepStartLocalIndex(activeContext.messages, normalizedOptions);
     if (keepStartLocalIndex === undefined || keepStartLocalIndex <= 0) {
@@ -452,6 +848,7 @@ export function buildFullCompactPlan(
         activeContextStartIndex: activeContext.startIndex,
         summarizeStartIndex: activeContext.startIndex,
         summarizeEndIndexExclusive: activeContext.startIndex + keepStartLocalIndex,
+        physicalKeepStartIndex: activeContext.startIndex + keepStartLocalIndex,
         keepStartIndex: activeContext.startIndex + keepStartLocalIndex,
         messagesToSummarize,
         messagesToKeep,
@@ -470,9 +867,15 @@ export function buildFullCompactSummaryText(
         toolResultPreviewChars: normalizeSummaryPreviewChars(options.toolResultPreviewChars)
     };
 
-    const parts: string[] = [
-        `[Full Compact Summary Scope]: summarize chat_context.messages[${plan.summarizeStartIndex}:${plan.summarizeEndIndexExclusive}); kept tail starts at ${plan.keepStartIndex} and is intentionally excluded.`
-    ];
+    const scopeLine = buildFullCompactSummaryScopeLine(plan);
+    const parts: string[] = [scopeLine];
+
+    if (plan.projectedItemsToSummarize) {
+        for (const item of plan.projectedItemsToSummarize) {
+            parts.push(...serializeProjectedItemForSummary(item, normalizedOptions));
+        }
+        return parts.filter((part) => part.trim().length > 0).join('\n\n');
+    }
 
     for (const message of plan.messagesToSummarize) {
         parts.push(...serializeMessageForSummary(message, normalizedOptions));
@@ -531,7 +934,11 @@ export function buildFullCompactBoundary(
             tool_calls: plan.keptStats.toolCalls
         },
         kept_messages: plan.messagesToKeep.length,
-        summarized_messages: plan.messagesToSummarize.length
+        summarized_messages: plan.messagesToSummarize.length,
+        kept_anchor_message_id: plan.keepAnchor?.messageId,
+        kept_anchor_message_index: plan.keepAnchor?.messageIndex,
+        kept_anchor_round_index: plan.keepAnchor?.roundRef?.roundIndex,
+        kept_anchor_start_part_index: plan.keepAnchor?.startPartIndex
     });
 }
 

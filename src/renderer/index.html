@@ -18,6 +18,13 @@
         <div class="drag-overlay">
             <div class="absolute top-0 right-0 z-10 flex">
                 <button
+                    id="shortcut-help-btn"
+                    title="快捷键帮助"
+                    class="window-control-btn w-10 h-8 text-xs text-gray-500 hover:bg-gray-200 hover:text-gray-700 transition"
+                >
+                    <i class="fa-solid fa-keyboard"></i>
+                </button>
+                <button
                     id="minimize-btn"
                     title="最小化"
                     class="window-control-btn w-10 h-8 text-xs text-gray-500 hover:bg-gray-200 hover:text-gray-700 transition"
@@ -29,7 +36,7 @@
                     id="maximize-btn"
                     title="最大化"
                     class="window-control-btn w-10 h-8 text-xs text-gray-500 hover:bg-gray-200 hover:text-gray-700 transition"
-                    onclick="window.settingAPI.maximizeMainWindow().then(() => updateMaximizeIcon())"
+                    onclick="window.settingAPI.maximizeMainWindow().then(() => window.updateMaximizeIcon())"
                 >
                     <i class="far fa-square" id="maximize-icon"></i>
                 </button>
@@ -46,11 +53,11 @@
         <div class="w-full h-screen">
             <splitter-widget class="w-full h-full flex">
                 <!-- 左侧面板 -->
-                <div id="leftPanel" slot="left" class="bg-gray-100 p-4 overflow-auto w-full h-full">
+                <div id="leftPanel" slot="left" class="bg-[#f5f5f5] p-4 overflow-auto w-full h-full">
                     <main-sidebar id="main-sidebar" class="w-full h-full" />
                 </div>
 
-                <!-- 右侧面板：双槽常驻，切换只显隐不销毁，保证应用对话保活 -->
+                <!-- 右侧面板 -->
                 <div id="rightPanel" slot="right" class="bg-white p-0 overflow-auto w-full h-full">
                     <div id="rightPanelInner" style="position: relative; width: 100%; height: 100%">
                         <div id="nonAppSlot" class="w-full h-full">
@@ -68,11 +75,72 @@
             <notification-panel
                 id="notification-panel"
                 class="fixed top-16 right-5 z-50 flex flex-col gap-3 w-[360px] font-sans"
-            />
+            ></notification-panel>
         </div>
+
+        <!-- 快捷键帮助面板（置于 body 顶层以避免被 overflow 裁切） -->
+        <shortcut-help-panel id="shortcut-help-panel"></shortcut-help-panel>
     </body>
 
-    <script>
+    <script type="module">
+        import { guiShortcutManager } from './components/shortcutManager.ts';
+
+        // Initialize shortcut manager and register built-in shortcuts
+        guiShortcutManager.register({
+            id: 'help:toggle-shortcut-panel',
+            label: '快捷键帮助',
+            category: '通用',
+            keys: ['Ctrl+/'],
+            match: (e) => (e.ctrlKey || e.metaKey) && e.key === '/',
+            handler: () => document.getElementById('shortcut-help-panel')?.toggle()
+        });
+
+        guiShortcutManager.register({
+            id: 'help:close-shortcut-panel',
+            label: '关闭帮助面板',
+            category: '通用',
+            keys: ['Esc'],
+            match: (e) => e.key === 'Escape',
+            handler: () => document.getElementById('shortcut-help-panel')?.hide()
+        });
+
+        guiShortcutManager.register({
+            id: 'display:zoom-in',
+            label: '放大界面',
+            category: '显示',
+            keys: ['Ctrl++ / ='],
+            match: (e) => (e.ctrlKey || e.metaKey) && (e.key === '=' || e.key === '+'),
+            handler: () => window.displayAPI?.adjustScaleFactor(0.1)
+        });
+
+        guiShortcutManager.register({
+            id: 'display:zoom-out',
+            label: '缩小界面',
+            category: '显示',
+            keys: ['Ctrl+-'],
+            match: (e) => (e.ctrlKey || e.metaKey) && e.key === '-',
+            handler: () => window.displayAPI?.adjustScaleFactor(-0.1)
+        });
+
+        guiShortcutManager.register({
+            id: 'display:zoom-reset',
+            label: '重置缩放',
+            category: '显示',
+            keys: ['Ctrl+0'],
+            match: (e) => (e.ctrlKey || e.metaKey) && e.key === '0',
+            handler: () => window.displayAPI?.setScaleFactor(1)
+        });
+
+        guiShortcutManager.attach();
+        window.__guiShortcutManager = guiShortcutManager;
+
+        document.getElementById('shortcut-help-btn')?.addEventListener('click', () => {
+            const panel = document.getElementById('shortcut-help-panel');
+            if (panel && typeof panel.toggle === 'function') {
+                panel.toggle();
+            }
+        });
+
         (function () {
             var nonAppSlot = null;
             var appFramesContainer = null;
@@ -204,6 +272,7 @@
                     maximizeIcon.className = isMaximized ? 'fas fa-window-restore' : 'far fa-square';
                 }
             }
+            window.updateMaximizeIcon = updateMaximizeIcon;
             window.addEventListener('resize', updateMaximizeIcon);
             updateMaximizeIcon();
 

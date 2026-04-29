@@ -30,6 +30,7 @@ class SideBar extends HTMLElement {
         this._loadingMore = false;
         /** 完整渲染列表的缓存 */
         this._fullRenderList = [];
+        this._searchQuery = '';
     }
 
     connectedCallback() {
@@ -38,6 +39,7 @@ class SideBar extends HTMLElement {
             this.taskList = taskList;
             this.reloadTaskList();
             this.setUpEventListeners();
+            this.subscribeToUnreadCounts();
         });
     }
 
@@ -52,127 +54,91 @@ class SideBar extends HTMLElement {
             console.info('task list updated', taskList);
             this.taskList = taskList;
             this.reloadTaskList();
+            document.dispatchEvent(new CustomEvent('task-list-updated', { detail: taskList }));
         });
-        this.querySelector('#create-task-btn').addEventListener('click', async () => {
-            const taskId = await window.taskManagerAPI.createTask();
-            window.globalControlAPI.openTask(taskId);
-            this.currentTaskId = taskId;
-            this.reloadTaskList();
-        });
-        this.querySelector('#open-home-btn').addEventListener('click', () => {
+        this.querySelector('#create-task-btn').addEventListener('click', () => {
             this.currentTaskId = null;
             window.globalControlAPI.openHomePage();
             this._updateTaskHighlight();
         });
-
-        this._initWorkspaceBar();
-    }
-
-    async _initWorkspaceBar() {
-        await this._refreshWorkspacePath();
-
-        this.querySelector('#workspace-open-btn').addEventListener('click', async () => {
-            const newPath = await window.workspaceAPI.selectWorkspaceDirectory();
-            if (newPath) {
-                await this._refreshWorkspacePath();
-            }
+        this.querySelector('#open-skills-btn').addEventListener('click', () => {
+            window.globalControlAPI.openApplication('skillmgr');
         });
 
-        const pathLabel = this.querySelector('#workspace-path-label');
-        pathLabel.addEventListener('contextmenu', (event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            this._showWorkspaceContextMenu(event.clientX, event.clientY);
+        const searchInput = this.querySelector('#task-search-input');
+        const searchClear = this.querySelector('#task-search-clear');
+        searchInput.addEventListener('input', () => {
+            this._searchQuery = searchInput.value.trim();
+            searchClear.style.display = this._searchQuery ? 'flex' : 'none';
+            this.reloadTaskList();
         });
-    }
-
-    async _refreshWorkspacePath() {
-        try {
-            const workspacePath = await window.workspaceAPI.getEffectiveWorkspace();
-            const pathLabel = this.querySelector('#workspace-path-label');
-            if (pathLabel) {
-                pathLabel.textContent = workspacePath;
-                pathLabel.title = workspacePath;
-            }
-        } catch (error) {
-            console.error('Failed to get workspace path:', error);
-        }
-    }
-
-    _showWorkspaceContextMenu(x, y) {
-        this._dismissWorkspaceContextMenu();
-
-        const menu = document.createElement('div');
-        menu.id = 'workspace-context-menu';
-        menu.className =
-            'fixed z-[9999] bg-white rounded-xl shadow-xl border border-gray-200 py-1 min-w-[180px] text-sm text-gray-700 animate-in fade-in';
-        menu.style.left = `${x}px`;
-        menu.style.top = `${y}px`;
-
-        menu.innerHTML = `
-            <button data-action="copy" class="w-full text-left px-4 py-2 flex items-center gap-2 hover:bg-gray-100 transition-colors duration-150">
-                <i class="fa-solid fa-copy w-4 text-center"></i>
-                <span>复制工作空间路径</span>
-            </button>
-            <button data-action="open" class="w-full text-left px-4 py-2 flex items-center gap-2 hover:bg-gray-100 transition-colors duration-150">
-                <i class="fa-solid fa-folder-open w-4 text-center"></i>
-                <span>打开工作空间目录</span>
-            </button>
-        `;
-
-        this.appendChild(menu);
-
-        requestAnimationFrame(() => {
-            const rect = menu.getBoundingClientRect();
-            if (rect.right > window.innerWidth) {
-                menu.style.left = `${window.innerWidth - rect.width - 8}px`;
-            }
-            if (rect.bottom > window.innerHeight) {
-                menu.style.top = `${window.innerHeight - rect.height - 8}px`;
-            }
+        searchClear.addEventListener('click', () => {
+            searchInput.value = '';
+            this._searchQuery = '';
+            searchClear.style.display = 'none';
+            this.reloadTaskList();
+            searchInput.focus();
         });
 
-        menu.querySelector('[data-action="copy"]').addEventListener('click', async () => {
-            this._dismissWorkspaceContextMenu();
-            try {
-                await window.workspaceAPI.copyWorkspacePath();
-            } catch (error) {
-                console.error('Failed to copy workspace path:', error);
+        const appsBtn = this.querySelector('#open-apps-btn');
+        const popover = this.querySelector('#app-popover');
+        appsBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const isVisible = !popover.classList.contains('sb-app-popover-hidden');
+            if (isVisible) {
+                this._dismissAppPopover();
+            } else {
+                this._showAppPopover();
             }
         });
-
-        menu.querySelector('[data-action="open"]').addEventListener('click', async () => {
-            this._dismissWorkspaceContextMenu();
-            try {
-                await window.workspaceAPI.openWorkspaceDirectory();
-            } catch (error) {
-                console.error('Failed to open workspace directory:', error);
-            }
-        });
-
-        const dismissHandler = (e) => {
-            if (!menu.contains(e.target)) {
-                this._dismissWorkspaceContextMenu();
-                document.removeEventListener('click', dismissHandler, true);
+        this._appPopoverDismissHandler = (e) => {
+            if (!popover.contains(e.target) && !appsBtn.contains(e.target)) {
+                this._dismissAppPopover();
             }
         };
-        setTimeout(() => document.addEventListener('click', dismissHandler, true), 0);
+        document.addEventListener('click', this._appPopoverDismissHandler, true);
     }
 
-    _dismissWorkspaceContextMenu() {
-        const existing = this.querySelector('#workspace-context-menu');
-        if (existing) existing.remove();
+    _showAppPopover() {
+        const popover = this.querySelector('#app-popover');
+        const appsBtn = this.querySelector('#open-apps-btn');
+        if (!popover || !appsBtn) return;
+
+        popover.classList.remove('sb-app-popover-hidden');
+        popover.classList.add('sb-app-popover-visible');
+        appsBtn.classList.add('sb-nav-btn-active');
+
+        const btnRect = appsBtn.getBoundingClientRect();
+        popover.style.position = 'fixed';
+        popover.style.left = `${btnRect.left}px`;
+        popover.style.top = `${btnRect.bottom + 4}px`;
+
+        requestAnimationFrame(() => {
+            const popRect = popover.getBoundingClientRect();
+            if (popRect.right > window.innerWidth) {
+                popover.style.left = `${window.innerWidth - popRect.width - 8}px`;
+            }
+            if (popRect.bottom > window.innerHeight) {
+                popover.style.top = `${btnRect.top - popRect.height - 4}px`;
+            }
+        });
+    }
+
+    _dismissAppPopover() {
+        const popover = this.querySelector('#app-popover');
+        const appsBtn = this.querySelector('#open-apps-btn');
+        if (popover) {
+            popover.classList.add('sb-app-popover-hidden');
+            popover.classList.remove('sb-app-popover-visible');
+        }
+        if (appsBtn) {
+            appsBtn.classList.remove('sb-nav-btn-active');
+        }
     }
 
     render() {
         this.innerHTML = `
-        <style>
-            [x-cloak] {
-                display: none !important;
-            }
-        </style>
-
-        <div class="h-full flex flex-col" x-data="{ showApps: false }">
+        <div class="h-full flex flex-col">
             <header class="py-2 px-1 flex flex-row items-start flex-shrink-0">
                 <img src="./images/icon_round.png" alt="OpenDesk Icon" class="w-12 h-12 mr-3"/>
                 <div class="flex flex-col items-start">
@@ -180,60 +146,41 @@ class SideBar extends HTMLElement {
                     <p class="text-xs mt-1 text-gray-500">一站式智慧办公空间</p>
                 </div>
             </header>
-            <div class="py-2 flex flex-row gap-2 flex-shrink-0">
+
+            <!-- Search -->
+            <div class="sb-search-v2">
+                <i class="fa-solid fa-magnifying-glass sb-search-v2-icon"></i>
+                <input type="text" id="task-search-input" placeholder="搜索..." class="sb-search-v2-input" />
+                <button id="task-search-clear" class="sb-search-v2-clear" style="display:none;">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+
+            <div class="sb-nav-row flex flex-row gap-1.5 flex-shrink-0" style="margin: 4px 0; position: relative;">
                 <button
-                    id="open-home-btn"
-                    class="flex-1 flex items-center justify-center gap-1 px-2 py-3 bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-2xl text-gray-700 font-normal text-sm transition-colors duration-200"
+                    id="create-task-btn"
+                    class="sb-nav-btn"
                 >
-                    <i class="fa-solid fa-house"></i>
-                    <span>主页</span>
+                    <i class="fa-solid fa-house" style="font-size: 12px;"></i>
+                    <span>新任务</span>
                 </button>
                 <button
                     id="open-apps-btn"
-                    @click="showApps = !showApps"
-                        :class="showApps ? 'ring-2 ring-orange-400 bg-orange-50' : ''"
-                    class="flex-1 flex items-center justify-center gap-1 px-2 py-3 bg-green-50 hover:bg-green-100 border border-green-200 rounded-2xl text-green-700 font-normal text-sm transition-colors duration-200"
+                    class="sb-nav-btn"
                 >
-                    <i class="fa-solid fa-th-large"></i>
+                    <i class="fa-solid fa-th-large" style="font-size: 12px;"></i>
                     <span>应用</span>
                 </button>
                 <button
-                    id="create-task-btn"
-                    class="flex-1 flex items-center justify-center gap-1 px-2 py-3 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-2xl text-blue-700 font-normal text-sm transition-colors duration-200"
+                    id="open-skills-btn"
+                    class="sb-nav-btn"
                 >
-                    <i class="fa-solid fa-comments"></i>
-                    <span>新任务</span>
+                    <i class="fa-solid fa-wand-magic-sparkles" style="font-size: 12px;"></i>
+                    <span>技能</span>
                 </button>
             </div>
 
-            <div
-                x-cloak
-                x-show="showApps"
-                x-transition:enter="transition ease-out duration-300"
-                x-transition:enter-start="opacity-0 transform translate-y-4"
-                x-transition:enter-end="opacity-100 transform translate-y-0"
-                class="bg-white/90 backdrop-blur-xl rounded-2xl p-4 border border-white/50 shadow-sm my-1"
-            >
-                <div id="app-container" class="flex flex-wrap gap-y-5 gap-x-2 items-center justify-left">
-
-                </div>
-            </div>
-
-            <div id="workspace-bar" class="flex items-center gap-1.5 px-2 py-1.5 my-1 mx-0 bg-white/60 backdrop-blur-sm rounded-xl border border-gray-100 flex-shrink-0">
-                <i class="fa-solid fa-briefcase text-[10px] text-gray-400 flex-shrink-0"></i>
-                <span
-                    id="workspace-path-label"
-                    class="flex-1 text-[11px] text-gray-500 truncate cursor-default select-none leading-tight"
-                    title=""
-                ></span>
-                <button
-                    id="workspace-open-btn"
-                    class="flex-shrink-0 w-5 h-5 flex items-center justify-center rounded-md text-gray-400 hover:text-blue-600 hover:bg-blue-50/80 transition-colors duration-150"
-                    title="选择工作空间"
-                >
-                    <i class="fa-solid fa-folder-open text-[10px]"></i>
-                </button>
-            </div>
+            <div id="app-popover" class="sb-app-popover sb-app-popover-hidden"></div>
 
             <div id="task-list-container" class="flex-1 overflow-y-auto py-2 pr-2">
             </div>
@@ -305,23 +252,36 @@ class SideBar extends HTMLElement {
     }
 
     async reloadApplicationList() {
-        const app_container = this.querySelector('#app-container');
-        app_container.innerHTML = '';
+        const popover = this.querySelector('#app-popover');
+        if (!popover) return;
+        popover.innerHTML = '';
         const appList = await window.applicationRegistryAPI.getApplicationList();
-        for (const app of appList) {
-            if (app.showIcon === false) continue;
+        const visibleApps = appList.filter((app) => app.showIcon !== false);
+
+        let gridHtml = '<div class="sb-app-popover-grid">';
+        for (const app of visibleApps) {
             const isMailbox = app.bundleName === 'mailbox';
-            app_container.innerHTML += `
-            <div class="flex flex-col items-center group cursor-pointer relative" onclick="window.globalControlAPI.openApplication('${app.bundleName}')" data-bundle-name="${app.bundleName}">
-                <div class="rounded-full w-12 h-12 shadow-lg transform transition duration-200 group-hover:brightness-90 group-active:scale-95 flex items-center justify-center relative">
-                    <img src="./applications/${app.bundleName}/icon.png" alt="${app.name}" class="w-full h-full object-cover">
-                    ${isMailbox ? '<span class="mailbox-unread-badge absolute -top-1 -right-1 bg-red-500 text-white text-xs font-bold rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1 hidden">0</span>' : ''}
+            gridHtml += `
+            <div class="sb-app-popover-item" data-bundle-name="${app.bundleName}">
+                <div class="sb-app-popover-icon-wrap">
+                    <img src="./applications/${app.bundleName}/icon.png" alt="${app.name}">
+                    ${isMailbox ? '<span class="mailbox-unread-badge">0</span>' : ''}
                 </div>
-                <span class="mt-2 text-xs font-medium text-gray-800 drop-shadow-sm w-16 text-center truncate">${app.name}</span>
+                <span class="sb-app-popover-label">${app.name}</span>
             </div>
             `;
         }
-        // 更新邮箱应用的未读数量标记
+        gridHtml += '</div>';
+        popover.innerHTML = gridHtml;
+
+        popover.querySelectorAll('.sb-app-popover-item').forEach((item) => {
+            item.addEventListener('click', () => {
+                const bundleName = item.dataset.bundleName;
+                window.globalControlAPI.openApplication(bundleName);
+                this._dismissAppPopover();
+            });
+        });
+
         this.updateMailboxBadge();
     }
 
@@ -329,73 +289,56 @@ class SideBar extends HTMLElement {
         try {
             const counts = await window.applicationRegistryAPI.call('mailbox', 'getAllNewEmailCounts');
             const total = Object.values(counts || {}).reduce((sum, count) => sum + (count || 0), 0);
-            const mailboxApp = this.querySelector('[data-bundle-name="mailbox"]');
-            if (mailboxApp) {
-                const badge = mailboxApp.querySelector('.mailbox-unread-badge');
-                if (badge) {
-                    if (total > 0) {
-                        badge.textContent = total > 99 ? '99+' : total.toString();
-                        badge.classList.remove('hidden');
-                    } else {
-                        badge.classList.add('hidden');
-                    }
-                }
-            }
+            this._applyMailboxBadge(total);
         } catch (error) {
             console.error('Failed to update mailbox badge:', error);
         }
     }
 
-    connectedCallback() {
-        this.render();
-        window.taskManagerAPI.getTaskList().then((taskList) => {
-            this.taskList = taskList;
-            this.reloadTaskList();
-            this.setUpEventListeners();
-            this.subscribeToUnreadCounts();
-        });
-    }
-
-    disconnectedCallback() {
-        if (this.unreadCountsUnsubscribe) {
-            this.unreadCountsUnsubscribe();
+    _applyMailboxBadge(total) {
+        const mailboxApp = this.querySelector('[data-bundle-name="mailbox"]');
+        if (!mailboxApp) return;
+        const badge = mailboxApp.querySelector('.mailbox-unread-badge');
+        if (!badge) return;
+        if (total > 0) {
+            badge.textContent = total > 99 ? '99+' : total.toString();
+            badge.classList.add('visible');
+        } else {
+            badge.classList.remove('visible');
         }
     }
 
     async subscribeToUnreadCounts() {
-        // 订阅新邮件数量更新事件
         try {
             this.unreadCountsUnsubscribe = await window.applicationRegistryAPI.subscribeEvent(
                 'mailbox',
                 'newEmailCountsUpdated',
                 (counts) => {
                     const total = Object.values(counts || {}).reduce((sum, count) => sum + (count || 0), 0);
-                    const mailboxApp = this.querySelector('[data-bundle-name="mailbox"]');
-                    if (mailboxApp) {
-                        const badge = mailboxApp.querySelector('.mailbox-unread-badge');
-                        if (badge) {
-                            if (total > 0) {
-                                badge.textContent = total > 99 ? '99+' : total.toString();
-                                badge.classList.remove('hidden');
-                            } else {
-                                badge.classList.add('hidden');
-                            }
-                        }
-                    }
+                    this._applyMailboxBadge(total);
                 }
             );
-            // 初始加载新邮件数量
             this.updateMailboxBadge();
         } catch (error) {
             console.error('Failed to subscribe to new email counts:', error);
         }
     }
 
+    _getFilteredTaskList() {
+        if (!this._searchQuery) return this.taskList;
+        const query = this._searchQuery.toLowerCase();
+        return this.taskList.filter((task) => {
+            const name = (task.task_name || '').toLowerCase();
+            return name.includes(query);
+        });
+    }
+
     buildTaskRenderList() {
+        const list = this._getFilteredTaskList();
         const childrenByParent = new Map();
         const rootTasks = [];
 
-        for (const task of this.taskList) {
+        for (const task of list) {
             if (task.parent_id) {
                 if (!childrenByParent.has(task.parent_id)) {
                     childrenByParent.set(task.parent_id, []);
@@ -422,7 +365,7 @@ class SideBar extends HTMLElement {
             appendTask(rootTask, 0);
         }
 
-        for (const task of [...this.taskList].reverse()) {
+        for (const task of [...list].reverse()) {
             if (!visited.has(task.task_id)) {
                 appendTask(task, 0);
             }
@@ -526,7 +469,6 @@ class SideBar extends HTMLElement {
         const taskListContainer = this.querySelector('#task-list-container');
         const sentinel = this.querySelector('#task-list-sentinel');
 
-        // 插入加载动画
         const loadingEl = document.createElement('div');
         loadingEl.id = 'task-list-loading';
         loadingEl.className = 'flex items-center justify-center py-3';
@@ -571,7 +513,6 @@ class SideBar extends HTMLElement {
                 taskListContainer.appendChild(fragment);
             }
 
-            // 触发入场动画
             requestAnimationFrame(() => {
                 const allItems = taskListContainer.querySelectorAll('.task-item');
                 allItems.forEach((el) => {
@@ -589,9 +530,6 @@ class SideBar extends HTMLElement {
         }, 400);
     }
 
-    /**
-     * 仅更新任务列表中的选中高亮样式，不做 DOM 重建
-     */
     _updateTaskHighlight() {
         const container = this.querySelector('#task-list-container');
         if (!container) return;
@@ -602,7 +540,6 @@ class SideBar extends HTMLElement {
             const isCurrentTask = taskId === this.currentTaskId;
             const isSubTask = depth > 0;
 
-            // 清除所有可能的选中/非选中样式
             item.classList.remove(
                 'bg-[#C94C40]',
                 'text-white',
@@ -626,7 +563,6 @@ class SideBar extends HTMLElement {
                 } else {
                     item.classList.add('bg-gray-50', 'text-gray-700', 'hover:bg-gray-100', 'border', 'border-gray-200');
                 }
-                // 更新连接器颜色
                 const connectorDot = item.querySelector('span > span:last-child');
                 const connectorLine = item.querySelector('span > span:first-child');
                 if (connectorDot) {
@@ -686,7 +622,6 @@ class SideBar extends HTMLElement {
 
         this.appendChild(menu);
 
-        // 确保菜单不超出视口
         requestAnimationFrame(() => {
             const rect = menu.getBoundingClientRect();
             if (rect.right > window.innerWidth) {
@@ -789,7 +724,7 @@ class SideBar extends HTMLElement {
             `);
         }
 
-        if (this.taskList.length > 0) {
+        if (this._getFilteredTaskList().length > 0) {
             htmlParts.push(`
             <div id="delete-all-tasks-btn" class="${standardClass} bg-white text-sm text-gray-700 hover:bg-[#C94C40] hover:text-white flex items-center justify-center gap-2">
                 <i class="fa-solid fa-trash"></i>
@@ -812,7 +747,6 @@ class SideBar extends HTMLElement {
             this.reloadTaskList();
         });
 
-        // IntersectionObserver 实现下拉到底延迟加载
         const sentinel = this.querySelector('#task-list-sentinel');
         if (sentinel) {
             if (this._scrollObserver) {

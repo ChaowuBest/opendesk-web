@@ -1712,6 +1712,12 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
                             <div id="account-selector-menu" class="hidden absolute left-0 top-full mt-1 w-64 bg-white rounded-xl shadow-lg border border-gray-100 py-1 overflow-hidden origin-top-left transition-all duration-200">
                                 <div class="px-3 py-2 text-xs font-medium text-gray-400 border-b border-gray-50">切换账号</div>
                                 ${accountListHtml || '<div class="p-3 text-xs text-gray-400">暂无可用账号</div>'}
+                                <div class="border-t border-gray-100">
+                                    <div id="add-new-mailbox-btn" class="px-3 py-2.5 hover:bg-indigo-50 cursor-pointer text-sm flex items-center gap-2 text-indigo-600 transition-colors">
+                                        <i class="fa-solid fa-plus text-xs"></i>
+                                        <span class="font-medium">配置新邮箱</span>
+                                    </div>
+                                </div>
                             </div>
                         </div>
 
@@ -1798,6 +1804,34 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
                 }
             });
         });
+
+        // 配置新邮箱按钮
+        this._bindAddNewMailboxBtn(menu);
+    }
+
+    async _onAddNewMailboxClick() {
+        const menu = this.querySelector('#account-selector-menu');
+        if (menu) menu.classList.add('hidden');
+        try {
+            const taskId = await window.taskManagerAPI.createTask();
+            await window.taskManagerAPI.submitMessage(taskId, {
+                message: '请帮我配置一个新的邮箱账号',
+                attachedFilePaths: []
+            });
+            const root = window.parent || window;
+            if (root.globalControlAPI?.openTask) {
+                root.globalControlAPI.openTask(taskId);
+            }
+        } catch (err) {
+            console.error('创建配置邮箱任务失败', err);
+        }
+    }
+
+    _bindAddNewMailboxBtn(container) {
+        const btn = container?.querySelector('#add-new-mailbox-btn');
+        if (btn) {
+            btn.addEventListener('click', () => this._onAddNewMailboxClick());
+        }
     }
 
     // 辅助方法：更新账号切换器 UI（选中状态和标题）
@@ -1835,6 +1869,12 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
         menu.innerHTML = `
             <div class="px-3 py-2 text-xs font-medium text-gray-400 border-b border-gray-50">切换账号</div>
             ${accountListHtml || '<div class="p-3 text-xs text-gray-400">暂无可用账号</div>'}
+            <div class="border-t border-gray-100">
+                <div id="add-new-mailbox-btn" class="px-3 py-2.5 hover:bg-indigo-50 cursor-pointer text-sm flex items-center gap-2 text-indigo-600 transition-colors">
+                    <i class="fa-solid fa-plus text-xs"></i>
+                    <span class="font-medium">配置新邮箱</span>
+                </div>
+            </div>
         `;
 
         // 4. 【关键】因为 DOM 被重写了，必须重新绑定点击事件
@@ -1844,10 +1884,13 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
                 const email = item.dataset.email;
                 if (email) {
                     this.switchAccount(email);
-                    menu.classList.add('hidden'); // 选择后关闭菜单
+                    menu.classList.add('hidden');
                 }
             });
         });
+
+        // 5. 绑定"配置新邮箱"按钮
+        this._bindAddNewMailboxBtn(menu);
     }
 
     // 辅助方法：设置标签页事件

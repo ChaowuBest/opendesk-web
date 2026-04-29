@@ -16,8 +16,10 @@ import {
     ExecuteBashTool,
     ExecuteZshTool,
     CheckShellStatusTool,
-    findExecutableInPath
+    findExecutableInPath,
+    hasZsh
 } from './tools.js';
+import fs from 'fs';
 
 export class TerminalApplication extends BaseApplication {
     constructor() {
@@ -37,7 +39,12 @@ export class TerminalApplication extends BaseApplication {
                 }
                 break;
             case 'openharmony':
-                toolset.addTool(new ExecuteZshTool());
+                const devBoxBash = '/data/service/hnp/bin/bash';
+                if (hasZsh()) {
+                    toolset.addTool(new ExecuteZshTool());
+                } else if (fs.existsSync(devBoxBash)) {
+                    toolset.addTool(new ExecuteBashTool(devBoxBash));
+                }
                 break;
             default:
                 // macOS/Linux 默认使用 /bin/bash

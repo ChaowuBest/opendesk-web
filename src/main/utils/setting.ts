@@ -87,6 +87,13 @@ const ModelSchema = z.object({
         .describe('模型默认推理模式(空字符串表示默认)')
 });
 
+/** 控制模型推理深度，空字符串表示使用模型默认值 */
+type ReasoningEffort = '' | 'none' | 'low' | 'medium' | 'high';
+
+const DisplaySchema = z.object({
+    scale_factor: z.number().min(0.5).max(2.0).default(1).describe('GUI 缩放系数 (0.5 ~ 2.0)')
+});
+
 type Provider = z.infer<typeof ProviderSchema>;
 type Model = z.infer<typeof ModelSchema>;
 
@@ -119,6 +126,7 @@ function getSettingSchema(): z.ZodObject<z.ZodRawShape> {
         ),
         providers: z.array(ProviderSchema).describe('可用AI模型提供商').default([]),
         models: z.array(ModelSchema).describe('可用AI模型').default([]),
+        display: DisplaySchema.describe('显示设置').default({}),
         applications: ApplicationConfigSchema.describe('OpenDesk应用相关配置').default({})
     });
 }
@@ -130,18 +138,27 @@ export class ModelInstance {
     base_url: string;
     api_key: string;
     no_proxy: boolean;
+    reasoning_effort: ReasoningEffort;
 
     /**
      * @param model_name 模型名称
      * @param base_url API 地址
      * @param api_key API 密钥
      * @param no_proxy 是否禁用代理
+     * @param reasoning_effort 模型默认推理模式
      */
-    constructor(model_name: string, base_url: string, api_key: string, no_proxy: boolean) {
+    constructor(
+        model_name: string,
+        base_url: string,
+        api_key: string,
+        no_proxy: boolean,
+        reasoning_effort: ReasoningEffort = ''
+    ) {
         this.model_name = model_name;
         this.base_url = base_url;
         this.api_key = api_key;
         this.no_proxy = no_proxy;
+        this.reasoning_effort = reasoning_effort;
     }
 }
 
@@ -280,7 +297,13 @@ export class Setting {
         if (provider === undefined) {
             return null;
         }
-        return new ModelInstance(modelRef.model_name, provider.base_url, provider.api_key, provider.no_proxy);
+        return new ModelInstance(
+            modelRef.model_name,
+            provider.base_url,
+            provider.api_key,
+            provider.no_proxy,
+            modelRef.reasoning_effort
+        );
     }
 
     /**
@@ -473,6 +496,28 @@ function getTaskToolResultDirectory(taskId: string, ensureExists: boolean = true
     return toolResultDirectory;
 }
 
+/**
+ * 获取任务级 session memory 目录 `artifacts/<taskId>/session-memory/`。
+ * 默认在访问时创建目录，仅读场景可显式关闭创建。
+ */
+function getTaskSessionMemoryDirectory(taskId: string, ensureExists: boolean = true): string {
+    const taskArtifactDirectory = getTaskArtifactDirectory(taskId, ensureExists);
+    const sessionMemoryDirectory = path.join(taskArtifactDirectory, 'session-memory');
+
+    if (ensureExists) {
+        ensureDirectoryExists(sessionMemoryDirectory);
+    }
+
+    return sessionMemoryDirectory;
+}
+
+/**
+ * 获取任务级 session memory 文件路径 `artifacts/<taskId>/session-memory/session-memory.md`。
+ */
+function getTaskSessionMemoryPath(taskId: string, ensureExists: boolean = true): string {
+    return path.join(getTaskSessionMemoryDirectory(taskId, ensureExists), 'session-memory.md');
+}
+
 export {
     getAppDirectory,
     getDefaultAppDirectory,
@@ -482,6 +527,9 @@ export {
     getArtifactDirectory,
     getTaskArtifactDirectory,
     getTaskToolResultDirectory,
+    getTaskSessionMemoryDirectory,
+    getTaskSessionMemoryPath,
     getTempWorkspaceDirectory,
-    getSettingSchema
+    getSettingSchema,
+    type ReasoningEffort
 };

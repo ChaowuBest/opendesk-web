@@ -105,3 +105,94 @@ elastic-toolbar-widget.mailbox-header button:hover {
 elastic-toolbar-widget.align-left header {
     justify-content: flex-start !important;
 }
+
+/* ===== Spread 布局：顶部分栏底线 ===== */
+elastic-toolbar-widget .toolbar-spread-header {
+    border-bottom: 1px solid #f0f0f0;
+}
+
+elastic-toolbar-widget .toolbar-spread-btn {
+    position: relative;
+}
+
+elastic-toolbar-widget .toolbar-spread-btn::after {
+    content: '';
+    position: absolute;
+    inset: 2px;
+    border-radius: 6px;
+    opacity: 0;
+    background: rgba(0, 0, 0, 0.04);
+    transition: opacity 0.15s;
+}
+
+elastic-toolbar-widget .toolbar-spread-btn:hover::after {
+    opacity: 1;
+}
+
+/* ===== Spread subtitle (workspace path) ===== */
+.toolbar-spread-subtitle {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 2px 0px;
+    border-radius: 9999px;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    max-width: 320px;
+    font-size: 11px;
+    color: #9ca3af;
+    line-height: 1.3;
+}
+.toolbar-spread-subtitle:hover {
+    background: #f3f4f6;
+    color: #6b7280;
+}
+.toolbar-spread-subtitle i:first-child {
+    font-size: 10px;
+    flex-shrink: 0;
+}
+.toolbar-spread-subtitle span {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* ===== Capsule button: hover text reveal animation (pure CSS, packaging-safe) ===== */
+elastic-toolbar-widget .elastic-capsule-btn {
+    transition: all 500ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+elastic-toolbar-widget .elastic-capsule-btn:hover {
+    background: #f3f4f6;
+    color: #2563eb;
+}
+
+elastic-toolbar-widget .elastic-label {
+    max-width: 0;
+    overflow: hidden;
+    opacity: 0;
+    margin-left: 0;
+    transition:
+        max-width 500ms ease-in-out,
+        opacity 500ms ease-in-out,
+        margin-left 500ms ease-in-out;
+    white-space: nowrap;
+    font-weight: 500;
+    letter-spacing: -0.025em;
+    font-size: 0.875rem;
+    line-height: 1.25rem;
+}
+
+elastic-toolbar-widget .elastic-capsule-btn:hover .elastic-label {
+    max-width: 120px;
+    opacity: 1;
+    margin-left: 0.5rem;
+}
+
+elastic-toolbar-widget .elastic-label--visible {
+    max-width: 120px;
+    opacity: 1;
+    margin-left: 0.5rem;
+}

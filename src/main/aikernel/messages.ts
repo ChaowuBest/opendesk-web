@@ -52,6 +52,18 @@ marked.use(
     })
 );
 
+const DANGEROUS_HTML_RE = /<\s*\/?\s*(style|script|link|meta|iframe|object|embed|applet|form|base)\b[^>]*>/gi;
+
+marked.use({
+    hooks: {
+        postprocess(html: string): string {
+            return html.replace(DANGEROUS_HTML_RE, (match) => {
+                return match.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            });
+        }
+    }
+});
+
 /**
  * This is NOT an OpenAI message part, but a message part for our own message system.
  */
@@ -367,61 +379,38 @@ export class ToolCall {
             }
         }
 
-        if (this.status === 'running') {
-            return `
-            <div class="flex mt-1.5 mb-1.5 text-xs items-center gap-2 bg-white/80 border border-slate-200 py-1 px-3 rounded-full shadow-sm w-fit">
-                <span class="font-medium text-slate-500">工具调用</span>
-                <div class="h-1 w-1 rounded-full bg-slate-300"></div>
-                <div class="flex items-center">
-                    <div class="h-1.5 w-1.5 rounded-full bg-blue-500 animate-pulse ring-2 ring-blue-100/50"></div>
-                    <span class="ml-1.5 font-medium text-slate-700">${this.tool_name}</span>
-                </div>
-            </div>
-            `;
-        } else if (this.status === 'success') {
-            return `
-            <div class="flex mt-1.5 mb-1.5 text-xs items-center gap-2 bg-white/80 border border-slate-200 py-1 px-3 rounded-full shadow-sm w-fit">
-                <span class="font-medium text-slate-500">工具调用</span>
-                <div class="h-1 w-1 rounded-full bg-slate-300"></div>
-                <div class="flex items-center">
-                    <div class="h-1.5 w-1.5 rounded-full bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.5)]"></div>
-                    <span class="ml-1.5 font-medium text-slate-600">${this.tool_name}</span>
-                </div>
-            </div>
-            `;
-        } else if (this.status === 'error') {
-            return `
-            <div class="flex mt-1.5 mb-1.5 text-xs items-center gap-2 bg-white/80 border border-slate-200 py-1 px-3 rounded-full shadow-sm w-fit">
-                <span class="font-medium text-slate-500">工具调用</span>
-                <div class="h-1 w-1 rounded-full bg-slate-300"></div>
-                <div class="flex items-center cursor-pointer group relative">
-                    <div class="h-2 w-2 rounded-full bg-rose-500 shadow-[0_0_6px_rgba(244,63,94,0.5)] flex items-center justify-center">
-                        <svg class="h-1 w-1 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="5">
-                            <path d="M12 8v4m0 4h.01" />
-                        </svg>
-                    </div>
-                    <span class="ml-1.5 font-semibold text-rose-600">${this.tool_name} Failed</span>
-                    <div class="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-all pointer-events-none z-10">
-                        <div class="bg-white border border-slate-200 shadow-xl rounded-lg p-2 w-44 text-[11px] text-slate-600">
-                            <p class="font-bold text-slate-800 mb-0.5">Execution Error</p>
-                            <p class="font-mono text-[10px] leading-relaxed text-rose-500 bg-rose-50 p-1 rounded">${this.result}</p>
-                            <div class="absolute -bottom-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-white border-b border-r border-slate-200 rotate-45"></div>
+        const statusIcon =
+            this.status === 'running'
+                ? '<span class="inline-block w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse"></span>'
+                : this.status === 'error'
+                  ? '<span class="inline-block w-1.5 h-1.5 rounded-full bg-rose-500"></span>'
+                  : '';
+
+        const displayName = this.tool_name;
+
+        if (this.status === 'error') {
+            return `<div class="my-2">
+                <div class="flex items-center gap-1.5 min-w-0 group relative">
+                    <i class="fas fa-wrench shrink-0 text-slate-400 text-xs"></i>
+                    <span class="shrink-0 text-slate-500 text-xs">${displayName}</span>
+                    ${statusIcon}
+                    <span class="text-xs text-rose-500">失败</span>
+                    <div class="absolute bottom-full mb-2 left-0 opacity-0 group-hover:opacity-100 transition-all pointer-events-none z-10">
+                        <div class="bg-white border border-slate-200 shadow-xl rounded-lg p-2 max-w-xs text-[11px] text-slate-600">
+                            <p class="font-mono text-[10px] leading-relaxed text-rose-500 bg-rose-50 p-1 rounded break-all">${this.result || ''}</p>
                         </div>
                     </div>
                 </div>
-            </div>
-            `;
-        } else {
-            return `
-            <div class="flex mt-1.5 mb-1.5 text-xs items-center gap-2 bg-white/80 border border-slate-200 py-1 px-3 rounded-full shadow-sm w-fit">
-                <span class="font-medium text-slate-500">工具调用</span>
-                <div class="flex items-center opacity-40">
-                    <div class="h-1.5 w-1.5 rounded-full bg-slate-400"></div>
-                    <span class="ml-1.5 font-medium text-slate-500">${this.tool_name}</span>
-                </div>
-            </div>
-            `;
+            </div>`;
         }
+
+        return `<div class="my-2">
+            <div class="flex items-center gap-1.5 min-w-0">
+                <i class="fas fa-wrench shrink-0 text-slate-400 text-xs"></i>
+                <span class="shrink-0 text-slate-500 text-xs">${displayName}</span>
+                ${statusIcon}
+            </div>
+        </div>`;
     }
 
     static assign(tool_call_obj: object): ToolCall {
@@ -463,7 +452,9 @@ export class ToolCallMessagePart {
             if (target === undefined) {
                 this.toolcalls.push(toolcall);
             } else {
-                target.args_string += toolcall.args_string ?? '';
+                // Handle the case where args_string might be the string "null" instead of proper JSON
+                const args_to_append = toolcall.args_string === 'null' ? '' : (toolcall.args_string ?? '');
+                target.args_string += args_to_append;
                 if (toolcall.tool_name && toolcall.tool_name !== 'unknown') {
                     target.tool_name = toolcall.tool_name;
                 }
@@ -1242,19 +1233,22 @@ export class AssistantMessage {
         return 'Toolcall failed: unfinished tool call';
     }
 
-    toOpenAIMessages(toolResultOverrides?: Map<string, string>): object[] {
+    private buildOpenAIMessagesFromParts(
+        parts: ReadonlyArray<AssistantMessagePart>,
+        toolResultOverrides?: Map<string, string>
+    ): object[] {
         const messages: object[] = [];
 
         let currentReasoning = '';
         let currentText = '';
 
-        const processCurrentMessage = () => {
+        const processCurrentMessage = (additionalFields?: Record<string, any>) => {
             currentReasoning = currentReasoning.trim();
             currentText = currentText.trim();
-            if (currentText.length === 0 && currentReasoning.length === 0) {
+            if (currentText.length === 0 && currentReasoning.length === 0 && additionalFields === undefined) {
                 return;
             }
-            const message: any = { role: 'assistant' };
+            const message: any = { role: 'assistant', ...additionalFields };
             if (currentReasoning.length > 0) {
                 message.reasoning_content = currentReasoning;
             }
@@ -1269,7 +1263,7 @@ export class AssistantMessage {
             messages.push(message);
         };
 
-        for (const part of this.content) {
+        for (const part of parts) {
             switch (part.type) {
                 case 'reasoning': {
                     if (part.source === 'think_tag') {
@@ -1280,7 +1274,6 @@ export class AssistantMessage {
                     break;
                 }
                 case 'tool_call': {
-                    processCurrentMessage();
                     const validToolcalls: ToolCall[] = [];
                     for (const tc of part.toolcalls) {
                         const argsToCheck =
@@ -1296,31 +1289,38 @@ export class AssistantMessage {
                         }
                         validToolcalls.push(tc);
                     }
-                    if (validToolcalls.length > 0) {
-                        const toolCallObjects = validToolcalls.map((tc) => {
-                            const shouldCompressArgs =
-                                tc.compress_id && tc.args_string && tc.args_string.length > LARGE_ARGS_THRESHOLD;
-                            return {
-                                id: tc.id,
-                                type: 'function',
-                                function: {
-                                    name: tc.tool_name,
-                                    arguments: shouldCompressArgs
-                                        ? `{"compressed":"工具参数已被压缩，数据ID为 ${tc.compress_id}"}`
-                                        : tc.args_string || ''
-                                }
-                            };
-                        });
-                        messages.push({ role: 'assistant', tool_calls: toolCallObjects });
-                        for (const toolcall of validToolcalls) {
-                            const toolCallMsg: any = { role: 'tool', tool_call_id: toolcall.id };
-                            toolCallMsg.content = AssistantMessage.buildOpenAIToolResultContent(
-                                toolcall,
-                                toolResultOverrides
-                            );
-                            messages.push(toolCallMsg);
-                        }
+
+                    if (validToolcalls.length === 0) {
+                        /* 如果当前没有有效的 toolcall，则直接处理下一个 message part 即可,
+                         * 连 processCurrentMessage 都不需要调用 */
+                        break;
                     }
+
+                    const toolCallObjects = validToolcalls.map((tc) => {
+                        const shouldCompressArgs =
+                            tc.compress_id && tc.args_string && tc.args_string.length > LARGE_ARGS_THRESHOLD;
+                        return {
+                            id: tc.id,
+                            type: 'function',
+                            function: {
+                                name: tc.tool_name,
+                                arguments: shouldCompressArgs
+                                    ? `{"compressed":"工具参数已被压缩，数据ID为 ${tc.compress_id}"}`
+                                    : tc.args_string || ''
+                            }
+                        };
+                    });
+
+                    processCurrentMessage({ tool_calls: toolCallObjects });
+                    for (const toolcall of validToolcalls) {
+                        const toolCallMsg: any = { role: 'tool', tool_call_id: toolcall.id };
+                        toolCallMsg.content = AssistantMessage.buildOpenAIToolResultContent(
+                            toolcall,
+                            toolResultOverrides
+                        );
+                        messages.push(toolCallMsg);
+                    }
+
                     break;
                 }
                 case 'text': {
@@ -1337,6 +1337,32 @@ export class AssistantMessage {
 
         processCurrentMessage();
         return messages;
+    }
+
+    toOpenAIMessages(toolResultOverrides?: Map<string, string>): object[] {
+        return this.buildOpenAIMessagesFromParts(this.content, toolResultOverrides);
+    }
+
+    toOpenAIMessagesFromPartIndex(startPartIndex: number, toolResultOverrides?: Map<string, string>): object[] {
+        if (!Number.isInteger(startPartIndex) || startPartIndex < 0) {
+            throw new Error(`invalid assistant replay startPartIndex: ${startPartIndex}`);
+        }
+        if (startPartIndex >= this.content.length) {
+            return [];
+        }
+        return this.buildOpenAIMessagesFromParts(this.content.slice(startPartIndex), toolResultOverrides);
+    }
+
+    toOpenAIMessagesFromRound(
+        roundRef: { assistantMessageId: string; startPartIndex: number },
+        toolResultOverrides?: Map<string, string>
+    ): object[] {
+        if (roundRef.assistantMessageId !== this.message_id) {
+            throw new Error(
+                `assistant replay roundRef message mismatch: expected ${this.message_id}, got ${roundRef.assistantMessageId}`
+            );
+        }
+        return this.toOpenAIMessagesFromPartIndex(roundRef.startPartIndex, toolResultOverrides);
     }
 
     getOpenAIToolMessages(toolResultOverrides?: Map<string, string>): object[] {
@@ -1382,11 +1408,14 @@ export class AssistantMessage {
         if (tool_calls) {
             const part = new ToolCallMessagePart();
             for (const tool_call of tool_calls) {
+                const args = tool_call['function']['arguments'];
+                // Some providers return the literal string "null" instead of JSON null
+                const args_string = args === 'null' ? '' : (args ?? '');
                 const tc = new ToolCall(
                     tool_call['index'],
                     tool_call['id'],
                     tool_call['function']['name'],
-                    tool_call['function']['arguments'] ?? ''
+                    args_string
                 );
                 part.push(tc);
             }
@@ -1473,7 +1502,7 @@ export interface CompactSummarizedRange {
 }
 
 export type CompactBoundaryTrigger = 'manual' | 'auto';
-export type CompactBoundaryStrategy = 'tail_preserving_full_compact';
+export type CompactBoundaryStrategy = 'tail_preserving_full_compact' | 'session_memory_compact';
 
 export interface CompactBoundaryMetadata {
     boundary_id: string;
@@ -1486,6 +1515,10 @@ export interface CompactBoundaryMetadata {
     kept_range?: CompactSummarizedRange;
     kept_messages?: number;
     summarized_messages?: number;
+    kept_anchor_message_id?: string;
+    kept_anchor_message_index?: number;
+    kept_anchor_round_index?: number;
+    kept_anchor_start_part_index?: number;
 }
 
 export const COMPACT_SUMMARY_VERSION = 1;
@@ -1534,7 +1567,7 @@ export class CompactSeparatorMessage {
             normalized.trigger = metadata.trigger;
         }
 
-        if (metadata?.strategy === 'tail_preserving_full_compact') {
+        if (metadata?.strategy === 'tail_preserving_full_compact' || metadata?.strategy === 'session_memory_compact') {
             normalized.strategy = metadata.strategy;
         }
 
@@ -1552,6 +1585,34 @@ export class CompactSeparatorMessage {
             metadata.summarized_messages >= 0
         ) {
             normalized.summarized_messages = metadata.summarized_messages;
+        }
+
+        if (typeof metadata?.kept_anchor_message_id === 'string' && metadata.kept_anchor_message_id.trim().length > 0) {
+            normalized.kept_anchor_message_id = metadata.kept_anchor_message_id;
+        }
+
+        if (
+            typeof metadata?.kept_anchor_message_index === 'number' &&
+            Number.isInteger(metadata.kept_anchor_message_index) &&
+            metadata.kept_anchor_message_index >= 0
+        ) {
+            normalized.kept_anchor_message_index = metadata.kept_anchor_message_index;
+        }
+
+        if (
+            typeof metadata?.kept_anchor_round_index === 'number' &&
+            Number.isInteger(metadata.kept_anchor_round_index) &&
+            metadata.kept_anchor_round_index >= 0
+        ) {
+            normalized.kept_anchor_round_index = metadata.kept_anchor_round_index;
+        }
+
+        if (
+            typeof metadata?.kept_anchor_start_part_index === 'number' &&
+            Number.isInteger(metadata.kept_anchor_start_part_index) &&
+            metadata.kept_anchor_start_part_index >= 0
+        ) {
+            normalized.kept_anchor_start_part_index = metadata.kept_anchor_start_part_index;
         }
 
         return normalized;
@@ -1605,7 +1666,11 @@ export class CompactSeparatorMessage {
                       strategy: obj.strategy,
                       kept_range: obj.kept_range,
                       kept_messages: obj.kept_messages,
-                      summarized_messages: obj.summarized_messages
+                      summarized_messages: obj.summarized_messages,
+                      kept_anchor_message_id: obj.kept_anchor_message_id,
+                      kept_anchor_message_index: obj.kept_anchor_message_index,
+                      kept_anchor_round_index: obj.kept_anchor_round_index,
+                      kept_anchor_start_part_index: obj.kept_anchor_start_part_index
                   };
         obj.metadata = CompactSeparatorMessage.normalizeMetadata(legacyMetadata);
         return obj as CompactSeparatorMessage;

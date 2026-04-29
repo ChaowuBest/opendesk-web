@@ -23,6 +23,7 @@ import { HookRegistry } from './hooks.js';
 import type { TaskState } from './states/tasks.js';
 import { buildActiveContextView, countNonBoundaryMessages } from './compaction/context-view.js';
 import { getAutoCompactDecision } from './compaction/auto-compact.js';
+import { describeCompactPlanVariant, logCompactInfo } from './compaction/compact-trace.js';
 import { compactFullContext, type FullCompactRunOptions } from './compaction/full-compact.js';
 import {
     buildToolResultReplacementText,
@@ -108,7 +109,7 @@ function collectActiveToolCalls(chatContext: ChatContext): ToolCall[] {
  *
  * @returns 本次新压缩的工具调用数量
  */
-export function compressToolCalls(chatContext: ChatContext): number {
+export function compressToolCalls(chatContext: ChatContext, taskId?: string): number {
     const activeToolCalls = collectActiveToolCalls(chatContext);
     const total = activeToolCalls.length;
 
@@ -127,16 +128,33 @@ export function compressToolCalls(chatContext: ChatContext): number {
     }
 
     if (newlyCompressed > 0) {
-        logger.info(
-            `[Compact L1] 工具调用压缩: 活跃上下文共 ${total} 个, ` +
-                `本次新压缩 ${newlyCompressed} 个, 此前已压缩 ${alreadyCompressed} 个, ` +
-                `保留最近 ${keepCount} 个不压缩`
-        );
+        logCompactInfo(taskId, {
+            source: 'compact',
+            event: 'legacy_tool_call_compacted',
+            message:
+                `[Compact L1] tool call compaction: activeContext=${total}, ` +
+                `newlyCompressed=${newlyCompressed}, alreadyCompressed=${alreadyCompressed}, ` +
+                `keptRecent=${keepCount}`,
+            data: {
+                totalToolCalls: total,
+                newlyCompressed,
+                alreadyCompressed,
+                keepCount
+            }
+        });
     } else {
-        logger.info(
-            `[Compact L1] 无新增压缩 (活跃上下文共 ${total} 个工具调用, ` +
-                `已压缩 ${alreadyCompressed} 个, 保留 ${keepCount} 个)`
-        );
+        logCompactInfo(taskId, {
+            source: 'compact',
+            event: 'legacy_tool_call_compact_noop',
+            message:
+                `[Compact L1] no new tool call compaction (activeContext=${total}, ` +
+                `alreadyCompressed=${alreadyCompressed}, keptRecent=${keepCount})`,
+            data: {
+                totalToolCalls: total,
+                alreadyCompressed,
+                keepCount
+            }
+        });
     }
 
     return newlyCompressed;
@@ -320,48 +338,112 @@ async function compressWithSeparator(chatContext: ChatContext, model?: string): 
  *
  * @returns 是否实际执行了压缩操作
  */
+export interface CompactContextRunOptions extends FullCompactRunOptions {
+    taskId?: string;
+}
+
 export async function compactContext(
     chatContext: ChatContext,
     model?: string,
-    options: FullCompactRunOptions = {}
+    options: CompactContextRunOptions = {}
 ): Promise<boolean> {
     chatContext.deduplicateCompactBoundaries();
+    const enableAssistantRoundBoundary = options.enableAssistantRoundBoundary !== false;
     const totalMessages = countNonBoundaryMessages(chatContext);
     const trigger = options.trigger ?? 'manual';
-    logger.info(`[Compact] 开始 tail-preserving full compact, 当前消息数: ${totalMessages}, trigger=${trigger}`);
+    logCompactInfo(options.taskId, {
+        source: 'compact',
+        event: 'assistant_round_boundary_default',
+        message: `[Compact Step9] assistant round boundary default=${enableAssistantRoundBoundary}, trigger=${trigger}`,
+        data: {
+            enableAssistantRoundBoundary,
+            trigger
+        }
+    });
+    logCompactInfo(options.taskId, {
+        source: 'compact',
+        event: 'full_compact_started',
+        message: `[Compact] starting tail-preserving full compact, totalMessages=${totalMessages}, trigger=${trigger}`,
+        data: {
+            totalMessages,
+            trigger
+        }
+    });
 
     const runResult = await compactFullContext(chatContext, model, {
         ...options,
-        trigger
+        trigger,
+        enableAssistantRoundBoundary
     });
 
     if (!runResult.compacted || !runResult.plan) {
-        logger.info(`[Compact] 当前上下文不满足 full compact 条件，跳过`);
+        logCompactInfo(options.taskId, {
+            source: 'compact',
+            event: 'full_compact_noop',
+            message: '[Compact] full compact skipped because the context does not satisfy compact conditions'
+        });
         return false;
     }
 
-    logger.info(
-        `[Compact] tail-preserving full compact 完成, ` +
-            `summary=${runResult.summary?.length ?? 0} 字符, ` +
-            `折叠=${runResult.plan.messagesToSummarize.length} 条, ` +
-            `保留=${runResult.plan.messagesToKeep.length} 条`
-    );
+    const compactVariant = describeCompactPlanVariant(runResult.plan);
+    logCompactInfo(options.taskId, {
+        source: 'compact',
+        event: 'full_compact_completed',
+        message:
+            `[Compact] tail-preserving full compact completed, ` +
+            `variant=${compactVariant.compactVariant}, ` +
+            `summaryLength=${runResult.summary?.length ?? 0}, ` +
+            `summarized=${runResult.plan.messagesToSummarize.length}, ` +
+            `kept=${runResult.plan.messagesToKeep.length}`,
+        data: {
+            summaryLength: runResult.summary?.length ?? 0,
+            summarizedMessages: runResult.plan.messagesToSummarize.length,
+            keptMessages: runResult.plan.messagesToKeep.length,
+            ...compactVariant
+        }
+    });
+    logCompactInfo(options.taskId, {
+        source: 'compact',
+        event: 'keep_anchor_selected',
+        message:
+            `[Compact Step9] applied compact variant=${compactVariant.compactVariant}, ` +
+            `recentUserPreserved=${compactVariant.recentUserPreserved}, ` +
+            `keepAnchorKind=${compactVariant.keepAnchorKind}` +
+            (compactVariant.keepAnchorKind === 'assistant_round'
+                ? `, messageId=${compactVariant.keepAnchorMessageId}, ` +
+                  `roundIndex=${compactVariant.kept_anchor_round_index}, ` +
+                  `startPartIndex=${compactVariant.kept_anchor_start_part_index}`
+                : ''),
+        data: {
+            ...compactVariant
+        }
+    });
     return true;
 }
 
 /**
  * 判断当前上下文是否需要压缩。
  */
-export async function shouldCompact(chatContext: ChatContext, model?: string): Promise<boolean> {
+export async function shouldCompact(chatContext: ChatContext, model?: string, taskId?: string): Promise<boolean> {
     const decision = await getAutoCompactDecision(chatContext, model);
     if (decision.shouldCompact) {
-        logger.info(
-            `[Compact] 自动压缩触发: prompt_tokens=${decision.promptTokens}, ` +
-                `阈值=${Math.floor(decision.autoCompactThreshold)} (` +
+        logCompactInfo(taskId, {
+            source: 'compact',
+            event: 'auto_compact_threshold_reached',
+            message:
+                `[Compact] auto compact triggered: prompt_tokens=${decision.promptTokens}, ` +
+                `threshold=${Math.floor(decision.autoCompactThreshold)} (` +
                 `contextWindow=${decision.contextWindow}, ` +
                 `reservedSummaryOutput=${decision.reservedSummaryOutput}, ` +
-                `buffer=${decision.buffer})`
-        );
+                `buffer=${decision.buffer})`,
+            data: {
+                promptTokens: decision.promptTokens,
+                autoCompactThreshold: Math.floor(decision.autoCompactThreshold),
+                contextWindow: decision.contextWindow,
+                reservedSummaryOutput: decision.reservedSummaryOutput,
+                buffer: decision.buffer
+            }
+        });
     }
     return decision.shouldCompact;
 }
@@ -392,10 +474,20 @@ function afterToolCallLargeResultToArtifact(task: TaskState, tool_call: ToolCall
 
         const sizeKB = (result.length / 1024).toFixed(1);
         const lineCount = result.split('\n').length;
-        logger.info(
-            `[Compact] 工具结果过大 (${sizeKB} KB, ${lineCount} 行)，已落盘: ${persisted.fullPath} ` +
-                `(tool=${tool_call.tool_name}, result_id=${persisted.metadata.result_id})`
-        );
+        logCompactInfo(task.task_id, {
+            source: 'compact',
+            event: 'tool_result_persisted_to_artifact',
+            message:
+                `[Compact] large tool result persisted (${sizeKB} KB, ${lineCount} lines): ${persisted.fullPath} ` +
+                `(tool=${tool_call.tool_name}, result_id=${persisted.metadata.result_id})`,
+            data: {
+                toolName: tool_call.tool_name,
+                resultId: persisted.metadata.result_id,
+                artifactPath: persisted.fullPath,
+                sizeKB,
+                lineCount
+            }
+        });
     } catch (err) {
         if (previousResultStorage) {
             tool_call.setResultStorage(previousResultStorage);

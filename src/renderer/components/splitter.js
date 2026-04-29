@@ -13,10 +13,17 @@ class SplitterWidget extends HTMLElement {
     constructor() {
         super();
         this.attachShadow({ mode: 'open' });
+        this._isResizing = false;
+        this._onMouseMove = this._onMouseMove.bind(this);
+        this._onMouseUp = this._onMouseUp.bind(this);
     }
 
     connectedCallback() {
         this.render();
+    }
+
+    disconnectedCallback() {
+        this._stopResize();
     }
 
     render() {
@@ -34,11 +41,11 @@ class SplitterWidget extends HTMLElement {
         <slot id="leftPanel" name="left" style="display: flex; flex-direction: column; width: ${initialWidth}px; height: 100%; flex-shrink: 0; min-height: 0; overflow: visible;"></slot>
 
         <div id="resizer"
-            class="w-[4px] relative group transition-all duration-150"
-            style="background: linear-gradient(to right, transparent 40%, #e0e0e0 50%, transparent 60%); min-width: 4px; cursor: col-resize; flex-shrink: 0;"
+            class="relative group"
+            style="background: transparent; width: 6px; min-width: 6px; cursor: col-resize; flex-shrink: 0;"
         >
             <div class="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 pointer-events-none">
-                <div class="w-[2px] h-12 bg-gray-200 rounded-full opacity-70 group-hover:opacity-100 group-hover:bg-blue-400 transition"></div>
+                <div class="w-[3px] h-10 rounded-full opacity-0 group-hover:opacity-100 transition" style="background: rgba(0,0,0,0.12);"></div>
             </div>
         </div>
 
@@ -48,42 +55,53 @@ class SplitterWidget extends HTMLElement {
         `;
 
         const resizer = this.shadowRoot.getElementById('resizer');
-        const leftPanel = this.shadowRoot.getElementById('leftPanel');
-        const rightPanel = this.shadowRoot.getElementById('rightPanel');
-
-        let isResizing = false;
-
         resizer.addEventListener('mousedown', (e) => {
             e.preventDefault();
-            isResizing = true;
-            document.body.style.cursor = 'col-resize';
-            document.body.style.userSelect = 'none';
+            e.stopPropagation();
+            this._startResize();
         });
+    }
 
-        document.addEventListener('mousemove', (e) => {
-            if (!isResizing) return;
+    _startResize() {
+        if (this._isResizing) return;
+        this._isResizing = true;
+        document.body.style.cursor = 'col-resize';
+        document.body.style.userSelect = 'none';
+        document.addEventListener('mousemove', this._onMouseMove);
+        document.addEventListener('mouseup', this._onMouseUp);
+    }
 
-            const containerRect = this.getBoundingClientRect();
-            const containerWidth = containerRect.width;
-            const mouseX = e.clientX - containerRect.left;
-            const leftWidth = mouseX;
+    _stopResize() {
+        if (!this._isResizing) return;
+        this._isResizing = false;
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+        document.removeEventListener('mousemove', this._onMouseMove);
+        document.removeEventListener('mouseup', this._onMouseUp);
+    }
 
-            const minWidth = 200;
-            const maxWidth = containerWidth * 0.85;
+    _onMouseMove(e) {
+        if (!this._isResizing) return;
+        e.preventDefault();
 
-            if (leftWidth < minWidth || leftWidth > maxWidth) return;
+        const leftPanel = this.shadowRoot.getElementById('leftPanel');
+        if (!leftPanel) return;
 
-            leftPanel.style.width = leftWidth + 'px';
-            rightPanel.style.flex = '1';
-        });
+        const containerRect = this.getBoundingClientRect();
+        const containerWidth = containerRect.width;
+        const mouseX = e.clientX - containerRect.left;
+        const leftWidth = mouseX;
 
-        document.addEventListener('mouseup', () => {
-            if (isResizing) {
-                isResizing = false;
-                document.body.style.cursor = '';
-                document.body.style.userSelect = '';
-            }
-        });
+        const minWidth = 200;
+        const maxWidth = containerWidth * 0.85;
+
+        if (leftWidth < minWidth || leftWidth > maxWidth) return;
+
+        leftPanel.style.width = leftWidth + 'px';
+    }
+
+    _onMouseUp(e) {
+        this._stopResize();
     }
 }
 

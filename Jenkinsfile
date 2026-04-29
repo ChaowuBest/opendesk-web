@@ -135,10 +135,15 @@ node {
                                     sh '''#!/usr/bin/env bash
                                         set -euo pipefail
 
-                                        npm run test:unit -- \
-                                          --json \
-                                          --outputFile "${CI_LOG_DIR}/jest-unit-results.json" \
-                                          2>&1 | tee "${CI_LOG_DIR}/test.log"
+                                        {
+ 	                                        echo "=== docs freshness check ==="
+ 	                                        npm run check:docs
+ 	                                        echo ""
+ 	                                        echo "=== unit tests ==="
+ 	                                        npm run test:unit -- \
+ 	                                          --json \
+ 	                                          --outputFile "${CI_LOG_DIR}/jest-unit-results.json"
+ 	                                    } 2>&1 | tee "${CI_LOG_DIR}/test.log"
                                     '''
                                     testStatus = 'success'
                                     sh 'echo "success" > "${CI_LOG_DIR}/test.status"'

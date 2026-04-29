@@ -12,6 +12,15 @@
 import { ToolResultReplacementStates, type ToolResultReplacementState } from '../compaction/tool-results.js';
 import { AutoCompactStates, type AutoCompactState } from '../compaction/auto-compact.js';
 import {
+    SessionMemoryStates,
+    shouldExtractSessionMemory,
+    updateSessionMemoryFromChatContext,
+    type SessionMemoryExtractionDecision,
+    type SessionMemoryState,
+    type SessionMemoryUpdateResult,
+    type UpdateSessionMemoryOptions
+} from '../compaction/session-memory-compact.js';
+import {
     ChatContext,
     UserMessage,
     UserMessagePart,
@@ -28,6 +37,11 @@ import {
     imageToDataUri
 } from '../messages.js';
 import { prepareContextForModel } from '../compaction/pipeline.js';
+import {
+    describeActiveContextVariant,
+    describeCompactPlanVariant,
+    logCompactInfo
+} from '../compaction/compact-trace.js';
 import type { ActiveContextView } from '../compaction/types.js';
 import { compactContext } from '../compact.js';
 import { BaseTool, BaseToolset } from '../tool.js';
@@ -116,6 +130,10 @@ function generateShortTaskId(): string {
     return `task_${timestamp}_${random}`;
 }
 
+function errorToMessage(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
+}
+
 export class TaskState {
     task_id: string = generateShortTaskId();
     parent_id: string | null = null;
@@ -125,6 +143,8 @@ export class TaskState {
     tool_result_replacement_state: ToolResultReplacementState = ToolResultReplacementStates.create();
     /** 自动压缩失败熔断状态，随 task JSON 持久化。 */
     auto_compact_state: AutoCompactState = AutoCompactStates.create();
+    /** task-local session memory 状态，文件位于 artifacts/<taskId>/session-memory/。 */
+    session_memory_state: SessionMemoryState = SessionMemoryStates.create();
 
     model?: string;
     reasoningEffort?: ReasoningEffort;
@@ -178,6 +198,8 @@ export class TaskState {
     private _stopResolvers: (() => void)[] = [];
     /** 标记 processTaskTurn 是否正在运行，stop() 据此决定是否立即发送 feedback */
     private _turnRunning: boolean = false;
+    /** Step 8F: task-local session memory 后台更新锁，避免同一 task 并发抽取。 */
+    private _sessionMemoryUpdatePromise?: Promise<SessionMemoryUpdateResult>;
 
     constructor(task_manager_state: TaskManagerState, parent_id: string | null = null) {
         this.task_manager_state = task_manager_state;
@@ -197,6 +219,9 @@ export class TaskState {
         );
         task.auto_compact_state = AutoCompactStates.deserialize(
             task_json.auto_compact_state ?? task_json.autoCompactState
+        );
+        task.session_memory_state = SessionMemoryStates.deserialize(
+            task_json.session_memory_state ?? task_json.sessionMemoryState
         );
         if (task_json.started_at) {
             task.started_at = new Date(task_json.started_at);
@@ -244,6 +269,7 @@ export class TaskState {
             chat_context: this.chat_context.toJSON(),
             tool_result_replacement_state: ToolResultReplacementStates.serialize(toolResultReplacementState),
             auto_compact_state: AutoCompactStates.serialize(this.auto_compact_state),
+            session_memory_state: SessionMemoryStates.serialize(this.session_memory_state),
             started_at: this.started_at?.toISOString(),
             finished_at: this.finished_at?.toISOString(),
             total_elapsed_ms: this.total_elapsed_ms,
@@ -306,6 +332,163 @@ export class TaskState {
         return this.auto_compact_state;
     }
 
+    getSessionMemoryState(): SessionMemoryState {
+        return SessionMemoryStates.clone(this.session_memory_state);
+    }
+
+    setSessionMemoryState(state: SessionMemoryState) {
+        this.session_memory_state = SessionMemoryStates.clone(state);
+    }
+
+    resetSessionMemoryState() {
+        this.session_memory_state = SessionMemoryStates.create();
+        return this.session_memory_state;
+    }
+
+    private buildSkippedSessionMemoryUpdateResult(
+        decision: SessionMemoryExtractionDecision
+    ): SessionMemoryUpdateResult {
+        return {
+            updated: false,
+            skipped: true,
+            state: SessionMemoryStates.clone(this.session_memory_state),
+            stateChanged: false,
+            decision
+        };
+    }
+
+    private saveSessionMemoryStateSafely() {
+        try {
+            this.task_manager_state.save();
+        } catch (error) {
+            logger.warn(
+                `[Compact Step8F] failed to persist session memory state for task ${this.task_id}: ` +
+                    errorToMessage(error)
+            );
+        }
+    }
+
+    private async runSessionMemoryUpdateAfterCompletion(
+        options: UpdateSessionMemoryOptions,
+        initialDecision: SessionMemoryExtractionDecision
+    ): Promise<SessionMemoryUpdateResult> {
+        try {
+            logCompactInfo(this.task_id, {
+                source: 'tasks',
+                event: 'session_memory_update_starting',
+                message:
+                    `[Compact Step8F] session memory update starting for task ${this.task_id}: ` +
+                    `reason=${initialDecision.reason}, tokens=${initialDecision.currentTokens}, ` +
+                    `delta=${initialDecision.tokensSinceLastExtraction}, ` +
+                    `toolCalls=${initialDecision.toolCallsSinceLastExtraction}`,
+                data: {
+                    reason: initialDecision.reason,
+                    currentTokens: initialDecision.currentTokens,
+                    tokensSinceLastExtraction: initialDecision.tokensSinceLastExtraction,
+                    toolCallsSinceLastExtraction: initialDecision.toolCallsSinceLastExtraction
+                }
+            });
+
+            const result = await updateSessionMemoryFromChatContext(
+                this.chat_context,
+                this.task_id,
+                this.model,
+                this.session_memory_state,
+                options
+            );
+
+            this.setSessionMemoryState(result.state);
+            if (result.stateChanged) {
+                this.saveSessionMemoryStateSafely();
+            }
+
+            logCompactInfo(this.task_id, {
+                source: 'tasks',
+                event: 'session_memory_update_completed',
+                message:
+                    `[Compact Step8F] session memory update completed for task ${this.task_id}: ` +
+                    `updated=${result.updated}, skipped=${result.skipped}, ` +
+                    `reason=${result.decision.reason}, error=${result.error ?? 'none'}`,
+                data: {
+                    updated: result.updated,
+                    skipped: result.skipped,
+                    reason: result.decision.reason,
+                    error: result.error ?? 'none'
+                }
+            });
+
+            return result;
+        } catch (error) {
+            const failureState = SessionMemoryStates.recordExtractionFailure(this.session_memory_state, error);
+            this.setSessionMemoryState(failureState);
+            this.saveSessionMemoryStateSafely();
+
+            const message = errorToMessage(error);
+            logger.warn(`[Compact Step8F] session memory update failed for task ${this.task_id}: ${message}`);
+
+            return {
+                updated: false,
+                skipped: false,
+                state: failureState,
+                stateChanged: true,
+                decision: initialDecision,
+                error: message
+            };
+        }
+    }
+
+    maybeUpdateSessionMemoryAfterCompletion(
+        options: UpdateSessionMemoryOptions = {}
+    ): Promise<SessionMemoryUpdateResult> {
+        if (this._sessionMemoryUpdatePromise) {
+            logCompactInfo(this.task_id, {
+                source: 'tasks',
+                event: 'session_memory_update_already_running',
+                message: `[Compact Step8F] session memory update already running for task ${this.task_id}`
+            });
+            return this._sessionMemoryUpdatePromise;
+        }
+
+        const decision = shouldExtractSessionMemory(this.chat_context, this.session_memory_state, options);
+        if (!options.force && !decision.shouldExtract) {
+            logCompactInfo(this.task_id, {
+                source: 'tasks',
+                event: 'session_memory_update_skipped',
+                message:
+                    `[Compact Step8F] session memory update skipped for task ${this.task_id}: ` +
+                    `reason=${decision.reason}, tokens=${decision.currentTokens}, ` +
+                    `delta=${decision.tokensSinceLastExtraction}, ` +
+                    `toolCalls=${decision.toolCallsSinceLastExtraction}`,
+                data: {
+                    reason: decision.reason,
+                    currentTokens: decision.currentTokens,
+                    tokensSinceLastExtraction: decision.tokensSinceLastExtraction,
+                    toolCallsSinceLastExtraction: decision.toolCallsSinceLastExtraction
+                }
+            });
+            return Promise.resolve(this.buildSkippedSessionMemoryUpdateResult(decision));
+        }
+
+        const updatePromise = this.runSessionMemoryUpdateAfterCompletion(options, decision);
+        this._sessionMemoryUpdatePromise = updatePromise;
+        void updatePromise.finally(() => {
+            if (this._sessionMemoryUpdatePromise === updatePromise) {
+                this._sessionMemoryUpdatePromise = undefined;
+            }
+        });
+
+        return updatePromise;
+    }
+
+    private scheduleSessionMemoryUpdateAfterCompletion() {
+        void this.maybeUpdateSessionMemoryAfterCompletion().catch((error) => {
+            logger.warn(
+                `[Compact Step8F] unexpected session memory scheduler failure for task ${this.task_id}: ` +
+                    errorToMessage(error)
+            );
+        });
+    }
+
     isAutoCompactCoolingDown(at: Date = new Date()) {
         return AutoCompactStates.isCoolingDown(this.auto_compact_state, at);
     }
@@ -348,7 +531,9 @@ export class TaskState {
     }
 
     async manualCompact(): Promise<boolean> {
-        return await compactContext(this.chat_context, this.model);
+        return await compactContext(this.chat_context, this.model, {
+            taskId: this.task_id
+        });
     }
 
     /**
@@ -368,12 +553,22 @@ export class TaskState {
             try {
                 const preparation = await prepareContextForModel(this.chat_context, this.model, {
                     beforeCompact: () => {
-                        logger.info(`Auto-compacting context for task ${this.task_id}`);
+                        logCompactInfo(this.task_id, {
+                            source: 'tasks',
+                            event: 'auto_compacting_context',
+                            message: `Auto-compacting context for task ${this.task_id}`
+                        });
                     },
-                    autoCompactState: this.auto_compact_state
+                    enableSessionMemoryCompact: true,
+                    autoCompactState: this.auto_compact_state,
+                    sessionMemoryState: this.session_memory_state,
+                    taskId: this.task_id
                 });
                 if (preparation.autoCompactState) {
                     this.setAutoCompactState(preparation.autoCompactState);
+                }
+                if (preparation.sessionMemoryState) {
+                    this.setSessionMemoryState(preparation.sessionMemoryState);
                 }
             } catch (err: unknown) {
                 logger.warn(`Auto-compact check failed: ${err instanceof Error ? err.message : err}`);
@@ -567,17 +762,18 @@ export class TaskState {
 
                 const fullContent = loadedSkill.getFullContent();
 
+                const qualifiedToolName = 'skill-manager-LoadSkill';
                 const toolCall = new ToolCall(
                     0,
                     `preload_${crypto.randomUUID()}`,
-                    'LoadSkill',
+                    qualifiedToolName,
                     JSON.stringify({ bundleName, skillName: name })
                 );
                 toolCall.args_object = { bundleName, skillName: name };
                 toolCall.status = 'success';
                 toolCall.result = fullContent;
 
-                const loadSkillTool = this.chat_context.getTool('LoadSkill');
+                const loadSkillTool = this.chat_context.getTool(qualifiedToolName);
                 if (loadSkillTool) toolCall.setTool(loadSkillTool);
 
                 const toolCallPart = new ToolCallMessagePart();
@@ -629,6 +825,8 @@ export class TaskState {
         forkedTask.chat_context = ChatContext.assign(this.chat_context.toJSON());
         forkedTask.tool_result_replacement_state = ToolResultReplacementStates.clone(toolResultReplacementState);
         forkedTask.auto_compact_state = AutoCompactStates.clone(this.auto_compact_state);
+        // Step 8A 第一版不复制 session-memory.md，避免 fork 后指向父任务 artifact。
+        forkedTask.session_memory_state = SessionMemoryStates.create();
 
         // Copy model and reasoning effort
         forkedTask.model = this.model;
@@ -759,13 +957,19 @@ export class TaskState {
         try {
             const preparation = await prepareContextForModel(this.chat_context, this.model, {
                 beforeCompact: () => {
-                    logger.info(`Auto-compacting context for task ${this.task_id}`);
+                    logCompactInfo(this.task_id, {
+                        source: 'tasks',
+                        event: 'auto_compacting_context',
+                        message: `Auto-compacting context for task ${this.task_id}`
+                    });
                 },
                 enableToolResultBudget: true,
                 enableMicrocompact: true,
+                enableSessionMemoryCompact: true,
                 taskId: this.task_id,
                 toolResultReplacementState: this.tool_result_replacement_state,
-                autoCompactState: this.auto_compact_state
+                autoCompactState: this.auto_compact_state,
+                sessionMemoryState: this.session_memory_state
             });
 
             if (preparation.toolResultReplacementState) {
@@ -776,14 +980,68 @@ export class TaskState {
                 this.setAutoCompactState(preparation.autoCompactState);
             }
 
+            if (preparation.sessionMemoryState) {
+                this.setSessionMemoryState(preparation.sessionMemoryState);
+            }
+
+            if (preparation.sessionMemoryCompactResult) {
+                const compactVariant = preparation.sessionMemoryCompactResult.plan
+                    ? describeCompactPlanVariant(preparation.sessionMemoryCompactResult.plan)
+                    : undefined;
+                logCompactInfo(this.task_id, {
+                    source: 'tasks',
+                    event: 'session_memory_compact_result',
+                    message:
+                        `[Compact Step9] session memory compact result: compacted=${preparation.sessionMemoryCompacted}, ` +
+                        (compactVariant ? `variant=${compactVariant.compactVariant}, ` : '') +
+                        `reason=${preparation.sessionMemoryCompactResult.noopReason ?? 'applied'}, ` +
+                        `postTokens=${preparation.sessionMemoryCompactResult.postCompactTokens ?? 'unknown'}`,
+                    data: {
+                        compacted: preparation.sessionMemoryCompacted,
+                        reason: preparation.sessionMemoryCompactResult.noopReason ?? 'applied',
+                        postTokens: preparation.sessionMemoryCompactResult.postCompactTokens ?? 'unknown',
+                        ...(compactVariant ?? {})
+                    }
+                });
+            }
+
+            const activeContextVariant = describeActiveContextVariant(preparation.activeContext);
+            logCompactInfo(this.task_id, {
+                source: 'tasks',
+                event: 'active_context_compact_variant',
+                message:
+                    `[Compact Step9] active context compact variant=${activeContextVariant.compactVariant}, ` +
+                    `recentUserPreserved=${activeContextVariant.recentUserPreserved}, ` +
+                    `startsInsideAssistant=${activeContextVariant.startsInsideAssistant}` +
+                    (activeContextVariant.startsInsideAssistant
+                        ? `, messageId=${activeContextVariant.keepAnchorMessageId}, ` +
+                          `roundIndex=${activeContextVariant.kept_anchor_round_index}, ` +
+                          `startPartIndex=${activeContextVariant.kept_anchor_start_part_index}`
+                        : ''),
+                data: {
+                    ...activeContextVariant
+                }
+            });
+
             if (preparation.budgetApplied && preparation.toolResultBudgetStats) {
                 const stats = preparation.toolResultBudgetStats;
-                logger.info(
-                    `[Compact Step4] query-time tool result budget: groups=${stats.groupCount}, ` +
+                logCompactInfo(this.task_id, {
+                    source: 'tasks',
+                    event: 'tool_result_budget',
+                    message:
+                        `[Compact Step4] query-time tool result budget: groups=${stats.groupCount}, ` +
                         `overrides=${stats.overrideCount}, reapplied=${stats.reappliedCount}, ` +
                         `newlySelected=${stats.newlySelectedCount}, newlySeen=${stats.newlySeenCount}, ` +
-                        `overBudgetGroups=${stats.overBudgetGroupCount}`
-                );
+                        `overBudgetGroups=${stats.overBudgetGroupCount}`,
+                    data: {
+                        groupCount: stats.groupCount,
+                        overrideCount: stats.overrideCount,
+                        reappliedCount: stats.reappliedCount,
+                        newlySelectedCount: stats.newlySelectedCount,
+                        newlySeenCount: stats.newlySeenCount,
+                        overBudgetGroupCount: stats.overBudgetGroupCount
+                    }
+                });
             }
 
             if (preparation.microcompactStats) {
@@ -792,39 +1050,86 @@ export class TaskState {
                     .sort(([leftReason], [rightReason]) => leftReason.localeCompare(rightReason))
                     .map(([reason, count]) => `${reason}=${count}`)
                     .join(', ');
-                logger.info(
-                    `[Compact Step5A] microcompact analysis: scanned=${stats.scannedToolCallCount}, ` +
+                logCompactInfo(this.task_id, {
+                    source: 'tasks',
+                    event: 'microcompact_analysis',
+                    message:
+                        `[Compact Step5A] microcompact analysis: scanned=${stats.scannedToolCallCount}, ` +
                         `candidates=${stats.candidateCount}, skipped=${stats.skippedCount}, ` +
                         `tailProtected=${stats.tailProtectedCount}, totalCandidateChars=${stats.totalCandidateChars}, ` +
                         `tailAssistantMessages=${stats.tailAssistantMessages}` +
-                        (skippedSummary.length > 0 ? `, skippedByReason={${skippedSummary}}` : '')
-                );
+                        (skippedSummary.length > 0 ? `, skippedByReason={${skippedSummary}}` : ''),
+                    data: {
+                        scannedToolCallCount: stats.scannedToolCallCount,
+                        candidateCount: stats.candidateCount,
+                        skippedCount: stats.skippedCount,
+                        tailProtectedCount: stats.tailProtectedCount,
+                        totalCandidateChars: stats.totalCandidateChars,
+                        tailAssistantMessages: stats.tailAssistantMessages,
+                        skippedByReason: stats.skippedByReason
+                    }
+                });
 
                 const topCandidates = [...(preparation.microcompactAnalysis?.candidates ?? [])]
                     .sort((left, right) => right.sizeChars - left.sizeChars)
                     .slice(0, 3);
                 for (const candidate of topCandidates) {
-                    logger.info(
-                        `[Compact Step5A] candidate tool=${candidate.toolName}, chars=${candidate.sizeChars}, ` +
+                    logCompactInfo(this.task_id, {
+                        source: 'tasks',
+                        event: 'microcompact_candidate',
+                        message:
+                            `[Compact Step5A] candidate tool=${candidate.toolName}, chars=${candidate.sizeChars}, ` +
                             `lines=${candidate.sizeLines}, chatIndex=${candidate.chatContextMessageIndex}, ` +
                             `part=${candidate.toolCallPartIndex}, call=${candidate.toolCallIndex}, ` +
-                            `resultId=${candidate.resultId}, hasStorage=${candidate.hasResultStorage}`
-                    );
+                            `resultId=${candidate.resultId}, hasStorage=${candidate.hasResultStorage}`,
+                        data: {
+                            toolName: candidate.toolName,
+                            sizeChars: candidate.sizeChars,
+                            sizeLines: candidate.sizeLines,
+                            chatContextMessageIndex: candidate.chatContextMessageIndex,
+                            toolCallPartIndex: candidate.toolCallPartIndex,
+                            toolCallIndex: candidate.toolCallIndex,
+                            resultId: candidate.resultId,
+                            hasResultStorage: candidate.hasResultStorage
+                        }
+                    });
                 }
-                logger.info(
-                    `[Compact Step5B] local microcompact: applied=${stats.appliedCount}, ` +
+                logCompactInfo(this.task_id, {
+                    source: 'tasks',
+                    event: 'microcompact_applied_summary',
+                    message:
+                        `[Compact Step5B] local microcompact: applied=${stats.appliedCount}, ` +
                         `skippedByOverride=${stats.skippedByOverrideCount}, ` +
                         `unshrinkable=${stats.unshrinkableCount}, ` +
-                        `charsBefore=${stats.totalCharsBefore}, charsAfter=${stats.totalCharsAfter}`
-                );
+                        `charsBefore=${stats.totalCharsBefore}, charsAfter=${stats.totalCharsAfter}`,
+                    data: {
+                        appliedCount: stats.appliedCount,
+                        skippedByOverrideCount: stats.skippedByOverrideCount,
+                        unshrinkableCount: stats.unshrinkableCount,
+                        totalCharsBefore: stats.totalCharsBefore,
+                        totalCharsAfter: stats.totalCharsAfter
+                    }
+                });
 
                 for (const candidate of preparation.microcompactAppliedCandidates.slice(0, 3)) {
-                    logger.info(
-                        `[Compact Step5B] applied tool=${candidate.toolName}, chars=${candidate.sizeChars}, ` +
+                    logCompactInfo(this.task_id, {
+                        source: 'tasks',
+                        event: 'microcompact_applied_candidate',
+                        message:
+                            `[Compact Step5B] applied tool=${candidate.toolName}, chars=${candidate.sizeChars}, ` +
                             `lines=${candidate.sizeLines}, chatIndex=${candidate.chatContextMessageIndex}, ` +
                             `part=${candidate.toolCallPartIndex}, call=${candidate.toolCallIndex}, ` +
-                            `resultId=${candidate.resultId}`
-                    );
+                            `resultId=${candidate.resultId}`,
+                        data: {
+                            toolName: candidate.toolName,
+                            sizeChars: candidate.sizeChars,
+                            sizeLines: candidate.sizeLines,
+                            chatContextMessageIndex: candidate.chatContextMessageIndex,
+                            toolCallPartIndex: candidate.toolCallPartIndex,
+                            toolCallIndex: candidate.toolCallIndex,
+                            resultId: candidate.resultId
+                        }
+                    });
                 }
             }
 
@@ -832,7 +1137,8 @@ export class TaskState {
                 preparation.compacted ||
                 preparation.toolResultStateChanged ||
                 preparation.microcompactStateChanged ||
-                preparation.autoCompactStateChanged
+                preparation.autoCompactStateChanged ||
+                preparation.sessionMemoryStateChanged
             ) {
                 this.task_manager_state.save();
             }
@@ -1328,6 +1634,7 @@ export class TaskState {
         this._turnRunning = true;
         let hookRejectCount = 0;
         this._currentTurn = 0;
+        let shouldScheduleSessionMemoryUpdate = false;
 
         try {
             while (this.task_status !== 'stopped') {
@@ -1346,6 +1653,7 @@ export class TaskState {
 
                 const checkHooks = await this.hooks.checkBeforeFinishTurn(this);
                 if (checkHooks.operation === 'finish') {
+                    shouldScheduleSessionMemoryUpdate = true;
                     break;
                 } else {
                     hookRejectCount++;
@@ -1353,6 +1661,7 @@ export class TaskState {
                         logger.warn(
                             `task ${this.task_id}: beforeFinishTurn hook rejected ${hookRejectCount} times consecutively, force-ending turn`
                         );
+                        shouldScheduleSessionMemoryUpdate = true;
                         break;
                     }
                     const backoffMs = 5_000;
@@ -1377,6 +1686,9 @@ export class TaskState {
             this.finished_at = new Date();
             this.sendSubscriptionFeedback();
             this.task_manager_state.publishTaskListUpdate();
+            if (shouldScheduleSessionMemoryUpdate) {
+                this.scheduleSessionMemoryUpdateAfterCompletion();
+            }
         } finally {
             this._turnRunning = false;
         }

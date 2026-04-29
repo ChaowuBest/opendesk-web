@@ -11,6 +11,8 @@
 
 import './toolbar.css';
 
+type ToolbarLayout = 'capsule' | 'spread';
+
 interface Button {
     id: string;
     icon: string;
@@ -23,17 +25,22 @@ export class ElasticToolbarWidget extends HTMLElement {
     uid: string;
     buttons: Button[];
     toolbarTitle?: string;
+    toolbarSubtitle?: string;
+    layout: ToolbarLayout;
+    _subtitleClickHandler?: () => void;
 
     /**
      * 创建一个弹性工具栏组件
      * @param buttons 工具栏按钮列表
      * @param toolbarTitle 工具栏标题（可选）
+     * @param layout 布局模式：'capsule' 居中胶囊（默认），'spread' 左标题右按钮
      */
-    constructor(buttons: Button[] = [], toolbarTitle?: string) {
+    constructor(buttons: Button[] = [], toolbarTitle?: string, layout: ToolbarLayout = 'capsule') {
         super();
         this.uid = crypto.randomUUID();
         this.buttons = buttons;
         this.toolbarTitle = toolbarTitle;
+        this.layout = layout;
     }
 
     connectedCallback() {
@@ -47,23 +54,101 @@ export class ElasticToolbarWidget extends HTMLElement {
 
     setToolbarTitle(toolbarTitle: string) {
         this.toolbarTitle = toolbarTitle;
-        this.render();
+        const titleEl = this.querySelector(`#toolbar-title-${this.uid}`);
+        if (titleEl) {
+            titleEl.textContent = toolbarTitle;
+            titleEl.setAttribute('title', toolbarTitle);
+        } else {
+            this.render();
+        }
+    }
+
+    setToolbarSubtitle(subtitle: string, onClick?: () => void) {
+        this.toolbarSubtitle = subtitle;
+        this._subtitleClickHandler = onClick;
+        const subtitleEl = this.querySelector(`#toolbar-subtitle-${this.uid}`) as HTMLElement | null;
+        if (subtitleEl) {
+            const textSpan = subtitleEl.querySelector('span');
+            if (textSpan) textSpan.textContent = subtitle;
+            subtitleEl.setAttribute('title', subtitle);
+            subtitleEl.style.display = subtitle ? '' : 'none';
+            if (onClick) {
+                const clone = subtitleEl.cloneNode(true) as HTMLElement;
+                subtitleEl.replaceWith(clone);
+                clone.addEventListener('click', onClick);
+            }
+        } else {
+            this.render();
+        }
     }
 
     render() {
+        if (this.layout === 'spread') {
+            this._renderSpread();
+        } else {
+            this._renderCapsule();
+        }
+        this._bindButtons();
+    }
+
+    private _renderSpread() {
+        const buttonsHTML = this.buttons
+            .map((button) => {
+                return `
+            <button id='${button.id}-${this.uid}'
+                class="toolbar-spread-btn flex items-center justify-center w-8 h-8 rounded-lg
+                       bg-transparent hover:bg-gray-100 active:bg-gray-200
+                       transition-colors duration-150
+                       text-gray-500 hover:text-gray-800"
+                title="${button.label}">
+                <i class="fa-solid ${button.icon} text-[15px]"></i>
+            </button>
+            `;
+            })
+            .join('');
+
+        const titleHTML = this.toolbarTitle
+            ? `<span id="toolbar-title-${this.uid}" class="text-[18px] font-bold text-gray-900 truncate" title="${this.toolbarTitle}">${this.toolbarTitle}</span>`
+            : '';
+
+        const subtitleHTML = this.toolbarSubtitle
+            ? `<button id="toolbar-subtitle-${this.uid}" class="toolbar-spread-subtitle" title="${this.toolbarSubtitle}">
+                <i class="fa-solid fa-briefcase"></i>
+                <span>${this.toolbarSubtitle}</span>
+                <i class="fa-solid fa-chevron-down" style="font-size: 8px; opacity: 0.5;"></i>
+               </button>`
+            : `<button id="toolbar-subtitle-${this.uid}" class="toolbar-spread-subtitle" style="display:none;" title="">
+                <i class="fa-solid fa-briefcase"></i>
+                <span></span>
+                <i class="fa-solid fa-chevron-down" style="font-size: 8px; opacity: 0.5;"></i>
+               </button>`;
+
+        this.innerHTML = `
+        <header class="toolbar-spread-header" style="height: 72px; padding: 0 5px 0 16px; display: flex; flex-direction: column; justify-content: flex-end;">
+            <div style="display: flex; align-items: end; justify-content: space-between; padding-bottom: 4px;">
+                <div class="flex flex-col min-w-0 flex-1 gap-0.5">
+                    ${titleHTML}
+                    ${subtitleHTML}
+                </div>
+                <div class="flex items-center gap-1 flex-shrink-0">
+                    ${buttonsHTML}
+                </div>
+            </div>
+        </header>
+        `;
+    }
+
+    private _renderCapsule() {
         const topButtonsHTML = this.buttons
             .map((button) => {
                 const labelStayVisible = !!button.labelStayVisible;
-                const labelSpanClass = labelStayVisible
-                    ? 'max-w-[120px] opacity-100 ml-2 transition-all duration-500 ease-in-out whitespace-nowrap font-medium tracking-tight text-sm'
-                    : 'max-w-0 overflow-hidden opacity-0 group-hover:max-w-[120px] group-hover:opacity-100 group-hover:ml-2 transition-all duration-500 ease-in-out whitespace-nowrap font-medium tracking-tight text-sm';
+                const labelCls = labelStayVisible ? 'elastic-label elastic-label--visible' : 'elastic-label';
                 return `
-            <button id='${button.id}-${this.uid}' class="group flex items-center px-2 py-2 rounded-full
-                        bg-transparent hover:bg-gray-100
-                        transition-all duration-500 ease-[cubic-bezier(0.23,1,0.32,1)]
-                        text-gray-700 hover:text-blue-600">
+            <button id='${button.id}-${this.uid}' class="elastic-capsule-btn flex items-center px-2 py-2 rounded-full
+                        bg-transparent
+                        text-gray-700">
                 <i class="fa-solid ${button.icon}"></i>
-                <span class="${labelSpanClass}">
+                <span class="${labelCls}">
                     ${button.label}
                 </span>
             </button>
@@ -75,7 +160,7 @@ export class ElasticToolbarWidget extends HTMLElement {
             ? `<div class="inline-block pl-4 py-2 font-semibold text-gray-800 text-sm">${this.toolbarTitle}</div>`
             : '';
 
-        const toolbarHTML = `
+        this.innerHTML = `
         <header class="h-16 px-4 flex items-center justify-center">
             <div class="flex items-center gap-3 p-1 rounded-full bg-white shadow">
                 ${titleHTML}
@@ -83,8 +168,9 @@ export class ElasticToolbarWidget extends HTMLElement {
             </div>
         </header>
         `;
+    }
 
-        this.innerHTML = toolbarHTML;
+    private _bindButtons() {
         this.buttons.forEach((button) => {
             const buttonElement = this.querySelector(`#${button.id}-${this.uid}`);
             if (buttonElement) {
@@ -93,6 +179,12 @@ export class ElasticToolbarWidget extends HTMLElement {
                 });
             }
         });
+        if (this._subtitleClickHandler) {
+            const subtitleEl = this.querySelector(`#toolbar-subtitle-${this.uid}`);
+            if (subtitleEl) {
+                subtitleEl.addEventListener('click', this._subtitleClickHandler);
+            }
+        }
     }
 }
 

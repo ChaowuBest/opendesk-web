@@ -18,6 +18,7 @@ const shared: Config = {
                     moduleResolution: 'bundler',
                     target: 'ES2022',
                     esModuleInterop: true,
+                    isolatedModules: true,
                     allowImportingTsExtensions: true,
                     strict: false,
                     skipLibCheck: true,

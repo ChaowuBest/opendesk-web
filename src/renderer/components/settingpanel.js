@@ -539,19 +539,59 @@ class SettingPanel extends HTMLElement {
         const provider = this.currentData.providers[index];
         const modelsUsingProvider = this.currentData.models?.filter((m) => m.provider_name === provider.name) || [];
 
-        if (modelsUsingProvider.length > 0) {
-            window.notificationAPI.sendNotification(
-                'warning',
-                '设置',
-                '无法删除',
-                `有 ${modelsUsingProvider.length} 个模型正在使用此提供商`
-            );
-            return;
-        }
+        const modelCount = modelsUsingProvider.length;
+        const message =
+            modelCount > 0
+                ? `提供商「${provider.name}」下有 ${modelCount} 个关联模型，删除提供商将同时删除这些模型。`
+                : `确定要删除提供商「${provider.name}」吗？`;
 
-        this.currentData.providers.splice(index, 1);
-        this.refreshProvidersSection();
-        this.scheduleSave();
+        this.showModal(`
+            <div class="bg-white/95 backdrop-blur-2xl rounded-3xl shadow-2xl border border-white/50 w-full max-w-md mx-4 overflow-hidden">
+                <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+                    <h3 class="text-lg font-semibold text-gray-800">删除提供商</h3>
+                    <button class="modal-close-btn text-gray-400 hover:text-gray-600 transition-colors">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+                <div class="px-6 py-5">
+                    <div class="flex items-start gap-3">
+                        <div class="shrink-0 w-10 h-10 rounded-full ${modelCount > 0 ? 'bg-amber-50 text-amber-500' : 'bg-red-50 text-red-500'} flex items-center justify-center">
+                            <i class="fas ${modelCount > 0 ? 'fa-exclamation-triangle' : 'fa-trash-alt'}"></i>
+                        </div>
+                        <div class="text-sm text-gray-600 leading-relaxed">${message}</div>
+                    </div>
+                    ${
+                        modelCount > 0
+                            ? `
+                    <div class="mt-3 ml-[52px] text-xs text-gray-400 bg-gray-50 rounded-lg p-2.5 space-y-0.5">
+                        ${modelsUsingProvider.map((m) => `<div class="truncate">· ${m.alias || m.model_name}</div>`).join('')}
+                    </div>`
+                            : ''
+                    }
+                </div>
+                <div class="px-6 py-4 border-t border-gray-100 flex justify-end gap-3">
+                    <button class="modal-close-btn px-4 py-2 text-sm text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-xl transition-colors">取消</button>
+                    <button id="confirm-delete-provider-btn" class="px-4 py-2 text-sm text-white bg-red-500 hover:bg-red-600 rounded-xl transition-colors">确认删除</button>
+                </div>
+            </div>
+        `);
+
+        this.querySelectorAll('.modal-close-btn').forEach((btn) => {
+            btn.addEventListener('click', () => {
+                this.closeModal();
+            });
+        });
+        this.querySelector('#confirm-delete-provider-btn')?.addEventListener('click', () => {
+            if (modelCount > 0) {
+                this.currentData.models = this.currentData.models.filter((m) => m.provider_name !== provider.name);
+                this.refreshModelsSection();
+                this.refreshDefaultModelsSection();
+            }
+            this.currentData.providers.splice(index, 1);
+            this.closeModal();
+            this.refreshProvidersSection();
+            this.scheduleSave();
+        });
     }
 
     refreshProvidersSection() {

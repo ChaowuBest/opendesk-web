@@ -19,7 +19,8 @@ import {
     shell,
     Menu,
     dialog,
-    protocol
+    screen,
+    session
 } from 'electron';
 import { Setting, getAppDirectory } from './utils/setting.js';
 import { QuickPassHelper } from './utils/quickpass.js';
@@ -161,6 +162,38 @@ async function installBundledSkillsIfNeeded() {
     }
 }
 
+// Browser management — shared persistent session.
+// The partition 'persist:opendesk-browser' stores data at <appDir>/apps/browser/session
+// via session.fromPath when available, otherwise falls back to Electron default location.
+let browserSessionInstance = null;
+const BROWSER_PARTITION = 'persist:opendesk-browser';
+
+function initBrowserSession() {
+    try {
+        const sessionPath = path.join(getAppDirectory(), 'apps', 'browser', 'session');
+        const fs = require('fs');
+        if (!fs.existsSync(sessionPath)) {
+            fs.mkdirSync(sessionPath, { recursive: true });
+        }
+
+        if (typeof session.fromPath === 'function') {
+            browserSessionInstance = session.fromPath(sessionPath);
+        } else {
+            browserSessionInstance = session.fromPartition(BROWSER_PARTITION);
+        }
+
+        browserSessionInstance.setPermissionRequestHandler((_webContents, permission, callback) => {
+            const allowed = ['clipboard-read', 'clipboard-sanitized-write', 'media', 'geolocation', 'notifications'];
+            callback(allowed.includes(permission));
+        });
+        logger.info(
+            `Browser session initialized, storage: ${browserSessionInstance.storagePath || browserSessionInstance.getStoragePath?.() || sessionPath}`
+        );
+    } catch (err) {
+        logger.error(`Failed to initialize browser session: ${err}`);
+    }
+}
+
 const createWindow = () => {
     const mainWindow = new BrowserWindow({
         width: 1200,
@@ -171,6 +204,8 @@ const createWindow = () => {
             nodeIntegration: false,
             nodeIntegrationInSubFrames: true,
             contextIsolation: true,
+            webviewTag: true,
+            allowRunningInsecureContent: true,
             preload: path.join(__dirname, '..', 'preload', 'index.js')
         }
     });
@@ -222,6 +257,12 @@ const createWindow = () => {
         }
         if (menuItems.length > 0) {
             Menu.buildFromTemplate(menuItems).popup({ window: mainWindow });
+        }
+    });
+
+    mainWindow.webContents.on('will-attach-webview', (_event, webPreferences, _params) => {
+        if (browserSessionInstance) {
+            webPreferences.session = browserSessionInstance;
         }
     });
 
@@ -310,6 +351,85 @@ const registerModeAPIHandlers = () => {
     });
 };
 
+const registerBrowserAPIHandlers = () => {
+    /**
+     * Helper: find the <task-artifacts> element for a given taskId in the renderer
+     * and invoke a method on it, returning the result.
+     */
+    const callBrowserOnTask = async (taskId, method, ...args) => {
+        if (!globalMainWindow) {
+            return { status: 'error', message: 'No main window' };
+        }
+        try {
+            const result = await globalMainWindow.webContents.executeJavaScript(
+                `(() => {
+                    var el = document.getElementById('task-${taskId}-artifacts');
+                    if (!el) return { error: 'Browser not available for task ${taskId}' };
+                    var tv = el.closest('task-view');
+                    if (tv && typeof tv._ensureRightSidebarOpen === 'function') tv._ensureRightSidebarOpen();
+                    if (typeof el.ensureBrowserReady === 'function') el.ensureBrowserReady();
+                    if (typeof el.${method} !== 'function') return { error: 'Method ${method} not available' };
+                    var r = el.${method}(${args.map((a) => JSON.stringify(a)).join(',')});
+                    return r instanceof Promise ? null : { result: r };
+                })()`
+            );
+            if (result && result.error) {
+                return { status: 'error', message: result.error };
+            }
+            return { status: 'ok', data: result?.result ?? result };
+        } catch (err) {
+            return { status: 'error', message: String(err) };
+        }
+    };
+
+    ipcMain.handle('browser:navigate', async (event, taskId, url) => {
+        return callBrowserOnTask(taskId, 'browserNavigate', url);
+    });
+
+    ipcMain.handle('browser:getState', async (event, taskId) => {
+        return callBrowserOnTask(taskId, 'browserGetState');
+    });
+
+    ipcMain.handle('browser:executeScript', async (event, taskId, script) => {
+        if (!globalMainWindow) {
+            return { status: 'error', message: 'No main window' };
+        }
+        try {
+            const result = await globalMainWindow.webContents.executeJavaScript(
+                `(() => {
+                    var el = document.getElementById('task-${taskId}-artifacts');
+                    if (!el) return { error: 'Browser not available' };
+                    var tv = el.closest('task-view');
+                    if (tv && typeof tv._ensureRightSidebarOpen === 'function') tv._ensureRightSidebarOpen();
+                    if (typeof el.ensureBrowserReady === 'function') el.ensureBrowserReady();
+                    if (typeof el.browserExecuteScript !== 'function') return { error: 'Browser not initialized' };
+                    return el.browserExecuteScript(${JSON.stringify(script)})
+                        .then(r => ({ result: r }))
+                        .catch(e => ({ error: e.message || String(e) }));
+                })()`
+            );
+            if (result && result.error) {
+                return { status: 'error', message: result.error };
+            }
+            return { status: 'ok', data: result?.result ?? result };
+        } catch (err) {
+            return { status: 'error', message: String(err) };
+        }
+    });
+
+    ipcMain.handle('browser:goBack', async (event, taskId) => {
+        return callBrowserOnTask(taskId, 'browserGoBack');
+    });
+
+    ipcMain.handle('browser:goForward', async (event, taskId) => {
+        return callBrowserOnTask(taskId, 'browserGoForward');
+    });
+
+    ipcMain.handle('browser:refresh', async (event, taskId) => {
+        return callBrowserOnTask(taskId, 'browserRefresh');
+    });
+};
+
 const registerTaskManagerAPIHandlers = () => {
     const globalState = GlobalState.getInstance();
 
@@ -372,6 +492,15 @@ const registerTaskManagerAPIHandlers = () => {
 
         await task.render();
         return { status: 'ok', data: task.toRenderJSON() };
+    });
+    ipcMain.handle('taskManager:getTaskTodos', async (event, taskId) => {
+        try {
+            const { getTaskTodosForDisplay } = await import('./aikernel/todos/task-todos.js');
+            const todos = getTaskTodosForDisplay(taskId);
+            return { status: 'ok', data: todos };
+        } catch (err) {
+            return { status: 'error', message: err?.message || String(err) };
+        }
     });
     ipcMain.handle('taskManager:subscribeTaskUpdate', (event, taskId) => {
         const task = globalState.taskManagerState.getTask(taskId);
@@ -464,6 +593,39 @@ const registerTaskManagerAPIHandlers = () => {
         }
         task.stop();
         return { status: 'ok' };
+    });
+    ipcMain.handle('taskManager:getSessionMemory', async (event, taskId) => {
+        try {
+            const { readTaskSessionMemory, isSessionMemoryTemplateOnly } =
+                await import('./aikernel/compaction/session-memory-compact.js');
+            const { marked } = await import('./aikernel/messages.js');
+            const content = readTaskSessionMemory(taskId);
+            if (!content || isSessionMemoryTemplateOnly(content)) {
+                return { status: 'ok', data: null };
+            }
+            const rendered = await marked.parse(content);
+            return { status: 'ok', data: { raw: content, rendered } };
+        } catch (err) {
+            return { status: 'ok', data: null };
+        }
+    });
+    ipcMain.handle('taskManager:getModelContextSize', async (event, modelAlias) => {
+        try {
+            const { lookupKnownContextSize, fetchContextSizeFromAPI } = await import('./utils/model-context.js');
+            const setting = Setting.getInstance();
+            const modelInstance = modelAlias ? setting.getModelInstance(modelAlias) : setting.getDefaultModelInstance();
+            if (!modelInstance) {
+                return { status: 'ok', data: 0 };
+            }
+            const knownSize = lookupKnownContextSize(modelInstance.model_name);
+            if (knownSize > 0) {
+                return { status: 'ok', data: knownSize };
+            }
+            const apiSize = await fetchContextSizeFromAPI(modelInstance);
+            return { status: 'ok', data: apiSize };
+        } catch (err) {
+            return { status: 'ok', data: 0 };
+        }
     });
     // 检查文件是否存在
     ipcMain.handle('fs:fileExists', async (event, filePath) => {
@@ -573,6 +735,99 @@ const registerFSAPIHandlers = () => {
             return { status: 'error', message: error.message };
         }
     });
+
+    // 列出目录内容（仅一层），用于工作空间文件浏览器的按需展开。
+    // 返回条目按：目录在前 + 名称不区分大小写排序。
+    ipcMain.handle('fs:listDirectory', async (event, dirPath) => {
+        try {
+            if (typeof dirPath !== 'string' || dirPath.length === 0) {
+                return { status: 'error', message: 'dirPath is required' };
+            }
+            const systemPath = dirPath.replace(/\//g, path.sep);
+            const dirents = await fs.promises.readdir(systemPath, { withFileTypes: true });
+            const entries = [];
+            for (const d of dirents) {
+                // 跳过一些典型噪声项，避免浏览器崩溃或渲染过慢；
+                // 这里只对无意义的系统快捷方式做过滤，用户自己的点开头目录仍然保留
+                const name = d.name;
+                const abs = path.join(systemPath, name);
+                let isDirectory = d.isDirectory();
+                const isSymbolicLink = d.isSymbolicLink();
+                let size = 0;
+                let modifiedAt = null;
+                try {
+                    const st = await fs.promises.stat(abs);
+                    // 通过 stat 解析 symlink 指向的真实类型，便于前端显示文件夹 / 文件图标
+                    if (isSymbolicLink) {
+                        isDirectory = st.isDirectory();
+                    }
+                    size = st.size;
+                    modifiedAt = st.mtimeMs;
+                } catch {
+                    // 忽略权限/损坏项，仍然列出但不提供尺寸
+                }
+                entries.push({
+                    name,
+                    path: abs.replace(/\\/g, '/'),
+                    isDirectory,
+                    isSymbolicLink,
+                    size,
+                    modifiedAt
+                });
+            }
+            entries.sort((a, b) => {
+                if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1;
+                return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+            });
+            return { status: 'ok', data: entries };
+        } catch (error) {
+            return { status: 'error', message: error.message };
+        }
+    });
+
+    // 读取文本文件内容（带大小限制），用于工作空间预览面板。
+    // 若文件超过 maxBytes 则直接返回 { tooLarge: true }，不读内容，由前端给出提示。
+    ipcMain.handle('fs:readTextFile', async (event, filePath, maxBytes) => {
+        try {
+            if (typeof filePath !== 'string' || filePath.length === 0) {
+                return { status: 'error', message: 'filePath is required' };
+            }
+            const limit = Number.isFinite(maxBytes) && maxBytes > 0 ? Math.floor(maxBytes) : 50 * 1024;
+            const systemPath = filePath.replace(/\//g, path.sep);
+            const st = await fs.promises.stat(systemPath);
+            if (!st.isFile()) {
+                return { status: 'error', message: 'not a file' };
+            }
+            if (st.size > limit) {
+                return {
+                    status: 'ok',
+                    data: { tooLarge: true, size: st.size, limit, content: '', binary: false }
+                };
+            }
+            const buf = await fs.promises.readFile(systemPath);
+            // 粗略判断是否为二进制：包含 NUL 字节即判定为二进制，避免把乱码渲染到预览器
+            let binary = false;
+            const probe = buf.subarray(0, Math.min(buf.length, 8192));
+            for (let i = 0; i < probe.length; i++) {
+                if (probe[i] === 0) {
+                    binary = true;
+                    break;
+                }
+            }
+            return {
+                status: 'ok',
+                data: {
+                    tooLarge: false,
+                    size: st.size,
+                    limit,
+                    content: binary ? '' : buf.toString('utf8'),
+                    binary
+                }
+            };
+        } catch (error) {
+            return { status: 'error', message: error.message };
+        }
+    });
 };
 
 const registerSettingAPIHandlers = () => {
@@ -665,6 +920,26 @@ const registerSettingAPIHandlers = () => {
             const currentData = Setting.getInstance().getData();
             Setting.getInstance().setData({ ...currentData, default_workspace: selectedPath });
             notifyWorkerSettingUpdate(Setting.getInstance().getData());
+
+            // 同步所有已有任务的 harnessContext 到新工作空间
+            const globalState = GlobalState.getInstance();
+            const agentDecl = getGlobalAgentDecl();
+            const modes = agentDecl.supportedModes();
+            for (const task of globalState.taskManagerState.tasks) {
+                const modeId = task.activeModeId || _currentElectronModeId || agentDecl.defaultModeId();
+                const mode = modes.find((m) => m.id === modeId) ?? modes[0];
+                const savedEnv = task.harnessContext.environ;
+                const savedPrompt = task.harnessContext.permissionPrompt;
+                try {
+                    const ctx = await HarnessContext.createForMode(selectedPath, mode);
+                    ctx.environ = savedEnv;
+                    ctx.permissionPrompt = savedPrompt;
+                    task.harnessContext = ctx;
+                } catch (err) {
+                    logger.warn(`Failed to sync task harness for new workspace: ${err}`);
+                }
+            }
+
             return { status: 'ok', data: selectedPath };
         } catch (error) {
             return { status: 'error', message: error.message };
@@ -713,6 +988,58 @@ const registerSettingAPIHandlers = () => {
         }));
 };
 
+const registerDisplayZoomHandlers = () => {
+    const readCurrentScale = () => {
+        try {
+            const val = Setting.getInstance().getData().display?.scale_factor;
+            return typeof val === 'number' && Number.isFinite(val) ? val : 1;
+        } catch {
+            return 1;
+        }
+    };
+
+    const applyZoom = (factor) => {
+        if (!globalMainWindow) return;
+        if (!Number.isFinite(factor)) factor = 1;
+        const clamped = Math.max(0.5, Math.min(2.0, factor));
+        globalMainWindow.webContents.setZoomFactor(clamped);
+        const currentData = Setting.getInstance().getData();
+        const rounded = Math.round(clamped * 10) / 10;
+        Setting.getInstance().setData({
+            ...currentData,
+            display: { ...(currentData.display || {}), scale_factor: rounded }
+        });
+    };
+
+    ipcMain.handle('display:getScaleFactor', () => {
+        try {
+            return { status: 'ok', data: readCurrentScale() };
+        } catch (error) {
+            return { status: 'error', message: error.message };
+        }
+    });
+
+    ipcMain.handle('display:setScaleFactor', (event, factor) => {
+        try {
+            applyZoom(factor);
+            return { status: 'ok', data: Math.max(0.5, Math.min(2.0, factor)) };
+        } catch (error) {
+            return { status: 'error', message: error.message };
+        }
+    });
+
+    ipcMain.handle('display:adjustScaleFactor', (event, delta) => {
+        try {
+            const current = readCurrentScale();
+            const next = Math.round((current + delta) * 10) / 10;
+            applyZoom(next);
+            return { status: 'ok', data: Math.max(0.5, Math.min(2.0, next)) };
+        } catch (error) {
+            return { status: 'error', message: error.message };
+        }
+    });
+};
+
 const registerNotificationAPIHandlers = () => {
     (ipcMain.handle('notification:sendNotification', (event, ...args) => {
         try {
@@ -726,6 +1053,26 @@ const registerNotificationAPIHandlers = () => {
             NotificationManager.getInstance().addSubscriber(event.sender);
             return { status: 'ok' };
         }));
+};
+
+const registerScreenAPIHandlers = () => {
+    ipcMain.handle('screen:getDisplayScaleFactors', () => {
+        try {
+            const displays = screen.getAllDisplays();
+            const scaleFactors = displays.map((display) => ({
+                id: display.id,
+                scaleFactor: display.scaleFactor,
+                bounds: display.bounds,
+                workArea: display.workArea,
+                rotation: display.rotation,
+                internal: display.internal,
+                touchSupport: display.touchSupport
+            }));
+            return { status: 'ok', data: scaleFactors };
+        } catch (error) {
+            return { status: 'error', message: error.message };
+        }
+    });
 };
 
 const registerHotKeys = () => {
@@ -813,6 +1160,15 @@ const initializeUpdater = () => {
     }
 };
 
+const initializeScreenAdaption = () => {
+    const scaleFactor = screen.getPrimaryDisplay().scaleFactor;
+    logger.info(`屏幕显示参数: ${scaleFactor}`);
+    screen.on('display-metrics-changed', (event, display, changedMetrics) => {
+        logger.info(`屏幕显示参数已更改: ${display.scaleFactor}`);
+        // 在此处重新计算并调整窗口布局
+    });
+};
+
 function startApplication() {
     if (app.requestSingleInstanceLock()) {
         app.on('second-instance', (event, path) => {
@@ -850,6 +1206,7 @@ function startApplication() {
             listAvailableToolsets: () => ApplicationRegistry.listAvailableToolsets()
         };
         createWindow();
+        initBrowserSession();
 
         // 将内置 skills（applications/skills/resources）自动同步到用户 skills 目录（先完成再注册，确保首次对话能发现技能）
         try {
@@ -858,14 +1215,28 @@ function startApplication() {
             console.error('installBundledSkillsIfNeeded error', err);
         }
 
+        initializeScreenAdaption();
+        registerBrowserAPIHandlers();
         registerTaskManagerAPIHandlers();
         registerModeAPIHandlers();
         registerFSAPIHandlers();
         registerSettingAPIHandlers();
         registerApplicationRegistryHandlers(ipcMain);
         registerNotificationAPIHandlers();
+        registerScreenAPIHandlers();
+        registerDisplayZoomHandlers();
         registerHotKeys();
         registerTray();
+
+        // Restore saved zoom level
+        try {
+            const savedScale = Setting.getInstance().getData().display?.scale_factor;
+            if (typeof savedScale === 'number' && Number.isFinite(savedScale) && savedScale !== 1 && globalMainWindow) {
+                globalMainWindow.webContents.setZoomFactor(Math.max(0.5, Math.min(3.0, savedScale)));
+            }
+        } catch (_e) {
+            /* ignore */
+        }
         initializeRegistryWorker();
         initializeProtocolHandlers();
         initializeUpdater();
