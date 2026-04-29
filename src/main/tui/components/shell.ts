@@ -4,6 +4,7 @@ import chalk from 'chalk';
 import process from 'process';
 import path from 'path';
 import fs from 'fs';
+import { t } from '../../../locale/index.js';
 
 // ── Shell 检测 ──────────────────────────────────────────────────────────
 
@@ -329,7 +330,7 @@ export function executeShellCommand(cmd: string, cwd: string, callbacks: ShellEx
                 const cwdChanged = isWin ? resolvedNew.toLowerCase() !== oldCwd.toLowerCase() : resolvedNew !== oldCwd;
                 if (cwdChanged) {
                     callbacks.onCwdChanged(resolvedNew);
-                    cwdChangedMsg = chalk.yellow(`📂 工作空间已切换: ${oldCwd} → ${resolvedNew}`);
+                    cwdChangedMsg = chalk.yellow(t('shell.cwd.changed', { oldCwd, newCwd: resolvedNew }));
                 }
             }
         }
@@ -338,7 +339,7 @@ export function executeShellCommand(cmd: string, cwd: string, callbacks: ShellEx
         const trimmedOutput = (displayOutput + (cleanedStderr ? chalk.red(cleanedStderr) : '')).trimEnd();
         if (trimmedOutput) parts.push(trimmedOutput);
         if (cwdChangedMsg) parts.push(cwdChangedMsg);
-        const finalOutput = parts.length > 0 ? parts.join('\n') : chalk.dim('(无输出)');
+        const finalOutput = parts.length > 0 ? parts.join('\n') : chalk.dim(t('shell.no.output'));
 
         callbacks.onResult(header, finalOutput);
         callbacks.requestRender();
@@ -349,7 +350,7 @@ export function executeShellCommand(cmd: string, cwd: string, callbacks: ShellEx
             _runningShellProcess = undefined;
         }
         const header = `${chalk.cyan('$')} ${chalk.bold(cmd)}  ${chalk.red('error')}`;
-        callbacks.onError(header, chalk.red(`执行失败: ${err.message}`));
+        callbacks.onError(header, chalk.red(t('shell.exec.failed', { error: err.message })));
         callbacks.requestRender();
     });
 }

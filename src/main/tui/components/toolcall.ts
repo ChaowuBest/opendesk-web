@@ -2,6 +2,7 @@ import chalk from 'chalk';
 import { type Component, visibleWidth, truncateToWidth } from '@mariozechner/pi-tui';
 import type { CardStatus } from './card';
 import type { ToolCall } from '../../aikernel/messages';
+import { t } from '../../../locale/index.js';
 
 /**
  * Truncate a string (may contain ANSI codes / wide chars) to fit within
@@ -15,15 +16,15 @@ export function truncText(str: string, maxWidth: number): string {
 export function statusDisplay(status: string): CardStatus {
     switch (status) {
         case 'pending':
-            return { icon: chalk.dim('○'), text: chalk.dim('等待中') };
+            return { icon: chalk.dim('○'), text: chalk.dim(t('toolcall.status.pending')) };
         case 'running':
-            return { icon: chalk.blueBright('●'), text: chalk.blueBright('执行中…') };
+            return { icon: chalk.blueBright('●'), text: chalk.blueBright(t('toolcall.status.running')) };
         case 'success':
-            return { icon: chalk.greenBright('✔'), text: chalk.greenBright('完成') };
+            return { icon: chalk.greenBright('✔'), text: chalk.greenBright(t('toolcall.status.success')) };
         case 'interrupted':
-            return { icon: chalk.yellowBright('⊘'), text: chalk.yellowBright('中断') };
+            return { icon: chalk.yellowBright('⊘'), text: chalk.yellowBright(t('toolcall.status.interrupted')) };
         case 'error':
-            return { icon: chalk.redBright('✘'), text: chalk.redBright('失败') };
+            return { icon: chalk.redBright('✘'), text: chalk.redBright(t('toolcall.status.error')) };
         default:
             return { icon: chalk.dim('○'), text: chalk.dim(status) };
     }

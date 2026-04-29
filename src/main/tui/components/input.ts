@@ -488,9 +488,9 @@ export class InlineResultPanel implements Component {
             const pos = this.scrollOffset + 1;
             const end = Math.min(this.scrollOffset + this.maxVisibleLines, total);
             scrollHints.push(chalk.dim(`${pos}-${end}/${total}`));
-            scrollHints.push(chalk.dim('Ctrl+↑/↓ 翻页'));
+            scrollHints.push(chalk.dim(t('inline.panel.scroll')));
         }
-        scrollHints.push(chalk.dim('Esc 关闭'));
+        scrollHints.push(chalk.dim(t('inline.panel.close')));
         const bottomInfo = ' ' + scrollHints.join('  ') + ' ';
         const bottomInfoW = visibleWidth(bottomInfo);
         const bottomBar = c('└') + c(bottomInfo) + c('─'.repeat(Math.max(0, width - bottomInfoW - 2))) + c('┘');
@@ -607,7 +607,7 @@ export class AgentInputArea implements Component {
     }
 
     private executeShellCommand(cmd: string) {
-        this.hintText.setText(chalk.cyan(`⏳ 正在执行: ${cmd}`));
+        this.hintText.setText(chalk.cyan(t('input.hint.shell.executing', { cmd })));
         this.openDeskTUI.tui.requestRender();
 
         const cwd = this.openDeskTUI.workspace;
@@ -778,7 +778,7 @@ export class AgentInputArea implements Component {
         if (this.messageQueue.length > 0) {
             this.updateQueueHint();
         } else if (this.status === 'running') {
-            this.hintText.setText(chalk.dim('任务进行中，你仍然可以继续输入...'));
+            this.hintText.setText(chalk.dim(t('input.hint.running')));
         } else {
             this.hintText.setText('');
         }
@@ -801,9 +801,9 @@ export class AgentInputArea implements Component {
         } else if (len === 1) {
             const preview =
                 this.messageQueue[0].length > 60 ? this.messageQueue[0].slice(0, 57) + '...' : this.messageQueue[0];
-            this.hintText.setText(chalk.yellow(`📨 待发送: ${preview} (输入 /cancel 撤销)`));
+            this.hintText.setText(chalk.yellow(t('input.hint.queue.single', { preview })));
         } else {
-            this.hintText.setText(chalk.yellow(`📨 ${len} 条消息待发送 (输入 /cancel 撤销)`));
+            this.hintText.setText(chalk.yellow(t('input.hint.queue.multiple', { count: len })));
         }
     }
 
