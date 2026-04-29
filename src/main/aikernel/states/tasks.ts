@@ -32,6 +32,7 @@ import {
     Usage,
     ToolCall,
     ToolCallMessagePart,
+    ReasoningMessagePart,
     CompactSeparatorMessage,
     extractImagePaths,
     imageToDataUri
@@ -778,6 +779,9 @@ export class TaskState {
 
                 const toolCallPart = new ToolCallMessagePart();
                 toolCallPart.push(toolCall);
+                assistantMessage.content.push(
+                    new ReasoningMessagePart(`User requested skill "${name}", loading it now.`, 'reasoning_content')
+                );
                 assistantMessage.content.push(toolCallPart);
 
                 logger.info(`preloaded skill via /skillname: ${bundleName}/${name}`);
