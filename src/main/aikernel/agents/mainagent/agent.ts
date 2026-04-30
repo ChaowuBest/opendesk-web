@@ -19,7 +19,7 @@ import {
     MAIN_AGENT_SOLO_MODE,
     MAIN_AGENT_UNLIMITED_MODE
 } from './modes/index.js';
-import { getLocale, getLocaleSetting } from '../../../../locale/index.js';
+import { getLocale } from '../../../../locale/index.js';
 
 /**
  * Boundary marker separating static (cacheable) content from dynamic content.
@@ -104,20 +104,14 @@ function getToneAndStyleSection(soulName: string, soulUid: string, soulContent: 
 
 // ─── Section 6.5: Language ─────────────────────────────────────────
 function getLanguageSection(): string {
-    const localeSetting = getLocaleSetting();
-    const effectiveLocale = getLocale();
-    const isChinese = effectiveLocale === 'zh-CN';
-
-    if (isChinese) {
-        const autoNote = localeSetting === 'auto' ? '（当前根据系统语言自动识别为中文）' : '';
-        return `# 语言${autoNote}
+    if (getLocale() === 'zh-CN') {
+        return `# 语言
 
 始终使用简体中文进行回复。所有解释、注释和与用户的沟通都应使用简体中文。
 技术术语和代码标识符应保持其原始形式不进行翻译。`;
     }
 
-    const autoNote = localeSetting === 'auto' ? ' (automatically detected from system language)' : '';
-    return `# Language${autoNote}
+    return `# Language
 
 Always respond in English. Use English for all explanations, comments, and communications with the user.
 Technical terms and code identifiers should remain in their original form.`;
