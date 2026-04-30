@@ -123,7 +123,7 @@ function getSettingSchema(): z.ZodObject<z.ZodRawShape> {
         default_workspace: z.string().describe('默认工作空间目录路径(为空时使用临时工作空间)').default(''),
         reason_display: ReasonDisplaySchema.describe(
             '思考内容显示模式: full=完整 Markdown, partial=仅显示末尾若干行(流式与结束后一致)'
-        ),
+        ).default('full'),
         providers: z.array(ProviderSchema).describe('可用AI模型提供商').default([]),
         models: z.array(ModelSchema).describe('可用AI模型').default([]),
         display: DisplaySchema.describe('显示设置').default({}),

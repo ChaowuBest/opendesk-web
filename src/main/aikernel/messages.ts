@@ -1180,7 +1180,8 @@ export class AssistantMessage {
         const last_part = this.content[this.content.length - 1];
         if (last_part && last_part.type === 'tool_call') {
             last_part.extend(part);
-        } else {
+        } else if (part.toolcalls.length > 0) {
+            /* 如果API返回的chunk中有空的toolcall列表占位，我们需要跳过它们, 否则消息将会被割裂成许多碎片 */
             this.content.push(part);
         }
         return this;
