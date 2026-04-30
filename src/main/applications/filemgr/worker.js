@@ -48,6 +48,11 @@ import fastGlob from 'fast-glob';
 
 const MAX_RECENT_FAILURES = 20;
 
+// 暂时禁用 filemgr 扫描。FileMgrApplication 仍注册、worker 仍 init、
+// search APIs 仍可用，但不启动 scanner、不做新文件 parse+chunk+embed。
+// 重新启用：改为 true。
+const FILEMGR_SCANNING_ENABLED = false;
+
 class FSScanner {
     /**
      * @param {object} entry - FSEntry config
@@ -340,6 +345,10 @@ class FileManagerWorker extends BaseWorker {
      * @param {object[]} filesystems
      */
     async _startScanners(filesystems) {
+        if (!FILEMGR_SCANNING_ENABLED) {
+            logger.info('[filemgr] scanning disabled — skip starting scanners');
+            return;
+        }
         for (const fsEntry of filesystems) {
             const root = fsEntry.root;
             const state = this.storage.scannerState.roots[root];
