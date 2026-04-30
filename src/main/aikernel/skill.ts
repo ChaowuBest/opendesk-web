@@ -40,7 +40,6 @@ import type { TaskState } from './states/tasks';
 import type { PermissionRequest } from './security/permission';
 import { SoulSkillProvider } from './soul/skills';
 import { SoulRegistry } from './soul/registry';
-import { PoolSkillProvider } from '../builtin/skills/pool';
 
 const NAME_MAX_LEN = 64;
 const DESCRIPTION_MAX_LEN = 1024;
@@ -673,7 +672,6 @@ export class SkillRegistry {
     private registerBuiltinProviders(): void {
         SoulRegistry.initialize();
         this.registerSkillProvider('soul', new SoulSkillProvider());
-        this.registerSkillProvider('builtin', new PoolSkillProvider());
     }
 
     registerSkillProvider(bundleName: string, provider: SkillProvider) {

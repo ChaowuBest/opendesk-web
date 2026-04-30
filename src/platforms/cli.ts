@@ -24,6 +24,7 @@ import { SkillMgrApplication } from '../main/applications/skillmgr/app.js';
 import { ChannelMgrApplication } from '../main/applications/channelmgr/app.js';
 import { KnowledgeBaseApplication } from '../main/applications/knowledgebase/app.js';
 import { DeviceMgrApplication } from '../main/applications/devicemgr/app.js';
+import { BuiltinApplication } from '../main/applications/builtin/app.js';
 
 export class CliPlatform extends AbstractPlatform {
     getName(): string {
@@ -43,7 +44,8 @@ export class CliPlatform extends AbstractPlatform {
             SkillMgrApplication,
             ChannelMgrApplication,
             KnowledgeBaseApplication,
-            DeviceMgrApplication
+            DeviceMgrApplication,
+            BuiltinApplication
         ];
     }
 }

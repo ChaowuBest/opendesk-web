@@ -482,15 +482,3 @@ export class CreateSubTaskPoolTool extends BaseTool<typeof CreateSubTaskPoolArgs
         );
     }
 }
-
-// ─── Skill Provider ────────────────────────────────────────────────────────────
-
-export class PoolSkillProvider {
-    async getSkills(): Promise<Skill[]> {
-        const skill = Skill.parseMd(POOL_SKILL);
-        const toolset = new BaseToolset('pool');
-        toolset.addTool(new CreateSubTaskPoolTool());
-        skill.toolsets = [toolset];
-        return [skill];
-    }
-}
