@@ -48,7 +48,7 @@ export function registerReasonCommand(tui: OpenDeskTUI): void {
                     return REASONING_EFFORT_CLI_TOKENS.filter((opt) => opt.startsWith(subArg)).map((opt) => ({
                         value: `effort ${opt}`,
                         label: opt,
-                        description: labelForStoredReasoningEffort(REASONING_EFFORT_CLI_TO_STORAGE[opt]!)
+                        description: labelForStoredReasoningEffort(REASONING_EFFORT_CLI_TO_STORAGE[opt]!, t)
                     }));
                 }
 
@@ -84,7 +84,7 @@ export function registerReasonCommand(tui: OpenDeskTUI): void {
                 if (currentModel) {
                     lines.push(`  ${t('reason.current.model')}: ${chalk.cyan(currentModelAlias)}`);
                     lines.push(
-                        `  ${t('reason.current.depth')}: ${chalk.cyan(labelForStoredReasoningEffort(currentEffort))}`
+                        `  ${t('reason.current.depth')}: ${chalk.cyan(labelForStoredReasoningEffort(currentEffort, t))}`
                     );
                 }
                 lines.push('');
@@ -158,7 +158,7 @@ export function registerReasonCommand(tui: OpenDeskTUI): void {
                     | 'high';
                 setting.save();
 
-                const effortLabel = labelForStoredReasoningEffort(effortValue);
+                const effortLabel = labelForStoredReasoningEffort(effortValue, t);
                 const info = new InfoOverlay(tui, {
                     title: t('reason.effort.set'),
                     message: chalk.green(t('reason.effort.set.message', { alias: modelAlias, effort: effortLabel })),

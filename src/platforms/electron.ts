@@ -34,6 +34,7 @@ import { BaseApplication } from '../main/applications/base';
 import { ChannelMgrApplication } from '../main/applications/channelmgr/app.js';
 import { KnowledgeBaseApplication } from '../main/applications/knowledgebase/app.js';
 import { DeviceMgrApplication } from '../main/applications/devicemgr/app.js';
+import { BuiltinApplication } from '../main/applications/builtin/app.js';
 
 import path from 'path';
 
@@ -115,7 +116,8 @@ export class ElectronPlatform extends AbstractPlatform {
             TodoMgrApplication,
             ChannelMgrApplication,
             KnowledgeBaseApplication,
-            DeviceMgrApplication
+            DeviceMgrApplication,
+            BuiltinApplication
         ];
     }
 }

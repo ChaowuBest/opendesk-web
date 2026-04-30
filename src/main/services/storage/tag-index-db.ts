@@ -16,7 +16,8 @@
  * 支持动态查询条件：'=', '!=', '>', '<', '>=', '<=', 'like', 'in'
  */
 
-import Database from 'better-sqlite3';
+import type DatabaseType from 'better-sqlite3';
+import { createRequire } from 'module';
 import path from 'path';
 import fs from 'fs';
 import type {
@@ -27,6 +28,10 @@ import type {
     UpdateData,
     ITagIndexDB
 } from './tag-indexer.js';
+
+// createRequire keeps resolution lazy — see base-index-db.ts for context.
+const require = createRequire(import.meta.url);
+const Database = require('better-sqlite3') as typeof DatabaseType;
 
 // 支持的操作符列表
 const SUPPORTED_OPERATORS: TagQueryOperator[] = ['=', '!=', '>', '<', '>=', '<=', 'like', 'in'];

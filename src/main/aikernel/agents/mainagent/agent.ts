@@ -19,6 +19,7 @@ import {
     MAIN_AGENT_SOLO_MODE,
     MAIN_AGENT_UNLIMITED_MODE
 } from './modes/index.js';
+import { getLocale } from '../../../../locale/index.js';
 
 /**
  * Boundary marker separating static (cacheable) content from dynamic content.
@@ -99,6 +100,21 @@ function getToneAndStyleSection(soulName: string, soulUid: string, soulContent: 
 你的回复语言应当与用户给你发消息使用的语言保持一致。
 
 当前人设内容如下：${soulContent}`;
+}
+
+// ─── Section 6.5: Language ─────────────────────────────────────────
+function getLanguageSection(): string {
+    if (getLocale() === 'zh-CN') {
+        return `# 语言
+
+始终使用简体中文进行回复。所有解释、注释和与用户的沟通都应使用简体中文。
+技术术语和代码标识符应保持其原始形式不进行翻译。`;
+    }
+
+    return `# Language
+
+Always respond in English. Use English for all explanations, comments, and communications with the user.
+Technical terms and code identifiers should remain in their original form.`;
 }
 
 // ─── Section 7: Output Efficiency ─────────────────────────────────
@@ -185,6 +201,7 @@ export class MainAgentDecl extends AgentDecl {
             getActionsSection(),
             getUsingToolsSection(),
             getToneAndStyleSection(soulName, soulUid, soulContent),
+            getLanguageSection(),
             getOutputEfficiencySection()
         ];
 

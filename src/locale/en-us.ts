@@ -503,6 +503,75 @@ export const enUs: Record<string, string> = {
     'filemgr.glob.name': 'Glob',
     'filemgr.grep.name': 'Grep',
 
+    // Reasoning Effort Labels
+    'reasoning.effort.default': 'Default',
+    'reasoning.effort.none': 'No Reasoning',
+    'reasoning.effort.low': 'Low Reasoning',
+    'reasoning.effort.medium': 'Medium Reasoning',
+    'reasoning.effort.high': 'Deep Reasoning',
+
+    // Tool Call Status
+    'toolcall.status.pending': 'Pending',
+    'toolcall.status.running': 'Running…',
+    'toolcall.status.success': 'Done',
+    'toolcall.status.interrupted': 'Interrupted',
+    'toolcall.status.error': 'Failed',
+
+    // Task Running Hint
+    'input.hint.running': 'Task in progress, you can still type...',
+    'input.hint.queue.single': '📨 Pending: ${preview} (type /cancel to undo)',
+    'input.hint.queue.multiple': '📨 ${count} message(s) pending (type /cancel to undo)',
+    'input.hint.shell.executing': '⏳ Executing: ${cmd}',
+
+    // Reasoning View
+    'reasoning.card.title': 'Thinking',
+    'reasoning.partial.hint': '…… (use /reason display full to show full thinking)',
+
+    // Compact Boundary
+    'compact.boundary.loading': 'Compressing context...',
+    'compact.boundary.done': 'Context compressed',
+
+    // Internal Message
+    'message.internal': '[Internal message]',
+
+    // Permission
+    'permission.action.read': 'Read',
+    'permission.action.write': 'Edit',
+    'permission.action.execute': 'Execute',
+    'permission.action.access': 'Access',
+    'permission.resource.file': 'File',
+    'permission.resource.network': 'Network',
+    'permission.resource.skill': 'Skill',
+    'permission.option.allow': 'Allow this time',
+    'permission.option.always.prefix': 'Always allow ${typeAction} for ${label}',
+    'permission.option.always.type': 'Always allow all ${typeAction} operations',
+    'permission.option.deny': 'Deny',
+    'permission.question': '${toolName} requests ${typeAction}, allow?',
+    'permission.hint.cancel': 'Esc cancel',
+    'permission.task.unnamed': 'Unnamed Task',
+    'permission.task.background': '⏳ Background task: ${name}',
+    'permission.queue.remaining': '${count} more permission request(s) waiting',
+    'permission.truncate.prefix': 'Always allow ',
+    'permission.truncate.suffix': ' for ',
+
+    // Help Overlay
+    'help.tab.commands': 'Commands',
+    'help.tab.skills': 'Skills',
+    'help.tab.switch': '← → switch',
+    'help.no.commands': 'No commands',
+    'help.skills.loading': 'Loading...',
+    'help.skills.none': 'No skills available',
+    'help.skills.manage': 'Use /skills to manage skills',
+
+    // Shell
+    'shell.cwd.changed': '📂 Workspace changed: ${oldCwd} → ${newCwd}',
+    'shell.no.output': '(no output)',
+    'shell.exec.failed': 'Execution failed: ${error}',
+
+    // InlineResultPanel
+    'inline.panel.scroll': 'Ctrl+↑/↓ scroll',
+    'inline.panel.close': 'Esc close',
+
     // Unknown
     'unknown.source': 'Unknown source'
 };

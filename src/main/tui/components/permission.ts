@@ -31,19 +31,19 @@ import type {
     PermissionTaskInfo
 } from '../../aikernel/security/permission';
 import chalk from 'chalk';
+import { t } from '../../../locale/index.js';
 
-const ACTION_LABELS: Record<string, string> = {
-    read: '读取',
-    write: '编辑',
-    execute: '执行',
-    access: '访问'
-};
+function getActionLabel(action: string): string {
+    const key = `permission.action.${action}`;
+    const result = t(key);
+    return result === key ? action : result;
+}
 
-const RESOURCE_TYPE_LABELS: Record<string, string> = {
-    file: '文件',
-    network: '网络',
-    skill: '技能'
-};
+function getResourceTypeLabel(resourceType: string): string {
+    const key = `permission.resource.${resourceType}`;
+    const result = t(key);
+    return result === key ? resourceType : result;
+}
 
 function padBgLine(line: string, width: number, bgFn: (s: string) => string): string {
     const truncated = truncateToWidth(line, width);
@@ -199,41 +199,41 @@ export class PermissionPromptWidget implements Component {
         const c = permissionColors;
 
         const first = requests[0];
-        const actionLabel = ACTION_LABELS[first.action] || first.action;
-        const typeLabel = RESOURCE_TYPE_LABELS[first.resourceType] || first.resourceType;
+        const actionLabel = getActionLabel(first.action);
+        const typeLabel = getResourceTypeLabel(first.resourceType);
         const typeActionLabel = `${actionLabel}${typeLabel}`;
 
         if (options?.isBackground) {
-            const name = options.taskName || '未命名任务';
-            this.taskBadge = c.taskBadge(` ⏳ 后台任务: ${name} `);
+            const name = options.taskName || t('permission.task.unnamed');
+            this.taskBadge = c.taskBadge(` ${t('permission.task.background', { name })} `);
         } else {
             this.taskBadge = null;
         }
 
         this.queueHint =
             options?.queueSize && options.queueSize > 0
-                ? c.hint(`  还有 ${options.queueSize} 个权限请求等待确认`)
+                ? c.hint(`  ${t('permission.queue.remaining', { count: options.queueSize })}`)
                 : null;
 
         this.titleLine = new Text(c.title(` ${typeActionLabel} `));
 
         this.rawPaths = requests.map((req) => req.resourcePath);
 
-        this.questionText = c.question(`  ${toolName} 请求${typeActionLabel}，是否允许？`);
+        this.questionText = c.question(`  ${t('permission.question', { toolName, typeAction: typeActionLabel })}`);
 
         const items: { value: string; label: string }[] = [];
-        items.push({ value: 'allow', label: '本次允许' });
+        items.push({ value: 'allow', label: t('permission.option.allow') });
 
         for (let i = 0; i < Math.min(prefixOptions.length, 4); i++) {
             const opt = prefixOptions[i];
             items.push({
                 value: `prefix:${opt.pattern}`,
-                label: `始终允许 ${opt.label} 的${typeActionLabel}`
+                label: t('permission.option.always.prefix', { label: opt.label, typeAction: typeActionLabel })
             });
         }
 
-        items.push({ value: 'allow_type', label: `始终允许所有${typeActionLabel}操作` });
-        items.push({ value: 'deny', label: '拒绝' });
+        items.push({ value: 'allow_type', label: t('permission.option.always.type', { typeAction: typeActionLabel }) });
+        items.push({ value: 'deny', label: t('permission.option.deny') });
 
         this.list = new SelectList(items, items.length, defaultSelectListTheme, {
             maxPrimaryColumnWidth: 999,
@@ -242,9 +242,8 @@ export class PermissionPromptWidget implements Component {
                 if (visibleWidth(text) <= ctx.maxWidth) {
                     return colorizeOptionLabel(ctx.item.value, text, c);
                 }
-                // 对"始终允许 <路径> 的XXX"格式的选项，保留前缀后缀，只截断中间路径
-                const prefixStr = '始终允许 ';
-                const suffixPattern = ` 的${typeActionLabel}`;
+                const prefixStr = t('permission.truncate.prefix');
+                const suffixPattern = `${t('permission.truncate.suffix')}${typeActionLabel}`;
                 if (text.startsWith(prefixStr) && text.includes(suffixPattern)) {
                     const suffixStart = text.lastIndexOf(suffixPattern);
                     const pathPart = text.slice(prefixStr.length, suffixStart);
@@ -261,7 +260,7 @@ export class PermissionPromptWidget implements Component {
             }
         });
 
-        this.hintLine = new Text(c.hint('Esc 取消'));
+        this.hintLine = new Text(c.hint(t('permission.hint.cancel')));
 
         this.list.onSelect = (item) => {
             if (item.value === 'allow') {

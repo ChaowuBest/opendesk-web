@@ -5,6 +5,7 @@ import { defaultSelectListTheme } from '../theme';
 import { OpenDeskTUI } from '../entry';
 import { SelectTable, type SelectRow } from './selecttable';
 import { SkillRegistry } from '../../aikernel/skill';
+import { t } from '../../../locale/index.js';
 
 type HelpTab = 'commands' | 'skills';
 
@@ -35,14 +36,14 @@ export class HelpOverlay implements Component {
             value: cmd.name
         }));
         if (commandRows.length === 0) {
-            commandRows.push({ labels: ['', '', chalk.dim('暂无命令')], value: '_empty' });
+            commandRows.push({ labels: ['', '', chalk.dim(t('help.no.commands'))], value: '_empty' });
         }
 
         this.commandTable = new SelectTable(commandRows, maxVisibleRows, defaultSelectListTheme);
         this.commandTable.setColumnStrechFactors([0, 0, 1]);
 
         // ── 构建 Skills 表格（初始为空，异步填充） ──
-        const placeholderRows: SelectRow[] = [{ labels: [chalk.dim('加载中...')], value: '_loading' }];
+        const placeholderRows: SelectRow[] = [{ labels: [chalk.dim(t('help.skills.loading'))], value: '_loading' }];
         this.skillTable = new SelectTable(placeholderRows, maxVisibleRows, defaultSelectListTheme);
         this.skillTable.setColumnStrechFactors([0, 1]);
 
@@ -79,9 +80,11 @@ export class HelpOverlay implements Component {
     }
 
     private buildHeader(): string {
-        const cmdLabel = this.activeTab === 'commands' ? chalk.bold.underline(' 指令 ') : chalk.dim(' 指令 ');
-        const skillLabel = this.activeTab === 'skills' ? chalk.bold.underline(' 技能 ') : chalk.dim(' 技能 ');
-        return ` ${cmdLabel}  ${skillLabel}  ${chalk.dim('← → 切换')}`;
+        const cmdText = ` ${t('help.tab.commands')} `;
+        const skillText = ` ${t('help.tab.skills')} `;
+        const cmdLabel = this.activeTab === 'commands' ? chalk.bold.underline(cmdText) : chalk.dim(cmdText);
+        const skillLabel = this.activeTab === 'skills' ? chalk.bold.underline(skillText) : chalk.dim(skillText);
+        return ` ${cmdLabel}  ${skillLabel}  ${chalk.dim(t('help.tab.switch'))}`;
     }
 
     private async loadSkills() {
@@ -103,7 +106,7 @@ export class HelpOverlay implements Component {
 
             if (rows.length === 0) {
                 rows.push({
-                    labels: [chalk.dim('暂无可用技能'), '', chalk.dim('使用 /skills 管理技能')],
+                    labels: [chalk.dim(t('help.skills.none')), '', chalk.dim(t('help.skills.manage'))],
                     value: '_empty'
                 });
             }

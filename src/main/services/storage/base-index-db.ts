@@ -16,11 +16,18 @@
  * 支持动态查询条件：'=', '!=', '>', '<', '>=', '<=', 'like', 'in', 'between'
  */
 
-import Database from 'better-sqlite3';
+import type DatabaseType from 'better-sqlite3';
+import { createRequire } from 'module';
 import path from 'path';
 import fs from 'fs';
 import { ColumnSchema, validateColumnSchema } from './abstract-storage.js';
 import type { BaseQueryCondition, BaseQueryOperator, BaseQueryOptions, IBaseIndexDB } from './base-indexer.js';
+
+// createRequire keeps the resolution lazy — only triggered when this module
+// is dynamically imported on platforms with native sqlite (mac / win-x64).
+// HM / win-arm64 take the wasm branch in factory and never load this module.
+const require = createRequire(import.meta.url);
+const Database = require('better-sqlite3') as typeof DatabaseType;
 
 // 支持的操作符列表
 const SUPPORTED_OPERATORS: BaseQueryOperator[] = [

@@ -497,6 +497,75 @@ export const zhCn: Record<string, string> = {
     'filemgr.glob.name': '模式匹配',
     'filemgr.grep.name': '内容搜索',
 
+    // Reasoning Effort Labels
+    'reasoning.effort.default': '默认',
+    'reasoning.effort.none': '无推理',
+    'reasoning.effort.low': '简洁推理',
+    'reasoning.effort.medium': '推理适中',
+    'reasoning.effort.high': '推理深入',
+
+    // Tool Call Status
+    'toolcall.status.pending': '等待中',
+    'toolcall.status.running': '执行中…',
+    'toolcall.status.success': '完成',
+    'toolcall.status.interrupted': '中断',
+    'toolcall.status.error': '失败',
+
+    // Task Running Hint
+    'input.hint.running': '任务进行中，你仍然可以继续输入...',
+    'input.hint.queue.single': '📨 待发送: ${preview} (输入 /cancel 撤销)',
+    'input.hint.queue.multiple': '📨 ${count} 条消息待发送 (输入 /cancel 撤销)',
+    'input.hint.shell.executing': '⏳ 正在执行: ${cmd}',
+
+    // Reasoning View
+    'reasoning.card.title': '思考',
+    'reasoning.partial.hint': '…… (使用 /reason display full 来显示完整思考内容)',
+
+    // Compact Boundary
+    'compact.boundary.loading': '正在压缩上下文...',
+    'compact.boundary.done': '上下文已压缩',
+
+    // Internal Message
+    'message.internal': '[内部消息]',
+
+    // Permission
+    'permission.action.read': '读取',
+    'permission.action.write': '编辑',
+    'permission.action.execute': '执行',
+    'permission.action.access': '访问',
+    'permission.resource.file': '文件',
+    'permission.resource.network': '网络',
+    'permission.resource.skill': '技能',
+    'permission.option.allow': '本次允许',
+    'permission.option.always.prefix': '始终允许 ${label} 的${typeAction}',
+    'permission.option.always.type': '始终允许所有${typeAction}操作',
+    'permission.option.deny': '拒绝',
+    'permission.question': '${toolName} 请求${typeAction}，是否允许？',
+    'permission.hint.cancel': 'Esc 取消',
+    'permission.task.unnamed': '未命名任务',
+    'permission.task.background': '⏳ 后台任务: ${name}',
+    'permission.queue.remaining': '还有 ${count} 个权限请求等待确认',
+    'permission.truncate.prefix': '始终允许 ',
+    'permission.truncate.suffix': ' 的',
+
+    // Help Overlay
+    'help.tab.commands': '指令',
+    'help.tab.skills': '技能',
+    'help.tab.switch': '← → 切换',
+    'help.no.commands': '暂无命令',
+    'help.skills.loading': '加载中...',
+    'help.skills.none': '暂无可用技能',
+    'help.skills.manage': '使用 /skills 管理技能',
+
+    // Shell
+    'shell.cwd.changed': '📂 工作空间已切换: ${oldCwd} → ${newCwd}',
+    'shell.no.output': '(无输出)',
+    'shell.exec.failed': '执行失败: ${error}',
+
+    // InlineResultPanel
+    'inline.panel.scroll': 'Ctrl+↑/↓ 翻页',
+    'inline.panel.close': 'Esc 关闭',
+
     // Unknown
     'unknown.source': '未知来源'
 };

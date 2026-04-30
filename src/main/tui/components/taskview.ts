@@ -32,6 +32,7 @@ import { DefaultToolCallView } from './toolcall';
 import { Card } from './card';
 import chalk from 'chalk';
 import type { TaskStatusBarData } from './input';
+import { t } from '../../../locale/index.js';
 
 /**
  * 流式输出时 Markdown 渲染的默认节流间隔（毫秒）。
@@ -127,8 +128,10 @@ function wrapReasoningLinesForPartial(rawLines: string[], contentWidth: number):
     return out;
 }
 
-/** 尾部截断时提示用户可切换为完整思考显示 */
-const REASONING_PARTIAL_OMIT_HINT = chalk.dim.italic('…… (使用 /reason display full 来显示完整思考内容)');
+/** 尾部截断时提示用户可切换为完整思考显示（动态取本地化文本） */
+function getReasoningPartialOmitHint(): string {
+    return chalk.dim.italic(t('reasoning.partial.hint'));
+}
 
 /** 思考/推理内容用卡片展示：
  * - reason_display = 'partial'：只显示最后 REASONING_TAIL_LINES 行；超出时首行省略号 + 切换 full 提示
@@ -220,7 +223,7 @@ export class ReasoningMessagePartView implements Component {
 
             const card = new Card({
                 icon: this._streaming ? this.getStreamingIcon() : chalk.dim('◆'),
-                title: '思考',
+                title: t('reasoning.card.title'),
                 body: bodyLines
             });
             this.cachedOutput = card.render(width);
@@ -230,12 +233,12 @@ export class ReasoningMessagePartView implements Component {
             const wrappedLines = wrapReasoningLinesForPartial(this._content.split('\n'), contentWidth);
             const hasMoreAbove = wrappedLines.length > REASONING_TAIL_LINES;
             const tailLines = wrappedLines.slice(-REASONING_TAIL_LINES).map((line) => chalk.italic(line));
-            const hintLines = hasMoreAbove ? wrapTextWithAnsi(REASONING_PARTIAL_OMIT_HINT, contentWidth) : [];
+            const hintLines = hasMoreAbove ? wrapTextWithAnsi(getReasoningPartialOmitHint(), contentWidth) : [];
             const bodyLines = hasMoreAbove ? [...hintLines, ...tailLines] : tailLines;
             const maxBodyLines = hasMoreAbove ? hintLines.length + REASONING_TAIL_LINES : REASONING_TAIL_LINES;
             const card = new Card({
                 icon: this._streaming ? this.getStreamingIcon() : chalk.dim('◆'),
-                title: '思考',
+                title: t('reasoning.card.title'),
                 body: bodyLines,
                 maxLines: maxBodyLines,
                 truncateStrategy: 'tail'
@@ -424,14 +427,14 @@ export class CompactBoundaryView implements Component {
         if (this._loading) {
             const idx = Math.floor(Date.now() / COMPACT_SPINNER_MS) % COMPACT_SPINNER_FRAMES.length;
             const icon = chalk.blueBright(COMPACT_SPINNER_FRAMES[idx]);
-            return ['', this.buildLine(` ${icon} 正在压缩上下文... `, width), ''];
+            return ['', this.buildLine(` ${icon} ${t('compact.boundary.loading')} `, width), ''];
         }
 
         if (!this.invalidated && this.lastWidth === width && this.cachedOutput) {
             return this.cachedOutput;
         }
         this.lastWidth = width;
-        this.cachedOutput = ['', this.buildLine(' ✂ 上下文已压缩 ', width), ''];
+        this.cachedOutput = ['', this.buildLine(` ✂ ${t('compact.boundary.done')} `, width), ''];
         this.invalidated = false;
         return this.cachedOutput;
     }
@@ -479,7 +482,7 @@ export class UserMessageView implements Component {
             return [];
         }
         if (this.message.internal) {
-            const label = chalk.dim.italic('  [内部消息]');
+            const label = chalk.dim.italic(`  ${t('message.internal')}`);
             const body = this.box.render(width);
             return [label, ...body];
         }
