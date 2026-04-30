@@ -18,12 +18,17 @@
  *   - chunk_index_vec:  chunk_pk(PK), repr float[N]（vec0 虚拟表）
  */
 
-import Database from 'better-sqlite3';
-import * as sqliteVec from 'sqlite-vec';
+import type DatabaseType from 'better-sqlite3';
+import { createRequire } from 'module';
 import path from 'path';
 import fs from 'fs';
 import { SimilarityMetric } from './abstract-storage.js';
 import type { ChunkIndexRecord, ChunkSearchResult, ChunkSearchOptions, IChunkIndexDB } from './chunk-indexer.js';
+
+// createRequire keeps resolution lazy — see base-index-db.ts for context.
+const require = createRequire(import.meta.url);
+const Database = require('better-sqlite3') as typeof DatabaseType;
+const sqliteVec = require('sqlite-vec') as typeof import('sqlite-vec');
 
 export class ChunkIndexDB implements IChunkIndexDB {
     private db: Database.Database;
@@ -115,9 +120,7 @@ export class ChunkIndexDB implements IChunkIndexDB {
     }
 
     async getStoredDim(): Promise<number | null> {
-        const stmt = this.db.prepare(
-            `SELECT vec_length(repr) as dim FROM ${this.vecTableName} LIMIT 1`
-        );
+        const stmt = this.db.prepare(`SELECT vec_length(repr) as dim FROM ${this.vecTableName} LIMIT 1`);
         const row = stmt.get() as { dim: number } | undefined;
         return row?.dim ?? null;
     }
@@ -125,10 +128,10 @@ export class ChunkIndexDB implements IChunkIndexDB {
     existingItemIds(ids: string[]): Promise<Set<string>> {
         if (ids.length === 0) return Promise.resolve(new Set());
         const placeholders = ids.map(() => '?').join(', ');
-        const rows = this.db.prepare(
-            `SELECT DISTINCT item_id FROM ${this.metaTableName} WHERE item_id IN (${placeholders})`
-        ).all(ids) as { item_id: string }[];
-        return Promise.resolve(new Set(rows.map(row => row.item_id)));
+        const rows = this.db
+            .prepare(`SELECT DISTINCT item_id FROM ${this.metaTableName} WHERE item_id IN (${placeholders})`)
+            .all(ids) as { item_id: string }[];
+        return Promise.resolve(new Set(rows.map((row) => row.item_id)));
     }
 
     /**
@@ -274,17 +277,17 @@ export class ChunkIndexDB implements IChunkIndexDB {
                 distance: number;
             }>;
 
-            const results: ChunkSearchResult[] = rows.map(row => ({
+            const results: ChunkSearchResult[] = rows.map((row) => ({
                 item_id: row.item_id,
                 chunk_id: row.chunk_id,
                 chunk_text: row.chunk_text,
                 distance: row.distance,
-                similarity: this.distanceToSimilarity(row.distance, metric),
+                similarity: this.distanceToSimilarity(row.distance, metric)
             }));
 
             // 应用相似度阈值过滤（>= threshold，与 VectorIndexer 语义一致）
             if (threshold !== undefined) {
-                return results.filter(r => r.similarity >= threshold);
+                return results.filter((r) => r.similarity >= threshold);
             }
             return results;
         } finally {

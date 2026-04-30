@@ -158,10 +158,16 @@ cat > "$RELEASE_DIR/package.json" << EOF
     "node": ">=20.0.0"
   },
   "dependencies": {
+    "hnsw": "^1.1.1",
+    "node-sqlite3-wasm": "^0.8.55",
     "number-to-alphabet": "^1.0.0",
     "vectra": "^0.11.1",
     "esbuild": "^0.27.3",
     "unpdf": "^1.4.0"
+  },
+  "optionalDependencies": {
+    "better-sqlite3": "^12.6.2",
+    "sqlite-vec": "^0.1.7-alpha.2"
   }
 }
 EOF

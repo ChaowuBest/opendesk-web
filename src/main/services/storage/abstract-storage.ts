@@ -480,6 +480,22 @@ export class BaseStorage {
     }
 
     /**
+     * Clear data for a specific item in a specific indexer, leaving all other indexers untouched.
+     *
+     * @param itemId - The item_id to clear
+     * @param indexerName - Which indexer to clear ('ChunkIndexer' | 'VectorIndexer' | 'BM25Indexer' | 'TagIndexer')
+     * @throws Error if indexerName is 'BaseIndexer' or if the indexer is not initialized
+     */
+    async clearIndexerForItem(itemId: string, indexerName: string): Promise<void> {
+        if (indexerName === 'BaseIndexer') {
+            throw new Error('Cannot clear BaseIndexer for a single item — use delete() to remove the entire item');
+        }
+
+        const indexer = this.getIndexerByName(indexerName);
+        await indexer.delete([itemId]);
+    }
+
+    /**
      * 获取所有 indexer 状态信息
      */
     async getStatus(): Promise<Record<string, Record<string, any>>> {

@@ -16,12 +16,17 @@
  * 支持向量相似度搜索：cosine, euclidean, manhattan
  */
 
-import Database from 'better-sqlite3';
-import * as sqliteVec from 'sqlite-vec';
+import type DatabaseType from 'better-sqlite3';
+import { createRequire } from 'module';
 import path from 'path';
 import fs from 'fs';
 import { SimilarityMetric } from './abstract-storage.js';
 import type { VectorIndexRecord, VectorSearchResult, VectorSearchOptions, IVectorIndexDB } from './vector-indexer.js';
+
+// createRequire keeps resolution lazy — see base-index-db.ts for context.
+const require = createRequire(import.meta.url);
+const Database = require('better-sqlite3') as typeof DatabaseType;
+const sqliteVec = require('sqlite-vec') as typeof import('sqlite-vec');
 
 /**
  * 向量索引数据库管理类

@@ -19,6 +19,8 @@ import { z } from 'zod';
 import FileManagerWorker from './worker';
 import { logger, getDebugMode } from '../../utils/logger.js';
 import { ApplicationRegistry } from '../registry.js';
+import { FILE_NAVIGATION_SKILL } from './skills.js';
+import { Skill } from '../../aikernel/skill.js';
 import { t } from '../../../locale/index.js';
 
 class FileMgrApplication extends BaseApplication {
@@ -59,29 +61,51 @@ class FileMgrApplication extends BaseApplication {
     async getToolsets() {
         const toolset = createFileManagerToolset();
 
-        // 仅在配置了嵌入模型时才注册 searchFile 工具
         try {
             const setting = Setting.getInstance();
-            const embeddingModel = setting.getModelInstance(setting.data.default_embedding_model);
-            if (embeddingModel) {
-                const searchFileTool = new BaseTool(
-                    'searchFile',
-                    '根据给定的查询内容对文件进行模糊搜索',
-                    z.object({
-                        query: z.string().describe('查询内容')
-                    })
-                );
-                searchFileTool.setExecutor(async (args) => {
-                    const result = await this.callWorker('searchFilesByNameSimilarity', args.query);
-                    return JSON.stringify(result);
-                });
-                toolset.addTool(searchFileTool);
-            }
+            setting.getDefaultEmbeddingModelInstance();
+
+            const searchByNameTool = new BaseTool(
+                'searchFileByName',
+                '根据文件名语义搜索文件。适用于"找和 auth 相关的文件"等场景。返回按相关度排序的文件列表。',
+                z.object({
+                    query: z.string().describe('搜索查询'),
+                    topK: z.number().optional().describe('返回结果数量上限，默认 20')
+                })
+            );
+            searchByNameTool.setExecutor(async (args) => {
+                const result = await this.callWorker('searchFileByName', args.query, args.topK);
+                return JSON.stringify(result);
+            });
+            toolset.addTool(searchByNameTool);
+
+            const searchByContentTool = new BaseTool(
+                'searchFileByContent',
+                '根据文件内容语义搜索文件。适用于"找讲迁移方案的文档"等场景。返回按相关度排序的文件列表，附带匹配片段。',
+                z.object({
+                    query: z.string().describe('搜索查询'),
+                    topK: z.number().optional().describe('返回结果数量上限，默认 20')
+                })
+            );
+            searchByContentTool.setExecutor(async (args) => {
+                const result = await this.callWorker('searchFileByContent', args.query, args.topK);
+                return JSON.stringify(result);
+            });
+            toolset.addTool(searchByContentTool);
         } catch {
-            // 嵌入模型未配置，跳过 searchFile 工具注册
+            // Embedding model not configured, skip semantic search tools
         }
 
         return [toolset];
+    }
+
+    async getSkills() {
+        try {
+            Setting.getInstance().getDefaultEmbeddingModelInstance();
+        } catch {
+            return [];
+        }
+        return [Skill.parseMd(FILE_NAVIGATION_SKILL)];
     }
 
     openPath(filePath) {
@@ -89,51 +113,66 @@ class FileMgrApplication extends BaseApplication {
     }
 
     getCliSlashCommands(tui) {
-        /**
-         * 格式化 storage 统计区块。
-         * @param {object} storage - { db_size, vecdb_size, veccache_size }
-         * @returns {string}
-         */
         function formatStorageBlock(storage) {
             if (!storage) {
                 return '存储统计\n  (暂无数据)';
             }
-            return `存储统计\n  文件总数: ${storage.db_size} 条 | 向量索引: ${storage.vecdb_size} 条 | 向量缓存: ${storage.veccache_size} 条`;
+            return `存储统计\n  文件元数据: ${storage.db_size} 条 | 文件名向量: ${storage.vecdb_size} 条 | 内容 chunks: ${storage.chunk_size} 条`;
         }
 
-        /**
-         * 格式化 /fs-status 的显示内容。
-         * 只展示用户可理解的信息：状态、目录、文件数、上次全量扫描时间。
-         * 不展示 storage 原始对象或内部 key。
-         * @param {object} data - callWorker getStatus 的第二层 data
-         * @returns {string}
-         */
         function formatFsStatusMessage(data) {
             const lines = [`状态: ${data.status}`, ''];
             const scanners = data.scanners ?? [];
+
+            let embeddingConfigured = true;
+            try {
+                Setting.getInstance().getDefaultEmbeddingModelInstance();
+            } catch {
+                embeddingConfigured = false;
+            }
+
             if (scanners.length === 0) {
                 lines.push('暂无扫描目录');
                 lines.push('运行 /config -> 文件扫描配置 添加目录');
             } else {
                 for (const s of scanners) {
-                    const lastScan = s.lastFullScan ? new Date(s.lastFullScan).toLocaleString() : '从未';
-                    lines.push(s.entry.root);
-                    lines.push(`  文件数: ${s.totalFiles} | 上次全量扫描: ${lastScan}`);
+                    lines.push(s.root ?? s.entry?.root);
+
+                    if (data.isDeferred) {
+                        lines.push('  初始化中...（等待嵌入模型配置）');
+                    } else if (!embeddingConfigured && s.lastFullScan === 0) {
+                        lines.push('  已暂停（等待嵌入模型配置）');
+                    } else if (!embeddingConfigured && s.lastFullScan > 0) {
+                        const lastScan = new Date(s.lastFullScan).toLocaleString();
+                        lines.push(
+                            `  已暂停，上次扫描: ${lastScan} | 文件数: ${s.totalFiles ?? 0} | 失败: ${s.lastFailedCount ?? 0}`
+                        );
+                    } else if (embeddingConfigured && s.lastFullScan === 0 && s.isRunning) {
+                        lines.push('  首次扫描进行中...');
+                    } else if (embeddingConfigured && s.lastFullScan === 0) {
+                        lines.push('  从未扫描');
+                    } else {
+                        const lastScan = new Date(s.lastFullScan).toLocaleString();
+                        lines.push(
+                            `  上次全量扫描: ${lastScan} | 文件数: ${s.totalFiles ?? 0} | 失败: ${s.lastFailedCount ?? 0}`
+                        );
+                    }
                     lines.push('');
                 }
             }
+
             lines.push('');
             lines.push(...formatStorageBlock(data.storage).split('\n'));
+
+            if (!embeddingConfigured) {
+                lines.push('');
+                lines.push('⚠️ 当前未配置有效的向量嵌入模型，扫描已暂停。');
+                lines.push('请运行 /config -> 默认模型配置 设置”向量嵌入模型”。');
+            }
+
             return lines.join('\n').trimEnd();
         }
 
-        /**
-         * 格式化 /fs-status 在 debug 模式下附加的诊断信息。
-         * 这些字段用于排查调用链与扫描器状态，不适合在普通模式下展示给用户。
-         * @param {object} filemgrConfig
-         * @param {object} result - ApplicationRegistry.callWorker 的原始返回
-         * @returns {string}
-         */
         function formatFsStatusDebugMessage(filemgrConfig, result) {
             const entries = filemgrConfig?.entries ?? [];
             const lines = ['调试信息', `  配置 entries: ${entries.length} 个`];
@@ -153,10 +192,16 @@ class FileMgrApplication extends BaseApplication {
 
             const data = workerResp.data;
             lines.push(`  scannerStatus: ${data.status}`);
+            lines.push(`  isDeferred: ${data.isDeferred ?? false}`);
 
             const scanners = data.scanners ?? [];
             const totalFiles = scanners.reduce((sum, s) => sum + (s.totalFiles ?? 0), 0);
             lines.push(`  scanners: ${scanners.length} 个 | 总文件数: ${totalFiles}`);
+
+            const storage = data.storage ?? {};
+            lines.push(
+                `  storage: db=${storage.db_size ?? 0}, vec=${storage.vecdb_size ?? 0}, chunks=${storage.chunk_size ?? 0}`
+            );
 
             return lines.join('\n');
         }
@@ -169,10 +214,6 @@ class FileMgrApplication extends BaseApplication {
                     try {
                         const result = await ApplicationRegistry.callWorker('filemgr', 'getStatus');
 
-                        // 这里存在三层状态判断，但职责不同，不能混为一个 status：
-                        // 1. result.status：主线程 -> 全局 worker 的 RPC 调用是否成功。
-                        // 2. workerResp.status：filemgr worker 方法返回包是否成功。
-                        // 3. workerResp.data.status：文件扫描业务状态（idle/running/error），这是用户真正关心的状态。
                         if (result.status !== 'ok') {
                             const msg = `获取状态失败: ${result.message ?? result.status}`;
                             logger.warn(`[fs-status] ${msg}`);
@@ -196,37 +237,23 @@ class FileMgrApplication extends BaseApplication {
                         }
 
                         let message = formatFsStatusMessage(workerResp.data);
-                        const storage = workerResp.data.storage ?? {};
-                        const dbSize = storage.db_size ?? 0;
-                        const vecSize = storage.vecdb_size ?? 0;
-                        if (dbSize > 0 && vecSize === 0) {
-                            let embeddingConfigured = true;
-                            try {
-                                Setting.getInstance().getDefaultEmbeddingModelInstance();
-                            } catch {
-                                embeddingConfigured = false;
-                            }
-                            if (!embeddingConfigured) {
-                                message += '\n\n⚠️ 检测到未配置有效的向量嵌入模型，文件相似度检索不可用。';
-                                message += '\n请运行 /config -> 默认模型配置 设置“向量嵌入模型”。';
-                            }
-                        }
+
                         if (getDebugMode()) {
                             const setting = Setting.getInstance();
                             const filemgrConfig = setting.getApplicationConfig('filemgr');
 
-                            logger.info('[fs-status] === FileMgr 调试摘要 ===');
-                            logger.info(`[fs-status] entriesCount: ${(filemgrConfig?.entries ?? []).length}`);
-                            logger.info(`[fs-status] callWorkerStatus: ${result.status}`);
-                            logger.info(`[fs-status] workerStatus: ${workerResp.status}`);
-                            logger.info(`[fs-status] scannerStatus: ${workerResp.data.status}`);
-                            logger.info(`[fs-status] scannersCount: ${(workerResp.data.scanners ?? []).length}`);
-                            logger.info(
-                                `[fs-status] storageStats: db=${dbSize}, vecdb=${vecSize}, cache=${storage.veccache_size ?? 0}`
-                            );
-                            logger.info('[fs-status] =======================');
-
                             message += `\n\n${formatFsStatusDebugMessage(filemgrConfig, result)}`;
+
+                            // Recent failures (spec §11.3)
+                            for (const s of workerResp.data.scanners ?? []) {
+                                const failures = s.recentFailures ?? [];
+                                if (failures.length > 0) {
+                                    message += `\n\n最近失败文件（${s.root ?? s.entry?.root}）:`;
+                                    for (const f of failures) {
+                                        message += `\n  ${f.path} - ${f.error}`;
+                                    }
+                                }
+                            }
                         }
 
                         tui.showTextPage('文件扫描状态', message);
