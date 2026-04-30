@@ -3,7 +3,7 @@ import { defaultSelectListTheme } from '../../theme.js';
 import { Setting } from '../../../utils/setting.js';
 import { ConfigForm, type FieldDef, type ActionDef } from './form';
 import chalk from 'chalk';
-import { REASONING_EFFORT_LABELS, REASONING_EFFORT_SELECT_VALUES } from '../../../../common/reasoning-effort.js';
+import { getReasoningEffortLabels, REASONING_EFFORT_SELECT_VALUES } from '../../../../common/reasoning-effort.js';
 import { t } from '../../../../locale/index.js';
 
 interface ModelData {
@@ -43,8 +43,9 @@ export class ModelConfigPage implements Component {
         const items = [
             { value: '__add__', label: chalk.green(t('config.model.add')) },
             ...models.map((m: ModelData, i: number) => {
+                const effortLabels = getReasoningEffortLabels(t);
                 const effortTag = m.reasoning_effort
-                    ? chalk.yellow(`[${REASONING_EFFORT_LABELS[m.reasoning_effort] ?? m.reasoning_effort}]`)
+                    ? chalk.yellow(`[${effortLabels[m.reasoning_effort] ?? m.reasoning_effort}]`)
                     : '';
                 return {
                     value: String(i),
@@ -114,7 +115,7 @@ export class ModelConfigPage implements Component {
             label: t('config.model.field.reasoning_effort'),
             value: model.reasoning_effort || '',
             options: REASONING_EFFORT_SELECT_VALUES,
-            optionLabels: REASONING_EFFORT_LABELS
+            optionLabels: getReasoningEffortLabels(t)
         });
 
         const actions: ActionDef[] = [{ key: 'save', label: t('config.common.save'), style: 'primary' }];
