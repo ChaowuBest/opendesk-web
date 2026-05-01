@@ -10,7 +10,6 @@
  */
 
 import { Marked } from 'marked';
-import { markedHighlight } from 'marked-highlight';
 import { logger, getDebugMode } from '../utils/logger.js';
 import { BaseTool, BaseToolset } from './tool.js';
 
@@ -33,16 +32,7 @@ function isValidToolCallArgs(args_string: string): boolean {
     }
 }
 
-export const marked = new Marked(
-    markedHighlight({
-        emptyLangClass: 'hljs',
-        langPrefix: 'hljs language-',
-        highlight(code, lang, info) {
-            const language = hljs.getLanguage(lang) ? lang : 'plaintext';
-            return hljs.highlight(code, { language }).value;
-        }
-    })
-);
+export const marked = new Marked();
 
 marked.use(
     markedKatex({
@@ -54,7 +44,80 @@ marked.use(
 
 const DANGEROUS_HTML_RE = /<\s*\/?\s*(style|script|link|meta|iframe|object|embed|applet|form|base)\b[^>]*>/gi;
 
+const LANG_DISPLAY_NAMES: Record<string, string> = {
+    js: 'JavaScript',
+    javascript: 'JavaScript',
+    ts: 'TypeScript',
+    typescript: 'TypeScript',
+    py: 'Python',
+    python: 'Python',
+    rb: 'Ruby',
+    ruby: 'Ruby',
+    java: 'Java',
+    cpp: 'C++',
+    c: 'C',
+    cs: 'C#',
+    csharp: 'C#',
+    go: 'Go',
+    rust: 'Rust',
+    rs: 'Rust',
+    swift: 'Swift',
+    kt: 'Kotlin',
+    kotlin: 'Kotlin',
+    php: 'PHP',
+    sql: 'SQL',
+    html: 'HTML',
+    css: 'CSS',
+    scss: 'SCSS',
+    less: 'LESS',
+    json: 'JSON',
+    yaml: 'YAML',
+    yml: 'YAML',
+    xml: 'XML',
+    toml: 'TOML',
+    sh: 'Shell',
+    bash: 'Bash',
+    zsh: 'Zsh',
+    powershell: 'PowerShell',
+    ps1: 'PowerShell',
+    md: 'Markdown',
+    markdown: 'Markdown',
+    tex: 'LaTeX',
+    latex: 'LaTeX',
+    dockerfile: 'Dockerfile',
+    makefile: 'Makefile',
+    cmake: 'CMake',
+    r: 'R',
+    lua: 'Lua',
+    perl: 'Perl',
+    scala: 'Scala',
+    elixir: 'Elixir',
+    dart: 'Dart',
+    vue: 'Vue',
+    svelte: 'Svelte',
+    jsx: 'JSX',
+    tsx: 'TSX',
+    graphql: 'GraphQL',
+    proto: 'Protobuf',
+    ini: 'INI',
+    plaintext: 'Text'
+};
+
 marked.use({
+    renderer: {
+        code({ text, lang }: { text: string; lang?: string; escaped?: boolean }): string {
+            const langClass = lang ? `hljs language-${lang}` : 'hljs';
+            const language = lang && hljs.getLanguage(lang) ? lang : 'plaintext';
+            const highlighted = hljs.highlight(text, { language }).value;
+            const displayLang = lang
+                ? LANG_DISPLAY_NAMES[lang.toLowerCase()] || lang.charAt(0).toUpperCase() + lang.slice(1)
+                : '';
+            const headerHtml = displayLang
+                ? `<div class="code-block-header"><span class="code-block-lang">${displayLang}</span></div>`
+                : '';
+            return `<div class="code-block-wrapper">${headerHtml}<pre><code class="${langClass}">${highlighted}</code></pre></div>`;
+        }
+    },
     hooks: {
         postprocess(html: string): string {
             return html.replace(DANGEROUS_HTML_RE, (match) => {
