@@ -473,6 +473,13 @@ if (window.self !== window.top) {
                 throw new Error(result.message);
             }
             return result.data;
+        },
+        verifyModel: async ({ base_url, api_key, model_name }) => {
+            const result = await ipcRenderer.invoke('setting:verifyModel', { base_url, api_key, model_name });
+            if (result.status !== 'ok') {
+                throw new Error(result.message);
+            }
+            return result.data;
         }
     });
 

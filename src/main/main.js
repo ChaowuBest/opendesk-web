@@ -890,6 +890,17 @@ const registerSettingAPIHandlers = () => {
     ipcMain.handle('setting:getProviderTemplates', () => {
         return { status: 'ok', data: PROVIDER_TEMPLATES };
     });
+    ipcMain.handle('setting:verifyModel', async (event, { base_url, api_key, model_name }) => {
+        try {
+            const { LLM } = await import('./aikernel/llm.js');
+            const { ModelInstance } = await import('./utils/setting.js');
+            const instance = new ModelInstance(model_name, base_url, api_key, false);
+            await LLM.verifyModel(instance);
+            return { status: 'ok', data: true };
+        } catch (error) {
+            return { status: 'error', message: error.message || String(error) };
+        }
+    });
     ipcMain.handle('workspace:getEffectiveWorkspace', () => {
         try {
             const workspace = Setting.getInstance().getEffectiveWorkspace();

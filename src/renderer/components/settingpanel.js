@@ -51,6 +51,7 @@ class SettingPanel extends HTMLElement {
 
             <!-- 可滚动内容区 -->
             <div class="flex-1 overflow-y-auto px-6 py-6 space-y-8">
+                ${this.renderActionButtonGroup()}
                 ${this.renderProvidersSection()}
                 ${this.renderModelsSection()}
                 ${this.renderDefaultModelsSection()}
@@ -70,44 +71,34 @@ class SettingPanel extends HTMLElement {
     _createSettingPanelToolbar() {
         const container = this.querySelector('#setting-panel-toolbar');
         if (!container) return;
+        // toolbar is now empty (buttons moved to inline button group)
+    }
 
-        const buttons = [
-            {
-                id: 'import-quickpass-btn',
-                icon: 'fa-key',
-                label: '导入口令',
-                primary: false,
-                action: () => this.showImportQuickPassModal()
-            },
-            {
-                id: 'export-quickpass-btn',
-                icon: 'fa-file-export',
-                label: '导出口令',
-                primary: false,
-                action: () => this.showExportQuickPassModal()
-            },
-            {
-                id: 'advanced-setting-btn',
-                icon: 'fa-cog',
-                label: '高级设置',
-                primary: true,
-                action: () => window.globalControlAPI.openAdvancedSettingEditor()
-            }
-        ];
-
-        const wrapper = document.createElement('div');
-        wrapper.className = 'flex items-center gap-2';
-
-        for (const btn of buttons) {
-            const el = document.createElement('button');
-            el.id = btn.id;
-            el.className = btn.primary ? 'sp-toolbar-btn sp-toolbar-primary' : 'sp-toolbar-btn';
-            el.innerHTML = `<i class="fa-solid ${btn.icon}"></i><span>${btn.label}</span>`;
-            el.addEventListener('click', btn.action);
-            wrapper.appendChild(el);
-        }
-
-        container.appendChild(wrapper);
+    renderActionButtonGroup() {
+        return `
+        <section>
+            <div class="flex items-center gap-2 mb-4">
+                <div class="w-8 h-8 rounded-lg bg-indigo-500/10 flex items-center justify-center">
+                    <i class="fas fa-toolbox text-indigo-500 text-sm"></i>
+                </div>
+                <h2 class="text-lg font-semibold text-gray-800">快捷操作</h2>
+            </div>
+            <div class="flex flex-wrap gap-3">
+                <button id="quick-setup-btn" class="sp-toolbar-btn">
+                    <i class="fa-solid fa-magic"></i><span>快速设置</span>
+                </button>
+                <button id="import-quickpass-btn" class="sp-toolbar-btn">
+                    <i class="fa-solid fa-key"></i><span>导入口令</span>
+                </button>
+                <button id="export-quickpass-btn" class="sp-toolbar-btn">
+                    <i class="fa-solid fa-file-export"></i><span>导出口令</span>
+                </button>
+                <button id="advanced-setting-btn" class="sp-toolbar-btn sp-toolbar-primary">
+                    <i class="fa-solid fa-cog"></i><span>高级设置</span>
+                </button>
+            </div>
+        </section>
+        `;
     }
 
     renderProvidersSection() {
@@ -118,14 +109,14 @@ class SettingPanel extends HTMLElement {
                 <div class="w-8 h-8 rounded-lg bg-blue-500/10 flex items-center justify-center">
                     <i class="fas fa-server text-blue-500 text-sm"></i>
                 </div>
-                <h2 class="text-lg font-semibold text-gray-800">模型提供商</h2>
+                <h2 class="text-lg font-semibold text-gray-800">模型提供方</h2>
                 <span class="text-xs text-gray-400 ml-2">${providers.length} 个已配置</span>
             </div>
             <div id="provider-list" class="grid grid-cols-1 md:grid-cols-2 gap-3">
                 ${providers.map((p, i) => this.renderProviderCard(p, i)).join('')}
             </div>
             <button id="add-provider-btn" class="sp-add-btn sp-add-provider mt-4 w-full py-3 text-sm text-gray-500 rounded-2xl border-2 border-dashed border-gray-200">
-                <i class="fas fa-plus mr-2"></i>添加提供商
+                <i class="fas fa-plus mr-2"></i>添加提供方
             </button>
         </section>
         `;
@@ -259,6 +250,20 @@ class SettingPanel extends HTMLElement {
     }
 
     setUpEventListeners() {
+        // 快捷操作按钮组
+        this.querySelector('#quick-setup-btn')?.addEventListener('click', () => {
+            window.globalControlAPI.openWizard();
+        });
+        this.querySelector('#import-quickpass-btn')?.addEventListener('click', () => {
+            this.showImportQuickPassModal();
+        });
+        this.querySelector('#export-quickpass-btn')?.addEventListener('click', () => {
+            this.showExportQuickPassModal();
+        });
+        this.querySelector('#advanced-setting-btn')?.addEventListener('click', () => {
+            window.globalControlAPI.openAdvancedSettingEditor();
+        });
+
         // 设置默认模型选择框的初始值
         this.updateDefaultModelSelects();
 
@@ -278,12 +283,12 @@ class SettingPanel extends HTMLElement {
             });
         });
 
-        // 添加提供商按钮
+        // 添加提供方按钮
         this.querySelector('#add-provider-btn')?.addEventListener('click', () => {
             this.showProviderTemplateModal();
         });
 
-        // 编辑/删除提供商
+        // 编辑/删除提供方
         this.querySelectorAll('.edit-provider-btn').forEach((btn) => {
             btn.addEventListener('click', (e) => {
                 const index = parseInt(e.currentTarget.dataset.index);
@@ -383,7 +388,7 @@ class SettingPanel extends HTMLElement {
         }
     }
 
-    // --- 提供商管理 ---
+    // --- 提供方管理 ---
     showProviderTemplateModal() {
         const templates = this.providerTemplates;
         const templateCards = templates
@@ -400,7 +405,7 @@ class SettingPanel extends HTMLElement {
         this.showModal(`
             <div class="bg-white/95 backdrop-blur-2xl rounded-3xl shadow-2xl border border-white/50 w-full max-w-2xl mx-4 overflow-hidden">
                 <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
-                    <h3 class="text-lg font-semibold text-gray-800">选择提供商模板</h3>
+                    <h3 class="text-lg font-semibold text-gray-800">选择提供方模板</h3>
                     <button class="modal-close-btn sp-modal-close w-8 h-8 rounded-lg text-gray-400">
                         <i class="fas fa-times"></i>
                     </button>
@@ -447,7 +452,7 @@ class SettingPanel extends HTMLElement {
         this.showModal(`
             <div class="bg-white/95 backdrop-blur-2xl rounded-3xl shadow-2xl border border-white/50 w-full min-w-[480px] max-w-xl mx-4 overflow-hidden">
                 <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
-                    <h3 class="text-lg font-semibold text-gray-800">${isEdit ? '编辑提供商' : '添加提供商'}</h3>
+                    <h3 class="text-lg font-semibold text-gray-800">${isEdit ? '编辑提供方' : '添加提供方'}</h3>
                     <button class="modal-close-btn sp-modal-close w-8 h-8 rounded-lg text-gray-400">
                         <i class="fas fa-times"></i>
                     </button>
@@ -513,7 +518,7 @@ class SettingPanel extends HTMLElement {
         const no_proxy = this.querySelector('#provider-no-proxy-input')?.checked || false;
 
         if (!name) {
-            window.notificationAPI.sendNotification('error', '设置', '请输入提供商名称');
+            window.notificationAPI.sendNotification('error', '设置', '请输入提供方名称');
             return;
         }
 
@@ -538,13 +543,13 @@ class SettingPanel extends HTMLElement {
         const modelCount = modelsUsingProvider.length;
         const message =
             modelCount > 0
-                ? `提供商「${provider.name}」下有 ${modelCount} 个关联模型，删除提供商将同时删除这些模型。`
-                : `确定要删除提供商「${provider.name}」吗？`;
+                ? `提供方「${provider.name}」下有 ${modelCount} 个关联模型，删除提供方将同时删除这些模型。`
+                : `确定要删除提供方「${provider.name}」吗？`;
 
         this.showModal(`
             <div class="bg-white/95 backdrop-blur-2xl rounded-3xl shadow-2xl border border-white/50 w-full max-w-md mx-4 overflow-hidden">
                 <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
-                    <h3 class="text-lg font-semibold text-gray-800">删除提供商</h3>
+                    <h3 class="text-lg font-semibold text-gray-800">删除提供方</h3>
                     <button class="modal-close-btn sp-modal-close text-gray-400">
                         <i class="fas fa-times"></i>
                     </button>
@@ -591,7 +596,8 @@ class SettingPanel extends HTMLElement {
     }
 
     refreshProvidersSection() {
-        const section = this.querySelector('section:first-of-type');
+        const sections = this.querySelectorAll('section');
+        const section = sections.length >= 2 ? sections[1] : null;
         if (section) {
             section.outerHTML = this.renderProvidersSection();
             // 重新绑定事件
@@ -643,9 +649,9 @@ class SettingPanel extends HTMLElement {
                         <input id="model-alias-input" type="text" value="${this.escapeHtml(model.alias)}" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all" placeholder="例如: gpt-4o">
                     </div>
                     <div>
-                        <label class="block text-sm font-medium text-gray-600 mb-1.5">提供商</label>
+                        <label class="block text-sm font-medium text-gray-600 mb-1.5">提供方</label>
                         <select id="model-provider-input" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all">
-                            <option value="">选择提供商</option>
+                            <option value="">选择提供方</option>
                             ${providerOptions}
                         </select>
                     </div>
@@ -664,9 +670,10 @@ class SettingPanel extends HTMLElement {
                         </select>
                     </div>
                 </div>
+                <div id="model-verify-result" class="px-6 text-sm hidden"></div>
                 <div class="px-6 py-4 border-t border-gray-100 flex justify-end gap-3">
                     <button class="modal-close-btn sp-modal-cancel px-4 py-2 text-sm text-gray-600 rounded-xl">取消</button>
-                    <button id="save-model-btn" class="sp-modal-save px-4 py-2 text-sm text-white bg-gradient-to-r from-purple-500 to-purple-600 rounded-xl">${isEdit ? '保存' : '添加'}</button>
+                    <button id="save-model-btn" class="sp-modal-save px-4 py-2 text-sm text-white bg-gradient-to-r from-purple-500 to-purple-600 rounded-xl">${isEdit ? '验证并保存' : '验证并添加'}</button>
                 </div>
             </div>
         `);
@@ -677,8 +684,65 @@ class SettingPanel extends HTMLElement {
             });
         });
         this.querySelector('#save-model-btn')?.addEventListener('click', () => {
-            this.saveModel();
+            this.verifyAndSaveModel();
         });
+    }
+
+    async verifyAndSaveModel() {
+        const alias = this.querySelector('#model-alias-input')?.value?.trim();
+        const provider_name = this.querySelector('#model-provider-input')?.value || '';
+        const model_name = this.querySelector('#model-name-input')?.value?.trim();
+        const resultDiv = this.querySelector('#model-verify-result');
+        const saveBtn = this.querySelector('#save-model-btn');
+
+        if (!alias) {
+            window.notificationAPI.sendNotification('error', '设置', '请输入模型别名');
+            return;
+        }
+        if (!provider_name) {
+            window.notificationAPI.sendNotification('error', '设置', '请选择提供方');
+            return;
+        }
+        if (!model_name) {
+            window.notificationAPI.sendNotification('error', '设置', '请输入模型名称');
+            return;
+        }
+
+        const provider = this.currentData?.providers?.find((p) => p.name === provider_name);
+        if (!provider) {
+            window.notificationAPI.sendNotification('error', '设置', '未找到对应的提供方配置');
+            return;
+        }
+
+        const origText = saveBtn.innerHTML;
+        saveBtn.disabled = true;
+        saveBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>验证中...';
+        if (resultDiv) {
+            resultDiv.classList.remove('hidden');
+            resultDiv.className = 'px-6 text-sm p-3 text-blue-600 bg-blue-50 rounded-xl border border-blue-200';
+            resultDiv.innerHTML = '<i class="fas fa-info-circle mr-2"></i>正在验证模型配置...';
+        }
+
+        try {
+            await window.settingAPI.verifyModel({
+                base_url: provider.base_url,
+                api_key: provider.api_key,
+                model_name: model_name
+            });
+            if (resultDiv) {
+                resultDiv.className = 'px-6 text-sm p-3 text-green-600 bg-green-50 rounded-xl border border-green-200';
+                resultDiv.innerHTML = '<i class="fas fa-check-circle mr-2"></i>验证成功，正在保存...';
+            }
+            this.saveModel();
+        } catch (error) {
+            if (resultDiv) {
+                resultDiv.className = 'px-6 text-sm p-3 text-red-600 bg-red-50 rounded-xl border border-red-200';
+                resultDiv.innerHTML = `<i class="fas fa-times-circle mr-2"></i>验证失败：${this.escapeHtml(error.message)}`;
+            }
+        } finally {
+            saveBtn.disabled = false;
+            saveBtn.innerHTML = origText;
+        }
     }
 
     saveModel() {
@@ -744,8 +808,8 @@ class SettingPanel extends HTMLElement {
 
     refreshModelsSection() {
         const sections = this.querySelectorAll('section');
-        if (sections.length >= 2) {
-            sections[1].outerHTML = this.renderModelsSection();
+        if (sections.length >= 3) {
+            sections[2].outerHTML = this.renderModelsSection();
             this.querySelector('#add-model-btn')?.addEventListener('click', () => {
                 this.showModelEditModal(-1);
             });
@@ -766,8 +830,8 @@ class SettingPanel extends HTMLElement {
 
     refreshDefaultModelsSection() {
         const sections = this.querySelectorAll('section');
-        if (sections.length >= 3) {
-            sections[2].outerHTML = this.renderDefaultModelsSection();
+        if (sections.length >= 4) {
+            sections[3].outerHTML = this.renderDefaultModelsSection();
             this.updateDefaultModelSelects();
             const selects = [
                 'default-model-select',

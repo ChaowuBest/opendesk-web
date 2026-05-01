@@ -228,6 +228,15 @@
                 showNonApp();
             }
 
+            async function needsWizard() {
+                try {
+                    var data = await window.settingAPI.loadSettingObject();
+                    return !data.providers || data.providers.length === 0;
+                } catch (e) {
+                    return false;
+                }
+            }
+
             function openHomePage() {
                 ensureSlots();
                 window.applicationRegistryAPI.call('mailbox', 'notifyMailboxClosed');
@@ -240,6 +249,11 @@
                 nonAppSlot.appendChild(homePage);
                 currentNonAppContent = 'home';
                 showNonApp();
+                needsWizard().then(function (needs) {
+                    if (needs) {
+                        window.globalControlAPI.openWizard();
+                    }
+                });
             }
 
             /**
@@ -277,6 +291,16 @@
             updateMaximizeIcon();
 
             window.globalControlAPI = {
+                openWizard: function () {
+                    ensureSlots();
+                    hideAllNonAppChildren();
+                    clearNonTaskContent();
+                    var el = document.createElement('setup-wizard');
+                    el.style.cssText = 'width:100%;height:100%;';
+                    nonAppSlot.appendChild(el);
+                    currentNonAppContent = 'wizard';
+                    showNonApp();
+                },
                 openSettingEditor: function () {
                     ensureSlots();
                     hideAllNonAppChildren();
@@ -333,6 +357,13 @@
                     showAppFrames();
                 }
             };
+
+            // 初始化时检查是否需要引导
+            needsWizard().then(function (needs) {
+                if (needs) {
+                    window.globalControlAPI.openWizard();
+                }
+            });
         })();
     </script>
 </html>
