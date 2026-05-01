@@ -29,6 +29,7 @@ interface BrowserTab {
     webview: WebviewTag | null;
     wrapEl: HTMLElement | null;
     ready: boolean;
+    pendingUrl: string | null;
 }
 
 /**
@@ -341,7 +342,8 @@ export class EmbeddedBrowser {
             url,
             webview: wv,
             wrapEl,
-            ready: false
+            ready: false,
+            pendingUrl: null
         };
         this.tabs.push(tab);
 
@@ -474,6 +476,15 @@ export class EmbeddedBrowser {
                     /* ignore */
                 }
             }
+            if (tab.pendingUrl) {
+                const url = tab.pendingUrl;
+                tab.pendingUrl = null;
+                try {
+                    wv.loadURL(url);
+                } catch {
+                    wv.src = url;
+                }
+            }
         });
 
         wv.addEventListener('did-navigate', (event: any) => {
@@ -559,10 +570,20 @@ export class EmbeddedBrowser {
     // ==== Public API (called by user UI AND by agent tools via IPC) ====
 
     public navigateTo(url: string): void {
-        const wv = this.getActiveWebview();
-        if (!wv) return;
+        const tab = this.getActiveTab();
+        if (!tab || !tab.webview) return;
         const targetUrl = url.trim();
-        wv.src = targetUrl;
+        if (tab.ready) {
+            try {
+                tab.webview.loadURL(targetUrl);
+            } catch {
+                tab.webview.src = targetUrl;
+            }
+        } else {
+            tab.pendingUrl = targetUrl;
+        }
+        tab.url = targetUrl;
+        this.syncUrlBar();
     }
 
     public goBack(): void {
