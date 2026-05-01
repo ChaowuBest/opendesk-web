@@ -115,7 +115,12 @@ marked.use({
             const headerHtml = displayLang
                 ? `<div class="code-block-header"><span class="code-block-lang">${displayLang}</span></div>`
                 : '';
-            return `<div class="code-block-wrapper">${headerHtml}<pre><code class="${langClass}">${highlighted}</code></pre></div>`;
+            const lines = highlighted.split('\n');
+            if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
+            const rows = lines
+                .map((line, i) => `<tr><td class="code-ln">${i + 1}</td><td class="code-line">${line || ' '}</td></tr>`)
+                .join('');
+            return `<div class="code-block-wrapper">${headerHtml}<div class="code-block-body ${langClass}"><table class="code-table"><tbody>${rows}</tbody></table></div></div>`;
         }
     },
     hooks: {

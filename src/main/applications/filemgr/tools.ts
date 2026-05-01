@@ -20,6 +20,7 @@ import { z } from 'zod';
 import { detectEncoding, decodeBuffer, encodingDisplayName, HEAD_BYTES } from '../terminal/encoding.js';
 import type { PermissionRequest } from '../../aikernel/security/permission';
 import type { TaskState } from '../../aikernel/states/tasks';
+import { Setting } from '../../utils/setting.js';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
@@ -34,7 +35,7 @@ const RENDER_CONTENT_MAX_LINES = 80;
 const DIFF_CONTEXT_LINES = 3;
 
 function getWorkingDirectory(taskState?: TaskState): string {
-    return taskState?.harnessContext?.workspace || process.cwd();
+    return taskState?.harnessContext?.workspace || Setting.getInstance().getEffectiveWorkspace();
 }
 
 // ==================== 路径处理 ====================

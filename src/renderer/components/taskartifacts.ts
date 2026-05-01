@@ -89,12 +89,12 @@ function escapeHtml(str: unknown): string {
 function statusIcon(status: TodoStatus): string {
     switch (status) {
         case 'completed':
-            return '\u2705';
+            return '✅';
         case 'in_progress':
-            return '\uD83D\uDD04';
+            return '��';
         case 'pending':
         default:
-            return '\u2B55';
+            return '⭕';
     }
 }
 
@@ -260,6 +260,13 @@ class TaskArtifacts extends HTMLElement {
      */
     refreshWorkspace(): void {
         this._fileExplorer.refresh();
+    }
+
+    /**
+     * 外部调用：当文件被编辑/创建/删除时，增量刷新已展开目录内容。
+     */
+    softRefreshWorkspace(): void {
+        this._fileExplorer.softRefresh();
     }
 
     /**
@@ -612,7 +619,7 @@ class TaskArtifacts extends HTMLElement {
             if (!startIso) return;
             const start = Date.parse(startIso);
             if (Number.isNaN(start)) return;
-            node.textContent = `\u5DF2\u6267\u884C ${formatDuration(now - start)}`;
+            node.textContent = `已执行 ${formatDuration(now - start)}`;
         });
     }
 
@@ -637,13 +644,13 @@ class TaskArtifacts extends HTMLElement {
                 const startIso = todo.started_at || todo.updated_at || todo.created_at || '';
                 durationHtml = `<span class="todo-duration todo-duration-running"
                     data-running="1" data-start="${escapeHtml(startIso)}"
-                    title="\u5DF2\u6267\u884C ${escapeHtml(formatDuration(durationMs))}">
-                    \u5DF2\u6267\u884C ${escapeHtml(formatDuration(durationMs))}
+                    title="已执行 ${escapeHtml(formatDuration(durationMs))}">
+                    已执行 ${escapeHtml(formatDuration(durationMs))}
                 </span>`;
             } else if (todo.status === 'completed') {
                 durationHtml = `<span class="todo-duration todo-duration-done"
-                    title="\u7528\u65F6 ${escapeHtml(formatDuration(durationMs))}">
-                    \u7528\u65F6 ${escapeHtml(formatDuration(durationMs))}
+                    title="用时 ${escapeHtml(formatDuration(durationMs))}">
+                    用时 ${escapeHtml(formatDuration(durationMs))}
                 </span>`;
             }
         }
@@ -687,7 +694,7 @@ class TaskArtifacts extends HTMLElement {
                 <header class="plan-section-header">
                     <span class="plan-section-title">
                         <i class="fas fa-diagram-project"></i>
-                        \u5F53\u524D\u4EFB\u52A1\u5F85\u529E
+                        当前任务待办
                     </span>
                     <span class="plan-section-count">${completed}/${this._taskTodos.length}</span>
                 </header>
@@ -704,7 +711,7 @@ class TaskArtifacts extends HTMLElement {
                 <header class="plan-section-header">
                     <span class="plan-section-title">
                         <i class="fas fa-globe"></i>
-                        \u5168\u5C40\u5F85\u529E
+                        全局待办
                     </span>
                     <span class="plan-section-count">${completed}/${this._globalTodos.length}</span>
                 </header>
@@ -737,7 +744,7 @@ class TaskArtifacts extends HTMLElement {
         const placeholderHTML = (tab: TabSpec) => `
             <div class="placeholder-content">
                 <i class="fas ${tab.icon} placeholder-icon"></i>
-                <p>${tab.label}\u5185\u5BB9\u5360\u4F4D\u7B26</p>
+                <p>${tab.label}内容占位符</p>
             </div>`;
 
         const contentHTML = tabs

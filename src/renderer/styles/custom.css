@@ -151,35 +151,72 @@ details.reasoning-block[open] > summary .reasoning-arrow {
     color: #64748b !important;
     user-select: none !important;
 }
-.markdown-body .code-block-wrapper pre {
-    margin: 0 !important;
-    padding: 0 !important;
-    border: none !important;
-    border-radius: 0 !important;
-    background: #ffffff !important;
-}
-.markdown-body .code-block-wrapper pre code.hljs {
-    display: block !important;
-    padding: 0.7em 0.9em !important;
-    font-size: 12px !important;
-    line-height: 1.6 !important;
-    font-family: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', 'Monaco', monospace !important;
-    background: #ffffff !important;
-    color: #1e293b !important;
+.markdown-body .code-block-body {
     overflow-x: auto !important;
+    background: #ffffff !important;
+    font-size: 11px !important;
+    line-height: 1.55 !important;
+    font-family: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', 'Monaco', monospace !important;
+    color: #1e293b !important;
+}
+.markdown-body .code-table {
+    border-collapse: collapse !important;
+    border-spacing: 0 !important;
+    border: none !important;
+    width: 100% !important;
+    font-size: inherit !important;
+    line-height: inherit !important;
+    margin: 0 !important;
+    display: table !important;
+    overflow: visible !important;
+}
+.markdown-body .code-table tr,
+.markdown-body .code-table tr:nth-child(2n) {
+    border: none !important;
+    border-top: none !important;
+    background: transparent !important;
+    background-color: transparent !important;
+}
+.markdown-body .code-table tr:hover {
+    background: #f8fafc !important;
+    background-color: #f8fafc !important;
+}
+.markdown-body td.code-ln {
+    width: 1px !important;
+    min-width: 2.2em !important;
+    padding: 0 0.6em !important;
+    text-align: right !important;
+    color: #c0c5ce !important;
+    user-select: none !important;
+    white-space: nowrap !important;
+    vertical-align: top !important;
+    background: #f8fafc !important;
+    border-right: 1px solid #f1f5f9 !important;
+    border-bottom: none !important;
+    border-left: none !important;
+    border-top: none !important;
+}
+.markdown-body td.code-line {
+    padding: 0 0.8em !important;
+    white-space: pre !important;
+    vertical-align: top !important;
+    border: none !important;
+}
+.markdown-body .code-table tbody tr:first-child td {
+    padding-top: 0.5em !important;
+}
+.markdown-body .code-table tbody tr:last-child td {
+    padding-bottom: 0.5em !important;
 }
 /* Code block scrollbar */
-.markdown-body .code-block-wrapper pre code::-webkit-scrollbar,
-.markdown-body pre code::-webkit-scrollbar {
+.markdown-body .code-block-body::-webkit-scrollbar {
     height: 4px !important;
 }
-.markdown-body .code-block-wrapper pre code::-webkit-scrollbar-thumb,
-.markdown-body pre code::-webkit-scrollbar-thumb {
+.markdown-body .code-block-body::-webkit-scrollbar-thumb {
     background: #d1d5db !important;
     border-radius: 2px !important;
 }
-.markdown-body .code-block-wrapper pre code::-webkit-scrollbar-track,
-.markdown-body pre code::-webkit-scrollbar-track {
+.markdown-body .code-block-body::-webkit-scrollbar-track {
     background: transparent !important;
 }
 /* Fallback for bare pre (no wrapper) */
@@ -194,8 +231,8 @@ details.reasoning-block[open] > summary .reasoning-arrow {
 .markdown-body pre code.hljs {
     display: block !important;
     padding: 0.7em 0.9em !important;
-    font-size: 12px !important;
-    line-height: 1.6 !important;
+    font-size: 11px !important;
+    line-height: 1.55 !important;
     font-family: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', 'Monaco', monospace !important;
     background: #ffffff !important;
     color: #1e293b !important;

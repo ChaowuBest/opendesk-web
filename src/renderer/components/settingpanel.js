@@ -670,7 +670,7 @@ class SettingPanel extends HTMLElement {
                         </select>
                     </div>
                 </div>
-                <div id="model-verify-result" class="px-6 text-sm hidden"></div>
+                <div id="model-verify-result" class="mx-6 mb-1 text-sm hidden"></div>
                 <div class="px-6 py-4 border-t border-gray-100 flex justify-end gap-3">
                     <button class="modal-close-btn sp-modal-cancel px-4 py-2 text-sm text-gray-600 rounded-xl">取消</button>
                     <button id="save-model-btn" class="sp-modal-save px-4 py-2 text-sm text-white bg-gradient-to-r from-purple-500 to-purple-600 rounded-xl">${isEdit ? '验证并保存' : '验证并添加'}</button>
@@ -719,7 +719,7 @@ class SettingPanel extends HTMLElement {
         saveBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>验证中...';
         if (resultDiv) {
             resultDiv.classList.remove('hidden');
-            resultDiv.className = 'px-6 text-sm p-3 text-blue-600 bg-blue-50 rounded-xl border border-blue-200';
+            resultDiv.className = 'mx-6 text-sm p-3 text-blue-600 bg-blue-50 rounded-xl border border-blue-200';
             resultDiv.innerHTML = '<i class="fas fa-info-circle mr-2"></i>正在验证模型配置...';
         }
 
@@ -730,13 +730,13 @@ class SettingPanel extends HTMLElement {
                 model_name: model_name
             });
             if (resultDiv) {
-                resultDiv.className = 'px-6 text-sm p-3 text-green-600 bg-green-50 rounded-xl border border-green-200';
+                resultDiv.className = 'mx-6 text-sm p-3 text-green-600 bg-green-50 rounded-xl border border-green-200';
                 resultDiv.innerHTML = '<i class="fas fa-check-circle mr-2"></i>验证成功，正在保存...';
             }
             this.saveModel();
         } catch (error) {
             if (resultDiv) {
-                resultDiv.className = 'px-6 text-sm p-3 text-red-600 bg-red-50 rounded-xl border border-red-200';
+                resultDiv.className = 'mx-6 text-sm p-3 text-red-600 bg-red-50 rounded-xl border border-red-200';
                 resultDiv.innerHTML = `<i class="fas fa-times-circle mr-2"></i>验证失败：${this.escapeHtml(error.message)}`;
             }
         } finally {

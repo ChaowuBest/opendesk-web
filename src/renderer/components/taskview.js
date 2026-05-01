@@ -871,6 +871,21 @@ class TaskView extends HTMLElement {
                 // 任务级待办的实时更新已通过 todomgr.taskTodosUpdated 事件单独订阅，
                 // 这里无需再从工具调用进度里反推 TodoWrite 的执行状态。
 
+                // 文件操作工具完成后，增量刷新工作空间文件浏览器
+                if (progress.last_part && progress.last_part.type === 'tool_call') {
+                    const FILE_TOOLS = new Set(['writeFile', 'editFile', 'searchReplace', 'applyPatch']);
+                    const toolcalls = progress.last_part.toolcalls || [];
+                    const hasFileOp = toolcalls.some(
+                        (tc) => FILE_TOOLS.has(tc.tool_name) && (tc.status === 'success' || tc.status === 'error')
+                    );
+                    if (hasFileOp) {
+                        const sidebar = this._getRightSidebarEl();
+                        if (sidebar && typeof sidebar.softRefreshWorkspace === 'function') {
+                            sidebar.softRefreshWorkspace();
+                        }
+                    }
+                }
+
                 this.tryScrollToEnd();
             });
         });
