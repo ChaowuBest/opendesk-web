@@ -341,6 +341,7 @@ const registerModeAPIHandlers = () => {
                     task.disabledTools = target.disabledTools;
                 } catch (err) {
                     logger.warn(`Failed to sync task harness for mode ${modeId}: ${err}`);
+                    task.harnessContext.workspace = workspace;
                 }
             }
 
@@ -460,6 +461,7 @@ const registerTaskManagerAPIHandlers = () => {
         } catch (err) {
             logger.warn(`Failed to init task harness in Electron, using empty context: ${err}`);
             task.harnessContext = HarnessContext.createEmpty();
+            task.harnessContext.workspace = workspace;
         }
         return { status: 'ok', data: task.task_id };
     });
@@ -948,6 +950,7 @@ const registerSettingAPIHandlers = () => {
                     task.harnessContext = ctx;
                 } catch (err) {
                     logger.warn(`Failed to sync task harness for new workspace: ${err}`);
+                    task.harnessContext.workspace = selectedPath;
                 }
             }
 
@@ -1217,6 +1220,15 @@ function startApplication() {
         GlobalState.getInstance().taskManagerState.toolsetProvider = {
             listAvailableToolsets: () => ApplicationRegistry.listAvailableToolsets()
         };
+
+        // 为从磁盘恢复的旧任务注入当前工作空间（harnessContext 不落盘，加载后默认为空）
+        const startupWorkspace = Setting.getInstance().getEffectiveWorkspace();
+        for (const task of GlobalState.getInstance().taskManagerState.tasks) {
+            if (!task.harnessContext.workspace) {
+                task.harnessContext.workspace = startupWorkspace;
+            }
+        }
+
         createWindow();
         initBrowserSession();
 

@@ -21,6 +21,7 @@ import path from 'path';
 import chalk from 'chalk';
 import type { PermissionRequest } from '../../aikernel/security/permission';
 import type { TaskState } from '../../aikernel/states/tasks';
+import { Setting } from '../../utils/setting.js';
 import {
     BackgroundProcessManager,
     killProcessTree,
@@ -322,7 +323,10 @@ export class ExecutePowerShellTool extends BaseTool<typeof ExecutePowerShellArgs
     ): PermissionRequest[] {
         const command = args.command;
         if (!command || typeof command !== 'string') return [];
-        const cwd = args.workingDirectory || taskState?.harnessContext?.workspace || process.cwd();
+        const cwd =
+            args.workingDirectory ||
+            taskState?.harnessContext?.workspace ||
+            Setting.getInstance().getEffectiveWorkspace();
         return analyzePowerShellPermissions(command, cwd);
     }
 
@@ -364,6 +368,8 @@ export class ExecutePowerShellTool extends BaseTool<typeof ExecutePowerShellArgs
             cwd = workingDirectory;
         } else if (taskState?.harnessContext?.workspace) {
             cwd = taskState?.harnessContext?.workspace;
+        } else {
+            cwd = Setting.getInstance().getEffectiveWorkspace();
         }
 
         const utf8Command = `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ${command}`;
@@ -419,7 +425,10 @@ export class ExecuteBashTool extends BaseTool<typeof ExecuteBashArgsSchema> {
     getDeclaredPermissions(args: z.output<typeof ExecuteBashArgsSchema>, taskState?: TaskState): PermissionRequest[] {
         const command = args.command;
         if (!command || typeof command !== 'string') return [];
-        const cwd = args.workingDirectory || taskState?.harnessContext?.workspace || process.cwd();
+        const cwd =
+            args.workingDirectory ||
+            taskState?.harnessContext?.workspace ||
+            Setting.getInstance().getEffectiveWorkspace();
         return analyzeBashPermissions(command, cwd);
     }
 
@@ -447,6 +456,8 @@ export class ExecuteBashTool extends BaseTool<typeof ExecuteBashArgsSchema> {
             cwd = workingDirectory;
         } else if (taskState?.harnessContext?.workspace) {
             cwd = taskState.harnessContext.workspace;
+        } else {
+            cwd = Setting.getInstance().getEffectiveWorkspace();
         }
 
         await executeShellCommand({
@@ -498,7 +509,10 @@ export class ExecuteZshTool extends BaseTool<typeof ExecuteZshArgsSchema> {
     getDeclaredPermissions(args: z.output<typeof ExecuteZshArgsSchema>, taskState?: TaskState): PermissionRequest[] {
         const command = args.command;
         if (!command || typeof command !== 'string') return [];
-        const cwd = args.workingDirectory || taskState?.harnessContext?.workspace || process.cwd();
+        const cwd =
+            args.workingDirectory ||
+            taskState?.harnessContext?.workspace ||
+            Setting.getInstance().getEffectiveWorkspace();
         return analyzeBashPermissions(command, cwd);
     }
 
@@ -532,6 +546,8 @@ export class ExecuteZshTool extends BaseTool<typeof ExecuteZshArgsSchema> {
             cwd = workingDirectory;
         } else if (taskState?.harnessContext?.workspace) {
             cwd = taskState.harnessContext.workspace;
+        } else {
+            cwd = Setting.getInstance().getEffectiveWorkspace();
         }
 
         await executeShellCommand({

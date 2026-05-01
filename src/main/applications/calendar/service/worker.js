@@ -99,6 +99,40 @@ class CalendarWorker extends BaseWorker {
     }
 
     /**
+     * @param {number} startTimestamp
+     * @param {number} endTimestamp
+     * @returns {Promise<z.output<CalendarItemSchema>[]>}
+     */
+    async getCalendarItemsInRange(startTimestamp, endTimestamp) {
+        const items = await this.db
+            .find({
+                startTime: { $gte: startTimestamp, $lte: endTimestamp }
+            })
+            .sort({ startTime: 1 });
+        return items.map((item) => CalendarItemSchema.parse(item));
+    }
+
+    /**
+     * @param {string} uid
+     * @param {object} updates
+     * @returns {Promise<z.output<CalendarItemSchema>>}
+     */
+    async updateCalendarItem(uid, updates) {
+        const existing = await this.db.findOne({ uid });
+        if (!existing) {
+            throw new Error(`未找到 uid 为 "${uid}" 的日程项`);
+        }
+        const allowedFields = ['subject', 'startTime', 'endTime', 'location', 'isAllDay', 'type'];
+        const updateData = {};
+        for (const field of allowedFields) {
+            if (updates[field] !== undefined) updateData[field] = updates[field];
+        }
+        await this.db.update({ uid }, { $set: updateData });
+        const updated = await this.db.findOne({ uid });
+        return CalendarItemSchema.parse(updated);
+    }
+
+    /**
      * @param {object} item
      * @param {string} item.subject
      * @param {number} item.startTime
@@ -115,7 +149,8 @@ class CalendarWorker extends BaseWorker {
             endTime: item.endTime,
             location: item.location || '',
             isAllDay: item.isAllDay ?? false,
-            isCancelled: false
+            isCancelled: false,
+            type: item.type || ''
         });
         await this.db.insert(doc);
         logger.info(`added calendar item: ${doc.uid} - ${doc.subject}`);
