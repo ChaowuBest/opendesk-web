@@ -50,7 +50,16 @@ node -v
 # v22.15.1
 ```
 
-接下来只要进入OpenDesk的代码仓库，执行`npm install`命令就可以自动安装所有依赖(也包括Electron)。
+本项目使用了 [node-gyp](https://github.com/nodejs/node-gyp#on-windows)，因此对于 Windows 用户，请确保安装了以下基础环境：
+
+1. [Python](https://www.python.org/downloads/)：推荐 3.9 以上的版本
+2. [Microsoft Visual Studio](https://visualstudio.microsoft.com/downloads/)：社区版即可，需要勾选 “使用 C++ 的桌面开发”（Desktop development with C++）
+
+接下来进入OpenDesk的代码仓库，执行下面的命令自动安装包括 Electron 在内的所有依赖。
+
+```shell
+npm install
+```
 
 ## 2. 安装包构建
 
