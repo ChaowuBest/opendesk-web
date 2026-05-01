@@ -8,6 +8,7 @@ import {
     buildSessionMemoryUpdatePrompt,
     countToolCallsSinceMessage,
     ensureTaskSessionMemoryFile,
+    estimateChatMessageTokensForSessionMemory,
     estimateChatContextTokensForSessionMemory,
     getTaskSessionMemoryRelativePath,
     hasRunningOrPendingToolCallInLastAssistant,
@@ -23,6 +24,7 @@ import { getTaskSessionMemoryPath, setCustomAppDirectory } from '../../../main/u
 import {
     AssistantMessage,
     ChatContext,
+    CompactSeparatorMessage,
     ToolCall,
     ToolCallMessagePart,
     Usage,
@@ -164,12 +166,71 @@ describe('session memory state and storage', () => {
 });
 
 describe('session memory extraction decision', () => {
-    test('优先使用最近 assistant usage.prompt_tokens 估算上下文大小', () => {
+    test('优先使用最近 usage total，并叠加 usage 后新增 visible tail', () => {
         const chatContext = createChatContext();
         chatContext.appendMessage(new UserMessage('hello'));
         chatContext.appendMessage(assistantWithText('short answer', 1234));
+        const tailUser = new UserMessage('follow-up question after the previous usage anchor');
+        chatContext.appendMessage(tailUser);
 
-        expect(estimateChatContextTokensForSessionMemory(chatContext)).toBe(1234);
+        expect(estimateChatContextTokensForSessionMemory(chatContext)).toBe(
+            1244 + estimateChatMessageTokensForSessionMemory(tailUser)
+        );
+    });
+
+    test('会把最近 usage assistant 内部后来追加的 tool result 算进去', () => {
+        const chatContext = createChatContext();
+        const assistant = new AssistantMessage();
+        const part = new ToolCallMessagePart();
+        const toolCall = new ToolCall(0, 'tool-usage-tail', 'demo_tool', '{"query":"demo"}');
+        toolCall.status = 'success';
+        toolCall.result = 'tool result appended after usage';
+        part.push(toolCall);
+        assistant.appendToolCallPart(part);
+        assistant.usage = new Usage(900, 100, 1000, {
+            input_tokens: 900,
+            output_tokens: 100
+        });
+        chatContext.appendMessage(assistant);
+
+        expect(estimateChatContextTokensForSessionMemory(chatContext)).toBeGreaterThan(1000);
+    });
+
+    test('忽略 compact boundary 之前隐藏历史中的旧 usage', () => {
+        const chatContext = createChatContext();
+        chatContext.appendMessage(assistantWithText('hidden assistant before boundary', 5000));
+        const boundary = new CompactSeparatorMessage('boundary summary', {
+            boundary_id: 'boundary-session-memory-test',
+            created_at: '2026-04-28T00:00:00.000Z'
+        });
+        const visibleUser = new UserMessage('visible user after boundary');
+        chatContext.appendMessage(boundary);
+        chatContext.appendMessage(visibleUser);
+
+        expect(estimateChatContextTokensForSessionMemory(chatContext)).toBe(
+            estimateChatMessageTokensForSessionMemory(boundary) + estimateChatMessageTokensForSessionMemory(visibleUser)
+        );
+    });
+
+    test('boundary 前隐藏的 pending assistant 不会阻止当前 visible context 抽取', () => {
+        const chatContext = createChatContext();
+        chatContext.appendMessage(assistantWithToolCall('pending', 5000));
+        chatContext.appendMessage(
+            new CompactSeparatorMessage('boundary summary', {
+                boundary_id: 'boundary-session-memory-visible-only',
+                created_at: '2026-04-28T00:00:00.000Z'
+            })
+        );
+        chatContext.appendMessage(new UserMessage('visible user after boundary'));
+
+        const decision = shouldExtractSessionMemory(chatContext, SessionMemoryStates.create(), {
+            minimumMessageTokensToInit: 1
+        });
+
+        expect(hasRunningOrPendingToolCallInLastAssistant(chatContext)).toBe(false);
+        expect(decision.shouldExtract).toBe(true);
+        expect(decision.reason).toBe('initialization_threshold_met');
+        expect(decision.hasRunningOrPendingToolCallInLastAssistant).toBe(false);
     });
 
     test('未达到初始化阈值时不抽取，达到后允许第一次抽取', () => {
@@ -205,7 +266,7 @@ describe('session memory extraction decision', () => {
 
         expect(decision.shouldExtract).toBe(false);
         expect(decision.reason).toBe('below_update_threshold');
-        expect(decision.tokensSinceLastExtraction).toBe(200);
+        expect(decision.tokensSinceLastExtraction).toBe(210);
     });
 
     test('最近 assistant 有 pending/running tool call 时不抽取', () => {
@@ -314,7 +375,7 @@ describe('session memory prompt and update loop', () => {
         expect(result.state.relativePath).toBe(getTaskSessionMemoryRelativePath('task-update'));
         expect(result.state.lastExtractedAt).toBe('2026-04-23T02:00:00.000Z');
         expect(result.state.lastSummarizedMessageId).toBe(assistant.message_id);
-        expect(result.state.tokensAtLastExtraction).toBe(12000);
+        expect(result.state.tokensAtLastExtraction).toBe(12010);
         expect(generateMemory).toHaveBeenCalledTimes(1);
         expect(readTaskSessionMemory('task-update')).toContain('Mock updated current state.');
     });

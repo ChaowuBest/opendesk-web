@@ -129,7 +129,8 @@ function createForcedCompactDecision() {
     return createAutoCompactDecision({
         contextWindow: 1000,
         promptTokens: 720,
-        reservedSummaryOutput: 100
+        reservedSummaryOutput: 100,
+        buffer: 180
     });
 }
 

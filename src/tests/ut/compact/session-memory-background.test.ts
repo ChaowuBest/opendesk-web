@@ -149,7 +149,7 @@ describe('session memory background update', () => {
             initialized: true,
             lastExtractedAt: '2026-04-23T02:00:00.000Z',
             lastSummarizedMessageId: assistant.message_id,
-            tokensAtLastExtraction: 12_000,
+            tokensAtLastExtraction: 12_010,
             extractionInProgress: false
         });
     });

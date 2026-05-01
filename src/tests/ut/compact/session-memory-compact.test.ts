@@ -568,6 +568,7 @@ describe('session memory compact try/pipeline integration', () => {
             createAutoCompactDecision({
                 contextWindow: 10,
                 promptTokens: 10,
+                reservedSummaryOutput: 0,
                 buffer: 0
             }),
             {
@@ -600,7 +601,8 @@ describe('session memory compact try/pipeline integration', () => {
             autoCompactDecisionOverride: createAutoCompactDecision({
                 contextWindow: 1000,
                 promptTokens: 720,
-                reservedSummaryOutput: 100
+                reservedSummaryOutput: 100,
+                buffer: 180
             }),
             autoCompactState,
             enableSessionMemoryCompact: true,
@@ -645,7 +647,8 @@ describe('session memory compact try/pipeline integration', () => {
             autoCompactDecisionOverride: createAutoCompactDecision({
                 contextWindow: 1000,
                 promptTokens: 720,
-                reservedSummaryOutput: 100
+                reservedSummaryOutput: 100,
+                buffer: 180
             }),
             autoCompactState,
             enableSessionMemoryCompact: true,
@@ -680,7 +683,8 @@ describe('session memory compact try/pipeline integration', () => {
             autoCompactDecisionOverride: createAutoCompactDecision({
                 contextWindow: 1000,
                 promptTokens: 720,
-                reservedSummaryOutput: 100
+                reservedSummaryOutput: 100,
+                buffer: 180
             }),
             autoCompactState,
             enableSessionMemoryCompact: true,
@@ -745,7 +749,8 @@ describe('session memory compact try/pipeline integration', () => {
             autoCompactDecisionOverride: createAutoCompactDecision({
                 contextWindow: 1000,
                 promptTokens: 720,
-                reservedSummaryOutput: 100
+                reservedSummaryOutput: 100,
+                buffer: 180
             }),
             autoCompactState,
             enableSessionMemoryCompact: true,
@@ -817,7 +822,8 @@ describe('session memory compact try/pipeline integration', () => {
             autoCompactDecisionOverride: createAutoCompactDecision({
                 contextWindow: 1000,
                 promptTokens: 720,
-                reservedSummaryOutput: 100
+                reservedSummaryOutput: 100,
+                buffer: 180
             }),
             autoCompactState,
             enableAssistantRoundBoundary: false,

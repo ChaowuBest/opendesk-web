@@ -1215,7 +1215,11 @@ export class TaskState {
         this.profiler?.endLLM({
             prompt_tokens: assistant_message.usage?.prompt_tokens,
             completion_tokens: assistant_message.usage?.completion_tokens,
-            total_tokens: assistant_message.usage?.total_tokens
+            total_tokens: assistant_message.usage?.total_tokens,
+            input_tokens: assistant_message.usage?.input_tokens,
+            output_tokens: assistant_message.usage?.output_tokens,
+            cache_creation_input_tokens: assistant_message.usage?.cache_creation_input_tokens,
+            cache_read_input_tokens: assistant_message.usage?.cache_read_input_tokens
         });
 
         this.task_manager_state.save();

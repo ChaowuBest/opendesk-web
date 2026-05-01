@@ -828,15 +828,98 @@ export function imageToDataUri(imagePath: string): string {
 /**
  * @class Usage
  */
-export class Usage {
-    prompt_tokens: number;
-    completion_tokens: number;
-    total_tokens: number;
+export interface UsageFields {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    total_tokens?: number;
+    input_tokens?: number;
+    output_tokens?: number;
+    cache_creation_input_tokens?: number;
+    cache_read_input_tokens?: number;
+}
 
-    constructor(prompt_tokens: number, completion_tokens: number, total_tokens: number) {
-        this.prompt_tokens = prompt_tokens;
-        this.completion_tokens = completion_tokens;
-        this.total_tokens = total_tokens;
+export class Usage {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    total_tokens?: number;
+    input_tokens?: number;
+    output_tokens?: number;
+    cache_creation_input_tokens?: number;
+    cache_read_input_tokens?: number;
+
+    constructor(
+        prompt_tokens?: number,
+        completion_tokens?: number,
+        total_tokens?: number,
+        extra: Omit<UsageFields, 'prompt_tokens' | 'completion_tokens' | 'total_tokens'> = {}
+    ) {
+        this.prompt_tokens = Usage.normalizeOptionalTokenCount(prompt_tokens);
+        this.completion_tokens = Usage.normalizeOptionalTokenCount(completion_tokens);
+        this.total_tokens = Usage.normalizeOptionalTokenCount(total_tokens);
+        this.input_tokens = Usage.normalizeOptionalTokenCount(extra.input_tokens);
+        this.output_tokens = Usage.normalizeOptionalTokenCount(extra.output_tokens);
+        this.cache_creation_input_tokens = Usage.normalizeOptionalTokenCount(extra.cache_creation_input_tokens);
+        this.cache_read_input_tokens = Usage.normalizeOptionalTokenCount(extra.cache_read_input_tokens);
+    }
+
+    private static normalizeOptionalTokenCount(value: unknown): number | undefined {
+        if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+            return undefined;
+        }
+        return Math.floor(value);
+    }
+
+    private static hasKnownUsageField(candidate: Record<string, unknown>): boolean {
+        return [
+            'prompt_tokens',
+            'completion_tokens',
+            'total_tokens',
+            'input_tokens',
+            'output_tokens',
+            'cache_creation_input_tokens',
+            'cache_read_input_tokens'
+        ].some((key) => candidate[key] !== undefined);
+    }
+
+    static fromRaw(raw_usage: unknown): Usage | undefined {
+        if (raw_usage === undefined || raw_usage === null || typeof raw_usage !== 'object') {
+            return undefined;
+        }
+
+        const candidate = raw_usage as Record<string, unknown>;
+        if (!Usage.hasKnownUsageField(candidate)) {
+            return undefined;
+        }
+
+        const usage = new Usage(
+            candidate.prompt_tokens as number,
+            candidate.completion_tokens as number,
+            candidate.total_tokens as number,
+            {
+                input_tokens: candidate.input_tokens as number,
+                output_tokens: candidate.output_tokens as number,
+                cache_creation_input_tokens: candidate.cache_creation_input_tokens as number,
+                cache_read_input_tokens: candidate.cache_read_input_tokens as number
+            }
+        );
+
+        if (
+            usage.prompt_tokens === undefined &&
+            usage.completion_tokens === undefined &&
+            usage.total_tokens === undefined &&
+            usage.input_tokens === undefined &&
+            usage.output_tokens === undefined &&
+            usage.cache_creation_input_tokens === undefined &&
+            usage.cache_read_input_tokens === undefined
+        ) {
+            return undefined;
+        }
+
+        return usage;
+    }
+
+    static assign(raw_usage: unknown): Usage | undefined {
+        return Usage.fromRaw(raw_usage);
     }
 }
 
@@ -1021,6 +1104,7 @@ export class AssistantMessage {
                 }
             }
         }
+        assistant_message.usage = Usage.fromRaw(assistant_message.usage);
         return assistant_message;
     }
 
@@ -1482,7 +1566,7 @@ export class AssistantResponse {
 
         const usage = openai_response['usage'];
         if (usage) {
-            response.usage = new Usage(usage['prompt_tokens'], usage['completion_tokens'], usage['total_tokens']);
+            response.usage = Usage.fromRaw(usage);
         }
         return response;
     }

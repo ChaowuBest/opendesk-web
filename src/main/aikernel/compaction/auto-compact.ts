@@ -9,19 +9,37 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { AssistantMessage, ChatContext } from '../messages.js';
+import { ChatContext } from '../messages.js';
 import { Setting, type ModelInstance } from '../../utils/setting.js';
-import { fetchContextSizeFromAPI, lookupKnownContextSize } from '../../utils/model-context.js';
+import {
+    fetchContextSizeFromAPI,
+    fetchMaxOutputTokensFromAPI,
+    lookupKnownContextSize,
+    lookupKnownMaxOutputTokens
+} from '../../utils/model-context.js';
+import { buildActiveContextView } from './context-view.js';
+import {
+    estimateVisibleContextTokens,
+    type TokenEstimateSource,
+    type VisibleContextTokenEstimate,
+    type VisibleContextTokenEstimationInput
+} from './token-estimation.js';
 
 export type AutoCompactDecisionReason =
-    | 'missing_prompt_tokens'
+    | 'missing_context_tokens'
     | 'unknown_context_window'
     | 'below_threshold'
     | 'at_or_above_threshold';
 
 export interface AutoCompactDecisionInput {
     contextWindow: number;
+    estimatedContextTokens?: number;
+    /** @deprecated Compatibility alias for tests still using the old name. */
     promptTokens?: number;
+    baseUsageTokens?: number;
+    tailEstimatedTokens?: number;
+    assistantInternalTailTokens?: number;
+    tokenEstimateSource?: TokenEstimateSource;
     reservedSummaryOutput?: number;
     buffer?: number;
 }
@@ -29,7 +47,11 @@ export interface AutoCompactDecisionInput {
 export interface AutoCompactDecision {
     shouldCompact: boolean;
     reason: AutoCompactDecisionReason;
-    promptTokens?: number;
+    estimatedContextTokens?: number;
+    baseUsageTokens: number;
+    tailEstimatedTokens: number;
+    assistantInternalTailTokens: number;
+    tokenEstimateSource?: TokenEstimateSource;
     contextWindow: number;
     reservedSummaryOutput: number;
     effectiveWindow: number;
@@ -44,6 +66,9 @@ export interface AutoCompactDecisionOptions {
     buffer?: number;
 }
 
+export const DEFAULT_AUTO_COMPACT_RESERVED_SUMMARY_OUTPUT = 16_384;
+export const DEFAULT_AUTO_COMPACT_BUFFER = 13_000;
+export const MAX_RESERVED_SUMMARY_OUTPUT = 20_000;
 export const DEFAULT_AUTO_COMPACT_FAILURE_THRESHOLD = 3;
 export const DEFAULT_AUTO_COMPACT_COOLDOWN_MS = 10 * 60 * 1000;
 
@@ -185,14 +210,69 @@ function buildCooldownUntil(now: Date, cooldownMs: number): string {
     return new Date(now.getTime() + Math.max(Math.floor(cooldownMs), 0)).toISOString();
 }
 
-function getLastPromptTokens(chatContext: ChatContext): number | undefined {
-    for (let i = chatContext.messages.length - 1; i >= 0; i--) {
-        const message = chatContext.messages[i];
-        if (message instanceof AssistantMessage && message.usage) {
-            return normalizeOptionalNonNegativeNumber(message.usage.prompt_tokens);
-        }
+function isChatContext(value: unknown): value is ChatContext {
+    return value instanceof ChatContext;
+}
+
+function normalizeTokenEstimateSource(value: unknown): TokenEstimateSource | undefined {
+    return value === 'usage_plus_tail_estimate' || value === 'rough_estimate_only' ? value : undefined;
+}
+
+function buildTokenEstimateInput(
+    input: ChatContext | VisibleContextTokenEstimationInput
+): VisibleContextTokenEstimationInput {
+    if (isChatContext(input)) {
+        return {
+            activeContext: buildActiveContextView(input)
+        };
     }
-    return undefined;
+    return input;
+}
+
+async function resolveMaxOutputTokens(model?: string): Promise<number> {
+    try {
+        let modelInstance: ModelInstance | null;
+        if (typeof model === 'string') {
+            modelInstance = Setting.getInstance().getModelInstance(model);
+            if (!modelInstance) {
+                return lookupKnownMaxOutputTokens(model);
+            }
+        } else {
+            modelInstance = Setting.getInstance().getDefaultModelInstance();
+            if (!modelInstance) {
+                return 0;
+            }
+        }
+
+        const knownMaxOutput = lookupKnownMaxOutputTokens(modelInstance.model_name);
+        if (knownMaxOutput > 0) {
+            return knownMaxOutput;
+        }
+
+        if (typeof model === 'string') {
+            const fallbackKnownMaxOutput = lookupKnownMaxOutputTokens(model);
+            if (fallbackKnownMaxOutput > 0) {
+                return fallbackKnownMaxOutput;
+            }
+        }
+
+        return await fetchMaxOutputTokensFromAPI(modelInstance);
+    } catch {
+        return 0;
+    }
+}
+
+export async function resolveReservedSummaryOutput(model?: string, override?: number): Promise<number> {
+    if (override !== undefined) {
+        return normalizeNonNegativeNumber(override, DEFAULT_AUTO_COMPACT_RESERVED_SUMMARY_OUTPUT);
+    }
+
+    const maxOutputTokens = await resolveMaxOutputTokens(model);
+    if (maxOutputTokens > 0) {
+        return Math.min(maxOutputTokens, MAX_RESERVED_SUMMARY_OUTPUT);
+    }
+
+    return DEFAULT_AUTO_COMPACT_RESERVED_SUMMARY_OUTPUT;
 }
 
 async function resolveContextWindow(model?: string): Promise<number> {
@@ -201,7 +281,7 @@ async function resolveContextWindow(model?: string): Promise<number> {
         if (typeof model === 'string') {
             modelInstance = Setting.getInstance().getModelInstance(model);
             if (!modelInstance) {
-                return 0;
+                return lookupKnownContextSize(model);
             }
         } else {
             modelInstance = Setting.getInstance().getDefaultModelInstance();
@@ -215,6 +295,13 @@ async function resolveContextWindow(model?: string): Promise<number> {
             return knownSize;
         }
 
+        if (typeof model === 'string') {
+            const fallbackKnownSize = lookupKnownContextSize(model);
+            if (fallbackKnownSize > 0) {
+                return fallbackKnownSize;
+            }
+        }
+
         return await fetchContextSizeFromAPI(modelInstance);
     } catch {
         return 0;
@@ -226,16 +313,29 @@ async function resolveContextWindow(model?: string): Promise<number> {
  */
 export function createAutoCompactDecision(input: AutoCompactDecisionInput): AutoCompactDecision {
     const contextWindow = normalizeNonNegativeNumber(input.contextWindow, 0);
-    const reservedSummaryOutput = normalizeNonNegativeNumber(input.reservedSummaryOutput, 0);
+    const reservedSummaryOutput = normalizeNonNegativeNumber(
+        input.reservedSummaryOutput,
+        DEFAULT_AUTO_COMPACT_RESERVED_SUMMARY_OUTPUT
+    );
     const effectiveWindow = Math.max(contextWindow - reservedSummaryOutput, 0);
-    const buffer = normalizeNonNegativeNumber(input.buffer ?? effectiveWindow * 0.2, 0);
+    const buffer = normalizeNonNegativeNumber(input.buffer ?? DEFAULT_AUTO_COMPACT_BUFFER, 0);
     const autoCompactThreshold = Math.max(effectiveWindow - buffer, 0);
-    const promptTokens = normalizeOptionalNonNegativeNumber(input.promptTokens);
+    const estimatedContextTokens = normalizeOptionalNonNegativeNumber(
+        input.estimatedContextTokens ?? input.promptTokens
+    );
+    const baseUsageTokens = normalizeNonNegativeNumber(input.baseUsageTokens, 0);
+    const tailEstimatedTokens = normalizeNonNegativeNumber(input.tailEstimatedTokens, 0);
+    const assistantInternalTailTokens = normalizeNonNegativeNumber(input.assistantInternalTailTokens, 0);
+    const tokenEstimateSource = normalizeTokenEstimateSource(input.tokenEstimateSource);
 
-    if (promptTokens === undefined) {
+    if (estimatedContextTokens === undefined) {
         return {
             shouldCompact: false,
-            reason: 'missing_prompt_tokens',
+            reason: 'missing_context_tokens',
+            baseUsageTokens,
+            tailEstimatedTokens,
+            assistantInternalTailTokens,
+            tokenEstimateSource,
             contextWindow,
             reservedSummaryOutput,
             effectiveWindow,
@@ -248,7 +348,11 @@ export function createAutoCompactDecision(input: AutoCompactDecisionInput): Auto
         return {
             shouldCompact: false,
             reason: 'unknown_context_window',
-            promptTokens,
+            estimatedContextTokens,
+            baseUsageTokens,
+            tailEstimatedTokens,
+            assistantInternalTailTokens,
+            tokenEstimateSource,
             contextWindow,
             reservedSummaryOutput,
             effectiveWindow,
@@ -259,18 +363,22 @@ export function createAutoCompactDecision(input: AutoCompactDecisionInput): Auto
         };
     }
 
-    const shouldCompact = promptTokens >= autoCompactThreshold;
+    const shouldCompact = estimatedContextTokens >= autoCompactThreshold;
     return {
         shouldCompact,
         reason: shouldCompact ? 'at_or_above_threshold' : 'below_threshold',
-        promptTokens,
+        estimatedContextTokens,
+        baseUsageTokens,
+        tailEstimatedTokens,
+        assistantInternalTailTokens,
+        tokenEstimateSource,
         contextWindow,
         reservedSummaryOutput,
         effectiveWindow,
         buffer,
         autoCompactThreshold,
-        windowUsageRatio: contextWindow > 0 ? promptTokens / contextWindow : undefined,
-        marginTokens: autoCompactThreshold - promptTokens
+        windowUsageRatio: contextWindow > 0 ? estimatedContextTokens / contextWindow : undefined,
+        marginTokens: autoCompactThreshold - estimatedContextTokens
     };
 }
 
@@ -278,19 +386,29 @@ export function createAutoCompactDecision(input: AutoCompactDecisionInput): Auto
  * 根据当前上下文和模型解析自动压缩决策。
  */
 export async function getAutoCompactDecision(
-    chatContext: ChatContext,
+    contextInput: ChatContext | VisibleContextTokenEstimationInput,
     model?: string,
     options: AutoCompactDecisionOptions = {}
 ): Promise<AutoCompactDecision> {
-    const promptTokens = getLastPromptTokens(chatContext);
+    const tokenEstimate = estimateVisibleContextTokens(buildTokenEstimateInput(contextInput));
     const contextWindow = await resolveContextWindow(model);
 
     return createAutoCompactDecision({
         contextWindow,
-        promptTokens,
-        reservedSummaryOutput: options.reservedSummaryOutput,
+        estimatedContextTokens: tokenEstimate.estimatedContextTokens,
+        baseUsageTokens: tokenEstimate.baseUsageTokens,
+        tailEstimatedTokens: tokenEstimate.tailEstimatedTokens,
+        assistantInternalTailTokens: tokenEstimate.assistantInternalTailTokens,
+        tokenEstimateSource: tokenEstimate.source,
+        reservedSummaryOutput: await resolveReservedSummaryOutput(model, options.reservedSummaryOutput),
         buffer: options.buffer
     });
+}
+
+export function estimateAutoCompactContextTokens(
+    input: ChatContext | VisibleContextTokenEstimationInput
+): VisibleContextTokenEstimate {
+    return estimateVisibleContextTokens(buildTokenEstimateInput(input));
 }
 
 export class AutoCompactStates {

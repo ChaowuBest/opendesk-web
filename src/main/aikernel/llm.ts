@@ -39,6 +39,13 @@ function mergeReasonOptions(reasoningEffort: ReasoningEffort | undefined): Recor
     return reasonOptions;
 }
 
+function normalizeMaxCompletionTokens(value: number | undefined): number | undefined {
+    if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+        return undefined;
+    }
+    return Math.floor(value);
+}
+
 /**
  * LLM 验证器的返回结果。
  * 当验证成功时 validated_content 有值且 message 为 undefined；
@@ -69,6 +76,8 @@ type ValidatorFn = (content: string) => LLMValidatorResult;
 interface LLMRequestOptions {
     /** 控制模型推理深度，不传则使用模型默认值 */
     reasoningEffort?: ReasoningEffort;
+    /** 限制本次补全的最大输出 token 数 */
+    maxCompletionTokens?: number;
 }
 
 interface LLMAskOptions {
@@ -277,12 +286,18 @@ class LLM {
         const messages: object[] = [options.question.toOpenAIMessage()];
         const reasoningEffort = options.requestOptions?.reasoningEffort ?? modelInstance.reasoning_effort;
         const reasonOptions = mergeReasonOptions(reasoningEffort);
+        const maxCompletionTokens = normalizeMaxCompletionTokens(options.requestOptions?.maxCompletionTokens);
 
         while (finalResponse === undefined && numRetries < 5) {
             const response = await withRateLimitRetry(() =>
                 client.chat.completions.create({
                     model: modelInstance.model_name,
                     messages: messages as OpenAI.ChatCompletionMessageParam[],
+                    ...(maxCompletionTokens !== undefined
+                        ? {
+                              max_completion_tokens: maxCompletionTokens
+                          }
+                        : {}),
                     ...reasonOptions
                 })
             );
@@ -500,12 +515,13 @@ class LLM {
         const toolOptions = this.buildToolOptions(chatContext);
         const reasoningEffort = requestOptions?.reasoningEffort ?? modelInstance.reasoning_effort;
         const reasonOptions = mergeReasonOptions(reasoningEffort);
+        const maxCompletionTokens = normalizeMaxCompletionTokens(requestOptions?.maxCompletionTokens) ?? 16384;
 
         const response = await withRateLimitRetry(() =>
             client.chat.completions.create({
                 model: modelInstance.model_name,
                 messages: messages as OpenAI.ChatCompletionMessageParam[],
-                max_completion_tokens: 16384,
+                max_completion_tokens: maxCompletionTokens,
                 ...toolOptions,
                 ...reasonOptions
             })
@@ -531,6 +547,7 @@ class LLM {
         const toolOptions = this.buildToolOptions(chatContext);
         const reasoningEffort = requestOptions?.reasoningEffort ?? modelInstance.reasoning_effort;
         const reasonOptions = mergeReasonOptions(reasoningEffort);
+        const maxCompletionTokens = normalizeMaxCompletionTokens(requestOptions?.maxCompletionTokens) ?? 16384;
 
         if (logger) {
             const hasImages = messages.some(
@@ -551,7 +568,7 @@ class LLM {
                 client.chat.completions.create({
                     model: modelInstance.model_name,
                     messages: messages as OpenAI.ChatCompletionMessageParam[],
-                    max_completion_tokens: 16384,
+                    max_completion_tokens: maxCompletionTokens,
                     stream: true,
                     stream_options: { include_usage: true },
                     ...toolOptions,
