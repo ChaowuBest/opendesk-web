@@ -15,10 +15,12 @@ export default defineConfig(({ mode }) => {
                         worker: path.join(__dirname, 'src', 'main', 'worker.ts')
                     },
                     onwarn(warning, warn) {
-                        if (warning.code === 'DYNAMIC_IMPORT_WILL_NOT_MOVE') {
-                            throw new Error(warning.message);
+                        const safeWarnings = ['CIRCULAR_DEPENDENCY'];
+                        if (safeWarnings.includes(warning.code)) {
+                            warn(warning);
+                            return;
                         }
-                        warn(warning);
+                        throw new Error(`[Rollup Warning] ${warning.code}: ${warning.message}`);
                     }
                 },
                 sourcemap: true

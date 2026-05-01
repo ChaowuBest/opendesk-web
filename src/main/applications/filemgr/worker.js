@@ -528,7 +528,7 @@ class FileManagerWorker extends BaseWorker {
     }
 
     /**
-     * Compat shim — fileview.js:39 + preload.js:171 + preload-web.js:214 call this.
+     * Compat shim — fileview.js:39 + preload.js:171 call this.
      * Delegates to searchFileByName, maps result back to flat FileEntry-like array
      * (fileview.js reads .path for dedup and rendering).
      */

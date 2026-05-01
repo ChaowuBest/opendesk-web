@@ -9,8 +9,6 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { ElasticToolbarWidget } from './toolbar.ts';
-
 class SettingEditor extends HTMLElement {
     constructor() {
         super();
@@ -167,15 +165,17 @@ class SettingEditor extends HTMLElement {
     render() {
         this.innerHTML = `
         <div class="flex flex-col h-full w-full p-5 bg-gradient-to-br from-slate-50 via-white to-blue-50/30">
+            <!-- 固定在右上角的工具栏 -->
+            <div id="setting-editor-toolbar" class="sp-fixed-toolbar"></div>
+
             <!-- 标题 -->
-            <div class="mb-4 pr-[140px] flex items-center justify-between">
+            <div class="mb-4 flex items-center">
                 <div class="flex items-center gap-3">
-                    <button id="back-to-setting-panel-btn" class="w-8 h-8 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors" title="返回设置">
+                    <button id="back-to-setting-panel-btn" class="sp-modal-close w-8 h-8 rounded-lg text-gray-400" title="返回设置">
                         <i class="fas fa-arrow-left"></i>
                     </button>
                     <h2 class="text-2xl font-bold bg-gradient-to-r from-gray-800 to-gray-600 bg-clip-text text-transparent">高级设置</h2>
                 </div>
-                <div id="setting-editor-toolbar"></div>
             </div>
             <!-- 主体内容部分 -->
             <div class="flex-1 h-full flex flex-col overflow-y-auto">
@@ -193,35 +193,46 @@ class SettingEditor extends HTMLElement {
     }
 
     _createSettingEditorToolbar() {
-        const toolbar = new ElasticToolbarWidget([
+        const container = this.querySelector('#setting-editor-toolbar');
+        if (!container) return;
+
+        const buttons = [
             {
                 id: 'save-setting-btn',
                 icon: 'fa-save',
                 label: '保存设置',
-                labelStayVisible: true,
+                primary: true,
                 action: () => this.saveSettingData()
             },
             {
                 id: 'export-setting-btn',
                 icon: 'fa-file-export',
                 label: '导出设置',
-                labelStayVisible: true,
+                primary: false,
                 action: () => this.exportSettingData()
             },
             {
                 id: 'import-setting-btn',
                 icon: 'fa-file-import',
                 label: '导入设置',
-                labelStayVisible: true,
+                primary: false,
                 action: () => this.importSettingData()
             }
-        ]);
+        ];
 
-        toolbar.classList.add('pill-buttons');
-        const container = this.querySelector('#setting-editor-toolbar');
-        if (container) {
-            container.appendChild(toolbar);
+        const wrapper = document.createElement('div');
+        wrapper.className = 'flex items-center gap-2';
+
+        for (const btn of buttons) {
+            const el = document.createElement('button');
+            el.id = btn.id;
+            el.className = btn.primary ? 'sp-toolbar-btn sp-toolbar-primary' : 'sp-toolbar-btn';
+            el.innerHTML = `<i class="fa-solid ${btn.icon}"></i><span>${btn.label}</span>`;
+            el.addEventListener('click', btn.action);
+            wrapper.appendChild(el);
         }
+
+        container.appendChild(wrapper);
     }
 }
 

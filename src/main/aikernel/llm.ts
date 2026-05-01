@@ -590,6 +590,26 @@ class LLM {
             );
         }
     }
+
+    /**
+     * 验证 ModelInstance 是否可用：发送一条极短的 chat completion 请求，
+     * 成功收到 choices 即视为验证通过。
+     */
+    static async verifyModel(modelInstance: ModelInstance): Promise<void> {
+        this.__ensureProxy(modelInstance);
+        const client = new OpenAI({
+            apiKey: modelInstance.api_key,
+            baseURL: modelInstance.base_url
+        });
+        const response = await client.chat.completions.create({
+            model: modelInstance.model_name,
+            messages: [{ role: 'user', content: 'Hi' }],
+            max_tokens: 8
+        });
+        if (!response?.choices?.[0]) {
+            throw new Error('模型返回结果异常');
+        }
+    }
 }
 
 export { LLM, type LLMRequestOptions };

@@ -1018,7 +1018,6 @@ pre.terminal-tool-output {
     height: 44px;
     border-radius: 12px;
     overflow: hidden;
-    border: 1px solid rgba(0, 0, 0, 0.06);
     flex-shrink: 0;
 }
 .sb-app-popover-icon-wrap img {
@@ -1095,4 +1094,206 @@ pre.terminal-tool-output {
 }
 .hp-workspace-bar:hover .hp-workspace-switch {
     color: #6b7280;
+}
+
+/* =========================================
+   Setting panel: packaging-safe hover effects
+   (Tailwind group-hover can be lost during purge/build)
+   ========================================= */
+
+/* Provider & Model cards */
+.sp-card {
+    transition:
+        box-shadow 0.3s ease,
+        border-color 0.3s ease;
+}
+.sp-card:hover {
+    box-shadow:
+        0 20px 25px -5px rgba(0, 0, 0, 0.1),
+        0 8px 10px -6px rgba(0, 0, 0, 0.1);
+}
+.sp-card.sp-card-provider:hover {
+    border-color: rgba(191, 219, 254, 0.5);
+}
+.sp-card.sp-card-model:hover {
+    border-color: rgba(216, 180, 254, 0.5);
+}
+.sp-card .sp-card-actions {
+    opacity: 0;
+    transition: opacity 0.15s ease;
+    pointer-events: none;
+}
+.sp-card:hover .sp-card-actions {
+    opacity: 1;
+    pointer-events: auto;
+}
+.sp-card .sp-card-action-btn {
+    width: 2rem;
+    height: 2rem;
+    border-radius: 0.5rem;
+    color: #9ca3af;
+    transition:
+        background 0.15s ease,
+        color 0.15s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.sp-card .sp-card-action-btn:hover {
+    background: #f3f4f6;
+    color: #4b5563;
+}
+.sp-card .sp-card-action-btn.sp-delete-btn:hover {
+    background: #fef2f2;
+    color: #ef4444;
+}
+
+/* Add provider/model dashed button */
+.sp-add-btn {
+    transition:
+        border-color 0.2s ease,
+        color 0.2s ease,
+        background 0.2s ease;
+}
+.sp-add-btn.sp-add-provider:hover {
+    border-color: #93c5fd;
+    color: #3b82f6;
+    background: rgba(239, 246, 255, 0.5);
+}
+.sp-add-btn.sp-add-model:hover {
+    border-color: #c4b5fd;
+    color: #a855f7;
+    background: rgba(250, 245, 255, 0.5);
+}
+
+/* Modal buttons */
+.sp-modal-close {
+    transition:
+        background 0.15s ease,
+        color 0.15s ease;
+}
+.sp-modal-close:hover {
+    background: #f3f4f6;
+    color: #4b5563;
+}
+.sp-modal-cancel {
+    transition: background 0.15s ease;
+}
+.sp-modal-cancel:hover {
+    background: #f3f4f6;
+}
+.sp-modal-save {
+    transition: box-shadow 0.2s ease;
+}
+.sp-modal-save:hover {
+    box-shadow:
+        0 10px 15px -3px rgba(0, 0, 0, 0.1),
+        0 4px 6px -4px rgba(0, 0, 0, 0.1);
+}
+.sp-template-btn {
+    transition:
+        border-color 0.15s ease,
+        background 0.15s ease;
+}
+.sp-template-btn:hover {
+    border-color: #93c5fd;
+    background: rgba(239, 246, 255, 0.5);
+}
+.sp-template-custom-btn {
+    transition:
+        border-color 0.15s ease,
+        background 0.15s ease;
+}
+.sp-template-custom-btn:hover {
+    border-color: #60a5fa;
+    background: rgba(239, 246, 255, 0.5);
+}
+.sp-confirm-delete {
+    transition: background 0.15s ease;
+}
+.sp-confirm-delete:hover {
+    background: #dc2626;
+}
+.sp-export-option-btn {
+    transition:
+        background 0.15s ease,
+        border-color 0.15s ease;
+}
+.sp-export-option-btn:hover {
+    background: #f9fafb;
+}
+.sp-export-option-btn.sp-export-base:hover {
+    border-color: #93c5fd;
+}
+.sp-export-option-btn.sp-export-all:hover {
+    border-color: #c4b5fd;
+}
+.sp-toggle-key {
+    transition: color 0.15s ease;
+}
+.sp-toggle-key:hover {
+    color: #4b5563;
+}
+
+/* Setting panel fixed toolbar (below window controls, right-aligned) */
+.sp-fixed-toolbar {
+    position: fixed;
+    top: 32px;
+    right: 8px;
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+}
+
+/* Setting panel icon buttons (import/export/advanced) */
+.sp-toolbar-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 14px;
+    border-radius: 8px;
+    border: 1px solid #e5e7eb;
+    background: white;
+    color: #4b5563;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+}
+.sp-toolbar-btn:hover {
+    background: #f9fafb;
+    border-color: #d1d5db;
+    box-shadow:
+        0 4px 6px -1px rgba(0, 0, 0, 0.1),
+        0 2px 4px -2px rgba(0, 0, 0, 0.1);
+}
+.sp-toolbar-btn i {
+    font-size: 12px;
+    width: 14px;
+    text-align: center;
+}
+.sp-toolbar-btn.sp-toolbar-primary {
+    background: linear-gradient(to right, #374151, #4b5563);
+    color: white;
+    border-color: transparent;
+}
+.sp-toolbar-btn.sp-toolbar-primary:hover {
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.15);
+    filter: brightness(1.1);
+}
+
+/* Resizer handle hover (taskview & splitter) */
+.resizer-handle-indicator {
+    opacity: 0;
+    transition:
+        opacity 0.2s ease,
+        background 0.2s ease;
+}
+.resizer-group:hover .resizer-handle-indicator {
+    opacity: 1;
+}
+.resizer-group:hover .resizer-handle-indicator.resizer-blue {
+    background: #60a5fa;
 }

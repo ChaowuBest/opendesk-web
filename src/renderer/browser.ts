@@ -45,10 +45,44 @@ export class EmbeddedBrowser {
 
     private tabs: BrowserTab[] = [];
     private activeTabId: number = -1;
+    private _currentZoomFactor: number = 1;
+    private _removeZoomListener: (() => void) | null = null;
 
     constructor(container: HTMLElement) {
         this.container = container;
+        this._initZoomSync();
         this.init();
+    }
+
+    private _initZoomSync(): void {
+        const displayAPI = (window as any).displayAPI;
+        if (!displayAPI) return;
+
+        displayAPI
+            .getScaleFactor()
+            .then((factor: number) => {
+                this._currentZoomFactor = factor;
+            })
+            .catch(() => {});
+
+        if (typeof displayAPI.onScaleFactorChanged === 'function') {
+            this._removeZoomListener = displayAPI.onScaleFactorChanged((factor: number) => {
+                this._currentZoomFactor = factor;
+                this._applyZoomToAllWebviews(factor);
+            });
+        }
+    }
+
+    private _applyZoomToAllWebviews(factor: number): void {
+        for (const tab of this.tabs) {
+            if (tab.ready && tab.webview) {
+                try {
+                    tab.webview.setZoomFactor(factor);
+                } catch {
+                    /* not ready */
+                }
+            }
+        }
     }
 
     private init(): void {
@@ -433,6 +467,13 @@ export class EmbeddedBrowser {
         wv.addEventListener('dom-ready', () => {
             tab.ready = true;
             this.syncNavButtons();
+            if (this._currentZoomFactor !== 1) {
+                try {
+                    wv.setZoomFactor(this._currentZoomFactor);
+                } catch {
+                    /* ignore */
+                }
+            }
         });
 
         wv.addEventListener('did-navigate', (event: any) => {
@@ -601,6 +642,10 @@ export class EmbeddedBrowser {
     }
 
     public destroy(): void {
+        if (this._removeZoomListener) {
+            this._removeZoomListener();
+            this._removeZoomListener = null;
+        }
         for (const tab of this.tabs) {
             tab.wrapEl?.remove();
             tab.webview = null;

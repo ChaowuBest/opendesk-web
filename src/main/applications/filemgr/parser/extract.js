@@ -8,25 +8,10 @@ import path from 'path';
 import yauzl from 'yauzl';
 import { DOMParser } from '@xmldom/xmldom';
 import * as XLSX from 'xlsx';
+import { logger as staticLogger } from '../../../utils/logger.js';
 
-const fallbackLogger = {
-    warn: (...args) => console.warn(...args)
-};
-
-let cachedLogger = null;
-let loggerLoadAttempted = false;
-
-async function getLogger() {
-    if (cachedLogger) return cachedLogger;
-    if (!loggerLoadAttempted) {
-        loggerLoadAttempted = true;
-        try {
-            ({ logger: cachedLogger } = await import('../../../utils/logger.js'));
-        } catch {
-            cachedLogger = fallbackLogger;
-        }
-    }
-    return cachedLogger ?? fallbackLogger;
+function getLogger() {
+    return staticLogger;
 }
 
 const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB
