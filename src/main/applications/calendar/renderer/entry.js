@@ -83,9 +83,10 @@ const CALENDAR_CSS = `
 }
 .cal-toolbar-title {
     font-size: 16px; font-weight: 700; color: #1d1d1f; letter-spacing: -0.01em;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;
 }
 .cal-toolbar-btn {
-    width: 36px; height: 36px; display: flex; align-items: center; justify-content: center;
+    width: 33px; height: 33px; display: flex; align-items: center; justify-content: center;
     border-radius: 10px; border: 1px solid #E5E5EA; background: #fff; cursor: pointer;
     color: #3C3C43; transition: all 0.15s;
 }
@@ -99,9 +100,10 @@ const CALENDAR_CSS = `
 .cal-today-btn:hover { background: #F5F5F7; border-color: #D1D1D6; }
 .cal-add-event-btn {
     display: flex; align-items: center; gap: 6px; padding: 8px 18px;
-    border-radius: 12px; border: none; background: #1d1d1f; color: #fff;
+    border-radius: 10px; border: none; background: #1d1d1f; color: #fff;
+    height: 33px;
     font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.15s;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.12); white-space: nowrap; flex-shrink: 0;
 }
 .cal-add-event-btn:hover { background: #333; box-shadow: 0 4px 16px rgba(0,0,0,0.16); }
 .cal-add-event-btn:active { transform: scale(0.97); }
@@ -163,6 +165,7 @@ const CALENDAR_CSS = `
 /* ---- Week / Day columns ---- */
 .cal-time-grid-header {
     display: flex; border-bottom: 1px solid #F0F0F0; background: #fff; flex-shrink: 0;
+    padding-right: 6px;
 }
 .cal-time-grid-header-gutter { width: 64px; flex-shrink: 0; }
 .cal-time-grid-header-cell {
@@ -201,7 +204,7 @@ const CALENDAR_CSS = `
 .cal-time-grid-header-cell.selected-hdr { background: rgba(99,102,241,0.04); }
 
 /* ---- All-day bar ---- */
-.cal-allday-bar { display: flex; border-bottom: 1px solid #F0F0F0; background: #FAFBFF; flex-shrink: 0; min-height: 0; }
+.cal-allday-bar { display: flex; border-bottom: 1px solid #F0F0F0; background: #FAFBFF; flex-shrink: 0; min-height: 0; padding-right: 6px; }
 .cal-allday-gutter { width: 64px; flex-shrink: 0; display: flex; align-items: center; justify-content: flex-end; padding-right: 12px; font-size: 10px; font-weight: 600; color: #8E8E93; }
 .cal-allday-cols { flex: 1; display: flex; }
 .cal-allday-col { flex: 1; padding: 4px 2px; border-left: 1px solid #F5F5F7; display: flex; flex-direction: column; gap: 2px; }
@@ -329,6 +332,27 @@ const CALENDAR_CSS = `
 @keyframes cal-detail-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
 
 .cal-detail-card { animation: cal-detail-in 0.3s ease-out; }
+
+/* ---- Drag ghost ---- */
+.cal-drag-ghost {
+    position: absolute; border: 2px dashed #007AFF; border-radius: 8px;
+    background: rgba(0,122,255,0.06); pointer-events: none; z-index: 30;
+    display: flex; align-items: center; justify-content: center;
+}
+.cal-drag-ghost-label {
+    font-size: 11px; font-weight: 600; color: #007AFF; opacity: 0.9;
+    text-align: center; padding: 2px 8px;
+}
+.cal-drag-ghost-month {
+    border: 2px dashed #007AFF; border-radius: 8px;
+    background: rgba(0,122,255,0.06); pointer-events: none;
+}
+.cal-ev-block.dragging { opacity: 0.35; }
+.cal-month-pill.dragging { opacity: 0.35; }
+.cal-allday-pill.dragging { opacity: 0.35; }
+
+/* ---- Disabled input ---- */
+.cal-input:disabled { background: #F2F2F7; color: #8E8E93; cursor: not-allowed; border-color: #E5E5EA; }
 `;
 
 /* ═══════════════════════════════════════════════════
@@ -429,6 +453,7 @@ class CalendarEntryWidget extends HTMLElement {
 
     connectedCallback() {
         this._injectStyles();
+        this._initDrag();
         this._render();
         this._bindCore();
         this._refreshAll();
@@ -437,6 +462,7 @@ class CalendarEntryWidget extends HTMLElement {
 
     disconnectedCallback() {
         if (this._nowTimer) clearInterval(this._nowTimer);
+        this._dragCleanup();
     }
 
     _injectStyles() {
@@ -788,17 +814,17 @@ class CalendarEntryWidget extends HTMLElement {
         if (!tb) return;
 
         tb.innerHTML = `
-        <div style="display:flex;align-items:center;gap:10px;">
+        <div style="display:flex;align-items:center;gap:10px;min-width:0;flex:1;overflow:hidden;">
             <span id="cal-toolbar-title" class="cal-toolbar-title"></span>
         </div>
-        <div style="display:flex;align-items:center;gap:8px;">
+        <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
             <button id="cal-nav-prev" class="cal-toolbar-btn">
                 <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/></svg>
             </button>
             <button id="cal-nav-next" class="cal-toolbar-btn">
                 <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
             </button>
-            <button id="cal-nav-today" class="cal-today-btn">Today</button>
+            <button id="cal-nav-today" class="cal-today-btn">今天</button>
             <div class="cal-seg" id="cal-seg" style="margin-left:8px;">
                 <div class="cal-seg-indicator" id="cal-seg-ind"></div>
                 <button class="cal-seg-btn ${this.viewMode === 'day' ? 'active' : ''}" data-view="day">日</button>
@@ -1213,6 +1239,10 @@ class CalendarEntryWidget extends HTMLElement {
         container.querySelectorAll('[data-event-uid]').forEach((el) => {
             el.addEventListener('click', (e) => {
                 e.stopPropagation();
+                if (this._dragJustEnded) {
+                    this._dragJustEnded = false;
+                    return;
+                }
                 this.selectedEvent = this._findEvent(el.dataset.eventUid);
                 this._renderDetail();
             });
@@ -1281,6 +1311,8 @@ class CalendarEntryWidget extends HTMLElement {
             }
             this._showCtx(e.clientX, e.clientY, uid, targetDate, clickHour);
         });
+
+        this._bindDragEvents(container);
     }
 
     /* ═══════════════════════════════════════════════════
@@ -1462,7 +1494,392 @@ class CalendarEntryWidget extends HTMLElement {
             }
         });
 
+        const allDayCheckbox = modal.querySelector('#cal-m-allday');
+        const startInput = modal.querySelector('#cal-m-start');
+        const endInput = modal.querySelector('#cal-m-end');
+        const syncAllDay = () => {
+            if (allDayCheckbox.checked) {
+                startInput.value = '00:00';
+                endInput.value = '00:00';
+                startInput.disabled = true;
+                endInput.disabled = true;
+            } else {
+                startInput.disabled = false;
+                endInput.disabled = false;
+            }
+        };
+        allDayCheckbox.addEventListener('change', syncAllDay);
+        syncAllDay();
+
         modal.querySelector('#cal-m-subject').focus();
+    }
+
+    /* ═══════════════════════════════════════════════════
+     *  DRAG & DROP
+     * ═══════════════════════════════════════════════════ */
+
+    _initDrag() {
+        this._drag = null;
+        this._onDragMove = this._onDragMove.bind(this);
+        this._onDragUp = this._onDragUp.bind(this);
+        this._onDragKey = this._onDragKey.bind(this);
+    }
+
+    _bindDragEvents(container) {
+        container.querySelectorAll('[data-event-uid]').forEach((el) => {
+            el.addEventListener('mousedown', (e) => {
+                if (e.button !== 0) return;
+                const uid = el.dataset.eventUid;
+                const ev = this._findEvent(uid);
+                if (!ev) return;
+                e.preventDefault();
+
+                this._drag = {
+                    uid,
+                    event: ev,
+                    startX: e.clientX,
+                    startY: e.clientY,
+                    el,
+                    started: false,
+                    ghost: null
+                };
+                document.addEventListener('mousemove', this._onDragMove);
+                document.addEventListener('mouseup', this._onDragUp);
+                document.addEventListener('keydown', this._onDragKey);
+            });
+        });
+    }
+
+    _onDragMove(e) {
+        if (!this._drag) return;
+        const dx = e.clientX - this._drag.startX;
+        const dy = e.clientY - this._drag.startY;
+        if (!this._drag.started && Math.abs(dx) + Math.abs(dy) < 8) return;
+
+        if (!this._drag.started) {
+            this._drag.started = true;
+            this._drag.el.classList.add('dragging');
+        }
+
+        if (this.viewMode === 'month') {
+            this._dragMoveMonth(e);
+        } else {
+            this._dragMoveTimeGrid(e);
+        }
+    }
+
+    _dragMoveTimeGrid(e) {
+        const container = this.querySelector('#cal-view');
+        if (!container) return;
+        const ev = this._drag.event;
+        const isAllDay = ev.isAllDay;
+
+        if (isAllDay) {
+            const allDayCols = container.querySelectorAll('.cal-allday-col');
+            let targetCol = null;
+            for (const col of allDayCols) {
+                const rect = col.getBoundingClientRect();
+                if (
+                    e.clientX >= rect.left &&
+                    e.clientX <= rect.right &&
+                    e.clientY >= rect.top - 20 &&
+                    e.clientY <= rect.bottom + 20
+                ) {
+                    targetCol = col;
+                    break;
+                }
+            }
+
+            if (!this._drag.ghost) {
+                this._drag.ghost = document.createElement('div');
+                this._drag.ghost.className = 'cal-drag-ghost';
+                this._drag.ghost.innerHTML = '<div class="cal-drag-ghost-label">按 Esc 取消</div>';
+                this._drag.ghost.style.position = 'fixed';
+                this._drag.ghost.style.height = '28px';
+                this._drag.ghost.style.zIndex = '9990';
+                document.body.appendChild(this._drag.ghost);
+            }
+
+            if (targetCol) {
+                const rect = targetCol.getBoundingClientRect();
+                this._drag.ghost.style.left = rect.left + 'px';
+                this._drag.ghost.style.top = rect.top + 'px';
+                this._drag.ghost.style.width = rect.width + 'px';
+                this._drag.ghost.style.display = 'flex';
+
+                const colEl = targetCol.closest('.cal-allday-cols');
+                if (colEl) {
+                    const cols = [...colEl.children];
+                    const idx = cols.indexOf(targetCol);
+                    if (this.viewMode === 'week') {
+                        const ws = getWeekStart(this.currentDate);
+                        const targetDate = new Date(ws);
+                        targetDate.setDate(targetDate.getDate() + idx);
+                        this._drag.targetDate = targetDate;
+                    } else {
+                        this._drag.targetDate = new Date(this.currentDate);
+                    }
+                }
+            } else {
+                this._drag.ghost.style.display = 'none';
+            }
+            return;
+        }
+
+        const gridCols = container.querySelectorAll('.cal-time-grid-col');
+        let targetCol = null;
+        let colIdx = -1;
+        for (let i = 0; i < gridCols.length; i++) {
+            const rect = gridCols[i].getBoundingClientRect();
+            if (e.clientX >= rect.left && e.clientX <= rect.right) {
+                targetCol = gridCols[i];
+                colIdx = i;
+                break;
+            }
+        }
+
+        if (!targetCol) {
+            if (this._drag.ghost) this._drag.ghost.style.display = 'none';
+            return;
+        }
+
+        const bodyEl = container.querySelector('.cal-time-grid-body');
+        if (!bodyEl) return;
+        const colsEl = bodyEl.querySelector('.cal-time-grid-cols');
+        if (!colsEl) return;
+        const colsRect = colsEl.getBoundingClientRect();
+
+        const duration = ev.endTime - ev.startTime;
+        const durationMin = Math.max(15, Math.round(duration / 60000));
+        const halfDurMin = durationMin / 2;
+
+        const yInCols = e.clientY - colsRect.top;
+        const centerMinutes = Math.max(0, Math.min(24 * 60 - 1, Math.round((yInCols / (24 * HOUR_HEIGHT)) * 24 * 60)));
+        const startMinutes = Math.max(0, Math.min(24 * 60 - durationMin, centerMinutes - halfDurMin));
+        const snappedMinutes = Math.round(startMinutes / 15) * 15;
+
+        const topPx = (snappedMinutes / 60) * HOUR_HEIGHT;
+        const heightPx = Math.max((durationMin / 60) * HOUR_HEIGHT, 22);
+
+        if (!this._drag.ghost) {
+            this._drag.ghost = document.createElement('div');
+            this._drag.ghost.className = 'cal-drag-ghost';
+            this._drag.ghost.innerHTML = '<div class="cal-drag-ghost-label">按 Esc 取消</div>';
+            document.body.appendChild(this._drag.ghost);
+        }
+
+        this._drag.ghost.style.position = 'absolute';
+        this._drag.ghost.style.display = 'flex';
+
+        if (colsEl && this._drag.ghost.parentElement !== colsEl) {
+            colsEl.appendChild(this._drag.ghost);
+        }
+
+        if (this.viewMode === 'week') {
+            const left = (colIdx / gridCols.length) * 100;
+            const width = (1 / gridCols.length) * 100;
+            this._drag.ghost.style.left = `calc(${left}% + 2px)`;
+            this._drag.ghost.style.width = `calc(${width}% - 4px)`;
+        } else {
+            this._drag.ghost.style.left = '4px';
+            this._drag.ghost.style.width = 'calc(100% - 8px)';
+        }
+        this._drag.ghost.style.top = topPx + 'px';
+        this._drag.ghost.style.height = heightPx + 'px';
+
+        if (targetCol.dataset.date) {
+            const parts = targetCol.dataset.date.split('-');
+            this._drag.targetDate = new Date(+parts[0], +parts[1] - 1, +parts[2]);
+        }
+        this._drag.targetMinutes = snappedMinutes;
+        this._drag.targetDurationMin = durationMin;
+    }
+
+    _dragMoveMonth(e) {
+        const container = this.querySelector('#cal-view');
+        if (!container) return;
+        const cells = container.querySelectorAll('.cal-month-cell[data-date]');
+        let targetCell = null;
+
+        for (const cell of cells) {
+            const rect = cell.getBoundingClientRect();
+            if (
+                e.clientX >= rect.left &&
+                e.clientX <= rect.right &&
+                e.clientY >= rect.top &&
+                e.clientY <= rect.bottom
+            ) {
+                targetCell = cell;
+                break;
+            }
+        }
+
+        container.querySelectorAll('.cal-drag-ghost-month').forEach((g) => g.remove());
+
+        if (targetCell) {
+            const ghost = document.createElement('div');
+            ghost.className = 'cal-drag-ghost-month';
+            ghost.innerHTML =
+                '<div class="cal-drag-ghost-label" style="padding:4px 6px;font-size:10px;">按 Esc 取消</div>';
+            ghost.style.position = 'absolute';
+            ghost.style.inset = '0';
+            targetCell.style.position = 'relative';
+            targetCell.appendChild(ghost);
+
+            const parts = targetCell.dataset.date.split('-');
+            this._drag.targetDate = new Date(+parts[0], +parts[1] - 1, +parts[2]);
+        }
+    }
+
+    _onDragUp(e) {
+        if (!this._drag || !this._drag.started) {
+            this._dragCleanup();
+            return;
+        }
+        this._dragJustEnded = true;
+        setTimeout(() => {
+            this._dragJustEnded = false;
+        }, 50);
+        const ev = this._drag.event;
+        const targetDate = this._drag.targetDate;
+
+        if (!targetDate) {
+            this._dragCleanup();
+            return;
+        }
+
+        let newStart, newEnd;
+        if (ev.isAllDay) {
+            const origStart = new Date(ev.startTime);
+            const origEnd = new Date(ev.endTime);
+            const dayDiff = Math.round(
+                (targetDate.getTime() -
+                    new Date(origStart.getFullYear(), origStart.getMonth(), origStart.getDate()).getTime()) /
+                    86400000
+            );
+            if (dayDiff === 0) {
+                this._dragCleanup();
+                return;
+            }
+            newStart = new Date(ev.startTime + dayDiff * 86400000);
+            newEnd = new Date(ev.endTime + dayDiff * 86400000);
+        } else if (this.viewMode === 'month') {
+            const origStart = new Date(ev.startTime);
+            const origEnd = new Date(ev.endTime);
+            const dayDiff = Math.round(
+                (targetDate.getTime() -
+                    new Date(origStart.getFullYear(), origStart.getMonth(), origStart.getDate()).getTime()) /
+                    86400000
+            );
+            if (dayDiff === 0) {
+                this._dragCleanup();
+                return;
+            }
+            newStart = new Date(ev.startTime + dayDiff * 86400000);
+            newEnd = new Date(ev.endTime + dayDiff * 86400000);
+        } else {
+            const minutes = this._drag.targetMinutes ?? 0;
+            const durMin = this._drag.targetDurationMin ?? 60;
+            newStart = new Date(targetDate);
+            newStart.setHours(0, minutes, 0, 0);
+            newEnd = new Date(newStart.getTime() + durMin * 60000);
+
+            if (newStart.getTime() === ev.startTime && newEnd.getTime() === ev.endTime) {
+                this._dragCleanup();
+                return;
+            }
+        }
+
+        this._dragCleanup();
+        this._showDragConfirmModal(ev, newStart, newEnd);
+    }
+
+    _onDragKey(e) {
+        if (e.key === 'Escape' && this._drag) {
+            this._dragCleanup();
+        }
+    }
+
+    _dragCleanup() {
+        if (!this._drag) return;
+        if (this._drag.ghost) this._drag.ghost.remove();
+        if (this._drag.el) this._drag.el.classList.remove('dragging');
+        this.querySelectorAll('.cal-drag-ghost-month').forEach((g) => g.remove());
+        this._drag = null;
+        document.removeEventListener('mousemove', this._onDragMove);
+        document.removeEventListener('mouseup', this._onDragUp);
+        document.removeEventListener('keydown', this._onDragKey);
+    }
+
+    _showDragConfirmModal(ev, newStart, newEnd) {
+        const modal = this.querySelector('#cal-modal');
+        if (!modal) return;
+        modal.classList.remove('hidden');
+
+        const origS = new Date(ev.startTime);
+        const formatRange = (s, e, allDay) => {
+            if (allDay) return fmtDateFull(s) + ' 全天';
+            return `${fmtDateFull(s)} ${fmtTime24(s.getTime())} — ${fmtTime24(e.getTime())}`;
+        };
+
+        modal.innerHTML = `
+        <div class="cal-modal-bg fixed inset-0" id="cal-modal-bg">
+            <div class="cal-modal-card" style="width:400px;">
+                <div style="padding:28px;">
+                    <div style="display:flex;align-items:center;gap:10px;margin-bottom:20px;">
+                        <div style="width:40px;height:40px;border-radius:12px;background:#EEF2FF;display:flex;align-items:center;justify-content:center;">
+                            <i class="fa-solid fa-arrows-up-down-left-right" style="color:#6366F1;font-size:16px;"></i>
+                        </div>
+                        <h3 style="font-size:16px;font-weight:700;color:#1d1d1f;">移动日程</h3>
+                    </div>
+                    <div style="margin-bottom:20px;">
+                        <div style="font-size:14px;font-weight:600;color:#1d1d1f;margin-bottom:12px;">${ev.subject}</div>
+                        <div style="display:flex;flex-direction:column;gap:8px;">
+                            <div style="display:flex;align-items:center;gap:8px;">
+                                <span style="font-size:12px;font-weight:600;color:#8E8E93;min-width:32px;">原</span>
+                                <span style="font-size:13px;color:#1d1d1f;">${formatRange(origS, new Date(ev.endTime), ev.isAllDay)}</span>
+                            </div>
+                            <div style="display:flex;align-items:center;gap:8px;">
+                                <span style="font-size:12px;font-weight:600;color:#007AFF;min-width:32px;">新</span>
+                                <span style="font-size:13px;color:#007AFF;font-weight:600;">${formatRange(newStart, newEnd, ev.isAllDay)}</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div style="display:flex;justify-content:flex-end;gap:10px;padding-top:16px;border-top:1px solid #F0F0F0;">
+                        <button id="cal-drag-cancel" class="cal-btn-secondary">取消</button>
+                        <button id="cal-drag-confirm" class="cal-btn-primary">确认移动</button>
+                    </div>
+                </div>
+            </div>
+        </div>`;
+
+        const close = () => {
+            modal.classList.add('hidden');
+            modal.innerHTML = '';
+            document.removeEventListener('keydown', escH);
+        };
+        const escH = (e) => {
+            if (e.key === 'Escape') close();
+        };
+        document.addEventListener('keydown', escH);
+
+        modal.querySelector('#cal-modal-bg').addEventListener('click', (e) => {
+            if (e.target.id === 'cal-modal-bg') close();
+        });
+        modal.querySelector('#cal-drag-cancel').addEventListener('click', close);
+        modal.querySelector('#cal-drag-confirm').addEventListener('click', async () => {
+            try {
+                await window.applicationAPI.call('updateCalendarItem', ev.uid, {
+                    startTime: newStart.getTime(),
+                    endTime: newEnd.getTime()
+                });
+                close();
+                await this._refreshAll();
+            } catch (err) {
+                console.error('移动日程失败:', err);
+                close();
+            }
+        });
     }
 
     /* ═══════════════════════════════════════════════════
