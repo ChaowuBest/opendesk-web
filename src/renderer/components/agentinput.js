@@ -13,6 +13,29 @@ import { REASONING_EFFORT_UI_OPTIONS as REASONING_EFFORT_OPTIONS } from '../../c
 
 const supportedFileExtensions = ['pdf', 'docx', 'doc', 'xls', 'xlsx', 'ppt', 'pptx'];
 
+const SKILL_PASTEL_COLORS = [
+    { bg: '#EBF3FE', text: '#5B8DEF' },
+    { bg: '#FEF1E6', text: '#E8935A' },
+    { bg: '#E7F6EA', text: '#4CAF6E' },
+    { bg: '#F2E8FD', text: '#9B6DD7' },
+    { bg: '#FDE9E9', text: '#E06060' },
+    { bg: '#E5F7F4', text: '#3DB49E' },
+    { bg: '#FFF7E0', text: '#D4A028' },
+    { bg: '#FBE5EE', text: '#D45D8A' }
+];
+
+function getSkillPastel(name) {
+    let hash = 0;
+    for (let i = 0; i < (name || '').length; i++) hash = ((hash << 5) - hash + name.charCodeAt(i)) | 0;
+    return SKILL_PASTEL_COLORS[Math.abs(hash) % SKILL_PASTEL_COLORS.length];
+}
+
+function getSkillInitial(name) {
+    if (!name) return '⚡';
+    const first = name.charAt(0).toUpperCase();
+    return /[A-Z0-9\u4e00-\u9fff]/.test(first) ? first : '⚡';
+}
+
 /**
  * 更新系统设置中的 default_model 和指定模型的 reasoning_effort。
  * 只修改需要变更的字段，其余保持不变。
@@ -733,19 +756,21 @@ class AgentInput extends HTMLElement {
             listEl.innerHTML = `<div class="skill-panel-empty">${filter ? '未找到匹配的技能' : '暂无已安装的技能'}</div>`;
         } else {
             listEl.innerHTML = filtered
-                .map(
-                    (s) => `
+                .map((s) => {
+                    const color = getSkillPastel(s.name);
+                    const initial = getSkillInitial(s.name);
+                    return `
                 <button class="skill-panel-item" data-skill-name="${s.name}">
-                    <div class="skill-panel-item-icon">
-                        <i class="fas fa-bolt text-violet-500 text-xs"></i>
+                    <div class="skill-panel-item-icon" style="background:${color.bg};color:${color.text};border-color:transparent;font-weight:700;font-size:14px;">
+                        ${initial}
                     </div>
                     <div class="skill-panel-item-info">
                         <div class="skill-panel-item-name">${s.name}</div>
                         <div class="skill-panel-item-desc">${s.description}</div>
                     </div>
                 </button>
-            `
-                )
+            `;
+                })
                 .join('');
         }
         this.bindSkillItemEvents();
@@ -833,13 +858,20 @@ class AgentInput extends HTMLElement {
             );
             if (filtered.length > 0) {
                 this.autocompleteMode = 'skill';
-                this.autocompleteItems = filtered.map((s) => ({
-                    value: s.name,
-                    label: s.name,
-                    description: s.description.slice(0, 80),
-                    icon: 'fa-bolt',
-                    iconClass: 'skill-icon'
-                }));
+                this.autocompleteItems = filtered.map((s) => {
+                    const color = getSkillPastel(s.name);
+                    const initial = getSkillInitial(s.name);
+                    return {
+                        value: s.name,
+                        label: s.name,
+                        description: s.description.slice(0, 80),
+                        icon: null,
+                        iconClass: 'skill-icon',
+                        pastelBg: color.bg,
+                        pastelText: color.text,
+                        initial
+                    };
+                });
                 this.autocompleteSelectedIndex = 0;
                 this.showAutocompletePanel(textarea);
                 return;
@@ -936,19 +968,20 @@ class AgentInput extends HTMLElement {
         if (!panel || !listEl) return;
 
         listEl.innerHTML = this.autocompleteItems
-            .map(
-                (item, idx) => `
+            .map((item, idx) => {
+                const iconContent = item.initial
+                    ? `<div class="autocomplete-panel-item-icon ${item.iconClass || ''}" style="background:${item.pastelBg};color:${item.pastelText};font-weight:700;font-size:12px;">${item.initial}</div>`
+                    : `<div class="autocomplete-panel-item-icon ${item.iconClass || ''}"><i class="fas ${item.icon}"></i></div>`;
+                return `
             <button class="autocomplete-panel-item${idx === this.autocompleteSelectedIndex ? ' selected' : ''}" data-idx="${idx}">
-                <div class="autocomplete-panel-item-icon ${item.iconClass || ''}">
-                    <i class="fas ${item.icon}"></i>
-                </div>
+                ${iconContent}
                 <div class="autocomplete-panel-item-info">
                     <div class="autocomplete-panel-item-name">${item.label}</div>
                     ${item.description ? `<div class="autocomplete-panel-item-desc">${item.description}</div>` : ''}
                 </div>
             </button>
-        `
-            )
+        `;
+            })
             .join('');
 
         panel.classList.remove('autocomplete-panel-hidden');

@@ -14,6 +14,7 @@ export interface RegistrySkill {
     installUrl: string;
     stars?: number;
     score?: number;
+    downloads?: number;
     canInstall: boolean;
 }
 
@@ -22,6 +23,7 @@ export interface SearchResult {
     total?: number;
     hasMore?: boolean;
     message?: string;
+    nextCursor?: string;
 }
 
 export interface SearchOptions {
@@ -29,6 +31,7 @@ export interface SearchOptions {
     page?: number;
     limit?: number;
     apiKey?: string;
+    cursor?: string;
 }
 
 export abstract class SkillRegistryBase {
@@ -38,6 +41,11 @@ export abstract class SkillRegistryBase {
     abstract readonly icon: string;
     /** GUI 中 r-icon 的 CSS 类名 */
     abstract readonly iconClass: string;
+
+    /** 热门技能页面的标语，子类可覆盖 */
+    get slogan(): string {
+        return '技能，让智能体无所不能';
+    }
 
     get installPrefix(): string {
         return `${this.id}:`;

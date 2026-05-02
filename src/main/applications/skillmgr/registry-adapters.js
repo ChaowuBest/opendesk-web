@@ -19,6 +19,7 @@
 import {
     allRegistries,
     getRegistry,
+    getRegistriesInfo as _getRegistriesInfo,
     searchRegistry as _searchRegistry,
     getInstallMethod as _getInstallMethod,
     parseInstallUrl as _parseInstallUrl
@@ -57,9 +58,14 @@ function getInstallMethod(installUrl) {
     return _getInstallMethod(installUrl);
 }
 
+function getRegistriesInfo() {
+    return _getRegistriesInfo();
+}
+
 export const RegistryAdapters = {
     searchRegistry,
     getInstallMethod,
+    getRegistriesInfo,
     parseClawHubInstallUrl,
     parseMatrixInstallUrl,
     parseModelScopeInstallUrl,
