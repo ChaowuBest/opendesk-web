@@ -815,6 +815,12 @@ class TaskView extends HTMLElement {
                         last_part_element.innerHTML = progress.last_part.rendered || '';
                     }
 
+                    if (progress.last_part.type === 'tool_call') {
+                        last_part_element.querySelectorAll('.terminal-tool-scroll').forEach((el) => {
+                            el.scrollTop = el.scrollHeight;
+                        });
+                    }
+
                     const isStreaming = progress.task_status === 'running';
                     const usageEl = message_container.querySelector('.message-usage');
                     if (usageEl) {
@@ -1353,6 +1359,12 @@ class EmbeddedTaskView extends HTMLElement {
                                 }
                             } else {
                                 last_part_element.innerHTML = progress.last_part.rendered || '';
+                            }
+
+                            if (progress.last_part.type === 'tool_call') {
+                                last_part_element.querySelectorAll('.terminal-tool-scroll').forEach((el) => {
+                                    el.scrollTop = el.scrollHeight;
+                                });
                             }
                         }
                     }

@@ -16,6 +16,10 @@ export class SkillHubRegistry extends SkillRegistryBase {
     readonly icon = '💎';
     readonly iconClass = 'skillhub';
 
+    override get slogan(): string {
+        return '专为中国用户优化的Skills社区';
+    }
+
     private mapSkill(s: any) {
         return {
             id: s.slug || s.name || '',
@@ -25,6 +29,7 @@ export class SkillHubRegistry extends SkillRegistryBase {
             source: 'skillhub' as const,
             installUrl: `${this.installPrefix}${s.slug || s.name || ''}`,
             stars: s.stars || 0,
+            downloads: s.downloads ?? s.downloadCount ?? s.download_count ?? 0,
             canInstall: true
         };
     }
