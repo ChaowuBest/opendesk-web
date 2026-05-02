@@ -376,64 +376,57 @@ class SideBar extends HTMLElement {
     }
 
     _buildTaskItemHtml(item) {
-        const standardClass = 'cursor-pointer rounded-xl pr-2 py-2 mb-2 transition-colors duration-200';
         const task = item.task;
         const depth = item.depth;
-        const indentPx = 12 + Math.min(depth, 5) * 14;
-
-        let taskStyle = '';
-        let connectorHtml = '';
         const isCurrentTask = task.task_id === this.currentTaskId;
         const isSubTask = depth > 0;
 
         if (isSubTask) {
-            const connectorColor = isCurrentTask ? 'bg-[#C94C40]' : 'bg-gray-300';
-            const connectorLineColor = isCurrentTask ? 'bg-[#C94C40]' : 'bg-gray-300';
-            connectorHtml = `<span class="inline-block w-4 h-full mr-1 relative flex-shrink-0">
-                <span class="absolute left-0 top-0 bottom-0 ${connectorLineColor}" style="height:calc(100% - 0.5rem);top:0.5rem;width:2px;"></span>
-                <span class="absolute left-0 top-1/2 -translate-y-1/2 ${connectorColor}" style="width:8px;height:8px;border-radius:50%;left:0;"></span>
-            </span>`;
-            if (isCurrentTask) {
-                taskStyle = 'text-[#C94C40] font-semibold border border-[#C94C40]';
-            } else {
-                taskStyle = 'bg-gray-50 text-gray-700 hover:bg-gray-100 border border-gray-200';
-            }
-        } else if (isCurrentTask) {
-            taskStyle = 'bg-[#C94C40] text-white font-semibold';
-        } else {
-            taskStyle = 'bg-white text-gray-700 hover:shadow-sm hover:border-l-2 hover:border-l-[#C94C40]';
+            return this._buildSubTaskItemHtml(task, isCurrentTask);
         }
 
-        const taskNameClass = isSubTask ? 'text-xs truncate' : 'text-sm truncate';
-        const subTaskBadge = isSubTask
-            ? '<span class="ml-1.5 text-[9px] px-1.5 py-0.5 rounded-full bg-gray-200 text-gray-600 font-medium">子</span>'
-            : '';
+        const taskStyle = isCurrentTask
+            ? 'bg-[#C94C40] text-white font-semibold'
+            : 'bg-white text-[#1f2937] hover:bg-[#f9fafb]';
+        const deleteColor = isCurrentTask ? 'text-white/60 hover:text-white' : 'text-[#9ca3af] hover:text-[#6b7280]';
 
         return `
         <div
-            class="task-item ${taskStyle} ${standardClass} ${isSubTask ? 'py-1.5' : ''}"
-            style="padding-left:${indentPx}px"
+            class="task-item cursor-pointer rounded-xl px-3 py-2.5 mb-1.5 transition-colors duration-150 ${taskStyle}"
             data-task_id="${task.task_id}"
-            data-parent_id="${task.parent_id || ''}"
-            data-depth="${depth}"
+            data-parent_id=""
+            data-depth="0"
         >
             <div class="flex items-center justify-between min-w-0 gap-2">
-                <div class="flex items-center flex-1 min-w-0 overflow-hidden gap-1">
-                    ${connectorHtml}
-                    <p class="${taskNameClass} flex-shrink-0">${task.task_name || '未命名任务'}</p>
-                    ${subTaskBadge}
-                    ${task.task_status === 'running' ? '<task-status-tag class="flex-shrink-0 ml-1"></task-status-tag>' : ''}
+                <div class="flex items-center flex-1 min-w-0 gap-2">
+                    <p class="text-[13px] truncate leading-tight">${task.task_name || '未命名任务'}</p>
+                    ${task.task_status === 'running' ? '<task-status-tag class="flex-shrink-0"></task-status-tag>' : ''}
                 </div>
-                <button
-                    class="delete-task-btn flex-shrink-0 ${isSubTask ? 'w-4 h-4' : 'w-5 h-5'} flex items-center justify-center rounded-full bg-white hover:bg-[#FFF8E7] transition-colors duration-200"
-                    data-task_id="${task.task_id}"
-                    title="删除"
-                >
-                    <span class="${isSubTask ? 'text-xs' : 'text-sm'} text-gray-600 pointer-events-none hover:text-white transition-colors duration-200" style="line-height:1;">×</span>
-                </button>
+                <button class="delete-task-btn flex-shrink-0 ${deleteColor} text-sm opacity-0 group-hover:opacity-100 transition-opacity" data-task_id="${task.task_id}" title="删除">×</button>
             </div>
-        </div>
-        `;
+        </div>`;
+    }
+
+    _buildSubTaskItemHtml(task, isCurrentTask) {
+        const nameColor = isCurrentTask ? 'text-[#C94C40] font-medium' : 'text-[#64748b]';
+        const dotColor =
+            task.task_status === 'running'
+                ? 'bg-[#64748b] animate-pulse'
+                : task.task_status === 'stopped' || task.task_status === 'completed'
+                  ? 'bg-[#86efac]'
+                  : 'bg-[#cbd5e1]';
+
+        return `
+        <div
+            class="task-item cursor-pointer flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-[#f8fafc] transition-colors duration-100"
+            data-task_id="${task.task_id}"
+            data-parent_id="${task.parent_id || ''}"
+            data-depth="1"
+        >
+            <span class="w-1.5 h-1.5 rounded-full shrink-0 ${dotColor}"></span>
+            <p class="text-[11px] truncate flex-1 min-w-0 ${nameColor}">${task.task_name || '未命名子任务'}</p>
+            <button class="delete-task-btn shrink-0 text-[10px] text-[#cbd5e1] hover:text-[#94a3b8] transition-colors" data-task_id="${task.task_id}" title="删除">×</button>
+        </div>`;
     }
 
     /**
@@ -497,10 +490,34 @@ class SideBar extends HTMLElement {
             const loadingIndicator = this.querySelector('#task-list-loading');
             if (loadingIndicator) loadingIndicator.remove();
 
+            const htmlParts = [];
+            let k = 0;
+            while (k < newItems.length) {
+                const item = newItems[k];
+                if (item.depth === 0) {
+                    const parentTask = item.task;
+                    const groupChildren = [];
+                    let m = k + 1;
+                    while (m < newItems.length && newItems[m].depth > 0) {
+                        groupChildren.push(newItems[m]);
+                        m++;
+                    }
+                    if (groupChildren.length > 0) {
+                        htmlParts.push(this._buildTaskCardWithChildren(parentTask, groupChildren));
+                    } else {
+                        htmlParts.push(this._buildTaskItemHtml(item));
+                    }
+                    k = m;
+                } else {
+                    htmlParts.push(this._buildTaskItemHtml(item));
+                    k++;
+                }
+            }
+
             const fragment = document.createDocumentFragment();
-            for (const item of newItems) {
+            for (const html of htmlParts) {
                 const wrapper = document.createElement('div');
-                wrapper.innerHTML = this._buildTaskItemHtml(item);
+                wrapper.innerHTML = html;
                 const el = wrapper.firstElementChild;
                 el.style.opacity = '0';
                 el.style.transform = 'translateY(8px)';
@@ -515,12 +532,9 @@ class SideBar extends HTMLElement {
             }
 
             requestAnimationFrame(() => {
-                const allItems = taskListContainer.querySelectorAll('.task-item');
-                allItems.forEach((el) => {
-                    if (el.style.opacity === '0') {
-                        el.style.opacity = '1';
-                        el.style.transform = 'translateY(0)';
-                    }
+                taskListContainer.querySelectorAll('[style*="opacity: 0"], [style*="opacity:0"]').forEach((el) => {
+                    el.style.opacity = '1';
+                    el.style.transform = 'translateY(0)';
                 });
             });
 
@@ -535,55 +549,52 @@ class SideBar extends HTMLElement {
         const container = this.querySelector('#task-list-container');
         if (!container) return;
 
-        container.querySelectorAll('.task-item').forEach((item) => {
+        container.querySelectorAll('.task-item[data-depth="1"]').forEach((item) => {
             const taskId = item.dataset.task_id;
-            const depth = parseInt(item.dataset.depth || '0', 10);
             const isCurrentTask = taskId === this.currentTaskId;
-            const isSubTask = depth > 0;
+            const nameEl = item.querySelector('p');
+            if (nameEl) {
+                nameEl.classList.toggle('text-[#C94C40]', isCurrentTask);
+                nameEl.classList.toggle('font-medium', isCurrentTask);
+                nameEl.classList.toggle('text-[#64748b]', !isCurrentTask);
+            }
+        });
 
+        container.querySelectorAll('#task-list-container > .task-item[data-depth="0"]').forEach((item) => {
+            const taskId = item.dataset.task_id;
+            const isCurrentTask = taskId === this.currentTaskId;
             item.classList.remove(
                 'bg-[#C94C40]',
                 'text-white',
                 'font-semibold',
-                'text-[#C94C40]',
-                'border',
-                'border-[#C94C40]',
-                'bg-gray-50',
-                'text-gray-700',
-                'hover:bg-gray-100',
-                'border-gray-200',
                 'bg-white',
-                'hover:shadow-sm',
-                'hover:border-l-2',
-                'hover:border-l-[#C94C40]'
+                'text-[#1f2937]',
+                'hover:bg-[#f9fafb]'
             );
-
-            if (isSubTask) {
-                if (isCurrentTask) {
-                    item.classList.add('text-[#C94C40]', 'font-semibold', 'border', 'border-[#C94C40]');
-                } else {
-                    item.classList.add('bg-gray-50', 'text-gray-700', 'hover:bg-gray-100', 'border', 'border-gray-200');
-                }
-                const connectorDot = item.querySelector('span > span:last-child');
-                const connectorLine = item.querySelector('span > span:first-child');
-                if (connectorDot) {
-                    connectorDot.classList.toggle('bg-[#C94C40]', isCurrentTask);
-                    connectorDot.classList.toggle('bg-gray-300', !isCurrentTask);
-                }
-                if (connectorLine) {
-                    connectorLine.classList.toggle('bg-[#C94C40]', isCurrentTask);
-                    connectorLine.classList.toggle('bg-gray-300', !isCurrentTask);
-                }
-            } else if (isCurrentTask) {
+            if (isCurrentTask) {
                 item.classList.add('bg-[#C94C40]', 'text-white', 'font-semibold');
             } else {
-                item.classList.add(
-                    'bg-white',
-                    'text-gray-700',
-                    'hover:shadow-sm',
-                    'hover:border-l-2',
-                    'hover:border-l-[#C94C40]'
-                );
+                item.classList.add('bg-white', 'text-[#1f2937]', 'hover:bg-[#f9fafb]');
+            }
+        });
+
+        container.querySelectorAll('.task-card-group').forEach((group) => {
+            const parentId = group.dataset.parentId;
+            const isCurrentParent = parentId === this.currentTaskId;
+            const headerEl = group.querySelector('.task-item[data-depth="0"]');
+            if (headerEl) {
+                headerEl.classList.toggle('bg-[#C94C40]', isCurrentParent);
+                const nameEl = headerEl.querySelector('p');
+                if (nameEl) {
+                    nameEl.classList.toggle('text-white', isCurrentParent);
+                    nameEl.classList.toggle('font-semibold', isCurrentParent);
+                    nameEl.classList.toggle('text-[#1f2937]', !isCurrentParent);
+                }
+                const delBtn = headerEl.querySelector('.delete-task-btn');
+                if (delBtn) {
+                    delBtn.classList.toggle('text-white/50', isCurrentParent);
+                    delBtn.classList.toggle('text-[#cbd5e1]', !isCurrentParent);
+                }
             }
         });
     }
@@ -774,6 +785,67 @@ class SideBar extends HTMLElement {
         });
     }
 
+    static SUBTASK_GROUP_MAX_HEIGHT = 340;
+
+    _buildTaskCardWithChildren(parentTask, children) {
+        const total = children.length;
+        const running = children.filter((c) => c.task.task_status === 'running').length;
+        const done = children.filter(
+            (c) => c.task.task_status === 'stopped' || c.task.task_status === 'completed'
+        ).length;
+        const percent = total > 0 ? Math.round((done / total) * 100) : 0;
+        const isCurrentTask = parentTask.task_id === this.currentTaskId;
+
+        let childrenHtml = '';
+        for (const item of children) {
+            childrenHtml += this._buildSubTaskItemHtml(item.task, item.task.task_id === this.currentTaskId);
+        }
+
+        const headerBg = isCurrentTask ? 'bg-[#C94C40]' : '';
+        const titleColor = isCurrentTask ? 'text-white font-semibold' : 'text-[#1f2937]';
+        const deleteColor = isCurrentTask ? 'text-white/50 hover:text-white' : 'text-[#cbd5e1] hover:text-[#94a3b8]';
+
+        const statusSummary =
+            running > 0
+                ? `<span class="flex items-center gap-1"><span class="w-1 h-1 rounded-full bg-[#64748b] animate-pulse"></span>${running} 运行中</span>`
+                : done === total
+                  ? `<span class="text-[#1f2937] font-medium">全部完成</span>`
+                  : `<span>${done}/${total} 完成</span>`;
+
+        const shouldOpen = running > 0 || (isCurrentTask && parentTask.task_status === 'running');
+
+        return `
+        <div class="task-card-group mb-1.5 rounded-xl bg-white overflow-hidden" data-parent-id="${parentTask.task_id}">
+            <!-- Card Header (parent task title) -->
+            <div class="task-item cursor-pointer flex items-center justify-between px-3 py-2.5 gap-2 rounded-t-xl ${headerBg}" data-task_id="${parentTask.task_id}" data-parent_id="" data-depth="0">
+                <div class="flex items-center flex-1 min-w-0 gap-2">
+                    <p class="text-[13px] truncate leading-tight ${titleColor}">${parentTask.task_name || '未命名任务'}</p>
+                    ${parentTask.task_status === 'running' ? '<task-status-tag class="flex-shrink-0"></task-status-tag>' : ''}
+                </div>
+                <button class="delete-task-btn shrink-0 text-sm ${deleteColor} transition-colors" data-task_id="${parentTask.task_id}" title="删除">×</button>
+            </div>
+
+            <!-- Collapsible children section -->
+            <details class="subtask-details"${shouldOpen ? ' open' : ''}>
+                <summary class="flex items-center justify-between px-3 py-1.5 cursor-pointer select-none border-t border-[#f1f5f9] hover:bg-[#f8fafc] transition-colors">
+                    <div class="flex items-center gap-2 text-[10px] text-[#94a3b8]">
+                        <svg class="subtask-chevron w-3 h-3 transition-transform duration-200" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
+                        <span>${total} 个子任务</span>
+                    </div>
+                    <div class="flex items-center gap-2 text-[10px] text-[#94a3b8]">
+                        ${statusSummary}
+                        <div class="w-10 h-1 rounded-full bg-[#f1f5f9] overflow-hidden">
+                            <div class="h-full rounded-full bg-[#94a3b8] transition-all duration-300" style="width:${percent}%"></div>
+                        </div>
+                    </div>
+                </summary>
+                <div class="subtask-group-scroll overflow-y-auto px-1.5 pb-1.5" style="max-height:${SideBar.SUBTASK_GROUP_MAX_HEIGHT}px;">
+                    ${childrenHtml}
+                </div>
+            </details>
+        </div>`;
+    }
+
     reloadTaskList() {
         const standardClass = 'cursor-pointer rounded-xl pr-2 py-2 mb-2 transition-colors duration-200';
         const taskListContainer = this.querySelector('#task-list-container');
@@ -787,8 +859,27 @@ class SideBar extends HTMLElement {
         this._displayedRootCount = Math.min(TASK_PAGE_SIZE, totalRootTasks);
 
         const htmlParts = [];
-        for (const item of initialSlice) {
-            htmlParts.push(this._buildTaskItemHtml(item));
+        let i = 0;
+        while (i < initialSlice.length) {
+            const item = initialSlice[i];
+            if (item.depth === 0) {
+                const parentTask = item.task;
+                const groupChildren = [];
+                let j = i + 1;
+                while (j < initialSlice.length && initialSlice[j].depth > 0) {
+                    groupChildren.push(initialSlice[j]);
+                    j++;
+                }
+                if (groupChildren.length > 0) {
+                    htmlParts.push(this._buildTaskCardWithChildren(parentTask, groupChildren));
+                } else {
+                    htmlParts.push(this._buildTaskItemHtml(item));
+                }
+                i = j;
+            } else {
+                htmlParts.push(this._buildTaskItemHtml(item));
+                i++;
+            }
         }
 
         if (totalRootTasks > TASK_PAGE_SIZE) {
@@ -855,6 +946,10 @@ class SideBar extends HTMLElement {
             );
             this._scrollObserver.observe(sentinel);
         }
+
+        taskListContainer.querySelectorAll('.subtask-group-scroll').forEach((el) => {
+            el.scrollTop = el.scrollHeight;
+        });
     }
 }
 

@@ -941,6 +941,10 @@ class TaskView extends HTMLElement {
             document.removeEventListener('task-list-updated', this._taskListUpdateHandler);
             this._taskListUpdateHandler = null;
         }
+        if (this._poolSegObserver) {
+            this._poolSegObserver.disconnect();
+            this._poolSegObserver = null;
+        }
         if (this._domSanitizer) {
             this._domSanitizer.disconnect();
             this._domSanitizer = null;
@@ -1145,6 +1149,58 @@ class TaskView extends HTMLElement {
                 }
             }
         });
+
+        this._poolSegRaf = null;
+        const initPoolSegIndicators = () => {
+            chatHistory.querySelectorAll('.pool-seg').forEach((seg) => {
+                const indicator = seg.querySelector('.pool-seg-indicator');
+                const active = seg.querySelector('.pool-seg-btn.active');
+                if (indicator && active) {
+                    indicator.style.left = active.offsetLeft + 'px';
+                    indicator.style.width = active.offsetWidth + 'px';
+                }
+            });
+        };
+        this._poolSegObserver = new MutationObserver(() => {
+            if (this._poolSegRaf) return;
+            this._poolSegRaf = requestAnimationFrame(() => {
+                this._poolSegRaf = null;
+                initPoolSegIndicators();
+            });
+        });
+        this._poolSegObserver.observe(chatHistory, { childList: true, subtree: true });
+
+        chatHistory.addEventListener('click', (e) => {
+            const tabBtn = e.target.closest('.pool-seg-btn[data-pool-filter]');
+            if (!tabBtn) return;
+            const card = tabBtn.closest('.subtask-pool-card');
+            if (!card) return;
+            const filter = tabBtn.dataset.poolFilter;
+
+            card.querySelectorAll('.pool-seg-btn').forEach((btn) => btn.classList.remove('active'));
+            tabBtn.classList.add('active');
+
+            const seg = tabBtn.closest('.pool-seg');
+            const indicator = seg ? seg.querySelector('.pool-seg-indicator') : null;
+            if (indicator) {
+                indicator.style.left = tabBtn.offsetLeft + 'px';
+                indicator.style.width = tabBtn.offsetWidth + 'px';
+            }
+
+            card.querySelectorAll('[data-pool-task-idx]').forEach((row) => {
+                const status = row.dataset.poolTaskStatus;
+                if (filter === 'all') {
+                    row.style.display = '';
+                } else if (filter === 'running') {
+                    row.style.display = status === 'running' || status === 'retrying' ? '' : 'none';
+                } else if (filter === 'success') {
+                    row.style.display = status === 'success' ? '' : 'none';
+                } else if (filter === 'fail') {
+                    row.style.display = status === 'fail' ? '' : 'none';
+                }
+            });
+        });
+
         const scrollButton = this.querySelector('#taskview-scroll-to-bottom-button');
         scrollButton.addEventListener('click', () => {
             this.setAutoScrollingToBottom(true);

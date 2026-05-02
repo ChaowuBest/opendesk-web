@@ -1486,3 +1486,136 @@ pre.terminal-tool-output {
         transform: scale(1) translateY(0);
     }
 }
+
+/* =========================================
+   Attempt Completion Card (subtask result)
+   ========================================= */
+.attempt-completion-card {
+    animation: completion-card-in 0.2s ease-out;
+}
+@keyframes completion-card-in {
+    from {
+        opacity: 0;
+        transform: translateY(3px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* =========================================
+   SubTask Pool Card
+   ========================================= */
+.subtask-pool-card {
+    animation: completion-card-in 0.2s ease-out;
+}
+.subtask-pool-card .pool-task-list::-webkit-scrollbar {
+    width: 3px;
+}
+.subtask-pool-card .pool-task-list::-webkit-scrollbar-thumb {
+    background: #e2e8f0;
+    border-radius: 2px;
+}
+.subtask-pool-card .pool-task-list::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+/* Segmented control (macOS-style sliding indicator) */
+.pool-seg {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    background: #f1f5f9;
+    border-radius: 7px;
+    padding: 2px;
+    gap: 0;
+}
+.pool-seg-indicator {
+    position: absolute;
+    top: 2px;
+    bottom: 2px;
+    border-radius: 6px;
+    background: #fff;
+    box-shadow:
+        0 1px 2px rgba(0, 0, 0, 0.06),
+        0 0.5px 1px rgba(0, 0, 0, 0.04);
+    transition:
+        left 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+        width 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    z-index: 0;
+}
+.pool-seg-btn {
+    position: relative;
+    z-index: 1;
+    padding: 3px 10px;
+    font-size: 11px;
+    font-weight: 500;
+    color: #94a3b8;
+    cursor: pointer;
+    border: none;
+    background: none;
+    transition: color 0.2s;
+    white-space: nowrap;
+    user-select: none;
+}
+.pool-seg-btn.active {
+    color: #1e293b;
+    font-weight: 600;
+}
+.pool-seg-btn.disabled {
+    opacity: 0.35;
+    pointer-events: none;
+}
+
+/* =========================================
+   Sidebar task card with children
+   ========================================= */
+.task-card-group {
+    border: 1px solid #f0f0f0;
+    border-radius: 12px;
+    transition: border-color 0.15s ease;
+}
+.task-card-group:hover {
+    border-color: #e2e5e9;
+}
+#task-list-container > .task-item {
+    border: 1px solid #f0f0f0;
+    border-radius: 12px;
+    transition:
+        border-color 0.15s ease,
+        background 0.15s ease;
+}
+#task-list-container > .task-item:hover {
+    border-color: #e2e5e9;
+}
+.subtask-details > summary {
+    list-style: none;
+}
+.subtask-details > summary::-webkit-details-marker {
+    display: none;
+}
+.subtask-details[open] > summary .subtask-chevron {
+    transform: rotate(0deg);
+}
+.subtask-details:not([open]) > summary .subtask-chevron {
+    transform: rotate(-90deg);
+}
+.subtask-group-scroll::-webkit-scrollbar {
+    width: 3px;
+}
+.subtask-group-scroll::-webkit-scrollbar-thumb {
+    background: #e5e7eb;
+    border-radius: 2px;
+}
+.subtask-group-scroll::-webkit-scrollbar-track {
+    background: transparent;
+}
+/* Show delete button on hover */
+.task-item .delete-task-btn {
+    opacity: 0;
+    transition: opacity 0.15s ease;
+}
+.task-item:hover .delete-task-btn {
+    opacity: 1;
+}

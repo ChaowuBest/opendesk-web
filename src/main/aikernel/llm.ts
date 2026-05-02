@@ -32,7 +32,7 @@ function mergeReasonOptions(reasoningEffort: ReasoningEffort | undefined): Recor
     const reasonOptions: Record<string, any> = {};
     if (reasoningEffort === 'none') {
         reasonOptions.thinking = { type: 'disabled' };
-    } else if (reasoningEffort && reasoningEffort !== '') {
+    } else if (reasoningEffort) {
         reasonOptions.thinking = { type: 'enabled' };
         reasonOptions.reasoning_effort = reasoningEffort;
     }
