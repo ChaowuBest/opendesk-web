@@ -353,6 +353,16 @@ export default class TodoMgrWorker extends BaseWorker {
     }
 
     /**
+     * 手动立即触发指定的全局待办
+     */
+    async triggerGlobalTodoNow(todoId: string): Promise<GlobalTodo> {
+        const todo = this.globalTodos.find((t) => t.id === todoId);
+        if (!todo) throw new Error(`GlobalTodo not found: ${todoId}`);
+        await this.fireTrigger(todo);
+        return todo;
+    }
+
+    /**
      * 处理来自其他应用的事件，检查是否有匹配的事件触发器
      */
     async handleApplicationEvent(sourceBundleName: string, eventName: string, _args: any[]): Promise<void> {

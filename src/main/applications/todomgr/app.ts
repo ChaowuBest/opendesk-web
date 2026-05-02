@@ -25,11 +25,12 @@ import {
 import { getAdaptiveGreen } from '../../tui/theme.js';
 import TodoMgrWorker from './worker';
 import { MANAGE_GLOBAL_TODOS_SKILL } from './skills.js';
+import { ApplicationRegistry } from '../registry.js';
 import chalk from 'chalk';
 
 export class TodoMgrApplication extends BaseApplication {
     constructor() {
-        super('todomgr', '待办事项', false);
+        super('todomgr', '任务自动化', true);
     }
 
     async getTUIStatusBlock(): Promise<string | null> {
@@ -82,6 +83,37 @@ export class TodoMgrApplication extends BaseApplication {
         manageGlobalTodosSkill.toolsets = [globalTodosToolset];
 
         return [manageGlobalTodosSkill];
+    }
+
+    /**
+     * 供 UI 调用：获取所有应用已注册的事件，附带应用名称
+     */
+    async getAllEventsForUI(): Promise<
+        { bundleName: string; appName: string; eventName: string; eventDescription: string }[]
+    > {
+        if (!this.registry) return [];
+        const eventsMap = await this.registry.getAllSupportedEvents();
+        const result: { bundleName: string; appName: string; eventName: string; eventDescription: string }[] = [];
+        for (const [bundleName, events] of eventsMap) {
+            const app = ApplicationRegistry.getApplication(bundleName);
+            const appName = app?.name || bundleName;
+            for (const event of events) {
+                result.push({
+                    bundleName,
+                    appName,
+                    eventName: event.eventName,
+                    eventDescription: event.eventDescription
+                });
+            }
+        }
+        return result;
+    }
+
+    /**
+     * 供 UI 调用：立即触发指定的全局待办
+     */
+    async triggerGlobalTodoNowFromUI(todoId: string): Promise<void> {
+        await this.callWorker('triggerGlobalTodoNow', todoId);
     }
 
     /**
