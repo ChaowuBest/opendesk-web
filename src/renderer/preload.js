@@ -280,6 +280,14 @@ function exposeFSAPI() {
                 throw new Error(result.message);
             }
             return result.data;
+        },
+        trashItem: async (itemPath) => {
+            const result = await ipcRenderer.invoke('fs:trashItem', itemPath);
+            if (result.status !== 'ok') {
+                console.error('trashing item failed', result.message);
+                throw new Error(result.message);
+            }
+            return result.data;
         }
     });
 }

@@ -412,8 +412,11 @@ class AgentInput extends HTMLElement {
                             <i class="fas fa-paper-plane text-sm"></i>
                         </button>
                         <!-- 停止按钮 -->
-                        <button id="agent-input-stop-btn" class="py-1 px-3 bg-red-500 hover:bg-red-600 text-white rounded-full transition-colors text-xs hidden">
-                            <i class="fas fa-stop text-[10px]"></i>
+                        <button id="agent-input-stop-btn" class="py-1 px-3 text-white rounded-full transition-all text-xs hidden"
+                            style="background: rgba(239,115,115,0.78); backdrop-filter: blur(4px);">
+                            <span class="agent-stop-icon inline-flex items-center">
+                                <i class="fas fa-stop text-[10px]"></i>
+                            </span>
                             <span class="ml-1">停止</span>
                         </button>
                     </div>
@@ -1477,7 +1480,8 @@ class ApplicationAgentInput extends HTMLElement {
                     </div>
 
                     <!-- 停止按钮 - 任务运行状态时显示 -->
-                    <button id="stop-task-button" class="flex-shrink-0 w-10 h-10 rounded-full bg-red-500 hover:bg-red-600 text-white flex items-center justify-center transition-colors shadow-lg hidden">
+                    <button id="stop-task-button" class="flex-shrink-0 w-10 h-10 rounded-full text-white flex items-center justify-center transition-all shadow-lg hidden"
+                        style="background: rgba(239,115,115,0.78);">
                         <i class="fas fa-stop text-sm"></i>
                     </button>
 

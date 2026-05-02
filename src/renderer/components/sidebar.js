@@ -11,6 +11,7 @@
 
 import './statustags';
 import { ElasticToolbarWidget } from './toolbar.ts';
+import { showConfirmModal } from './confirmModal.ts';
 
 const TASK_PAGE_SIZE = 30;
 
@@ -597,27 +598,46 @@ class SideBar extends HTMLElement {
 
         const menu = document.createElement('div');
         menu.id = 'task-context-menu';
-        menu.className =
-            'fixed z-[9999] bg-white rounded-xl shadow-xl border border-gray-200 py-1 min-w-[160px] text-sm text-gray-700 animate-in fade-in';
-        menu.style.left = `${x}px`;
-        menu.style.top = `${y}px`;
+        Object.assign(menu.style, {
+            position: 'fixed',
+            zIndex: '9999',
+            minWidth: '180px',
+            padding: '4px',
+            borderRadius: '10px',
+            background: 'rgba(255, 255, 255, 0.88)',
+            backdropFilter: 'blur(40px) saturate(1.8)',
+            WebkitBackdropFilter: 'blur(40px) saturate(1.8)',
+            border: '0.5px solid rgba(0, 0, 0, 0.08)',
+            boxShadow:
+                '0 12px 40px -8px rgba(0,0,0,0.15), 0 0 0 0.5px rgba(0,0,0,0.04), inset 0 0.5px 0 rgba(255,255,255,0.5)',
+            animation: 'od-ctx-appear 0.12s ease-out',
+            fontFamily: 'system-ui, -apple-system, sans-serif',
+            left: `${x}px`,
+            top: `${y}px`
+        });
 
         const items = [
             { id: 'fork', icon: 'fa-solid fa-code-fork', label: '复制并创建任务' },
+            { id: 'delete', icon: 'fa-solid fa-trash-can', label: '删除任务', danger: true },
             { id: 'delete-all', icon: 'fa-solid fa-trash', label: '删除全部任务', danger: true }
         ];
 
+        const btnStyle = `display:flex; align-items:center; gap:8px; width:100%; padding:6px 10px; border:none; border-radius:6px; background:transparent; font-size:12px; cursor:pointer; text-align:left; transition:background 0.1s;`;
+        const iconStyle = 'width:16px; text-align:center; font-size:12px; flex-shrink:0;';
+
         menu.innerHTML = items
-            .map(
-                (item) => `
-            <button
-                data-action="${item.id}"
-                class="w-full text-left px-4 py-2 flex items-center gap-2 hover:bg-gray-100 transition-colors duration-150 ${item.danger ? 'text-red-500 hover:bg-red-50' : ''}"
-            >
-                <i class="${item.icon} w-4 text-center"></i>
-                <span>${item.label}</span>
-            </button>`
-            )
+            .map((item, i) => {
+                const needSep = item.id === 'delete';
+                const sep = needSep
+                    ? '<div style="height:1px; margin:3px 8px; background:rgba(0,0,0,0.06);"></div>'
+                    : '';
+                const color = item.danger ? '#dc2626' : '#1f2937';
+                const iconColor = item.danger ? '#dc2626' : '#6b7280';
+                return (
+                    `${sep}<button data-action="${item.id}" data-danger="${item.danger ? '1' : ''}" style="${btnStyle} color:${color};">` +
+                    `<i class="${item.icon}" style="${iconStyle} color:${iconColor};"></i><span>${item.label}</span></button>`
+                );
+            })
             .join('');
 
         this.appendChild(menu);
@@ -632,6 +652,22 @@ class SideBar extends HTMLElement {
             }
         });
 
+        menu.querySelectorAll('[data-action]').forEach((btn) => {
+            const isDanger = btn.dataset.danger === '1';
+            btn.addEventListener('mouseenter', () => {
+                btn.style.background = isDanger ? '#fef2f2' : '#3b82f6';
+                btn.style.color = isDanger ? '#b91c1c' : 'white';
+                const icon = btn.querySelector('i');
+                if (icon) icon.style.color = isDanger ? '#b91c1c' : 'white';
+            });
+            btn.addEventListener('mouseleave', () => {
+                btn.style.background = 'transparent';
+                btn.style.color = isDanger ? '#dc2626' : '#1f2937';
+                const icon = btn.querySelector('i');
+                if (icon) icon.style.color = isDanger ? '#dc2626' : '#6b7280';
+            });
+        });
+
         menu.querySelector('[data-action="fork"]').addEventListener('click', async () => {
             this._dismissContextMenu();
             try {
@@ -644,9 +680,39 @@ class SideBar extends HTMLElement {
             }
         });
 
+        menu.querySelector('[data-action="delete"]').addEventListener('click', async () => {
+            this._dismissContextMenu();
+            const confirmed = await showConfirmModal({
+                icon: 'fa-trash-can',
+                iconBg: '#FEF2F2',
+                iconColor: '#DC2626',
+                title: '删除任务',
+                message: '确定要删除这个任务吗？<b>删除后无法恢复。</b>',
+                confirmText: '删除',
+                cancelText: '取消',
+                danger: true
+            });
+            if (!confirmed) return;
+            window.globalControlAPI.removeTaskViewCache(taskId);
+            if (this.currentTaskId === taskId) {
+                window.globalControlAPI.openTask(null);
+            }
+            await window.taskManagerAPI.removeTask(taskId);
+        });
+
         menu.querySelector('[data-action="delete-all"]').addEventListener('click', async () => {
             this._dismissContextMenu();
-            if (!window.confirm('确定要删除所有任务吗？删除后无法恢复。')) return;
+            const confirmed = await showConfirmModal({
+                icon: 'fa-trash',
+                iconBg: '#FEF2F2',
+                iconColor: '#DC2626',
+                title: '删除全部任务',
+                message: '确定要删除所有任务吗？<b>删除后无法恢复。</b>',
+                confirmText: '全部删除',
+                cancelText: '取消',
+                danger: true
+            });
+            if (!confirmed) return;
             window.globalControlAPI.clearAllTaskViewCache();
             window.globalControlAPI.openHomePage();
             this.currentTaskId = null;
@@ -686,10 +752,19 @@ class SideBar extends HTMLElement {
             btn._bound = true;
             btn.addEventListener('click', async (event) => {
                 event.stopPropagation();
-                const confirmDelete = window.confirm('确定要删除这个任务吗？删除后无法恢复。');
-                if (!confirmDelete) return;
-
                 const taskId = event.currentTarget.dataset.task_id;
+                const confirmed = await showConfirmModal({
+                    icon: 'fa-trash-can',
+                    iconBg: '#FEF2F2',
+                    iconColor: '#DC2626',
+                    title: '删除任务',
+                    message: '确定要删除这个任务吗？<b>删除后无法恢复。</b>',
+                    confirmText: '删除',
+                    cancelText: '取消',
+                    danger: true
+                });
+                if (!confirmed) return;
+
                 window.globalControlAPI.removeTaskViewCache(taskId);
                 if (this.currentTaskId === taskId) {
                     window.globalControlAPI.openTask(null);
@@ -739,7 +814,17 @@ class SideBar extends HTMLElement {
 
         this.querySelector('#delete-all-tasks-btn')?.addEventListener('click', async (event) => {
             event.stopPropagation();
-            if (!window.confirm('确定要删除所有任务吗？删除后无法恢复。')) return;
+            const confirmed = await showConfirmModal({
+                icon: 'fa-trash',
+                iconBg: '#FEF2F2',
+                iconColor: '#DC2626',
+                title: '删除全部任务',
+                message: '确定要删除所有任务吗？<b>删除后无法恢复。</b>',
+                confirmText: '全部删除',
+                cancelText: '取消',
+                danger: true
+            });
+            if (!confirmed) return;
             window.globalControlAPI.clearAllTaskViewCache();
             window.globalControlAPI.openHomePage();
             this.currentTaskId = null;

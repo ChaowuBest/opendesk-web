@@ -639,6 +639,15 @@ const registerTaskManagerAPIHandlers = () => {
             return { status: 'error', message: error.message };
         }
     });
+    ipcMain.handle('fs:trashItem', async (event, itemPath) => {
+        try {
+            await shell.trashItem(path.resolve(itemPath));
+            return { status: 'ok', data: true };
+        } catch (error) {
+            logger.error('trashing item failed', error);
+            return { status: 'error', message: error.message };
+        }
+    });
     // 显示保存文件对话框
     ipcMain.handle('dialog:saveFile', async (event, options) => {
         try {
