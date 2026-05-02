@@ -13,8 +13,77 @@ import { BaseTool } from '../../aikernel/tool';
 import { ToolCall } from '../../aikernel/messages';
 import { Card } from '../../tui/components/card';
 import { statusDisplay, truncText } from '../../tui/components/toolcall';
+import { escapeHtml } from '../../utils/escape';
 import chalk from 'chalk';
 import { z } from 'zod';
+
+const MONTH_LABELS = ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月'];
+const WEEKDAY_LABELS = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六'];
+
+function fmtTimeGui(ts: number): string {
+    const d = new Date(ts);
+    const h = d.getHours();
+    const m = String(d.getMinutes()).padStart(2, '0');
+    const ampm = h >= 12 ? 'PM' : 'AM';
+    const h12 = h % 12 || 12;
+    return `${h12}:${m} ${ampm}`;
+}
+
+function fmtDateFullGui(d: Date): string {
+    return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`;
+}
+
+function renderCalendarItemCard(item: any, title: string, status: string): string {
+    const start = new Date(item.startTime);
+    const monthLabel = MONTH_LABELS[start.getMonth()];
+    const subject = escapeHtml(item.subject);
+    const location = item.location ? escapeHtml(item.location) : '';
+    const timeStr = item.isAllDay ? '全天' : `${fmtTimeGui(item.startTime)} — ${fmtTimeGui(item.endTime)}`;
+    const dateStr = `${fmtDateFullGui(start)} ${WEEKDAY_LABELS[start.getDay()]}`;
+
+    const statusIcon =
+        status === 'success'
+            ? '<i class="fa-solid fa-circle-check" style="color:#34C759;font-size:14px;"></i>'
+            : status === 'error'
+              ? '<i class="fa-solid fa-circle-xmark" style="color:#FF3B30;font-size:14px;"></i>'
+              : '<i class="fa-solid fa-spinner fa-spin" style="color:#007AFF;font-size:14px;"></i>';
+
+    return `<div style="max-width:380px;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text',system-ui,sans-serif;-webkit-font-smoothing:antialiased; margin-top: 10px; margin-bottom: 10px;">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
+        ${statusIcon}
+        <span style="font-size:13px;font-weight:600;color:#1d1d1f;">${escapeHtml(title)}</span>
+    </div>
+    <div style="border-radius:14px;background:#fff;border:1px solid #F0F0F0;overflow:hidden;">
+        <div style="padding:16px;display:flex;align-items:flex-start;gap:14px;">
+            <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;width:52px;height:52px;border-radius:12px;background:#FAFAFA;border:1px solid #EBEBEB;flex-shrink:0;">
+                <span style="font-size:10px;font-weight:700;color:#FF3B30;text-transform:uppercase;">${monthLabel}</span>
+                <span style="font-size:18px;font-weight:800;color:#1d1d1f;line-height:1;">${start.getDate()}</span>
+            </div>
+            <div style="flex:1;min-width:0;">
+                <div style="font-size:15px;font-weight:700;color:#1d1d1f;letter-spacing:-0.01em;margin-bottom:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${subject}</div>
+                <div style="display:flex;flex-direction:column;gap:4px;">
+                    <div style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;color:#1d1d1f;">
+                        <i class="fa-regular fa-clock" style="color:#8E8E93;font-size:12px;width:14px;text-align:center;"></i>
+                        ${timeStr}
+                    </div>
+                    <div style="display:flex;align-items:center;gap:8px;font-size:12px;color:#8E8E93;">
+                        <i class="fa-regular fa-calendar" style="font-size:12px;width:14px;text-align:center;"></i>
+                        ${dateStr}
+                    </div>
+                    ${
+                        location
+                            ? `<div style="display:flex;align-items:center;gap:8px;font-size:12px;color:#8E8E93;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+                        <i class="fa-solid fa-location-dot" style="font-size:12px;width:14px;text-align:center;"></i>
+                        ${location}
+                    </div>`
+                            : ''
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+</div>`;
+}
 
 // ========== getCalendarItems 工具 ==========
 
@@ -112,6 +181,38 @@ export class AddCalendarItemTool extends BaseTool<typeof AddCalendarItemArgsSche
         );
         this.calendarApp = calendarApp;
         this.setExecutor(this.handleExecute.bind(this));
+    }
+
+    async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
+        if (toolcall.status === 'success' && toolcall.result) {
+            try {
+                const item = JSON.parse(toolcall.result);
+                return renderCalendarItemCard(item, '已添加日程', toolcall.status);
+            } catch {
+                /* fall through */
+            }
+        }
+        if (toolcall.status === 'running') {
+            const args = toolcall.args_object as any;
+            if (args?.['subject'] && args?.['dateString']) {
+                const dateParts = String(args['dateString']).replace(/-/g, '/');
+                const startTs = args['isAllDay']
+                    ? new Date(dateParts).getTime()
+                    : new Date(`${dateParts} ${args['startTime'] || '00:00'}`).getTime();
+                const endTs = args['isAllDay']
+                    ? startTs + 86400000
+                    : new Date(`${dateParts} ${args['endTime'] || '01:00'}`).getTime();
+                const pseudo = {
+                    subject: args['subject'],
+                    startTime: startTs,
+                    endTime: endTs,
+                    location: args['location'] || '',
+                    isAllDay: !!args['isAllDay']
+                };
+                return renderCalendarItemCard(pseudo, '正在添加日程…', toolcall.status);
+            }
+        }
+        return undefined;
     }
 
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
@@ -234,5 +335,162 @@ export class DeleteCalendarItemTool extends BaseTool<typeof DeleteCalendarItemAr
         const result = await this.calendarApp.callWorker('deleteCalendarItem', args.uid);
         const data = result?.data ?? result;
         return JSON.stringify({ success: true, uid: args.uid, ...data });
+    }
+}
+
+// ========== editCalendarItem 工具 ==========
+
+const EditCalendarItemArgsSchema = z.object({
+    itemId: z.string().describe('要修改的日程项的唯一标识符（uid），可通过 getCalendarItems 获取'),
+    subject: z.string().optional().describe('新的日程标题'),
+    dateString: z.string().optional().describe('新的日期字符串，格式为YYYY-MM-DD'),
+    startTime: z.string().optional().describe('新的开始时间，格式为HH:MM（24小时制）'),
+    endTime: z.string().optional().describe('新的结束时间，格式为HH:MM（24小时制）'),
+    location: z.string().optional().describe('新的地点'),
+    isAllDay: z.boolean().optional().describe('是否为全天事件')
+});
+
+export class EditCalendarItemTool extends BaseTool<typeof EditCalendarItemArgsSchema> {
+    private calendarApp: any;
+
+    constructor(calendarApp: any) {
+        super(
+            'editCalendarItem',
+            '修改一个已有的日程项，需要提供日程项的uid和要修改的字段',
+            EditCalendarItemArgsSchema
+        );
+        this.calendarApp = calendarApp;
+        this.setExecutor(this.handleExecute.bind(this));
+    }
+
+    async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
+        if (toolcall.status === 'success' && toolcall.result) {
+            try {
+                const item = JSON.parse(toolcall.result);
+                return renderCalendarItemCard(item, '已修改日程', toolcall.status);
+            } catch {
+                /* fall through */
+            }
+        }
+        if (toolcall.status === 'running') {
+            const args = toolcall.args_object as any;
+            if (args?.['subject'] && args?.['dateString']) {
+                const dateParts = String(args['dateString']).replace(/-/g, '/');
+                const startTs = args['isAllDay']
+                    ? new Date(dateParts).getTime()
+                    : new Date(`${dateParts} ${args['startTime'] || '00:00'}`).getTime();
+                const endTs = args['isAllDay']
+                    ? startTs + 86400000
+                    : new Date(`${dateParts} ${args['endTime'] || '01:00'}`).getTime();
+                const pseudo = {
+                    subject: args['subject'],
+                    startTime: startTs,
+                    endTime: endTs,
+                    location: args['location'] || '',
+                    isAllDay: !!args['isAllDay']
+                };
+                return renderCalendarItemCard(pseudo, '正在修改日程…', toolcall.status);
+            }
+        }
+        return undefined;
+    }
+
+    renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
+        const args = toolcall.args_object as any;
+        const body: string[] = [];
+
+        if (args?.['itemId']) {
+            body.push(chalk.dim('ID: ') + chalk.cyan(truncText(String(args['itemId']), width - 12)));
+        }
+        if (args?.['subject']) {
+            body.push(chalk.dim('标题: ') + chalk.white(truncText(String(args['subject']), width - 16)));
+        }
+        if (args?.['dateString']) {
+            body.push(chalk.dim('日期: ') + chalk.cyan(String(args['dateString'])));
+        }
+        if (args?.['isAllDay']) {
+            body.push(chalk.dim('时间: ') + chalk.hex('#FFAB00')('全天'));
+        } else if (args?.['startTime'] && args?.['endTime']) {
+            body.push(chalk.dim('时间: ') + chalk.cyan(`${args['startTime']} — ${args['endTime']}`));
+        }
+        if (args?.['location']) {
+            body.push(chalk.dim('地点: ') + chalk.hex('#4A90D9')(String(args['location'])));
+        }
+
+        if (toolcall.status === 'success' && toolcall.result) {
+            try {
+                const result = JSON.parse(toolcall.result);
+                body.push(chalk.dim('  ✓ 日程已修改，ID: ') + chalk.green(String(result.uid)));
+            } catch {
+                body.push(chalk.dim('  ✓ 日程已修改'));
+            }
+        } else if (toolcall.status === 'error' && toolcall.result) {
+            body.push(chalk.redBright('  ' + truncText(String(toolcall.result), width - 10)));
+        }
+
+        return new Card({
+            icon: '✏️',
+            title: '修改日程',
+            status: statusDisplay(toolcall.status),
+            body
+        }).render(width);
+    }
+
+    private async handleExecute(args: z.output<typeof EditCalendarItemArgsSchema>): Promise<string> {
+        const { itemId, subject, dateString, startTime, endTime, location, isAllDay } = args;
+
+        const updates: Record<string, any> = {};
+        if (subject !== undefined) updates.subject = subject;
+        if (location !== undefined) updates.location = location;
+        if (isAllDay !== undefined) updates.isAllDay = isAllDay;
+
+        if (dateString !== undefined && (startTime !== undefined || endTime !== undefined)) {
+            const dateParts = dateString.replace(/-/g, '/');
+            if (isAllDay) {
+                updates.startTime = new Date(dateParts).getTime();
+                updates.endTime = updates.startTime + 86400000;
+            } else {
+                if (startTime !== undefined) {
+                    updates.startTime = new Date(`${dateParts} ${startTime}`).getTime();
+                }
+                if (endTime !== undefined) {
+                    updates.endTime = new Date(`${dateParts} ${endTime}`).getTime();
+                }
+            }
+        } else if (dateString !== undefined) {
+            const dateParts = dateString.replace(/-/g, '/');
+            if (isAllDay) {
+                updates.startTime = new Date(dateParts).getTime();
+                updates.endTime = updates.startTime + 86400000;
+            } else {
+                const baseDate = new Date(dateParts);
+                if (startTime !== undefined) {
+                    const [h, m] = startTime.split(':').map(Number);
+                    baseDate.setHours(h, m, 0, 0);
+                    updates.startTime = baseDate.getTime();
+                }
+                if (endTime !== undefined) {
+                    const [h, m] = endTime.split(':').map(Number);
+                    const endDate = new Date(dateParts);
+                    endDate.setHours(h, m, 0, 0);
+                    updates.endTime = endDate.getTime();
+                }
+            }
+        }
+
+        if (Object.keys(updates).length === 0) {
+            throw new Error('未提供任何要修改的字段');
+        }
+
+        if (updates.startTime !== undefined && isNaN(updates.startTime)) {
+            throw new Error('日期或时间格式无效，请使用 YYYY-MM-DD 和 HH:MM 格式');
+        }
+        if (updates.endTime !== undefined && isNaN(updates.endTime)) {
+            throw new Error('日期或时间格式无效，请使用 YYYY-MM-DD 和 HH:MM 格式');
+        }
+
+        const result = await this.calendarApp.callWorker('updateCalendarItem', itemId, updates);
+        const item = result?.data ?? result;
+        return JSON.stringify(item);
     }
 }
