@@ -65,10 +65,6 @@ description: 提供嵌入式网页浏览器功能：访问网页、页面导航�
 - **browserGetHtml** — 获取页面的原始 HTML 或指定 CSS 选择器匹配元素的 HTML。
   适合需要分析 DOM 结构的场景。
 
-## 截图
-
-使用 **browserScreenshot** 截取当前页面的可见区域截图，返回 base64 编码的 PNG 图片数据。
-
 ## 标签页管理
 
 浏览器支持多个标签页，可以并行打开多个网页：

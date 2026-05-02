@@ -26,7 +26,6 @@ import {
     BrowserScrollTool,
     BrowserExtractContentTool,
     BrowserGetHtmlTool,
-    BrowserScreenshotTool,
     BrowserListTabsTool,
     BrowserSwitchTabTool,
     BrowserCloseTabTool
@@ -97,7 +96,6 @@ class BrowserApplication extends BaseApplication {
         toolset.addTool(new BrowserRefreshTool(this));
         toolset.addTool(new BrowserExtractContentTool(this));
         toolset.addTool(new BrowserGetHtmlTool(this));
-        toolset.addTool(new BrowserScreenshotTool(this));
         toolset.addTool(new BrowserExecuteScriptTool(this));
         toolset.addTool(new BrowserListTabsTool(this));
         toolset.addTool(new BrowserSwitchTabTool(this));
@@ -210,44 +208,6 @@ class BrowserApplication extends BaseApplication {
             `);
         }
         this.emitEvent(eventName, taskId, ...args);
-    }
-
-    /**
-     * Capture a screenshot of the active webview content.
-     * Uses webview.capturePage() via the renderer process.
-     * task-artifacts uses Shadow DOM, so we query via el.shadowRoot.
-     */
-    async captureScreenshot(taskId: string): Promise<{ success: boolean; image?: string; error?: string }> {
-        const mainWin = await this._getMainWindow();
-        if (!mainWin) return { success: false, error: 'No main window available' };
-
-        const safeId = taskId.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-
-        const result = await mainWin.webContents.executeJavaScript(`
-            (async () => {
-                try {
-                    ${this._makeEnsureSidebarScript(taskId)}
-                    var el = document.getElementById('task-${safeId}-artifacts');
-                    if (!el) return { __e: 'Task artifacts element not found' };
-                    if (!el._browser) return { __e: 'Browser not initialized' };
-                    // Access the active webview via the browser's internal tabs
-                    var browser = el._browser;
-                    var tabs = browser.tabs;
-                    var activeTab = tabs.find(function(t) { return t.id === browser.activeTabId; });
-                    if (!activeTab || !activeTab.webview) return { __e: 'No active webview' };
-                    if (!activeTab.ready) return { __e: 'Webview not ready yet' };
-                    var nativeImage = await activeTab.webview.capturePage();
-                    var png = nativeImage.toPNG();
-                    var base64 = png.toString('base64');
-                    return { __d: { success: true, image: base64, size: png.length } };
-                } catch (e) {
-                    return { __e: (e && e.message) || String(e) };
-                }
-            })()
-        `);
-
-        if (result?.__e) return { success: false, error: result.__e };
-        return result?.__d ?? { success: false, error: 'Unknown error' };
     }
 }
 

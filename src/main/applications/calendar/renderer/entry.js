@@ -83,9 +83,10 @@ const CALENDAR_CSS = `
 }
 .cal-toolbar-title {
     font-size: 16px; font-weight: 700; color: #1d1d1f; letter-spacing: -0.01em;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;
 }
 .cal-toolbar-btn {
-    width: 36px; height: 36px; display: flex; align-items: center; justify-content: center;
+    width: 33px; height: 33px; display: flex; align-items: center; justify-content: center;
     border-radius: 10px; border: 1px solid #E5E5EA; background: #fff; cursor: pointer;
     color: #3C3C43; transition: all 0.15s;
 }
@@ -99,9 +100,10 @@ const CALENDAR_CSS = `
 .cal-today-btn:hover { background: #F5F5F7; border-color: #D1D1D6; }
 .cal-add-event-btn {
     display: flex; align-items: center; gap: 6px; padding: 8px 18px;
-    border-radius: 12px; border: none; background: #1d1d1f; color: #fff;
+    border-radius: 10px; border: none; background: #1d1d1f; color: #fff;
+    height: 33px;
     font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.15s;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.12); white-space: nowrap; flex-shrink: 0;
 }
 .cal-add-event-btn:hover { background: #333; box-shadow: 0 4px 16px rgba(0,0,0,0.16); }
 .cal-add-event-btn:active { transform: scale(0.97); }
@@ -163,6 +165,7 @@ const CALENDAR_CSS = `
 /* ---- Week / Day columns ---- */
 .cal-time-grid-header {
     display: flex; border-bottom: 1px solid #F0F0F0; background: #fff; flex-shrink: 0;
+    padding-right: 6px;
 }
 .cal-time-grid-header-gutter { width: 64px; flex-shrink: 0; }
 .cal-time-grid-header-cell {
@@ -197,6 +200,18 @@ const CALENDAR_CSS = `
     flex: 1; position: relative; border-left: 1px solid #F5F5F7;
 }
 .cal-time-grid-col.today-col { background: rgba(0,122,255,0.015); }
+.cal-time-grid-col.selected-col { background: rgba(99,102,241,0.03); }
+.cal-time-grid-header-cell.selected-hdr { background: rgba(99,102,241,0.04); }
+
+/* ---- All-day bar ---- */
+.cal-allday-bar { display: flex; border-bottom: 1px solid #F0F0F0; background: #FAFBFF; flex-shrink: 0; min-height: 0; padding-right: 6px; }
+.cal-allday-gutter { width: 64px; flex-shrink: 0; display: flex; align-items: center; justify-content: flex-end; padding-right: 12px; font-size: 10px; font-weight: 600; color: #8E8E93; }
+.cal-allday-cols { flex: 1; display: flex; }
+.cal-allday-col { flex: 1; padding: 4px 2px; border-left: 1px solid #F5F5F7; display: flex; flex-direction: column; gap: 2px; }
+.cal-allday-pill {
+    padding: 2px 8px; border-radius: 6px; font-size: 11px; font-weight: 600;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer;
+}
 .cal-time-grid-hour-line {
     position: absolute; left: 0; right: 0; border-top: 1px solid #F0F0F0;
 }
@@ -211,9 +226,12 @@ const CALENDAR_CSS = `
     transition: box-shadow 0.15s, transform 0.1s;
     display: flex; flex-direction: column; gap: 2px;
 }
+.cal-ev-block.cal-ev-compact {
+    flex-direction: row; align-items: center; gap: 6px; padding: 2px 8px;
+}
 .cal-ev-block:hover { box-shadow: 0 4px 16px rgba(0,0,0,0.1); transform: translateY(-1px); }
-.cal-ev-block-title { font-size: 12px; font-weight: 600; line-height: 1.3; }
-.cal-ev-block-time { font-size: 11px; opacity: 0.7; line-height: 1.2; }
+.cal-ev-block-title { font-size: 12px; font-weight: 600; line-height: 1.3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cal-ev-block-time { font-size: 11px; opacity: 0.7; line-height: 1.2; white-space: nowrap; flex-shrink: 0; }
 
 /* ---- Now indicator ---- */
 .cal-now-line {
@@ -314,6 +332,27 @@ const CALENDAR_CSS = `
 @keyframes cal-detail-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
 
 .cal-detail-card { animation: cal-detail-in 0.3s ease-out; }
+
+/* ---- Drag ghost ---- */
+.cal-drag-ghost {
+    position: absolute; border: 2px dashed #007AFF; border-radius: 8px;
+    background: rgba(0,122,255,0.06); pointer-events: none; z-index: 30;
+    display: flex; align-items: center; justify-content: center;
+}
+.cal-drag-ghost-label {
+    font-size: 11px; font-weight: 600; color: #007AFF; opacity: 0.9;
+    text-align: center; padding: 2px 8px;
+}
+.cal-drag-ghost-month {
+    border: 2px dashed #007AFF; border-radius: 8px;
+    background: rgba(0,122,255,0.06); pointer-events: none;
+}
+.cal-ev-block.dragging { opacity: 0.35; }
+.cal-month-pill.dragging { opacity: 0.35; }
+.cal-allday-pill.dragging { opacity: 0.35; }
+
+/* ---- Disabled input ---- */
+.cal-input:disabled { background: #F2F2F7; color: #8E8E93; cursor: not-allowed; border-color: #E5E5EA; }
 `;
 
 /* ═══════════════════════════════════════════════════
@@ -414,6 +453,7 @@ class CalendarEntryWidget extends HTMLElement {
 
     connectedCallback() {
         this._injectStyles();
+        this._initDrag();
         this._render();
         this._bindCore();
         this._refreshAll();
@@ -422,6 +462,7 @@ class CalendarEntryWidget extends HTMLElement {
 
     disconnectedCallback() {
         if (this._nowTimer) clearInterval(this._nowTimer);
+        this._dragCleanup();
     }
 
     _injectStyles() {
@@ -645,6 +686,25 @@ class CalendarEntryWidget extends HTMLElement {
 
             let html = `<div style="font-size:14px;font-weight:700;color:#1d1d1f;margin-bottom:16px;">${fmtDateFull(this.currentDate)} ${WEEK_DAYS_FULL[this.currentDate.getDay()]}</div>`;
 
+            const allDayEvents = dayEvents.filter((e) => e.isAllDay);
+            const timedEvents = dayEvents.filter((e) => !e.isAllDay);
+
+            if (allDayEvents.length > 0) {
+                html += '<div style="margin-bottom:12px;">';
+                html +=
+                    '<div style="font-size:11px;font-weight:600;color:#8E8E93;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:6px;">全天</div>';
+                for (const ev of allDayEvents) {
+                    const c = getEventColor(ev);
+                    html += `<div style="display:flex;gap:12px;padding:10px 12px;border-radius:12px;background:${c.bg};margin-bottom:4px;cursor:pointer;border-left:4px solid ${c.border};" data-detail-uid="${ev.uid}">
+                        <div style="flex:1;min-width:0;">
+                            <div style="font-size:13px;font-weight:600;color:${c.text};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${ev.subject}</div>
+                            ${ev.location ? `<div style="font-size:11px;color:#8E8E93;margin-top:2px;"><i class="fa-solid fa-location-dot" style="font-size:9px;margin-right:4px;"></i>${ev.location}</div>` : ''}
+                        </div>
+                    </div>`;
+                }
+                html += '</div>';
+            }
+
             if (dayEvents.length === 0) {
                 html += `<div style="text-align:center;padding-top:40px;">
                     <div style="width:56px;height:56px;border-radius:16px;background:#F2F2F7;display:inline-flex;align-items:center;justify-content:center;margin-bottom:16px;">
@@ -653,9 +713,9 @@ class CalendarEntryWidget extends HTMLElement {
                     <p style="font-size:14px;font-weight:600;color:#1d1d1f;">暂无日程</p>
                     <p style="font-size:12px;color:#8E8E93;margin-top:4px;">右键点击日历来添加新日程</p>
                 </div>`;
-            } else {
+            } else if (timedEvents.length > 0) {
                 html += '<div style="display:flex;flex-direction:column;gap:8px;">';
-                for (const ev of dayEvents) {
+                for (const ev of timedEvents) {
                     const c = getEventColor(ev);
                     html += `<div style="display:flex;gap:12px;padding:12px;border-radius:14px;background:#fff;border:1px solid #F0F0F0;cursor:pointer;transition:box-shadow 0.15s;" data-detail-uid="${ev.uid}" onmouseover="this.style.boxShadow='0 2px 12px rgba(0,0,0,0.06)'" onmouseout="this.style.boxShadow='none'">
                         <div style="width:4px;border-radius:4px;background:${c.border};flex-shrink:0;"></div>
@@ -710,7 +770,7 @@ class CalendarEntryWidget extends HTMLElement {
                 <div style="display:flex;flex-direction:column;gap:6px;padding-top:2px;">
                     <div style="display:flex;align-items:center;gap:8px;font-size:14px;font-weight:600;color:#1d1d1f;">
                         <i class="fa-regular fa-clock" style="color:#8E8E93;font-size:13px;"></i>
-                        ${fmtTime(ev.startTime)} — ${fmtTime(ev.endTime)}
+                        ${ev.isAllDay ? '全天' : `${fmtTime(ev.startTime)} — ${fmtTime(ev.endTime)}`}
                     </div>
                     <div style="display:flex;align-items:center;gap:8px;font-size:13px;color:#8E8E93;">
                         <i class="fa-regular fa-calendar" style="font-size:13px;"></i>
@@ -754,17 +814,17 @@ class CalendarEntryWidget extends HTMLElement {
         if (!tb) return;
 
         tb.innerHTML = `
-        <div style="display:flex;align-items:center;gap:10px;">
+        <div style="display:flex;align-items:center;gap:10px;min-width:0;flex:1;overflow:hidden;">
             <span id="cal-toolbar-title" class="cal-toolbar-title"></span>
         </div>
-        <div style="display:flex;align-items:center;gap:8px;">
+        <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
             <button id="cal-nav-prev" class="cal-toolbar-btn">
                 <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/></svg>
             </button>
             <button id="cal-nav-next" class="cal-toolbar-btn">
                 <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
             </button>
-            <button id="cal-nav-today" class="cal-today-btn">Today</button>
+            <button id="cal-nav-today" class="cal-today-btn">今天</button>
             <div class="cal-seg" id="cal-seg" style="margin-left:8px;">
                 <div class="cal-seg-indicator" id="cal-seg-ind"></div>
                 <button class="cal-seg-btn ${this.viewMode === 'day' ? 'active' : ''}" data-view="day">日</button>
@@ -920,9 +980,10 @@ class CalendarEntryWidget extends HTMLElement {
             for (let j = 0; j < Math.min(evts.length, maxShow); j++) {
                 const ev = evts[j];
                 const c = getEventColor(ev);
+                const timeLabel = ev.isAllDay ? '全天' : fmtTime(ev.startTime);
                 html += `<div class="cal-month-pill" style="background:${c.bg};color:${c.text};" data-event-uid="${ev.uid}">
                     <div class="cal-month-pill-dot" style="background:${c.border};"></div>
-                    <span class="cal-month-pill-time">${fmtTime(ev.startTime)}</span>
+                    <span class="cal-month-pill-time">${timeLabel}</span>
                     <span class="cal-month-pill-subject">${ev.subject}</span>
                 </div>`;
             }
@@ -955,6 +1016,7 @@ class CalendarEntryWidget extends HTMLElement {
         }
         const today = new Date();
         const totalH = 24 * HOUR_HEIGHT;
+        const selKey = dateKey(this.currentDate);
 
         let html = '';
 
@@ -963,14 +1025,40 @@ class CalendarEntryWidget extends HTMLElement {
         for (let i = 0; i < 7; i++) {
             const d = days[i];
             const isToday = isSameDay(d, today);
+            const isSel = dateKey(d) === selKey && !isToday;
             const monthStr = `${d.getMonth() + 1}月${d.getDate()}日`;
-            html += `<div class="cal-time-grid-header-cell ${isToday ? 'today-col' : ''}" data-date="${dateKey(d)}">
+            html += `<div class="cal-time-grid-header-cell ${isToday ? 'today-col' : ''} ${isSel ? 'selected-hdr' : ''}" data-date="${dateKey(d)}">
                 <div class="cal-wh-weekday">${WEEK_HEADER_FULL[i]}</div>
                 <div class="cal-wh-day ${isToday ? 'today-circle' : ''}">${d.getDate()}</div>
                 <div class="cal-wh-date-label">${monthStr}</div>
             </div>`;
         }
         html += '</div>';
+
+        let hasAllDay = false;
+        for (const d of days) {
+            const allDayEvts = this._eventsFor(dateKey(d)).filter((e) => e.isAllDay);
+            if (allDayEvts.length > 0) {
+                hasAllDay = true;
+                break;
+            }
+        }
+        if (hasAllDay) {
+            html += '<div class="cal-allday-bar">';
+            html += '<div class="cal-allday-gutter">全天</div>';
+            html += '<div class="cal-allday-cols">';
+            for (let i = 0; i < 7; i++) {
+                const dk = dateKey(days[i]);
+                const allDayEvts = this._eventsFor(dk).filter((e) => e.isAllDay);
+                html += '<div class="cal-allday-col">';
+                for (const ev of allDayEvts) {
+                    const cc = getEventColor(ev);
+                    html += `<div class="cal-allday-pill" style="background:${cc.bg};color:${cc.text};" data-event-uid="${ev.uid}">${ev.subject}</div>`;
+                }
+                html += '</div>';
+            }
+            html += '</div></div>';
+        }
 
         html += `<div style="flex:1;overflow-y:auto;" class="cal-scroll" id="cal-week-scroll">`;
         html += `<div class="cal-time-grid-body" style="height:${totalH}px;position:relative;">`;
@@ -992,23 +1080,25 @@ class CalendarEntryWidget extends HTMLElement {
             const d = days[i];
             const dk = dateKey(d);
             const isToday = isSameDay(d, today);
+            const isSel = dk === selKey && !isToday;
             const evts = this._eventsFor(dk).filter((e) => !e.isAllDay);
             const laid = layoutOverlapping(evts);
 
-            html += `<div class="cal-time-grid-col ${isToday ? 'today-col' : ''}" data-date="${dk}">`;
+            html += `<div class="cal-time-grid-col ${isToday ? 'today-col' : ''} ${isSel ? 'selected-col' : ''}" data-date="${dk}">`;
             for (const ev of laid) {
                 const s = new Date(ev.startTime);
                 const e = new Date(ev.endTime);
                 const sm = s.getHours() * 60 + s.getMinutes();
                 const em = e.getHours() * 60 + e.getMinutes();
                 const top = (sm / 60) * HOUR_HEIGHT;
-                const height = Math.max(((em - sm) / 60) * HOUR_HEIGHT, 26);
+                const height = Math.max(((em - sm) / 60) * HOUR_HEIGHT, 22);
                 const left = (ev._col / ev._totalCols) * 100;
                 const width = (1 / ev._totalCols) * 100;
                 const cc = getEventColor(ev);
-                html += `<div class="cal-ev-block" style="top:${top}px;height:${height}px;left:calc(${left}% + 2px);width:calc(${width}% - 4px);background:${cc.bg};border-left-color:${cc.border};color:${cc.text};" data-event-uid="${ev.uid}">
+                const compact = height < 36;
+                html += `<div class="cal-ev-block ${compact ? 'cal-ev-compact' : ''}" style="top:${top}px;height:${height}px;left:calc(${left}% + 2px);width:calc(${width}% - 4px);background:${cc.bg};border-left-color:${cc.border};color:${cc.text};" data-event-uid="${ev.uid}">
                     <div class="cal-ev-block-title">${ev.subject}</div>
-                    <div class="cal-ev-block-time">${fmtTime(ev.startTime)} – ${fmtTime(ev.endTime)}</div>
+                    <div class="cal-ev-block-time">${compact ? fmtTime24(ev.startTime) : `${fmtTime(ev.startTime)} – ${fmtTime(ev.endTime)}`}</div>
                 </div>`;
             }
             html += '</div>';
@@ -1043,10 +1133,23 @@ class CalendarEntryWidget extends HTMLElement {
         const isToday = isSameDay(d, today);
         const totalH = 24 * HOUR_HEIGHT;
         const dk = dateKey(d);
+        const allDayEvts = this._eventsFor(dk).filter((e) => e.isAllDay);
         const evts = this._eventsFor(dk).filter((e) => !e.isAllDay);
         const laid = layoutOverlapping(evts);
 
         let html = '';
+
+        if (allDayEvts.length > 0) {
+            html += '<div class="cal-allday-bar">';
+            html += '<div class="cal-allday-gutter">全天</div>';
+            html +=
+                '<div class="cal-allday-cols"><div class="cal-allday-col" style="flex-direction:row;flex-wrap:wrap;gap:4px;padding:6px 8px;">';
+            for (const ev of allDayEvts) {
+                const cc = getEventColor(ev);
+                html += `<div class="cal-allday-pill" style="background:${cc.bg};color:${cc.text};" data-event-uid="${ev.uid}">${ev.subject}</div>`;
+            }
+            html += '</div></div></div>';
+        }
 
         html += `<div style="flex:1;overflow-y:auto;" class="cal-scroll" id="cal-day-scroll">`;
         html += `<div class="cal-time-grid-body" style="height:${totalH}px;position:relative;">`;
@@ -1071,14 +1174,15 @@ class CalendarEntryWidget extends HTMLElement {
             const sm = s.getHours() * 60 + s.getMinutes();
             const em = e.getHours() * 60 + e.getMinutes();
             const top = (sm / 60) * HOUR_HEIGHT;
-            const height = Math.max(((em - sm) / 60) * HOUR_HEIGHT, 32);
+            const height = Math.max(((em - sm) / 60) * HOUR_HEIGHT, 22);
             const left = (ev._col / ev._totalCols) * 100;
             const width = (1 / ev._totalCols) * 100;
             const cc = getEventColor(ev);
-            html += `<div class="cal-ev-block" style="top:${top}px;height:${height}px;left:calc(${left}% + 4px);width:calc(${width}% - 8px);background:${cc.bg};border-left-color:${cc.border};color:${cc.text};" data-event-uid="${ev.uid}">
-                <div class="cal-ev-block-title" style="font-size:13px;">${ev.subject}</div>
-                <div class="cal-ev-block-time">${fmtTime(ev.startTime)} — ${fmtTime(ev.endTime)}</div>
-                ${ev.location ? `<div style="font-size:10px;opacity:0.6;margin-top:2px;"><i class="fa-solid fa-location-dot" style="font-size:8px;margin-right:3px;"></i>${ev.location}</div>` : ''}
+            const compact = height < 36;
+            html += `<div class="cal-ev-block ${compact ? 'cal-ev-compact' : ''}" style="top:${top}px;height:${height}px;left:calc(${left}% + 4px);width:calc(${width}% - 8px);background:${cc.bg};border-left-color:${cc.border};color:${cc.text};" data-event-uid="${ev.uid}">
+                <div class="cal-ev-block-title" style="${compact ? '' : 'font-size:13px;'}">${ev.subject}</div>
+                <div class="cal-ev-block-time">${compact ? fmtTime24(ev.startTime) : `${fmtTime(ev.startTime)} — ${fmtTime(ev.endTime)}`}</div>
+                ${!compact && ev.location ? `<div style="font-size:10px;opacity:0.6;margin-top:2px;"><i class="fa-solid fa-location-dot" style="font-size:8px;margin-right:3px;"></i>${ev.location}</div>` : ''}
             </div>`;
         }
         html += '</div>';
@@ -1112,14 +1216,33 @@ class CalendarEntryWidget extends HTMLElement {
     _scrollToNow(scrollId) {
         const sc = this.querySelector(`#${scrollId}`);
         if (!sc) return;
-        const now = new Date();
-        sc.scrollTop = Math.max(0, (now.getHours() - 1) * HOUR_HEIGHT);
+        const today = new Date();
+
+        if (isSameDay(this.currentDate, today)) {
+            sc.scrollTop = Math.max(0, (today.getHours() - 1) * HOUR_HEIGHT);
+            return;
+        }
+
+        const dk = dateKey(this.currentDate);
+        const evts = this._eventsFor(dk).filter((e) => !e.isAllDay);
+        if (evts.length > 0) {
+            const earliest = evts.reduce((a, b) => (a.startTime < b.startTime ? a : b));
+            const s = new Date(earliest.startTime);
+            const hourPos = (s.getHours() * 60 + s.getMinutes()) / 60;
+            sc.scrollTop = Math.max(0, (hourPos - 0.5) * HOUR_HEIGHT);
+        } else {
+            sc.scrollTop = 8 * HOUR_HEIGHT;
+        }
     }
 
     _bindViewEvents(container) {
         container.querySelectorAll('[data-event-uid]').forEach((el) => {
             el.addEventListener('click', (e) => {
                 e.stopPropagation();
+                if (this._dragJustEnded) {
+                    this._dragJustEnded = false;
+                    return;
+                }
                 this.selectedEvent = this._findEvent(el.dataset.eventUid);
                 this._renderDetail();
             });
@@ -1135,19 +1258,32 @@ class CalendarEntryWidget extends HTMLElement {
                 this._renderLeftHeader();
                 this._renderDetail();
                 this._updateToolbarTitle();
+
+                const selDk = dateKey(this.currentDate);
+                const today = new Date();
+
                 if (this.viewMode === 'month') {
                     container.querySelectorAll('.cal-month-cell').forEach((c) => {
-                        c.classList.toggle('selected', c.dataset.date === el.dataset.date);
-                        c.classList.toggle('today', false);
-                    });
-                    const today = new Date();
-                    container.querySelectorAll('.cal-month-cell').forEach((c) => {
                         const dk = c.dataset.date;
-                        if (dk) {
-                            const parts = dk.split('-');
-                            const cd = new Date(+parts[0], +parts[1] - 1, +parts[2]);
-                            if (isSameDay(cd, today)) c.classList.add('today');
-                        }
+                        const p = dk?.split('-');
+                        const cd = p ? new Date(+p[0], +p[1] - 1, +p[2]) : null;
+                        c.classList.toggle('selected', dk === selDk);
+                        c.classList.toggle('today', cd ? isSameDay(cd, today) : false);
+                    });
+                } else if (this.viewMode === 'week') {
+                    container.querySelectorAll('.cal-time-grid-col').forEach((c) => {
+                        const dk = c.dataset.date;
+                        const p = dk?.split('-');
+                        const cd = p ? new Date(+p[0], +p[1] - 1, +p[2]) : null;
+                        const isToday = cd ? isSameDay(cd, today) : false;
+                        c.classList.toggle('selected-col', dk === selDk && !isToday);
+                    });
+                    container.querySelectorAll('.cal-time-grid-header-cell').forEach((c) => {
+                        const dk = c.dataset.date;
+                        const p = dk?.split('-');
+                        const cd = p ? new Date(+p[0], +p[1] - 1, +p[2]) : null;
+                        const isToday = cd ? isSameDay(cd, today) : false;
+                        c.classList.toggle('selected-hdr', dk === selDk && !isToday);
                     });
                 }
             });
@@ -1163,15 +1299,27 @@ class CalendarEntryWidget extends HTMLElement {
                 const parts = dateEl.dataset.date.split('-');
                 targetDate = new Date(+parts[0], +parts[1] - 1, +parts[2]);
             }
-            this._showCtx(e.clientX, e.clientY, uid, targetDate);
+
+            let clickHour = -1;
+            if (this.viewMode !== 'month') {
+                const colEl = e.target.closest('.cal-time-grid-col');
+                if (colEl) {
+                    const rect = colEl.getBoundingClientRect();
+                    const yOff = e.clientY - rect.top;
+                    clickHour = Math.max(0, Math.min(23, Math.floor(yOff / HOUR_HEIGHT)));
+                }
+            }
+            this._showCtx(e.clientX, e.clientY, uid, targetDate, clickHour);
         });
+
+        this._bindDragEvents(container);
     }
 
     /* ═══════════════════════════════════════════════════
      *  CONTEXT MENU
      * ═══════════════════════════════════════════════════ */
 
-    _showCtx(x, y, eventUid, targetDate) {
+    _showCtx(x, y, eventUid, targetDate, clickHour = -1) {
         const ctx = this.querySelector('#cal-ctx');
         if (!ctx) return;
 
@@ -1196,7 +1344,12 @@ class CalendarEntryWidget extends HTMLElement {
 
         ctx.querySelector('[data-action="add"]')?.addEventListener('click', () => {
             ctx.classList.add('hidden');
-            this._showModal(null, targetDate);
+            let modalDate = targetDate;
+            if (clickHour >= 0) {
+                modalDate = new Date(targetDate);
+                modalDate.setHours(clickHour, 0, 0, 0);
+            }
+            this._showModal(null, modalDate);
         });
         ctx.querySelector('[data-action="edit"]')?.addEventListener('click', () => {
             ctx.classList.add('hidden');
@@ -1292,7 +1445,12 @@ class CalendarEntryWidget extends HTMLElement {
         const close = () => {
             modal.classList.add('hidden');
             modal.innerHTML = '';
+            document.removeEventListener('keydown', escHandler);
         };
+        const escHandler = (e) => {
+            if (e.key === 'Escape') close();
+        };
+        document.addEventListener('keydown', escHandler);
         modal.querySelector('#cal-modal-close').addEventListener('click', close);
         modal.querySelector('#cal-modal-cancel').addEventListener('click', close);
         modal.querySelector('#cal-modal-bg').addEventListener('click', (e) => {
@@ -1336,7 +1494,392 @@ class CalendarEntryWidget extends HTMLElement {
             }
         });
 
+        const allDayCheckbox = modal.querySelector('#cal-m-allday');
+        const startInput = modal.querySelector('#cal-m-start');
+        const endInput = modal.querySelector('#cal-m-end');
+        const syncAllDay = () => {
+            if (allDayCheckbox.checked) {
+                startInput.value = '00:00';
+                endInput.value = '00:00';
+                startInput.disabled = true;
+                endInput.disabled = true;
+            } else {
+                startInput.disabled = false;
+                endInput.disabled = false;
+            }
+        };
+        allDayCheckbox.addEventListener('change', syncAllDay);
+        syncAllDay();
+
         modal.querySelector('#cal-m-subject').focus();
+    }
+
+    /* ═══════════════════════════════════════════════════
+     *  DRAG & DROP
+     * ═══════════════════════════════════════════════════ */
+
+    _initDrag() {
+        this._drag = null;
+        this._onDragMove = this._onDragMove.bind(this);
+        this._onDragUp = this._onDragUp.bind(this);
+        this._onDragKey = this._onDragKey.bind(this);
+    }
+
+    _bindDragEvents(container) {
+        container.querySelectorAll('[data-event-uid]').forEach((el) => {
+            el.addEventListener('mousedown', (e) => {
+                if (e.button !== 0) return;
+                const uid = el.dataset.eventUid;
+                const ev = this._findEvent(uid);
+                if (!ev) return;
+                e.preventDefault();
+
+                this._drag = {
+                    uid,
+                    event: ev,
+                    startX: e.clientX,
+                    startY: e.clientY,
+                    el,
+                    started: false,
+                    ghost: null
+                };
+                document.addEventListener('mousemove', this._onDragMove);
+                document.addEventListener('mouseup', this._onDragUp);
+                document.addEventListener('keydown', this._onDragKey);
+            });
+        });
+    }
+
+    _onDragMove(e) {
+        if (!this._drag) return;
+        const dx = e.clientX - this._drag.startX;
+        const dy = e.clientY - this._drag.startY;
+        if (!this._drag.started && Math.abs(dx) + Math.abs(dy) < 8) return;
+
+        if (!this._drag.started) {
+            this._drag.started = true;
+            this._drag.el.classList.add('dragging');
+        }
+
+        if (this.viewMode === 'month') {
+            this._dragMoveMonth(e);
+        } else {
+            this._dragMoveTimeGrid(e);
+        }
+    }
+
+    _dragMoveTimeGrid(e) {
+        const container = this.querySelector('#cal-view');
+        if (!container) return;
+        const ev = this._drag.event;
+        const isAllDay = ev.isAllDay;
+
+        if (isAllDay) {
+            const allDayCols = container.querySelectorAll('.cal-allday-col');
+            let targetCol = null;
+            for (const col of allDayCols) {
+                const rect = col.getBoundingClientRect();
+                if (
+                    e.clientX >= rect.left &&
+                    e.clientX <= rect.right &&
+                    e.clientY >= rect.top - 20 &&
+                    e.clientY <= rect.bottom + 20
+                ) {
+                    targetCol = col;
+                    break;
+                }
+            }
+
+            if (!this._drag.ghost) {
+                this._drag.ghost = document.createElement('div');
+                this._drag.ghost.className = 'cal-drag-ghost';
+                this._drag.ghost.innerHTML = '<div class="cal-drag-ghost-label">按 Esc 取消</div>';
+                this._drag.ghost.style.position = 'fixed';
+                this._drag.ghost.style.height = '28px';
+                this._drag.ghost.style.zIndex = '9990';
+                document.body.appendChild(this._drag.ghost);
+            }
+
+            if (targetCol) {
+                const rect = targetCol.getBoundingClientRect();
+                this._drag.ghost.style.left = rect.left + 'px';
+                this._drag.ghost.style.top = rect.top + 'px';
+                this._drag.ghost.style.width = rect.width + 'px';
+                this._drag.ghost.style.display = 'flex';
+
+                const colEl = targetCol.closest('.cal-allday-cols');
+                if (colEl) {
+                    const cols = [...colEl.children];
+                    const idx = cols.indexOf(targetCol);
+                    if (this.viewMode === 'week') {
+                        const ws = getWeekStart(this.currentDate);
+                        const targetDate = new Date(ws);
+                        targetDate.setDate(targetDate.getDate() + idx);
+                        this._drag.targetDate = targetDate;
+                    } else {
+                        this._drag.targetDate = new Date(this.currentDate);
+                    }
+                }
+            } else {
+                this._drag.ghost.style.display = 'none';
+            }
+            return;
+        }
+
+        const gridCols = container.querySelectorAll('.cal-time-grid-col');
+        let targetCol = null;
+        let colIdx = -1;
+        for (let i = 0; i < gridCols.length; i++) {
+            const rect = gridCols[i].getBoundingClientRect();
+            if (e.clientX >= rect.left && e.clientX <= rect.right) {
+                targetCol = gridCols[i];
+                colIdx = i;
+                break;
+            }
+        }
+
+        if (!targetCol) {
+            if (this._drag.ghost) this._drag.ghost.style.display = 'none';
+            return;
+        }
+
+        const bodyEl = container.querySelector('.cal-time-grid-body');
+        if (!bodyEl) return;
+        const colsEl = bodyEl.querySelector('.cal-time-grid-cols');
+        if (!colsEl) return;
+        const colsRect = colsEl.getBoundingClientRect();
+
+        const duration = ev.endTime - ev.startTime;
+        const durationMin = Math.max(15, Math.round(duration / 60000));
+        const halfDurMin = durationMin / 2;
+
+        const yInCols = e.clientY - colsRect.top;
+        const centerMinutes = Math.max(0, Math.min(24 * 60 - 1, Math.round((yInCols / (24 * HOUR_HEIGHT)) * 24 * 60)));
+        const startMinutes = Math.max(0, Math.min(24 * 60 - durationMin, centerMinutes - halfDurMin));
+        const snappedMinutes = Math.round(startMinutes / 15) * 15;
+
+        const topPx = (snappedMinutes / 60) * HOUR_HEIGHT;
+        const heightPx = Math.max((durationMin / 60) * HOUR_HEIGHT, 22);
+
+        if (!this._drag.ghost) {
+            this._drag.ghost = document.createElement('div');
+            this._drag.ghost.className = 'cal-drag-ghost';
+            this._drag.ghost.innerHTML = '<div class="cal-drag-ghost-label">按 Esc 取消</div>';
+            document.body.appendChild(this._drag.ghost);
+        }
+
+        this._drag.ghost.style.position = 'absolute';
+        this._drag.ghost.style.display = 'flex';
+
+        if (colsEl && this._drag.ghost.parentElement !== colsEl) {
+            colsEl.appendChild(this._drag.ghost);
+        }
+
+        if (this.viewMode === 'week') {
+            const left = (colIdx / gridCols.length) * 100;
+            const width = (1 / gridCols.length) * 100;
+            this._drag.ghost.style.left = `calc(${left}% + 2px)`;
+            this._drag.ghost.style.width = `calc(${width}% - 4px)`;
+        } else {
+            this._drag.ghost.style.left = '4px';
+            this._drag.ghost.style.width = 'calc(100% - 8px)';
+        }
+        this._drag.ghost.style.top = topPx + 'px';
+        this._drag.ghost.style.height = heightPx + 'px';
+
+        if (targetCol.dataset.date) {
+            const parts = targetCol.dataset.date.split('-');
+            this._drag.targetDate = new Date(+parts[0], +parts[1] - 1, +parts[2]);
+        }
+        this._drag.targetMinutes = snappedMinutes;
+        this._drag.targetDurationMin = durationMin;
+    }
+
+    _dragMoveMonth(e) {
+        const container = this.querySelector('#cal-view');
+        if (!container) return;
+        const cells = container.querySelectorAll('.cal-month-cell[data-date]');
+        let targetCell = null;
+
+        for (const cell of cells) {
+            const rect = cell.getBoundingClientRect();
+            if (
+                e.clientX >= rect.left &&
+                e.clientX <= rect.right &&
+                e.clientY >= rect.top &&
+                e.clientY <= rect.bottom
+            ) {
+                targetCell = cell;
+                break;
+            }
+        }
+
+        container.querySelectorAll('.cal-drag-ghost-month').forEach((g) => g.remove());
+
+        if (targetCell) {
+            const ghost = document.createElement('div');
+            ghost.className = 'cal-drag-ghost-month';
+            ghost.innerHTML =
+                '<div class="cal-drag-ghost-label" style="padding:4px 6px;font-size:10px;">按 Esc 取消</div>';
+            ghost.style.position = 'absolute';
+            ghost.style.inset = '0';
+            targetCell.style.position = 'relative';
+            targetCell.appendChild(ghost);
+
+            const parts = targetCell.dataset.date.split('-');
+            this._drag.targetDate = new Date(+parts[0], +parts[1] - 1, +parts[2]);
+        }
+    }
+
+    _onDragUp(e) {
+        if (!this._drag || !this._drag.started) {
+            this._dragCleanup();
+            return;
+        }
+        this._dragJustEnded = true;
+        setTimeout(() => {
+            this._dragJustEnded = false;
+        }, 50);
+        const ev = this._drag.event;
+        const targetDate = this._drag.targetDate;
+
+        if (!targetDate) {
+            this._dragCleanup();
+            return;
+        }
+
+        let newStart, newEnd;
+        if (ev.isAllDay) {
+            const origStart = new Date(ev.startTime);
+            const origEnd = new Date(ev.endTime);
+            const dayDiff = Math.round(
+                (targetDate.getTime() -
+                    new Date(origStart.getFullYear(), origStart.getMonth(), origStart.getDate()).getTime()) /
+                    86400000
+            );
+            if (dayDiff === 0) {
+                this._dragCleanup();
+                return;
+            }
+            newStart = new Date(ev.startTime + dayDiff * 86400000);
+            newEnd = new Date(ev.endTime + dayDiff * 86400000);
+        } else if (this.viewMode === 'month') {
+            const origStart = new Date(ev.startTime);
+            const origEnd = new Date(ev.endTime);
+            const dayDiff = Math.round(
+                (targetDate.getTime() -
+                    new Date(origStart.getFullYear(), origStart.getMonth(), origStart.getDate()).getTime()) /
+                    86400000
+            );
+            if (dayDiff === 0) {
+                this._dragCleanup();
+                return;
+            }
+            newStart = new Date(ev.startTime + dayDiff * 86400000);
+            newEnd = new Date(ev.endTime + dayDiff * 86400000);
+        } else {
+            const minutes = this._drag.targetMinutes ?? 0;
+            const durMin = this._drag.targetDurationMin ?? 60;
+            newStart = new Date(targetDate);
+            newStart.setHours(0, minutes, 0, 0);
+            newEnd = new Date(newStart.getTime() + durMin * 60000);
+
+            if (newStart.getTime() === ev.startTime && newEnd.getTime() === ev.endTime) {
+                this._dragCleanup();
+                return;
+            }
+        }
+
+        this._dragCleanup();
+        this._showDragConfirmModal(ev, newStart, newEnd);
+    }
+
+    _onDragKey(e) {
+        if (e.key === 'Escape' && this._drag) {
+            this._dragCleanup();
+        }
+    }
+
+    _dragCleanup() {
+        if (!this._drag) return;
+        if (this._drag.ghost) this._drag.ghost.remove();
+        if (this._drag.el) this._drag.el.classList.remove('dragging');
+        this.querySelectorAll('.cal-drag-ghost-month').forEach((g) => g.remove());
+        this._drag = null;
+        document.removeEventListener('mousemove', this._onDragMove);
+        document.removeEventListener('mouseup', this._onDragUp);
+        document.removeEventListener('keydown', this._onDragKey);
+    }
+
+    _showDragConfirmModal(ev, newStart, newEnd) {
+        const modal = this.querySelector('#cal-modal');
+        if (!modal) return;
+        modal.classList.remove('hidden');
+
+        const origS = new Date(ev.startTime);
+        const formatRange = (s, e, allDay) => {
+            if (allDay) return fmtDateFull(s) + ' 全天';
+            return `${fmtDateFull(s)} ${fmtTime24(s.getTime())} — ${fmtTime24(e.getTime())}`;
+        };
+
+        modal.innerHTML = `
+        <div class="cal-modal-bg fixed inset-0" id="cal-modal-bg">
+            <div class="cal-modal-card" style="width:400px;">
+                <div style="padding:28px;">
+                    <div style="display:flex;align-items:center;gap:10px;margin-bottom:20px;">
+                        <div style="width:40px;height:40px;border-radius:12px;background:#EEF2FF;display:flex;align-items:center;justify-content:center;">
+                            <i class="fa-solid fa-arrows-up-down-left-right" style="color:#6366F1;font-size:16px;"></i>
+                        </div>
+                        <h3 style="font-size:16px;font-weight:700;color:#1d1d1f;">移动日程</h3>
+                    </div>
+                    <div style="margin-bottom:20px;">
+                        <div style="font-size:14px;font-weight:600;color:#1d1d1f;margin-bottom:12px;">${ev.subject}</div>
+                        <div style="display:flex;flex-direction:column;gap:8px;">
+                            <div style="display:flex;align-items:center;gap:8px;">
+                                <span style="font-size:12px;font-weight:600;color:#8E8E93;min-width:32px;">原</span>
+                                <span style="font-size:13px;color:#1d1d1f;">${formatRange(origS, new Date(ev.endTime), ev.isAllDay)}</span>
+                            </div>
+                            <div style="display:flex;align-items:center;gap:8px;">
+                                <span style="font-size:12px;font-weight:600;color:#007AFF;min-width:32px;">新</span>
+                                <span style="font-size:13px;color:#007AFF;font-weight:600;">${formatRange(newStart, newEnd, ev.isAllDay)}</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div style="display:flex;justify-content:flex-end;gap:10px;padding-top:16px;border-top:1px solid #F0F0F0;">
+                        <button id="cal-drag-cancel" class="cal-btn-secondary">取消</button>
+                        <button id="cal-drag-confirm" class="cal-btn-primary">确认移动</button>
+                    </div>
+                </div>
+            </div>
+        </div>`;
+
+        const close = () => {
+            modal.classList.add('hidden');
+            modal.innerHTML = '';
+            document.removeEventListener('keydown', escH);
+        };
+        const escH = (e) => {
+            if (e.key === 'Escape') close();
+        };
+        document.addEventListener('keydown', escH);
+
+        modal.querySelector('#cal-modal-bg').addEventListener('click', (e) => {
+            if (e.target.id === 'cal-modal-bg') close();
+        });
+        modal.querySelector('#cal-drag-cancel').addEventListener('click', close);
+        modal.querySelector('#cal-drag-confirm').addEventListener('click', async () => {
+            try {
+                await window.applicationAPI.call('updateCalendarItem', ev.uid, {
+                    startTime: newStart.getTime(),
+                    endTime: newEnd.getTime()
+                });
+                close();
+                await this._refreshAll();
+            } catch (err) {
+                console.error('移动日程失败:', err);
+                close();
+            }
+        });
     }
 
     /* ═══════════════════════════════════════════════════

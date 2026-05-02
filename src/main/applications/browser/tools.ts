@@ -846,48 +846,6 @@ export class BrowserGetHtmlTool extends BaseTool<typeof BrowserGetHtmlArgsSchema
     }
 }
 
-// ========== browserScreenshot ==========
-
-const BrowserScreenshotArgsSchema = z.object({});
-
-export class BrowserScreenshotTool extends BaseTool<typeof BrowserScreenshotArgsSchema> {
-    private browserApp: BrowserApplication;
-
-    constructor(browserApp: BrowserApplication) {
-        super(
-            'browserScreenshot',
-            '截取当前页面的可见区域截图，返回 base64 编码的 PNG 图片数据',
-            BrowserScreenshotArgsSchema
-        );
-        this.browserApp = browserApp;
-        this.setExecutor(this.handleExecute.bind(this));
-    }
-
-    renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
-        const body: string[] = [];
-        if (toolcall.status === 'running') body.push(chalk.dim('  ⏳ 正在截图…'));
-        else if (toolcall.status === 'success') body.push(chalk.dim('  ✓ 截图完成'));
-        else if (toolcall.status === 'error' && toolcall.result)
-            body.push(chalk.redBright('  ' + truncText(String(toolcall.result), width - 10)));
-        return new Card({ icon: '📷', title: '页面截图', status: statusDisplay(toolcall.status), body }).render(width);
-    }
-
-    private async handleExecute(
-        _args: z.output<typeof BrowserScreenshotArgsSchema>,
-        taskState?: TaskState
-    ): Promise<string> {
-        const taskId = taskState?.task_id;
-        if (!taskId) return JSON.stringify({ success: false, error: 'No task context' });
-
-        try {
-            const result = await this.browserApp.captureScreenshot(taskId);
-            return JSON.stringify(result);
-        } catch (err: any) {
-            return JSON.stringify({ success: false, error: err.message || String(err) });
-        }
-    }
-}
-
 // ========== browserExecuteScript ==========
 
 const BrowserExecuteScriptArgsSchema = z.object({
