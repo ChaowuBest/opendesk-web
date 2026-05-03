@@ -1033,6 +1033,12 @@ export class OpenDeskTUI {
             /* 忽略 TUI 清理错误 */
         }
 
+        try {
+            await this.taskManagerState.flushAllPendingSaves();
+        } catch {
+            /* best-effort flush */
+        }
+
         const worker = ApplicationRegistry.globalWorker;
         if (worker) {
             await worker.terminate();

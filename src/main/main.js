@@ -601,7 +601,7 @@ const registerTaskManagerAPIHandlers = () => {
             const { readTaskSessionMemory, isSessionMemoryTemplateOnly } =
                 await import('./aikernel/compaction/session-memory-compact.js');
             const { marked } = await import('./aikernel/messages.js');
-            const content = readTaskSessionMemory(taskId);
+            const content = await readTaskSessionMemory(taskId);
             if (!content || isSessionMemoryTemplateOnly(content)) {
                 return { status: 'ok', data: null };
             }
@@ -1337,6 +1337,11 @@ function startApplication() {
         // 停止自动更新检查
         if (updateClient) {
             updateClient.stopAutoCheck();
+        }
+        try {
+            await GlobalState.getInstance().taskManagerState.flushAllPendingSaves();
+        } catch {
+            /* best-effort flush */
         }
     });
 }

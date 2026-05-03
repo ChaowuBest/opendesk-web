@@ -28,6 +28,8 @@ finished — 仅当以下条件都满足时才判定为 finished:
 
 type TerminationState = 'finished' | 'interrupted' | 'question';
 
+const TERMINATION_CHECK_TIMEOUT_MS = 8_000;
+
 export async function checkTerminationFromMessages(
     userQuestion: string,
     lastTextResponse: string
@@ -36,7 +38,20 @@ export async function checkTerminationFromMessages(
     userMessage += `用户的原始问题为: ${userQuestion}\n`;
     userMessage += `你的回答的最后一部分为: ${lastTextResponse}\n\n请你判断对话的状态。`;
     const model = Setting.getInstance().getDefaultModelInstance();
-    const rawResult = await LLM.ask(userMessage, model, { reasoningEffort: 'none' });
+
+    let rawResult: string;
+    try {
+        rawResult = await Promise.race([
+            LLM.ask(userMessage, model, { reasoningEffort: 'none' }),
+            new Promise<never>((_, reject) =>
+                setTimeout(() => reject(new Error('termination check timeout')), TERMINATION_CHECK_TIMEOUT_MS)
+            )
+        ]);
+    } catch {
+        logger.warn('termination check timed out or failed, defaulting to finished');
+        return 'finished';
+    }
+
     const normalized = rawResult.trim().toLowerCase();
 
     logger.info(`termination state checked: ${rawResult} (normalized: ${normalized})`);

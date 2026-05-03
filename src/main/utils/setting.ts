@@ -100,11 +100,11 @@ const GUIConfigSchema = z.object({
 });
 
 export const DEFAULT_SHORTCUTS = {
-    switch_mode: 'ctrl+m',
+    switch_mode: 'ctrl+k',
     switch_model: 'f2',
+    clear_input: 'ctrl+c',
     endline: 'ctrl+j',
     show_help: 'ctrl+h',
-    clear_input: 'ctrl+c',
     list_tasks: 'ctrl+l'
 } as const;
 
@@ -471,9 +471,11 @@ function getAppDirectory(): string {
 /**
  * 获取应用日志目录
  */
+const _ensuredDirCache = new Set<string>();
 function ensureDirectoryExists(directory: string): string {
-    if (!fs.existsSync(directory)) {
+    if (!_ensuredDirCache.has(directory)) {
         fs.mkdirSync(directory, { recursive: true });
+        _ensuredDirCache.add(directory);
     }
     return directory;
 }

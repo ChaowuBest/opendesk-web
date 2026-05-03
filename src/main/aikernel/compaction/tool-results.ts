@@ -190,9 +190,11 @@ export function persistToolResultArtifact(
     result: string
 ): PersistedToolResultArtifact {
     const fullPath = getToolResultArtifactPath(taskId, resultId, true);
-    if (!fs.existsSync(fullPath)) {
-        fs.writeFileSync(fullPath, result, 'utf8');
-    }
+    fs.promises.access(fullPath).catch(() => {
+        fs.promises.writeFile(fullPath, result, 'utf8').catch(() => {
+            /* best-effort artifact persistence */
+        });
+    });
 
     return {
         fullPath,

@@ -445,7 +445,7 @@ export class CreateSubTaskPoolTool extends BaseTool<typeof CreateSubTaskPoolArgs
             }))
         };
 
-        const PROGRESS_THROTTLE_MS = 5000;
+        const PROGRESS_THROTTLE_MS = 1000;
         let lastProgressPushMs = 0;
         let progressPending = false;
         let progressTimer: ReturnType<typeof setTimeout> | undefined;
