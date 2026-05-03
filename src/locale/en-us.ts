@@ -573,6 +573,9 @@ export const enUs: Record<string, string> = {
     'config.shortcuts.confirm': 'Enter save  Esc cancel  D reset default',
     'config.shortcuts.hint': '↑↓ select  Enter edit  D reset default  Esc back',
     'config.shortcuts.saved': 'Shortcuts saved',
+    'config.shortcuts.error.single_key.title': 'Invalid Shortcut',
+    'config.shortcuts.error.single_key.message':
+        'Single keys are not allowed as shortcuts. Please use key combinations (e.g., Ctrl+A, Alt+B).',
 
     // Help Overlay
     'help.tab.commands': 'Commands',

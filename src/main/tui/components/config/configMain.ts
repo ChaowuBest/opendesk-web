@@ -8,13 +8,14 @@ import { LanguageConfigPage } from './languageConfig.js';
 import { ShortcutsConfigPage } from './shortcutsConfig.js';
 import chalk from 'chalk';
 import { t } from '../../../../locale/index.js';
+import { OpenDeskTUI } from '../../entry.js';
 
 interface ConfigSectionDef {
     value: string;
     icon: string;
     titleKey: string;
     hintKey: string;
-    create: (tui: TUI, onBack: () => void, onConfigChange?: () => void) => Component;
+    create: (openDeskTUI: OpenDeskTUI, onBack: () => void, onConfigChange?: () => void) => Component;
 }
 
 const SECTION_DEFS: ConfigSectionDef[] = [
@@ -23,42 +24,43 @@ const SECTION_DEFS: ConfigSectionDef[] = [
         icon: '💳',
         titleKey: 'config.provider.title',
         hintKey: 'config.provider.title.hint',
-        create: (tui, onBack) => new ProviderConfigPage(tui, onBack)
+        create: (openDeskTUI, onBack) => new ProviderConfigPage(openDeskTUI.tui, onBack)
     },
     {
         value: 'models',
         icon: '💰',
         titleKey: 'config.model.title',
         hintKey: 'config.model.title.hint',
-        create: (tui, onBack) => new ModelConfigPage(tui, onBack)
+        create: (openDeskTUI, onBack) => new ModelConfigPage(openDeskTUI.tui, onBack)
     },
     {
         value: 'default-model',
         icon: '🏆',
         titleKey: 'config.defaultmodel.title',
         hintKey: 'config.defaultmodel.title.hint',
-        create: (tui, onBack, onConfigChange) => new DefaultModelConfigPage(tui, onBack, onConfigChange)
+        create: (openDeskTUI, onBack, onConfigChange) =>
+            new DefaultModelConfigPage(openDeskTUI.tui, onBack, onConfigChange)
     },
     {
         value: 'filemgr',
         icon: '📦',
         titleKey: 'config.filemgr.title',
         hintKey: 'config.filemgr.title.hint',
-        create: (tui: any, onBack: () => void) => new FileMgrConfigPage(tui, onBack)
+        create: (openDeskTUI, onBack) => new FileMgrConfigPage(openDeskTUI.tui, onBack)
     },
     {
         value: 'language',
         icon: '🌎',
         titleKey: 'config.language.title',
         hintKey: 'config.language.title.hint',
-        create: (tui: any, onBack: () => void) => new LanguageConfigPage(tui, onBack)
+        create: (openDeskTUI, onBack) => new LanguageConfigPage(openDeskTUI.tui, onBack)
     },
     {
         value: 'shortcuts',
         icon: '🚲️',
         titleKey: 'config.shortcuts.title',
         hintKey: 'config.shortcuts.title.hint',
-        create: (tui: any, onBack: () => void) => new ShortcutsConfigPage(tui, onBack)
+        create: (openDeskTUI, onBack) => new ShortcutsConfigPage(openDeskTUI, onBack)
     }
 ];
 
@@ -84,7 +86,7 @@ function buildSectionItems(): Array<{ value: string; label: string }> {
  * 一级菜单列出所有配置分区，选择后进入对应子页面，Esc 返回上级。
  */
 export class ConfigMainPage implements Component {
-    private tui: TUI;
+    private openDeskTUI: OpenDeskTUI;
     private onClose: () => void;
     private onConfigChange?: () => void;
     private state: 'main' | 'sub' = 'main';
@@ -92,8 +94,8 @@ export class ConfigMainPage implements Component {
     private list?: SelectList;
     private subPage?: Component;
 
-    constructor(tui: TUI, onClose: () => void, onConfigChange?: () => void) {
-        this.tui = tui;
+    constructor(openDeskTUI: OpenDeskTUI, onClose: () => void, onConfigChange?: () => void) {
+        this.openDeskTUI = openDeskTUI;
         this.onClose = onClose;
         this.onConfigChange = onConfigChange;
         this.showMain();
@@ -105,7 +107,7 @@ export class ConfigMainPage implements Component {
 
         const items = buildSectionItems();
         this.list = new SelectList(items, items.length, defaultSelectListTheme);
-        this.tui.setFocus(this.list);
+        this.openDeskTUI.tui.setFocus(this.list);
 
         this.list.onSelect = (item) => {
             const section = SECTION_DEFS.find((s) => s.value === item.value);
@@ -113,14 +115,14 @@ export class ConfigMainPage implements Component {
         };
         this.list.onCancel = () => this.onClose();
 
-        this.tui.requestRender();
+        this.openDeskTUI.tui.requestRender();
     }
 
     private enterSection(section: ConfigSectionDef) {
         this.state = 'sub';
         this.list = undefined;
-        this.subPage = section.create(this.tui, () => this.showMain(), this.onConfigChange);
-        this.tui.requestRender();
+        this.subPage = section.create(this.openDeskTUI, () => this.showMain(), this.onConfigChange);
+        this.openDeskTUI.tui.requestRender();
     }
 
     invalidate() {}

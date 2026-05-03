@@ -10,6 +10,8 @@ import {
 } from '@mariozechner/pi-tui';
 import { Setting, DEFAULT_SHORTCUTS, type ShortcutsConfig } from '../../../utils/setting.js';
 import { SlashCommandRegistry } from '../../commands/base.js';
+import { InfoOverlay } from '../notice.js';
+import { OpenDeskTUI } from '../../entry.js';
 import chalk from 'chalk';
 import { t } from '../../../../locale/index.js';
 
@@ -27,6 +29,7 @@ type PageState = 'list' | 'capturing' | 'confirming';
  * 列出所有可配置的快捷键，支持按键捕获、恢复默认。
  */
 export class ShortcutsConfigPage implements Component {
+    private openDeskTUI: OpenDeskTUI;
     private tui: TUI;
     private onBack: () => void;
     private removeInputListener?: () => void;
@@ -36,8 +39,9 @@ export class ShortcutsConfigPage implements Component {
     private state: PageState = 'list';
     private capturedKey: string = '';
 
-    constructor(tui: TUI, onBack: () => void) {
-        this.tui = tui;
+    constructor(openDeskTUI: OpenDeskTUI, onBack: () => void) {
+        this.openDeskTUI = openDeskTUI;
+        this.tui = openDeskTUI.tui;
         this.onBack = onBack;
 
         const shortcuts = this.loadShortcuts();
@@ -108,7 +112,7 @@ export class ShortcutsConfigPage implements Component {
         this.removeInputListener = undefined;
     }
 
-    private handleInput(data: string): { consume?: boolean; data?: string } | undefined {
+    handleInput(data: string): { consume?: boolean; data?: string } | undefined {
         if (isKeyRelease(data)) {
             if (this.state === 'capturing') {
                 // 按键松开，完成捕获（仅在已有捕获内容时）
@@ -178,6 +182,25 @@ export class ShortcutsConfigPage implements Component {
 
     private handleConfirming(data: string): { consume?: boolean } | undefined {
         if (matchesKey(data, Key.enter)) {
+            // 验证：不允许单个按键
+            if (this.isSingleKey(this.capturedKey)) {
+                // 先移除输入监听器，让 InfoOverlay 能接收按键
+                this.deactivate();
+                const info = new InfoOverlay(this.openDeskTUI, {
+                    title: t('config.shortcuts.error.single_key.title'),
+                    message: t('config.shortcuts.error.single_key.message'),
+                    type: 'error'
+                });
+                info.show(() => {
+                    // InfoOverlay 关闭后，重新激活输入监听器
+                    this.activate();
+                    // 回到列表状态
+                    this.state = 'list';
+                    this.capturedKey = '';
+                    this.tui.requestRender();
+                });
+                return { consume: true };
+            }
             // 确认保存
             this.items[this.activeIndex].currentValue = this.capturedKey;
             this.saveAndClose();
@@ -198,6 +221,16 @@ export class ShortcutsConfigPage implements Component {
             return { consume: true };
         }
         return { consume: true };
+    }
+
+    /**
+     * 判断是否是单个按键（没有修饰键）。
+     * 单个按键格式：a, b, enter, escape, tab 等
+     * 组合键格式：ctrl+a, alt+b, shift+tab 等
+     */
+    private isSingleKey(keyId: string): boolean {
+        // 组合键都包含 '+' 符号
+        return !keyId.includes('+');
     }
 
     /**

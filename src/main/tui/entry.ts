@@ -593,7 +593,7 @@ export class OpenDeskTUI {
 
     enterConfigMode() {
         this.configComponent = new ConfigMainPage(
-            this.tui,
+            this,
             () => this.exitConfigMode(),
             () => {
                 this.resolveModelInfo();

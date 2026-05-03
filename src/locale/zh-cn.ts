@@ -567,6 +567,8 @@ export const zhCn: Record<string, string> = {
     'config.shortcuts.confirm': 'Enter 保存  Esc 取消  D 恢复默认',
     'config.shortcuts.hint': '↑↓ 选择  Enter 编辑  D 恢复默认  Esc 返回',
     'config.shortcuts.saved': '快捷键已保存',
+    'config.shortcuts.error.single_key.title': '快捷键无效',
+    'config.shortcuts.error.single_key.message': '不允许使用单个按键作为快捷键，请使用组合键（如 Ctrl+A、Alt+B 等）。',
 
     // Help Overlay
     'help.tab.commands': '指令',
