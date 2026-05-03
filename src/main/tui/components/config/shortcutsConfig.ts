@@ -234,7 +234,7 @@ export class ShortcutsConfigPage implements Component {
         const lines: string[] = [];
         const dividerWidth = Math.min(width - 2, 50);
 
-        lines.push(chalk.bold('⌨️  ' + t('config.shortcuts.title')));
+        lines.push(chalk.bold('🚲️  ' + t('config.shortcuts.title')));
         lines.push(chalk.dim('─'.repeat(dividerWidth)));
         lines.push('');
 

@@ -100,7 +100,7 @@ const GUIConfigSchema = z.object({
 });
 
 export const DEFAULT_SHORTCUTS = {
-    switch_mode: 'tab',
+    switch_mode: 'ctrl+m',
     switch_model: 'f2',
     endline: 'ctrl+j',
     show_help: 'ctrl+h',

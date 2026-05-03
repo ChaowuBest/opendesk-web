@@ -55,7 +55,7 @@ const SECTION_DEFS: ConfigSectionDef[] = [
     },
     {
         value: 'shortcuts',
-        icon: '⌨️',
+        icon: '🚲️',
         titleKey: 'config.shortcuts.title',
         hintKey: 'config.shortcuts.title.hint',
         create: (tui: any, onBack: () => void) => new ShortcutsConfigPage(tui, onBack)
