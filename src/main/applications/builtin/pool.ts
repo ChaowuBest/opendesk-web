@@ -445,11 +445,39 @@ export class CreateSubTaskPoolTool extends BaseTool<typeof CreateSubTaskPoolArgs
             }))
         };
 
-        const updateProgress = () => {
+        const PROGRESS_THROTTLE_MS = 5000;
+        let lastProgressPushMs = 0;
+        let progressPending = false;
+        let progressTimer: ReturnType<typeof setTimeout> | undefined;
+
+        const pushProgress = () => {
             toolResult.updateResultObject({ pool_state: { ...poolState, tasks: [...poolState.tasks] } });
+            lastProgressPushMs = Date.now();
+            progressPending = false;
         };
 
-        updateProgress();
+        const updateProgress = (force = false) => {
+            if (force) {
+                if (progressTimer) {
+                    clearTimeout(progressTimer);
+                    progressTimer = undefined;
+                }
+                pushProgress();
+                return;
+            }
+            const elapsed = Date.now() - lastProgressPushMs;
+            if (elapsed >= PROGRESS_THROTTLE_MS) {
+                pushProgress();
+            } else if (!progressPending) {
+                progressPending = true;
+                progressTimer = setTimeout(() => {
+                    progressTimer = undefined;
+                    pushProgress();
+                }, PROGRESS_THROTTLE_MS - elapsed);
+            }
+        };
+
+        updateProgress(true);
 
         logger.info(
             `[pool] starting pool: total=${taskItems.length} concurrency=${concurrency} maxRetries=${maxRetries}`
@@ -585,7 +613,7 @@ export class CreateSubTaskPoolTool extends BaseTool<typeof CreateSubTaskPoolArgs
 
         await allDone;
 
-        updateProgress();
+        updateProgress(true);
 
         const summaryResults = poolState.tasks.map((t) => ({
             index: t.index,

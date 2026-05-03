@@ -64,6 +64,7 @@ import { HarnessContext } from '../security/harness.js';
 import type { PermissionRequest, PermissionCheckResult, PermissionUserResponse } from '../security/permission.js';
 import { createResourcePath } from '../security/permission.js';
 import { TaskProfiler } from '../profiler.js';
+import { getPlatform } from '../../../platforms/base.js';
 
 type TaskStatus = 'waiting' | 'running' | 'stopped';
 
@@ -903,13 +904,17 @@ export class TaskState {
         this.subscribers = this.subscribers.filter((subscriber) => subscriber.isAvailable());
         if (this.subscribers.length === 0) return;
 
+        const needsHtmlRender = getPlatform().getName() === 'electron';
+
         try {
             let chunkUpdate: TaskUpdateChunk;
             if (last_message instanceof UserMessage) {
                 if (last_message.content.length === 0) return;
                 const updated_part_index = part_index !== undefined ? part_index : last_message.content.length - 1;
                 const last_part = last_message.content[updated_part_index];
-                await last_message.render();
+                if (needsHtmlRender) {
+                    await last_message.render();
+                }
                 chunkUpdate = {
                     type: 'user',
                     task_id: this.task_id,
@@ -920,10 +925,12 @@ export class TaskState {
                     internal: last_message.internal
                 };
             } else if (last_message instanceof AssistantMessage) {
-                if (last_message.content.length === 0) return; // 空的助手消息，跳过
+                if (last_message.content.length === 0) return;
                 const updated_part_index = part_index !== undefined ? part_index : last_message.content.length - 1;
                 const last_part = last_message.content[updated_part_index];
-                await last_part.render();
+                if (needsHtmlRender) {
+                    await last_part.render();
+                }
                 chunkUpdate = {
                     type: 'assistant',
                     task_id: this.task_id,
@@ -934,7 +941,6 @@ export class TaskState {
                     usage: last_message.usage
                 };
             } else if (last_message instanceof CompactSeparatorMessage) {
-                // 压缩分隔消息不需要发送订阅更新，直接返回
                 return;
             } else {
                 logger.warn(
