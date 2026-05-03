@@ -600,6 +600,11 @@ export class TaskState {
         // 检测用户消息中的 /skillname 引用并预加载
         await this.preloadSlashSkills(message, assistant_message);
 
+        // 预加载产生的 parts 需要立即推送到前端，否则后续流式更新的 part_index 与 DOM 不同步
+        for (let i = 0; i < assistant_message.content.length; i++) {
+            await this.sendSubscriptionFeedback(i);
+        }
+
         logger.info(`messsage submitted to task ${this.task_id}`);
 
         if (this.task_name === null) {

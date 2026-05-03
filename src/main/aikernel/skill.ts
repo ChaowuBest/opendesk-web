@@ -336,7 +336,11 @@ class LoadSkillTool extends BaseTool<typeof LoadSkillSchema> {
 
     async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
         const args = toolcall.args_object as z.output<typeof LoadSkillSchema> | undefined;
-        const skillName = args ? `${args.bundleName}/${args.skillName}` : '';
+        const bundleName = args?.bundleName || '';
+        const skillName = args?.skillName || '';
+
+        const provider = SkillRegistry.getInstance().getSkillProvider(bundleName);
+        const appDisplayName = (provider as any)?.name || bundleName;
 
         const statusIcon =
             toolcall.status === 'running'
@@ -345,16 +349,21 @@ class LoadSkillTool extends BaseTool<typeof LoadSkillSchema> {
                   ? '<span class="inline-block w-1.5 h-1.5 rounded-full bg-rose-500"></span>'
                   : '';
 
-        const detailHtml = skillName
-            ? `<span class="truncate text-xs text-slate-600">${escapeHtml(skillName)}</span>`
-            : '';
+        const chevron = '<i class="fas fa-chevron-right" style="font-size:8px;color:#94a3b8;margin:0 2px;"></i>';
+        const crumbs: string[] = [];
+        if (appDisplayName) crumbs.push(`<span style="color:#64748b;">${escapeHtml(appDisplayName)}</span>`);
+        if (skillName) crumbs.push(`<span style="color:#334155;font-weight:500;">${escapeHtml(skillName)}</span>`);
+        const breadcrumbHtml =
+            crumbs.length > 0
+                ? `<span class="truncate text-xs" style="display:inline-flex;align-items:center;gap:1px;">${crumbs.join(chevron)}</span>`
+                : '';
 
         return `<div class="my-2">
             <div class="flex items-center gap-1.5 min-w-0">
                 <i class="fas fa-book shrink-0 text-slate-400 text-xs"></i>
                 <span class="shrink-0 text-slate-500 text-xs">加载技能</span>
                 ${statusIcon}
-                ${detailHtml}
+                ${breadcrumbHtml}
             </div>
         </div>`;
     }
@@ -368,10 +377,10 @@ class LoadSkillTool extends BaseTool<typeof LoadSkillSchema> {
         const { bundleName, skillName } = args;
         const { icon } = statusDisplay(toolcall.status);
 
-        // 构建标题行
-        const title = `${bundleName}/${skillName}`;
+        const provider = SkillRegistry.getInstance().getSkillProvider(bundleName);
+        const appName = (provider as any)?.name || bundleName;
+        const title = `${appName} › ${skillName}`;
 
-        // 根据状态显示不同的卡片
         if (toolcall.status === 'running') {
             return [`  ${icon} ${chalk.cyan('📚')} ${chalk.bold(title)} ${chalk.dim('· 加载中...')}`];
         } else if (toolcall.status === 'success') {
@@ -464,7 +473,7 @@ class CallSkillTool extends BaseTool<typeof CallSkillToolSchema> {
 
     /**
      * 渲染 CallSkillTool 工具调用的 Electron HTML 界面
-     * 优先使用内部工具的自定义渲染，否则展示统一的技能调用卡片
+     * 优先使用内部工具的自定义渲染，否则展示统一的技能调用面包屑卡片
      */
     async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
         const inner = this.resolveInnerTool(toolcall);
@@ -474,8 +483,13 @@ class CallSkillTool extends BaseTool<typeof CallSkillToolSchema> {
         }
 
         const args = toolcall.args_object as z.output<typeof CallSkillToolSchema> | undefined;
-        const skillName = args ? `${args.bundleName}/${args.skillName}` : '';
+        const bundleName = args?.bundleName || '';
+        const skillName = args?.skillName || '';
         const toolName = args?.toolName || '';
+
+        // 使用应用 name（显示名称）而非 bundleName
+        const provider = SkillRegistry.getInstance().getSkillProvider(bundleName);
+        const appDisplayName = (provider as any)?.name || bundleName;
 
         const statusIcon =
             toolcall.status === 'running'
@@ -484,12 +498,14 @@ class CallSkillTool extends BaseTool<typeof CallSkillToolSchema> {
                   ? '<span class="inline-block w-1.5 h-1.5 rounded-full bg-rose-500"></span>'
                   : '';
 
-        const detailParts: string[] = [];
-        if (skillName) detailParts.push(escapeHtml(skillName));
-        if (toolName) detailParts.push(escapeHtml(toolName));
-        const detailHtml =
-            detailParts.length > 0
-                ? `<span class="truncate text-xs text-slate-600">${detailParts.join(' / ')}</span>`
+        const chevron = '<i class="fas fa-chevron-right" style="font-size:8px;color:#94a3b8;margin:0 2px;"></i>';
+        const crumbs: string[] = [];
+        if (appDisplayName) crumbs.push(`<span style="color:#64748b;">${escapeHtml(appDisplayName)}</span>`);
+        if (skillName) crumbs.push(`<span style="color:#64748b;">${escapeHtml(skillName)}</span>`);
+        if (toolName) crumbs.push(`<span style="color:#334155;font-weight:500;">${escapeHtml(toolName)}</span>`);
+        const breadcrumbHtml =
+            crumbs.length > 0
+                ? `<span class="truncate text-xs" style="display:inline-flex;align-items:center;gap:1px;">${crumbs.join(chevron)}</span>`
                 : '';
 
         return `<div class="my-2">
@@ -497,7 +513,7 @@ class CallSkillTool extends BaseTool<typeof CallSkillToolSchema> {
                 <i class="fas fa-bolt shrink-0 text-slate-400 text-xs"></i>
                 <span class="shrink-0 text-slate-500 text-xs">调用技能</span>
                 ${statusIcon}
-                ${detailHtml}
+                ${breadcrumbHtml}
             </div>
         </div>`;
     }
@@ -553,7 +569,7 @@ class CallSkillTool extends BaseTool<typeof CallSkillToolSchema> {
     }
 
     /**
-     * 渲染默认的技能工具调用卡片
+     * 渲染默认的技能工具调用卡片（面包屑风格：应用名 › 技能名 › 工具名）
      */
     private renderDefaultCard(
         toolcall: ToolCall,
@@ -564,8 +580,13 @@ class CallSkillTool extends BaseTool<typeof CallSkillToolSchema> {
     ): string[] {
         const { icon } = statusDisplay(toolcall.status);
 
-        const skillPath = bundleName && skillName ? `${bundleName}/${skillName}` : '未知技能';
+        const provider = SkillRegistry.getInstance().getSkillProvider(bundleName);
+        const appName = (provider as any)?.name || bundleName || '未知应用';
+        const skill = skillName || '未知技能';
         const tool = toolName || '未知工具';
+
+        const sep = chalk.dim(' › ');
+        const breadcrumb = chalk.dim(appName) + sep + chalk.dim(skill) + sep + chalk.bold(tool);
 
         const accentColor =
             toolcall.status === 'error'
@@ -576,14 +597,14 @@ class CallSkillTool extends BaseTool<typeof CallSkillToolSchema> {
                     ? chalk.blue
                     : chalk.dim;
 
-        const header = `  ${icon} ${chalk.magenta('⚡')} ${accentColor.bold(tool)} ${chalk.dim('·')} ${chalk.dim(skillPath)}`;
+        const header = `  ${icon} ${chalk.magenta('⚡')} ${breadcrumb}`;
 
         if (toolcall.status === 'running') {
-            return [header + ' ' + chalk.dim('执行中...')];
+            return [header + ' ' + accentColor('执行中...')];
         } else if (toolcall.status === 'success') {
-            return [header + ' ' + chalk.dim('完成')];
+            return [header + ' ' + accentColor('完成')];
         } else if (toolcall.status === 'error') {
-            return [header + ' ' + chalk.red('失败')];
+            return [header + ' ' + accentColor('失败')];
         } else {
             return [header];
         }

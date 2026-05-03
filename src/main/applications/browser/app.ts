@@ -138,15 +138,17 @@ class BrowserApplication extends BaseApplication {
     /**
      * Ensure browser sidebar is open and browser tab is active for the given task,
      * then execute a script in the active webview and return the result.
+     *
+     * @param timeoutMs 超时时间（毫秒），默认 12 秒。防止 webview.executeJavaScript 在页面加载期间无限挂起。
      */
-    async runOnActiveWebview(taskId: string, script: string): Promise<any> {
+    async runOnActiveWebview(taskId: string, script: string, timeoutMs: number = 12000): Promise<any> {
         const mainWin = await this._getMainWindow();
         if (!mainWin) throw new Error('No main window available');
 
         const safeId = taskId.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
         const escapedScript = JSON.stringify(script);
 
-        const result = await mainWin.webContents.executeJavaScript(`
+        const jsPromise = mainWin.webContents.executeJavaScript(`
             (async () => {
                 try {
                     ${this._makeEnsureSidebarScript(taskId)}
@@ -160,6 +162,13 @@ class BrowserApplication extends BaseApplication {
                 }
             })()
         `);
+
+        const result = await Promise.race([
+            jsPromise,
+            new Promise<{ __e: string }>((_, reject) =>
+                setTimeout(() => reject(new Error(`webview script timed out after ${timeoutMs}ms`)), timeoutMs)
+            )
+        ]);
 
         if (result?.__e) throw new Error(result.__e);
         return result?.__d;
