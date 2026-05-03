@@ -38,6 +38,10 @@ class MailboxApplication extends BaseApplication {
         super('mailbox', '邮箱');
     }
 
+    needAgentBar() {
+        return true;
+    }
+
     async getTUIStatusBlock() {
         try {
             const [accountsRes, countsRes] = await Promise.allSettled([

@@ -3,6 +3,8 @@
  * OpenDesk is licensed under Mulan PSL v2.
  */
 
+import { showConfirmModal } from '../../../../renderer/components/confirmModal';
+
 function getPathFromFile(file) {
     if (!file) return null;
     const path = window.fsAPI.getFilePath(file);
@@ -779,7 +781,19 @@ class SkillMgrEntryWidget extends HTMLElement {
     async deleteSkill(skillId) {
         const api = getSkillsAPI();
         if (!api?.delete) return;
-        if (!confirm(`确定要删除技能「${skillId}」吗？`)) return;
+
+        const confirmed = await showConfirmModal({
+            icon: 'fa-trash-can',
+            iconBg: '#FEF2F2',
+            iconColor: '#DC2626',
+            title: '删除技能',
+            message: `确定要删除技能「<b>${skillId}</b>」吗？删除后需要重新安装才能恢复。`,
+            confirmText: '删除',
+            cancelText: '取消',
+            danger: true
+        });
+        if (!confirmed) return;
+
         this.deletingId = skillId;
         this.render();
         try {

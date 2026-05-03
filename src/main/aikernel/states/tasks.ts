@@ -46,8 +46,8 @@ import {
 import type { ActiveContextView } from '../compaction/types.js';
 import { compactContext } from '../compact.js';
 import { BaseTool, BaseToolset } from '../tool.js';
-import { LLM, type ReasoningEffort, type LLMRequestOptions } from '../llm.js';
-import { getTaskArtifactDirectory, getTaskDirectory } from '../../utils/setting.js';
+import { LLM, type LLMRequestOptions } from '../llm.js';
+import { getTaskArtifactDirectory, getTaskDirectory, type ReasoningEffort } from '../../utils/setting.js';
 import { logger } from '../../utils/logger.js';
 import { type ToolsetProvider, EmptyToolsetProvider } from './toolset-provider.js';
 import { jsonrepair } from 'jsonrepair';
@@ -599,6 +599,11 @@ export class TaskState {
 
         // 检测用户消息中的 /skillname 引用并预加载
         await this.preloadSlashSkills(message, assistant_message);
+
+        // 预加载产生的 parts 需要立即推送到前端，否则后续流式更新的 part_index 与 DOM 不同步
+        for (let i = 0; i < assistant_message.content.length; i++) {
+            await this.sendSubscriptionFeedback(i);
+        }
 
         logger.info(`messsage submitted to task ${this.task_id}`);
 
@@ -1904,34 +1909,35 @@ export class TaskManagerState {
      * @param {string} taskId
      */
     removeTask(taskId: string) {
-        // 1. 找到要删除的任务对象
         const taskToRemove = this.getTask(taskId);
-
         if (!taskToRemove) {
             logger.warn(`Task ${taskId} not found for deletion.`);
             return;
         }
 
-        // Stop execution first so parent task cannot continue creating more subtasks.
-        taskToRemove.stop('system');
+        const removedIds = new Set<string>();
+        this._removeTaskRecursive(taskId, removedIds);
 
-        // 2. [递归步骤] 查找所有 parent_id 为当前 taskId 的子任务
+        if (removedIds.size > 0) {
+            this.tasks = this.tasks.filter((t) => !removedIds.has(t.task_id));
+            this.publishTaskListUpdate();
+            this.save();
+        }
+    }
+
+    private _removeTaskRecursive(taskId: string, removedIds: Set<string>) {
+        const task = this.getTask(taskId);
+        if (!task || removedIds.has(taskId)) return;
+
+        task.stop('system');
+
         const children = this.tasks.filter((t) => t.parent_id === taskId);
-
         for (const child of children) {
-            // 递归调用，这样子任务的子任务也会被删除
-            this.removeTask(child.task_id);
+            this._removeTaskRecursive(child.task_id, removedIds);
         }
 
-        // 3. [清理步骤] 调用 TaskState 的 cleanup 方法删除物理文件 (JSON + Logs)
-        taskToRemove.cleanup();
-
-        // 4. [内存清理] 从内存列表中移除
-        this.tasks = this.tasks.filter((task) => task.task_id !== taskId);
-
-        // 5. 更新前端和保存列表
-        this.publishTaskListUpdate();
-        this.save();
+        task.cleanup();
+        removedIds.add(taskId);
     }
 
     /**

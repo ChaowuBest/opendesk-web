@@ -53,6 +53,8 @@ export interface GlobalTodo {
     trigger?: TodoTrigger; // 触发器配置
     /** 回复投递目标，继承自创建该待办的任务 origin（如飞书发起的会话） */
     deliver?: Participant;
+    /** 是否启用自动触发，默认 true。禁用后不会按触发器自动执行，但仍可手动触发 */
+    enabled?: boolean;
     last_triggered_at?: string; // 上次触发时间
     created_at: string;
     updated_at: string;

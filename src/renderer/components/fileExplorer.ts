@@ -22,6 +22,8 @@
  *   - 点击文件弹出文本预览（>50 KB / 二进制 → 拒绝提示）
  */
 
+import { showConfirmModal } from './confirmModal';
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -621,13 +623,14 @@ export class FileExplorer {
             fontFamily: 'system-ui, -apple-system, sans-serif'
         });
 
-        const items: { icon: string; label: string; action: string }[] = [];
+        const items: { icon: string; label: string; action: string; danger?: boolean }[] = [];
         if (!isDirectory) {
             items.push({ icon: 'fa-eye', label: '预览', action: 'preview' });
         }
         items.push({ icon: 'fa-arrow-up-right-from-square', label: '用默认应用打开', action: 'open-default' });
         items.push({ icon: 'fa-folder-open', label: '在文件夹中显示', action: 'reveal' });
         items.push({ icon: 'fa-link', label: '复制路径', action: 'copy-path' });
+        items.push({ icon: 'fa-trash-can', label: '删除', action: 'delete', danger: true });
 
         const btnStyle = `
             display:flex; align-items:center; gap:8px; width:100%;
@@ -637,13 +640,22 @@ export class FileExplorer {
         `.trim();
         const iconStyle = 'width:16px; text-align:center; font-size:12px; color:#6b7280; flex-shrink:0;';
 
+        const dangerBtnStyle = btnStyle.replace('color:#1f2937', 'color:#dc2626');
+        const dangerIconStyle = iconStyle.replace('color:#6b7280', 'color:#dc2626');
+
         menu.innerHTML = items
-            .map(
-                (it, i) =>
-                    `${i > 0 && it.action === 'copy-path' ? '<div style="height:1px; margin:3px 8px; background:rgba(0,0,0,0.06);"></div>' : ''}` +
-                    `<button data-ctx-action="${it.action}" style="${btnStyle}">` +
-                    `<i class="fas ${it.icon}" style="${iconStyle}"></i><span>${it.label}</span></button>`
-            )
+            .map((it, i) => {
+                const needSep = (i > 0 && it.action === 'copy-path') || it.action === 'delete';
+                const sep = needSep
+                    ? '<div style="height:1px; margin:3px 8px; background:rgba(0,0,0,0.06);"></div>'
+                    : '';
+                const bStyle = it.danger ? dangerBtnStyle : btnStyle;
+                const iStyle = it.danger ? dangerIconStyle : iconStyle;
+                return (
+                    `${sep}<button data-ctx-action="${it.action}" data-danger="${it.danger ? '1' : ''}" style="${bStyle}">` +
+                    `<i class="fas ${it.icon}" style="${iStyle}"></i><span>${it.label}</span></button>`
+                );
+            })
             .join('');
 
         menu.style.left = `${ev.clientX}px`;
@@ -661,17 +673,18 @@ export class FileExplorer {
         this._ctxMenuEl = menu;
 
         menu.querySelectorAll<HTMLElement>('[data-ctx-action]').forEach((btn) => {
+            const isDanger = btn.dataset.danger === '1';
             btn.addEventListener('mouseenter', () => {
-                btn.style.background = '#3b82f6';
-                btn.style.color = 'white';
+                btn.style.background = isDanger ? '#fef2f2' : '#3b82f6';
+                btn.style.color = isDanger ? '#b91c1c' : 'white';
                 const icon = btn.querySelector('i');
-                if (icon) (icon as HTMLElement).style.color = 'white';
+                if (icon) (icon as HTMLElement).style.color = isDanger ? '#b91c1c' : 'white';
             });
             btn.addEventListener('mouseleave', () => {
                 btn.style.background = 'transparent';
-                btn.style.color = '#1f2937';
+                btn.style.color = isDanger ? '#dc2626' : '#1f2937';
                 const icon = btn.querySelector('i');
-                if (icon) (icon as HTMLElement).style.color = '#6b7280';
+                if (icon) (icon as HTMLElement).style.color = isDanger ? '#dc2626' : '#6b7280';
             });
             btn.addEventListener('click', (e) => {
                 e.stopPropagation();
@@ -691,6 +704,9 @@ export class FileExplorer {
                     }
                     case 'copy-path':
                         navigator.clipboard.writeText(filePath).catch(() => {});
+                        break;
+                    case 'delete':
+                        this._deleteItem(filePath, isDirectory);
                         break;
                 }
             });
@@ -712,6 +728,40 @@ export class FileExplorer {
             document.removeEventListener('click', this._ctxDismissHandler);
             document.removeEventListener('contextmenu', this._ctxDismissHandler);
             this._ctxDismissHandler = null;
+        }
+    }
+
+    private async _deleteItem(filePath: string, isDirectory: boolean): Promise<void> {
+        const name = filePath.split('/').pop() || filePath;
+        const typeLabel = isDirectory ? '文件夹' : '文件';
+
+        const confirmed = await showConfirmModal({
+            icon: 'fa-trash-can',
+            iconBg: '#FEF2F2',
+            iconColor: '#DC2626',
+            title: `删除${typeLabel}`,
+            message: `确定要将${typeLabel}「<b>${escapeHtml(name)}</b>」移动到回收站吗？此操作可从回收站恢复。`,
+            confirmText: '删除',
+            cancelText: '取消',
+            danger: true
+        });
+        if (!confirmed) return;
+
+        try {
+            const api = (window as any).fsAPI;
+            if (!api || typeof api.trashItem !== 'function') {
+                throw new Error('当前环境不支持删除操作');
+            }
+            await api.trashItem(filePath);
+            if (this._selectedFile === filePath) {
+                this._selectedFile = null;
+                this._previewState = { status: 'idle' };
+                this._renderPreview();
+            }
+            this.softRefresh();
+        } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            window.alert(`删除失败: ${msg}`);
         }
     }
 

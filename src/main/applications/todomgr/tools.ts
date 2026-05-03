@@ -164,6 +164,88 @@ function formatDeliverDisplay(deliver: any): string {
     return `${deliver.channel}:${deliver.accountId} → ${deliver.recipientId}`;
 }
 
+const TRIGGER_ICON_CONFIG: Record<string, { icon: string; bg: string; color: string; label: string }> = {
+    scheduled: { icon: 'fa-clock', bg: '#EFF6FF', color: '#2563EB', label: '定时任务' },
+    cron: { icon: 'fa-arrows-rotate', bg: '#F0FDF4', color: '#16A34A', label: '周期任务' },
+    event: { icon: 'fa-bolt', bg: '#FFF7ED', color: '#EA580C', label: '按需触发' }
+};
+const PRIORITY_BADGE: Record<string, { color: string; bg: string; label: string }> = {
+    high: { color: '#DC2626', bg: '#FEF2F2', label: '高' },
+    medium: { color: '#D97706', bg: '#FFFBEB', label: '中' },
+    low: { color: '#16A34A', bg: '#F0FDF4', label: '低' }
+};
+const STATUS_BADGE: Record<string, { color: string; bg: string; label: string; dot: string }> = {
+    pending: { color: '#8E8E93', bg: '#F5F5F7', label: '待执行', dot: '#C7C7CC' },
+    in_progress: { color: '#2563EB', bg: '#EFF6FF', label: '执行中', dot: '#007AFF' },
+    completed: { color: '#16A34A', bg: '#F0FDF4', label: '已完成', dot: '#34C759' }
+};
+
+function renderTodoCardHtml(actionLabel: string, args: any, toolcall: ToolCall): string {
+    const title = args?.['title'] || '';
+    const content = args?.['content'] || '';
+    const priority = args?.['priority'] || 'medium';
+    const category = args?.['category'];
+    const trigger = args?.['trigger'];
+    const status = args?.['status'] || 'pending';
+
+    const triggerType = trigger?.type || 'scheduled';
+    const tCfg = TRIGGER_ICON_CONFIG[triggerType] || TRIGGER_ICON_CONFIG.scheduled;
+    const pCfg = PRIORITY_BADGE[priority] || PRIORITY_BADGE.medium;
+    const sCfg = STATUS_BADGE[status] || STATUS_BADGE.pending;
+    const triggerDesc = formatTriggerDisplay(trigger);
+
+    const isRunning = toolcall.status === 'running';
+    const isSuccess = toolcall.status === 'success';
+    const isError = toolcall.status === 'error';
+
+    let resultHtml = '';
+    if (isSuccess && toolcall.result) {
+        try {
+            const result = JSON.parse(toolcall.result);
+            resultHtml = `<div style="display:flex;align-items:center;gap:5px;margin-top:10px;padding:8px 10px;background:#F0FDF4;border-radius:8px;font-size:12px;color:#16A34A;">
+                <i class="fas fa-check-circle"></i> 操作成功${result.id ? `（ID: ${escapeHtml(String(result.id).slice(0, 16))}…）` : ''}
+            </div>`;
+        } catch {
+            resultHtml =
+                '<div style="margin-top:10px;padding:8px 10px;background:#F0FDF4;border-radius:8px;font-size:12px;color:#16A34A;"><i class="fas fa-check-circle"></i> 操作成功</div>';
+        }
+    } else if (isError && toolcall.result) {
+        resultHtml = `<div style="margin-top:10px;padding:8px 10px;background:#FEF2F2;border-radius:8px;font-size:12px;color:#DC2626;"><i class="fas fa-circle-xmark"></i> ${escapeHtml(String(toolcall.result).slice(0, 120))}</div>`;
+    }
+
+    return `<div style="padding:0;margin:6px 0;">
+        <div style="border:1px solid #EBEBEB;border-radius:12px;overflow:hidden;background:#fff;">
+            <div style="padding:12px 14px;">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+                    <div style="width:28px;height:28px;border-radius:8px;background:${tCfg.bg};color:${tCfg.color};display:flex;align-items:center;justify-content:center;font-size:13px;flex-shrink:0;">
+                        <i class="fas ${tCfg.icon}"></i>
+                    </div>
+                    <span style="font-size:12px;color:#8E8E93;font-weight:500;">${escapeHtml(actionLabel)}</span>
+                    ${isRunning ? '<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#3B82F6;animation:pulse 1.5s infinite;margin-left:auto;"></span>' : ''}
+                </div>
+                <div style="display:flex;align-items:flex-start;gap:10px;">
+                    <div style="width:32px;height:32px;border-radius:8px;background:${pCfg.bg};display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px;">
+                        <span style="width:8px;height:8px;border-radius:50%;background:${pCfg.color};display:inline-block;"></span>
+                    </div>
+                    <div style="flex:1;min-width:0;">
+                        <div style="font-size:13px;font-weight:600;color:#1d1d1f;line-height:1.35;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(String(title))}</div>
+                        ${content ? `<div style="font-size:12px;color:#8E8E93;line-height:1.4;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(String(content).slice(0, 80))}</div>` : ''}
+                        <div style="display:flex;align-items:center;gap:6px;margin-top:5px;flex-wrap:wrap;">
+                            <span style="display:inline-flex;align-items:center;gap:3px;padding:1px 7px;border-radius:6px;font-size:11px;font-weight:500;line-height:1.6;background:${sCfg.bg};color:${sCfg.color};">
+                                <span style="width:7px;height:7px;border-radius:50%;background:${sCfg.dot};display:inline-block;"></span>
+                                ${sCfg.label}
+                            </span>
+                            ${triggerDesc ? `<span style="display:inline-flex;align-items:center;gap:3px;padding:1px 7px;border-radius:6px;font-size:11px;font-weight:500;line-height:1.6;background:#F5F5F7;color:#8E8E93;">${escapeHtml(triggerDesc)}</span>` : ''}
+                            ${category ? `<span style="display:inline-flex;align-items:center;gap:3px;padding:1px 7px;border-radius:6px;font-size:11px;font-weight:500;line-height:1.6;background:#F5F3FF;color:#7C3AED;">${escapeHtml(String(category))}</span>` : ''}
+                        </div>
+                    </div>
+                </div>
+                ${resultHtml}
+            </div>
+        </div>
+    </div>`;
+}
+
 // ========== TodoWrite 工具 ==========
 
 const TodoWriteTodoSchema = z.object({
@@ -428,42 +510,7 @@ export class AddGlobalTodoTool extends BaseTool<typeof AddGlobalTodoArgsSchema> 
     }
 
     renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
-        const args = toolcall.args_object as any;
-        const title = args?.['title'];
-        const content = args?.['content'];
-        const priority = args?.['priority'] || 'medium';
-        const category = args?.['category'];
-        const trigger = args?.['trigger'];
-
-        let html = '<div style="padding: 12px;">';
-        html += '<div style="font-weight: 600; margin-bottom: 8px;">🌍 添加全局待办</div>';
-
-        if (title)
-            html += `<div style="margin-bottom: 4px;"><span style="color: #6b7280;">标题:</span> ${escapeHtml(String(title))}</div>`;
-        if (content)
-            html += `<div style="margin-bottom: 4px;"><span style="color: #6b7280;">内容:</span> ${escapeHtml(String(content))}</div>`;
-        html += `<div style="margin-bottom: 4px;"><span style="color: #6b7280;">优先级:</span> ${escapeHtml(String(priority).toUpperCase())}</div>`;
-        if (category)
-            html += `<div style="margin-bottom: 4px;"><span style="color: #6b7280;">分类:</span> ${escapeHtml(String(category))}</div>`;
-        if (trigger)
-            html += `<div style="margin-bottom: 4px;"><span style="color: #6b7280;">触发器:</span> ${escapeHtml(formatTriggerDisplay(trigger))}</div>`;
-
-        if (toolcall.status === 'success' && toolcall.result) {
-            try {
-                const result = JSON.parse(toolcall.result);
-                html += `<div style="color: #16a34a; margin-top: 8px;">✓ 待办已添加，ID: ${escapeHtml(String(result.id))}</div>`;
-                if (result.todo?.deliver) {
-                    html += `<div style="color: #2563eb; margin-top: 4px;">📨 投递到: ${escapeHtml(formatDeliverDisplay(result.todo.deliver))}</div>`;
-                }
-            } catch {
-                html += '<div style="color: #16a34a; margin-top: 8px;">✓ 待办已添加!</div>';
-            }
-        } else if (toolcall.status === 'error' && toolcall.result) {
-            html += `<div style="color: #dc2626; margin-top: 8px;">${escapeHtml(String(toolcall.result))}</div>`;
-        }
-
-        html += '</div>';
-        return Promise.resolve(html);
+        return Promise.resolve(renderTodoCardHtml('添加自动化任务', toolcall.args_object, toolcall));
     }
 
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
@@ -574,6 +621,10 @@ export class UpdateGlobalTodoTool extends BaseTool<typeof UpdateGlobalTodoArgsSc
         );
         this.todoMgrApp = todoMgrApp;
         this.setExecutor(this.handleExecute.bind(this));
+    }
+
+    renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
+        return Promise.resolve(renderTodoCardHtml('更新自动化任务', toolcall.args_object, toolcall));
     }
 
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {

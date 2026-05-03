@@ -285,6 +285,14 @@ export abstract class BaseApplication {
     setCliOptions(options: Record<string, string | boolean | undefined>): void {}
 
     /**
+     * 该应用是否需要在 Electron 应用页面中显示 Agent 悬浮输入栏（底部浮球 + 对话面板）。
+     * 默认返回 false；需要 Agent 功能的应用（如邮箱）可重写并返回 true。
+     */
+    needAgentBar(): boolean {
+        return false;
+    }
+
+    /**
      * 返回应用的配置 schema，用于在设置界面中显示和编辑配置。如果不需要配置，则返回空对象。
      */
     static getConfigSchema(): z.ZodObject<any> {

@@ -639,6 +639,15 @@ const registerTaskManagerAPIHandlers = () => {
             return { status: 'error', message: error.message };
         }
     });
+    ipcMain.handle('fs:trashItem', async (event, itemPath) => {
+        try {
+            await shell.trashItem(path.resolve(itemPath));
+            return { status: 'ok', data: true };
+        } catch (error) {
+            logger.error('trashing item failed', error);
+            return { status: 'error', message: error.message };
+        }
+    });
     // 显示保存文件对话框
     ipcMain.handle('dialog:saveFile', async (event, options) => {
         try {
@@ -1264,6 +1273,63 @@ function startApplication() {
         initializeRegistryWorker();
         initializeProtocolHandlers();
         initializeUpdater();
+
+        // 设置全局待办触发器回调（Electron GUI 模式）
+        ApplicationRegistry.onTriggerTask = async (todoId, todoTitle, todoContent, trigger, deliver) => {
+            try {
+                const globalState = GlobalState.getInstance();
+                const task = globalState.taskManagerState.createTask();
+                const workspace = Setting.getInstance().getEffectiveWorkspace();
+                const agentDecl = getGlobalAgentDecl();
+                const modes = agentDecl.supportedModes();
+                const resolvedModeId = _currentElectronModeId || agentDecl.defaultModeId();
+                const activeMode = modes.find((m) => m.id === resolvedModeId) ?? modes[0];
+
+                const systemPrompt = await agentDecl.createSystemPrompt(activeMode);
+                task.setSystemPrompt(systemPrompt);
+
+                try {
+                    task.harnessContext = await HarnessContext.createForMode(workspace, activeMode);
+                    task.harnessContext.permissionPrompt = new ElectronPermissionPromptProvider();
+                    task.activeModeId = activeMode.id;
+                    task.disabledTools = activeMode.disabledTools;
+                    const askUserProvider = new ElectronAskUserProvider();
+                    task.interactionToolset = createInteractionToolset(askUserProvider);
+                } catch (err) {
+                    logger.warn(`Trigger task harness init failed: ${err}`);
+                    task.harnessContext = HarnessContext.createEmpty();
+                    task.harnessContext.workspace = workspace;
+                }
+
+                if (deliver) {
+                    task.origin = deliver;
+                }
+
+                let triggerInfo = '';
+                if (trigger?.type === 'event') {
+                    triggerInfo = `[event] 事件驱动任务，由事件 ${trigger.bundleName}:${trigger.eventName} 自动触发 `;
+                } else if (trigger?.type === 'scheduled') {
+                    triggerInfo = `[scheduled] 定时任务，仅执行一次 `;
+                } else if (trigger?.type === 'cron') {
+                    triggerInfo = `[cron] 周期任务 `;
+                }
+
+                logger.info(`[Electron] 触发器创建任务: ${todoId} -> task ${task.task_id}`);
+
+                const message =
+                    `请执行以下全局待办事项：\n\n` +
+                    `- 待办事项ID: ${todoId}\n` +
+                    `- 待办事项标题：${todoTitle}\n` +
+                    `- 待办事项触发方式：${triggerInfo}\n\n` +
+                    `待办事项内容\n---\n\n${todoContent}`;
+
+                task.submitUserMessage(message).catch((err) =>
+                    logger.error(`Trigger task submitMessage failed for ${task.task_id}:`, err)
+                );
+            } catch (err) {
+                logger.error(`[Electron] 触发器任务创建失败: ${err}`);
+            }
+        };
     });
 
     app.on('will-quit', async () => {

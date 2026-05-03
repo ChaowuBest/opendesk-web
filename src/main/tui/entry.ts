@@ -783,11 +783,13 @@ export class OpenDeskTUI {
         // 绑定到新任务的队列
         this.inputArea.bindToTaskQueue(task.task_id, task.message_queue);
         this.inputArea.statusBar.setAccumulatedMs(task.total_elapsed_ms);
-        this.inputArea.statusBar.update({ totalTokens: 0 });
 
         // 为历史 ToolCall 挂载 toolsets 并解析 tool 引用，确保自定义渲染器正常工作
         await task.ensureToolsResolved();
 
+        // rebuildFromHistory 会通过 onStatusBarUpdate 恢复最后一条消息的 token 用量，
+        // 因此先重置为 0，再重建历史——如果有历史 usage 会立即被覆盖
+        this.inputArea.statusBar.update({ totalTokens: 0 });
         this.taskView.rebuildFromHistory();
 
         if (task.task_status === 'running') {

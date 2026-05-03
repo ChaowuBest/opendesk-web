@@ -79,20 +79,29 @@ export class BrowserNavigateTool extends BaseTool<typeof BrowserNavigateArgsSche
             } else {
                 await this.browserApp.callRendererBrowser(taskId, 'browserNavigate', args.url);
             }
-            // 等待页面开始加载
-            await new Promise((r) => setTimeout(r, 500));
 
-            // 获取导航后的页面信息
+            // 轮询等待导航完成（最多 8 秒），而非固定 500ms
             const stateScript = `(() => {
                 return JSON.stringify({ url: location.href, title: document.title });
             })()`;
-            try {
-                const raw = await this.browserApp.runOnActiveWebview(taskId, stateScript);
-                const info = typeof raw === 'string' ? JSON.parse(raw) : raw;
-                return JSON.stringify({ success: true, url: info.url, title: info.title });
-            } catch {
-                return JSON.stringify({ success: true, url: args.url });
+
+            const maxAttempts = 4;
+            const delays = [600, 1500, 3000, 3000];
+
+            for (let attempt = 0; attempt < maxAttempts; attempt++) {
+                await new Promise((r) => setTimeout(r, delays[attempt]));
+                try {
+                    const raw = await this.browserApp.runOnActiveWebview(taskId, stateScript, 5000);
+                    const info = typeof raw === 'string' ? JSON.parse(raw) : raw;
+                    if (info.url && info.url !== 'about:blank') {
+                        return JSON.stringify({ success: true, url: info.url, title: info.title });
+                    }
+                } catch {
+                    /* 超时或未就绪，重试 */
+                }
             }
+
+            return JSON.stringify({ success: true, url: args.url, title: '(页面加载中)' });
         } catch (err: any) {
             return JSON.stringify({ success: false, error: err.message || String(err) });
         }

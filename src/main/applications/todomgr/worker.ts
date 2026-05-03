@@ -114,6 +114,7 @@ export default class TodoMgrWorker extends BaseWorker {
             category,
             trigger,
             deliver,
+            enabled: true,
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString()
         };
@@ -137,10 +138,15 @@ export default class TodoMgrWorker extends BaseWorker {
 
         const { removeTrigger, ...todoUpdates } = updates;
         const oldTrigger = this.globalTodos[idx].trigger;
-        const oldStatus = this.globalTodos[idx].status;
+        const oldLastTriggered = this.globalTodos[idx].last_triggered_at;
+
+        logger.info(
+            `[todomgr] updateGlobalTodo [${id}]: keys=${Object.keys(todoUpdates).join(',')}, hasTrigger=${'trigger' in todoUpdates}, removeTrigger=${removeTrigger}`
+        );
 
         // cron 类型的 todo 不允许标记为 completed，因为它是周期性任务
-        if (todoUpdates.status === 'completed' && this.globalTodos[idx].trigger?.type === 'cron') {
+        const effectiveTriggerType = todoUpdates.trigger?.type ?? this.globalTodos[idx].trigger?.type;
+        if (todoUpdates.status === 'completed' && effectiveTriggerType === 'cron') {
             logger.warn(`[todomgr] cron 类型的待办 [${id}] 不允许标记为 completed，忽略状态更新`);
             delete todoUpdates.status;
         }
@@ -157,8 +163,46 @@ export default class TodoMgrWorker extends BaseWorker {
             delete this.globalTodos[idx].last_triggered_at;
         }
 
-        // 如果状态变为 completed，记录完成时间
-        if (todoUpdates.status === 'completed' && !this.globalTodos[idx].completed_at) {
+        // 检测触发器是否发生了变更
+        const triggerChanged = 'trigger' in todoUpdates && !removeTrigger;
+        if (triggerChanged) {
+            const newTriggerObj = this.globalTodos[idx].trigger;
+            const oldType = oldTrigger?.type;
+            const newType = newTriggerObj?.type;
+
+            const getTriggerConfig = (t: any): string => {
+                if (!t) return '';
+                switch (t.type) {
+                    case 'scheduled':
+                        return t.triggerAt || '';
+                    case 'cron':
+                        return t.cronExpression || '';
+                    case 'event':
+                        return `${t.bundleName || ''}:${t.eventName || ''}`;
+                    default:
+                        return '';
+                }
+            };
+            const oldConfig = getTriggerConfig(oldTrigger);
+            const newConfig = getTriggerConfig(newTriggerObj);
+
+            if (oldType !== newType || oldConfig !== newConfig) {
+                logger.info(
+                    `[todomgr] 触发器已变更 [${id}]: ${oldType}(${oldConfig}) -> ${newType}(${newConfig}), 重置触发状态`
+                );
+                delete this.globalTodos[idx].last_triggered_at;
+                delete this.globalTodos[idx].completed_at;
+                // 一次性触发器(scheduled/event)变更后始终重置为 pending，确保能再次触发
+                if (newType === 'scheduled' || newType === 'event') {
+                    this.globalTodos[idx].status = 'pending';
+                }
+            } else {
+                logger.info(`[todomgr] 触发器配置未变 [${id}]: ${newType}(${newConfig})`);
+            }
+        }
+
+        // 如果状态变为 completed（非触发器变更引起），记录完成时间
+        if (this.globalTodos[idx].status === 'completed' && !this.globalTodos[idx].completed_at) {
             this.globalTodos[idx].completed_at = new Date().toISOString();
         }
 
@@ -172,9 +216,26 @@ export default class TodoMgrWorker extends BaseWorker {
             this.stopCronJob(id);
         }
 
-        // 如果有 cron 触发器，始终启动它（cron 任务不因 completed 状态而停止）
+        // 如果有 cron 触发器且已启用，重新启动；如果禁用，停止
         if (newTrigger?.type === 'cron') {
-            this.startCronJob(this.globalTodos[idx]);
+            if (this.globalTodos[idx].enabled === false) {
+                this.stopCronJob(id);
+            } else {
+                this.startCronJob(this.globalTodos[idx]);
+            }
+        }
+
+        // 触发器变更后，如果是 scheduled 类型，立即检查一次以确保新的时间生效
+        if (triggerChanged && newTrigger?.type === 'scheduled') {
+            const todo = this.globalTodos[idx];
+            logger.info(
+                `[todomgr] scheduled 触发器变更后立即检查 [${id}]: status=${todo.status}, last_triggered=${todo.last_triggered_at}, triggerAt=${(todo.trigger as any)?.triggerAt}`
+            );
+            setTimeout(() => {
+                this.checkScheduledTriggers().catch((err) => {
+                    logger.error('触发器变更后 scheduled 检查失败:', err);
+                });
+            }, 500);
         }
 
         return this.globalTodos[idx];
@@ -222,9 +283,9 @@ export default class TodoMgrWorker extends BaseWorker {
      * 启动所有触发器
      */
     private startAllTriggers(): void {
-        // 启动所有 cron 任务（cron 是周期性任务，不因 completed 状态而停止）
+        // 启动所有已启用的 cron 任务（cron 是周期性任务，不因 completed 状态而停止）
         for (const todo of this.globalTodos) {
-            if (todo.trigger?.type === 'cron') {
+            if (todo.trigger?.type === 'cron' && todo.enabled !== false) {
                 this.startCronJob(todo);
             }
         }
@@ -268,8 +329,10 @@ export default class TodoMgrWorker extends BaseWorker {
                     logger.info(`[todomgr] todo [${todo.id}] 不存在，跳过触发`);
                     return;
                 }
-
-                // cron 是周期性任务，不检查 completed 状态，始终执行
+                if (currentTodo.enabled === false) {
+                    logger.info(`[todomgr] todo [${todo.id}] 已禁用，跳过触发`);
+                    return;
+                }
                 // 更新触发时间
                 currentTodo.last_triggered_at = new Date().toISOString();
                 currentTodo.updated_at = new Date().toISOString();
@@ -305,17 +368,24 @@ export default class TodoMgrWorker extends BaseWorker {
         const now = new Date();
         const nowTs = now.getTime();
 
-        logger.info(`[todomgr] 开始检查 scheduled 触发器，当前时间：${now.toISOString()}`);
-
         for (const todo of this.globalTodos) {
-            // 跳过没有触发器的待办
             if (!todo.trigger) continue;
-            // 只处理 scheduled 类型
             if (todo.trigger.type !== 'scheduled') continue;
-            // 已完成的跳过
-            if (todo.status === 'completed') continue;
-            // 已触发过的跳过
-            if (todo.last_triggered_at) continue;
+
+            if (todo.enabled === false) {
+                logger.debug(`[todomgr] scheduled [${todo.id}] 已禁用，跳过`);
+                continue;
+            }
+            if (todo.status === 'completed') {
+                logger.debug(`[todomgr] scheduled [${todo.id}] 已完成(status=completed)，跳过`);
+                continue;
+            }
+            if (todo.last_triggered_at) {
+                logger.debug(
+                    `[todomgr] scheduled [${todo.id}] 已触发过(last_triggered=${todo.last_triggered_at})，跳过`
+                );
+                continue;
+            }
 
             try {
                 const triggerTime = new Date(todo.trigger.triggerAt);
@@ -353,12 +423,23 @@ export default class TodoMgrWorker extends BaseWorker {
     }
 
     /**
+     * 手动立即触发指定的全局待办
+     */
+    async triggerGlobalTodoNow(todoId: string): Promise<GlobalTodo> {
+        const todo = this.globalTodos.find((t) => t.id === todoId);
+        if (!todo) throw new Error(`GlobalTodo not found: ${todoId}`);
+        await this.fireTrigger(todo);
+        return todo;
+    }
+
+    /**
      * 处理来自其他应用的事件，检查是否有匹配的事件触发器
      */
     async handleApplicationEvent(sourceBundleName: string, eventName: string, _args: any[]): Promise<void> {
         for (const todo of this.globalTodos) {
             if (!todo.trigger) continue;
             if (todo.trigger.type !== 'event') continue;
+            if (todo.enabled === false) continue;
             // event 类型触发器通常是一次性的，完成后不再触发
             if (todo.status === 'completed') continue;
 

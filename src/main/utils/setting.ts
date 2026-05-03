@@ -90,8 +90,13 @@ const ModelSchema = z.object({
 /** 控制模型推理深度，空字符串表示使用模型默认值 */
 type ReasoningEffort = '' | 'none' | 'low' | 'medium' | 'high';
 
-const DisplaySchema = z.object({
-    scale_factor: z.number().min(0.5).max(2.0).default(1).describe('GUI 缩放系数 (0.5 ~ 2.0)')
+const DesktopGUISchema = z.object({
+    scale_factor: z.number().min(0.5).max(2.0).optional().default(1).describe('GUI 缩放系数 (0.5 ~ 2.0)'),
+    ctrl_enter_send: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe('是否使用 Ctrl+Enter 发送消息（false 时按 Enter 发送）')
 });
 
 type Provider = z.infer<typeof ProviderSchema>;
@@ -126,7 +131,7 @@ function getSettingSchema(): z.ZodObject<z.ZodRawShape> {
         ).default('full'),
         providers: z.array(ProviderSchema).describe('可用AI模型提供商').default([]),
         models: z.array(ModelSchema).describe('可用AI模型').default([]),
-        display: DisplaySchema.describe('显示设置').default({}),
+        display: DesktopGUISchema.describe('桌面 GUI 设置').default({ scale_factor: 1, ctrl_enter_send: false }),
         applications: ApplicationConfigSchema.describe('OpenDesk应用相关配置').default({})
     });
 }

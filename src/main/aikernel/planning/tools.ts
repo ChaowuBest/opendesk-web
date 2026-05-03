@@ -921,39 +921,68 @@ export class AttemptCompletionSubTaskTool extends BaseTool<typeof AttemptComplet
         const args = toolcall.args_object as z.output<typeof AttemptCompletionSubTaskArgsSchema> | undefined;
         if (!args) return undefined;
 
+        const taskId = toolcall.id ? toolcall.id.slice(0, 8) : '—';
+
         if (args.type === 'fail') {
             const messageHtml = args.message ? await marked.parse(args.message) : '';
             return `
-            <div class="flex flex-col mt-1 mb-1 text-xs bg-rose-50/80 backdrop-blur-md border border-rose-200 py-2 px-3 rounded-xl shadow-sm w-fit max-w-2xl">
-                <div class="flex items-center space-x-2 mb-1">
-                    <span class="text-sm">❌</span>
-                    <span class="font-medium text-rose-600">子任务未能完成</span>
+            <div class="attempt-completion-card my-1.5 w-full rounded-lg border border-[#e2e8f0] bg-white overflow-hidden">
+                <div class="flex items-center justify-between px-3.5 py-1.5 border-b border-[#f1f5f9] bg-[#f8fafc]">
+                    <div class="flex items-center gap-2">
+                        <span class="inline-flex items-center justify-center w-4 h-4 rounded bg-[#fef2f2]">
+                            <i class="fa-solid fa-xmark text-[#b91c1c] text-[9px]"></i>
+                        </span>
+                        <span class="text-[11px] font-semibold text-[#64748b]">子任务报告</span>
+                        <span class="text-[10px] text-[#94a3b8] font-mono">#${taskId}</span>
+                    </div>
+                    <div class="flex items-center gap-1 px-2 py-0.5 rounded bg-[#fef2f2] text-[#b91c1c]">
+                        <i class="fa-solid fa-circle-xmark text-[9px]"></i>
+                        <span class="text-[10px] font-medium">失败</span>
+                    </div>
                 </div>
-                ${messageHtml ? `<div class="prose prose-slate prose-xs max-w-none">${messageHtml}</div>` : ''}
+                ${messageHtml ? `<div class="px-3.5 py-2.5 text-xs text-[#334155] leading-relaxed markdown-body">${messageHtml}</div>` : ''}
             </div>`;
         }
 
         if (args.type === 'ask') {
             const messageHtml = args.message ? await marked.parse(args.message) : '';
             return `
-            <div class="flex flex-col mt-1 mb-1 text-xs bg-amber-50/80 backdrop-blur-md border border-amber-200 py-2 px-3 rounded-xl shadow-sm w-fit max-w-2xl">
-                <div class="flex items-center space-x-2 mb-1">
-                    <span class="text-sm">❓</span>
-                    <span class="font-medium text-amber-600">子任务需要补充信息</span>
+            <div class="attempt-completion-card my-1.5 w-full rounded-lg border border-[#e2e8f0] bg-white overflow-hidden">
+                <div class="flex items-center justify-between px-3.5 py-1.5 border-b border-[#f1f5f9] bg-[#f8fafc]">
+                    <div class="flex items-center gap-2">
+                        <span class="inline-flex items-center justify-center w-4 h-4 rounded bg-[#fffbeb]">
+                            <i class="fa-solid fa-question text-[#92400e] text-[9px]"></i>
+                        </span>
+                        <span class="text-[11px] font-semibold text-[#64748b]">子任务报告</span>
+                        <span class="text-[10px] text-[#94a3b8] font-mono">#${taskId}</span>
+                    </div>
+                    <div class="flex items-center gap-1 px-2 py-0.5 rounded bg-[#fffbeb] text-[#92400e]">
+                        <i class="fa-solid fa-circle-question text-[9px]"></i>
+                        <span class="text-[10px] font-medium">等待补充</span>
+                    </div>
                 </div>
-                ${messageHtml ? `<div class="prose prose-slate prose-xs max-w-none">${messageHtml}</div>` : ''}
+                ${messageHtml ? `<div class="px-3.5 py-2.5 text-xs text-[#334155] leading-relaxed markdown-body">${messageHtml}</div>` : ''}
             </div>`;
         }
 
         // success
         const messageHtml = args.message ? await marked.parse(args.message) : '';
         return `
-        <div class="flex flex-col mt-1 mb-1 text-xs bg-emerald-50/80 backdrop-blur-md border border-emerald-200 py-2 px-3 rounded-xl shadow-sm w-fit max-w-2xl">
-            <div class="flex items-center space-x-2 mb-1">
-                <span class="text-sm">✅</span>
-                <span class="font-medium text-emerald-600">子任务完成</span>
+        <div class="attempt-completion-card my-1.5 w-full rounded-lg border border-[#d5e8d4] bg-white overflow-hidden">
+            <div class="flex items-center justify-between px-3.5 py-1.5 border-b border-[#d5e8d4] bg-[#f4faf3]">
+                <div class="flex items-center gap-2">
+                    <span class="inline-flex items-center justify-center w-4 h-4 rounded bg-[#e6f4e4]">
+                        <i class="fa-solid fa-check text-[#3d7a38] text-[9px]"></i>
+                    </span>
+                    <span class="text-[11px] font-semibold text-[#3d6b38]">子任务报告</span>
+                    <span class="text-[10px] text-[#7dab79] font-mono">#${taskId}</span>
+                </div>
+                <div class="flex items-center gap-1 px-2 py-0.5 rounded bg-[#e6f4e4] text-[#3d7a38]">
+                    <i class="fa-solid fa-circle-check text-[9px]"></i>
+                    <span class="text-[10px] font-medium">已完成</span>
+                </div>
             </div>
-            ${messageHtml ? `<div class="prose prose-slate prose-xs max-w-none">${messageHtml}</div>` : ''}
+            ${messageHtml ? `<div class="px-3.5 py-2.5 text-xs text-[#334155] leading-relaxed markdown-body">${messageHtml}</div>` : ''}
         </div>`;
     }
 

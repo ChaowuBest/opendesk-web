@@ -97,10 +97,41 @@ class AgentInput extends HTMLElement {
         this._workspacePath = '';
         /** 防抖定时器 */
         this._fileCompleteTimer = null;
+        /** 是否使用 Ctrl+Enter 发送（false=Enter 发送） */
+        this.ctrlEnterSend = false;
+        /** 发送选项菜单是否打开 */
+        this.sendMenuOpen = false;
     }
 
     connectedCallback() {
-        Promise.all([this.loadModels(), this.loadModes(), this.loadSkills()]).then(() => this.render());
+        Promise.all([this.loadModels(), this.loadModes(), this.loadSkills(), this.loadCtrlEnterSend()]).then(() =>
+            this.render()
+        );
+    }
+
+    async loadCtrlEnterSend() {
+        try {
+            if (!window.settingAPI?.loadSettingObject) return;
+            const settingObj = await window.settingAPI.loadSettingObject();
+            this.ctrlEnterSend = !!settingObj.display?.ctrl_enter_send;
+        } catch (err) {
+            console.warn('Failed to load ctrl_enter_send setting:', err);
+        }
+    }
+
+    async saveCtrlEnterSend(value) {
+        this.ctrlEnterSend = value;
+        try {
+            if (!window.settingAPI?.saveSettingObject || !window.settingAPI?.loadSettingObject) return;
+            const settingObj = await window.settingAPI.loadSettingObject();
+            if (!settingObj.display) settingObj.display = {};
+            settingObj.display.ctrl_enter_send = value;
+            await window.settingAPI.saveSettingObject(settingObj);
+        } catch (err) {
+            console.warn('Failed to save ctrl_enter_send setting:', err);
+        }
+        this.updateSubmitTooltip();
+        this.updatePlaceholder();
     }
 
     async loadModels() {
@@ -225,6 +256,7 @@ class AgentInput extends HTMLElement {
     updateInputState() {
         const textarea = this.querySelector('#agent-input-textarea');
         const submitBtn = this.querySelector('#agent-input-submit-btn');
+        const sendMenuBtn = this.querySelector('#agent-input-send-menu-btn');
         const stopBtn = this.querySelector('#agent-input-stop-btn');
 
         if (textarea) {
@@ -235,23 +267,53 @@ class AgentInput extends HTMLElement {
             } else {
                 textarea.disabled = false;
                 textarea.classList.remove('opacity-50', 'cursor-not-allowed');
-                textarea.placeholder = '在这里输入消息，按 Ctrl+Enter 发送';
+                this.updatePlaceholder();
             }
         }
 
-        if (submitBtn) {
-            if (this.showStopButton) {
-                submitBtn.classList.add('hidden');
-            } else {
-                submitBtn.classList.remove('hidden');
-            }
+        const sendGroup = this.querySelector('.agent-send-group');
+        if (sendGroup) {
+            sendGroup.style.display = this.showStopButton ? 'none' : '';
         }
 
         if (stopBtn) {
-            if (this.showStopButton) {
-                stopBtn.classList.remove('hidden');
+            stopBtn.style.display = this.showStopButton ? '' : 'none';
+        }
+
+        this.updateSendButtonState();
+    }
+
+    updatePlaceholder() {
+        const textarea = this.querySelector('#agent-input-textarea');
+        if (!textarea || this.isDisabled) return;
+        textarea.placeholder = this.ctrlEnterSend
+            ? '在这里输入消息，按 Ctrl+Enter 发送'
+            : '在这里输入消息，按 Enter 发送';
+    }
+
+    updateSubmitTooltip() {
+        const submitBtn = this.querySelector('#agent-input-submit-btn');
+        if (submitBtn) {
+            submitBtn.title = this.ctrlEnterSend ? '发送 (Ctrl+Enter)' : '发送 (Enter)';
+        }
+    }
+
+    updateSendButtonState() {
+        const textarea = this.querySelector('#agent-input-textarea');
+        const submitBtn = this.querySelector('#agent-input-submit-btn');
+        const sendMenuBtn = this.querySelector('#agent-input-send-menu-btn');
+        if (!textarea || !submitBtn) return;
+
+        const hasText = textarea.value.trim().length > 0;
+        const active = hasText && !this.isDisabled;
+        for (const btn of [submitBtn, sendMenuBtn]) {
+            if (!btn) continue;
+            if (active) {
+                btn.classList.add('agent-send-active');
+                btn.classList.remove('agent-send-inactive');
             } else {
-                stopBtn.classList.add('hidden');
+                btn.classList.remove('agent-send-active');
+                btn.classList.add('agent-send-inactive');
             }
         }
     }
@@ -329,7 +391,7 @@ class AgentInput extends HTMLElement {
                 <div class="px-3.5 pt-2.5 pb-1">
                     <textarea
                         id="agent-input-textarea"
-                        placeholder="在这里输入消息，按 Ctrl+Enter 发送"
+                        placeholder="${this.ctrlEnterSend ? '在这里输入消息，按 Ctrl+Enter 发送' : '在这里输入消息，按 Enter 发送'}"
                         class="w-full h-14 resize-none border-none outline-none placeholder-gray-400 text-gray-700 text-[13px] leading-relaxed"
                     ></textarea>
                 </div>
@@ -406,14 +468,26 @@ class AgentInput extends HTMLElement {
                     </div>
 
                     <!-- 右侧按钮 -->
-                    <div class="flex items-center gap-1.5">
-                        <!-- 发送按钮 -->
-                        <button id="agent-input-submit-btn" class="p-1 text-gray-400 hover:text-blue-500 rounded-full transition-colors">
-                            <i class="fas fa-paper-plane text-sm"></i>
-                        </button>
+                    <div class="flex items-center gap-0">
+                        <!-- 发送按钮组 -->
+                        <div class="agent-send-group">
+                            <button id="agent-input-submit-btn" class="agent-send-btn agent-send-inactive"
+                                title="${this.ctrlEnterSend ? '发送 (Ctrl+Enter)' : '发送 (Enter)'}">
+                                <i class="fas fa-arrow-up" style="font-size:10px;"></i>
+                                <span>发送</span>
+                            </button>
+                            <div class="agent-send-divider"></div>
+                            <button id="agent-input-send-menu-btn" class="agent-send-menu-btn agent-send-inactive"
+                                title="发送选项">
+                                <i class="fas fa-ellipsis" style="font-size:9px;"></i>
+                            </button>
+                        </div>
                         <!-- 停止按钮 -->
-                        <button id="agent-input-stop-btn" class="py-1 px-3 bg-red-500 hover:bg-red-600 text-white rounded-full transition-colors text-xs hidden">
-                            <i class="fas fa-stop text-[10px]"></i>
+                        <button id="agent-input-stop-btn" class="py-1 px-3 text-white rounded-full transition-all text-xs"
+                            style="display:none; background: rgba(239,115,115,0.78); backdrop-filter: blur(4px);">
+                            <span class="agent-stop-icon inline-flex items-center">
+                                <i class="fas fa-stop text-[10px]"></i>
+                            </span>
                             <span class="ml-1">停止</span>
                         </button>
                     </div>
@@ -484,6 +558,7 @@ class AgentInput extends HTMLElement {
         this.closeModePanel(true);
         this.toggleSkillPanel(true);
         this.closeAutocompletePanel();
+        this.closeSendMenu();
     }
 
     toggleModelPanel(forceClose = false) {
@@ -836,6 +911,69 @@ class AgentInput extends HTMLElement {
             console.error('Failed to install skill:', err);
             window.notificationAPI?.sendNotification('error', '技能中心', '安装失败', err.message || '未知错误');
         }
+    }
+
+    // ── 发送选项菜单 ────────────────────────────────────────
+
+    showSendMenu() {
+        this.closeSendMenu();
+        const groupEl = this.querySelector('.agent-send-group');
+        if (!groupEl) return;
+
+        const menu = document.createElement('div');
+        menu.id = 'agent-send-options-menu';
+        menu.className = 'agent-send-options-panel';
+
+        Object.assign(menu.style, {
+            position: 'fixed',
+            zIndex: '10002',
+            animation: 'od-ctx-appear 0.12s ease-out'
+        });
+
+        const checked = this.ctrlEnterSend;
+        menu.innerHTML = `
+            <div class="agent-send-menu-item" data-action="toggle-ctrl-enter">
+                <span class="agent-send-menu-item-label">按 Ctrl+Enter 发送</span>
+                <label class="agent-send-toggle">
+                    <input type="checkbox" ${checked ? 'checked' : ''}>
+                    <span class="agent-send-toggle-slider"></span>
+                </label>
+            </div>
+        `;
+
+        document.body.appendChild(menu);
+
+        // 定位：向下弹出，右对齐到按钮组
+        const groupRect = groupEl.getBoundingClientRect();
+        const menuRect = menu.getBoundingClientRect();
+        let top = groupRect.bottom + 6;
+        let left = groupRect.right - menuRect.width;
+        if (top + menuRect.height > window.innerHeight - 8) {
+            top = groupRect.top - menuRect.height - 6;
+        }
+        if (left < 8) left = 8;
+        menu.style.top = top + 'px';
+        menu.style.left = left + 'px';
+
+        this.sendMenuOpen = true;
+
+        // 事件绑定 — 点击整行或直接点 checkbox 都切换
+        const menuItem = menu.querySelector('[data-action="toggle-ctrl-enter"]');
+        const checkbox = menu.querySelector('input[type="checkbox"]');
+        if (menuItem && checkbox) {
+            menuItem.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                checkbox.checked = !checkbox.checked;
+                this.saveCtrlEnterSend(checkbox.checked);
+            });
+        }
+    }
+
+    closeSendMenu() {
+        const existing = document.querySelector('#agent-send-options-menu');
+        if (existing) existing.remove();
+        this.sendMenuOpen = false;
     }
 
     // ── 内联补全面板 ────────────────────────────────────────
@@ -1247,6 +1385,19 @@ class AgentInput extends HTMLElement {
                         this.closeAutocompletePanel();
                     }
                 }
+                // 关闭发送选项菜单
+                if (this.sendMenuOpen) {
+                    const sendMenu = document.querySelector('#agent-send-options-menu');
+                    const sendMenuBtn = this.querySelector('#agent-input-send-menu-btn');
+                    if (
+                        sendMenu &&
+                        !sendMenu.contains(e.target) &&
+                        e.target !== sendMenuBtn &&
+                        !sendMenuBtn?.contains(e.target)
+                    ) {
+                        this.closeSendMenu();
+                    }
+                }
             });
         }
 
@@ -1279,6 +1430,20 @@ class AgentInput extends HTMLElement {
         };
 
         submitBtn.addEventListener('click', handleSubmit);
+
+        // 发送选项菜单按钮
+        const sendMenuBtn = this.querySelector('#agent-input-send-menu-btn');
+        if (sendMenuBtn) {
+            sendMenuBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                if (this.sendMenuOpen) {
+                    this.closeSendMenu();
+                } else {
+                    this.closeAllPanels();
+                    this.showSendMenu();
+                }
+            });
+        }
 
         // 停止按钮事件
         if (stopBtn) {
@@ -1330,19 +1495,29 @@ class AgentInput extends HTMLElement {
             }
         });
 
-        // 键盘事件：补全导航 + Ctrl+Enter 发送
+        // 键盘事件：补全导航 + Enter/Ctrl+Enter 发送
         textarea.addEventListener('keydown', (e) => {
             if (this.isDisabled) {
                 e.preventDefault();
                 return;
             }
 
+            // 输入法组字过程中不处理
+            if (e.isComposing || e.keyCode === 229) return;
+
             // 补全面板打开时优先处理键盘导航
             if (this.handleAutocompleteKeydown(e)) return;
 
-            if (e.ctrlKey && e.key === 'Enter') {
-                e.preventDefault();
-                handleSubmit();
+            if (this.ctrlEnterSend) {
+                if (e.ctrlKey && e.key === 'Enter') {
+                    e.preventDefault();
+                    handleSubmit();
+                }
+            } else {
+                if (e.key === 'Enter' && !e.ctrlKey && !e.shiftKey) {
+                    e.preventDefault();
+                    handleSubmit();
+                }
             }
         });
 
@@ -1357,6 +1532,8 @@ class AgentInput extends HTMLElement {
             );
             // 检测 / 和 @ 触发补全
             this.handleAutocompleteInput(textarea);
+            // 更新发送按钮状态
+            this.updateSendButtonState();
         });
     }
 }
@@ -1477,7 +1654,8 @@ class ApplicationAgentInput extends HTMLElement {
                     </div>
 
                     <!-- 停止按钮 - 任务运行状态时显示 -->
-                    <button id="stop-task-button" class="flex-shrink-0 w-10 h-10 rounded-full bg-red-500 hover:bg-red-600 text-white flex items-center justify-center transition-colors shadow-lg hidden">
+                    <button id="stop-task-button" class="flex-shrink-0 w-10 h-10 rounded-full text-white flex items-center justify-center transition-all shadow-lg hidden"
+                        style="background: rgba(239,115,115,0.78);">
                         <i class="fas fa-stop text-sm"></i>
                     </button>
 
