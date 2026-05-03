@@ -305,13 +305,13 @@ export class HeadlessRunner {
 
         switch (part.type) {
             case 'reasoning': {
-                const content = (part as ReasoningMessagePart).content.trim();
+                const content = (part as ReasoningMessagePart).content?.trim();
                 if (!content) break;
                 process.stdout.write(chalk.dim(`[${t('headless.thinking')}] ` + content) + '\n');
                 break;
             }
             case 'text': {
-                const text = (part as TextMessagePart).text.trim();
+                const text = (part as TextMessagePart).text?.trim();
                 if (!text) break;
                 process.stdout.write(chalk.bold.green(`[${t('headless.assistant')}] `) + text + '\n');
                 break;
@@ -321,7 +321,7 @@ export class HeadlessRunner {
                 for (const tc of tcPart.toolcalls) {
                     if (!tc.tool && tc.tool_name) {
                         const tool = task.chat_context.getTool(tc.tool_name);
-                        if (tool) tc.setTool(tool);
+                        if (tool && typeof tc.setTool === 'function') tc.setTool(tool);
                     }
                 }
                 const view = new ToolCallMessagePartView();

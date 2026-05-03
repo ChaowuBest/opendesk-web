@@ -930,7 +930,7 @@ export class TaskState {
                     task_status: this.task_status,
                     message_id: last_message.message_id,
                     last_part_index: updated_part_index,
-                    last_part: last_part.toRenderJSON(),
+                    last_part: last_part,
                     usage: last_message.usage
                 };
             } else if (last_message instanceof CompactSeparatorMessage) {
