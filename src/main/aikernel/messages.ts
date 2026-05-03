@@ -1308,12 +1308,14 @@ export class AssistantMessage {
     private _checkAndSplitReasoningClose(): void {
         const last_part = this.content[this.content.length - 1];
         if (!last_part || last_part.type !== 'reasoning') return;
+        const content = (last_part as ReasoningMessagePart).content;
+        if (!content) return;
 
-        const closeIdx = last_part.content.indexOf('</think>');
+        const closeIdx = content.indexOf('</think>');
         if (closeIdx === -1) return;
 
-        const reasoningText = last_part.content.substring(0, closeIdx);
-        const afterClose = last_part.content.substring(closeIdx + '</think>'.length);
+        const reasoningText = content.substring(0, closeIdx);
+        const afterClose = content.substring(closeIdx + '</think>'.length);
 
         last_part.content = reasoningText;
         last_part.invalidateRender();

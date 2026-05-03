@@ -601,7 +601,7 @@ const registerTaskManagerAPIHandlers = () => {
             const { readTaskSessionMemory, isSessionMemoryTemplateOnly } =
                 await import('./aikernel/compaction/session-memory-compact.js');
             const { marked } = await import('./aikernel/messages.js');
-            const content = readTaskSessionMemory(taskId);
+            const content = await readTaskSessionMemory(taskId);
             if (!content || isSessionMemoryTemplateOnly(content)) {
                 return { status: 'ok', data: null };
             }
@@ -1014,7 +1014,7 @@ const registerSettingAPIHandlers = () => {
 const registerDisplayZoomHandlers = () => {
     const readCurrentScale = () => {
         try {
-            const val = Setting.getInstance().getData().display?.scale_factor;
+            const val = Setting.getInstance().getData().gui_config?.scale_factor;
             return typeof val === 'number' && Number.isFinite(val) ? val : 1;
         } catch {
             return 1;
@@ -1030,7 +1030,7 @@ const registerDisplayZoomHandlers = () => {
         const rounded = Math.round(clamped * 10) / 10;
         Setting.getInstance().setData({
             ...currentData,
-            display: { ...(currentData.display || {}), scale_factor: rounded }
+            gui_config: { ...(currentData.gui_config || {}), scale_factor: rounded }
         });
         globalMainWindow.webContents.send('display:scaleFactorChanged', rounded);
     };
@@ -1263,7 +1263,7 @@ function startApplication() {
 
         // Restore saved zoom level
         try {
-            const savedScale = Setting.getInstance().getData().display?.scale_factor;
+            const savedScale = Setting.getInstance().getData().gui_config?.scale_factor;
             if (typeof savedScale === 'number' && Number.isFinite(savedScale) && savedScale !== 1 && globalMainWindow) {
                 globalMainWindow.webContents.setZoomFactor(Math.max(0.5, Math.min(3.0, savedScale)));
             }
@@ -1337,6 +1337,11 @@ function startApplication() {
         // 停止自动更新检查
         if (updateClient) {
             updateClient.stopAutoCheck();
+        }
+        try {
+            await GlobalState.getInstance().taskManagerState.flushAllPendingSaves();
+        } catch {
+            /* best-effort flush */
         }
     });
 }

@@ -113,7 +113,7 @@ class AgentInput extends HTMLElement {
         try {
             if (!window.settingAPI?.loadSettingObject) return;
             const settingObj = await window.settingAPI.loadSettingObject();
-            this.ctrlEnterSend = !!settingObj.display?.ctrl_enter_send;
+            this.ctrlEnterSend = !!settingObj.gui_config?.ctrl_enter_send;
         } catch (err) {
             console.warn('Failed to load ctrl_enter_send setting:', err);
         }
@@ -124,8 +124,8 @@ class AgentInput extends HTMLElement {
         try {
             if (!window.settingAPI?.saveSettingObject || !window.settingAPI?.loadSettingObject) return;
             const settingObj = await window.settingAPI.loadSettingObject();
-            if (!settingObj.display) settingObj.display = {};
-            settingObj.display.ctrl_enter_send = value;
+            if (!settingObj.gui_config) settingObj.gui_config = {};
+            settingObj.gui_config.ctrl_enter_send = value;
             await window.settingAPI.saveSettingObject(settingObj);
         } catch (err) {
             console.warn('Failed to save ctrl_enter_send setting:', err);

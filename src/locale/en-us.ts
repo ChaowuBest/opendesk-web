@@ -282,7 +282,7 @@ export const enUs: Record<string, string> = {
     'log.all.description': 'All',
 
     // Commands - Mode
-    'mode.description': 'View or switch mode (Shift+Tab)',
+    'mode.description': 'View or switch mode',
 
     // Commands - Help
     'help.description': 'Show shortcuts and command help',
@@ -554,11 +554,38 @@ export const enUs: Record<string, string> = {
     'permission.truncate.prefix': 'Always allow ',
     'permission.truncate.suffix': ' for ',
 
+    // Shortcuts
+    'shortcut.switch_mode': 'Switch Mode',
+    'shortcut.switch_model': 'Switch Model',
+    'shortcut.endline': 'Insert Newline',
+    'shortcut.show_help': 'Show Help',
+    'shortcut.clear_input': 'Clear Input',
+    'shortcut.list_tasks': 'Task List',
+    'shortcut.model.switched': 'Model switched to',
+    'shortcut.model.none': 'No models configured',
+
+    // Config - Shortcuts
+    'config.shortcuts.title': 'Shortcuts',
+    'config.shortcuts.title.hint': 'Customize terminal shortcuts',
+    'config.shortcuts.press.enter': 'Enter edit',
+    'config.shortcuts.waiting': 'Press new key combination...',
+    'config.shortcuts.captured': 'Captured',
+    'config.shortcuts.confirm': 'Enter save  Esc cancel  D reset default',
+    'config.shortcuts.hint': '↑↓ select  Enter edit  D reset default  Esc back',
+    'config.shortcuts.saved': 'Shortcuts saved',
+    'config.shortcuts.error.single_key.title': 'Invalid Shortcut',
+    'config.shortcuts.error.single_key.message':
+        'Single keys are not allowed as shortcuts. Please use key combinations (e.g., Ctrl+A, Alt+B).',
+
     // Help Overlay
     'help.tab.commands': 'Commands',
     'help.tab.skills': 'Skills',
+    'help.tab.shortcuts': 'Shortcuts',
     'help.tab.switch': '← → switch',
     'help.no.commands': 'No commands',
+    'help.no.shortcuts': 'No shortcuts',
+    'help.shortcuts.action': 'Action',
+    'help.shortcuts.key': 'Key',
     'help.skills.loading': 'Loading...',
     'help.skills.none': 'No skills available',
     'help.skills.manage': 'Use /skills to manage skills',

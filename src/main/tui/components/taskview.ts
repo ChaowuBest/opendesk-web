@@ -154,9 +154,9 @@ export class ReasoningMessagePartView implements Component {
     throttleMsProvider?: () => number;
 
     setContent(content: string) {
-        this._content = content;
+        this._content = content ?? '';
         // 同时更新 Markdown 内容（完整显示模式需要）
-        this._markdown.setText(content);
+        this._markdown.setText(content ?? '');
         this._dirty = true;
         this.invalidated = true;
     }
@@ -803,6 +803,45 @@ export class TaskView implements Component {
         }
 
         await this.taskState.submitUserMessage(text);
+
+        // submitUserMessage 中 preloadSlashSkills 可能已向 assistant_message 写入
+        // reasoning + tool_call parts（如 /skillName 预加载）。
+        // 这些 parts 的 sendSubscriptionFeedback 在 waitUntilFinished 订阅建立前发出，
+        // TUI callback 收不到。此处用原始对象补建 view，确保预加载内容可见且自定义渲染生效。
+        const lastMsg = this.taskState.chat_context.lastMessage();
+        if (lastMsg instanceof AssistantMessage && lastMsg.content.length > 0) {
+            let view = this.messageIdToAssistantView.get(lastMsg.message_id);
+            if (!view) {
+                view = new AssistantMessageView();
+                view.setMessageId(lastMsg.message_id);
+                view.throttleMsProvider = () => this.getMdRenderThrottleMs();
+                this.messageIdToAssistantView.set(lastMsg.message_id, view);
+                this.messages.push(view);
+                this.messageLayout.addChild(view);
+            }
+            for (let i = 0; i < lastMsg.content.length; i++) {
+                const part = lastMsg.content[i];
+                switch (part.type) {
+                    case 'text':
+                        await view.updateTextPart(i, part);
+                        break;
+                    case 'reasoning':
+                        await view.updateReasoningPart(i, part);
+                        break;
+                    case 'tool_call':
+                        await view.updateToolCallPart(i, part);
+                        break;
+                    case 'error':
+                        await view.updateErrorPart(i, part);
+                        break;
+                }
+            }
+            // preload 的 parts 已是最终状态，关闭 reasoning spinner
+            view.setStreamingComplete();
+            this.invalidated = true;
+            this.requestStreamRender();
+        }
+
         const renderInterval = setInterval(() => {
             if (this.currentTaskId === snapshotTaskId) {
                 this.requestStreamRender();

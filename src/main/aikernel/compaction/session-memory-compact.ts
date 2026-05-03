@@ -389,50 +389,59 @@ export function getTaskSessionMemoryRelativePath(taskId: string): string {
     return path.join('artifacts', taskId, SESSION_MEMORY_DIRECTORY_NAME, SESSION_MEMORY_FILENAME);
 }
 
-export function ensureTaskSessionMemoryFile(taskId: string, options: { template?: string } = {}): SessionMemoryFile {
+export async function ensureTaskSessionMemoryFile(
+    taskId: string,
+    options: { template?: string } = {}
+): Promise<SessionMemoryFile> {
     const fullPath = getTaskSessionMemoryPath(taskId, true);
     const relativePath = getTaskSessionMemoryRelativePath(taskId);
     let created = false;
 
-    if (!fs.existsSync(fullPath)) {
-        fs.writeFileSync(fullPath, options.template ?? DEFAULT_SESSION_MEMORY_TEMPLATE, { encoding: 'utf8' });
+    try {
+        await fs.promises.access(fullPath);
+    } catch {
+        await fs.promises.writeFile(fullPath, options.template ?? DEFAULT_SESSION_MEMORY_TEMPLATE, {
+            encoding: 'utf8'
+        });
         created = true;
     }
 
-    return {
-        fullPath,
-        relativePath,
-        content: fs.readFileSync(fullPath, 'utf8'),
-        created
-    };
+    const content = await fs.promises.readFile(fullPath, 'utf8');
+    return { fullPath, relativePath, content, created };
 }
 
-export function readTaskSessionMemory(
+export async function readTaskSessionMemory(
     taskId: string,
     options: { ensureExists?: boolean; template?: string } = {}
-): string | undefined {
+): Promise<string | undefined> {
     if (options.ensureExists) {
-        return ensureTaskSessionMemoryFile(taskId, { template: options.template }).content;
+        return (await ensureTaskSessionMemoryFile(taskId, { template: options.template })).content;
     }
 
     const fullPath = getTaskSessionMemoryPath(taskId, false);
-    if (!fs.existsSync(fullPath)) {
+    try {
+        return await fs.promises.readFile(fullPath, 'utf8');
+    } catch {
         return undefined;
     }
-    return fs.readFileSync(fullPath, 'utf8');
 }
 
-export function writeTaskSessionMemory(taskId: string, content: string): { fullPath: string; relativePath: string } {
+export async function writeTaskSessionMemory(
+    taskId: string,
+    content: string
+): Promise<{ fullPath: string; relativePath: string }> {
     const fullPath = getTaskSessionMemoryPath(taskId, true);
     const relativePath = getTaskSessionMemoryRelativePath(taskId);
     const tmpPath = `${fullPath}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`;
 
     try {
-        fs.writeFileSync(tmpPath, content, { encoding: 'utf8' });
-        fs.renameSync(tmpPath, fullPath);
+        await fs.promises.writeFile(tmpPath, content, { encoding: 'utf8' });
+        await fs.promises.rename(tmpPath, fullPath);
     } catch (error) {
-        if (fs.existsSync(tmpPath)) {
-            fs.rmSync(tmpPath, { force: true });
+        try {
+            await fs.promises.rm(tmpPath, { force: true });
+        } catch {
+            /* cleanup best-effort */
         }
         throw error;
     }
@@ -803,7 +812,7 @@ export async function updateSessionMemoryFromChatContext(
     }
 
     const startedState = SessionMemoryStates.recordExtractionStarted(normalizedState);
-    const sessionMemoryFile = ensureTaskSessionMemoryFile(taskId, { template: options.template });
+    const sessionMemoryFile = await ensureTaskSessionMemoryFile(taskId, { template: options.template });
     const activeContext = buildActiveContextView(chatContext);
     const prompt = buildSessionMemoryUpdatePrompt(sessionMemoryFile.content, activeContext, startedState, options);
     const generator = options.generateMemory ?? defaultSessionMemoryGenerator;
@@ -829,7 +838,7 @@ export async function updateSessionMemoryFromChatContext(
             );
         }
 
-        const writeResult = writeTaskSessionMemory(
+        const writeResult = await writeTaskSessionMemory(
             taskId,
             validation.content.endsWith('\n') ? validation.content : `${validation.content}\n`
         );
@@ -1629,7 +1638,7 @@ export async function trySessionMemoryCompaction(
         ...options,
         autoCompactThreshold: options.autoCompactThreshold ?? autoCompactDecision?.autoCompactThreshold
     });
-    const memoryContent = readTaskSessionMemory(taskId);
+    const memoryContent = await readTaskSessionMemory(taskId);
     if (memoryContent === undefined) {
         return { compacted: false, noopReason: 'missing_memory_file' };
     }

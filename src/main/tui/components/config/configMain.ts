@@ -1,53 +1,92 @@
-import { type Component, SelectList, type TUI } from '@mariozechner/pi-tui';
+import { type Component, SelectList, type TUI, visibleWidth } from '@mariozechner/pi-tui';
 import { defaultSelectListTheme } from '../../theme.js';
 import { ProviderConfigPage } from './providers';
 import { ModelConfigPage } from './models';
 import { DefaultModelConfigPage } from './defaultModels';
 import { FileMgrConfigPage } from './filemgrConfig.js';
 import { LanguageConfigPage } from './languageConfig.js';
+import { ShortcutsConfigPage } from './shortcutsConfig.js';
 import chalk from 'chalk';
 import { t } from '../../../../locale/index.js';
+import { OpenDeskTUI } from '../../entry.js';
 
-interface ConfigSection {
+interface ConfigSectionDef {
     value: string;
-    label: string;
-    create: (tui: TUI, onBack: () => void, onConfigChange?: () => void) => Component;
+    icon: string;
+    titleKey: string;
+    hintKey: string;
+    create: (openDeskTUI: OpenDeskTUI, onBack: () => void, onConfigChange?: () => void) => Component;
 }
 
-const CONFIG_SECTIONS: ConfigSection[] = [
+const SECTION_DEFS: ConfigSectionDef[] = [
     {
         value: 'providers',
-        label: `💳  ${t('config.provider.title')}       ${chalk.dim(t('config.provider.title.hint'))}`,
-        create: (tui, onBack) => new ProviderConfigPage(tui, onBack)
+        icon: '💳',
+        titleKey: 'config.provider.title',
+        hintKey: 'config.provider.title.hint',
+        create: (openDeskTUI, onBack) => new ProviderConfigPage(openDeskTUI.tui, onBack)
     },
     {
         value: 'models',
-        label: `💰  ${t('config.model.title')}         ${chalk.dim(t('config.model.title.hint'))}`,
-        create: (tui, onBack) => new ModelConfigPage(tui, onBack)
+        icon: '💰',
+        titleKey: 'config.model.title',
+        hintKey: 'config.model.title.hint',
+        create: (openDeskTUI, onBack) => new ModelConfigPage(openDeskTUI.tui, onBack)
     },
     {
         value: 'default-model',
-        label: `🏆  ${t('config.defaultmodel.title')}     ${chalk.dim(t('config.defaultmodel.title.hint'))}`,
-        create: (tui, onBack, onConfigChange) => new DefaultModelConfigPage(tui, onBack, onConfigChange)
+        icon: '🏆',
+        titleKey: 'config.defaultmodel.title',
+        hintKey: 'config.defaultmodel.title.hint',
+        create: (openDeskTUI, onBack, onConfigChange) =>
+            new DefaultModelConfigPage(openDeskTUI.tui, onBack, onConfigChange)
     },
     {
         value: 'filemgr',
-        label: `📦  ${t('config.filemgr.title')}       ${chalk.dim(t('config.filemgr.title.hint'))}`,
-        create: (tui: any, onBack: () => void) => new FileMgrConfigPage(tui, onBack)
+        icon: '📦',
+        titleKey: 'config.filemgr.title',
+        hintKey: 'config.filemgr.title.hint',
+        create: (openDeskTUI, onBack) => new FileMgrConfigPage(openDeskTUI.tui, onBack)
     },
     {
         value: 'language',
-        label: `🌎  ${t('config.language.title')}       ${chalk.dim(t('config.language.title.hint'))}`,
-        create: (tui: any, onBack: () => void) => new LanguageConfigPage(tui, onBack)
+        icon: '🌎',
+        titleKey: 'config.language.title',
+        hintKey: 'config.language.title.hint',
+        create: (openDeskTUI, onBack) => new LanguageConfigPage(openDeskTUI.tui, onBack)
+    },
+    {
+        value: 'shortcuts',
+        icon: '🚲️',
+        titleKey: 'config.shortcuts.title',
+        hintKey: 'config.shortcuts.title.hint',
+        create: (openDeskTUI, onBack) => new ShortcutsConfigPage(openDeskTUI, onBack)
     }
 ];
+
+/**
+ * 动态构建菜单项列表（每次调用时重新翻译，确保语言切换后菜单更新）
+ */
+function buildSectionItems(): Array<{ value: string; label: string }> {
+    const titles = SECTION_DEFS.map((s) => `${s.icon}  ${t(s.titleKey)}`);
+    const maxTitleWidth = Math.max(...titles.map((title) => visibleWidth(title)));
+
+    return SECTION_DEFS.map((s, i) => {
+        const title = titles[i];
+        const pad = ' '.repeat(Math.max(2, maxTitleWidth - visibleWidth(title) + 4));
+        return {
+            value: s.value,
+            label: `${title}${pad}${chalk.dim(t(s.hintKey))}`
+        };
+    });
+}
 
 /**
  * 系统设置主页面。
  * 一级菜单列出所有配置分区，选择后进入对应子页面，Esc 返回上级。
  */
 export class ConfigMainPage implements Component {
-    private tui: TUI;
+    private openDeskTUI: OpenDeskTUI;
     private onClose: () => void;
     private onConfigChange?: () => void;
     private state: 'main' | 'sub' = 'main';
@@ -55,8 +94,8 @@ export class ConfigMainPage implements Component {
     private list?: SelectList;
     private subPage?: Component;
 
-    constructor(tui: TUI, onClose: () => void, onConfigChange?: () => void) {
-        this.tui = tui;
+    constructor(openDeskTUI: OpenDeskTUI, onClose: () => void, onConfigChange?: () => void) {
+        this.openDeskTUI = openDeskTUI;
         this.onClose = onClose;
         this.onConfigChange = onConfigChange;
         this.showMain();
@@ -66,24 +105,24 @@ export class ConfigMainPage implements Component {
         this.state = 'main';
         this.subPage = undefined;
 
-        const items = CONFIG_SECTIONS.map((s) => ({ value: s.value, label: s.label }));
+        const items = buildSectionItems();
         this.list = new SelectList(items, items.length, defaultSelectListTheme);
-        this.tui.setFocus(this.list);
+        this.openDeskTUI.tui.setFocus(this.list);
 
         this.list.onSelect = (item) => {
-            const section = CONFIG_SECTIONS.find((s) => s.value === item.value);
+            const section = SECTION_DEFS.find((s) => s.value === item.value);
             if (section) this.enterSection(section);
         };
         this.list.onCancel = () => this.onClose();
 
-        this.tui.requestRender();
+        this.openDeskTUI.tui.requestRender();
     }
 
-    private enterSection(section: ConfigSection) {
+    private enterSection(section: ConfigSectionDef) {
         this.state = 'sub';
         this.list = undefined;
-        this.subPage = section.create(this.tui, () => this.showMain(), this.onConfigChange);
-        this.tui.requestRender();
+        this.subPage = section.create(this.openDeskTUI, () => this.showMain(), this.onConfigChange);
+        this.openDeskTUI.tui.requestRender();
     }
 
     invalidate() {}

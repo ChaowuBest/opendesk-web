@@ -64,6 +64,7 @@ import { HarnessContext } from '../security/harness.js';
 import type { PermissionRequest, PermissionCheckResult, PermissionUserResponse } from '../security/permission.js';
 import { createResourcePath } from '../security/permission.js';
 import { TaskProfiler } from '../profiler.js';
+import { getPlatform } from '../../../platforms/base.js';
 
 type TaskStatus = 'waiting' | 'running' | 'stopped';
 
@@ -903,38 +904,43 @@ export class TaskState {
         this.subscribers = this.subscribers.filter((subscriber) => subscriber.isAvailable());
         if (this.subscribers.length === 0) return;
 
+        const needsHtmlRender = getPlatform().getName() === 'electron';
+
         try {
             let chunkUpdate: TaskUpdateChunk;
             if (last_message instanceof UserMessage) {
                 if (last_message.content.length === 0) return;
                 const updated_part_index = part_index !== undefined ? part_index : last_message.content.length - 1;
                 const last_part = last_message.content[updated_part_index];
-                await last_message.render();
+                if (needsHtmlRender) {
+                    await last_message.render();
+                }
                 chunkUpdate = {
                     type: 'user',
                     task_id: this.task_id,
                     task_status: this.task_status,
                     message_id: last_message.message_id,
                     last_part_index: updated_part_index,
-                    last_part: last_part.toRenderJSON(),
+                    last_part: last_part,
                     internal: last_message.internal
                 };
             } else if (last_message instanceof AssistantMessage) {
-                if (last_message.content.length === 0) return; // 空的助手消息，跳过
+                if (last_message.content.length === 0) return;
                 const updated_part_index = part_index !== undefined ? part_index : last_message.content.length - 1;
                 const last_part = last_message.content[updated_part_index];
-                await last_part.render();
+                if (needsHtmlRender) {
+                    await last_part.render();
+                }
                 chunkUpdate = {
                     type: 'assistant',
                     task_id: this.task_id,
                     task_status: this.task_status,
                     message_id: last_message.message_id,
                     last_part_index: updated_part_index,
-                    last_part: last_part.toRenderJSON(),
+                    last_part: last_part,
                     usage: last_message.usage
                 };
             } else if (last_message instanceof CompactSeparatorMessage) {
-                // 压缩分隔消息不需要发送订阅更新，直接返回
                 return;
             } else {
                 logger.warn(
@@ -1824,16 +1830,54 @@ export class TaskManagerState {
             return aTime - bTime;
         });
 
-        taskManagerState.save();
+        taskManagerState.saveSync();
         logger.info(`task list rebuilt: ${taskManagerState.tasks.length} task(s) recovered`);
         return taskManagerState;
     }
 
+    private _saveTimer?: ReturnType<typeof setTimeout>;
+    private _lastWritePromise: Promise<void> = Promise.resolve();
+    private static SAVE_THROTTLE_MS = 2000;
+
+    /**
+     * Schedule an async throttled write of all tasks to disk.
+     * Multiple calls within the throttle window are coalesced into a single write
+     * of the latest state snapshot, keeping the event loop free for UI rendering.
+     */
     save(): void {
+        if (this._saveTimer) return;
+        this._saveTimer = setTimeout(() => {
+            this._saveTimer = undefined;
+            this._lastWritePromise = this._writeAll().catch((err) => {
+                logger.error(`async save failed: ${err}`);
+            });
+        }, TaskManagerState.SAVE_THROTTLE_MS);
+    }
+
+    private async _writeAll(): Promise<void> {
         const taskDirectory = getTaskDirectory();
         const taskListFile = path.join(taskDirectory, 'task_list.json');
+        const taskListJson = JSON.stringify(
+            this.tasks.map((t) => t.toSimplifiedJSON()),
+            null,
+            4
+        );
+        await fs.promises.writeFile(taskListFile, taskListJson, 'utf8');
+        await Promise.allSettled(
+            this.tasks.map((task) => {
+                const taskFile = path.join(taskDirectory, `${task.task_id}.json`);
+                return fs.promises.writeFile(taskFile, JSON.stringify(task.toJSON(), null, 4), 'utf8');
+            })
+        );
+    }
 
-        // Write task list
+    /**
+     * Synchronous write for operations that require immediate persistence
+     * (e.g. rebuild, clear, remove — user may exit right after).
+     */
+    saveSync(): void {
+        const taskDirectory = getTaskDirectory();
+        const taskListFile = path.join(taskDirectory, 'task_list.json');
         fs.writeFileSync(
             taskListFile,
             JSON.stringify(
@@ -1843,14 +1887,23 @@ export class TaskManagerState {
             ),
             { encoding: 'utf8' }
         );
-
-        // Write individual task files
         for (const task of this.tasks) {
             const taskFile = path.join(taskDirectory, `${task.task_id}.json`);
-            fs.writeFileSync(taskFile, JSON.stringify(task.toJSON(), null, 4), {
-                encoding: 'utf8'
-            });
+            fs.writeFileSync(taskFile, JSON.stringify(task.toJSON(), null, 4), { encoding: 'utf8' });
         }
+    }
+
+    /**
+     * Cancel any pending throttled write and perform a final async write.
+     * Call before process exit to ensure no data is lost.
+     */
+    async flushAllPendingSaves(): Promise<void> {
+        if (this._saveTimer) {
+            clearTimeout(this._saveTimer);
+            this._saveTimer = undefined;
+        }
+        await this._lastWritePromise;
+        await this._writeAll();
     }
 
     /**
@@ -1921,7 +1974,7 @@ export class TaskManagerState {
         if (removedIds.size > 0) {
             this.tasks = this.tasks.filter((t) => !removedIds.has(t.task_id));
             this.publishTaskListUpdate();
-            this.save();
+            this.saveSync();
         }
     }
 
@@ -1952,7 +2005,7 @@ export class TaskManagerState {
         this.tasks = [];
         this.publishTaskListUpdate();
         this.cleanupOldTaskFiles();
-        this.save();
+        this.saveSync();
     }
 
     /**

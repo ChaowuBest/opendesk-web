@@ -5,9 +5,10 @@ import { defaultSelectListTheme } from '../theme';
 import { OpenDeskTUI } from '../entry';
 import { SelectTable, type SelectRow } from './selecttable';
 import { SkillRegistry } from '../../aikernel/skill';
+import { getShortcuts } from '../../utils/setting.js';
 import { t } from '../../../locale/index.js';
 
-type HelpTab = 'commands' | 'skills';
+type HelpTab = 'commands' | 'skills' | 'shortcuts';
 
 export class HelpOverlay implements Component {
     private openDeskTUI: OpenDeskTUI;
@@ -16,8 +17,10 @@ export class HelpOverlay implements Component {
 
     private commandTable: SelectTable;
     private skillTable: SelectTable;
+    private shortcutTable: SelectTable;
 
     private activeTab: HelpTab = 'commands';
+    private readonly tabOrder: HelpTab[] = ['commands', 'skills', 'shortcuts'];
     private overlayHandle?: { hide: () => void };
     private removeInputListener?: () => void;
 
@@ -50,6 +53,9 @@ export class HelpOverlay implements Component {
         // 异步加载 skill 列表
         this.loadSkills();
 
+        // ── 构建 Shortcuts 表格 ──
+        this.shortcutTable = this.buildShortcutTable(maxVisibleRows);
+
         this.headerText = new Text(this.buildHeader());
 
         this.box = new Box(1, 1);
@@ -60,6 +66,7 @@ export class HelpOverlay implements Component {
         // 代理 SelectTable 事件
         this.setupTableCallbacks(this.commandTable);
         this.setupTableCallbacks(this.skillTable);
+        this.setupTableCallbacks(this.shortcutTable);
     }
 
     private setupTableCallbacks(table: SelectTable) {
@@ -79,12 +86,43 @@ export class HelpOverlay implements Component {
         this.openDeskTUI.tui.setFocus(this.openDeskTUI.inputArea.input);
     }
 
+    private buildShortcutTable(maxVisibleRows: number): SelectTable {
+        const shortcuts = getShortcuts();
+        const shortcutDefs: Array<{ key: string; descKey: string }> = [
+            { key: 'switch_mode', descKey: 'shortcut.switch_mode' },
+            { key: 'switch_model', descKey: 'shortcut.switch_model' },
+            { key: 'endline', descKey: 'shortcut.endline' },
+            { key: 'show_help', descKey: 'shortcut.show_help' },
+            { key: 'clear_input', descKey: 'shortcut.clear_input' },
+            { key: 'list_tasks', descKey: 'shortcut.list_tasks' }
+        ];
+
+        const rows: SelectRow[] = shortcutDefs.map((def) => ({
+            labels: [
+                chalk.bold(t(def.descKey)),
+                chalk.cyan(SlashCommandRegistry.formatKeyLabel(shortcuts[def.key as keyof typeof shortcuts]))
+            ],
+            value: def.key
+        }));
+
+        if (rows.length === 0) {
+            rows.push({ labels: [chalk.dim(t('help.no.shortcuts')), ''], value: '_empty' });
+        }
+
+        const table = new SelectTable(rows, maxVisibleRows, defaultSelectListTheme);
+        table.setColumnStrechFactors([1, 0]);
+        return table;
+    }
+
     private buildHeader(): string {
         const cmdText = ` ${t('help.tab.commands')} `;
         const skillText = ` ${t('help.tab.skills')} `;
+        const shortcutText = ` ${t('help.tab.shortcuts')} `;
         const cmdLabel = this.activeTab === 'commands' ? chalk.bold.underline(cmdText) : chalk.dim(cmdText);
         const skillLabel = this.activeTab === 'skills' ? chalk.bold.underline(skillText) : chalk.dim(skillText);
-        return ` ${cmdLabel}  ${skillLabel}  ${chalk.dim(t('help.tab.switch'))}`;
+        const shortcutLabel =
+            this.activeTab === 'shortcuts' ? chalk.bold.underline(shortcutText) : chalk.dim(shortcutText);
+        return ` ${cmdLabel}  ${skillLabel}  ${shortcutLabel}  ${chalk.dim(t('help.tab.switch'))}`;
     }
 
     private async loadSkills() {
@@ -137,16 +175,22 @@ export class HelpOverlay implements Component {
         this.headerText.setText(this.buildHeader());
         this.rebuildBox();
 
-        const activeTable = this.activeTab === 'commands' ? this.commandTable : this.skillTable;
+        const activeTable = this.getActiveTable();
         this.openDeskTUI.tui.setFocus(activeTable.innerList);
         this.openDeskTUI.tui.requestRender();
+    }
+
+    private getActiveTable(): SelectTable {
+        if (this.activeTab === 'commands') return this.commandTable;
+        if (this.activeTab === 'skills') return this.skillTable;
+        return this.shortcutTable;
     }
 
     private rebuildBox() {
         this.box = new Box(1, 1);
         this.box.setBgFn((text: string) => chalk.bgHex('#2d2d2d').hex('#e0e0e0')(text));
         this.box.addChild(this.headerText);
-        this.box.addChild(this.activeTab === 'commands' ? this.commandTable : this.skillTable);
+        this.box.addChild(this.getActiveTable());
     }
 
     invalidate(): void {
@@ -179,8 +223,10 @@ export class HelpOverlay implements Component {
             }
 
             if (matchesKey(data, Key.left) || matchesKey(data, Key.right)) {
-                const newTab: HelpTab = this.activeTab === 'commands' ? 'skills' : 'commands';
-                this.switchTab(newTab);
+                const idx = this.tabOrder.indexOf(this.activeTab);
+                const dir = matchesKey(data, Key.right) ? 1 : -1;
+                const newIdx = (idx + dir + this.tabOrder.length) % this.tabOrder.length;
+                this.switchTab(this.tabOrder[newIdx]);
                 return { consume: true };
             }
             return undefined;

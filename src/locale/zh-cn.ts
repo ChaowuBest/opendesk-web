@@ -279,7 +279,7 @@ export const zhCn: Record<string, string> = {
     'log.all.description': '全部',
 
     // Commands - Mode
-    'mode.description': '查看或切换运行模式 (Shift+Tab)',
+    'mode.description': '查看或切换运行模式',
 
     // Commands - Help
     'help.description': '显示快捷键与指令帮助',
@@ -548,11 +548,37 @@ export const zhCn: Record<string, string> = {
     'permission.truncate.prefix': '始终允许 ',
     'permission.truncate.suffix': ' 的',
 
+    // Shortcuts
+    'shortcut.switch_mode': '模式切换',
+    'shortcut.switch_model': '模型切换',
+    'shortcut.endline': '回车换行',
+    'shortcut.show_help': '打开帮助',
+    'shortcut.clear_input': '删除输入内容',
+    'shortcut.list_tasks': '显示任务列表',
+    'shortcut.model.switched': '模型已切换为',
+    'shortcut.model.none': '未配置任何模型',
+
+    // Config - Shortcuts
+    'config.shortcuts.title': '快捷键设置',
+    'config.shortcuts.title.hint': '自定义终端快捷键',
+    'config.shortcuts.press.enter': 'Enter 编辑',
+    'config.shortcuts.waiting': '按下新的快捷键组合...',
+    'config.shortcuts.captured': '已捕获',
+    'config.shortcuts.confirm': 'Enter 保存  Esc 取消  D 恢复默认',
+    'config.shortcuts.hint': '↑↓ 选择  Enter 编辑  D 恢复默认  Esc 返回',
+    'config.shortcuts.saved': '快捷键已保存',
+    'config.shortcuts.error.single_key.title': '快捷键无效',
+    'config.shortcuts.error.single_key.message': '不允许使用单个按键作为快捷键，请使用组合键（如 Ctrl+A、Alt+B 等）。',
+
     // Help Overlay
     'help.tab.commands': '指令',
     'help.tab.skills': '技能',
+    'help.tab.shortcuts': '快捷键',
     'help.tab.switch': '← → 切换',
     'help.no.commands': '暂无命令',
+    'help.no.shortcuts': '暂无快捷键',
+    'help.shortcuts.action': '功能',
+    'help.shortcuts.key': '快捷键',
     'help.skills.loading': '加载中...',
     'help.skills.none': '暂无可用技能',
     'help.skills.manage': '使用 /skills 管理技能',

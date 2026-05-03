@@ -188,7 +188,7 @@ export class SearchMemoryTool extends BaseTool<typeof SearchMemoryArgsSchema> {
 
         const topResults = results.slice(0, 10);
         const memoriesForContext = topResults.map((r) => ({ scope: r.scope, meta: r.meta }));
-        const formattedContent = registry.formatMemoriesForContext(memoriesForContext);
+        const formattedContent = await registry.formatMemoriesForContext(memoriesForContext);
 
         return JSON.stringify({
             success: true,
@@ -241,7 +241,7 @@ export class DeleteMemoryTool extends BaseTool<typeof DeleteMemoryArgsSchema> {
 
     private async handleExecute(args: z.output<typeof DeleteMemoryArgsSchema>): Promise<string> {
         const registry = MemoryRegistry.getInstance();
-        const deleted = registry.deleteMemory(args.uid);
+        const deleted = await registry.deleteMemory(args.uid);
         if (deleted) {
             return JSON.stringify({ success: true, uid: args.uid });
         } else {
