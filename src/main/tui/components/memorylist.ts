@@ -40,11 +40,15 @@ export class MemoryListOverlay implements Component {
     private filteredMemories: { scope: MemoryScope; meta: MemoryMeta }[] = [];
     private hideHandle?: { hide: () => void };
 
-    constructor(openDeskTUI: OpenDeskTUI) {
-        this.openDeskTUI = openDeskTUI;
+    static async create(openDeskTUI: OpenDeskTUI): Promise<MemoryListOverlay> {
+        const view = new MemoryListOverlay(openDeskTUI);
+        await view.loadMemories();
+        view.applyFilter();
+        return view;
+    }
 
-        this.loadMemories();
-        this.applyFilter();
+    private constructor(openDeskTUI: OpenDeskTUI) {
+        this.openDeskTUI = openDeskTUI;
 
         this.header = new Text(this.buildHeaderText());
         this.separator = new Text(chalk.dim('─'.repeat(60)));
@@ -65,9 +69,9 @@ export class MemoryListOverlay implements Component {
         this.setupSelectionTracking();
     }
 
-    private loadMemories() {
+    private async loadMemories() {
         const registry = MemoryRegistry.getInstance();
-        this.allMemories = registry.listAllMemories();
+        this.allMemories = await registry.listAllMemories();
     }
 
     private applyFilter() {
@@ -148,9 +152,9 @@ export class MemoryListOverlay implements Component {
         }
     }
 
-    private updatePreview(uid: string) {
+    private async updatePreview(uid: string) {
         const registry = MemoryRegistry.getInstance();
-        const memory = registry.getMemory(uid);
+        const memory = await registry.getMemory(uid);
         if (!memory) {
             this.previewText.setText(chalk.dim('  无法加载记忆内容'));
             return;

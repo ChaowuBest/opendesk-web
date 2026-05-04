@@ -14,7 +14,7 @@ const ARTIFACT_HEAD_LINES = 100;
 const ARTIFACT_TAIL_LINES = 200;
 const ARTIFACT_HEAD_CHARS = 4_000;
 const ARTIFACT_TAIL_CHARS = 8_000;
-export const TOOL_RESULT_COMPRESSION_EXCLUDED_TOOL_NAMES = new Set(['readFiles']);
+export const TOOL_RESULT_COMPRESSION_EXCLUDED_TOOL_NAMES = new Set(['readFile']);
 
 export interface ToolResultPreview {
     mode: 'chars' | 'lines';
@@ -84,7 +84,7 @@ export function ensureToolResultStorageId(toolCall: ToolCall): string {
 }
 
 export function isToolResultCompressionExcluded(toolName: string, extraExcludedToolNames?: Iterable<string>): boolean {
-    if (TOOL_RESULT_COMPRESSION_EXCLUDED_TOOL_NAMES.has(toolName) || toolName.endsWith('-readFiles')) {
+    if (TOOL_RESULT_COMPRESSION_EXCLUDED_TOOL_NAMES.has(toolName) || toolName.endsWith('-readFile')) {
         return true;
     }
 
@@ -190,9 +190,11 @@ export function persistToolResultArtifact(
     result: string
 ): PersistedToolResultArtifact {
     const fullPath = getToolResultArtifactPath(taskId, resultId, true);
-    if (!fs.existsSync(fullPath)) {
-        fs.writeFileSync(fullPath, result, 'utf8');
-    }
+    fs.promises.access(fullPath).catch(() => {
+        fs.promises.writeFile(fullPath, result, 'utf8').catch(() => {
+            /* best-effort artifact persistence */
+        });
+    });
 
     return {
         fullPath,

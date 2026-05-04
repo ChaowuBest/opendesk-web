@@ -341,6 +341,7 @@ const registerModeAPIHandlers = () => {
                     task.disabledTools = target.disabledTools;
                 } catch (err) {
                     logger.warn(`Failed to sync task harness for mode ${modeId}: ${err}`);
+                    task.harnessContext.workspace = workspace;
                 }
             }
 
@@ -460,6 +461,7 @@ const registerTaskManagerAPIHandlers = () => {
         } catch (err) {
             logger.warn(`Failed to init task harness in Electron, using empty context: ${err}`);
             task.harnessContext = HarnessContext.createEmpty();
+            task.harnessContext.workspace = workspace;
         }
         return { status: 'ok', data: task.task_id };
     });
@@ -599,7 +601,7 @@ const registerTaskManagerAPIHandlers = () => {
             const { readTaskSessionMemory, isSessionMemoryTemplateOnly } =
                 await import('./aikernel/compaction/session-memory-compact.js');
             const { marked } = await import('./aikernel/messages.js');
-            const content = readTaskSessionMemory(taskId);
+            const content = await readTaskSessionMemory(taskId);
             if (!content || isSessionMemoryTemplateOnly(content)) {
                 return { status: 'ok', data: null };
             }
@@ -634,6 +636,15 @@ const registerTaskManagerAPIHandlers = () => {
             return { status: 'ok', data: exists };
         } catch (error) {
             logger.error('checking file exists failed', error);
+            return { status: 'error', message: error.message };
+        }
+    });
+    ipcMain.handle('fs:trashItem', async (event, itemPath) => {
+        try {
+            await shell.trashItem(path.resolve(itemPath));
+            return { status: 'ok', data: true };
+        } catch (error) {
+            logger.error('trashing item failed', error);
             return { status: 'error', message: error.message };
         }
     });
@@ -890,6 +901,17 @@ const registerSettingAPIHandlers = () => {
     ipcMain.handle('setting:getProviderTemplates', () => {
         return { status: 'ok', data: PROVIDER_TEMPLATES };
     });
+    ipcMain.handle('setting:verifyModel', async (event, { base_url, api_key, model_name }) => {
+        try {
+            const { LLM } = await import('./aikernel/llm.js');
+            const { ModelInstance } = await import('./utils/setting.js');
+            const instance = new ModelInstance(model_name, base_url, api_key, false);
+            await LLM.verifyModel(instance);
+            return { status: 'ok', data: true };
+        } catch (error) {
+            return { status: 'error', message: error.message || String(error) };
+        }
+    });
     ipcMain.handle('workspace:getEffectiveWorkspace', () => {
         try {
             const workspace = Setting.getInstance().getEffectiveWorkspace();
@@ -937,6 +959,7 @@ const registerSettingAPIHandlers = () => {
                     task.harnessContext = ctx;
                 } catch (err) {
                     logger.warn(`Failed to sync task harness for new workspace: ${err}`);
+                    task.harnessContext.workspace = selectedPath;
                 }
             }
 
@@ -991,7 +1014,7 @@ const registerSettingAPIHandlers = () => {
 const registerDisplayZoomHandlers = () => {
     const readCurrentScale = () => {
         try {
-            const val = Setting.getInstance().getData().display?.scale_factor;
+            const val = Setting.getInstance().getData().gui_config?.scale_factor;
             return typeof val === 'number' && Number.isFinite(val) ? val : 1;
         } catch {
             return 1;
@@ -1007,8 +1030,9 @@ const registerDisplayZoomHandlers = () => {
         const rounded = Math.round(clamped * 10) / 10;
         Setting.getInstance().setData({
             ...currentData,
-            display: { ...(currentData.display || {}), scale_factor: rounded }
+            gui_config: { ...(currentData.gui_config || {}), scale_factor: rounded }
         });
+        globalMainWindow.webContents.send('display:scaleFactorChanged', rounded);
     };
 
     ipcMain.handle('display:getScaleFactor', () => {
@@ -1205,6 +1229,15 @@ function startApplication() {
         GlobalState.getInstance().taskManagerState.toolsetProvider = {
             listAvailableToolsets: () => ApplicationRegistry.listAvailableToolsets()
         };
+
+        // 为从磁盘恢复的旧任务注入当前工作空间（harnessContext 不落盘，加载后默认为空）
+        const startupWorkspace = Setting.getInstance().getEffectiveWorkspace();
+        for (const task of GlobalState.getInstance().taskManagerState.tasks) {
+            if (!task.harnessContext.workspace) {
+                task.harnessContext.workspace = startupWorkspace;
+            }
+        }
+
         createWindow();
         initBrowserSession();
 
@@ -1230,7 +1263,7 @@ function startApplication() {
 
         // Restore saved zoom level
         try {
-            const savedScale = Setting.getInstance().getData().display?.scale_factor;
+            const savedScale = Setting.getInstance().getData().gui_config?.scale_factor;
             if (typeof savedScale === 'number' && Number.isFinite(savedScale) && savedScale !== 1 && globalMainWindow) {
                 globalMainWindow.webContents.setZoomFactor(Math.max(0.5, Math.min(3.0, savedScale)));
             }
@@ -1240,6 +1273,63 @@ function startApplication() {
         initializeRegistryWorker();
         initializeProtocolHandlers();
         initializeUpdater();
+
+        // 设置全局待办触发器回调（Electron GUI 模式）
+        ApplicationRegistry.onTriggerTask = async (todoId, todoTitle, todoContent, trigger, deliver) => {
+            try {
+                const globalState = GlobalState.getInstance();
+                const task = globalState.taskManagerState.createTask();
+                const workspace = Setting.getInstance().getEffectiveWorkspace();
+                const agentDecl = getGlobalAgentDecl();
+                const modes = agentDecl.supportedModes();
+                const resolvedModeId = _currentElectronModeId || agentDecl.defaultModeId();
+                const activeMode = modes.find((m) => m.id === resolvedModeId) ?? modes[0];
+
+                const systemPrompt = await agentDecl.createSystemPrompt(activeMode);
+                task.setSystemPrompt(systemPrompt);
+
+                try {
+                    task.harnessContext = await HarnessContext.createForMode(workspace, activeMode);
+                    task.harnessContext.permissionPrompt = new ElectronPermissionPromptProvider();
+                    task.activeModeId = activeMode.id;
+                    task.disabledTools = activeMode.disabledTools;
+                    const askUserProvider = new ElectronAskUserProvider();
+                    task.interactionToolset = createInteractionToolset(askUserProvider);
+                } catch (err) {
+                    logger.warn(`Trigger task harness init failed: ${err}`);
+                    task.harnessContext = HarnessContext.createEmpty();
+                    task.harnessContext.workspace = workspace;
+                }
+
+                if (deliver) {
+                    task.origin = deliver;
+                }
+
+                let triggerInfo = '';
+                if (trigger?.type === 'event') {
+                    triggerInfo = `[event] 事件驱动任务，由事件 ${trigger.bundleName}:${trigger.eventName} 自动触发 `;
+                } else if (trigger?.type === 'scheduled') {
+                    triggerInfo = `[scheduled] 定时任务，仅执行一次 `;
+                } else if (trigger?.type === 'cron') {
+                    triggerInfo = `[cron] 周期任务 `;
+                }
+
+                logger.info(`[Electron] 触发器创建任务: ${todoId} -> task ${task.task_id}`);
+
+                const message =
+                    `请执行以下全局待办事项：\n\n` +
+                    `- 待办事项ID: ${todoId}\n` +
+                    `- 待办事项标题：${todoTitle}\n` +
+                    `- 待办事项触发方式：${triggerInfo}\n\n` +
+                    `待办事项内容\n---\n\n${todoContent}`;
+
+                task.submitUserMessage(message).catch((err) =>
+                    logger.error(`Trigger task submitMessage failed for ${task.task_id}:`, err)
+                );
+            } catch (err) {
+                logger.error(`[Electron] 触发器任务创建失败: ${err}`);
+            }
+        };
     });
 
     app.on('will-quit', async () => {
@@ -1247,6 +1337,11 @@ function startApplication() {
         // 停止自动更新检查
         if (updateClient) {
             updateClient.stopAutoCheck();
+        }
+        try {
+            await GlobalState.getInstance().taskManagerState.flushAllPendingSaves();
+        } catch {
+            /* best-effort flush */
         }
     });
 }

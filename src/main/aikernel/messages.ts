@@ -10,7 +10,6 @@
  */
 
 import { Marked } from 'marked';
-import { markedHighlight } from 'marked-highlight';
 import { logger, getDebugMode } from '../utils/logger.js';
 import { BaseTool, BaseToolset } from './tool.js';
 
@@ -33,16 +32,7 @@ function isValidToolCallArgs(args_string: string): boolean {
     }
 }
 
-export const marked = new Marked(
-    markedHighlight({
-        emptyLangClass: 'hljs',
-        langPrefix: 'hljs language-',
-        highlight(code, lang, info) {
-            const language = hljs.getLanguage(lang) ? lang : 'plaintext';
-            return hljs.highlight(code, { language }).value;
-        }
-    })
-);
+export const marked = new Marked();
 
 marked.use(
     markedKatex({
@@ -54,7 +44,85 @@ marked.use(
 
 const DANGEROUS_HTML_RE = /<\s*\/?\s*(style|script|link|meta|iframe|object|embed|applet|form|base)\b[^>]*>/gi;
 
+const LANG_DISPLAY_NAMES: Record<string, string> = {
+    js: 'JavaScript',
+    javascript: 'JavaScript',
+    ts: 'TypeScript',
+    typescript: 'TypeScript',
+    py: 'Python',
+    python: 'Python',
+    rb: 'Ruby',
+    ruby: 'Ruby',
+    java: 'Java',
+    cpp: 'C++',
+    c: 'C',
+    cs: 'C#',
+    csharp: 'C#',
+    go: 'Go',
+    rust: 'Rust',
+    rs: 'Rust',
+    swift: 'Swift',
+    kt: 'Kotlin',
+    kotlin: 'Kotlin',
+    php: 'PHP',
+    sql: 'SQL',
+    html: 'HTML',
+    css: 'CSS',
+    scss: 'SCSS',
+    less: 'LESS',
+    json: 'JSON',
+    yaml: 'YAML',
+    yml: 'YAML',
+    xml: 'XML',
+    toml: 'TOML',
+    sh: 'Shell',
+    bash: 'Bash',
+    zsh: 'Zsh',
+    powershell: 'PowerShell',
+    ps1: 'PowerShell',
+    md: 'Markdown',
+    markdown: 'Markdown',
+    tex: 'LaTeX',
+    latex: 'LaTeX',
+    dockerfile: 'Dockerfile',
+    makefile: 'Makefile',
+    cmake: 'CMake',
+    r: 'R',
+    lua: 'Lua',
+    perl: 'Perl',
+    scala: 'Scala',
+    elixir: 'Elixir',
+    dart: 'Dart',
+    vue: 'Vue',
+    svelte: 'Svelte',
+    jsx: 'JSX',
+    tsx: 'TSX',
+    graphql: 'GraphQL',
+    proto: 'Protobuf',
+    ini: 'INI',
+    plaintext: 'Text'
+};
+
 marked.use({
+    renderer: {
+        code({ text, lang }: { text: string; lang?: string; escaped?: boolean }): string {
+            const langClass = lang ? `hljs language-${lang}` : 'hljs';
+            const language = lang && hljs.getLanguage(lang) ? lang : 'plaintext';
+            const highlighted = hljs.highlight(text, { language }).value;
+            const displayLang = lang
+                ? LANG_DISPLAY_NAMES[lang.toLowerCase()] || lang.charAt(0).toUpperCase() + lang.slice(1)
+                : '';
+            const headerHtml = displayLang
+                ? `<div class="code-block-header"><span class="code-block-lang">${displayLang}</span></div>`
+                : '';
+            const lines = highlighted.split('\n');
+            if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
+            const rows = lines
+                .map((line, i) => `<tr><td class="code-ln">${i + 1}</td><td class="code-line">${line || ' '}</td></tr>`)
+                .join('');
+            return `<div class="code-block-wrapper">${headerHtml}<div class="code-block-body ${langClass}"><table class="code-table"><tbody>${rows}</tbody></table></div></div>`;
+        }
+    },
     hooks: {
         postprocess(html: string): string {
             return html.replace(DANGEROUS_HTML_RE, (match) => {
@@ -828,15 +896,98 @@ export function imageToDataUri(imagePath: string): string {
 /**
  * @class Usage
  */
-export class Usage {
-    prompt_tokens: number;
-    completion_tokens: number;
-    total_tokens: number;
+export interface UsageFields {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    total_tokens?: number;
+    input_tokens?: number;
+    output_tokens?: number;
+    cache_creation_input_tokens?: number;
+    cache_read_input_tokens?: number;
+}
 
-    constructor(prompt_tokens: number, completion_tokens: number, total_tokens: number) {
-        this.prompt_tokens = prompt_tokens;
-        this.completion_tokens = completion_tokens;
-        this.total_tokens = total_tokens;
+export class Usage {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    total_tokens?: number;
+    input_tokens?: number;
+    output_tokens?: number;
+    cache_creation_input_tokens?: number;
+    cache_read_input_tokens?: number;
+
+    constructor(
+        prompt_tokens?: number,
+        completion_tokens?: number,
+        total_tokens?: number,
+        extra: Omit<UsageFields, 'prompt_tokens' | 'completion_tokens' | 'total_tokens'> = {}
+    ) {
+        this.prompt_tokens = Usage.normalizeOptionalTokenCount(prompt_tokens);
+        this.completion_tokens = Usage.normalizeOptionalTokenCount(completion_tokens);
+        this.total_tokens = Usage.normalizeOptionalTokenCount(total_tokens);
+        this.input_tokens = Usage.normalizeOptionalTokenCount(extra.input_tokens);
+        this.output_tokens = Usage.normalizeOptionalTokenCount(extra.output_tokens);
+        this.cache_creation_input_tokens = Usage.normalizeOptionalTokenCount(extra.cache_creation_input_tokens);
+        this.cache_read_input_tokens = Usage.normalizeOptionalTokenCount(extra.cache_read_input_tokens);
+    }
+
+    private static normalizeOptionalTokenCount(value: unknown): number | undefined {
+        if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+            return undefined;
+        }
+        return Math.floor(value);
+    }
+
+    private static hasKnownUsageField(candidate: Record<string, unknown>): boolean {
+        return [
+            'prompt_tokens',
+            'completion_tokens',
+            'total_tokens',
+            'input_tokens',
+            'output_tokens',
+            'cache_creation_input_tokens',
+            'cache_read_input_tokens'
+        ].some((key) => candidate[key] !== undefined);
+    }
+
+    static fromRaw(raw_usage: unknown): Usage | undefined {
+        if (raw_usage === undefined || raw_usage === null || typeof raw_usage !== 'object') {
+            return undefined;
+        }
+
+        const candidate = raw_usage as Record<string, unknown>;
+        if (!Usage.hasKnownUsageField(candidate)) {
+            return undefined;
+        }
+
+        const usage = new Usage(
+            candidate.prompt_tokens as number,
+            candidate.completion_tokens as number,
+            candidate.total_tokens as number,
+            {
+                input_tokens: candidate.input_tokens as number,
+                output_tokens: candidate.output_tokens as number,
+                cache_creation_input_tokens: candidate.cache_creation_input_tokens as number,
+                cache_read_input_tokens: candidate.cache_read_input_tokens as number
+            }
+        );
+
+        if (
+            usage.prompt_tokens === undefined &&
+            usage.completion_tokens === undefined &&
+            usage.total_tokens === undefined &&
+            usage.input_tokens === undefined &&
+            usage.output_tokens === undefined &&
+            usage.cache_creation_input_tokens === undefined &&
+            usage.cache_read_input_tokens === undefined
+        ) {
+            return undefined;
+        }
+
+        return usage;
+    }
+
+    static assign(raw_usage: unknown): Usage | undefined {
+        return Usage.fromRaw(raw_usage);
     }
 }
 
@@ -1021,6 +1172,7 @@ export class AssistantMessage {
                 }
             }
         }
+        assistant_message.usage = Usage.fromRaw(assistant_message.usage);
         return assistant_message;
     }
 
@@ -1156,12 +1308,14 @@ export class AssistantMessage {
     private _checkAndSplitReasoningClose(): void {
         const last_part = this.content[this.content.length - 1];
         if (!last_part || last_part.type !== 'reasoning') return;
+        const content = (last_part as ReasoningMessagePart).content;
+        if (!content) return;
 
-        const closeIdx = last_part.content.indexOf('</think>');
+        const closeIdx = content.indexOf('</think>');
         if (closeIdx === -1) return;
 
-        const reasoningText = last_part.content.substring(0, closeIdx);
-        const afterClose = last_part.content.substring(closeIdx + '</think>'.length);
+        const reasoningText = content.substring(0, closeIdx);
+        const afterClose = content.substring(closeIdx + '</think>'.length);
 
         last_part.content = reasoningText;
         last_part.invalidateRender();
@@ -1482,7 +1636,7 @@ export class AssistantResponse {
 
         const usage = openai_response['usage'];
         if (usage) {
-            response.usage = new Usage(usage['prompt_tokens'], usage['completion_tokens'], usage['total_tokens']);
+            response.usage = Usage.fromRaw(usage);
         }
         return response;
     }

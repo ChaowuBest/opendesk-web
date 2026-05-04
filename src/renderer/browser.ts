@@ -29,6 +29,7 @@ interface BrowserTab {
     webview: WebviewTag | null;
     wrapEl: HTMLElement | null;
     ready: boolean;
+    pendingUrl: string | null;
 }
 
 /**
@@ -45,10 +46,44 @@ export class EmbeddedBrowser {
 
     private tabs: BrowserTab[] = [];
     private activeTabId: number = -1;
+    private _currentZoomFactor: number = 1;
+    private _removeZoomListener: (() => void) | null = null;
 
     constructor(container: HTMLElement) {
         this.container = container;
+        this._initZoomSync();
         this.init();
+    }
+
+    private _initZoomSync(): void {
+        const displayAPI = (window as any).displayAPI;
+        if (!displayAPI) return;
+
+        displayAPI
+            .getScaleFactor()
+            .then((factor: number) => {
+                this._currentZoomFactor = factor;
+            })
+            .catch(() => {});
+
+        if (typeof displayAPI.onScaleFactorChanged === 'function') {
+            this._removeZoomListener = displayAPI.onScaleFactorChanged((factor: number) => {
+                this._currentZoomFactor = factor;
+                this._applyZoomToAllWebviews(factor);
+            });
+        }
+    }
+
+    private _applyZoomToAllWebviews(factor: number): void {
+        for (const tab of this.tabs) {
+            if (tab.ready && tab.webview) {
+                try {
+                    tab.webview.setZoomFactor(factor);
+                } catch {
+                    /* not ready */
+                }
+            }
+        }
     }
 
     private init(): void {
@@ -307,7 +342,8 @@ export class EmbeddedBrowser {
             url,
             webview: wv,
             wrapEl,
-            ready: false
+            ready: false,
+            pendingUrl: null
         };
         this.tabs.push(tab);
 
@@ -433,6 +469,22 @@ export class EmbeddedBrowser {
         wv.addEventListener('dom-ready', () => {
             tab.ready = true;
             this.syncNavButtons();
+            if (this._currentZoomFactor !== 1) {
+                try {
+                    wv.setZoomFactor(this._currentZoomFactor);
+                } catch {
+                    /* ignore */
+                }
+            }
+            if (tab.pendingUrl) {
+                const url = tab.pendingUrl;
+                tab.pendingUrl = null;
+                try {
+                    wv.loadURL(url);
+                } catch {
+                    wv.src = url;
+                }
+            }
         });
 
         wv.addEventListener('did-navigate', (event: any) => {
@@ -518,10 +570,20 @@ export class EmbeddedBrowser {
     // ==== Public API (called by user UI AND by agent tools via IPC) ====
 
     public navigateTo(url: string): void {
-        const wv = this.getActiveWebview();
-        if (!wv) return;
+        const tab = this.getActiveTab();
+        if (!tab || !tab.webview) return;
         const targetUrl = url.trim();
-        wv.src = targetUrl;
+        if (tab.ready) {
+            try {
+                tab.webview.loadURL(targetUrl);
+            } catch {
+                tab.webview.src = targetUrl;
+            }
+        } else {
+            tab.pendingUrl = targetUrl;
+        }
+        tab.url = targetUrl;
+        this.syncUrlBar();
     }
 
     public goBack(): void {
@@ -601,6 +663,10 @@ export class EmbeddedBrowser {
     }
 
     public destroy(): void {
+        if (this._removeZoomListener) {
+            this._removeZoomListener();
+            this._removeZoomListener = null;
+        }
         for (const tab of this.tabs) {
             tab.wrapEl?.remove();
             tab.webview = null;

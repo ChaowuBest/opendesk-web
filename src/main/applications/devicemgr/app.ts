@@ -97,7 +97,7 @@ export class DeviceMgrApplication extends BaseApplication {
             registerOpenClawMethods(this.gateway, {
                 taskManagerState: globalState.taskManagerState,
                 model: settingData?.default_model || undefined,
-                workspace: process.cwd()
+                workspace: Setting.getInstance().getEffectiveWorkspace()
             });
 
             await this.gateway.start();

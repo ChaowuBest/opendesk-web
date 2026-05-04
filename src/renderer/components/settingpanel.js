@@ -9,8 +9,6 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { ElasticToolbarWidget } from './toolbar.ts';
-
 class SettingPanel extends HTMLElement {
     constructor() {
         super();
@@ -40,19 +38,20 @@ class SettingPanel extends HTMLElement {
     render() {
         this.innerHTML = `
         <div class="w-full h-full overflow-hidden flex flex-col bg-gradient-to-br from-slate-50 via-white to-blue-50/30">
+            <!-- 固定在右上角的工具栏（窗口控制按钮下方） -->
+            <div id="setting-panel-toolbar" class="sp-fixed-toolbar"></div>
+
             <!-- 顶部标题栏 -->
-            <div class="sticky top-0 z-10 px-6 py-4 pr-[140px] flex items-center justify-between bg-white/60 backdrop-blur-2xl border-b border-gray-100/50">
+            <div class="sticky top-0 z-10 px-6 py-4 flex items-center bg-white/60 backdrop-blur-2xl border-b border-gray-100/50">
                 <h1 class="text-2xl font-bold bg-gradient-to-r from-gray-800 to-gray-600 bg-clip-text text-transparent">设置</h1>
-                <div class="flex items-center gap-3">
-                    <span id="save-indicator" class="text-xs text-green-500 opacity-0 transition-opacity duration-300 flex items-center gap-1">
-                        <i class="fas fa-check-circle"></i> 已保存
-                    </span>
-                    <div id="setting-panel-toolbar"></div>
-                </div>
+                <span id="save-indicator" class="ml-4 text-xs text-green-500 opacity-0 transition-opacity duration-300 flex items-center gap-1">
+                    <i class="fas fa-check-circle"></i> 已保存
+                </span>
             </div>
 
             <!-- 可滚动内容区 -->
             <div class="flex-1 overflow-y-auto px-6 py-6 space-y-8">
+                ${this.renderActionButtonGroup()}
                 ${this.renderProvidersSection()}
                 ${this.renderModelsSection()}
                 ${this.renderDefaultModelsSection()}
@@ -70,48 +69,36 @@ class SettingPanel extends HTMLElement {
     }
 
     _createSettingPanelToolbar() {
-        const toolbar = new ElasticToolbarWidget([
-            {
-                id: 'import-quickpass-btn',
-                icon: 'fa-key',
-                label: '导入口令',
-                labelStayVisible: true,
-                action: () => this.showImportQuickPassModal()
-            },
-            {
-                id: 'export-quickpass-btn',
-                icon: 'fa-file-export',
-                label: '导出口令',
-                labelStayVisible: true,
-                action: () => this.showExportQuickPassModal()
-            },
-            {
-                id: 'advanced-setting-btn',
-                icon: 'fa-cog',
-                label: '高级设置',
-                labelStayVisible: true,
-                action: () => window.globalControlAPI.openAdvancedSettingEditor()
-            }
-        ]);
-
-        toolbar.classList.add('pill-buttons');
         const container = this.querySelector('#setting-panel-toolbar');
-        if (container) {
-            container.appendChild(toolbar);
-        }
+        if (!container) return;
+        // toolbar is now empty (buttons moved to inline button group)
+    }
 
-        // 高级设置按钮使用渐变背景
-        const advancedBtn = toolbar.querySelector(`[id^="advanced-setting-btn"]`);
-        if (advancedBtn) {
-            advancedBtn.classList.remove('bg-transparent', 'hover:bg-gray-100');
-            advancedBtn.classList.add(
-                'bg-gradient-to-r',
-                'from-gray-700',
-                'to-gray-600',
-                'text-white',
-                'hover:shadow-md'
-            );
-        }
+    renderActionButtonGroup() {
+        return `
+        <section>
+            <div class="flex items-center gap-2 mb-4">
+                <div class="w-8 h-8 rounded-lg bg-indigo-500/10 flex items-center justify-center">
+                    <i class="fas fa-toolbox text-indigo-500 text-sm"></i>
+                </div>
+                <h2 class="text-lg font-semibold text-gray-800">快捷操作</h2>
+            </div>
+            <div class="flex flex-wrap gap-3">
+                <button id="quick-setup-btn" class="sp-toolbar-btn">
+                    <i class="fa-solid fa-magic"></i><span>快速设置</span>
+                </button>
+                <button id="import-quickpass-btn" class="sp-toolbar-btn">
+                    <i class="fa-solid fa-key"></i><span>导入口令</span>
+                </button>
+                <button id="export-quickpass-btn" class="sp-toolbar-btn">
+                    <i class="fa-solid fa-file-export"></i><span>导出口令</span>
+                </button>
+                <button id="advanced-setting-btn" class="sp-toolbar-btn sp-toolbar-primary">
+                    <i class="fa-solid fa-cog"></i><span>高级设置</span>
+                </button>
+            </div>
+        </section>
+        `;
     }
 
     renderProvidersSection() {
@@ -122,14 +109,14 @@ class SettingPanel extends HTMLElement {
                 <div class="w-8 h-8 rounded-lg bg-blue-500/10 flex items-center justify-center">
                     <i class="fas fa-server text-blue-500 text-sm"></i>
                 </div>
-                <h2 class="text-lg font-semibold text-gray-800">模型提供商</h2>
+                <h2 class="text-lg font-semibold text-gray-800">模型提供方</h2>
                 <span class="text-xs text-gray-400 ml-2">${providers.length} 个已配置</span>
             </div>
             <div id="provider-list" class="grid grid-cols-1 md:grid-cols-2 gap-3">
                 ${providers.map((p, i) => this.renderProviderCard(p, i)).join('')}
             </div>
-            <button id="add-provider-btn" class="mt-4 w-full py-3 text-sm text-gray-500 rounded-2xl border-2 border-dashed border-gray-200 hover:border-blue-300 hover:text-blue-500 hover:bg-blue-50/50 transition-all duration-200">
-                <i class="fas fa-plus mr-2"></i>添加提供商
+            <button id="add-provider-btn" class="sp-add-btn sp-add-provider mt-4 w-full py-3 text-sm text-gray-500 rounded-2xl border-2 border-dashed border-gray-200">
+                <i class="fas fa-plus mr-2"></i>添加提供方
             </button>
         </section>
         `;
@@ -138,7 +125,7 @@ class SettingPanel extends HTMLElement {
     renderProviderCard(provider, index) {
         const maskedKey = this.maskApiKey(provider.api_key);
         return `
-        <div class="group bg-white/70 backdrop-blur-xl rounded-2xl border border-white/50 shadow-lg hover:shadow-xl hover:border-blue-200/50 transition-all duration-300 p-4" data-provider-index="${index}">
+        <div class="sp-card sp-card-provider bg-white/70 backdrop-blur-xl rounded-2xl border border-white/50 shadow-lg p-4" data-provider-index="${index}">
             <div class="flex items-start justify-between">
                 <div class="flex-1 min-w-0">
                     <h3 class="font-semibold text-gray-800 truncate">${this.escapeHtml(provider.name)}</h3>
@@ -146,11 +133,11 @@ class SettingPanel extends HTMLElement {
                     <p class="text-xs text-gray-400 mt-0.5">${maskedKey}</p>
                     ${provider.no_proxy ? '<span class="inline-block mt-2 text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-600">禁用代理</span>' : ''}
                 </div>
-                <div class="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button class="edit-provider-btn w-8 h-8 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors" data-index="${index}">
+                <div class="sp-card-actions flex gap-1">
+                    <button class="edit-provider-btn sp-card-action-btn" data-index="${index}">
                         <i class="fas fa-pen text-xs"></i>
                     </button>
-                    <button class="delete-provider-btn w-8 h-8 rounded-lg hover:bg-red-50 text-gray-400 hover:text-red-500 transition-colors" data-index="${index}">
+                    <button class="delete-provider-btn sp-card-action-btn sp-delete-btn" data-index="${index}">
                         <i class="fas fa-trash text-xs"></i>
                     </button>
                 </div>
@@ -173,7 +160,7 @@ class SettingPanel extends HTMLElement {
             <div id="model-list" class="grid grid-cols-1 md:grid-cols-2 gap-3">
                 ${models.map((m, i) => this.renderModelCard(m, i)).join('')}
             </div>
-            <button id="add-model-btn" class="mt-4 w-full py-3 text-sm text-gray-500 rounded-2xl border-2 border-dashed border-gray-200 hover:border-purple-300 hover:text-purple-500 hover:bg-purple-50/50 transition-all duration-200">
+            <button id="add-model-btn" class="sp-add-btn sp-add-model mt-4 w-full py-3 text-sm text-gray-500 rounded-2xl border-2 border-dashed border-gray-200">
                 <i class="fas fa-plus mr-2"></i>添加模型
             </button>
         </section>
@@ -183,7 +170,7 @@ class SettingPanel extends HTMLElement {
     renderModelCard(model, index) {
         const effortLabel = this.getEffortLabel(model.reasoning_effort);
         return `
-        <div class="group bg-white/70 backdrop-blur-xl rounded-2xl border border-white/50 shadow-lg hover:shadow-xl hover:border-purple-200/50 transition-all duration-300 p-4" data-model-index="${index}">
+        <div class="sp-card sp-card-model bg-white/70 backdrop-blur-xl rounded-2xl border border-white/50 shadow-lg p-4" data-model-index="${index}">
             <div class="flex items-start justify-between">
                 <div class="flex-1 min-w-0">
                     <div class="flex items-center gap-2">
@@ -192,11 +179,11 @@ class SettingPanel extends HTMLElement {
                     </div>
                     <p class="text-xs text-gray-400 mt-1 truncate">${this.escapeHtml(model.provider_name)} / ${this.escapeHtml(model.model_name)}</p>
                 </div>
-                <div class="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button class="edit-model-btn w-8 h-8 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors" data-index="${index}">
+                <div class="sp-card-actions flex gap-1">
+                    <button class="edit-model-btn sp-card-action-btn" data-index="${index}">
                         <i class="fas fa-pen text-xs"></i>
                     </button>
-                    <button class="delete-model-btn w-8 h-8 rounded-lg hover:bg-red-50 text-gray-400 hover:text-red-500 transition-colors" data-index="${index}">
+                    <button class="delete-model-btn sp-card-action-btn sp-delete-btn" data-index="${index}">
                         <i class="fas fa-trash text-xs"></i>
                     </button>
                 </div>
@@ -263,6 +250,20 @@ class SettingPanel extends HTMLElement {
     }
 
     setUpEventListeners() {
+        // 快捷操作按钮组
+        this.querySelector('#quick-setup-btn')?.addEventListener('click', () => {
+            window.globalControlAPI.openWizard();
+        });
+        this.querySelector('#import-quickpass-btn')?.addEventListener('click', () => {
+            this.showImportQuickPassModal();
+        });
+        this.querySelector('#export-quickpass-btn')?.addEventListener('click', () => {
+            this.showExportQuickPassModal();
+        });
+        this.querySelector('#advanced-setting-btn')?.addEventListener('click', () => {
+            window.globalControlAPI.openAdvancedSettingEditor();
+        });
+
         // 设置默认模型选择框的初始值
         this.updateDefaultModelSelects();
 
@@ -282,12 +283,12 @@ class SettingPanel extends HTMLElement {
             });
         });
 
-        // 添加提供商按钮
+        // 添加提供方按钮
         this.querySelector('#add-provider-btn')?.addEventListener('click', () => {
             this.showProviderTemplateModal();
         });
 
-        // 编辑/删除提供商
+        // 编辑/删除提供方
         this.querySelectorAll('.edit-provider-btn').forEach((btn) => {
             btn.addEventListener('click', (e) => {
                 const index = parseInt(e.currentTarget.dataset.index);
@@ -387,13 +388,13 @@ class SettingPanel extends HTMLElement {
         }
     }
 
-    // --- 提供商管理 ---
+    // --- 提供方管理 ---
     showProviderTemplateModal() {
         const templates = this.providerTemplates;
         const templateCards = templates
             .map(
                 (t, i) => `
-            <button class="provider-template-btn flex flex-col items-center justify-center p-4 rounded-xl border border-gray-200 hover:border-blue-300 hover:bg-blue-50/50 transition-all" data-index="${i}">
+            <button class="provider-template-btn sp-template-btn flex flex-col items-center justify-center p-4 rounded-xl border border-gray-200" data-index="${i}">
                 <span class="font-medium text-gray-800">${this.escapeHtml(t.displayName)}</span>
                 <span class="text-xs text-gray-400 mt-1 truncate max-w-full">${this.escapeHtml(t.base_url)}</span>
             </button>
@@ -404,15 +405,15 @@ class SettingPanel extends HTMLElement {
         this.showModal(`
             <div class="bg-white/95 backdrop-blur-2xl rounded-3xl shadow-2xl border border-white/50 w-full max-w-2xl mx-4 overflow-hidden">
                 <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
-                    <h3 class="text-lg font-semibold text-gray-800">选择提供商模板</h3>
-                    <button class="modal-close-btn w-8 h-8 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors">
+                    <h3 class="text-lg font-semibold text-gray-800">选择提供方模板</h3>
+                    <button class="modal-close-btn sp-modal-close w-8 h-8 rounded-lg text-gray-400">
                         <i class="fas fa-times"></i>
                     </button>
                 </div>
                 <div class="px-6 py-5">
                     <div class="grid grid-cols-2 md:grid-cols-3 gap-3 max-h-[400px] overflow-y-auto">
                         ${templateCards}
-                        <button class="provider-custom-btn flex flex-col items-center justify-center p-4 rounded-xl border border-dashed border-gray-300 hover:border-blue-400 hover:bg-blue-50/50 transition-all">
+                        <button class="provider-custom-btn sp-template-custom-btn flex flex-col items-center justify-center p-4 rounded-xl border border-dashed border-gray-300">
                             <i class="fas fa-plus text-gray-400 mb-1"></i>
                             <span class="text-sm text-gray-500">自定义</span>
                         </button>
@@ -451,8 +452,8 @@ class SettingPanel extends HTMLElement {
         this.showModal(`
             <div class="bg-white/95 backdrop-blur-2xl rounded-3xl shadow-2xl border border-white/50 w-full min-w-[480px] max-w-xl mx-4 overflow-hidden">
                 <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
-                    <h3 class="text-lg font-semibold text-gray-800">${isEdit ? '编辑提供商' : '添加提供商'}</h3>
-                    <button class="modal-close-btn w-8 h-8 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors">
+                    <h3 class="text-lg font-semibold text-gray-800">${isEdit ? '编辑提供方' : '添加提供方'}</h3>
+                    <button class="modal-close-btn sp-modal-close w-8 h-8 rounded-lg text-gray-400">
                         <i class="fas fa-times"></i>
                     </button>
                 </div>
@@ -469,7 +470,7 @@ class SettingPanel extends HTMLElement {
                         <label class="block text-sm font-medium text-gray-600 mb-1.5">API 密钥</label>
                         <div class="relative">
                             <input id="provider-key-input" type="password" value="${this.escapeHtml(provider.api_key)}" class="w-full px-4 py-2.5 pr-10 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all" placeholder="sk-...">
-                            <button id="toggle-key-visibility" class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+                            <button id="toggle-key-visibility" class="sp-toggle-key absolute right-3 top-1/2 -translate-y-1/2 text-gray-400">
                                 <i class="fas fa-eye text-xs"></i>
                             </button>
                         </div>
@@ -480,8 +481,8 @@ class SettingPanel extends HTMLElement {
                     </div>
                 </div>
                 <div class="px-6 py-4 border-t border-gray-100 flex justify-end gap-3">
-                    <button class="modal-close-btn px-4 py-2 text-sm text-gray-600 rounded-xl hover:bg-gray-100 transition-colors">取消</button>
-                    <button id="save-provider-btn" class="px-4 py-2 text-sm text-white bg-gradient-to-r from-blue-500 to-blue-600 rounded-xl hover:shadow-lg transition-all">${isEdit ? '保存' : '添加'}</button>
+                    <button class="modal-close-btn sp-modal-cancel px-4 py-2 text-sm text-gray-600 rounded-xl">取消</button>
+                    <button id="save-provider-btn" class="sp-modal-save px-4 py-2 text-sm text-white bg-gradient-to-r from-blue-500 to-blue-600 rounded-xl">${isEdit ? '保存' : '添加'}</button>
                 </div>
             </div>
         `);
@@ -517,7 +518,7 @@ class SettingPanel extends HTMLElement {
         const no_proxy = this.querySelector('#provider-no-proxy-input')?.checked || false;
 
         if (!name) {
-            window.notificationAPI.sendNotification('error', '设置', '请输入提供商名称');
+            window.notificationAPI.sendNotification('error', '设置', '请输入提供方名称');
             return;
         }
 
@@ -542,14 +543,14 @@ class SettingPanel extends HTMLElement {
         const modelCount = modelsUsingProvider.length;
         const message =
             modelCount > 0
-                ? `提供商「${provider.name}」下有 ${modelCount} 个关联模型，删除提供商将同时删除这些模型。`
-                : `确定要删除提供商「${provider.name}」吗？`;
+                ? `提供方「${provider.name}」下有 ${modelCount} 个关联模型，删除提供方将同时删除这些模型。`
+                : `确定要删除提供方「${provider.name}」吗？`;
 
         this.showModal(`
             <div class="bg-white/95 backdrop-blur-2xl rounded-3xl shadow-2xl border border-white/50 w-full max-w-md mx-4 overflow-hidden">
                 <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
-                    <h3 class="text-lg font-semibold text-gray-800">删除提供商</h3>
-                    <button class="modal-close-btn text-gray-400 hover:text-gray-600 transition-colors">
+                    <h3 class="text-lg font-semibold text-gray-800">删除提供方</h3>
+                    <button class="modal-close-btn sp-modal-close text-gray-400">
                         <i class="fas fa-times"></i>
                     </button>
                 </div>
@@ -570,8 +571,8 @@ class SettingPanel extends HTMLElement {
                     }
                 </div>
                 <div class="px-6 py-4 border-t border-gray-100 flex justify-end gap-3">
-                    <button class="modal-close-btn px-4 py-2 text-sm text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-xl transition-colors">取消</button>
-                    <button id="confirm-delete-provider-btn" class="px-4 py-2 text-sm text-white bg-red-500 hover:bg-red-600 rounded-xl transition-colors">确认删除</button>
+                    <button class="modal-close-btn sp-modal-cancel px-4 py-2 text-sm text-gray-600 bg-gray-100 rounded-xl">取消</button>
+                    <button id="confirm-delete-provider-btn" class="sp-confirm-delete px-4 py-2 text-sm text-white bg-red-500 rounded-xl">确认删除</button>
                 </div>
             </div>
         `);
@@ -595,7 +596,8 @@ class SettingPanel extends HTMLElement {
     }
 
     refreshProvidersSection() {
-        const section = this.querySelector('section:first-of-type');
+        const sections = this.querySelectorAll('section');
+        const section = sections.length >= 2 ? sections[1] : null;
         if (section) {
             section.outerHTML = this.renderProvidersSection();
             // 重新绑定事件
@@ -637,7 +639,7 @@ class SettingPanel extends HTMLElement {
             <div class="bg-white/95 backdrop-blur-2xl rounded-3xl shadow-2xl border border-white/50 w-full min-w-[480px] max-w-xl mx-4 overflow-hidden">
                 <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
                     <h3 class="text-lg font-semibold text-gray-800">${isEdit ? '编辑模型' : '添加模型'}</h3>
-                    <button class="modal-close-btn w-8 h-8 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors">
+                    <button class="modal-close-btn sp-modal-close w-8 h-8 rounded-lg text-gray-400">
                         <i class="fas fa-times"></i>
                     </button>
                 </div>
@@ -647,9 +649,9 @@ class SettingPanel extends HTMLElement {
                         <input id="model-alias-input" type="text" value="${this.escapeHtml(model.alias)}" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all" placeholder="例如: gpt-4o">
                     </div>
                     <div>
-                        <label class="block text-sm font-medium text-gray-600 mb-1.5">提供商</label>
+                        <label class="block text-sm font-medium text-gray-600 mb-1.5">提供方</label>
                         <select id="model-provider-input" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all">
-                            <option value="">选择提供商</option>
+                            <option value="">选择提供方</option>
                             ${providerOptions}
                         </select>
                     </div>
@@ -668,9 +670,10 @@ class SettingPanel extends HTMLElement {
                         </select>
                     </div>
                 </div>
+                <div id="model-verify-result" class="mx-6 mb-1 text-sm hidden"></div>
                 <div class="px-6 py-4 border-t border-gray-100 flex justify-end gap-3">
-                    <button class="modal-close-btn px-4 py-2 text-sm text-gray-600 rounded-xl hover:bg-gray-100 transition-colors">取消</button>
-                    <button id="save-model-btn" class="px-4 py-2 text-sm text-white bg-gradient-to-r from-purple-500 to-purple-600 rounded-xl hover:shadow-lg transition-all">${isEdit ? '保存' : '添加'}</button>
+                    <button class="modal-close-btn sp-modal-cancel px-4 py-2 text-sm text-gray-600 rounded-xl">取消</button>
+                    <button id="save-model-btn" class="sp-modal-save px-4 py-2 text-sm text-white bg-gradient-to-r from-purple-500 to-purple-600 rounded-xl">${isEdit ? '验证并保存' : '验证并添加'}</button>
                 </div>
             </div>
         `);
@@ -681,8 +684,65 @@ class SettingPanel extends HTMLElement {
             });
         });
         this.querySelector('#save-model-btn')?.addEventListener('click', () => {
-            this.saveModel();
+            this.verifyAndSaveModel();
         });
+    }
+
+    async verifyAndSaveModel() {
+        const alias = this.querySelector('#model-alias-input')?.value?.trim();
+        const provider_name = this.querySelector('#model-provider-input')?.value || '';
+        const model_name = this.querySelector('#model-name-input')?.value?.trim();
+        const resultDiv = this.querySelector('#model-verify-result');
+        const saveBtn = this.querySelector('#save-model-btn');
+
+        if (!alias) {
+            window.notificationAPI.sendNotification('error', '设置', '请输入模型别名');
+            return;
+        }
+        if (!provider_name) {
+            window.notificationAPI.sendNotification('error', '设置', '请选择提供方');
+            return;
+        }
+        if (!model_name) {
+            window.notificationAPI.sendNotification('error', '设置', '请输入模型名称');
+            return;
+        }
+
+        const provider = this.currentData?.providers?.find((p) => p.name === provider_name);
+        if (!provider) {
+            window.notificationAPI.sendNotification('error', '设置', '未找到对应的提供方配置');
+            return;
+        }
+
+        const origText = saveBtn.innerHTML;
+        saveBtn.disabled = true;
+        saveBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>验证中...';
+        if (resultDiv) {
+            resultDiv.classList.remove('hidden');
+            resultDiv.className = 'mx-6 text-sm p-3 text-blue-600 bg-blue-50 rounded-xl border border-blue-200';
+            resultDiv.innerHTML = '<i class="fas fa-info-circle mr-2"></i>正在验证模型配置...';
+        }
+
+        try {
+            await window.settingAPI.verifyModel({
+                base_url: provider.base_url,
+                api_key: provider.api_key,
+                model_name: model_name
+            });
+            if (resultDiv) {
+                resultDiv.className = 'mx-6 text-sm p-3 text-green-600 bg-green-50 rounded-xl border border-green-200';
+                resultDiv.innerHTML = '<i class="fas fa-check-circle mr-2"></i>验证成功，正在保存...';
+            }
+            this.saveModel();
+        } catch (error) {
+            if (resultDiv) {
+                resultDiv.className = 'mx-6 text-sm p-3 text-red-600 bg-red-50 rounded-xl border border-red-200';
+                resultDiv.innerHTML = `<i class="fas fa-times-circle mr-2"></i>验证失败：${this.escapeHtml(error.message)}`;
+            }
+        } finally {
+            saveBtn.disabled = false;
+            saveBtn.innerHTML = origText;
+        }
     }
 
     saveModel() {
@@ -748,8 +808,8 @@ class SettingPanel extends HTMLElement {
 
     refreshModelsSection() {
         const sections = this.querySelectorAll('section');
-        if (sections.length >= 2) {
-            sections[1].outerHTML = this.renderModelsSection();
+        if (sections.length >= 3) {
+            sections[2].outerHTML = this.renderModelsSection();
             this.querySelector('#add-model-btn')?.addEventListener('click', () => {
                 this.showModelEditModal(-1);
             });
@@ -770,8 +830,8 @@ class SettingPanel extends HTMLElement {
 
     refreshDefaultModelsSection() {
         const sections = this.querySelectorAll('section');
-        if (sections.length >= 3) {
-            sections[2].outerHTML = this.renderDefaultModelsSection();
+        if (sections.length >= 4) {
+            sections[3].outerHTML = this.renderDefaultModelsSection();
             this.updateDefaultModelSelects();
             const selects = [
                 'default-model-select',
@@ -796,21 +856,21 @@ class SettingPanel extends HTMLElement {
             <div class="bg-white/95 backdrop-blur-2xl rounded-3xl shadow-2xl border border-white/50 w-full min-w-[480px] max-w-lg mx-4 overflow-hidden">
                 <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
                     <h3 class="text-lg font-semibold text-gray-800">导出口令</h3>
-                    <button class="modal-close-btn w-8 h-8 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors">
+                    <button class="modal-close-btn sp-modal-close w-8 h-8 rounded-lg text-gray-400">
                         <i class="fas fa-times"></i>
                     </button>
                 </div>
                 <div class="px-6 py-5 space-y-4">
                     <div class="flex gap-3">
-                        <button id="export-base-btn" class="flex-1 py-3 text-sm text-gray-700 bg-white border border-gray-200 rounded-xl hover:bg-gray-50 hover:border-blue-300 transition-all">
+                        <button id="export-base-btn" class="sp-export-option-btn sp-export-base flex-1 py-3 text-sm text-gray-700 bg-white border border-gray-200 rounded-xl">
                             <i class="fas fa-cog mr-2 text-blue-500"></i>基础设置口令
                         </button>
-                        <button id="export-all-btn" class="flex-1 py-3 text-sm text-gray-700 bg-white border border-gray-200 rounded-xl hover:bg-gray-50 hover:border-purple-300 transition-all">
+                        <button id="export-all-btn" class="sp-export-option-btn sp-export-all flex-1 py-3 text-sm text-gray-700 bg-white border border-gray-200 rounded-xl">
                             <i class="fas fa-box mr-2 text-purple-500"></i>全部设置口令
                         </button>
                     </div>
                     <textarea id="export-result" readonly class="w-full h-32 px-4 py-3 text-xs font-mono bg-gray-50 border border-gray-200 rounded-xl resize-none focus:outline-none" placeholder="点击上方按钮生成口令..."></textarea>
-                    <button id="copy-quickpass-btn" class="w-full py-2.5 text-sm text-white bg-gradient-to-r from-gray-700 to-gray-600 rounded-xl hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed" disabled>
+                    <button id="copy-quickpass-btn" class="sp-modal-save w-full py-2.5 text-sm text-white bg-gradient-to-r from-gray-700 to-gray-600 rounded-xl disabled:opacity-50 disabled:cursor-not-allowed" disabled>
                         <i class="fas fa-copy mr-2"></i>复制到剪贴板
                     </button>
                 </div>
@@ -854,14 +914,14 @@ class SettingPanel extends HTMLElement {
             <div class="bg-white/95 backdrop-blur-2xl rounded-3xl shadow-2xl border border-white/50 w-full min-w-[480px] max-w-lg mx-4 overflow-hidden">
                 <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
                     <h3 class="text-lg font-semibold text-gray-800">导入口令</h3>
-                    <button class="modal-close-btn w-8 h-8 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors">
+                    <button class="modal-close-btn sp-modal-close w-8 h-8 rounded-lg text-gray-400">
                         <i class="fas fa-times"></i>
                     </button>
                 </div>
                 <div class="px-6 py-5 space-y-4">
                     <textarea id="import-input" class="w-full h-32 px-4 py-3 text-xs font-mono bg-white/60 border border-gray-200/60 rounded-xl resize-none focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all" placeholder="粘贴口令..."></textarea>
                     <div id="import-result" class="text-sm"></div>
-                    <button id="import-quickpass-confirm-btn" class="w-full py-2.5 text-sm text-white bg-gradient-to-r from-blue-500 to-blue-600 rounded-xl hover:shadow-lg transition-all">
+                    <button id="import-quickpass-confirm-btn" class="sp-modal-save w-full py-2.5 text-sm text-white bg-gradient-to-r from-blue-500 to-blue-600 rounded-xl">
                         <i class="fas fa-check mr-2"></i>导入
                     </button>
                 </div>

@@ -40,12 +40,20 @@ export async function searchRegistry(registryId: string, opts: SearchOptions = {
     return registry.search(opts);
 }
 
+export function getRegistriesInfo(): { id: string; label: string; icon: string; slogan: string }[] {
+    return allRegistries
+        .filter((r) => ['matrix', 'clawhub', 'skillhub', 'modelscope'].includes(r.id))
+        .map((r) => ({ id: r.id, label: r.label, icon: r.icon, slogan: r.slogan }));
+}
+
 export function getInstallMethod(installUrl: string): string {
     if (!installUrl || typeof installUrl !== 'string') return 'zip';
     for (const reg of allRegistries) {
         if (reg.matchesInstallUrl(installUrl)) return reg.id;
     }
-    return installUrl.includes('github.com') && installUrl.includes('/tree/') ? 'github' : 'zip';
+    if (installUrl.includes('github.com') && installUrl.includes('/tree/')) return 'github';
+    if (/github\.com\/[^/]+\/[^/]+/.test(installUrl)) return 'github';
+    return 'zip';
 }
 
 export function parseInstallUrl(installUrl: string): { slug: string; version?: string } | null {

@@ -64,7 +64,7 @@ describe('compact smoke: task JSON persistence', () => {
         });
         manager.tasks.push(task);
 
-        manager.save();
+        manager.saveSync();
 
         const reloadedManager = TaskManagerState.load();
         const reloadedTask = reloadedManager?.getTask('task-json-smoke');

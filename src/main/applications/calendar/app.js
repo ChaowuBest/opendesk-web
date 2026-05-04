@@ -16,7 +16,7 @@ import { z } from 'zod';
 import { logger } from '../../utils/logger.js';
 import CalendarWorker from './service/worker';
 import { CalendarOverlay } from './tui';
-import { GetCalendarItemsTool, AddCalendarItemTool, DeleteCalendarItemTool } from './tools';
+import { GetCalendarItemsTool, AddCalendarItemTool, DeleteCalendarItemTool, EditCalendarItemTool } from './tools';
 import { CALENDAR_SKILL } from './skills';
 import chalk from 'chalk';
 
@@ -91,6 +91,7 @@ class CalendarApplication extends BaseApplication {
         const toolset = new BaseToolset('calendar');
         toolset.addTool(new GetCalendarItemsTool(this));
         toolset.addTool(new AddCalendarItemTool(this));
+        toolset.addTool(new EditCalendarItemTool(this));
         toolset.addTool(new DeleteCalendarItemTool(this));
         skill.toolsets = [toolset];
         return [skill];

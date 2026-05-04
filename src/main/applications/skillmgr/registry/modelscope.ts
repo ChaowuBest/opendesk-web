@@ -15,6 +15,10 @@ export class ModelScopeRegistry extends SkillRegistryBase {
     readonly icon = '🔮';
     readonly iconClass = 'modelscope';
 
+    override get slogan(): string {
+        return '汇聚社区技能组件，定义模型无限可能';
+    }
+
     private async initCookies(): Promise<void> {
         try {
             await fetch(`${BASE_URL}/skills`, { signal: AbortSignal.timeout(10000) });
@@ -65,16 +69,30 @@ export class ModelScopeRegistry extends SkillRegistryBase {
             const skillList = data.Data?.SkillList || [];
             const totalCount = data.Data?.TotalCount || 0;
 
-            const skills = skillList.map((s: any) => ({
-                id: s.Name || '',
-                name: s.DisplayName || s.Name || '',
-                description: s.DescriptionEn || s.Description || '',
-                author: s.Owner || s.SourceDeveloper || '',
-                source: 'modelscope' as const,
-                installUrl: `${this.installPrefix}${s.Name || ''}`,
-                stars: s.SourceStar || 0,
-                canInstall: true
-            }));
+            const skills = skillList.map((s: any) => {
+                const sourceUrl = (s.SourceURL || '').trim();
+                const isGitHubTree = sourceUrl.includes('github.com') && sourceUrl.includes('/tree/');
+                const isGitHubRepo = !isGitHubTree && /github\.com\/[^/]+\/[^/]+/.test(sourceUrl);
+                let installUrl: string;
+                if (isGitHubTree) {
+                    installUrl = sourceUrl;
+                } else if (isGitHubRepo) {
+                    installUrl = sourceUrl.replace(/\/+$/, '') + '/tree/main';
+                } else {
+                    installUrl = `${this.installPrefix}${s.Owner ? s.Owner + '/' : ''}${s.Name || ''}`;
+                }
+                return {
+                    id: s.Name || '',
+                    name: s.DisplayName || s.Name || '',
+                    description: s.DescriptionEn || s.Description || '',
+                    author: s.Path?.replace(/^@/, '') || s.SourceDeveloper || s.Owner || '',
+                    source: 'modelscope' as const,
+                    installUrl,
+                    stars: s.SourceStar || 0,
+                    downloads: s.DownloadCount ?? 0,
+                    canInstall: !!(isGitHubTree || isGitHubRepo || (s.Owner && s.Name))
+                };
+            });
 
             return {
                 skills,

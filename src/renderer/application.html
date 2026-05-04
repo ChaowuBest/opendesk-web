@@ -51,8 +51,10 @@
         </div>
 
         <div
+            id="agent-input-wrapper"
             class="fixed bottom-3 left-1/2 -translate-x-1/2 w-full max-w-2xl px-4 z-50 pointer-events-none"
             x-ref="agentInput"
+            style="display: none"
         >
             <application-agent-input id="application-agent-input" style="pointer-events: none" />
         </div>
@@ -155,6 +157,20 @@
 
                 const entryName = `${applicationBundleName}-entry-widget`;
 
+                // 检查应用是否需要 Agent 悬浮栏（iframe 内使用 applicationAPI）
+                let showAgentBar = false;
+                try {
+                    showAgentBar = await window.applicationAPI.callMainWorld('needAgentBar');
+                } catch (err) {
+                    console.warn('Failed to check needAgentBar:', err);
+                }
+
+                if (showAgentBar) {
+                    // 显示 Agent 悬浮输入栏（默认 display:none，只有需要时才显示）
+                    const agentInputWrapper = document.querySelector('#agent-input-wrapper');
+                    if (agentInputWrapper) agentInputWrapper.style.display = '';
+                }
+
                 window.aiBarAPI = {
                     submitRequest: (request) => submitRequest({ message: request }),
                     submitRequestInNewTask: async (request) => {
@@ -165,15 +181,18 @@
 
                 document.querySelector('#application-container').innerHTML =
                     `<${entryName} id='application-entry-widget' class="w-full h-full"/>`;
-                document.querySelector('#application-agent-input').addEventListener('focus', () => {
-                    // 如果用户激活了聊天输入浮窗，且当前有任务，则显示浮动聊天面板
-                    if (currentTaskId !== null) {
-                        Alpine.$data(document.body).showFloatingChatPanel = true;
-                    }
-                });
-                document.querySelector('#application-agent-input').addEventListener('submit', (e) => {
-                    submitRequest(e.detail);
-                });
+
+                if (showAgentBar) {
+                    document.querySelector('#application-agent-input').addEventListener('focus', () => {
+                        // 如果用户激活了聊天输入浮窗，且当前有任务，则显示浮动聊天面板
+                        if (currentTaskId !== null) {
+                            Alpine.$data(document.body).showFloatingChatPanel = true;
+                        }
+                    });
+                    document.querySelector('#application-agent-input').addEventListener('submit', (e) => {
+                        submitRequest(e.detail);
+                    });
+                }
             })();
         </script>
     </body>

@@ -18,7 +18,8 @@ const CalendarItemSchema = z.object({
     endTime: z.number(),
     location: z.string().default(''),
     isAllDay: z.boolean().default(false),
-    isCancelled: z.boolean().default(false)
+    isCancelled: z.boolean().default(false),
+    type: z.string().default('')
 });
 
 export { CalendarItemSchema };

@@ -41,6 +41,7 @@ interface RegistrySkill {
     source: string;
     installUrl: string;
     stars?: number;
+    downloads?: number;
     canInstall: boolean;
 }
 

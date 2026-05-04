@@ -289,6 +289,135 @@ export class CreateSubTaskPoolTool extends BaseTool<typeof CreateSubTaskPoolArgs
         }).render(width);
     }
 
+    // ─── GUI Rendering ────────────────────────────────────────────────────
+
+    private static escapeHtml(text: string): string {
+        return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    private static renderTaskRow(task: PoolTaskEntry): string {
+        const statusMap: Record<PoolTaskStatus, { label: string; color: string; dot: string }> = {
+            pending: { label: '待执行', color: '#94a3b8', dot: '#cbd5e1' },
+            running: { label: '执行中', color: '#64748b', dot: '#64748b' },
+            retrying: { label: '重试中', color: '#92400e', dot: '#d97706' },
+            success: { label: '已完成', color: '#166534', dot: '#4ade80' },
+            fail: { label: '失败', color: '#b91c1c', dot: '#f87171' }
+        };
+        const s = statusMap[task.status] || statusMap.pending;
+        const label = task.itemPrompt.length > 50 ? task.itemPrompt.slice(0, 47) + '…' : task.itemPrompt;
+        const retryBadge =
+            task.retryCount > 0
+                ? `<span class="text-[9px]" style="color:#92400e;margin-left:4px;">(×${task.retryCount})</span>`
+                : '';
+        const runningAnim = task.status === 'running' || task.status === 'retrying' ? ' animate-pulse' : '';
+
+        return `
+        <div class="flex items-center px-3.5 py-[5px] border-b border-[#f8fafc] last:border-b-0 hover:bg-[#f8fafc] transition-colors" data-pool-task-idx="${task.index}" data-pool-task-status="${task.status}">
+            <span class="w-1.5 h-1.5 rounded-full shrink-0 mr-2.5${runningAnim}" style="background:${s.dot}"></span>
+            <div class="flex-1 min-w-0">
+                <span class="text-[11px] text-[#334155] truncate block">#${task.index + 1} ${CreateSubTaskPoolTool.escapeHtml(label)}</span>
+            </div>
+            <span class="text-[10px] shrink-0 ml-2" style="color:${s.color}">${s.label}</span>${retryBadge}
+        </div>`;
+    }
+
+    async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
+        const args = toolcall.args_object as z.output<typeof CreateSubTaskPoolArgsSchema> | undefined;
+        const poolState = CreateSubTaskPoolTool.getPoolState(toolcall);
+        const totalCount = poolState?.totalCount ?? args?.taskItems?.length ?? 0;
+        const completedCount = poolState?.completedCount ?? 0;
+        const successCount = poolState?.successCount ?? 0;
+        const failCount = poolState?.failCount ?? 0;
+        const runningCount = poolState?.runningCount ?? 0;
+        const pendingCount = totalCount - completedCount - runningCount;
+        const progressPercent = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
+
+        const isRunning = toolcall.status === 'running';
+        const isComplete = toolcall.status === 'success' || toolcall.status === 'error';
+
+        // Segmented control 标签（macOS 风格滑块）
+        const tabs = [
+            { id: 'all', label: '全部', count: totalCount },
+            { id: 'running', label: '执行中', count: runningCount },
+            { id: 'success', label: '已完成', count: successCount },
+            { id: 'fail', label: '失败', count: failCount }
+        ];
+
+        const tabsHtml = tabs
+            .map(
+                (tab) =>
+                    `<button class="pool-seg-btn ${tab.id === 'all' ? 'active' : ''}${tab.count === 0 && tab.id !== 'all' ? ' disabled' : ''}" data-pool-filter="${tab.id}">${tab.label} ${tab.count}</button>`
+            )
+            .join('');
+
+        // 进度指示 — 紧凑的在 header 右侧
+        let progressHtml: string;
+        if (isRunning) {
+            progressHtml = `
+                <div class="flex items-center gap-2">
+                    <i class="fa-solid fa-circle-notch fa-spin text-[#94a3b8] text-[10px]"></i>
+                    <span class="text-[11px] text-[#64748b] font-medium">${completedCount}/${totalCount}</span>
+                    <div class="w-16 h-1 rounded-full bg-[#f1f5f9] overflow-hidden">
+                        <div class="h-full rounded-full bg-[#94a3b8] transition-all duration-300" style="width:${progressPercent}%"></div>
+                    </div>
+                </div>`;
+        } else if (isComplete && failCount === 0) {
+            progressHtml = `
+                <div class="flex items-center gap-1 text-[#166534]">
+                    <i class="fa-solid fa-circle-check text-[10px]"></i>
+                    <span class="text-[10px] font-medium">全部完成</span>
+                </div>`;
+        } else if (isComplete && failCount > 0) {
+            progressHtml = `
+                <div class="flex items-center gap-1 text-[#b91c1c]">
+                    <i class="fa-solid fa-triangle-exclamation text-[10px]"></i>
+                    <span class="text-[10px] font-medium">${successCount} 成功 · ${failCount} 失败</span>
+                </div>`;
+        } else {
+            progressHtml = `<span class="text-[10px] text-[#94a3b8]">等待启动</span>`;
+        }
+
+        // 任务列表
+        const tasks = poolState?.tasks ?? [];
+        const maxDisplay = 8;
+        const displayTasks = tasks.slice(0, maxDisplay);
+        const taskRowsHtml = displayTasks.map((t) => CreateSubTaskPoolTool.renderTaskRow(t)).join('');
+        const moreHtml =
+            tasks.length > maxDisplay
+                ? `<div class="text-center text-[10px] text-[#94a3b8] py-1.5">… 还有 ${tasks.length - maxDisplay} 个任务</div>`
+                : '';
+
+        return `
+        <div class="subtask-pool-card my-1.5 w-full rounded-lg border border-[#e2e8f0] bg-white overflow-hidden" data-pool-toolcall-id="${toolcall.id}">
+            <!-- Header -->
+            <div class="flex items-center justify-between px-3.5 py-1.5 border-b border-[#f1f5f9] bg-[#f8fafc]">
+                <div class="flex items-center gap-2">
+                    <svg class="w-3.5 h-3.5 text-[#64748b] shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+                        <path d="M4 6h16M4 12h16M4 18h16"/>
+                    </svg>
+                    <span class="text-[11px] font-semibold text-[#475569]">子任务池</span>
+                    <span class="text-[10px] text-[#94a3b8]">${totalCount} 个 · 并发 ${args?.concurrency ?? 3}</span>
+                </div>
+                ${progressHtml}
+            </div>
+
+            <!-- Segmented Control -->
+            <div class="flex items-center px-3.5 py-1.5 border-b border-[#f1f5f9]">
+                <div class="pool-seg">
+                    <div class="pool-seg-indicator"></div>
+                    ${tabsHtml}
+                </div>
+            </div>
+
+            <!-- Task List -->
+            <div class="pool-task-list max-h-[220px] overflow-y-auto">
+                ${taskRowsHtml}
+                ${moreHtml}
+                ${tasks.length === 0 ? '<div class="text-center text-[11px] text-[#94a3b8] py-3">等待任务启动…</div>' : ''}
+            </div>
+        </div>`;
+    }
+
     // ─── Execution ──────────────────────────────────────────────────────────
 
     private async handleExecute(
@@ -316,11 +445,39 @@ export class CreateSubTaskPoolTool extends BaseTool<typeof CreateSubTaskPoolArgs
             }))
         };
 
-        const updateProgress = () => {
+        const PROGRESS_THROTTLE_MS = 1000;
+        let lastProgressPushMs = 0;
+        let progressPending = false;
+        let progressTimer: ReturnType<typeof setTimeout> | undefined;
+
+        const pushProgress = () => {
             toolResult.updateResultObject({ pool_state: { ...poolState, tasks: [...poolState.tasks] } });
+            lastProgressPushMs = Date.now();
+            progressPending = false;
         };
 
-        updateProgress();
+        const updateProgress = (force = false) => {
+            if (force) {
+                if (progressTimer) {
+                    clearTimeout(progressTimer);
+                    progressTimer = undefined;
+                }
+                pushProgress();
+                return;
+            }
+            const elapsed = Date.now() - lastProgressPushMs;
+            if (elapsed >= PROGRESS_THROTTLE_MS) {
+                pushProgress();
+            } else if (!progressPending) {
+                progressPending = true;
+                progressTimer = setTimeout(() => {
+                    progressTimer = undefined;
+                    pushProgress();
+                }, PROGRESS_THROTTLE_MS - elapsed);
+            }
+        };
+
+        updateProgress(true);
 
         logger.info(
             `[pool] starting pool: total=${taskItems.length} concurrency=${concurrency} maxRetries=${maxRetries}`
@@ -456,7 +613,7 @@ export class CreateSubTaskPoolTool extends BaseTool<typeof CreateSubTaskPoolArgs
 
         await allDone;
 
-        updateProgress();
+        updateProgress(true);
 
         const summaryResults = poolState.tasks.map((t) => ({
             index: t.index,

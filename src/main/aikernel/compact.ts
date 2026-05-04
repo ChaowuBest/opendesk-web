@@ -22,7 +22,7 @@ import { logger } from '../utils/logger.js';
 import { HookRegistry } from './hooks.js';
 import type { TaskState } from './states/tasks.js';
 import { buildActiveContextView, countNonBoundaryMessages } from './compaction/context-view.js';
-import { getAutoCompactDecision } from './compaction/auto-compact.js';
+import { getAutoCompactDecision, resolveReservedSummaryOutput } from './compaction/auto-compact.js';
 import { describeCompactPlanVariant, logCompactInfo } from './compaction/compact-trace.js';
 import { compactFullContext, type FullCompactRunOptions } from './compaction/full-compact.js';
 import {
@@ -211,7 +211,10 @@ async function generateSummary(messages: ChatMessage[], model?: string): Promise
     const messagesText = buildMessagesText(messages);
     const question = new UserMessage();
     question.appendText(`${getCompressionPrompt()}\n\n---\n\n以下是需要总结的对话历史：\n\n${messagesText}`);
-    return await LLM.ask(question, model);
+    const maxCompletionTokens = await resolveReservedSummaryOutput(model);
+    return await LLM.ask(question, model, {
+        maxCompletionTokens
+    });
 }
 
 /** 统计消息列表中的对话轮次和工具调用数 */
@@ -431,17 +434,24 @@ export async function shouldCompact(chatContext: ChatContext, model?: string, ta
             source: 'compact',
             event: 'auto_compact_threshold_reached',
             message:
-                `[Compact] auto compact triggered: prompt_tokens=${decision.promptTokens}, ` +
+                `[Compact] auto compact triggered: estimated_context_tokens=${decision.estimatedContextTokens}, ` +
                 `threshold=${Math.floor(decision.autoCompactThreshold)} (` +
                 `contextWindow=${decision.contextWindow}, ` +
                 `reservedSummaryOutput=${decision.reservedSummaryOutput}, ` +
-                `buffer=${decision.buffer})`,
+                `buffer=${decision.buffer}, ` +
+                `baseUsageTokens=${decision.baseUsageTokens}, ` +
+                `tailEstimatedTokens=${decision.tailEstimatedTokens}, ` +
+                `assistantInternalTailTokens=${decision.assistantInternalTailTokens})`,
             data: {
-                promptTokens: decision.promptTokens,
+                estimatedContextTokens: decision.estimatedContextTokens,
                 autoCompactThreshold: Math.floor(decision.autoCompactThreshold),
                 contextWindow: decision.contextWindow,
                 reservedSummaryOutput: decision.reservedSummaryOutput,
-                buffer: decision.buffer
+                buffer: decision.buffer,
+                baseUsageTokens: decision.baseUsageTokens,
+                tailEstimatedTokens: decision.tailEstimatedTokens,
+                assistantInternalTailTokens: decision.assistantInternalTailTokens,
+                tokenEstimateSource: decision.tokenEstimateSource
             }
         });
     }

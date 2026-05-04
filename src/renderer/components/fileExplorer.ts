@@ -22,6 +22,8 @@
  *   - 点击文件弹出文本预览（>50 KB / 二进制 → 拒绝提示）
  */
 
+import { showConfirmModal } from './confirmModal';
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -250,6 +252,26 @@ export function getFileExplorerCSS(): string {
             box-shadow: 0 1px 1px rgba(15, 23, 42, 0.08), 0 0 0 0.5px rgba(15, 23, 42, 0.05);
         }
 
+        .ws-refresh-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 24px;
+            height: 24px;
+            background: transparent;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            color: #9ca3af;
+            font-size: 11px;
+            transition: color 0.15s, background 0.15s;
+            flex-shrink: 0;
+        }
+        .ws-refresh-btn:hover {
+            color: #374151;
+            background: #f1f3f6;
+        }
+
         .ws-browser-body {
             flex: 1;
             overflow: hidden;
@@ -396,6 +418,21 @@ export class FileExplorer {
     }
 
     /**
+     * 软刷新：保留当前展开/选中状态，仅重新加载已缓存目录的内容。
+     * 适用于文件编辑/写入后的增量更新。
+     */
+    softRefresh(): void {
+        if (!this._container || !this._workspaceRoot) return;
+        const dirs = [...this._childrenCache.keys()];
+        for (const dir of dirs) {
+            this._childrenCache.delete(dir);
+        }
+        for (const dir of dirs) {
+            void this._loadChildren(dir);
+        }
+    }
+
+    /**
      * 重置所有状态并重新加载工作空间。
      * 切换任务 / 切换工作空间时调用。
      */
@@ -421,13 +458,13 @@ export class FileExplorer {
         try {
             const api = window.workspaceAPI;
             if (!api || typeof api.getEffectiveWorkspace !== 'function') {
-                this._workspaceError = '\u5F53\u524D\u73AF\u5883\u672A\u63D0\u4F9B workspaceAPI';
+                this._workspaceError = '当前环境未提供 workspaceAPI';
                 this._renderPanel();
                 return;
             }
             const root = await api.getEffectiveWorkspace();
             if (!root) {
-                this._workspaceError = '\u672A\u80FD\u83B7\u53D6\u5DE5\u4F5C\u7A7A\u95F4\u8DEF\u5F84';
+                this._workspaceError = '未能获取工作空间路径';
                 this._renderPanel();
                 return;
             }
@@ -451,7 +488,7 @@ export class FileExplorer {
         try {
             const api = window.fsAPI;
             if (!api || typeof api.listDirectory !== 'function') {
-                throw new Error('\u5F53\u524D\u73AF\u5883\u672A\u63D0\u4F9B fsAPI.listDirectory');
+                throw new Error('当前环境未提供 fsAPI.listDirectory');
             }
             const entries = await api.listDirectory(dirPath);
             this._childrenCache.set(dirPath, entries);
@@ -547,7 +584,7 @@ export class FileExplorer {
         try {
             const api = window.fsAPI;
             if (!api || typeof api.readTextFile !== 'function') {
-                throw new Error('\u5F53\u524D\u73AF\u5883\u672A\u63D0\u4F9B fsAPI.readTextFile');
+                throw new Error('当前环境未提供 fsAPI.readTextFile');
             }
             const data = await api.readTextFile(filePath, PREVIEW_MAX_BYTES);
             if (this._selectedFile !== filePath) return;
@@ -586,13 +623,14 @@ export class FileExplorer {
             fontFamily: 'system-ui, -apple-system, sans-serif'
         });
 
-        const items: { icon: string; label: string; action: string }[] = [];
+        const items: { icon: string; label: string; action: string; danger?: boolean }[] = [];
         if (!isDirectory) {
             items.push({ icon: 'fa-eye', label: '预览', action: 'preview' });
         }
         items.push({ icon: 'fa-arrow-up-right-from-square', label: '用默认应用打开', action: 'open-default' });
         items.push({ icon: 'fa-folder-open', label: '在文件夹中显示', action: 'reveal' });
         items.push({ icon: 'fa-link', label: '复制路径', action: 'copy-path' });
+        items.push({ icon: 'fa-trash-can', label: '删除', action: 'delete', danger: true });
 
         const btnStyle = `
             display:flex; align-items:center; gap:8px; width:100%;
@@ -602,13 +640,22 @@ export class FileExplorer {
         `.trim();
         const iconStyle = 'width:16px; text-align:center; font-size:12px; color:#6b7280; flex-shrink:0;';
 
+        const dangerBtnStyle = btnStyle.replace('color:#1f2937', 'color:#dc2626');
+        const dangerIconStyle = iconStyle.replace('color:#6b7280', 'color:#dc2626');
+
         menu.innerHTML = items
-            .map(
-                (it, i) =>
-                    `${i > 0 && it.action === 'copy-path' ? '<div style="height:1px; margin:3px 8px; background:rgba(0,0,0,0.06);"></div>' : ''}` +
-                    `<button data-ctx-action="${it.action}" style="${btnStyle}">` +
-                    `<i class="fas ${it.icon}" style="${iconStyle}"></i><span>${it.label}</span></button>`
-            )
+            .map((it, i) => {
+                const needSep = (i > 0 && it.action === 'copy-path') || it.action === 'delete';
+                const sep = needSep
+                    ? '<div style="height:1px; margin:3px 8px; background:rgba(0,0,0,0.06);"></div>'
+                    : '';
+                const bStyle = it.danger ? dangerBtnStyle : btnStyle;
+                const iStyle = it.danger ? dangerIconStyle : iconStyle;
+                return (
+                    `${sep}<button data-ctx-action="${it.action}" data-danger="${it.danger ? '1' : ''}" style="${bStyle}">` +
+                    `<i class="fas ${it.icon}" style="${iStyle}"></i><span>${it.label}</span></button>`
+                );
+            })
             .join('');
 
         menu.style.left = `${ev.clientX}px`;
@@ -626,17 +673,18 @@ export class FileExplorer {
         this._ctxMenuEl = menu;
 
         menu.querySelectorAll<HTMLElement>('[data-ctx-action]').forEach((btn) => {
+            const isDanger = btn.dataset.danger === '1';
             btn.addEventListener('mouseenter', () => {
-                btn.style.background = '#3b82f6';
-                btn.style.color = 'white';
+                btn.style.background = isDanger ? '#fef2f2' : '#3b82f6';
+                btn.style.color = isDanger ? '#b91c1c' : 'white';
                 const icon = btn.querySelector('i');
-                if (icon) (icon as HTMLElement).style.color = 'white';
+                if (icon) (icon as HTMLElement).style.color = isDanger ? '#b91c1c' : 'white';
             });
             btn.addEventListener('mouseleave', () => {
                 btn.style.background = 'transparent';
-                btn.style.color = '#1f2937';
+                btn.style.color = isDanger ? '#dc2626' : '#1f2937';
                 const icon = btn.querySelector('i');
-                if (icon) (icon as HTMLElement).style.color = '#6b7280';
+                if (icon) (icon as HTMLElement).style.color = isDanger ? '#dc2626' : '#6b7280';
             });
             btn.addEventListener('click', (e) => {
                 e.stopPropagation();
@@ -656,6 +704,9 @@ export class FileExplorer {
                     }
                     case 'copy-path':
                         navigator.clipboard.writeText(filePath).catch(() => {});
+                        break;
+                    case 'delete':
+                        this._deleteItem(filePath, isDirectory);
                         break;
                 }
             });
@@ -677,6 +728,40 @@ export class FileExplorer {
             document.removeEventListener('click', this._ctxDismissHandler);
             document.removeEventListener('contextmenu', this._ctxDismissHandler);
             this._ctxDismissHandler = null;
+        }
+    }
+
+    private async _deleteItem(filePath: string, isDirectory: boolean): Promise<void> {
+        const name = filePath.split('/').pop() || filePath;
+        const typeLabel = isDirectory ? '文件夹' : '文件';
+
+        const confirmed = await showConfirmModal({
+            icon: 'fa-trash-can',
+            iconBg: '#FEF2F2',
+            iconColor: '#DC2626',
+            title: `删除${typeLabel}`,
+            message: `确定要将${typeLabel}「<b>${escapeHtml(name)}</b>」移动到回收站吗？此操作可从回收站恢复。`,
+            confirmText: '删除',
+            cancelText: '取消',
+            danger: true
+        });
+        if (!confirmed) return;
+
+        try {
+            const api = (window as any).fsAPI;
+            if (!api || typeof api.trashItem !== 'function') {
+                throw new Error('当前环境不支持删除操作');
+            }
+            await api.trashItem(filePath);
+            if (this._selectedFile === filePath) {
+                this._selectedFile = null;
+                this._previewState = { status: 'idle' };
+                this._renderPreview();
+            }
+            this.softRefresh();
+        } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            window.alert(`删除失败: ${msg}`);
         }
     }
 
@@ -721,7 +806,7 @@ export class FileExplorer {
             panel.innerHTML = `
             <div class="placeholder-content">
                 <i class="fas fa-folder-open placeholder-icon"></i>
-                <p>\u65E0\u6CD5\u52A0\u8F7D\u5DE5\u4F5C\u7A7A\u95F4</p>
+                <p>无法加载工作空间</p>
                 <p class="placeholder-hint">${escapeHtml(this._workspaceError)}</p>
             </div>`;
             return;
@@ -730,7 +815,7 @@ export class FileExplorer {
             panel.innerHTML = `
             <div class="placeholder-content">
                 <i class="fas fa-folder-open placeholder-icon"></i>
-                <p>\u6B63\u5728\u52A0\u8F7D\u5DE5\u4F5C\u7A7A\u95F4\u2026</p>
+                <p>正在加载工作空间…</p>
             </div>`;
             return;
         }
@@ -744,17 +829,22 @@ export class FileExplorer {
                     <i class="fas fa-folder-tree ws-path-icon"></i>
                     <span class="ws-path-text">${escapeHtml(rootName)}</span>
                 </div>
-                <div class="ws-view-switch" role="tablist" aria-label="\u89C6\u56FE\u6A21\u5F0F">
-                    <button class="ws-view-btn ${this._viewMode === 'tree' ? 'ws-view-active' : ''}"
-                        data-view="tree" title="\u6811\u72B6\u89C6\u56FE">
-                        <i class="fas fa-list"></i>
-                        <span>\u6811\u72B6</span>
+                <div style="display:flex;align-items:center;gap:4px;">
+                    <button class="ws-refresh-btn" title="刷新" data-action="refresh">
+                        <i class="fas fa-arrows-rotate"></i>
                     </button>
-                    <button class="ws-view-btn ${this._viewMode === 'grid' ? 'ws-view-active' : ''}"
-                        data-view="grid" title="\u56FE\u6807\u89C6\u56FE">
-                        <i class="fas fa-grip"></i>
-                        <span>\u56FE\u6807</span>
-                    </button>
+                    <div class="ws-view-switch" role="tablist" aria-label="视图模式">
+                        <button class="ws-view-btn ${this._viewMode === 'tree' ? 'ws-view-active' : ''}"
+                            data-view="tree" title="树状视图">
+                            <i class="fas fa-list"></i>
+                            <span>树状</span>
+                        </button>
+                        <button class="ws-view-btn ${this._viewMode === 'grid' ? 'ws-view-active' : ''}"
+                            data-view="grid" title="图标视图">
+                            <i class="fas fa-grip"></i>
+                            <span>图标</span>
+                        </button>
+                    </div>
                 </div>
             </div>
             <div class="ws-browser-body">
@@ -772,6 +862,21 @@ export class FileExplorer {
                 if (v === 'tree' || v === 'grid') this._setViewMode(v);
             });
         });
+        const refreshBtn = panel.querySelector<HTMLButtonElement>('.ws-refresh-btn');
+        if (refreshBtn) {
+            refreshBtn.addEventListener('click', () => {
+                const icon = refreshBtn.querySelector('i');
+                if (icon) {
+                    icon.style.transition = 'transform 0.5s ease';
+                    icon.style.transform = 'rotate(360deg)';
+                    setTimeout(() => {
+                        icon.style.transition = '';
+                        icon.style.transform = '';
+                    }, 500);
+                }
+                this.softRefresh();
+            });
+        }
 
         const browser = panel.querySelector<HTMLElement>('.ws-browser-body');
         if (browser) {
@@ -825,7 +930,7 @@ export class FileExplorer {
         if (cached === 'loading' || cached === undefined) {
             return `<div class="ws-tree-loading" style="padding-left:${depth * 14 + 10}px">
                 <i class="fas fa-circle-notch fa-spin"></i>
-                <span>\u52A0\u8F7D\u4E2D\u2026</span>
+                <span>加载中…</span>
             </div>`;
         }
         if ((cached as { error?: string }).error) {
@@ -836,7 +941,7 @@ export class FileExplorer {
         }
         const entries = cached as FSEntry[];
         if (entries.length === 0) {
-            return `<div class="ws-tree-empty" style="padding-left:${depth * 14 + 10}px">\uFF08\u7A7A\u76EE\u5F55\uFF09</div>`;
+            return `<div class="ws-tree-empty" style="padding-left:${depth * 14 + 10}px">（空目录）</div>`;
         }
         return entries.map((e) => this._renderTreeEntryHtml(e, depth)).join('');
     }
@@ -923,7 +1028,7 @@ export class FileExplorer {
         if (cached === undefined || cached === 'loading') {
             return `<div class="ws-grid-loading">
                 <i class="fas fa-circle-notch fa-spin"></i>
-                <span>\u52A0\u8F7D\u4E2D\u2026</span>
+                <span>加载中…</span>
             </div>`;
         }
         if ((cached as { error?: string }).error) {
@@ -938,13 +1043,13 @@ export class FileExplorer {
                 ? `<div class="ws-grid-item ws-grid-up" data-action="grid-up"
                         data-path="${escapeHtml(this._parentOf(this._gridPath))}">
                         <i class="fas fa-arrow-up ws-grid-icon ws-grid-icon-up"></i>
-                        <div class="ws-grid-name">\u4E0A\u7EA7\u76EE\u5F55</div>
+                        <div class="ws-grid-name">上级目录</div>
                     </div>`
                 : '';
         if (entries.length === 0) {
             return `<div class="ws-grid-items">
                 ${upButton}
-                <div class="ws-grid-empty">\uFF08\u7A7A\u76EE\u5F55\uFF09</div>
+                <div class="ws-grid-empty">（空目录）</div>
             </div>`;
         }
         const items = entries
@@ -993,7 +1098,7 @@ export class FileExplorer {
             return `
             <div class="ws-preview-empty">
                 <i class="fas fa-eye"></i>
-                <span>\u70B9\u51FB\u6587\u4EF6\u4EE5\u5728\u6B64\u9884\u89C8</span>
+                <span>点击文件以在此预览</span>
             </div>`;
         }
         const name = this._selectedFile.split('/').pop() || this._selectedFile;
@@ -1006,7 +1111,7 @@ export class FileExplorer {
                     ? `<span class="ws-preview-size">${escapeHtml(formatBytes(this._previewState.data.size))}</span>`
                     : ''
             }
-            <button class="ws-preview-close" title="\u5173\u95ED\u9884\u89C8" data-preview-close>
+            <button class="ws-preview-close" title="关闭预览" data-preview-close>
                 <i class="fas fa-xmark"></i>
             </button>
         </div>`;
@@ -1016,13 +1121,13 @@ export class FileExplorer {
             bodyHtml = `
             <div class="ws-preview-body ws-preview-info">
                 <i class="fas fa-circle-notch fa-spin"></i>
-                <span>\u6B63\u5728\u8BFB\u53D6\u6587\u4EF6\u2026</span>
+                <span>正在读取文件…</span>
             </div>`;
         } else if (this._previewState.status === 'error') {
             bodyHtml = `
             <div class="ws-preview-body ws-preview-info">
                 <i class="fas fa-triangle-exclamation"></i>
-                <span>${escapeHtml(this._previewState.error || '\u8BFB\u53D6\u5931\u8D25')}</span>
+                <span>${escapeHtml(this._previewState.error || '读取失败')}</span>
             </div>`;
         } else if (this._previewState.data) {
             const d = this._previewState.data;
@@ -1031,9 +1136,9 @@ export class FileExplorer {
                 <div class="ws-preview-body ws-preview-info">
                     <i class="fas fa-file-circle-xmark"></i>
                     <div>
-                        <div>\u65E0\u6CD5\u9884\u89C8\uFF1A\u6587\u4EF6\u5927\u5C0F ${escapeHtml(formatBytes(d.size))}
-                            \u8D85\u8FC7 ${escapeHtml(formatBytes(d.limit))} \u9650\u5236</div>
-                        <div class="ws-preview-hint">\u5F53\u524D\u9884\u89C8\u5668\u4EC5\u652F\u6301\u8F83\u5C0F\u7684\u6587\u672C\u6587\u4EF6</div>
+                        <div>无法预览：文件大小 ${escapeHtml(formatBytes(d.size))}
+                            超过 ${escapeHtml(formatBytes(d.limit))} 限制</div>
+                        <div class="ws-preview-hint">当前预览器仅支持较小的文本文件</div>
                     </div>
                 </div>`;
             } else if (d.binary) {
@@ -1041,8 +1146,8 @@ export class FileExplorer {
                 <div class="ws-preview-body ws-preview-info">
                     <i class="fas fa-file-shield"></i>
                     <div>
-                        <div>\u65E0\u6CD5\u9884\u89C8\uFF1A\u68C0\u6D4B\u5230\u4E8C\u8FDB\u5236\u6587\u4EF6</div>
-                        <div class="ws-preview-hint">\u5F53\u524D\u9884\u89C8\u5668\u4EC5\u652F\u6301\u6587\u672C\u6587\u4EF6</div>
+                        <div>无法预览：检测到二进制文件</div>
+                        <div class="ws-preview-hint">当前预览器仅支持文本文件</div>
                     </div>
                 </div>`;
             } else {

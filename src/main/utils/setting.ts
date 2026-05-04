@@ -90,8 +90,42 @@ const ModelSchema = z.object({
 /** 控制模型推理深度，空字符串表示使用模型默认值 */
 type ReasoningEffort = '' | 'none' | 'low' | 'medium' | 'high';
 
-const DisplaySchema = z.object({
-    scale_factor: z.number().min(0.5).max(2.0).default(1).describe('GUI 缩放系数 (0.5 ~ 2.0)')
+const GUIConfigSchema = z.object({
+    scale_factor: z.number().min(0.5).max(2.0).optional().default(1).describe('GUI 缩放系数 (0.5 ~ 2.0)'),
+    ctrl_enter_send: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe('是否使用 Ctrl+Enter 发送消息（false 时按 Enter 发送）')
+});
+
+export const DEFAULT_SHORTCUTS = {
+    switch_mode: 'ctrl+k',
+    switch_model: 'f2',
+    clear_input: 'ctrl+c',
+    endline: 'ctrl+j',
+    show_help: 'ctrl+h',
+    list_tasks: 'ctrl+l'
+} as const;
+
+const ShortcutsSchema = z.object({
+    switch_mode: z.string().default(DEFAULT_SHORTCUTS.switch_mode).describe('模式切换'),
+    switch_model: z.string().default(DEFAULT_SHORTCUTS.switch_model).describe('模型切换'),
+    endline: z.string().default(DEFAULT_SHORTCUTS.endline).describe('回车换行'),
+    show_help: z.string().default(DEFAULT_SHORTCUTS.show_help).describe('打开帮助'),
+    clear_input: z.string().default(DEFAULT_SHORTCUTS.clear_input).describe('删除输入内容'),
+    list_tasks: z.string().default(DEFAULT_SHORTCUTS.list_tasks).describe('显示任务列表')
+});
+
+const TerminalCliSchema = z.object({
+    shortcuts: ShortcutsSchema.default({
+        switch_mode: DEFAULT_SHORTCUTS.switch_mode,
+        switch_model: DEFAULT_SHORTCUTS.switch_model,
+        endline: DEFAULT_SHORTCUTS.endline,
+        show_help: DEFAULT_SHORTCUTS.show_help,
+        clear_input: DEFAULT_SHORTCUTS.clear_input,
+        list_tasks: DEFAULT_SHORTCUTS.list_tasks
+    }).describe('快捷键配置')
 });
 
 type Provider = z.infer<typeof ProviderSchema>;
@@ -126,7 +160,17 @@ function getSettingSchema(): z.ZodObject<z.ZodRawShape> {
         ).default('full'),
         providers: z.array(ProviderSchema).describe('可用AI模型提供商').default([]),
         models: z.array(ModelSchema).describe('可用AI模型').default([]),
-        display: DisplaySchema.describe('显示设置').default({}),
+        gui_config: GUIConfigSchema.describe('桌面 GUI 设置').default({ scale_factor: 1, ctrl_enter_send: false }),
+        cli_config: TerminalCliSchema.describe('终端 CLI 设置').default({
+            shortcuts: {
+                switch_mode: DEFAULT_SHORTCUTS.switch_mode,
+                switch_model: DEFAULT_SHORTCUTS.switch_model,
+                endline: DEFAULT_SHORTCUTS.endline,
+                show_help: DEFAULT_SHORTCUTS.show_help,
+                clear_input: DEFAULT_SHORTCUTS.clear_input,
+                list_tasks: DEFAULT_SHORTCUTS.list_tasks
+            }
+        }),
         applications: ApplicationConfigSchema.describe('OpenDesk应用相关配置').default({})
     });
 }
@@ -264,6 +308,13 @@ export class Setting {
             return null;
         }
         const settingRawObject = JSON.parse(fs.readFileSync(settingFile, 'utf8'));
+
+        // Migration: rename legacy 'display' field to 'gui_config'
+        if (settingRawObject.display && !settingRawObject.gui_config) {
+            settingRawObject.gui_config = settingRawObject.display;
+            delete settingRawObject.display;
+        }
+
         const setting = new Setting();
         try {
             setting.data = getSettingSchema().parse(settingRawObject) as SettingData;
@@ -420,9 +471,11 @@ function getAppDirectory(): string {
 /**
  * 获取应用日志目录
  */
+const _ensuredDirCache = new Set<string>();
 function ensureDirectoryExists(directory: string): string {
-    if (!fs.existsSync(directory)) {
+    if (!_ensuredDirCache.has(directory)) {
         fs.mkdirSync(directory, { recursive: true });
+        _ensuredDirCache.add(directory);
     }
     return directory;
 }
@@ -518,6 +571,16 @@ function getTaskSessionMemoryPath(taskId: string, ensureExists: boolean = true):
     return path.join(getTaskSessionMemoryDirectory(taskId, ensureExists), 'session-memory.md');
 }
 
+export type ShortcutsConfig = z.infer<typeof ShortcutsSchema>;
+
+/**
+ * 获取当前已配置的快捷键（带默认值回退）
+ */
+function getShortcuts(): ShortcutsConfig {
+    const data = Setting.getInstance().getData();
+    return (data as any).cli_config?.shortcuts ?? ShortcutsSchema.parse({});
+}
+
 export {
     getAppDirectory,
     getDefaultAppDirectory,
@@ -531,5 +594,6 @@ export {
     getTaskSessionMemoryPath,
     getTempWorkspaceDirectory,
     getSettingSchema,
+    getShortcuts,
     type ReasoningEffort
 };

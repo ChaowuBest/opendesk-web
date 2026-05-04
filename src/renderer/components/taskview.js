@@ -112,7 +112,7 @@ class TaskView extends HTMLElement {
         if (hasTextPart) {
             return `
             <div class="flex items-start flex-row-reverse">
-                <div class="bg-white text-gray-900 rounded-2xl px-3 py-1.5 shadow-sm max-w-3xl border border-gray-200">
+                <div class="bg-white text-gray-900 rounded-lg px-3 py-1.5 max-w-3xl border border-gray-200">
                     ${content}
                 </div>
             </div>
@@ -216,9 +216,13 @@ class TaskView extends HTMLElement {
             const domElement = this.getHistoryContainer();
             this._programmaticScrolling = true;
             domElement.scrollTop = domElement.scrollHeight;
-            requestAnimationFrame(() => {
+            // 延长程序化滚动保护窗口——内容插入导致的布局重排可能在多帧后
+            // 才触发 scroll 事件，单帧保护不够
+            if (this._programmaticScrollTimer) clearTimeout(this._programmaticScrollTimer);
+            this._programmaticScrollTimer = setTimeout(() => {
                 this._programmaticScrolling = false;
-            });
+                this._programmaticScrollTimer = null;
+            }, 150);
         });
     }
 
@@ -815,16 +819,27 @@ class TaskView extends HTMLElement {
                         last_part_element.innerHTML = progress.last_part.rendered || '';
                     }
 
+                    if (progress.last_part.type === 'tool_call') {
+                        last_part_element.querySelectorAll('.terminal-tool-scroll').forEach((el) => {
+                            el.scrollTop = el.scrollHeight;
+                        });
+                    }
+
                     const isStreaming = progress.task_status === 'running';
                     const usageEl = message_container.querySelector('.message-usage');
                     if (usageEl) {
                         const usage = progress.usage || null;
-                        const promptTokens = usage ? usage.prompt_tokens : 0;
-                        const completionTokens = usage ? usage.completion_tokens : 0;
-                        const totalTokens = usage ? usage.total_tokens : 0;
-                        const titleParts = usage
-                            ? `输入: ${promptTokens}, 输出: ${completionTokens}, 总计: ${totalTokens}`
-                            : '';
+                        // 模型尚未返回新的 usage 时，沿用之前已显示的数值，避免闪回 0
+                        const prevPrompt = parseInt(usageEl.dataset.promptTokens || '0', 10);
+                        const prevCompletion = parseInt(usageEl.dataset.completionTokens || '0', 10);
+                        const prevTotal = parseInt(usageEl.dataset.totalTokens || '0', 10);
+                        const promptTokens = usage ? usage.prompt_tokens : prevPrompt;
+                        const completionTokens = usage ? usage.completion_tokens : prevCompletion;
+                        const totalTokens = usage ? usage.total_tokens : prevTotal;
+                        const titleParts =
+                            totalTokens > 0
+                                ? `输入: ${promptTokens}, 输出: ${completionTokens}, 总计: ${totalTokens}`
+                                : '';
                         let ratioText = '';
                         if (this._modelContextSize > 0 && totalTokens > 0) {
                             const pct = ((totalTokens / this._modelContextSize) * 100).toFixed(1);
@@ -871,6 +886,21 @@ class TaskView extends HTMLElement {
                 // 任务级待办的实时更新已通过 todomgr.taskTodosUpdated 事件单独订阅，
                 // 这里无需再从工具调用进度里反推 TodoWrite 的执行状态。
 
+                // 文件操作工具完成后，增量刷新工作空间文件浏览器
+                if (progress.last_part && progress.last_part.type === 'tool_call') {
+                    const FILE_TOOLS = new Set(['writeFile', 'editFile', 'searchReplace', 'applyPatch']);
+                    const toolcalls = progress.last_part.toolcalls || [];
+                    const hasFileOp = toolcalls.some(
+                        (tc) => FILE_TOOLS.has(tc.tool_name) && (tc.status === 'success' || tc.status === 'error')
+                    );
+                    if (hasFileOp) {
+                        const sidebar = this._getRightSidebarEl();
+                        if (sidebar && typeof sidebar.softRefreshWorkspace === 'function') {
+                            sidebar.softRefreshWorkspace();
+                        }
+                    }
+                }
+
                 this.tryScrollToEnd();
             });
         });
@@ -911,6 +941,10 @@ class TaskView extends HTMLElement {
             document.removeEventListener('task-list-updated', this._taskListUpdateHandler);
             this._taskListUpdateHandler = null;
         }
+        if (this._poolSegObserver) {
+            this._poolSegObserver.disconnect();
+            this._poolSegObserver = null;
+        }
         if (this._domSanitizer) {
             this._domSanitizer.disconnect();
             this._domSanitizer = null;
@@ -930,8 +964,8 @@ class TaskView extends HTMLElement {
                         <!-- 滚动到底部按钮, 按需显示 -->
                         <button
                             id="taskview-scroll-to-bottom-button"
-                            class="absolute bottom-3 right-8 flex items-center justify-center px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-full shadow transition-all focus:outline-none active:scale-95 text-xs hidden"
-                            style="min-width: unset; height: 2rem;"
+                            class="absolute bottom-3 right-8 flex items-center justify-center px-3 py-1 text-white rounded-full shadow transition-all focus:outline-none active:scale-95 text-xs hidden"
+                            style="min-width: unset; height: 2rem; background: rgba(120,140,170,0.72); backdrop-filter: blur(4px);"
                             title="滚动到底部"
                         >
                             <i class="fas fa-arrow-down text-sm"></i>
@@ -953,11 +987,11 @@ class TaskView extends HTMLElement {
 
                 <!-- 右侧边栏拖拽条 -->
                 <div id="task-${this.task_id}-resizer"
-                    class="relative group shrink-0"
+                    class="resizer-group relative shrink-0"
                     style="background: linear-gradient(to right, transparent 40%, #e0e0e0 50%, transparent 60%); width: 4px; cursor: col-resize; display: ${TaskView.rightSidebarExpanded ? '' : 'none'};"
                 >
                     <div class="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 pointer-events-none">
-                        <div class="w-[2px] h-12 bg-gray-200 rounded-full opacity-70 group-hover:opacity-100 group-hover:bg-blue-400 transition"></div>
+                        <div class="resizer-handle-indicator resizer-blue" style="width: 2px; height: 3rem; border-radius: 9999px; background: #e5e7eb;"></div>
                     </div>
                 </div>
 
@@ -1104,8 +1138,69 @@ class TaskView extends HTMLElement {
             if (this._programmaticScrolling) return;
             const scrollBottom = chatHistory.scrollTop + chatHistory.clientHeight;
             const distanceToBottom = Math.abs(chatHistory.scrollHeight - scrollBottom);
-            this.setAutoScrollingToBottom(distanceToBottom < 50);
+            // 使用更宽松的阈值避免因内容增长导致的误 detach
+            if (distanceToBottom < 80) {
+                if (!this.auto_scrolling_to_bottom) {
+                    this.setAutoScrollingToBottom(true);
+                }
+            } else {
+                if (this.auto_scrolling_to_bottom) {
+                    this.setAutoScrollingToBottom(false);
+                }
+            }
         });
+
+        this._poolSegRaf = null;
+        const initPoolSegIndicators = () => {
+            chatHistory.querySelectorAll('.pool-seg').forEach((seg) => {
+                const indicator = seg.querySelector('.pool-seg-indicator');
+                const active = seg.querySelector('.pool-seg-btn.active');
+                if (indicator && active) {
+                    indicator.style.left = active.offsetLeft + 'px';
+                    indicator.style.width = active.offsetWidth + 'px';
+                }
+            });
+        };
+        this._poolSegObserver = new MutationObserver(() => {
+            if (this._poolSegRaf) return;
+            this._poolSegRaf = requestAnimationFrame(() => {
+                this._poolSegRaf = null;
+                initPoolSegIndicators();
+            });
+        });
+        this._poolSegObserver.observe(chatHistory, { childList: true, subtree: true });
+
+        chatHistory.addEventListener('click', (e) => {
+            const tabBtn = e.target.closest('.pool-seg-btn[data-pool-filter]');
+            if (!tabBtn) return;
+            const card = tabBtn.closest('.subtask-pool-card');
+            if (!card) return;
+            const filter = tabBtn.dataset.poolFilter;
+
+            card.querySelectorAll('.pool-seg-btn').forEach((btn) => btn.classList.remove('active'));
+            tabBtn.classList.add('active');
+
+            const seg = tabBtn.closest('.pool-seg');
+            const indicator = seg ? seg.querySelector('.pool-seg-indicator') : null;
+            if (indicator) {
+                indicator.style.left = tabBtn.offsetLeft + 'px';
+                indicator.style.width = tabBtn.offsetWidth + 'px';
+            }
+
+            card.querySelectorAll('[data-pool-task-idx]').forEach((row) => {
+                const status = row.dataset.poolTaskStatus;
+                if (filter === 'all') {
+                    row.style.display = '';
+                } else if (filter === 'running') {
+                    row.style.display = status === 'running' || status === 'retrying' ? '' : 'none';
+                } else if (filter === 'success') {
+                    row.style.display = status === 'success' ? '' : 'none';
+                } else if (filter === 'fail') {
+                    row.style.display = status === 'fail' ? '' : 'none';
+                }
+            });
+        });
+
         const scrollButton = this.querySelector('#taskview-scroll-to-bottom-button');
         scrollButton.addEventListener('click', () => {
             this.setAutoScrollingToBottom(true);
@@ -1159,7 +1254,7 @@ class EmbeddedTaskView extends HTMLElement {
         if (hasTextPart) {
             return `
             <div class="flex items-start flex-row-reverse">
-                <div class="bg-white text-gray-900 rounded-2xl px-3 py-1 shadow-sm max-w-3xl border border-gray-200">
+                <div class="bg-white text-gray-900 rounded-lg px-3 py-1 max-w-3xl border border-gray-200">
                     ${content}
                 </div>
             </div>
@@ -1339,6 +1434,12 @@ class EmbeddedTaskView extends HTMLElement {
                             } else {
                                 last_part_element.innerHTML = progress.last_part.rendered || '';
                             }
+
+                            if (progress.last_part.type === 'tool_call') {
+                                last_part_element.querySelectorAll('.terminal-tool-scroll').forEach((el) => {
+                                    el.scrollTop = el.scrollHeight;
+                                });
+                            }
                         }
                     }
                 }
@@ -1390,8 +1491,8 @@ class EmbeddedTaskView extends HTMLElement {
             <!-- 滚动到底部按钮, 按需显示 -->
             <button
                 id="taskview-scroll-to-bottom-button"
-                class="absolute bottom-20 left-1/2 -translate-x-1/2 flex items-center justify-center px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-full shadow transition-all focus:outline-none active:scale-95 text-xs hidden"
-                style="min-width: unset; height: 2rem;"
+                class="absolute bottom-20 left-1/2 -translate-x-1/2 flex items-center justify-center px-3 py-1 text-white rounded-full shadow transition-all focus:outline-none active:scale-95 text-xs hidden"
+                style="min-width: unset; height: 2rem; background: rgba(120,140,170,0.72); backdrop-filter: blur(4px);"
                 title="滚动到底部"
             >
                 <i class="fas fa-arrow-down text-sm"></i>
@@ -1407,7 +1508,15 @@ class EmbeddedTaskView extends HTMLElement {
         this.querySelector('#taskview-chat-history').addEventListener('scroll', (event) => {
             const scrollBottom = event.target.scrollTop + event.target.clientHeight;
             const distanceToBottom = Math.abs(event.target.scrollHeight - scrollBottom);
-            this.setAutoScrollingToBottom(distanceToBottom < 50);
+            if (distanceToBottom < 80) {
+                if (!this.auto_scrolling_to_bottom) {
+                    this.setAutoScrollingToBottom(true);
+                }
+            } else {
+                if (this.auto_scrolling_to_bottom) {
+                    this.setAutoScrollingToBottom(false);
+                }
+            }
         });
 
         const hc = this.getHistoryContainer();

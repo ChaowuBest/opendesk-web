@@ -4,18 +4,10 @@
 
 import path from 'path';
 import { chunk as llmChunk } from 'llm-chunk';
-
-let cachedLLM = null;
+import { LLM } from '../../../aikernel/llm.js';
 
 async function getBatchEmbedFn() {
-    if (cachedLLM) return cachedLLM.batchEmbed.bind(cachedLLM);
-    try {
-        const mod = await import('../../../aikernel/llm.js');
-        cachedLLM = mod.LLM;
-        return cachedLLM.batchEmbed.bind(cachedLLM);
-    } catch (err) {
-        throw new Error(`LLM.batchEmbed unavailable: ${err.message}`);
-    }
+    return LLM.batchEmbed.bind(LLM);
 }
 
 // ── 私有：format 映射 ──────────────────────────────────────────────────

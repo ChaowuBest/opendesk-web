@@ -25,6 +25,7 @@ import '../components/logview.js';
 import '../components/fileview.js';
 import '../components/recommendation.ts';
 import '../components/homepage.js';
+import '../components/wizard.ts';
 import '../components/schemaeditor.js';
 import '../../main/applications/ppt/renderer/pptcontainer.js';
 import '../components/shortcutManager.ts';

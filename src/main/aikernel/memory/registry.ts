@@ -101,50 +101,58 @@ export class MemoryRegistry {
 
     // ─── Path helpers ──────────────────────────────────────
 
-    private getGlobalMemoryDir(): string {
+    private _ensuredDirs = new Set<string>();
+
+    private async getGlobalMemoryDir(): Promise<string> {
         const base = this.globalDirOverride ?? getAppDirectory();
         const dir = path.join(base, 'memory');
-        fs.mkdirSync(dir, { recursive: true });
+        if (!this._ensuredDirs.has(dir)) {
+            await fs.promises.mkdir(dir, { recursive: true });
+            this._ensuredDirs.add(dir);
+        }
         return dir;
     }
 
-    private getWorkspaceMemoryDir(): string {
+    private async getWorkspaceMemoryDir(): Promise<string> {
         const dir = path.join(this.workspace, '.opendesk', 'memory');
-        fs.mkdirSync(dir, { recursive: true });
+        if (!this._ensuredDirs.has(dir)) {
+            await fs.promises.mkdir(dir, { recursive: true });
+            this._ensuredDirs.add(dir);
+        }
         return dir;
     }
 
-    private getMemoryDir(scope: MemoryScope): string {
+    private async getMemoryDir(scope: MemoryScope): Promise<string> {
         return scope === 'global' ? this.getGlobalMemoryDir() : this.getWorkspaceMemoryDir();
     }
 
-    private getIndexPath(scope: MemoryScope): string {
-        return path.join(this.getMemoryDir(scope), 'index.json');
+    private async getIndexPath(scope: MemoryScope): Promise<string> {
+        return path.join(await this.getMemoryDir(scope), 'index.json');
     }
 
-    private getContentPath(scope: MemoryScope, uid: string): string {
-        return path.join(this.getMemoryDir(scope), `${uid}.md`);
+    private async getContentPath(scope: MemoryScope, uid: string): Promise<string> {
+        return path.join(await this.getMemoryDir(scope), `${uid}.md`);
     }
 
     // ─── Index I/O ────────────────────────────────────────
 
-    private loadIndex(scope: MemoryScope): MemoryIndex {
-        const indexPath = this.getIndexPath(scope);
-        if (!fs.existsSync(indexPath)) {
-            return createEmptyIndex();
-        }
+    private async loadIndex(scope: MemoryScope): Promise<MemoryIndex> {
+        const indexPath = await this.getIndexPath(scope);
         try {
-            const raw = fs.readFileSync(indexPath, 'utf-8');
+            const raw = await fs.promises.readFile(indexPath, 'utf-8');
             return JSON.parse(raw) as MemoryIndex;
         } catch (err) {
+            if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+                return createEmptyIndex();
+            }
             logger.warn(`Failed to load memory index (${scope}): ${err}`);
             return createEmptyIndex();
         }
     }
 
-    private saveIndex(scope: MemoryScope, index: MemoryIndex): void {
-        const indexPath = this.getIndexPath(scope);
-        fs.writeFileSync(indexPath, JSON.stringify(index, null, 2), 'utf-8');
+    private async saveIndex(scope: MemoryScope, index: MemoryIndex): Promise<void> {
+        const indexPath = await this.getIndexPath(scope);
+        await fs.promises.writeFile(indexPath, JSON.stringify(index, null, 2), 'utf-8');
     }
 
     // ─── Low-level CRUD ───────────────────────────────────
@@ -152,15 +160,15 @@ export class MemoryRegistry {
     /**
      * 底层写入。如果存在相同 uid 则更新，否则创建。
      */
-    putMemory(
+    async putMemory(
         scope: MemoryScope,
         meta: Omit<MemoryMeta, 'created_at' | 'updated_at'> & {
             created_at?: string;
             updated_at?: string;
         },
         content: string
-    ): MemoryMeta {
-        const index = this.loadIndex(scope);
+    ): Promise<MemoryMeta> {
+        const index = await this.loadIndex(scope);
         const now = new Date().toISOString();
 
         const existingIdx = index.memories.findIndex((m) => m.uid === meta.uid);
@@ -176,34 +184,41 @@ export class MemoryRegistry {
             index.memories.push(fullMeta);
         }
 
-        this.saveIndex(scope, index);
-        fs.writeFileSync(this.getContentPath(scope, meta.uid), content, 'utf-8');
+        await this.saveIndex(scope, index);
+        await fs.promises.writeFile(await this.getContentPath(scope, meta.uid), content, 'utf-8');
         return fullMeta;
     }
 
-    getMemory(uid: string): { meta: MemoryMeta; content: string; scope: MemoryScope } | undefined {
+    async getMemory(uid: string): Promise<{ meta: MemoryMeta; content: string; scope: MemoryScope } | undefined> {
         for (const scope of ['workspace', 'global'] as MemoryScope[]) {
-            const index = this.loadIndex(scope);
+            const index = await this.loadIndex(scope);
             const meta = index.memories.find((m) => m.uid === uid);
             if (meta) {
-                const contentPath = this.getContentPath(scope, uid);
-                const content = fs.existsSync(contentPath) ? fs.readFileSync(contentPath, 'utf-8') : '';
+                const contentPath = await this.getContentPath(scope, uid);
+                let content = '';
+                try {
+                    content = await fs.promises.readFile(contentPath, 'utf-8');
+                } catch {
+                    /* content file missing */
+                }
                 return { meta, content, scope };
             }
         }
         return undefined;
     }
 
-    deleteMemory(uid: string): boolean {
+    async deleteMemory(uid: string): Promise<boolean> {
         for (const scope of ['workspace', 'global'] as MemoryScope[]) {
-            const index = this.loadIndex(scope);
+            const index = await this.loadIndex(scope);
             const idx = index.memories.findIndex((m) => m.uid === uid);
             if (idx >= 0) {
                 index.memories.splice(idx, 1);
-                this.saveIndex(scope, index);
-                const contentPath = this.getContentPath(scope, uid);
-                if (fs.existsSync(contentPath)) {
-                    fs.unlinkSync(contentPath);
+                await this.saveIndex(scope, index);
+                const contentPath = await this.getContentPath(scope, uid);
+                try {
+                    await fs.promises.unlink(contentPath);
+                } catch {
+                    /* file already gone */
                 }
                 return true;
             }
@@ -211,14 +226,14 @@ export class MemoryRegistry {
         return false;
     }
 
-    listMemories(scope: MemoryScope): MemoryMeta[] {
-        return this.loadIndex(scope).memories;
+    async listMemories(scope: MemoryScope): Promise<MemoryMeta[]> {
+        return (await this.loadIndex(scope)).memories;
     }
 
-    listAllMemories(): { scope: MemoryScope; meta: MemoryMeta }[] {
+    async listAllMemories(): Promise<{ scope: MemoryScope; meta: MemoryMeta }[]> {
         const result: { scope: MemoryScope; meta: MemoryMeta }[] = [];
         for (const scope of ['workspace', 'global'] as MemoryScope[]) {
-            for (const meta of this.listMemories(scope)) {
+            for (const meta of await this.listMemories(scope)) {
                 result.push({ scope, meta });
             }
         }
@@ -230,12 +245,12 @@ export class MemoryRegistry {
     /**
      * 基于关键词的快速预过滤，返回候选集供 LLM 重排。
      */
-    keywordSearch(query: string): { scope: MemoryScope; meta: MemoryMeta; score: number }[] {
+    async keywordSearch(query: string): Promise<{ scope: MemoryScope; meta: MemoryMeta; score: number }[]> {
         const queryTokens = query.toLowerCase().split(/\s+/).filter(Boolean);
         const results: { scope: MemoryScope; meta: MemoryMeta; score: number }[] = [];
 
         for (const scope of ['workspace', 'global'] as MemoryScope[]) {
-            const index = this.loadIndex(scope);
+            const index = await this.loadIndex(scope);
             for (const meta of index.memories) {
                 let score = 0;
                 for (const token of queryTokens) {
@@ -260,11 +275,10 @@ export class MemoryRegistry {
      * 流程：关键词预过滤 → 全量候选（若预过滤无结果）→ LLM 语义评分 → 过滤低分项
      */
     async smartSearch(query: string): Promise<{ scope: MemoryScope; meta: MemoryMeta; relevance: number }[]> {
-        let candidates = this.keywordSearch(query);
+        let candidates = await this.keywordSearch(query);
 
-        // 关键词无结果时，使用全部记忆作为候选
         if (candidates.length === 0) {
-            candidates = this.listAllMemories().map((m) => ({ ...m, score: 0 }));
+            candidates = (await this.listAllMemories()).map((m) => ({ ...m, score: 0 }));
         }
 
         if (candidates.length === 0) {
@@ -389,11 +403,15 @@ ${candidateDescriptions}
         category: string,
         sourceTaskId?: string
     ): Promise<{ action: 'created' | 'updated' | 'skipped'; uid: string; name: string }> {
-        const existingMemories = this.listMemories(scope);
+        const existingMemories = await this.listMemories(scope);
 
         if (existingMemories.length === 0) {
             const uid = this.generateUid();
-            this.putMemory(scope, { uid, name, keywords, summary, category, source_task_id: sourceTaskId }, content);
+            await this.putMemory(
+                scope,
+                { uid, name, keywords, summary, category, source_task_id: sourceTaskId },
+                content
+            );
             return { action: 'created', uid, name };
         }
 
@@ -407,23 +425,26 @@ ${candidateDescriptions}
             .sort((a, b) => b.score - a.score)
             .slice(0, 5);
 
-        // 无潜在重复 → 跳过 LLM 直接创建
         if (candidates.length === 0) {
             const uid = this.generateUid();
-            this.putMemory(scope, { uid, name, keywords, summary, category, source_task_id: sourceTaskId }, content);
+            await this.putMemory(
+                scope,
+                { uid, name, keywords, summary, category, source_task_id: sourceTaskId },
+                content
+            );
             return { action: 'created', uid, name };
         }
 
-        // 只把候选项（而非全量记忆）发给 LLM 做精确判重
-        const existingDescriptions = candidates
-            .map((c) => {
+        const existingDescriptionParts = await Promise.all(
+            candidates.map(async (c) => {
                 const m = c.meta;
-                const existingContent = this.loadMemoryContent(m.uid) ?? '';
+                const existingContent = (await this.loadMemoryContent(m.uid)) ?? '';
                 const contentPreview =
                     existingContent.length > 200 ? existingContent.slice(0, 200) + '...' : existingContent;
                 return `- uid=${m.uid} | 名称: ${m.name} | 关键词: ${m.keywords.join(',')} | 摘要: ${m.summary}\n  内容摘要: ${contentPreview}`;
             })
-            .join('\n');
+        );
+        const existingDescriptions = existingDescriptionParts.join('\n');
 
         const prompt = `你是一个记忆管理助手。现在要添加一条新记忆，请判断它与现有记忆的关系。
 
@@ -467,7 +488,7 @@ ${existingDescriptions}
                     const targetUid = result.target_uid;
                     if (!targetUid) {
                         const uid = this.generateUid();
-                        this.putMemory(
+                        await this.putMemory(
                             scope,
                             {
                                 uid,
@@ -481,7 +502,7 @@ ${existingDescriptions}
                         );
                         return { action: 'created', uid, name };
                     }
-                    this.putMemory(
+                    await this.putMemory(
                         scope,
                         {
                             uid: targetUid,
@@ -500,7 +521,7 @@ ${existingDescriptions}
                 case 'create':
                 default: {
                     const uid = this.generateUid();
-                    this.putMemory(
+                    await this.putMemory(
                         scope,
                         { uid, name, keywords, summary, category, source_task_id: sourceTaskId },
                         content
@@ -511,7 +532,11 @@ ${existingDescriptions}
         } catch (err) {
             logger.warn(`LLM dedup failed, creating new memory: ${err}`);
             const uid = this.generateUid();
-            this.putMemory(scope, { uid, name, keywords, summary, category, source_task_id: sourceTaskId }, content);
+            await this.putMemory(
+                scope,
+                { uid, name, keywords, summary, category, source_task_id: sourceTaskId },
+                content
+            );
             return { action: 'created', uid, name };
         }
     }
@@ -522,7 +547,7 @@ ${existingDescriptions}
      * 智能删除：用 LLM 理解用户描述，找到最匹配的记忆并删除。
      */
     async smartForget(description: string): Promise<{ deleted: { uid: string; name: string; scope: MemoryScope }[] }> {
-        const allMemories = this.listAllMemories();
+        const allMemories = await this.listAllMemories();
         if (allMemories.length === 0) {
             return { deleted: [] };
         }
@@ -560,7 +585,7 @@ ${memDescriptions}
             const deleted: { uid: string; name: string; scope: MemoryScope }[] = [];
             for (const r of response.results.filter((r) => r.relevance >= 7)) {
                 const mem = allMemories.find((m) => m.meta.uid === r.uid);
-                if (mem && this.deleteMemory(r.uid)) {
+                if (mem && (await this.deleteMemory(r.uid))) {
                     deleted.push({ uid: r.uid, name: mem.meta.name, scope: mem.scope });
                 }
             }
@@ -577,19 +602,19 @@ ${memDescriptions}
         return `mem_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     }
 
-    loadMemoryContent(uid: string): string | undefined {
-        const memory = this.getMemory(uid);
+    async loadMemoryContent(uid: string): Promise<string | undefined> {
+        const memory = await this.getMemory(uid);
         if (!memory) return undefined;
         return memory.content;
     }
 
-    formatMemoriesForContext(memories: { scope: MemoryScope; meta: MemoryMeta }[]): string {
+    async formatMemoriesForContext(memories: { scope: MemoryScope; meta: MemoryMeta }[]): Promise<string> {
         if (memories.length === 0) return '未找到相关记忆。';
 
         const lines: string[] = ['以下是检索到的相关记忆信息：\n'];
 
         for (const { scope, meta } of memories) {
-            const content = this.loadMemoryContent(meta.uid);
+            const content = await this.loadMemoryContent(meta.uid);
             const scopeLabel = scope === 'global' ? '全局' : '工作区';
             lines.push(`### [${scopeLabel}] ${meta.name}`);
             lines.push(`- 分类: ${meta.category}`);

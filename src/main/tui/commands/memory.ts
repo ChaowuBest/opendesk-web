@@ -87,7 +87,7 @@ async function handleMemorySearch(tui: OpenDeskTUI, query: string): Promise<void
 
         const topResults = results.slice(0, 5);
         const memoriesForContext = topResults.map((r) => ({ scope: r.scope, meta: r.meta }));
-        const formattedContent = registry.formatMemoriesForContext(memoriesForContext);
+        const formattedContent = await registry.formatMemoriesForContext(memoriesForContext);
 
         const resultLines = topResults
             .map((r) => `  • ${r.meta.name} (${t('memory.relevance')}: ${r.relevance}/10)`)
@@ -143,8 +143,8 @@ async function handleMemoryForget(tui: OpenDeskTUI, description: string): Promis
     }
 }
 
-function handleMemoryList(tui: OpenDeskTUI): void {
-    const overlay = new MemoryListOverlay(tui);
+async function handleMemoryList(tui: OpenDeskTUI): Promise<void> {
+    const overlay = await MemoryListOverlay.create(tui);
     overlay.show();
 }
 
@@ -193,7 +193,7 @@ export function registerMemoryCommand(tui: OpenDeskTUI): void {
                 }
                 await handleMemoryForget(tui, restArgs);
             } else if (subCommand === 'list') {
-                handleMemoryList(tui);
+                await handleMemoryList(tui);
             } else {
                 logger.warn(
                     'Usage: /memory add [prompt] | /memory search <query> | /memory forget <description> | /memory list'

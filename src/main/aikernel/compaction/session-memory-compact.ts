@@ -15,6 +15,13 @@ import { getTaskSessionMemoryPath } from '../../utils/setting.js';
 import type { AutoCompactDecision } from './auto-compact.js';
 import { buildActiveContextView, buildProjectedActiveContextView } from './context-view.js';
 import { countFullCompactMessageStats, type FullCompactMessageStats } from './full-compact.js';
+import {
+    estimateRoughTokensFromAssistantParts,
+    estimateRoughTokensFromChatMessage,
+    estimateRoughTokensFromToolCall,
+    estimateTextTokens,
+    estimateVisibleContextTokens
+} from './token-estimation.js';
 import type { ActiveContextView, AssistantRoundRef, CompactBoundaryRef, ProjectedContextItem } from './types.js';
 
 export const SESSION_MEMORY_STATE_VERSION = 1;
@@ -382,50 +389,59 @@ export function getTaskSessionMemoryRelativePath(taskId: string): string {
     return path.join('artifacts', taskId, SESSION_MEMORY_DIRECTORY_NAME, SESSION_MEMORY_FILENAME);
 }
 
-export function ensureTaskSessionMemoryFile(taskId: string, options: { template?: string } = {}): SessionMemoryFile {
+export async function ensureTaskSessionMemoryFile(
+    taskId: string,
+    options: { template?: string } = {}
+): Promise<SessionMemoryFile> {
     const fullPath = getTaskSessionMemoryPath(taskId, true);
     const relativePath = getTaskSessionMemoryRelativePath(taskId);
     let created = false;
 
-    if (!fs.existsSync(fullPath)) {
-        fs.writeFileSync(fullPath, options.template ?? DEFAULT_SESSION_MEMORY_TEMPLATE, { encoding: 'utf8' });
+    try {
+        await fs.promises.access(fullPath);
+    } catch {
+        await fs.promises.writeFile(fullPath, options.template ?? DEFAULT_SESSION_MEMORY_TEMPLATE, {
+            encoding: 'utf8'
+        });
         created = true;
     }
 
-    return {
-        fullPath,
-        relativePath,
-        content: fs.readFileSync(fullPath, 'utf8'),
-        created
-    };
+    const content = await fs.promises.readFile(fullPath, 'utf8');
+    return { fullPath, relativePath, content, created };
 }
 
-export function readTaskSessionMemory(
+export async function readTaskSessionMemory(
     taskId: string,
     options: { ensureExists?: boolean; template?: string } = {}
-): string | undefined {
+): Promise<string | undefined> {
     if (options.ensureExists) {
-        return ensureTaskSessionMemoryFile(taskId, { template: options.template }).content;
+        return (await ensureTaskSessionMemoryFile(taskId, { template: options.template })).content;
     }
 
     const fullPath = getTaskSessionMemoryPath(taskId, false);
-    if (!fs.existsSync(fullPath)) {
+    try {
+        return await fs.promises.readFile(fullPath, 'utf8');
+    } catch {
         return undefined;
     }
-    return fs.readFileSync(fullPath, 'utf8');
 }
 
-export function writeTaskSessionMemory(taskId: string, content: string): { fullPath: string; relativePath: string } {
+export async function writeTaskSessionMemory(
+    taskId: string,
+    content: string
+): Promise<{ fullPath: string; relativePath: string }> {
     const fullPath = getTaskSessionMemoryPath(taskId, true);
     const relativePath = getTaskSessionMemoryRelativePath(taskId);
     const tmpPath = `${fullPath}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`;
 
     try {
-        fs.writeFileSync(tmpPath, content, { encoding: 'utf8' });
-        fs.renameSync(tmpPath, fullPath);
+        await fs.promises.writeFile(tmpPath, content, { encoding: 'utf8' });
+        await fs.promises.rename(tmpPath, fullPath);
     } catch (error) {
-        if (fs.existsSync(tmpPath)) {
-            fs.rmSync(tmpPath, { force: true });
+        try {
+            await fs.promises.rm(tmpPath, { force: true });
+        } catch {
+            /* cleanup best-effort */
         }
         throw error;
     }
@@ -468,6 +484,10 @@ function isAssistantMessage(message: ChatMessage): message is AssistantMessage {
     return message instanceof AssistantMessage || message.role === 'assistant';
 }
 
+function getActiveContextForSessionMemory(chatContext: ChatContext): ActiveContextView {
+    return buildActiveContextView(chatContext);
+}
+
 function getMessageId(message: ChatMessage): string | undefined {
     if (isUserMessage(message) || isAssistantMessage(message)) {
         return normalizeOptionalString(message.message_id);
@@ -475,97 +495,48 @@ function getMessageId(message: ChatMessage): string | undefined {
     return undefined;
 }
 
-function estimateTextTokens(text: string | undefined): number {
-    if (!text) {
-        return 0;
-    }
-    return Math.ceil(text.length / 4);
-}
-
 function estimateToolCallTokens(toolCall: ToolCall): number {
-    return (
-        estimateTextTokens(toolCall.tool_name) +
-        estimateTextTokens(toolCall.args_string) +
-        estimateTextTokens(toolCall.result) +
-        estimateTextTokens(JSON.stringify(toolCall.result_object ?? ''))
-    );
+    return estimateRoughTokensFromToolCall(toolCall);
 }
 
 export function estimateChatMessageTokensForSessionMemory(message: ChatMessage): number {
-    if (isCompactBoundaryMessage(message)) {
-        return estimateTextTokens(message.summary);
-    }
-
-    if (isUserMessage(message)) {
-        return message.content.reduce((total, part) => {
-            if (part.type === 'text') {
-                return total + estimateTextTokens(part.text);
-            }
-            if (part.type === 'file') {
-                return total + estimateTextTokens(part.path) + estimateTextTokens(part.content);
-            }
-            if (part.type === 'image_url') {
-                return total + 256;
-            }
-            return total;
-        }, 0);
-    }
-
-    if (isAssistantMessage(message)) {
-        return message.content.reduce((total, part) => {
-            if (part.type === 'text') {
-                return total + estimateTextTokens(part.text);
-            }
-            if (part.type === 'reasoning') {
-                return total + estimateTextTokens(part.content);
-            }
-            if (part.type === 'error') {
-                return total + estimateTextTokens(part.title) + estimateTextTokens(part.message);
-            }
-            if (part.type === 'tool_call') {
-                return total + part.toolcalls.reduce((sum, toolCall) => sum + estimateToolCallTokens(toolCall), 0);
-            }
-            return total;
-        }, 0);
-    }
-
-    return 0;
+    return estimateRoughTokensFromChatMessage(message);
 }
 
-function getLastPromptTokens(chatContext: ChatContext): number | undefined {
-    for (let index = chatContext.messages.length - 1; index >= 0; index--) {
-        const message = chatContext.messages[index];
-        if (isAssistantMessage(message) && typeof message.usage?.prompt_tokens === 'number') {
-            return normalizeNonNegativeInteger(message.usage.prompt_tokens, 0);
+function getLastAssistantMessageFromMessages(messages: ReadonlyArray<ChatMessage>): AssistantMessage | undefined {
+    for (let index = messages.length - 1; index >= 0; index--) {
+        const message = messages[index];
+        if (isAssistantMessage(message)) {
+            return message;
         }
     }
     return undefined;
 }
 
 export function estimateChatContextTokensForSessionMemory(chatContext: ChatContext): number {
-    const lastPromptTokens = getLastPromptTokens(chatContext);
-    if (lastPromptTokens !== undefined) {
-        return lastPromptTokens;
-    }
-
-    return chatContext.messages.reduce(
-        (total, message) => total + estimateChatMessageTokensForSessionMemory(message),
-        0
-    );
+    return estimateVisibleContextTokens({
+        activeContext: getActiveContextForSessionMemory(chatContext)
+    }).estimatedContextTokens;
 }
 
 export function countToolCallsSinceMessage(chatContext: ChatContext, messageId?: string): number {
-    let foundStart = messageId === undefined;
+    const activeContext = getActiveContextForSessionMemory(chatContext);
+    const floorIndex = activeContext.startIndex;
+    let startIndex = floorIndex;
+
+    if (messageId !== undefined) {
+        for (let index = floorIndex; index < chatContext.messages.length; index++) {
+            if (getMessageId(chatContext.messages[index]) === messageId) {
+                startIndex = index + 1;
+                break;
+            }
+        }
+    }
+
     let toolCalls = 0;
 
-    for (const message of chatContext.messages) {
-        if (!foundStart) {
-            if (getMessageId(message) === messageId) {
-                foundStart = true;
-            }
-            continue;
-        }
-
+    for (let index = startIndex; index < chatContext.messages.length; index++) {
+        const message = chatContext.messages[index];
         if (!isAssistantMessage(message)) {
             continue;
         }
@@ -578,16 +549,6 @@ export function countToolCallsSinceMessage(chatContext: ChatContext, messageId?:
     }
 
     return toolCalls;
-}
-
-function getLastAssistantMessage(chatContext: ChatContext): AssistantMessage | undefined {
-    for (let index = chatContext.messages.length - 1; index >= 0; index--) {
-        const message = chatContext.messages[index];
-        if (isAssistantMessage(message)) {
-            return message;
-        }
-    }
-    return undefined;
 }
 
 function assistantHasToolCall(message: AssistantMessage | undefined): boolean {
@@ -605,7 +566,8 @@ function assistantHasRunningOrPendingToolCall(message: AssistantMessage | undefi
 }
 
 export function hasRunningOrPendingToolCallInLastAssistant(chatContext: ChatContext): boolean {
-    return assistantHasRunningOrPendingToolCall(getLastAssistantMessage(chatContext));
+    const activeContext = getActiveContextForSessionMemory(chatContext);
+    return assistantHasRunningOrPendingToolCall(getLastAssistantMessageFromMessages(activeContext.messages));
 }
 
 export function shouldExtractSessionMemory(
@@ -615,13 +577,14 @@ export function shouldExtractSessionMemory(
 ): SessionMemoryExtractionDecision {
     const normalizedState = normalizeSessionMemoryState(state);
     const normalizedOptions = normalizeExtractionOptions(options);
+    const activeContext = getActiveContextForSessionMemory(chatContext);
     const currentTokens = estimateChatContextTokensForSessionMemory(chatContext);
     const tokensSinceLastExtraction = Math.max(currentTokens - normalizedState.tokensAtLastExtraction, 0);
     const toolCallsSinceLastExtraction = countToolCallsSinceMessage(
         chatContext,
         normalizedState.lastSummarizedMessageId
     );
-    const lastAssistant = getLastAssistantMessage(chatContext);
+    const lastAssistant = getLastAssistantMessageFromMessages(activeContext.messages);
     const lastAssistantHasToolCall = assistantHasToolCall(lastAssistant);
     const hasRunningOrPending = assistantHasRunningOrPendingToolCall(lastAssistant);
 
@@ -808,8 +771,10 @@ Return only the complete updated markdown memory file.`;
 }
 
 export function getLastSafeSessionMemoryMessageId(chatContext: ChatContext): string | undefined {
-    for (let index = chatContext.messages.length - 1; index >= 0; index--) {
-        const message = chatContext.messages[index];
+    const activeContext = getActiveContextForSessionMemory(chatContext);
+
+    for (let index = activeContext.messages.length - 1; index >= 0; index--) {
+        const message = activeContext.messages[index];
         if (isAssistantMessage(message) && assistantHasRunningOrPendingToolCall(message)) {
             continue;
         }
@@ -847,7 +812,7 @@ export async function updateSessionMemoryFromChatContext(
     }
 
     const startedState = SessionMemoryStates.recordExtractionStarted(normalizedState);
-    const sessionMemoryFile = ensureTaskSessionMemoryFile(taskId, { template: options.template });
+    const sessionMemoryFile = await ensureTaskSessionMemoryFile(taskId, { template: options.template });
     const activeContext = buildActiveContextView(chatContext);
     const prompt = buildSessionMemoryUpdatePrompt(sessionMemoryFile.content, activeContext, startedState, options);
     const generator = options.generateMemory ?? defaultSessionMemoryGenerator;
@@ -873,7 +838,7 @@ export async function updateSessionMemoryFromChatContext(
             );
         }
 
-        const writeResult = writeTaskSessionMemory(
+        const writeResult = await writeTaskSessionMemory(
             taskId,
             validation.content.endsWith('\n') ? validation.content : `${validation.content}\n`
         );
@@ -1112,21 +1077,7 @@ function assistantRoundHasTextContent(item: Extract<ProjectedContextItem, { kind
 }
 
 function estimateAssistantRoundTokens(item: Extract<ProjectedContextItem, { kind: 'assistant_round' }>): number {
-    return item.round.parts.reduce((total, part) => {
-        if (part.type === 'text') {
-            return total + estimateTextTokens(part.text);
-        }
-        if (part.type === 'reasoning') {
-            return total + estimateTextTokens(part.content);
-        }
-        if (part.type === 'error') {
-            return total + estimateTextTokens(part.title) + estimateTextTokens(part.message);
-        }
-        if (part.type === 'tool_call') {
-            return total + part.toolcalls.reduce((sum, toolCall) => sum + estimateToolCallTokens(toolCall), 0);
-        }
-        return total;
-    }, 0);
+    return estimateRoughTokensFromAssistantParts(item.round.parts);
 }
 
 function estimateProjectedItemsTokens(projectedItems: ProjectedContextItem[]): number {
@@ -1687,7 +1638,7 @@ export async function trySessionMemoryCompaction(
         ...options,
         autoCompactThreshold: options.autoCompactThreshold ?? autoCompactDecision?.autoCompactThreshold
     });
-    const memoryContent = readTaskSessionMemory(taskId);
+    const memoryContent = await readTaskSessionMemory(taskId);
     if (memoryContent === undefined) {
         return { compacted: false, noopReason: 'missing_memory_file' };
     }

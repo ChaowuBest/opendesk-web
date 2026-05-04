@@ -20,7 +20,7 @@ import { AgentInputArea } from './components/input';
 import { ApplicationRegistry } from '../applications/registry';
 import { KeyboardShortcutManager } from './shortcuts';
 import { SlashCommandRegistry, registerAllCommands } from './commands/index.js';
-import { Setting } from '../utils/setting.js';
+import { Setting, getShortcuts } from '../utils/setting.js';
 import { getReasoningEffortLabels } from '../../common/reasoning-effort.js';
 import { logger, setDebugMode, getDebugMode } from '../utils/logger.js';
 import { lookupKnownContextSize, fetchContextSizeFromAPI } from '../utils/model-context';
@@ -335,10 +335,11 @@ export class OpenDeskTUI {
         this.setupCommands();
         this.inputArea.setCommandRegistry(this.commandRegistry);
 
-        // 从已注册指令中提取快捷键
+        // 从已注册指令中提取快捷键（跳过由 cli_config.shortcuts 管理的命令）
+        const CLI_MANAGED_COMMANDS = new Set(['switch']);
         this.shortcutManager = new KeyboardShortcutManager();
         for (const cmd of this.commandRegistry.getAll()) {
-            if (cmd.shortcut) {
+            if (cmd.shortcut && !CLI_MANAGED_COMMANDS.has(cmd.name)) {
                 this.shortcutManager.register({
                     key: cmd.shortcut,
                     handler: () => {
@@ -592,7 +593,7 @@ export class OpenDeskTUI {
 
     enterConfigMode() {
         this.configComponent = new ConfigMainPage(
-            this.tui,
+            this,
             () => this.exitConfigMode(),
             () => {
                 this.resolveModelInfo();
@@ -783,11 +784,13 @@ export class OpenDeskTUI {
         // 绑定到新任务的队列
         this.inputArea.bindToTaskQueue(task.task_id, task.message_queue);
         this.inputArea.statusBar.setAccumulatedMs(task.total_elapsed_ms);
-        this.inputArea.statusBar.update({ totalTokens: 0 });
 
         // 为历史 ToolCall 挂载 toolsets 并解析 tool 引用，确保自定义渲染器正常工作
         await task.ensureToolsResolved();
 
+        // rebuildFromHistory 会通过 onStatusBarUpdate 恢复最后一条消息的 token 用量，
+        // 因此先重置为 0，再重建历史——如果有历史 usage 会立即被覆盖
+        this.inputArea.statusBar.update({ totalTokens: 0 });
         this.taskView.rebuildFromHistory();
 
         if (task.task_status === 'running') {
@@ -1028,6 +1031,12 @@ export class OpenDeskTUI {
             this.tui.stop();
         } catch {
             /* 忽略 TUI 清理错误 */
+        }
+
+        try {
+            await this.taskManagerState.flushAllPendingSaves();
+        } catch {
+            /* best-effort flush */
         }
 
         const worker = ApplicationRegistry.globalWorker;
@@ -1380,6 +1389,33 @@ export class OpenDeskTUI {
     }
 
     /**
+     * 在所有已配置模型之间循环切换（不持久化到磁盘，仅影响当前会话）
+     */
+    cycleModel(): void {
+        const setting = Setting.getInstance();
+        const data = setting.getData() as any;
+        const models: any[] = data.models ?? [];
+        if (models.length === 0) {
+            logger.info('No models configured, cannot cycle');
+            return;
+        }
+        if (models.length === 1) {
+            this.model = models[0].alias;
+            this.resolveModelInfo();
+            return;
+        }
+
+        const currentAlias = this.model || data.default_model;
+        const currentIndex = models.findIndex((m: any) => m.alias === currentAlias);
+        const nextIndex = (currentIndex + 1) % models.length;
+        const nextAlias = models[nextIndex].alias;
+
+        this.model = nextAlias;
+        this.resolveModelInfo();
+        logger.info(`Model switched to: ${nextAlias}`);
+    }
+
+    /**
      * 根据 id 切换到指定模式
      */
     async setMode(modeId: string): Promise<boolean> {
@@ -1458,11 +1494,64 @@ export class OpenDeskTUI {
 
         // Attach a direct input listener to TUI FIRST, to hijack Ctrl+C before Editor gets it!
         this.tui.addInputListener((data) => {
-            // Shift+Tab 循环切换模式
-            // 忽略 key release，否则在 Kitty 键盘协议下按一次会触发「按下+松开」两次，导致切换两次
-            if (!isKeyRelease(data) && matchesKey(data, Key.shift('tab'))) {
-                if (!this.hasOpenOverlay && !this.configComponent) {
+            if (!isKeyRelease(data) && !this.hasOpenOverlay && !this.configComponent) {
+                const shortcuts = getShortcuts();
+
+                // 模式切换
+                if (matchesKey(data, shortcuts.switch_mode)) {
                     this.cycleMode();
+                    return { consume: true };
+                }
+
+                // 模型切换
+                if (matchesKey(data, shortcuts.switch_model)) {
+                    this.cycleModel();
+                    return { consume: true };
+                }
+
+                // 回车换行：向编辑器注入换行符
+                if (matchesKey(data, shortcuts.endline)) {
+                    return { data: '\n' };
+                }
+
+                // 打开帮助
+                if (matchesKey(data, shortcuts.show_help)) {
+                    new HelpOverlay(this).show();
+                    return { consume: true };
+                }
+
+                // 显示任务列表
+                if (matchesKey(data, shortcuts.list_tasks)) {
+                    const switcher = new TaskSwitcher(this);
+                    switcher.show();
+                    return { consume: true };
+                }
+
+                // 删除输入内容
+                if (matchesKey(data, shortcuts.clear_input)) {
+                    (this.inputArea.input as any).cancelAutocomplete();
+                    const currentText = this.inputArea.input.getText();
+                    if (currentText.trim() === '') {
+                        const info = new InfoOverlay(this, {
+                            title: t('exit.hint.title'),
+                            message: t('exit.hint.message'),
+                            closeLabel: t('common.close')
+                        });
+                        info.show();
+                    } else {
+                        this.inputArea.input.setText('');
+                    }
+                    this.tui.requestRender(true);
+                    return { consume: true };
+                }
+            }
+
+            // Ctrl+C 在配置模式或 overlay 下的特殊处理
+            if (matchesKey(data, Key.ctrl('c'))) {
+                if (this.hasOpenOverlay) {
+                    return undefined;
+                }
+                if (this.configComponent) {
                     return { consume: true };
                 }
             }
@@ -1490,40 +1579,6 @@ export class OpenDeskTUI {
                 }
             }
 
-            if (matchesKey(data, Key.ctrl('c'))) {
-                // 有 overlay 打开时不处理
-                if (this.hasOpenOverlay) {
-                    return undefined; // 不消费，让 overlay 处理
-                }
-
-                // 配置模式下静默消费，不干扰配置页面
-                if (this.configComponent) {
-                    return { consume: true };
-                }
-
-                // 首先，取消自动补全（如果正在显示）
-                (this.inputArea.input as any).cancelAutocomplete();
-
-                // 检查输入框是否有内容
-                const currentText = this.inputArea.input.getText();
-                if (currentText.trim() === '') {
-                    // 输入框为空，显示提示
-                    const info = new InfoOverlay(this, {
-                        title: t('exit.hint.title'),
-                        message: t('exit.hint.message'),
-                        closeLabel: t('common.close')
-                    });
-                    info.show();
-                } else {
-                    // 清空输入框
-                    this.inputArea.input.setText('');
-                }
-
-                // 强制重新渲染
-                this.tui.requestRender(true);
-
-                return { consume: true }; // 完全消费掉，不传给 Editor！
-            }
             return undefined;
         });
 

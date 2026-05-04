@@ -89,12 +89,12 @@ function escapeHtml(str: unknown): string {
 function statusIcon(status: TodoStatus): string {
     switch (status) {
         case 'completed':
-            return '\u2705';
+            return '<i class="fas fa-check-circle" style="color:#10b981;font-size:13px;"></i>';
         case 'in_progress':
-            return '\uD83D\uDD04';
+            return '<i class="fas fa-circle-notch fa-spin" style="color:#3b82f6;font-size:13px;"></i>';
         case 'pending':
         default:
-            return '\u2B55';
+            return '<i class="far fa-circle" style="color:#d1d5db;font-size:13px;"></i>';
     }
 }
 
@@ -157,7 +157,8 @@ function extractFontAwesomeRulesText(): string {
                 if (
                     /\.fa[srb]?\b/.test(text) ||
                     /font-family:\s*["']?Font\s*Awesome/i.test(text) ||
-                    /\.fa-/.test(text)
+                    /\.fa-/.test(text) ||
+                    /^@keyframes\s+fa-/i.test(text)
                 ) {
                     chunks.push(text);
                 }
@@ -232,7 +233,7 @@ class TaskArtifacts extends HTMLElement {
     }
 
     private _syncTaskPlanVisibility(): void {
-        const hasTodos = this._taskTodos.length > 0 || this._globalTodos.length > 0;
+        const hasTodos = this._taskTodos.length > 0;
         if (hasTodos && !this._taskPlanVisible) {
             this._taskPlanVisible = true;
             this._rebuildTabBar();
@@ -247,7 +248,7 @@ class TaskArtifacts extends HTMLElement {
     }
 
     hasAnyTodos(): boolean {
-        return this._taskTodos.length > 0 || this._globalTodos.length > 0;
+        return this._taskTodos.length > 0;
     }
 
     hasTaskTodos(): boolean {
@@ -260,6 +261,13 @@ class TaskArtifacts extends HTMLElement {
      */
     refreshWorkspace(): void {
         this._fileExplorer.refresh();
+    }
+
+    /**
+     * 外部调用：当文件被编辑/创建/删除时，增量刷新已展开目录内容。
+     */
+    softRefreshWorkspace(): void {
+        this._fileExplorer.softRefresh();
     }
 
     /**
@@ -579,9 +587,7 @@ class TaskArtifacts extends HTMLElement {
     // ----- Timer (for in_progress durations) -----
 
     private _scheduleTick(): void {
-        const hasInProgress =
-            this._taskTodos.some((t) => t.status === 'in_progress') ||
-            this._globalTodos.some((t) => t.status === 'in_progress');
+        const hasInProgress = this._taskTodos.some((t) => t.status === 'in_progress');
 
         if (!hasInProgress) {
             this._stopTick();
@@ -612,22 +618,15 @@ class TaskArtifacts extends HTMLElement {
             if (!startIso) return;
             const start = Date.parse(startIso);
             if (Number.isNaN(start)) return;
-            node.textContent = `\u5DF2\u6267\u884C ${formatDuration(now - start)}`;
+            node.innerHTML = `<i class="fas fa-clock" style="font-size:9px;margin-right:2px;"></i> ${formatDuration(now - start)}`;
         });
     }
 
     // ----- Task Plan rendering -----
 
-    private _renderTodoItem(todo: TaskTodoLike | GlobalTodoLike, opts: { showPriority?: boolean } = {}): string {
+    private _renderTodoItem(todo: TaskTodoLike | GlobalTodoLike, _opts: { showPriority?: boolean } = {}): string {
         const isCompleted = todo.status === 'completed';
         const title = todo.title || todo.content || '';
-
-        let priorityBadge = '';
-        const priority = (todo as GlobalTodoLike).priority;
-        if (opts.showPriority && priority) {
-            const conf = PRIORITY_STYLE[priority] || PRIORITY_STYLE.medium;
-            priorityBadge = `<span class="todo-badge ${conf.cls}">${conf.label}</span>`;
-        }
 
         const now = Date.now();
         const durationMs = computeDurationMs(todo, now);
@@ -637,28 +636,26 @@ class TaskArtifacts extends HTMLElement {
                 const startIso = todo.started_at || todo.updated_at || todo.created_at || '';
                 durationHtml = `<span class="todo-duration todo-duration-running"
                     data-running="1" data-start="${escapeHtml(startIso)}"
-                    title="\u5DF2\u6267\u884C ${escapeHtml(formatDuration(durationMs))}">
-                    \u5DF2\u6267\u884C ${escapeHtml(formatDuration(durationMs))}
+                    title="已执行 ${escapeHtml(formatDuration(durationMs))}">
+                    <i class="fas fa-clock" style="font-size:9px;margin-right:2px;"></i>
+                    ${escapeHtml(formatDuration(durationMs))}
                 </span>`;
             } else if (todo.status === 'completed') {
                 durationHtml = `<span class="todo-duration todo-duration-done"
-                    title="\u7528\u65F6 ${escapeHtml(formatDuration(durationMs))}">
-                    \u7528\u65F6 ${escapeHtml(formatDuration(durationMs))}
+                    title="用时 ${escapeHtml(formatDuration(durationMs))}">
+                    <i class="fas fa-check" style="font-size:9px;margin-right:2px;"></i>
+                    ${escapeHtml(formatDuration(durationMs))}
                 </span>`;
             }
         }
 
-        const inProgressCls = todo.status === 'in_progress' ? 'todo-in-progress' : '';
-        const completedCls = isCompleted ? 'todo-completed' : '';
+        const statusCls = todo.status === 'in_progress' ? 'todo-in-progress' : isCompleted ? 'todo-completed' : '';
 
         return `
-        <div class="todo-item ${inProgressCls} ${completedCls}">
+        <div class="todo-item ${statusCls}">
             <span class="todo-status-icon">${statusIcon(todo.status)}</span>
             <div class="todo-body">
-                <div class="todo-title-row">
-                    ${priorityBadge}
-                    <span class="todo-title">${escapeHtml(title)}</span>
-                </div>
+                <span class="todo-title">${escapeHtml(title)}</span>
                 ${durationHtml ? `<div class="todo-meta-row">${durationHtml}</div>` : ''}
             </div>
         </div>`;
@@ -670,51 +667,15 @@ class TaskArtifacts extends HTMLElement {
         const panel = root.querySelector<HTMLElement>('.tab-content[data-tab="task-plan"]');
         if (!panel) return;
 
-        const hasTask = this._taskTodos.length > 0;
-        const hasGlobal = this._globalTodos.length > 0;
-
-        if (!hasTask && !hasGlobal) {
+        if (this._taskTodos.length === 0) {
             panel.innerHTML = '';
             return;
         }
 
-        let html = '<div class="task-plan-sections">';
-
-        if (hasTask) {
-            const completed = this._taskTodos.filter((t) => t.status === 'completed').length;
-            html += `
-            <section class="plan-section">
-                <header class="plan-section-header">
-                    <span class="plan-section-title">
-                        <i class="fas fa-diagram-project"></i>
-                        \u5F53\u524D\u4EFB\u52A1\u5F85\u529E
-                    </span>
-                    <span class="plan-section-count">${completed}/${this._taskTodos.length}</span>
-                </header>
-                <div class="plan-section-body">
-                    ${this._taskTodos.map((t) => this._renderTodoItem(t)).join('')}
-                </div>
-            </section>`;
-        }
-
-        if (hasGlobal) {
-            const completed = this._globalTodos.filter((t) => t.status === 'completed').length;
-            html += `
-            <section class="plan-section">
-                <header class="plan-section-header">
-                    <span class="plan-section-title">
-                        <i class="fas fa-globe"></i>
-                        \u5168\u5C40\u5F85\u529E
-                    </span>
-                    <span class="plan-section-count">${completed}/${this._globalTodos.length}</span>
-                </header>
-                <div class="plan-section-body">
-                    ${this._globalTodos.map((t) => this._renderTodoItem(t, { showPriority: true })).join('')}
-                </div>
-            </section>`;
-        }
-
-        html += '</div>';
+        const html = `
+        <div class="task-plan-list">
+            ${this._taskTodos.map((t) => this._renderTodoItem(t)).join('<div class="todo-separator"></div>')}
+        </div>`;
         panel.innerHTML = html;
     }
 
@@ -737,7 +698,7 @@ class TaskArtifacts extends HTMLElement {
         const placeholderHTML = (tab: TabSpec) => `
             <div class="placeholder-content">
                 <i class="fas ${tab.icon} placeholder-icon"></i>
-                <p>${tab.label}\u5185\u5BB9\u5360\u4F4D\u7B26</p>
+                <p>${tab.label}内容占位符</p>
             </div>`;
 
         const contentHTML = tabs
@@ -856,94 +817,42 @@ class TaskArtifacts extends HTMLElement {
                 color: #6b7280;
             }
 
-            /* Task plan panel */
-            .task-plan-sections {
+            /* Task plan panel — flat list (no card wrapping) */
+            .task-plan-list {
                 display: flex;
                 flex-direction: column;
-                gap: 10px;
-                padding: 12px;
-            }
-
-            .plan-section {
-                background: white;
-                border: 1px solid #eef0f3;
-                border-radius: 10px;
-                overflow: hidden;
-            }
-
-            .plan-section-header {
-                display: flex;
-                align-items: center;
-                justify-content: space-between;
                 padding: 8px 12px;
-                background: #f8fafc;
-                border-bottom: 1px solid #eef0f3;
-            }
-            .plan-section-title {
-                display: flex;
-                align-items: center;
-                gap: 6px;
-                font-size: 12px;
-                font-weight: 600;
-                color: #334155;
-            }
-            .plan-section-title i {
-                color: #64748b;
-                font-size: 11px;
-            }
-            .plan-section-count {
-                font-size: 11px;
-                color: #64748b;
-                background: white;
-                border: 1px solid #e2e8f0;
-                border-radius: 999px;
-                padding: 1px 8px;
             }
 
-            .plan-section-body {
-                display: flex;
-                flex-direction: column;
-                gap: 2px;
-                padding: 6px 6px;
+            .todo-separator {
+                height: 1px;
+                background: #f1f5f9;
+                margin: 0 4px;
             }
 
             .todo-item {
                 display: flex;
-                align-items: flex-start;
-                gap: 8px;
-                padding: 7px 8px;
-                border-radius: 6px;
-                transition: background 0.15s;
-            }
-            .todo-item:hover {
-                background: #f8fafc;
-            }
-            .todo-item.todo-in-progress {
-                background: #eff6ff;
-            }
-            .todo-item.todo-in-progress:hover {
-                background: #dbeafe;
+                align-items: center;
+                gap: 12px;
+                padding: 12px 4px;
             }
 
             .todo-status-icon {
-                font-size: 13px;
-                line-height: 1.5;
                 flex-shrink: 0;
-                margin-top: 1px;
+                width: 20px;
+                height: 20px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
             }
 
             .todo-body {
                 flex: 1;
                 min-width: 0;
             }
-            .todo-title-row {
-                display: flex;
-                align-items: center;
-                gap: 6px;
-                flex-wrap: wrap;
-            }
             .todo-title {
-                font-size: 12px;
+                font-size: 13px;
+                font-weight: 500;
                 line-height: 1.5;
                 color: #1f2937;
                 word-break: break-word;
@@ -951,45 +860,29 @@ class TaskArtifacts extends HTMLElement {
             .todo-completed .todo-title {
                 text-decoration: line-through;
                 color: #9ca3af;
+                font-weight: 400;
             }
 
             .todo-meta-row {
                 display: flex;
                 gap: 6px;
-                margin-top: 2px;
+                margin-top: 4px;
                 flex-wrap: wrap;
             }
 
             .todo-duration {
                 display: inline-flex;
                 align-items: center;
-                font-size: 10px;
+                font-size: 11px;
                 line-height: 1;
-                padding: 2px 6px;
-                border-radius: 999px;
-                border: 1px solid transparent;
+                font-weight: 500;
                 font-variant-numeric: tabular-nums;
             }
             .todo-duration-running {
-                color: #1d4ed8;
-                background: #dbeafe;
-                border-color: #bfdbfe;
+                color: #3b82f6;
             }
             .todo-duration-done {
-                color: #047857;
-                background: #ecfdf5;
-                border-color: #a7f3d0;
-            }
-
-            .todo-badge {
-                display: inline-flex;
-                align-items: center;
-                font-size: 10px;
-                line-height: 1;
-                padding: 2px 6px;
-                border: 1px solid transparent;
-                border-radius: 999px;
-                flex-shrink: 0;
+                color: #10b981;
             }
 
             /* Session memory styles */

@@ -131,7 +131,8 @@ describe('compact trace artifact', () => {
             autoCompactDecisionOverride: createAutoCompactDecision({
                 contextWindow: 1000,
                 promptTokens: 720,
-                reservedSummaryOutput: 100
+                reservedSummaryOutput: 100,
+                buffer: 180
             })
         });
 
@@ -213,7 +214,8 @@ describe('compact trace artifact', () => {
             autoCompactDecisionOverride: createAutoCompactDecision({
                 contextWindow: 1000,
                 promptTokens: 720,
-                reservedSummaryOutput: 100
+                reservedSummaryOutput: 100,
+                buffer: 180
             }),
             sessionMemoryCompactOptions: {
                 minTokens: 1,

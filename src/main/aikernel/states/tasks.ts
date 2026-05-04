@@ -46,8 +46,8 @@ import {
 import type { ActiveContextView } from '../compaction/types.js';
 import { compactContext } from '../compact.js';
 import { BaseTool, BaseToolset } from '../tool.js';
-import { LLM, type ReasoningEffort, type LLMRequestOptions } from '../llm.js';
-import { getTaskArtifactDirectory, getTaskDirectory } from '../../utils/setting.js';
+import { LLM, type LLMRequestOptions } from '../llm.js';
+import { getTaskArtifactDirectory, getTaskDirectory, type ReasoningEffort } from '../../utils/setting.js';
 import { logger } from '../../utils/logger.js';
 import { type ToolsetProvider, EmptyToolsetProvider } from './toolset-provider.js';
 import { jsonrepair } from 'jsonrepair';
@@ -64,6 +64,7 @@ import { HarnessContext } from '../security/harness.js';
 import type { PermissionRequest, PermissionCheckResult, PermissionUserResponse } from '../security/permission.js';
 import { createResourcePath } from '../security/permission.js';
 import { TaskProfiler } from '../profiler.js';
+import { getPlatform } from '../../../platforms/base.js';
 
 type TaskStatus = 'waiting' | 'running' | 'stopped';
 
@@ -135,6 +136,22 @@ function errorToMessage(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
 }
 
+/**
+ * 原子写入文件：先写入临时文件，再 rename 覆盖目标文件。
+ * 防止进程崩溃时产生残缺/损坏的 JSON 文件。
+ */
+async function _atomicWriteFile(filePath: string, content: string): Promise<void> {
+    const tmpPath = filePath + '.tmp';
+    await fs.promises.writeFile(tmpPath, content, 'utf8');
+    await fs.promises.rename(tmpPath, filePath);
+}
+
+function _atomicWriteFileSync(filePath: string, content: string): void {
+    const tmpPath = filePath + '.tmp';
+    fs.writeFileSync(tmpPath, content, { encoding: 'utf8' });
+    fs.renameSync(tmpPath, filePath);
+}
+
 export class TaskState {
     task_id: string = generateShortTaskId();
     parent_id: string | null = null;
@@ -146,6 +163,14 @@ export class TaskState {
     auto_compact_state: AutoCompactState = AutoCompactStates.create();
     /** task-local session memory 状态，文件位于 artifacts/<taskId>/session-memory/。 */
     session_memory_state: SessionMemoryState = SessionMemoryStates.create();
+
+    /**
+     * 脏标记：标识本任务在当前进程中是否被修改过。
+     * 仅被标记为脏的任务在 save 时才会写入磁盘，
+     * 防止多进程同时运行时互相用过时的内存数据覆盖对方的任务文件。
+     * 新创建的任务默认为 true（需要写入）；从磁盘加载的任务默认为 false。
+     */
+    _dirty: boolean = true;
 
     model?: string;
     reasoningEffort?: ReasoningEffort;
@@ -207,6 +232,15 @@ export class TaskState {
         this.parent_id = parent_id;
     }
 
+    /**
+     * 标记当前任务为脏并触发异步落盘。
+     * TaskState 内部所有修改了持久化字段的路径都应调用此方法，而非直接 task_manager_state.save()。
+     */
+    persistLater(): void {
+        this._dirty = true;
+        this.task_manager_state.save();
+    }
+
     static load(task_json_path: string, task_manager_state: TaskManagerState): TaskState {
         const task_json = JSON.parse(fs.readFileSync(task_json_path, 'utf8'));
         const task = new TaskState(task_manager_state, task_json.parent_id || null);
@@ -242,6 +276,7 @@ export class TaskState {
         if (task_json.origin) {
             task.origin = task_json.origin;
         }
+        task._dirty = false;
         return task;
     }
 
@@ -360,7 +395,7 @@ export class TaskState {
 
     private saveSessionMemoryStateSafely() {
         try {
-            this.task_manager_state.save();
+            this.persistLater();
         } catch (error) {
             logger.warn(
                 `[Compact Step8F] failed to persist session memory state for task ${this.task_id}: ` +
@@ -542,9 +577,10 @@ export class TaskState {
      */
     async submitUserMessage(message: string) {
         this.task_status = 'running';
-        this.started_at = new Date(); // 记录任务开始时间
+        this.started_at = new Date();
         this.stop_requested_by_user = false;
-        this.finished_at = undefined; // 清除之前的完成时间
+        this.finished_at = undefined;
+        this.persistLater();
         this.task_manager_state.publishTaskListUpdate();
 
         // 在追加新消息前检查是否需要自动压缩上下文（TUI 层可能已经做过，此处为 GUI 等场景的兜底）
@@ -600,12 +636,17 @@ export class TaskState {
         // 检测用户消息中的 /skillname 引用并预加载
         await this.preloadSlashSkills(message, assistant_message);
 
+        // 预加载产生的 parts 需要立即推送到前端，否则后续流式更新的 part_index 与 DOM 不同步
+        for (let i = 0; i < assistant_message.content.length; i++) {
+            await this.sendSubscriptionFeedback(i);
+        }
+
         logger.info(`messsage submitted to task ${this.task_id}`);
 
         if (this.task_name === null) {
-            // 这里我们先放一个占位符，避免可能出现的重复submitUserMessage导致多次起名
             this.task_name = '未命名任务';
             this.generateTaskName(message).then(() => {
+                this.persistLater();
                 this.task_manager_state.publishTaskListUpdate();
             });
         }
@@ -685,6 +726,7 @@ export class TaskState {
         if (!this._turnRunning) {
             this.sendSubscriptionFeedback();
         }
+        this.persistLater();
         this.task_manager_state.publishTaskListUpdate();
     }
 
@@ -802,7 +844,9 @@ export class TaskState {
             return null;
         });
 
-        this.task_name = task_name;
+        if (task_name) {
+            this.task_name = task_name;
+        }
     }
 
     /**
@@ -811,7 +855,7 @@ export class TaskState {
      */
     rename(name: string) {
         this.task_name = name;
-        this.task_manager_state.save();
+        this.persistLater();
         this.task_manager_state.publishTaskListUpdate();
         logger.info(`task ${this.task_id} renamed to "${name}"`);
     }
@@ -854,7 +898,7 @@ export class TaskState {
         forkedTask.activeModeId = this.activeModeId;
         forkedTask.disabledTools = this.disabledTools;
 
-        // Add to task manager
+        // Add to task manager — forkedTask._dirty 默认 true，save 时会写入
         this.task_manager_state.tasks.push(forkedTask);
         this.task_manager_state.save();
         this.task_manager_state.publishTaskListUpdate();
@@ -870,7 +914,7 @@ export class TaskState {
      */
     setBookmark(path: string) {
         this.bookmark_path = path;
-        this.task_manager_state.save();
+        this.persistLater();
         this.task_manager_state.publishTaskListUpdate();
         logger.info(`task ${this.task_id} bookmark set to "${path}"`);
     }
@@ -880,7 +924,7 @@ export class TaskState {
      */
     removeBookmark() {
         this.bookmark_path = undefined;
-        this.task_manager_state.save();
+        this.persistLater();
         this.task_manager_state.publishTaskListUpdate();
         logger.info(`task ${this.task_id} bookmark removed`);
     }
@@ -898,38 +942,43 @@ export class TaskState {
         this.subscribers = this.subscribers.filter((subscriber) => subscriber.isAvailable());
         if (this.subscribers.length === 0) return;
 
+        const needsHtmlRender = getPlatform().getName() === 'electron';
+
         try {
             let chunkUpdate: TaskUpdateChunk;
             if (last_message instanceof UserMessage) {
                 if (last_message.content.length === 0) return;
                 const updated_part_index = part_index !== undefined ? part_index : last_message.content.length - 1;
                 const last_part = last_message.content[updated_part_index];
-                await last_message.render();
+                if (needsHtmlRender) {
+                    await last_message.render();
+                }
                 chunkUpdate = {
                     type: 'user',
                     task_id: this.task_id,
                     task_status: this.task_status,
                     message_id: last_message.message_id,
                     last_part_index: updated_part_index,
-                    last_part,
+                    last_part: last_part,
                     internal: last_message.internal
                 };
             } else if (last_message instanceof AssistantMessage) {
-                if (last_message.content.length === 0) return; // 空的助手消息，跳过
+                if (last_message.content.length === 0) return;
                 const updated_part_index = part_index !== undefined ? part_index : last_message.content.length - 1;
                 const last_part = last_message.content[updated_part_index];
-                await last_part.render();
+                if (needsHtmlRender) {
+                    await last_part.render();
+                }
                 chunkUpdate = {
                     type: 'assistant',
                     task_id: this.task_id,
                     task_status: this.task_status,
                     message_id: last_message.message_id,
                     last_part_index: updated_part_index,
-                    last_part,
+                    last_part: last_part,
                     usage: last_message.usage
                 };
             } else if (last_message instanceof CompactSeparatorMessage) {
-                // 压缩分隔消息不需要发送订阅更新，直接返回
                 return;
             } else {
                 logger.warn(
@@ -1144,7 +1193,7 @@ export class TaskState {
                 preparation.autoCompactStateChanged ||
                 preparation.sessionMemoryStateChanged
             ) {
-                this.task_manager_state.save();
+                this.persistLater();
             }
 
             streamOptions = {
@@ -1215,10 +1264,14 @@ export class TaskState {
         this.profiler?.endLLM({
             prompt_tokens: assistant_message.usage?.prompt_tokens,
             completion_tokens: assistant_message.usage?.completion_tokens,
-            total_tokens: assistant_message.usage?.total_tokens
+            total_tokens: assistant_message.usage?.total_tokens,
+            input_tokens: assistant_message.usage?.input_tokens,
+            output_tokens: assistant_message.usage?.output_tokens,
+            cache_creation_input_tokens: assistant_message.usage?.cache_creation_input_tokens,
+            cache_read_input_tokens: assistant_message.usage?.cache_read_input_tokens
         });
 
-        this.task_manager_state.save();
+        this.persistLater();
     }
 
     /**
@@ -1688,6 +1741,7 @@ export class TaskState {
             }
             await this.hooks.noticeAfterFinishTurn(this);
             this.finished_at = new Date();
+            this.persistLater();
             this.sendSubscriptionFeedback();
             this.task_manager_state.publishTaskListUpdate();
             if (shouldScheduleSessionMemoryUpdate) {
@@ -1739,6 +1793,7 @@ export class TaskManagerState {
     tasks: TaskState[] = [];
     subscribers: BaseTaskManagerUpdateSubscriber[] = [];
     toolsetProvider: ToolsetProvider = new EmptyToolsetProvider();
+    private _deletedTaskIds: Set<string> = new Set();
 
     /**
      * Load the task manager state from the file system
@@ -1757,8 +1812,8 @@ export class TaskManagerState {
         try {
             taskList = JSON.parse(fs.readFileSync(taskListFile, 'utf8'));
         } catch (err) {
-            logger.error(`failed to load task list: ${err}`);
-            return new TaskManagerState();
+            logger.error(`failed to parse task_list.json: ${err}, falling back to directory scan...`);
+            return TaskManagerState.rebuildTaskListFromDirectory();
         }
         for (const task of taskList) {
             try {
@@ -1770,7 +1825,12 @@ export class TaskManagerState {
                 continue;
             }
         }
-        return taskManagerState.tasks.length > 0 ? taskManagerState : null;
+        if (taskManagerState.tasks.length > 0) {
+            return taskManagerState;
+        }
+        // task_list.json 有条目但所有任务文件都加载失败，尝试从目录恢复
+        logger.warn('all tasks in task_list.json failed to load, falling back to directory scan...');
+        return TaskManagerState.rebuildTaskListFromDirectory();
     }
 
     /**
@@ -1790,7 +1850,7 @@ export class TaskManagerState {
         const taskManagerState = new TaskManagerState();
 
         for (const file of files) {
-            if (!file.endsWith('.json') || file === 'task_list.json') {
+            if (!file.endsWith('.json') || file === 'task_list.json' || file.endsWith('.tmp')) {
                 continue;
             }
 
@@ -1815,33 +1875,129 @@ export class TaskManagerState {
             return aTime - bTime;
         });
 
-        taskManagerState.save();
+        taskManagerState.saveSync();
         logger.info(`task list rebuilt: ${taskManagerState.tasks.length} task(s) recovered`);
         return taskManagerState;
     }
 
+    private _saveTimer?: ReturnType<typeof setTimeout>;
+    private _lastWritePromise: Promise<void> = Promise.resolve();
+    private _savePendingAfterTimer: boolean = false;
+    private static SAVE_THROTTLE_MS = 2000;
+
+    /**
+     * Schedule an async throttled write of all tasks to disk.
+     * Multiple calls within the throttle window are coalesced into a single write
+     * of the latest state snapshot, keeping the event loop free for UI rendering.
+     *
+     * 如果在 timer 等待期间再次调用 save()，会标记 _savePendingAfterTimer，
+     * 确保 timer 触发写入后再安排一次写入以捕获最新状态。
+     */
     save(): void {
+        if (this._saveTimer) {
+            this._savePendingAfterTimer = true;
+            return;
+        }
+        this._saveTimer = setTimeout(() => {
+            this._saveTimer = undefined;
+            const hadPending = this._savePendingAfterTimer;
+            this._savePendingAfterTimer = false;
+            this._lastWritePromise = this._writeAll()
+                .catch((err) => {
+                    logger.error(`async save failed: ${err}`);
+                })
+                .finally(() => {
+                    if (hadPending || this._savePendingAfterTimer) {
+                        this._savePendingAfterTimer = false;
+                        this.save();
+                    }
+                });
+        }, TaskManagerState.SAVE_THROTTLE_MS);
+    }
+
+    private async _writeAll(): Promise<void> {
         const taskDirectory = getTaskDirectory();
         const taskListFile = path.join(taskDirectory, 'task_list.json');
 
-        // Write task list
-        fs.writeFileSync(
-            taskListFile,
-            JSON.stringify(
-                this.tasks.map((task) => task.toSimplifiedJSON()),
-                null,
-                4
-            ),
-            { encoding: 'utf8' }
+        // 只写入在本进程中被修改过的任务文件，防止多进程互相覆盖
+        const dirtyTasks = this.tasks.filter((t) => t._dirty);
+        const results = await Promise.allSettled(
+            dirtyTasks.map((task) => {
+                const taskFile = path.join(taskDirectory, `${task.task_id}.json`);
+                return _atomicWriteFile(taskFile, JSON.stringify(task.toJSON(), null, 4));
+            })
         );
-
-        // Write individual task files
-        for (const task of this.tasks) {
-            const taskFile = path.join(taskDirectory, `${task.task_id}.json`);
-            fs.writeFileSync(taskFile, JSON.stringify(task.toJSON(), null, 4), {
-                encoding: 'utf8'
-            });
+        for (let i = 0; i < results.length; i++) {
+            if (results[i].status === 'fulfilled') {
+                dirtyTasks[i]._dirty = false;
+            }
         }
+
+        // 构建合并后的 task_list.json：保留其他进程写入的任务条目
+        const mergedList = this._buildMergedTaskList(taskDirectory, taskListFile);
+        await _atomicWriteFile(taskListFile, JSON.stringify(mergedList, null, 4));
+    }
+
+    /**
+     * 构建合并后的任务列表：以内存任务为主，同时保留磁盘上由其他进程创建的任务条目。
+     * 防止 CLI 和 GUI 同时运行时互相覆盖彼此的任务。
+     */
+    private _buildMergedTaskList(taskDirectory: string, taskListFile: string): object[] {
+        const inMemoryIds = new Set(this.tasks.map((t) => t.task_id));
+        const mergedList: object[] = this.tasks.map((t) => t.toSimplifiedJSON());
+
+        try {
+            if (!fs.existsSync(taskListFile)) return mergedList;
+            const diskEntries: { task_id: string }[] = JSON.parse(fs.readFileSync(taskListFile, 'utf8'));
+            for (const entry of diskEntries) {
+                if (inMemoryIds.has(entry.task_id) || this._deletedTaskIds.has(entry.task_id)) {
+                    continue;
+                }
+                const taskFile = path.join(taskDirectory, `${entry.task_id}.json`);
+                if (fs.existsSync(taskFile)) {
+                    mergedList.push(entry);
+                }
+            }
+        } catch {
+            // 读取/解析失败时仅使用内存中的任务列表
+        }
+
+        return mergedList;
+    }
+
+    /**
+     * Synchronous write for operations that require immediate persistence
+     * (e.g. rebuild, clear, remove — user may exit right after).
+     */
+    saveSync(): void {
+        const taskDirectory = getTaskDirectory();
+        const taskListFile = path.join(taskDirectory, 'task_list.json');
+
+        // 只写入在本进程中被修改过的任务文件
+        const dirtyTasks = this.tasks.filter((t) => t._dirty);
+        for (const task of dirtyTasks) {
+            const taskFile = path.join(taskDirectory, `${task.task_id}.json`);
+            _atomicWriteFileSync(taskFile, JSON.stringify(task.toJSON(), null, 4));
+            task._dirty = false;
+        }
+
+        // 构建合并后的 task_list.json
+        const mergedList = this._buildMergedTaskList(taskDirectory, taskListFile);
+        _atomicWriteFileSync(taskListFile, JSON.stringify(mergedList, null, 4));
+    }
+
+    /**
+     * Cancel any pending throttled write and perform a final synchronous write.
+     * Call before process exit to ensure no data is lost.
+     */
+    async flushAllPendingSaves(): Promise<void> {
+        if (this._saveTimer) {
+            clearTimeout(this._saveTimer);
+            this._saveTimer = undefined;
+        }
+        this._savePendingAfterTimer = false;
+        await this._lastWritePromise;
+        await this._writeAll();
     }
 
     /**
@@ -1881,6 +2037,7 @@ export class TaskManagerState {
         }
         logger.info('task created', task.task_id);
         this.tasks.push(task);
+        this.save();
         this.publishTaskListUpdate();
         return task;
     }
@@ -1900,49 +2057,51 @@ export class TaskManagerState {
      * @param {string} taskId
      */
     removeTask(taskId: string) {
-        // 1. 找到要删除的任务对象
         const taskToRemove = this.getTask(taskId);
-
         if (!taskToRemove) {
             logger.warn(`Task ${taskId} not found for deletion.`);
             return;
         }
 
-        // Stop execution first so parent task cannot continue creating more subtasks.
-        taskToRemove.stop('system');
+        const removedIds = new Set<string>();
+        this._removeTaskRecursive(taskId, removedIds);
 
-        // 2. [递归步骤] 查找所有 parent_id 为当前 taskId 的子任务
+        if (removedIds.size > 0) {
+            this.tasks = this.tasks.filter((t) => !removedIds.has(t.task_id));
+            this.publishTaskListUpdate();
+            this.saveSync();
+        }
+    }
+
+    private _removeTaskRecursive(taskId: string, removedIds: Set<string>) {
+        const task = this.getTask(taskId);
+        if (!task || removedIds.has(taskId)) return;
+
+        task.stop('system');
+
         const children = this.tasks.filter((t) => t.parent_id === taskId);
-
         for (const child of children) {
-            // 递归调用，这样子任务的子任务也会被删除
-            this.removeTask(child.task_id);
+            this._removeTaskRecursive(child.task_id, removedIds);
         }
 
-        // 3. [清理步骤] 调用 TaskState 的 cleanup 方法删除物理文件 (JSON + Logs)
-        taskToRemove.cleanup();
-
-        // 4. [内存清理] 从内存列表中移除
-        this.tasks = this.tasks.filter((task) => task.task_id !== taskId);
-
-        // 5. 更新前端和保存列表
-        this.publishTaskListUpdate();
-        this.save();
+        task.cleanup();
+        removedIds.add(taskId);
+        this._deletedTaskIds.add(taskId);
     }
 
     /**
      * Remove all tasks from the task manager
      */
     clearAllTasks(): void {
-        // [新增] 清空前，先遍历调用每个 task 的 cleanup，确保物理日志被销毁
         for (const task of this.tasks) {
+            this._deletedTaskIds.add(task.task_id);
             task.stop('system');
             task.cleanup();
         }
         this.tasks = [];
         this.publishTaskListUpdate();
         this.cleanupOldTaskFiles();
-        this.save();
+        this.saveSync();
     }
 
     /**

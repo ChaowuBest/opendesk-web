@@ -1,7 +1,6 @@
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
-import { spawn } from 'child_process';
 import AdmZip from 'adm-zip';
 import { SkillRegistry } from './skillregistry.js';
 import { RegistryAdapters } from './registry-adapters.js';
@@ -78,7 +77,8 @@ function findSkillRootInDir(rootDir: string, relPath?: string | null): string | 
 
 function parseGitHubTreeUrl(githubUrl: string): { owner: string; repo: string; branch: string; path: string } | null {
     if (!githubUrl || typeof githubUrl !== 'string') return null;
-    const m = githubUrl.trim().match(/github\.com\/([^/]+)\/([^/]+)\/tree\/([^/]+)\/(.*)/i);
+    const url = githubUrl.trim();
+    const m = url.match(/github\.com\/([^/]+)\/([^/]+)\/tree\/([^/]+)(?:\/(.*?))?(?:\?.*)?$/i);
     if (!m) return null;
     const [, owner, repo, branch, relPath] = m;
     const pathPart = (relPath || '').replace(/\/+$/, '');
@@ -108,49 +108,6 @@ async function fetchGitHubZipWithFallback(zipUrl: string): Promise<Response> {
         }
         throw e;
     }
-}
-
-function runNpx(
-    args: string[],
-    cwd: string,
-    timeoutMs: number
-): Promise<{ code: number | null; stdout: string; stderr: string }> {
-    return new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve, reject) => {
-        const child = spawn('npx', args, {
-            cwd,
-            shell: process.platform === 'win32',
-            stdio: ['ignore', 'pipe', 'pipe']
-        });
-        let stdout = '';
-        let stderr = '';
-        let done = false;
-        const timer = setTimeout(() => {
-            if (done) return;
-            done = true;
-            try {
-                child.kill();
-            } catch {}
-            reject(new Error(`命令执行超时（${Math.floor(timeoutMs / 1000)} 秒），npx 可能正在首次下载依赖包`));
-        }, timeoutMs);
-        child.stdout?.on('data', (ch) => {
-            stdout += ch;
-        });
-        child.stderr?.on('data', (ch) => {
-            stderr += ch;
-        });
-        child.on('error', (err) => {
-            if (done) return;
-            done = true;
-            clearTimeout(timer);
-            reject(err);
-        });
-        child.on('close', (code) => {
-            if (done) return;
-            done = true;
-            clearTimeout(timer);
-            resolve({ code, stdout, stderr });
-        });
-    });
 }
 
 export function installSkillFromDirectory(sourceDir: string, force: boolean = false): InstallSkillResult {
@@ -231,20 +188,20 @@ export async function installSkillFromGitHubUrl(
     githubUrl: string,
     force: boolean = false
 ): Promise<InstallSkillResult> {
-    const parsed = parseGitHubTreeUrl(githubUrl);
+    let parsed = parseGitHubTreeUrl(githubUrl);
+    if (!parsed) {
+        const repoMatch = githubUrl.trim().match(/github\.com\/([^/]+)\/([^/?#]+)/i);
+        if (repoMatch) {
+            parsed = { owner: repoMatch[1], repo: repoMatch[2].replace(/\.git$/, ''), branch: 'main', path: '' };
+        }
+    }
     if (!parsed) {
         return {
             success: false,
-            error: '无效的 GitHub 技能 URL，需为 tree 格式：https://github.com/owner/repo/tree/branch/path'
+            error: '无效的 GitHub 技能 URL'
         };
     }
     const { owner, repo, branch, path: relPath } = parsed;
-    if (!relPath || !relPath.trim()) {
-        return {
-            success: false,
-            error: 'GitHub URL 须包含技能路径，如 .../tree/main/skills/pdf'
-        };
-    }
 
     const zipUrl = `https://github.com/${owner}/${repo}/archive/refs/heads/${branch}.zip`;
     const tmpDir = path.join(os.tmpdir(), `skill-github-${Date.now()}`);
@@ -258,7 +215,7 @@ export async function installSkillFromGitHubUrl(
         const zipBuffer = Buffer.from(await res.arrayBuffer());
         const zipPath = path.join(tmpDir, 'repo.zip');
         fs.writeFileSync(zipPath, zipBuffer);
-        return installSkillFromLocalZip(zipPath, relPath);
+        return installSkillFromLocalZip(zipPath, relPath || undefined);
     } catch (e: any) {
         return { success: false, error: e?.message || '下载或安装失败' };
     } finally {
@@ -275,27 +232,12 @@ export async function installSkillFromClawHubSlug(
         return { success: false, error: '请提供 ClawHub 技能 slug（如 my-skill）' };
     }
     const safeSlug = slug.trim();
-    const tmpDir = path.join(os.tmpdir(), `skill-clawhub-${Date.now()}`);
-    try {
-        fs.mkdirSync(tmpDir, { recursive: true });
-        const args = ['clawhub@latest', 'install', safeSlug];
-        if (version && String(version).trim()) {
-            args.push('--version', String(version).trim());
-        }
-        const { code, stderr } = await runNpx(args, tmpDir, 120000);
-        if (code !== 0) {
-            return { success: false, error: `ClawHub 安装失败: ${(stderr || '').trim() || `退出码 ${code}`}` };
-        }
-        const skillRoot = findSkillRootInDir(tmpDir, null);
-        if (!skillRoot) {
-            return { success: false, error: 'ClawHub 安装后未找到 SKILL.md，请确认 slug 正确' };
-        }
-        return SkillRegistry.addSkillFromDirectory(skillRoot, force);
-    } catch (e: any) {
-        return { success: false, error: e?.message || 'ClawHub 安装异常' };
-    } finally {
-        rmRecursive(tmpDir);
+    const params = new URLSearchParams({ slug: safeSlug });
+    if (version && String(version).trim()) {
+        params.set('version', String(version).trim());
     }
+    const downloadUrl = `${CLAWHUB_DOWNLOAD_URL}?${params}`;
+    return installSkillFromUrl(downloadUrl, force);
 }
 
 export async function installSkillFromMatrixSlug(slug: string, force: boolean = false): Promise<InstallSkillResult> {
@@ -303,33 +245,8 @@ export async function installSkillFromMatrixSlug(slug: string, force: boolean = 
         return { success: false, error: '请提供 Matrix Skill 的英文名称（如 test-master）' };
     }
     const safeSlug = slug.trim();
-    const tmpDir = path.join(os.tmpdir(), `skill-matrix-${Date.now()}`);
-    try {
-        fs.mkdirSync(tmpDir, { recursive: true });
-        const args = [
-            '@matrixopenharmony/matrix-cli',
-            '--workdir',
-            tmpDir,
-            '--dir',
-            'skills',
-            'skill',
-            'install',
-            safeSlug
-        ];
-        const { code, stderr } = await runNpx(args, tmpDir, 120000);
-        if (code !== 0) {
-            return { success: false, error: `Matrix Skill 安装失败: ${(stderr || '').trim() || `退出码 ${code}`}` };
-        }
-        const skillRoot = path.join(tmpDir, 'skills', safeSlug);
-        if (!fs.existsSync(skillRoot) || !fs.statSync(skillRoot).isDirectory()) {
-            return { success: false, error: `Matrix Skill 安装后未找到技能目录: ${skillRoot}` };
-        }
-        return SkillRegistry.addSkillFromDirectory(skillRoot, force);
-    } catch (e: any) {
-        return { success: false, error: e?.message || 'Matrix Skill 安装异常' };
-    } finally {
-        rmRecursive(tmpDir);
-    }
+    const downloadUrl = `https://matrix.openharmony.cn/api/registry/skill/${encodeURIComponent(safeSlug)}/install?format=zip`;
+    return installSkillFromUrl(downloadUrl, force);
 }
 
 const SKILLHUB_DOWNLOAD_URL = 'https://api.skillhub.tencent.com/api/v1/download';
@@ -352,12 +269,20 @@ export async function installSkillFromModelScopeSlug(
     }
     const safeSlug = slug.trim();
 
-    const skillhubUrl = `${SKILLHUB_DOWNLOAD_URL}?slug=${encodeURIComponent(safeSlug)}`;
-    let result = await installSkillFromUrl(skillhubUrl, force);
+    if (safeSlug.includes('/')) {
+        const msUrl = `https://www.modelscope.cn/api/v1/skills/${safeSlug}/archive/zip/master`;
+        const result = await installSkillFromUrl(msUrl, force);
+        if (result.success) return result;
+    }
+
+    const nameOnly = safeSlug.includes('/') ? safeSlug.split('/').pop()! : safeSlug;
+
+    const clawhubUrl = `${CLAWHUB_DOWNLOAD_URL}?slug=${encodeURIComponent(nameOnly)}`;
+    let result = await installSkillFromUrl(clawhubUrl, force);
     if (result.success) return result;
 
-    const clawhubUrl = `${CLAWHUB_DOWNLOAD_URL}?slug=${encodeURIComponent(safeSlug)}`;
-    result = await installSkillFromUrl(clawhubUrl, force);
+    const skillhubUrl = `${SKILLHUB_DOWNLOAD_URL}?slug=${encodeURIComponent(nameOnly)}`;
+    result = await installSkillFromUrl(skillhubUrl, force);
     if (result.success) return result;
 
     return { success: false, error: `ModelScope 技能「${safeSlug}」安装失败：所有下载源均不可用` };

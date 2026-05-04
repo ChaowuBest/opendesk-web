@@ -20,6 +20,7 @@ import { getShellCompletions, executeShellCommand } from './shell';
 import { spawnSync } from 'child_process';
 import process from 'process';
 import { SkillRegistry as AISkillRegistry } from '../../aikernel/skill';
+import { getShortcuts } from '../../utils/setting.js';
 import { t } from '../../../locale/index.js';
 
 type AgentInputStatus = 'idle' | 'running';
@@ -172,10 +173,12 @@ export class TaskStatusBar implements Component {
 
         const leftContent = leftCells.length > 0 ? ` ${leftCells.map((c) => c.text).join('  │  ')}` : '';
 
-        // 右侧固定区域：帮助提示（含模式切换提示）
+        // 右侧固定区域：帮助提示（含模式切换提示，使用可配置快捷键）
+        const shortcuts = getShortcuts();
+        const fmtKey = (k: string) => SlashCommandRegistry.formatKeyLabel(k);
         const rightHint =
             chalk.hex(colors.fgDim)(
-                `Shift+Tab ${t('input.statusbar.switchmode')}  /${t('help.name')} ${t('input.statusbar.help')}`
+                `${fmtKey(shortcuts.switch_mode)} ${t('input.statusbar.switchmode')}  ${fmtKey(shortcuts.show_help)} ${t('input.statusbar.help')}`
             ) + ' ';
 
         let leftW = visibleWidth(leftContent);

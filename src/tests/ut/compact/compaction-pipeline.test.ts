@@ -1,21 +1,52 @@
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 import { jest } from '@jest/globals';
 import { AutoCompactStates, createAutoCompactDecision } from '../../../main/aikernel/compaction/auto-compact';
 import { FULL_COMPACT_BOUNDARY_STRATEGY } from '../../../main/aikernel/compaction/full-compact';
 import { prepareContextForModel } from '../../../main/aikernel/compaction/pipeline';
+import { estimateVisibleContextTokens } from '../../../main/aikernel/compaction/token-estimation';
+import { ToolResultReplacementStates } from '../../../main/aikernel/compaction/tool-results';
 import { LLM } from '../../../main/aikernel/llm';
 import {
     AssistantMessage,
     ChatContext,
     ToolCall,
     ToolCallMessagePart,
+    Usage,
     UserMessage,
     isCompactBoundaryMessage
 } from '../../../main/aikernel/messages';
+import { setCustomAppDirectory } from '../../../main/utils/setting';
+
+let tempRootDir: string | undefined;
+
+function createTempAppDirectory(): string {
+    tempRootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-compaction-pipeline-'));
+    setCustomAppDirectory(tempRootDir);
+    return tempRootDir;
+}
+
+function cleanupTempAppDirectory(): void {
+    if (tempRootDir && fs.existsSync(tempRootDir)) {
+        fs.rmSync(tempRootDir, { recursive: true, force: true });
+    }
+    tempRootDir = undefined;
+}
 
 function createChatContext(): ChatContext {
     const chatContext = new ChatContext();
     chatContext.appendMessage(new UserMessage('hello'));
     return chatContext;
+}
+
+function createForcedCompactDecision(estimatedContextTokens = 720) {
+    return createAutoCompactDecision({
+        contextWindow: 1000,
+        promptTokens: estimatedContextTokens,
+        reservedSummaryOutput: 100,
+        buffer: 180
+    });
 }
 
 function appendAssistantMessage(chatContext: ChatContext, text: string): void {
@@ -55,6 +86,25 @@ function createLargeAssistantMessage(): AssistantMessage {
     return message;
 }
 
+function createAssistantWithUsageAndLargeToolResult(
+    totalTokens: number,
+    result: string
+): { message: AssistantMessage; toolCall: ToolCall } {
+    const message = new AssistantMessage();
+    message.appendText('assistant prepared a large tool result');
+    message.usage = new Usage(totalTokens, 0, totalTokens);
+
+    const toolCall = new ToolCall(0, 'tool-visible-budget', 'executePowerShell', '{"command":"Get-Content build.log"}');
+    toolCall.status = 'success';
+    toolCall.result = result;
+
+    const part = new ToolCallMessagePart();
+    part.push(toolCall);
+    message.appendToolCallPart(part);
+
+    return { message, toolCall };
+}
+
 describe('压缩 pipeline 的自动压缩状态流', () => {
     beforeEach(() => {
         jest.useFakeTimers();
@@ -63,6 +113,7 @@ describe('压缩 pipeline 的自动压缩状态流', () => {
     afterEach(() => {
         jest.restoreAllMocks();
         jest.useRealTimers();
+        cleanupTempAppDirectory();
     });
 
     test('达到阈值时会执行自动 compact，并在成功后清空失败状态', async () => {
@@ -83,11 +134,7 @@ describe('压缩 pipeline 的自动压缩状态流', () => {
         });
 
         const result = await prepareContextForModel(chatContext, undefined, {
-            autoCompactDecisionOverride: createAutoCompactDecision({
-                contextWindow: 1000,
-                promptTokens: 720,
-                reservedSummaryOutput: 100
-            }),
+            autoCompactDecisionOverride: createForcedCompactDecision(),
             autoCompactState,
             beforeCompact,
             executeCompact
@@ -126,11 +173,7 @@ describe('压缩 pipeline 的自动压缩状态流', () => {
         const executeCompact = jest.fn();
 
         const result = await prepareContextForModel(chatContext, undefined, {
-            autoCompactDecisionOverride: createAutoCompactDecision({
-                contextWindow: 1000,
-                promptTokens: 720,
-                reservedSummaryOutput: 100
-            }),
+            autoCompactDecisionOverride: createForcedCompactDecision(),
             autoCompactState,
             beforeCompact,
             executeCompact
@@ -166,11 +209,7 @@ describe('压缩 pipeline 的自动压缩状态流', () => {
 
         await expect(
             prepareContextForModel(chatContext, undefined, {
-                autoCompactDecisionOverride: createAutoCompactDecision({
-                    contextWindow: 1000,
-                    promptTokens: 720,
-                    reservedSummaryOutput: 100
-                }),
+                autoCompactDecisionOverride: createForcedCompactDecision(),
                 autoCompactState,
                 beforeCompact,
                 executeCompact
@@ -201,11 +240,7 @@ describe('压缩 pipeline 的自动压缩状态流', () => {
         const executeCompact = jest.fn(() => false);
 
         const result = await prepareContextForModel(chatContext, undefined, {
-            autoCompactDecisionOverride: createAutoCompactDecision({
-                contextWindow: 1000,
-                promptTokens: 720,
-                reservedSummaryOutput: 100
-            }),
+            autoCompactDecisionOverride: createForcedCompactDecision(),
             autoCompactState,
             beforeCompact,
             executeCompact
@@ -242,11 +277,7 @@ describe('压缩 pipeline 的自动压缩状态流', () => {
             .mockResolvedValue('<state_snapshot><overall_goal>pipeline compact</overall_goal></state_snapshot>');
 
         const result = await prepareContextForModel(chatContext, 'demo-model', {
-            autoCompactDecisionOverride: createAutoCompactDecision({
-                contextWindow: 1000,
-                promptTokens: 720,
-                reservedSummaryOutput: 100
-            }),
+            autoCompactDecisionOverride: createForcedCompactDecision(),
             autoCompactState,
             beforeCompact
         });
@@ -297,11 +328,7 @@ describe('压缩 pipeline 的自动压缩状态流', () => {
             .mockResolvedValue('<state_snapshot><overall_goal>step9 pipeline default</overall_goal></state_snapshot>');
 
         const result = await prepareContextForModel(chatContext, 'demo-model', {
-            autoCompactDecisionOverride: createAutoCompactDecision({
-                contextWindow: 1000,
-                promptTokens: 720,
-                reservedSummaryOutput: 100
-            }),
+            autoCompactDecisionOverride: createForcedCompactDecision(),
             autoCompactState: AutoCompactStates.create()
         });
 
@@ -352,11 +379,7 @@ describe('压缩 pipeline 的自动压缩状态流', () => {
             .mockResolvedValue('<state_snapshot><overall_goal>step9 pipeline rollback</overall_goal></state_snapshot>');
 
         const result = await prepareContextForModel(chatContext, 'demo-model', {
-            autoCompactDecisionOverride: createAutoCompactDecision({
-                contextWindow: 1000,
-                promptTokens: 720,
-                reservedSummaryOutput: 100
-            }),
+            autoCompactDecisionOverride: createForcedCompactDecision(),
             autoCompactState: AutoCompactStates.create(),
             enableAssistantRoundBoundary: false
         });
@@ -375,6 +398,42 @@ describe('压缩 pipeline 的自动压缩状态流', () => {
         expect(serialized).toContain('recent-round-4');
     });
 
+    test('自动压缩决策会使用 Step 4 预算后的可见工具结果 preview', async () => {
+        createTempAppDirectory();
+        const chatContext = new ChatContext();
+        chatContext.appendMessage(new UserMessage('inspect the latest build output'));
+        const largeResult = `HEAD\n${'x'.repeat(80_000)}\nTAIL`;
+        const { message } = createAssistantWithUsageAndLargeToolResult(90_000, largeResult);
+        chatContext.appendMessage(message);
+
+        const rawEstimate = estimateVisibleContextTokens({
+            activeContext: {
+                startIndex: 0,
+                messages: chatContext.messages
+            }
+        });
+
+        const result = await prepareContextForModel(chatContext, 'gpt-4o', {
+            taskId: 'task-pipeline-visible-budget',
+            enableToolResultBudget: true,
+            toolResultBudgetChars: 1_000,
+            toolResultReplacementState: ToolResultReplacementStates.create()
+        });
+
+        expect(rawEstimate.estimatedContextTokens).toBeGreaterThan(result.autoCompactDecision.autoCompactThreshold);
+        expect(result.contextTokenEstimate.estimatedContextTokens).toBeLessThan(
+            result.autoCompactDecision.autoCompactThreshold
+        );
+        expect(result.autoCompactDecision.shouldCompact).toBe(false);
+        expect(result.shouldCompact).toBe(false);
+        expect(result.compacted).toBe(false);
+        expect(result.autoCompactDecision.tokenEstimateSource).toBe('usage_plus_tail_estimate');
+        expect(result.toolResultOverrides.size).toBe(1);
+        expect(result.contextTokenEstimate.assistantInternalTailTokens).toBeLessThan(
+            rawEstimate.assistantInternalTailTokens
+        );
+    });
+
     test('未达到阈值时不会触发自动 compact，也不会改动自动压缩状态', async () => {
         const now = new Date('2026-04-17T02:00:00.000Z');
         jest.setSystemTime(now);
@@ -389,11 +448,7 @@ describe('压缩 pipeline 的自动压缩状态流', () => {
         const executeCompact = jest.fn();
 
         const result = await prepareContextForModel(chatContext, undefined, {
-            autoCompactDecisionOverride: createAutoCompactDecision({
-                contextWindow: 1000,
-                promptTokens: 719,
-                reservedSummaryOutput: 100
-            }),
+            autoCompactDecisionOverride: createForcedCompactDecision(719),
             autoCompactState,
             beforeCompact,
             executeCompact

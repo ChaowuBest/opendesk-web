@@ -165,6 +165,32 @@ function getCompactTracePath(taskId: string): string {
     return path.join(getTaskArtifactDirectory(taskId), 'compact.ndjson');
 }
 
+const _traceBuffers = new Map<string, string[]>();
+let _traceFlushTimer: ReturnType<typeof setTimeout> | undefined;
+const TRACE_FLUSH_INTERVAL_MS = 3000;
+
+function scheduleTraceFlush(): void {
+    if (_traceFlushTimer) return;
+    _traceFlushTimer = setTimeout(() => {
+        _traceFlushTimer = undefined;
+        flushAllTraceBuffers();
+    }, TRACE_FLUSH_INTERVAL_MS);
+}
+
+function flushAllTraceBuffers(): void {
+    for (const [taskId, lines] of _traceBuffers) {
+        if (lines.length === 0) continue;
+        const data = lines.join('');
+        _traceBuffers.set(taskId, []);
+        fs.promises.appendFile(getCompactTracePath(taskId), data, { encoding: 'utf8' }).catch((error) => {
+            logger.warn(
+                `[Compact Trace] failed to flush trace for task ${taskId}: ` +
+                    `${error instanceof Error ? error.message : String(error)}`
+            );
+        });
+    }
+}
+
 export function appendCompactTrace(taskId: string | undefined, entry: CompactTraceEntry): void {
     if (!taskId) {
         return;
@@ -180,14 +206,13 @@ export function appendCompactTrace(taskId: string | undefined, entry: CompactTra
         ...(entry.data ? { data: entry.data } : {})
     };
 
-    try {
-        fs.appendFileSync(getCompactTracePath(taskId), `${JSON.stringify(record)}\n`, { encoding: 'utf8' });
-    } catch (error) {
-        logger.warn(
-            `[Compact Trace] failed to append compact trace for task ${taskId}: ` +
-                `${error instanceof Error ? error.message : String(error)}`
-        );
+    let buf = _traceBuffers.get(taskId);
+    if (!buf) {
+        buf = [];
+        _traceBuffers.set(taskId, buf);
     }
+    buf.push(`${JSON.stringify(record)}\n`);
+    scheduleTraceFlush();
 }
 
 export function logCompactInfo(taskId: string | undefined, entry: CompactTraceEntry): void {

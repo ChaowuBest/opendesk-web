@@ -6,7 +6,8 @@ import {
     buildFullCompactPlan,
     buildFullCompactSummaryText,
     compactFullContext,
-    countFullCompactMessageStats
+    countFullCompactMessageStats,
+    generateFullCompactSummary
 } from '../../../main/aikernel/compaction/full-compact';
 import {
     buildActiveContextView,
@@ -24,6 +25,10 @@ import {
     isCompactBoundaryMessage,
     type ChatMessage
 } from '../../../main/aikernel/messages';
+
+afterEach(() => {
+    jest.restoreAllMocks();
+});
 
 function createMessageFactory() {
     const labels = new Map<ChatMessage, string>();
@@ -416,6 +421,41 @@ describe('full compact planning', () => {
         expect(summaryText).not.toContain('user kept-user');
         expect(summaryText).not.toContain('assistant kept tail text');
         expect(summaryText).not.toContain('hidden-u');
+    });
+
+    test('generateFullCompactSummary 默认把 reserved summary output 传给 LLM.ask 的 maxCompletionTokens', async () => {
+        const factory = createMessageFactory();
+        const chatContext = new ChatContext();
+
+        appendMessages(chatContext, [
+            factory.user('u1'),
+            factory.assistant('a1'),
+            factory.user('u2'),
+            factory.assistant('a2'),
+            factory.user('u3'),
+            factory.assistant('a3')
+        ]);
+
+        const plan = buildFullCompactPlan(chatContext, {
+            tailMessageCount: 2,
+            tailAssistantToolMessageCount: 0,
+            tailAssistantErrorMessageCount: 0,
+            tailPlanMessageCount: 0
+        });
+        expect(plan).toBeDefined();
+
+        const askSpy = jest
+            .spyOn(LLM, 'ask')
+            .mockResolvedValue('<state_snapshot><overall_goal>demo</overall_goal></state_snapshot>');
+
+        await expect(generateFullCompactSummary(plan!, 'anthropic/claude-4-sonnet')).resolves.toContain(
+            '<state_snapshot>'
+        );
+        expect(askSpy).toHaveBeenCalledTimes(1);
+        expect(askSpy.mock.calls[0]?.[1]).toBe('anthropic/claude-4-sonnet');
+        expect(askSpy.mock.calls[0]?.[2]).toMatchObject({
+            maxCompletionTokens: 20000
+        });
     });
 
     test('enableAssistantRoundBoundary 打开后，planner 可以在单条 assistant 内部计算 keep anchor', () => {

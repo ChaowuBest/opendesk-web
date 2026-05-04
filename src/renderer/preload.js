@@ -280,6 +280,14 @@ function exposeFSAPI() {
                 throw new Error(result.message);
             }
             return result.data;
+        },
+        trashItem: async (itemPath) => {
+            const result = await ipcRenderer.invoke('fs:trashItem', itemPath);
+            if (result.status !== 'ok') {
+                console.error('trashing item failed', result.message);
+                throw new Error(result.message);
+            }
+            return result.data;
         }
     });
 }
@@ -473,6 +481,13 @@ if (window.self !== window.top) {
                 throw new Error(result.message);
             }
             return result.data;
+        },
+        verifyModel: async ({ base_url, api_key, model_name }) => {
+            const result = await ipcRenderer.invoke('setting:verifyModel', { base_url, api_key, model_name });
+            if (result.status !== 'ok') {
+                throw new Error(result.message);
+            }
+            return result.data;
         }
     });
 
@@ -587,6 +602,11 @@ if (window.self !== window.top) {
             const result = await ipcRenderer.invoke('display:adjustScaleFactor', delta);
             if (result.status !== 'ok') throw new Error(result.message);
             return result.data;
+        },
+        onScaleFactorChanged: (callback) => {
+            const handler = (_event, factor) => callback(factor);
+            ipcRenderer.on('display:scaleFactorChanged', handler);
+            return () => ipcRenderer.removeListener('display:scaleFactorChanged', handler);
         }
     });
 

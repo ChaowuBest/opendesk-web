@@ -6,7 +6,13 @@ import { AutoCompactStates } from '../../../main/aikernel/compaction/auto-compac
 import { SessionMemoryStates } from '../../../main/aikernel/compaction/session-memory-compact';
 import { FULL_COMPACT_BOUNDARY_STRATEGY } from '../../../main/aikernel/compaction/full-compact';
 import { buildActiveContextView } from '../../../main/aikernel/compaction/context-view';
-import { ChatContext, CompactSeparatorMessage, UserMessage } from '../../../main/aikernel/messages';
+import {
+    AssistantMessage,
+    ChatContext,
+    CompactSeparatorMessage,
+    Usage,
+    UserMessage
+} from '../../../main/aikernel/messages';
 import { TaskManagerState, TaskState } from '../../../main/aikernel/states/tasks';
 
 let tempRootDir: string | undefined;
@@ -63,7 +69,7 @@ describe('任务持久化中的自动压缩状态', () => {
         const task = createTask(manager);
         manager.tasks.push(task);
 
-        manager.save();
+        manager.saveSync();
 
         const savedTaskJson = JSON.parse(fs.readFileSync(path.join(taskDir, 'task-root.json'), 'utf8'));
         expect(savedTaskJson.auto_compact_state).toMatchObject({
@@ -112,7 +118,7 @@ describe('任务持久化中的自动压缩状态', () => {
         expect(task.getAutoCompactState().lastFailureReason).toBe('compact failed');
         expect(forked.getAutoCompactState().lastFailureReason).toBe('forked task failed');
 
-        manager.save();
+        manager.saveSync();
 
         const reloadedManager = TaskManagerState.load();
         expect(reloadedManager).not.toBeNull();
@@ -196,7 +202,7 @@ describe('任务持久化中的自动压缩状态', () => {
         task.setSessionMemoryState(sessionMemoryState);
         manager.tasks.push(task);
 
-        manager.save();
+        manager.saveSync();
 
         const savedTaskJson = JSON.parse(fs.readFileSync(path.join(taskDir, 'task-root.json'), 'utf8'));
         expect(savedTaskJson.session_memory_state).toMatchObject({
@@ -217,6 +223,101 @@ describe('任务持久化中的自动压缩状态', () => {
 
         const forked = loadedTask!.fork();
         expect(forked.getSessionMemoryState()).toEqual(SessionMemoryStates.create());
+    });
+
+    test('save 和 load 会保留 assistant usage 的扩展字段，并归一化为 Usage 实例', () => {
+        const taskDir = createTempTaskDirectory();
+        const manager = new TaskManagerState();
+        const task = createTask(manager);
+        const assistant = new AssistantMessage();
+        assistant.appendText('assistant with normalized usage');
+        assistant.usage = new Usage(100, 20, 120, {
+            input_tokens: 90,
+            output_tokens: 30,
+            cache_creation_input_tokens: 10,
+            cache_read_input_tokens: 5
+        });
+        task.chat_context = new ChatContext();
+        task.chat_context.appendMessage(new UserMessage('seed context'));
+        task.chat_context.appendMessage(assistant);
+        manager.tasks.push(task);
+
+        manager.saveSync();
+
+        const savedTaskJson = JSON.parse(fs.readFileSync(path.join(taskDir, 'task-root.json'), 'utf8'));
+        const savedAssistant = savedTaskJson.chat_context.messages.find(
+            (message: { role?: string }) => message.role === 'assistant'
+        );
+        expect(savedAssistant.usage).toMatchObject({
+            prompt_tokens: 100,
+            completion_tokens: 20,
+            total_tokens: 120,
+            input_tokens: 90,
+            output_tokens: 30,
+            cache_creation_input_tokens: 10,
+            cache_read_input_tokens: 5
+        });
+
+        const reloadedManager = TaskManagerState.load();
+        expect(reloadedManager).not.toBeNull();
+        const loadedTask = reloadedManager!.getTask('task-root');
+        const loadedAssistant = loadedTask!.chat_context.messages[1] as AssistantMessage;
+
+        expect(loadedAssistant.usage).toBeInstanceOf(Usage);
+        expect(loadedAssistant.usage).toMatchObject(savedAssistant.usage);
+    });
+
+    test('load 兼容旧任务 assistant usage JSON', () => {
+        const taskDir = createTempTaskDirectory();
+        fs.writeFileSync(
+            path.join(taskDir, 'task_list.json'),
+            JSON.stringify([{ task_id: 'task-legacy-usage' }], null, 4),
+            'utf8'
+        );
+        fs.writeFileSync(
+            path.join(taskDir, 'task-legacy-usage.json'),
+            JSON.stringify(
+                {
+                    task_id: 'task-legacy-usage',
+                    parent_id: null,
+                    task_name: 'legacy-usage-task',
+                    task_status: 'waiting',
+                    chat_context: {
+                        messages: [
+                            {
+                                role: 'assistant',
+                                message_id: 'assistant-legacy-usage',
+                                usage: {
+                                    prompt_tokens: 321,
+                                    completion_tokens: 45,
+                                    total_tokens: 366
+                                },
+                                content: [{ type: 'text', text: 'legacy assistant usage payload' }]
+                            }
+                        ]
+                    },
+                    tool_result_replacement_state: { seen_ids: [], replacements: [] }
+                },
+                null,
+                4
+            ),
+            'utf8'
+        );
+
+        const reloadedManager = TaskManagerState.load();
+        expect(reloadedManager).not.toBeNull();
+        const loadedTask = reloadedManager!.getTask('task-legacy-usage');
+        expect(loadedTask).toBeDefined();
+
+        const loadedAssistant = loadedTask!.chat_context.messages[0] as AssistantMessage;
+        expect(loadedAssistant.usage).toBeInstanceOf(Usage);
+        expect(loadedAssistant.usage).toMatchObject({
+            prompt_tokens: 321,
+            completion_tokens: 45,
+            total_tokens: 366
+        });
+        expect(loadedAssistant.usage?.input_tokens).toBeUndefined();
+        expect(loadedAssistant.usage?.cache_creation_input_tokens).toBeUndefined();
     });
 
     test('save 和 load 会保留 full compact boundary metadata', () => {
@@ -259,7 +360,7 @@ describe('任务持久化中的自动压缩状态', () => {
         task.chat_context.appendMessage(new UserMessage('kept user message'));
         manager.tasks.push(task);
 
-        manager.save();
+        manager.saveSync();
 
         const savedTaskJson = JSON.parse(fs.readFileSync(path.join(taskDir, 'task-root.json'), 'utf8'));
         const savedBoundary = savedTaskJson.chat_context.messages.find(
