@@ -57,6 +57,8 @@ import { HarnessContext } from './aikernel/security/harness.js';
 import { ElectronPermissionPromptProvider } from './aikernel/security/electronPrompt.js';
 import { ElectronAskUserProvider } from './aikernel/interaction/electronAskUser.js';
 import { createInteractionToolset } from './aikernel/interaction/tools.js';
+import { ChannelMgrApplication } from './applications/channelmgr/app.js';
+import { ChannelMessageRouter } from './applications/channelmgr/router.js';
 
 /** 全局 agentDecl 实例（延迟初始化），用于获取 mode 等元信息 */
 let _globalAgentDecl: MainAgentDecl | null = null;
@@ -1289,6 +1291,36 @@ function startApplication() {
         initializeRegistryWorker();
         initializeProtocolHandlers();
         initializeUpdater();
+
+        ApplicationRegistry.onReady(async () => {
+            const channelMgrApp = ApplicationRegistry.getApplication('channelmgr') as ChannelMgrApplication | undefined;
+            if (channelMgrApp) {
+                const agentDecl = getGlobalAgentDecl();
+                const router = new ChannelMessageRouter(
+                    GlobalState.getInstance().taskManagerState,
+                    agentDecl,
+                    startupWorkspace
+                );
+
+                router.onTaskResolved = (task, message) => {
+                    const senderLabel = message.senderName || message.senderId;
+                    const channelLabel = message.channelId;
+                    const preview =
+                        (message.text || '').length > 40
+                            ? (message.text || '').slice(0, 37) + '...'
+                            : message.text || '';
+
+                    NotificationManager.getInstance().info(
+                        channelLabel,
+                        `来自 ${senderLabel} 的新消息`,
+                        preview || '(无文本内容)'
+                    );
+                };
+
+                await channelMgrApp.initializeChannels(router, startupWorkspace);
+                logger.info('[electron] channelmgr 消息路由已初始化');
+            }
+        });
     });
 
     app.on('will-quit', async () => {

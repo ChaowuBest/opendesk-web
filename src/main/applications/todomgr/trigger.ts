@@ -15,7 +15,7 @@
  */
 
 import format from 'string-template';
-import { describeCron } from '../utils/cron.js';
+import { describeCron } from '../../utils/cron.js';
 
 const TODO_HANDLER_TEMPLATE = `
 请执行以下全局待办事项：

@@ -1021,6 +1021,7 @@ export class UserMessage {
     role: 'user' = 'user';
     message_id: string = crypto.randomUUID();
     content: Array<UserMessagePart> = [];
+    timestamp: number = Date.now();
     /**
      * 标记此消息为内部消息（如钩子系统自动生成的 reject 消息）。
      * internal = true 时，仅在 debug 模式下在 TUI 中显示；
@@ -1083,6 +1084,9 @@ export class UserMessage {
         if (!user_message.message_id) {
             user_message.message_id = crypto.randomUUID();
         }
+        if (!user_message.timestamp) {
+            user_message.timestamp = Date.now();
+        }
         if (user_message.content !== undefined) {
             for (const part of user_message.content) {
                 if (part.type === 'text') {
@@ -1110,6 +1114,7 @@ export class UserMessage {
             role: this.role,
             message_id: this.message_id,
             internal: this.internal,
+            timestamp: this.timestamp,
             content: this.content.map((part) => part.toRenderJSON())
         };
     }

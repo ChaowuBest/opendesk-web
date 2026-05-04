@@ -27,7 +27,7 @@ import TodoMgrWorker from './worker';
 import { MANAGE_GLOBAL_TODOS_SKILL } from './skills.js';
 import { ApplicationRegistry } from '../registry.js';
 import { GlobalState } from '../../aikernel/states/global.js';
-import { buildTriggerMessage } from '../../aikernel/trigger.js';
+import { buildTriggerMessage } from './trigger.js';
 import { AssistantMessage } from '../../aikernel/messages.js';
 import { logger } from '../../utils/logger.js';
 import chalk from 'chalk';

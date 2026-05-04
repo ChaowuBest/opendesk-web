@@ -80,6 +80,7 @@ export interface TaskUpdateUserChunk {
     last_part: UserMessagePart;
     usage?: Usage;
     internal?: boolean;
+    timestamp?: number;
 }
 
 export interface TaskUpdateAssistantChunk {
@@ -969,7 +970,8 @@ export class TaskState {
                     message_id: last_message.message_id,
                     last_part_index: updated_part_index,
                     last_part: last_part,
-                    internal: last_message.internal
+                    internal: last_message.internal,
+                    timestamp: last_message.timestamp
                 };
             } else if (last_message instanceof AssistantMessage) {
                 if (last_message.content.length === 0) return;
