@@ -17,6 +17,7 @@ import { z } from 'zod';
 import { type TaskTodo, getOrInitTaskTodos, setTaskTodos } from '../../aikernel/todos/task-todos';
 import type { TaskState } from '../../aikernel/states/tasks';
 import { escapeHtml } from '../../utils/escape';
+import { t } from '../../../locale/index.js';
 import { type TodoMgrApplication } from './app';
 import { describeCron } from '../../utils/cron';
 import chalk from 'chalk';
@@ -35,6 +36,26 @@ export class GetCurrentTimeTool extends BaseTool<typeof GetCurrentTimeArgsSchema
 
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
         return [chalk.dim('🕐 获取当前时间')];
+    }
+
+    async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
+        const now = new Date();
+        const pad = (n: number) => String(n).padStart(2, '0');
+        const timeStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
+
+        const statusIcon =
+            toolcall.status === 'running'
+                ? '<span class="inline-block w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse"></span>'
+                : '';
+
+        return `<div class="my-2">
+            <div class="flex items-center gap-1.5 min-w-0">
+                <i class="far fa-clock shrink-0 text-slate-400 text-xs"></i>
+                <span class="shrink-0 text-slate-500 text-xs">${escapeHtml(t('tools.getCurrentTime.name'))}</span>
+                ${statusIcon}
+                <span class="text-xs text-slate-600">${escapeHtml(timeStr)}</span>
+            </div>
+        </div>`;
     }
 
     private async handleExecute(): Promise<string> {

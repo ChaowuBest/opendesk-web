@@ -497,6 +497,16 @@ export const zhCn: Record<string, string> = {
     'filemgr.glob.name': '模式匹配',
     'filemgr.grep.name': '内容搜索',
 
+    // Task & Planning Tools
+    'tools.getCurrentTime.name': '获取当前时间',
+    'tools.listRecentTasks.name': '列出任务',
+    'tools.getTaskHistory.name': '获取历史',
+    'tools.askFromTask.name': '任务追问',
+    'tools.createSubTask.name': '子任务',
+    'tools.waitSubTask.name': '等待子任务',
+    'tools.attachToSubTask.name': '追加消息到子任务',
+    'tools.askUser.name': '询问用户',
+
     // Reasoning Effort Labels
     'reasoning.effort.default': '默认',
     'reasoning.effort.none': '无推理',

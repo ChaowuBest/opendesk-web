@@ -503,6 +503,16 @@ export const enUs: Record<string, string> = {
     'filemgr.glob.name': 'Glob',
     'filemgr.grep.name': 'Grep',
 
+    // Task & Planning Tools
+    'tools.getCurrentTime.name': 'Get Current Time',
+    'tools.listRecentTasks.name': 'List Tasks',
+    'tools.getTaskHistory.name': 'Task History',
+    'tools.askFromTask.name': 'Ask Task',
+    'tools.createSubTask.name': 'Sub-task',
+    'tools.waitSubTask.name': 'Await Sub-task',
+    'tools.attachToSubTask.name': 'Append to Sub-task',
+    'tools.askUser.name': 'Ask User',
+
     // Reasoning Effort Labels
     'reasoning.effort.default': 'Default',
     'reasoning.effort.none': 'No Reasoning',

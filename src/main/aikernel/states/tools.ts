@@ -17,6 +17,8 @@ import { LLM } from '../llm.js';
 import { logger } from '../../utils/logger.js';
 import { Card } from '../../tui/components/card.js';
 import { statusDisplay, truncText } from '../../tui/components/toolcall.js';
+import { escapeHtml } from '../../utils/escape.js';
+import { t } from '../../../locale/index.js';
 import type { TaskManagerState, TaskState } from './tasks.js';
 
 // ═══════════════════ Helpers ═══════════════════
@@ -114,33 +116,25 @@ class ListRecentTasksTool extends BaseTool<typeof ListRecentTasksSchema> {
         const args = toolcall.args_object as z.output<typeof ListRecentTasksSchema> | undefined;
         const dateRange = args?.startDate && args?.endDate ? `${args.startDate} ~ ${args.endDate}` : '';
 
-        if (toolcall.status === 'running') {
-            return `
-            <div class="flex flex-col mt-3 mb-3 text-sm bg-white/80 backdrop-blur-md border border-slate-200 py-3 px-4 rounded-2xl shadow-sm w-fit min-w-[280px] max-w-md">
-                <div class="flex items-center space-x-3">
-                    <span class="text-base">📋</span>
-                    <span class="font-semibold text-slate-600">列出任务</span>
-                    <div class="h-2 w-2 rounded-full bg-blue-500 animate-pulse ring-4 ring-blue-100/50"></div>
-                    <span class="text-slate-400 text-xs">${dateRange}</span>
-                </div>
-            </div>`;
-        }
+        const statusIcon =
+            toolcall.status === 'running'
+                ? '<span class="inline-block w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse"></span>'
+                : toolcall.status === 'error'
+                  ? '<span class="inline-block w-1.5 h-1.5 rounded-full bg-rose-500"></span>'
+                  : '';
 
-        let statusHtml = '';
+        let detail = escapeHtml(dateRange);
         if (toolcall.status === 'success' && toolcall.result) {
             const taskCount = (toolcall.result.match(/^## /gm) ?? []).length;
-            statusHtml = `<span class="text-emerald-500">✅ ${taskCount} 个任务</span>`;
-        } else if (toolcall.status === 'error') {
-            statusHtml = `<span class="text-rose-500">❌ 失败</span>`;
+            detail += `，共 ${taskCount} 个任务`;
         }
 
-        return `
-        <div class="flex flex-col mt-3 mb-3 text-sm bg-white/80 backdrop-blur-md border border-slate-200 py-2 px-4 rounded-full shadow-sm w-fit">
-            <div class="flex items-center space-x-4">
-                <span class="text-base">📋</span>
-                <span class="font-semibold text-slate-600">列出任务</span>
-                <span class="text-slate-400 text-xs">${dateRange}</span>
-                ${statusHtml}
+        return `<div class="my-2">
+            <div class="flex items-center gap-1.5 min-w-0">
+                <i class="fas fa-list-ul shrink-0 text-slate-400 text-xs"></i>
+                <span class="shrink-0 text-slate-500 text-xs">${escapeHtml(t('tools.listRecentTasks.name'))}</span>
+                ${statusIcon}
+                <span class="truncate text-xs text-slate-600">${detail}</span>
             </div>
         </div>`;
     }
@@ -262,40 +256,47 @@ class AskFromTaskTool extends BaseTool<typeof AskFromTaskSchema> {
     async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
         const args = toolcall.args_object as z.output<typeof AskFromTaskSchema> | undefined;
         const question = args?.question ?? '';
-        const taskIdShort = args?.taskId ? args.taskId.slice(0, 8) + '…' : '';
+        const isRunning = toolcall.status === 'running';
+        const isError = toolcall.status === 'error';
 
-        if (toolcall.status === 'running') {
-            return `
-            <div class="flex flex-col mt-3 mb-3 text-sm bg-white/80 backdrop-blur-md border border-slate-200 py-3 px-4 rounded-2xl shadow-sm w-fit min-w-[280px] max-w-md">
-                <div class="flex items-center space-x-3">
-                    <span class="text-base">💬</span>
-                    <span class="font-semibold text-slate-600">询问任务</span>
-                    <div class="h-2 w-2 rounded-full bg-blue-500 animate-pulse ring-4 ring-blue-100/50"></div>
-                    <span class="text-slate-500 truncate max-w-xs text-xs">${taskIdShort}</span>
-                </div>
-                ${question ? `<div class="mt-1 text-xs text-slate-400 truncate max-w-full">问题: ${question.length > 60 ? question.slice(0, 60) + '…' : question}</div>` : ''}
-            </div>`;
-        }
+        const borderColor = isError ? 'border-red-200' : 'border-gray-200';
+        const iconBg = isError ? 'bg-red-50 text-red-400' : 'bg-blue-50 text-blue-400';
 
-        let resultHtml = '';
-        if (toolcall.status === 'success' && toolcall.result) {
-            const rendered = marked.parse(toolcall.result);
-            resultHtml = `<div class="mt-2 text-xs text-slate-600 max-h-40 overflow-y-auto prose prose-xs">${rendered}</div>`;
-        } else if (toolcall.status === 'error') {
-            resultHtml = `<div class="mt-1 text-xs text-rose-500">❌ ${toolcall.result ?? '失败'}</div>`;
+        const toolName = t('tools.askFromTask.name');
+        const questionText = escapeHtml(question.length > 80 ? question.slice(0, 77) + '…' : question);
+
+        let bodyContent = '';
+        if (isRunning) {
+            bodyContent = `
+                <div class="px-4 py-3 flex items-center gap-2 text-blue-400 text-[12px]">
+                    <i class="fa-solid fa-circle-notch fa-spin"></i>
+                    <span class="text-gray-400">正在分析任务对话记录…</span>
+                </div>`;
+        } else if (toolcall.status === 'success' && toolcall.result) {
+            const rendered = await marked.parse(toolcall.result);
+            bodyContent = `
+                <div class="px-4 py-2.5 text-xs text-gray-700 leading-relaxed markdown-body max-h-[240px] overflow-y-auto">${rendered}</div>`;
+        } else if (isError) {
+            bodyContent = `
+                <div class="px-4 py-2.5 text-xs text-red-600">${escapeHtml(String(toolcall.result ?? '查询失败'))}</div>`;
         }
 
         return `
-        <div class="flex flex-col mt-3 mb-3 text-sm bg-white/80 backdrop-blur-md border border-slate-200 py-3 px-4 rounded-2xl shadow-sm w-fit min-w-[280px] max-w-lg">
-            <div class="flex items-center space-x-3">
-                <span class="text-base">💬</span>
-                <span class="font-semibold text-slate-600">询问任务</span>
-                <span class="text-slate-500 text-xs">${taskIdShort}</span>
-                ${toolcall.status === 'success' ? '<span class="text-emerald-500">✅</span>' : ''}
+        <details class="my-1.5 rounded-lg border ${borderColor} bg-white overflow-hidden w-full" open>
+            <summary class="flex items-center gap-2 px-3 py-2 cursor-pointer select-none hover:bg-gray-50/60 transition-colors duration-150">
+                <span class="inline-flex items-center justify-center w-5 h-5 rounded ${iconBg}">
+                    <i class="fa-solid fa-comment-dots text-[10px]"></i>
+                </span>
+                <span class="text-[12px] text-gray-500 shrink-0">${escapeHtml(toolName)}</span>
+                <span class="text-[12px] text-gray-600 truncate flex-1">${questionText}</span>
+                <svg class="w-3 h-3 text-gray-400 shrink-0 transition-transform duration-200" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path d="M6 9l6 6 6-6"/>
+                </svg>
+            </summary>
+            <div class="border-t border-gray-100 bg-gray-50/40">
+                ${bodyContent}
             </div>
-            ${question ? `<div class="mt-1 text-xs text-slate-400">问题: ${question.length > 80 ? question.slice(0, 80) + '…' : question}</div>` : ''}
-            ${resultHtml}
-        </div>`;
+        </details>`;
     }
 
     private async handleExecute(args: z.output<typeof AskFromTaskSchema>): Promise<string> {
@@ -398,33 +399,25 @@ class GetTaskHistoryTool extends BaseTool<typeof GetTaskHistorySchema> {
         const taskIdShort = args?.taskId ? args.taskId.slice(0, 8) + '…' : '';
         const limit = args?.limit ?? 10;
 
-        if (toolcall.status === 'running') {
-            return `
-            <div class="flex flex-col mt-3 mb-3 text-sm bg-white/80 backdrop-blur-md border border-slate-200 py-3 px-4 rounded-2xl shadow-sm w-fit min-w-[280px] max-w-md">
-                <div class="flex items-center space-x-3">
-                    <span class="text-base">📜</span>
-                    <span class="font-semibold text-slate-600">获取历史</span>
-                    <div class="h-2 w-2 rounded-full bg-blue-500 animate-pulse ring-4 ring-blue-100/50"></div>
-                    <span class="text-slate-400 text-xs">${taskIdShort} · ${limit}条</span>
-                </div>
-            </div>`;
-        }
+        const statusIcon =
+            toolcall.status === 'running'
+                ? '<span class="inline-block w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse"></span>'
+                : toolcall.status === 'error'
+                  ? '<span class="inline-block w-1.5 h-1.5 rounded-full bg-rose-500"></span>'
+                  : '';
 
-        let statusHtml = '';
+        let detail = `${escapeHtml(taskIdShort)} · 最近 ${limit} 条`;
         if (toolcall.status === 'success' && toolcall.result) {
             const msgCount = (toolcall.result.match(/^### /gm) ?? []).length;
-            statusHtml = `<span class="text-emerald-500">✅ ${msgCount} 条消息</span>`;
-        } else if (toolcall.status === 'error') {
-            statusHtml = `<span class="text-rose-500">❌ 失败</span>`;
+            detail += ` · 返回 ${msgCount} 条`;
         }
 
-        return `
-        <div class="flex flex-col mt-3 mb-3 text-sm bg-white/80 backdrop-blur-md border border-slate-200 py-2 px-4 rounded-full shadow-sm w-fit">
-            <div class="flex items-center space-x-4">
-                <span class="text-base">📜</span>
-                <span class="font-semibold text-slate-600">获取历史</span>
-                <span class="text-slate-400 text-xs">${taskIdShort} · ${limit}条</span>
-                ${statusHtml}
+        return `<div class="my-2">
+            <div class="flex items-center gap-1.5 min-w-0">
+                <i class="fas fa-clock-rotate-left shrink-0 text-slate-400 text-xs"></i>
+                <span class="shrink-0 text-slate-500 text-xs">${escapeHtml(t('tools.getTaskHistory.name'))}</span>
+                ${statusIcon}
+                <span class="truncate text-xs text-slate-600">${detail}</span>
             </div>
         </div>`;
     }

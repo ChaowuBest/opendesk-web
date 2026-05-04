@@ -58,6 +58,7 @@ export function registerImportCommand(tui: OpenDeskTUI): void {
             try {
                 const task = TaskState.load(jsonPath, tui.taskManagerState);
                 task.task_id = crypto.randomUUID();
+                task._dirty = true;
                 tui.taskManagerState.tasks.push(task);
                 tui.taskManagerState.save();
                 tui.taskManagerState.publishTaskListUpdate();
