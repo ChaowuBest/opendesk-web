@@ -112,7 +112,7 @@ class TaskView extends HTMLElement {
         if (hasTextPart) {
             return `
             <div class="flex items-start flex-row-reverse">
-                <div class="bg-white text-gray-900 rounded-2xl px-3 py-1.5 shadow-sm max-w-3xl border border-gray-200">
+                <div class="bg-white text-gray-900 rounded-lg px-3 py-1.5 max-w-3xl border border-gray-200">
                     ${content}
                 </div>
             </div>
@@ -1254,7 +1254,7 @@ class EmbeddedTaskView extends HTMLElement {
         if (hasTextPart) {
             return `
             <div class="flex items-start flex-row-reverse">
-                <div class="bg-white text-gray-900 rounded-2xl px-3 py-1 shadow-sm max-w-3xl border border-gray-200">
+                <div class="bg-white text-gray-900 rounded-lg px-3 py-1 max-w-3xl border border-gray-200">
                     ${content}
                 </div>
             </div>

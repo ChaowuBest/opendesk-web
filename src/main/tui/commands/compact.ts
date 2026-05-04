@@ -28,6 +28,7 @@ export function registerCompactCommand(tui: OpenDeskTUI): void {
                 if (!compacted) {
                     throw new Error(tui.taskView.lastCompactErrorMessage ?? 'Context compact failed');
                 }
+                currentTask._dirty = true;
                 tui.taskManagerState.save();
 
                 tui.taskView.clearMessages();

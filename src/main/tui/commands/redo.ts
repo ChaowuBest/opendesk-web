@@ -81,6 +81,7 @@ export function registerRedoCommand(tui: OpenDeskTUI): void {
                 totalRestored += restored.length;
             }
 
+            task._dirty = true;
             tui.taskManagerState.save();
             tui.taskView.clearMessages();
             tui.taskView.rebuildFromHistory();

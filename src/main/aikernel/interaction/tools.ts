@@ -21,7 +21,9 @@ import { BaseTool, BaseToolset, ToolResult } from '../tool.js';
 import { Card } from '../../tui/components/card.js';
 import { statusDisplay, truncText } from '../../tui/components/toolcall.js';
 import type { ToolCall } from '../messages.js';
+import { marked } from '../messages.js';
 import type { TaskState } from '../states/tasks.js';
+import { t } from '../../../locale/index.js';
 import chalk from 'chalk';
 
 // ─── Provider 接口 ────────────────────────────────────────────────────────────
@@ -161,83 +163,91 @@ export class AskUserTool extends BaseTool<typeof AskUserArgsSchema> {
 
     async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
         const args = toolcall.args_object as z.output<typeof AskUserArgsSchema> | undefined;
+        const isRunning = toolcall.status === 'running';
+        const isError = toolcall.status === 'error';
 
-        if (toolcall.status === 'running') {
-            const questionsHtml =
-                args?.questions
-                    .map(
-                        (q) => `
-                <div class="mb-2">
-                    <div class="text-slate-600 font-medium text-[12px] mb-1">${escapeHtml(q.question)}</div>
-                    <div class="flex flex-wrap gap-1">
-                        ${q.options.map((o) => `<span class="px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 text-[11px]">${escapeHtml(o.label)}</span>`).join('')}
-                    </div>
-                </div>`
-                    )
-                    .join('') ?? '';
+        const toolName = t('tools.askUser.name');
+        const borderColor = isError ? 'border-red-200' : 'border-gray-200';
+        const iconBg = isError
+            ? 'bg-red-50 text-red-400'
+            : isRunning
+              ? 'bg-amber-50 text-amber-500'
+              : 'bg-emerald-50 text-emerald-500';
 
-            return `
-            <div class="flex flex-col mt-3 mb-3 text-sm bg-white/80 backdrop-blur-md border border-slate-200 py-3 px-4 rounded-2xl shadow-sm w-fit min-w-[280px] max-w-md">
-                <div class="flex items-center space-x-3 mb-2">
-                    <span class="text-base">❓</span>
-                    <span class="font-semibold text-slate-600">询问用户</span>
-                    <div class="h-2 w-2 rounded-full bg-amber-400 animate-pulse ring-4 ring-amber-100/50"></div>
-                </div>
-                ${questionsHtml}
-            </div>`;
+        const firstQuestion = args?.questions?.[0]?.question ?? '';
+        const headerQuestion = escapeHtml(firstQuestion.length > 60 ? firstQuestion.slice(0, 57) + '…' : firstQuestion);
+
+        let statusBadge = '';
+        if (isRunning) {
+            statusBadge = `<span class="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-50 text-amber-600"><i class="fa-solid fa-circle-notch fa-spin text-[8px]"></i>等待回答</span>`;
+        } else if (isError) {
+            statusBadge = `<span class="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-red-50 text-red-500"><i class="fa-solid fa-circle-xmark text-[8px]"></i>失败</span>`;
+        } else if (toolcall.status === 'success') {
+            statusBadge = `<span class="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-50 text-emerald-600"><i class="fa-solid fa-circle-check text-[8px]"></i>已回答</span>`;
         }
 
-        if (toolcall.status === 'success' && toolcall.result) {
+        let bodyContent = '';
+        if (isRunning && args?.questions) {
+            const questionsHtml = args.questions
+                .map(
+                    (q) => `
+                <div class="mb-2.5 last:mb-0">
+                    <div class="text-gray-600 font-medium text-[12px] mb-1.5">${escapeHtml(q.question)}</div>
+                    <div class="flex flex-wrap gap-1.5">
+                        ${q.options.map((o) => `<span class="px-2 py-0.5 rounded bg-gray-100 text-gray-500 text-[11px]" title="${escapeHtml(o.description)}">${escapeHtml(o.label)}</span>`).join('')}
+                    </div>
+                </div>`
+                )
+                .join('');
+            bodyContent = `<div class="px-3.5 py-2.5">${questionsHtml}</div>`;
+        } else if (toolcall.status === 'success' && toolcall.result) {
             try {
                 const parsed = JSON.parse(toolcall.result) as {
                     answers: Record<string, string[]>;
                     cancelled?: boolean;
                 };
                 if (parsed.cancelled) {
-                    return `
-                    <div class="flex items-center space-x-3 mt-3 mb-3 text-sm bg-slate-50/80 backdrop-blur-md border border-slate-200 py-2 px-4 rounded-full shadow-sm w-fit">
-                        <span class="text-base">❓</span>
-                        <span class="font-semibold text-slate-500">询问用户</span>
-                        <span class="text-slate-400 text-xs">已取消</span>
-                    </div>`;
+                    bodyContent = `<div class="px-3.5 py-2.5 text-[12px] text-gray-400">用户取消了本次询问</div>`;
+                } else if (parsed.answers && args?.questions) {
+                    const answersHtml = Object.entries(parsed.answers)
+                        .map(([idx, selected]) => {
+                            const q = args.questions[Number(idx)];
+                            if (!q) return '';
+                            const selectedBadges = selected
+                                .map(
+                                    (s) =>
+                                        `<span class="px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 text-[11px] font-medium">${escapeHtml(s)}</span>`
+                                )
+                                .join('');
+                            return `<div class="mb-2 last:mb-0">
+                                <div class="text-gray-500 text-[11px] mb-1">${escapeHtml(q.header || q.question)}</div>
+                                <div class="flex flex-wrap gap-1.5">${selectedBadges}</div>
+                            </div>`;
+                        })
+                        .filter(Boolean)
+                        .join('');
+                    bodyContent = `<div class="px-3.5 py-2.5">${answersHtml}</div>`;
                 }
-                const answersHtml = Object.entries(parsed.answers)
-                    .map(([idx, selected]) => {
-                        const q = args?.questions[Number(idx)];
-                        return q
-                            ? `<span class="text-slate-500 text-xs">${escapeHtml(q.header || q.question.slice(0, 20))}: </span><span class="font-medium text-slate-700 text-xs">${escapeHtml(selected.join(', '))}</span>`
-                            : '';
-                    })
-                    .filter(Boolean)
-                    .join('<span class="text-slate-300 mx-1">·</span>');
-
-                return `
-                <div class="flex items-center space-x-3 mt-3 mb-3 text-sm bg-white/80 backdrop-blur-md border border-slate-200 py-2 px-4 rounded-full shadow-sm w-fit max-w-md">
-                    <span class="text-base">❓</span>
-                    <span class="font-semibold text-slate-600">询问用户</span>
-                    <span class="text-emerald-500">✓</span>
-                    <span class="truncate">${answersHtml}</span>
-                </div>`;
-            } catch {
-                return `
-                <div class="flex items-center space-x-3 mt-3 mb-3 text-sm bg-white/80 backdrop-blur-md border border-slate-200 py-2 px-4 rounded-full shadow-sm w-fit">
-                    <span class="text-base">❓</span>
-                    <span class="font-semibold text-slate-600">询问用户</span>
-                    <span class="text-emerald-500">✓</span>
-                </div>`;
-            }
+            } catch {}
+        } else if (isError && toolcall.result) {
+            bodyContent = `<div class="px-3.5 py-2.5 text-[12px] text-red-600">${escapeHtml(String(toolcall.result).slice(0, 200))}</div>`;
         }
 
-        if (toolcall.status === 'error') {
-            return `
-            <div class="flex items-center space-x-3 mt-3 mb-3 text-sm bg-rose-50/80 backdrop-blur-md border border-rose-200 py-2 px-4 rounded-full shadow-sm w-fit">
-                <span class="text-base">❓</span>
-                <span class="font-semibold text-rose-600">询问用户</span>
-                <span class="text-rose-500 text-xs">失败</span>
-            </div>`;
-        }
-
-        return undefined;
+        return `
+        <details class="my-1.5 rounded-lg border ${borderColor} bg-white overflow-hidden w-full" open>
+            <summary class="flex items-center gap-2 px-3 py-2 cursor-pointer select-none hover:bg-gray-50/60 transition-colors duration-150">
+                <span class="inline-flex items-center justify-center w-5 h-5 rounded ${iconBg}">
+                    <i class="fa-solid fa-circle-question text-[10px]"></i>
+                </span>
+                <span class="text-[12px] text-gray-500 shrink-0">${escapeHtml(toolName)}</span>
+                <span class="text-[12px] text-gray-600 truncate flex-1">${headerQuestion}</span>
+                ${statusBadge}
+                <svg class="w-3 h-3 text-gray-400 shrink-0 transition-transform duration-200" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path d="M6 9l6 6 6-6"/>
+                </svg>
+            </summary>
+            ${bodyContent ? `<div class="border-t border-gray-100 bg-gray-50/40">${bodyContent}</div>` : ''}
+        </details>`;
     }
 
     // ── 执行 ──────────────────────────────────────────────────────────────────
