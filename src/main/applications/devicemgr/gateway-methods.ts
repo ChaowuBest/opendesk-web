@@ -20,7 +20,7 @@ import { logger } from '../../utils/logger.js';
 import type { DeviceGateway, GatewayMethodHandler, ConnectionState } from './gateway.js';
 import type { TaskManagerState, TaskState, TaskUpdateChunk } from '../../aikernel/states/tasks.js';
 import { BaseTaskUpdateSubscriber } from '../../aikernel/states/tasks.js';
-import { MainAgentDecl } from '../../aikernel/agents/mainagent/agent.js';
+import { MainAgentDecl } from '../../aikernel/agents/main/agent.js';
 
 const TAG = '[devicemgr:gateway-methods]';
 

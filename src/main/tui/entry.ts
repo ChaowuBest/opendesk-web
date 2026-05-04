@@ -26,8 +26,8 @@ import { logger, setDebugMode, getDebugMode } from '../utils/logger.js';
 import { lookupKnownContextSize, fetchContextSizeFromAPI } from '../utils/model-context';
 import { LLM } from '../aikernel/llm.js';
 import { UpgradeOverlay } from './components/upgrade';
-import { AgentDecl, type ModeDecl } from '../aikernel/agent.js';
-import { MainAgentDecl } from '../aikernel/agents/mainagent/agent.js';
+import { AgentDecl, type ModeDecl } from '../aikernel/agents/common.js';
+import { MainAgentDecl } from '../aikernel/agents/main/agent.js';
 import { HelpOverlay } from './components/help';
 import { ConfirmOverlay, InfoOverlay, InfoPage } from './components/notice';
 import { DashboardOverlay } from './components/dashboard';
@@ -377,7 +377,7 @@ export class OpenDeskTUI {
         ) => {
             try {
                 const task = this.taskManagerState.createTask(this.model);
-                const systemPrompt = await this.agentDecl.createSystemPrompt(this._activeMode);
+                const systemPrompt = await this.agentDecl.createSystemPrompt(this._activeMode, this.workspace);
                 task.setSystemPrompt(systemPrompt);
                 await this.initTaskHarness(task);
 
@@ -526,7 +526,7 @@ export class OpenDeskTUI {
         const task = this.taskManagerState.getTask(this.activeTaskId);
         if (!task) return;
         try {
-            const systemPrompt = await this.agentDecl.createSystemPrompt(this._activeMode);
+            const systemPrompt = await this.agentDecl.createSystemPrompt(this._activeMode, this.workspace);
             task.setSystemPrompt(systemPrompt);
         } catch (err) {
             logger.warn(`Failed to refresh active task system prompt after skill update: ${err}`);
@@ -727,7 +727,7 @@ export class OpenDeskTUI {
         }
 
         const task = this.taskManagerState.createTask(this.model);
-        const systemPrompt = await this.agentDecl.createSystemPrompt(this._activeMode);
+        const systemPrompt = await this.agentDecl.createSystemPrompt(this._activeMode, this.workspace);
         task.setSystemPrompt(systemPrompt);
         await this.initTaskHarness(task);
 
@@ -1049,7 +1049,7 @@ export class OpenDeskTUI {
     async onRequestSubmit(request: string) {
         if (this.taskView.taskState === undefined) {
             this.taskView.taskState = this.taskManagerState.createTask(this.model);
-            const systemPrompt = await this.agentDecl.createSystemPrompt(this._activeMode);
+            const systemPrompt = await this.agentDecl.createSystemPrompt(this._activeMode, this.workspace);
             this.taskView.taskState.setSystemPrompt(systemPrompt);
             await this.initTaskHarness(this.taskView.taskState);
 
@@ -1337,6 +1337,7 @@ export class OpenDeskTUI {
             task.harnessContext = await HarnessContext.createForMode(this.workspace, this._activeMode);
             task.harnessContext.permissionPrompt = this.sharedPermissionPrompt;
             task.activeModeId = this._activeMode.id;
+            task.allowedTools = this._activeMode.allowedTools;
             task.disabledTools = this._activeMode.disabledTools;
             // 注入 interaction 工具集（仅主任务）
             task.interactionToolset = createInteractionToolset(this.sharedAskUserProvider);
@@ -1432,13 +1433,14 @@ export class OpenDeskTUI {
     }
 
     /**
-     * 将所有任务的权限引擎同步到最新的 Mode。
+     * 将所有主任务的权限引擎同步到最新的 Mode。
      * 保留已有的环境变量和 permissionPrompt，仅替换权限引擎和 activeModeId。
-     * 同时递归更新子任务的 harnessContext，避免子任务持有旧引用。
+     * 子任务由父任务管理，不在此处更新。
      */
     private async syncAllTaskHarnesses(): Promise<void> {
         const mode = this._activeMode;
         for (const task of this.taskManagerState.tasks) {
+            if (task.parent_id !== null) continue;
             const savedEnv = task.harnessContext.environ;
             const savedPrompt = task.harnessContext.permissionPrompt;
 
@@ -1448,6 +1450,7 @@ export class OpenDeskTUI {
                 ctx.permissionPrompt = savedPrompt;
                 task.harnessContext = ctx;
                 task.activeModeId = mode.id;
+                task.allowedTools = mode.allowedTools;
                 task.disabledTools = mode.disabledTools;
             } catch (err) {
                 logger.warn(`Failed to sync task harness for mode ${mode.id}: ${err}`);
@@ -1456,14 +1459,32 @@ export class OpenDeskTUI {
     }
 
     /**
-     * 更新工作空间目录，同步刷新 Banner、process.cwd、自动补全 basePath。
+     * 更新工作空间目录，同步刷新 Banner、自动补全 basePath，
+     * 并为所有主任务重建 harnessContext（包含新 workspace 的权限引擎）。
+     * 子任务由父任务在创建时管理，不在此处更新。
      */
-    updateWorkspace(newWorkspace: string) {
+    async updateWorkspace(newWorkspace: string) {
         try {
             logger.info(`changing workspace to ${newWorkspace}`);
             this.workspace = newWorkspace;
             this.rebuildBanner();
             this.inputArea.refreshAutocomplete();
+
+            const mode = this._activeMode;
+            for (const task of this.taskManagerState.tasks) {
+                if (task.parent_id !== null) continue;
+                const savedEnv = task.harnessContext.environ;
+                const savedPrompt = task.harnessContext.permissionPrompt;
+                try {
+                    const ctx = await HarnessContext.createForMode(newWorkspace, mode);
+                    ctx.environ = savedEnv;
+                    ctx.permissionPrompt = savedPrompt;
+                    task.harnessContext = ctx;
+                } catch (err) {
+                    logger.warn(`Failed to sync task harness for new workspace: ${err}`);
+                    task.harnessContext.workspace = newWorkspace;
+                }
+            }
         } catch {
             logger.error(`failed to change workspace to ${newWorkspace}`);
         }

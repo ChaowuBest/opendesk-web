@@ -51,7 +51,8 @@ import {
     ElectronTaskManagerUpdateSubscriber
 } from '../platforms/electron.js';
 import { exportTaskToHtml, generateTaskHtml } from './utils/export';
-import { MainAgentDecl } from './aikernel/agents/mainagent/agent.js';
+import { MainAgentDecl } from './aikernel/agents/main/agent.js';
+import { AgentRegistry } from './aikernel/agents/registry.js';
 import { HarnessContext } from './aikernel/security/harness.js';
 import { ElectronPermissionPromptProvider } from './aikernel/security/electronPrompt.js';
 import { ElectronAskUserProvider } from './aikernel/interaction/electronAskUser.js';
@@ -63,6 +64,7 @@ function getGlobalAgentDecl() {
     if (!_globalAgentDecl) {
         const workspace = Setting.getInstance().getEffectiveWorkspace();
         _globalAgentDecl = new MainAgentDecl({ workspace });
+        AgentRegistry.initBuiltinAgents(workspace);
     }
     return _globalAgentDecl;
 }
@@ -326,18 +328,20 @@ const registerModeAPIHandlers = () => {
             }
             _currentElectronModeId = modeId;
 
-            // 同步所有已有任务的权限引擎到新模式
+            // 同步所有主任务的权限引擎到新模式（子任务由父任务管理）
             const globalState = GlobalState.getInstance();
             const workspace = Setting.getInstance().getEffectiveWorkspace();
             for (const task of globalState.taskManagerState.tasks) {
+                if (task.parent_id !== null) continue;
                 const savedEnv = task.harnessContext.environ;
-                const savedPrompt = task.harnessContext.permissionPrompt;
                 try {
                     const ctx = await HarnessContext.createForMode(workspace, target);
                     ctx.environ = savedEnv;
-                    ctx.permissionPrompt = savedPrompt;
+                    ctx.permissionPrompt =
+                        task.harnessContext.permissionPrompt || new ElectronPermissionPromptProvider();
                     task.harnessContext = ctx;
                     task.activeModeId = target.id;
+                    task.allowedTools = target.allowedTools;
                     task.disabledTools = target.disabledTools;
                 } catch (err) {
                     logger.warn(`Failed to sync task harness for mode ${modeId}: ${err}`);
@@ -443,7 +447,7 @@ const registerTaskManagerAPIHandlers = () => {
         const activeMode = modes.find((m) => m.id === resolvedModeId) ?? modes[0];
 
         agentDecl
-            .createSystemPrompt(activeMode)
+            .createSystemPrompt(activeMode, workspace)
             .then((prompt) => {
                 task.setSystemPrompt(prompt);
             })
@@ -454,6 +458,7 @@ const registerTaskManagerAPIHandlers = () => {
             task.harnessContext = await HarnessContext.createForMode(workspace, activeMode);
             task.harnessContext.permissionPrompt = new ElectronPermissionPromptProvider();
             task.activeModeId = activeMode.id;
+            task.allowedTools = activeMode.allowedTools;
             task.disabledTools = activeMode.disabledTools;
             // 注入 interaction 工具集（仅主任务，buildToolsets 会自动包含）
             const askUserProvider = new ElectronAskUserProvider();
@@ -944,18 +949,20 @@ const registerSettingAPIHandlers = () => {
             notifyWorkerSettingUpdate(Setting.getInstance().getData());
 
             // 同步所有已有任务的 harnessContext 到新工作空间
+            // 仅更新主任务（parent_id === null）；子任务的 harnessContext 由父任务在创建时决定
             const globalState = GlobalState.getInstance();
             const agentDecl = getGlobalAgentDecl();
             const modes = agentDecl.supportedModes();
             for (const task of globalState.taskManagerState.tasks) {
+                if (task.parent_id !== null) continue;
                 const modeId = task.activeModeId || _currentElectronModeId || agentDecl.defaultModeId();
                 const mode = modes.find((m) => m.id === modeId) ?? modes[0];
                 const savedEnv = task.harnessContext.environ;
-                const savedPrompt = task.harnessContext.permissionPrompt;
                 try {
                     const ctx = await HarnessContext.createForMode(selectedPath, mode);
                     ctx.environ = savedEnv;
-                    ctx.permissionPrompt = savedPrompt;
+                    ctx.permissionPrompt =
+                        task.harnessContext.permissionPrompt || new ElectronPermissionPromptProvider();
                     task.harnessContext = ctx;
                 } catch (err) {
                     logger.warn(`Failed to sync task harness for new workspace: ${err}`);
@@ -1230,11 +1237,21 @@ function startApplication() {
             listAvailableToolsets: () => ApplicationRegistry.listAvailableToolsets()
         };
 
-        // 为从磁盘恢复的旧任务注入当前工作空间（harnessContext 不落盘，加载后默认为空）
+        // 为从磁盘恢复的旧任务注入完整的 harnessContext（不落盘，加载后默认为空）
         const startupWorkspace = Setting.getInstance().getEffectiveWorkspace();
+        const agentDecl = getGlobalAgentDecl();
+        const defaultMode =
+            agentDecl.supportedModes().find((m) => m.id === (_currentElectronModeId || agentDecl.defaultModeId())) ??
+            agentDecl.supportedModes()[0];
         for (const task of GlobalState.getInstance().taskManagerState.tasks) {
             if (!task.harnessContext.workspace) {
-                task.harnessContext.workspace = startupWorkspace;
+                try {
+                    task.harnessContext = await HarnessContext.createForMode(startupWorkspace, defaultMode);
+                    task.harnessContext.permissionPrompt = new ElectronPermissionPromptProvider();
+                } catch (err) {
+                    logger.warn(`Failed to init restored task harness: ${err}`);
+                    task.harnessContext.workspace = startupWorkspace;
+                }
             }
         }
 
@@ -1285,7 +1302,7 @@ function startApplication() {
                 const resolvedModeId = _currentElectronModeId || agentDecl.defaultModeId();
                 const activeMode = modes.find((m) => m.id === resolvedModeId) ?? modes[0];
 
-                const systemPrompt = await agentDecl.createSystemPrompt(activeMode);
+                const systemPrompt = await agentDecl.createSystemPrompt(activeMode, workspace);
                 task.setSystemPrompt(systemPrompt);
 
                 try {

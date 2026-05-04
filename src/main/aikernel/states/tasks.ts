@@ -194,6 +194,12 @@ export class TaskState {
      */
     disabledTools?: string[];
 
+    /**
+     * Mode 级别的工具白名单。非空时仅白名单内的工具可用。
+     * 不参与序列化——由子任务 Agent 的 Mode 派发时设置。
+     */
+    allowedTools?: string[];
+
     stop_requested_by_user: boolean = false;
     started_at?: Date;
     finished_at?: Date;
@@ -1293,11 +1299,23 @@ export class TaskState {
             }
         }
 
-        // Apply disabledTools filter if present
+        // Apply allowedTools whitelist filter (Agent level) — if set, only these tools are kept
+        if (this.allowedTools && this.allowedTools.length > 0) {
+            const allowed = new Set(this.allowedTools);
+            for (const toolset of all) {
+                for (const [name] of toolset.tools.entries()) {
+                    if (!allowed.has(name)) {
+                        toolset.tools.delete(name);
+                    }
+                }
+            }
+        }
+
+        // Apply disabledTools blacklist filter (Mode + Agent level)
         if (this.disabledTools && this.disabledTools.length > 0) {
             const disabled = new Set(this.disabledTools);
             for (const toolset of all) {
-                for (const [name, tool] of toolset.tools.entries()) {
+                for (const [name] of toolset.tools.entries()) {
                     if (disabled.has(name)) {
                         toolset.tools.delete(name);
                     }

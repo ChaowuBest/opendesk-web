@@ -52,7 +52,13 @@ export interface ModeDecl {
      */
     getSubPrompt?: (workspace: string) => string | null;
     /**
+     * 工具白名单：非空时仅白名单内的工具可用，此时 disabledTools 被忽略。
+     * 空数组或 undefined 表示不做白名单过滤。
+     */
+    allowedTools?: string[];
+    /**
      * 工具集过滤器：返回在该 Mode 下需要排除的工具名列表。
+     * 当 allowedTools 为空时生效。
      * 返回空数组或 undefined 表示不过滤。
      */
     disabledTools?: string[];
@@ -60,7 +66,18 @@ export interface ModeDecl {
 
 // ─── AgentDecl ────────────────────────────────────────────────
 
+export type AgentType = 'builtin' | 'custom';
+
 export abstract class AgentDecl {
+    /** Agent 的唯一名称标识 */
+    abstract readonly agentName: string;
+
+    /** Agent 类型：builtin 为系统内置，custom 为通过 AGENT.md 等外部工具加载（预留） */
+    abstract readonly agentType: AgentType;
+
+    /** Agent 的使用场景描述，指示何时应该使用此 Agent */
+    abstract readonly whenToUse: string;
+
     protected environment: AgentEnvironment;
 
     constructor(environment: AgentEnvironment) {
@@ -77,5 +94,5 @@ export abstract class AgentDecl {
      */
     abstract defaultModeId(): string;
 
-    abstract createSystemPrompt(activeMode?: ModeDecl): Promise<string>;
+    abstract createSystemPrompt(activeMode?: ModeDecl, workspace?: string): Promise<string>;
 }

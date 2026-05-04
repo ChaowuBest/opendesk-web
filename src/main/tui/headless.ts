@@ -25,7 +25,7 @@ import {
     type TaskUpdateAssistantChunk
 } from '../aikernel/states/tasks.js';
 import { GlobalState } from '../aikernel/states/global.js';
-import { MainAgentDecl } from '../aikernel/agents/mainagent/agent.js';
+import { MainAgentDecl } from '../aikernel/agents/main/agent.js';
 import type { ModeDecl } from '../aikernel/agents/common.js';
 import { ApplicationRegistry } from '../applications/registry.js';
 import { logger } from '../utils/logger.js';
@@ -131,7 +131,7 @@ export class HeadlessRunner {
         );
 
         const task = this.taskManagerState.createTask(this.args.model);
-        const systemPrompt = await this.agentDecl.createSystemPrompt(this.activeMode);
+        const systemPrompt = await this.agentDecl.createSystemPrompt(this.activeMode, this.args.workspace);
         await task.setSystemPrompt(systemPrompt);
 
         if (this.args.profile) {

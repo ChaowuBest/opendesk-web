@@ -9,7 +9,8 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { AgentDecl, type ModeDecl } from '../common';
+import { AgentDecl, type AgentType, type ModeDecl } from '../common';
+import { AgentRegistry } from '../registry.js';
 import { SkillRegistry } from '../../skill';
 import { SoulRegistry } from '../../soul/registry';
 import { TASK_MANAGEMENT_PROMPT } from '../../planning/prompt';
@@ -165,6 +166,19 @@ export function getSkillsSection(skillFrontmatters: string): string {
 <skills>${skillFrontmatters}</skills>`;
 }
 
+// ─── Section 12: Agents ──────────────────────────────────────────
+function getAgentsSection(agentFrontmatters: string): string | null {
+    if (!agentFrontmatters) return null;
+    return `# 可用的子任务 Agent
+
+当你需要创建子任务时，可以通过 createSubTask 的 agentName 参数指定使用下列专用 Agent 来执行。
+如果不指定 agentName，子任务将使用默认的通用子任务执行器。
+
+选择合适的 Agent 可以获得更好的任务执行效果，例如使用 explore Agent 来进行代码库探索和调研。
+
+<agents>${agentFrontmatters}</agents>`;
+}
+
 // ─── Section 13: MCP Instructions (placeholder) ───────────────────
 // 当前未实现，预留接口
 function getMcpInstructionsSection(): string | null {
@@ -178,6 +192,10 @@ function formatBullets(items: Array<string | string[]>): string[] {
 }
 
 export class MainAgentDecl extends AgentDecl {
+    readonly agentName = 'main';
+    readonly agentType: AgentType = 'builtin';
+    readonly whenToUse = '通用主智能体，负责与用户直接交互并执行各种软件工程任务，包括编码、调试、重构和项目管理等。';
+
     supportedModes(): ModeDecl[] {
         return [MAIN_AGENT_STANDARD_MODE, MAIN_AGENT_PLAN_MODE, MAIN_AGENT_SOLO_MODE, MAIN_AGENT_UNLIMITED_MODE];
     }
@@ -186,8 +204,10 @@ export class MainAgentDecl extends AgentDecl {
         return 'standard';
     }
 
-    async createSystemPrompt(activeMode?: ModeDecl): Promise<string> {
+    async createSystemPrompt(activeMode?: ModeDecl, workspace?: string): Promise<string> {
+        const effectiveWorkspace = workspace || this.environment.workspace;
         const skillFrontmatters = await SkillRegistry.getInstance().getSkillFrontmatterXml();
+        const agentFrontmatters = AgentRegistry.getAgentFrontmatterXml();
 
         const soulUid = SoulRegistry.getActiveSoulUid();
         const soulName = SoulRegistry.getActiveSoulName();
@@ -206,7 +226,7 @@ export class MainAgentDecl extends AgentDecl {
         ];
 
         // Mode-specific sub-prompt 作为静态部分的一部分（用于 prompt cache 的考虑将来可以调整）
-        const modeSubPrompt = activeMode?.getSubPrompt?.(this.environment.workspace);
+        const modeSubPrompt = activeMode?.getSubPrompt?.(effectiveWorkspace);
         if (modeSubPrompt) {
             staticSections.push(modeSubPrompt);
         }
@@ -214,8 +234,9 @@ export class MainAgentDecl extends AgentDecl {
         const dynamicSections = [
             getSessionSpecificGuidanceSection(),
             getMemorySection(),
-            getEnvironmentSection(this.environment.workspace),
+            getEnvironmentSection(effectiveWorkspace),
             getSkillsSection(skillFrontmatters),
+            getAgentsSection(agentFrontmatters),
             getMcpInstructionsSection()
         ].filter((s): s is string => s !== null);
 

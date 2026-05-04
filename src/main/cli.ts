@@ -24,7 +24,8 @@ import { program as prog, Option } from 'commander';
 import { listInstalledPlugins, loadPlugins } from './aikernel/plugins/index.js';
 import { ChannelMgrApplication } from './applications/channelmgr/app.js';
 import { ChannelMessageRouter } from './applications/channelmgr/router.js';
-import { MainAgentDecl } from './aikernel/agents/mainagent/agent.js';
+import { MainAgentDecl } from './aikernel/agents/main/agent.js';
+import { AgentRegistry } from './aikernel/agents/registry.js';
 import { NotificationManager } from './utils/notificationmgr.js';
 import { registerPluginsCommand } from './tui/subcommands/plugins.js';
 import { registerToolsCommand } from './tui/subcommands/tools.js';
@@ -316,6 +317,7 @@ async function main(args: CommandLineArgs) {
         return;
     } else if (args.headless && args.command) {
         GlobalState.initialize();
+        AgentRegistry.initBuiltinAgents(args.workspace);
 
         initializeRegistry();
         initializeRegistryWorker();
@@ -329,6 +331,7 @@ async function main(args: CommandLineArgs) {
         });
     } else {
         GlobalState.initialize();
+        AgentRegistry.initBuiltinAgents(args.workspace);
 
         // 在 TUI 接管 stdin 之前检测终端配色方案（OSC 11 查询需要直接读写 stdin/stdout）
         const { detectTerminalColorScheme } = await import('./tui/theme.js');

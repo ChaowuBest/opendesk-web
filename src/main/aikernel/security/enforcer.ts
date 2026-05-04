@@ -145,6 +145,7 @@ export class ReadableDirectoryRegistry {
     getReadRules(): PermissionRule[] {
         const rules: PermissionRule[] = [];
         for (const dir of this.directories) {
+            rules.push({ resourceType: 'file', action: 'read', pathPattern: dir, effect: 'allow' });
             rules.push({ resourceType: 'file', action: 'read', pathPattern: `${dir}/**`, effect: 'allow' });
         }
         return rules;
@@ -303,6 +304,10 @@ export function createDefaultPermissionRules(workspace: string): PermissionRule[
     return [
         // 设备节点始终允许（/dev/stdin, /dev/null 等）
         ...createDeviceNodeRules(),
+        // 工作空间根目录本身的读写执行允许（ls 等命令会声明 read <workspace>，需要精确匹配根目录）
+        { resourceType: 'file', action: 'read', pathPattern: workspaceNorm, effect: 'allow' },
+        { resourceType: 'file', action: 'write', pathPattern: workspaceNorm, effect: 'allow' },
+        { resourceType: 'file', action: 'execute', pathPattern: workspaceNorm, effect: 'allow' },
         // 工作空间内读写允许（dot: true 确保 .gitignore 等 dotfiles 也被匹配）
         { resourceType: 'file', action: 'read', pathPattern: `${workspaceNorm}/**`, effect: 'allow' },
         { resourceType: 'file', action: 'write', pathPattern: `${workspaceNorm}/**`, effect: 'allow' },
