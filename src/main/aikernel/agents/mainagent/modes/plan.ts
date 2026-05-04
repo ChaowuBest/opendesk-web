@@ -74,7 +74,7 @@ export function getPlanModeSubPrompt(workspace: string): string {
 - 明确任务的范围、约束和验收标准
 
 ### 阶段 2：探索代码库
-- 使用 readFiles、grepFiles、globFiles 等工具探索相关代码
+- 使用 readFile、grepFiles、globFiles 等工具探索相关代码
 - 理解现有的架构模式、命名规范和代码风格
 - 找到需要修改的关键文件和它们的依赖关系
 - 使用 shell 运行只读命令获取 git 历史、分支状态等上下文

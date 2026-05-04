@@ -493,7 +493,7 @@ export const enUs: Record<string, string> = {
     'config.language.option.en-US': 'English',
 
     // File Manager Tools
-    'filemgr.readFiles.name': 'Read Files',
+    'filemgr.readFile.name': 'Read File',
     'filemgr.writeFile.name': 'Write File',
     'filemgr.writeFile.append': ' (Append)',
     'filemgr.editFile.name': 'Edit File',

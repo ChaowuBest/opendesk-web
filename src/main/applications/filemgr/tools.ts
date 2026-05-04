@@ -568,20 +568,14 @@ export function getTempDirectory(): string {
     return os.tmpdir();
 }
 
-// ==================== ReadFiles 工具 ====================
+// ==================== ReadFile 工具 ====================
 
-const READ_FILES_MAX_BYTES = 80 * 1024;
-const READ_FILES_MAX_CONCURRENCY = 5;
+const READ_FILE_MAX_BYTES = 160 * 1024;
 
-const readFilesSchema = z.object({
-    files: z
-        .array(
-            z.object({
-                path: z.string().describe('文件路径'),
-                offsetKB: z.number().int().min(0).default(0).describe('起始位置（单位 KB，从 0 开始），默认 0')
-            })
-        )
-        .describe('要读取的文件列表，每项可指定 path 与起始位置 offsetKB（KB）')
+const readFileSchema = z.object({
+    file_path: z.string().describe('文件的绝对路径或相对于工作目录的路径'),
+    offset: z.number().int().nonnegative().optional().describe('起始行号（从 1 开始）。仅在文件过大需要分段读取时提供'),
+    limit: z.number().int().positive().optional().describe('读取的行数。仅在文件过大需要分段读取时提供')
 });
 
 function isBinaryMedia(mime: string): boolean {
@@ -601,241 +595,84 @@ function hasBinaryContent(buffer: Buffer): boolean {
     return false;
 }
 
-interface ReadFileMetadata {
-    size: number;
-    modified: string;
-    totalChars?: number;
-    encoding?: string;
-    mime?: string;
-    ext?: string;
-}
-
-interface ReadFileResult {
-    path: string;
-    requestedOffsetKB: number;
-    error?: string;
-    metadata?: ReadFileMetadata;
-    content?: string;
-    nonText?: boolean;
-    truncated?: boolean;
-    nextOffsetKB?: number;
-}
-
-async function readSingleFile(filePath: string, offsetKB: number): Promise<ReadFileResult> {
-    if (offsetKB < 0) {
-        return { path: filePath, requestedOffsetKB: offsetKB, error: 'offsetKB 不能为负数' };
-    }
-
-    try {
-        const stat = await fs.promises.stat(filePath);
-        const size = stat.size;
-        const modified = stat.mtime.toISOString();
-
-        let type: Awaited<ReturnType<typeof fileType.fromFile>> = undefined;
-        try {
-            type = await fileType.fromFile(filePath);
-        } catch {
-            // 解析不了当文本
-        }
-
-        if (type?.mime && isBinaryMedia(type.mime)) {
-            return {
-                path: filePath,
-                requestedOffsetKB: offsetKB,
-                metadata: { size, modified, mime: type.mime, ext: type.ext },
-                content: undefined,
-                nonText: true
-            };
-        }
-
-        if (size === 0) {
-            return {
-                path: filePath,
-                requestedOffsetKB: offsetKB,
-                metadata: { size, modified, totalChars: 0, encoding: 'UTF-8' },
-                content: '',
-                truncated: false
-            };
-        }
-
-        const headLen = Math.min(size, HEAD_BYTES);
-        const headBuf = Buffer.alloc(headLen);
-        const fd = await fs.promises.open(filePath, 'r');
-        try {
-            await fd.read(headBuf, 0, headLen, 0);
-        } finally {
-            await fd.close();
-        }
-
-        if (!type && hasBinaryContent(headBuf)) {
-            return {
-                path: filePath,
-                requestedOffsetKB: offsetKB,
-                metadata: { size, modified },
-                content: undefined,
-                nonText: true
-            };
-        }
-
-        const { encoding, bomOffset } = detectEncoding(headBuf);
-        const encodingLabel = encodingDisplayName(encoding);
-
-        const byteOffset = offsetKB * 1024;
-        const readPosition = bomOffset + byteOffset;
-        const readLen = Math.max(0, Math.min(READ_FILES_MAX_BYTES, size - readPosition));
-
-        if (readLen === 0) {
-            return {
-                path: filePath,
-                requestedOffsetKB: offsetKB,
-                metadata: { size, modified, encoding: encodingLabel },
-                content: '',
-                truncated: false
-            };
-        }
-
-        let block: Buffer;
-        if (readPosition < headLen && readPosition + readLen <= headLen) {
-            block = headBuf.subarray(readPosition, readPosition + readLen);
-        } else {
-            block = Buffer.alloc(readLen);
-            const fd2 = await fs.promises.open(filePath, 'r');
-            try {
-                await fd2.read(block, 0, readLen, readPosition);
-            } finally {
-                await fd2.close();
+function addLineNumbers(content: string, startLine: number): string {
+    const lines = content.split(/\r?\n/);
+    return lines
+        .map((line, index) => {
+            const numStr = String(index + startLine);
+            if (numStr.length >= 6) {
+                return `${numStr}\t${line}`;
             }
-        }
-
-        const content = decodeBuffer(block, encoding, 0);
-        const truncated = readLen === READ_FILES_MAX_BYTES && readPosition + readLen < size;
-        const nextOffsetKB = Math.ceil((byteOffset + readLen) / 1024);
-
-        return {
-            path: filePath,
-            requestedOffsetKB: offsetKB,
-            metadata: { size, modified, encoding: encodingLabel },
-            content,
-            truncated: truncated ? true : undefined,
-            nextOffsetKB: truncated ? nextOffsetKB : undefined
-        };
-    } catch (err) {
-        let message: string;
-        if (err instanceof Error) {
-            const nodeErr = err as NodeJS.ErrnoException;
-            if (nodeErr.code === 'ENOENT') {
-                message = `文件不存在: ${filePath}`;
-            } else if (nodeErr.code === 'EACCES') {
-                message = `权限不足，无法读取文件: ${filePath}`;
-            } else if (nodeErr.code === 'EISDIR') {
-                message = `路径是目录，不是文件: ${filePath}`;
-            } else if (nodeErr.code === 'EMFILE') {
-                message = `打开文件过多，请稍后重试`;
-            } else {
-                message = err.message;
-            }
-        } else {
-            message = String(err);
-        }
-        return { path: filePath, requestedOffsetKB: offsetKB, error: message };
-    }
+            return `${numStr.padStart(6, ' ')}\t${line}`;
+        })
+        .join('\n');
 }
 
-function formatReadFileResult(result: ReadFileResult): string {
-    const parts: string[] = [`--- ${result.path} ---`];
-
-    if (result.error) {
-        parts.push(`错误: ${result.error}`);
-        return parts.join('\n');
-    }
-
-    if (result.requestedOffsetKB > 0) {
-        parts.push(`[从位置 ${result.requestedOffsetKB} KB 开始]`);
-    }
-
-    if (result.nonText) {
-        parts.push(
-            `此文件不是纯文本（检测为 ${result.metadata?.mime ?? '二进制'}），ReadFilesTool 无法打开非文本文件；以上仅为元数据。`
-        );
-    } else {
-        if (result.content != null && result.content.length > 0) {
-            parts.push(result.content);
-        }
-        if (result.truncated && result.nextOffsetKB !== undefined) {
-            const sizeStr = result.metadata?.size !== undefined ? `，文件总大小 ${result.metadata.size} 字节` : '';
-            parts.push(`[ 后续被截断，你可指定 offsetKB = ${result.nextOffsetKB} 继续读${sizeStr} ]`);
-        }
-    }
-
-    return parts.join('\n');
-}
-
-export class ReadFilesTool extends BaseTool<typeof readFilesSchema> {
+export class ReadFileTool extends BaseTool<typeof readFileSchema> {
     constructor() {
         super(
-            'readFiles',
-            '并行读取多个文件的原始文本内容，可用来读取文本、代码、配置文件等文本格式数据。支持同时读取多个文件，支持 offsetKB（KB）分页；非文本文件仅返回元数据',
-            readFilesSchema
+            'readFile',
+            '读取本地文件系统中的文件。你可以使用此工具直接访问任意文件。\n\n使用方法：\n- file_path 参数支持绝对路径或相对路径\n- 默认从文件开头读取全部内容\n- 可以通过 offset（起始行号）和 limit（行数）指定读取范围，适用于大文件分段读取\n- 返回结果为 JSON 格式，内容使用 cat -n 风格的行号标注\n- 此工具只能读取文件，不能读取目录。要读取目录内容请使用 shell 工具的 ls 命令\n- 如果读取的文件存在但内容为空，你会收到空文件提示',
+            readFileSchema
         );
 
         this.setExecutor(this.executeCommand);
     }
 
-    getDeclaredPermissions(args: z.output<typeof readFilesSchema>, taskState?: TaskState): PermissionRequest[] {
-        if (!args.files || !Array.isArray(args.files)) return [];
+    getDeclaredPermissions(args: z.output<typeof readFileSchema>, taskState?: TaskState): PermissionRequest[] {
         const basePath = getWorkingDirectory(taskState);
-        return args.files
-            .map((f: any) => ({
-                resourceType: 'file' as const,
-                action: 'read' as const,
-                resourcePath: sanitizePath(typeof f === 'string' ? f : f.path || '', basePath)
-            }))
-            .filter((p) => p.resourcePath !== '');
+        const p = sanitizePath(args.file_path || '', basePath);
+        if (!p) return [];
+        return [{ resourceType: 'file' as const, action: 'read' as const, resourcePath: p }];
     }
 
     async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
-        const files = toolcall.args_object?.['files'] as Array<{ path: string; offsetKB?: number }> | undefined;
-        const filePaths =
-            files && Array.isArray(files)
-                ? files.slice(0, 12).map((f) => {
-                      const pRaw = typeof f === 'object' && f && 'path' in f ? f.path : f;
-                      return typeof pRaw === 'string' ? pRaw : String(pRaw ?? '');
-                  })
-                : [];
+        const filePath = toolcall.args_object?.['file_path'] as string | undefined;
+        const offset = toolcall.args_object?.['offset'] as number | undefined;
+        const limit = toolcall.args_object?.['limit'] as number | undefined;
 
-        const detail =
-            filePaths.length === 1
-                ? escapeHtml(filePaths[0])
-                : filePaths.length > 0
-                  ? `${filePaths.length} 个文件`
-                  : '未指定文件';
+        let detail = filePath ? escapeHtml(filePath) : '';
+
+        if (offset != null || limit != null) {
+            const rangeStr = formatLineRange(offset, limit);
+            if (rangeStr) {
+                detail += ` · ${escapeHtml(rangeStr)}`;
+            }
+        }
+
+        if (toolcall.status === 'success' && toolcall.result) {
+            try {
+                const result = JSON.parse(toolcall.result);
+                if (result.type === 'text' && result.file) {
+                    detail += ` · ${result.file.totalLines} 行`;
+                }
+            } catch {
+                /* ignore */
+            }
+        }
 
         return renderInlineTool({
             icon: 'fas fa-file-lines',
-            title: t('filemgr.readFiles.name'),
+            title: t('filemgr.readFile.name'),
             status: toolcall.status,
             detail,
-            detailTitle: filePaths.length > 1 ? filePaths.map((p) => p).join('\n') : undefined,
-            fileList: filePaths.length > 1 ? filePaths : undefined
+            detailTitle: filePath || undefined
         });
     }
 
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
-        const files = toolcall.args_object?.['files'] as Array<{ path: string; offsetKB?: number }> | undefined;
+        const filePath = toolcall.args_object?.['file_path'] as string | undefined;
+        const offset = toolcall.args_object?.['offset'] as number | undefined;
+        const limit = toolcall.args_object?.['limit'] as number | undefined;
         const body: string[] = [];
 
-        if (files && Array.isArray(files)) {
-            body.push(chalk.yellow(`${files.length} 个文件`));
-            for (const f of files.slice(0, 5)) {
-                const pRaw = typeof f === 'object' && f && 'path' in f ? f.path : f;
-                const p = typeof pRaw === 'string' ? pRaw : String(pRaw ?? '');
-                const off = typeof f === 'object' && f && 'offsetKB' in f ? (f as { offsetKB?: number }).offsetKB : 0;
-                const suffix = (off ?? 0) > 0 ? chalk.dim(` (从 ${off} KB 开始)`) : '';
-                body.push(chalk.dim('  • ') + truncText(p, width - 16) + suffix);
+        if (filePath) {
+            let fileInfo = truncText(String(filePath), width - 8);
+            const rangeStr = formatLineRange(offset, limit);
+            if (rangeStr) {
+                fileInfo += chalk.dim(` (${rangeStr})`);
             }
-            if (files.length > 5) {
-                body.push(chalk.dim(`  … 共 ${files.length} 个文件`));
-            }
+            body.push(chalk.yellow(fileInfo));
         }
 
         if (toolcall.status === 'running') {
@@ -844,59 +681,180 @@ export class ReadFilesTool extends BaseTool<typeof readFilesSchema> {
             const errStr = typeof toolcall.result === 'string' ? toolcall.result : String(toolcall.result);
             body.push(chalk.red(`  ✗ ${truncText(errStr, width - 16)}`));
         } else if (toolcall.status === 'success' && toolcall.result != null) {
-            const resultStr = typeof toolcall.result === 'string' ? toolcall.result : String(toolcall.result);
-            const errorLines = resultStr.match(/^错误: .+$/gm);
-            if (errorLines) {
-                for (const line of errorLines.slice(0, 5)) {
-                    body.push(chalk.red(`  ✗ ${truncText(line, width - 16)}`));
+            try {
+                const result = JSON.parse(String(toolcall.result));
+                if (result.type === 'error') {
+                    body.push(chalk.red(`  ✗ ${truncText(result.error, width - 16)}`));
+                } else if (result.type === 'text' && result.file) {
+                    const f = result.file;
+                    if (f.numLines > 0) {
+                        body.push(
+                            chalk.dim(
+                                `  ${f.numLines} 行 (${f.startLine}~${f.startLine + f.numLines - 1}/${f.totalLines})`
+                            )
+                        );
+                    } else {
+                        body.push(chalk.dim(`  空内容 (文件共 ${f.totalLines} 行)`));
+                    }
                 }
-                if (errorLines.length > 5) {
-                    body.push(chalk.red(`  … 共 ${errorLines.length} 个错误`));
-                }
-            }
-            const truncatedMatch = resultStr.match(/\[ 后续被截断[^]]*offsetKB = (\d+)[^]]* ]/);
-            if (truncatedMatch) {
-                body.push(chalk.dim(`  已截断，可指定 offsetKB = ${truncatedMatch[1]} 继续读`));
-            } else if (!errorLines) {
+            } catch {
                 body.push(chalk.dim('  见下方结果'));
             }
         }
 
         return new Card({
             icon: '📖',
-            title: t('filemgr.readFiles.name'),
+            title: t('filemgr.readFile.name'),
             status: statusDisplay(toolcall.status),
             body
         }).render(width);
     }
 
-    async executeCommand(args: z.output<typeof readFilesSchema>, taskState?: TaskState): Promise<string> {
-        if (!args.files || !Array.isArray(args.files) || args.files.length === 0) {
-            return '请提供要读取的文件列表（files 数组，每项含 path 与可选的 offsetKB）';
-        }
-
+    async executeCommand(args: z.output<typeof readFileSchema>, taskState?: TaskState): Promise<string> {
         const basePath = getWorkingDirectory(taskState);
-        const results: ReadFileResult[] = [];
-        for (let i = 0; i < args.files.length; i += READ_FILES_MAX_CONCURRENCY) {
-            const batch = args.files.slice(i, i + READ_FILES_MAX_CONCURRENCY);
-            const batchResults = await Promise.all(
-                batch.map((f: any) => {
-                    const rawPath =
-                        typeof f === 'string' ? f : typeof f.path === 'string' ? f.path : String(f.path ?? '');
-                    const p = sanitizePath(rawPath, basePath);
-                    const offsetKB = Number(f.offsetKB ?? 0);
-                    return readSingleFile(p, offsetKB);
-                })
-            );
-            results.push(...batchResults);
+        const filePath = sanitizePath(args.file_path || '', basePath);
+        const { offset, limit } = args;
+
+        if (!filePath) {
+            return JSON.stringify({ type: 'error', error: '请提供文件路径 (file_path)' });
         }
 
-        const output: string[] = [];
-        for (const result of results) {
-            output.push(formatReadFileResult(result));
+        try {
+            const stat = await fs.promises.stat(filePath);
+
+            if (stat.isDirectory()) {
+                return JSON.stringify({
+                    type: 'error',
+                    error: `路径是目录，不是文件: ${filePath}。要读取目录内容请使用 shell 工具的 ls 命令`
+                });
+            }
+
+            const size = stat.size;
+
+            if (size === 0) {
+                return JSON.stringify({
+                    type: 'text',
+                    file: {
+                        filePath,
+                        content: '',
+                        numLines: 0,
+                        startLine: 1,
+                        totalLines: 0
+                    }
+                });
+            }
+
+            const headLen = Math.min(size, HEAD_BYTES);
+            const headBuf = Buffer.alloc(headLen);
+            const fd = await fs.promises.open(filePath, 'r');
+            try {
+                await fd.read(headBuf, 0, headLen, 0);
+            } finally {
+                await fd.close();
+            }
+
+            const { encoding, bomOffset } = detectEncoding(headBuf);
+            const isMultiByteUnicode =
+                encoding === 'utf16le' || encoding === 'utf16be' || encoding === 'utf-32le' || encoding === 'utf-32be';
+
+            if (!isMultiByteUnicode) {
+                let type: Awaited<ReturnType<typeof fileType.fromFile>> = undefined;
+                try {
+                    type = await fileType.fromFile(filePath);
+                } catch {
+                    /* ignore */
+                }
+
+                if (type?.mime && isBinaryMedia(type.mime)) {
+                    return JSON.stringify({
+                        type: 'error',
+                        error: `此文件不是纯文本（检测为 ${type.mime}），readFile 无法打开非文本文件`
+                    });
+                }
+
+                if (!type && hasBinaryContent(headBuf)) {
+                    return JSON.stringify({
+                        type: 'error',
+                        error: `此文件不是纯文本（检测为二进制），readFile 无法打开非文本文件`
+                    });
+                }
+            }
+
+            const rawBuf = await fs.promises.readFile(filePath);
+            const fullContent = decodeBuffer(rawBuf, encoding, bomOffset);
+            const allLines = fullContent.split(/\r?\n/);
+            const totalLines = allLines.length;
+
+            const startLine = offset != null ? Math.max(1, offset) : 1;
+            const startIdx = startLine - 1;
+
+            if (startIdx >= totalLines) {
+                return JSON.stringify({
+                    type: 'text',
+                    file: {
+                        filePath,
+                        content: '',
+                        numLines: 0,
+                        startLine,
+                        totalLines
+                    }
+                });
+            }
+
+            const endIdx = limit != null ? Math.min(startIdx + limit, totalLines) : totalLines;
+            const selectedLines = allLines.slice(startIdx, endIdx);
+            const numberedContent = addLineNumbers(selectedLines.join('\n'), startLine);
+
+            const contentByteLen = Buffer.byteLength(numberedContent, 'utf8');
+            if (contentByteLen > READ_FILE_MAX_BYTES) {
+                return JSON.stringify({
+                    type: 'error',
+                    error: `读取范围过大（${Math.ceil(contentByteLen / 1024)} KB 超过 ${READ_FILE_MAX_BYTES / 1024} KB 限制）。文件共 ${totalLines} 行，请使用 offset 和 limit 参数分段读取。例如：offset=${startLine}, limit=2000`
+                });
+            }
+
+            return JSON.stringify({
+                type: 'text',
+                file: {
+                    filePath,
+                    content: numberedContent,
+                    numLines: selectedLines.length,
+                    startLine,
+                    totalLines
+                }
+            });
+        } catch (err) {
+            let message: string;
+            if (err instanceof Error) {
+                const nodeErr = err as NodeJS.ErrnoException;
+                if (nodeErr.code === 'ENOENT') {
+                    message = `文件不存在: ${filePath}`;
+                } else if (nodeErr.code === 'EACCES') {
+                    message = `权限不足，无法读取文件: ${filePath}`;
+                } else if (nodeErr.code === 'EISDIR') {
+                    message = `路径是目录，不是文件: ${filePath}`;
+                } else if (nodeErr.code === 'EMFILE') {
+                    message = `打开文件过多，请稍后重试`;
+                } else {
+                    message = err.message;
+                }
+            } else {
+                message = String(err);
+            }
+            return JSON.stringify({ type: 'error', error: message });
         }
-        return output.join('\n\n');
     }
+}
+
+function formatLineRange(offset?: number, limit?: number): string {
+    if (offset != null && limit != null) {
+        return `第 ${offset}~${offset + limit - 1} 行`;
+    } else if (offset != null) {
+        return `从第 ${offset} 行`;
+    } else if (limit != null) {
+        return `前 ${limit} 行`;
+    }
+    return '';
 }
 
 // ==================== WriteFile 工具 ====================
@@ -1279,11 +1237,11 @@ export class EditFileTool extends BaseTool<typeof editFileSchema> {
                 if (firstLine.length > 10) {
                     const lineIdx = normalizedContent.split('\n').findIndex((l) => l.trim() === firstLine);
                     if (lineIdx >= 0) {
-                        return `错误: 未找到要替换的文本。提示：在文件第 ${lineIdx + 1} 行找到了与 oldString 第一行相似的内容，但后续行不完全匹配。请使用 readFiles 工具重新读取文件以获取最新内容`;
+                        return `错误: 未找到要替换的文本。提示：在文件第 ${lineIdx + 1} 行找到了与 oldString 第一行相似的内容，但后续行不完全匹配。请使用 readFile 工具重新读取文件以获取最新内容`;
                     }
                 }
 
-                return `错误: 未找到要替换的文本。请确保 oldString 与文件内容完全匹配（包括空白和缩进）。建议先用 readFiles 工具读取文件内容`;
+                return `错误: 未找到要替换的文本。请确保 oldString 与文件内容完全匹配（包括空白和缩进）。建议先用 readFile 工具读取文件内容`;
             }
         }
 
@@ -2329,7 +2287,7 @@ export class GrepFilesTool extends BaseTool<typeof grepSchema> {
 
 export function createFileManagerToolset(): BaseToolset {
     const toolset = new BaseToolset('filemgr');
-    toolset.addTool(new ReadFilesTool());
+    toolset.addTool(new ReadFileTool());
     toolset.addTool(new WriteFileTool());
     toolset.addTool(new EditFileTool());
     toolset.addTool(new SearchReplaceTool());

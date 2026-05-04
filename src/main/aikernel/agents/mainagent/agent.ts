@@ -79,7 +79,7 @@ function getUsingToolsSection(): string {
     const items = [
         '不要在有相关专用工具时使用 shell 命令。使用专用工具使用户更容易理解和审查你的工作。以下是一些重要的替代规则：',
         [
-            '读取文件时使用 readFiles 而非 cat、head、tail 或 sed',
+            '读取文件时使用 readFile 而非 cat、head、tail 或 sed',
             '编辑文件时使用 editFile 而非 sed 或 awk',
             '创建文件时使用 writeFile 而非 cat heredoc 或 echo 重定向',
             '搜索文件时使用 globFiles 而非 find 或 ls',
