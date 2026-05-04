@@ -11,7 +11,7 @@ export default defineConfig(({ mode }) => {
                 outDir: 'dist/main',
                 rollupOptions: {
                     input: {
-                        main: path.join(__dirname, 'src', 'main', 'main.js'),
+                        main: path.join(__dirname, 'src', 'main', 'main.ts'),
                         worker: path.join(__dirname, 'src', 'main', 'worker.ts')
                     },
                     onwarn(warning, warn) {

@@ -101,7 +101,7 @@ export class HeadlessRunner {
     constructor(args: CommandLineArgs) {
         this.args = args;
         this.taskManagerState = GlobalState.getInstance().taskManagerState;
-        this.agentDecl = new MainAgentDecl({ workspace: args.workspace });
+        this.agentDecl = new MainAgentDecl();
         MemoryRegistry.getInstance(args.workspace);
 
         const modes = this.agentDecl.supportedModes();

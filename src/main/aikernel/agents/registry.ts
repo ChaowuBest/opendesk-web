@@ -48,9 +48,9 @@ export class AgentRegistry {
     /**
      * 注册所有内置 Agent。在应用启动时调用一次。
      */
-    static initBuiltinAgents(workspace: string): void {
+    static initBuiltinAgents(): void {
         if (this.agents.size > 0) return; // 防止重复初始化
-        this.registerAgent(new ExploreAgentDecl({ workspace }));
+        this.registerAgent(new ExploreAgentDecl());
     }
 
     /**

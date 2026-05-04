@@ -11,6 +11,10 @@
 
 import { AbstractPlatform } from './base';
 import { BaseApplication } from '../main/applications/base';
+import type { TaskState } from '../main/aikernel/states/tasks.js';
+import type { PermissionPromptProvider } from '../main/aikernel/security/permission.js';
+import type { AskUserProvider } from '../main/aikernel/interaction/tools.js';
+import { createInteractionToolset } from '../main/aikernel/interaction/tools.js';
 
 import { MailboxApplication } from '../main/applications/mailbox/app.js';
 import { FileMgrApplication } from '../main/applications/filemgr/app.js';
@@ -27,8 +31,35 @@ import { DeviceMgrApplication } from '../main/applications/devicemgr/app.js';
 import { BuiltinApplication } from '../main/applications/builtin/app.js';
 
 export class CliPlatform extends AbstractPlatform {
+    private _workspace: string = process.cwd();
+    private _permissionPromptProvider: PermissionPromptProvider | null = null;
+    private _askUserProvider: AskUserProvider | null = null;
+
     getName(): string {
         return 'cli';
+    }
+
+    getEffectiveWorkspace(): string {
+        return this._workspace;
+    }
+
+    setWorkspace(workspace: string): void {
+        this._workspace = workspace;
+    }
+
+    setPermissionPromptProvider(provider: PermissionPromptProvider): void {
+        this._permissionPromptProvider = provider;
+    }
+
+    setAskUserProvider(provider: AskUserProvider): void {
+        this._askUserProvider = provider;
+    }
+
+    async initPlatformHarness(task: TaskState): Promise<void> {
+        task.harnessContext.permissionPrompt = this._permissionPromptProvider;
+        if (this._askUserProvider) {
+            task.interactionToolset = createInteractionToolset(this._askUserProvider);
+        }
     }
 
     getApplicationClasses(): (typeof BaseApplication)[] {

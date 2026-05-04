@@ -126,8 +126,8 @@ export async function startSubTask(options: StartSubTaskOptions): Promise<SubTas
     if (agentDecl) {
         const defaultMode = agentDecl.supportedModes().find((m) => m.id === agentDecl.defaultModeId());
 
-        // workspace 优先取父任务的当前值（可能已被用户切换），fallback 到 agent 构造时的值
-        const workspace = parentTask.harnessContext.workspace || agentDecl['environment']?.workspace;
+        // workspace 优先取父任务的当前值（可能已被用户切换）
+        const workspace = parentTask.harnessContext.workspace || '';
         const agentSystemPrompt = await agentDecl.createSystemPrompt(defaultMode, workspace);
         subTask.setSystemPrompt(agentSystemPrompt);
         if (workspace && defaultMode) {
@@ -513,9 +513,15 @@ export class CreateSubTaskTool extends BaseTool<typeof CreateSubTaskArgsSchema> 
 
         // 卡片标题：含 agentName 时 "创建子任务 (agentName: 标题)"，否则 "创建子任务 (标题)"
         const titleSuffix = args?.title || '未命名';
-        const cardTitle = args?.agentName
-            ? `创建子任务 (${args.agentName}: ${truncText(titleSuffix, Math.max(12, width - 36))})`
-            : `创建子任务 (${truncText(titleSuffix, Math.max(12, width - 24))})`;
+        let cardTitle: string;
+        if (args?.agentName) {
+            const maxAgent = Math.max(6, Math.floor((width - 24) / 2));
+            const agentLabel = truncText(args.agentName, maxAgent);
+            const maxTitle = Math.max(12, width - 24 - agentLabel.length);
+            cardTitle = `创建子任务 (${agentLabel}: ${truncText(titleSuffix, maxTitle)})`;
+        } else {
+            cardTitle = `创建子任务 (${truncText(titleSuffix, Math.max(12, width - 24))})`;
+        }
 
         if (args?.objective) {
             body.push(truncText(args.objective, width - 8));

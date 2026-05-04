@@ -26,7 +26,12 @@ import { getAdaptiveGreen } from '../../tui/theme.js';
 import TodoMgrWorker from './worker';
 import { MANAGE_GLOBAL_TODOS_SKILL } from './skills.js';
 import { ApplicationRegistry } from '../registry.js';
+import { GlobalState } from '../../aikernel/states/global.js';
+import { buildTriggerMessage } from '../../aikernel/trigger.js';
+import { AssistantMessage } from '../../aikernel/messages.js';
+import { logger } from '../../utils/logger.js';
 import chalk from 'chalk';
+import type { Participant } from '../../aikernel/plugins/types.js';
 
 export class TodoMgrApplication extends BaseApplication {
     constructor() {
@@ -114,6 +119,75 @@ export class TodoMgrApplication extends BaseApplication {
      */
     async triggerGlobalTodoNowFromUI(todoId: string): Promise<void> {
         await this.callWorker('triggerGlobalTodoNow', todoId);
+    }
+
+    /**
+     * 处理触发器产生的任务：通过 dispatchPromptToAgent 分发给 main agent，处理投递。
+     * 由 TodoMgrWorker 通过 callApp 调用，实现 todomgr 内部闭环。
+     */
+    async triggerTodoTask(
+        todoId: string,
+        todoTitle: string,
+        todoContent: string,
+        trigger: any,
+        deliver?: Participant
+    ): Promise<void> {
+        try {
+            const prompt = buildTriggerMessage(todoId, todoTitle, todoContent, trigger);
+            const taskManager = GlobalState.getInstance().taskManagerState;
+
+            logger.info(`触发器创建任务: ${todoId}`);
+            const task = await taskManager.dispatchPromptToAgent('main', undefined, prompt);
+
+            // 如果待办有 deliver 配置，设置任务的 origin，使其结果投递到对应 channel
+            if (deliver) {
+                task.origin = deliver;
+                logger.info(
+                    `触发器 deliver 已设置: channel=${deliver.channel}, accountId=${deliver.accountId}, recipientId=${deliver.recipientId}`
+                );
+
+                const channelMgr = ApplicationRegistry.getApplication('channelmgr') as any;
+
+                logger.info(`触发器任务等待完成: origin=${task.origin.channel}:${task.origin.accountId}`);
+                await task.waitUntilFinished();
+                logger.info(`触发器任务已完成`);
+
+                // 提取最终回复：从消息历史中找到最后一条 assistant 文本
+                const texts: string[] = [];
+                for (let msgIdx = task.chat_context.messages.length - 1; msgIdx >= 0; msgIdx--) {
+                    const msg = task.chat_context.messages[msgIdx];
+                    if (!(msg instanceof AssistantMessage)) continue;
+
+                    for (let partIdx = msg.content.length - 1; partIdx >= 0; partIdx--) {
+                        const part = msg.content[partIdx];
+                        if (part.type === 'text' && (part as any).text) {
+                            texts.unshift((part as any).text);
+                            break;
+                        }
+                    }
+                    if (texts.length > 0) break;
+                }
+
+                const finalText = texts.join('\n').trim();
+
+                logger.info(`触发器任务最终回复: text_len=${finalText.length}`);
+                if (finalText && channelMgr?.sendTextToParticipant) {
+                    await channelMgr.sendTextToParticipant(task.origin, finalText);
+                    logger.info(`触发器任务最终回复已发送`);
+
+                    const router = channelMgr.getRouter?.();
+                    if (router) {
+                        router.registerTaskForParticipant(task.task_id, task.origin, task.task_name);
+                    } else {
+                        logger.warn(`触发器任务: 无法获取 router，用户的回复将创建新任务`);
+                    }
+                } else if (!finalText) {
+                    logger.warn(`触发器任务: 没有找到可发送的文本回复`);
+                }
+            }
+        } catch (err) {
+            logger.error(`触发器任务创建失败: ${err}`);
+        }
     }
 
     /**

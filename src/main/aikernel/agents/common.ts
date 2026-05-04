@@ -11,10 +11,6 @@
 
 import type { PermissionRule } from '../security/permission.js';
 
-export interface AgentEnvironment {
-    workspace: string;
-}
-
 // ─── Mode 系统 ────────────────────────────────────────────────
 
 /**
@@ -78,12 +74,6 @@ export abstract class AgentDecl {
     /** Agent 的使用场景描述，指示何时应该使用此 Agent */
     abstract readonly whenToUse: string;
 
-    protected environment: AgentEnvironment;
-
-    constructor(environment: AgentEnvironment) {
-        this.environment = environment;
-    }
-
     /**
      * 返回此 Agent 支持的所有模式。至少包含一个模式。
      */
@@ -94,5 +84,5 @@ export abstract class AgentDecl {
      */
     abstract defaultModeId(): string;
 
-    abstract createSystemPrompt(activeMode?: ModeDecl, workspace?: string): Promise<string>;
+    abstract createSystemPrompt(activeMode: ModeDecl | undefined, workspace: string): Promise<string>;
 }

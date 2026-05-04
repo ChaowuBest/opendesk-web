@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { setPlatform } from '../platforms/base';
+import { setPlatform, getPlatform } from '../platforms/base.js';
 import { CliPlatform } from '../platforms/cli.js';
 import { isMainThread } from 'worker_threads';
 import { useCliTransport, useConsoleTransport, useDumpLogTransport, interceptConsole } from './utils/logger.js';
@@ -40,6 +40,8 @@ import path from 'path';
 import fs from 'fs';
 
 function parseCommandLineArgs() {
+    setPlatform(new CliPlatform());
+
     prog.name('opendesk');
     prog.option('--workspace <path>', 'the workspace to open', (v) => v, '.');
     prog.option('--model <alias>', 'model alias to use', (v) => v);
@@ -283,7 +285,7 @@ function parseCommandLineArgs() {
 }
 
 async function main(args: CommandLineArgs) {
-    setPlatform(new CliPlatform());
+    (getPlatform() as CliPlatform).setWorkspace(args.workspace);
     useCliTransport();
     if (args.dumpLog) {
         useDumpLogTransport(path.resolve(args.dumpLog));
@@ -317,7 +319,7 @@ async function main(args: CommandLineArgs) {
         return;
     } else if (args.headless && args.command) {
         GlobalState.initialize();
-        AgentRegistry.initBuiltinAgents(args.workspace);
+        AgentRegistry.initBuiltinAgents();
 
         initializeRegistry();
         initializeRegistryWorker();
@@ -331,7 +333,7 @@ async function main(args: CommandLineArgs) {
         });
     } else {
         GlobalState.initialize();
-        AgentRegistry.initBuiltinAgents(args.workspace);
+        AgentRegistry.initBuiltinAgents();
 
         // 在 TUI 接管 stdin 之前检测终端配色方案（OSC 11 查询需要直接读写 stdin/stdout）
         const { detectTerminalColorScheme } = await import('./tui/theme.js');
@@ -354,8 +356,8 @@ async function main(args: CommandLineArgs) {
         ApplicationRegistry.onReady(async () => {
             const channelMgrApp = ApplicationRegistry.getApplication('channelmgr') as ChannelMgrApplication | undefined;
             if (channelMgrApp) {
-                const agentDecl = new MainAgentDecl({ workspace: args.workspace });
-                const router = new ChannelMessageRouter(tui.taskManagerState, agentDecl, args.model);
+                const agentDecl = new MainAgentDecl();
+                const router = new ChannelMessageRouter(tui.taskManagerState, agentDecl, args.workspace, args.model);
 
                 router.onTaskResolved = (task, message) => {
                     const senderLabel = message.senderName || message.senderId;

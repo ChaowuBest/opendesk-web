@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { AgentDecl, type AgentType, type ModeDecl } from '../common';
+import { AgentDecl, type AgentType, type ModeDecl } from '../common.js';
 import { AgentRegistry } from '../registry.js';
 import { SkillRegistry } from '../../skill';
 import { SoulRegistry } from '../../soul/registry';
@@ -204,8 +204,8 @@ export class MainAgentDecl extends AgentDecl {
         return 'standard';
     }
 
-    async createSystemPrompt(activeMode?: ModeDecl, workspace?: string): Promise<string> {
-        const effectiveWorkspace = workspace || this.environment.workspace;
+    async createSystemPrompt(activeMode: ModeDecl | undefined, workspace: string): Promise<string> {
+        const effectiveWorkspace = workspace;
         const skillFrontmatters = await SkillRegistry.getInstance().getSkillFrontmatterXml();
         const agentFrontmatters = AgentRegistry.getAgentFrontmatterXml();
 

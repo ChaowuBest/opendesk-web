@@ -69,7 +69,7 @@ export class ExploreAgentDecl extends AgentDecl {
         return 'default';
     }
 
-    async createSystemPrompt(_activeMode?: ModeDecl, workspace?: string): Promise<string> {
-        return getExploreSystemPrompt(workspace || this.environment.workspace);
+    async createSystemPrompt(_activeMode: ModeDecl | undefined, workspace: string): Promise<string> {
+        return getExploreSystemPrompt(workspace);
     }
 }

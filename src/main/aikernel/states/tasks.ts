@@ -49,7 +49,7 @@ import { BaseTool, BaseToolset } from '../tool.js';
 import { LLM, type LLMRequestOptions } from '../llm.js';
 import { getTaskArtifactDirectory, getTaskDirectory, type ReasoningEffort } from '../../utils/setting.js';
 import { logger } from '../../utils/logger.js';
-import { type ToolsetProvider, EmptyToolsetProvider } from './toolset-provider.js';
+import { type ToolsetProvider, EmptyToolsetProvider } from '../tool.js';
 import { jsonrepair } from 'jsonrepair';
 import officeParser from 'officeparser';
 import path from 'path';
@@ -65,6 +65,9 @@ import type { PermissionRequest, PermissionCheckResult, PermissionUserResponse }
 import { createResourcePath } from '../security/permission.js';
 import { TaskProfiler } from '../profiler.js';
 import { getPlatform } from '../../../platforms/base.js';
+import type { AgentDecl, ModeDecl } from '../agents/common.js';
+import { MainAgentDecl } from '../agents/main/agent.js';
+import { AgentRegistry } from '../agents/registry.js';
 
 type TaskStatus = 'waiting' | 'running' | 'stopped';
 
@@ -2057,6 +2060,68 @@ export class TaskManagerState {
         this.tasks.push(task);
         this.save();
         this.publishTaskListUpdate();
+        return task;
+    }
+
+    /**
+     * 为任务初始化 HarnessContext：根据 mode 创建权限引擎，设置 mode 相关属性，
+     * 并调用 Platform.initPlatformHarness 注入平台特定提供者。
+     */
+    async initHarness(task: TaskState, workspace: string, mode: ModeDecl): Promise<void> {
+        try {
+            task.harnessContext = await HarnessContext.createForMode(workspace, mode);
+            task.activeModeId = mode.id;
+            task.allowedTools = mode.allowedTools;
+            task.disabledTools = mode.disabledTools;
+            await getPlatform().initPlatformHarness(task);
+        } catch (err) {
+            logger.warn(`Failed to init task harness, using empty context: ${err}`);
+            task.harnessContext = HarnessContext.createEmpty();
+            task.harnessContext.workspace = workspace;
+        }
+    }
+
+    /**
+     * 将 prompt 分发给指定 Agent 执行：创建任务、初始化 harness、提交消息。
+     * @param agentName Agent 名称（'main' 或 AgentRegistry 中注册的名称）
+     * @param modeName 使用的 Mode 名称，undefined 则使用 Agent 的默认 Mode
+     * @param prompt 要提交的用户消息
+     * @returns 创建好的 TaskState（已提交消息，任务开始执行）
+     */
+    async dispatchPromptToAgent(agentName: string, modeName: string | undefined, prompt: string): Promise<TaskState> {
+        // 解析 Agent
+        let agentDecl: AgentDecl;
+        if (agentName === 'main') {
+            agentDecl = new MainAgentDecl();
+        } else {
+            const registered = AgentRegistry.getAgent(agentName);
+            if (!registered) {
+                throw new Error(`Agent "${agentName}" not found in AgentRegistry`);
+            }
+            agentDecl = registered;
+        }
+
+        // 解析 Mode
+        const modes = agentDecl.supportedModes();
+        const targetModeId = modeName || agentDecl.defaultModeId();
+        const activeMode = modes.find((m) => m.id === targetModeId) ?? modes[0];
+
+        // 获取 workspace
+        const workspace = getPlatform().getEffectiveWorkspace();
+
+        // 创建任务
+        const task = this.createTask();
+
+        // 构建 system prompt 并设置
+        const systemPrompt = await agentDecl.createSystemPrompt(activeMode, workspace);
+        task.setSystemPrompt(systemPrompt);
+
+        // 初始化 harness（mode 相关 + 平台相关）
+        await this.initHarness(task, workspace, activeMode);
+
+        // 提交用户消息
+        await task.submitUserMessage(prompt);
+
         return task;
     }
     /**
