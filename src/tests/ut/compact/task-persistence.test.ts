@@ -69,7 +69,7 @@ describe('任务持久化中的自动压缩状态', () => {
         const task = createTask(manager);
         manager.tasks.push(task);
 
-        manager.save();
+        manager.saveSync();
 
         const savedTaskJson = JSON.parse(fs.readFileSync(path.join(taskDir, 'task-root.json'), 'utf8'));
         expect(savedTaskJson.auto_compact_state).toMatchObject({
@@ -118,7 +118,7 @@ describe('任务持久化中的自动压缩状态', () => {
         expect(task.getAutoCompactState().lastFailureReason).toBe('compact failed');
         expect(forked.getAutoCompactState().lastFailureReason).toBe('forked task failed');
 
-        manager.save();
+        manager.saveSync();
 
         const reloadedManager = TaskManagerState.load();
         expect(reloadedManager).not.toBeNull();
@@ -202,7 +202,7 @@ describe('任务持久化中的自动压缩状态', () => {
         task.setSessionMemoryState(sessionMemoryState);
         manager.tasks.push(task);
 
-        manager.save();
+        manager.saveSync();
 
         const savedTaskJson = JSON.parse(fs.readFileSync(path.join(taskDir, 'task-root.json'), 'utf8'));
         expect(savedTaskJson.session_memory_state).toMatchObject({
@@ -242,7 +242,7 @@ describe('任务持久化中的自动压缩状态', () => {
         task.chat_context.appendMessage(assistant);
         manager.tasks.push(task);
 
-        manager.save();
+        manager.saveSync();
 
         const savedTaskJson = JSON.parse(fs.readFileSync(path.join(taskDir, 'task-root.json'), 'utf8'));
         const savedAssistant = savedTaskJson.chat_context.messages.find(
@@ -360,7 +360,7 @@ describe('任务持久化中的自动压缩状态', () => {
         task.chat_context.appendMessage(new UserMessage('kept user message'));
         manager.tasks.push(task);
 
-        manager.save();
+        manager.saveSync();
 
         const savedTaskJson = JSON.parse(fs.readFileSync(path.join(taskDir, 'task-root.json'), 'utf8'));
         const savedBoundary = savedTaskJson.chat_context.messages.find(
