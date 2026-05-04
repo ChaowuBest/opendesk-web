@@ -319,6 +319,11 @@ class AgentInput extends HTMLElement {
     }
 
     render() {
+        const prevTextarea = this.querySelector('#agent-input-textarea');
+        const savedValue = prevTextarea ? prevTextarea.value : '';
+        const savedSelStart = prevTextarea ? prevTextarea.selectionStart : 0;
+        const savedSelEnd = prevTextarea ? prevTextarea.selectionEnd : 0;
+
         let fileItems = this.attachedFilePaths
             .map((filePath) => {
                 const fileName = filePath.split('/').pop();
@@ -502,6 +507,15 @@ class AgentInput extends HTMLElement {
         `;
 
         this.setUpEventListeners();
+
+        if (savedValue) {
+            const newTextarea = this.querySelector('#agent-input-textarea');
+            if (newTextarea) {
+                newTextarea.value = savedValue;
+                newTextarea.setSelectionRange(savedSelStart, savedSelEnd);
+            }
+        }
+
         this.updateInputState();
         this.updateModeIndicator();
     }

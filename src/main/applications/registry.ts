@@ -19,8 +19,6 @@ import { getPlatform } from '../../platforms/base.js';
 import { Worker } from 'worker_threads';
 import { SkillRegistry } from '../aikernel/skill.js';
 import { type Privileges, type ProtocolRequest } from 'electron';
-import type { TodoTrigger } from './todomgr/common.js';
-import type { Participant } from '../aikernel/plugins/types.js';
 
 export type ProtocolHandlerEntry = {
     scheme: string;
@@ -45,17 +43,6 @@ export class ApplicationRegistry {
 
     /** 就绪回调队列 */
     private static readyCallbacks: (() => void)[] = [];
-
-    /**
-     * 当触发器触发待办任务时的回调（由 TUI 或 Electron 主进程设置）
-     */
-    static onTriggerTask?: (
-        todoId: string,
-        todoTitle: string,
-        todoContent: string,
-        trigger: TodoTrigger,
-        deliver?: Participant
-    ) => void;
 
     /**
      * 注册就绪回调。如果应用注册表已就绪，则立即执行；否则加入队列等待。
@@ -350,10 +337,28 @@ export function initializeRegistryWorker() {
                 ApplicationRegistry.handleWorkerEmitEvent(bundleName, eventName, args);
                 break;
             }
+            case 'callApp': {
+                const { bundleName: appBundle, methodName, args: callArgs } = event;
+                const app = ApplicationRegistry.getApplication(appBundle);
+                if (app && typeof (app as any)[methodName] === 'function') {
+                    Promise.resolve((app as any)[methodName](...(callArgs || []))).catch((err: any) =>
+                        logger.error(`callApp ${appBundle}.${methodName} failed:`, err)
+                    );
+                } else {
+                    logger.warn(`callApp: method ${methodName} not found on application ${appBundle}`);
+                }
+                break;
+            }
             case 'triggerTodoTask': {
+                // 兼容旧消息格式：转发到 TodoMgrApplication.triggerTodoTask
                 const { todoId, todoTitle, todoContent, trigger, deliver } = event;
                 logger.info(`收到触发器任务请求: todo=${todoId}`);
-                ApplicationRegistry.onTriggerTask?.(todoId, todoTitle, todoContent, trigger, deliver);
+                const todoApp = ApplicationRegistry.getApplication('todomgr');
+                if (todoApp && typeof (todoApp as any).triggerTodoTask === 'function') {
+                    (todoApp as any)
+                        .triggerTodoTask(todoId, todoTitle, todoContent, trigger, deliver)
+                        .catch((err: any) => logger.error(`triggerTodoTask failed:`, err));
+                }
                 break;
             }
             case 'emailListUpdated': {

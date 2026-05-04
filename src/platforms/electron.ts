@@ -35,6 +35,11 @@ import { ChannelMgrApplication } from '../main/applications/channelmgr/app.js';
 import { KnowledgeBaseApplication } from '../main/applications/knowledgebase/app.js';
 import { DeviceMgrApplication } from '../main/applications/devicemgr/app.js';
 import { BuiltinApplication } from '../main/applications/builtin/app.js';
+import { Setting } from '../main/utils/setting.js';
+import type { TaskState } from '../main/aikernel/states/tasks.js';
+import { ElectronPermissionPromptProvider } from '../main/aikernel/security/electronPrompt.js';
+import { ElectronAskUserProvider } from '../main/aikernel/interaction/electronAskUser.js';
+import { createInteractionToolset } from '../main/aikernel/interaction/tools.js';
 
 import path from 'path';
 
@@ -89,6 +94,15 @@ export class ElectronPlatform extends AbstractPlatform {
 
     getName(): string {
         return 'electron';
+    }
+
+    getEffectiveWorkspace(): string {
+        return Setting.getInstance().getEffectiveWorkspace();
+    }
+
+    async initPlatformHarness(task: TaskState): Promise<void> {
+        task.harnessContext.permissionPrompt = new ElectronPermissionPromptProvider();
+        task.interactionToolset = createInteractionToolset(new ElectronAskUserProvider());
     }
 
     getWorkerPath(): string {

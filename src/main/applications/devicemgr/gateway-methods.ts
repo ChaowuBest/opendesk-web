@@ -20,7 +20,7 @@ import { logger } from '../../utils/logger.js';
 import type { DeviceGateway, GatewayMethodHandler, ConnectionState } from './gateway.js';
 import type { TaskManagerState, TaskState, TaskUpdateChunk } from '../../aikernel/states/tasks.js';
 import { BaseTaskUpdateSubscriber } from '../../aikernel/states/tasks.js';
-import { MainAgentDecl } from '../../aikernel/agents/mainagent/agent.js';
+import { MainAgentDecl } from '../../aikernel/agents/main/agent.js';
 
 const TAG = '[devicemgr:gateway-methods]';
 
@@ -180,7 +180,7 @@ const handleStatus: GatewayMethodHandler = (_conn, _frame, _params, respond) => 
  * 流程与 CLI 一致：创建/复用 task → submitUserMessage → 订阅更新 → 流式推送 chat 事件。
  */
 function makeChatSendHandler(gateway: DeviceGateway, ctx: GatewayMethodContext): GatewayMethodHandler {
-    const agentDecl = new MainAgentDecl({ workspace: ctx.workspace });
+    const agentDecl = new MainAgentDecl();
 
     return async (conn: ConnectionState, _frame, params, respond) => {
         const sessionKey: string = params?.sessionKey ?? 'main';
@@ -278,7 +278,7 @@ async function resolveOrCreateTask(
     }
 
     const task = ctx.taskManagerState.createTask(ctx.model);
-    const systemPrompt = await agentDecl.createSystemPrompt();
+    const systemPrompt = await agentDecl.createSystemPrompt(undefined, ctx.workspace);
     await task.setSystemPrompt(systemPrompt);
     task.task_name = `Gateway: ${sessionKey}`;
 

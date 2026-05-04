@@ -109,21 +109,41 @@ class TaskView extends HTMLElement {
                 hasTextPart = true;
             }
         }
+        const timeHtml = user_message.timestamp
+            ? `<div class="text-right text-[10px] text-gray-400 mt-0.5 mr-1">${TaskView.formatRelativeTime(user_message.timestamp)}</div>`
+            : '';
         if (hasTextPart) {
             return `
-            <div class="flex items-start flex-row-reverse">
+            <div class="flex flex-col items-end">
                 <div class="bg-white text-gray-900 rounded-lg px-3 py-1.5 max-w-3xl border border-gray-200">
                     ${content}
                 </div>
+                ${timeHtml}
             </div>
             `;
         } else {
             return `
-            <div class="flex items-start flex-row-reverse">
+            <div class="flex flex-col items-end">
                 ${content}
+                ${timeHtml}
             </div>
             `;
         }
+    }
+
+    static formatRelativeTime(timestamp) {
+        const now = Date.now();
+        const diff = now - timestamp;
+        const minutes = Math.floor(diff / 60000);
+        const hours = Math.floor(diff / 3600000);
+
+        if (minutes < 1) return '刚刚';
+        if (minutes < 60) return `${minutes} 分钟前`;
+        if (hours < 24) return `${hours} 小时前`;
+
+        const d = new Date(timestamp);
+        const pad = (n) => String(n).padStart(2, '0');
+        return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
     }
 
     static USER_PART_CLASS_MAP = {
@@ -758,6 +778,7 @@ class TaskView extends HTMLElement {
                 if (progress.type === 'user') {
                     if (progress.internal) return;
                     const userMsg = {
+                        timestamp: progress.timestamp || Date.now(),
                         content: [
                             {
                                 type: progress.last_part.type,
@@ -1251,18 +1272,23 @@ class EmbeddedTaskView extends HTMLElement {
                 hasTextPart = true;
             }
         }
+        const timeHtml = user_message.timestamp
+            ? `<div class="text-right text-[10px] text-gray-400 mt-0.5 mr-1">${TaskView.formatRelativeTime(user_message.timestamp)}</div>`
+            : '';
         if (hasTextPart) {
             return `
-            <div class="flex items-start flex-row-reverse">
+            <div class="flex flex-col items-end">
                 <div class="bg-white text-gray-900 rounded-lg px-3 py-1 max-w-3xl border border-gray-200">
                     ${content}
                 </div>
+                ${timeHtml}
             </div>
             `;
         } else {
             return `
-            <div class="flex items-start flex-row-reverse">
+            <div class="flex flex-col items-end">
                 ${content}
+                ${timeHtml}
             </div>
             `;
         }
@@ -1389,6 +1415,7 @@ class EmbeddedTaskView extends HTMLElement {
                 if (progress.type === 'user') {
                     if (progress.internal) return;
                     const userMsg = {
+                        timestamp: progress.timestamp || Date.now(),
                         content: [
                             {
                                 type: progress.last_part.type,

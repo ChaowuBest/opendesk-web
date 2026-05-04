@@ -20,6 +20,8 @@ export interface SubTaskConfig {
     criteria: string;
     /** 是否为异步任务，异步任务立刻返回子任务ID */
     isAsync: boolean;
+    /** 指定执行此任务的 Agent 名称（如 'explore'），留空使用默认子任务执行器 */
+    agentName?: string;
 }
 
 export interface SubTaskResult {

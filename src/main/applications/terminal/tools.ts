@@ -357,7 +357,7 @@ export class ExecutePowerShellTool extends BaseTool<typeof ExecutePowerShellArgs
             args.workingDirectory ||
             taskState?.harnessContext?.workspace ||
             Setting.getInstance().getEffectiveWorkspace();
-        return analyzePowerShellPermissions(command, cwd);
+        return analyzePowerShellPermissions(command, cwd).filter((p) => p.action !== 'execute');
     }
 
     async stop(): Promise<void> {
@@ -459,7 +459,7 @@ export class ExecuteBashTool extends BaseTool<typeof ExecuteBashArgsSchema> {
             args.workingDirectory ||
             taskState?.harnessContext?.workspace ||
             Setting.getInstance().getEffectiveWorkspace();
-        return analyzeBashPermissions(command, cwd);
+        return analyzeBashPermissions(command, cwd).filter((p) => p.action !== 'execute');
     }
 
     async stop(): Promise<void> {
@@ -543,7 +543,7 @@ export class ExecuteZshTool extends BaseTool<typeof ExecuteZshArgsSchema> {
             args.workingDirectory ||
             taskState?.harnessContext?.workspace ||
             Setting.getInstance().getEffectiveWorkspace();
-        return analyzeBashPermissions(command, cwd);
+        return analyzeBashPermissions(command, cwd).filter((p) => p.action !== 'execute');
     }
 
     async stop(): Promise<void> {

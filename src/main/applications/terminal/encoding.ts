@@ -70,7 +70,7 @@ export function detectEncoding(buffer: Buffer): DetectResult {
     }
 
     // 无 BOM：使用 chardet 统计检测
-    const results = chardet.analyse(buffer);
+    const results = chardet.detectAll(buffer);
     if (results.length > 0) {
         const best = results[0];
         const encoding = normalizeChardetName(best.name);

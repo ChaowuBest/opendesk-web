@@ -96,6 +96,18 @@ export class BaseWorker {
     }
 
     /**
+     * 调用主线程对应 BaseApplication 实例上的方法（fire-and-forget，类似渲染器的 callMainWorld）
+     */
+    callApp(methodName: string, ...args: any[]): void {
+        parentPort?.postMessage({
+            type: 'callApp',
+            bundleName: this.bundleName,
+            methodName,
+            args
+        });
+    }
+
+    /**
      * 顺序执行任务
      */
     async runSequentially(task: () => Promise<void>): Promise<void> {
