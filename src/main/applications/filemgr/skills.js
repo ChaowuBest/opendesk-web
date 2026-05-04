@@ -12,18 +12,18 @@
 export const FILE_NAVIGATION_SKILL = `
 ---
 name: file-navigation
-description: 在 FillipDesk 本地文件相关工具之间选择与组合使用的决策指南
+description: 在 OpenDesk 本地文件相关工具之间选择与组合使用的决策指南
 ---
 
 # 文件导航与搜索指南
 
-当用户要你定位、查看或操作本地文件时，FillipDesk 提供了多个 tool，每种适合不同场景。选错 tool 会浪费资源或得到错误结果。
+当用户要你定位、查看或操作本地文件时，OpenDesk 提供了多个 tool，每种适合不同场景。选错 tool 会浪费资源或得到错误结果。
 
 ## 决策路径
 
 按顺序检查下列问题，选第一个符合的 tool：
 
-1. **用户给了精确路径** → \`readFiles(['<path>'])\`
+1. **用户给了精确路径** → \`readFile('<path>')\`
 
 2. **用户要按文件名/路径通配符匹配** → \`globFiles('docs/**/*.md')\`
    - 适用："列出所有 markdown 文件"、"找 src 目录下的所有 .ts 文件"
@@ -46,7 +46,7 @@ description: 在 FillipDesk 本地文件相关工具之间选择与组合使用�
 ## 使用建议
 
 - **优先用非语义 tool**（globFiles / grepFiles），它们更便宜更精确
-- **语义搜索结果是候选，不是答案**；拿到后可能还要 \`readFiles\` 读具体文件确认
+- **语义搜索结果是候选，不是答案**；拿到后可能还要 \`readFile\` 读具体文件确认
 - **不要对同一问题重复调多个 search**——先想清楚用哪个
 - **搜索返回空时不要盲目放宽 query 重试**；先检查返回值的 \`warning\` 字段
 - 语义搜索默认返回 file-level 结果（一个文件一条，不重复）

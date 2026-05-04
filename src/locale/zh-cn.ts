@@ -487,7 +487,7 @@ export const zhCn: Record<string, string> = {
     'config.language.option.en-US': 'English',
 
     // File Manager Tools
-    'filemgr.readFiles.name': '读取文件',
+    'filemgr.readFile.name': '读取文件',
     'filemgr.writeFile.name': '写入文件',
     'filemgr.writeFile.append': ' (追加)',
     'filemgr.editFile.name': '编辑文件',
