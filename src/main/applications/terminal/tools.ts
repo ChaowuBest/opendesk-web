@@ -29,7 +29,7 @@ import {
     type BackgroundProcessStatus
 } from './background';
 import { analyzeBashPermissions, analyzePowerShellPermissions } from './shellPermissions';
-import { findExecutableInPath } from './shellExec.js';
+import { findExecutableInPath } from '../../utils/shellExec.js';
 
 const MAX_CLI_OUTPUT_LINES = 10;
 const LIVE_UPDATE_INTERVAL_MS = 200;
@@ -75,7 +75,7 @@ function buildSpawnEnv(taskState?: TaskState): NodeJS.ProcessEnv {
 }
 
 // re-export for backward compatibility
-export { findExecutableInPath, hasZsh } from './shellExec.js';
+export { findExecutableInPath, hasZsh } from '../../utils/shellExec.js';
 
 function getZshPath(): string | null {
     return findExecutableInPath('zsh');

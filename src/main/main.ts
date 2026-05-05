@@ -1031,6 +1031,9 @@ const registerSettingAPIHandlers = () => {
         ipcMain.handle('setting:getLogContent', () => {
             return { status: 'ok', data: converter.toHtml(LogStream.getStream().getContent()) };
         }));
+    ipcMain.handle('setting:getLogEntries', (_event: any, options: any) => {
+        return { status: 'ok', data: LogStream.getStream().getEntries(options || {}) };
+    });
     (ipcMain.handle('setting:closeMainWindow', () => {
         if (globalMainWindow === null) {
             return { status: 'error', message: 'main window not found' };

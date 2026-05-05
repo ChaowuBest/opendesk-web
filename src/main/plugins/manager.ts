@@ -21,7 +21,7 @@ import { getAppDirectory } from '../utils/setting.js';
 import { logger } from '../utils/logger.js';
 import { ensureOpenClawShim } from './openclaw/shim.js';
 import { createPluginApi } from './openclaw/api.js';
-import { asyncShellExec, shellExec } from '../applications/terminal/shellExec.js';
+import { asyncShellExec, shellExec } from '../utils/shellExec.js';
 import type {
     PluginManifest,
     PluginInstallRecord,

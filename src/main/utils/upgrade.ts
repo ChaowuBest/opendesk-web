@@ -11,7 +11,7 @@
 
 import * as https from 'https';
 import fs from 'fs';
-import { asyncShellExec } from '../applications/terminal/shellExec.js';
+import { asyncShellExec } from './shellExec.js';
 
 const PACKAGE_NAME = '@bitclub.ai/opendesk-cli';
 
