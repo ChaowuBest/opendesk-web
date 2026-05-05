@@ -5,7 +5,7 @@ import process from 'process';
 import path from 'path';
 import fs from 'fs';
 import { t } from '../../../locale/index.js';
-import { findExecutableInPath } from '../../applications/terminal/shellExec.js';
+import { findExecutableInPath } from '../../utils/shellExec.js';
 
 // ── Shell 检测 ──────────────────────────────────────────────────────────
 

@@ -17,7 +17,7 @@ import chalk from 'chalk';
 import { visibleWidth, truncateToWidth } from '@mariozechner/pi-tui';
 import { getFileCompletions, extractAtQuery, FILE_COMPLETION_MAX_RESULTS } from './file-completions';
 import { getShellCompletions, executeShellCommand } from './shell';
-import { findExecutableInPath } from '../../applications/terminal/shellExec.js';
+import { findExecutableInPath } from '../../utils/shellExec.js';
 import { SkillRegistry as AISkillRegistry } from '../../aikernel/skill';
 import { getShortcuts } from '../../utils/setting.js';
 import { t } from '../../../locale/index.js';

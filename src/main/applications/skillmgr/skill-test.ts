@@ -30,7 +30,7 @@ import os from 'os';
 import { spawn } from 'child_process';
 import { parse as parseYaml } from 'yaml';
 import { logger } from '../../utils/logger.js';
-import { findExecutableInPath } from '../terminal/shellExec.js';
+import { findExecutableInPath } from '../../utils/shellExec.js';
 
 /** Windows: 获取合并后的 PATH（用户 + 系统），供测试子进程使用，使 python/pip 与终端一致 */
 function getWindowsPathForTests(): Promise<string | null> {
