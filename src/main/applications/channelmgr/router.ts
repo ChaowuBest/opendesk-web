@@ -280,7 +280,6 @@ export class ChannelMessageRouter {
 
         await task.setSystemPrompt(channelContext);
 
-        task.task_name = `消息: ${message.senderName || message.senderId}`;
         task.origin = {
             type: 'channel',
             channel: message.channelId,
@@ -336,6 +335,14 @@ export class ChannelMessageRouter {
             const assistantMessage = new AssistantMessage();
             task.chat_context.appendMessage(userMessage);
             task.chat_context.appendMessage(assistantMessage);
+
+            if (task.task_name === null) {
+                task.task_name = '未命名任务';
+                task.generateTaskName(userText).then(() => {
+                    task.persistLater();
+                    task.task_manager_state.publishTaskListUpdate();
+                });
+            }
 
             const toolsets = await ApplicationRegistry.listAvailableToolsets();
             const skillToolset = SkillRegistry.getInstance().getToolset();

@@ -359,19 +359,30 @@ async function main(args: CommandLineArgs) {
                 const agentDecl = new MainAgentDecl();
                 const router = new ChannelMessageRouter(tui.taskManagerState, agentDecl, args.workspace, args.model);
 
+                const CHANNEL_NAMES: Record<string, string> = {
+                    feishu: '飞书',
+                    'openclaw-weixin': '微信',
+                    whatsapp: 'WhatsApp',
+                    zalouser: 'Zalo',
+                    telegram: 'Telegram',
+                    discord: 'Discord',
+                    slack: 'Slack',
+                    signal: 'Signal'
+                };
+
                 router.onTaskResolved = (task, message) => {
-                    const senderLabel = message.senderName || message.senderId;
-                    const channelLabel = message.channelId;
+                    const channelName = CHANNEL_NAMES[message.channelId] || message.channelId;
+                    const senderLabel = message.senderName || '新联系人';
                     const preview =
-                        (message.text || '').length > 40
-                            ? (message.text || '').slice(0, 37) + '...'
+                        (message.text || '').length > 60
+                            ? (message.text || '').slice(0, 57) + '...'
                             : message.text || '';
 
                     tui.switchToTask(task);
 
                     NotificationManager.getInstance().info(
-                        channelLabel,
-                        `来自 ${senderLabel} 的新消息`,
+                        channelName,
+                        `${senderLabel} 的${channelName}消息`,
                         preview || '(无文本内容)'
                     );
                 };

@@ -390,6 +390,7 @@ class SideBar extends HTMLElement {
             : 'bg-white text-[#1f2937] hover:bg-[#f9fafb]';
         const deleteColor = isCurrentTask ? 'text-white/60 hover:text-white' : 'text-[#9ca3af] hover:text-[#6b7280]';
 
+        const channelTag = SideBar.buildChannelTag(task, isCurrentTask);
         return `
         <div
             class="task-item cursor-pointer rounded-xl px-3 py-2.5 mb-1.5 transition-colors duration-150 ${taskStyle}"
@@ -397,12 +398,11 @@ class SideBar extends HTMLElement {
             data-parent_id=""
             data-depth="0"
         >
-            <div class="flex items-center justify-between min-w-0 gap-2">
-                <div class="flex items-center flex-1 min-w-0 gap-2">
-                    <p class="text-[13px] truncate leading-tight">${task.task_name || '未命名任务'}</p>
-                    ${task.task_status === 'running' ? '<task-status-tag class="flex-shrink-0"></task-status-tag>' : ''}
-                </div>
-                <button class="delete-task-btn flex-shrink-0 ${deleteColor} text-sm opacity-0 group-hover:opacity-100 transition-opacity" data-task_id="${task.task_id}" title="删除">×</button>
+            <div class="flex items-center min-w-0 gap-2">
+                <p class="text-[13px] truncate leading-tight flex-1 min-w-0">${task.task_name || '未命名任务'}</p>
+                ${task.task_status === 'running' ? '<task-status-tag class="flex-shrink-0"></task-status-tag>' : ''}
+                ${channelTag}
+                <button class="delete-task-btn flex-shrink-0 ${deleteColor} text-sm" data-task_id="${task.task_id}" title="删除">×</button>
             </div>
         </div>`;
     }
@@ -427,6 +427,36 @@ class SideBar extends HTMLElement {
             <p class="text-[11px] truncate flex-1 min-w-0 ${nameColor}">${task.task_name || '未命名子任务'}</p>
             <button class="delete-task-btn shrink-0 text-[10px] text-[#cbd5e1] hover:text-[#94a3b8] transition-colors" data-task_id="${task.task_id}" title="删除">×</button>
         </div>`;
+    }
+
+    static CHANNEL_META = {
+        feishu: { label: '飞书', color: '#3370FF' },
+        'openclaw-weixin': { label: '微信', color: '#09B83E' },
+        whatsapp: { label: 'WhatsApp', color: '#25D366' },
+        zalouser: { label: 'Zalo', color: null },
+        telegram: { label: 'Telegram', color: '#26A5E4' },
+        discord: { label: 'Discord', color: '#5865F2' },
+        slack: { label: 'Slack', color: '#4A154B' },
+        signal: { label: 'Signal', color: '#3A76F0' }
+    };
+
+    static buildChannelTag(task, isCurrentTask) {
+        if (!task.origin || task.origin.type !== 'channel') return '';
+        const channelId = task.origin.channel || '';
+        const meta = SideBar.CHANNEL_META[channelId];
+        const label = meta?.label || channelId;
+        const brandColor = meta?.color;
+
+        let style = '';
+        let cls = '';
+        if (brandColor && !isCurrentTask) {
+            style = `style="background:${brandColor};color:#fff"`;
+        } else if (isCurrentTask) {
+            cls = 'bg-white/25 text-white';
+        } else {
+            cls = 'bg-[#f0f0f0] text-[#888]';
+        }
+        return `<span class="channel-tag inline-flex items-center px-2 py-1 rounded text-[11px] leading-none font-medium whitespace-nowrap transition-transform duration-200 ${cls}" ${style}>${label}</span>`;
     }
 
     /**
