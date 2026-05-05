@@ -16,8 +16,8 @@
  * etc.) that channel plugins depend on for message processing and error handling.
  */
 
-import { getAppDirectory } from '../../../utils/setting.js';
-import { logger, addConsoleInterceptHook } from '../../../utils/logger.js';
+import { getAppDirectory } from '../../utils/setting.js';
+import { logger, addConsoleInterceptHook } from '../../utils/logger.js';
 import type {
     PluginEntry,
     ChannelPlugin,

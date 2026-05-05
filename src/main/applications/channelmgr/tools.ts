@@ -16,12 +16,7 @@ import fs from 'fs';
 import pathLib from 'path';
 import { getPendingRequests, getApprovedUsers, approveUser, revokeUser, removePairingRequest } from './pairing.js';
 import type { ChannelMgrApplication } from './app.js';
-import {
-    installPlugin,
-    uninstallPlugin,
-    listInstalledPlugins,
-    setPluginEnabled
-} from '../../aikernel/plugins/index.js';
+import { installPlugin, uninstallPlugin, listInstalledPlugins, setPluginEnabled } from '../../plugins/index.js';
 import { feishuAuthInit, feishuAuthBegin, feishuAuthPoll } from './feishu-auth.js';
 import { logger } from '../../utils/logger.js';
 import chalk from 'chalk';

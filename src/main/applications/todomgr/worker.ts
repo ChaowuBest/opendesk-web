@@ -15,7 +15,7 @@ import { Cron } from 'croner';
 import path from 'path';
 import fs from 'fs';
 import type { GlobalTodo, GlobalTodoStorage, TodoTrigger } from './common';
-import type { Participant } from '../../aikernel/plugins/types';
+import type { Participant } from '../../plugins/types';
 import type { Cron as CronerJob } from 'croner';
 
 export default class TodoMgrWorker extends BaseWorker {

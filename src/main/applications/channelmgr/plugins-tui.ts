@@ -14,8 +14,8 @@ import chalk from 'chalk';
 import { defaultSelectListTheme } from '../../tui/theme';
 import { OpenDeskTUI } from '../../tui/entry';
 import { InfoOverlay } from '../../tui/components/notice';
-import { uninstallPlugin, listInstalledPlugins, setPluginEnabled } from '../../aikernel/plugins/index.js';
-import type { PluginInstallRecord } from '../../aikernel/plugins/types.js';
+import { uninstallPlugin, listInstalledPlugins, setPluginEnabled } from '../../plugins/index.js';
+import type { PluginInstallRecord } from '../../plugins/types.js';
 
 type ViewState = 'list' | 'confirm-toggle' | 'confirm-uninstall' | 'uninstalling';
 

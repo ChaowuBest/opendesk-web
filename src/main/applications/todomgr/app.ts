@@ -31,7 +31,7 @@ import { buildTriggerMessage } from './trigger.js';
 import { AssistantMessage } from '../../aikernel/messages.js';
 import { logger } from '../../utils/logger.js';
 import chalk from 'chalk';
-import type { Participant } from '../../aikernel/plugins/types.js';
+import type { Participant } from '../../plugins/types.js';
 
 export class TodoMgrApplication extends BaseApplication {
     constructor() {

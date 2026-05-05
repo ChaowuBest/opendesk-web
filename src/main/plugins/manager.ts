@@ -14,14 +14,14 @@
  * OpenClaw-compatible channel plugins.
  */
 
-import { execSync, spawn } from 'child_process';
 import path from 'path';
 import fs from 'fs';
 import module from 'module';
-import { getAppDirectory } from '../../utils/setting.js';
-import { logger } from '../../utils/logger.js';
+import { getAppDirectory } from '../utils/setting.js';
+import { logger } from '../utils/logger.js';
 import { ensureOpenClawShim } from './openclaw/shim.js';
 import { createPluginApi } from './openclaw/api.js';
+import { asyncShellExec, shellExec } from '../applications/terminal/shellExec.js';
 import type {
     PluginManifest,
     PluginInstallRecord,
@@ -93,63 +93,6 @@ function ensureExtensionPackageJson(): void {
     }
 }
 
-// ── Internal: Async command execution ────────────────────────────────────────
-
-function execAsync(
-    command: string,
-    options: { cwd?: string; timeout?: number; env?: NodeJS.ProcessEnv }
-): Promise<{ stdout: string; stderr: string }> {
-    return new Promise((resolve, reject) => {
-        const parts = command.split(' ');
-        const cmd = parts[0];
-        const args = parts.slice(1);
-
-        const proc = spawn(cmd, args, {
-            cwd: options.cwd,
-            env: options.env,
-            shell: true,
-            stdio: 'pipe'
-        });
-
-        let stdout = '';
-        let stderr = '';
-        let timedOut = false;
-
-        const timer = options.timeout
-            ? setTimeout(() => {
-                  timedOut = true;
-                  proc.kill('SIGTERM');
-              }, options.timeout)
-            : null;
-
-        proc.stdout?.on('data', (data) => {
-            stdout += data.toString();
-        });
-        proc.stderr?.on('data', (data) => {
-            stderr += data.toString();
-        });
-
-        proc.on('close', (code) => {
-            if (timer) clearTimeout(timer);
-            if (timedOut) {
-                reject(new Error(`Command timed out after ${options.timeout}ms`));
-            } else if (code !== 0) {
-                const err: any = new Error(`Command failed with exit code ${code}: ${stderr}`);
-                err.stderr = stderr;
-                err.stdout = stdout;
-                reject(err);
-            } else {
-                resolve({ stdout, stderr });
-            }
-        });
-
-        proc.on('error', (err) => {
-            if (timer) clearTimeout(timer);
-            reject(err);
-        });
-    });
-}
-
 // ── Public API: Install / Uninstall ──────────────────────────────────────────
 
 /**
@@ -170,10 +113,8 @@ function isUrl(spec: string): boolean {
 function downloadFile(url: string, destPath: string): Promise<void> {
     return new Promise((resolve, reject) => {
         try {
-            // Use curl for downloading - it handles redirects, proxies, and various network conditions better
-            execSync(`curl -L -o "${destPath}" "${url}"`, {
-                stdio: 'pipe',
-                timeout: 300000 // 5 minutes
+            shellExec(`curl -L -o "${destPath}" "${url}"`, {
+                timeout: 300000
             });
 
             // Verify the file was downloaded
@@ -197,7 +138,7 @@ function extractPackageNameFromTgz(tgzPath: string): string | null {
         // Use npm pack to extract and read package.json
         const tempDir = fs.mkdtempSync(path.join(path.dirname(tgzPath), 'tgz-extract-'));
         try {
-            execSync(`tar -xzf "${tgzPath}" -C "${tempDir}"`, { stdio: 'pipe' });
+            shellExec(`tar -xzf "${tgzPath}" -C "${tempDir}"`);
 
             // The extracted content is usually in a 'package/' directory
             const packageDir = path.join(tempDir, 'package');
@@ -253,11 +194,14 @@ export async function installPlugin(npmSpecOrUrl: string): Promise<{ success: bo
 
             // Install from local file
             try {
-                await execAsync(`npm install --prefix "${extensionsDir}" "${tempTgzPath}" --save`, {
-                    cwd: extensionsDir,
-                    timeout: 180000,
-                    env: { ...process.env, npm_config_fund: 'false' }
-                });
+                await asyncShellExec(
+                    `npm install --prefix "${extensionsDir}" "${tempTgzPath}" --save --ignore-scripts --no-bin-links`,
+                    {
+                        cwd: extensionsDir,
+                        timeout: 180000,
+                        env: { ...process.env, npm_config_fund: 'false' }
+                    }
+                );
             } catch (npmErr: any) {
                 const errMsg = npmErr?.stderr || npmErr?.message || String(npmErr);
                 logger.error(`npm install failed: ${errMsg}`);
@@ -368,11 +312,14 @@ export async function installPlugin(npmSpecOrUrl: string): Promise<{ success: bo
             // project root, preventing it from walking up the directory tree and
             // installing into a parent node_modules.
             try {
-                await execAsync(`npm install --prefix "${extensionsDir}" ${npmSpecOrUrl} --save`, {
-                    cwd: extensionsDir,
-                    timeout: 180000,
-                    env: { ...process.env, npm_config_fund: 'false' }
-                });
+                await asyncShellExec(
+                    `npm install --prefix "${extensionsDir}" ${npmSpecOrUrl} --save --ignore-scripts --no-bin-links`,
+                    {
+                        cwd: extensionsDir,
+                        timeout: 180000,
+                        env: { ...process.env, npm_config_fund: 'false' }
+                    }
+                );
             } catch (npmErr: any) {
                 const errMsg = npmErr?.stderr || npmErr?.message || String(npmErr);
                 logger.error(`npm install failed: ${errMsg}`);
@@ -452,7 +399,7 @@ export async function uninstallPlugin(pluginId: string): Promise<{ success: bool
 
     try {
         const pkgName = extractPackageName(record.npmSpec) || pluginId;
-        await execAsync(`npm uninstall --prefix "${extensionsDir}" ${pkgName}`, {
+        await asyncShellExec(`npm uninstall --prefix "${extensionsDir}" ${pkgName}`, {
             cwd: extensionsDir,
             timeout: 60000
         });
@@ -633,9 +580,9 @@ async function compileTypeScriptPlugin(entryPoint: string, pluginDir: string): P
     // Fallback: use npx esbuild CLI
     try {
         const externals = externalPackages.map((p) => `--external:${p}`).join(' ');
-        execSync(
+        shellExec(
             `npx esbuild "${entryPoint}" --bundle --format=esm --platform=node --target=node20 ${externals} --outfile="${compiledPath}"`,
-            { stdio: 'pipe', timeout: 30000 }
+            { timeout: 30000 }
         );
         logger.info(`Compiled TypeScript plugin via CLI: ${entryPoint}`);
         return compiledPath;

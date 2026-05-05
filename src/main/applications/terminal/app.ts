@@ -11,14 +11,8 @@
 
 import { BaseToolset } from '../../aikernel/tool';
 import { BaseApplication } from '../base';
-import {
-    ExecutePowerShellTool,
-    ExecuteBashTool,
-    ExecuteZshTool,
-    CheckShellStatusTool,
-    findExecutableInPath,
-    hasZsh
-} from './tools.js';
+import { ExecutePowerShellTool, ExecuteBashTool, ExecuteZshTool, CheckShellStatusTool } from './tools.js';
+import { findExecutableInPath, hasZsh } from './shellExec.js';
 import fs from 'fs';
 
 export class TerminalApplication extends BaseApplication {

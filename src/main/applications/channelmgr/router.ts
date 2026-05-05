@@ -18,7 +18,7 @@ import { createMemoryToolset } from '../../aikernel/memory/tools.js';
 import { BaseToolset } from '../../aikernel/tool.js';
 import { logger } from '../../utils/logger.js';
 import { LLM } from '../../aikernel/llm.js';
-import type { InboundChannelMessage, Participant } from '../../aikernel/plugins/types.js';
+import type { InboundChannelMessage, Participant } from '../../plugins/types.js';
 import type { AgentDecl } from '../../aikernel/agents/common.js';
 import { SEND_FILE_TOOL_NAME } from './tools.js';
 
