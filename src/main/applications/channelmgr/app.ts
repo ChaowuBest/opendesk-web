@@ -26,7 +26,7 @@ import {
     uninstallPlugin,
     setPluginEnabled,
     invalidatePluginRequireCache
-} from '../../aikernel/plugins/index.js';
+} from '../../plugins/index.js';
 import type {
     PluginEntry,
     PluginLoadError,
@@ -36,12 +36,8 @@ import type {
     InboundChannelMessage,
     ChannelAccountSnapshot,
     Participant
-} from '../../aikernel/plugins/types.js';
-import {
-    registerChannelDispatch,
-    unregisterChannelDispatch,
-    setPairingProvider
-} from '../../aikernel/plugins/openclaw/api.js';
+} from '../../plugins/types.js';
+import { registerChannelDispatch, unregisterChannelDispatch, setPairingProvider } from '../../plugins/openclaw/api.js';
 import * as pairing from './pairing.js';
 import { ChannelMessageRouter, type ChannelReply } from './router.js';
 import { getTempDirectory } from '../filemgr/tools.js';

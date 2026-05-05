@@ -9,12 +9,9 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { exec } from 'child_process';
-import { promisify } from 'util';
 import * as https from 'https';
 import fs from 'fs';
-
-const execAsync = promisify(exec);
+import { asyncShellExec } from '../applications/terminal/shellExec.js';
 
 const PACKAGE_NAME = '@bitclub.ai/opendesk-cli';
 
@@ -36,7 +33,7 @@ export interface VersionInfo {
 async function getNpmInstallInfo(): Promise<{ version: string | null; isInstalled: boolean }> {
     try {
         // 方法1：通过 npm root 获取全局目录，直接读取 package.json
-        const { stdout: globalRoot } = await execAsync('npm root -g', {
+        const { stdout: globalRoot } = await asyncShellExec('npm root -g', {
             timeout: 5000
         });
         const packageJsonPath = `${globalRoot.trim()}/${PACKAGE_NAME}/package.json`;
@@ -53,7 +50,7 @@ async function getNpmInstallInfo(): Promise<{ version: string | null; isInstalle
     } catch {
         // 方法2：回退到 npm list（较慢但可靠）
         try {
-            const { stdout } = await execAsync(`npm list -g ${PACKAGE_NAME} --depth=0 --json`, {
+            const { stdout } = await asyncShellExec(`npm list -g ${PACKAGE_NAME} --depth=0 --json`, {
                 timeout: 15000
             });
             const result = JSON.parse(stdout);
@@ -157,7 +154,7 @@ export async function getNpmVersion(packageName: string, tag: string = 'latest')
     } catch {
         // 回退到 npm view 命令
         try {
-            const { stdout } = await execAsync(`npm view ${packageName} version --tag ${tag}`, {
+            const { stdout } = await asyncShellExec(`npm view ${packageName} version --tag ${tag}`, {
                 timeout: 30000
             });
             return stdout.trim() || null;
@@ -279,8 +276,8 @@ export async function installVersion(
 
         // 执行全局安装
         const installCmd = `npm install -g ${PACKAGE_NAME}@${tag}`;
-        await execAsync(installCmd, {
-            timeout: 120000 // 2 分钟超时
+        await asyncShellExec(installCmd, {
+            timeout: 120000
         });
 
         // 检查安装是否成功

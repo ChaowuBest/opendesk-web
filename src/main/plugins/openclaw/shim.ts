@@ -17,7 +17,7 @@
 
 import path from 'path';
 import fs from 'fs';
-import { logger } from '../../../utils/logger.js';
+import { logger } from '../../utils/logger.js';
 
 export const PAIRING_REPLY_TEMPLATE = `为了让消息收发更加安全，你得先在OpenDesk中批准配对请求 😉
 请求ID: {idLine}

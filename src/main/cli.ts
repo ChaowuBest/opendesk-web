@@ -21,7 +21,7 @@ import { OpenDeskTUI, CommandLineArgs } from './tui/entry.js';
 import { HeadlessRunner } from './tui/headless.js';
 import { Setting, getDefaultAppDirectory, setCustomAppDirectory } from './utils/setting';
 import { program as prog, Option } from 'commander';
-import { listInstalledPlugins, loadPlugins } from './aikernel/plugins/index.js';
+import { listInstalledPlugins, loadPlugins } from './plugins/index.js';
 import { ChannelMgrApplication } from './applications/channelmgr/app.js';
 import { ChannelMessageRouter } from './applications/channelmgr/router.js';
 import { MainAgentDecl } from './aikernel/agents/main/agent.js';

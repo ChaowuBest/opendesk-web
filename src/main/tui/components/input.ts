@@ -17,8 +17,7 @@ import chalk from 'chalk';
 import { visibleWidth, truncateToWidth } from '@mariozechner/pi-tui';
 import { getFileCompletions, extractAtQuery, FILE_COMPLETION_MAX_RESULTS } from './file-completions';
 import { getShellCompletions, executeShellCommand } from './shell';
-import { spawnSync } from 'child_process';
-import process from 'process';
+import { findExecutableInPath } from '../../applications/terminal/shellExec.js';
 import { SkillRegistry as AISkillRegistry } from '../../aikernel/skill';
 import { getShortcuts } from '../../utils/setting.js';
 import { t } from '../../../locale/index.js';
@@ -209,15 +208,10 @@ let _cachedFdPath: string | null | undefined;
 function detectFd(): string | null {
     if (_cachedFdPath !== undefined) return _cachedFdPath;
     for (const bin of ['fd', 'fdfind']) {
-        try {
-            const cmd = process.platform === 'win32' ? 'where' : 'which';
-            const r = spawnSync(cmd, [bin], { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] });
-            if (r.status === 0 && r.stdout.trim()) {
-                _cachedFdPath = r.stdout.trim().split(/\r?\n/)[0]!;
-                return _cachedFdPath;
-            }
-        } catch {
-            /* ignore */
+        const p = findExecutableInPath(bin);
+        if (p) {
+            _cachedFdPath = p;
+            return _cachedFdPath;
         }
     }
     _cachedFdPath = null;
