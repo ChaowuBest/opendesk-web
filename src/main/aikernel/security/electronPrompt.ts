@@ -17,7 +17,6 @@
  * 同时向操作系统发送通知，提示用户需要进行权限授权。
  */
 
-import electron from 'electron';
 import type {
     PermissionRequest,
     PermissionUserResponse,
@@ -25,8 +24,7 @@ import type {
     PermissionTaskInfo
 } from './permission.js';
 import { logger } from '../../utils/logger.js';
-
-const { BrowserWindow, ipcMain, Notification } = electron;
+import { electron } from '../../../utils/electron.js';
 
 const ACTION_LABELS: Record<string, string> = {
     read: '读取',
@@ -49,6 +47,7 @@ export class ElectronPermissionPromptProvider implements PermissionPromptProvide
         taskInfo?: PermissionTaskInfo
     ): Promise<PermissionUserResponse> {
         try {
+            const { BrowserWindow, ipcMain, Notification } = electron();
             const focusedWindow = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed()) || null;
 
             if (!focusedWindow) {
