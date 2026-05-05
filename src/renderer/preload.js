@@ -502,6 +502,14 @@ if (window.self !== window.top) {
             }
             return result.data;
         },
+        getLogEntries: async (options) => {
+            const result = await ipcRenderer.invoke('setting:getLogEntries', options);
+            if (result.status !== 'ok') {
+                console.error('getting log entries failed', result.message);
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
         subscribeLogContentUpdate: (callback) => {
             ipcRenderer.on('setting:logContentUpdate', (event, ...args) => {
                 callback(...args);
