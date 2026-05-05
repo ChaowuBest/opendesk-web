@@ -10,6 +10,7 @@
  */
 
 import type { TaskManagerState, TaskState } from '../../aikernel/states/tasks.js';
+import { HarnessContext } from '../../aikernel/security/harness.js';
 import { UserMessage, AssistantMessage, ImageMessagePart, imageToDataUri } from '../../aikernel/messages.js';
 import { ApplicationRegistry } from '../registry.js';
 import { SkillRegistry } from '../../aikernel/skill.js';
@@ -261,7 +262,9 @@ export class ChannelMessageRouter {
 
     private async createSessionTask(taskKey: string, message: InboundChannelMessage): Promise<TaskState> {
         const task = this.taskManagerState.createTask(this.model);
-        const systemPrompt = await this.agentDecl.createSystemPrompt(undefined, this.workspace);
+        task.harnessContext = HarnessContext.createEmpty();
+        task.harnessContext.workspace = this.workspace;
+        const systemPrompt = await this.agentDecl.createSystemPrompt(undefined, task);
 
         // Determine reply target: group ID for group chats, sender ID for direct messages
         const replyTarget = message.chatType === 'group' && message.groupId ? message.groupId : message.senderId;

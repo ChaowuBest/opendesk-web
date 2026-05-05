@@ -872,6 +872,13 @@ export class AgentInputArea implements Component {
     }
 
     /**
+     * 是否有权限/问答/计划审批等 prompt widget 正在显示。
+     */
+    hasPromptWidget(): boolean {
+        return this.permissionWidget !== null;
+    }
+
+    /**
      * 隐藏权限确认 widget，恢复 Editor 输入框。
      */
     hidePermissionPrompt() {

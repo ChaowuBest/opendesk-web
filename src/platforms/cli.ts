@@ -15,6 +15,7 @@ import type { TaskState } from '../main/aikernel/states/tasks.js';
 import type { PermissionPromptProvider } from '../main/aikernel/security/permission.js';
 import type { AskUserProvider } from '../main/aikernel/interaction/tools.js';
 import { createInteractionToolset } from '../main/aikernel/interaction/tools.js';
+import type { ExitPlanModeProvider } from '../main/aikernel/interaction/exitPlanMode.js';
 
 import { MailboxApplication } from '../main/applications/mailbox/app.js';
 import { FileMgrApplication } from '../main/applications/filemgr/app.js';
@@ -34,6 +35,7 @@ export class CliPlatform extends AbstractPlatform {
     private _workspace: string = process.cwd();
     private _permissionPromptProvider: PermissionPromptProvider | null = null;
     private _askUserProvider: AskUserProvider | null = null;
+    private _exitPlanModeProvider: ExitPlanModeProvider | null = null;
 
     getName(): string {
         return 'cli';
@@ -55,10 +57,17 @@ export class CliPlatform extends AbstractPlatform {
         this._askUserProvider = provider;
     }
 
+    setExitPlanModeProvider(provider: ExitPlanModeProvider): void {
+        this._exitPlanModeProvider = provider;
+    }
+
     async initPlatformHarness(task: TaskState): Promise<void> {
         task.harnessContext.permissionPrompt = this._permissionPromptProvider;
         if (this._askUserProvider) {
-            task.interactionToolset = createInteractionToolset(this._askUserProvider);
+            task.interactionToolset = createInteractionToolset(
+                this._askUserProvider,
+                this._exitPlanModeProvider ?? undefined
+            );
         }
     }
 

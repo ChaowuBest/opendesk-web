@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { AgentDecl, type AgentType, type ModeDecl } from '../common.js';
+import { AgentDecl, type AgentType, type ModeDecl, type TaskContext } from '../common.js';
 import { AgentRegistry } from '../registry.js';
 import { SkillRegistry } from '../../skill';
 import { SoulRegistry } from '../../soul/registry';
@@ -204,8 +204,8 @@ export class MainAgentDecl extends AgentDecl {
         return 'standard';
     }
 
-    async createSystemPrompt(activeMode: ModeDecl | undefined, workspace: string): Promise<string> {
-        const effectiveWorkspace = workspace;
+    async createSystemPrompt(activeMode: ModeDecl | undefined, taskCtx: TaskContext): Promise<string> {
+        const effectiveWorkspace = taskCtx.getWorkspace();
         const skillFrontmatters = await SkillRegistry.getInstance().getSkillFrontmatterXml();
         const agentFrontmatters = AgentRegistry.getAgentFrontmatterXml();
 
@@ -226,7 +226,7 @@ export class MainAgentDecl extends AgentDecl {
         ];
 
         // Mode-specific sub-prompt 作为静态部分的一部分（用于 prompt cache 的考虑将来可以调整）
-        const modeSubPrompt = activeMode?.getSubPrompt?.(effectiveWorkspace);
+        const modeSubPrompt = activeMode?.getSubPrompt?.(taskCtx);
         if (modeSubPrompt) {
             staticSections.push(modeSubPrompt);
         }

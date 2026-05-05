@@ -13,11 +13,11 @@ import { z } from 'zod';
 import { BaseTool, BaseToolset, ToolResult } from '../tool.js';
 import { Card } from '../../tui/components/card.js';
 import { statusDisplay, truncText } from '../../tui/components/toolcall.js';
-import { Markdown, Text, truncateToWidth } from '@mariozechner/pi-tui';
+import { Markdown } from '@mariozechner/pi-tui';
 import type { TaskState, TaskUpdateChunk } from '../states/tasks.js';
 import type { TextMessagePart } from '../messages.js';
 import type { SubTaskConfig, SubTaskResult, SubTaskProgressInfo, PendingSubTask } from './common.js';
-import { AssistantMessage, UserMessage, ToolCall, ToolCallMessagePart, ErrorMessagePart, marked } from '../messages.js';
+import { UserMessage, ToolCall, ToolCallMessagePart, marked } from '../messages.js';
 import { SUBTASK_SYSTEM_PROMPT } from './prompt.js';
 import {
     registerSubTaskAttemptCompletionHook,
@@ -128,14 +128,14 @@ export async function startSubTask(options: StartSubTaskOptions): Promise<SubTas
 
         // workspace 优先取父任务的当前值（可能已被用户切换）
         const workspace = parentTask.harnessContext.workspace || '';
-        const agentSystemPrompt = await agentDecl.createSystemPrompt(defaultMode, workspace);
-        subTask.setSystemPrompt(agentSystemPrompt);
         if (workspace && defaultMode) {
-            subTask.harnessContext = await HarnessContext.createForMode(workspace, defaultMode);
             // explore 等只读 agent 不设 permissionPrompt，让 ask 自动拒绝
+            subTask.harnessContext = await HarnessContext.createForMode(workspace, defaultMode);
         } else {
             subTask.harnessContext = parentTask.harnessContext;
         }
+        const agentSystemPrompt = await agentDecl.createSystemPrompt(defaultMode, subTask);
+        subTask.setSystemPrompt(agentSystemPrompt);
 
         // 应用 Mode 级别的工具过滤
         if (defaultMode) {
@@ -637,7 +637,9 @@ export class CreateSubTaskTool extends BaseTool<typeof CreateSubTaskArgsSchema> 
                     const renderedResult = await marked.parse(resultText);
                     bodyContent = `<div class="px-3.5 py-2.5 text-xs ${color} leading-relaxed markdown-body max-h-[200px] overflow-y-auto">${renderedResult}</div>`;
                 }
-            } catch {}
+            } catch {
+                /* ignore parse errors in render */
+            }
         } else if (isError && toolcall.result) {
             bodyContent = `<div class="px-3.5 py-2.5 text-[12px] text-red-600">${escapeHtml(String(toolcall.result).slice(0, 200))}</div>`;
         }
@@ -696,7 +698,7 @@ export class CreateSubTaskTool extends BaseTool<typeof CreateSubTaskArgsSchema> 
                     taskState: asyncSubTaskState
                 });
                 promise
-                    .then((result) => {
+                    .then((_result) => {
                         pendingSubTasks.delete(asyncSubTaskState!.task_id);
                     })
                     .catch(() => {
@@ -870,7 +872,9 @@ export class WaitSubTaskTool extends BaseTool<typeof WaitSubTaskArgsSchema> {
                     const renderedResult = await marked.parse(resultText);
                     bodyContent = `<div class="px-3.5 py-2.5 text-xs ${color} leading-relaxed markdown-body max-h-[240px] overflow-y-auto">${renderedResult}</div>`;
                 }
-            } catch {}
+            } catch {
+                /* ignore parse errors in render */
+            }
         } else if (isError && toolcall.result) {
             bodyContent = `<div class="px-3.5 py-2.5 text-[12px] text-red-600">${escapeHtml(String(toolcall.result).slice(0, 200))}</div>`;
         }

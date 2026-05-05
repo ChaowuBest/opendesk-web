@@ -66,7 +66,7 @@ const BROWSER_TAB: TabSpec = { id: 'browser', label: '浏览器', icon: 'fa-glob
 const CHANGES_TAB: TabSpec = { id: 'changes', label: '变更', icon: 'fa-code-compare' };
 const SESSION_MEMORY_TAB: TabSpec = { id: 'session-memory', label: '任务记忆', icon: 'fa-brain', dynamic: true };
 
-const PRIORITY_STYLE: Record<TodoPriority, { cls: string; label: string }> = {
+const _PRIORITY_STYLE: Record<TodoPriority, { cls: string; label: string }> = {
     low: { cls: 'bg-blue-50 text-blue-600 border-blue-100', label: '低' },
     medium: { cls: 'bg-amber-50 text-amber-600 border-amber-100', label: '中' },
     high: { cls: 'bg-red-50 text-red-600 border-red-100', label: '高' }
@@ -268,6 +268,14 @@ class TaskArtifacts extends HTMLElement {
      */
     softRefreshWorkspace(): void {
         this._fileExplorer.softRefresh();
+    }
+
+    /**
+     * 外部调用：切换到工作空间 tab 并打开指定文件的预览。
+     */
+    openFilePreview(filePath: string): void {
+        this._switchTab('workspace');
+        this._fileExplorer.selectFile(filePath);
     }
 
     /**

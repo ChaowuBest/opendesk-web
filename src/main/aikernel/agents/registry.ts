@@ -11,6 +11,7 @@
 
 import type { AgentDecl } from './common.js';
 import { ExploreAgentDecl } from './explore/agent.js';
+import { PlanAgentDecl } from './plan/agent.js';
 
 /**
  * AgentRegistry —— 全局 Agent 注册表。
@@ -51,6 +52,7 @@ export class AgentRegistry {
     static initBuiltinAgents(): void {
         if (this.agents.size > 0) return; // 防止重复初始化
         this.registerAgent(new ExploreAgentDecl());
+        this.registerAgent(new PlanAgentDecl());
     }
 
     /**

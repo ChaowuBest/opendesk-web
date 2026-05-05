@@ -1,3 +1,4 @@
+/* eslint-disable no-console */
 /**
  * Copyright (c) 2026 The OpenDesk Team
  * OpenDesk is licensed under Mulan PSL v2.
@@ -32,6 +33,8 @@ class SideBar extends HTMLElement {
         /** 完整渲染列表的缓存 */
         this._fullRenderList = [];
         this._searchQuery = '';
+        /** 正在等待用户确认的任务 ID 集合 */
+        this._waitingTaskIds = new Set();
     }
 
     connectedCallback() {
@@ -41,6 +44,14 @@ class SideBar extends HTMLElement {
             this.reloadTaskList();
             this.setUpEventListeners();
             this.subscribeToUnreadCounts();
+        });
+
+        document.addEventListener('task-waiting-state', (e) => {
+            const { taskId, waiting } = e.detail;
+            const changed = waiting
+                ? !this._waitingTaskIds.has(taskId) && (this._waitingTaskIds.add(taskId), true)
+                : this._waitingTaskIds.delete(taskId);
+            if (changed) this._refreshWaitingTags();
         });
     }
 
@@ -391,6 +402,7 @@ class SideBar extends HTMLElement {
         const deleteColor = isCurrentTask ? 'text-white/60 hover:text-white' : 'text-[#9ca3af] hover:text-[#6b7280]';
 
         const channelTag = SideBar.buildChannelTag(task, isCurrentTask);
+        const waitingTag = SideBar.buildWaitingTag(task.task_id, this._waitingTaskIds, isCurrentTask);
         return `
         <div
             class="task-item cursor-pointer rounded-xl px-3 py-2.5 mb-1.5 transition-colors duration-150 ${taskStyle}"
@@ -401,6 +413,7 @@ class SideBar extends HTMLElement {
             <div class="flex items-center min-w-0 gap-2">
                 <p class="text-[13px] truncate leading-tight flex-1 min-w-0">${task.task_name || '未命名任务'}</p>
                 ${task.task_status === 'running' ? '<task-status-tag class="flex-shrink-0"></task-status-tag>' : ''}
+                ${waitingTag}
                 ${channelTag}
                 <button class="delete-task-btn flex-shrink-0 ${deleteColor} text-sm" data-task_id="${task.task_id}" title="删除">×</button>
             </div>
@@ -427,6 +440,40 @@ class SideBar extends HTMLElement {
             <p class="text-[11px] truncate flex-1 min-w-0 ${nameColor}">${task.task_name || '未命名子任务'}</p>
             <button class="delete-task-btn shrink-0 text-[10px] text-[#cbd5e1] hover:text-[#94a3b8] transition-colors" data-task_id="${task.task_id}" title="删除">×</button>
         </div>`;
+    }
+
+    _refreshWaitingTags() {
+        const container = this.querySelector('#task-list-container');
+        if (!container) return;
+        container.querySelectorAll('.task-item[data-task_id]').forEach((el) => {
+            const taskId = el.dataset.task_id;
+            const existing = el.querySelector('.waiting-tag');
+            if (this._waitingTaskIds.has(taskId)) {
+                if (!existing) {
+                    const tag = document.createElement('span');
+                    tag.className =
+                        'waiting-tag inline-flex items-center px-2 py-0.5 rounded text-[10px] leading-none font-medium whitespace-nowrap bg-orange-100 text-orange-600 border border-orange-200 flex-shrink-0';
+                    tag.textContent = '等待确认';
+                    const flexRow = el.querySelector('.flex');
+                    const deleteBtn = flexRow?.querySelector('.delete-task-btn');
+                    if (deleteBtn) {
+                        flexRow.insertBefore(tag, deleteBtn);
+                    } else if (flexRow) {
+                        flexRow.appendChild(tag);
+                    }
+                }
+            } else if (existing) {
+                existing.remove();
+            }
+        });
+    }
+
+    static buildWaitingTag(taskId, waitingSet, isCurrentTask) {
+        if (!waitingSet.has(taskId)) return '';
+        const cls = isCurrentTask
+            ? 'bg-white/25 text-white border-white/30'
+            : 'bg-orange-100 text-orange-600 border-orange-200';
+        return `<span class="waiting-tag inline-flex items-center px-2 py-0.5 rounded text-[10px] leading-none font-medium whitespace-nowrap ${cls} flex-shrink-0">等待确认</span>`;
     }
 
     static CHANNEL_META = {
@@ -667,7 +714,7 @@ class SideBar extends HTMLElement {
         const iconStyle = 'width:16px; text-align:center; font-size:12px; flex-shrink:0;';
 
         menu.innerHTML = items
-            .map((item, i) => {
+            .map((item, _i) => {
                 const needSep = item.id === 'delete';
                 const sep = needSep
                     ? '<div style="height:1px; margin:3px 8px; background:rgba(0,0,0,0.06);"></div>'
@@ -851,6 +898,7 @@ class SideBar extends HTMLElement {
                 <div class="flex items-center flex-1 min-w-0 gap-2">
                     <p class="text-[13px] truncate leading-tight ${titleColor}">${parentTask.task_name || '未命名任务'}</p>
                     ${parentTask.task_status === 'running' ? '<task-status-tag class="flex-shrink-0"></task-status-tag>' : ''}
+                    ${SideBar.buildWaitingTag(parentTask.task_id, this._waitingTaskIds, isCurrentTask)}
                 </div>
                 <button class="delete-task-btn shrink-0 text-sm ${deleteColor} transition-colors" data-task_id="${parentTask.task_id}" title="删除">×</button>
             </div>

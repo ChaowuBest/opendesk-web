@@ -26,7 +26,7 @@ import { LLM } from '../aikernel/llm.js';
 import { AgentDecl, type ModeDecl } from '../aikernel/agents/common.js';
 import { MainAgentDecl } from '../aikernel/agents/main/agent.js';
 import { HelpOverlay } from './components/help';
-import { ConfirmOverlay, InfoOverlay, InfoPage } from './components/notice';
+import { InfoOverlay, InfoPage } from './components/notice';
 import { LogPanel, LogPanelMode } from './components/logpanel';
 import { TodoList } from './components/todolist';
 import { TaskSwitcher } from './components/taskswitcher';
@@ -43,6 +43,7 @@ import { DashboardBar } from './components/dashboard';
 import { HarnessContext } from '../aikernel/security/harness.js';
 import { TUIPermissionPromptProvider } from './components/permission.js';
 import { TUIAskUserProvider } from './components/askUser.js';
+import { TUIExitPlanModeProvider } from './components/exitPlanMode.js';
 import { TaskProfiler } from '../aikernel/profiler.js';
 import { t } from '../../locale/index.js';
 import { getPlatform } from '../../platforms/base.js';
@@ -92,6 +93,8 @@ export class OpenDeskTUI {
 
     /** 主任务专用的 askUser provider */
     private sharedAskUserProvider: TUIAskUserProvider;
+    /** 主任务专用的 exitPlanMode provider */
+    private sharedExitPlanModeProvider: TUIExitPlanModeProvider;
 
     /** 跟踪是否有 overlay 打开（使用 setter 以在关闭时自动处理积压弹窗） */
     private _hasOpenOverlay = false;
@@ -175,6 +178,7 @@ export class OpenDeskTUI {
         this.dashboardBar = new DashboardBar(() => this.tui.requestRender());
         this.sharedPermissionPrompt = new TUIPermissionPromptProvider(this);
         this.sharedAskUserProvider = new TUIAskUserProvider(this);
+        this.sharedExitPlanModeProvider = new TUIExitPlanModeProvider(this);
         this.workspace = args.workspace;
         this.model = args.model;
         this.singleShot = !!args.command;
@@ -326,6 +330,7 @@ export class OpenDeskTUI {
             if (platform instanceof CliPlatform) {
                 platform.setPermissionPromptProvider(this.sharedPermissionPrompt);
                 platform.setAskUserProvider(this.sharedAskUserProvider);
+                platform.setExitPlanModeProvider(this.sharedExitPlanModeProvider);
             }
         }
 
@@ -408,7 +413,7 @@ export class OpenDeskTUI {
         const task = this.taskManagerState.getTask(this.activeTaskId);
         if (!task) return;
         try {
-            const systemPrompt = await this.agentDecl.createSystemPrompt(this._activeMode, this.workspace);
+            const systemPrompt = await this.agentDecl.createSystemPrompt(this._activeMode, task);
             task.setSystemPrompt(systemPrompt);
         } catch (err) {
             logger.warn(`Failed to refresh active task system prompt after skill update: ${err}`);
@@ -609,9 +614,9 @@ export class OpenDeskTUI {
         }
 
         const task = this.taskManagerState.createTask(this.model);
-        const systemPrompt = await this.agentDecl.createSystemPrompt(this._activeMode, this.workspace);
-        task.setSystemPrompt(systemPrompt);
         await this.initTaskHarness(task);
+        const systemPrompt = await this.agentDecl.createSystemPrompt(this._activeMode, task);
+        task.setSystemPrompt(systemPrompt);
 
         this.activeTaskId = task.task_id;
         this.taskView.taskState = task;
@@ -686,6 +691,9 @@ export class OpenDeskTUI {
             this.startRunningMonitorForTask(task);
         }
         this.tui.requestRender(true);
+
+        // 切换任务后，处理可能与新任务关联的积压弹窗
+        this.processPendingPrompts();
     }
 
     /**
@@ -931,9 +939,9 @@ export class OpenDeskTUI {
     async onRequestSubmit(request: string) {
         if (this.taskView.taskState === undefined) {
             this.taskView.taskState = this.taskManagerState.createTask(this.model);
-            const systemPrompt = await this.agentDecl.createSystemPrompt(this._activeMode, this.workspace);
-            this.taskView.taskState.setSystemPrompt(systemPrompt);
             await this.initTaskHarness(this.taskView.taskState);
+            const systemPrompt = await this.agentDecl.createSystemPrompt(this._activeMode, this.taskView.taskState);
+            this.taskView.taskState.setSystemPrompt(systemPrompt);
 
             if (this.profilePath) {
                 this.taskView.taskState.profiler = new TaskProfiler(this.taskView.taskState.task_id);
@@ -1208,6 +1216,7 @@ export class OpenDeskTUI {
     processPendingPrompts(): void {
         this.sharedPermissionPrompt.processQueueIfReady();
         this.sharedAskUserProvider.processQueueIfReady();
+        this.sharedExitPlanModeProvider.processQueueIfReady();
     }
 
     /**
@@ -1252,7 +1261,16 @@ export class OpenDeskTUI {
         const modes = this.agentDecl.supportedModes();
         const currentIndex = modes.findIndex((m) => m.id === this._activeMode.id);
         const nextIndex = (currentIndex + 1) % modes.length;
-        this._activeMode = modes[nextIndex];
+        const oldMode = this._activeMode;
+        const newMode = modes[nextIndex];
+
+        // 调用退出旧模式的钩子
+        await oldMode.onExitMode?.(this.workspace);
+
+        this._activeMode = newMode;
+
+        // 调用进入新模式的钩子
+        await newMode.onEnterMode?.(this.workspace);
 
         this.syncModeDisplay();
         await this.syncAllTaskHarnesses();
@@ -1294,7 +1312,20 @@ export class OpenDeskTUI {
         const modes = this.agentDecl.supportedModes();
         const target = modes.find((m) => m.id === modeId);
         if (!target) return false;
+
+        const oldMode = this._activeMode;
+
+        // 调用退出旧模式的钩子
+        if (oldMode.id !== target.id) {
+            await oldMode.onExitMode?.(this.workspace);
+        }
+
         this._activeMode = target;
+
+        // 调用进入新模式的钩子
+        if (oldMode.id !== target.id) {
+            await target.onEnterMode?.(this.workspace);
+        }
 
         this.syncModeDisplay();
         await this.syncAllTaskHarnesses();
@@ -1392,7 +1423,12 @@ export class OpenDeskTUI {
 
         // Attach a direct input listener to TUI FIRST, to hijack Ctrl+C before Editor gets it!
         this.tui.addInputListener((data) => {
-            if (!isKeyRelease(data) && !this.hasOpenOverlay && !this.configComponent) {
+            if (
+                !isKeyRelease(data) &&
+                !this.hasOpenOverlay &&
+                !this.configComponent &&
+                !this.inputArea.hasPromptWidget()
+            ) {
                 const shortcuts = getShortcuts();
 
                 // 模式切换

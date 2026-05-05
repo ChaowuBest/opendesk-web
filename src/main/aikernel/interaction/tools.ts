@@ -21,7 +21,6 @@ import { BaseTool, BaseToolset, ToolResult } from '../tool.js';
 import { Card } from '../../tui/components/card.js';
 import { statusDisplay, truncText } from '../../tui/components/toolcall.js';
 import type { ToolCall } from '../messages.js';
-import { marked } from '../messages.js';
 import type { TaskState } from '../states/tasks.js';
 import { t } from '../../../locale/index.js';
 import chalk from 'chalk';
@@ -228,7 +227,9 @@ export class AskUserTool extends BaseTool<typeof AskUserArgsSchema> {
                         .join('');
                     bodyContent = `<div class="px-3.5 py-2.5">${answersHtml}</div>`;
                 }
-            } catch {}
+            } catch {
+                /* ignore parse errors in render */
+            }
         } else if (isError && toolcall.result) {
             bodyContent = `<div class="px-3.5 py-2.5 text-[12px] text-red-600">${escapeHtml(String(toolcall.result).slice(0, 200))}</div>`;
         }
@@ -304,15 +305,31 @@ export class AskUserTool extends BaseTool<typeof AskUserArgsSchema> {
 
 // ─── Toolset Factory ──────────────────────────────────────────────────────────
 
+import { ExitPlanModeTool, type ExitPlanModeProvider } from './exitPlanMode.js';
+
 /**
  * 创建 interaction 工具集（仅主任务使用）。
  * provider 由调用方注入（TUI 或 Electron）。
+ *
+ * @param askUserProvider askUser 交互提供者
+ * @param exitPlanModeProvider exitPlanMode 交互提供者（可选）
  */
-export function createInteractionToolset(provider: AskUserProvider): BaseToolset {
+export function createInteractionToolset(
+    askUserProvider: AskUserProvider,
+    exitPlanModeProvider?: ExitPlanModeProvider
+): BaseToolset {
     const toolset = new BaseToolset('interaction');
-    const tool = new AskUserTool();
-    tool.setProvider(provider);
-    toolset.addTool(tool);
+
+    const askUserTool = new AskUserTool();
+    askUserTool.setProvider(askUserProvider);
+    toolset.addTool(askUserTool);
+
+    const exitPlanModeTool = new ExitPlanModeTool();
+    if (exitPlanModeProvider) {
+        exitPlanModeTool.setProvider(exitPlanModeProvider);
+    }
+    toolset.addTool(exitPlanModeTool);
+
     return toolset;
 }
 

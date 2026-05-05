@@ -102,7 +102,7 @@ export class BaseTaskUpdateSubscriber {
         return true;
     }
 
-    send(chunkUpdate: TaskUpdateChunk) {
+    send(_chunkUpdate: TaskUpdateChunk) {
         throw new Error('send not implemented');
     }
 }
@@ -240,6 +240,13 @@ export class TaskState {
     constructor(task_manager_state: TaskManagerState, parent_id: string | null = null) {
         this.task_manager_state = task_manager_state;
         this.parent_id = parent_id;
+    }
+
+    /**
+     * 获取当前任务的工作空间路径。
+     */
+    getWorkspace(): string {
+        return this.harnessContext?.workspace || '';
     }
 
     /**
@@ -800,7 +807,7 @@ export class TaskState {
             const entry = allSkills.find((e) => e.skill.frontmatter.name === name && e.skill.isUserInvocable);
             if (!entry) continue;
 
-            const { bundleName, skill } = entry;
+            const { bundleName } = entry;
             try {
                 const loadedSkill = await registry.getSkill(bundleName, name);
                 if (!loadedSkill) continue;
@@ -1719,7 +1726,7 @@ export class TaskState {
         try {
             while (this.task_status !== 'stopped') {
                 await this.processCompletion();
-                // @ts-ignore 这里的task_status可能通过前端的请求被随时中止
+                // @ts-expect-error 这里的task_status可能通过前端的请求被随时中止
                 if (this.task_status === 'stopped') {
                     break;
                 }
@@ -1807,7 +1814,7 @@ export class TaskState {
 export class BaseTaskManagerUpdateSubscriber {
     subscription_id: string = crypto.randomUUID();
 
-    send(taskList: object[]): void {
+    send(_taskList: object[]): void {
         throw new Error('send not implemented');
     }
 }
@@ -2114,12 +2121,13 @@ export class TaskManagerState {
         // 创建任务
         const task = this.createTask();
 
-        // 构建 system prompt 并设置
-        const systemPrompt = await agentDecl.createSystemPrompt(activeMode, workspace);
-        task.setSystemPrompt(systemPrompt);
-
-        // 初始化 harness（mode 相关 + 平台相关）
+        // 先初始化 harness（设置 workspace、权限引擎等），
+        // 这样 createSystemPrompt 中的 taskCtx.getWorkspace() 才能返回正确值
         await this.initHarness(task, workspace, activeMode);
+
+        // 构建 system prompt 并设置
+        const systemPrompt = await agentDecl.createSystemPrompt(activeMode, task);
+        task.setSystemPrompt(systemPrompt);
 
         // 提交用户消息
         await task.submitUserMessage(prompt);

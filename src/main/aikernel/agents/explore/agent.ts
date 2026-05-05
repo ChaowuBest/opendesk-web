@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { AgentDecl, type AgentType, type ModeDecl } from '../common.js';
+import { AgentDecl, type AgentType, type ModeDecl, type TaskContext } from '../common.js';
 import { EXPLORE_AGENT_DEFAULT_MODE } from './modes/default.js';
 
 export const SYSTEM_PROMPT_DYNAMIC_BOUNDARY = '__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__';
@@ -69,7 +69,7 @@ export class ExploreAgentDecl extends AgentDecl {
         return 'default';
     }
 
-    async createSystemPrompt(_activeMode: ModeDecl | undefined, workspace: string): Promise<string> {
-        return getExploreSystemPrompt(workspace);
+    async createSystemPrompt(_activeMode: ModeDecl | undefined, taskCtx: TaskContext): Promise<string> {
+        return getExploreSystemPrompt(taskCtx.getWorkspace());
     }
 }

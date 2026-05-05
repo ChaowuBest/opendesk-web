@@ -45,8 +45,9 @@ export interface ModeDecl {
     /**
      * 模式专属的 Sub-Prompt，会作为独立 Section 整合进 SystemPrompt。
      * 返回 null 表示无额外提示。
+     * @param taskCtx 任务上下文（包含 workspace、taskId 等）
      */
-    getSubPrompt?: (workspace: string) => string | null;
+    getSubPrompt?: (taskCtx: TaskContext) => string | null;
     /**
      * 工具白名单：非空时仅白名单内的工具可用，此时 disabledTools 被忽略。
      * 空数组或 undefined 表示不做白名单过滤。
@@ -58,11 +59,31 @@ export interface ModeDecl {
      * 返回空数组或 undefined 表示不过滤。
      */
     disabledTools?: string[];
+    /**
+     * 进入该模式时的钩子函数。
+     * 由框架在模式切换生效后调用，可用于初始化模式所需资源（如创建目录等）。
+     */
+    onEnterMode?: (workspace: string) => Promise<void> | void;
+    /**
+     * 退出该模式时的钩子函数。
+     * 由框架在即将切换离开此模式时调用，可用于清理资源或保存状态。
+     */
+    onExitMode?: (workspace: string) => Promise<void> | void;
 }
 
 // ─── AgentDecl ────────────────────────────────────────────────
 
 export type AgentType = 'builtin' | 'custom';
+
+/**
+ * createSystemPrompt 所需的任务上下文。
+ * 由 TaskState 实现，此处用接口定义以避免循环依赖。
+ */
+export interface TaskContext {
+    readonly task_id: string;
+    readonly task_name: string | null;
+    getWorkspace(): string;
+}
 
 export abstract class AgentDecl {
     /** Agent 的唯一名称标识 */
@@ -84,5 +105,5 @@ export abstract class AgentDecl {
      */
     abstract defaultModeId(): string;
 
-    abstract createSystemPrompt(activeMode: ModeDecl | undefined, workspace: string): Promise<string>;
+    abstract createSystemPrompt(activeMode: ModeDecl | undefined, taskCtx: TaskContext): Promise<string>;
 }

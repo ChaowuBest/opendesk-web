@@ -21,6 +21,7 @@ import type { DeviceGateway, GatewayMethodHandler, ConnectionState } from './gat
 import type { TaskManagerState, TaskState, TaskUpdateChunk } from '../../aikernel/states/tasks.js';
 import { BaseTaskUpdateSubscriber } from '../../aikernel/states/tasks.js';
 import { MainAgentDecl } from '../../aikernel/agents/main/agent.js';
+import { HarnessContext } from '../../aikernel/security/harness.js';
 
 const TAG = '[devicemgr:gateway-methods]';
 
@@ -278,7 +279,9 @@ async function resolveOrCreateTask(
     }
 
     const task = ctx.taskManagerState.createTask(ctx.model);
-    const systemPrompt = await agentDecl.createSystemPrompt(undefined, ctx.workspace);
+    task.harnessContext = HarnessContext.createEmpty();
+    task.harnessContext.workspace = ctx.workspace;
+    const systemPrompt = await agentDecl.createSystemPrompt(undefined, task);
     await task.setSystemPrompt(systemPrompt);
     task.task_name = `Gateway: ${sessionKey}`;
 

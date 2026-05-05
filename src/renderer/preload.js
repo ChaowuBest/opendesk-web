@@ -1,3 +1,4 @@
+/* eslint-disable no-console */
 /**
  * Copyright (c) 2026 The OpenDesk Team
  * OpenDesk is licensed under Mulan PSL v2.
@@ -163,21 +164,62 @@ function exposeTaskManagerAPI() {
         }
     });
 
+    // askUser 使用事件广播模式，每个 task-view 中的组件都可以按 taskId 过滤
+    const askUserRequestCallbacks = new Set();
+    const askUserDismissCallbacks = new Set();
+    ipcRenderer.on('askUser:request', (_event, requestId, data) => {
+        for (const cb of askUserRequestCallbacks) cb(requestId, data);
+    });
+    ipcRenderer.on('askUser:dismiss', (_event, requestId) => {
+        for (const cb of askUserDismissCallbacks) cb(requestId);
+    });
     contextBridge.exposeInMainWorld('askUserAPI', {
         onAskUserRequest: (callback) => {
-            ipcRenderer.removeAllListeners('askUser:request');
-            ipcRenderer.on('askUser:request', (event, requestId, data) => {
-                callback(requestId, data);
-            });
+            askUserRequestCallbacks.add(callback);
+        },
+        offAskUserRequest: (callback) => {
+            askUserRequestCallbacks.delete(callback);
         },
         onAskUserDismiss: (callback) => {
-            ipcRenderer.removeAllListeners('askUser:dismiss');
-            ipcRenderer.on('askUser:dismiss', (event, requestId) => {
-                callback(requestId);
-            });
+            askUserDismissCallbacks.add(callback);
+        },
+        offAskUserDismiss: (callback) => {
+            askUserDismissCallbacks.delete(callback);
         },
         respondAskUser: (requestId, response) => {
             ipcRenderer.send('askUser:response', requestId, response);
+        }
+    });
+
+    // exitPlanMode 使用事件广播模式
+    const exitPlanRequestCallbacks = new Set();
+    const exitPlanDismissCallbacks = new Set();
+    ipcRenderer.on('exitPlanMode:request', (_event, requestId, data) => {
+        for (const cb of exitPlanRequestCallbacks) cb(requestId, data);
+    });
+    ipcRenderer.on('exitPlanMode:dismiss', (_event, requestId) => {
+        for (const cb of exitPlanDismissCallbacks) cb(requestId);
+    });
+    contextBridge.exposeInMainWorld('exitPlanModeAPI', {
+        onExitPlanModeRequest: (callback) => {
+            exitPlanRequestCallbacks.add(callback);
+        },
+        offExitPlanModeRequest: (callback) => {
+            exitPlanRequestCallbacks.delete(callback);
+        },
+        onExitPlanModeDismiss: (callback) => {
+            exitPlanDismissCallbacks.add(callback);
+        },
+        offExitPlanModeDismiss: (callback) => {
+            exitPlanDismissCallbacks.delete(callback);
+        },
+        respondExitPlanMode: (requestId, response) => {
+            ipcRenderer.send('exitPlanMode:response', requestId, response);
+        },
+        getPendingRequest: async () => {
+            const result = await ipcRenderer.invoke('exitPlanMode:getPending');
+            if (result.status === 'ok') return result.data;
+            return null;
         }
     });
 }
@@ -488,6 +530,13 @@ if (window.self !== window.top) {
                 throw new Error(result.message);
             }
             return result.data;
+        },
+        getVersion: async () => {
+            const result = await ipcRenderer.invoke('setting:getAppVersion');
+            if (result.status !== 'ok') {
+                throw new Error(result.message);
+            }
+            return result.data;
         }
     });
 
@@ -507,6 +556,12 @@ if (window.self !== window.top) {
                 throw new Error(result.message);
             }
             return result.data;
+        },
+        onModeChanged: (callback) => {
+            ipcRenderer.removeAllListeners('mode:changed');
+            ipcRenderer.on('mode:changed', (event, modeId) => {
+                callback(modeId);
+            });
         }
     });
 
@@ -629,18 +684,27 @@ if (window.self !== window.top) {
         }
     });
 
+    // permission 使用事件广播模式，每个 task-view 中的组件都可以按 taskId 过滤
+    const permRequestCallbacks = new Set();
+    const permDismissCallbacks = new Set();
+    ipcRenderer.on('permission:request', (_event, requestId, data) => {
+        for (const cb of permRequestCallbacks) cb(requestId, data);
+    });
+    ipcRenderer.on('permission:dismiss', (_event, requestId) => {
+        for (const cb of permDismissCallbacks) cb(requestId);
+    });
     contextBridge.exposeInMainWorld('permissionAPI', {
         onPermissionRequest: (callback) => {
-            ipcRenderer.removeAllListeners('permission:request');
-            ipcRenderer.on('permission:request', (event, requestId, data) => {
-                callback(requestId, data);
-            });
+            permRequestCallbacks.add(callback);
+        },
+        offPermissionRequest: (callback) => {
+            permRequestCallbacks.delete(callback);
         },
         onPermissionDismiss: (callback) => {
-            ipcRenderer.removeAllListeners('permission:dismiss');
-            ipcRenderer.on('permission:dismiss', (event, requestId) => {
-                callback(requestId);
-            });
+            permDismissCallbacks.add(callback);
+        },
+        offPermissionDismiss: (callback) => {
+            permDismissCallbacks.delete(callback);
         },
         respondPermission: (requestId, response) => {
             ipcRenderer.send('permission:response', requestId, response);
