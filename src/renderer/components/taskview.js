@@ -1,3 +1,4 @@
+/* eslint-disable no-console */
 /**
  * Copyright (c) 2026 The OpenDesk Team
  * OpenDesk is licensed under Mulan PSL v2.
@@ -458,7 +459,7 @@ class TaskView extends HTMLElement {
         TaskView.rightSidebarExpanded = false;
     }
 
-    _autoSwitchTabIfEmpty(sidebar) {
+    _autoSwitchTabIfEmpty(_sidebar) {
         // Tab visibility is now managed dynamically inside TaskArtifacts
     }
 
@@ -755,7 +756,9 @@ class TaskView extends HTMLElement {
                 try {
                     const p = await window.workspaceAPI.getEffectiveWorkspace();
                     this._toolbar.setToolbarSubtitle(p, this._toolbar._subtitleClickHandler);
-                } catch (_) {}
+                } catch {
+                    /* ignore */
+                }
             }
         };
         document.addEventListener('workspace-changed', this._workspaceChangedHandler);
@@ -950,7 +953,9 @@ class TaskView extends HTMLElement {
             for (const unsub of this._browserEventUnsubscribes) {
                 try {
                     unsub();
-                } catch (_) {}
+                } catch {
+                    /* ignore */
+                }
             }
             this._browserEventUnsubscribes = null;
         }
@@ -999,6 +1004,9 @@ class TaskView extends HTMLElement {
 
                     <!-- 用户提问面板 -->
                     <ask-user-prompt id="task-${this.task_id}-ask-user" data-task-id="${this.task_id}" class="block px-4"></ask-user-prompt>
+
+                    <!-- 计划审批面板 -->
+                    <exit-plan-mode-prompt id="task-${this.task_id}-exit-plan" class="block px-4"></exit-plan-mode-prompt>
 
                     <!-- 输入区域 -->
                     <div class="px-3 pb-3 pt-1">
@@ -1108,7 +1116,7 @@ class TaskView extends HTMLElement {
                 try {
                     const isQP = await window.quickpassAPI.isQuickPass(message);
                     if (isQP) {
-                        const { name, hasApplications } = await window.quickpassAPI.importQuickPass(message);
+                        const { name: _name, hasApplications } = await window.quickpassAPI.importQuickPass(message);
                         const scope = hasApplications ? '全部设置（含应用配置）' : '基础设置（不含应用配置）';
                         await window.notificationAPI.sendNotification(
                             'info',

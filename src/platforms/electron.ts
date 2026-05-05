@@ -19,13 +19,13 @@ import { MailboxApplication } from '../main/applications/mailbox/app.js';
 import { FileMgrApplication } from '../main/applications/filemgr/app.js';
 import { CalendarApplication } from '../main/applications/calendar/app.js';
 import { BrowserApplication } from '../main/applications/browser/app';
-import { A2AApplication } from '../main/applications/a2a/app.js';
-import { RecallApplication } from '../main/applications/recall/app.js';
-import { SearchApplication } from '../main/applications/search/app';
-import { NewsApplication } from '../main/applications/news/app.js';
+// import { A2AApplication } from '../main/applications/a2a/app.js';
+// import { RecallApplication } from '../main/applications/recall/app.js';
+// import { SearchApplication } from '../main/applications/search/app';
+// import { NewsApplication } from '../main/applications/news/app.js';
 import { TerminalApplication } from '../main/applications/terminal/app.js';
-import { PPTCreatorApplication } from '../main/applications/ppt/app.js';
-import { DesignerApplication } from '../main/applications/designer/app.js';
+// import { PPTCreatorApplication } from '../main/applications/ppt/app.js';
+// import { DesignerApplication } from '../main/applications/designer/app.js';
 import { SkillMgrApplication } from '../main/applications/skillmgr/app.js';
 import { McpMgrApplication } from '../main/applications/mcpmgr/app.js';
 import { TodoMgrApplication } from '../main/applications/todomgr/app.js';
@@ -40,6 +40,7 @@ import type { TaskState } from '../main/aikernel/states/tasks.js';
 import { ElectronPermissionPromptProvider } from '../main/aikernel/security/electronPrompt.js';
 import { ElectronAskUserProvider } from '../main/aikernel/interaction/electronAskUser.js';
 import { createInteractionToolset } from '../main/aikernel/interaction/tools.js';
+import { ElectronExitPlanModeProvider } from '../main/aikernel/interaction/electronExitPlanMode.js';
 
 import path from 'path';
 
@@ -102,7 +103,10 @@ export class ElectronPlatform extends AbstractPlatform {
 
     async initPlatformHarness(task: TaskState): Promise<void> {
         task.harnessContext.permissionPrompt = new ElectronPermissionPromptProvider();
-        task.interactionToolset = createInteractionToolset(new ElectronAskUserProvider());
+        task.interactionToolset = createInteractionToolset(
+            new ElectronAskUserProvider(),
+            new ElectronExitPlanModeProvider()
+        );
     }
 
     getWorkerPath(): string {

@@ -131,8 +131,6 @@ export class HeadlessRunner {
         );
 
         const task = this.taskManagerState.createTask(this.args.model);
-        const systemPrompt = await this.agentDecl.createSystemPrompt(this.activeMode, this.args.workspace);
-        await task.setSystemPrompt(systemPrompt);
 
         if (this.args.profile) {
             task.profiler = new TaskProfiler(task.task_id);
@@ -146,6 +144,9 @@ export class HeadlessRunner {
         } catch (err) {
             logger.warn(`Failed to init headless task harness: ${err}`);
         }
+
+        const systemPrompt = await this.agentDecl.createSystemPrompt(this.activeMode, task);
+        await task.setSystemPrompt(systemPrompt);
 
         // 打印用户输入
         this.printUserMessage(command);

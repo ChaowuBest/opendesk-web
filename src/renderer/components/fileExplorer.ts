@@ -23,6 +23,7 @@
  */
 
 import { showConfirmModal } from './confirmModal';
+import { marked } from 'marked';
 
 // ============================================================================
 // Types
@@ -341,8 +342,11 @@ export function getFileExplorerCSS(): string {
         /* Preview */
         .ws-preview {
             background: white; border: 1px solid #eef0f3; border-radius: 10px;
-            overflow: hidden; max-height: 45%; min-height: 44px;
-            display: flex; flex-direction: column; flex-shrink: 0;
+            overflow: hidden; flex: 2; min-height: 80px;
+            display: flex; flex-direction: column;
+        }
+        .ws-preview:empty, .ws-preview.ws-preview--collapsed {
+            flex: 0 0 auto; min-height: 44px;
         }
         .ws-preview-empty {
             display: flex; align-items: center; justify-content: center;
@@ -376,8 +380,88 @@ export function getFileExplorerCSS(): string {
         }
         .ws-preview-info > i { font-size: 14px; color: #64748b; margin-top: 2px; }
         .ws-preview-hint { font-size: 11px; color: #94a3b8; margin-top: 2px; }
+
+        .ws-preview-md-host {
+            flex: 1; overflow: auto; min-height: 60px;
+        }
+
+        /* Fullscreen toggle button (shared style for browser & preview) */
+        .ws-fullscreen-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 22px; height: 22px;
+            background: transparent; border: none; border-radius: 4px;
+            cursor: pointer; color: #9ca3af; font-size: 10px;
+            transition: color 0.15s, background 0.15s;
+            flex-shrink: 0;
+        }
+        .ws-fullscreen-btn:hover { color: #374151; background: #f1f3f6; }
+
+        /* When browser is fullscreen, hide preview */
+        .ws-browser--fullscreen { flex: 1 !important; }
+        .ws-browser--fullscreen ~ .ws-preview { display: none !important; }
+
+        /* When preview is fullscreen, hide browser */
+        .ws-preview--fullscreen { flex: 1 !important; min-height: 0 !important; }
+        .ws-browser--hidden { display: none !important; }
     `;
 }
+
+function isMarkdownFile(filePath: string): boolean {
+    const ext = filePath.split('.').pop()?.toLowerCase();
+    return ext === 'md' || ext === 'markdown';
+}
+
+const MARKDOWN_PREVIEW_CSS = `
+    :host {
+        display: block;
+        height: 100%;
+        overflow: auto;
+        background: #fbfcfd;
+    }
+    .markdown-body {
+        font-family: 'PingFang SC', 'Microsoft YaHei', -apple-system, sans-serif;
+        font-size: 12px;
+        line-height: 1.7;
+        color: #1f2937;
+        padding: 12px 14px;
+        word-wrap: break-word;
+    }
+    .markdown-body h1 { font-size: 1.4em; margin: 0.8em 0 0.4em; font-weight: 600; border-bottom: 1px solid #e5e7eb; padding-bottom: 0.3em; }
+    .markdown-body h2 { font-size: 1.25em; margin: 0.7em 0 0.3em; font-weight: 600; border-bottom: 1px solid #f3f4f6; padding-bottom: 0.2em; }
+    .markdown-body h3 { font-size: 1.1em; margin: 0.6em 0 0.3em; font-weight: 600; }
+    .markdown-body h4, .markdown-body h5, .markdown-body h6 { font-size: 1em; margin: 0.5em 0 0.2em; font-weight: 600; }
+    .markdown-body p { margin: 0 0 0.5em; }
+    .markdown-body ul, .markdown-body ol { padding-left: 1.6em; margin: 0.3em 0 0.5em; }
+    .markdown-body li { margin-bottom: 0.15em; }
+    .markdown-body blockquote {
+        margin: 0.5em 0; padding: 0.3em 0.8em;
+        border-left: 3px solid #d1d5db; color: #6b7280; background: #f9fafb;
+    }
+    .markdown-body code {
+        font-family: 'Cascadia Code', 'Fira Code', Consolas, monospace;
+        font-size: 0.9em; padding: 0.15em 0.35em;
+        background: #f1f5f9; border-radius: 3px; color: #334155;
+    }
+    .markdown-body pre {
+        margin: 0.5em 0; padding: 0.7em 0.9em;
+        background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px;
+        overflow-x: auto; font-size: 11px; line-height: 1.5;
+    }
+    .markdown-body pre code { padding: 0; background: none; border-radius: 0; font-size: inherit; }
+    .markdown-body table {
+        font-size: 11px; margin: 0.5em 0; width: 100%;
+        border-collapse: collapse; border: 1px solid #e2e8f0; border-radius: 6px;
+    }
+    .markdown-body th { background: #f8fafc; font-weight: 600; text-align: left; }
+    .markdown-body th, .markdown-body td { padding: 0.4em 0.7em; border-bottom: 1px solid #f1f5f9; }
+    .markdown-body hr { border: none; border-top: 1px solid #e5e7eb; margin: 0.8em 0; }
+    .markdown-body a { color: #2563eb; text-decoration: none; }
+    .markdown-body a:hover { text-decoration: underline; }
+    .markdown-body img { max-width: 100%; border-radius: 4px; }
+    .markdown-body strong { font-weight: 600; }
+`;
 
 // ============================================================================
 // FileExplorer
@@ -405,6 +489,8 @@ export class FileExplorer {
     private _previewState: { status: 'idle' | 'loading' | 'error'; error?: string; data?: PreviewPayload } = {
         status: 'idle'
     };
+    private _browserFullscreen = false;
+    private _previewFullscreen = false;
 
     /**
      * 将文件浏览器渲染到指定容器中。
@@ -564,7 +650,11 @@ export class FileExplorer {
         void this._loadChildren(dirPath);
     }
 
-    private _selectFile(filePath: string): void {
+    /**
+     * 选中并预览指定文件。
+     * 可由外部调用（如工具卡片中的"查看文件"按钮）。
+     */
+    selectFile(filePath: string): void {
         this._selectedFile = filePath;
         this._previewState = { status: 'loading' };
         this._renderPreview();
@@ -692,7 +782,7 @@ export class FileExplorer {
                 this._dismissContextMenu();
                 switch (action) {
                     case 'preview':
-                        this._selectFile(filePath);
+                        this.selectFile(filePath);
                         break;
                     case 'open-default':
                         window.fsAPI?.openPath?.(filePath);
@@ -781,13 +871,13 @@ export class FileExplorer {
                 this._toggleTreeNode(p);
                 break;
             case 'tree-file':
-                this._selectFile(p);
+                this.selectFile(p);
                 break;
             case 'grid-dir':
                 this._enterGridDir(p);
                 break;
             case 'grid-file':
-                this._selectFile(p);
+                this.selectFile(p);
                 break;
             case 'grid-up':
             case 'grid-crumb':
@@ -823,7 +913,7 @@ export class FileExplorer {
         const rootName = this._workspaceRoot.split('/').filter(Boolean).pop() || this._workspaceRoot;
 
         panel.innerHTML = `
-        <div class="ws-browser">
+        <div class="ws-browser${this._browserFullscreen ? ' ws-browser--fullscreen' : ''}${this._previewFullscreen ? ' ws-browser--hidden' : ''}">
             <div class="ws-browser-header">
                 <div class="ws-path" title="${escapeHtml(this._workspaceRoot)}">
                     <i class="fas fa-folder-tree ws-path-icon"></i>
@@ -832,6 +922,9 @@ export class FileExplorer {
                 <div style="display:flex;align-items:center;gap:4px;">
                     <button class="ws-refresh-btn" title="刷新" data-action="refresh">
                         <i class="fas fa-arrows-rotate"></i>
+                    </button>
+                    <button class="ws-fullscreen-btn" title="全屏文件列表" data-action="browser-fullscreen">
+                        <i class="fas ${this._browserFullscreen ? 'fa-compress' : 'fa-expand'}"></i>
                     </button>
                     <div class="ws-view-switch" role="tablist" aria-label="视图模式">
                         <button class="ws-view-btn ${this._viewMode === 'tree' ? 'ws-view-active' : ''}"
@@ -851,7 +944,7 @@ export class FileExplorer {
                 ${this._viewMode === 'tree' ? this._renderTreeContainerHtml() : this._renderGridContainerHtml()}
             </div>
         </div>
-        <div class="ws-preview" data-preview-root>
+        <div class="ws-preview${this._selectedFile ? '' : ' ws-preview--collapsed'}${this._previewFullscreen ? ' ws-preview--fullscreen' : ''}" data-preview-root>
             ${this._renderPreviewHtml()}
         </div>`;
 
@@ -878,6 +971,15 @@ export class FileExplorer {
             });
         }
 
+        // Fullscreen toggle buttons
+        panel.querySelectorAll<HTMLButtonElement>('[data-action="browser-fullscreen"]').forEach((btn) => {
+            btn.addEventListener('click', () => {
+                this._browserFullscreen = !this._browserFullscreen;
+                this._previewFullscreen = false;
+                this._renderPanel();
+            });
+        });
+
         const browser = panel.querySelector<HTMLElement>('.ws-browser-body');
         if (browser) {
             browser.addEventListener('click', (ev) => this._handleBrowserClick(ev));
@@ -898,9 +1000,16 @@ export class FileExplorer {
             previewEl.addEventListener('click', (ev) => {
                 const target = ev.target as HTMLElement | null;
                 if (!target) return;
+                if (target.closest('[data-action="preview-fullscreen"]')) {
+                    this._previewFullscreen = !this._previewFullscreen;
+                    this._browserFullscreen = false;
+                    this._renderPanel();
+                    return;
+                }
                 if (target.closest('[data-preview-close]')) {
                     this._selectedFile = null;
                     this._previewState = { status: 'idle' };
+                    this._previewFullscreen = false;
                     const rn = this._rootNode;
                     if (rn) {
                         rn.querySelectorAll<HTMLElement>('.ws-file-selected').forEach((el) => {
@@ -911,6 +1020,34 @@ export class FileExplorer {
                 }
             });
         }
+
+        // _renderPanel 后需要重新挂载 Markdown Shadow DOM（_renderPreviewHtml 只输出占位 div）
+        this._attachMarkdownShadow(panel);
+    }
+
+    /**
+     * 为 Markdown 预览的占位 div 挂载 Shadow DOM 并渲染内容。
+     * 由 _renderPanel 和 _renderPreview 共同调用。
+     */
+    private _attachMarkdownShadow(root: ParentNode): void {
+        if (
+            !this._selectedFile ||
+            !isMarkdownFile(this._selectedFile) ||
+            this._previewState.status !== 'idle' ||
+            !this._previewState.data?.content
+        ) {
+            return;
+        }
+        const host = root.querySelector<HTMLElement>('.ws-preview-md-host');
+        if (!host || host.shadowRoot) return;
+        const shadow = host.attachShadow({ mode: 'open' });
+        const style = document.createElement('style');
+        style.textContent = MARKDOWN_PREVIEW_CSS;
+        shadow.appendChild(style);
+        const container = document.createElement('div');
+        container.className = 'markdown-body';
+        container.innerHTML = marked.parse(this._previewState.data.content, { async: false }) as string;
+        shadow.appendChild(container);
     }
 
     // ----- Tree HTML -----
@@ -1091,6 +1228,9 @@ export class FileExplorer {
         const el = rn.querySelector<HTMLElement>('[data-preview-root]');
         if (!el) return;
         el.innerHTML = this._renderPreviewHtml();
+        el.classList.toggle('ws-preview--collapsed', !this._selectedFile);
+
+        this._attachMarkdownShadow(el);
     }
 
     private _renderPreviewHtml(): string {
@@ -1111,6 +1251,9 @@ export class FileExplorer {
                     ? `<span class="ws-preview-size">${escapeHtml(formatBytes(this._previewState.data.size))}</span>`
                     : ''
             }
+            <button class="ws-fullscreen-btn" title="全屏预览" data-action="preview-fullscreen">
+                <i class="fas ${this._previewFullscreen ? 'fa-compress' : 'fa-expand'}"></i>
+            </button>
             <button class="ws-preview-close" title="关闭预览" data-preview-close>
                 <i class="fas fa-xmark"></i>
             </button>
@@ -1150,6 +1293,8 @@ export class FileExplorer {
                         <div class="ws-preview-hint">当前预览器仅支持文本文件</div>
                     </div>
                 </div>`;
+            } else if (this._selectedFile && isMarkdownFile(this._selectedFile)) {
+                bodyHtml = `<div class="ws-preview-md-host"></div>`;
             } else {
                 bodyHtml = `
                 <div class="ws-preview-body">

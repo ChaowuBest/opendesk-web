@@ -31,25 +31,7 @@ import path from 'path';
 import type { PermissionEnforcer, PermissionRequest, PermissionCheckResult, PermissionRule } from './permission.js';
 import { logger } from '../../utils/logger.js';
 import { createSensitivePathRules, createDeviceNodeRules } from '../../utils/permissionRules.js';
-
-function normalizePath(p: string): string {
-    if (!p) return '';
-    // 截断换行符及之后的内容（防止含换行符的路径绕过 glob 匹配）
-    // 同时处理 Unicode 行/段分隔符 U+2028/U+2029（picomatch ** 不匹配含这些字符的路径）
-    const newlineIdx = p.search(/[\r\n\u2028\u2029]/);
-    if (newlineIdx !== -1) {
-        p = p.slice(0, newlineIdx);
-    }
-    return p.replace(/\\/g, '/');
-}
-
-/**
- * 将 MSYS2/Git Bash 风格的路径（如 /c/Projects/...）转换为 Windows 原生路径（如 C:/Projects/...）。
- */
-function fromMsysPath(p: string): string {
-    if (process.platform !== 'win32') return p;
-    return p.replace(/^\/([a-zA-Z])\//, (_, letter) => `${letter.toUpperCase()}:/`);
-}
+import { fromMsysPath, normalizePath } from '../../../utils/pathNormalize.js';
 
 interface CompiledRule {
     resourceType: string;

@@ -23,6 +23,7 @@
 
 import os from 'os';
 import type { PermissionRule, PermissionAction, PermissionResourceType } from '../aikernel/security/permission.js';
+import { normalizePath } from '../../utils/pathNormalize.js';
 
 export interface SensitivePathPattern {
     /** glob 风格的路径模式（使用正斜杠，不含平台特定前缀） */
@@ -85,10 +86,6 @@ export const SENSITIVE_PATH_PATTERNS: SensitivePathPattern[] = [
         description: '环境变量文件'
     }
 ];
-
-function normalizePath(p: string): string {
-    return p.replace(/\\/g, '/');
-}
 
 /**
  * 将敏感路径模式展开为具体的 PermissionRule 列表。

@@ -1,3 +1,4 @@
+/* eslint-disable no-console */
 /**
  * Copyright (c) 2026 The OpenDesk Team
  * OpenDesk is licensed under Mulan PSL v2.
@@ -107,6 +108,13 @@ class AgentInput extends HTMLElement {
         Promise.all([this.loadModels(), this.loadModes(), this.loadSkills(), this.loadCtrlEnterSend()]).then(() =>
             this.render()
         );
+
+        window.modeAPI?.onModeChanged?.((modeId) => {
+            if (this.selectedModeId !== modeId) {
+                this.selectedModeId = modeId;
+                this._updateModeButton();
+            }
+        });
     }
 
     async loadCtrlEnterSend() {
@@ -186,6 +194,19 @@ class AgentInput extends HTMLElement {
         // 当前不做视觉变化，保持边框颜色固定
     }
 
+    /**
+     * 仅更新模式按钮文本，不全量重渲染。
+     * 当主进程程序化切换模式（如 ExitPlanMode）时调用。
+     */
+    _updateModeButton() {
+        const mode = this.availableModes.find((m) => m.id === this.selectedModeId);
+        if (!mode) return;
+        const modeBtnIcon = this.querySelector('#agent-input-mode-btn span:first-child');
+        const modeBtnText = this.querySelector('#agent-input-mode-btn span:last-child');
+        if (modeBtnIcon) modeBtnIcon.textContent = mode.icon;
+        if (modeBtnText) modeBtnText.textContent = mode.name;
+    }
+
     async loadSkills() {
         try {
             if (!window.applicationRegistryAPI?.callMainWorld) return;
@@ -255,8 +276,8 @@ class AgentInput extends HTMLElement {
 
     updateInputState() {
         const textarea = this.querySelector('#agent-input-textarea');
-        const submitBtn = this.querySelector('#agent-input-submit-btn');
-        const sendMenuBtn = this.querySelector('#agent-input-send-menu-btn');
+        const _submitBtn = this.querySelector('#agent-input-submit-btn');
+        const _sendMenuBtn = this.querySelector('#agent-input-send-menu-btn');
         const stopBtn = this.querySelector('#agent-input-stop-btn');
 
         if (textarea) {
@@ -595,7 +616,7 @@ class AgentInput extends HTMLElement {
         }
     }
 
-    closeModelPanel(force = false) {
+    closeModelPanel(_force = false) {
         const panel = this.querySelector('#agent-input-model-panel');
         if (!panel) return;
         panel.classList.remove('popup-panel-visible');
@@ -619,7 +640,7 @@ class AgentInput extends HTMLElement {
         }
     }
 
-    closeModePanel(force = false) {
+    closeModePanel(_force = false) {
         const panel = this.querySelector('#agent-input-mode-panel');
         if (!panel) return;
         panel.classList.remove('popup-panel-visible');
@@ -1469,7 +1490,7 @@ class AgentInput extends HTMLElement {
         }
 
         removeFileBtns.forEach((btn) => {
-            btn.addEventListener('click', (e) => {
+            btn.addEventListener('click', (_e) => {
                 this.removeFilePath(btn.dataset.file_path);
             });
         });

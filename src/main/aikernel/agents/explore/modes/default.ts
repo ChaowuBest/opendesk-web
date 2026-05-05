@@ -13,10 +13,7 @@ import type { PermissionRule } from '../../../security/permission.js';
 import type { ModeDecl } from '../../common.js';
 import path from 'path';
 import { createSensitivePathRules, createDeviceNodeRules } from '../../../../utils/permissionRules.js';
-
-function normalizePath(p: string): string {
-    return p.replace(/\\/g, '/');
-}
+import { fromMsysPath, normalizePath } from '../../../../../utils/pathNormalize.js';
 
 /**
  * Explore agent 专用权限规则。
@@ -29,19 +26,17 @@ function normalizePath(p: string): string {
  * - 设备节点：allow
  */
 function createExplorePermissionRules(workspace: string): PermissionRule[] {
-    const workspaceNorm = normalizePath(path.resolve(workspace));
+    const workspaceNorm = normalizePath(path.resolve(fromMsysPath(workspace)));
+    // brace expansion：{,/**} 同时匹配工作空间根目录自身和所有子路径
+    const wsPattern = `${workspaceNorm}{,/**}`;
 
     return [
         ...createDeviceNodeRules(),
-        // 工作空间根目录本身允许读取和执行（ls 等命令会声明 read <workspace>）
-        { resourceType: 'file', action: 'read', pathPattern: workspaceNorm, effect: 'allow' },
-        { resourceType: 'file', action: 'execute', pathPattern: workspaceNorm, effect: 'allow' },
         // 工作空间内只读 + 执行（不包含 write）
-        { resourceType: 'file', action: 'read', pathPattern: `${workspaceNorm}/**`, effect: 'allow' },
-        { resourceType: 'file', action: 'execute', pathPattern: `${workspaceNorm}/**`, effect: 'allow' },
+        { resourceType: 'file', action: 'read', pathPattern: wsPattern, effect: 'allow' },
+        { resourceType: 'file', action: 'execute', pathPattern: wsPattern, effect: 'allow' },
         // 工作空间根目录及内部写入显式拒绝
-        { resourceType: 'file', action: 'write', pathPattern: workspaceNorm, effect: 'deny' },
-        { resourceType: 'file', action: 'write', pathPattern: `${workspaceNorm}/**`, effect: 'deny' },
+        { resourceType: 'file', action: 'write', pathPattern: wsPattern, effect: 'deny' },
         // Skill 读取允许
         { resourceType: 'skill', action: 'read', pathPattern: '**', effect: 'allow' },
         // 敏感路径保护（ask，因无 promptProvider 自动拒绝）
