@@ -17,13 +17,14 @@
  *
  * 维护 pending 状态以支持任务切换后恢复审批面板：
  * renderer 可通过 exitPlanMode:getPending 查询当前活跃请求。
+ *
+ * 注意：使用 createRequire 延迟加载 electron，避免 worker 线程中
+ * 静态 import 导致 electron 模块不可用而崩溃（尤其在 OpenHarmony 平台）。
  */
 
-import electron from 'electron';
 import type { ExitPlanModeProvider, ExitPlanModeResponse, ExitPlanModeAction } from './exitPlanMode.js';
 import { logger } from '../../utils/logger.js';
-
-const { BrowserWindow, ipcMain, Notification } = electron;
+import { electron } from '../../../utils/electron.js';
 
 interface PendingRequest {
     requestId: string;
@@ -49,6 +50,7 @@ export class ElectronExitPlanModeProvider implements ExitPlanModeProvider {
         if (_ipcHandleRegistered) return;
         _ipcHandleRegistered = true;
 
+        const { ipcMain } = electron();
         ipcMain.handle('exitPlanMode:getPending', () => {
             if (!_pendingRequest) return { status: 'ok', data: null };
             return {
@@ -70,6 +72,8 @@ export class ElectronExitPlanModeProvider implements ExitPlanModeProvider {
     ): Promise<ExitPlanModeResponse> {
         try {
             this.ensureIpcHandle();
+
+            const { BrowserWindow, ipcMain, Notification } = electron();
 
             const win = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed()) || null;
             if (!win) {
@@ -136,7 +140,6 @@ export class ElectronExitPlanModeProvider implements ExitPlanModeProvider {
                 });
             });
 
-            // 如果用户选择执行，切换模式
             if (response.action === 'execute-standard' && this.modeSwitcher) {
                 await this.modeSwitcher('standard');
             } else if (response.action === 'execute-solo' && this.modeSwitcher) {

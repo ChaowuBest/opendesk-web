@@ -40,8 +40,6 @@ import type { TaskState } from '../main/aikernel/states/tasks.js';
 import { ElectronPermissionPromptProvider } from '../main/aikernel/security/electronPrompt.js';
 import { ElectronAskUserProvider } from '../main/aikernel/interaction/electronAskUser.js';
 import { createInteractionToolset } from '../main/aikernel/interaction/tools.js';
-import { ElectronExitPlanModeProvider } from '../main/aikernel/interaction/electronExitPlanMode.js';
-
 import path from 'path';
 
 export class ElectronTaskUpdateSubscriber extends BaseTaskUpdateSubscriber {
@@ -102,6 +100,7 @@ export class ElectronPlatform extends AbstractPlatform {
     }
 
     async initPlatformHarness(task: TaskState): Promise<void> {
+        const { ElectronExitPlanModeProvider } = await import('../main/aikernel/interaction/electronExitPlanMode.js');
         task.harnessContext.permissionPrompt = new ElectronPermissionPromptProvider();
         task.interactionToolset = createInteractionToolset(
             new ElectronAskUserProvider(),
