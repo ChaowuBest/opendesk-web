@@ -3,6 +3,7 @@ import os from 'os';
 import path from 'path';
 import { setCustomAppDirectory } from '../../../main/utils/setting';
 import { AutoCompactStates } from '../../../main/aikernel/compaction/auto-compact';
+import { MicrocompactStates } from '../../../main/aikernel/compaction/microcompact-state';
 import { SessionMemoryStates } from '../../../main/aikernel/compaction/session-memory-compact';
 import { FULL_COMPACT_BOUNDARY_STRATEGY } from '../../../main/aikernel/compaction/full-compact';
 import { buildActiveContextView } from '../../../main/aikernel/compaction/context-view';
@@ -183,6 +184,7 @@ describe('任务持久化中的自动压缩状态', () => {
         expect(loadedTask!.getAutoCompactState()).toEqual(legacyState);
         expect(loadedTask!.getAutoCompactState().cooldownUntil).toBe('2026-04-17T02:20:00.000Z');
         expect(loadedTask!.getAutoCompactState().lastFailureReason).toBe('legacy compact failure');
+        expect(loadedTask!.getMicrocompactState()).toEqual(MicrocompactStates.create());
         expect(loadedTask!.getSessionMemoryState()).toEqual(SessionMemoryStates.create());
     });
 
@@ -223,6 +225,46 @@ describe('任务持久化中的自动压缩状态', () => {
 
         const forked = loadedTask!.fork();
         expect(forked.getSessionMemoryState()).toEqual(SessionMemoryStates.create());
+    });
+
+    test('save 和 load 会保留 microcompact_state，fork / subtask 会重置 microcompact 状态', () => {
+        const taskDir = createTempTaskDirectory();
+        const manager = new TaskManagerState();
+        const task = createTask(manager);
+        const microcompactState = MicrocompactStates.deserialize({
+            version: 1,
+            last_assistant_completed_at: '2026-05-04T01:00:00.000Z',
+            last_decision_at: '2026-05-04T01:05:00.000Z',
+            last_decision_mode: 'noop',
+            last_local_clear_at: '2026-05-04T01:10:00.000Z',
+            last_local_clear_result_ids: ['result-a', 'result-b']
+        });
+        task.setMicrocompactState(microcompactState);
+        manager.tasks.push(task);
+
+        manager.saveSync();
+
+        const savedTaskJson = JSON.parse(fs.readFileSync(path.join(taskDir, 'task-root.json'), 'utf8'));
+        expect(savedTaskJson.microcompact_state).toMatchObject({
+            version: 1,
+            last_assistant_completed_at: '2026-05-04T01:00:00.000Z',
+            last_decision_at: '2026-05-04T01:05:00.000Z',
+            last_decision_mode: 'noop',
+            last_local_clear_at: '2026-05-04T01:10:00.000Z',
+            last_local_clear_result_ids: ['result-a', 'result-b']
+        });
+
+        const reloadedManager = TaskManagerState.load();
+        expect(reloadedManager).not.toBeNull();
+        const loadedTask = reloadedManager!.getTask('task-root');
+        expect(loadedTask).toBeDefined();
+        expect(loadedTask!.getMicrocompactState()).toEqual(microcompactState);
+
+        const forked = loadedTask!.fork();
+        expect(forked.getMicrocompactState()).toEqual(MicrocompactStates.create());
+
+        const subTask = reloadedManager!.createSubTask(loadedTask!.task_id);
+        expect(subTask.getMicrocompactState()).toEqual(MicrocompactStates.create());
     });
 
     test('save 和 load 会保留 assistant usage 的扩展字段，并归一化为 Usage 实例', () => {

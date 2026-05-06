@@ -1,7 +1,13 @@
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 import {
     analyzeMicrocompactCandidatesForChatContext,
-    applyLocalMicrocompactToChatContext
+    applyLocalMicrocompactToChatContext,
+    buildRequestTimeMicrocompactOverrides,
+    isMicrocompactableToolName
 } from '../../../main/aikernel/compaction/microcompact';
+import { getToolResultArtifactPath } from '../../../main/aikernel/compaction/tool-results';
 import {
     AssistantMessage,
     ChatContext,
@@ -10,12 +16,32 @@ import {
     ToolCallMessagePart,
     UserMessage
 } from '../../../main/aikernel/messages';
+import { setCustomAppDirectory } from '../../../main/utils/setting';
 
-function createToolAssistant(name: string, result: string): { message: AssistantMessage; toolCall: ToolCall } {
+let tempRootDir: string | undefined;
+
+function createTempAppDirectory(): string {
+    tempRootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-microcompact-smoke-'));
+    setCustomAppDirectory(tempRootDir);
+    return tempRootDir;
+}
+
+function cleanupTempAppDirectory(): void {
+    if (tempRootDir && fs.existsSync(tempRootDir)) {
+        fs.rmSync(tempRootDir, { recursive: true, force: true });
+    }
+    tempRootDir = undefined;
+}
+
+function createToolAssistant(
+    name: string,
+    result: string,
+    toolName: string = 'executePowerShell'
+): { message: AssistantMessage; toolCall: ToolCall } {
     const message = new AssistantMessage();
     message.appendText(`assistant ${name}`);
 
-    const toolCall = new ToolCall(0, `tool-${name}`, 'executePowerShell', `{"command":"echo ${name}"}`);
+    const toolCall = new ToolCall(0, `tool-${name}`, toolName, `{"command":"echo ${name}"}`);
     toolCall.status = 'success';
     toolCall.result = result;
 
@@ -88,6 +114,39 @@ function createLargeAssistantWithVisibleTailRounds(): {
 }
 
 describe('compact smoke: microcompact', () => {
+    afterEach(() => {
+        cleanupTempAppDirectory();
+    });
+
+    test('readFile matcher 会进入 Step 5 microcompact 覆盖面，并兼容带 toolset 前缀的工具名', () => {
+        const chatContext = new ChatContext();
+        chatContext.appendMessage(new UserMessage('read several files'));
+
+        const directReadFile = createToolAssistant('read-file', 'alpha\n'.repeat(400), 'readFile');
+        const prefixedReadFile = createToolAssistant('prefixed-read-file', 'beta\n'.repeat(400), 'filemgr-readFile');
+        const recent = createToolAssistant('recent-shell', 'recent shell result should stay visible');
+        chatContext.appendMessage(directReadFile.message);
+        chatContext.appendMessage(prefixedReadFile.message);
+        chatContext.appendMessage(recent.message);
+
+        expect(isMicrocompactableToolName('readFile')).toBe(true);
+        expect(isMicrocompactableToolName('filemgr-readFile')).toBe(true);
+        expect(isMicrocompactableToolName('executePowerShell')).toBe(true);
+        expect(isMicrocompactableToolName('webSearch')).toBe(true);
+
+        const analysis = analyzeMicrocompactCandidatesForChatContext(chatContext, {
+            tailAssistantMessages: 1
+        });
+
+        expect(analysis.candidates.map((candidate) => candidate.toolName)).toEqual(['readFile', 'filemgr-readFile']);
+        expect(analysis.candidates.map((candidate) => candidate.toolCall.id)).toEqual([
+            'tool-read-file',
+            'tool-prefixed-read-file'
+        ]);
+        expect(analysis.stats.tailProtectedCount).toBe(1);
+        expect(analysis.skipped.map((candidate) => candidate.toolCall.id)).toEqual(['tool-recent-shell']);
+    });
+
     test('会清理旧工具结果，并保护最近的工具调用 tail', () => {
         const chatContext = new ChatContext();
         chatContext.appendMessage(new UserMessage('run several tools'));
@@ -117,6 +176,86 @@ describe('compact smoke: microcompact', () => {
         expect(recent.toolCall.result).toBe('recent result should stay visible');
         expect(recent.toolCall.microcompact).toBeUndefined();
         expect(result.activeContext.messages).toHaveLength(4);
+    });
+
+    test('request-time override 不改写原始 tool result，但会生成稳定 override', () => {
+        const chatContext = new ChatContext();
+        chatContext.appendMessage(new UserMessage('run several tools'));
+
+        const old1 = createToolAssistant('old-1', 'old result 1 '.repeat(80));
+        const old2 = createToolAssistant('old-2', 'old result 2 '.repeat(80));
+        const recent = createToolAssistant('recent', 'recent result should stay visible');
+        chatContext.appendMessage(old1.message);
+        chatContext.appendMessage(old2.message);
+        chatContext.appendMessage(recent.message);
+
+        const analysis = analyzeMicrocompactCandidatesForChatContext(chatContext, {
+            tailAssistantMessages: 1
+        });
+
+        const result = buildRequestTimeMicrocompactOverrides('task-microcompact-request-override', {
+            analysis,
+            selectedResultIds: analysis.candidates.map((candidate) => candidate.resultId)
+        });
+
+        expect(result.appliedCandidates).toHaveLength(2);
+        expect(result.overrides.size).toBe(2);
+        expect(old1.toolCall.result).toContain('old result 1');
+        expect(old2.toolCall.result).toContain('old result 2');
+        expect(old1.toolCall.microcompact).toBeUndefined();
+        expect(old2.toolCall.microcompact).toBeUndefined();
+        expect(old1.toolCall.result_storage?.result_id).toBeDefined();
+        expect(old2.toolCall.result_storage?.result_id).toBeDefined();
+        expect(result.overrides.get(old1.toolCall.result_storage!.result_id)).toContain(
+            '[旧工具结果已被 microcompact 清理'
+        );
+        expect(result.overrides.get(old2.toolCall.result_storage!.result_id)).toContain(
+            '[旧工具结果已被 microcompact 清理'
+        );
+    });
+
+    test('readFile warm path 会保留原结果，并在大结果时写 artifact 与路径范围提示', () => {
+        createTempAppDirectory();
+        const chatContext = new ChatContext();
+        chatContext.appendMessage(new UserMessage('inspect an older file read result'));
+
+        const readFile = createToolAssistant('read-file-large', 'line content\n'.repeat(12_000), 'readFile');
+        readFile.toolCall.args_string = JSON.stringify({
+            file_path: 'src/main/aikernel/compaction/microcompact.ts',
+            offset: 21,
+            limit: 120
+        });
+        const recent = createToolAssistant('recent', 'recent result should stay visible');
+        chatContext.appendMessage(readFile.message);
+        chatContext.appendMessage(recent.message);
+
+        const analysis = analyzeMicrocompactCandidatesForChatContext(chatContext, {
+            tailAssistantMessages: 1
+        });
+
+        const result = buildRequestTimeMicrocompactOverrides('task-microcompact-readfile-artifact', {
+            analysis,
+            selectedResultIds: analysis.candidates.map((candidate) => candidate.resultId)
+        });
+
+        const resultId = readFile.toolCall.result_storage?.result_id;
+        expect(result.appliedCandidates).toHaveLength(1);
+        expect(result.overrides.size).toBe(1);
+        expect(resultId).toBeDefined();
+        expect(readFile.toolCall.result).toContain('line content');
+        expect(readFile.toolCall.microcompact).toBeUndefined();
+        expect(readFile.toolCall.result_storage?.relative_path).toBeDefined();
+        expect(readFile.toolCall.result_storage?.replacement_text).toBeUndefined();
+        expect(
+            fs.readFileSync(getToolResultArtifactPath('task-microcompact-readfile-artifact', resultId!, false), 'utf8')
+        ).toBe(readFile.toolCall.result);
+
+        const replacement = result.overrides.get(resultId!);
+        expect(replacement).toContain('工具: readFile');
+        expect(replacement).toContain('文件: src/main/aikernel/compaction/microcompact.ts');
+        expect(replacement).toContain('读取范围: 第 21~140 行');
+        expect(replacement).toContain('完整输出可查看:');
+        expect(replacement).toContain('重新调用 readFile');
     });
 
     test('step 8 protects only the most recent tool rounds inside one assistant', () => {

@@ -781,6 +781,10 @@ export class TaskView implements Component {
                     logger.info(`Auto-compacting context for task ${this.taskState!.task_id}`);
                 },
                 autoCompactState: this.taskState.auto_compact_state,
+                microcompactState: this.taskState.getMicrocompactState(),
+                microcompactRequestKind: 'pre_submit_check',
+                microcompactTaskRole: this.taskState.parent_id === null ? 'main' : 'subtask',
+                taskId: this.taskState.task_id,
                 executeCompact: async () => {
                     const compacted = await this.performCompactWithAnimation();
                     if (!compacted) {
@@ -790,6 +794,9 @@ export class TaskView implements Component {
             });
             if (preparation.autoCompactState) {
                 this.taskState.setAutoCompactState(preparation.autoCompactState);
+            }
+            if (preparation.microcompactState) {
+                this.taskState.setMicrocompactState(preparation.microcompactState);
             }
             if (preparation.compacted) {
                 // 压缩重建后重新添加用户消息视图（此时尚未入 chat_context）

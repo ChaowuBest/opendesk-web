@@ -3,6 +3,7 @@ import os from 'os';
 import path from 'path';
 import { FULL_COMPACT_BOUNDARY_STRATEGY } from '../../../main/aikernel/compaction/full-compact';
 import { buildActiveContextView } from '../../../main/aikernel/compaction/context-view';
+import { MicrocompactStates } from '../../../main/aikernel/compaction/microcompact-state';
 import { ToolResultReplacementStates } from '../../../main/aikernel/compaction/tool-results';
 import { ChatContext, CompactSeparatorMessage, UserMessage } from '../../../main/aikernel/messages';
 import { TaskManagerState, TaskState } from '../../../main/aikernel/states/tasks';
@@ -96,5 +97,73 @@ describe('compact smoke: task JSON persistence', () => {
                 }
             ]
         });
+    });
+
+    test('task JSON 会保存 microcompact_state，且旧 JSON 缺少该字段时仍兼容加载', () => {
+        createTempTaskDirectory();
+        const manager = new TaskManagerState();
+        const task = new TaskState(manager, null);
+        task.task_id = 'task-json-microcompact';
+        task.task_name = 'microcompact persistence smoke';
+        task.chat_context = new ChatContext();
+        task.chat_context.appendMessage(new UserMessage('persist microcompact state'));
+        task.setMicrocompactState(
+            MicrocompactStates.deserialize({
+                version: 1,
+                last_assistant_completed_at: '2026-05-04T00:00:00.000Z',
+                last_decision_at: '2026-05-04T00:05:00.000Z',
+                last_decision_mode: 'noop',
+                last_local_clear_at: '2026-05-04T00:10:00.000Z',
+                last_local_clear_result_ids: ['result-alpha', 'result-beta']
+            })
+        );
+        manager.tasks.push(task);
+
+        manager.saveSync();
+
+        const savedTaskJson = JSON.parse(
+            fs.readFileSync(path.join(tempRootDir!, 'tasks', 'task-json-microcompact.json'), 'utf8')
+        );
+        expect(savedTaskJson.microcompact_state).toMatchObject({
+            version: 1,
+            last_assistant_completed_at: '2026-05-04T00:00:00.000Z',
+            last_decision_at: '2026-05-04T00:05:00.000Z',
+            last_decision_mode: 'noop',
+            last_local_clear_at: '2026-05-04T00:10:00.000Z',
+            last_local_clear_result_ids: ['result-alpha', 'result-beta']
+        });
+
+        const reloadedManager = TaskManagerState.load();
+        const reloadedTask = reloadedManager?.getTask('task-json-microcompact');
+        expect(reloadedTask).toBeDefined();
+        expect(reloadedTask!.getMicrocompactState()).toEqual(task.getMicrocompactState());
+
+        fs.writeFileSync(
+            path.join(tempRootDir!, 'tasks', 'task-list-legacy.json'),
+            JSON.stringify([{ task_id: 'task-json-legacy-no-microcompact' }], null, 4),
+            'utf8'
+        );
+        fs.writeFileSync(
+            path.join(tempRootDir!, 'tasks', 'task-json-legacy-no-microcompact.json'),
+            JSON.stringify(
+                {
+                    task_id: 'task-json-legacy-no-microcompact',
+                    parent_id: null,
+                    task_name: 'legacy task',
+                    task_status: 'waiting',
+                    chat_context: { messages: [] },
+                    tool_result_replacement_state: { seen_ids: [], replacements: [] }
+                },
+                null,
+                4
+            ),
+            'utf8'
+        );
+
+        const legacyTask = TaskState.load(
+            path.join(tempRootDir!, 'tasks', 'task-json-legacy-no-microcompact.json'),
+            new TaskManagerState()
+        );
+        expect(legacyTask.getMicrocompactState()).toEqual(MicrocompactStates.create());
     });
 });

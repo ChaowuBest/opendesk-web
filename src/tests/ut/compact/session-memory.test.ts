@@ -141,18 +141,18 @@ describe('session memory state and storage', () => {
         expect(SessionMemoryStates.deserialize(SessionMemoryStates.serialize(state))).toEqual(state);
     });
 
-    test('memory 文件按 UTF-8 创建、读取和原子写入', () => {
+    test('memory 文件按 UTF-8 创建、读取和原子写入', async () => {
         createTempAppDirectory();
         const taskId = 'task-memory';
 
-        const file = ensureTaskSessionMemoryFile(taskId);
+        const file = await ensureTaskSessionMemoryFile(taskId);
         expect(file.relativePath).toBe(getTaskSessionMemoryRelativePath(taskId));
         expect(file.content).toBe(DEFAULT_SESSION_MEMORY_TEMPLATE);
         expect(fs.existsSync(getTaskSessionMemoryPath(taskId))).toBe(true);
 
-        writeTaskSessionMemory(taskId, `${validSessionMemory('包含中文 UTF-8 内容。')}\n`);
+        await writeTaskSessionMemory(taskId, `${validSessionMemory('包含中文 UTF-8 内容。')}\n`);
 
-        const readBack = readTaskSessionMemory(taskId);
+        const readBack = await readTaskSessionMemory(taskId);
         expect(readBack).toContain('包含中文 UTF-8 内容。');
     });
 
@@ -377,13 +377,13 @@ describe('session memory prompt and update loop', () => {
         expect(result.state.lastSummarizedMessageId).toBe(assistant.message_id);
         expect(result.state.tokensAtLastExtraction).toBe(12010);
         expect(generateMemory).toHaveBeenCalledTimes(1);
-        expect(readTaskSessionMemory('task-update')).toContain('Mock updated current state.');
+        expect(await readTaskSessionMemory('task-update')).toContain('Mock updated current state.');
     });
 
     test('generator 抛错时不覆盖旧 memory 文件，并记录失败状态', async () => {
         createTempAppDirectory();
         const oldMemory = validSessionMemory('Old memory content.');
-        writeTaskSessionMemory('task-failure', oldMemory);
+        await writeTaskSessionMemory('task-failure', oldMemory);
 
         const chatContext = createChatContext();
         chatContext.appendMessage(new UserMessage('continue'));
@@ -405,13 +405,13 @@ describe('session memory prompt and update loop', () => {
         expect(result.error).toBe('mock llm failed');
         expect(result.state.extractionInProgress).toBe(false);
         expect(result.state.lastError).toBe('mock llm failed');
-        expect(readTaskSessionMemory('task-failure')).toBe(oldMemory);
+        expect(await readTaskSessionMemory('task-failure')).toBe(oldMemory);
     });
 
     test('generator 返回非法 markdown 时不覆盖旧 memory 文件', async () => {
         createTempAppDirectory();
         const oldMemory = validSessionMemory('Old memory content.');
-        writeTaskSessionMemory('task-invalid', oldMemory);
+        await writeTaskSessionMemory('task-invalid', oldMemory);
 
         const chatContext = createChatContext();
         chatContext.appendMessage(new UserMessage('continue'));
@@ -428,6 +428,6 @@ describe('session memory prompt and update loop', () => {
 
         expect(result.updated).toBe(false);
         expect(result.error).toContain('invalid session memory markdown');
-        expect(readTaskSessionMemory('task-invalid')).toBe(oldMemory);
+        expect(await readTaskSessionMemory('task-invalid')).toBe(oldMemory);
     });
 });
