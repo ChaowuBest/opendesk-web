@@ -179,6 +179,10 @@ function initBrowserSession() {
         if (!fs.existsSync(sessionPath)) {
             fs.mkdirSync(sessionPath, { recursive: true });
         }
+        const sharedDictCachePath = path.join(sessionPath, 'Shared Dictionary', 'cache');
+        if (!fs.existsSync(sharedDictCachePath)) {
+            fs.mkdirSync(sharedDictCachePath, { recursive: true });
+        }
 
         if (typeof session.fromPath === 'function') {
             browserSessionInstance = session.fromPath(sessionPath);
