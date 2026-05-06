@@ -21,7 +21,7 @@ import type { z } from 'zod';
 import process from 'process';
 
 /**
- * 收集 mainagent 可使用的全部工具集（与 TaskState.buildToolsets 保持一致）。
+ * 收集 main agent 可使用的全部工具集（与 TaskState.buildToolsets 保持一致）。
  * 注意：setPlatform 已在 cli.ts 入口处统一调用，此处无需重复设置。
  */
 async function collectAllToolsets(): Promise<BaseToolset[]> {
