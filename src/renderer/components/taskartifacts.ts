@@ -592,6 +592,15 @@ class TaskArtifacts extends HTMLElement {
         return this._browser.addTab(url);
     }
 
+    /**
+     * 外部调用：获取当前活动 webview 的 webContentsId，供 main process 通过 CDP 控制。
+     */
+    browserGetWebContentsId(): number | null {
+        this.ensureBrowserReady();
+        if (!this._browser) return null;
+        return this._browser.getWebContentsId();
+    }
+
     // ----- Timer (for in_progress durations) -----
 
     private _scheduleTick(): void {

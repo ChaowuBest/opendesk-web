@@ -662,6 +662,20 @@ export class EmbeddedBrowser {
         return tab.webview.executeJavaScript(script);
     }
 
+    /**
+     * Return the active tab's webview webContentsId.
+     * Used by main process to attach CDP debugger to the guest webContents.
+     */
+    public getWebContentsId(): number | null {
+        const tab = this.getActiveTab();
+        if (!tab?.webview || !tab.ready) return null;
+        try {
+            return (tab.webview as any).getWebContentsId();
+        } catch {
+            return null;
+        }
+    }
+
     public destroy(): void {
         if (this._removeZoomListener) {
             this._removeZoomListener();

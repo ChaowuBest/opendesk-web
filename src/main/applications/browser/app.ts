@@ -16,24 +16,28 @@ import { z } from 'zod';
 import { logger } from '../../utils/logger.js';
 import {
     BrowserNavigateTool,
-    BrowserGetStateTool,
-    BrowserExecuteScriptTool,
+    BrowserSnapshotTool,
+    BrowserClickTool,
+    BrowserTypeTool,
+    BrowserHoverTool,
+    BrowserPressKeyTool,
+    BrowserSelectOptionTool,
+    BrowserScrollTool,
     BrowserGoBackTool,
     BrowserGoForwardTool,
-    BrowserRefreshTool,
-    BrowserClickTool,
-    BrowserInputTool,
-    BrowserScrollTool,
-    BrowserExtractContentTool,
-    BrowserGetHtmlTool,
-    BrowserListTabsTool,
-    BrowserSwitchTabTool,
-    BrowserCloseTabTool
+    BrowserReloadTool,
+    BrowserEvaluateTool,
+    BrowserTabsTool,
+    BrowserWaitForTool
 } from './tools';
 import { BROWSER_SKILL } from './skills';
+import { CDPSessionManager } from './cdp/session';
+import type { CDPSession } from './cdp/session';
 import chalk from 'chalk';
 
 class BrowserApplication extends BaseApplication {
+    private _cdpManager = new CDPSessionManager();
+
     constructor() {
         super('browser', '浏览器', false);
     }
@@ -87,21 +91,42 @@ class BrowserApplication extends BaseApplication {
         const skill = Skill.parseMd(BROWSER_SKILL);
         const toolset = new BaseToolset('browser');
         toolset.addTool(new BrowserNavigateTool(this));
-        toolset.addTool(new BrowserGetStateTool(this));
+        toolset.addTool(new BrowserSnapshotTool(this));
         toolset.addTool(new BrowserClickTool(this));
-        toolset.addTool(new BrowserInputTool(this));
+        toolset.addTool(new BrowserTypeTool(this));
+        toolset.addTool(new BrowserHoverTool(this));
+        toolset.addTool(new BrowserPressKeyTool(this));
+        toolset.addTool(new BrowserSelectOptionTool(this));
         toolset.addTool(new BrowserScrollTool(this));
         toolset.addTool(new BrowserGoBackTool(this));
         toolset.addTool(new BrowserGoForwardTool(this));
-        toolset.addTool(new BrowserRefreshTool(this));
-        toolset.addTool(new BrowserExtractContentTool(this));
-        toolset.addTool(new BrowserGetHtmlTool(this));
-        toolset.addTool(new BrowserExecuteScriptTool(this));
-        toolset.addTool(new BrowserListTabsTool(this));
-        toolset.addTool(new BrowserSwitchTabTool(this));
-        toolset.addTool(new BrowserCloseTabTool(this));
+        toolset.addTool(new BrowserReloadTool(this));
+        toolset.addTool(new BrowserEvaluateTool(this));
+        toolset.addTool(new BrowserTabsTool(this));
+        toolset.addTool(new BrowserWaitForTool(this));
         skill.toolsets = [toolset];
         return [skill];
+    }
+
+    // ---- CDP session access ----
+
+    /**
+     * Obtain a CDP session for the current task's active webview.
+     * Flow: renderer → webContentsId → main process CDP attach.
+     * Falls back to null if CDP is unavailable (CLI mode, etc.)
+     */
+    async getCDPSession(taskId: string): Promise<CDPSession | null> {
+        try {
+            const wcId = await this.callRendererBrowser(taskId, 'browserGetWebContentsId');
+            if (wcId == null) {
+                logger.warn('browserGetWebContentsId returned null — webview may not be ready');
+                return null;
+            }
+            return await this._cdpManager.getSession(wcId);
+        } catch (err: any) {
+            logger.warn(`Failed to get CDP session: ${err.message || err}`);
+            return null;
+        }
     }
 
     // ---- Renderer bridge methods ----
