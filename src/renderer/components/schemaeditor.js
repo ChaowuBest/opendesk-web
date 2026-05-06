@@ -106,16 +106,21 @@ class SchemaEditor extends HTMLElement {
 
         // 处理数组添加按钮
         container.querySelectorAll('[data-array-add-btn]').forEach((btn) => {
+            if (btn._arrayAddBound) return;
+            btn._arrayAddBound = true;
             btn.addEventListener('click', (e) => {
-                const fieldId = e.target.getAttribute('data-array-field-id');
-                const fieldPath = e.target.getAttribute('data-field-path');
-                const itemsSchema = JSON.parse(e.target.getAttribute('data-items-schema'));
+                const button = e.currentTarget;
+                const fieldId = button.getAttribute('data-array-field-id');
+                const fieldPath = button.getAttribute('data-field-path');
+                const itemsSchema = JSON.parse(button.getAttribute('data-items-schema'));
                 this.addArrayItem(fieldId, fieldPath, itemsSchema);
             });
         });
 
         // 处理可选字段的添加/移除
         container.querySelectorAll('[data-optional-toggle]').forEach((btn) => {
+            if (btn._optionalToggleBound) return;
+            btn._optionalToggleBound = true;
             btn.addEventListener('click', (e) => {
                 // 使用 currentTarget 或 closest 确保获取到按钮元素，而不是子元素
                 const button = e.currentTarget || e.target.closest('[data-optional-toggle]');
@@ -135,11 +140,8 @@ class SchemaEditor extends HTMLElement {
                         if (schemaJson) {
                             try {
                                 const schema = JSON.parse(schemaJson);
-                                // 如果有default值，应用到currentValue
                                 if (schema.default !== undefined) {
                                     this.setNestedValue(this.currentValue, fieldPath, schema.default);
-                                    // 更新输入框的值以反映default值
-                                    this.updateInputValues(this.currentValue);
                                 }
                             } catch (e) {
                                 console.error('Failed to parse schema:', e);
@@ -185,6 +187,8 @@ class SchemaEditor extends HTMLElement {
 
         // 处理数组项删除
         container.querySelectorAll('[data-array-item-remove]').forEach((btn) => {
+            if (btn._arrayRemoveBound) return;
+            btn._arrayRemoveBound = true;
             btn.addEventListener('click', (e) => {
                 const arrayItem = e.target.closest('[data-array-index]');
                 if (!arrayItem) return;
@@ -248,11 +252,8 @@ class SchemaEditor extends HTMLElement {
         itemsContainer.appendChild(itemDiv);
         this.setupEventListeners(itemDiv);
 
-        // 如果有默认值，应用到 currentValue
         if (defaultValue !== undefined) {
             this.setNestedValue(this.currentValue, itemPath, defaultValue);
-            // 更新输入框的值以反映默认值
-            this.updateInputValues(this.currentValue);
         }
 
         this.dispatchEvent(
