@@ -5,42 +5,19 @@ import process from 'process';
 import path from 'path';
 import fs from 'fs';
 import { t } from '../../../locale/index.js';
+import { findExecutableInPath } from '../../utils/shellExec.js';
 
 // ── Shell 检测 ──────────────────────────────────────────────────────────
 
 function detectShell(): { shell: string; args: string[] } {
-    const isOpenHarmony = process.env.OPENHARMONY === '1' || process.env.OHOS_SDK_HOME != null;
-    if (isOpenHarmony) {
-        return { shell: 'zsh', args: ['-c'] };
-    }
     if (process.platform === 'win32') {
-        for (const bin of ['bash']) {
-            try {
-                const r = spawnSync('where', [bin], {
-                    encoding: 'utf-8',
-                    stdio: ['pipe', 'pipe', 'pipe']
-                });
-                if (r.status === 0 && r.stdout.trim()) {
-                    return { shell: r.stdout.trim().split(/\r?\n/)[0]!, args: ['-c'] };
-                }
-            } catch {
-                /* ignore */
-            }
-        }
+        const bashPath = findExecutableInPath('bash');
+        if (bashPath) return { shell: bashPath, args: ['-c'] };
         return { shell: 'powershell.exe', args: ['-Command'] };
     }
     for (const bin of ['bash', 'sh']) {
-        try {
-            const r = spawnSync('which', [bin], {
-                encoding: 'utf-8',
-                stdio: ['pipe', 'pipe', 'pipe']
-            });
-            if (r.status === 0 && r.stdout.trim()) {
-                return { shell: r.stdout.trim().split(/\r?\n/)[0]!, args: ['-c'] };
-            }
-        } catch {
-            /* ignore */
-        }
+        const p = findExecutableInPath(bin);
+        if (p) return { shell: p, args: ['-c'] };
     }
     return { shell: '/bin/sh', args: ['-c'] };
 }

@@ -22,8 +22,6 @@
 import type { PermissionEnforcer, PermissionPromptProvider } from './permission.js';
 import { GlobPermissionEnforcer, createDefaultPermissionRules, ReadableDirectoryRegistry } from './enforcer.js';
 import type { ModeDecl } from '../agents/common.js';
-import fs from 'fs';
-import path from 'path';
 
 export class HarnessContext {
     /**
@@ -71,7 +69,8 @@ export class HarnessContext {
      * 根据 ModeDecl 创建 HarnessContext。
      * 使用 Mode 的 permissionFactory 返回的规则创建 GlobPermissionEnforcer。
      *
-     * 对于 Plan Mode，自动创建 .plan 目录（计划文件的输出位置）。
+     * 注意：模式特有的资源初始化（如 Plan Mode 的 .plan 目录创建）
+     * 已移至 ModeDecl.onEnterMode 钩子中，由框架在模式切换时调用。
      */
     static async createForMode(workspace: string, mode: ModeDecl): Promise<HarnessContext> {
         const ctx = new HarnessContext();
@@ -83,18 +82,6 @@ export class HarnessContext {
         // 追加外部注册的可读目录规则（如 skill 目录）
         for (const rule of ReadableDirectoryRegistry.getInstance().getReadRules()) {
             await ctx.permission.addRule(rule);
-        }
-
-        // Plan Mode 时自动创建 .plan 目录
-        if (mode.id === 'plan') {
-            const planDir = path.join(workspace, '.plan');
-            try {
-                if (!fs.existsSync(planDir)) {
-                    fs.mkdirSync(planDir, { recursive: true });
-                }
-            } catch {
-                /* .plan 目录创建失败不影响主流程 */
-            }
         }
 
         return ctx;

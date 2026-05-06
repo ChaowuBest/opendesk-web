@@ -18,7 +18,7 @@ import {
     setPluginEnabled,
     resetOpenClawShim,
     loadPlugins
-} from '../../aikernel/plugins/index.js';
+} from '../../plugins/index.js';
 import process from 'process';
 
 export function registerPluginsCommand(prog: Command): void {

@@ -21,5 +21,6 @@ export const MAIN_AGENT_STANDARD_MODE: ModeDecl = {
     description: '默认工作模式，在工作空间内自由读写，工作空间外需确认',
     icon: '⚡',
     color: '#FFFFFF',
-    permissionFactory: (workspace) => createDefaultPermissionRules(workspace)
+    permissionFactory: (workspace) => createDefaultPermissionRules(workspace),
+    disabledTools: ['exitPlanMode']
 };

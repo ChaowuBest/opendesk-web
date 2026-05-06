@@ -13,12 +13,13 @@
  * Electron renderer 侧的用户提问面板组件。
  *
  * 面板通过 IPC 从主进程接收问题请求，展示在 task-view 的底部（agent-input 上方），
- * 样式与权限确认面板保持一致。用户做出选择后通过 IPC 回传结果。
+ * 仅在本组件所属的 task-view（通过 data-task-id 匹配）中显示。
+ * 用户做出选择后通过 IPC 回传结果。
  *
  * 支持多问题顺序导航：每次显示一个问题，用户回答后自动进入下一题。
  */
 
-interface AskUserOption {
+export interface AskUserOption {
     label: string;
     description: string;
 }
@@ -40,7 +41,9 @@ declare global {
     interface Window {
         askUserAPI?: {
             onAskUserRequest: (callback: (requestId: string, data: AskUserRequestData) => void) => void;
+            offAskUserRequest: (callback: (requestId: string, data: AskUserRequestData) => void) => void;
             onAskUserDismiss: (callback: (requestId: string) => void) => void;
+            offAskUserDismiss: (callback: (requestId: string) => void) => void;
             respondAskUser: (requestId: string, response: Record<string, unknown>) => void;
         };
     }
@@ -59,17 +62,30 @@ class AskUserPrompt extends HTMLElement {
     private _currentQuestionIndex = 0;
     private _answers: Record<number, string[]> = {};
     private _selectedValues: Set<number> = new Set();
+    private _customInputOpen = false;
+    private _onRequest = (requestId: string, data: AskUserRequestData) => {
+        if (data.taskId && data.taskId !== this._ownTaskId) return;
+        this.showPrompt(requestId, data);
+    };
+    private _onDismiss = (requestId: string) => {
+        if (this._requestId === requestId) {
+            this.hidePrompt();
+        }
+    };
+
+    private get _ownTaskId(): string {
+        return this.getAttribute('data-task-id') || '';
+    }
 
     connectedCallback(): void {
         this.renderContent();
-        window.askUserAPI?.onAskUserRequest((requestId, data) => {
-            this.showPrompt(requestId, data);
-        });
-        window.askUserAPI?.onAskUserDismiss((requestId) => {
-            if (this._requestId === requestId) {
-                this.hidePrompt();
-            }
-        });
+        window.askUserAPI?.onAskUserRequest(this._onRequest);
+        window.askUserAPI?.onAskUserDismiss(this._onDismiss);
+    }
+
+    disconnectedCallback(): void {
+        window.askUserAPI?.offAskUserRequest(this._onRequest);
+        window.askUserAPI?.offAskUserDismiss(this._onDismiss);
     }
 
     private showPrompt(requestId: string, data: AskUserRequestData): void {
@@ -79,7 +95,10 @@ class AskUserPrompt extends HTMLElement {
         this._currentQuestionIndex = 0;
         this._answers = {};
         this._selectedValues = new Set();
+        this._customInputOpen = false;
         this.renderContent();
+
+        this._notifyWaitingState(true);
 
         requestAnimationFrame(() => {
             const panel = this.querySelector<HTMLElement>('#ask-user-panel');
@@ -96,12 +115,22 @@ class AskUserPrompt extends HTMLElement {
             panel.classList.add('translate-y-4', 'opacity-0');
             panel.classList.remove('translate-y-0', 'opacity-100');
         }
+
+        this._notifyWaitingState(false);
+
         setTimeout(() => {
             this._visible = false;
             this._requestId = null;
             this._data = null;
             this.renderContent();
         }, 200);
+    }
+
+    private _notifyWaitingState(waiting: boolean): void {
+        const taskId = this._ownTaskId;
+        if (taskId) {
+            document.dispatchEvent(new CustomEvent('task-waiting-state', { detail: { taskId, waiting } }));
+        }
     }
 
     private selectOption(optionIndex: number): void {
@@ -177,13 +206,20 @@ class AskUserPrompt extends HTMLElement {
         this.hidePrompt();
     }
 
+    private submitCustomInput(text: string): void {
+        if (!this._data || !text.trim()) return;
+        this._answers[this._currentQuestionIndex] = [text.trim()];
+        this._customInputOpen = false;
+        this.advanceOrSubmit();
+    }
+
     private renderContent(): void {
         if (!this._visible || !this._data) {
             this.innerHTML = '';
             return;
         }
 
-        const { questions, taskName } = this._data;
+        const { questions } = this._data;
         const q = questions[this._currentQuestionIndex];
         if (!q) {
             this.innerHTML = '';
@@ -191,85 +227,97 @@ class AskUserPrompt extends HTMLElement {
         }
 
         const totalQuestions = questions.length;
-        const progressText =
-            totalQuestions > 1 ? `问题 ${this._currentQuestionIndex + 1} / ${totalQuestions}` : '请选择';
-
-        const taskBadgeHtml = taskName
-            ? `<span class="text-[11px] text-blue-500 bg-blue-50 rounded-md px-2 py-0.5 font-mono truncate max-w-[200px]">${escapeHtml(taskName)}</span>`
-            : '';
+        const progressText = totalQuestions > 1 ? `问题 ${this._currentQuestionIndex + 1} / ${totalQuestions}` : '';
 
         const optionsHtml = q.options
             .map((opt, i) => {
                 const isSelected = this._selectedValues.has(i);
                 const selectedClass = isSelected
                     ? 'bg-blue-50 border-blue-300 ring-1 ring-blue-200'
-                    : 'bg-white/60 border-slate-200/80 hover:bg-slate-50/80';
+                    : 'bg-white border-gray-200 hover:bg-gray-50 hover:border-gray-300';
                 const checkHtml = q.multiple
                     ? `<div class="flex-shrink-0 w-4 h-4 rounded border ${isSelected ? 'bg-blue-500 border-blue-500' : 'border-slate-300'} flex items-center justify-center">
                         ${isSelected ? '<svg class="w-2.5 h-2.5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>' : ''}
                        </div>`
-                    : `<div class="flex-shrink-0 w-4 h-4 rounded-full border ${isSelected ? 'bg-blue-500 border-blue-500' : 'border-slate-300'}"></div>`;
+                    : '';
 
                 return `
                 <button
                     data-option-index="${i}"
-                    class="ask-option-btn w-full text-left px-3 py-2 rounded-xl border ${selectedClass} transition-all duration-150 active:scale-[0.99] flex items-start gap-2.5"
-                >
+                    class="ask-option-btn inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium
+                           border ${selectedClass} transition-colors duration-150 cursor-pointer">
                     ${checkHtml}
-                    <div class="flex-1 min-w-0">
-                        <div class="text-[13px] font-medium text-slate-800 leading-tight">${escapeHtml(opt.label)}</div>
-                        ${opt.description ? `<div class="text-[11px] text-slate-500 mt-0.5 leading-snug">${escapeHtml(opt.description)}</div>` : ''}
-                    </div>
+                    <span>${escapeHtml(opt.label)}</span>
                 </button>`;
             })
             .join('');
 
         const confirmBtnHtml = q.multiple
-            ? `<button id="ask-confirm-btn" class="w-full px-3 py-2 rounded-lg text-[13px] font-medium text-white bg-blue-500 hover:bg-blue-600 shadow-sm transition-all duration-150 active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed" ${this._selectedValues.size === 0 ? 'disabled' : ''}>
+            ? `<button id="ask-confirm-btn"
+                    class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium
+                           bg-blue-500 text-white hover:bg-blue-600 border border-blue-500
+                           transition-colors duration-150 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                    ${this._selectedValues.size === 0 ? 'disabled' : ''}>
+                    <i class="fa-solid fa-check text-[10px]"></i>
                     确认选择 (${this._selectedValues.size} 项)
-                   </button>`
+               </button>`
+            : '';
+
+        const customInputHtml = this._customInputOpen
+            ? `<div class="px-4 pb-3 flex items-center gap-2">
+                    <input id="ask-custom-input" type="text" placeholder="输入自定义回答后按 Enter 确认"
+                           class="flex-1 px-3 py-1.5 rounded-lg text-[12px] border border-blue-300 bg-white
+                                  focus:outline-none focus:ring-1 focus:ring-blue-300 text-gray-700 placeholder-gray-400" />
+                    <button id="ask-custom-submit"
+                            class="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium
+                                   bg-blue-500 text-white hover:bg-blue-600 border border-blue-500
+                                   transition-colors duration-150 cursor-pointer">
+                        <i class="fa-solid fa-paper-plane text-[10px]"></i>
+                        发送
+                    </button>
+               </div>`
             : '';
 
         this.innerHTML = `
         <div id="ask-user-panel"
-             class="transform translate-y-4 opacity-0 transition-all duration-200 ease-out">
-            <div class="rounded-2xl bg-white/85 backdrop-blur-xl shadow-[0_8px_40px_-8px_rgba(0,0,0,0.12)] ring-1 ring-black/[0.06] overflow-hidden">
-                <!-- 标题栏 -->
-                <div class="flex items-center gap-3 px-4 pt-3.5 pb-2">
-                    <div class="flex-shrink-0 w-8 h-8 rounded-xl bg-blue-50 border border-blue-200/60 flex items-center justify-center text-blue-600">
-                        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <circle cx="12" cy="12" r="10"/>
-                            <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
-                            <line x1="12" y1="17" x2="12.01" y2="17"/>
-                        </svg>
-                    </div>
-                    <div class="flex-1 min-w-0">
-                        <div class="text-[13px] font-semibold text-slate-800">${escapeHtml(progressText)}</div>
-                        ${taskBadgeHtml ? `<div class="mt-0.5">${taskBadgeHtml}</div>` : ''}
-                    </div>
-                    <button id="ask-cancel-btn" class="flex-shrink-0 w-6 h-6 rounded-md text-slate-400 hover:text-slate-600 hover:bg-slate-100 flex items-center justify-center transition-colors">
-                        <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                            <line x1="18" y1="6" x2="6" y2="18"/>
-                            <line x1="6" y1="6" x2="18" y2="18"/>
-                        </svg>
-                    </button>
-                </div>
-
-                <!-- 分割线 -->
-                <div class="mx-4 border-t border-slate-200/60"></div>
-
-                <!-- 问题文本 -->
-                <div class="px-4 pt-3 pb-2">
-                    <p class="text-[13px] text-slate-700 font-medium leading-snug">${escapeHtml(q.question)}</p>
-                    ${q.multiple ? '<p class="text-[11px] text-slate-400 mt-1">可多选</p>' : ''}
-                </div>
-
-                <!-- 选项列表 -->
-                <div class="px-4 pb-3 flex flex-col gap-1.5">
-                    ${optionsHtml}
-                    ${confirmBtnHtml}
-                </div>
+             class="mb-2 rounded-xl border border-blue-200 bg-gradient-to-b from-blue-50/80 to-white shadow-sm
+                    transition-all duration-200 translate-y-4 opacity-0">
+            <!-- 标题栏 -->
+            <div class="flex items-center gap-2 px-4 py-2.5 border-b border-blue-100">
+                <span class="inline-flex items-center justify-center w-6 h-6 rounded-lg bg-blue-100 text-blue-600">
+                    <i class="fa-solid fa-circle-question text-[12px]"></i>
+                </span>
+                <span class="text-[13px] font-medium text-gray-700">需要确认</span>
+                ${progressText ? `<span class="text-[11px] text-blue-400 ml-1">${escapeHtml(progressText)}</span>` : ''}
+                <div class="flex-1"></div>
+                <button id="ask-cancel-btn"
+                        class="inline-flex items-center justify-center w-5 h-5 rounded text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors cursor-pointer">
+                    <i class="fa-solid fa-xmark text-[10px]"></i>
+                </button>
             </div>
+
+            <!-- 问题文本 -->
+            <div class="px-4 py-2 border-b border-gray-100">
+                <p class="text-[12px] text-gray-600 leading-snug">${escapeHtml(q.question)}</p>
+                ${q.multiple ? '<p class="text-[11px] text-gray-400 mt-1">可多选</p>' : ''}
+            </div>
+
+            <!-- 选项列表 -->
+            <div class="px-4 py-3 flex flex-wrap gap-2">
+                ${optionsHtml}
+                ${confirmBtnHtml}
+                <button id="ask-custom-toggle"
+                        class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium
+                               bg-white border border-dashed border-gray-300 text-gray-500
+                               hover:bg-gray-50 hover:border-gray-400 hover:text-gray-600
+                               transition-colors duration-150 cursor-pointer">
+                    <i class="fa-solid fa-pen-to-square text-[10px]"></i>
+                    自定义
+                </button>
+            </div>
+
+            <!-- 自定义输入区域 -->
+            ${customInputHtml}
         </div>
         `;
 
@@ -294,6 +342,41 @@ class AskUserPrompt extends HTMLElement {
         if (cancelBtn) {
             cancelBtn.addEventListener('click', () => {
                 this.cancel();
+            });
+        }
+
+        const customToggle = this.querySelector<HTMLButtonElement>('#ask-custom-toggle');
+        if (customToggle) {
+            customToggle.addEventListener('click', () => {
+                this._customInputOpen = !this._customInputOpen;
+                this.renderContent();
+                requestAnimationFrame(() => {
+                    const panel = this.querySelector<HTMLElement>('#ask-user-panel');
+                    if (panel) {
+                        panel.classList.remove('translate-y-4', 'opacity-0');
+                        panel.classList.add('translate-y-0', 'opacity-100');
+                    }
+                    const input = this.querySelector<HTMLInputElement>('#ask-custom-input');
+                    input?.focus();
+                });
+            });
+        }
+
+        const customInput = this.querySelector<HTMLInputElement>('#ask-custom-input');
+        if (customInput) {
+            customInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    this.submitCustomInput(customInput.value);
+                }
+            });
+        }
+
+        const customSubmit = this.querySelector<HTMLButtonElement>('#ask-custom-submit');
+        if (customSubmit) {
+            customSubmit.addEventListener('click', () => {
+                const input = this.querySelector<HTMLInputElement>('#ask-custom-input');
+                if (input) this.submitCustomInput(input.value);
             });
         }
     }

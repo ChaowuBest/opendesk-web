@@ -31,25 +31,7 @@ import path from 'path';
 import type { PermissionEnforcer, PermissionRequest, PermissionCheckResult, PermissionRule } from './permission.js';
 import { logger } from '../../utils/logger.js';
 import { createSensitivePathRules, createDeviceNodeRules } from '../../utils/permissionRules.js';
-
-function normalizePath(p: string): string {
-    if (!p) return '';
-    // 截断换行符及之后的内容（防止含换行符的路径绕过 glob 匹配）
-    // 同时处理 Unicode 行/段分隔符 U+2028/U+2029（picomatch ** 不匹配含这些字符的路径）
-    const newlineIdx = p.search(/[\r\n\u2028\u2029]/);
-    if (newlineIdx !== -1) {
-        p = p.slice(0, newlineIdx);
-    }
-    return p.replace(/\\/g, '/');
-}
-
-/**
- * 将 MSYS2/Git Bash 风格的路径（如 /c/Projects/...）转换为 Windows 原生路径（如 C:/Projects/...）。
- */
-function fromMsysPath(p: string): string {
-    if (process.platform !== 'win32') return p;
-    return p.replace(/^\/([a-zA-Z])\//, (_, letter) => `${letter.toUpperCase()}:/`);
-}
+import { fromMsysPath, normalizePath } from '../../../utils/pathNormalize.js';
 
 interface CompiledRule {
     resourceType: string;
@@ -145,7 +127,7 @@ export class ReadableDirectoryRegistry {
     getReadRules(): PermissionRule[] {
         const rules: PermissionRule[] = [];
         for (const dir of this.directories) {
-            rules.push({ resourceType: 'file', action: 'read', pathPattern: `${dir}/**`, effect: 'allow' });
+            rules.push({ resourceType: 'file', action: 'read', pathPattern: `${dir}{,/**}`, effect: 'allow' });
         }
         return rules;
     }
@@ -260,7 +242,7 @@ export class GlobPermissionEnforcer implements PermissionEnforcer {
             this.askRules.push(compiled);
         }
 
-        logger.info(
+        logger.debug(
             `permission rule added: ${rule.effect} ${rule.resourceType}:${rule.action} ${compiled.pathPattern}`
         );
     }
@@ -300,13 +282,16 @@ export class GlobPermissionEnforcer implements PermissionEnforcer {
 export function createDefaultPermissionRules(workspace: string): PermissionRule[] {
     const workspaceNorm = normalizePath(path.resolve(fromMsysPath(workspace)));
 
+    // 使用 brace expansion 同时匹配工作空间根目录和子路径：{,/**} = 根目录自身 + 所有子路径
+    const wsPattern = `${workspaceNorm}{,/**}`;
+
     return [
         // 设备节点始终允许（/dev/stdin, /dev/null 等）
         ...createDeviceNodeRules(),
-        // 工作空间内读写允许（dot: true 确保 .gitignore 等 dotfiles 也被匹配）
-        { resourceType: 'file', action: 'read', pathPattern: `${workspaceNorm}/**`, effect: 'allow' },
-        { resourceType: 'file', action: 'write', pathPattern: `${workspaceNorm}/**`, effect: 'allow' },
-        { resourceType: 'file', action: 'execute', pathPattern: `${workspaceNorm}/**`, effect: 'allow' },
+        // 工作空间内读写执行允许（dot: true 确保 .gitignore 等 dotfiles 也被匹配）
+        { resourceType: 'file', action: 'read', pathPattern: wsPattern, effect: 'allow' },
+        { resourceType: 'file', action: 'write', pathPattern: wsPattern, effect: 'allow' },
+        { resourceType: 'file', action: 'execute', pathPattern: wsPattern, effect: 'allow' },
         // 所有技能读取允许（加载、查看等），写入/执行需用户确认（隐式 ask）
         { resourceType: 'skill', action: 'read', pathPattern: '**', effect: 'allow' },
         // 敏感路径保护规则（即使在工作空间内也需要用户确认）

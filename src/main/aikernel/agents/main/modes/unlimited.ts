@@ -41,5 +41,5 @@ export const MAIN_AGENT_UNLIMITED_MODE: ModeDecl = {
     icon: '🔓',
     color: '#FF4081',
     permissionFactory: (_workspace) => createUnlimitedModePermissionRules(),
-    disabledTools: ['askUser']
+    disabledTools: ['askUser', 'exitPlanMode']
 };

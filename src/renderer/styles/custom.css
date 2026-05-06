@@ -1778,11 +1778,19 @@ pre.terminal-tool-output {
 .subtask-group-scroll::-webkit-scrollbar-track {
     background: transparent;
 }
-/* Show delete button on hover */
+/* Show delete button on hover; slide channel tag left to make room */
 .task-item .delete-task-btn {
     opacity: 0;
-    transition: opacity 0.15s ease;
+    width: 0;
+    overflow: hidden;
+    transition:
+        opacity 0.2s ease,
+        width 0.2s ease,
+        margin 0.2s ease;
+    margin-left: 0;
 }
 .task-item:hover .delete-task-btn {
     opacity: 1;
+    width: 1rem;
+    margin-left: 0.375rem;
 }

@@ -60,17 +60,77 @@ class CliLogTransport extends Transport {
     }
 }
 
+interface LogEntry {
+    level: string;
+    timestamp: string;
+    message: string;
+}
+
+const LOG_LINE_REGEX = /^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s*\|\s*(\S+)\]\s*(.*)$/s;
+
+function stripAnsi(str: string): string {
+    return str.replace(/\x1b\[[0-9;]*m/g, '');
+}
+
+function parseLogLine(raw: string): LogEntry {
+    const cleaned = stripAnsi(raw).trim();
+    const m = cleaned.match(LOG_LINE_REGEX);
+    if (m) {
+        return { timestamp: m[1], level: m[2].toLowerCase(), message: m[3] };
+    }
+    return { timestamp: '', level: 'info', message: cleaned };
+}
+
 class LogStream extends Writable {
     content: string = '';
+    entries: LogEntry[] = [];
     static globalStream: LogStream | null = null;
 
     _write(chunk: string, encoding: string, callback: () => void) {
         this.content += chunk;
+        const raw = typeof chunk === 'string' ? chunk : chunk.toString();
+        const lines = raw.split('\n').filter((l: string) => l.trim().length > 0);
+        for (const line of lines) {
+            this.entries.push(parseLogLine(line));
+        }
         callback();
     }
 
     getContent(): string {
         return this.content;
+    }
+
+    getEntries(
+        options: {
+            offset?: number;
+            limit?: number;
+            filter?: string;
+            level?: string;
+        } = {}
+    ): { entries: LogEntry[]; total: number; offset: number; hasMore: boolean } {
+        const { offset = 0, limit = 100, filter = '', level = '' } = options;
+        let filtered: LogEntry[];
+        if (level || filter) {
+            filtered = this.entries;
+            if (level) {
+                filtered = filtered.filter((e) => e.level === level);
+            }
+            if (filter) {
+                const kw = filter.toLowerCase();
+                filtered = filtered.filter(
+                    (e) =>
+                        e.message.toLowerCase().includes(kw) ||
+                        e.timestamp.toLowerCase().includes(kw) ||
+                        e.level.includes(kw)
+                );
+            }
+        } else {
+            filtered = this.entries;
+        }
+        const total = filtered.length;
+        const safeOffset = Math.max(0, Math.min(offset, total));
+        const slice = filtered.slice(safeOffset, safeOffset + limit);
+        return { entries: slice, total, offset: safeOffset, hasMore: safeOffset + limit < total };
     }
 
     static getStream(): LogStream {

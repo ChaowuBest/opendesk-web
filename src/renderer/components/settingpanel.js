@@ -20,6 +20,7 @@ class SettingPanel extends HTMLElement {
         this._pendingSave = false;
         this._editingProviderIndex = -1;
         this._editingModelIndex = -1;
+        this.appVersion = null;
     }
 
     connectedCallback() {
@@ -33,6 +34,11 @@ class SettingPanel extends HTMLElement {
     async loadData() {
         this.currentData = await window.settingAPI.loadSettingObject();
         this.providerTemplates = await window.settingAPI.getProviderTemplates();
+        try {
+            this.appVersion = await window.settingAPI.getVersion();
+        } catch (e) {
+            console.warn('Failed to load version:', e);
+        }
     }
 
     render() {
@@ -55,6 +61,11 @@ class SettingPanel extends HTMLElement {
                 ${this.renderProvidersSection()}
                 ${this.renderModelsSection()}
                 ${this.renderDefaultModelsSection()}
+            </div>
+
+            <!-- 底部版本信息栏 -->
+            <div class="shrink-0 px-6 py-3 border-t border-gray-200/50 bg-white/40 backdrop-blur-sm text-center">
+                <span class="text-xs text-gray-400">OpenDesk v${this.appVersion || '...'}</span>
             </div>
         </div>
 

@@ -50,30 +50,38 @@ import {
     ElectronPlatform,
     ElectronTaskManagerUpdateSubscriber
 } from '../platforms/electron.js';
-import { exportTaskToHtml, generateTaskHtml } from './utils/export';
-import { MainAgentDecl } from './aikernel/agents/mainagent/agent.js';
+import { exportTaskToHtml, generateTaskHtml } from './utils/export.js';
+import { MainAgentDecl } from './aikernel/agents/main/agent.js';
+import { AgentRegistry } from './aikernel/agents/registry.js';
 import { HarnessContext } from './aikernel/security/harness.js';
 import { ElectronPermissionPromptProvider } from './aikernel/security/electronPrompt.js';
 import { ElectronAskUserProvider } from './aikernel/interaction/electronAskUser.js';
 import { createInteractionToolset } from './aikernel/interaction/tools.js';
+import { ElectronExitPlanModeProvider } from './aikernel/interaction/electronExitPlanMode.js';
+import { ChannelMgrApplication } from './applications/channelmgr/app.js';
+import { ChannelMessageRouter } from './applications/channelmgr/router.js';
 
 /** 全局 agentDecl 实例（延迟初始化），用于获取 mode 等元信息 */
-let _globalAgentDecl = null;
-function getGlobalAgentDecl() {
+let _globalAgentDecl: MainAgentDecl | null = null;
+function getGlobalAgentDecl(): MainAgentDecl {
     if (!_globalAgentDecl) {
-        const workspace = Setting.getInstance().getEffectiveWorkspace();
-        _globalAgentDecl = new MainAgentDecl({ workspace });
+        _globalAgentDecl = new MainAgentDecl();
+        AgentRegistry.initBuiltinAgents();
     }
     return _globalAgentDecl;
 }
 /** 当前在 Electron GUI 中选择的 modeId */
-let _currentElectronModeId = null;
+let _currentElectronModeId: string | null = null;
 
 import Convert from 'ansi-to-html';
 import path from 'path';
 import fs from 'fs';
 
 import appIcon from '../../resources/main/images/icon_round.png?asset';
+
+// TODO: FSService 和 recallApplication 当前未接入，保留 ipcMain handler 以兼容旧前端
+declare const FSService: any;
+declare const recallApplication: any;
 
 setPlatform(new ElectronPlatform(app));
 useConsoleTransport();
@@ -85,7 +93,7 @@ if (process.platform === 'openharmony' && !process.env.USER_DATA_PATH) {
         if (electronUserData) {
             process.env.USER_DATA_PATH = electronUserData;
         }
-    } catch (_e) {
+    } catch {
         // app.getPath 可能在 OpenHarmony 上不可用，后续 resolveWritableUserDataRoot 会做回退
     }
 }
@@ -93,11 +101,8 @@ if (process.platform === 'openharmony' && !process.env.USER_DATA_PATH) {
 const __dirname = import.meta.dirname;
 const converter = new Convert();
 
-/** @type {BrowserWindow | null} */
-let globalMainWindow = null;
-/** @type {Tray | null} */
-let globalTray = null;
-/** @type {boolean} */
+let globalMainWindow: BrowserWindow | null = null;
+let globalTray: Tray | null = null;
 let isAppQuitting = false;
 
 /**
@@ -139,7 +144,7 @@ async function installBundledSkillsIfNeeded() {
 
         const userSkillsDir = SkillRegistry.getSkillsDirectory();
 
-        const copyRecursive = (src, dest) => {
+        const copyRecursive = (src: string, dest: string) => {
             const stat = fs.statSync(src);
             if (stat.isDirectory()) {
                 fs.mkdirSync(dest, { recursive: true });
@@ -157,21 +162,20 @@ async function installBundledSkillsIfNeeded() {
             const destPath = path.join(userSkillsDir, ent.name);
             copyRecursive(srcPath, destPath);
         }
-    } catch (error) {
-        console.error('installBundledSkillsIfNeeded failed', error);
+    } catch (error: any) {
+        logger.error('installBundledSkillsIfNeeded failed', error);
     }
 }
 
 // Browser management — shared persistent session.
 // The partition 'persist:opendesk-browser' stores data at <appDir>/apps/browser/session
 // via session.fromPath when available, otherwise falls back to Electron default location.
-let browserSessionInstance = null;
+let browserSessionInstance: Electron.Session | null = null;
 const BROWSER_PARTITION = 'persist:opendesk-browser';
 
 function initBrowserSession() {
     try {
         const sessionPath = path.join(getAppDirectory(), 'apps', 'browser', 'session');
-        const fs = require('fs');
         if (!fs.existsSync(sessionPath)) {
             fs.mkdirSync(sessionPath, { recursive: true });
         }
@@ -228,8 +232,8 @@ const createWindow = () => {
 
     const protocolConfigs = ApplicationRegistry.collectProtocolHandlerEntries();
     const inAppSchemePrefixes = protocolConfigs.map((c) => c.scheme + '://');
-    const openLink = (url) => {
-        console.log(`openLink: ${url}`);
+    const openLink = (url: string) => {
+        logger.info(`openLink: ${url}`);
         if (
             url.startsWith('file://') ||
             url.startsWith('http://localhost') ||
@@ -242,7 +246,7 @@ const createWindow = () => {
     };
 
     mainWindow.webContents.on('context-menu', (_event, params) => {
-        const menuItems = [];
+        const menuItems: Electron.MenuItemConstructorOptions[] = [];
         if (params.editFlags.canCut) {
             menuItems.push({ label: '剪切', role: 'cut' });
         }
@@ -324,20 +328,35 @@ const registerModeAPIHandlers = () => {
             if (!target) {
                 return { status: 'error', message: `unknown mode: ${modeId}` };
             }
+
+            // 调用模式切换钩子
+            const workspace = Setting.getInstance().getEffectiveWorkspace();
+            const oldModeId = _currentElectronModeId || agentDecl.defaultModeId();
+            if (oldModeId !== modeId) {
+                const oldMode = modes.find((m) => m.id === oldModeId);
+                if (oldMode?.onExitMode) {
+                    await oldMode.onExitMode(workspace);
+                }
+                if (target.onEnterMode) {
+                    await target.onEnterMode(workspace);
+                }
+            }
+
             _currentElectronModeId = modeId;
 
-            // 同步所有已有任务的权限引擎到新模式
+            // 同步所有主任务的权限引擎到新模式（子任务由父任务管理）
             const globalState = GlobalState.getInstance();
-            const workspace = Setting.getInstance().getEffectiveWorkspace();
             for (const task of globalState.taskManagerState.tasks) {
+                if (task.parent_id !== null) continue;
                 const savedEnv = task.harnessContext.environ;
-                const savedPrompt = task.harnessContext.permissionPrompt;
                 try {
                     const ctx = await HarnessContext.createForMode(workspace, target);
                     ctx.environ = savedEnv;
-                    ctx.permissionPrompt = savedPrompt;
+                    ctx.permissionPrompt =
+                        task.harnessContext.permissionPrompt || new ElectronPermissionPromptProvider();
                     task.harnessContext = ctx;
                     task.activeModeId = target.id;
+                    task.allowedTools = target.allowedTools;
                     task.disabledTools = target.disabledTools;
                 } catch (err) {
                     logger.warn(`Failed to sync task harness for mode ${modeId}: ${err}`);
@@ -357,7 +376,7 @@ const registerBrowserAPIHandlers = () => {
      * Helper: find the <task-artifacts> element for a given taskId in the renderer
      * and invoke a method on it, returning the result.
      */
-    const callBrowserOnTask = async (taskId, method, ...args) => {
+    const callBrowserOnTask = async (taskId: string, method: string, ...args: unknown[]) => {
         if (!globalMainWindow) {
             return { status: 'error', message: 'No main window' };
         }
@@ -442,22 +461,54 @@ const registerTaskManagerAPIHandlers = () => {
         const resolvedModeId = modeId || _currentElectronModeId || agentDecl.defaultModeId();
         const activeMode = modes.find((m) => m.id === resolvedModeId) ?? modes[0];
 
-        agentDecl
-            .createSystemPrompt(activeMode)
-            .then((prompt) => {
-                task.setSystemPrompt(prompt);
-            })
-            .catch((err) => {
-                logger.error('failed to create system prompt', err);
-            });
         try {
             task.harnessContext = await HarnessContext.createForMode(workspace, activeMode);
             task.harnessContext.permissionPrompt = new ElectronPermissionPromptProvider();
             task.activeModeId = activeMode.id;
+            task.allowedTools = activeMode.allowedTools;
             task.disabledTools = activeMode.disabledTools;
             // 注入 interaction 工具集（仅主任务，buildToolsets 会自动包含）
             const askUserProvider = new ElectronAskUserProvider();
-            task.interactionToolset = createInteractionToolset(askUserProvider);
+            const exitPlanModeProvider = new ElectronExitPlanModeProvider();
+            exitPlanModeProvider.setModeSwitcher(async (targetModeId: string) => {
+                const modes2 = getGlobalAgentDecl().supportedModes();
+                const targetMode = modes2.find((m) => m.id === targetModeId);
+                if (!targetMode) return;
+                const ws = Setting.getInstance().getEffectiveWorkspace();
+                const oldId = _currentElectronModeId || getGlobalAgentDecl().defaultModeId();
+                if (oldId !== targetModeId) {
+                    const oldMode = modes2.find((m) => m.id === oldId);
+                    await oldMode?.onExitMode?.(ws);
+                    await targetMode.onEnterMode?.(ws);
+                }
+                _currentElectronModeId = targetModeId;
+                for (const t of globalState.taskManagerState.tasks) {
+                    if (t.parent_id !== null) continue;
+                    const savedEnv = t.harnessContext.environ;
+                    try {
+                        const ctx = await HarnessContext.createForMode(ws, targetMode);
+                        ctx.environ = savedEnv;
+                        ctx.permissionPrompt =
+                            t.harnessContext.permissionPrompt || new ElectronPermissionPromptProvider();
+                        t.harnessContext = ctx;
+                        t.activeModeId = targetMode.id;
+                        t.allowedTools = targetMode.allowedTools;
+                        t.disabledTools = targetMode.disabledTools;
+                    } catch {
+                        /* ignore */
+                    }
+                }
+                // 通知 renderer 侧更新模式显示
+                for (const w of BrowserWindow.getAllWindows()) {
+                    if (!w.isDestroyed()) {
+                        w.webContents.send('mode:changed', targetModeId);
+                    }
+                }
+            });
+            task.interactionToolset = createInteractionToolset(askUserProvider, exitPlanModeProvider);
+
+            const systemPrompt = await agentDecl.createSystemPrompt(activeMode, task);
+            task.setSystemPrompt(systemPrompt);
         } catch (err) {
             logger.warn(`Failed to init task harness in Electron, using empty context: ${err}`);
             task.harnessContext = HarnessContext.createEmpty();
@@ -526,7 +577,7 @@ const registerTaskManagerAPIHandlers = () => {
         return { status: 'ok', data: task.removeSubscriber(subscriptionId) };
     });
 
-    ipcMain.handle('taskManager:getTaskList', (event) => {
+    ipcMain.handle('taskManager:getTaskList', (_event) => {
         return { status: 'ok', data: globalState.taskManagerState.getTaskList() };
     });
     ipcMain.handle('taskManager:subscribeTaskListUpdate', (event) => {
@@ -547,7 +598,7 @@ const registerTaskManagerAPIHandlers = () => {
             tool.setExecutor(async (args) => {
                 const toolCallId = crypto.randomUUID();
 
-                const result = new Promise((resolve, reject) => {
+                const result = new Promise((resolve, _reject) => {
                     ipcMain.once(`taskManager:reportToolCallResult:${toolCallId}`, (event, result) => {
                         resolve(result);
                     });
@@ -607,7 +658,7 @@ const registerTaskManagerAPIHandlers = () => {
             }
             const rendered = await marked.parse(content);
             return { status: 'ok', data: { raw: content, rendered } };
-        } catch (err) {
+        } catch {
             return { status: 'ok', data: null };
         }
     });
@@ -625,7 +676,7 @@ const registerTaskManagerAPIHandlers = () => {
             }
             const apiSize = await fetchContextSizeFromAPI(modelInstance);
             return { status: 'ok', data: apiSize };
-        } catch (err) {
+        } catch {
             return { status: 'ok', data: 0 };
         }
     });
@@ -634,7 +685,7 @@ const registerTaskManagerAPIHandlers = () => {
         try {
             const exists = fs.existsSync(filePath);
             return { status: 'ok', data: exists };
-        } catch (error) {
+        } catch (error: any) {
             logger.error('checking file exists failed', error);
             return { status: 'error', message: error.message };
         }
@@ -643,7 +694,7 @@ const registerTaskManagerAPIHandlers = () => {
         try {
             await shell.trashItem(path.resolve(itemPath));
             return { status: 'ok', data: true };
-        } catch (error) {
+        } catch (error: any) {
             logger.error('trashing item failed', error);
             return { status: 'error', message: error.message };
         }
@@ -651,9 +702,9 @@ const registerTaskManagerAPIHandlers = () => {
     // 显示保存文件对话框
     ipcMain.handle('dialog:saveFile', async (event, options) => {
         try {
-            const result = await dialog.showSaveDialog(globalMainWindow, options);
+            const result = await dialog.showSaveDialog(globalMainWindow!, options);
             return { status: 'ok', data: result };
-        } catch (error) {
+        } catch (error: any) {
             logger.error('showing save dialog failed', error);
             return { status: 'error', message: error.message };
         }
@@ -667,7 +718,7 @@ const registerTaskManagerAPIHandlers = () => {
             await task.render();
             await exportTaskToHtml(task, filePath);
             return { status: 'ok', data: filePath };
-        } catch (error) {
+        } catch (error: any) {
             logger.error('exporting task failed', error);
             return { status: 'error', message: error.message };
         }
@@ -682,7 +733,7 @@ const registerTaskManagerAPIHandlers = () => {
             // 创建一个临时函数来获取 HTML 内容而不写入文件
             const htmlContent = await generateTaskHtml(task);
             return { status: 'ok', data: htmlContent };
-        } catch (error) {
+        } catch (error: any) {
             logger.error('exporting task failed', error);
             return { status: 'error', message: error.message };
         }
@@ -694,7 +745,7 @@ const registerFSAPIHandlers = () => {
         try {
             const result = await FSService.searchFilesByKeyword(keyword);
             return { status: 'ok', data: result };
-        } catch (error) {
+        } catch (error: any) {
             return { status: 'error', message: error.message };
         }
     }),
@@ -702,7 +753,7 @@ const registerFSAPIHandlers = () => {
             try {
                 const result = await FSService.searchFilesByNameSimilarity(query);
                 return { status: 'ok', data: result };
-            } catch (error) {
+            } catch (error: any) {
                 return { status: 'error', message: error.message };
             }
         }),
@@ -738,7 +789,7 @@ const registerFSAPIHandlers = () => {
             } else {
                 return { status: 'ok', data: null };
             }
-        } catch (error) {
+        } catch (error: any) {
             // 如果路径不存在或无法访问，返回null
             if (error.code === 'ENOENT') {
                 return { status: 'ok', data: null };
@@ -791,7 +842,7 @@ const registerFSAPIHandlers = () => {
                 return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
             });
             return { status: 'ok', data: entries };
-        } catch (error) {
+        } catch (error: any) {
             return { status: 'error', message: error.message };
         }
     });
@@ -835,7 +886,7 @@ const registerFSAPIHandlers = () => {
                     binary
                 }
             };
-        } catch (error) {
+        } catch (error: any) {
             return { status: 'error', message: error.message };
         }
     });
@@ -846,7 +897,7 @@ const registerSettingAPIHandlers = () => {
         try {
             const schema = Setting.getSettingSchema();
             return { status: 'ok', data: z.toJSONSchema(schema) };
-        } catch (error) {
+        } catch (error: any) {
             logger.error(`error loading setting schema`, error);
             logger.error(error.stack);
             return { status: 'error', message: error.message };
@@ -861,7 +912,7 @@ const registerSettingAPIHandlers = () => {
             // 通知 Worker 线程更新设置，使新的模型配置立即生效
             notifyWorkerSettingUpdate(Setting.getInstance().getData());
             return { status: 'ok' };
-        } catch (error) {
+        } catch (error: any) {
             return { status: 'error', message: error.message };
         }
     });
@@ -871,7 +922,7 @@ const registerSettingAPIHandlers = () => {
             const result = QuickPassHelper.importConfig(cleaned);
             notifyWorkerSettingUpdate(Setting.getInstance().getData());
             return { status: 'ok', data: result };
-        } catch (error) {
+        } catch (error: any) {
             return { status: 'error', message: error.message };
         }
     });
@@ -886,7 +937,7 @@ const registerSettingAPIHandlers = () => {
         try {
             const quickpass = QuickPassHelper.exportBaseConfig();
             return { status: 'ok', data: quickpass };
-        } catch (error) {
+        } catch (error: any) {
             return { status: 'error', message: error.message };
         }
     });
@@ -894,7 +945,7 @@ const registerSettingAPIHandlers = () => {
         try {
             const quickpass = QuickPassHelper.exportAllConfig();
             return { status: 'ok', data: quickpass };
-        } catch (error) {
+        } catch (error: any) {
             return { status: 'error', message: error.message };
         }
     });
@@ -908,7 +959,7 @@ const registerSettingAPIHandlers = () => {
             const instance = new ModelInstance(model_name, base_url, api_key, false);
             await LLM.verifyModel(instance);
             return { status: 'ok', data: true };
-        } catch (error) {
+        } catch (error: any) {
             return { status: 'error', message: error.message || String(error) };
         }
     });
@@ -916,7 +967,7 @@ const registerSettingAPIHandlers = () => {
         try {
             const workspace = Setting.getInstance().getEffectiveWorkspace();
             return { status: 'ok', data: workspace };
-        } catch (error) {
+        } catch (error: any) {
             return { status: 'error', message: error.message };
         }
     });
@@ -925,13 +976,13 @@ const registerSettingAPIHandlers = () => {
             const workspace = Setting.getInstance().getEffectiveWorkspace();
             await shell.openPath(workspace);
             return { status: 'ok' };
-        } catch (error) {
+        } catch (error: any) {
             return { status: 'error', message: error.message };
         }
     });
     ipcMain.handle('workspace:selectWorkspaceDirectory', async () => {
         try {
-            const result = await dialog.showOpenDialog(globalMainWindow, {
+            const result = await dialog.showOpenDialog(globalMainWindow!, {
                 title: '选择工作空间目录',
                 properties: ['openDirectory']
             });
@@ -944,18 +995,20 @@ const registerSettingAPIHandlers = () => {
             notifyWorkerSettingUpdate(Setting.getInstance().getData());
 
             // 同步所有已有任务的 harnessContext 到新工作空间
+            // 仅更新主任务（parent_id === null）；子任务的 harnessContext 由父任务在创建时决定
             const globalState = GlobalState.getInstance();
             const agentDecl = getGlobalAgentDecl();
             const modes = agentDecl.supportedModes();
             for (const task of globalState.taskManagerState.tasks) {
+                if (task.parent_id !== null) continue;
                 const modeId = task.activeModeId || _currentElectronModeId || agentDecl.defaultModeId();
                 const mode = modes.find((m) => m.id === modeId) ?? modes[0];
                 const savedEnv = task.harnessContext.environ;
-                const savedPrompt = task.harnessContext.permissionPrompt;
                 try {
                     const ctx = await HarnessContext.createForMode(selectedPath, mode);
                     ctx.environ = savedEnv;
-                    ctx.permissionPrompt = savedPrompt;
+                    ctx.permissionPrompt =
+                        task.harnessContext.permissionPrompt || new ElectronPermissionPromptProvider();
                     task.harnessContext = ctx;
                 } catch (err) {
                     logger.warn(`Failed to sync task harness for new workspace: ${err}`);
@@ -964,7 +1017,7 @@ const registerSettingAPIHandlers = () => {
             }
 
             return { status: 'ok', data: selectedPath };
-        } catch (error) {
+        } catch (error: any) {
             return { status: 'error', message: error.message };
         }
     });
@@ -978,6 +1031,9 @@ const registerSettingAPIHandlers = () => {
         ipcMain.handle('setting:getLogContent', () => {
             return { status: 'ok', data: converter.toHtml(LogStream.getStream().getContent()) };
         }));
+    ipcMain.handle('setting:getLogEntries', (_event: any, options: any) => {
+        return { status: 'ok', data: LogStream.getStream().getEntries(options || {}) };
+    });
     (ipcMain.handle('setting:closeMainWindow', () => {
         if (globalMainWindow === null) {
             return { status: 'error', message: 'main window not found' };
@@ -1008,6 +1064,9 @@ const registerSettingAPIHandlers = () => {
                 return { status: 'error', message: 'main window not found' };
             }
             return { status: 'ok', data: globalMainWindow.isMaximized() };
+        }),
+        ipcMain.handle('setting:getAppVersion', () => {
+            return { status: 'ok', data: app.getVersion() };
         }));
 };
 
@@ -1021,7 +1080,7 @@ const registerDisplayZoomHandlers = () => {
         }
     };
 
-    const applyZoom = (factor) => {
+    const applyZoom = (factor: number) => {
         if (!globalMainWindow) return;
         if (!Number.isFinite(factor)) factor = 1;
         const clamped = Math.max(0.5, Math.min(2.0, factor));
@@ -1038,7 +1097,7 @@ const registerDisplayZoomHandlers = () => {
     ipcMain.handle('display:getScaleFactor', () => {
         try {
             return { status: 'ok', data: readCurrentScale() };
-        } catch (error) {
+        } catch (error: any) {
             return { status: 'error', message: error.message };
         }
     });
@@ -1047,7 +1106,7 @@ const registerDisplayZoomHandlers = () => {
         try {
             applyZoom(factor);
             return { status: 'ok', data: Math.max(0.5, Math.min(2.0, factor)) };
-        } catch (error) {
+        } catch (error: any) {
             return { status: 'error', message: error.message };
         }
     });
@@ -1058,7 +1117,7 @@ const registerDisplayZoomHandlers = () => {
             const next = Math.round((current + delta) * 10) / 10;
             applyZoom(next);
             return { status: 'ok', data: Math.max(0.5, Math.min(2.0, next)) };
-        } catch (error) {
+        } catch (error: any) {
             return { status: 'error', message: error.message };
         }
     });
@@ -1069,7 +1128,7 @@ const registerNotificationAPIHandlers = () => {
         try {
             NotificationManager.getInstance().sendNotification(...args);
             return { status: 'ok' };
-        } catch (error) {
+        } catch (error: any) {
             return { status: 'error', message: error.message };
         }
     }),
@@ -1093,7 +1152,7 @@ const registerScreenAPIHandlers = () => {
                 touchSupport: display.touchSupport
             }));
             return { status: 'ok', data: scaleFactors };
-        } catch (error) {
+        } catch (error: any) {
             return { status: 'error', message: error.message };
         }
     });
@@ -1111,7 +1170,7 @@ const registerHotKeys = () => {
         globalMainWindow.webContents.send('command:openHomePage');
     });
     if (!ret) {
-        console.log(`hotkey ${hotkey} register failed, possibly because the hot key is already in use`);
+        logger.warn(`hotkey ${hotkey} register failed, possibly because the hot key is already in use`);
     }
 };
 
@@ -1155,7 +1214,7 @@ const registerTray = () => {
 };
 
 // 初始化自动更新客户端
-let updateClient = null;
+let updateClient: UpdateClient | null = null;
 
 const initializeUpdater = () => {
     // 配置多个备选更新服务器地址，按顺序尝试
@@ -1187,7 +1246,7 @@ const initializeUpdater = () => {
 const initializeScreenAdaption = () => {
     const scaleFactor = screen.getPrimaryDisplay().scaleFactor;
     logger.info(`屏幕显示参数: ${scaleFactor}`);
-    screen.on('display-metrics-changed', (event, display, changedMetrics) => {
+    screen.on('display-metrics-changed', (event, display, _changedMetrics) => {
         logger.info(`屏幕显示参数已更改: ${display.scaleFactor}`);
         // 在此处重新计算并调整窗口布局
     });
@@ -1195,7 +1254,7 @@ const initializeScreenAdaption = () => {
 
 function startApplication() {
     if (app.requestSingleInstanceLock()) {
-        app.on('second-instance', (event, path) => {
+        app.on('second-instance', (_event, _commandLine) => {
             if (globalMainWindow) {
                 globalMainWindow.show();
             }
@@ -1230,11 +1289,21 @@ function startApplication() {
             listAvailableToolsets: () => ApplicationRegistry.listAvailableToolsets()
         };
 
-        // 为从磁盘恢复的旧任务注入当前工作空间（harnessContext 不落盘，加载后默认为空）
+        // 为从磁盘恢复的旧任务注入完整的 harnessContext（不落盘，加载后默认为空）
         const startupWorkspace = Setting.getInstance().getEffectiveWorkspace();
+        const agentDecl = getGlobalAgentDecl();
+        const defaultMode =
+            agentDecl.supportedModes().find((m) => m.id === (_currentElectronModeId || agentDecl.defaultModeId())) ??
+            agentDecl.supportedModes()[0];
         for (const task of GlobalState.getInstance().taskManagerState.tasks) {
             if (!task.harnessContext.workspace) {
-                task.harnessContext.workspace = startupWorkspace;
+                try {
+                    task.harnessContext = await HarnessContext.createForMode(startupWorkspace, defaultMode);
+                    task.harnessContext.permissionPrompt = new ElectronPermissionPromptProvider();
+                } catch (err) {
+                    logger.warn(`Failed to init restored task harness: ${err}`);
+                    task.harnessContext.workspace = startupWorkspace;
+                }
             }
         }
 
@@ -1245,7 +1314,7 @@ function startApplication() {
         try {
             await installBundledSkillsIfNeeded();
         } catch (err) {
-            console.error('installBundledSkillsIfNeeded error', err);
+            logger.error('installBundledSkillsIfNeeded error', err);
         }
 
         initializeScreenAdaption();
@@ -1267,69 +1336,53 @@ function startApplication() {
             if (typeof savedScale === 'number' && Number.isFinite(savedScale) && savedScale !== 1 && globalMainWindow) {
                 globalMainWindow.webContents.setZoomFactor(Math.max(0.5, Math.min(3.0, savedScale)));
             }
-        } catch (_e) {
+        } catch {
             /* ignore */
         }
         initializeRegistryWorker();
         initializeProtocolHandlers();
         initializeUpdater();
 
-        // 设置全局待办触发器回调（Electron GUI 模式）
-        ApplicationRegistry.onTriggerTask = async (todoId, todoTitle, todoContent, trigger, deliver) => {
-            try {
-                const globalState = GlobalState.getInstance();
-                const task = globalState.taskManagerState.createTask();
-                const workspace = Setting.getInstance().getEffectiveWorkspace();
+        ApplicationRegistry.onReady(async () => {
+            const channelMgrApp = ApplicationRegistry.getApplication('channelmgr') as ChannelMgrApplication | undefined;
+            if (channelMgrApp) {
                 const agentDecl = getGlobalAgentDecl();
-                const modes = agentDecl.supportedModes();
-                const resolvedModeId = _currentElectronModeId || agentDecl.defaultModeId();
-                const activeMode = modes.find((m) => m.id === resolvedModeId) ?? modes[0];
-
-                const systemPrompt = await agentDecl.createSystemPrompt(activeMode);
-                task.setSystemPrompt(systemPrompt);
-
-                try {
-                    task.harnessContext = await HarnessContext.createForMode(workspace, activeMode);
-                    task.harnessContext.permissionPrompt = new ElectronPermissionPromptProvider();
-                    task.activeModeId = activeMode.id;
-                    task.disabledTools = activeMode.disabledTools;
-                    const askUserProvider = new ElectronAskUserProvider();
-                    task.interactionToolset = createInteractionToolset(askUserProvider);
-                } catch (err) {
-                    logger.warn(`Trigger task harness init failed: ${err}`);
-                    task.harnessContext = HarnessContext.createEmpty();
-                    task.harnessContext.workspace = workspace;
-                }
-
-                if (deliver) {
-                    task.origin = deliver;
-                }
-
-                let triggerInfo = '';
-                if (trigger?.type === 'event') {
-                    triggerInfo = `[event] 事件驱动任务，由事件 ${trigger.bundleName}:${trigger.eventName} 自动触发 `;
-                } else if (trigger?.type === 'scheduled') {
-                    triggerInfo = `[scheduled] 定时任务，仅执行一次 `;
-                } else if (trigger?.type === 'cron') {
-                    triggerInfo = `[cron] 周期任务 `;
-                }
-
-                logger.info(`[Electron] 触发器创建任务: ${todoId} -> task ${task.task_id}`);
-
-                const message =
-                    `请执行以下全局待办事项：\n\n` +
-                    `- 待办事项ID: ${todoId}\n` +
-                    `- 待办事项标题：${todoTitle}\n` +
-                    `- 待办事项触发方式：${triggerInfo}\n\n` +
-                    `待办事项内容\n---\n\n${todoContent}`;
-
-                task.submitUserMessage(message).catch((err) =>
-                    logger.error(`Trigger task submitMessage failed for ${task.task_id}:`, err)
+                const router = new ChannelMessageRouter(
+                    GlobalState.getInstance().taskManagerState,
+                    agentDecl,
+                    startupWorkspace
                 );
-            } catch (err) {
-                logger.error(`[Electron] 触发器任务创建失败: ${err}`);
+
+                const CHANNEL_NAMES: Record<string, string> = {
+                    feishu: '飞书',
+                    'openclaw-weixin': '微信',
+                    whatsapp: 'WhatsApp',
+                    zalouser: 'Zalo',
+                    telegram: 'Telegram',
+                    discord: 'Discord',
+                    slack: 'Slack',
+                    signal: 'Signal'
+                };
+
+                router.onTaskResolved = (task, message) => {
+                    const channelName = CHANNEL_NAMES[message.channelId] || message.channelId;
+                    const senderLabel = message.senderName || '新联系人';
+                    const preview =
+                        (message.text || '').length > 60
+                            ? (message.text || '').slice(0, 57) + '...'
+                            : message.text || '';
+
+                    NotificationManager.getInstance().info(
+                        channelName,
+                        `${senderLabel} 的${channelName}消息`,
+                        preview || '(无文本内容)'
+                    );
+                };
+
+                await channelMgrApp.initializeChannels(router, startupWorkspace);
+                logger.info('[electron] channelmgr 消息路由已初始化');
             }
-        };
+        });
     });
 
     app.on('will-quit', async () => {

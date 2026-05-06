@@ -49,7 +49,7 @@ import { BaseTool, BaseToolset } from '../tool.js';
 import { LLM, type LLMRequestOptions } from '../llm.js';
 import { getTaskArtifactDirectory, getTaskDirectory, type ReasoningEffort } from '../../utils/setting.js';
 import { logger } from '../../utils/logger.js';
-import { type ToolsetProvider, EmptyToolsetProvider } from './toolset-provider.js';
+import { type ToolsetProvider, EmptyToolsetProvider } from '../tool.js';
 import { jsonrepair } from 'jsonrepair';
 import officeParser from 'officeparser';
 import path from 'path';
@@ -65,6 +65,9 @@ import type { PermissionRequest, PermissionCheckResult, PermissionUserResponse }
 import { createResourcePath } from '../security/permission.js';
 import { TaskProfiler } from '../profiler.js';
 import { getPlatform } from '../../../platforms/base.js';
+import type { AgentDecl, ModeDecl } from '../agents/common.js';
+import { MainAgentDecl } from '../agents/main/agent.js';
+import { AgentRegistry } from '../agents/registry.js';
 
 type TaskStatus = 'waiting' | 'running' | 'stopped';
 
@@ -77,6 +80,7 @@ export interface TaskUpdateUserChunk {
     last_part: UserMessagePart;
     usage?: Usage;
     internal?: boolean;
+    timestamp?: number;
 }
 
 export interface TaskUpdateAssistantChunk {
@@ -98,7 +102,7 @@ export class BaseTaskUpdateSubscriber {
         return true;
     }
 
-    send(chunkUpdate: TaskUpdateChunk) {
+    send(_chunkUpdate: TaskUpdateChunk) {
         throw new Error('send not implemented');
     }
 }
@@ -194,6 +198,12 @@ export class TaskState {
      */
     disabledTools?: string[];
 
+    /**
+     * Mode 级别的工具白名单。非空时仅白名单内的工具可用。
+     * 不参与序列化——由子任务 Agent 的 Mode 派发时设置。
+     */
+    allowedTools?: string[];
+
     stop_requested_by_user: boolean = false;
     started_at?: Date;
     finished_at?: Date;
@@ -230,6 +240,13 @@ export class TaskState {
     constructor(task_manager_state: TaskManagerState, parent_id: string | null = null) {
         this.task_manager_state = task_manager_state;
         this.parent_id = parent_id;
+    }
+
+    /**
+     * 获取当前任务的工作空间路径。
+     */
+    getWorkspace(): string {
+        return this.harnessContext?.workspace || '';
     }
 
     /**
@@ -790,7 +807,7 @@ export class TaskState {
             const entry = allSkills.find((e) => e.skill.frontmatter.name === name && e.skill.isUserInvocable);
             if (!entry) continue;
 
-            const { bundleName, skill } = entry;
+            const { bundleName } = entry;
             try {
                 const loadedSkill = await registry.getSkill(bundleName, name);
                 if (!loadedSkill) continue;
@@ -960,7 +977,8 @@ export class TaskState {
                     message_id: last_message.message_id,
                     last_part_index: updated_part_index,
                     last_part: last_part,
-                    internal: last_message.internal
+                    internal: last_message.internal,
+                    timestamp: last_message.timestamp
                 };
             } else if (last_message instanceof AssistantMessage) {
                 if (last_message.content.length === 0) return;
@@ -1293,11 +1311,23 @@ export class TaskState {
             }
         }
 
-        // Apply disabledTools filter if present
+        // Apply allowedTools whitelist filter (Agent level) — if set, only these tools are kept
+        if (this.allowedTools && this.allowedTools.length > 0) {
+            const allowed = new Set(this.allowedTools);
+            for (const toolset of all) {
+                for (const [name] of toolset.tools.entries()) {
+                    if (!allowed.has(name)) {
+                        toolset.tools.delete(name);
+                    }
+                }
+            }
+        }
+
+        // Apply disabledTools blacklist filter (Mode + Agent level)
         if (this.disabledTools && this.disabledTools.length > 0) {
             const disabled = new Set(this.disabledTools);
             for (const toolset of all) {
-                for (const [name, tool] of toolset.tools.entries()) {
+                for (const [name] of toolset.tools.entries()) {
                     if (disabled.has(name)) {
                         toolset.tools.delete(name);
                     }
@@ -1696,7 +1726,7 @@ export class TaskState {
         try {
             while (this.task_status !== 'stopped') {
                 await this.processCompletion();
-                // @ts-ignore 这里的task_status可能通过前端的请求被随时中止
+                // @ts-expect-error 这里的task_status可能通过前端的请求被随时中止
                 if (this.task_status === 'stopped') {
                     break;
                 }
@@ -1784,7 +1814,7 @@ export class TaskState {
 export class BaseTaskManagerUpdateSubscriber {
     subscription_id: string = crypto.randomUUID();
 
-    send(taskList: object[]): void {
+    send(_taskList: object[]): void {
         throw new Error('send not implemented');
     }
 }
@@ -2039,6 +2069,69 @@ export class TaskManagerState {
         this.tasks.push(task);
         this.save();
         this.publishTaskListUpdate();
+        return task;
+    }
+
+    /**
+     * 为任务初始化 HarnessContext：根据 mode 创建权限引擎，设置 mode 相关属性，
+     * 并调用 Platform.initPlatformHarness 注入平台特定提供者。
+     */
+    async initHarness(task: TaskState, workspace: string, mode: ModeDecl): Promise<void> {
+        try {
+            task.harnessContext = await HarnessContext.createForMode(workspace, mode);
+            task.activeModeId = mode.id;
+            task.allowedTools = mode.allowedTools;
+            task.disabledTools = mode.disabledTools;
+            await getPlatform().initPlatformHarness(task);
+        } catch (err) {
+            logger.warn(`Failed to init task harness, using empty context: ${err}`);
+            task.harnessContext = HarnessContext.createEmpty();
+            task.harnessContext.workspace = workspace;
+        }
+    }
+
+    /**
+     * 将 prompt 分发给指定 Agent 执行：创建任务、初始化 harness、提交消息。
+     * @param agentName Agent 名称（'main' 或 AgentRegistry 中注册的名称）
+     * @param modeName 使用的 Mode 名称，undefined 则使用 Agent 的默认 Mode
+     * @param prompt 要提交的用户消息
+     * @returns 创建好的 TaskState（已提交消息，任务开始执行）
+     */
+    async dispatchPromptToAgent(agentName: string, modeName: string | undefined, prompt: string): Promise<TaskState> {
+        // 解析 Agent
+        let agentDecl: AgentDecl;
+        if (agentName === 'main') {
+            agentDecl = new MainAgentDecl();
+        } else {
+            const registered = AgentRegistry.getAgent(agentName);
+            if (!registered) {
+                throw new Error(`Agent "${agentName}" not found in AgentRegistry`);
+            }
+            agentDecl = registered;
+        }
+
+        // 解析 Mode
+        const modes = agentDecl.supportedModes();
+        const targetModeId = modeName || agentDecl.defaultModeId();
+        const activeMode = modes.find((m) => m.id === targetModeId) ?? modes[0];
+
+        // 获取 workspace
+        const workspace = getPlatform().getEffectiveWorkspace();
+
+        // 创建任务
+        const task = this.createTask();
+
+        // 先初始化 harness（设置 workspace、权限引擎等），
+        // 这样 createSystemPrompt 中的 taskCtx.getWorkspace() 才能返回正确值
+        await this.initHarness(task, workspace, activeMode);
+
+        // 构建 system prompt 并设置
+        const systemPrompt = await agentDecl.createSystemPrompt(activeMode, task);
+        task.setSystemPrompt(systemPrompt);
+
+        // 提交用户消息
+        await task.submitUserMessage(prompt);
+
         return task;
     }
     /**

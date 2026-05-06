@@ -14,14 +14,14 @@
  * OpenClaw-compatible channel plugins.
  */
 
-import { execSync } from 'child_process';
 import path from 'path';
 import fs from 'fs';
 import module from 'module';
-import { getAppDirectory } from '../../utils/setting.js';
-import { logger } from '../../utils/logger.js';
+import { getAppDirectory } from '../utils/setting.js';
+import { logger } from '../utils/logger.js';
 import { ensureOpenClawShim } from './openclaw/shim.js';
 import { createPluginApi } from './openclaw/api.js';
+import { asyncShellExec, shellExec } from '../utils/shellExec.js';
 import type {
     PluginManifest,
     PluginInstallRecord,
@@ -113,10 +113,8 @@ function isUrl(spec: string): boolean {
 function downloadFile(url: string, destPath: string): Promise<void> {
     return new Promise((resolve, reject) => {
         try {
-            // Use curl for downloading - it handles redirects, proxies, and various network conditions better
-            execSync(`curl -L -o "${destPath}" "${url}"`, {
-                stdio: 'pipe',
-                timeout: 300000 // 5 minutes
+            shellExec(`curl -L -o "${destPath}" "${url}"`, {
+                timeout: 300000
             });
 
             // Verify the file was downloaded
@@ -140,7 +138,7 @@ function extractPackageNameFromTgz(tgzPath: string): string | null {
         // Use npm pack to extract and read package.json
         const tempDir = fs.mkdtempSync(path.join(path.dirname(tgzPath), 'tgz-extract-'));
         try {
-            execSync(`tar -xzf "${tgzPath}" -C "${tempDir}"`, { stdio: 'pipe' });
+            shellExec(`tar -xzf "${tgzPath}" -C "${tempDir}"`);
 
             // The extracted content is usually in a 'package/' directory
             const packageDir = path.join(tempDir, 'package');
@@ -196,14 +194,16 @@ export async function installPlugin(npmSpecOrUrl: string): Promise<{ success: bo
 
             // Install from local file
             try {
-                execSync(`npm install --prefix "${extensionsDir}" "${tempTgzPath}" --save`, {
-                    cwd: extensionsDir,
-                    stdio: 'inherit',
-                    timeout: 180000,
-                    env: { ...process.env, npm_config_fund: 'false' }
-                });
+                await asyncShellExec(
+                    `npm install --prefix "${extensionsDir}" "${tempTgzPath}" --save --ignore-scripts --no-bin-links`,
+                    {
+                        cwd: extensionsDir,
+                        timeout: 180000,
+                        env: { ...process.env, npm_config_fund: 'false' }
+                    }
+                );
             } catch (npmErr: any) {
-                const errMsg = npmErr?.message || String(npmErr);
+                const errMsg = npmErr?.stderr || npmErr?.message || String(npmErr);
                 logger.error(`npm install failed: ${errMsg}`);
                 return { success: false, error: `npm install failed: ${errMsg}` };
             } finally {
@@ -312,14 +312,16 @@ export async function installPlugin(npmSpecOrUrl: string): Promise<{ success: bo
             // project root, preventing it from walking up the directory tree and
             // installing into a parent node_modules.
             try {
-                execSync(`npm install --prefix "${extensionsDir}" ${npmSpecOrUrl} --save`, {
-                    cwd: extensionsDir,
-                    stdio: 'inherit',
-                    timeout: 180000,
-                    env: { ...process.env, npm_config_fund: 'false' }
-                });
+                await asyncShellExec(
+                    `npm install --prefix "${extensionsDir}" ${npmSpecOrUrl} --save --ignore-scripts --no-bin-links`,
+                    {
+                        cwd: extensionsDir,
+                        timeout: 180000,
+                        env: { ...process.env, npm_config_fund: 'false' }
+                    }
+                );
             } catch (npmErr: any) {
-                const errMsg = npmErr?.message || String(npmErr);
+                const errMsg = npmErr?.stderr || npmErr?.message || String(npmErr);
                 logger.error(`npm install failed: ${errMsg}`);
                 return { success: false, error: `npm install failed: ${errMsg}` };
             }
@@ -397,9 +399,8 @@ export async function uninstallPlugin(pluginId: string): Promise<{ success: bool
 
     try {
         const pkgName = extractPackageName(record.npmSpec) || pluginId;
-        execSync(`npm uninstall --prefix "${extensionsDir}" ${pkgName}`, {
+        await asyncShellExec(`npm uninstall --prefix "${extensionsDir}" ${pkgName}`, {
             cwd: extensionsDir,
-            stdio: 'pipe',
             timeout: 60000
         });
 
@@ -409,7 +410,7 @@ export async function uninstallPlugin(pluginId: string): Promise<{ success: bool
         logger.info(`Plugin uninstalled: ${pluginId}`);
         return { success: true };
     } catch (err: any) {
-        const message = err?.stderr?.toString() || err?.message || String(err);
+        const message = err?.stderr || err?.message || String(err);
         logger.error(`Plugin uninstall failed: ${message}`);
         return { success: false, error: message };
     }
@@ -480,6 +481,14 @@ function resolvePluginEntryPoint(pluginDir: string): string | null {
         pkgJson = JSON.parse(fs.readFileSync(pkgJsonPath, 'utf-8'));
     } catch {
         return null;
+    }
+
+    // Prefer pre-compiled JS (runtimeExtensions) over TS source (extensions)
+    // to avoid esbuild compilation and shim compatibility issues
+    const runtimeExts = pkgJson?.openclaw?.runtimeExtensions;
+    if (Array.isArray(runtimeExts) && runtimeExts.length > 0) {
+        const entry = path.join(pluginDir, runtimeExts[0]);
+        if (fs.existsSync(entry)) return entry;
     }
 
     // openclaw.extensions field (e.g., ["./index.ts"])
@@ -571,9 +580,9 @@ async function compileTypeScriptPlugin(entryPoint: string, pluginDir: string): P
     // Fallback: use npx esbuild CLI
     try {
         const externals = externalPackages.map((p) => `--external:${p}`).join(' ');
-        execSync(
+        shellExec(
             `npx esbuild "${entryPoint}" --bundle --format=esm --platform=node --target=node20 ${externals} --outfile="${compiledPath}"`,
-            { stdio: 'pipe', timeout: 30000 }
+            { timeout: 30000 }
         );
         logger.info(`Compiled TypeScript plugin via CLI: ${entryPoint}`);
         return compiledPath;
@@ -626,18 +635,34 @@ async function loadSinglePlugin(record: PluginInstallRecord): Promise<PluginEntr
             logger.error(`Failed to import TypeScript plugin ${pkgName}: ${err?.message || err}`);
             return null;
         }
-    } else {
-        // JavaScript plugins: use createRequire
-        const require = module.createRequire(path.join(extensionsDir, 'package.json'));
+    } else if (entryPoint) {
+        // JavaScript plugins: prefer dynamic import (supports ESM), fallback to require (CJS)
         try {
-            pluginModule = require(pkgName);
+            const fileUrl = 'file://' + entryPoint.replace(/\\/g, '/') + '?t=' + Date.now();
+            pluginModule = await import(fileUrl);
             if (pluginModule && pluginModule.default) {
                 pluginModule = pluginModule.default;
             }
-        } catch (err: any) {
-            logger.error(`Failed to require plugin ${pkgName}: ${err?.message || err}`);
-            return null;
+            logger.info(`Loaded JS plugin via import: ${pkgName} (${entryPoint})`);
+        } catch (importErr: any) {
+            // Fallback to require for CJS plugins
+            try {
+                const require = module.createRequire(path.join(extensionsDir, 'package.json'));
+                pluginModule = require(pkgName);
+                if (pluginModule && pluginModule.default) {
+                    pluginModule = pluginModule.default;
+                }
+                logger.info(`Loaded JS plugin via require: ${pkgName}`);
+            } catch (requireErr: any) {
+                logger.error(
+                    `Failed to load plugin ${pkgName}: import error: ${importErr?.message}; require error: ${requireErr?.message}`
+                );
+                return null;
+            }
         }
+    } else {
+        logger.warn(`No entry point found for plugin ${pkgName}`);
+        return null;
     }
 
     const entry: PluginEntry = {

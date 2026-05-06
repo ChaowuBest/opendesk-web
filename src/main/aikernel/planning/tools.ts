@@ -13,11 +13,11 @@ import { z } from 'zod';
 import { BaseTool, BaseToolset, ToolResult } from '../tool.js';
 import { Card } from '../../tui/components/card.js';
 import { statusDisplay, truncText } from '../../tui/components/toolcall.js';
-import { Markdown, Text, truncateToWidth } from '@mariozechner/pi-tui';
+import { Markdown } from '@mariozechner/pi-tui';
 import type { TaskState, TaskUpdateChunk } from '../states/tasks.js';
 import type { TextMessagePart } from '../messages.js';
 import type { SubTaskConfig, SubTaskResult, SubTaskProgressInfo, PendingSubTask } from './common.js';
-import { AssistantMessage, UserMessage, ToolCall, ToolCallMessagePart, ErrorMessagePart, marked } from '../messages.js';
+import { UserMessage, ToolCall, ToolCallMessagePart, marked } from '../messages.js';
 import { SUBTASK_SYSTEM_PROMPT } from './prompt.js';
 import {
     registerSubTaskAttemptCompletionHook,
@@ -26,7 +26,9 @@ import {
     hasAttemptCompletion
 } from './harness.js';
 import { SkillRegistry } from '../skill.js';
-import { getSkillsSection } from '../agents/mainagent/agent.js';
+import { getSkillsSection } from '../agents/main/agent.js';
+import { AgentRegistry } from '../agents/registry.js';
+import { HarnessContext } from '../security/harness.js';
 import { logger } from '../../utils/logger.js';
 import { escapeHtml } from '../../utils/escape.js';
 import { t } from '../../../locale/index.js';
@@ -108,15 +110,53 @@ export async function startSubTask(options: StartSubTaskOptions): Promise<SubTas
         };
     }
 
-    // 创建子任务，继承父任务的 harnessContext（共享权限引擎和环境变量）
+    // 创建子任务
     const subTask = parentTask.task_manager_state.createSubTask(parentTask.task_id);
     subTask.model = parentTask.model;
-    subTask.harnessContext = parentTask.harnessContext;
     subTask.task_name = config.title || '未命名子任务';
 
-    const skillFrontmatters = await SkillRegistry.getInstance().getSkillFrontmatterXml();
-    const subtaskSystemPrompt = [SUBTASK_SYSTEM_PROMPT.trim(), getSkillsSection(skillFrontmatters)].join('\n\n');
-    subTask.setSystemPrompt(subtaskSystemPrompt);
+    // 如果指定了 agentName，使用对应 Agent 的系统提示词、权限和工具过滤
+    const agentDecl = config.agentName ? AgentRegistry.getAgent(config.agentName) : undefined;
+    if (config.agentName && !agentDecl) {
+        logger.warn(
+            `[subtask] agent "${config.agentName}" not found in registry, falling back to default subtask agent`
+        );
+    }
+
+    if (agentDecl) {
+        const defaultMode = agentDecl.supportedModes().find((m) => m.id === agentDecl.defaultModeId());
+
+        // workspace 优先取父任务的当前值（可能已被用户切换）
+        const workspace = parentTask.harnessContext.workspace || '';
+        if (workspace && defaultMode) {
+            // explore 等只读 agent 不设 permissionPrompt，让 ask 自动拒绝
+            subTask.harnessContext = await HarnessContext.createForMode(workspace, defaultMode);
+        } else {
+            subTask.harnessContext = parentTask.harnessContext;
+        }
+        const agentSystemPrompt = await agentDecl.createSystemPrompt(defaultMode, subTask);
+        subTask.setSystemPrompt(agentSystemPrompt);
+
+        // 应用 Mode 级别的工具过滤
+        if (defaultMode) {
+            if (defaultMode.allowedTools && defaultMode.allowedTools.length > 0) {
+                subTask.allowedTools = [...defaultMode.allowedTools];
+            }
+            if (defaultMode.disabledTools && defaultMode.disabledTools.length > 0) {
+                subTask.disabledTools = [...defaultMode.disabledTools];
+            }
+        }
+    } else {
+        // 默认子任务：继承父任务的 harnessContext（复制 workspace、environ、权限引擎）
+        subTask.harnessContext.environ = { ...parentTask.harnessContext.environ };
+        subTask.harnessContext.permission = parentTask.harnessContext.permission;
+        subTask.harnessContext.permissionPrompt = parentTask.harnessContext.permissionPrompt;
+        subTask.harnessContext.workspace = parentTask.harnessContext.workspace;
+
+        const skillFrontmatters = await SkillRegistry.getInstance().getSkillFrontmatterXml();
+        const subtaskSystemPrompt = [SUBTASK_SYSTEM_PROMPT.trim(), getSkillsSection(skillFrontmatters)].join('\n\n');
+        subTask.setSystemPrompt(subtaskSystemPrompt);
+    }
 
     // 注册 attemptCompletion 检查钩子
     registerSubTaskAttemptCompletionHook(subTask);
@@ -389,7 +429,8 @@ const CreateSubTaskArgsSchema = z.object({
     title: z.string().describe('子任务标题，一句话解释任务目标'),
     objective: z.string().describe('完整的任务目标，尽可能详细地描述任务细节。这是唯一会带入子任务的上下文信息'),
     criteria: z.string().describe('子任务的输出结果要求，描述期望输出的内容，格式等要求'),
-    isAsync: z.boolean().default(false).describe('是否异步执行')
+    isAsync: z.boolean().default(false).describe('是否异步执行'),
+    agentName: z.string().optional().describe('指定执行子任务的 Agent 名称，留空则使用默认通用子任务执行器')
 });
 
 export class CreateSubTaskTool extends BaseTool<typeof CreateSubTaskArgsSchema> {
@@ -470,14 +511,20 @@ export class CreateSubTaskTool extends BaseTool<typeof CreateSubTaskArgsSchema> 
         const args = toolcall.args_object as z.output<typeof CreateSubTaskArgsSchema> | undefined;
         const body: string[] = [];
 
-        if (args?.title) {
-            body.push(chalk.dim('标题: ') + truncText(args.title, width - 12));
+        // 卡片标题：含 agentName 时 "创建子任务 (agentName: 标题)"，否则 "创建子任务 (标题)"
+        const titleSuffix = args?.title || '未命名';
+        let cardTitle: string;
+        if (args?.agentName) {
+            const maxAgent = Math.max(6, Math.floor((width - 24) / 2));
+            const agentLabel = truncText(args.agentName, maxAgent);
+            const maxTitle = Math.max(12, width - 24 - agentLabel.length);
+            cardTitle = `创建子任务 (${agentLabel}: ${truncText(titleSuffix, maxTitle)})`;
+        } else {
+            cardTitle = `创建子任务 (${truncText(titleSuffix, Math.max(12, width - 24))})`;
         }
+
         if (args?.objective) {
-            body.push(chalk.dim('目标: ') + truncText(args.objective, width - 12));
-        }
-        if (args?.isAsync) {
-            body.push(chalk.dim('模式: ') + chalk.cyan('异步'));
+            body.push(truncText(args.objective, width - 8));
         }
 
         if (toolcall.status === 'running') {
@@ -487,22 +534,27 @@ export class CreateSubTaskTool extends BaseTool<typeof CreateSubTaskArgsSchema> 
         if (toolcall.status === 'success' && toolcall.result) {
             try {
                 const parsed = JSON.parse(toolcall.result);
-                if (parsed.success !== undefined) {
-                    const icon = parsed.success
-                        ? chalk.greenBright('✔')
-                        : parsed.status === 'ask'
-                          ? chalk.yellowBright('❓')
-                          : chalk.redBright('✘');
-                    const label = parsed.success ? '成功' : parsed.status === 'ask' ? '询问' : '失败';
-                    body.push(`${icon} ${label}`);
-                    if (parsed.result) {
-                        body.push(chalk.dim('  结果: ') + truncText(parsed.result, width - 14));
+                if (parsed.result) {
+                    body.push(chalk.dim('─'.repeat(Math.min(40, Math.max(4, width - 8)))));
+                    const resultLines = String(parsed.result).split('\n');
+                    const MAX_RESULT_LINES = 10;
+                    if (resultLines.length > MAX_RESULT_LINES) {
+                        body.push(chalk.dim.italic(`  … 共 ${resultLines.length} 行，显示最后 ${MAX_RESULT_LINES} 行`));
                     }
-                } else if (parsed.subtask_id) {
-                    body.push(chalk.blueBright(`⏳ 异步子任务已创建: ${parsed.subtask_id.slice(0, 8)}...`));
+                    const displayLines = resultLines.slice(-MAX_RESULT_LINES);
+                    for (const line of displayLines) {
+                        body.push('  ' + chalk.dim(truncText(line, width - 10)));
+                    }
+                } else if (parsed.subtask_id && !parsed.success) {
+                    const idMaxLen = Math.max(8, width - 22);
+                    const idDisplay =
+                        parsed.subtask_id.length > idMaxLen
+                            ? parsed.subtask_id.slice(0, idMaxLen) + '…'
+                            : parsed.subtask_id;
+                    body.push(chalk.blueBright(`⏳ 异步子任务已创建: ${idDisplay}`));
                 }
             } catch {
-                body.push(chalk.greenBright('  ✔ 子任务已完成'));
+                /* ignore parse error */
             }
         } else if (toolcall.status === 'error' && toolcall.result) {
             body.push(chalk.redBright('  ' + truncText(String(toolcall.result), width - 10)));
@@ -510,7 +562,7 @@ export class CreateSubTaskTool extends BaseTool<typeof CreateSubTaskArgsSchema> 
 
         return new Card({
             icon: '📋',
-            title: '创建子任务',
+            title: cardTitle,
             status: statusDisplay(toolcall.status),
             body
         }).render(width);
@@ -558,6 +610,9 @@ export class CreateSubTaskTool extends BaseTool<typeof CreateSubTaskArgsSchema> 
 
         const toolName = t('tools.createSubTask.name');
         const objective = args?.objective || '';
+        const agentTag = args?.agentName
+            ? `<span class="text-[10px] font-medium px-1.5 py-0.5 rounded bg-purple-50 text-purple-500">${escapeHtml(args.agentName)}</span>`
+            : '';
 
         let bodyContent = '';
         if (isRunning) {
@@ -582,7 +637,9 @@ export class CreateSubTaskTool extends BaseTool<typeof CreateSubTaskArgsSchema> 
                     const renderedResult = await marked.parse(resultText);
                     bodyContent = `<div class="px-3.5 py-2.5 text-xs ${color} leading-relaxed markdown-body max-h-[200px] overflow-y-auto">${renderedResult}</div>`;
                 }
-            } catch {}
+            } catch {
+                /* ignore parse errors in render */
+            }
         } else if (isError && toolcall.result) {
             bodyContent = `<div class="px-3.5 py-2.5 text-[12px] text-red-600">${escapeHtml(String(toolcall.result).slice(0, 200))}</div>`;
         }
@@ -595,6 +652,7 @@ export class CreateSubTaskTool extends BaseTool<typeof CreateSubTaskArgsSchema> 
                 </span>
                 <span class="text-[12px] text-gray-500 shrink-0">${escapeHtml(toolName)}</span>
                 <span class="text-[12px] text-gray-600 truncate flex-1">${escapeHtml(title)}</span>
+                ${agentTag}
                 ${asyncTag}
                 ${statusBadge}
                 <svg class="w-3 h-3 text-gray-400 shrink-0 transition-transform duration-200" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
@@ -618,7 +676,8 @@ export class CreateSubTaskTool extends BaseTool<typeof CreateSubTaskArgsSchema> 
             title: args.title,
             objective: args.objective,
             criteria: args.criteria,
-            isAsync: args.isAsync
+            isAsync: args.isAsync,
+            agentName: args.agentName
         };
 
         if (config.isAsync) {
@@ -639,7 +698,7 @@ export class CreateSubTaskTool extends BaseTool<typeof CreateSubTaskArgsSchema> 
                     taskState: asyncSubTaskState
                 });
                 promise
-                    .then((result) => {
+                    .then((_result) => {
                         pendingSubTasks.delete(asyncSubTaskState!.task_id);
                     })
                     .catch(() => {
@@ -725,11 +784,9 @@ export class WaitSubTaskTool extends BaseTool<typeof WaitSubTaskArgsSchema> {
     }
 
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
-        const args = toolcall.args_object as z.output<typeof WaitSubTaskArgsSchema> | undefined;
         const body: string[] = [];
-        const title = WaitSubTaskTool.getSubTaskTitle(toolcall);
-
-        body.push(chalk.dim('标题: ') + chalk.cyan(truncText(title, width - 12)));
+        const subTitle = WaitSubTaskTool.getSubTaskTitle(toolcall);
+        const cardTitle = `等待子任务 (${truncText(subTitle, Math.max(12, width - 24))})`;
 
         if (toolcall.status === 'running') {
             body.push(...CreateSubTaskTool.renderProgressCli(WaitSubTaskTool.getProgress(toolcall), width));
@@ -738,18 +795,20 @@ export class WaitSubTaskTool extends BaseTool<typeof WaitSubTaskArgsSchema> {
         if (toolcall.status === 'success' && toolcall.result) {
             try {
                 const parsed = JSON.parse(toolcall.result);
-                const icon = parsed.success
-                    ? chalk.greenBright('✔')
-                    : parsed.status === 'ask'
-                      ? chalk.yellowBright('❓')
-                      : chalk.redBright('✘');
-                const label = parsed.success ? '成功' : parsed.status === 'ask' ? '询问' : '失败';
-                body.push(`${icon} ${label}`);
                 if (parsed.result) {
-                    body.push(chalk.dim('  结果: ') + truncText(parsed.result, width - 14));
+                    body.push(chalk.dim('─'.repeat(Math.min(40, Math.max(4, width - 8)))));
+                    const resultLines = String(parsed.result).split('\n');
+                    const MAX_RESULT_LINES = 10;
+                    if (resultLines.length > MAX_RESULT_LINES) {
+                        body.push(chalk.dim.italic(`  … 共 ${resultLines.length} 行，显示最后 ${MAX_RESULT_LINES} 行`));
+                    }
+                    const displayLines = resultLines.slice(-MAX_RESULT_LINES);
+                    for (const line of displayLines) {
+                        body.push('  ' + chalk.dim(truncText(line, width - 10)));
+                    }
                 }
             } catch {
-                body.push(chalk.greenBright('  ✔ 子任务已完成'));
+                /* ignore parse error */
             }
         } else if (toolcall.status === 'error' && toolcall.result) {
             body.push(chalk.redBright('  ' + truncText(String(toolcall.result), width - 10)));
@@ -757,7 +816,7 @@ export class WaitSubTaskTool extends BaseTool<typeof WaitSubTaskArgsSchema> {
 
         return new Card({
             icon: '⏳',
-            title: '等待子任务',
+            title: cardTitle,
             status: statusDisplay(toolcall.status),
             body
         }).render(width);
@@ -813,7 +872,9 @@ export class WaitSubTaskTool extends BaseTool<typeof WaitSubTaskArgsSchema> {
                     const renderedResult = await marked.parse(resultText);
                     bodyContent = `<div class="px-3.5 py-2.5 text-xs ${color} leading-relaxed markdown-body max-h-[240px] overflow-y-auto">${renderedResult}</div>`;
                 }
-            } catch {}
+            } catch {
+                /* ignore parse errors in render */
+            }
         } else if (isError && toolcall.result) {
             bodyContent = `<div class="px-3.5 py-2.5 text-[12px] text-red-600">${escapeHtml(String(toolcall.result).slice(0, 200))}</div>`;
         }

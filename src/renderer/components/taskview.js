@@ -1,3 +1,4 @@
+/* eslint-disable no-console */
 /**
  * Copyright (c) 2026 The OpenDesk Team
  * OpenDesk is licensed under Mulan PSL v2.
@@ -109,21 +110,41 @@ class TaskView extends HTMLElement {
                 hasTextPart = true;
             }
         }
+        const timeHtml = user_message.timestamp
+            ? `<div class="text-right text-[10px] text-gray-400 mt-0.5 mr-1">${TaskView.formatRelativeTime(user_message.timestamp)}</div>`
+            : '';
         if (hasTextPart) {
             return `
-            <div class="flex items-start flex-row-reverse">
+            <div class="flex flex-col items-end">
                 <div class="bg-white text-gray-900 rounded-lg px-3 py-1.5 max-w-3xl border border-gray-200">
                     ${content}
                 </div>
+                ${timeHtml}
             </div>
             `;
         } else {
             return `
-            <div class="flex items-start flex-row-reverse">
+            <div class="flex flex-col items-end">
                 ${content}
+                ${timeHtml}
             </div>
             `;
         }
+    }
+
+    static formatRelativeTime(timestamp) {
+        const now = Date.now();
+        const diff = now - timestamp;
+        const minutes = Math.floor(diff / 60000);
+        const hours = Math.floor(diff / 3600000);
+
+        if (minutes < 1) return '刚刚';
+        if (minutes < 60) return `${minutes} 分钟前`;
+        if (hours < 24) return `${hours} 小时前`;
+
+        const d = new Date(timestamp);
+        const pad = (n) => String(n).padStart(2, '0');
+        return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
     }
 
     static USER_PART_CLASS_MAP = {
@@ -438,7 +459,7 @@ class TaskView extends HTMLElement {
         TaskView.rightSidebarExpanded = false;
     }
 
-    _autoSwitchTabIfEmpty(sidebar) {
+    _autoSwitchTabIfEmpty(_sidebar) {
         // Tab visibility is now managed dynamically inside TaskArtifacts
     }
 
@@ -735,7 +756,9 @@ class TaskView extends HTMLElement {
                 try {
                     const p = await window.workspaceAPI.getEffectiveWorkspace();
                     this._toolbar.setToolbarSubtitle(p, this._toolbar._subtitleClickHandler);
-                } catch (_) {}
+                } catch {
+                    /* ignore */
+                }
             }
         };
         document.addEventListener('workspace-changed', this._workspaceChangedHandler);
@@ -758,6 +781,7 @@ class TaskView extends HTMLElement {
                 if (progress.type === 'user') {
                     if (progress.internal) return;
                     const userMsg = {
+                        timestamp: progress.timestamp || Date.now(),
                         content: [
                             {
                                 type: progress.last_part.type,
@@ -929,7 +953,9 @@ class TaskView extends HTMLElement {
             for (const unsub of this._browserEventUnsubscribes) {
                 try {
                     unsub();
-                } catch (_) {}
+                } catch {
+                    /* ignore */
+                }
             }
             this._browserEventUnsubscribes = null;
         }
@@ -978,6 +1004,9 @@ class TaskView extends HTMLElement {
 
                     <!-- 用户提问面板 -->
                     <ask-user-prompt id="task-${this.task_id}-ask-user" data-task-id="${this.task_id}" class="block px-4"></ask-user-prompt>
+
+                    <!-- 计划审批面板 -->
+                    <exit-plan-mode-prompt id="task-${this.task_id}-exit-plan" class="block px-4"></exit-plan-mode-prompt>
 
                     <!-- 输入区域 -->
                     <div class="px-3 pb-3 pt-1">
@@ -1087,7 +1116,7 @@ class TaskView extends HTMLElement {
                 try {
                     const isQP = await window.quickpassAPI.isQuickPass(message);
                     if (isQP) {
-                        const { name, hasApplications } = await window.quickpassAPI.importQuickPass(message);
+                        const { name: _name, hasApplications } = await window.quickpassAPI.importQuickPass(message);
                         const scope = hasApplications ? '全部设置（含应用配置）' : '基础设置（不含应用配置）';
                         await window.notificationAPI.sendNotification(
                             'info',
@@ -1251,18 +1280,23 @@ class EmbeddedTaskView extends HTMLElement {
                 hasTextPart = true;
             }
         }
+        const timeHtml = user_message.timestamp
+            ? `<div class="text-right text-[10px] text-gray-400 mt-0.5 mr-1">${TaskView.formatRelativeTime(user_message.timestamp)}</div>`
+            : '';
         if (hasTextPart) {
             return `
-            <div class="flex items-start flex-row-reverse">
+            <div class="flex flex-col items-end">
                 <div class="bg-white text-gray-900 rounded-lg px-3 py-1 max-w-3xl border border-gray-200">
                     ${content}
                 </div>
+                ${timeHtml}
             </div>
             `;
         } else {
             return `
-            <div class="flex items-start flex-row-reverse">
+            <div class="flex flex-col items-end">
                 ${content}
+                ${timeHtml}
             </div>
             `;
         }
@@ -1389,6 +1423,7 @@ class EmbeddedTaskView extends HTMLElement {
                 if (progress.type === 'user') {
                     if (progress.internal) return;
                     const userMsg = {
+                        timestamp: progress.timestamp || Date.now(),
                         content: [
                             {
                                 type: progress.last_part.type,

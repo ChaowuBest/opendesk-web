@@ -12,8 +12,8 @@
 /**
  * Electron renderer 侧的权限确认浮窗组件。
  *
- * 浮窗通过 IPC 从主进程接收权限请求，展示在 task-view 的底部（agent-input 上方），
- * 样式参考 macOS 原生弹窗风格。用户做出选择后通过 IPC 回传结果。
+ * 浮窗通过 IPC 从主进程接收权限请求，仅在本组件所属的 task-view（通过 data-task-id 匹配）中显示。
+ * 用户做出选择后通过 IPC 回传结果。
  */
 
 interface PermissionRequestData {
@@ -21,13 +21,17 @@ interface PermissionRequestData {
     toolName: string;
     prefixOptions: { label: string; pattern: string }[];
     timeoutSec?: number;
+    taskId?: string;
+    taskName?: string | null;
 }
 
 declare global {
     interface Window {
         permissionAPI?: {
             onPermissionRequest: (callback: (requestId: string, data: PermissionRequestData) => void) => void;
+            offPermissionRequest: (callback: (requestId: string, data: PermissionRequestData) => void) => void;
             onPermissionDismiss: (callback: (requestId: string) => void) => void;
+            offPermissionDismiss: (callback: (requestId: string) => void) => void;
             respondPermission: (requestId: string, response: Record<string, unknown>) => void;
         };
     }
@@ -58,7 +62,7 @@ function getShortName(resourcePath: string): string {
         const pathParts = url.pathname.split('/').filter(Boolean);
         return pathParts.length > 0 ? pathParts[pathParts.length - 1] : url.hostname;
     } catch {
-        // 非 URL，按路径处理
+        // not a URL
     }
     const parts = p.split('/').filter(Boolean);
     return parts.length > 0 ? parts[parts.length - 1] : p;
@@ -76,18 +80,30 @@ class PermissionPrompt extends HTMLElement {
     private _data: PermissionRequestData | null = null;
     private _countdownTimer: ReturnType<typeof setInterval> | null = null;
     private _remaining = 0;
+    private _onRequest = (requestId: string, data: PermissionRequestData) => {
+        if (data.taskId && data.taskId !== this._ownTaskId) return;
+        this.showPrompt(requestId, data);
+    };
+    private _onDismiss = (requestId: string) => {
+        if (this._requestId === requestId) {
+            this.stopCountdown();
+            this.hidePrompt();
+        }
+    };
+
+    private get _ownTaskId(): string {
+        return this.getAttribute('data-task-id') || '';
+    }
 
     connectedCallback(): void {
         this.renderContent();
-        window.permissionAPI?.onPermissionRequest((requestId, data) => {
-            this.showPrompt(requestId, data);
-        });
-        window.permissionAPI?.onPermissionDismiss((requestId) => {
-            if (this._requestId === requestId) {
-                this.stopCountdown();
-                this.hidePrompt();
-            }
-        });
+        window.permissionAPI?.onPermissionRequest(this._onRequest);
+        window.permissionAPI?.onPermissionDismiss(this._onDismiss);
+    }
+
+    disconnectedCallback(): void {
+        window.permissionAPI?.offPermissionRequest(this._onRequest);
+        window.permissionAPI?.offPermissionDismiss(this._onDismiss);
     }
 
     private showPrompt(requestId: string, data: PermissionRequestData): void {
@@ -98,6 +114,8 @@ class PermissionPrompt extends HTMLElement {
         this._remaining = data.timeoutSec ?? 300;
         this.renderContent();
         this.startCountdown();
+
+        this._notifyWaitingState(true);
 
         requestAnimationFrame(() => {
             const panel = this.querySelector<HTMLElement>('#permission-prompt-panel');
@@ -115,12 +133,22 @@ class PermissionPrompt extends HTMLElement {
             panel.classList.add('translate-y-4', 'opacity-0');
             panel.classList.remove('translate-y-0', 'opacity-100');
         }
+
+        this._notifyWaitingState(false);
+
         setTimeout(() => {
             this._visible = false;
             this._requestId = null;
             this._data = null;
             this.renderContent();
         }, 200);
+    }
+
+    private _notifyWaitingState(waiting: boolean): void {
+        const taskId = this._ownTaskId;
+        if (taskId) {
+            document.dispatchEvent(new CustomEvent('task-waiting-state', { detail: { taskId, waiting } }));
+        }
     }
 
     private startCountdown(): void {
@@ -176,85 +204,82 @@ class PermissionPrompt extends HTMLElement {
             <button
                 data-action="prefix"
                 data-pattern="${escapeHtml(opt.pattern)}"
-                class="permission-btn w-full text-left px-3 py-2 rounded-lg text-[13px] text-blue-700 bg-blue-50/60 hover:bg-blue-100/80 transition-all duration-150 active:scale-[0.98]"
-            >
-                <span class="font-medium">始终允许${actionLabel}</span>
-                <span class="text-blue-500 font-mono text-[11px] ml-1">${escapeHtml(opt.label)}</span>
+                class="permission-btn inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium
+                       bg-blue-50 border border-blue-200 text-blue-700
+                       hover:bg-blue-100 hover:border-blue-300 transition-colors duration-150 cursor-pointer">
+                <span>始终允许${actionLabel}</span>
+                <span class="text-blue-500 font-mono text-[11px]">${escapeHtml(opt.label)}</span>
             </button>`
             )
             .join('');
 
         this.innerHTML = `
         <div id="permission-prompt-panel"
-             class="transform translate-y-4 opacity-0 transition-all duration-200 ease-out">
-            <div class="rounded-2xl bg-white/80 backdrop-blur-xl shadow-[0_8px_40px_-8px_rgba(0,0,0,0.12)] ring-1 ring-black/[0.06] overflow-hidden">
-                <!-- 标题栏 -->
-                <div class="flex items-center gap-3 px-4 pt-3.5 pb-2">
-                    <div class="flex-shrink-0 w-8 h-8 rounded-xl bg-amber-50 border border-amber-200/60 flex items-center justify-center text-amber-600">
-                        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-                        </svg>
-                    </div>
-                    <div class="flex-1 min-w-0">
-                        <div class="text-[13px] text-gray-600">
-                            <span class="font-semibold text-gray-900">${escapeHtml(toolName)}</span>
-                            <span class="mx-1">请求${actionLabel}${typeLabel}</span>
-                        </div>
-                    </div>
-                    <div class="flex-shrink-0">
-                        <span class="text-[11px] font-mono text-gray-500 bg-gray-100/80 rounded-md px-2 py-0.5 max-w-[280px] truncate inline-block" title="${escapeHtml(fullPath)}">${escapeHtml(fullPath)}</span>
-                    </div>
-                </div>
+             class="mb-2 rounded-xl border border-amber-200 bg-gradient-to-b from-amber-50/80 to-white shadow-sm
+                    transition-all duration-200 translate-y-4 opacity-0">
+            <!-- 标题栏 -->
+            <div class="flex items-center gap-2 px-4 py-2.5 border-b border-amber-100">
+                <span class="inline-flex items-center justify-center w-6 h-6 rounded-lg bg-amber-100 text-amber-600">
+                    <i class="fa-solid fa-shield-halved text-[12px]"></i>
+                </span>
+                <span class="text-[13px] font-medium text-gray-700">
+                    <span class="font-semibold">${escapeHtml(toolName)}</span>
+                    <span class="text-gray-500 ml-1">请求${actionLabel}${typeLabel}</span>
+                </span>
+            </div>
 
-                <!-- 分割线 -->
-                <div class="mx-4 border-t border-gray-200/60"></div>
+            <!-- 资源路径 -->
+            <div class="px-4 py-2 text-[11px] text-gray-400 font-mono flex items-center gap-1.5 border-b border-gray-100">
+                <i class="fa-solid fa-file-lines text-[10px] text-gray-300"></i>
+                <span class="truncate" title="${escapeHtml(fullPath)}">${escapeHtml(fullPath)}</span>
+            </div>
 
-                <!-- 操作按钮 -->
-                <div class="px-4 py-3 flex flex-col gap-1.5">
-                    <!-- 主按钮行：允许(左) / 始终允许(中) / 拒绝(右) -->
-                    <div class="flex gap-2">
-                        <button
-                            data-action="allow"
-                            class="permission-btn flex-1 px-3 py-2 rounded-lg text-[13px] font-medium text-white bg-blue-500 hover:bg-blue-600 shadow-sm transition-all duration-150 active:scale-[0.98] truncate"
-                        >
-                            允许${actionLabel} ${escapeHtml(shortName)}
-                        </button>
-                        ${
-                            firstPrefix
-                                ? `
-                        <button
-                            data-action="prefix"
-                            data-pattern="${escapeHtml(firstPrefix.pattern)}"
-                            class="permission-btn flex-1 px-3 py-2 rounded-lg text-[13px] font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200/50 transition-all duration-150 active:scale-[0.98] truncate"
-                        >
-                            始终允许${actionLabel} ${escapeHtml(shortName)}
-                        </button>`
-                                : ''
-                        }
-                        <button
-                            data-action="deny"
-                            class="permission-btn flex-shrink-0 px-3 py-2 rounded-lg text-[13px] font-medium text-red-600 bg-red-50 hover:bg-red-100 border border-red-200/60 transition-all duration-150 active:scale-[0.98] flex items-center gap-1.5"
-                        >
-                            <svg class="w-3.5 h-3.5 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                                <circle cx="12" cy="12" r="10"/>
-                                <line x1="15" y1="9" x2="9" y2="15"/>
-                                <line x1="9" y1="9" x2="15" y2="15"/>
-                            </svg>
-                            <span>拒绝</span>
-                        </button>
-                    </div>
-                    ${restPrefixButtonsHtml}
-                    <button
-                        data-action="allow_type"
-                        class="permission-btn w-full px-3 py-2 rounded-lg text-[13px] font-medium text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200/60 transition-all duration-150 active:scale-[0.98]"
-                    >
-                        始终允许所有${actionLabel}${typeLabel}操作
-                    </button>
-                    <!-- 倒计时提示 -->
-                    <div class="text-center">
-                        <span id="permission-countdown" class="text-[11px] text-gray-400">${this._remaining}s 后自动拒绝</span>
-                    </div>
-                </div>
+            <!-- 操作按钮 -->
+            <div class="px-4 py-3 flex flex-wrap gap-2">
+                <button
+                    data-action="allow"
+                    class="permission-btn inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium
+                           bg-emerald-50 border border-emerald-200 text-emerald-700
+                           hover:bg-emerald-100 hover:border-emerald-300 transition-colors duration-150 cursor-pointer">
+                    <i class="fa-solid fa-check text-[10px]"></i>
+                    允许${actionLabel} ${escapeHtml(shortName)}
+                </button>
+                ${
+                    firstPrefix
+                        ? `
+                <button
+                    data-action="prefix"
+                    data-pattern="${escapeHtml(firstPrefix.pattern)}"
+                    class="permission-btn inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium
+                           bg-blue-50 border border-blue-200 text-blue-700
+                           hover:bg-blue-100 hover:border-blue-300 transition-colors duration-150 cursor-pointer">
+                    <i class="fa-solid fa-folder-open text-[10px]"></i>
+                    始终允许${actionLabel} ${escapeHtml(shortName)}
+                </button>`
+                        : ''
+                }
+                <button
+                    data-action="deny"
+                    class="permission-btn inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium
+                           bg-red-50 border border-red-200 text-red-600
+                           hover:bg-red-100 hover:border-red-300 transition-colors duration-150 cursor-pointer">
+                    <i class="fa-solid fa-xmark text-[10px]"></i>
+                    拒绝
+                </button>
+                ${restPrefixButtonsHtml}
+                <button
+                    data-action="allow_type"
+                    class="permission-btn inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium
+                           bg-white border border-gray-200 text-gray-600
+                           hover:bg-gray-50 hover:border-gray-300 transition-colors duration-150 cursor-pointer">
+                    <i class="fa-solid fa-unlock text-[10px]"></i>
+                    始终允许所有${actionLabel}${typeLabel}操作
+                </button>
+            </div>
+
+            <!-- 倒计时提示 -->
+            <div class="px-4 pb-3">
+                <span id="permission-countdown" class="text-[11px] text-gray-400">${this._remaining}s 后自动拒绝</span>
             </div>
         </div>
         `;
