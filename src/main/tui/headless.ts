@@ -25,7 +25,7 @@ import {
     type TaskUpdateAssistantChunk
 } from '../aikernel/states/tasks.js';
 import { GlobalState } from '../aikernel/states/global.js';
-import { MainAgentDecl } from '../aikernel/agents/mainagent/agent.js';
+import { MainAgentDecl } from '../aikernel/agents/main/agent.js';
 import type { ModeDecl } from '../aikernel/agents/common.js';
 import { ApplicationRegistry } from '../applications/registry.js';
 import { logger } from '../utils/logger.js';
@@ -101,7 +101,7 @@ export class HeadlessRunner {
     constructor(args: CommandLineArgs) {
         this.args = args;
         this.taskManagerState = GlobalState.getInstance().taskManagerState;
-        this.agentDecl = new MainAgentDecl({ workspace: args.workspace });
+        this.agentDecl = new MainAgentDecl();
         MemoryRegistry.getInstance(args.workspace);
 
         const modes = this.agentDecl.supportedModes();
@@ -131,8 +131,6 @@ export class HeadlessRunner {
         );
 
         const task = this.taskManagerState.createTask(this.args.model);
-        const systemPrompt = await this.agentDecl.createSystemPrompt(this.activeMode);
-        await task.setSystemPrompt(systemPrompt);
 
         if (this.args.profile) {
             task.profiler = new TaskProfiler(task.task_id);
@@ -146,6 +144,9 @@ export class HeadlessRunner {
         } catch (err) {
             logger.warn(`Failed to init headless task harness: ${err}`);
         }
+
+        const systemPrompt = await this.agentDecl.createSystemPrompt(this.activeMode, task);
+        await task.setSystemPrompt(systemPrompt);
 
         // 打印用户输入
         this.printUserMessage(command);

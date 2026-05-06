@@ -15,7 +15,7 @@ const LAYER_DEPS = {
     utils: [],
     aikernel: ['utils', 'tui'],
     services: ['utils', 'aikernel'],
-    applications: ['aikernel', 'services', 'tui', 'utils']
+    applications: ['aikernel', 'services', 'tui', 'utils', 'plugins']
 };
 
 const colors = {

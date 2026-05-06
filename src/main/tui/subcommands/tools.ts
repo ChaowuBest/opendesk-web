@@ -10,8 +10,6 @@
  */
 
 import type { Command } from 'commander';
-import { setPlatform } from '../../../platforms/base.js';
-import { CliPlatform } from '../../../platforms/cli.js';
 import { useConsoleTransport } from '../../utils/logger.js';
 import { initializeRegistry, ApplicationRegistry } from '../../applications/registry.js';
 import { GlobalState } from '../../aikernel/states/global.js';
@@ -24,9 +22,9 @@ import process from 'process';
 
 /**
  * 收集 mainagent 可使用的全部工具集（与 TaskState.buildToolsets 保持一致）。
+ * 注意：setPlatform 已在 cli.ts 入口处统一调用，此处无需重复设置。
  */
 async function collectAllToolsets(): Promise<BaseToolset[]> {
-    setPlatform(new CliPlatform());
     GlobalState.initialize();
     initializeRegistry();
 

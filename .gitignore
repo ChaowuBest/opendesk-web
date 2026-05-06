@@ -4,6 +4,7 @@
 .opendesk
 .claude
 .cursor
+.plan
 
 **/.DS_Store
 package-lock.json

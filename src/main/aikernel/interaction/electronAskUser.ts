@@ -18,6 +18,7 @@
 
 import type { AskUserRequest, AskUserResponse, AskUserProvider } from './tools.js';
 import { logger } from '../../utils/logger.js';
+import { electron } from '../../../utils/electron.js';
 
 export class ElectronAskUserProvider implements AskUserProvider {
     isPrompting?(): boolean {
@@ -26,8 +27,7 @@ export class ElectronAskUserProvider implements AskUserProvider {
 
     async prompt(request: AskUserRequest): Promise<AskUserResponse> {
         try {
-            const { BrowserWindow, ipcMain, Notification } = await import('electron');
-
+            const { BrowserWindow, ipcMain, Notification } = electron();
             const win = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed()) || null;
             if (!win) {
                 logger.warn('ElectronAskUserProvider: no window available, returning cancelled');

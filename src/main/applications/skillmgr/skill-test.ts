@@ -30,6 +30,7 @@ import os from 'os';
 import { spawn } from 'child_process';
 import { parse as parseYaml } from 'yaml';
 import { logger } from '../../utils/logger.js';
+import { findExecutableInPath } from '../../utils/shellExec.js';
 
 /** Windows: 获取合并后的 PATH（用户 + 系统），供测试子进程使用，使 python/pip 与终端一致 */
 function getWindowsPathForTests(): Promise<string | null> {
@@ -302,15 +303,8 @@ function checkOS(required?: string[]): EnvironmentCheck {
     };
 }
 
-/** Windows 用 where，其余平台（含 openharmony）用 which；鸿蒙 HiShell 为 Unix 兼容 */
 async function checkTool(name: string): Promise<boolean> {
-    return new Promise((resolve) => {
-        const cmd = process.platform === 'win32' ? 'where' : 'which';
-        const child = spawn(cmd, [name], { shell: true });
-
-        child.on('error', () => resolve(false));
-        child.on('close', (code) => resolve(code === 0));
-    });
+    return findExecutableInPath(name) !== null;
 }
 
 async function checkTools(required?: string[]): Promise<EnvironmentCheck[]> {

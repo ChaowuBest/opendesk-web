@@ -26,7 +26,7 @@ import {
     uninstallPlugin,
     setPluginEnabled,
     invalidatePluginRequireCache
-} from '../../aikernel/plugins/index.js';
+} from '../../plugins/index.js';
 import type {
     PluginEntry,
     PluginLoadError,
@@ -36,12 +36,8 @@ import type {
     InboundChannelMessage,
     ChannelAccountSnapshot,
     Participant
-} from '../../aikernel/plugins/types.js';
-import {
-    registerChannelDispatch,
-    unregisterChannelDispatch,
-    setPairingProvider
-} from '../../aikernel/plugins/openclaw/api.js';
+} from '../../plugins/types.js';
+import { registerChannelDispatch, unregisterChannelDispatch, setPairingProvider } from '../../plugins/openclaw/api.js';
 import * as pairing from './pairing.js';
 import { ChannelMessageRouter, type ChannelReply } from './router.js';
 import { getTempDirectory } from '../filemgr/tools.js';
@@ -693,9 +689,16 @@ export class ChannelMgrApplication extends BaseApplication {
      * 优先使用 gateway.loginWithQrStart + loginWithQrWait（返回 QR URL，可在 UI 显示）。
      * 若无 gateway QR 方法：对 Feishu 注入设备授权流程；对其他插件调用 auth.login（QR 输出到控制台）。
      */
+    private findChannelPlugin(channelId: string): PluginEntry | undefined {
+        return (
+            this.plugins.find((p) => p.channelPlugin?.id === channelId) ||
+            this.plugins.find((p) => p.channelPlugin && (p.id === channelId || p.installRecord?.id === channelId))
+        );
+    }
+
     async loginChannel(channelId: string, accountId = 'default', result?: ToolResult): Promise<LoginResult> {
         // 先在已加载的插件中查找
-        let entry = this.plugins.find((p) => p.channelPlugin?.id === channelId);
+        let entry = this.findChannelPlugin(channelId);
 
         // 如果未找到，尝试（重新）加载插件——可能是安装后未重启，或首次调用
         if (!entry?.channelPlugin) {
@@ -706,11 +709,15 @@ export class ChannelMgrApplication extends BaseApplication {
             this.plugins = loadResult.entries;
             this.pluginLoadErrors = loadResult.errors;
             logger.info(`[loginChannel] reloaded ${this.plugins.length} plugins`);
-            entry = this.plugins.find((p) => p.channelPlugin?.id === channelId);
+            entry = this.findChannelPlugin(channelId);
         }
 
         if (!entry?.channelPlugin) {
-            return { phase: 'error', error: `未找到渠道: ${channelId}` };
+            const loadedIds = this.plugins
+                .filter((p) => p.channelPlugin)
+                .map((p) => `${p.id}(channel=${p.channelPlugin!.id})`)
+                .join(', ');
+            return { phase: 'error', error: `未找到渠道: ${channelId}。已加载的渠道: [${loadedIds}]` };
         }
 
         const cp = entry.channelPlugin;

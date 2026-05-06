@@ -15,7 +15,7 @@ export type { TodoStatus, TaskTodo };
 // 优先级类型
 export type TodoPriority = 'low' | 'medium' | 'high';
 
-import type { Participant } from '../../aikernel/plugins/types.js';
+import type { Participant } from '../../plugins/types.js';
 
 // ========== 触发器类型定义 ==========
 

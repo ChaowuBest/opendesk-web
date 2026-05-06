@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { setPlatform } from '../platforms/base';
+import { setPlatform, getPlatform } from '../platforms/base.js';
 import { CliPlatform } from '../platforms/cli.js';
 import { isMainThread } from 'worker_threads';
 import { useCliTransport, useConsoleTransport, useDumpLogTransport, interceptConsole } from './utils/logger.js';
@@ -21,10 +21,11 @@ import { OpenDeskTUI, CommandLineArgs } from './tui/entry.js';
 import { HeadlessRunner } from './tui/headless.js';
 import { Setting, getDefaultAppDirectory, setCustomAppDirectory } from './utils/setting';
 import { program as prog, Option } from 'commander';
-import { listInstalledPlugins, loadPlugins } from './aikernel/plugins/index.js';
+import { listInstalledPlugins, loadPlugins } from './plugins/index.js';
 import { ChannelMgrApplication } from './applications/channelmgr/app.js';
 import { ChannelMessageRouter } from './applications/channelmgr/router.js';
-import { MainAgentDecl } from './aikernel/agents/mainagent/agent.js';
+import { MainAgentDecl } from './aikernel/agents/main/agent.js';
+import { AgentRegistry } from './aikernel/agents/registry.js';
 import { NotificationManager } from './utils/notificationmgr.js';
 import { registerPluginsCommand } from './tui/subcommands/plugins.js';
 import { registerToolsCommand } from './tui/subcommands/tools.js';
@@ -39,6 +40,8 @@ import path from 'path';
 import fs from 'fs';
 
 function parseCommandLineArgs() {
+    setPlatform(new CliPlatform());
+
     prog.name('opendesk');
     prog.option('--workspace <path>', 'the workspace to open', (v) => v, '.');
     prog.option('--model <alias>', 'model alias to use', (v) => v);
@@ -282,7 +285,7 @@ function parseCommandLineArgs() {
 }
 
 async function main(args: CommandLineArgs) {
-    setPlatform(new CliPlatform());
+    (getPlatform() as CliPlatform).setWorkspace(args.workspace);
     useCliTransport();
     if (args.dumpLog) {
         useDumpLogTransport(path.resolve(args.dumpLog));
@@ -316,6 +319,7 @@ async function main(args: CommandLineArgs) {
         return;
     } else if (args.headless && args.command) {
         GlobalState.initialize();
+        AgentRegistry.initBuiltinAgents();
 
         initializeRegistry();
         initializeRegistryWorker();
@@ -329,6 +333,7 @@ async function main(args: CommandLineArgs) {
         });
     } else {
         GlobalState.initialize();
+        AgentRegistry.initBuiltinAgents();
 
         // 在 TUI 接管 stdin 之前检测终端配色方案（OSC 11 查询需要直接读写 stdin/stdout）
         const { detectTerminalColorScheme } = await import('./tui/theme.js');
@@ -351,22 +356,33 @@ async function main(args: CommandLineArgs) {
         ApplicationRegistry.onReady(async () => {
             const channelMgrApp = ApplicationRegistry.getApplication('channelmgr') as ChannelMgrApplication | undefined;
             if (channelMgrApp) {
-                const agentDecl = new MainAgentDecl({ workspace: args.workspace });
-                const router = new ChannelMessageRouter(tui.taskManagerState, agentDecl, args.model);
+                const agentDecl = new MainAgentDecl();
+                const router = new ChannelMessageRouter(tui.taskManagerState, agentDecl, args.workspace, args.model);
+
+                const CHANNEL_NAMES: Record<string, string> = {
+                    feishu: '飞书',
+                    'openclaw-weixin': '微信',
+                    whatsapp: 'WhatsApp',
+                    zalouser: 'Zalo',
+                    telegram: 'Telegram',
+                    discord: 'Discord',
+                    slack: 'Slack',
+                    signal: 'Signal'
+                };
 
                 router.onTaskResolved = (task, message) => {
-                    const senderLabel = message.senderName || message.senderId;
-                    const channelLabel = message.channelId;
+                    const channelName = CHANNEL_NAMES[message.channelId] || message.channelId;
+                    const senderLabel = message.senderName || '新联系人';
                     const preview =
-                        (message.text || '').length > 40
-                            ? (message.text || '').slice(0, 37) + '...'
+                        (message.text || '').length > 60
+                            ? (message.text || '').slice(0, 57) + '...'
                             : message.text || '';
 
                     tui.switchToTask(task);
 
                     NotificationManager.getInstance().info(
-                        channelLabel,
-                        `来自 ${senderLabel} 的新消息`,
+                        channelName,
+                        `${senderLabel} 的${channelName}消息`,
                         preview || '(无文本内容)'
                     );
                 };

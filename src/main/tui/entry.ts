@@ -1,6 +1,5 @@
 import {
     TUI,
-    Box,
     Text,
     Key,
     matchesKey,
@@ -9,11 +8,10 @@ import {
     EditorKeybindingsManager,
     setEditorKeybindings
 } from '@mariozechner/pi-tui';
-// FULL_CLEAR removed: use tui.requestRender(true) instead to avoid blank-frame flicker
 import { OpenDeskBanner } from './banner';
 import { VerticalLayout } from './components/layout';
 import { OpenDeskTerminal } from './terminal';
-import { TaskView, AssistantMessageView } from './components/taskview';
+import { TaskView } from './components/taskview';
 import { TaskManagerState, TaskState, TaskUpdateChunk } from '../aikernel/states/tasks';
 import { GlobalState } from '../aikernel/states/global';
 import { AgentInputArea } from './components/input';
@@ -22,28 +20,22 @@ import { KeyboardShortcutManager } from './shortcuts';
 import { SlashCommandRegistry, registerAllCommands } from './commands/index.js';
 import { Setting, getShortcuts } from '../utils/setting.js';
 import { getReasoningEffortLabels } from '../../common/reasoning-effort.js';
-import { logger, setDebugMode, getDebugMode } from '../utils/logger.js';
+import { logger } from '../utils/logger.js';
 import { lookupKnownContextSize, fetchContextSizeFromAPI } from '../utils/model-context';
 import { LLM } from '../aikernel/llm.js';
-import { UpgradeOverlay } from './components/upgrade';
-import { AgentDecl, type ModeDecl } from '../aikernel/agent.js';
-import { MainAgentDecl } from '../aikernel/agents/mainagent/agent.js';
+import { AgentDecl, type ModeDecl } from '../aikernel/agents/common.js';
+import { MainAgentDecl } from '../aikernel/agents/main/agent.js';
 import { HelpOverlay } from './components/help';
-import { ConfirmOverlay, InfoOverlay, InfoPage } from './components/notice';
-import { DashboardOverlay } from './components/dashboard';
+import { InfoOverlay, InfoPage } from './components/notice';
 import { LogPanel, LogPanelMode } from './components/logpanel';
 import { TodoList } from './components/todolist';
 import { TaskSwitcher } from './components/taskswitcher';
-import { BookmarkList } from './components/bookmarklist';
 import { ConfigMainPage } from './components/config/configMain';
 import { getTaskTodosForDisplay } from '../aikernel/todos/task-todos';
 import { exportTaskToHtml } from '../utils/export';
 import { QuickPassHelper } from '../utils/quickpass';
-import { describeCron } from '../utils/cron';
 import { MemoryRegistry } from '../aikernel/memory/registry';
-import { MemoryListOverlay } from './components/memorylist';
-import { ChatContext, UserMessage, SystemMessage, AssistantMessage, type ChatMessage } from '../aikernel/messages';
-import { createMemoryToolset } from '../aikernel/memory/tools';
+import { UserMessage, AssistantMessage, type ChatMessage } from '../aikernel/messages';
 import { NotificationStore, NotificationCenterOverlay, ToastManager } from './components/notification';
 import { NotificationManager } from '../utils/notificationmgr.js';
 import { SkillMgrApplication } from '../applications/skillmgr/app.js';
@@ -51,35 +43,15 @@ import { DashboardBar } from './components/dashboard';
 import { HarnessContext } from '../aikernel/security/harness.js';
 import { TUIPermissionPromptProvider } from './components/permission.js';
 import { TUIAskUserProvider } from './components/askUser.js';
-import { createInteractionToolset } from '../aikernel/interaction/tools.js';
+import { TUIExitPlanModeProvider } from './components/exitPlanMode.js';
 import { TaskProfiler } from '../aikernel/profiler.js';
 import { t } from '../../locale/index.js';
+import { getPlatform } from '../../platforms/base.js';
+import { CliPlatform } from '../../platforms/cli.js';
 
-import format from 'string-template';
 import path from 'path';
 import fs from 'fs';
 import chalk from 'chalk';
-import { fileURLToPath } from 'url';
-import open from 'open';
-
-const TODO_HANDLER_TEMPLATE = `
-请执行以下全局待办事项：
-
-- 待办事项ID: {todoId}
-- 待办事项标题：{todoTitle}
-- 待办事项触发方式：{todoTrigger}
-
-待办事项内容
----
-
-{todoContent}
-
-注意事项
----
-1. 这条消息是由待办事项管理器自动创建的，你的回复应当专注于完成用户在待办事项中指定的任务;
-2. 待办事项的所有信息已经告诉你了，不需要尝试获取待办事项的更多信息，你也**不需要**将待办事项标记为已完成；
-3. 如果周期型待办事项无法成功完成，你应当检查过往的执行历史，如果失败次数过多，应当提醒用户取消待办事项；
-`;
 
 export interface CommandLineArgs {
     workspace: string;
@@ -121,6 +93,8 @@ export class OpenDeskTUI {
 
     /** 主任务专用的 askUser provider */
     private sharedAskUserProvider: TUIAskUserProvider;
+    /** 主任务专用的 exitPlanMode provider */
+    private sharedExitPlanModeProvider: TUIExitPlanModeProvider;
 
     /** 跟踪是否有 overlay 打开（使用 setter 以在关闭时自动处理积压弹窗） */
     private _hasOpenOverlay = false;
@@ -173,7 +147,7 @@ export class OpenDeskTUI {
 
     constructor(args: CommandLineArgs) {
         this.taskManagerState = GlobalState.getInstance().taskManagerState;
-        this.agentDecl = new MainAgentDecl({ workspace: args.workspace });
+        this.agentDecl = new MainAgentDecl();
 
         // 初始化默认 Mode（--allow-everything 等价于 --mode unlimited）
         {
@@ -204,6 +178,7 @@ export class OpenDeskTUI {
         this.dashboardBar = new DashboardBar(() => this.tui.requestRender());
         this.sharedPermissionPrompt = new TUIPermissionPromptProvider(this);
         this.sharedAskUserProvider = new TUIAskUserProvider(this);
+        this.sharedExitPlanModeProvider = new TUIExitPlanModeProvider(this);
         this.workspace = args.workspace;
         this.model = args.model;
         this.singleShot = !!args.command;
@@ -349,8 +324,15 @@ export class OpenDeskTUI {
             }
         }
 
-        // 设置触发器任务回调
-        this.setupTriggerTaskHandler();
+        // 将 TUI 的权限/交互提供者注入到 Platform，供 dispatchPromptToAgent 使用
+        {
+            const platform = getPlatform();
+            if (platform instanceof CliPlatform) {
+                platform.setPermissionPromptProvider(this.sharedPermissionPrompt);
+                platform.setAskUserProvider(this.sharedAskUserProvider);
+                platform.setExitPlanModeProvider(this.sharedExitPlanModeProvider);
+            }
+        }
 
         // ── 全局通知系统初始化 ──
         this.toastManager = new ToastManager(this);
@@ -362,101 +344,6 @@ export class OpenDeskTUI {
 
         // 初始化模式显示
         this.syncModeDisplay();
-    }
-
-    /**
-     * 设置全局待办触发器的任务创建回调
-     */
-    private setupTriggerTaskHandler(): void {
-        ApplicationRegistry.onTriggerTask = async (
-            todoId: string,
-            todoTitle: string,
-            todoContent: string,
-            trigger: any,
-            deliver?: any
-        ) => {
-            try {
-                const task = this.taskManagerState.createTask(this.model);
-                const systemPrompt = await this.agentDecl.createSystemPrompt(this._activeMode);
-                task.setSystemPrompt(systemPrompt);
-                await this.initTaskHarness(task);
-
-                // 如果待办有 deliver 配置，设置任务的 origin，使其结果投递到对应 channel
-                if (deliver) {
-                    task.origin = deliver;
-                    logger.info(
-                        `触发器 deliver 已设置: channel=${deliver.channel}, accountId=${deliver.accountId}, recipientId=${deliver.recipientId}`
-                    );
-                }
-
-                let triggerInfo = '';
-                if (trigger?.type === 'event') {
-                    triggerInfo = `[event] 事件驱动任务，由事件 ${trigger.bundleName}:${trigger.eventName} 自动触发 `;
-                } else if (trigger?.type === 'scheduled') {
-                    triggerInfo = `[scheduled] 定时任务，仅执行一次 `;
-                } else if (trigger?.type === 'cron') {
-                    triggerInfo = `[cron] 定时任务, 触发时机为 ${describeCron(trigger.cronExpression)} `;
-                }
-
-                logger.info(`触发器创建任务: ${todoId} -> task ${task.task_id}`);
-                await task.submitUserMessage(
-                    format(TODO_HANDLER_TEMPLATE, {
-                        todoId: todoId,
-                        todoTitle: todoTitle,
-                        todoContent: todoContent,
-                        todoTrigger: triggerInfo
-                    })
-                );
-
-                // 如果有 origin，等待任务完成并发送最终回复
-                if (task.origin) {
-                    const { ApplicationRegistry } = await import('../applications/registry.js');
-                    const channelMgr = ApplicationRegistry.getApplication('channelmgr') as any;
-
-                    logger.info(`触发器任务等待完成: origin=${task.origin.channel}:${task.origin.accountId}`);
-
-                    // 等待任务完成
-                    await task.waitUntilFinished();
-                    logger.info(`触发器任务已完成`);
-
-                    // 提取最终回复：从消息历史中找到最后一条 assistant 文本
-                    const texts: string[] = [];
-                    for (let msgIdx = task.chat_context.messages.length - 1; msgIdx >= 0; msgIdx--) {
-                        const msg = task.chat_context.messages[msgIdx];
-                        if (!(msg instanceof AssistantMessage)) continue;
-
-                        for (let partIdx = msg.content.length - 1; partIdx >= 0; partIdx--) {
-                            const part = msg.content[partIdx];
-                            if (part.type === 'text' && (part as any).text) {
-                                texts.unshift((part as any).text);
-                                break;
-                            }
-                        }
-                        if (texts.length > 0) break;
-                    }
-
-                    const finalText = texts.join('\n').trim();
-
-                    logger.info(`触发器任务最终回复: text_len=${finalText.length}`);
-                    if (finalText && channelMgr?.sendTextToParticipant) {
-                        await channelMgr.sendTextToParticipant(task.origin, finalText);
-                        logger.info(`触发器任务最终回复已发送`);
-
-                        // Register the task in the router's taskMap so user replies are routed to this task
-                        const router = channelMgr.getRouter?.();
-                        if (router) {
-                            router.registerTaskForParticipant(task.task_id, task.origin, task.task_name);
-                        } else {
-                            logger.warn(`触发器任务: 无法获取 router，用户的回复将创建新任务`);
-                        }
-                    } else if (!finalText) {
-                        logger.warn(`触发器任务: 没有找到可发送的文本回复`);
-                    }
-                }
-            } catch (err) {
-                logger.error(`触发器任务创建失败: ${err}`);
-            }
-        };
     }
 
     /**
@@ -526,7 +413,7 @@ export class OpenDeskTUI {
         const task = this.taskManagerState.getTask(this.activeTaskId);
         if (!task) return;
         try {
-            const systemPrompt = await this.agentDecl.createSystemPrompt(this._activeMode);
+            const systemPrompt = await this.agentDecl.createSystemPrompt(this._activeMode, task);
             task.setSystemPrompt(systemPrompt);
         } catch (err) {
             logger.warn(`Failed to refresh active task system prompt after skill update: ${err}`);
@@ -727,9 +614,9 @@ export class OpenDeskTUI {
         }
 
         const task = this.taskManagerState.createTask(this.model);
-        const systemPrompt = await this.agentDecl.createSystemPrompt(this._activeMode);
-        task.setSystemPrompt(systemPrompt);
         await this.initTaskHarness(task);
+        const systemPrompt = await this.agentDecl.createSystemPrompt(this._activeMode, task);
+        task.setSystemPrompt(systemPrompt);
 
         this.activeTaskId = task.task_id;
         this.taskView.taskState = task;
@@ -804,6 +691,9 @@ export class OpenDeskTUI {
             this.startRunningMonitorForTask(task);
         }
         this.tui.requestRender(true);
+
+        // 切换任务后，处理可能与新任务关联的积压弹窗
+        this.processPendingPrompts();
     }
 
     /**
@@ -1049,9 +939,9 @@ export class OpenDeskTUI {
     async onRequestSubmit(request: string) {
         if (this.taskView.taskState === undefined) {
             this.taskView.taskState = this.taskManagerState.createTask(this.model);
-            const systemPrompt = await this.agentDecl.createSystemPrompt(this._activeMode);
-            this.taskView.taskState.setSystemPrompt(systemPrompt);
             await this.initTaskHarness(this.taskView.taskState);
+            const systemPrompt = await this.agentDecl.createSystemPrompt(this._activeMode, this.taskView.taskState);
+            this.taskView.taskState.setSystemPrompt(systemPrompt);
 
             if (this.profilePath) {
                 this.taskView.taskState.profiler = new TaskProfiler(this.taskView.taskState.task_id);
@@ -1326,6 +1216,7 @@ export class OpenDeskTUI {
     processPendingPrompts(): void {
         this.sharedPermissionPrompt.processQueueIfReady();
         this.sharedAskUserProvider.processQueueIfReady();
+        this.sharedExitPlanModeProvider.processQueueIfReady();
     }
 
     /**
@@ -1333,17 +1224,7 @@ export class OpenDeskTUI {
      * 根据当前 activeMode 构建。
      */
     private async initTaskHarness(task: TaskState): Promise<void> {
-        try {
-            task.harnessContext = await HarnessContext.createForMode(this.workspace, this._activeMode);
-            task.harnessContext.permissionPrompt = this.sharedPermissionPrompt;
-            task.activeModeId = this._activeMode.id;
-            task.disabledTools = this._activeMode.disabledTools;
-            // 注入 interaction 工具集（仅主任务）
-            task.interactionToolset = createInteractionToolset(this.sharedAskUserProvider);
-        } catch (err) {
-            logger.warn(`Failed to init task harness, using empty context: ${err}`);
-            task.harnessContext = HarnessContext.createEmpty();
-        }
+        await this.taskManagerState.initHarness(task, this.workspace, this._activeMode);
     }
 
     // ─── Mode 管理 ────────────────────────────────────────────────
@@ -1380,7 +1261,16 @@ export class OpenDeskTUI {
         const modes = this.agentDecl.supportedModes();
         const currentIndex = modes.findIndex((m) => m.id === this._activeMode.id);
         const nextIndex = (currentIndex + 1) % modes.length;
-        this._activeMode = modes[nextIndex];
+        const oldMode = this._activeMode;
+        const newMode = modes[nextIndex];
+
+        // 调用退出旧模式的钩子
+        await oldMode.onExitMode?.(this.workspace);
+
+        this._activeMode = newMode;
+
+        // 调用进入新模式的钩子
+        await newMode.onEnterMode?.(this.workspace);
 
         this.syncModeDisplay();
         await this.syncAllTaskHarnesses();
@@ -1422,7 +1312,20 @@ export class OpenDeskTUI {
         const modes = this.agentDecl.supportedModes();
         const target = modes.find((m) => m.id === modeId);
         if (!target) return false;
+
+        const oldMode = this._activeMode;
+
+        // 调用退出旧模式的钩子
+        if (oldMode.id !== target.id) {
+            await oldMode.onExitMode?.(this.workspace);
+        }
+
         this._activeMode = target;
+
+        // 调用进入新模式的钩子
+        if (oldMode.id !== target.id) {
+            await target.onEnterMode?.(this.workspace);
+        }
 
         this.syncModeDisplay();
         await this.syncAllTaskHarnesses();
@@ -1432,13 +1335,14 @@ export class OpenDeskTUI {
     }
 
     /**
-     * 将所有任务的权限引擎同步到最新的 Mode。
+     * 将所有主任务的权限引擎同步到最新的 Mode。
      * 保留已有的环境变量和 permissionPrompt，仅替换权限引擎和 activeModeId。
-     * 同时递归更新子任务的 harnessContext，避免子任务持有旧引用。
+     * 子任务由父任务管理，不在此处更新。
      */
     private async syncAllTaskHarnesses(): Promise<void> {
         const mode = this._activeMode;
         for (const task of this.taskManagerState.tasks) {
+            if (task.parent_id !== null) continue;
             const savedEnv = task.harnessContext.environ;
             const savedPrompt = task.harnessContext.permissionPrompt;
 
@@ -1448,6 +1352,7 @@ export class OpenDeskTUI {
                 ctx.permissionPrompt = savedPrompt;
                 task.harnessContext = ctx;
                 task.activeModeId = mode.id;
+                task.allowedTools = mode.allowedTools;
                 task.disabledTools = mode.disabledTools;
             } catch (err) {
                 logger.warn(`Failed to sync task harness for mode ${mode.id}: ${err}`);
@@ -1456,14 +1361,38 @@ export class OpenDeskTUI {
     }
 
     /**
-     * 更新工作空间目录，同步刷新 Banner、process.cwd、自动补全 basePath。
+     * 更新工作空间目录，同步刷新 Banner、自动补全 basePath，
+     * 并为所有主任务重建 harnessContext（包含新 workspace 的权限引擎）。
+     * 子任务由父任务在创建时管理，不在此处更新。
      */
-    updateWorkspace(newWorkspace: string) {
+    async updateWorkspace(newWorkspace: string) {
         try {
             logger.info(`changing workspace to ${newWorkspace}`);
             this.workspace = newWorkspace;
+
+            const platform = getPlatform();
+            if (platform instanceof CliPlatform) {
+                platform.setWorkspace(newWorkspace);
+            }
+
             this.rebuildBanner();
             this.inputArea.refreshAutocomplete();
+
+            const mode = this._activeMode;
+            for (const task of this.taskManagerState.tasks) {
+                if (task.parent_id !== null) continue;
+                const savedEnv = task.harnessContext.environ;
+                const savedPrompt = task.harnessContext.permissionPrompt;
+                try {
+                    const ctx = await HarnessContext.createForMode(newWorkspace, mode);
+                    ctx.environ = savedEnv;
+                    ctx.permissionPrompt = savedPrompt;
+                    task.harnessContext = ctx;
+                } catch (err) {
+                    logger.warn(`Failed to sync task harness for new workspace: ${err}`);
+                    task.harnessContext.workspace = newWorkspace;
+                }
+            }
         } catch {
             logger.error(`failed to change workspace to ${newWorkspace}`);
         }
@@ -1494,7 +1423,12 @@ export class OpenDeskTUI {
 
         // Attach a direct input listener to TUI FIRST, to hijack Ctrl+C before Editor gets it!
         this.tui.addInputListener((data) => {
-            if (!isKeyRelease(data) && !this.hasOpenOverlay && !this.configComponent) {
+            if (
+                !isKeyRelease(data) &&
+                !this.hasOpenOverlay &&
+                !this.configComponent &&
+                !this.inputArea.hasPromptWidget()
+            ) {
                 const shortcuts = getShortcuts();
 
                 // 模式切换

@@ -12,11 +12,10 @@
 import { BaseWorker } from '../base';
 import { logger } from '../../utils/logger';
 import { Cron } from 'croner';
-import { parentPort } from 'worker_threads';
 import path from 'path';
 import fs from 'fs';
 import type { GlobalTodo, GlobalTodoStorage, TodoTrigger } from './common';
-import type { Participant } from '../../aikernel/plugins/types';
+import type { Participant } from '../../plugins/types';
 import type { Cron as CronerJob } from 'croner';
 
 export default class TodoMgrWorker extends BaseWorker {
@@ -459,15 +458,7 @@ export default class TodoMgrWorker extends BaseWorker {
         todo.updated_at = new Date().toISOString();
         await this.saveGlobalTodos();
 
-        parentPort?.postMessage({
-            type: 'triggerTodoTask',
-            bundleName: this.bundleName,
-            todoId: todo.id,
-            todoTitle: todo.title,
-            todoContent: todo.content,
-            trigger: todo.trigger,
-            deliver: todo.deliver
-        });
+        this.callApp('triggerTodoTask', todo.id, todo.title, todo.content, todo.trigger, todo.deliver);
     }
 
     /**
@@ -476,14 +467,6 @@ export default class TodoMgrWorker extends BaseWorker {
     private async fireTriggerWithoutSave(todo: GlobalTodo): Promise<void> {
         logger.info(`[todomgr] 触发待办: ${todo.id} - ${todo.title}`);
 
-        parentPort?.postMessage({
-            type: 'triggerTodoTask',
-            bundleName: this.bundleName,
-            todoId: todo.id,
-            todoTitle: todo.title,
-            todoContent: todo.content,
-            trigger: todo.trigger,
-            deliver: todo.deliver
-        });
+        this.callApp('triggerTodoTask', todo.id, todo.title, todo.content, todo.trigger, todo.deliver);
     }
 }

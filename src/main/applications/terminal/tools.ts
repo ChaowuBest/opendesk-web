@@ -29,6 +29,7 @@ import {
     type BackgroundProcessStatus
 } from './background';
 import { analyzeBashPermissions, analyzePowerShellPermissions } from './shellPermissions';
+import { findExecutableInPath } from '../../utils/shellExec.js';
 
 const MAX_CLI_OUTPUT_LINES = 10;
 const LIVE_UPDATE_INTERVAL_MS = 200;
@@ -73,53 +74,11 @@ function buildSpawnEnv(taskState?: TaskState): NodeJS.ProcessEnv {
     return env;
 }
 
-/**
- * 通过 PATH 环境变量及平台备选路径查找可执行文件
- * 支持跨平台：Windows、macOS、Linux
- * @param executable 可执行文件名
- * @returns 可执行文件的完整路径，如果找不到则返回 null
- */
-export function findExecutableInPath(executable: string): string | null {
-    const isWindows = process.platform === 'win32';
-    const pathSeparator = isWindows ? ';' : ':';
-    const pathEnv = process.env.PATH || '';
-    const searchDirs: string[] = pathEnv.split(pathSeparator).filter(Boolean);
+// re-export for backward compatibility
+export { findExecutableInPath, hasZsh } from '../../utils/shellExec.js';
 
-    // 非 Windows 下追加常见备选路径
-    if (!isWindows) {
-        searchDirs.push('/bin', '/usr/bin', '/usr/local/bin');
-    }
-
-    const executableNames = isWindows
-        ? [executable, `${executable}.exe`, `${executable}.cmd`, `${executable}.bat`]
-        : [executable];
-
-    for (const dir of searchDirs) {
-        for (const name of executableNames) {
-            const fullPath = path.join(dir, name);
-            try {
-                if (!fs.existsSync(fullPath)) continue;
-                if (isWindows) return fullPath;
-                fs.accessSync(fullPath, fs.constants.X_OK);
-                return fullPath;
-            } catch {
-                continue;
-            }
-        }
-    }
-    return null;
-}
-
-/**
- * 获取 zsh 可执行文件路径
- * @returns zsh 路径，如果找不到则返回 null
- */
 function getZshPath(): string | null {
     return findExecutableInPath('zsh');
-}
-
-export function hasZsh(): boolean {
-    return getZshPath() !== null;
 }
 
 function renderTerminalToolCallCli(shellLabel: string, toolcall: ToolCall, width: number): string[] {
@@ -357,7 +316,7 @@ export class ExecutePowerShellTool extends BaseTool<typeof ExecutePowerShellArgs
             args.workingDirectory ||
             taskState?.harnessContext?.workspace ||
             Setting.getInstance().getEffectiveWorkspace();
-        return analyzePowerShellPermissions(command, cwd);
+        return analyzePowerShellPermissions(command, cwd).filter((p) => p.action !== 'execute');
     }
 
     async stop(): Promise<void> {
@@ -459,7 +418,7 @@ export class ExecuteBashTool extends BaseTool<typeof ExecuteBashArgsSchema> {
             args.workingDirectory ||
             taskState?.harnessContext?.workspace ||
             Setting.getInstance().getEffectiveWorkspace();
-        return analyzeBashPermissions(command, cwd);
+        return analyzeBashPermissions(command, cwd).filter((p) => p.action !== 'execute');
     }
 
     async stop(): Promise<void> {
@@ -543,7 +502,7 @@ export class ExecuteZshTool extends BaseTool<typeof ExecuteZshArgsSchema> {
             args.workingDirectory ||
             taskState?.harnessContext?.workspace ||
             Setting.getInstance().getEffectiveWorkspace();
-        return analyzeBashPermissions(command, cwd);
+        return analyzeBashPermissions(command, cwd).filter((p) => p.action !== 'execute');
     }
 
     async stop(): Promise<void> {

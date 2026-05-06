@@ -17,7 +17,7 @@
 
 import path from 'path';
 import fs from 'fs';
-import { logger } from '../../../utils/logger.js';
+import { logger } from '../../utils/logger.js';
 
 export const PAIRING_REPLY_TEMPLATE = `为了让消息收发更加安全，你得先在OpenDesk中批准配对请求 😉
 请求ID: {idLine}
@@ -29,7 +29,7 @@ export const PAIRING_REPLY_TEMPLATE = `为了让消息收发更加安全，你�
  * Ensure the openclaw shim is available in the extensions node_modules.
  * Generates the shim inline so plugins can resolve `openclaw/plugin-sdk`.
  */
-const SHIM_VERSION = '9';
+const SHIM_VERSION = '11';
 
 export function ensureOpenClawShim(extensionsDir: string): void {
     const shimTarget = path.join(extensionsDir, 'node_modules', 'openclaw');
@@ -933,6 +933,14 @@ export function listDevicePairing() { return Promise.resolve([]); }
 export function runPluginCommandWithTimeout() { return Promise.resolve(); }
 export function listSkillCommandsForAgents() { return []; }
 export function buildOauthProviderAuthResult() { return {}; }
+
+// ── Hook runtime stubs ───────────────────────────────────────────────────────
+
+export async function fireAndForgetHook() {}
+export function buildCanonicalSentMessageHookContext() { return {}; }
+export function toPluginMessageContext() { return {}; }
+export function toPluginMessageSentEvent() { return {}; }
+export function getGlobalHookRunner() { return { fire: async () => {}, register: () => {}, hasHooks: () => false, runMessageSent: async () => {}, runMessageSending: async () => undefined }; }
 
 // ── Platform-specific stubs ──────────────────────────────────────────────────
 

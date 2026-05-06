@@ -17,8 +17,14 @@
  * 同时向操作系统发送通知，提示用户需要进行权限授权。
  */
 
-import type { PermissionRequest, PermissionUserResponse, PermissionPromptProvider } from './permission.js';
+import type {
+    PermissionRequest,
+    PermissionUserResponse,
+    PermissionPromptProvider,
+    PermissionTaskInfo
+} from './permission.js';
 import { logger } from '../../utils/logger.js';
+import { electron } from '../../../utils/electron.js';
 
 const ACTION_LABELS: Record<string, string> = {
     read: '读取',
@@ -37,11 +43,11 @@ export class ElectronPermissionPromptProvider implements PermissionPromptProvide
     async prompt(
         requests: PermissionRequest[],
         toolName: string,
-        prefixOptions: { label: string; pattern: string }[]
+        prefixOptions: { label: string; pattern: string }[],
+        taskInfo?: PermissionTaskInfo
     ): Promise<PermissionUserResponse> {
         try {
-            const { BrowserWindow, ipcMain, Notification } = await import('electron');
-
+            const { BrowserWindow, ipcMain, Notification } = electron();
             const focusedWindow = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed()) || null;
 
             if (!focusedWindow) {
@@ -116,7 +122,9 @@ export class ElectronPermissionPromptProvider implements PermissionPromptProvide
                     })),
                     toolName,
                     prefixOptions,
-                    timeoutSec
+                    timeoutSec,
+                    taskId: taskInfo?.taskId ?? '',
+                    taskName: taskInfo?.taskName ?? null
                 });
             });
         } catch (err) {
