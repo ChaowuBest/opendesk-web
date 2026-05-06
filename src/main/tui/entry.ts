@@ -929,6 +929,13 @@ export class OpenDeskTUI {
             /* best-effort flush */
         }
 
+        try {
+            const { closeTempDir } = await import('../utils/temp.js');
+            closeTempDir();
+        } catch {
+            /* best-effort */
+        }
+
         const worker = ApplicationRegistry.globalWorker;
         if (worker) {
             await worker.terminate();

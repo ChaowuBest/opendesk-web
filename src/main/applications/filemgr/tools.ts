@@ -21,9 +21,9 @@ import { detectEncoding, decodeBuffer, encodingDisplayName, HEAD_BYTES } from '.
 import type { PermissionRequest } from '../../aikernel/security/permission';
 import type { TaskState } from '../../aikernel/states/tasks';
 import { Setting } from '../../utils/setting.js';
+import { getTempDir, getHomeDir } from '../../utils/temp.js';
 import fs from 'fs';
 import path from 'path';
-import os from 'os';
 import * as diff from 'diff';
 import fileType from 'file-type';
 import chalk from 'chalk';
@@ -71,7 +71,7 @@ function sanitizePath(inputPath: string, basePath?: string): string {
 
     // 展开 ~ 为用户主目录
     if (p === '~' || p.startsWith('~/') || p.startsWith('~\\')) {
-        p = os.homedir() + p.slice(1);
+        p = getHomeDir() + p.slice(1);
     }
 
     // 将 MSYS2/Git Bash 风格路径转换为 Windows 原生路径，避免 path.resolve 产生双重前缀
@@ -558,15 +558,7 @@ function truncateContent(content: string): { text: string; truncated: boolean } 
  * 获取系统临时目录
  */
 export function getTempDirectory(): string {
-    // @ts-ignore 主线 nodeJS 当前还没支持openharmony，所以这里需要手动处理
-    if (process.platform === 'openharmony') {
-        const tmpdir = path.join(os.tmpdir(), '.tmp');
-        if (!fs.existsSync(tmpdir)) {
-            fs.mkdirSync(tmpdir, { recursive: true });
-        }
-        return tmpdir;
-    }
-    return os.tmpdir();
+    return getTempDir();
 }
 
 // ==================== ReadFile 工具 ====================

@@ -78,6 +78,7 @@ import path from 'path';
 import fs from 'fs';
 
 import appIcon from '../../resources/main/images/icon_round.png?asset';
+import { initTempDir, closeTempDir } from './utils/temp.js';
 
 // TODO: FSService 和 recallApplication 当前未接入，保留 ipcMain handler 以兼容旧前端
 declare const FSService: any;
@@ -85,6 +86,12 @@ declare const recallApplication: any;
 
 setPlatform(new ElectronPlatform(app));
 useConsoleTransport();
+initTempDir();
+
+app.commandLine.appendSwitch(
+    'disable-features',
+    'CompressionDictionaryTransportBackend,CompressionDictionaryTransport'
+);
 
 // OpenHarmony 环境下注入 USER_DATA_PATH，确保 setting.ts / skillregistry 等模块能找到可写数据目录
 if (process.platform === 'openharmony' && !process.env.USER_DATA_PATH) {
@@ -178,10 +185,6 @@ function initBrowserSession() {
         const sessionPath = path.join(getAppDirectory(), 'apps', 'browser', 'session');
         if (!fs.existsSync(sessionPath)) {
             fs.mkdirSync(sessionPath, { recursive: true });
-        }
-        const sharedDictCachePath = path.join(sessionPath, 'Shared Dictionary', 'cache');
-        if (!fs.existsSync(sharedDictCachePath)) {
-            fs.mkdirSync(sharedDictCachePath, { recursive: true });
         }
 
         if (typeof session.fromPath === 'function') {
@@ -1391,7 +1394,6 @@ function startApplication() {
 
     app.on('will-quit', async () => {
         globalShortcut.unregisterAll();
-        // 停止自动更新检查
         if (updateClient) {
             updateClient.stopAutoCheck();
         }
@@ -1400,6 +1402,7 @@ function startApplication() {
         } catch {
             /* best-effort flush */
         }
+        closeTempDir();
     });
 }
 

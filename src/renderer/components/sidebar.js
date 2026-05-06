@@ -452,7 +452,7 @@ class SideBar extends HTMLElement {
                 if (!existing) {
                     const tag = document.createElement('span');
                     tag.className =
-                        'waiting-tag inline-flex items-center px-2 py-0.5 rounded text-[10px] leading-none font-medium whitespace-nowrap bg-orange-100 text-orange-600 border border-orange-200 flex-shrink-0';
+                        'waiting-tag inline-flex items-center px-2 py-1 rounded text-[10px] leading-none font-medium whitespace-nowrap bg-orange-100 text-orange-600 border border-orange-200 flex-shrink-0';
                     tag.textContent = '等待确认';
                     const flexRow = el.querySelector('.flex');
                     const deleteBtn = flexRow?.querySelector('.delete-task-btn');
@@ -473,7 +473,7 @@ class SideBar extends HTMLElement {
         const cls = isCurrentTask
             ? 'bg-white/25 text-white border-white/30'
             : 'bg-orange-100 text-orange-600 border-orange-200';
-        return `<span class="waiting-tag inline-flex items-center px-2 py-0.5 rounded text-[10px] leading-none font-medium whitespace-nowrap ${cls} flex-shrink-0">等待确认</span>`;
+        return `<span class="waiting-tag inline-flex items-center px-2 py-1 rounded text-[10px] leading-none font-medium whitespace-nowrap ${cls} flex-shrink-0">等待确认</span>`;
     }
 
     static CHANNEL_META = {

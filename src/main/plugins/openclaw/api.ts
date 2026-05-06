@@ -28,9 +28,9 @@ import type {
 } from '../types.js';
 import path from 'path';
 import fs from 'fs';
-import os from 'os';
 import format from 'string-template';
 import { PAIRING_REPLY_TEMPLATE } from './shim.js';
+import { getTempDir } from '../../utils/temp.js';
 
 function detectMimeFromBuffer(buf: Buffer): string {
     if (!buf || buf.length < 4) return 'application/octet-stream';
@@ -476,7 +476,7 @@ function buildPluginRuntime() {
                     }
                     const ext = resolvedType?.split('/')[1]?.split(';')[0] || 'bin';
                     const name = fileName || `media-${Date.now()}.${ext}`;
-                    const mediaDir = path.join(os.tmpdir(), 'opendesk-media');
+                    const mediaDir = path.join(getTempDir(), 'opendesk-media');
                     if (!fs.existsSync(mediaDir)) fs.mkdirSync(mediaDir, { recursive: true });
                     const filePath = path.join(mediaDir, name);
                     fs.writeFileSync(filePath, buffer);
