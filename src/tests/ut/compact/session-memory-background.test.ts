@@ -121,7 +121,7 @@ describe('session memory background update', () => {
         expect(result.decision.reason).toBe('below_initialization_threshold');
         expect(generateMemory).not.toHaveBeenCalled();
         expect(saveSpy).not.toHaveBeenCalled();
-        expect(readTaskSessionMemory(task.task_id)).toBeUndefined();
+        expect(await readTaskSessionMemory(task.task_id)).toBeUndefined();
         expect(task.getSessionMemoryState()).toEqual(SessionMemoryStates.create());
     });
 
@@ -144,7 +144,7 @@ describe('session memory background update', () => {
         expect(result.skipped).toBe(false);
         expect(generateMemory).toHaveBeenCalledTimes(1);
         expect(saveSpy).toHaveBeenCalledTimes(1);
-        expect(readTaskSessionMemory(task.task_id)).toContain('Mocked background update completed.');
+        expect(await readTaskSessionMemory(task.task_id)).toContain('Mocked background update completed.');
         expect(task.getSessionMemoryState()).toMatchObject({
             initialized: true,
             lastExtractedAt: '2026-04-23T02:00:00.000Z',
@@ -158,10 +158,15 @@ describe('session memory background update', () => {
         createTempAppDirectory();
         const { task } = createTaskWithConversation(12_000);
         let resolveMemory!: (content: string) => void;
+        let notifyGeneratorStarted!: () => void;
+        const generatorStarted = new Promise<void>((resolve) => {
+            notifyGeneratorStarted = resolve;
+        });
         const generateMemory = jest.fn(
             (_request: SessionMemoryUpdateRequest): Promise<string> =>
                 new Promise<string>((resolve) => {
                     resolveMemory = resolve;
+                    notifyGeneratorStarted();
                 })
         );
 
@@ -175,6 +180,7 @@ describe('session memory background update', () => {
         });
 
         expect(second).toBe(first);
+        await generatorStarted;
         expect(generateMemory).toHaveBeenCalledTimes(1);
 
         resolveMemory(validSessionMemory('Concurrent update resolved.'));
@@ -182,7 +188,7 @@ describe('session memory background update', () => {
 
         expect(firstResult.updated).toBe(true);
         expect(secondResult).toBe(firstResult);
-        expect(readTaskSessionMemory(task.task_id)).toContain('Concurrent update resolved.');
+        expect(await readTaskSessionMemory(task.task_id)).toContain('Concurrent update resolved.');
     });
 
     test('processTaskTurn 自然结束后会调度更新，但不等待后台 promise', async () => {

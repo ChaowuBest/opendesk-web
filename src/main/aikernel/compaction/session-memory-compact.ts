@@ -436,7 +436,17 @@ export async function writeTaskSessionMemory(
 
     try {
         await fs.promises.writeFile(tmpPath, content, { encoding: 'utf8' });
-        await fs.promises.rename(tmpPath, fullPath);
+        try {
+            await fs.promises.rename(tmpPath, fullPath);
+        } catch (error) {
+            const code = (error as NodeJS.ErrnoException | undefined)?.code;
+            if (!['ENOENT', 'EPERM', 'EXDEV'].includes(code ?? '')) {
+                throw error;
+            }
+
+            await fs.promises.mkdir(path.dirname(fullPath), { recursive: true });
+            await fs.promises.writeFile(fullPath, content, { encoding: 'utf8' });
+        }
     } catch (error) {
         try {
             await fs.promises.rm(tmpPath, { force: true });
@@ -444,6 +454,12 @@ export async function writeTaskSessionMemory(
             /* cleanup best-effort */
         }
         throw error;
+    }
+
+    try {
+        await fs.promises.rm(tmpPath, { force: true });
+    } catch {
+        /* cleanup best-effort */
     }
 
     return { fullPath, relativePath };

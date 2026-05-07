@@ -14,9 +14,9 @@
 import os from 'os';
 import path from 'path';
 import { GlobPermissionEnforcer, createDefaultPermissionRules } from '../../../main/aikernel/security/enforcer';
-import { createSoloModePermissionRules } from '../../../main/aikernel/agents/mainagent/modes/solo';
-import { createPlanModePermissionRules } from '../../../main/aikernel/agents/mainagent/modes/plan';
-import { createUnlimitedModePermissionRules } from '../../../main/aikernel/agents/mainagent/modes/unlimited';
+import { createSoloModePermissionRules } from '../../../main/aikernel/agents/main/modes/solo';
+import { createPlanModePermissionRules } from '../../../main/aikernel/agents/main/modes/plan';
+import { createUnlimitedModePermissionRules } from '../../../main/aikernel/agents/main/modes/unlimited';
 import {
     createSensitivePathRules,
     createCriticalPathRules,

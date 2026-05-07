@@ -3,6 +3,7 @@ import os from 'os';
 import path from 'path';
 import { jest } from '@jest/globals';
 import { AutoCompactStates, createAutoCompactDecision } from '../../../main/aikernel/compaction/auto-compact';
+import { MicrocompactStates } from '../../../main/aikernel/compaction/microcompact-state';
 import { FULL_COMPACT_BOUNDARY_STRATEGY } from '../../../main/aikernel/compaction/full-compact';
 import { prepareContextForModel } from '../../../main/aikernel/compaction/pipeline';
 import { estimateVisibleContextTokens } from '../../../main/aikernel/compaction/token-estimation';
@@ -103,6 +104,109 @@ function createAssistantWithUsageAndLargeToolResult(
     message.appendToolCallPart(part);
 
     return { message, toolCall };
+}
+
+function createAssistantWithCompactableToolResult(
+    toolIdSuffix: string,
+    result: string,
+    toolName: string = 'executePowerShell'
+): { message: AssistantMessage; toolCall: ToolCall } {
+    const message = new AssistantMessage();
+    message.appendText(`assistant ${toolIdSuffix}`);
+
+    const toolCall = new ToolCall(0, `tool-${toolIdSuffix}`, toolName, `{"command":"echo ${toolIdSuffix}"}`);
+    toolCall.status = 'success';
+    toolCall.result = result;
+
+    const part = new ToolCallMessagePart();
+    part.push(toolCall);
+    message.appendToolCallPart(part);
+
+    return { message, toolCall };
+}
+
+function createMicrocompactableChatContext(): {
+    chatContext: ChatContext;
+    toolCalls: {
+        old1: ToolCall;
+        old2: ToolCall;
+        recent: ToolCall;
+    };
+} {
+    const chatContext = new ChatContext();
+    chatContext.appendMessage(new UserMessage('run several tools'));
+
+    const old1 = createAssistantWithCompactableToolResult('old-1', 'old result 1 '.repeat(80));
+    const old2 = createAssistantWithCompactableToolResult('old-2', 'old result 2 '.repeat(80));
+    const recent = createAssistantWithCompactableToolResult('recent', 'recent result should stay visible');
+    chatContext.appendMessage(old1.message);
+    chatContext.appendMessage(old2.message);
+    chatContext.appendMessage(recent.message);
+
+    return {
+        chatContext,
+        toolCalls: {
+            old1: old1.toolCall,
+            old2: old2.toolCall,
+            recent: recent.toolCall
+        }
+    };
+}
+
+function createManyMicrocompactableChatContext(oldResultCount: number): {
+    chatContext: ChatContext;
+    oldToolCalls: ToolCall[];
+    recentToolCall: ToolCall;
+} {
+    const chatContext = new ChatContext();
+    chatContext.appendMessage(new UserMessage('run many tools'));
+
+    const oldToolCalls: ToolCall[] = [];
+    for (let index = 1; index <= oldResultCount; index++) {
+        const old = createAssistantWithCompactableToolResult(`old-${index}`, `old result ${index} `.repeat(80));
+        chatContext.appendMessage(old.message);
+        oldToolCalls.push(old.toolCall);
+    }
+
+    const recent = createAssistantWithCompactableToolResult('recent', 'recent result should stay visible');
+    chatContext.appendMessage(recent.message);
+
+    return {
+        chatContext,
+        oldToolCalls,
+        recentToolCall: recent.toolCall
+    };
+}
+
+function createStep4AndStep5ChatContext(): {
+    chatContext: ChatContext;
+    toolCalls: {
+        oldBudgeted: ToolCall;
+        oldMicrocompactOnly: ToolCall;
+        recent: ToolCall;
+    };
+} {
+    const chatContext = new ChatContext();
+    chatContext.appendMessage(new UserMessage('run several tools with mixed budgets'));
+
+    const oldBudgeted = createAssistantWithCompactableToolResult('old-budgeted', `HEAD\n${'x'.repeat(12_000)}\nTAIL`);
+    const oldMicrocompactOnly = createAssistantWithCompactableToolResult(
+        'old-microcompact-only',
+        'mid result '.repeat(140)
+    );
+    const recent = createAssistantWithCompactableToolResult('recent', 'recent result should stay visible');
+    chatContext.appendMessage(oldBudgeted.message);
+    chatContext.appendMessage(oldMicrocompactOnly.message);
+    chatContext.appendMessage(recent.message);
+
+    return {
+        chatContext,
+        toolCalls: {
+            oldBudgeted: oldBudgeted.toolCall,
+            oldMicrocompactOnly: oldMicrocompactOnly.toolCall,
+            recent: recent.toolCall
+        }
+    };
 }
 
 describe('压缩 pipeline 的自动压缩状态流', () => {
@@ -432,6 +536,287 @@ describe('压缩 pipeline 的自动压缩状态流', () => {
         expect(result.contextTokenEstimate.assistantInternalTailTokens).toBeLessThan(
             rawEstimate.assistantInternalTailTokens
         );
+    });
+
+    test('Phase 2: pre_submit_check 和 view_only 只做 microcompact analysis，不产生本地副作用', async () => {
+        const { chatContext, toolCalls } = createMicrocompactableChatContext();
+
+        const preSubmit = await prepareContextForModel(chatContext, undefined, {
+            taskId: 'task-pre-submit-microcompact',
+            enableMicrocompact: true,
+            microcompactRequestKind: 'pre_submit_check',
+            microcompactTaskRole: 'main',
+            microcompactTailAssistantMessages: 1,
+            autoCompactDecisionOverride: createForcedCompactDecision(0)
+        });
+
+        expect(preSubmit.microcompactAnalysis?.candidates.map((candidate) => candidate.toolCall.id)).toEqual([
+            'tool-old-1',
+            'tool-old-2'
+        ]);
+        expect(preSubmit.microcompactDecision).toMatchObject({
+            mode: 'noop',
+            reason: 'pre_submit_check'
+        });
+        expect(preSubmit.microcompactApplied).toBe(false);
+        expect(preSubmit.microcompactAppliedCandidates).toHaveLength(0);
+        expect(toolCalls.old1.microcompact).toBeUndefined();
+        expect(toolCalls.old2.microcompact).toBeUndefined();
+        expect(toolCalls.old1.result).toContain('old result 1');
+        expect(toolCalls.old2.result).toContain('old result 2');
+
+        const viewOnly = await prepareContextForModel(chatContext, undefined, {
+            taskId: 'task-view-only-microcompact',
+            enableMicrocompact: true,
+            microcompactRequestKind: 'view_only',
+            microcompactTaskRole: 'main',
+            microcompactTailAssistantMessages: 1,
+            autoCompactDecisionOverride: createForcedCompactDecision(0)
+        });
+
+        expect(viewOnly.microcompactAnalysis?.candidates.map((candidate) => candidate.toolCall.id)).toEqual([
+            'tool-old-1',
+            'tool-old-2'
+        ]);
+        expect(viewOnly.microcompactDecision).toMatchObject({
+            mode: 'noop',
+            reason: 'view_only'
+        });
+        expect(viewOnly.microcompactApplied).toBe(false);
+        expect(viewOnly.microcompactAppliedCandidates).toHaveLength(0);
+        expect(toolCalls.recent.result).toBe('recent result should stay visible');
+    });
+
+    test('Phase 2: subtask 的 task_turn 默认不执行副作用型 microcompact', async () => {
+        const { chatContext, toolCalls } = createMicrocompactableChatContext();
+
+        const result = await prepareContextForModel(chatContext, undefined, {
+            taskId: 'task-subtask-microcompact',
+            enableMicrocompact: true,
+            microcompactRequestKind: 'task_turn',
+            microcompactTaskRole: 'subtask',
+            microcompactTailAssistantMessages: 1,
+            autoCompactDecisionOverride: createForcedCompactDecision(0)
+        });
+
+        expect(result.microcompactAnalysis?.candidates.map((candidate) => candidate.toolCall.id)).toEqual([
+            'tool-old-1',
+            'tool-old-2'
+        ]);
+        expect(result.microcompactDecision).toMatchObject({
+            mode: 'noop',
+            reason: 'subtask_skipped'
+        });
+        expect(result.microcompactApplied).toBe(false);
+        expect(result.microcompactAppliedCandidates).toHaveLength(0);
+        expect(toolCalls.old1.microcompact).toBeUndefined();
+        expect(toolCalls.old2.microcompact).toBeUndefined();
+        expect(toolCalls.old1.result).toContain('old result 1');
+        expect(toolCalls.old2.result).toContain('old result 2');
+    });
+
+    test('Phase 4: main task_turn 在暖路径下默认走 request_override，不改原始结果并记录 microcompact state', async () => {
+        const now = new Date('2026-05-05T01:00:00.000Z');
+        jest.setSystemTime(now);
+
+        const { chatContext, toolCalls } = createMicrocompactableChatContext();
+        const rawEstimate = estimateVisibleContextTokens({
+            activeContext: {
+                startIndex: 0,
+                messages: chatContext.messages
+            }
+        });
+
+        const result = await prepareContextForModel(chatContext, undefined, {
+            taskId: 'task-main-task-turn-microcompact',
+            enableMicrocompact: true,
+            microcompactRequestKind: 'task_turn',
+            microcompactTaskRole: 'main',
+            microcompactTailAssistantMessages: 1,
+            microcompactState: MicrocompactStates.deserialize({
+                version: 1,
+                last_assistant_completed_at: '2026-05-05T00:30:00.000Z'
+            }),
+            autoCompactDecisionOverride: createForcedCompactDecision(0)
+        });
+
+        expect(result.microcompactDecision).toMatchObject({
+            mode: 'request_override',
+            reason: 'warm_path_request_override'
+        });
+        expect(result.microcompactDecision?.idleGapMinutes).toBe(30);
+        expect(result.microcompactDecision?.selectedResultIds).toHaveLength(2);
+        expect(result.microcompactApplied).toBe(true);
+        expect(result.toolResultOverrides.size).toBe(2);
+        expect(result.microcompactAppliedCandidates.map((candidate) => candidate.toolCall.id)).toEqual([
+            'tool-old-1',
+            'tool-old-2'
+        ]);
+        expect(result.microcompactStateChanged).toBe(true);
+        expect(result.microcompactState).toMatchObject({
+            lastDecisionAt: now.toISOString(),
+            lastDecisionMode: 'request_override'
+        });
+        expect(result.microcompactState?.lastLocalClearAt).toBeUndefined();
+        expect(result.microcompactState?.lastLocalClearResultIds).toBeUndefined();
+        expect(toolCalls.old1.result).toContain('old result 1');
+        expect(toolCalls.old2.result).toContain('old result 2');
+        expect(toolCalls.old1.microcompact).toBeUndefined();
+        expect(toolCalls.old2.microcompact).toBeUndefined();
+        expect(toolCalls.old1.result_storage?.replacement_text).toBeUndefined();
+        expect(toolCalls.old2.result_storage?.replacement_text).toBeUndefined();
+        expect(toolCalls.old1.result_storage?.result_id).toBeDefined();
+        expect(toolCalls.old2.result_storage?.result_id).toBeDefined();
+        expect(result.contextTokenEstimate.estimatedContextTokens).toBeLessThan(rawEstimate.estimatedContextTokens);
+
+        const messages = LLM.buildMessages(chatContext, false, {
+            activeContext: result.activeContext,
+            toolResultOverrides: result.toolResultOverrides
+        });
+        const serialized = JSON.stringify(messages);
+        expect(serialized).toContain('[旧工具结果已被 microcompact 清理');
+        expect(serialized).not.toContain('old result 1 old result 1 old result 1');
+        expect(serialized).not.toContain('old result 2 old result 2 old result 2');
+    });
+
+    test('Phase 5: idle gap 达到冷路径阈值后才会 local_clear，且保留最近 5 个结果', async () => {
+        const now = new Date('2026-05-05T02:01:00.000Z');
+        jest.setSystemTime(now);
+
+        const { chatContext, oldToolCalls, recentToolCall } = createManyMicrocompactableChatContext(7);
+
+        const result = await prepareContextForModel(chatContext, undefined, {
+            taskId: 'task-main-task-turn-cold-path',
+            enableMicrocompact: true,
+            microcompactRequestKind: 'task_turn',
+            microcompactTaskRole: 'main',
+            microcompactTailAssistantMessages: 1,
+            microcompactState: MicrocompactStates.deserialize({
+                version: 1,
+                last_assistant_completed_at: '2026-05-05T01:00:00.000Z'
+            }),
+            autoCompactDecisionOverride: createForcedCompactDecision(0)
+        });
+
+        expect(result.microcompactDecision).toMatchObject({
+            mode: 'local_clear',
+            reason: 'cold_path_local_clear',
+            idleGapMinutes: 61
+        });
+        expect(result.microcompactDecision?.selectedResultIds).toHaveLength(2);
+        expect(result.microcompactDecision?.keptRecentResultIds).toHaveLength(5);
+        expect(result.microcompactApplied).toBe(true);
+        expect(result.toolResultOverrides.size).toBe(0);
+        expect(result.microcompactAppliedCandidates.map((candidate) => candidate.toolCall.id)).toEqual([
+            'tool-old-1',
+            'tool-old-2'
+        ]);
+        expect(result.microcompactState).toMatchObject({
+            lastDecisionAt: now.toISOString(),
+            lastDecisionMode: 'local_clear',
+            lastLocalClearAt: now.toISOString(),
+            lastLocalClearResultIds: result.microcompactDecision?.selectedResultIds
+        });
+
+        expect(oldToolCalls[0].result).toContain('[旧工具结果已被 microcompact 清理');
+        expect(oldToolCalls[1].result).toContain('[旧工具结果已被 microcompact 清理');
+        expect(oldToolCalls[0].microcompact?.strategy).toBe('local_clear');
+        expect(oldToolCalls[1].microcompact?.strategy).toBe('local_clear');
+
+        for (const toolCall of oldToolCalls.slice(2)) {
+            expect(toolCall.result).toContain('old result');
+            expect(toolCall.microcompact).toBeUndefined();
+        }
+        expect(recentToolCall.result).toBe('recent result should stay visible');
+        expect(recentToolCall.microcompact).toBeUndefined();
+    });
+
+    test('Phase 4: local_clear 仍可通过 mode override 触发', async () => {
+        const now = new Date('2026-05-04T04:00:00.000Z');
+        jest.setSystemTime(now);
+
+        const { chatContext, toolCalls } = createMicrocompactableChatContext();
+
+        const result = await prepareContextForModel(chatContext, undefined, {
+            taskId: 'task-main-task-turn-local-clear',
+            enableMicrocompact: true,
+            microcompactRequestKind: 'task_turn',
+            microcompactTaskRole: 'main',
+            microcompactModeOverride: 'local_clear',
+            microcompactTailAssistantMessages: 1,
+            microcompactState: MicrocompactStates.create(),
+            autoCompactDecisionOverride: createForcedCompactDecision(0)
+        });
+
+        expect(result.microcompactDecision).toMatchObject({
+            mode: 'local_clear',
+            reason: 'mode_override'
+        });
+        expect(result.microcompactAppliedCandidates.map((candidate) => candidate.toolCall.id)).toEqual([
+            'tool-old-1',
+            'tool-old-2'
+        ]);
+        expect(result.microcompactState).toMatchObject({
+            lastDecisionAt: now.toISOString(),
+            lastDecisionMode: 'local_clear',
+            lastLocalClearAt: now.toISOString(),
+            lastLocalClearResultIds: result.microcompactDecision?.selectedResultIds
+        });
+        expect(toolCalls.old1.result).toContain('[旧工具结果已被 microcompact 清理');
+        expect(toolCalls.old2.result).toContain('[旧工具结果已被 microcompact 清理');
+        expect(toolCalls.old1.microcompact?.strategy).toBe('local_clear');
+        expect(toolCalls.old2.microcompact?.strategy).toBe('local_clear');
+    });
+
+    test('Phase 4: Step 4 与 Step 5 override 会合并，且 Step 5 不污染 replacement state', async () => {
+        createTempAppDirectory();
+        const { chatContext, toolCalls } = createStep4AndStep5ChatContext();
+        const replacementState = ToolResultReplacementStates.create();
+
+        const result = await prepareContextForModel(chatContext, undefined, {
+            taskId: 'task-step4-step5-merge',
+            enableToolResultBudget: true,
+            toolResultBudgetChars: 2_500,
+            toolResultReplacementState: replacementState,
+            enableMicrocompact: true,
+            microcompactRequestKind: 'task_turn',
+            microcompactTaskRole: 'main',
+            microcompactTailAssistantMessages: 1,
+            microcompactState: MicrocompactStates.create(),
+            autoCompactDecisionOverride: createForcedCompactDecision(0)
+        });
+
+        const oldBudgetedResultId = toolCalls.oldBudgeted.result_storage?.result_id;
+        const oldMicrocompactOnlyResultId = toolCalls.oldMicrocompactOnly.result_storage?.result_id;
+
+        expect(result.microcompactDecision).toMatchObject({
+            mode: 'request_override',
+            reason: 'warm_path_request_override'
+        });
+        expect(result.microcompactDecision?.selectedResultIds).toHaveLength(2);
+        expect(result.microcompactStats).toMatchObject({
+            appliedCount: 1,
+            skippedByOverrideCount: 1
+        });
+        expect(result.toolResultOverrides.size).toBe(2);
+        expect(oldBudgetedResultId).toBeDefined();
+        expect(oldMicrocompactOnlyResultId).toBeDefined();
+        expect(result.toolResultOverrides.get(oldBudgetedResultId!)).toBe(
+            toolCalls.oldBudgeted.result_storage?.replacement_text
+        );
+        expect(result.toolResultOverrides.get(oldMicrocompactOnlyResultId!)).toContain(
+            '[旧工具结果已被 microcompact 清理'
+        );
+        expect(result.toolResultReplacementState?.replacements.has(oldBudgetedResultId!)).toBe(true);
+        expect(result.toolResultReplacementState?.replacements.has(oldMicrocompactOnlyResultId!)).toBe(false);
+        expect(toolCalls.oldBudgeted.result).toContain('HEAD');
+        expect(toolCalls.oldMicrocompactOnly.result).toContain('mid result');
+        expect(toolCalls.oldMicrocompactOnly.result_storage?.replacement_text).toBeUndefined();
+        expect(toolCalls.oldBudgeted.microcompact).toBeUndefined();
+        expect(toolCalls.oldMicrocompactOnly.microcompact).toBeUndefined();
+        expect(result.microcompactAppliedCandidates.map((candidate) => candidate.toolCall.id)).toEqual([
+            'tool-old-microcompact-only'
+        ]);
     });
 
     test('未达到阈值时不会触发自动 compact，也不会改动自动压缩状态', async () => {

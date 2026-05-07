@@ -11,6 +11,7 @@
 
 import { ToolResultReplacementStates, type ToolResultReplacementState } from '../compaction/tool-results.js';
 import { AutoCompactStates, type AutoCompactState } from '../compaction/auto-compact.js';
+import { MicrocompactStates, type MicrocompactState } from '../compaction/microcompact-state.js';
 import {
     SessionMemoryStates,
     shouldExtractSessionMemory,
@@ -44,7 +45,7 @@ import {
     describeCompactPlanVariant,
     logCompactInfo
 } from '../compaction/compact-trace.js';
-import type { ActiveContextView } from '../compaction/types.js';
+import type { ActiveContextView, MicrocompactTaskRole } from '../compaction/types.js';
 import { compactContext } from '../compact.js';
 import { BaseTool, BaseToolset } from '../tool.js';
 import { LLM, type LLMRequestOptions } from '../llm.js';
@@ -166,6 +167,8 @@ export class TaskState {
     tool_result_replacement_state: ToolResultReplacementState = ToolResultReplacementStates.create();
     /** 自动压缩失败熔断状态，随 task JSON 持久化。 */
     auto_compact_state: AutoCompactState = AutoCompactStates.create();
+    /** task-local microcompact 状态，供后续 Phase 3/5 策略与冷启动路径使用。 */
+    microcompact_state: MicrocompactState = MicrocompactStates.create();
     /** task-local session memory 状态，文件位于 artifacts/<taskId>/session-memory/。 */
     session_memory_state: SessionMemoryState = SessionMemoryStates.create();
 
@@ -273,6 +276,9 @@ export class TaskState {
         task.auto_compact_state = AutoCompactStates.deserialize(
             task_json.auto_compact_state ?? task_json.autoCompactState
         );
+        task.microcompact_state = MicrocompactStates.deserialize(
+            task_json.microcompact_state ?? task_json.microcompactState
+        );
         task.session_memory_state = SessionMemoryStates.deserialize(
             task_json.session_memory_state ?? task_json.sessionMemoryState
         );
@@ -323,6 +329,7 @@ export class TaskState {
             chat_context: this.chat_context.toJSON(),
             tool_result_replacement_state: ToolResultReplacementStates.serialize(toolResultReplacementState),
             auto_compact_state: AutoCompactStates.serialize(this.auto_compact_state),
+            microcompact_state: MicrocompactStates.serialize(this.microcompact_state),
             session_memory_state: SessionMemoryStates.serialize(this.session_memory_state),
             started_at: this.started_at?.toISOString(),
             finished_at: this.finished_at?.toISOString(),
@@ -384,6 +391,24 @@ export class TaskState {
     resetAutoCompactState() {
         this.auto_compact_state = AutoCompactStates.create();
         return this.auto_compact_state;
+    }
+
+    getMicrocompactState(): MicrocompactState {
+        return MicrocompactStates.clone(this.microcompact_state);
+    }
+
+    setMicrocompactState(state: MicrocompactState) {
+        this.microcompact_state = MicrocompactStates.clone(state);
+    }
+
+    resetMicrocompactState() {
+        this.microcompact_state = MicrocompactStates.create();
+        return this.microcompact_state;
+    }
+
+    recordMicrocompactAssistantCompleted(at: Date = new Date()) {
+        this.microcompact_state = MicrocompactStates.recordAssistantCompleted(this.microcompact_state, at);
+        return this.microcompact_state;
     }
 
     getSessionMemoryState(): SessionMemoryState {
@@ -584,6 +609,10 @@ export class TaskState {
         this._compactedBeforeSubmit = true;
     }
 
+    private getMicrocompactTaskRole(): MicrocompactTaskRole {
+        return this.parent_id === null ? 'main' : 'subtask';
+    }
+
     async manualCompact(): Promise<boolean> {
         return await compactContext(this.chat_context, this.model, {
             taskId: this.task_id
@@ -616,11 +645,17 @@ export class TaskState {
                     },
                     enableSessionMemoryCompact: true,
                     autoCompactState: this.auto_compact_state,
+                    microcompactState: this.microcompact_state,
+                    microcompactRequestKind: 'pre_submit_check',
+                    microcompactTaskRole: this.getMicrocompactTaskRole(),
                     sessionMemoryState: this.session_memory_state,
                     taskId: this.task_id
                 });
                 if (preparation.autoCompactState) {
                     this.setAutoCompactState(preparation.autoCompactState);
+                }
+                if (preparation.microcompactState) {
+                    this.setMicrocompactState(preparation.microcompactState);
                 }
                 if (preparation.sessionMemoryState) {
                     this.setSessionMemoryState(preparation.sessionMemoryState);
@@ -939,6 +974,7 @@ export class TaskState {
         forkedTask.chat_context = ChatContext.assign(this.chat_context.toJSON());
         forkedTask.tool_result_replacement_state = ToolResultReplacementStates.clone(toolResultReplacementState);
         forkedTask.auto_compact_state = AutoCompactStates.clone(this.auto_compact_state);
+        forkedTask.microcompact_state = MicrocompactStates.create();
         // Step 8A 第一版不复制 session-memory.md，避免 fork 后指向父任务 artifact。
         forkedTask.session_memory_state = SessionMemoryStates.create();
 
@@ -1089,6 +1125,9 @@ export class TaskState {
                 taskId: this.task_id,
                 toolResultReplacementState: this.tool_result_replacement_state,
                 autoCompactState: this.auto_compact_state,
+                microcompactState: this.microcompact_state,
+                microcompactRequestKind: 'task_turn',
+                microcompactTaskRole: this.getMicrocompactTaskRole(),
                 sessionMemoryState: this.session_memory_state
             });
 
@@ -1098,6 +1137,10 @@ export class TaskState {
 
             if (preparation.autoCompactState) {
                 this.setAutoCompactState(preparation.autoCompactState);
+            }
+
+            if (preparation.microcompactState) {
+                this.setMicrocompactState(preparation.microcompactState);
             }
 
             if (preparation.sessionMemoryState) {
@@ -1172,7 +1215,7 @@ export class TaskState {
                     .join(', ');
                 logCompactInfo(this.task_id, {
                     source: 'tasks',
-                    event: 'microcompact_analysis',
+                    event: 'microcompact_analysis_detail',
                     message:
                         `[Compact Step5A] microcompact analysis: scanned=${stats.scannedToolCallCount}, ` +
                         `candidates=${stats.candidateCount}, skipped=${stats.skippedCount}, ` +
@@ -1196,7 +1239,7 @@ export class TaskState {
                 for (const candidate of topCandidates) {
                     logCompactInfo(this.task_id, {
                         source: 'tasks',
-                        event: 'microcompact_candidate',
+                        event: 'microcompact_candidate_detail',
                         message:
                             `[Compact Step5A] candidate tool=${candidate.toolName}, chars=${candidate.sizeChars}, ` +
                             `lines=${candidate.sizeLines}, chatIndex=${candidate.chatContextMessageIndex}, ` +
@@ -1214,15 +1257,44 @@ export class TaskState {
                         }
                     });
                 }
+                if (preparation.microcompactDecision) {
+                    const decision = preparation.microcompactDecision;
+                    logCompactInfo(this.task_id, {
+                        source: 'tasks',
+                        event: 'microcompact_decision_detail',
+                        message:
+                            `[Compact Step5B] microcompact decision: mode=${decision.mode}, ` +
+                            `reason=${decision.reason}, selected=${decision.selectedResultIds.length}, ` +
+                            `keptRecent=${decision.keptRecentResultIds.length}, ` +
+                            `idleGapMinutes=${decision.idleGapMinutes ?? 'n/a'}, ` +
+                            `estimatedCharsBefore=${decision.estimatedCharsBefore}, ` +
+                            `estimatedCharsAfter=${decision.estimatedCharsAfter}, ` +
+                            `estimatedCharsSaved=${decision.estimatedCharsSaved}`,
+                        data: {
+                            mode: decision.mode,
+                            reason: decision.reason,
+                            selectedCount: decision.selectedResultIds.length,
+                            selectedResultIds: decision.selectedResultIds,
+                            keptRecentCount: decision.keptRecentResultIds.length,
+                            keptRecentResultIds: decision.keptRecentResultIds,
+                            idleGapMinutes: decision.idleGapMinutes,
+                            estimatedCharsBefore: decision.estimatedCharsBefore,
+                            estimatedCharsAfter: decision.estimatedCharsAfter,
+                            estimatedCharsSaved: decision.estimatedCharsSaved
+                        }
+                    });
+                }
                 logCompactInfo(this.task_id, {
                     source: 'tasks',
-                    event: 'microcompact_applied_summary',
+                    event: 'microcompact_execution_detail',
                     message:
-                        `[Compact Step5B] local microcompact: applied=${stats.appliedCount}, ` +
+                        `[Compact Step5C] microcompact execution: mode=${preparation.microcompactDecision?.mode ?? 'noop'}, ` +
+                        `applied=${stats.appliedCount}, ` +
                         `skippedByOverride=${stats.skippedByOverrideCount}, ` +
                         `unshrinkable=${stats.unshrinkableCount}, ` +
                         `charsBefore=${stats.totalCharsBefore}, charsAfter=${stats.totalCharsAfter}`,
                     data: {
+                        mode: preparation.microcompactDecision?.mode ?? 'noop',
                         appliedCount: stats.appliedCount,
                         skippedByOverrideCount: stats.skippedByOverrideCount,
                         unshrinkableCount: stats.unshrinkableCount,
@@ -1234,9 +1306,9 @@ export class TaskState {
                 for (const candidate of preparation.microcompactAppliedCandidates.slice(0, 3)) {
                     logCompactInfo(this.task_id, {
                         source: 'tasks',
-                        event: 'microcompact_applied_candidate',
+                        event: 'microcompact_applied_candidate_detail',
                         message:
-                            `[Compact Step5B] applied tool=${candidate.toolName}, chars=${candidate.sizeChars}, ` +
+                            `[Compact Step5C] applied tool=${candidate.toolName}, chars=${candidate.sizeChars}, ` +
                             `lines=${candidate.sizeLines}, chatIndex=${candidate.chatContextMessageIndex}, ` +
                             `part=${candidate.toolCallPartIndex}, call=${candidate.toolCallIndex}, ` +
                             `resultId=${candidate.resultId}`,
@@ -1819,7 +1891,11 @@ export class TaskState {
                 this.task_status = 'stopped';
             }
             await this.hooks.noticeAfterFinishTurn(this);
-            this.finished_at = new Date();
+            const completedAt = new Date();
+            this.finished_at = completedAt;
+            if (shouldScheduleSessionMemoryUpdate) {
+                this.recordMicrocompactAssistantCompleted(completedAt);
+            }
             this.persistLater();
             this.sendSubscriptionFeedback();
             this.task_manager_state.publishTaskListUpdate();

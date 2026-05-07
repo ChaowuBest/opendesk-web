@@ -9,7 +9,13 @@ import {
     getAutoCompactDecision,
     type AutoCompactState
 } from './auto-compact.js';
-import { analyzeMicrocompactCandidates, applyLocalMicrocompactToChatContext } from './microcompact.js';
+import { MicrocompactStates } from './microcompact-state.js';
+import {
+    analyzeMicrocompactCandidates,
+    applyLocalMicrocompactToChatContext,
+    buildRequestTimeMicrocompactOverrides,
+    createMicrocompactDecision
+} from './microcompact.js';
 import { trySessionMemoryCompaction } from './session-memory-compact.js';
 import { buildToolResultBudgetProjectionForChatContext } from './tool-results.js';
 import type { PrepareContextOptions, PreparedContextResult } from './types.js';
@@ -32,12 +38,149 @@ function isAssistantRoundBoundaryEnabled(options: PrepareContextOptions): boolea
     return options.enableAssistantRoundBoundary !== false;
 }
 
+function didMicrocompactStateChange(
+    previous: PreparedContextResult['microcompactState'],
+    next: PreparedContextResult['microcompactState']
+): boolean {
+    if (previous === undefined || next === undefined) {
+        return previous !== next;
+    }
+
+    return (
+        JSON.stringify(MicrocompactStates.serialize(previous)) !== JSON.stringify(MicrocompactStates.serialize(next))
+    );
+}
+
+function selectPrimaryMicrocompactLayerResult(
+    previous: LightweightPreparationResult,
+    next: LightweightPreparationResult
+): Pick<
+    LightweightPreparationResult,
+    'microcompactAnalysis' | 'microcompactStats' | 'microcompactDecision' | 'microcompactMode'
+> {
+    const previousMode = previous.microcompactDecision?.mode ?? previous.microcompactMode ?? 'noop';
+    const nextMode = next.microcompactDecision?.mode ?? next.microcompactMode ?? 'noop';
+
+    if (previousMode !== 'noop' && nextMode === 'noop') {
+        return {
+            microcompactAnalysis: previous.microcompactAnalysis,
+            microcompactStats: previous.microcompactStats,
+            microcompactDecision: previous.microcompactDecision,
+            microcompactMode: previous.microcompactMode
+        };
+    }
+
+    return {
+        microcompactAnalysis: next.microcompactAnalysis,
+        microcompactStats: next.microcompactStats,
+        microcompactDecision: next.microcompactDecision,
+        microcompactMode: next.microcompactMode
+    };
+}
+
+function logMicrocompactTraceSummary(
+    taskId: string | undefined,
+    result: Pick<
+        LightweightPreparationResult,
+        'microcompactAnalysis' | 'microcompactStats' | 'microcompactDecision' | 'microcompactMode'
+    >
+): void {
+    const analysis = result.microcompactAnalysis;
+    const stats = result.microcompactStats;
+    const decision = result.microcompactDecision;
+    const mode = decision?.mode ?? result.microcompactMode ?? 'noop';
+
+    if (!analysis || !stats || !decision) {
+        return;
+    }
+
+    const skippedSummary = Object.entries(stats.skippedByReason)
+        .sort(([leftReason], [rightReason]) => leftReason.localeCompare(rightReason))
+        .map(([reason, count]) => `${reason}=${count}`)
+        .join(', ');
+
+    logCompactInfo(taskId, {
+        source: 'pipeline',
+        event: 'microcompact_analysis',
+        message:
+            `[Compact Step5A] microcompact analysis: scanned=${stats.scannedToolCallCount}, ` +
+            `candidates=${stats.candidateCount}, skipped=${stats.skippedCount}, ` +
+            `tailProtected=${stats.tailProtectedCount}, totalCandidateChars=${stats.totalCandidateChars}, ` +
+            `tailAssistantMessages=${stats.tailAssistantMessages}` +
+            (skippedSummary.length > 0 ? `, skippedByReason={${skippedSummary}}` : ''),
+        data: {
+            scannedToolCallCount: stats.scannedToolCallCount,
+            candidateCount: stats.candidateCount,
+            skippedCount: stats.skippedCount,
+            tailProtectedCount: stats.tailProtectedCount,
+            totalCandidateChars: stats.totalCandidateChars,
+            tailAssistantMessages: stats.tailAssistantMessages,
+            skippedByReason: stats.skippedByReason
+        }
+    });
+
+    logCompactInfo(taskId, {
+        source: 'pipeline',
+        event: 'microcompact_decision',
+        message:
+            `[Compact Step5B] microcompact decision: mode=${decision.mode}, ` +
+            `reason=${decision.reason}, selected=${decision.selectedResultIds.length}, ` +
+            `keptRecent=${decision.keptRecentResultIds.length}, ` +
+            `idleGapMinutes=${decision.idleGapMinutes ?? 'n/a'}, ` +
+            `estimatedCharsBefore=${decision.estimatedCharsBefore}, ` +
+            `estimatedCharsAfter=${decision.estimatedCharsAfter}, ` +
+            `estimatedCharsSaved=${decision.estimatedCharsSaved}`,
+        data: {
+            mode: decision.mode,
+            reason: decision.reason,
+            selectedCount: decision.selectedResultIds.length,
+            selectedResultIds: decision.selectedResultIds,
+            keptRecentCount: decision.keptRecentResultIds.length,
+            keptRecentResultIds: decision.keptRecentResultIds,
+            idleGapMinutes: decision.idleGapMinutes,
+            estimatedCharsBefore: decision.estimatedCharsBefore,
+            estimatedCharsAfter: decision.estimatedCharsAfter,
+            estimatedCharsSaved: decision.estimatedCharsSaved
+        }
+    });
+
+    const actualCharsSaved = Math.max(stats.totalCharsBefore - stats.totalCharsAfter, 0);
+    const executionEvent =
+        mode === 'request_override'
+            ? 'microcompact_request_override'
+            : mode === 'local_clear'
+              ? 'microcompact_local_clear'
+              : 'microcompact_noop';
+    logCompactInfo(taskId, {
+        source: 'pipeline',
+        event: executionEvent,
+        message:
+            `[Compact Step5C] microcompact execution: mode=${mode}, ` +
+            `reason=${decision.reason}, applied=${stats.appliedCount}, ` +
+            `skippedByOverride=${stats.skippedByOverrideCount}, ` +
+            `unshrinkable=${stats.unshrinkableCount}, ` +
+            `charsBefore=${stats.totalCharsBefore}, charsAfter=${stats.totalCharsAfter}, ` +
+            `charsSaved=${actualCharsSaved}`,
+        data: {
+            mode,
+            reason: decision.reason,
+            appliedCount: stats.appliedCount,
+            skippedByOverrideCount: stats.skippedByOverrideCount,
+            unshrinkableCount: stats.unshrinkableCount,
+            totalCharsBefore: stats.totalCharsBefore,
+            totalCharsAfter: stats.totalCharsAfter,
+            totalCharsSaved: actualCharsSaved
+        }
+    });
+}
+
 function runLightweightPreparationLayers(
     chatContext: ChatContext,
     options: PrepareContextOptions = {}
 ): LightweightPreparationResult {
     let activeContext = buildActiveContextView(chatContext);
     let budgetApplied = false;
+    let budgetToolResultOverrides = new Map<string, string>();
     let toolResultOverrides: PreparedContextResult['toolResultOverrides'] = new Map<string, string>();
     let toolResultReplacementState: PreparedContextResult['toolResultReplacementState'] =
         options.toolResultReplacementState;
@@ -56,7 +199,8 @@ function runLightweightPreparationLayers(
         );
         activeContext = projection.activeContext;
         budgetApplied = true;
-        toolResultOverrides = projection.overrides;
+        budgetToolResultOverrides = projection.overrides;
+        toolResultOverrides = new Map(budgetToolResultOverrides);
         toolResultReplacementState = projection.replacementState;
         toolResultBudgetStats = projection.stats;
     }
@@ -64,29 +208,81 @@ function runLightweightPreparationLayers(
     let microcompactAnalysis: PreparedContextResult['microcompactAnalysis'] = undefined;
     let microcompactAppliedCandidates: PreparedContextResult['microcompactAppliedCandidates'] = [];
     let microcompactStats: PreparedContextResult['microcompactStats'] = undefined;
+    let microcompactDecision: PreparedContextResult['microcompactDecision'] = undefined;
+    let microcompactMode: PreparedContextResult['microcompactMode'] = undefined;
+    let microcompactState: PreparedContextResult['microcompactState'] = options.microcompactState
+        ? MicrocompactStates.clone(options.microcompactState)
+        : undefined;
     let microcompactApplied = false;
     let microcompactStateChanged = false;
+    const microcompactRequestKind = options.microcompactRequestKind ?? 'task_turn';
+    const microcompactTaskRole = options.microcompactTaskRole ?? 'main';
+    const canApplyLocalMicrocompact = microcompactRequestKind === 'task_turn' && microcompactTaskRole === 'main';
 
     if (options.enableMicrocompact) {
         const analysis = analyzeMicrocompactCandidates(activeContext, {
             tailAssistantMessages: options.microcompactTailAssistantMessages,
             skipToolNames: options.microcompactSkipToolNames
         });
+        microcompactAnalysis = analysis;
+        microcompactStats = analysis.stats;
+        microcompactDecision = createMicrocompactDecision(analysis, {
+            enabled: true,
+            requestKind: microcompactRequestKind,
+            taskRole: microcompactTaskRole,
+            taskId: options.taskId,
+            modeOverride: options.microcompactModeOverride,
+            state: microcompactState,
+            idleGapThresholdMinutes: options.microcompactIdleGapMinutes,
+            keepRecentResults: options.microcompactKeepRecentResults
+        });
+        microcompactMode = microcompactDecision.mode;
 
-        if (options.taskId) {
+        if (microcompactState && microcompactDecision.mode !== 'noop') {
+            const nextMicrocompactState = MicrocompactStates.recordDecision(microcompactState, microcompactDecision);
+            microcompactStateChanged = didMicrocompactStateChange(microcompactState, nextMicrocompactState);
+            microcompactState = nextMicrocompactState;
+        }
+
+        if (microcompactDecision.mode === 'local_clear' && options.taskId && canApplyLocalMicrocompact) {
             const microcompactResult = applyLocalMicrocompactToChatContext(chatContext, options.taskId, {
                 analysis,
-                skipResultIds: toolResultOverrides.keys()
+                skipResultIds: budgetToolResultOverrides.keys(),
+                selectedResultIds: microcompactDecision.selectedResultIds
             });
             activeContext = microcompactResult.activeContext;
             microcompactAnalysis = microcompactResult.analysis;
             microcompactAppliedCandidates = microcompactResult.appliedCandidates;
             microcompactStats = microcompactResult.stats;
             microcompactApplied = microcompactResult.appliedCandidates.length > 0;
-            microcompactStateChanged = microcompactResult.stateChanged;
-        } else {
-            microcompactAnalysis = analysis;
-            microcompactStats = analysis.stats;
+            if (microcompactState && microcompactResult.appliedCandidates.length > 0) {
+                const nextMicrocompactState = MicrocompactStates.recordLocalClear(
+                    microcompactState,
+                    microcompactResult.appliedCandidates.map((candidate) => candidate.resultId)
+                );
+                microcompactStateChanged =
+                    microcompactStateChanged || didMicrocompactStateChange(microcompactState, nextMicrocompactState);
+                microcompactState = nextMicrocompactState;
+            } else {
+                microcompactStateChanged = microcompactStateChanged || microcompactResult.stateChanged;
+            }
+        } else if (microcompactDecision.mode === 'request_override' && options.taskId) {
+            const microcompactResult = buildRequestTimeMicrocompactOverrides(options.taskId, {
+                analysis,
+                skipResultIds: budgetToolResultOverrides.keys(),
+                selectedResultIds: microcompactDecision.selectedResultIds
+            });
+            microcompactAppliedCandidates = microcompactResult.appliedCandidates;
+            microcompactStats = microcompactResult.stats;
+            microcompactApplied = microcompactResult.appliedCandidates.length > 0;
+            microcompactStateChanged = microcompactStateChanged || microcompactResult.stateChanged;
+
+            toolResultOverrides = new Map(budgetToolResultOverrides);
+            for (const [resultId, replacement] of microcompactResult.overrides) {
+                if (!toolResultOverrides.has(resultId)) {
+                    toolResultOverrides.set(resultId, replacement);
+                }
+            }
         }
     }
 
@@ -94,9 +290,12 @@ function runLightweightPreparationLayers(
         activeContext,
         budgetApplied,
         microcompactApplied,
+        microcompactMode,
+        microcompactDecision,
         toolResultOverrides,
         toolResultReplacementState,
         toolResultBudgetStats,
+        microcompactState,
         microcompactAnalysis,
         microcompactAppliedCandidates,
         microcompactStats,
@@ -112,7 +311,7 @@ function runLightweightPreparationLayers(
  * 统一的 query 前准备入口：
  * - 规范化 compact boundary
  * - 先执行 Step 4 tool result budget
- * - 再执行 Step 5 local microcompact
+ * - 再执行 Step 5 microcompact policy / execution
  * - 最后才判断是否需要旧的 full compact
  * - 如果 full compact 执行过，则重新跑一遍 Step 4/5，得到最终发给模型的上下文视图
  */
@@ -292,15 +491,21 @@ export async function prepareContextForModel(
 
             const rerunOptions: PrepareContextOptions = {
                 ...options,
+                microcompactState: lightweightResult.microcompactState,
                 toolResultReplacementState: lightweightResult.toolResultReplacementState,
                 autoCompactState: autoCompactStateTarget ?? autoCompactState
             };
             const rerunResult = runLightweightPreparationLayers(chatContext, rerunOptions);
+            const primaryMicrocompact = selectPrimaryMicrocompactLayerResult(lightweightResult, rerunResult);
 
             lightweightResult = {
                 ...rerunResult,
                 budgetApplied: lightweightResult.budgetApplied || rerunResult.budgetApplied,
                 microcompactApplied: lightweightResult.microcompactApplied || rerunResult.microcompactApplied,
+                microcompactAnalysis: primaryMicrocompact.microcompactAnalysis,
+                microcompactStats: primaryMicrocompact.microcompactStats,
+                microcompactDecision: primaryMicrocompact.microcompactDecision,
+                microcompactMode: primaryMicrocompact.microcompactMode,
                 microcompactAppliedCandidates: [
                     ...lightweightResult.microcompactAppliedCandidates,
                     ...rerunResult.microcompactAppliedCandidates
@@ -317,6 +522,8 @@ export async function prepareContextForModel(
             });
         }
     }
+
+    logMicrocompactTraceSummary(options.taskId, lightweightResult);
 
     return {
         ...lightweightResult,
