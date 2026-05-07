@@ -2038,6 +2038,8 @@ class MailEditorWidget extends AgentOperableHTMLElement {
             cc: null,
             bcc: null
         };
+        /** @type {string | null} */
+        this.currentOperation = null;
     }
 
     async getEditor() {
@@ -2320,6 +2322,7 @@ class MailEditorWidget extends AgentOperableHTMLElement {
             return;
         }
         const editor = await this.editorReady;
+        this.currentOperation = operation;
         if (operation == MailOperations.POLISH) {
             editor.setContent(mailContent);
             return;
@@ -2359,7 +2362,35 @@ class MailEditorWidget extends AgentOperableHTMLElement {
     }
 
     async magicWrite() {
-        window.aiBarAPI.submitRequestInNewTask('帮我回复一下当前打开的这封邮件');
+        const isReplyMode = [MailOperations.REPLY, MailOperations.REPLYALL, MailOperations.FORWARD].includes(
+            this.currentOperation
+        );
+
+        if (isReplyMode) {
+            window.aiBarAPI.submitRequestInNewTask('帮我回复一下当前打开的这封邮件');
+            return;
+        }
+
+        const to = this.getTagValue('to');
+        const subject = document.getElementById('subject').value.trim();
+        const editor = await this.editorReady;
+        const bodyContent = editor.getContent({ format: 'text' }).trim();
+
+        if (!to || to.length === 0 || !subject) {
+            Swal.fire({
+                title: '信息不完整',
+                text: '请先填写收件人和主题，再使用帮我写功能',
+                icon: 'warning',
+                timer: 2000,
+                showConfirmButton: false
+            });
+            return;
+        }
+
+        const toAddresses = to.map((t) => (typeof t === 'string' ? t : t.value)).join(', ');
+        window.aiBarAPI.submitRequestInNewTask(
+            `请帮我写以下邮件。\n\n收件人: ${toAddresses}\n主题: ${subject}\n正文:\n${bodyContent}`
+        );
     }
 
     render() {
