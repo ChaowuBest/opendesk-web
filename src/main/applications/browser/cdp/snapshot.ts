@@ -149,25 +149,33 @@ export async function captureSnapshot(session: CDPSession): Promise<PageSnapshot
 
 /**
  * Resolve an element ref (e.g. "e5") to its center coordinates via CDP.
- * First scrolls the element into view, then returns viewport-relative coords.
+ * First scrolls the element into view, waits for layout to stabilize,
+ * then returns viewport-relative coords.
  */
 export async function resolveRefCoords(
     session: CDPSession,
     ref: string
 ): Promise<{ x: number; y: number; tag: string; text: string }> {
     const result = await session.send('Runtime.evaluate', {
-        expression: `(() => {
+        expression: `(async () => {
             var el = document.querySelector('[data-od-ref="${ref}"]');
-            if (!el) return JSON.stringify({ error: 'Element ref "${ref}" not found. Page may have changed — call browserSnapshot to refresh.' });
+            if (!el) return JSON.stringify({ error: 'Element ref "${ref}" not found. Page may have changed — call snapshot to refresh.' });
             el.scrollIntoView({ block: 'center', behavior: 'instant' });
+            await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
             var rect = el.getBoundingClientRect();
+            var cx = Math.round(rect.left + rect.width / 2);
+            var cy = Math.round(rect.top + rect.height / 2);
+            var hitEl = document.elementFromPoint(cx, cy);
+            var obscured = hitEl && hitEl !== el && !el.contains(hitEl) && !hitEl.contains(el);
             return JSON.stringify({
-                x: Math.round(rect.left + rect.width / 2),
-                y: Math.round(rect.top + rect.height / 2),
+                x: cx,
+                y: cy,
                 tag: el.tagName.toLowerCase(),
-                text: (el.innerText || '').trim().slice(0, 80)
+                text: (el.innerText || '').trim().slice(0, 80),
+                obscured: !!obscured
             });
         })()`,
+        awaitPromise: true,
         returnByValue: true
     });
 
@@ -189,18 +197,26 @@ export async function resolveSelectorCoords(
 ): Promise<{ x: number; y: number; tag: string; text: string }> {
     const selectorEscaped = JSON.stringify(selector);
     const result = await session.send('Runtime.evaluate', {
-        expression: `(() => {
-            var el = document.querySelector(${selectorEscaped});
-            if (!el) return JSON.stringify({ error: 'Selector ' + ${selectorEscaped} + ' did not match any element' });
+        expression: `(async () => {
+            var sel = ${selectorEscaped};
+            var el = document.querySelector(sel);
+            if (!el) return JSON.stringify({ error: 'Selector ' + sel + ' did not match any element' });
             el.scrollIntoView({ block: 'center', behavior: 'instant' });
+            await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
             var rect = el.getBoundingClientRect();
+            var cx = Math.round(rect.left + rect.width / 2);
+            var cy = Math.round(rect.top + rect.height / 2);
+            var hitEl = document.elementFromPoint(cx, cy);
+            var obscured = hitEl && hitEl !== el && !el.contains(hitEl) && !hitEl.contains(el);
             return JSON.stringify({
-                x: Math.round(rect.left + rect.width / 2),
-                y: Math.round(rect.top + rect.height / 2),
+                x: cx,
+                y: cy,
                 tag: el.tagName.toLowerCase(),
-                text: (el.innerText || '').trim().slice(0, 80)
+                text: (el.innerText || '').trim().slice(0, 80),
+                obscured: !!obscured
             });
         })()`,
+        awaitPromise: true,
         returnByValue: true
     });
 
@@ -215,7 +231,7 @@ export async function resolveSelectorCoords(
 
 /**
  * Resolve a target (either a ref like "e5" or a CSS selector) to coordinates.
- * Refs take priority — they're assigned by browserSnapshot and more reliable.
+ * Refs take priority — they're assigned by snapshot and more reliable.
  */
 export async function resolveTargetCoords(
     session: CDPSession,

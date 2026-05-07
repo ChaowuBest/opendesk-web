@@ -15,7 +15,7 @@
  * Architecture (aligned with Playwright MCP):
  *   Agent → tool handler → CDPSession (Electron debugger API) → guest webContents
  *
- * Element targeting uses a ref system (e0, e1, …) assigned by browserSnapshot.
+ * Element targeting uses a ref system (e0, e1, …) assigned by snapshot.
  * Click / type / hover use CDP Input domain for real OS-level events,
  * fixing React/Vue synthetic event issues of the previous executeJavaScript approach.
  */
@@ -167,7 +167,7 @@ async function waitForClickCompletion(session: CDPSession, callback: () => Promi
     }
 }
 
-// ========== browserNavigate ==========
+// ========== navigate ==========
 
 const BrowserNavigateArgsSchema = z.object({
     url: z.string().describe('要访问的网址，例如 https://www.baidu.com'),
@@ -179,7 +179,7 @@ export class BrowserNavigateTool extends BaseTool<typeof BrowserNavigateArgsSche
 
     constructor(browserApp: BrowserApplication) {
         super(
-            'browserNavigate',
+            'navigate',
             '在当前任务的嵌入式浏览器中打开指定的网页。支持在当前标签页或新标签页中打开。浏览器会自动切换到前台显示。',
             BrowserNavigateArgsSchema
         );
@@ -258,7 +258,7 @@ export class BrowserNavigateTool extends BaseTool<typeof BrowserNavigateArgsSche
     }
 }
 
-// ========== browserSnapshot ==========
+// ========== snapshot ==========
 
 const BrowserSnapshotArgsSchema = z.object({});
 
@@ -267,8 +267,8 @@ export class BrowserSnapshotTool extends BaseTool<typeof BrowserSnapshotArgsSche
 
     constructor(browserApp: BrowserApplication) {
         super(
-            'browserSnapshot',
-            '获取当前页面快照：URL、标题、viewport 及所有可交互元素列表（每个元素带有 ref 标识，如 e0、e1，用于后续 browserClick / browserType 等操作的目标定位）。这是与页面交互前的必要步骤。',
+            'snapshot',
+            '获取当前页面快照：URL、标题、viewport 及所有可交互元素列表（每个元素带有 ref 标识，如 e0、e1，用于后续 click / type 等操作的目标定位）。这是与页面交互前的必要步骤。',
             BrowserSnapshotArgsSchema
         );
         this.browserApp = browserApp;
@@ -311,10 +311,10 @@ export class BrowserSnapshotTool extends BaseTool<typeof BrowserSnapshotArgsSche
     }
 }
 
-// ========== browserClick ==========
+// ========== click ==========
 
 const BrowserClickArgsSchema = z.object({
-    target: z.string().describe('要点击的元素：使用 ref（如 e3，从 browserSnapshot 获取）或 CSS 选择器'),
+    target: z.string().describe('要点击的元素：使用 ref（如 e3，从 snapshot 获取）或 CSS 选择器'),
     button: z.enum(['left', 'right', 'middle']).default('left').describe('鼠标按钮，默认 left'),
     doubleClick: z.boolean().default(false).describe('是否双击'),
     modifiers: z
@@ -328,8 +328,8 @@ export class BrowserClickTool extends BaseTool<typeof BrowserClickArgsSchema> {
 
     constructor(browserApp: BrowserApplication) {
         super(
-            'browserClick',
-            '点击页面元素。使用 ref（从 browserSnapshot 获取，如 e3）或 CSS 选择器定位。通过 CDP 发送真实鼠标事件，兼容 React/Vue 等所有前端框架。',
+            'click',
+            '点击页面元素。使用 ref（从 snapshot 获取，如 e3）或 CSS 选择器定位。通过 CDP 发送真实鼠标事件，兼容 React/Vue 等所有前端框架。',
             BrowserClickArgsSchema
         );
         this.browserApp = browserApp;
@@ -403,6 +403,26 @@ export class BrowserClickTool extends BaseTool<typeof BrowserClickArgsSchema> {
                             /* best effort */
                         });
                 }
+
+                // When the target element is obscured by another element (e.g. sticky
+                // headers, overlays), CDP mouse events land on the wrong element.
+                // Fall back to a direct JS click on the target in that case.
+                if ((coords as any).obscured && button === 'left') {
+                    const targetExpr = /^e\d+$/.test(args.target)
+                        ? `document.querySelector('[data-od-ref="${args.target}"]')`
+                        : `document.querySelector(${JSON.stringify(args.target)})`;
+                    await session
+                        .send('Runtime.evaluate', {
+                            expression: `(() => {
+                                var el = ${targetExpr};
+                                if (el) el.click();
+                            })()`,
+                            returnByValue: true
+                        })
+                        .catch(() => {
+                            /* best effort */
+                        });
+                }
             };
 
             // Wait for click side-effects (navigation, XHR, etc.) to settle
@@ -421,7 +441,7 @@ export class BrowserClickTool extends BaseTool<typeof BrowserClickArgsSchema> {
     }
 }
 
-// ========== browserType ==========
+// ========== type ==========
 
 const BrowserTypeArgsSchema = z.object({
     target: z.string().describe('要输入的目标元素：ref（如 e3）或 CSS 选择器'),
@@ -439,7 +459,7 @@ export class BrowserTypeTool extends BaseTool<typeof BrowserTypeArgsSchema> {
 
     constructor(browserApp: BrowserApplication) {
         super(
-            'browserType',
+            'type',
             '在页面输入框中输入文本。使用 ref 或 CSS 选择器定位元素，通过 CDP 发送真实键盘事件。支持清空已有内容和输入后按 Enter 提交。',
             BrowserTypeArgsSchema
         );
@@ -572,7 +592,7 @@ export class BrowserTypeTool extends BaseTool<typeof BrowserTypeArgsSchema> {
     }
 }
 
-// ========== browserHover ==========
+// ========== hover ==========
 
 const BrowserHoverArgsSchema = z.object({
     target: z.string().describe('要悬停的元素：ref（如 e3）或 CSS 选择器')
@@ -583,7 +603,7 @@ export class BrowserHoverTool extends BaseTool<typeof BrowserHoverArgsSchema> {
 
     constructor(browserApp: BrowserApplication) {
         super(
-            'browserHover',
+            'hover',
             '将鼠标悬停在指定元素上。用于触发 hover 效果、显示 tooltip、展开下拉菜单等。',
             BrowserHoverArgsSchema
         );
@@ -622,7 +642,7 @@ export class BrowserHoverTool extends BaseTool<typeof BrowserHoverArgsSchema> {
     }
 }
 
-// ========== browserPressKey ==========
+// ========== pressKey ==========
 
 const BrowserPressKeyArgsSchema = z.object({
     key: z.string().describe('按键名称，如 Enter、Tab、Escape、ArrowDown、a、1 等'),
@@ -637,7 +657,7 @@ export class BrowserPressKeyTool extends BaseTool<typeof BrowserPressKeyArgsSche
 
     constructor(browserApp: BrowserApplication) {
         super(
-            'browserPressKey',
+            'pressKey',
             '在当前焦点元素上按下指定按键。支持功能键（Enter、Tab、Escape、方向键等）和修饰键组合。',
             BrowserPressKeyArgsSchema
         );
@@ -690,7 +710,7 @@ export class BrowserPressKeyTool extends BaseTool<typeof BrowserPressKeyArgsSche
     }
 }
 
-// ========== browserSelectOption ==========
+// ========== selectOption ==========
 
 const BrowserSelectOptionArgsSchema = z.object({
     target: z.string().describe('select 元素的 ref（如 e3）或 CSS 选择器'),
@@ -702,7 +722,7 @@ export class BrowserSelectOptionTool extends BaseTool<typeof BrowserSelectOption
 
     constructor(browserApp: BrowserApplication) {
         super(
-            'browserSelectOption',
+            'selectOption',
             '在下拉选择框（<select>）中选择指定选项。通过 value 值匹配要选中的选项。',
             BrowserSelectOptionArgsSchema
         );
@@ -764,7 +784,7 @@ export class BrowserSelectOptionTool extends BaseTool<typeof BrowserSelectOption
     }
 }
 
-// ========== browserScroll ==========
+// ========== scroll ==========
 
 const BrowserScrollArgsSchema = z.object({
     direction: z.enum(['up', 'down']).describe('滚动方向：up 向上 / down 向下'),
@@ -775,7 +795,7 @@ export class BrowserScrollTool extends BaseTool<typeof BrowserScrollArgsSchema> 
     private browserApp: BrowserApplication;
 
     constructor(browserApp: BrowserApplication) {
-        super('browserScroll', '滚动当前浏览器页面。返回滚动后的位置和页面总高度信息。', BrowserScrollArgsSchema);
+        super('scroll', '滚动当前浏览器页面。返回滚动后的位置和页面总高度信息。', BrowserScrollArgsSchema);
         this.browserApp = browserApp;
         this.setExecutor(this.handleExecute.bind(this));
     }
@@ -842,7 +862,7 @@ export class BrowserScrollTool extends BaseTool<typeof BrowserScrollArgsSchema> 
     }
 }
 
-// ========== browserGoBack ==========
+// ========== goBack ==========
 
 const BrowserGoBackArgsSchema = z.object({});
 
@@ -850,7 +870,7 @@ export class BrowserGoBackTool extends BaseTool<typeof BrowserGoBackArgsSchema> 
     private browserApp: BrowserApplication;
 
     constructor(browserApp: BrowserApplication) {
-        super('browserGoBack', '在浏览器中后退到上一个页面', BrowserGoBackArgsSchema);
+        super('goBack', '在浏览器中后退到上一个页面', BrowserGoBackArgsSchema);
         this.browserApp = browserApp;
         this.setExecutor(this.handleExecute.bind(this));
     }
@@ -899,7 +919,7 @@ export class BrowserGoBackTool extends BaseTool<typeof BrowserGoBackArgsSchema> 
     }
 }
 
-// ========== browserGoForward ==========
+// ========== goForward ==========
 
 const BrowserGoForwardArgsSchema = z.object({});
 
@@ -907,7 +927,7 @@ export class BrowserGoForwardTool extends BaseTool<typeof BrowserGoForwardArgsSc
     private browserApp: BrowserApplication;
 
     constructor(browserApp: BrowserApplication) {
-        super('browserGoForward', '在浏览器中前进到下一个页面', BrowserGoForwardArgsSchema);
+        super('goForward', '在浏览器中前进到下一个页面', BrowserGoForwardArgsSchema);
         this.browserApp = browserApp;
         this.setExecutor(this.handleExecute.bind(this));
     }
@@ -956,7 +976,7 @@ export class BrowserGoForwardTool extends BaseTool<typeof BrowserGoForwardArgsSc
     }
 }
 
-// ========== browserReload ==========
+// ========== reload ==========
 
 const BrowserReloadArgsSchema = z.object({});
 
@@ -964,7 +984,7 @@ export class BrowserReloadTool extends BaseTool<typeof BrowserReloadArgsSchema> 
     private browserApp: BrowserApplication;
 
     constructor(browserApp: BrowserApplication) {
-        super('browserReload', '刷新当前浏览器页面', BrowserReloadArgsSchema);
+        super('reload', '刷新当前浏览器页面', BrowserReloadArgsSchema);
         this.browserApp = browserApp;
         this.setExecutor(this.handleExecute.bind(this));
     }
@@ -1022,7 +1042,7 @@ export class BrowserReloadTool extends BaseTool<typeof BrowserReloadArgsSchema> 
     }
 }
 
-// ========== browserEvaluate ==========
+// ========== evaluate ==========
 
 const BrowserEvaluateArgsSchema = z.object({
     expression: z.string().describe('要在页面中执行的 JavaScript 表达式，返回值将被序列化后返回')
@@ -1033,7 +1053,7 @@ export class BrowserEvaluateTool extends BaseTool<typeof BrowserEvaluateArgsSche
 
     constructor(browserApp: BrowserApplication) {
         super(
-            'browserEvaluate',
+            'evaluate',
             '在当前页面执行任意 JavaScript 并返回结果。适用于其他工具无法满足需求时的高级操作或数据提取。',
             BrowserEvaluateArgsSchema
         );
@@ -1083,7 +1103,7 @@ export class BrowserEvaluateTool extends BaseTool<typeof BrowserEvaluateArgsSche
     }
 }
 
-// ========== browserTabs ==========
+// ========== tabs ==========
 
 const BrowserTabsArgsSchema = z.object({
     action: z
@@ -1099,7 +1119,7 @@ export class BrowserTabsTool extends BaseTool<typeof BrowserTabsArgsSchema> {
 
     constructor(browserApp: BrowserApplication) {
         super(
-            'browserTabs',
+            'tabs',
             '管理浏览器标签页：列出 (list)、新建 (new)、关闭 (close)、切换 (switch)。',
             BrowserTabsArgsSchema
         );
@@ -1168,7 +1188,7 @@ export class BrowserTabsTool extends BaseTool<typeof BrowserTabsArgsSchema> {
     }
 }
 
-// ========== browserWaitFor ==========
+// ========== waitFor ==========
 
 const BrowserWaitForArgsSchema = z.object({
     text: z.string().optional().describe('等待页面出现指定文本'),
@@ -1181,7 +1201,7 @@ export class BrowserWaitForTool extends BaseTool<typeof BrowserWaitForArgsSchema
 
     constructor(browserApp: BrowserApplication) {
         super(
-            'browserWaitFor',
+            'waitFor',
             '等待页面满足指定条件：出现指定文本 (text) 或文本消失 (textGone)。用于等待页面加载、动态内容渲染等。',
             BrowserWaitForArgsSchema
         );
