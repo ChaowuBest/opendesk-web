@@ -444,7 +444,11 @@ function createInnerToolCall(
 
 class CallSkillTool extends BaseTool<typeof CallSkillToolSchema> {
     constructor() {
-        super('CallSkillTool', '调用Skill提供的内部工具', CallSkillToolSchema);
+        super(
+            'CallSkillTool',
+            '调用Skill提供的内部工具, 只有先调用LoadSkillTool加载了Skill, 才能调用它的内部工具',
+            CallSkillToolSchema
+        );
         this.setUniversalExecutor(this.callSkillToolUniversal.bind(this));
     }
 
