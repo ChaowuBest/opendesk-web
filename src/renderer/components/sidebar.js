@@ -35,6 +35,8 @@ class SideBar extends HTMLElement {
         this._searchQuery = '';
         /** 正在等待用户确认的任务 ID 集合 */
         this._waitingTaskIds = new Set();
+        /** 已收藏的任务 ID 集合 */
+        this._favoritedTaskIds = new Set(JSON.parse(localStorage.getItem('od_favorited_tasks') || '[]'));
     }
 
     connectedCallback() {
@@ -337,12 +339,16 @@ class SideBar extends HTMLElement {
     }
 
     _getFilteredTaskList() {
-        if (!this._searchQuery) return this.taskList;
-        const query = this._searchQuery.toLowerCase();
-        return this.taskList.filter((task) => {
-            const name = (task.task_name || '').toLowerCase();
-            return name.includes(query);
-        });
+        const list = this.taskList;
+        // 搜索时显示全部（包括收藏的），否则从主列表中过滤掉已收藏的任务
+        if (this._searchQuery) {
+            const query = this._searchQuery.toLowerCase();
+            return list.filter((task) => {
+                const name = (task.task_name || '').toLowerCase();
+                return name.includes(query);
+            });
+        }
+        return list.filter((task) => !this._favoritedTaskIds.has(task.task_id));
     }
 
     buildTaskRenderList() {
@@ -694,11 +700,87 @@ class SideBar extends HTMLElement {
                 }
             }
         });
+
+        this._renderFavoritesCard();
     }
 
     _dismissContextMenu() {
         const existing = this.querySelector('#task-context-menu');
         if (existing) existing.remove();
+    }
+
+    _saveFavorites() {
+        localStorage.setItem('od_favorited_tasks', JSON.stringify([...this._favoritedTaskIds]));
+    }
+
+    _toggleFavorite(taskId) {
+        if (this._favoritedTaskIds.has(taskId)) {
+            this._favoritedTaskIds.delete(taskId);
+        } else {
+            this._favoritedTaskIds.add(taskId);
+        }
+        this._saveFavorites();
+        this.reloadTaskList();
+        this._renderFavoritesCard();
+    }
+
+    _renderFavoritesCard() {
+        const existing = this.querySelector('#favorites-card');
+        if (existing) existing.remove();
+
+        const favTasks = this.taskList.filter((t) => this._favoritedTaskIds.has(t.task_id));
+        if (favTasks.length === 0) return;
+
+        const card = document.createElement('div');
+        card.id = 'favorites-card';
+        card.className = 'flex-shrink-0 w-full pr-2 mt-4';
+
+        const maxVisible = 5;
+        const itemHeight = 38;
+        const maxHeight = maxVisible * itemHeight;
+
+        let itemsHtml = '';
+        for (const task of favTasks) {
+            const isCurrentTask = task.task_id === this.currentTaskId;
+            const taskStyle = isCurrentTask
+                ? 'bg-[#C94C40] text-white font-semibold'
+                : 'bg-white text-[#1f2937] hover:bg-[#f9fafb]';
+            itemsHtml += `
+            <div class="fav-task-item task-item cursor-pointer rounded-xl px-3 py-2.5 mb-1.5 transition-colors duration-150 ${taskStyle}" data-task_id="${task.task_id}">
+                <div class="flex items-center min-w-0 gap-2">
+                    <i class="fa-solid fa-star text-[10px] ${isCurrentTask ? 'text-white/70' : 'text-amber-400'} shrink-0"></i>
+                    <p class="text-[13px] truncate leading-tight flex-1 min-w-0">${task.task_name || '未命名任务'}</p>
+                </div>
+            </div>`;
+        }
+
+        card.innerHTML = `
+        <div class="overflow-hidden">
+            <div class="fav-list overflow-y-auto" style="max-height:${maxHeight}px;">
+                ${itemsHtml}
+            </div>
+        </div>`;
+
+        const toolbar = this.querySelector('#sidebar-bottom-toolbar');
+        if (toolbar) {
+            toolbar.parentNode.insertBefore(card, toolbar);
+        }
+
+        card.querySelectorAll('.fav-task-item').forEach((item) => {
+            item.addEventListener('click', (e) => {
+                const tid = item.dataset.task_id;
+                window.globalControlAPI.openTask(tid);
+                this.currentTaskId = tid;
+                this._updateTaskHighlight();
+                this._renderFavoritesCard();
+            });
+            item.addEventListener('contextmenu', (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                const tid = event.currentTarget.dataset.task_id;
+                this._showContextMenu(event.clientX, event.clientY, tid);
+            });
+        });
     }
 
     _showContextMenu(x, y, taskId) {
@@ -724,7 +806,14 @@ class SideBar extends HTMLElement {
             top: `${y}px`
         });
 
+        const isFavorited = this._favoritedTaskIds.has(taskId);
         const items = [
+            {
+                id: 'favorite',
+                icon: isFavorited ? 'fa-solid fa-star' : 'fa-regular fa-star',
+                label: isFavorited ? '取消收藏' : '收藏任务',
+                favoriteHighlight: !isFavorited
+            },
             { id: 'fork', icon: 'fa-solid fa-code-fork', label: '复制并创建任务' },
             { id: 'delete', icon: 'fa-solid fa-trash-can', label: '删除任务', danger: true },
             { id: 'delete-all', icon: 'fa-solid fa-trash', label: '删除全部任务', danger: true }
@@ -739,10 +828,10 @@ class SideBar extends HTMLElement {
                 const sep = needSep
                     ? '<div style="height:1px; margin:3px 8px; background:rgba(0,0,0,0.06);"></div>'
                     : '';
-                const color = item.danger ? '#dc2626' : '#1f2937';
-                const iconColor = item.danger ? '#dc2626' : '#6b7280';
+                const color = item.danger ? '#dc2626' : item.favoriteHighlight ? '#d97706' : '#1f2937';
+                const iconColor = item.danger ? '#dc2626' : item.favoriteHighlight ? '#d97706' : '#6b7280';
                 return (
-                    `${sep}<button data-action="${item.id}" data-danger="${item.danger ? '1' : ''}" style="${btnStyle} color:${color};">` +
+                    `${sep}<button data-action="${item.id}" data-danger="${item.danger ? '1' : ''}" data-fav="${item.favoriteHighlight ? '1' : ''}" style="${btnStyle} color:${color};">` +
                     `<i class="${item.icon}" style="${iconStyle} color:${iconColor};"></i><span>${item.label}</span></button>`
                 );
             })
@@ -762,18 +851,24 @@ class SideBar extends HTMLElement {
 
         menu.querySelectorAll('[data-action]').forEach((btn) => {
             const isDanger = btn.dataset.danger === '1';
+            const isFav = btn.dataset.fav === '1';
             btn.addEventListener('mouseenter', () => {
-                btn.style.background = isDanger ? '#fef2f2' : '#3b82f6';
-                btn.style.color = isDanger ? '#b91c1c' : 'white';
+                btn.style.background = isDanger ? '#fef2f2' : isFav ? '#fffbeb' : '#3b82f6';
+                btn.style.color = isDanger ? '#b91c1c' : isFav ? '#b45309' : 'white';
                 const icon = btn.querySelector('i');
-                if (icon) icon.style.color = isDanger ? '#b91c1c' : 'white';
+                if (icon) icon.style.color = isDanger ? '#b91c1c' : isFav ? '#b45309' : 'white';
             });
             btn.addEventListener('mouseleave', () => {
                 btn.style.background = 'transparent';
-                btn.style.color = isDanger ? '#dc2626' : '#1f2937';
+                btn.style.color = isDanger ? '#dc2626' : isFav ? '#d97706' : '#1f2937';
                 const icon = btn.querySelector('i');
-                if (icon) icon.style.color = isDanger ? '#dc2626' : '#6b7280';
+                if (icon) icon.style.color = isDanger ? '#dc2626' : isFav ? '#d97706' : '#6b7280';
             });
+        });
+
+        menu.querySelector('[data-action="favorite"]').addEventListener('click', () => {
+            this._dismissContextMenu();
+            this._toggleFavorite(taskId);
         });
 
         menu.querySelector('[data-action="fork"]').addEventListener('click', async () => {
@@ -1048,6 +1143,8 @@ class SideBar extends HTMLElement {
         taskListContainer.querySelectorAll('.subtask-group-scroll').forEach((el) => {
             el.scrollTop = el.scrollHeight;
         });
+
+        this._renderFavoritesCard();
     }
 }
 
