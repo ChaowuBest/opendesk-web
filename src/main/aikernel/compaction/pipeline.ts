@@ -326,14 +326,16 @@ export async function prepareContextForModel(
     let lightweightResult = runLightweightPreparationLayers(chatContext, options);
     const contextTokenEstimate = estimateAutoCompactContextTokens({
         activeContext: lightweightResult.activeContext,
-        toolResultOverrides: lightweightResult.toolResultOverrides
+        toolResultOverrides: lightweightResult.toolResultOverrides,
+        systemPrompt: chatContext.system_prompt
     });
     const autoCompactDecision =
         options.autoCompactDecisionOverride ??
         (await getAutoCompactDecision(
             {
                 activeContext: lightweightResult.activeContext,
-                toolResultOverrides: lightweightResult.toolResultOverrides
+                toolResultOverrides: lightweightResult.toolResultOverrides,
+                systemPrompt: chatContext.system_prompt
             },
             model
         ));

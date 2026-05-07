@@ -19,12 +19,14 @@ import {
     validateSessionMemoryMarkdown,
     writeTaskSessionMemory
 } from '../../../main/aikernel/compaction/session-memory-compact';
+import { estimateTextTokens } from '../../../main/aikernel/compaction/token-estimation';
 import { buildActiveContextView } from '../../../main/aikernel/compaction/context-view';
 import { getTaskSessionMemoryPath, setCustomAppDirectory } from '../../../main/utils/setting';
 import {
     AssistantMessage,
     ChatContext,
     CompactSeparatorMessage,
+    SystemMessage,
     ToolCall,
     ToolCallMessagePart,
     Usage,
@@ -175,6 +177,21 @@ describe('session memory extraction decision', () => {
 
         expect(estimateChatContextTokensForSessionMemory(chatContext)).toBe(
             1244 + estimateChatMessageTokensForSessionMemory(tailUser)
+        );
+    });
+
+    test('estimateChatContextTokensForSessionMemory 会把 system_prompt 计入粗略预算', () => {
+        const chatContext = createChatContext();
+        chatContext.system_prompt = new SystemMessage('system prompt '.repeat(200));
+        const user = new UserMessage('hello world');
+        const assistant = assistantWithText('plain answer without usage');
+        chatContext.appendMessage(user);
+        chatContext.appendMessage(assistant);
+
+        expect(estimateChatContextTokensForSessionMemory(chatContext)).toBe(
+            estimateTextTokens(chatContext.system_prompt.content) +
+                estimateChatMessageTokensForSessionMemory(user) +
+                estimateChatMessageTokensForSessionMemory(assistant)
         );
     });
 

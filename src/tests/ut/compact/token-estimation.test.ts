@@ -1,4 +1,5 @@
 import { buildActiveContextView } from '../../../main/aikernel/compaction/context-view';
+import { estimateAutoCompactContextTokens } from '../../../main/aikernel/compaction/auto-compact';
 import {
     estimateAssistantPostUsageVisibleTokens,
     estimateRoughTokensFromChatMessage,
@@ -12,6 +13,7 @@ import {
     ChatContext,
     ToolCall,
     ToolCallMessagePart,
+    SystemMessage,
     Usage,
     UserMessage
 } from '../../../main/aikernel/messages';
@@ -128,5 +130,26 @@ describe('token estimation foundation', () => {
             assistantInternalTailTokens: 0,
             source: 'rough_estimate_only'
         });
+    });
+
+    test('estimateAutoCompactContextTokens 会把 system_prompt 计入预算', () => {
+        const chatContext = new ChatContext();
+        chatContext.system_prompt = new SystemMessage('system prompt '.repeat(400));
+
+        const user = new UserMessage('hello world');
+        const assistant = new AssistantMessage();
+        assistant.appendText('plain answer with no usage');
+        chatContext.appendMessage(user);
+        chatContext.appendMessage(assistant);
+
+        const estimate = estimateAutoCompactContextTokens(chatContext);
+
+        const visibleMessageTokens = chatContext.messages.reduce(
+            (total, message) => total + estimateRoughTokensFromChatMessage(message),
+            0
+        );
+        const systemPromptTokens = estimateTextTokens(chatContext.system_prompt.content);
+
+        expect(estimate.estimatedContextTokens).toBe(visibleMessageTokens + systemPromptTokens);
     });
 });

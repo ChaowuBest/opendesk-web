@@ -223,7 +223,8 @@ function buildTokenEstimateInput(
 ): VisibleContextTokenEstimationInput {
     if (isChatContext(input)) {
         return {
-            activeContext: buildActiveContextView(input)
+            activeContext: buildActiveContextView(input),
+            systemPrompt: input.system_prompt
         };
     }
     return input;
