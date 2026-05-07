@@ -531,7 +531,8 @@ function getLastAssistantMessageFromMessages(messages: ReadonlyArray<ChatMessage
 
 export function estimateChatContextTokensForSessionMemory(chatContext: ChatContext): number {
     return estimateVisibleContextTokens({
-        activeContext: getActiveContextForSessionMemory(chatContext)
+        activeContext: getActiveContextForSessionMemory(chatContext),
+        systemPrompt: chatContext.system_prompt
     }).estimatedContextTokens;
 }
 

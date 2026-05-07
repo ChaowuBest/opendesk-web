@@ -14,6 +14,7 @@ import {
     ChatContext,
     ToolCall,
     ToolCallMessagePart,
+    SystemMessage,
     Usage,
     UserMessage,
     isCompactBoundaryMessage
@@ -536,6 +537,36 @@ describe('压缩 pipeline 的自动压缩状态流', () => {
         expect(result.contextTokenEstimate.assistantInternalTailTokens).toBeLessThan(
             rawEstimate.assistantInternalTailTokens
         );
+    });
+
+    test('prepareContextForModel 会把 system_prompt 计入自动压缩预算', async () => {
+        const chatContext = new ChatContext();
+        chatContext.system_prompt = new SystemMessage('system prompt '.repeat(400));
+        chatContext.appendMessage(new UserMessage('inspect the latest build output'));
+        const assistant = new AssistantMessage();
+        assistant.appendText('plain answer without usage');
+        chatContext.appendMessage(assistant);
+
+        const expectedEstimate = estimateVisibleContextTokens({
+            activeContext: {
+                startIndex: 0,
+                messages: chatContext.messages
+            },
+            systemPrompt: chatContext.system_prompt
+        });
+
+        const result = await prepareContextForModel(chatContext, undefined, {
+            autoCompactDecisionOverride: createAutoCompactDecision({
+                contextWindow: 10_000,
+                estimatedContextTokens: 1,
+                reservedSummaryOutput: 0,
+                buffer: 0
+            })
+        });
+
+        expect(result.contextTokenEstimate).toMatchObject(expectedEstimate);
+        expect(result.shouldCompact).toBe(false);
+        expect(result.compacted).toBe(false);
     });
 
     test('Phase 2: pre_submit_check 和 view_only 只做 microcompact analysis，不产生本地副作用', async () => {
