@@ -160,6 +160,7 @@ class PermissionPrompt extends HTMLElement {
             }
             if (this._remaining <= 0) {
                 this.stopCountdown();
+                this.hidePrompt();
             }
         }, 1000);
     }

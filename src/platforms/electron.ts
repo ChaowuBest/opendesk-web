@@ -21,7 +21,7 @@ import { CalendarApplication } from '../main/applications/calendar/app.js';
 import { BrowserApplication } from '../main/applications/browser/app';
 // import { A2AApplication } from '../main/applications/a2a/app.js';
 // import { RecallApplication } from '../main/applications/recall/app.js';
-// import { SearchApplication } from '../main/applications/search/app';
+import { SearchApplication } from '../main/applications/search/app';
 // import { NewsApplication } from '../main/applications/news/app.js';
 import { TerminalApplication } from '../main/applications/terminal/app.js';
 // import { PPTCreatorApplication } from '../main/applications/ppt/app.js';
@@ -123,7 +123,7 @@ export class ElectronPlatform extends AbstractPlatform {
             BrowserApplication,
             // A2AApplication,
             // RecallApplication,
-            // SearchApplication,
+            SearchApplication,
             // NewsApplication,
             TerminalApplication,
             // PPTCreatorApplication,

@@ -413,6 +413,11 @@ function isMarkdownFile(filePath: string): boolean {
     return ext === 'md' || ext === 'markdown';
 }
 
+function isHtmlFile(filePath: string): boolean {
+    const ext = filePath.split('.').pop()?.toLowerCase();
+    return ext === 'html' || ext === 'htm';
+}
+
 const MARKDOWN_PREVIEW_CSS = `
     :host {
         display: block;
@@ -1021,8 +1026,8 @@ export class FileExplorer {
             });
         }
 
-        // _renderPanel 后需要重新挂载 Markdown Shadow DOM（_renderPreviewHtml 只输出占位 div）
         this._attachMarkdownShadow(panel);
+        this._attachHtmlPreview(panel);
     }
 
     /**
@@ -1231,6 +1236,46 @@ export class FileExplorer {
         el.classList.toggle('ws-preview--collapsed', !this._selectedFile);
 
         this._attachMarkdownShadow(el);
+        this._attachHtmlPreview(el);
+    }
+
+    private _attachHtmlPreview(root: ParentNode): void {
+        if (
+            !this._selectedFile ||
+            !isHtmlFile(this._selectedFile) ||
+            this._previewState.status !== 'idle' ||
+            !this._previewState.data?.content
+        ) {
+            return;
+        }
+        const host = root.querySelector<HTMLElement>('.ws-preview-html-host');
+        if (!host || host.dataset.attached) return;
+        host.dataset.attached = '1';
+
+        const dirPath = this._selectedFile.replace(/[^/\\]+$/, '');
+        const baseHref = `file://${dirPath}`;
+
+        const iframe = document.createElement('iframe');
+        iframe.sandbox.add('allow-same-origin');
+        iframe.style.cssText = 'width:100%;height:100%;border:none;display:block;background:#fff;';
+
+        const content = this._previewState.data.content;
+        const hasBase = /<base\s/i.test(content);
+        const baseTag = hasBase ? '' : `<base href="${baseHref}">`;
+        const headInsert = baseTag;
+
+        let srcdoc: string;
+        if (/<head[\s>]/i.test(content)) {
+            srcdoc = content.replace(/(<head[^>]*>)/i, `$1${headInsert}`);
+        } else if (/<html[\s>]/i.test(content)) {
+            srcdoc = content.replace(/(<html[^>]*>)/i, `$1<head>${headInsert}</head>`);
+        } else {
+            srcdoc = `<!DOCTYPE html><html><head>${headInsert}</head><body>${content}</body></html>`;
+        }
+
+        iframe.srcdoc = srcdoc;
+        host.style.cssText = 'width:100%;height:100%;overflow:hidden;';
+        host.appendChild(iframe);
     }
 
     private _renderPreviewHtml(): string {
@@ -1295,6 +1340,8 @@ export class FileExplorer {
                 </div>`;
             } else if (this._selectedFile && isMarkdownFile(this._selectedFile)) {
                 bodyHtml = `<div class="ws-preview-md-host"></div>`;
+            } else if (this._selectedFile && isHtmlFile(this._selectedFile)) {
+                bodyHtml = `<div class="ws-preview-html-host"></div>`;
             } else {
                 bodyHtml = `
                 <div class="ws-preview-body">

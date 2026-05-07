@@ -78,6 +78,7 @@ import path from 'path';
 import fs from 'fs';
 
 import appIcon from '../../resources/main/images/icon_round.png?asset';
+import { initTempDir, closeTempDir } from './utils/temp.js';
 
 // TODO: FSService 和 recallApplication 当前未接入，保留 ipcMain handler 以兼容旧前端
 declare const FSService: any;
@@ -85,6 +86,12 @@ declare const recallApplication: any;
 
 setPlatform(new ElectronPlatform(app));
 useConsoleTransport();
+initTempDir();
+
+app.commandLine.appendSwitch(
+    'disable-features',
+    'CompressionDictionaryTransportBackend,CompressionDictionaryTransport'
+);
 
 // OpenHarmony 环境下注入 USER_DATA_PATH，确保 setting.ts / skillregistry 等模块能找到可写数据目录
 if (process.platform === 'openharmony' && !process.env.USER_DATA_PATH) {
@@ -1377,6 +1384,12 @@ function startApplication() {
                         `${senderLabel} 的${channelName}消息`,
                         preview || '(无文本内容)'
                     );
+
+                    // 自动切换到渠道消息对应的任务会话
+                    if (globalMainWindow) {
+                        globalMainWindow.show();
+                        globalMainWindow.webContents.send('command:openTask', task.task_id);
+                    }
                 };
 
                 await channelMgrApp.initializeChannels(router, startupWorkspace);
@@ -1387,7 +1400,6 @@ function startApplication() {
 
     app.on('will-quit', async () => {
         globalShortcut.unregisterAll();
-        // 停止自动更新检查
         if (updateClient) {
             updateClient.stopAutoCheck();
         }
@@ -1396,6 +1408,7 @@ function startApplication() {
         } catch {
             /* best-effort flush */
         }
+        closeTempDir();
     });
 }
 

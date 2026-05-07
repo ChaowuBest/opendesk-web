@@ -1,9 +1,9 @@
 import path from 'path';
 import fs from 'fs';
-import os from 'os';
 import AdmZip from 'adm-zip';
 import { SkillRegistry } from './skillregistry.js';
 import { RegistryAdapters } from './registry-adapters.js';
+import { getTempDir } from '../../utils/temp.js';
 
 const SKILL_MD_FILENAME = 'SKILL.md';
 const ZIP_MAX_UNCOMPRESSED_BYTES = 500 * 1024 * 1024;
@@ -130,7 +130,7 @@ export function installSkillFromLocalZip(
         return { success: false, error: '请选择 .zip 格式的压缩包' };
     }
 
-    const tmpDir = path.join(os.tmpdir(), `skill-zip-${Date.now()}`);
+    const tmpDir = path.join(getTempDir(), `skill-zip-${Date.now()}`);
     const safeRelPath = skillRelPath && typeof skillRelPath === 'string' ? skillRelPath.trim() : '';
 
     try {
@@ -166,7 +166,7 @@ export async function installSkillFromUrl(url: string, force: boolean = false): 
         return { success: false, error: 'URL 须以 http:// 或 https:// 开头' };
     }
 
-    const tmpDir = path.join(os.tmpdir(), `skill-download-${Date.now()}`);
+    const tmpDir = path.join(getTempDir(), `skill-download-${Date.now()}`);
     try {
         fs.mkdirSync(tmpDir, { recursive: true });
         const res = await fetch(trimmed, { redirect: 'follow' });
@@ -204,7 +204,7 @@ export async function installSkillFromGitHubUrl(
     const { owner, repo, branch, path: relPath } = parsed;
 
     const zipUrl = `https://github.com/${owner}/${repo}/archive/refs/heads/${branch}.zip`;
-    const tmpDir = path.join(os.tmpdir(), `skill-github-${Date.now()}`);
+    const tmpDir = path.join(getTempDir(), `skill-github-${Date.now()}`);
 
     try {
         fs.mkdirSync(tmpDir, { recursive: true });
