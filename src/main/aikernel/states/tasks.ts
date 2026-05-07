@@ -26,6 +26,7 @@ import {
     UserMessagePart,
     AssistantMessage,
     AssistantMessagePart,
+    TextMessagePart,
     FileMessagePart,
     ImageMessagePart,
     SystemMessage,
@@ -643,6 +644,19 @@ export class TaskState {
         }
 
         const assistant_message = new AssistantMessage();
+
+        // 检测用户消息中的 /skillname，先替换文本（在 append 和渲染之前）
+        const displayMessage = await this.replaceSlashSkillsInText(message);
+
+        // 如果文本被替换了，更新用户消息中的文本部分
+        if (displayMessage !== message) {
+            const textPart = user_message.content.find((p) => p.type === 'text') as TextMessagePart | undefined;
+            if (textPart) {
+                textPart.text = displayMessage;
+                textPart.invalidateRender();
+            }
+        }
+
         this.chat_context.appendMessage(user_message);
         await this.sendSubscriptionFeedback();
         this.chat_context.appendMessage(assistant_message);
@@ -650,7 +664,7 @@ export class TaskState {
         const allToolsets = await this.buildToolsets();
         this.chat_context.attachToolsets(...allToolsets);
 
-        // 检测用户消息中的 /skillname 引用并预加载
+        // 检测用户消息中的 /skillname 引用并预加载到 assistant message
         await this.preloadSlashSkills(message, assistant_message);
 
         // 预加载产生的 parts 需要立即推送到前端，否则后续流式更新的 part_index 与 DOM 不同步
@@ -789,6 +803,41 @@ export class TaskState {
      * 从用户消息中提取 /skillname 引用，逐一查找并预加载到 assistant message 中。
      * 未找到的 skill name 静默忽略（不报错）。
      */
+    /**
+     * 将用户消息中匹配到的 /skillName 替换为 [技能: skillName](directory) 标签。
+     * 在消息 append 到 chat_context 之前调用，确保渲染时已经是替换后的文本。
+     */
+    private async replaceSlashSkillsInText(message: string): Promise<string> {
+        const skillNamePattern = /(?:^|\s)\/([a-z0-9](?:[a-z0-9-]*[a-z0-9])?)(?=\s|$)/g;
+        const matchedNames = new Set<string>();
+        let match: RegExpExecArray | null;
+        while ((match = skillNamePattern.exec(message)) !== null) {
+            matchedNames.add(match[1]);
+        }
+        if (matchedNames.size === 0) return message;
+
+        const registry = SkillRegistry.getInstance();
+        const allSkills = await registry.getAllSkillsFlat();
+
+        let updatedMessage = message;
+        for (const name of matchedNames) {
+            const entry = allSkills.find((e) => e.skill.frontmatter.name === name && e.skill.isUserInvocable);
+            if (!entry) continue;
+
+            try {
+                const loadedSkill = await registry.getSkill(entry.bundleName, name);
+                if (!loadedSkill) continue;
+
+                const directory = loadedSkill.directory || entry.bundleName;
+                const slashPattern = new RegExp(`(^|\\s)\\/${name.replace(/-/g, '\\-')}(?=\\s|$)`, 'g');
+                updatedMessage = updatedMessage.replace(slashPattern, `$1[技能: ${name}](${directory})`);
+            } catch {
+                // skill 加载失败时不替换
+            }
+        }
+        return updatedMessage;
+    }
+
     private async preloadSlashSkills(message: string, assistantMessage: AssistantMessage) {
         // 提取消息中所有 /skillname 模式（skill name 规则: 小写字母、数字、连字符）
         const skillNamePattern = /(?:^|\s)\/([a-z0-9](?:[a-z0-9-]*[a-z0-9])?)(?=\s|$)/g;

@@ -653,6 +653,26 @@ class SideBar extends HTMLElement {
             } else {
                 item.classList.add('bg-white', 'text-[#1f2937]', 'hover:bg-[#f9fafb]');
             }
+
+            // 同步更新 channel-tag 样式
+            const channelTag = item.querySelector('.channel-tag');
+            if (channelTag) {
+                channelTag.classList.remove('bg-white/25', 'text-white', 'bg-[#f0f0f0]', 'text-[#888]');
+                if (isCurrentTask) {
+                    channelTag.removeAttribute('style');
+                    channelTag.classList.add('bg-white/25', 'text-white');
+                } else {
+                    const task = this.taskList?.find((t) => t.task_id === taskId);
+                    const channelId = task?.origin?.channel || '';
+                    const meta = SideBar.CHANNEL_META[channelId];
+                    if (meta?.color) {
+                        channelTag.setAttribute('style', `background:${meta.color};color:#fff`);
+                    } else {
+                        channelTag.removeAttribute('style');
+                        channelTag.classList.add('bg-[#f0f0f0]', 'text-[#888]');
+                    }
+                }
+            }
         });
 
         container.querySelectorAll('.task-card-group').forEach((group) => {

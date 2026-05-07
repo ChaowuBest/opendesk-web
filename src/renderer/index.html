@@ -278,6 +278,9 @@
             }
 
             window.settingAPI.registerCommandCallback('openHomePage', openHomePage);
+            window.settingAPI.registerCommandCallback('openTask', function (taskId) {
+                openTask(taskId);
+            });
 
             async function updateMaximizeIcon() {
                 const isMaximized = await window.settingAPI.isMaximized();

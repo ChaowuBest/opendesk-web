@@ -1,13 +1,13 @@
 export const BROWSER_SKILL = `
 ---
 name: use-browser
-description: 提供嵌入式网页浏览器功能：访问网页、页面导航、元素交互、内容提取、多标签页管理等自动化控制能力
+description: 提供嵌入式网页浏览器控制功能：访问网页、页面导航、元素交互、内容提取、多标签页管理等自动化控制能力
 ---
 
-# 嵌入式浏览器
+# 嵌入式网页浏览器
 
-本技能提供内置的网页浏览器功能，可以通过 OpenDesk 的浏览器标签直接访问网页，并支持通过工具进行自动化操作。
-浏览器支持多标签页，所有标签页共享同一个会话（cookies / localStorage），跨任务也保持登录状态。
+本技能提供内置的网页浏览器功能，可以通过 OpenDesk 的任务级浏览器标签直接访问网页，并支持通过工具进行自动化操作。
+每个任务拥有自己独立的浏览器实例。浏览器支持多标签页，所有标签页共享同一个会话（cookies / localStorage），跨任务也保持登录状态。
 
 底层使用 Chrome DevTools Protocol (CDP) 进行真实用户输入模拟（鼠标点击、键盘输入等），兼容所有前端框架（React / Vue / Angular 等）。
 
@@ -25,8 +25,6 @@ description: 提供嵌入式网页浏览器功能：访问网页、页面导航�
 - **browserGoBack** — 后退到上一个页面
 - **browserGoForward** — 前进到下一个页面
 - **browserReload** — 刷新当前页面
-
-所有导航工具都会检测 chrome-error 页面，自动返回真实的错误信息（如 DNS 解析失败、连接超时等）。
 
 ## 页面快照
 

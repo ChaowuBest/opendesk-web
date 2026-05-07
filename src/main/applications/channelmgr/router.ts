@@ -82,6 +82,25 @@ export class ChannelMessageRouter {
     }
 
     /**
+     * 获取指定渠道/账号下所有已知的会话接收者列表。
+     * 从 taskMap 中提取，用于 UI 选择投递目标时枚举可选联系人/群组。
+     */
+    getKnownRecipients(channelId: string, accountId: string): { recipientId: string; taskName?: string }[] {
+        const prefix = `${channelId}:${accountId}:`;
+        const recipients: { recipientId: string; taskName?: string }[] = [];
+        for (const [key, entry] of taskMap) {
+            if (key.startsWith(prefix)) {
+                const recipientId = key.slice(prefix.length);
+                if (recipientId) {
+                    const task = this.taskManagerState.getTask(entry.taskId);
+                    recipients.push({ recipientId, taskName: task?.task_name || undefined });
+                }
+            }
+        }
+        return recipients;
+    }
+
+    /**
      * Route an inbound channel message to the task system.
      * Creates or reuses a session/task for the sender, runs the AI agent,
      * and returns the assistant's reply text.

@@ -39,6 +39,7 @@ import type {
 } from '../../plugins/types.js';
 import { registerChannelDispatch, unregisterChannelDispatch, setPairingProvider } from '../../plugins/openclaw/api.js';
 import * as pairing from './pairing.js';
+import { recordContact, getContacts } from './contacts.js';
 import { ChannelMessageRouter, type ChannelReply } from './router.js';
 import { getTempDirectory } from '../filemgr/tools.js';
 import os from 'os';
@@ -470,6 +471,13 @@ export class ChannelMgrApplication extends BaseApplication {
         }
 
         const replyTo = message.chatType === 'group' && message.groupId ? message.groupId : message.senderId;
+
+        // 记录联系人信息，用于自动化任务投递目标选择
+        const contactName =
+            message.chatType === 'group'
+                ? message.groupName || message.groupId || ''
+                : message.senderName || message.senderId || '';
+        recordContact(cp.id, accountId, replyTo, contactName, message.chatType);
         const cfg = this.getChannelConfig(cp.id);
         const baseCtx = {
             channelId: cp.id,
@@ -613,6 +621,20 @@ export class ChannelMgrApplication extends BaseApplication {
                 label: resolveChannelDisplayName(p.channelPlugin!.id, p.channelPlugin!.meta.label),
                 description: p.channelPlugin!.meta.description
             }));
+    }
+
+    /**
+     * 获取指定渠道/账号的已知联系人（从持久化存储中读取）。
+     */
+    getPersistedContacts(
+        channelId: string,
+        accountId: string
+    ): { recipientId: string; displayName: string; chatType: string }[] {
+        return getContacts(channelId, accountId).map((c) => ({
+            recipientId: c.recipientId,
+            displayName: c.displayName,
+            chatType: c.chatType
+        }));
     }
 
     getPluginLoadErrors(): PluginLoadError[] {

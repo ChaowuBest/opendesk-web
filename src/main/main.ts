@@ -1384,6 +1384,12 @@ function startApplication() {
                         `${senderLabel} 的${channelName}消息`,
                         preview || '(无文本内容)'
                     );
+
+                    // 自动切换到渠道消息对应的任务会话
+                    if (globalMainWindow) {
+                        globalMainWindow.show();
+                        globalMainWindow.webContents.send('command:openTask', task.task_id);
+                    }
                 };
 
                 await channelMgrApp.initializeChannels(router, startupWorkspace);
