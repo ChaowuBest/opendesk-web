@@ -595,6 +595,11 @@ const registerTaskManagerAPIHandlers = () => {
         return { status: 'ok', data: globalState.taskManagerState.addSubscriber(subscriber) };
     });
     ipcMain.handle('taskManager:attachToolset', async (event, taskId, toolsetObject) => {
+        if (!event.senderFrame) {
+            return { status: 'error', message: 'sender frame not found' };
+        }
+        const senderFrame = event.senderFrame;
+
         const task = globalState.taskManagerState.getTask(taskId);
         if (task === undefined) {
             return { status: 'error', message: `task ${taskId} not found` };
@@ -604,15 +609,28 @@ const registerTaskManagerAPIHandlers = () => {
         for (const tool of toolset.tools.values()) {
             tool.setExecutor(async (args) => {
                 const toolCallId = crypto.randomUUID();
+                type RendererToolCallResult = { status: 'ok'; data: string } | { status: 'error'; message?: string };
 
-                const result = new Promise((resolve, _reject) => {
-                    ipcMain.once(`taskManager:reportToolCallResult:${toolCallId}`, (event, result) => {
-                        resolve(result);
-                    });
-                    event.senderFrame.send(`taskManager:callTool`, taskId, toolCallId, toolset.name, tool.name, args);
+                const result = await new Promise<RendererToolCallResult>((resolve, _reject) => {
+                    const timeout = setTimeout(() => {
+                        ipcMain.removeAllListeners(`taskManager:reportToolCallResult:${toolCallId}`);
+                        resolve({ status: 'error', message: `Renderer tool ${tool.name} timed out (60s)` });
+                    }, 60_000);
+
+                    ipcMain.once(
+                        `taskManager:reportToolCallResult:${toolCallId}`,
+                        (_event, result: RendererToolCallResult) => {
+                            clearTimeout(timeout);
+                            resolve(result);
+                        }
+                    );
+                    senderFrame.send(`taskManager:callTool`, taskId, toolCallId, toolset.name, tool.name, args);
                 });
 
-                return await result;
+                if (result.status === 'error') {
+                    throw new Error(result.message || 'Renderer tool execution failed');
+                }
+                return result.data;
             });
         }
 
