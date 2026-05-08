@@ -62,6 +62,19 @@ This project implements a data processing pipeline with authentication, caching,
     fs.writeFileSync(path.join(dir, 'data.bin'), Buffer.from([0x00, 0x01, 0x02, 0x03]));
 }
 
+function makeFileEntry(filePath) {
+    const stat = fs.statSync(filePath);
+    return {
+        path: filePath,
+        filename: path.basename(filePath),
+        size: stat.size,
+        modified: Math.floor(stat.mtimeMs),
+        created: Math.floor(stat.birthtimeMs),
+        accessed: Math.floor(stat.atimeMs),
+        type: 'file'
+    };
+}
+
 function makeConfig(root) {
     return {
         entries: [
@@ -75,12 +88,10 @@ function makeConfig(root) {
 }
 
 // ── Global Setting setup ────────────────────────────────────────────
+// Initialised before the no-API early-exit so that the fast-path tests
+// can reference globalAppDir / settingData.
 
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
-if (!OPENROUTER_API_KEY) {
-    console.log('OPENROUTER_API_KEY not set, skipping filemgr worker tests');
-    process.exit(0);
-}
 
 const globalAppDir = tmpDir('setting');
 setCustomAppDirectory(globalAppDir);
@@ -95,7 +106,7 @@ const settingData = {
         {
             name: 'openrouter',
             base_url: 'https://openrouter.ai/api/v1',
-            api_key: OPENROUTER_API_KEY,
+            api_key: OPENROUTER_API_KEY ?? '',
             no_proxy: true
         }
     ],
@@ -111,6 +122,20 @@ const settingData = {
 
 fs.writeFileSync(path.join(globalAppDir, 'setting.json'), JSON.stringify(settingData, null, 4), 'utf-8');
 Setting.updateInstanceData(settingData);
+
+if (!OPENROUTER_API_KEY) {
+    console.log('OPENROUTER_API_KEY not set, running no-API worker orchestration tests');
+    // Tests below exercise base-only scanning, config-change root plumbing,
+    // getStatus shape, legacy-file cleanup, and queue-yield logic without
+    // any real embedding API calls.
+    await testGetStatus();
+    await testConfigChangeAddRoot();
+    await testConfigChangeRemoveRoot();
+    await testLegacyFileCleanup();
+    await testEmbeddingTaskYieldsToQueuedScan();
+    cleanup(globalAppDir);
+    process.exit(0);
+}
 
 // ── Test 1: testFullScanSmallDir ─────────────────────────────────────
 
@@ -439,22 +464,29 @@ async function testDeferredRecovery() {
         await worker.initialize();
         await worker.taskQueue.onIdle();
 
-        // Storage should be deferred (no embedding model)
-        assert.ok(worker.storage.isDeferred(), 'storage should be deferred without embedding config');
+        // Storage should be in base-only mode (no embedding model configured)
+        assert.ok(!worker.storage.isDeferred(), 'storage should not be truly deferred — base-only always initializes');
+        assert.equal(worker.storage.mode, 'base-only', 'storage should be in base-only mode without embedding config');
 
         // Restore embedding config
         setCustomAppDirectory(globalAppDir);
         Setting.updateInstanceData(settingData);
 
-        // Trigger recovery through scanner's scan() method — which calls
-        // storage.initialize() when deferred, mimicking the real recovery path.
+        // Trigger mode sync from base-only to full via scanner's scan() method.
+        // syncEmbeddingMode at scan start detects embedding now available and transitions to full.
         // Going through taskQueue keeps test path consistent with production
         // serialization — see worker.js header concurrency invariant.
         const scanner = worker.scanners.get(scanDir);
-        assert.ok(scanner, 'scanner should exist even in deferred state');
+        assert.ok(scanner, 'scanner should exist even in base-only state');
         await worker.taskQueue.add(() => scanner.scan());
+        // Drain embedding task enqueued by scan
+        await worker.taskQueue.onIdle();
 
-        assert.ok(!worker.storage.isDeferred(), 'storage should recover after embedding config restored via scan');
+        assert.equal(
+            worker.storage.mode,
+            'full',
+            'storage should recover to full mode after embedding config restored via scan'
+        );
 
         console.log('  ✅ testDeferredRecovery');
     } finally {
@@ -650,12 +682,120 @@ async function testLegacyFileCleanup() {
     }
 }
 
+// ── Test: testEmbeddingTaskYieldsToQueuedScan ────────────────────────
+
+async function testEmbeddingTaskYieldsToQueuedScan() {
+    console.log('  testEmbeddingTaskYieldsToQueuedScan...');
+    const dir = tmpDir('yield');
+    try {
+        const worker = new FileManagerWorker('test', dir);
+        worker.config = { entries: [] };
+        await worker.initialize();
+
+        const fss = worker.storage;
+        for (let i = 0; i < 5; i++) {
+            const f = path.join(dir, `f${i}.md`);
+            fs.writeFileSync(f, `# content ${i}`);
+            await fss.saveFiles([makeFileEntry(f)], dir);
+        }
+
+        // Set mode to full so processEmbeddingQueue runs
+        fss.mode = 'full';
+
+        // Stub embedSingleFile with a delay so we can observe mid-batch yield.
+        // No real API call — this test is only about queue-yield behaviour.
+        let processed = 0;
+        fss.embedSingleFile = async (_row) => {
+            await new Promise((r) => setTimeout(r, 50));
+            processed++;
+        };
+
+        const taskPromise = fss.processEmbeddingQueue(() => worker._scanPending);
+        setTimeout(() => {
+            worker._scanPending = true;
+        }, 75);
+
+        const total = await taskPromise;
+        assert.ok(total < 5, `must yield mid-task (got ${total} processed)`);
+        assert.ok(processed >= 1);
+    } finally {
+        cleanup(dir);
+    }
+    console.log('  ✅ testEmbeddingTaskYieldsToQueuedScan');
+}
+
+// ── E2E: testE2EBaseOnlyToFullCatchUp ────────────────────────────────
+
+async function waitForCondition(checkFn, { timeoutMs = 15000, intervalMs = 100, label } = {}) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+        if (await checkFn()) return;
+        await new Promise((r) => setTimeout(r, intervalMs));
+    }
+    throw new Error(`waitForCondition timeout: ${label ?? 'condition'}`);
+}
+
+async function testE2EBaseOnlyToFullCatchUp() {
+    console.log('  testE2EBaseOnlyToFullCatchUp...');
+    Setting.updateInstanceData({ ...settingData, default_embedding_model: '' });
+    fs.writeFileSync(
+        path.join(globalAppDir, 'setting.json'),
+        JSON.stringify({ ...settingData, default_embedding_model: '' }, null, 4)
+    );
+    const dir = tmpDir('e2e');
+    let worker;
+    try {
+        fs.writeFileSync(path.join(dir, 'alpha.md'), '# alpha content');
+        fs.writeFileSync(path.join(dir, 'beta.md'), '# beta content');
+
+        worker = new FileManagerWorker('test', dir);
+        worker.config = { entries: [{ root: dir, include_patterns: ['**/*.md'], exclude_patterns: [] }] };
+        await worker.initialize();
+        // Wait for first scan to complete deterministically
+        await worker.taskQueue.onIdle();
+
+        const k = await worker.searchFilesByKeyword('alpha');
+        assert.ok(k.length >= 1, 'keyword search must work in base-only');
+
+        const s1 = await worker.searchFileByName('alpha');
+        assert.equal(s1.code, 'EMBED_UNAVAILABLE');
+
+        // Configure embedding
+        Setting.updateInstanceData(settingData);
+        fs.writeFileSync(path.join(globalAppDir, 'setting.json'), JSON.stringify(settingData, null, 4));
+        await worker.applicationConfigChanged(worker.config);
+
+        // syncEmbeddingMode runs inside applicationConfigChanged; embedding follow-up
+        // is enqueued afterwards. Wait until queue drains AND mode is full
+        // AND no rows remain pending.
+        await waitForCondition(
+            async () => {
+                await worker.taskQueue.onIdle();
+                const status = await worker.storage.getStatus();
+                return status?.mode === 'full' && status.pending_count === 0;
+            },
+            { timeoutMs: 30000, label: 'mode=full + pending_count=0' }
+        );
+
+        const s2 = await worker.searchFileByName('alpha');
+        assert.equal(s2.code, undefined);
+        assert.ok(s2.results.length >= 1);
+    } finally {
+        Setting.updateInstanceData(settingData);
+        if (worker) await worker.taskQueue.onIdle();
+        cleanup(dir);
+    }
+    console.log('  ✅ testE2EBaseOnlyToFullCatchUp');
+}
+
 // ── Main ────────────────────────────────────────────────────────────
 
 async function main() {
     console.log('=== FileManagerWorker Tests ===\n');
     let passed = 0,
         failed = 0;
+
+    const filter = process.env.TEST_FILTER;
 
     const tests = [
         testFullScanSmallDir,
@@ -667,10 +807,14 @@ async function main() {
         testGetStatus,
         testResetFileSystemStorage,
         testScannerStateCorruptRebuild,
-        testLegacyFileCleanup
+        testLegacyFileCleanup,
+        testEmbeddingTaskYieldsToQueuedScan,
+        testE2EBaseOnlyToFullCatchUp
     ];
 
-    for (const test of tests) {
+    const filteredTests = filter ? tests.filter((t) => t.name.includes(filter)) : tests;
+
+    for (const test of filteredTests) {
         try {
             await test();
             passed++;

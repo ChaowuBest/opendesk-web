@@ -56,7 +56,7 @@ description: 在 OpenDesk 本地文件相关工具之间选择与组合使用的
 搜索结果可能包含 \`warning\` 字段，表示索引状态异常：
 
 - \`首次扫描进行中\` → 告知用户"文件索引正在构建中，请稍后重试"，**不要反复尝试**
-- \`未配置向量嵌入模型\` → 告知用户需要运行 \`/config\` 配置嵌入模型
+- \`未配置向量嵌入模型\` 或带有 \`code: 'EMBED_UNAVAILABLE'\` 的结果 → 嵌入模型不可用，**不要重试 searchFileByName / searchFileByContent**；改用 \`grepFiles\` / \`searchFileByKeyword\` 完成本次查询，并告知用户运行 \`/config\` 配置嵌入模型
 - \`未配置扫描目录\` → 告知用户需要运行 \`/config\` 添加文件扫描路径
 
 ## 两个 search tool 的边界

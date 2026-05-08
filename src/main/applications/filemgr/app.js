@@ -23,6 +23,29 @@ import { FILE_NAVIGATION_SKILL } from './skills.js';
 import { Skill } from '../../aikernel/skill.js';
 import { t } from '../../../locale/index.js';
 
+function formatStorageStatusBlock(storage) {
+    if (!storage) return '存储统计\n  (暂无数据)';
+    const isFull = storage.mode === 'full';
+    const modeLabel = isFull ? '完整' : '基础（向量搜索不可用）';
+    const lines = [`索引模式: ${modeLabel}`];
+
+    if (isFull) {
+        lines.push(
+            `向量嵌入: ${storage.embedded_count ?? 0} / ${storage.total_files ?? 0} 已完成（${storage.pending_count ?? 0} 待处理）`
+        );
+    } else if ((storage.embedded_count ?? 0) > 0) {
+        lines.push(`已嵌入文件: ${storage.embedded_count} 条（嵌入暂停）`);
+    }
+
+    if (storage.last_embedding_task_at) {
+        lines.push(`最近嵌入任务: ${new Date(storage.last_embedding_task_at).toLocaleString()}`);
+    }
+
+    const chunkPart = isFull ? `内容分片 ${storage.chunk_size ?? 0} 条` : '内容分片 未加载（基础模式）';
+    lines.push(`存储占用: 元数据 ${storage.db_size ?? 0} 条 | ${chunkPart}`);
+    return lines.join('\n');
+}
+
 class FileMgrApplication extends BaseApplication {
     constructor() {
         super('filemgr', '文件');
@@ -61,50 +84,40 @@ class FileMgrApplication extends BaseApplication {
     async getToolsets() {
         const toolset = createFileManagerToolset();
 
-        try {
-            const setting = Setting.getInstance();
-            setting.getDefaultEmbeddingModelInstance();
+        // Decision #18: register semantic tools regardless of embedding config.
+        // Worker layer returns code:'EMBED_UNAVAILABLE' when unavailable.
+        const searchByNameTool = new BaseTool(
+            'searchFileByName',
+            '根据文件名语义搜索文件。适用于"找和 auth 相关的文件"等场景。返回按相关度排序的文件列表。嵌入模型不可用时返回 EMBED_UNAVAILABLE，请改用 grepFiles / searchFileByKeyword。',
+            z.object({
+                query: z.string().describe('搜索查询'),
+                topK: z.number().optional().describe('返回结果数量上限，默认 20')
+            })
+        );
+        searchByNameTool.setExecutor(async (args) => {
+            const result = await this.callWorker('searchFileByName', args.query, args.topK);
+            return JSON.stringify(result);
+        });
+        toolset.addTool(searchByNameTool);
 
-            const searchByNameTool = new BaseTool(
-                'searchFileByName',
-                '根据文件名语义搜索文件。适用于"找和 auth 相关的文件"等场景。返回按相关度排序的文件列表。',
-                z.object({
-                    query: z.string().describe('搜索查询'),
-                    topK: z.number().optional().describe('返回结果数量上限，默认 20')
-                })
-            );
-            searchByNameTool.setExecutor(async (args) => {
-                const result = await this.callWorker('searchFileByName', args.query, args.topK);
-                return JSON.stringify(result);
-            });
-            toolset.addTool(searchByNameTool);
-
-            const searchByContentTool = new BaseTool(
-                'searchFileByContent',
-                '根据文件内容语义搜索文件。适用于"找讲迁移方案的文档"等场景。返回按相关度排序的文件列表，附带匹配片段。',
-                z.object({
-                    query: z.string().describe('搜索查询'),
-                    topK: z.number().optional().describe('返回结果数量上限，默认 20')
-                })
-            );
-            searchByContentTool.setExecutor(async (args) => {
-                const result = await this.callWorker('searchFileByContent', args.query, args.topK);
-                return JSON.stringify(result);
-            });
-            toolset.addTool(searchByContentTool);
-        } catch {
-            // Embedding model not configured, skip semantic search tools
-        }
+        const searchByContentTool = new BaseTool(
+            'searchFileByContent',
+            '根据文件内容语义搜索文件。嵌入模型不可用时返回 EMBED_UNAVAILABLE，请改用 grepFiles / searchFileByKeyword。',
+            z.object({
+                query: z.string().describe('搜索查询'),
+                topK: z.number().optional().describe('返回结果数量上限，默认 20')
+            })
+        );
+        searchByContentTool.setExecutor(async (args) => {
+            const result = await this.callWorker('searchFileByContent', args.query, args.topK);
+            return JSON.stringify(result);
+        });
+        toolset.addTool(searchByContentTool);
 
         return [toolset];
     }
 
     async getSkills() {
-        try {
-            Setting.getInstance().getDefaultEmbeddingModelInstance();
-        } catch {
-            return [];
-        }
         return [Skill.parseMd(FILE_NAVIGATION_SKILL)];
     }
 
@@ -113,23 +126,9 @@ class FileMgrApplication extends BaseApplication {
     }
 
     getCliSlashCommands(tui) {
-        function formatStorageBlock(storage) {
-            if (!storage) {
-                return '存储统计\n  (暂无数据)';
-            }
-            return `存储统计\n  文件元数据: ${storage.db_size} 条 | 文件名向量: ${storage.vecdb_size} 条 | 内容 chunks: ${storage.chunk_size} 条`;
-        }
-
         function formatFsStatusMessage(data) {
             const lines = [`状态: ${data.status}`, ''];
             const scanners = data.scanners ?? [];
-
-            let embeddingConfigured = true;
-            try {
-                Setting.getInstance().getDefaultEmbeddingModelInstance();
-            } catch {
-                embeddingConfigured = false;
-            }
 
             if (scanners.length === 0) {
                 lines.push('暂无扫描目录');
@@ -139,35 +138,28 @@ class FileMgrApplication extends BaseApplication {
                     lines.push(s.root ?? s.entry?.root);
 
                     if (data.isDeferred) {
-                        lines.push('  初始化中...（等待嵌入模型配置）');
-                    } else if (!embeddingConfigured && s.lastFullScan === 0) {
-                        lines.push('  已暂停（等待嵌入模型配置）');
-                    } else if (!embeddingConfigured && s.lastFullScan > 0) {
-                        const lastScan = new Date(s.lastFullScan).toLocaleString();
-                        lines.push(
-                            `  已暂停，上次扫描: ${lastScan} | 文件数: ${s.totalFiles ?? 0} | 失败: ${s.lastFailedCount ?? 0}`
-                        );
-                    } else if (embeddingConfigured && s.lastFullScan === 0 && s.isRunning) {
+                        lines.push('  初始化中...');
+                    } else if (s.lastFullScan === 0 && s.isRunning) {
                         lines.push('  首次扫描进行中...');
-                    } else if (embeddingConfigured && s.lastFullScan === 0) {
+                    } else if (s.lastFullScan === 0) {
                         lines.push('  从未扫描');
                     } else {
                         const lastScan = new Date(s.lastFullScan).toLocaleString();
-                        lines.push(
-                            `  上次全量扫描: ${lastScan} | 文件数: ${s.totalFiles ?? 0} | 失败: ${s.lastFailedCount ?? 0}`
-                        );
+                        lines.push(`  上次全量扫描: ${lastScan} | 文件数: ${s.totalFiles ?? 0}`);
                     }
                     lines.push('');
                 }
             }
 
             lines.push('');
-            lines.push(...formatStorageBlock(data.storage).split('\n'));
+            lines.push(...formatStorageStatusBlock(data.storage).split('\n'));
 
-            if (!embeddingConfigured) {
+            if (data.storage?.mode === 'base-only') {
                 lines.push('');
-                lines.push('⚠️ 当前未配置有效的向量嵌入模型，扫描已暂停。');
-                lines.push('请运行 /config -> 默认模型配置 设置”向量嵌入模型”。');
+                lines.push('⚠️ 向量嵌入不可用：语义搜索不可用，关键词搜索正常。');
+                lines.push(
+                    '运行 /config -> 默认模型配置，设置或检查”向量嵌入模型”后语义搜索自动开启。配置生效有延迟，最长约 10 分钟。'
+                );
             }
 
             return lines.join('\n').trimEnd();
@@ -268,4 +260,4 @@ class FileMgrApplication extends BaseApplication {
     }
 }
 
-export { FileMgrApplication };
+export { FileMgrApplication, formatStorageStatusBlock };
