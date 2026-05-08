@@ -68,8 +68,8 @@ function resolveVisibleToolResultContent(
     toolCall: ToolCall,
     toolResultOverrides?: ReadonlyMap<string, string>
 ): string | undefined {
-    if (toolCall.compress_id) {
-        return `工具返回结果已被压缩，数据ID为 ${toolCall.compress_id}`;
+    if (toolCall.hasLegacyCompressId()) {
+        return toolCall.getLegacyCompressedResultText();
     }
 
     const overrideContent = resolveToolResultOverride(toolCall, toolResultOverrides);

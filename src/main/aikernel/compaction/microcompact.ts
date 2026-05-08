@@ -356,7 +356,7 @@ export function analyzeMicrocompactCandidates(
                     toolCallIndex
                 );
                 const hasResultStorage = toolCall.result_storage !== undefined;
-                const hasCompressId = typeof toolCall.compress_id === 'string' && toolCall.compress_id.length > 0;
+                const hasCompressId = toolCall.hasLegacyCompressId();
                 const sizeChars = typeof toolCall.result === 'string' ? toolCall.result.length : undefined;
                 const sizeLines =
                     typeof toolCall.result === 'string' ? countToolResultLines(toolCall.result) : undefined;

@@ -354,10 +354,6 @@ class TaskView extends HTMLElement {
         </div>`;
     }
 
-    static renderCompactSeparator() {
-        return TaskView.renderCompactBoundary();
-    }
-
     updateStopButtonVisibility() {
         const inputWidget = this.querySelector(`#task-${this.task_id}-input`);
         if (inputWidget) {

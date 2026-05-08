@@ -11,6 +11,7 @@ import {
     type ChatMessage,
     type CompactBoundaryTrigger
 } from '../messages.js';
+import { buildAssistantRounds } from './assistant-rounds.js';
 import { getTaskSessionMemoryPath } from '../../utils/setting.js';
 import type { AutoCompactDecision } from './auto-compact.js';
 import { buildActiveContextView, buildProjectedActiveContextView } from './context-view.js';
@@ -24,7 +25,7 @@ import {
 } from './token-estimation.js';
 import type { ActiveContextView, AssistantRoundRef, CompactBoundaryRef, ProjectedContextItem } from './types.js';
 
-export const SESSION_MEMORY_STATE_VERSION = 1;
+export const SESSION_MEMORY_STATE_VERSION = 2;
 export const SESSION_MEMORY_DIRECTORY_NAME = 'session-memory';
 export const SESSION_MEMORY_FILENAME = 'session-memory.md';
 
@@ -80,6 +81,9 @@ export interface SessionMemoryState {
     relativePath?: string;
     lastExtractedAt?: string;
     lastSummarizedMessageId?: string;
+    lastSummarizedRoundIndex?: number;
+    lastSummarizedRoundStartPartIndex?: number;
+    preferredLanguage?: string;
     tokensAtLastExtraction: number;
     extractionInProgress?: boolean;
     lastError?: string;
@@ -91,6 +95,9 @@ export interface SerializedSessionMemoryState {
     relative_path?: string;
     last_extracted_at?: string;
     last_summarized_message_id?: string;
+    last_summarized_round_index?: number;
+    last_summarized_round_start_part_index?: number;
+    preferred_language?: string;
     tokens_at_last_extraction: number;
     extraction_in_progress?: boolean;
     last_error?: string;
@@ -144,6 +151,7 @@ export interface SessionMemoryValidationResult {
 
 export interface SessionMemoryUpdatePromptOptions extends SessionMemoryExtractionOptions {
     includeStateDebugInfo?: boolean;
+    preferredLanguage?: string;
 }
 
 export interface SessionMemoryUpdateRequest {
@@ -154,6 +162,7 @@ export interface SessionMemoryUpdateRequest {
     activeContext: ActiveContextView;
     currentMemory: string;
     prompt: string;
+    preferredLanguage?: string;
     currentTokens: number;
     memoryPath: string;
     relativePath: string;
@@ -225,6 +234,98 @@ function normalizeOptionalString(value: unknown): string | undefined {
     return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined;
 }
 
+function normalizeOptionalNonNegativeInteger(value: unknown): number | undefined {
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+        return undefined;
+    }
+    return Math.floor(value);
+}
+
+function normalizeOptionalLanguage(value: unknown): string | undefined {
+    return normalizeOptionalString(value);
+}
+
+function detectSessionMemoryLanguageFromText(text: string): string {
+    const normalized = text.trim();
+    if (normalized.length === 0) {
+        return 'en-US';
+    }
+
+    const hanCount = (normalized.match(/[\u4E00-\u9FFF]/g) ?? []).length;
+    const hiraganaCount = (normalized.match(/[\u3040-\u309F]/g) ?? []).length;
+    const katakanaCount = (normalized.match(/[\u30A0-\u30FF]/g) ?? []).length;
+
+    if (hiraganaCount + katakanaCount >= 2) {
+        return 'ja-JP';
+    }
+
+    if (hanCount >= 2 || hiraganaCount + katakanaCount >= 2) {
+        return 'zh-CN';
+    }
+
+    return 'en-US';
+}
+
+function formatSessionMemoryLanguageInstruction(language?: string): string {
+    const normalized = normalizeOptionalLanguage(language);
+    if (!normalized) {
+        return 'Use the same language as the user task input.';
+    }
+
+    const lower = normalized.toLowerCase();
+    if (lower.startsWith('zh')) {
+        return '请使用中文编写正文内容。';
+    }
+    if (lower.startsWith('ja')) {
+        return '本文は日本語で書いてください。';
+    }
+    if (lower.startsWith('en')) {
+        return 'Write the body content in English.';
+    }
+    return `Write the body content in ${normalized}.`;
+}
+
+function collectTaskLanguageSample(chatContext: ChatContext): string {
+    const activeContext = getActiveContextForSessionMemory(chatContext);
+
+    for (const message of activeContext.messages) {
+        if (!isUserMessage(message)) {
+            continue;
+        }
+
+        const parts: string[] = [];
+        for (const part of message.content) {
+            if (part.type === 'text') {
+                parts.push(part.text);
+            } else if (part.type === 'file') {
+                parts.push(part.content);
+                parts.push(part.path);
+            }
+        }
+
+        const sample = parts.join('\n').trim();
+        if (sample.length > 0) {
+            return sample.slice(0, 1_000);
+        }
+    }
+
+    return '';
+}
+
+function inferSessionMemoryPreferredLanguage(chatContext: ChatContext, state: SessionMemoryState): string | undefined {
+    const preferredLanguage = normalizeOptionalLanguage(state.preferredLanguage);
+    if (preferredLanguage) {
+        return preferredLanguage;
+    }
+
+    const sample = collectTaskLanguageSample(chatContext);
+    if (sample.trim().length > 0) {
+        return detectSessionMemoryLanguageFromText(sample);
+    }
+
+    return undefined;
+}
+
 function normalizeExtractionOptions(
     options: SessionMemoryExtractionOptions = {}
 ): NormalizedSessionMemoryExtractionOptions {
@@ -284,6 +385,12 @@ function normalizeSessionMemoryState(raw: unknown): SessionMemoryState {
         lastExtractedAt?: unknown;
         last_summarized_message_id?: unknown;
         lastSummarizedMessageId?: unknown;
+        last_summarized_round_index?: unknown;
+        lastSummarizedRoundIndex?: unknown;
+        last_summarized_round_start_part_index?: unknown;
+        lastSummarizedRoundStartPartIndex?: unknown;
+        preferred_language?: unknown;
+        preferredLanguage?: unknown;
         tokens_at_last_extraction?: unknown;
         tokensAtLastExtraction?: unknown;
         extraction_in_progress?: unknown;
@@ -292,14 +399,29 @@ function normalizeSessionMemoryState(raw: unknown): SessionMemoryState {
         lastError?: unknown;
     };
 
+    const lastSummarizedMessageId = normalizeOptionalString(
+        candidate.last_summarized_message_id ?? candidate.lastSummarizedMessageId
+    );
+    const lastSummarizedRoundIndex = normalizeOptionalNonNegativeInteger(
+        candidate.last_summarized_round_index ?? candidate.lastSummarizedRoundIndex
+    );
+    const lastSummarizedRoundStartPartIndex = normalizeOptionalNonNegativeInteger(
+        candidate.last_summarized_round_start_part_index ?? candidate.lastSummarizedRoundStartPartIndex
+    );
+    const hasRoundAnchor =
+        lastSummarizedMessageId !== undefined &&
+        lastSummarizedRoundIndex !== undefined &&
+        lastSummarizedRoundStartPartIndex !== undefined;
+
     return {
-        version: normalizePositiveInteger(candidate.version, SESSION_MEMORY_STATE_VERSION),
+        version: SESSION_MEMORY_STATE_VERSION,
         initialized: normalizeBoolean(candidate.initialized, defaults.initialized),
         relativePath: normalizeOptionalString(candidate.relative_path ?? candidate.relativePath),
         lastExtractedAt: normalizeOptionalTimestamp(candidate.last_extracted_at ?? candidate.lastExtractedAt),
-        lastSummarizedMessageId: normalizeOptionalString(
-            candidate.last_summarized_message_id ?? candidate.lastSummarizedMessageId
-        ),
+        lastSummarizedMessageId,
+        lastSummarizedRoundIndex: hasRoundAnchor ? lastSummarizedRoundIndex : undefined,
+        lastSummarizedRoundStartPartIndex: hasRoundAnchor ? lastSummarizedRoundStartPartIndex : undefined,
+        preferredLanguage: normalizeOptionalLanguage(candidate.preferred_language ?? candidate.preferredLanguage),
         tokensAtLastExtraction: normalizeNonNegativeInteger(
             candidate.tokens_at_last_extraction ?? candidate.tokensAtLastExtraction,
             defaults.tokensAtLastExtraction
@@ -337,6 +459,9 @@ export class SessionMemoryStates {
             relative_path: normalized.relativePath,
             last_extracted_at: normalized.lastExtractedAt,
             last_summarized_message_id: normalized.lastSummarizedMessageId,
+            last_summarized_round_index: normalized.lastSummarizedRoundIndex,
+            last_summarized_round_start_part_index: normalized.lastSummarizedRoundStartPartIndex,
+            preferred_language: normalized.preferredLanguage,
             tokens_at_last_extraction: normalized.tokensAtLastExtraction,
             extraction_in_progress: normalized.extractionInProgress,
             last_error: normalized.lastError
@@ -358,6 +483,9 @@ export class SessionMemoryStates {
             relativePath: string;
             currentTokens: number;
             lastSummarizedMessageId?: string;
+            lastSummarizedRoundIndex?: number;
+            lastSummarizedRoundStartPartIndex?: number;
+            preferredLanguage?: string;
             at?: Date;
         }
     ): SessionMemoryState {
@@ -369,6 +497,11 @@ export class SessionMemoryStates {
             relativePath: args.relativePath,
             lastExtractedAt: at.toISOString(),
             lastSummarizedMessageId: args.lastSummarizedMessageId ?? normalized.lastSummarizedMessageId,
+            lastSummarizedRoundIndex: normalizeOptionalNonNegativeInteger(args.lastSummarizedRoundIndex),
+            lastSummarizedRoundStartPartIndex: normalizeOptionalNonNegativeInteger(
+                args.lastSummarizedRoundStartPartIndex
+            ),
+            preferredLanguage: normalizeOptionalLanguage(args.preferredLanguage) ?? normalized.preferredLanguage,
             tokensAtLastExtraction: normalizeNonNegativeInteger(args.currentTokens, normalized.tokensAtLastExtraction),
             extractionInProgress: false,
             lastError: undefined
@@ -568,6 +701,104 @@ export function countToolCallsSinceMessage(chatContext: ChatContext, messageId?:
     return toolCalls;
 }
 
+export interface SessionMemoryCoverageAnchor {
+    kind: 'user_message' | 'assistant_round';
+    messageId: string;
+    roundIndex?: number;
+    roundStartPartIndex?: number;
+}
+
+function countToolCallsInAssistantMessageFromPartIndex(message: AssistantMessage, startPartIndex: number): number {
+    let toolCalls = 0;
+
+    for (let index = Math.max(0, startPartIndex); index < message.content.length; index++) {
+        const part = message.content[index];
+        if (part.type !== 'tool_call') {
+            continue;
+        }
+        toolCalls += part.toolcalls.length;
+    }
+
+    return toolCalls;
+}
+
+export function getLastSafeSessionMemoryCoverageAnchor(
+    chatContext: ChatContext
+): SessionMemoryCoverageAnchor | undefined {
+    const activeContext = getActiveContextForSessionMemory(chatContext);
+
+    for (let index = activeContext.messages.length - 1; index >= 0; index--) {
+        const message = activeContext.messages[index];
+        if (isAssistantMessage(message)) {
+            if (assistantHasRunningOrPendingToolCall(message)) {
+                continue;
+            }
+
+            const rounds = buildAssistantRounds(message);
+            const lastRound = rounds[rounds.length - 1];
+            if (lastRound) {
+                return {
+                    kind: 'assistant_round',
+                    messageId: message.message_id,
+                    roundIndex: lastRound.ref.roundIndex,
+                    roundStartPartIndex: lastRound.ref.startPartIndex
+                };
+            }
+            continue;
+        }
+
+        const messageId = getMessageId(message);
+        if (messageId) {
+            return {
+                kind: 'user_message',
+                messageId
+            };
+        }
+    }
+    return undefined;
+}
+
+export function getLastSafeSessionMemoryMessageId(chatContext: ChatContext): string | undefined {
+    return getLastSafeSessionMemoryCoverageAnchor(chatContext)?.messageId;
+}
+
+function countToolCallsSinceCoverageAnchor(chatContext: ChatContext, state: SessionMemoryState): number {
+    const activeContext = getActiveContextForSessionMemory(chatContext);
+    const floorIndex = activeContext.startIndex;
+    const anchorRoundIndex = state.lastSummarizedRoundIndex;
+    const anchorRoundStartPartIndex = state.lastSummarizedRoundStartPartIndex;
+
+    if (state.lastSummarizedMessageId && anchorRoundIndex !== undefined && anchorRoundStartPartIndex !== undefined) {
+        for (let index = floorIndex; index < chatContext.messages.length; index++) {
+            const message = chatContext.messages[index];
+            if (!isAssistantMessage(message) || getMessageId(message) !== state.lastSummarizedMessageId) {
+                continue;
+            }
+
+            const rounds = buildAssistantRounds(message);
+            const round = rounds.find(
+                (candidate) =>
+                    candidate.ref.roundIndex === anchorRoundIndex &&
+                    candidate.ref.startPartIndex === anchorRoundStartPartIndex
+            );
+            if (round) {
+                let toolCalls = countToolCallsInAssistantMessageFromPartIndex(message, round.ref.endPartIndexExclusive);
+                for (let laterIndex = index + 1; laterIndex < chatContext.messages.length; laterIndex++) {
+                    const laterMessage = chatContext.messages[laterIndex];
+                    if (!isAssistantMessage(laterMessage)) {
+                        continue;
+                    }
+                    toolCalls += countToolCallsInAssistantMessageFromPartIndex(laterMessage, 0);
+                }
+                return toolCalls;
+            }
+            break;
+        }
+    }
+
+    return countToolCallsSinceMessage(chatContext, state.lastSummarizedMessageId);
+}
+
 function assistantHasToolCall(message: AssistantMessage | undefined): boolean {
     return message?.content.some((part) => part.type === 'tool_call' && part.toolcalls.length > 0) ?? false;
 }
@@ -597,10 +828,7 @@ export function shouldExtractSessionMemory(
     const activeContext = getActiveContextForSessionMemory(chatContext);
     const currentTokens = estimateChatContextTokensForSessionMemory(chatContext);
     const tokensSinceLastExtraction = Math.max(currentTokens - normalizedState.tokensAtLastExtraction, 0);
-    const toolCallsSinceLastExtraction = countToolCallsSinceMessage(
-        chatContext,
-        normalizedState.lastSummarizedMessageId
-    );
+    const toolCallsSinceLastExtraction = countToolCallsSinceCoverageAnchor(chatContext, normalizedState);
     const lastAssistant = getLastAssistantMessageFromMessages(activeContext.messages);
     const lastAssistantHasToolCall = assistantHasToolCall(lastAssistant);
     const hasRunningOrPending = assistantHasRunningOrPendingToolCall(lastAssistant);
@@ -755,9 +983,13 @@ export function buildSessionMemoryUpdatePrompt(
 ): string {
     const normalizedState = normalizeSessionMemoryState(state);
     const transcript = serializeActiveContextForSessionMemory(activeContext, options);
+    const preferredLanguage = normalizeOptionalLanguage(options.preferredLanguage);
     const stateDebugInfo = options.includeStateDebugInfo
         ? `\nState: ${JSON.stringify(SessionMemoryStates.serialize(normalizedState), null, 2)}\n`
         : '';
+    const languageInstruction = preferredLanguage
+        ? formatSessionMemoryLanguageInstruction(preferredLanguage)
+        : "Write the section content in the same language as the user's task input.";
 
     return `IMPORTANT: This message is not part of the user conversation. Do not mention note-taking, session memory, this prompt, or the update process in the output.
 
@@ -768,6 +1000,7 @@ Rules:
 - Preserve exactly these section headings and keep them in this order:
 ${SESSION_MEMORY_REQUIRED_HEADINGS.map((heading) => `  - ${heading}`).join('\n')}
 - Keep each italic section description line from the template.
+- Keep the headings in English, but ${languageInstruction}
 - Update actual content below the italic descriptions with dense, specific facts.
 - Always make "# Current State" reflect the most recent work, pending tasks, and immediate next steps.
 - Include concrete file paths, function names, commands, errors, decisions, and exact key results when available.
@@ -785,23 +1018,6 @@ ${transcript}
 </active_context>
 
 Return only the complete updated markdown memory file.`;
-}
-
-export function getLastSafeSessionMemoryMessageId(chatContext: ChatContext): string | undefined {
-    const activeContext = getActiveContextForSessionMemory(chatContext);
-
-    for (let index = activeContext.messages.length - 1; index >= 0; index--) {
-        const message = activeContext.messages[index];
-        if (isAssistantMessage(message) && assistantHasRunningOrPendingToolCall(message)) {
-            continue;
-        }
-
-        const messageId = getMessageId(message);
-        if (messageId) {
-            return messageId;
-        }
-    }
-    return undefined;
 }
 
 async function defaultSessionMemoryGenerator(request: SessionMemoryUpdateRequest): Promise<string> {
@@ -831,7 +1047,11 @@ export async function updateSessionMemoryFromChatContext(
     const startedState = SessionMemoryStates.recordExtractionStarted(normalizedState);
     const sessionMemoryFile = await ensureTaskSessionMemoryFile(taskId, { template: options.template });
     const activeContext = buildActiveContextView(chatContext);
-    const prompt = buildSessionMemoryUpdatePrompt(sessionMemoryFile.content, activeContext, startedState, options);
+    const preferredLanguage = inferSessionMemoryPreferredLanguage(chatContext, startedState);
+    const prompt = buildSessionMemoryUpdatePrompt(sessionMemoryFile.content, activeContext, startedState, {
+        ...options,
+        preferredLanguage
+    });
     const generator = options.generateMemory ?? defaultSessionMemoryGenerator;
 
     try {
@@ -843,6 +1063,7 @@ export async function updateSessionMemoryFromChatContext(
             activeContext,
             currentMemory: sessionMemoryFile.content,
             prompt,
+            preferredLanguage,
             currentTokens: decision.currentTokens,
             memoryPath: sessionMemoryFile.fullPath,
             relativePath: sessionMemoryFile.relativePath
@@ -859,10 +1080,14 @@ export async function updateSessionMemoryFromChatContext(
             taskId,
             validation.content.endsWith('\n') ? validation.content : `${validation.content}\n`
         );
+        const coverageAnchor = getLastSafeSessionMemoryCoverageAnchor(chatContext);
         const successState = SessionMemoryStates.recordExtractionSuccess(startedState, {
             relativePath: writeResult.relativePath,
             currentTokens: decision.currentTokens,
-            lastSummarizedMessageId: getLastSafeSessionMemoryMessageId(chatContext),
+            lastSummarizedMessageId: coverageAnchor?.messageId,
+            lastSummarizedRoundIndex: coverageAnchor?.roundIndex,
+            lastSummarizedRoundStartPartIndex: coverageAnchor?.roundStartPartIndex,
+            preferredLanguage,
             at: options.now
         });
 

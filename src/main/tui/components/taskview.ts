@@ -440,8 +440,6 @@ export class CompactBoundaryView implements Component {
     }
 }
 
-export { CompactBoundaryView as CompactSeparatorView };
-
 export class UserMessageView implements Component {
     message: UserMessage;
     box: Box = new Box(1, 1);

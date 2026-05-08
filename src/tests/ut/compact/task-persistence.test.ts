@@ -193,11 +193,14 @@ describe('任务持久化中的自动压缩状态', () => {
         const manager = new TaskManagerState();
         const task = createTask(manager);
         const sessionMemoryState = SessionMemoryStates.deserialize({
-            version: 1,
+            version: 2,
             initialized: true,
             relative_path: 'artifacts/task-root/session-memory/session-memory.md',
             last_extracted_at: '2026-04-23T02:00:00.000Z',
             last_summarized_message_id: 'message-session-memory',
+            last_summarized_round_index: 2,
+            last_summarized_round_start_part_index: 6,
+            preferred_language: 'zh-CN',
             tokens_at_last_extraction: 12000,
             extraction_in_progress: false
         });
@@ -208,11 +211,14 @@ describe('任务持久化中的自动压缩状态', () => {
 
         const savedTaskJson = JSON.parse(fs.readFileSync(path.join(taskDir, 'task-root.json'), 'utf8'));
         expect(savedTaskJson.session_memory_state).toMatchObject({
-            version: 1,
+            version: 2,
             initialized: true,
             relative_path: 'artifacts/task-root/session-memory/session-memory.md',
             last_extracted_at: '2026-04-23T02:00:00.000Z',
             last_summarized_message_id: 'message-session-memory',
+            last_summarized_round_index: 2,
+            last_summarized_round_start_part_index: 6,
+            preferred_language: 'zh-CN',
             tokens_at_last_extraction: 12000,
             extraction_in_progress: false
         });
