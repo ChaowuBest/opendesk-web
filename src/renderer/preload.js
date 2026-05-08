@@ -164,6 +164,30 @@ function exposeTaskManagerAPI() {
         }
     });
 
+    ipcRenderer.on('taskManager:callTool', async (_event, taskId, toolCallId, toolsetName, toolName, args) => {
+        try {
+            const taskCallbacks = taskwiseToolsetCallbacks.get(taskId);
+            const callback = taskCallbacks?.get(toolsetName);
+            if (!callback) {
+                ipcRenderer.send(`taskManager:reportToolCallResult:${toolCallId}`, {
+                    status: 'error',
+                    message: `No toolset callback for ${toolsetName} in task ${taskId}`
+                });
+                return;
+            }
+            const toolResult = await callback(toolName, args);
+            ipcRenderer.send(`taskManager:reportToolCallResult:${toolCallId}`, {
+                status: 'ok',
+                data: typeof toolResult === 'string' ? toolResult : JSON.stringify(toolResult)
+            });
+        } catch (err) {
+            ipcRenderer.send(`taskManager:reportToolCallResult:${toolCallId}`, {
+                status: 'error',
+                message: err?.message || String(err)
+            });
+        }
+    });
+
     // askUser 使用事件广播模式，每个 task-view 中的组件都可以按 taskId 过滤
     const askUserRequestCallbacks = new Set();
     const askUserDismissCallbacks = new Set();
