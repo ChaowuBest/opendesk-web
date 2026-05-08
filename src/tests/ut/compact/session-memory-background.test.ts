@@ -149,9 +149,41 @@ describe('session memory background update', () => {
             initialized: true,
             lastExtractedAt: '2026-04-23T02:00:00.000Z',
             lastSummarizedMessageId: assistant.message_id,
+            preferredLanguage: 'en-US',
             tokensAtLastExtraction: 12_010,
             extractionInProgress: false
         });
+    });
+
+    test('中文任务输入会把 preferredLanguage 持久化成 zh-CN', async () => {
+        createTempAppDirectory();
+        const manager = new TaskManagerState();
+        const task = new TaskState(manager, null);
+        task.task_id = 'task-session-memory-background-zh';
+        task.task_name = 'session-memory-background-zh';
+        task.model = 'demo-model';
+        task.chat_context = new ChatContext();
+        task.chat_context.appendMessage(new UserMessage('请把 Step 8F 的 session memory 改成中文。'));
+
+        const assistant = new AssistantMessage();
+        assistant.appendText('已完成 session memory 更新。');
+        assistant.usage = new Usage(12_000, 10, 12_010);
+        task.chat_context.appendMessage(assistant);
+        manager.tasks.push(task);
+
+        const generateMemory = jest.fn(async ({ preferredLanguage }: SessionMemoryUpdateRequest) => {
+            expect(preferredLanguage).toBe('zh-CN');
+            return validSessionMemory('已用中文更新 session memory。');
+        });
+
+        const result = await task.maybeUpdateSessionMemoryAfterCompletion({
+            minimumMessageTokensToInit: 100,
+            generateMemory
+        });
+
+        expect(result.updated).toBe(true);
+        expect(task.getSessionMemoryState().preferredLanguage).toBe('zh-CN');
+        expect(await readTaskSessionMemory(task.task_id)).toContain('已用中文更新 session memory。');
     });
 
     test('并发触发会复用同一个 task-local 更新 promise', async () => {

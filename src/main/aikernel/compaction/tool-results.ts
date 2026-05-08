@@ -776,7 +776,7 @@ function collectToolResultBudgetCandidates(
                     continue;
                 }
 
-                if (toolCall.compress_id) {
+                if (toolCall.hasLegacyCompressId()) {
                     skipped.push(
                         createBudgetSkippedCandidate(
                             'level1_compressed',
