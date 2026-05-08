@@ -82,7 +82,7 @@ export class ElectronPermissionPromptProvider implements PermissionPromptProvide
                 let settled = false;
 
                 const cleanup = () => {
-                    ipcMain.removeAllListeners('permission:response');
+                    ipcMain.removeListener('permission:response', handler);
                 };
 
                 const timer = setTimeout(() => {

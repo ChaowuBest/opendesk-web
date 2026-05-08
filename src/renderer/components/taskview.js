@@ -485,32 +485,33 @@ class TaskView extends HTMLElement {
         const chatWrapper = this.querySelector('#taskview-chat-history')?.parentElement;
         if (!chatWrapper) return;
 
-        const sidebar = this._getRightSidebarEl();
         this._browserPip = new BrowserPip(chatWrapper, {
             onRestore: () => {
-                // 恢复：强制展开侧边栏并切到浏览器 tab
                 if (this._browserPip) this._browserPip.hide();
-                if (sidebar) {
-                    if (typeof sidebar.ensureBrowserReady === 'function') {
-                        sidebar.ensureBrowserReady();
-                    }
+                const sidebar = this._getRightSidebarEl();
+                if (sidebar && typeof sidebar.ensureBrowserReady === 'function') {
+                    sidebar.ensureBrowserReady();
                 }
                 this._forceExpandRightSidebar();
                 this._updateSidebarToggleIcon(true);
             },
             capturePage: async () => {
+                const sidebar = this._getRightSidebarEl();
                 if (!sidebar || typeof sidebar.browserCapturePage !== 'function') return null;
                 return sidebar.browserCapturePage();
             },
             getTabCount: () => {
+                const sidebar = this._getRightSidebarEl();
                 if (!sidebar || typeof sidebar.browserGetTabCount !== 'function') return 0;
                 return sidebar.browserGetTabCount();
             },
             getActiveTabTitle: () => {
+                const sidebar = this._getRightSidebarEl();
                 if (!sidebar || typeof sidebar.browserGetActiveTabTitle !== 'function') return '';
                 return sidebar.browserGetActiveTabTitle();
             },
             getActiveTabUrl: () => {
+                const sidebar = this._getRightSidebarEl();
                 if (!sidebar || typeof sidebar.browserGetActiveTabUrl !== 'function') return '';
                 return sidebar.browserGetActiveTabUrl();
             }

@@ -1374,8 +1374,8 @@ function startApplication() {
             }
         }
 
-        createWindow();
         initBrowserSession();
+        createWindow();
 
         // 将内置 skills（applications/skills/resources）自动同步到用户 skills 目录（先完成再注册，确保首次对话能发现技能）
         try {
@@ -1467,6 +1467,13 @@ function startApplication() {
             await GlobalState.getInstance().taskManagerState.flushAllPendingSaves();
         } catch {
             /* best-effort flush */
+        }
+        if (browserSessionInstance) {
+            try {
+                browserSessionInstance.flushStorageData();
+            } catch {
+                /* best-effort flush */
+            }
         }
         closeTempDir();
     });

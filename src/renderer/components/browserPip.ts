@@ -25,7 +25,7 @@
 const PIP_WIDTH = 384; // ~320 * 1.2
 const PIP_HEIGHT = 240; // 16:10
 const STATUS_BAR_HEIGHT = 28;
-const CAPTURE_INTERVAL_MS = 1500;
+const CAPTURE_INTERVAL_MS = 1000;
 const MARGIN = 16;
 
 export interface BrowserPipCallbacks {
@@ -50,6 +50,7 @@ export class BrowserPip {
     private _callbacks: BrowserPipCallbacks;
     private _visible = false;
     private _closed = false;
+    private _capturing = false;
 
     // 拖动状态
     private _dragging = false;
@@ -309,6 +310,8 @@ export class BrowserPip {
 
     private async _doCapture(): Promise<void> {
         if (!this._visible || !this._imgEl) return;
+        if (this._capturing) return;
+        this._capturing = true;
         try {
             const dataUrl = await this._callbacks.capturePage();
             if (dataUrl && this._imgEl && this._visible) {
@@ -318,6 +321,8 @@ export class BrowserPip {
             }
         } catch {
             // 截图失败则保持上次的截图
+        } finally {
+            this._capturing = false;
         }
         this._updateStatus();
     }
@@ -376,11 +381,13 @@ export class BrowserPip {
         this._closed = false;
     }
 
-    /** 立即触发一次截图刷新（浏览器事件发生时调用，比等待定时器更及时） */
+    /** 触发一组截图刷新（浏览器操作后调用，多次捕获以显示页面加载进度） */
     public triggerCapture(): void {
-        if (this._visible) {
-            this._doCapture();
-        }
+        if (!this._visible) return;
+        this._doCapture();
+        // 页面操作后多次刷新以捕获加载过程和最终状态
+        setTimeout(() => this._doCapture(), 800);
+        setTimeout(() => this._doCapture(), 2000);
     }
 
     public isClosed(): boolean {
