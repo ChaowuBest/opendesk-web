@@ -822,22 +822,36 @@ export class BrowserScrollTool extends BaseTool<typeof BrowserScrollArgsSchema> 
             const session = await requireCDP(this.browserApp, taskId);
             const deltaY = args.direction === 'up' ? -args.amount : args.amount;
 
-            // Get actual viewport size for center-of-viewport scroll
-            const vpResult = await session.send('Runtime.evaluate', {
-                expression: `JSON.stringify({ w: window.innerWidth, h: window.innerHeight })`,
+            // Use window.scrollBy as primary scroll method — works reliably on
+            // dynamic/SPA pages (e.g. Bilibili) that intercept native wheel events.
+            // Falls back to CDP Input.dispatchMouseEvent mouseWheel if JS scroll
+            // doesn't change the position (custom scroll containers).
+            const scrollResult = await session.send('Runtime.evaluate', {
+                expression: `(() => {
+                    var before = window.scrollY;
+                    window.scrollBy({ top: ${deltaY}, behavior: 'instant' });
+                    return JSON.stringify({ before: before, after: window.scrollY });
+                })()`,
                 returnByValue: true
             });
-            const vp = JSON.parse(vpResult.result.value);
-            const cx = Math.round(vp.w / 2);
-            const cy = Math.round(vp.h / 2);
+            const scrollDelta = JSON.parse(scrollResult.result.value);
+            const jsScrollWorked = scrollDelta.before !== scrollDelta.after;
 
-            await session.send('Input.dispatchMouseEvent', {
-                type: 'mouseWheel',
-                x: cx,
-                y: cy,
-                deltaX: 0,
-                deltaY
-            });
+            if (!jsScrollWorked) {
+                // JS scroll didn't move — try mouseWheel as fallback for custom containers
+                const vpResult = await session.send('Runtime.evaluate', {
+                    expression: `JSON.stringify({ w: window.innerWidth, h: window.innerHeight })`,
+                    returnByValue: true
+                });
+                const vp = JSON.parse(vpResult.result.value);
+                await session.send('Input.dispatchMouseEvent', {
+                    type: 'mouseWheel',
+                    x: Math.round(vp.w / 2),
+                    y: Math.round(vp.h / 2),
+                    deltaX: 0,
+                    deltaY
+                });
+            }
 
             await sleep(200);
 

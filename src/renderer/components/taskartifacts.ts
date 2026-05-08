@@ -601,6 +601,45 @@ class TaskArtifacts extends HTMLElement {
         return this._browser.getWebContentsId();
     }
 
+    /**
+     * 外部调用：截取当前活动标签页的截图（data URL）。
+     */
+    async browserCapturePage(): Promise<string | null> {
+        if (!this._browser) return null;
+        return this._browser.capturePage();
+    }
+
+    /**
+     * 外部调用：获取浏览器标签页总数。
+     */
+    browserGetTabCount(): number {
+        if (!this._browser) return 0;
+        return this._browser.getTabCount();
+    }
+
+    /**
+     * 外部调用：检查浏览器是否已可见（即 agent 已使用过浏览器工具）。
+     */
+    isBrowserVisible(): boolean {
+        return this._browserVisible;
+    }
+
+    /**
+     * 外部调用：获取当前活动标签页的标题。
+     */
+    browserGetActiveTabTitle(): string {
+        if (!this._browser) return '';
+        return this._browser.getActiveTabTitle();
+    }
+
+    /**
+     * 外部调用：获取当前活动标签页的 URL。
+     */
+    browserGetActiveTabUrl(): string {
+        if (!this._browser) return '';
+        return this._browser.getActiveTabUrl();
+    }
+
     // ----- Timer (for in_progress durations) -----
 
     private _scheduleTick(): void {

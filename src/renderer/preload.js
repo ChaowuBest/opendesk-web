@@ -830,6 +830,13 @@ if (window.self !== window.top) {
                 throw new Error(result.message);
             }
             return result.data;
+        },
+        captureScreenshot: async (webContentsId) => {
+            const result = await ipcRenderer.invoke('browser:captureScreenshot', webContentsId);
+            if (result.status !== 'ok') {
+                return null;
+            }
+            return result.data;
         }
     });
 }
