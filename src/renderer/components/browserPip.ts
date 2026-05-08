@@ -26,6 +26,7 @@ const PIP_WIDTH = 384; // ~320 * 1.2
 const PIP_HEIGHT = 240; // 16:10
 const STATUS_BAR_HEIGHT = 28;
 const CAPTURE_INTERVAL_MS = 1000;
+const CAPTURE_TIMEOUT_MS = 8000;
 const MARGIN = 16;
 
 export interface BrowserPipCallbacks {
@@ -313,7 +314,11 @@ export class BrowserPip {
         if (this._capturing) return;
         this._capturing = true;
         try {
-            const dataUrl = await this._callbacks.capturePage();
+            const capturePromise = this._callbacks.capturePage();
+            const timeoutPromise = new Promise<null>((resolve) => {
+                setTimeout(() => resolve(null), CAPTURE_TIMEOUT_MS);
+            });
+            const dataUrl = await Promise.race([capturePromise, timeoutPromise]);
             if (dataUrl && this._imgEl && this._visible) {
                 this._imgEl.src = dataUrl;
                 const placeholder = this._el?.querySelector('.pip-placeholder') as HTMLElement;

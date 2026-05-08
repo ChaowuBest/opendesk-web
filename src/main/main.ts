@@ -507,9 +507,6 @@ const registerBrowserAPIHandlers = () => {
             if (!wc || wc.isDestroyed()) {
                 return { status: 'error', message: 'WebContents not found or destroyed' };
             }
-            // Use CDP Page.captureScreenshot — works even when the webview
-            // parent element has display:none (unlike webContents.capturePage
-            // which relies on the GPU compositor and fails for hidden webviews).
             const dbg = wc.debugger;
             let wasAttached = dbg.isAttached();
             if (!wasAttached) {
@@ -520,10 +517,14 @@ const registerBrowserAPIHandlers = () => {
                 }
             }
             try {
-                const result = await dbg.sendCommand('Page.captureScreenshot', {
+                const capturePromise = dbg.sendCommand('Page.captureScreenshot', {
                     format: 'jpeg',
                     quality: 70
                 });
+                const timeoutPromise = new Promise<never>((_resolve, reject) => {
+                    setTimeout(() => reject(new Error('captureScreenshot timeout')), 5000);
+                });
+                const result = await Promise.race([capturePromise, timeoutPromise]);
                 if (!result || !result.data) {
                     return { status: 'error', message: 'Empty capture' };
                 }
