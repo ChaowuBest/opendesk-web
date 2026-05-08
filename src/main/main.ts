@@ -175,34 +175,78 @@ async function installBundledSkillsIfNeeded() {
 }
 
 // Browser management — shared persistent session.
-// The partition 'persist:opendesk-browser' stores data at <appDir>/apps/browser/session
-// via session.fromPath when available, otherwise falls back to Electron default location.
+// Use 'persist:' partition — Electron automatically persists cookies, localStorage, etc.
+// to <userData>/Partitions/opendesk-browser/. This is more reliable than session.fromPath
+// which can suffer from disk cache corruption (causing SSL handshake failures).
 let browserSessionInstance: Electron.Session | null = null;
 const BROWSER_PARTITION = 'persist:opendesk-browser';
 
 function initBrowserSession() {
     try {
-        const sessionPath = path.join(getAppDirectory(), 'apps', 'browser', 'session');
-        if (!fs.existsSync(sessionPath)) {
-            fs.mkdirSync(sessionPath, { recursive: true });
+        // Clean up the old session.fromPath directory if its cache is corrupted
+        const legacySessionPath = path.join(getAppDirectory(), 'apps', 'browser', 'session');
+        const legacyCachePath = path.join(legacySessionPath, 'Cache');
+        if (fs.existsSync(legacyCachePath)) {
+            try {
+                fs.rmSync(legacyCachePath, { recursive: true, force: true });
+                logger.info('Cleaned up legacy browser session cache directory');
+            } catch {
+                // best-effort cleanup
+            }
         }
 
-        if (typeof session.fromPath === 'function') {
-            browserSessionInstance = session.fromPath(sessionPath);
-        } else {
-            browserSessionInstance = session.fromPartition(BROWSER_PARTITION);
-        }
+        browserSessionInstance = session.fromPartition(BROWSER_PARTITION);
 
         browserSessionInstance.setPermissionRequestHandler((_webContents, permission, callback) => {
             const allowed = ['clipboard-read', 'clipboard-sanitized-write', 'media', 'geolocation', 'notifications'];
             callback(allowed.includes(permission));
         });
+
         logger.info(
-            `Browser session initialized, storage: ${browserSessionInstance.storagePath || browserSessionInstance.getStoragePath?.() || sessionPath}`
+            `Browser session initialized (partition: ${BROWSER_PARTITION}), storage: ${browserSessionInstance.storagePath || browserSessionInstance.getStoragePath?.() || 'default'}`
         );
     } catch (err) {
         logger.error(`Failed to initialize browser session: ${err}`);
     }
+}
+
+/**
+ * 将所有 session cookies 转为持久 cookies（30 天过期），确保登录态跨重启保留。
+ *
+ * Electron 中 session cookies（无 expirationDate）在应用退出时不会被保留到磁盘，
+ * 但常规浏览器（Chrome）有"恢复上次会话"机制可以保留它们。
+ * 此函数在退出前批量转换，模拟浏览器的会话恢复行为。
+ */
+async function persistSessionCookies(ses: Electron.Session): Promise<void> {
+    const allCookies = await ses.cookies.get({ session: true });
+    if (allCookies.length === 0) return;
+
+    const persistentExpiry = Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60;
+    const promises: Promise<void>[] = [];
+
+    for (const cookie of allCookies) {
+        const url = `http${cookie.secure ? 's' : ''}://${cookie.domain?.replace(/^\./, '') || 'localhost'}${cookie.path || '/'}`;
+        promises.push(
+            ses.cookies
+                .set({
+                    url,
+                    name: cookie.name,
+                    value: cookie.value,
+                    domain: cookie.domain,
+                    path: cookie.path,
+                    secure: cookie.secure,
+                    httpOnly: cookie.httpOnly,
+                    sameSite: cookie.sameSite as any,
+                    expirationDate: persistentExpiry
+                })
+                .catch(() => {
+                    // 部分 cookie 可能因安全策略无法设置
+                })
+        );
+    }
+
+    await Promise.all(promises);
+    logger.info(`Persisted ${allCookies.length} session cookies for next launch`);
 }
 
 const createWindow = () => {
@@ -1469,6 +1513,16 @@ function startApplication() {
             /* best-effort flush */
         }
         if (browserSessionInstance) {
+            try {
+                await persistSessionCookies(browserSessionInstance);
+            } catch {
+                /* best-effort persist */
+            }
+            try {
+                await browserSessionInstance.cookies.flushStore();
+            } catch {
+                /* best-effort flush */
+            }
             try {
                 browserSessionInstance.flushStorageData();
             } catch {
