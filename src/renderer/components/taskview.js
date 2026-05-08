@@ -485,32 +485,33 @@ class TaskView extends HTMLElement {
         const chatWrapper = this.querySelector('#taskview-chat-history')?.parentElement;
         if (!chatWrapper) return;
 
-        const sidebar = this._getRightSidebarEl();
         this._browserPip = new BrowserPip(chatWrapper, {
             onRestore: () => {
-                // 恢复：强制展开侧边栏并切到浏览器 tab
                 if (this._browserPip) this._browserPip.hide();
-                if (sidebar) {
-                    if (typeof sidebar.ensureBrowserReady === 'function') {
-                        sidebar.ensureBrowserReady();
-                    }
+                const sidebar = this._getRightSidebarEl();
+                if (sidebar && typeof sidebar.ensureBrowserReady === 'function') {
+                    sidebar.ensureBrowserReady();
                 }
                 this._forceExpandRightSidebar();
                 this._updateSidebarToggleIcon(true);
             },
             capturePage: async () => {
+                const sidebar = this._getRightSidebarEl();
                 if (!sidebar || typeof sidebar.browserCapturePage !== 'function') return null;
                 return sidebar.browserCapturePage();
             },
             getTabCount: () => {
+                const sidebar = this._getRightSidebarEl();
                 if (!sidebar || typeof sidebar.browserGetTabCount !== 'function') return 0;
                 return sidebar.browserGetTabCount();
             },
             getActiveTabTitle: () => {
+                const sidebar = this._getRightSidebarEl();
                 if (!sidebar || typeof sidebar.browserGetActiveTabTitle !== 'function') return '';
                 return sidebar.browserGetActiveTabTitle();
             },
             getActiveTabUrl: () => {
+                const sidebar = this._getRightSidebarEl();
                 if (!sidebar || typeof sidebar.browserGetActiveTabUrl !== 'function') return '';
                 return sidebar.browserGetActiveTabUrl();
             }
@@ -590,7 +591,10 @@ class TaskView extends HTMLElement {
     _hideRightSidebarOffscreen(el) {
         el.style.display = '';
         el.style.position = 'absolute';
-        el.style.left = '-9999px';
+        // 保持元素在视口内（left: 0 而非 -9999px），防止 Chromium 因元素完全移出视口
+        // 而暂停 webview guest compositor 的 BeginFrame 调度，导致截图命令永久挂起。
+        // 使用 opacity: 0 + pointer-events: none + z-index: -1 确保不可见、不可交互。
+        el.style.left = '0';
         el.style.top = '0';
         // 使用桌面标准宽度，使 webview 以正常桌面布局渲染（而非移动端窄布局），
         // 画中画截图可以显示完整宽度的页面内容
@@ -598,6 +602,7 @@ class TaskView extends HTMLElement {
         el.style.height = '800px';
         el.style.opacity = '0';
         el.style.pointerEvents = 'none';
+        el.style.zIndex = '-1';
         el.dataset.offscreen = '1';
     }
 
@@ -610,6 +615,8 @@ class TaskView extends HTMLElement {
         el.style.top = '';
         el.style.height = '';
         el.style.pointerEvents = '';
+        el.style.zIndex = '';
+        el.style.opacity = '';
         delete el.dataset.offscreen;
     }
 

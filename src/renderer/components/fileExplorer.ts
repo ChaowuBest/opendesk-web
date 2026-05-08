@@ -348,6 +348,9 @@ export function getFileExplorerCSS(): string {
         .ws-preview:empty, .ws-preview.ws-preview--collapsed {
             flex: 0 0 auto; min-height: 44px;
         }
+        .ws-preview.ws-preview--unsupported {
+            flex: 0 0 auto; min-height: auto;
+        }
         .ws-preview-empty {
             display: flex; align-items: center; justify-content: center;
             gap: 6px; padding: 10px; font-size: 11px; color: #9ca3af;
@@ -949,7 +952,7 @@ export class FileExplorer {
                 ${this._viewMode === 'tree' ? this._renderTreeContainerHtml() : this._renderGridContainerHtml()}
             </div>
         </div>
-        <div class="ws-preview${this._selectedFile ? '' : ' ws-preview--collapsed'}${this._previewFullscreen ? ' ws-preview--fullscreen' : ''}" data-preview-root>
+        <div class="ws-preview${this._selectedFile ? '' : ' ws-preview--collapsed'}${this._previewFullscreen ? ' ws-preview--fullscreen' : ''}${this._isPreviewUnsupported() ? ' ws-preview--unsupported' : ''}" data-preview-root>
             ${this._renderPreviewHtml()}
         </div>`;
 
@@ -1234,9 +1237,16 @@ export class FileExplorer {
         if (!el) return;
         el.innerHTML = this._renderPreviewHtml();
         el.classList.toggle('ws-preview--collapsed', !this._selectedFile);
+        el.classList.toggle('ws-preview--unsupported', this._isPreviewUnsupported());
 
         this._attachMarkdownShadow(el);
         this._attachHtmlPreview(el);
+    }
+
+    private _isPreviewUnsupported(): boolean {
+        if (this._previewState.status !== 'idle' || !this._previewState.data) return false;
+        const d = this._previewState.data;
+        return d.tooLarge || d.binary;
     }
 
     private _attachHtmlPreview(root: ParentNode): void {
