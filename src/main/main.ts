@@ -455,6 +455,48 @@ const registerBrowserAPIHandlers = () => {
     ipcMain.handle('browser:refresh', async (event, taskId) => {
         return callBrowserOnTask(taskId, 'browserRefresh');
     });
+
+    ipcMain.handle('browser:captureScreenshot', async (_event, webContentsId: number) => {
+        try {
+            const { webContents } = await import('electron');
+            const wc = webContents.fromId(webContentsId);
+            if (!wc || wc.isDestroyed()) {
+                return { status: 'error', message: 'WebContents not found or destroyed' };
+            }
+            // Use CDP Page.captureScreenshot — works even when the webview
+            // parent element has display:none (unlike webContents.capturePage
+            // which relies on the GPU compositor and fails for hidden webviews).
+            const dbg = wc.debugger;
+            let wasAttached = dbg.isAttached();
+            if (!wasAttached) {
+                try {
+                    dbg.attach('1.3');
+                } catch {
+                    wasAttached = true;
+                }
+            }
+            try {
+                const result = await dbg.sendCommand('Page.captureScreenshot', {
+                    format: 'jpeg',
+                    quality: 70
+                });
+                if (!result || !result.data) {
+                    return { status: 'error', message: 'Empty capture' };
+                }
+                return { status: 'ok', data: `data:image/jpeg;base64,${result.data}` };
+            } finally {
+                if (!wasAttached) {
+                    try {
+                        dbg.detach();
+                    } catch {
+                        /* ignore */
+                    }
+                }
+            }
+        } catch (err) {
+            return { status: 'error', message: String(err) };
+        }
+    });
 };
 
 const registerTaskManagerAPIHandlers = () => {

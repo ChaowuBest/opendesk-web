@@ -572,7 +572,8 @@ export class EmbeddedBrowser {
     public navigateTo(url: string): void {
         const tab = this.getActiveTab();
         if (!tab || !tab.webview) return;
-        const targetUrl = url.trim();
+        const targetUrl = this.normalizeUrl(url.trim());
+        if (!targetUrl) return;
         if (tab.ready) {
             try {
                 tab.webview.loadURL(targetUrl);
@@ -584,6 +585,20 @@ export class EmbeddedBrowser {
         }
         tab.url = targetUrl;
         this.syncUrlBar();
+    }
+
+    /**
+     * Normalize user input into a valid URL.
+     * - empty / whitespace-only → null (skip navigation)
+     * - already has scheme (http/https/about/file/data) → keep as-is
+     * - looks like a domain (contains dot, no spaces) → prepend https://
+     * - otherwise → treat as search query (not implemented, just prepend https://)
+     */
+    private normalizeUrl(raw: string): string | null {
+        if (!raw) return null;
+        if (/^(https?|about|file|data):/.test(raw)) return raw;
+        if (/^[^\s]+\.[^\s]+/.test(raw)) return `https://${raw}`;
+        return `https://${raw}`;
     }
 
     public goBack(): void {
@@ -674,6 +689,43 @@ export class EmbeddedBrowser {
         } catch {
             return null;
         }
+    }
+
+    /**
+     * Capture a screenshot of the active tab as a data URL (PNG).
+     * Uses main-process IPC to capture via webContents.capturePage(),
+     * which works even when the webview's parent element is display:none.
+     */
+    public async capturePage(): Promise<string | null> {
+        const tab = this.getActiveTab();
+        if (!tab?.webview || !tab.ready) return null;
+        const currentUrl = tab.url || '';
+        if (!currentUrl || currentUrl === 'about:blank') return null;
+        try {
+            const wcId = (tab.webview as any).getWebContentsId();
+            if (wcId == null) return null;
+            const browserAPI = (window as any).browserAPI;
+            if (browserAPI && typeof browserAPI.captureScreenshot === 'function') {
+                return await browserAPI.captureScreenshot(wcId);
+            }
+            return null;
+        } catch {
+            return null;
+        }
+    }
+
+    public getTabCount(): number {
+        return this.tabs.length;
+    }
+
+    public getActiveTabTitle(): string {
+        const tab = this.getActiveTab();
+        return tab?.title || '';
+    }
+
+    public getActiveTabUrl(): string {
+        const tab = this.getActiveTab();
+        return tab?.url || '';
     }
 
     public destroy(): void {

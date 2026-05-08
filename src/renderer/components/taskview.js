@@ -12,6 +12,7 @@
 
 import { ElasticToolbarWidget } from './toolbar.ts';
 import './taskartifacts.ts';
+import { BrowserPip } from './browserPip.ts';
 
 const DANGEROUS_TAGS = new Set(['STYLE', 'SCRIPT', 'LINK', 'META', 'IFRAME', 'OBJECT', 'EMBED', 'APPLET', 'BASE']);
 
@@ -76,6 +77,8 @@ class TaskView extends HTMLElement {
         this._messageContainerCache = new Map();
         /** @type {number | null} 节流滚动的 rAF id */
         this._scrollRafId = null;
+        /** @type {BrowserPip | null} 浏览器画中画浮窗 */
+        this._browserPip = null;
     }
 
     static isCompactBoundaryMessage(message) {
@@ -380,7 +383,7 @@ class TaskView extends HTMLElement {
         const resizer = this.querySelector(`#task-${this.task_id}-resizer`);
         if (!rightSidebar) return;
 
-        const isExpanded = rightSidebar.style.display !== 'none';
+        const isExpanded = !this._isRightSidebarHidden(rightSidebar);
         if (isExpanded) {
             this._collapseRightSidebar(rightSidebar, resizer);
         } else {
@@ -391,6 +394,7 @@ class TaskView extends HTMLElement {
 
     _expandRightSidebar(rightSidebar, resizer) {
         const targetWidth = TaskView.rightSidebarWidth || 380;
+        this._restoreRightSidebarFromOffscreen(rightSidebar);
         rightSidebar.style.display = '';
         rightSidebar.style.width = '0px';
         rightSidebar.style.opacity = '0';
@@ -420,6 +424,11 @@ class TaskView extends HTMLElement {
 
         TaskView.rightSidebarExpanded = true;
         this._autoSwitchTabIfEmpty(rightSidebar);
+
+        // 侧边栏展开时隐藏画中画浮窗
+        if (this._browserPip) {
+            this._browserPip.hide();
+        }
     }
 
     _collapseRightSidebar(rightSidebar, resizer) {
@@ -440,7 +449,9 @@ class TaskView extends HTMLElement {
         const onEnd = (e) => {
             if (e.propertyName !== 'width') return;
             rightSidebar.removeEventListener('transitionend', onEnd);
-            rightSidebar.style.display = 'none';
+            // 不使用 display:none — 使用 offscreen 定位，保持 webview 活跃
+            // （display:none 会导致 Chromium 暂停 webview 渲染，使 CDP 操作卡住、截图无法更新）
+            this._hideRightSidebarOffscreen(rightSidebar);
             rightSidebar.style.overflow = '';
             rightSidebar.style.transition = '';
             rightSidebar.style.opacity = '';
@@ -453,6 +464,13 @@ class TaskView extends HTMLElement {
         rightSidebar.addEventListener('transitionend', onEnd);
 
         TaskView.rightSidebarExpanded = false;
+
+        // 侧边栏收起时重置画中画关闭状态（新的折叠周期，允许重新弹出）
+        if (this._browserPip) {
+            this._browserPip.resetClosed();
+        }
+        // 若浏览器已被使用，显示画中画浮窗
+        this._showBrowserPipIfNeeded();
     }
 
     _autoSwitchTabIfEmpty(_sidebar) {
@@ -460,13 +478,102 @@ class TaskView extends HTMLElement {
     }
 
     /**
-     * 确保右侧边栏处于展开状态。若原本未展开则展开它
+     * 初始化浏览器画中画浮窗。在 init() 渲染完成后调用。
+     */
+    _initBrowserPip() {
+        // 浮窗挂载在聊天历史滚动区域的外层 relative 容器内
+        const chatWrapper = this.querySelector('#taskview-chat-history')?.parentElement;
+        if (!chatWrapper) return;
+
+        const sidebar = this._getRightSidebarEl();
+        this._browserPip = new BrowserPip(chatWrapper, {
+            onRestore: () => {
+                // 恢复：强制展开侧边栏并切到浏览器 tab
+                if (this._browserPip) this._browserPip.hide();
+                if (sidebar) {
+                    if (typeof sidebar.ensureBrowserReady === 'function') {
+                        sidebar.ensureBrowserReady();
+                    }
+                }
+                this._forceExpandRightSidebar();
+                this._updateSidebarToggleIcon(true);
+            },
+            capturePage: async () => {
+                if (!sidebar || typeof sidebar.browserCapturePage !== 'function') return null;
+                return sidebar.browserCapturePage();
+            },
+            getTabCount: () => {
+                if (!sidebar || typeof sidebar.browserGetTabCount !== 'function') return 0;
+                return sidebar.browserGetTabCount();
+            },
+            getActiveTabTitle: () => {
+                if (!sidebar || typeof sidebar.browserGetActiveTabTitle !== 'function') return '';
+                return sidebar.browserGetActiveTabTitle();
+            },
+            getActiveTabUrl: () => {
+                if (!sidebar || typeof sidebar.browserGetActiveTabUrl !== 'function') return '';
+                return sidebar.browserGetActiveTabUrl();
+            }
+        });
+    }
+
+    /**
+     * 若侧边栏已收起且浏览器已被使用（且浮窗未被手动关闭），则显示画中画浮窗。
+     */
+    _showBrowserPipIfNeeded() {
+        const sidebar = this._getRightSidebarEl();
+        if (!sidebar || typeof sidebar.isBrowserVisible !== 'function') return;
+        if (!sidebar.isBrowserVisible()) return;
+
+        if (!this._browserPip) {
+            this._initBrowserPip();
+        }
+        if (this._browserPip && !this._browserPip.isClosed()) {
+            this._browserPip.show();
+        }
+    }
+
+    /**
+     * 确保右侧边栏处于展开状态。若原本未展开则展开它。
+     * 当侧边栏已收起且浏览器正在被使用（画中画模式），
+     * 不强制展开侧边栏，而是尝试显示画中画。
+     * 注意：即使画中画被用户关闭，也不阻塞调用（浏览器工具仍可在后台工作）。
      */
     _ensureRightSidebarOpen() {
+        if (!TaskView.rightSidebarExpanded) {
+            const sidebar = this._getRightSidebarEl();
+            const browserActive =
+                sidebar && typeof sidebar.isBrowserVisible === 'function' && sidebar.isBrowserVisible();
+            if (browserActive) {
+                // 浏览器已激活且侧边栏收起，尝试显示画中画（用户已关闭则不弹出）
+                // 不展开侧边栏，让浏览器工具在后台继续运行
+                this._showBrowserPipIfNeeded();
+                // 延迟刷新截图，等待浏览器操作渲染完成
+                if (this._browserPip && this._browserPip.isVisible()) {
+                    setTimeout(() => this._browserPip?.triggerCapture(), 600);
+                }
+                return;
+            }
+        }
+
         const rightSidebar = this.querySelector(`#task-${this.task_id}-artifacts`);
         const resizer = this.querySelector(`#task-${this.task_id}-resizer`);
         if (!rightSidebar) return;
-        if (rightSidebar.style.display !== 'none') return;
+        if (!this._isRightSidebarHidden(rightSidebar)) return;
+
+        this._expandRightSidebar(rightSidebar, resizer);
+        this._updateSidebarToggleIcon(true);
+    }
+
+    /**
+     * 强制展开右侧边栏（不受画中画状态影响）。
+     * 仅用于用户主动点击恢复按钮等场景。
+     */
+    _forceExpandRightSidebar() {
+        const rightSidebar = this.querySelector(`#task-${this.task_id}-artifacts`);
+        const resizer = this.querySelector(`#task-${this.task_id}-resizer`);
+        if (!rightSidebar) return;
+        if (!this._isRightSidebarHidden(rightSidebar)) return;
 
         this._expandRightSidebar(rightSidebar, resizer);
         this._updateSidebarToggleIcon(true);
@@ -474,6 +581,43 @@ class TaskView extends HTMLElement {
 
     _getRightSidebarEl() {
         return this.querySelector(`#task-${this.task_id}-artifacts`);
+    }
+
+    /**
+     * 将侧边栏移到屏幕外（保持渲染活跃），代替 display:none。
+     * 保留原始宽度，让 webview 继续在合理尺寸下渲染。
+     */
+    _hideRightSidebarOffscreen(el) {
+        el.style.display = '';
+        el.style.position = 'absolute';
+        el.style.left = '-9999px';
+        el.style.top = '0';
+        // 使用桌面标准宽度，使 webview 以正常桌面布局渲染（而非移动端窄布局），
+        // 画中画截图可以显示完整宽度的页面内容
+        el.style.width = '1280px';
+        el.style.height = '800px';
+        el.style.opacity = '0';
+        el.style.pointerEvents = 'none';
+        el.dataset.offscreen = '1';
+    }
+
+    /**
+     * 将侧边栏从屏幕外恢复到正常位置。
+     */
+    _restoreRightSidebarFromOffscreen(el) {
+        el.style.position = '';
+        el.style.left = '';
+        el.style.top = '';
+        el.style.height = '';
+        el.style.pointerEvents = '';
+        delete el.dataset.offscreen;
+    }
+
+    /**
+     * 判断侧边栏是否处于隐藏状态（offscreen 或 display:none）。
+     */
+    _isRightSidebarHidden(el) {
+        return el.style.display === 'none' || el.dataset.offscreen === '1';
     }
 
     /**
@@ -606,8 +750,16 @@ class TaskView extends HTMLElement {
         const sidebar = this._getRightSidebarEl();
         if (!sidebar || typeof sidebar[method] !== 'function') return;
         sidebar[method](...args);
-        // Auto-expand sidebar when browser action is triggered
-        this._ensureRightSidebarOpen();
+
+        // 若侧边栏已展开则保持不变；若已收起，尝试显示画中画浮窗
+        if (!TaskView.rightSidebarExpanded) {
+            this._showBrowserPipIfNeeded();
+            // 浏览器事件发生时立即刷新截图，而不是等待定时器
+            if (this._browserPip && this._browserPip.isVisible()) {
+                // 延迟 500ms 等待浏览器操作完成后再截图
+                setTimeout(() => this._browserPip?.triggerCapture(), 500);
+            }
+        }
     }
 
     /** 同步全局侧边栏状态到当前任务视图（切换任务时调用） */
@@ -617,13 +769,19 @@ class TaskView extends HTMLElement {
         if (!rightSidebar) return;
 
         if (TaskView.rightSidebarExpanded) {
+            this._restoreRightSidebarFromOffscreen(rightSidebar);
             rightSidebar.style.display = '';
             rightSidebar.style.width = TaskView.rightSidebarWidth + 'px';
+            rightSidebar.style.opacity = '';
             if (resizer) resizer.style.display = '';
             this._autoSwitchTabIfEmpty(rightSidebar);
+            // 侧边栏展开时隐藏画中画
+            if (this._browserPip) this._browserPip.hide();
         } else {
-            rightSidebar.style.display = 'none';
+            this._hideRightSidebarOffscreen(rightSidebar);
             if (resizer) resizer.style.display = 'none';
+            // 侧边栏收起时，根据浏览器状态决定是否显示画中画
+            this._showBrowserPipIfNeeded();
         }
         this._updateSidebarToggleIcon(TaskView.rightSidebarExpanded);
 
@@ -927,6 +1085,10 @@ class TaskView extends HTMLElement {
     }
 
     disconnectedCallback() {
+        if (this._browserPip) {
+            this._browserPip.destroy();
+            this._browserPip = null;
+        }
         window.taskManagerAPI.unsubscribeTaskUpdate(this.task_id, this.subscription_id);
         this.subscription_id = null;
         if (this._globalTodosUnsubscribe) {
