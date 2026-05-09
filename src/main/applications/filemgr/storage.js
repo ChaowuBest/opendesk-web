@@ -544,26 +544,6 @@ class FSStorage {
         }
     }
 
-    /** @returns {Promise<{dim: number|null, model: string|null}>} */
-    async _tryProbe() {
-        try {
-            // Refresh Setting cache — main thread may have written setting.json
-            // (e.g. user just configured embedding model in TUI) without notifying
-            // this worker thread. Without this, deferred recovery sees stale cache.
-            this.refreshLatestSetting();
-            Setting.getInstance().getDefaultEmbeddingModelInstance();
-        } catch {
-            return { dim: null, model: null };
-        }
-        try {
-            const probe = await this._probeEmbedding();
-            return { dim: probe.dim, model: probe.model_name };
-        } catch (err) {
-            logger.warn(`[filemgr] probe failed: ${err.message}`);
-            return { dim: null, model: null };
-        }
-    }
-
     /**
      * Back-fill embedded=1 for files that already have vector records.
      * Runs once on first startup after the `embedded` column is introduced.
