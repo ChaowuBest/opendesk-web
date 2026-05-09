@@ -73,3 +73,35 @@ export function getHomeDir(): string {
     }
     return os.homedir();
 }
+
+/**
+ * 获取所有应被视为"临时目录"的路径列表（去重）。
+ *
+ * 除 getTempDir()（os.tmpdir()）外，还包含系统级临时目录：
+ * - macOS: /tmp（符号链接）和 /private/tmp（实际路径）
+ * - Linux: /tmp
+ * - Windows: 无额外路径（os.tmpdir() 已覆盖 %TEMP%/%TMP%）
+ *
+ * 用于权限引擎将所有临时目录标记为始终允许。
+ */
+export function getAllTempDirs(): string[] {
+    const dirs: string[] = [getTempDir()];
+
+    if (process.platform === 'darwin') {
+        dirs.push('/tmp', '/private/tmp');
+    } else if (process.platform !== 'win32') {
+        dirs.push('/tmp');
+    }
+
+    // 去重（规范化后比较）
+    const seen = new Set<string>();
+    const result: string[] = [];
+    for (const dir of dirs) {
+        const norm = dir.replace(/\\/g, '/');
+        if (!seen.has(norm)) {
+            seen.add(norm);
+            result.push(norm);
+        }
+    }
+    return result;
+}

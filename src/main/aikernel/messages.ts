@@ -32,6 +32,61 @@ function isValidToolCallArgs(args_string: string): boolean {
     }
 }
 
+/**
+ * 尝试从 args_string 中提取第一个完整的 JSON 对象。
+ *
+ * 处理模型输出的 args_string 为 "{ ... 正确JSON } { ... 未完成的JSON" 这种情况：
+ * 通过追踪大括号嵌套层级（正确处理字符串内的转义），找到第一个完整的顶层 {} 对象。
+ *
+ * @returns 提取出的有效 JSON 字符串，或 null（无法提取时）
+ */
+function tryExtractFirstJson(args_string: string): string | null {
+    const trimmed = args_string.trim();
+    if (!trimmed.startsWith('{')) return null;
+
+    let depth = 0;
+    let inString = false;
+    let escape = false;
+
+    for (let i = 0; i < trimmed.length; i++) {
+        const ch = trimmed[i];
+
+        if (escape) {
+            escape = false;
+            continue;
+        }
+
+        if (ch === '\\' && inString) {
+            escape = true;
+            continue;
+        }
+
+        if (ch === '"') {
+            inString = !inString;
+            continue;
+        }
+
+        if (inString) continue;
+
+        if (ch === '{') {
+            depth++;
+        } else if (ch === '}') {
+            depth--;
+            if (depth === 0) {
+                const candidate = trimmed.slice(0, i + 1);
+                try {
+                    JSON.parse(candidate);
+                    return candidate;
+                } catch {
+                    return null;
+                }
+            }
+        }
+    }
+
+    return null;
+}
+
 export const marked = new Marked();
 
 marked.use(
@@ -564,6 +619,15 @@ export class ToolCallMessagePart {
         return this.toolcalls
             .filter((toolcall) => {
                 if (!isValidToolCallArgs(toolcall.args_string)) {
+                    const extracted = tryExtractFirstJson(toolcall.args_string);
+                    if (extracted) {
+                        logger.info(
+                            `Recovered partial JSON for tool call "${toolcall.tool_name}" (id=${toolcall.id}): ` +
+                                `extracted valid prefix from malformed args_string`
+                        );
+                        toolcall.args_string = extracted;
+                        return true;
+                    }
                     logger.warn(
                         `Dropping tool call "${toolcall.tool_name}" (id=${toolcall.id}) from OpenAI tool_calls: ` +
                             `args_string is not valid JSON. Raw args: ${toolcall.args_string?.substring(0, 200)}`
@@ -1461,10 +1525,20 @@ export class AssistantMessage {
                             ? `{"compressed":"placeholder"}`
                             : tc.args_string || '';
                         if (!isValidToolCallArgs(argsToCheck)) {
-                            logger.warn(
-                                `Dropping tool call "${tc.tool_name}" (id=${tc.id}) from OpenAI context: ` +
-                                    `args_string is not valid JSON. Raw args: ${tc.args_string?.substring(0, 200)}`
-                            );
+                            const extracted = tryExtractFirstJson(tc.args_string);
+                            if (extracted) {
+                                logger.info(
+                                    `Recovered partial JSON for tool call "${tc.tool_name}" (id=${tc.id}) in OpenAI context: ` +
+                                        `extracted valid prefix from malformed args_string`
+                                );
+                                tc.args_string = extracted;
+                                validToolcalls.push(tc);
+                            } else {
+                                logger.warn(
+                                    `Dropping tool call "${tc.tool_name}" (id=${tc.id}) from OpenAI context: ` +
+                                        `args_string is not valid JSON. Raw args: ${tc.args_string?.substring(0, 200)}`
+                                );
+                            }
                             continue;
                         }
                         validToolcalls.push(tc);
@@ -1548,11 +1622,16 @@ export class AssistantMessage {
         for (const part of tool_call_parts) {
             for (const toolcall of part.toolcalls) {
                 if (!isValidToolCallArgs(toolcall.args_string)) {
-                    logger.warn(
-                        `Skipping tool response for "${toolcall.tool_name}" (id=${toolcall.id}): ` +
-                            `original tool call had invalid JSON args`
-                    );
-                    continue;
+                    const extracted = tryExtractFirstJson(toolcall.args_string);
+                    if (extracted) {
+                        toolcall.args_string = extracted;
+                    } else {
+                        logger.warn(
+                            `Skipping tool response for "${toolcall.tool_name}" (id=${toolcall.id}): ` +
+                                `original tool call had invalid JSON args`
+                        );
+                        continue;
+                    }
                 }
                 const overrideContent = AssistantMessage.resolveToolCallOverrideContent(toolcall, toolResultOverrides);
                 if (

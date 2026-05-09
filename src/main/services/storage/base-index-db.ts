@@ -20,7 +20,7 @@ import type DatabaseType from 'better-sqlite3';
 import { createRequire } from 'module';
 import path from 'path';
 import fs from 'fs';
-import { ColumnSchema, validateColumnSchema } from './abstract-storage.js';
+import { ColumnSchema, validateColumnSchema, type ColumnConstraint } from './abstract-storage.js';
 import type { BaseQueryCondition, BaseQueryOperator, BaseQueryOptions, IBaseIndexDB } from './base-indexer.js';
 
 // createRequire keeps the resolution lazy — only triggered when this module
@@ -59,12 +59,19 @@ export class BaseIndexDB implements IBaseIndexDB {
     private isInitialized = false;
     private schema: ColumnSchema;
     private validFields: string[];
+    private requiredFields: string[];
 
     constructor(dbPath: string, schema: ColumnSchema) {
         // 验证 schema
         validateColumnSchema(schema);
         this.schema = schema;
         this.validFields = Object.keys(schema.columns);
+        this.requiredFields = Object.entries(schema.columns)
+            .filter(
+                ([col, def]) =>
+                    col !== 'item_id' && !def.nullable && (def.defaultValue === undefined || def.defaultValue === null)
+            )
+            .map(([col]) => col);
 
         // 确保目录存在
         const dir = path.dirname(dbPath);
@@ -91,32 +98,9 @@ export class BaseIndexDB implements IBaseIndexDB {
     private initializeTable(): void {
         if (this.isInitialized) return;
 
-        const columnDefs: string[] = [];
-
-        for (const columnName of Object.keys(this.schema.columns)) {
-            const allowedDef = this.schema.columns[columnName];
-            if (!allowedDef) continue;
-
-            let colDef = `${columnName} ${allowedDef.type}`;
-
-            // 添加约束
-            if (columnName === 'item_id') {
-                colDef += ' PRIMARY KEY';
-            } else {
-                if (!allowedDef.nullable) {
-                    colDef += ' NOT NULL';
-                }
-                if (allowedDef.defaultValue !== undefined && allowedDef.defaultValue !== null) {
-                    const defaultVal =
-                        typeof allowedDef.defaultValue === 'string'
-                            ? `'${allowedDef.defaultValue}'`
-                            : allowedDef.defaultValue;
-                    colDef += ` DEFAULT ${defaultVal}`;
-                }
-            }
-
-            columnDefs.push(colDef);
-        }
+        const columnDefs = Object.entries(this.schema.columns).map(([columnName, def]) =>
+            this.buildColumnDef(columnName, def)
+        );
 
         const createTableSQL = `
             CREATE TABLE IF NOT EXISTS ${this.tableName} (
@@ -125,11 +109,42 @@ export class BaseIndexDB implements IBaseIndexDB {
         `;
 
         this.db.exec(createTableSQL);
+        this.ensureColumns();
 
         // 为常用查询字段创建索引
         this.createIndexes();
 
         this.isInitialized = true;
+    }
+
+    private buildColumnDef(columnName: string, def: ColumnConstraint): string {
+        let colDef = `${columnName} ${def.type}`;
+
+        // 添加约束
+        if (columnName === 'item_id') {
+            colDef += ' PRIMARY KEY';
+        } else {
+            if (!def.nullable) {
+                colDef += ' NOT NULL';
+            }
+            if (def.defaultValue !== undefined && def.defaultValue !== null) {
+                const defaultVal = typeof def.defaultValue === 'string' ? `'${def.defaultValue}'` : def.defaultValue;
+                colDef += ` DEFAULT ${defaultVal}`;
+            }
+        }
+
+        return colDef;
+    }
+
+    private ensureColumns(): void {
+        const existing = new Set<string>(
+            (this.db.pragma(`table_info(${this.tableName})`) as Array<{ name: string }>).map((c) => c.name)
+        );
+        for (const [colName, def] of Object.entries(this.schema.columns)) {
+            if (existing.has(colName)) continue;
+            // item_id is always present (REQUIRED_COLUMNS), so PRIMARY KEY never reaches ALTER.
+            this.db.exec(`ALTER TABLE ${this.tableName} ADD COLUMN ${this.buildColumnDef(colName, def)}`);
+        }
     }
 
     /**
@@ -220,6 +235,14 @@ export class BaseIndexDB implements IBaseIndexDB {
     async upsertMany(records: Record<string, any>[]): Promise<number> {
         if (records.length === 0) return 0;
 
+        for (const record of records) {
+            for (const field of this.requiredFields) {
+                if (record[field] === undefined || record[field] === null) {
+                    throw new Error(`BaseIndexer.upsert requires insertable row; missing required field "${field}"`);
+                }
+            }
+        }
+
         const upsertAll = this.db.transaction((records: Record<string, any>[]) => {
             let count = 0;
             for (const record of records) {
@@ -292,6 +315,14 @@ export class BaseIndexDB implements IBaseIndexDB {
         });
 
         return updateAll(records);
+    }
+
+    async updateWhere(field: string, value: any, conditions: BaseQueryCondition[]): Promise<number> {
+        this.validateField(field);
+        const { whereClause, params } = this.buildWhereClause(conditions);
+        const stmt = this.db.prepare(`UPDATE ${this.tableName} SET ${field} = ? WHERE ${whereClause}`);
+        const result = stmt.run(value, ...params);
+        return result.changes;
     }
 
     /**

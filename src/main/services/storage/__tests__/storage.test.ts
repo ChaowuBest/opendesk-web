@@ -819,6 +819,230 @@ async function testItemTypeNotPolluted(storage: BaseStorage): Promise<void> {
     console.log('[testItemTypeNotPolluted] PASS');
 }
 
+async function testUpsertPartialSkipsUnwantedIndexers(): Promise<void> {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'partial-skip-'));
+    const storage = new BaseStorage('partial-skip', fullSchema, dir);
+    await storage.initialize();
+    try {
+        await storage.upsert(
+            [
+                {
+                    item_id: 'p1',
+                    item_type: 'file',
+                    filename: 'a.md',
+                    text: 'hello',
+                    indexer_columns: {
+                        VectorIndexer: [{ column: 'text', content: makeOneHotVector(0) }],
+                        BM25Indexer: [{ column: 'text', content: 'hello world' }]
+                    }
+                }
+            ],
+            { indexers: ['BaseIndexer'] }
+        );
+        const baseRes = await storage.search([
+            { indexer: 'BaseIndexer', field: 'item_id', operator: '=', value: 'p1' }
+        ]);
+        assert.equal(baseRes.items.length, 1);
+        const status = await storage.getStatus();
+        assert.equal(
+            status.VectorIndexer?.size ?? 0,
+            0,
+            'VectorIndexer must be empty: payload was provided but options.indexers excluded it'
+        );
+        assert.equal(status.BM25Indexer?.size ?? 0, 0, 'BM25Indexer must be empty likewise');
+    } finally {
+        await storage.close();
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+}
+
+async function testUpsertWithoutOptionsWritesAll(): Promise<void> {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'partial-all-'));
+    const storage = new BaseStorage('partial-all', fullSchema, dir);
+    await storage.initialize();
+    try {
+        await storage.upsert([
+            {
+                item_id: 'p2',
+                item_type: 'file',
+                filename: 'b.md',
+                text: 'hi',
+                indexer_columns: {
+                    VectorIndexer: [{ column: 'text', content: makeOneHotVector(1) }]
+                }
+            }
+        ]);
+        const status = await storage.getStatus();
+        assert.equal(status.VectorIndexer?.size, 1);
+    } finally {
+        await storage.close();
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+}
+
+async function testUpdatePartialSkipsUnwantedIndexers(): Promise<void> {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'partial-update-skip-'));
+    const storage = new BaseStorage('partial-update-skip', fullSchema, dir);
+    await storage.initialize();
+    try {
+        await storage.upsert([
+            {
+                item_id: 'pu1',
+                item_type: 'file',
+                filename: 'before.md',
+                text: 'before',
+                indexer_columns: {
+                    VectorIndexer: [{ column: 'text', content: makeOneHotVector(2) }]
+                }
+            }
+        ]);
+        await storage.update(
+            [
+                {
+                    item_id: 'pu1',
+                    item_type: 'file',
+                    filename: 'after.md',
+                    text: 'after',
+                    indexer_columns: {
+                        VectorIndexer: [{ column: 'text', content: makeOneHotVector(3) }]
+                    }
+                }
+            ],
+            { indexers: ['BaseIndexer'] }
+        );
+
+        const { items: baseItems } = await storage.search([
+            { indexer: 'BaseIndexer', field: 'item_id', operator: '=', value: 'pu1' }
+        ]);
+        assert.equal(baseItems[0]?.item?.filename, 'after.md', 'partial update must update base fields');
+
+        const status = await storage.getStatus();
+        assert.equal(status.VectorIndexer?.size, 1, 'partial update must not add vector rows');
+
+        const oldVectorRows = extractSearchItems(
+            await storage.search([
+                {
+                    indexer: 'VectorIndexer',
+                    field: 'text',
+                    operator: 'vector_similarity',
+                    value: makeOneHotVector(2),
+                    vectorQuery: { topK: 5, metric: 'cosine', threshold: 0.9 }
+                }
+            ])
+        );
+        assert(
+            oldVectorRows.some((r) => r.item.item_id === 'pu1'),
+            'old vector content must remain'
+        );
+
+        const newVectorRows = extractSearchItems(
+            await storage.search([
+                {
+                    indexer: 'VectorIndexer',
+                    field: 'text',
+                    operator: 'vector_similarity',
+                    value: makeOneHotVector(3),
+                    vectorQuery: { topK: 5, metric: 'cosine', threshold: 0.9 }
+                }
+            ])
+        );
+        assert(!newVectorRows.some((r) => r.item.item_id === 'pu1'), 'new vector content must not be written');
+    } finally {
+        await storage.close();
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+}
+
+// ── searchVectorMeta tests ──────────────────────────────────────────
+
+async function testSearchVectorMetaNoConditions(): Promise<void> {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vecmeta-all-'));
+    const storage = new BaseStorage('vecmeta-all', fullSchema, dir);
+    await storage.initialize();
+    try {
+        await storage.upsert([
+            {
+                item_id: 'vm1',
+                item_type: 'file',
+                filename: 'a.md',
+                text: 'x',
+                indexer_columns: { VectorIndexer: [{ column: 'text', content: makeOneHotVector(1) }] }
+            },
+            {
+                item_id: 'vm2',
+                item_type: 'file',
+                filename: 'b.md',
+                text: 'y',
+                indexer_columns: { VectorIndexer: [{ column: 'text', content: makeOneHotVector(2) }] }
+            }
+        ]);
+        // item with no vector — should NOT appear in searchVectorMeta
+        await storage.upsert([{ item_id: 'vm3', item_type: 'file', filename: 'c.md', text: 'z' }]);
+
+        const rows = await storage.searchVectorMeta([]);
+        const ids = rows.map((r) => r.item_id).sort();
+        assert.deepEqual(ids, ['vm1', 'vm2'], 'searchVectorMeta() with no conditions returns only vectorized items');
+        // item_type in vector meta is the column name ('text'), not the item item_type ('file')
+        assert(
+            rows.every((r) => r.item_type === 'text'),
+            'item_type in vector meta must equal the column name'
+        );
+    } finally {
+        storage.close();
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+}
+
+async function testSearchVectorMetaWithConditions(): Promise<void> {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vecmeta-cond-'));
+    const storage = new BaseStorage('vecmeta-cond', fullSchema, dir);
+    await storage.initialize();
+    try {
+        const items: Item[] = ['p', 'q', 'r'].map((id, i) => ({
+            item_id: id,
+            item_type: 'file',
+            filename: `${id}.md`,
+            text: id,
+            indexer_columns: { VectorIndexer: [{ column: 'text', content: makeOneHotVector(i + 1) }] }
+        }));
+        await storage.upsert(items);
+
+        // filter by item_id '='
+        const byId = await storage.searchVectorMeta([{ field: 'item_id', operator: '=', value: 'q' }]);
+        assert.equal(byId.length, 1, 'item_id = filter must return exactly one row');
+        assert.equal(byId[0].item_id, 'q');
+
+        // filter by item_id 'in'
+        const byIn = await storage.searchVectorMeta([{ field: 'item_id', operator: 'in', value: ['p', 'r'] }]);
+        const inIds = byIn.map((r) => r.item_id).sort();
+        assert.deepEqual(inIds, ['p', 'r'], 'item_id in filter must return matching rows');
+
+        // filter by item_type '=' — item_type in vector meta is the column name, not item.item_type
+        const byType = await storage.searchVectorMeta([{ field: 'item_type', operator: '=', value: 'text' }]);
+        assert.equal(byType.length, 3, 'item_type = text (column name) must return all three rows');
+
+        // non-matching filter returns empty
+        const empty = await storage.searchVectorMeta([{ field: 'item_id', operator: '=', value: 'nonexistent' }]);
+        assert.equal(empty.length, 0, 'no match must return empty array');
+    } finally {
+        storage.close();
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+}
+
+async function testSearchVectorMetaEmptyDb(): Promise<void> {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vecmeta-empty-'));
+    const storage = new BaseStorage('vecmeta-empty', fullSchema, dir);
+    await storage.initialize();
+    try {
+        const rows = await storage.searchVectorMeta([]);
+        assert.equal(rows.length, 0, 'empty db must return empty array');
+    } finally {
+        storage.close();
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+}
+
 // ── Main ─────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
@@ -862,13 +1086,19 @@ async function main(): Promise<void> {
         testVectorInsertSkipSibling,
         testDimMismatchDetection,
         testGetStatus,
+        testUpsertPartialSkipsUnwantedIndexers,
+        testUpsertWithoutOptionsWritesAll,
+        testUpdatePartialSkipsUnwantedIndexers,
         testClearChunkIndexerPreservesOthers,
         testClearVectorIndexerPreservesOthers,
         testClearBM25IndexerPreservesOthers,
         testClearTagIndexerPreservesOthers,
         testClearIndexerNonexistentIsNoop,
         testClearBaseIndexerThrows,
-        testClearUninitializedIndexerThrows
+        testClearUninitializedIndexerThrows,
+        testSearchVectorMetaNoConditions,
+        testSearchVectorMetaWithConditions,
+        testSearchVectorMetaEmptyDb
     ];
 
     for (const test of standaloneTests) {

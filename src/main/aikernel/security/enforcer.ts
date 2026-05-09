@@ -32,7 +32,7 @@ import type { PermissionEnforcer, PermissionRequest, PermissionCheckResult, Perm
 import { logger } from '../../utils/logger.js';
 import { createSensitivePathRules, createDeviceNodeRules } from '../../utils/permissionRules.js';
 import { fromMsysPath, normalizePath } from '../../../utils/pathNormalize.js';
-import { getTempDir } from '../../utils/temp.js';
+import { getAllTempDirs } from '../../utils/temp.js';
 
 interface CompiledRule {
     resourceType: string;
@@ -286,9 +286,16 @@ export function createDefaultPermissionRules(workspace: string): PermissionRule[
     // 使用 brace expansion 同时匹配工作空间根目录和子路径：{,/**} = 根目录自身 + 所有子路径
     const wsPattern = `${workspaceNorm}{,/**}`;
 
-    // 临时目录始终允许读写执行
-    const tempDir = normalizePath(getTempDir());
-    const tempPattern = `${tempDir}{,/**}`;
+    // 所有临时目录（os.tmpdir() + 系统级 /tmp 等）始终允许读写执行
+    const tempRules: PermissionRule[] = [];
+    for (const dir of getAllTempDirs()) {
+        const pattern = `${normalizePath(dir)}{,/**}`;
+        tempRules.push(
+            { resourceType: 'file', action: 'read', pathPattern: pattern, effect: 'allow' },
+            { resourceType: 'file', action: 'write', pathPattern: pattern, effect: 'allow' },
+            { resourceType: 'file', action: 'execute', pathPattern: pattern, effect: 'allow' }
+        );
+    }
 
     return [
         // 设备节点始终允许（/dev/stdin, /dev/null 等）
@@ -298,9 +305,7 @@ export function createDefaultPermissionRules(workspace: string): PermissionRule[
         { resourceType: 'file', action: 'write', pathPattern: wsPattern, effect: 'allow' },
         { resourceType: 'file', action: 'execute', pathPattern: wsPattern, effect: 'allow' },
         // 临时目录读写执行允许
-        { resourceType: 'file', action: 'read', pathPattern: tempPattern, effect: 'allow' },
-        { resourceType: 'file', action: 'write', pathPattern: tempPattern, effect: 'allow' },
-        { resourceType: 'file', action: 'execute', pathPattern: tempPattern, effect: 'allow' },
+        ...tempRules,
         // 所有技能读取允许（加载、查看等），写入/执行需用户确认（隐式 ask）
         { resourceType: 'skill', action: 'read', pathPattern: '**', effect: 'allow' },
         // 敏感路径保护规则（即使在工作空间内也需要用户确认）

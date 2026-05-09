@@ -5,7 +5,6 @@
 .claude
 .cursor
 .plan
-.brv/
 
 **/.DS_Store
 package-lock.json
