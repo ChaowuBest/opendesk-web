@@ -354,6 +354,14 @@ function exposeFSAPI() {
                 throw new Error(result.message);
             }
             return result.data;
+        },
+        writeTextFile: async (filePath, content) => {
+            const result = await ipcRenderer.invoke('fs:writeTextFile', filePath, content);
+            if (result.status !== 'ok') {
+                console.error('writing text file failed', result.message);
+                throw new Error(result.message);
+            }
+            return result.data;
         }
     });
 }
@@ -862,5 +870,11 @@ if (window.self !== window.top) {
             }
             return result.data;
         }
+    });
+
+    // 监听主进程转发的 webview 弹窗拦截事件，通过 CustomEvent 派发到 renderer，
+    // 由 EmbeddedBrowser 接收并打开新标签页。
+    ipcRenderer.on('browser:popup-blocked', (_event, url, webContentsId) => {
+        window.dispatchEvent(new CustomEvent('browser-popup-blocked', { detail: { url, webContentsId } }));
     });
 }

@@ -321,6 +321,17 @@ const createWindow = () => {
         }
     });
 
+    // 拦截嵌入式浏览器 webview 中的弹窗请求（window.open / target="_blank"），
+    // 通知 renderer 以新标签页形式打开，避免弹出独立窗口。
+    mainWindow.webContents.on('did-attach-webview', (_event, webContents) => {
+        webContents.setWindowOpenHandler(({ url }) => {
+            if (url && url !== 'about:blank') {
+                mainWindow.webContents.send('browser:popup-blocked', url, webContents.id);
+            }
+            return { action: 'deny' };
+        });
+    });
+
     mainWindow.webContents.on('will-navigate', (event) => {
         if (openLink(event.url)) {
             event.preventDefault();
@@ -959,20 +970,20 @@ const registerFSAPIHandlers = () => {
         }
     });
 
-    // 读取文本文件内容（带大小限制），用于工作空间预览面板。
-    // 若文件超过 maxBytes 则直接返回 { tooLarge: true }，不读内容，由前端给出提示。
+    // 读取文本文件内容，用于工作空间预览/编辑面板。
+    // maxBytes <= 0 或未提供时不限制体积，直接读取全文。
     ipcMain.handle('fs:readTextFile', async (event, filePath, maxBytes) => {
         try {
             if (typeof filePath !== 'string' || filePath.length === 0) {
                 return { status: 'error', message: 'filePath is required' };
             }
-            const limit = Number.isFinite(maxBytes) && maxBytes > 0 ? Math.floor(maxBytes) : 50 * 1024;
+            const limit = Number.isFinite(maxBytes) && maxBytes > 0 ? Math.floor(maxBytes) : 0;
             const systemPath = filePath.replace(/\//g, path.sep);
             const st = await fs.promises.stat(systemPath);
             if (!st.isFile()) {
                 return { status: 'error', message: 'not a file' };
             }
-            if (st.size > limit) {
+            if (limit > 0 && st.size > limit) {
                 return {
                     status: 'ok',
                     data: { tooLarge: true, size: st.size, limit, content: '', binary: false }
@@ -998,6 +1009,23 @@ const registerFSAPIHandlers = () => {
                     binary
                 }
             };
+        } catch (error: any) {
+            return { status: 'error', message: error.message };
+        }
+    });
+
+    // 写入文本文件，供工作空间编辑器保存文件使用。
+    ipcMain.handle('fs:writeTextFile', async (_event, filePath: string, content: string) => {
+        try {
+            if (typeof filePath !== 'string' || filePath.length === 0) {
+                return { status: 'error', message: 'filePath is required' };
+            }
+            if (typeof content !== 'string') {
+                return { status: 'error', message: 'content must be a string' };
+            }
+            const systemPath = filePath.replace(/\//g, path.sep);
+            await fs.promises.writeFile(systemPath, content, 'utf8');
+            return { status: 'ok', data: true };
         } catch (error: any) {
             return { status: 'error', message: error.message };
         }
