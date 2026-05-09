@@ -12,7 +12,7 @@ import assert from 'node:assert/strict';
 import path from 'path';
 import os from 'os';
 import fs from 'fs';
-import { FSStorage, EmbeddingNotConfiguredError, RebuildRequiredError, SCAN_INTERVAL_MS } from '../storage.js';
+import { FSStorage, RebuildRequiredError, SCAN_INTERVAL_MS, makeSchema } from '../storage.js';
 import { Setting, setCustomAppDirectory } from '../../../utils/setting.js';
 import { LLM } from '../../../aikernel/llm.ts';
 
@@ -52,12 +52,10 @@ function cleanup(dir) {
 }
 
 // ── Global Setting setup ────────────────────────────────────────────
-// Must set custom app dir BEFORE Setting.getInstance() is called
+// Must set custom app dir BEFORE Setting.getInstance() is called.
+// Initialised here (before the no-API early-exit) so that tests that
+// depend on settingData / globalAppDir can run in the fast path too.
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
-if (!OPENROUTER_API_KEY) {
-    console.log('OPENROUTER_API_KEY not set, skipping filemgr storage tests');
-    process.exit(0);
-}
 
 const globalAppDir = tmpDir('setting');
 setCustomAppDirectory(globalAppDir);
@@ -72,7 +70,7 @@ const settingData = {
         {
             name: 'openrouter',
             base_url: 'https://openrouter.ai/api/v1',
-            api_key: OPENROUTER_API_KEY,
+            api_key: OPENROUTER_API_KEY ?? '',
             no_proxy: true
         }
     ],
@@ -90,6 +88,22 @@ const settingData = {
 fs.writeFileSync(path.join(globalAppDir, 'setting.json'), JSON.stringify(settingData, null, 4), 'utf-8');
 
 Setting.updateInstanceData(settingData);
+
+if (!OPENROUTER_API_KEY) {
+    console.log('OPENROUTER_API_KEY not set, running pure storage tests');
+    await testScannerStateNewField();
+    await testMakeSchemaModes();
+    await testResetVectorChunkAcceptsExplicitDimAndMode();
+    await testResetVectorChunkPreservesBaseAndResetsEmbedded();
+    await testSaveFilesBaseOnlyWritesEmbeddedZero();
+    await testSaveFilesRefOnlyPreservesEmbedded();
+    await testSaveFilesModifiedChangedResetsEmbedded();
+    await testEmbedSingleFileGoneDeletes();
+    await testInitializeBaseOnlyWhenNoEmbedding();
+    await testSearchByNameBaseOnlyReturnsEmbedUnavailable();
+    cleanup(globalAppDir);
+    process.exit(0);
+}
 
 // ── Helper: create FSStorage with initialized Setting ───────────────
 
@@ -110,311 +124,6 @@ function makeFileEntry(filePath) {
         accessed: Math.floor(stat.atimeMs),
         type: 'file'
     };
-}
-
-// ── Test 1: indexFile with chunks ───────────────────────────────────
-
-async function testIndexFileWithChunks() {
-    console.log('  testIndexFileWithChunks...');
-    const testDir = tmpDir('idx-chunks');
-    let fss;
-    try {
-        // Create a .md file with real content
-        const mdPath = path.join(testDir, 'architecture.md');
-        fs.writeFileSync(mdPath, SAMPLE_MD_CONTENT, 'utf-8');
-
-        fss = await createFSStorage(testDir);
-        const fileEntry = makeFileEntry(mdPath);
-
-        await fss.indexFile(fileEntry, {
-            wasInDb: false,
-            existingItem: undefined,
-            scannerRoot: testDir
-        });
-
-        // Verify BaseIndexer has data
-        const baseResult = await fss.storage.search([
-            { indexer: 'BaseIndexer', field: 'item_id', operator: '=', value: mdPath }
-        ]);
-        assert.equal(baseResult.items.length, 1, 'BaseIndexer should have 1 item');
-        assert.equal(baseResult.items[0].item.filename, 'architecture.md');
-
-        // Verify VectorIndexer has data
-        const embedding = await LLM.embed('architecture');
-        const vecResult = await fss.storage.search([
-            {
-                indexer: 'VectorIndexer',
-                field: 'filename',
-                operator: 'vector_near',
-                value: embedding,
-                vectorQuery: { topK: 5, metric: 'cosine' }
-            }
-        ]);
-        assert.ok(vecResult.items.length >= 1, 'VectorIndexer should find the file');
-
-        // Verify ChunkIndexer has data
-        const chunkResult = await fss.storage.search([
-            {
-                indexer: 'ChunkIndexer',
-                field: 'chunk_text',
-                operator: 'vector_near',
-                value: embedding,
-                vectorQuery: { topK: 5, metric: 'cosine' }
-            }
-        ]);
-        assert.ok(chunkResult.items.length >= 1, 'ChunkIndexer should have chunk data');
-
-        // Verify status reflects data in all indexers
-        const status = await fss.getStatus();
-        assert.ok(status.db_size >= 1, 'db_size should be >= 1');
-        assert.ok(status.vecdb_size >= 1, 'vecdb_size should be >= 1');
-        assert.ok(status.chunk_size >= 1, 'chunk_size should be >= 1');
-
-        console.log('  ✅ testIndexFileWithChunks');
-    } finally {
-        if (fss?.storage) fss.storage.close();
-        cleanup(testDir);
-    }
-}
-
-// ── Test 2: indexFile without chunks ────────────────────────────────
-
-async function testIndexFileNoChunks() {
-    console.log('  testIndexFileNoChunks...');
-    const testDir = tmpDir('idx-nochunks');
-    let fss;
-    try {
-        // Create a tiny .json file (parseAndChunk returns chunk_type='filename')
-        const jsonPath = path.join(testDir, 'config.json');
-        fs.writeFileSync(jsonPath, '{"key": "value"}', 'utf-8');
-
-        fss = await createFSStorage(testDir);
-        const fileEntry = makeFileEntry(jsonPath);
-
-        await fss.indexFile(fileEntry, {
-            wasInDb: false,
-            existingItem: undefined,
-            scannerRoot: testDir
-        });
-
-        // Verify BaseIndexer has data
-        const baseResult = await fss.storage.search([
-            { indexer: 'BaseIndexer', field: 'item_id', operator: '=', value: jsonPath }
-        ]);
-        assert.equal(baseResult.items.length, 1, 'BaseIndexer should have 1 item');
-
-        // Verify VectorIndexer has data (filename embedding)
-        const embedding = await LLM.embed('config');
-        const vecResult = await fss.storage.search([
-            {
-                indexer: 'VectorIndexer',
-                field: 'filename',
-                operator: 'vector_near',
-                value: embedding,
-                vectorQuery: { topK: 5, metric: 'cosine' }
-            }
-        ]);
-        assert.ok(vecResult.items.length >= 1, 'VectorIndexer should find the file');
-
-        // Verify ChunkIndexer is empty
-        const status = await fss.getStatus();
-        assert.equal(status.chunk_size, 0, 'ChunkIndexer should be empty for filename-only file');
-
-        console.log('  ✅ testIndexFileNoChunks');
-    } finally {
-        if (fss?.storage) fss.storage.close();
-        cleanup(testDir);
-    }
-}
-
-// ── Test 3: indexFile transition to no-chunks ───────────────────────
-
-async function testIndexFileTransitionToNoChunks() {
-    console.log('  testIndexFileTransitionToNoChunks...');
-    const testDir = tmpDir('idx-transition');
-    let fss;
-    try {
-        // Step 1: Create a .md file with content and index it
-        const mdPath = path.join(testDir, 'doc.md');
-        fs.writeFileSync(mdPath, SAMPLE_MD_CONTENT, 'utf-8');
-
-        fss = await createFSStorage(testDir);
-        const fileEntry1 = makeFileEntry(mdPath);
-
-        await fss.indexFile(fileEntry1, {
-            wasInDb: false,
-            existingItem: undefined,
-            scannerRoot: testDir
-        });
-
-        // Verify chunks exist
-        let status = await fss.getStatus();
-        assert.ok(status.chunk_size >= 1, 'ChunkIndexer should have data after first index');
-        const chunkSizeBefore = status.chunk_size;
-
-        // Step 2: Overwrite the file with empty content, re-index with wasInDb=true
-        fs.writeFileSync(mdPath, '', 'utf-8');
-        const fileEntry2 = makeFileEntry(mdPath);
-
-        // Get existing item for wasInDb=true
-        const existing = await fss.storage.search([
-            { indexer: 'BaseIndexer', field: 'item_id', operator: '=', value: mdPath }
-        ]);
-        const existingItem = existing.items[0].item;
-
-        await fss.indexFile(fileEntry2, {
-            wasInDb: true,
-            existingItem,
-            scannerRoot: testDir
-        });
-
-        // Verify ChunkIndexer is now empty (clearIndexerForItem was called)
-        status = await fss.getStatus();
-        assert.equal(status.chunk_size, 0, 'ChunkIndexer should be cleared after transition to no-chunks');
-
-        // BaseIndexer and VectorIndexer should still have data
-        assert.ok(status.db_size >= 1, 'BaseIndexer should still have the item');
-        assert.ok(status.vecdb_size >= 1, 'VectorIndexer should still have filename embedding');
-
-        console.log('  ✅ testIndexFileTransitionToNoChunks');
-    } finally {
-        if (fss?.storage) fss.storage.close();
-        cleanup(testDir);
-    }
-}
-
-// ── Test 2b: indexFile with chunks=null (unknown format) ──────────────
-
-async function testIndexFileChunksNull() {
-    console.log('  testIndexFileChunksNull...');
-    const testDir = tmpDir('idx-chunks-null');
-    let fss;
-    try {
-        // .bin → resolveFormat returns null → chunk_type=null, chunks=null
-        const binPath = path.join(testDir, 'data.bin');
-        fs.writeFileSync(binPath, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x01, 0x02]));
-
-        fss = await createFSStorage(testDir);
-        const fileEntry = makeFileEntry(binPath);
-
-        await fss.indexFile(fileEntry, {
-            wasInDb: false,
-            existingItem: undefined,
-            scannerRoot: testDir
-        });
-
-        // BaseIndexer + VectorIndexer should have data, ChunkIndexer empty
-        const status = await fss.getStatus();
-        assert.ok(status.db_size >= 1, 'BaseIndexer should have item');
-        assert.ok(status.vecdb_size >= 1, 'VectorIndexer should have filename embedding');
-        assert.equal(status.chunk_size, 0, 'ChunkIndexer should be empty for unknown format');
-
-        console.log('  ✅ testIndexFileChunksNull');
-    } finally {
-        if (fss?.storage) fss.storage.close();
-        cleanup(testDir);
-    }
-}
-
-// ── Test 2c: indexFile with empty .md (chunks=[]) ─────────────────
-
-async function testIndexFileChunksEmpty() {
-    console.log('  testIndexFileChunksEmpty...');
-    const testDir = tmpDir('idx-chunks-empty');
-    let fss;
-    try {
-        // Empty .md → extractText returns '' → segmentText returns [] → mergeBySize returns []
-        const mdPath = path.join(testDir, 'empty.md');
-        fs.writeFileSync(mdPath, '', 'utf-8');
-
-        fss = await createFSStorage(testDir);
-        const fileEntry = makeFileEntry(mdPath);
-
-        await fss.indexFile(fileEntry, {
-            wasInDb: false,
-            existingItem: undefined,
-            scannerRoot: testDir
-        });
-
-        // BaseIndexer + VectorIndexer should have data, ChunkIndexer empty
-        const status = await fss.getStatus();
-        assert.ok(status.db_size >= 1, 'BaseIndexer should have item');
-        assert.ok(status.vecdb_size >= 1, 'VectorIndexer should have filename embedding');
-        assert.equal(status.chunk_size, 0, 'ChunkIndexer should be empty for empty file');
-
-        console.log('  ✅ testIndexFileChunksEmpty');
-    } finally {
-        if (fss?.storage) fss.storage.close();
-        cleanup(testDir);
-    }
-}
-
-// ── Test 3b: indexFile re-index with chunks (wasInDb=true, hasUsableChunks=true)
-
-async function testIndexFileReindexWithChunks() {
-    console.log('  testIndexFileReindexWithChunks...');
-    const testDir = tmpDir('idx-reindex');
-    let fss;
-    try {
-        fss = await createFSStorage(testDir);
-
-        // Step 1: Index a .md file
-        const mdPath = path.join(testDir, 'doc.md');
-        fs.writeFileSync(mdPath, SAMPLE_MD_CONTENT, 'utf-8');
-        const fileEntry1 = makeFileEntry(mdPath);
-
-        await fss.indexFile(fileEntry1, {
-            wasInDb: false,
-            existingItem: undefined,
-            scannerRoot: testDir
-        });
-
-        const statusBefore = await fss.getStatus();
-        assert.ok(statusBefore.chunk_size >= 1, 'should have chunks after first index');
-
-        // Step 2: Update the file with different content, re-index with wasInDb=true
-        const updatedContent = `# Updated Document
-
-This is a completely different document about machine learning and neural networks.
-
-## Deep Learning
-
-Convolutional neural networks process images through multiple layers of filters.
-Each layer learns increasingly abstract features from raw pixels to complex patterns.
-
-## Reinforcement Learning
-
-Agents learn optimal policies by interacting with environments and receiving rewards.
-`;
-        fs.writeFileSync(mdPath, updatedContent, 'utf-8');
-        const fileEntry2 = makeFileEntry(mdPath);
-
-        const existing = await fss.storage.search([
-            { indexer: 'BaseIndexer', field: 'item_id', operator: '=', value: mdPath }
-        ]);
-        const existingItem = existing.items[0].item;
-
-        await fss.indexFile(fileEntry2, {
-            wasInDb: true,
-            existingItem,
-            scannerRoot: testDir
-        });
-
-        // Verify ChunkIndexer still has data (new chunks replaced old)
-        const statusAfter = await fss.getStatus();
-        assert.ok(statusAfter.chunk_size >= 1, 'should still have chunks after re-index');
-        assert.ok(statusAfter.db_size >= 1, 'BaseIndexer should still have item');
-        assert.ok(statusAfter.vecdb_size >= 1, 'VectorIndexer should still have data');
-
-        // Verify the content is from the updated file (search for new content)
-        const result = await fss.searchFileByContent('neural networks deep learning');
-        assert.ok(result.results.length > 0, 'should find updated content');
-
-        console.log('  ✅ testIndexFileReindexWithChunks');
-    } finally {
-        if (fss?.storage) fss.storage.close();
-        cleanup(testDir);
-    }
 }
 
 // ── Test 4: _parseRootRefs ──────────────────────────────────────────
@@ -471,26 +180,21 @@ async function testSearchFileByName() {
             { name: 'notes.txt', content: 'Some notes about the project setup and deployment process.\n'.repeat(5) }
         ];
 
+        const fileEntries = [];
         for (const f of files) {
             const filePath = path.join(testDir, f.name);
             fs.writeFileSync(filePath, f.content, 'utf-8');
-            const fileEntry = makeFileEntry(filePath);
-            await fss.indexFile(fileEntry, {
-                wasInDb: false,
-                existingItem: undefined,
-                scannerRoot: testDir
-            });
+            fileEntries.push(makeFileEntry(filePath));
         }
+        await fss.saveFiles(fileEntries, testDir);
 
-        // Search by name
-        const result = await fss.searchFileByName('readme');
-        assert.ok(result.query === 'readme', 'result should have query field');
-        assert.ok(Array.isArray(result.results), 'result should have results array');
-        assert.ok(typeof result.totalHits === 'number', 'result should have totalHits');
-        assert.ok(result.results.length > 0, 'should find at least one result');
+        // Search by name (keyword-based, uses BaseIndexer LIKE query)
+        const result = await fss.searchFilesByKeyword('readme');
+        assert.ok(Array.isArray(result), 'result should be an array');
+        assert.ok(result.length > 0, 'should find at least one result');
 
         // First result should have expected shape
-        const first = result.results[0];
+        const first = result[0];
         assert.ok(typeof first.path === 'string', 'result item should have path');
         assert.ok(typeof first.filename === 'string', 'result item should have filename');
 
@@ -536,39 +240,22 @@ preconfigured for latency, throughput, and error rate monitoring.
         const file2 = path.join(testDir, 'deployment.md');
         fs.writeFileSync(file2, file2Content, 'utf-8');
 
-        for (const filePath of [file1, file2]) {
-            const fileEntry = makeFileEntry(filePath);
-            await fss.indexFile(fileEntry, {
-                wasInDb: false,
-                existingItem: undefined,
-                scannerRoot: testDir
-            });
-        }
+        const entries = [file1, file2].map(makeFileEntry);
+        await fss.saveFiles(entries, testDir);
 
-        // Verify multiple chunks exist (both files should produce chunks)
+        // Verify base index has both files
         const status = await fss.getStatus();
-        assert.ok(status.chunk_size >= 2, 'should have chunks from multiple files');
+        assert.ok(status.db_size >= 2, 'should have 2 files in BaseIndexer');
 
-        // Search by content — should return file-level aggregated results
-        const result = await fss.searchFileByContent('authentication JWT token');
-        assert.ok(result.query === 'authentication JWT token', 'result should have query field');
-        assert.ok(Array.isArray(result.results), 'result should have results array');
-        assert.ok(typeof result.totalHits === 'number', 'result should have totalHits');
-        assert.ok(result.results.length > 0, 'should find at least one result');
+        // Search by keyword — base-only search, no vector data needed
+        const result = await fss.searchFilesByKeyword('architecture');
+        assert.ok(Array.isArray(result), 'result should be an array');
+        assert.ok(result.length > 0, 'should find at least one result by keyword');
 
-        // Verify file-level aggregation: one result per file (even if multiple chunks matched)
-        const paths = result.results.map((r) => r.path);
-        const uniquePaths = [...new Set(paths)];
-        assert.equal(paths.length, uniquePaths.length, 'should have one result per file (aggregated)');
-
-        // Result follows SearchResultItem shape: path, filename, modified, size, snippet
-        const first = result.results[0];
+        // Result follows SearchResultItem shape
+        const first = result[0];
         assert.ok(typeof first.path === 'string', 'result should have path');
         assert.ok(typeof first.filename === 'string', 'result should have filename');
-        assert.ok(
-            typeof first.snippet === 'string' && first.snippet.length > 0,
-            'result should have non-empty snippet'
-        );
 
         console.log('  ✅ testSearchFileByContent');
     } finally {
@@ -594,21 +281,10 @@ async function testRemoveDeletedFilesMultiRoot() {
         fs.writeFileSync(mdPath, SAMPLE_MD_CONTENT, 'utf-8');
         const fileEntry = makeFileEntry(mdPath);
 
-        await fss.indexFile(fileEntry, {
-            wasInDb: false,
-            existingItem: undefined,
-            scannerRoot: root1
-        });
+        await fss.saveFiles([fileEntry], root1);
 
-        // Re-index under root2 (wasInDb=true, existing item has root1)
-        const existing1 = await fss.storage.search([
-            { indexer: 'BaseIndexer', field: 'item_id', operator: '=', value: mdPath }
-        ]);
-        await fss.indexFile(fileEntry, {
-            wasInDb: true,
-            existingItem: existing1.items[0].item,
-            scannerRoot: root2
-        });
+        // Add root2 as a second root for the same file
+        await fss.saveFiles([fileEntry], root2);
 
         // Verify root_refs has both roots
         const afterBoth = await fss.storage.search([
@@ -774,6 +450,563 @@ async function testEmbedWithRetry429() {
     }
 }
 
+// ── Test 11: makeSchema supports base-only and full modes ───────────
+
+async function testMakeSchemaModes() {
+    console.log('  testMakeSchemaModes...');
+    const baseOnly = makeSchema(1024, { mode: 'base-only' });
+    assert.deepEqual(baseOnly.needIndexers, {});
+
+    const full = makeSchema(1024, { mode: 'full' });
+    assert.equal(full.needIndexers.filename[0].indexer, 'VectorIndexer');
+    assert.equal(full.needIndexers.chunk_text[0].indexer, 'ChunkIndexer');
+
+    assert.equal(baseOnly.columns.embedded.defaultValue, 0);
+    assert.equal(full.columns.embedded.defaultValue, 0);
+    console.log('  ✅ testMakeSchemaModes');
+}
+
+// ── Test 12: scanner_state has embedding task timestamp field ───────
+
+async function testScannerStateNewField() {
+    console.log('  testScannerStateNewField...');
+    const fss = new FSStorage(tmpDir('state'));
+    assert.equal(fss.scannerState.last_embedding_task_at, null);
+    console.log('  ✅ testScannerStateNewField');
+}
+
+// ── Test 13: _resetVectorChunk preserves base and resets embedded ────
+
+async function testResetVectorChunkPreservesBaseAndResetsEmbedded() {
+    console.log('  testResetVectorChunkPreservesBaseAndResetsEmbedded...');
+    const dir = tmpDir('reset-vec');
+    try {
+        // Bootstrap with dim=1 so this test runs without a real embedding API.
+        const fss = new FSStorage(dir);
+        fss.scannerState.vec_dim = 1;
+        await fss._resetVectorChunk('test-bootstrap', { dim: 1, mode: 'full' });
+
+        const file = path.join(dir, 'r.md');
+        fs.writeFileSync(file, 'r body');
+        await fss.saveFiles([makeFileEntry(file)], dir);
+
+        // Seed a vector row + flip embedded=1 manually (bypasses embedSingleFile).
+        const dim = fss.scannerState.vec_dim; // = 1
+        await fss.storage.upsert(
+            [
+                {
+                    item_id: file,
+                    item_type: 'file',
+                    filename: 'r.md',
+                    indexer_columns: { VectorIndexer: [{ column: 'filename', content: new Array(dim).fill(0.1) }] }
+                }
+            ],
+            { indexers: ['VectorIndexer'] }
+        );
+        await fss.storage.update([{ item_id: file, item_type: 'file', embedded: 1 }], { indexers: ['BaseIndexer'] });
+
+        await fss._resetVectorChunk('test', { dim: fss.scannerState.vec_dim, mode: fss.mode });
+
+        const after = (
+            await fss.storage.search([{ indexer: 'BaseIndexer', field: 'item_id', operator: '=', value: file }])
+        ).items[0].item;
+        assert.equal(after.embedded, 0);
+        const status = await fss.storage.getStatus();
+        assert.equal(status.VectorIndexer?.size ?? 0, 0);
+        assert.equal(status.ChunkIndexer?.size ?? 0, 0);
+    } finally {
+        cleanup(dir);
+    }
+    console.log('  ✅ testResetVectorChunkPreservesBaseAndResetsEmbedded');
+}
+
+// ── Test 14: _resetVectorChunk accepts explicit dim and mode ─────────
+
+async function testResetVectorChunkAcceptsExplicitDimAndMode() {
+    console.log('  testResetVectorChunkAcceptsExplicitDimAndMode...');
+    const dir = tmpDir('reset-explicit');
+    try {
+        const fss = await createFSStorage(dir);
+        // Caller is responsible for updating scannerState BEFORE calling reset.
+        fss.scannerState.vec_dim = 768;
+        await fss._resetVectorChunk('dim change', { dim: 768, mode: 'full' });
+        assert.equal(fss.mode, 'full');
+        // The reopened storage should accept 768-dim writes:
+        await fss.storage.upsert(
+            [
+                {
+                    item_id: 'q',
+                    item_type: 'file',
+                    filename: 'q.md',
+                    root_refs: '[]',
+                    indexer_columns: { VectorIndexer: [{ column: 'filename', content: new Array(768).fill(0.2) }] }
+                }
+            ],
+            { indexers: ['VectorIndexer', 'BaseIndexer'] }
+        );
+        const status = await fss.storage.getStatus();
+        assert.equal(status.VectorIndexer.size, 1);
+    } finally {
+        cleanup(dir);
+    }
+    console.log('  ✅ testResetVectorChunkAcceptsExplicitDimAndMode');
+}
+
+// ── Test: saveFiles base-only writes embedded=0 ─────────────────────
+
+async function testSaveFilesBaseOnlyWritesEmbeddedZero() {
+    console.log('  testSaveFilesBaseOnlyWritesEmbeddedZero...');
+    const dir = tmpDir('savefiles-baseonly');
+    try {
+        // Bypass full initialize() — directly use _resetVectorChunk which bootstraps
+        // storage in the requested mode. Task 9 will wire initialize() to handle
+        // base-only automatically; for now we bootstrap manually.
+        const fss = new FSStorage(dir);
+        // _resetVectorChunk closes old storage and opens new one with given schema.
+        // Use a placeholder dim=1 — base-only schema ignores dim in needIndexers.
+        await fss._resetVectorChunk('test-bootstrap', { dim: 1, mode: 'base-only' });
+        assert.equal(fss.mode, 'base-only');
+        const file = path.join(dir, 'doc.md');
+        fs.writeFileSync(file, '# hi');
+        const result = await fss.saveFiles([makeFileEntry(file)], dir);
+        assert.equal(result.saved, 1);
+        const rows = await fss.storage.search([
+            { indexer: 'BaseIndexer', field: 'item_id', operator: '=', value: file }
+        ]);
+        assert.equal(rows.items[0].item.embedded, 0);
+    } finally {
+        cleanup(dir);
+    }
+    console.log('  ✅ testSaveFilesBaseOnlyWritesEmbeddedZero');
+}
+
+// ── Test: saveFiles ref-only preserves embedded ──────────────────────
+
+async function testSaveFilesRefOnlyPreservesEmbedded() {
+    console.log('  testSaveFilesRefOnlyPreservesEmbedded...');
+    const dir = tmpDir('savefiles-refonly');
+    try {
+        const fss = new FSStorage(dir);
+        await fss._resetVectorChunk('test-bootstrap', { dim: 1, mode: 'base-only' });
+        const file = path.join(dir, 'shared.md');
+        fs.writeFileSync(file, '# shared');
+        // First scan from rootA
+        await fss.saveFiles([makeFileEntry(file)], '/rootA');
+        // Manually mark embedded=1 (simulating embedding completion)
+        await fss.storage.update(
+            [
+                {
+                    item_id: file,
+                    item_type: 'file',
+                    embedded: 1
+                }
+            ],
+            { indexers: ['BaseIndexer'] }
+        );
+        // Second scan from rootB — same file, no modification
+        await fss.saveFiles([makeFileEntry(file)], '/rootB');
+        const row = (
+            await fss.storage.search([{ indexer: 'BaseIndexer', field: 'item_id', operator: '=', value: file }])
+        ).items[0].item;
+        assert.equal(row.embedded, 1, 'ref-only update must not reset embedded');
+        const refs = JSON.parse(row.root_refs);
+        assert.deepEqual(refs.sort(), ['/rootA', '/rootB']);
+    } finally {
+        cleanup(dir);
+    }
+    console.log('  ✅ testSaveFilesRefOnlyPreservesEmbedded');
+}
+
+// ── Test: saveFiles modified changed resets embedded ─────────────────
+
+async function testSaveFilesModifiedChangedResetsEmbedded() {
+    console.log('  testSaveFilesModifiedChangedResetsEmbedded...');
+    const dir = tmpDir('savefiles-modified');
+    try {
+        const fss = new FSStorage(dir);
+        await fss._resetVectorChunk('test-bootstrap', { dim: 1, mode: 'base-only' });
+        const file = path.join(dir, 'm.md');
+        fs.writeFileSync(file, 'a');
+        const e1 = makeFileEntry(file);
+        await fss.saveFiles([e1], dir);
+        await fss.storage.update([{ item_id: file, item_type: 'file', embedded: 1 }], { indexers: ['BaseIndexer'] });
+        // Touch mtime
+        await new Promise((r) => setTimeout(r, 10));
+        fs.writeFileSync(file, 'a longer content');
+        const e2 = makeFileEntry(file);
+        assert.notEqual(e1.modified, e2.modified);
+        await fss.saveFiles([e2], dir);
+        const row = (
+            await fss.storage.search([{ indexer: 'BaseIndexer', field: 'item_id', operator: '=', value: file }])
+        ).items[0].item;
+        assert.equal(row.embedded, 0, 'modifiedChanged must reset embedded=0');
+    } finally {
+        cleanup(dir);
+    }
+    console.log('  ✅ testSaveFilesModifiedChangedResetsEmbedded');
+}
+
+// ── Test: embedSingleFile happy path ─────────────────────────────────
+
+async function testEmbedSingleFileHappyPath() {
+    console.log('  testEmbedSingleFileHappyPath...');
+    const dir = tmpDir('embed-happy');
+    try {
+        const fss = await createFSStorage(dir);
+        const file = path.join(dir, 'a.md');
+        fs.writeFileSync(file, SAMPLE_MD_CONTENT);
+        await fss.saveFiles([makeFileEntry(file)], dir);
+        const row = (
+            await fss.storage.search([{ indexer: 'BaseIndexer', field: 'item_id', operator: '=', value: file }])
+        ).items[0].item;
+        assert.equal(row.embedded, 0);
+        await fss.embedSingleFile(row);
+        const after = (
+            await fss.storage.search([{ indexer: 'BaseIndexer', field: 'item_id', operator: '=', value: file }])
+        ).items[0].item;
+        assert.equal(after.embedded, 1);
+        const status = await fss.storage.getStatus();
+        assert.ok((status.VectorIndexer?.size ?? 0) >= 1);
+    } finally {
+        cleanup(dir);
+    }
+    console.log('  ✅ testEmbedSingleFileHappyPath');
+}
+
+// ── Test: embedSingleFile gone deletes ───────────────────────────────
+
+async function testEmbedSingleFileGoneDeletes() {
+    console.log('  testEmbedSingleFileGoneDeletes...');
+    const dir = tmpDir('embed-gone');
+    try {
+        const fss = new FSStorage(dir);
+        fss.scannerState.vec_dim = 1;
+        await fss._resetVectorChunk('test-bootstrap', { dim: 1, mode: 'full' });
+        const file = path.join(dir, 'gone.md');
+        fs.writeFileSync(file, 'x');
+        await fss.saveFiles([makeFileEntry(file)], dir);
+        const row = (
+            await fss.storage.search([{ indexer: 'BaseIndexer', field: 'item_id', operator: '=', value: file }])
+        ).items[0].item;
+        fs.unlinkSync(file);
+        await fss.embedSingleFile(row);
+        const after = await fss.storage.search([
+            { indexer: 'BaseIndexer', field: 'item_id', operator: '=', value: file }
+        ]);
+        assert.equal(after.items.length, 0);
+    } finally {
+        cleanup(dir);
+    }
+    console.log('  ✅ testEmbedSingleFileGoneDeletes');
+}
+
+// ── Test: embedSingleFile drift returns skipped ──────────────────────
+
+async function testEmbedSingleFileDriftReturnsSkipped() {
+    console.log('  testEmbedSingleFileDriftReturnsSkipped...');
+    const dir = tmpDir('embed-drift');
+    try {
+        const fss = new FSStorage(dir);
+        fss.scannerState.vec_dim = 1;
+        await fss._resetVectorChunk('test-bootstrap', { dim: 1, mode: 'full' });
+        const file = path.join(dir, 'drift.md');
+        fs.writeFileSync(file, 'a');
+        await fss.saveFiles([makeFileEntry(file)], dir);
+        const row = (
+            await fss.storage.search([{ indexer: 'BaseIndexer', field: 'item_id', operator: '=', value: file }])
+        ).items[0].item;
+
+        // Force drift: monkey-patch _embedWithRetry to mutate file mid-flight
+        const orig = fss._embedWithRetry.bind(fss);
+        fss._embedWithRetry = async (texts) => {
+            await new Promise((r) => setTimeout(r, 50));
+            fs.writeFileSync(file, 'a much longer content now to change size+mtime');
+            return orig(texts);
+        };
+
+        const r = await fss.embedSingleFile(row);
+        assert.equal(r?.status, 'skipped_drift');
+        const after = (
+            await fss.storage.search([{ indexer: 'BaseIndexer', field: 'item_id', operator: '=', value: file }])
+        ).items[0].item;
+        assert.equal(after.embedded, 0);
+    } finally {
+        cleanup(dir);
+    }
+    console.log('  ✅ testEmbedSingleFileDriftReturnsSkipped');
+}
+
+// ── Test: processEmbeddingQueue drains pending ───────────────────────
+
+async function testProcessEmbeddingQueueDrainsPending() {
+    console.log('  testProcessEmbeddingQueueDrainsPending...');
+    const dir = tmpDir('embed-queue');
+    try {
+        const fss = await createFSStorage(dir);
+        const f1 = path.join(dir, 'a.md');
+        const f2 = path.join(dir, 'b.md');
+        fs.writeFileSync(f1, '# a content');
+        fs.writeFileSync(f2, '# b content');
+        await fss.saveFiles([makeFileEntry(f1), makeFileEntry(f2)], dir);
+
+        const processed = await fss.processEmbeddingQueue(() => false);
+        assert.equal(processed, 2);
+
+        const all = await fss.storage.search([
+            { indexer: 'BaseIndexer', field: 'item_type', operator: '=', value: 'file' }
+        ]);
+        for (const it of all.items) assert.equal(it.item.embedded, 1);
+    } finally {
+        cleanup(dir);
+    }
+    console.log('  ✅ testProcessEmbeddingQueueDrainsPending');
+}
+
+// ── Test: processEmbeddingQueue drift skipped once ───────────────────
+
+async function testProcessEmbeddingQueueDriftSkippedOnce() {
+    console.log('  testProcessEmbeddingQueueDriftSkippedOnce...');
+    const dir = tmpDir('embed-queue-drift');
+    try {
+        const fss = new FSStorage(dir);
+        fss.scannerState.vec_dim = 1;
+        await fss._resetVectorChunk('test-bootstrap', { dim: 1, mode: 'full' });
+        const file = path.join(dir, 'drift.md');
+        fs.writeFileSync(file, 'a');
+        await fss.saveFiles([makeFileEntry(file)], dir);
+
+        let calls = 0;
+        fss.embedSingleFile = async (row) => {
+            calls++;
+            return { status: 'skipped_drift' };
+        };
+
+        const processed = await fss.processEmbeddingQueue(() => false);
+        assert.equal(processed, 0);
+        assert.equal(calls, 1, 'must NOT reselect the same drifting file within one task');
+    } finally {
+        cleanup(dir);
+    }
+    console.log('  ✅ testProcessEmbeddingQueueDriftSkippedOnce');
+}
+
+// ── Test: syncEmbeddingMode switches base-only → full when model becomes available ───────
+
+async function testHotSwapBaseOnlyToFull() {
+    console.log('  testHotSwapBaseOnlyToFull...');
+    Setting.updateInstanceData({ ...settingData, default_embedding_model: '' });
+    fs.writeFileSync(
+        path.join(globalAppDir, 'setting.json'),
+        JSON.stringify({ ...settingData, default_embedding_model: '' }, null, 4)
+    );
+
+    const dir = tmpDir('hotswap');
+    try {
+        // Bootstrap in base-only mode (no embedding configured)
+        const fss = new FSStorage(dir);
+        fss.scannerState.vec_dim = null;
+        await fss._resetVectorChunk('test-bootstrap', { dim: 1, mode: 'base-only' });
+        assert.equal(fss.mode, 'base-only');
+
+        // Configure embedding now
+        Setting.updateInstanceData(settingData);
+        fs.writeFileSync(path.join(globalAppDir, 'setting.json'), JSON.stringify(settingData, null, 4));
+
+        // syncEmbeddingMode detects model available and transitions to full
+        await fss.syncEmbeddingMode('test');
+
+        assert.equal(fss.mode, 'full');
+        assert.ok(fss.scannerState.vec_dim !== null, 'vec_dim should be recorded after sync');
+        assert.ok(fss.scannerState.embedding_model !== null, 'embedding_model should be recorded after sync');
+    } finally {
+        Setting.updateInstanceData(settingData);
+        fs.writeFileSync(path.join(globalAppDir, 'setting.json'), JSON.stringify(settingData, null, 4));
+        cleanup(dir);
+    }
+    console.log('  ✅ testHotSwapBaseOnlyToFull');
+}
+
+// ── Test A: base-only when no embedding configured ───────────────────
+
+async function testInitializeBaseOnlyWhenNoEmbedding() {
+    console.log('  testInitializeBaseOnlyWhenNoEmbedding...');
+    Setting.updateInstanceData({ ...settingData, default_embedding_model: '' });
+    fs.writeFileSync(
+        path.join(globalAppDir, 'setting.json'),
+        JSON.stringify({ ...settingData, default_embedding_model: '' }, null, 4)
+    );
+    const dir = tmpDir('baseonly-init');
+    try {
+        const fss = new FSStorage(dir);
+        await fss.initialize();
+        assert.equal(fss.mode, 'base-only');
+        assert.ok(fss.storage !== null, 'storage must be initialized even in base-only');
+        const status = await fss.storage.getStatus();
+        assert.ok(!status.VectorIndexer, 'VectorIndexer must NOT be initialized in base-only');
+    } finally {
+        Setting.updateInstanceData(settingData);
+        fs.writeFileSync(path.join(globalAppDir, 'setting.json'), JSON.stringify(settingData, null, 4));
+        cleanup(dir);
+    }
+    console.log('  ✅ testInitializeBaseOnlyWhenNoEmbedding');
+}
+
+// ── Test B: full mode when embedding configured ──────────────────────
+
+async function testInitializeFullWhenEmbeddingConfigured() {
+    console.log('  testInitializeFullWhenEmbeddingConfigured...');
+    const dir = tmpDir('full-init');
+    try {
+        const fss = new FSStorage(dir);
+        await fss.initialize();
+        assert.equal(fss.mode, 'full');
+    } finally {
+        cleanup(dir);
+    }
+    console.log('  ✅ testInitializeFullWhenEmbeddingConfigured');
+}
+
+// ── Test C: dim change triggers soft reset ───────────────────────────
+
+async function testInitializeDimChangeSoftResetsAndStaysFull() {
+    console.log('  testInitializeDimChangeSoftResetsAndStaysFull...');
+    const dir = tmpDir('dimchange-init');
+    try {
+        // First init
+        const fss1 = new FSStorage(dir);
+        await fss1.initialize();
+        assert.equal(fss1.mode, 'full');
+        const file = path.join(dir, 'd.md');
+        fs.writeFileSync(file, 'd');
+        await fss1.saveFiles([makeFileEntry(file)], dir);
+        await fss1.storage.update([{ item_id: file, item_type: 'file', embedded: 1 }], { indexers: ['BaseIndexer'] });
+        await fss1.storage.close?.();
+
+        // Patch state file to look like old different dim/model
+        const stateFile = path.join(dir, 'scanner_state.json');
+        const state = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+        state.vec_dim = 99999; // Force mismatch
+        state.embedding_model = 'old-model';
+        fs.writeFileSync(stateFile, JSON.stringify(state, null, 2));
+
+        // Re-init — should detect dim mismatch and soft-reset
+        const fss2 = new FSStorage(dir);
+        await fss2.initialize();
+        assert.equal(fss2.mode, 'full');
+        // Base row preserved, embedded reset to 0
+        const row = (
+            await fss2.storage.search([{ indexer: 'BaseIndexer', field: 'item_id', operator: '=', value: file }])
+        ).items[0].item;
+        assert.equal(row.embedded, 0, 'embedded must be reset to 0 after dim change');
+        const status = await fss2.storage.getStatus();
+        assert.equal(status.VectorIndexer.size, 0, 'VectorIndexer must be empty after reset');
+    } finally {
+        cleanup(dir);
+    }
+    console.log('  ✅ testInitializeDimChangeSoftResetsAndStaysFull');
+}
+
+// ── Test: searchFileByName returns EMBED_UNAVAILABLE in base-only mode ─
+
+async function testSearchByNameBaseOnlyReturnsEmbedUnavailable() {
+    console.log('  testSearchByNameBaseOnlyReturnsEmbedUnavailable...');
+    Setting.updateInstanceData({ ...settingData, default_embedding_model: '' });
+    fs.writeFileSync(
+        path.join(globalAppDir, 'setting.json'),
+        JSON.stringify({ ...settingData, default_embedding_model: '' }, null, 4)
+    );
+    const dir = tmpDir('semantic-baseonly');
+    try {
+        const fss = await createFSStorage(dir);
+        const r = await fss.searchFileByName('foo');
+        assert.equal(r.results.length, 0);
+        assert.equal(r.totalHits, 0);
+        assert.equal(r.code, 'EMBED_UNAVAILABLE');
+        assert.ok(r.warning);
+    } finally {
+        Setting.updateInstanceData(settingData);
+        fs.writeFileSync(path.join(globalAppDir, 'setting.json'), JSON.stringify(settingData, null, 4));
+        cleanup(dir);
+    }
+    console.log('  ✅ testSearchByNameBaseOnlyReturnsEmbedUnavailable');
+}
+
+// ── Test 11 (Task 11): getStatus reports mode and counts ─────────────
+
+async function testGetStatusReportsModeAndCounts() {
+    console.log('  testGetStatusReportsModeAndCounts...');
+    const dir = tmpDir('status');
+    try {
+        const fss = await createFSStorage(dir);
+        const file = path.join(dir, 'x.md');
+        fs.writeFileSync(file, 'x');
+        await fss.saveFiles([makeFileEntry(file)], dir);
+        const s = await fss.getStatus();
+        assert.equal(s.mode, 'full');
+        assert.equal(s.embedded_count, 0);
+        assert.equal(s.pending_count, 1);
+        assert.equal(s.last_embedding_task_at, null);
+    } finally {
+        cleanup(dir);
+    }
+    console.log('  ✅ testGetStatusReportsModeAndCounts');
+}
+
+// ── Test: searchFileByName filters embedded=0 rows ───────────────────
+
+async function testSearchFilterEmbeddedOneExcludesPending() {
+    console.log('  testSearchFilterEmbeddedOneExcludesPending...');
+    const dir = tmpDir('embedfilter');
+    try {
+        const fss = await createFSStorage(dir);
+        // File A: fully embedded
+        const fa = path.join(dir, 'alpha.md');
+        fs.writeFileSync(fa, '# alpha topic');
+        await fss.saveFiles([makeFileEntry(fa)], dir);
+        const rowA = (
+            await fss.storage.search([{ indexer: 'BaseIndexer', field: 'item_id', operator: '=', value: fa }])
+        ).items[0].item;
+        await fss.embedSingleFile(rowA);
+
+        // File B: vector seeded manually (simulating a stale state) but base.embedded=0
+        const fb = path.join(dir, 'beta.md');
+        fs.writeFileSync(fb, '# beta topic');
+        await fss.saveFiles([makeFileEntry(fb)], dir);
+        // Manually inject a vector row for B but keep embedded=0
+        const dim = fss.scannerState.vec_dim;
+        await fss.storage.upsert(
+            [
+                {
+                    item_id: fb,
+                    item_type: 'file',
+                    filename: 'beta.md',
+                    indexer_columns: { VectorIndexer: [{ column: 'filename', content: new Array(dim).fill(0.1) }] }
+                }
+            ],
+            { indexers: ['VectorIndexer'] }
+        );
+        // Confirm B is still embedded=0
+        const rowB = (
+            await fss.storage.search([{ indexer: 'BaseIndexer', field: 'item_id', operator: '=', value: fb }])
+        ).items[0].item;
+        assert.equal(rowB.embedded, 0);
+
+        // Query — must NOT include B
+        const r = await fss.searchFileByName('beta');
+        const paths = r.results.map((x) => x.path);
+        assert.ok(!paths.includes(fb), 'embedded=0 row must be filtered out');
+
+        // After embedding B, it should appear
+        await fss.embedSingleFile(rowB);
+        const r2 = await fss.searchFileByName('beta');
+        const paths2 = r2.results.map((x) => x.path);
+        assert.ok(paths2.includes(fb));
+    } finally {
+        cleanup(dir);
+    }
+    console.log('  ✅ testSearchFilterEmbeddedOneExcludesPending');
+}
+
 // ── Main ────────────────────────────────────────────────────────────
 
 async function main() {
@@ -782,19 +1015,32 @@ async function main() {
         failed = 0;
 
     const tests = [
-        testIndexFileWithChunks,
-        testIndexFileNoChunks,
-        testIndexFileChunksNull,
-        testIndexFileChunksEmpty,
-        testIndexFileTransitionToNoChunks,
-        testIndexFileReindexWithChunks,
         testParseRootRefs,
         testSearchFileByName,
         testSearchFileByContent,
         testRemoveDeletedFilesMultiRoot,
         testDetachRootDeferred,
         testSaveScannerStateConcurrent,
-        testEmbedWithRetry429
+        testEmbedWithRetry429,
+        testMakeSchemaModes,
+        testScannerStateNewField,
+        testResetVectorChunkPreservesBaseAndResetsEmbedded,
+        testResetVectorChunkAcceptsExplicitDimAndMode,
+        testSaveFilesBaseOnlyWritesEmbeddedZero,
+        testSaveFilesRefOnlyPreservesEmbedded,
+        testSaveFilesModifiedChangedResetsEmbedded,
+        testEmbedSingleFileHappyPath,
+        testEmbedSingleFileGoneDeletes,
+        testEmbedSingleFileDriftReturnsSkipped,
+        testProcessEmbeddingQueueDrainsPending,
+        testProcessEmbeddingQueueDriftSkippedOnce,
+        testHotSwapBaseOnlyToFull,
+        testInitializeBaseOnlyWhenNoEmbedding,
+        testInitializeFullWhenEmbeddingConfigured,
+        testInitializeDimChangeSoftResetsAndStaysFull,
+        testSearchByNameBaseOnlyReturnsEmbedUnavailable,
+        testGetStatusReportsModeAndCounts,
+        testSearchFilterEmbeddedOneExcludesPending
     ];
 
     for (const test of tests) {

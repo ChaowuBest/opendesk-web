@@ -57,6 +57,12 @@ export interface VectorSearchOptions {
     topK?: number;
 }
 
+export interface VectorMetaCondition {
+    field: 'item_id' | 'item_type';
+    operator: '=' | 'in';
+    value: string | string[];
+}
+
 // ============================================================================
 // IVectorIndexDB - 统一异步接口（VectorIndexDB 和 VectorIndexDBHm 共同实现）
 // ============================================================================
@@ -76,6 +82,7 @@ export interface IVectorIndexDB {
     count(): Promise<number>;
     exists(itemId: string): Promise<boolean>;
     clear(): Promise<number>;
+    searchMeta(conditions?: VectorMetaCondition[]): Promise<Array<{ item_id: string; item_type: string }>>;
     transaction<T>(fn: () => Promise<T>): Promise<T>;
     close(): void;
     getDimension(): number;
@@ -385,6 +392,10 @@ export class VectorIndexer extends Indexer {
 
     async clear(): Promise<void> {
         await this.ensureDB().clear();
+    }
+
+    async searchMeta(conditions?: VectorMetaCondition[]): Promise<Array<{ item_id: string; item_type: string }>> {
+        return this.ensureDB().searchMeta(conditions);
     }
 
     async getInfo(): Promise<Record<string, any>> {

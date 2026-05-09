@@ -20,7 +20,7 @@
 import fs from 'fs';
 import path from 'path';
 import { createRequire } from 'module';
-import { ColumnSchema, validateColumnSchema } from './abstract-storage.js';
+import { ColumnSchema, validateColumnSchema, type ColumnConstraint } from './abstract-storage.js';
 import type { BaseQueryCondition, BaseQueryOperator, BaseQueryOptions, IBaseIndexDB } from './base-indexer.js';
 
 const require = createRequire(import.meta.url);
@@ -34,9 +34,18 @@ const sqlite3Wasm = require('node-sqlite3-wasm') as {
 };
 
 const SUPPORTED_OPERATORS: BaseQueryOperator[] = [
-    '=', '!=', '>', '<', '>=', '<=',
-    'like', 'notlike', 'in', 'notin',
-    'between', 'notbetween',
+    '=',
+    '!=',
+    '>',
+    '<',
+    '>=',
+    '<=',
+    'like',
+    'notlike',
+    'in',
+    'notin',
+    'between',
+    'notbetween'
 ];
 
 function quoteString(value: string): string {
@@ -72,24 +81,9 @@ export class BaseIndexDBWasm implements IBaseIndexDB {
     private initializeTable(): void {
         if (this.isInitialized) return;
 
-        const columnDefs: string[] = [];
-        for (const columnName of Object.keys(this.schema.columns)) {
-            const allowedDef = this.schema.columns[columnName];
-            if (!allowedDef) continue;
-
-            let colDef = `${columnName} ${allowedDef.type}`;
-            if (columnName === 'item_id') {
-                colDef += ' PRIMARY KEY';
-            } else {
-                if (!allowedDef.nullable) {
-                    colDef += ' NOT NULL';
-                }
-                if (allowedDef.defaultValue !== undefined && allowedDef.defaultValue !== null) {
-                    colDef += ` DEFAULT ${typeof allowedDef.defaultValue === 'string' ? quoteString(allowedDef.defaultValue) : allowedDef.defaultValue}`;
-                }
-            }
-            columnDefs.push(colDef);
-        }
+        const columnDefs = Object.entries(this.schema.columns).map(([columnName, def]) =>
+            this.buildColumnDef(columnName, def)
+        );
 
         this.db.run(`
             CREATE TABLE IF NOT EXISTS ${this.tableName} (
@@ -97,8 +91,33 @@ export class BaseIndexDBWasm implements IBaseIndexDB {
             )
         `);
 
+        this.ensureColumns();
         this.createIndexes();
         this.isInitialized = true;
+    }
+
+    private buildColumnDef(columnName: string, def: ColumnConstraint): string {
+        let colDef = `${columnName} ${def.type}`;
+        if (columnName === 'item_id') {
+            colDef += ' PRIMARY KEY';
+        } else {
+            if (!def.nullable) {
+                colDef += ' NOT NULL';
+            }
+            if (def.defaultValue !== undefined && def.defaultValue !== null) {
+                colDef += ` DEFAULT ${typeof def.defaultValue === 'string' ? quoteString(def.defaultValue) : def.defaultValue}`;
+            }
+        }
+        return colDef;
+    }
+
+    private ensureColumns(): void {
+        const rows = this.db.all(`PRAGMA table_info(${this.tableName})`) as Array<{ name: string }>;
+        const existing = new Set(rows.map((r) => r.name));
+        for (const [colName, def] of Object.entries(this.schema.columns)) {
+            if (existing.has(colName)) continue;
+            this.db.run(`ALTER TABLE ${this.tableName} ADD COLUMN ${this.buildColumnDef(colName, def)}`);
+        }
     }
 
     private createIndexes(): void {
@@ -160,7 +179,9 @@ export class BaseIndexDBWasm implements IBaseIndexDB {
             this.validateField(field);
 
             if (!BaseIndexDBWasm.isOperatorSupported(op)) {
-                throw new Error(`Unsupported operator: ${operator}. Supported operators: ${SUPPORTED_OPERATORS.join(', ')}`);
+                throw new Error(
+                    `Unsupported operator: ${operator}. Supported operators: ${SUPPORTED_OPERATORS.join(', ')}`
+                );
             }
 
             if (op === 'in' || op === 'notin') {
@@ -209,7 +230,7 @@ export class BaseIndexDBWasm implements IBaseIndexDB {
 
         return {
             whereClause: clauses.length > 0 ? clauses.join(' AND ') : '1=1',
-            params,
+            params
         };
     }
 
@@ -254,11 +275,12 @@ export class BaseIndexDBWasm implements IBaseIndexDB {
                 const placeholders = columns.map(() => '?').join(', ');
                 const values = columns.map((column) => record[column]);
                 const updateColumns = columns.filter((column) => column !== 'item_id');
-                const sql = updateColumns.length === 0
-                    ? `INSERT INTO ${this.tableName} (${columns.join(', ')})
+                const sql =
+                    updateColumns.length === 0
+                        ? `INSERT INTO ${this.tableName} (${columns.join(', ')})
                        VALUES (${placeholders})
                        ON CONFLICT(item_id) DO NOTHING`
-                    : `INSERT INTO ${this.tableName} (${columns.join(', ')})
+                        : `INSERT INTO ${this.tableName} (${columns.join(', ')})
                        VALUES (${placeholders})
                        ON CONFLICT(item_id) DO UPDATE SET ${updateColumns.map((column) => `${column} = excluded.${column}`).join(', ')}`;
                 const result = this.db.run(sql, values);
@@ -269,8 +291,8 @@ export class BaseIndexDBWasm implements IBaseIndexDB {
     }
 
     async update(itemId: string, data: Record<string, any>): Promise<boolean> {
-        const fields = Object.keys(data).filter((key) =>
-            this.validFields.includes(key) && key !== 'item_id' && data[key] !== undefined
+        const fields = Object.keys(data).filter(
+            (key) => this.validFields.includes(key) && key !== 'item_id' && data[key] !== undefined
         );
         if (fields.length === 0) {
             throw new Error('No valid fields to update');
@@ -304,6 +326,16 @@ export class BaseIndexDBWasm implements IBaseIndexDB {
             }
             return count;
         });
+    }
+
+    async updateWhere(field: string, value: any, conditions: BaseQueryCondition[]): Promise<number> {
+        this.validateField(field);
+        const { whereClause, params } = this.buildWhereClause(conditions);
+        const result = this.db.run(`UPDATE ${this.tableName} SET ${field} = ? WHERE ${whereClause}`, [
+            value,
+            ...params
+        ]);
+        return result.changes ?? 0;
     }
 
     async delete(itemId: string): Promise<boolean> {
@@ -365,7 +397,10 @@ export class BaseIndexDBWasm implements IBaseIndexDB {
         return this.db.all(sql, params);
     }
 
-    async search(conditions: BaseQueryCondition[], options?: Omit<BaseQueryOptions, 'conditions'>): Promise<Record<string, any>[]> {
+    async search(
+        conditions: BaseQueryCondition[],
+        options?: Omit<BaseQueryOptions, 'conditions'>
+    ): Promise<Record<string, any>[]> {
         return this.findAll({ ...options, conditions });
     }
 

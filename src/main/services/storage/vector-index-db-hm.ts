@@ -334,6 +334,24 @@ export class VectorIndexDBHm implements IVectorIndexDB {
         return countBefore;
     }
 
+    async searchMeta(
+        conditions?: import('./vector-indexer.js').VectorMetaCondition[]
+    ): Promise<Array<{ item_id: string; item_type: string }>> {
+        await this.ensureInitialized();
+        let sql = `SELECT DISTINCT item_id, item_type FROM ${this.metaTableName}`;
+        if (conditions && conditions.length > 0) {
+            const clauses = conditions.map((c) => {
+                if (c.operator === '=') {
+                    return `${c.field} = '${escapeStr(c.value as string)}'`;
+                }
+                const vals = Array.isArray(c.value) ? c.value : [c.value as string];
+                return `${c.field} IN (${vals.map((v) => `'${escapeStr(v)}'`).join(', ')})`;
+            });
+            sql += ` WHERE ${clauses.join(' AND ')}`;
+        }
+        return (await this.execSql(sql)) as { item_id: string; item_type: string }[];
+    }
+
     async transaction<T>(fn: () => Promise<T>): Promise<T> {
         await this.ensureInitialized();
         return this.runTransaction(fn);

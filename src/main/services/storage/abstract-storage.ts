@@ -262,6 +262,10 @@ export interface FilterCondition {
     vectorQuery?: VectorQuery;
 }
 
+export interface UpsertOptions {
+    indexers?: string[];
+}
+
 // ============================================================================
 // BaseStorage - 多索引器协调存储
 // ============================================================================
@@ -402,6 +406,13 @@ export class BaseStorage {
         };
     }
 
+    async searchVectorMeta(
+        conditions?: import('./vector-indexer.js').VectorMetaCondition[]
+    ): Promise<Array<{ item_id: string; item_type: string }>> {
+        if (!this.vectorIndexer) return [];
+        return (this.vectorIndexer as VectorIndexer).searchMeta(conditions);
+    }
+
     /**
      * 插入数据
      */
@@ -440,29 +451,37 @@ export class BaseStorage {
     /**
      * 更新数据
      */
-    async update(items: Item[]): Promise<void> {
+    async update(items: Item[], options?: UpsertOptions): Promise<void> {
         if (items.length === 0) return;
+        const should = (name: string) => !options?.indexers || options.indexers.includes(name);
 
         await Promise.all([
-            this.baseIndexer.update(items),
-            this.bm25Indexer ? this.bm25Indexer.update(items) : Promise.resolve(),
-            this.vectorIndexer ? this.vectorIndexer.update(items) : Promise.resolve(),
-            this.tagIndexer ? this.tagIndexer.update(items) : Promise.resolve(),
-            this.chunkIndexer ? this.chunkIndexer.update(items) : Promise.resolve()
+            should('BaseIndexer') ? this.baseIndexer.update(items) : Promise.resolve(),
+            should('BM25Indexer') && this.bm25Indexer ? this.bm25Indexer.update(items) : Promise.resolve(),
+            should('VectorIndexer') && this.vectorIndexer ? this.vectorIndexer.update(items) : Promise.resolve(),
+            should('TagIndexer') && this.tagIndexer ? this.tagIndexer.update(items) : Promise.resolve(),
+            should('ChunkIndexer') && this.chunkIndexer ? this.chunkIndexer.update(items) : Promise.resolve()
         ]);
     }
 
     /**
-     * 插入或更新数据（存在则更新，不存在则插入）
+     * Insert or update items. `options.indexers` restricts the write to listed
+     * indexers (e.g. ['BaseIndexer']). Promise.all is NOT cross-indexer atomic;
+     * callers relying on partial-write semantics MUST use a separate marker column
+     * for eventual consistency (filemgr uses `embedded`).
+     *
+     * See spec §"部分写入失败的语义与不变式".
      */
-    async upsert(items: Item[]): Promise<void> {
+    async upsert(items: Item[], options?: UpsertOptions): Promise<void> {
         if (items.length === 0) return;
+        const should = (name: string) => !options?.indexers || options.indexers.includes(name);
+
         await Promise.all([
-            this.baseIndexer.upsert(items),
-            this.bm25Indexer ? this.bm25Indexer.upsert(items) : Promise.resolve(),
-            this.vectorIndexer ? this.vectorIndexer.upsert(items) : Promise.resolve(),
-            this.tagIndexer ? this.tagIndexer.upsert(items) : Promise.resolve(),
-            this.chunkIndexer ? this.chunkIndexer.upsert(items) : Promise.resolve()
+            should('BaseIndexer') ? this.baseIndexer.upsert(items) : Promise.resolve(),
+            should('BM25Indexer') && this.bm25Indexer ? this.bm25Indexer.upsert(items) : Promise.resolve(),
+            should('VectorIndexer') && this.vectorIndexer ? this.vectorIndexer.upsert(items) : Promise.resolve(),
+            should('TagIndexer') && this.tagIndexer ? this.tagIndexer.upsert(items) : Promise.resolve(),
+            should('ChunkIndexer') && this.chunkIndexer ? this.chunkIndexer.upsert(items) : Promise.resolve()
         ]);
     }
 

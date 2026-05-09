@@ -47,7 +47,11 @@ function toBuffer(repr: Float32Array | number[]): Buffer {
 
 function toVector(blob: Uint8Array): number[] {
     const buffer = Buffer.from(blob);
-    const view = new Float32Array(buffer.buffer, buffer.byteOffset, Math.floor(buffer.byteLength / Float32Array.BYTES_PER_ELEMENT));
+    const view = new Float32Array(
+        buffer.buffer,
+        buffer.byteOffset,
+        Math.floor(buffer.byteLength / Float32Array.BYTES_PER_ELEMENT)
+    );
     return Array.from(view);
 }
 
@@ -58,13 +62,17 @@ function similarityToDistance(similarity: number, metric: SimilarityMetric): num
             return 1 - similarity;
         case 'euclidean':
         case 'manhattan':
-            return Math.max(0, (1 / Math.max(similarity, Number.EPSILON)) - 1);
+            return Math.max(0, 1 / Math.max(similarity, Number.EPSILON) - 1);
         default:
             return 1 - similarity;
     }
 }
 
-function computeMetric(query: number[], candidate: number[], metric: SimilarityMetric): { similarity: number; distance: number } {
+function computeMetric(
+    query: number[],
+    candidate: number[],
+    metric: SimilarityMetric
+): { similarity: number; distance: number } {
     if (query.length !== candidate.length) {
         throw new Error(`Vector dimension mismatch: expected ${query.length}, got ${candidate.length}`);
     }
@@ -200,7 +208,9 @@ export class VectorIndexDBWasm implements IVectorIndexDB {
     }
 
     private getState(key: string): string | null {
-        const row = this.db.get(`SELECT value FROM ${this.hnswMetadataTableName} WHERE key = ?`, [key]) as { value?: string } | undefined;
+        const row = this.db.get(`SELECT value FROM ${this.hnswMetadataTableName} WHERE key = ?`, [key]) as
+            | { value?: string }
+            | undefined;
         return row?.value ?? null;
     }
 
@@ -228,9 +238,9 @@ export class VectorIndexDBWasm implements IVectorIndexDB {
     }
 
     private getStoredDimSync(): number | null {
-        const row = this.db.get(
-            `SELECT repr FROM ${this.tableName} WHERE active = 1 LIMIT 1`
-        ) as { repr?: Uint8Array } | undefined;
+        const row = this.db.get(`SELECT repr FROM ${this.tableName} WHERE active = 1 LIMIT 1`) as
+            | { repr?: Uint8Array }
+            | undefined;
         if (!row?.repr) return null;
         return Math.floor(Buffer.from(row.repr).byteLength / Float32Array.BYTES_PER_ELEMENT);
     }
@@ -345,7 +355,7 @@ export class VectorIndexDBWasm implements IVectorIndexDB {
         ) as Array<{ point_id: string; repr: Uint8Array }>;
         const points: HnswPoint[] = rows.map((row) => ({
             id: row.point_id,
-            vector: toVector(row.repr),
+            vector: toVector(row.repr)
         }));
         await this.hnsw.rebuild(points);
         this.refreshActiveCounts();
@@ -373,7 +383,11 @@ export class VectorIndexDBWasm implements IVectorIndexDB {
         });
     }
 
-    private exactSearch(queryVector: Float32Array | number[], options?: VectorSearchOptions, filterItemIds?: string[]): VectorSearchResult[] {
+    private exactSearch(
+        queryVector: Float32Array | number[],
+        options?: VectorSearchOptions,
+        filterItemIds?: string[]
+    ): VectorSearchResult[] {
         const query = Array.from(queryVector);
         const metric = options?.metric ?? 'cosine';
         const topK = options?.topK ?? 10;
@@ -381,24 +395,28 @@ export class VectorIndexDBWasm implements IVectorIndexDB {
         const columnName = options?.columnName ?? '';
         const rows = this.getActiveRowsByConditions(columnName, filterItemIds);
 
-        const results = rows.map((row) => {
-            const scored = computeMetric(query, toVector(row.repr), metric);
-            return {
-                item_id: row.item_id,
-                item_type: row.item_type,
-                similarity: scored.similarity,
-                distance: scored.distance,
-            };
-        }).sort((a, b) => b.similarity - a.similarity);
+        const results = rows
+            .map((row) => {
+                const scored = computeMetric(query, toVector(row.repr), metric);
+                return {
+                    item_id: row.item_id,
+                    item_type: row.item_type,
+                    similarity: scored.similarity,
+                    distance: scored.distance
+                };
+            })
+            .sort((a, b) => b.similarity - a.similarity);
 
-        const filtered = threshold === undefined
-            ? results
-            : results.filter((item) => item.similarity >= threshold);
+        const filtered = threshold === undefined ? results : results.filter((item) => item.similarity >= threshold);
 
         return filtered.slice(0, topK);
     }
 
-    private async annSearch(queryVector: Float32Array | number[], options?: VectorSearchOptions, filterItemIds?: string[]): Promise<VectorSearchResult[]> {
+    private async annSearch(
+        queryVector: Float32Array | number[],
+        options?: VectorSearchOptions,
+        filterItemIds?: string[]
+    ): Promise<VectorSearchResult[]> {
         await this.ensureInitialized();
         const metric = options?.metric ?? 'cosine';
         if (metric !== 'cosine' && metric !== 'dot_product') {
@@ -420,14 +438,15 @@ export class VectorIndexDBWasm implements IVectorIndexDB {
             if (hits.length === 0) break;
 
             const pointIds = hits.map((hit) => hit.id);
-            const rows = pointIds.length === 0
-                ? []
-                : this.db.all(
-                    `SELECT point_id, item_id, item_type, active
+            const rows =
+                pointIds.length === 0
+                    ? []
+                    : (this.db.all(
+                          `SELECT point_id, item_id, item_type, active
                      FROM ${this.tableName}
                      WHERE point_id IN (${pointIds.map(() => '?').join(', ')})`,
-                    pointIds
-                ) as Array<{ point_id: string; item_id: string; item_type: string; active: number }>;
+                          pointIds
+                      ) as Array<{ point_id: string; item_id: string; item_type: string; active: number }>);
             const rowMap = new Map(rows.map((row) => [row.point_id, row]));
 
             results.length = 0;
@@ -443,7 +462,7 @@ export class VectorIndexDBWasm implements IVectorIndexDB {
                     item_id: row.item_id,
                     item_type: row.item_type,
                     similarity,
-                    distance: similarityToDistance(similarity, metric),
+                    distance: similarityToDistance(similarity, metric)
                 });
                 if (results.length >= topK) break;
             }
@@ -466,7 +485,10 @@ export class VectorIndexDBWasm implements IVectorIndexDB {
         if (records.length === 0) return 0;
         return this.withDirtyWrite(async () => {
             const existing = new Set(
-                this.getRowsByVectorIds(records.map((record) => record.vector_id), true).map((row) => row.vector_id)
+                this.getRowsByVectorIds(
+                    records.map((record) => record.vector_id),
+                    true
+                ).map((row) => row.vector_id)
             );
             let count = 0;
             const toAdd: Array<{ pointId: string; vector: number[] }> = [];
@@ -480,14 +502,7 @@ export class VectorIndexDBWasm implements IVectorIndexDB {
                     this.db.run(
                         `INSERT INTO ${this.tableName} (point_id, vector_id, item_id, item_type, active, repr, created_at)
                          VALUES (?, ?, ?, ?, 1, ?, ?)`,
-                        [
-                            pointId,
-                            record.vector_id,
-                            record.item_id,
-                            record.item_type,
-                            toBuffer(record.repr),
-                            Date.now(),
-                        ]
+                        [pointId, record.vector_id, record.item_id, record.item_type, toBuffer(record.repr), Date.now()]
                     );
                     existing.add(record.vector_id);
                     toAdd.push({ pointId, vector: Array.from(record.repr) });
@@ -526,14 +541,7 @@ export class VectorIndexDBWasm implements IVectorIndexDB {
                     this.db.run(
                         `INSERT INTO ${this.tableName} (point_id, vector_id, item_id, item_type, active, repr, created_at)
                          VALUES (?, ?, ?, ?, 1, ?, ?)`,
-                        [
-                            pointId,
-                            record.vector_id,
-                            record.item_id,
-                            record.item_type,
-                            toBuffer(record.repr),
-                            Date.now(),
-                        ]
+                        [pointId, record.vector_id, record.item_id, record.item_type, toBuffer(record.repr), Date.now()]
                     );
                     toAdd.push({ pointId, vector: Array.from(record.repr) });
                     count += 1;
@@ -553,7 +561,10 @@ export class VectorIndexDBWasm implements IVectorIndexDB {
         if (records.length === 0) return 0;
         return this.withDirtyWrite(async () => {
             const existing = new Set(
-                this.getRowsByVectorIds(records.map((record) => record.vector_id), true).map((row) => row.vector_id)
+                this.getRowsByVectorIds(
+                    records.map((record) => record.vector_id),
+                    true
+                ).map((row) => row.vector_id)
             );
             let count = 0;
             const toAdd: Array<{ pointId: string; vector: number[] }> = [];
@@ -573,14 +584,7 @@ export class VectorIndexDBWasm implements IVectorIndexDB {
                     this.db.run(
                         `INSERT INTO ${this.tableName} (point_id, vector_id, item_id, item_type, active, repr, created_at)
                          VALUES (?, ?, ?, ?, 1, ?, ?)`,
-                        [
-                            pointId,
-                            record.vector_id,
-                            record.item_id,
-                            record.item_type,
-                            toBuffer(record.repr),
-                            Date.now(),
-                        ]
+                        [pointId, record.vector_id, record.item_id, record.item_type, toBuffer(record.repr), Date.now()]
                     );
                     toAdd.push({ pointId, vector: Array.from(record.repr) });
                     count += 1;
@@ -619,7 +623,11 @@ export class VectorIndexDBWasm implements IVectorIndexDB {
         });
     }
 
-    async search(queryVector: Float32Array | number[], options?: VectorSearchOptions, filterItemIds?: string[]): Promise<VectorSearchResult[]> {
+    async search(
+        queryVector: Float32Array | number[],
+        options?: VectorSearchOptions,
+        filterItemIds?: string[]
+    ): Promise<VectorSearchResult[]> {
         this.validateDimension(queryVector);
         const columnName = options?.columnName ?? '';
         if (!columnName) return [];
@@ -638,10 +646,7 @@ export class VectorIndexDBWasm implements IVectorIndexDB {
 
     async exists(itemId: string): Promise<boolean> {
         await this.ensureInitialized();
-        const row = this.db.get(
-            `SELECT 1 FROM ${this.tableName} WHERE item_id = ? AND active = 1 LIMIT 1`,
-            [itemId]
-        );
+        const row = this.db.get(`SELECT 1 FROM ${this.tableName} WHERE item_id = ? AND active = 1 LIMIT 1`, [itemId]);
         return row != null;
     }
 
@@ -654,6 +659,28 @@ export class VectorIndexDBWasm implements IVectorIndexDB {
             await this.rebuildIndexLocked();
             return countBefore;
         });
+    }
+
+    async searchMeta(
+        conditions?: import('./vector-indexer.js').VectorMetaCondition[]
+    ): Promise<Array<{ item_id: string; item_type: string }>> {
+        await this.ensureInitialized();
+        const clauses: string[] = ['active = 1'];
+        const params: string[] = [];
+        if (conditions && conditions.length > 0) {
+            for (const c of conditions) {
+                if (c.operator === '=') {
+                    params.push(c.value as string);
+                    clauses.push(`${c.field} = ?`);
+                } else {
+                    const vals = Array.isArray(c.value) ? c.value : [c.value as string];
+                    vals.forEach((v) => params.push(v));
+                    clauses.push(`${c.field} IN (${vals.map(() => '?').join(', ')})`);
+                }
+            }
+        }
+        const sql = `SELECT DISTINCT item_id, item_type FROM ${this.tableName} WHERE ${clauses.join(' AND ')}`;
+        return this.db.all(sql, params) as { item_id: string; item_type: string }[];
     }
 
     async transaction<T>(fn: () => Promise<T>): Promise<T> {

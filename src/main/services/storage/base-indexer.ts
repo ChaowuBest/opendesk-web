@@ -56,6 +56,7 @@ export interface IBaseIndexDB {
     deleteByConditions(conditions: BaseQueryCondition[]): Promise<number>;
     update(itemId: string, data: Record<string, any>): Promise<boolean>;
     updateMany(records: Record<string, any>[]): Promise<number>;
+    updateWhere(field: string, value: any, conditions: BaseQueryCondition[]): Promise<number>;
     findById(itemId: string): Promise<Record<string, any> | undefined>;
     findByIds(itemIds: string[]): Promise<Record<string, any>[]>;
     findAll(options?: BaseQueryOptions): Promise<Record<string, any>[]>;
@@ -243,6 +244,13 @@ export class BaseIndexer extends Indexer {
         return { items, totalCount };
     }
 
+    async count(conditions: FilterCondition[]): Promise<number> {
+        const queryConditions = conditions
+            .filter((c) => c.indexer === 'BaseIndexer')
+            .map((c) => this.toQueryCondition(c));
+        return this.ensureDB().count(queryConditions);
+    }
+
     /**
      * 插入 Item
      */
@@ -271,6 +279,14 @@ export class BaseIndexer extends Indexer {
     async upsert(items: Item[]): Promise<void> {
         if (items.length === 0) return;
         await this.ensureDB().upsertMany(this.buildRecords(items));
+    }
+
+    async resetField(field: string, value: any, conditions: FilterCondition[]): Promise<number> {
+        this.validateField(field);
+        const queryConditions = conditions
+            .filter((c) => c.indexer === 'BaseIndexer')
+            .map((c) => this.toQueryCondition(c));
+        return this.ensureDB().updateWhere(field, value, queryConditions);
     }
 
     /**

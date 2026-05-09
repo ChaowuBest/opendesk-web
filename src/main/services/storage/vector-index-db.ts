@@ -438,6 +438,26 @@ export class VectorIndexDB implements IVectorIndexDB {
         return countBefore;
     }
 
+    async searchMeta(
+        conditions?: import('./vector-indexer.js').VectorMetaCondition[]
+    ): Promise<Array<{ item_id: string; item_type: string }>> {
+        let sql = `SELECT DISTINCT item_id, item_type FROM ${this.metaTableName}`;
+        const params: string[] = [];
+        if (conditions && conditions.length > 0) {
+            const clauses = conditions.map((c) => {
+                if (c.operator === '=') {
+                    params.push(c.value as string);
+                    return `${c.field} = ?`;
+                }
+                const vals = Array.isArray(c.value) ? c.value : [c.value as string];
+                vals.forEach((v) => params.push(v));
+                return `${c.field} IN (${vals.map(() => '?').join(', ')})`;
+            });
+            sql += ` WHERE ${clauses.join(' AND ')}`;
+        }
+        return this.db.prepare(sql).all(...params) as { item_id: string; item_type: string }[];
+    }
+
     /**
      * 在事务中执行多个操作
      * @param fn 要在事务中执行的函数
