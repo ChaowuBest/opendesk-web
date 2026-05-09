@@ -194,7 +194,8 @@ function runLightweightPreparationLayers(
             {
                 groupBudgetChars: options.toolResultBudgetChars,
                 previewOptions: options.toolResultBudgetPreviewOptions,
-                skipToolNames: options.skipToolNames
+                skipToolNames: options.skipToolNames,
+                persistArtifacts: options.readonlyOnly !== true
             }
         );
         activeContext = projection.activeContext;

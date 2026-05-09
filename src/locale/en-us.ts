@@ -323,6 +323,11 @@ export const enUs: Record<string, string> = {
 
     // Commands - Compact
     'compact.description': 'Manually compress current task context',
+    'context.description': 'Show current context diagnostics',
+    'context.title': 'Context Diagnostics',
+    'context.no.task': 'No active task',
+    'context.task.not.found': 'Current task not found',
+    'context.fail': 'Failed to build context diagnostics',
 
     // Commands - Debug
     'debug.description': 'Debug command, usage: /debug log [on|off] | /debug taskid',

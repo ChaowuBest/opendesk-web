@@ -320,6 +320,11 @@ export const zhCn: Record<string, string> = {
 
     // Commands - Compact
     'compact.description': '手动压缩当前任务的上下文',
+    'context.description': '显示当前上下文诊断',
+    'context.title': '上下文诊断',
+    'context.no.task': '当前没有活跃任务',
+    'context.task.not.found': '未找到当前任务',
+    'context.fail': '无法生成上下文诊断',
 
     // Commands - Debug
     'debug.description': '调试命令，用法: /debug log [on|off] | /debug taskid',
